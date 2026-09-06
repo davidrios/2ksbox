@@ -17,6 +17,11 @@ backend later.
 - `patches/qemu/README.md` — every QEMU patch, what it does, when to drop it.
 - `docs/build-macos.md` — Apple Silicon specifics (the M1 Air is the
   Apple test machine; the reference rig in `docs/09` is the oracle).
+- `docs/build-windows.md` — the Windows build, which is a **cross build
+  from Linux** in a container (`scripts/win-cross.sh`,
+  `scripts/build-windows.sh`, `scripts/package-windows.sh`). Windows
+  artefacts go to `build/win/` and
+  `target/x86_64-pc-windows-gnu/`, never over the native ones.
 
 ## Locked decisions (do not reopen)
 
@@ -26,7 +31,7 @@ backend later.
   commands `2ksbox` / `2ksbox-player`, the resource dirs `share/2ksbox`
   etc., and the user's data directory `~/.local/share/2ksbox` — moved
   from the old `win98-xp-virt` one exactly once by
-  `launcher/src/paths.rs::data_dir()`, an atomic rename that only
+  `launcher-core/src/paths.rs::data_dir()`, an atomic rename that only
   happens when the new name is absent. The application ID is
   `com._2ksbox.Launcher` (the underscore is required: a name segment may
   not start with a digit).
@@ -35,6 +40,19 @@ backend later.
 - QEMU runs **in-process** (`libqemu-embed-<target>`, `embed/`) for latency.
 - **Standalone Rust player + launcher.** RetroArch/libretro was tried and
   rejected — never propose it again.
+- **The launcher is two front ends over one library** (ADR-014,
+  2026-09-06, doc 07): `launcher-core/` holds everything it *decides* — the bundle
+  format, the machine library, the disc shelf, snapshots, shader
+  profiles, the preview's render path, **and every window's own state
+  machine and the sentences it shows** — while `launcher/` (egui) and
+  `launcher-qt/` (Qt 6 / QML) are views over it, both maintained.
+  Nothing that a second front end could get differently goes in a front
+  end: not a default that follows the family, not a note under a
+  checkbox, not a combo box's labels. Every toolkit-free debug verb is
+  `launcher_core::cli`, so both binaries answer them identically.
+  `launcher-capi/` is the same thing as a C ABI, for a front end in
+  another language. `launcher-qt` is not in the root workspace, so
+  `cargo build` never needs Qt 6.
 - Rust wherever possible; C only inside QEMU/qemu-3dfx and guest-side
   era code. Python is uv-managed (3.12; 3.14 breaks QEMU's venv).
 - Everything open source; Apple Silicon must work (TCG), not just x86 hosts.
@@ -45,6 +63,16 @@ backend later.
   the fallback/DX7 path only; don't sink more time into wine9x bugs. The
   reference workload is `guest-tools/src/d3dgame9.c` / `d3dgame8.c`,
   golden on the rig first.
+- **The host-side Glide wrapper is our own build of OpenGLide** (doc 12 §5,
+  2026-09-06). qemu-3dfx's `hw/3dfx` only *dispatches* -- it `dlopen`s a
+  `libglide2x` and looks up 183 entry points -- and upstream ships that
+  library to donors only, so Glide had never worked here at all. OpenGLide
+  (LGPL) is pinned at `third_party/openglide` with a patch queue and the
+  window-less platform layer in `glidept/`; it renders into the embed
+  backend's own context (patch 33's `glide_host_ops` reverses upstream's
+  window handshake) rather than opening a window. Don't propose nGlide or
+  dgVoodoo2: closed source, and D3D-targeted. `patches/openglide/README.md`
+  has the argument, the guest-side alternatives included.
 - **XP's display adapter is our `d3dpt-vga` + real display driver** (doc
   15, ADR-008): `-vga none -device d3dpt-vga`, `guest-tools/src/d3dptvid/`
   (miniport + display DLL + INF, mingw-w64 DDK headers, no Microsoft DDK),
@@ -97,6 +125,9 @@ cargo build --release
 # configure-qemu.sh also builds libdisc (the CD-ROM model) and links it into QEMU (patch 50)
 # Direct3D pass-through (doc 14) needs the executor too:
 scripts/prepare-dxvk.sh && scripts/configure-dxvk.sh && ninja -C build/dxvk && scripts/build-d3dpt-exec.sh
+# Glide pass-through (doc 12 §5) needs the host-side wrapper, which qemu-3dfx
+# does not ship: scripts/prepare-openglide.sh && scripts/build-glide.sh
+# (QEMU finds it through QEMU_GLIDE_LIB=build/glide/libglide2x.so)
 guest-tools/build-wrappers.sh   # the guest-tools ISO (SETUP.EXE + the guest DLLs)
 ```
 
@@ -151,14 +182,16 @@ GPU); don't propose wiring it in.
 | `scripts/test.sh [host\|guest\|all]` | the whole suite below, PASS/FAIL/SKIP per check, outputs in `build/test/`; `TEST_KEEP=1` leaves XP running on failure |
 | `SETUP.EXE` (guest-tools ISO root; `guest-tools/src/setup.c`) | installs the guest tools from inside the machine, and the reason the ISO's folders are what they are: one folder per role, one copy of every file, and SETUP knows which of them *this* Windows wants (98/Me: Glide + `FXMEMMAP.VXD`; 2000/XP: Glide + `FXPTL.SYS` with the MAPMEM service, and the `d3dpt-vga` display driver). A console program, so a guest test drives it: `SETUP /ALL` installs everything applicable, `SETUP /LIST` prints the lists, `SETUP /GAME <n> <dir>` copies one per-game file set next to a game's EXE (that is where WineD3D's `WINED9.DLL` → `D3D9.DLL` renames happen, so the disc carries no second copy). Writes `SETUP.LOG` |
 | `tools/setup-guest-test.sh <image> [xp\|win98]` | `SETUP.EXE` in a real guest, headless, on both families: `/LIST`, `/ALL`, `/GAME 3 C:\2KSBOX`, then **Windows' own `dir`** on everything that should now exist (and `net start MAPMEM` on NT) over COM1 — the installer's own exit code is not the evidence. XP boots on `-vga none -device d3dpt-vga` so the display-driver component has a device to bind to, and the QEMU log's `d3dptvid: adapter found` is checked too; Win98 boots on cirrus and the run fails if that component is even offered. Overlay only, never the image. Local only (needs a guest image), not in `scripts/test.sh` |
+| `launcher-capi/examples/smoke.c` | a third front end, in C, over the same models the egui and Qt builds use (`launcher-capi/include/launcher_core.h`): creates a DOS machine through the shared wizard and checks its answers (64 MB, a period processor, emulated, no network card, our own emulator fast paths all at their shipped setting and a checkbox that changes the count), then the disc shelf, the library and the profile editor. The `capi` check in `scripts/test.sh`; a scratch library, never the user's own. A changed default in a model fails here as well as in the two GUIs |
 | `tools/x87-fast-test.c` | patch 05's x87 fast path equals the real x87 (x86-64 host oracle) |
+| the `optimizations` check in `scripts/test.sh` | the wizard's "Emulation optimizations" switches (`patches/qemu/README.md`, doc 07) from a checkbox to a real QEMU: a machine nobody has touched emits no property and writes no `[optimizations]` table, each switch lands on the option QEMU looks it up on (`-cpu` for the four CPU properties, `-accel tcg` for the three accelerator ones), our own `qemu-system-i386` accepts the exact line the launcher writes with all seven flipped, and "All defaults" empties the table again. The switches' *effect* is the guest batteries' job; this is the wiring between them and a checkbox |
 | `scripts/package-flatpak.sh` | the Flatpak (doc 07's primary Linux target; manifest in `packaging/flatpak/`): a from-source build against `org.freedesktop.Sdk` — host binaries cannot be reused, the runtime's glibc is older than this host's — reusing the install layout via `package-linux.sh --prefix /app`, plus libslirp (absent from the runtime, and `-netdev user` needs it) and a build-only `distlib`. Then asks the *installed* app, in its own sandbox, whether every companion resolves under `/app` and the library under `~/.var/app`. The build is **offline** (Flathub's rule): `packaging/flatpak/cargo-sources.json` declares all 513 crates with checksums — regenerate with `scripts/gen-flatpak-cargo-sources.sh` after any dependency change. `FLATPAK_BUILD_DIR` moves the build tree off a full root filesystem |
 | `scripts/package-linux.sh` | the Linux package (doc 07's install layout, ADR-011's names — product `2ksbox`, application ID `com._2ksbox.Launcher`): stages launcher + player + embed library + `qemu-img` + firmware + guest-tools ISO into one relocatable prefix (`--with-shaders` adds the presets), then asks the **staged** launcher with `env -i` from `/` whether every companion resolves inside the package (`launcher --paths`), that the staged player `ldd`s to the package's own `libqemu-embed`, that the packaged `qemu-img` creates a disk and `--print-args` points `-L` at the packaged firmware, and that the desktop entry and the AppStream metainfo validate (`appstreamcli --no-net`, errors only); rolls a `.tar.zst` unless `--no-tar` (the `package` check in `scripts/test.sh`). `packaging/linux/install.sh` inside it copies a tree into a prefix |
-| `target/release/discx` (`cargo build --release -p libdisc`) | the CD-ROM model (doc 17): `selftest <dir>` writes synthetic cue/bin, CCD and ISO images and checks reads, EDC/ECC, Q synthesis and the MMC responders through them (the `libdisc` check in `scripts/test.sh`); `info` / `dump` print what a guest will see (cue, CCD, MDS, ISO); `scan` classifies and L-EC-verifies every sector of a real dump (the bad-sector map: SafeDisc's weak sectors show up here); `repair <image> <outdir>` writes the negative-control copy of a protected dump (every L-EC-failing sector's EDC/ECC regenerated over the dumped user data, nothing else touched, run-out sectors left alone) so a protection check can be watched to *fail*; `subscan` does the same for the stored subchannel (Q CRC failures and whether they cluster, and how often `subq::synthesize` reproduces the disc's own frames); `convert` makes a MODE1/2352 cue/bin (+ WAVE audio tracks) from an ISO |
+| `target/release/discx` (`cargo build --release -p libdisc`) | the CD-ROM model (doc 17): `selftest <dir>` writes synthetic cue/bin, CCD and ISO images and checks reads, EDC/ECC, Q synthesis and the MMC responders through them (the `libdisc` check in `scripts/test.sh`); `info` / `dump` print what a guest will see (cue, CCD, MDS, ISO); `scan` classifies and L-EC-verifies every sector of a real dump (the bad-sector map: SafeDisc's weak sectors show up here); `repair <image> <outdir>` writes the negative-control copy of a protected dump (every L-EC-failing sector's EDC/ECC regenerated over the dumped user data, nothing else touched, run-out sectors left alone) so a protection check can be watched to *fail*; `subscan` does the same for the stored subchannel (Q CRC failures and whether they cluster, and how often `subq::synthesize` reproduces the disc's own frames); `convert` makes a MODE1/2352 cue/bin (+ WAVE audio tracks) from an ISO; `export` writes the cooked view as an `.iso`, which is how a **folder disc** is checked — `isodir:<dir>` serves a host directory as a generated ISO 9660 + Joliet volume (M5g, `docs/tracks/m5-dirdisc.md`), `mktree` writes the fixture tree for it and the `dirdisc` check in `scripts/test.sh` has xorriso read the folder back out |
 | `tools/atapi-guest-test.py` | a DOS program drives the ATAPI drive on a cdimage disc by PIO (patch 51): every reply at two byte-count limits identical to `discx dump`, the sense of a bad / audio sector, audio positions; then the disc shelf (patch 52): LIST/LOAD/EJECT with the sectors read before and after to prove the tray changed, and a second boot running the real `CDSHELF.COM` on the same shelf; the `atapi-guest` check |
-| `tools/xp-cdimage-test.sh <image> <disc> <ref dir>` | XP boots read-only with a `.cue`/`.ccd`/`.mds`/`.iso` as its CD-ROM (the `cdimage` block driver, doc 17), copies the whole disc through cdrom.sys to the scratch FAT and every file is compared with the reference directory (the ISO extracted with `bsdtar` or xorriso); `CDTEST=<CDTEST.EXE>` also plays track 2 through MCI into a wav on the drive's `audiodev` and checks for the 1 kHz tone; the `guest-cdimage` check |
+| `tools/xp-cdimage-test.sh <image> <disc> <ref dir>` | XP boots read-only with a `.cue`/`.ccd`/`.mds`/`.iso` — or `isodir:<dir>`, a host folder served as a generated disc (M5g), where passing that same directory as the reference makes the run a round trip — as its CD-ROM (the `cdimage` block driver, doc 17), copies the whole disc through cdrom.sys to the scratch FAT and every file is compared with the reference directory (the ISO extracted with `bsdtar` or xorriso); `CDTEST=<CDTEST.EXE>` also plays track 2 through MCI into a wav on the drive's `audiodev` and checks for the 1 kHz tone; the `guest-cdimage` check (and `guest-dirdisc`, the same tree served as a folder). Runs on macOS too: mtools builds the scratch disk where `sfdisk`/`mkfs.fat` are missing, and the wait watches COM1 because XP's lazy writer can hold a small FAT write for minutes |
 | `TESTS\CDTEST.EXE` (guest-tools ISO; `guest-tools/src/cdtest.c`) | CD audio through MCI in XP / Win98: tracks, play track 2, positions while playing / paused / resumed, `cdtest.log` |
-| `CDSHELF\CDSHELF.EXE` / `.COM` (guest-tools ISO; `guest-tools/src/cdshelf.c`, `cdshelf.asm`) | the host's disc shelf from inside the machine (doc 07, patch 52). No arguments: a window on Windows, a key-per-disc menu in DOS. Verbs for scripts: `CDSHELF LIST`, `CDSHELF <n>`, `CDSHELF E`. One EXE for Win98 (ASPI) and XP (SPTI), a NASM `.COM` for DOS; nothing to install — it is a vendor command on the machine's own CD-ROM drive, and an insert always ejects first |
+| `CDSHELF\CDSHELF.EXE` / `.COM` (guest-tools ISO; `guest-tools/src/cdshelf.c`, `cdshelf.asm`) | the host's disc shelf from inside the machine (doc 07, patch 52). No arguments: a window on Windows, a key-per-disc menu in DOS. Verbs for scripts: `CDSHELF LIST`, `CDSHELF <n>`, `CDSHELF E`. One EXE for Win98 (ASPI) and XP (SPTI), a NASM `.COM` for DOS; nothing to install — it is a vendor command on the machine's own CD-ROM drive, and an insert always ejects first, waits for the drive to confirm the empty tray, and then **dismounts the volume** (`FSCTL_DISMOUNT_VOLUME`): the program's own TEST UNIT READY polling consumes the media-change sense a drive raises once, so Windows must be told outright or it keeps serving the disc that came out |
 | `tools/cdshelf-guest-test.sh <image> [xp\|win98]` | `CDSHELF.EXE` in a real Windows guest, headless: boots with an empty tray and a two-disc shelf (a generated ISO and a path that doesn't exist), lists it, loads the ISO and reads its files back with `dir`/`type` — Windows' own driver is the proof the tray changed — refuses the missing one, ejects. Local only (needs a guest image), never wired into `scripts/test.sh`; writes to a qcow2 overlay, never the image |
 | `tools/dos-guest-test.py` | the DOS machine family (doc 06) end to end: the launcher's own bundle → `--print-args` → our QEMU → a real FreeDOS floppy. Checks `Machine::reference(Dos)`'s defaults, that the machine boots from its **floppy** (the blank disk can print nothing), that a throttled machine is emulated even when the bundle says KVM, and that the processor combo is real — a 200 M-instruction loop timed inside the guest against the rate the chosen CPU promises (31.3 M/s asked 31.25, 7.8 asked 7.8). That last check is the point: `-icount` without `align=on` only makes the guest *believe* it is slow. Local only (fetches the FreeDOS floppy), not in `scripts/test.sh` |
 | `tools/x87-guest-test.py` | DOS program under TCG: results identical with the fast path on/off (needs nasm, mtools, FreeDOS floppy); `QEMU_TCG_OPTS=pinned-regs=on` runs it and the other DOS batteries under patch 21's pinned registers (doc 18) |
@@ -174,6 +207,9 @@ GPU); don't propose wiring it in.
 | `tools/xp-ssebench.sh` | runs `SSEBENCH.EXE` in an XP image headlessly (QMP typing, output via a floppy image), once per `-cpu` config |
 | `tools/d3dpt-dp2-test.cpp` | the display driver's records (doc 15 M7c) without a guest: VRAM surfaces, a context, the D3D7TEST scene as DX7 DP2 tokens, readback pixels checked, hostile records refused; its BMP is the oracle for the guest's `D3D7TEST` |
 | `tools/embed-3d-test.c` | drives the window-less Mesa backend without a guest: context, frame, orientation, dma-buf ring (Linux) |
+| `TESTS\GLIDETEST.EXE` (guest-tools ISO; `guest-tools/src/glidetest.c`) | Glide 2.x through the pass-through device from inside the guest (doc 12 §5): the same scene `glide-host-test` draws, but the whole chain — the guest's `GLIDE2X.DLL`, the MMIO FIFO, `hw/3dfx`, our `libglide2x`, the frontend's context. It checks its **own** pixels through `grLfbLock` rather than trusting the host to look at them, and ends with `glidetest: N cases, M failed`. Four cases: a clear, the triangle (whose corners are the upper-left-origin check), a re-clear, and a close/reopen — a game's mode switch, which is where a host that leaked its context fails. `-res N` picks another resolution, `-hold N` keeps the frame up |
+| `tools/glide-guest-test.sh <image>` | `GLIDETEST.EXE` in a real Win98 guest **in the player**, headless: overlay boot with the guest-tools ISO (`SETUP /ALL` installs the Glide wrapper) and the program on a floppy, driven through the Run dialog over QMP, verdict read off COM1. It must be the player and not `qemu-system-i386`: a bare QEMU registers no 3D provider, so `glide_host_ops` returns NULL and `grSstWinOpen` fails by design. Local only (needs a guest image), never in `scripts/test.sh` |
+| `tools/glide-host-test.cpp` | Glide pass-through without a guest (doc 12 §5): the real host wrapper (`build/glide/libglide2x.so`) loaded by `hw/3dfx`'s own dispatcher, opened through `glidewnd.c`'s handshake on a context nobody has a window for, then a clear and a triangle through the wrapper and `grBufferSwap` -- the frame is checked at the frontend callback, corners included so Glide's upper-left origin is proved too. `GLIDE_TEST_BMP=<path>` writes the frame out; `GLIDE_HOST_LOG=<path\|->` turns on the wrapper's own log. The `glide-host` check in `scripts/test.sh` |
 | `tools/qmpc.py` | drives a guest over an extra `-qmp unix:…,server,nowait` socket: keys, typing, screendumps |
 | `guest-tools/src/d3dgame9.c`, `d3dgame8.c` | the Direct3D reference scene (doc 14): golden BMPs from the rig, diffed against every emulated path |
 | `build/crtcal-render <dir>` (`tools/crtcal-render.c`) | writes doc 09's eight CRT calibration patterns as BMPs at every era mode and checks each one's circle comes out round on the tube it is drawn for (the `crtcal` check in `scripts/test.sh`); the patterns themselves are `guest-tools/src/crtcal.h`, shared with the guest program |

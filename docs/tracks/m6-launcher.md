@@ -1497,6 +1497,144 @@ in QML, secondary screens as **real top-level windows**.
   of `src/qt/wizard.rs`, which is where the next person will be when
   they bite.
 
+## The emulation optimizations, as checkboxes (2026-09-06)
+
+The QEMU patch queue has seven fast paths that carry an off switch
+(`patches/qemu/README.md`): `x87-fast` (patches 05 and 06), `sse-fast`
+(11), `simd-fast` (12) and `rep-fast` (17) are properties of the guest
+CPU; `smc-same-value` (18), `inline-lookup` (20) and `pinned-regs` (21)
+are properties of the TCG accelerator. All are now a checkbox in the
+machine form, behind a disclosure headed with the count so a machine
+with one off says so while closed.
+
+**Why expose them at all.** Each replaces simulated arithmetic with the
+host's own. When a guest computes the wrong number or a game stops
+drawing, one run with one switch clear says whether a fast path did it;
+without the switch the answer costs a bisect of the patch queue against
+a Windows install. That is also why the defaults are "everything that has
+shipped", with `pinned-regs` off — its own patch is off by default while
+the work is in progress and a boot crash has been seen with it on.
+
+**Three decisions worth keeping.**
+
+* **Only the difference is stored.** `Optimizations` is a
+  `BTreeMap<String, bool>` holding what someone changed, keyed by the
+  QEMU property name; `set()` back to a value's own default *removes* the
+  entry. So a machine that has changed nothing writes no
+  `[optimizations]` table, emits no property, and produces the command
+  line it always produced — which also means it still starts on a QEMU
+  without these patches. An optimization added to the queue later arrives
+  **on** in every bundle that already exists, and an entry a newer
+  launcher wrote survives a load and a save here, because the key is a
+  name and not a Rust enum variant.
+* **The field is last in `Machine`.** It is the only one that serializes
+  to a TOML *table*, and a table swallows every key-value line after it;
+  anywhere else in the struct, the fields below would come back as part
+  of `[optimizations]`.
+* **`-accel`, not `-machine accel=`.** The accelerator-side properties
+  have nowhere to live in `accel=kvm:tcg`, and QEMU refuses the two
+  spellings together ("The -accel and \"-machine accel=\" options are
+  incompatible", `system/vl.c`). `Auto` is now `-accel kvm -accel
+  tcg[,…]`: `configure_accelerators` tries them in order and stops at the
+  first that initializes, which is exactly what the colon list did.
+  Confirmed with `query-kvm` on the real binary — `kvm` for both
+  spellings, `tcg` alone for `-accel tcg`. `tools/dos-guest-test.py`'s
+  "a throttled machine runs emulated even when it asks for KVM" reads the
+  `-accel` list now instead of matching `pc,accel=tcg`.
+
+**Where the code is.** `bundle::Optimization` (the enum, the QEMU
+property name, which option it goes on, the label and the sentence under
+it) and `bundle::Optimizations` (the set); `wizard::Form`'s
+`choose_optimization` / `reset_optimizations` / `optimizations_summary` /
+`optimizations_note` — including the one thing worth saying above the
+switches, that a machine headed for KVM has no emulator in the path for
+them to be fast paths *in*. The egui build draws a `CollapsingHeader`;
+QML a `CheckBox` disclosure over a `Repeater`, whose `checked` binds to a
+new `optimizationsMask` Q_PROPERTY — a bitmask because a `Q_INVOKABLE`
+would never re-evaluate, and cxx-qt has no `QList<bool>`. The C ABI gets
+`lc_wizard_optimization_enabled` and friends plus two new
+`lc_wizard_label` kinds.
+
+**Both wizards now scroll.** Seven more rows plus a sentence each was
+enough to push "Save" past the bottom of a 720-tall window: the fields go
+in a scroll area (egui `ScrollArea`, QML `ScrollView`) and the error line
+and the buttons stay outside it. Verified on a deliberately short screen
+in both — the section expanded, the button still there. (An egui trap
+worth remembering: `CollapsingHeader` *animates* open and clips its
+content while it does, so a `--diag-wizard-frame` script has to spend
+several `~ms` steps after the click or it screenshots a half-open,
+truncated section and looks like a layout bug.)
+
+**Checked.** The `optimizations` check in `scripts/test.sh`: a machine
+nobody has touched still emits no property and writes no table; each of
+the seven lands on the option QEMU looks it up on; **our own
+`qemu-system-i386` accepts the exact line the launcher writes** with all
+seven flipped (started paused on QMP and told to quit, so a rejected
+property is an exit code); "All defaults" empties the table again. Plus
+the `capi` smoke test's new block (the count, a switch, the reset) and
+both GUIs driven headlessly — the egui build clicked through to a real
+`machine.toml` carrying `sse-fast = false` and `pinned-regs = true`,
+which `--print-args` then places as `-cpu pentium3,sse-fast=off` and
+`-accel tcg,pinned-regs=on`. The switches' *effect* is already the guest
+batteries' job (`x87-guest`, `sse-guest`, `rep-guest`, `smc-guest`);
+this check is the wiring between them and a checkbox.
+
+## The preview animates (2026-09-06, user-reported)
+
+**The report:** "some shaders change frame to frame, like to simulate the
+flicker of some TVs" — and in the profile editor they didn't.
+
+**Why:** the preview renders when something changes (the preset, a
+slider, the image, the pane's size) and never otherwise. That is right
+for a preset that draws the same picture forever and wrong for the many
+that don't: an interlaced CRT puts up alternate fields, a phosphor
+afterglow decays over several frames, an NTSC signal shimmers, a
+simulated TV flickers. `shader-chain` was even counting frames for the
+shader (`frame_count += 1` per render), so the *number* moved — nobody
+was asking for a second frame. The player, which renders continuously,
+never had the problem.
+
+**The fix, in the core, because it is a decision and not a widget:**
+
+- `shader_chain::preset_is_animated(&preset)` — whether a preset's
+  picture can change on a still input. It reads the *preprocessed* pass
+  sources (so an `#include`d `#define FrameCount params.FrameCount` is
+  already expanded) and looks for a **use** of a frame-varying uniform,
+  i.e. the `<block>.FrameCount` member access GLSL requires, or for a
+  history / feedback texture (`OriginalHistory…`, `PassFeedback…`,
+  `<alias>Feedback`), or for a pass with `frame_count_mod` set. The
+  declaration alone means nothing: **1131 files in the slang-shaders tree
+  declare `FrameCount` in a uniform block and only 271 read it**, so a
+  plain substring search would have animated everything. Reflection would
+  answer exactly, but only by compiling every pass a second time — the
+  reading is deliberately conservative instead: in doubt it says
+  animated, because that costs a redraw and the other error is the bug.
+- `preview::Preview::frame_interval()` — `Some(16 ms)` for such a preset,
+  `None` for one that stands still; and the frame number handed to the
+  shader now comes from a **clock at `FRAME_RATE` (60/s)** rather than
+  from a count of renders (`Chain::run_at`). A front end that cannot
+  redraw that often — the Qt one reads every frame back to the CPU and
+  writes a BMP — then drops frames instead of running the effect in slow
+  motion.
+- Each front end obeys in its own idiom and decides nothing:
+  `ui.ctx().request_repaint_after(interval)` in `preview_ui`, and a
+  `Timer` in `ShaderEditorWindow.qml` whose `interval`/`running` come
+  from the new `previewInterval` property (0 = still).
+- The headless verbs pin one frame (`PREVIEW_FRAME`, default 0) so
+  `--preview-shader` and `--diag-preview-frame` still dump the same PNG
+  twice, and so the two front ends' PNGs stay byte-identical.
+
+**Measured over every `crt/*.slangp` in the submodule** (100 presets,
+each rendered at frame 0 and frame 1 against the checked-in reference
+game frame): 51 still and identical, 18 animated and genuinely different,
+23 animated but identical *at this source size* (the conservative
+direction — most of those interlace only for a taller source), 8 that
+fail to load at all for unrelated reasons, and **zero called still that
+moved**. The `preview-anim` check in `scripts/test.sh` holds one of each
+kind: `crt-lottes` (still, and the same picture at frames 0 and 7) and
+`crt-beans-vga` (animated, and half the pixels different between frames 0
+and 1).
+
 ## Next steps, in order
 
 1. ~~**The machine bundle format**~~ — done above.
@@ -1605,25 +1743,72 @@ in QML, secondary screens as **real top-level windows**.
    - 6e the shader-pack release and the docs site from these documents
      (doc 08's M6 line), which have no prerequisites in the code.
 
-**The track's wired-in check is `package`** (added 2026-09-05):
+- **Step 7 (two front ends, one core) landed 2026-09-06:** the Qt spike
+  became a maintained peer, and the sharing became a real crate. See
+  doc 07's "Two front ends, one core" for the findings; the shape is
+  `launcher-core/` (everything the launcher *decides*, including each
+  window's state machine, the notes it prints, the preview's render
+  path and every toolkit-free debug verb) with `launcher/` and
+  `launcher-qt/` as views, plus `launcher-capi/` for a front end in
+  another language.
+
+  What made it worth doing rather than leaving the `#[path]` includes
+  alone: the arrangement proved the *file formats* were portable while
+  every window's behaviour stayed written twice, and it had already
+  drifted. The Qt wizard had no processor, floppy or boot-order field
+  at all — so a DOS machine created there came out unthrottled, the one
+  setting that decides whether an era game is playable — its networking
+  checkbox didn't follow the family, the line under it named Windows on
+  machines that may run DOS, and saving a *new* shader profile dropped
+  its parameter overrides on the **egui** side while the Qt side kept
+  them. One implementation each now.
+
+  The mechanical part worth remembering for the next bridge: with the
+  state in a core model *beside* the Q_PROPERTYs, the cxx-qt trap
+  (doc 07's trap 1 — a setter that skips its notify when the field
+  already holds the value) closes by construction. `publish` reads the
+  model and writes every property through its setter; the property
+  fields are never assigned anywhere else; the `Clone`-and-`apply` dance
+  every bridge used to need is gone, and the Qt Rust dropped 792 lines.
+
+  Verified: `scripts/test.sh host` 12/12 (with the new `capi` check),
+  `tools/dos-guest-test.py` all green, `--preview-shader` byte-identical
+  across the two binaries, and a DOS machine created through each front
+  end's *real window* differing only in name and disk path.
+
+**The track's wired-in checks are `package` and `capi`.** `package`
+(added 2026-09-05):
 `scripts/test.sh`'s host stage runs `scripts/package-linux.sh --no-tar`,
 which stages the install layout and interrogates the staged launcher and
 player with a scrubbed environment — a real boundary (the binaries'
 compiled-in path resolution, which otherwise only breaks on someone
-else's machine), and it costs about a second in a ~3 s host stage. The
-rest of the launcher still has no wired-in check; CLAUDE.md's
-integration/e2e policy applies as more of it becomes worth guarding —
-don't add `#[cfg(test)]` modules.
-`launcher`'s debug verbs (`--new`, `--print-args`, `--play`, `--paths`,
+else's machine), and it costs about a second in a ~3 s host stage.
+`capi` (added 2026-09-06) builds `launcher-capi/examples/smoke.c`
+against the C ABI and runs it on a scratch library: a DOS machine
+created through the shared wizard, its answers checked (64 MB, a period
+processor, emulated, no network card), then the disc shelf, the library
+and the profile editor. It is the first check on the launcher's *models*
+rather than on its packaging, and because both GUIs are views over those
+models a changed default fails here too. CLAUDE.md's integration/e2e
+policy applies as more of the launcher becomes worth guarding — don't
+add `#[cfg(test)]` modules.
+The debug verbs are `launcher_core::cli`'s since step 7, so **`launcher`
+and `launcher-qt` answer all of them identically** — the two exceptions
+are `--pick-file` (it pops `rfd`'s dialog; Qt's is declarative, in QML)
+and the `--diag-*` screenshot verbs, which are each toolkit's own. The
+list (`--new`, `--print-args`, `--play`, `--paths`,
 `--wizard-new`, `--wizard-edit`, `--pick-file`, `--new-shader-profile`,
 `--set-shader-param`, `--list-shader-params`, `--assign-shader`,
 `--print-shader-args`, `--preview-shader`, `--diag-preview-frame`,
-`--diag-editor-frame`, `--disc-shelf`, `--diag-shelf-frame`,
+`--diag-editor-frame`, `--discs`, `--boot-disc`, `--diag-shelf-frame`,
 `--snapshots` (`--live` for a running machine), `--diag-snapshots-frame`,
 `--qmp-socket`, `--insert-disc`, `--kvm`, `--diag-wizard-frame`,
-`--shaders`, `--download-shaders`, `--browse-start`; and
-`--wizard-edit` now takes optional `[ram-mb] [auto|kvm|tcg] [net|nonet]`,
-`-` keeping a field, while a diag script step may now be `~<ms>`) are
+`--shaders`, `--download-shaders`, `--browse-start`,
+`--optimizations`; and
+`--wizard-edit` now takes optional
+`[ram-mb] [auto|kvm|tcg] [net|nonet] [processor] [boot]`, `-` keeping a
+field — the last two added at step 7, since they are exactly what the Qt
+form had no widget for — while a diag script step may now be `~<ms>`) is
 otherwise exercised by hand (see the state notes above).
 
 This worktree now *does* have a real `build/qemu` (built here for patch

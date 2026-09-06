@@ -30,8 +30,27 @@ readback path stays as the fallback (macOS, or no Vulkan extensions).
 bound to rectangle textures with `CGLTexImageIOSurface2D`, flipped blit
 from the stand-in FBO, embed API v6 `on_3d_iosurface`; the player wraps
 the surface in a Metal texture (`player/src/iosurface.rs`). **§4 complete
-on both platforms.** Left in M3: Glide (§5); refinement: fence-based sync
-on both platforms instead of `glFinish`.
+on both platforms.**
+**Glide (§5) done on Linux, 2026-09-06:** the host-side wrapper is ours now
+(OpenGLide, `third_party/openglide` + `patches/openglide`, built by
+`scripts/build-glide.sh`), it renders into the same window-less context as
+the Mesa path, and `tools/glide-host-test.cpp` drives the whole thing
+without a guest. **A Glide guest ran the same day:** `GLIDETEST.EXE`
+(`guest-tools/src/glidetest.c`, on the guest-tools ISO) in Win98 in the
+player, headless through `tools/glide-guest-test.sh` — the whole chain, and
+the guest checks its own pixels back through `grLfbLock` rather than
+trusting the host to look at them: `glidetest: 4 cases, 0 failed` (clear,
+triangle, re-clear, close/reopen). It paid for itself immediately with
+patch `04-lfb-origin`: OpenGLide's `grLfbLock` never filled the caller's
+`lfbInfo->origin`, which the dispatcher caches and answers a Glide 2.11
+title's `grLfbBegin` from. **The wrapper compiles on macOS too** (a
+forwarding `<GL/gl.h>` / `<GL/glext.h>` in `glidept/host/macos/`, on the
+include path on Darwin only, because the framework's headers live under
+`OpenGL/` and the only `GL/` on a Mac is XQuartz's Mesa) — built and linked
+against `OpenGL.framework` alone, but run by nothing there: `glide-host` is
+the EGL path and stays Linux-only. Refinement still open: fence-based sync
+on both platforms instead of `glFinish`; a macOS `glide-host` check and the
+Windows build of the wrapper; a Glide *title* rather than our own program.
 
 Source survey of the patched tree (hw/mesa, hw/3dfx, ui/sdl2.c); file:line
 refs are to `qemu/` as prepared by `scripts/prepare-qemu.sh`.
@@ -79,7 +98,12 @@ refs are to `qemu/` as prepared by `scripts/prepare-qemu.sh`.
   device. Nothing tells a display listener; `con->ui_info.passthrough` is
   private. We add an explicit edge notification to the embed API.
 - **Glide presents inside a third-party wrapper** (`libglide2x.so` creates
-  its own context on the window handle, `glide2x_impl.c:796-806`). Defer.
+  its own context on the window handle, `glide2x_impl.c:796-806`) -- and
+  qemu-3dfx does not contain that wrapper at all: `hw/3dfx` is a dispatcher
+  that `dlopen`s one and looks up 183 entry points in it, and upstream ships
+  the library to donors only. So section 5 is two problems, not one: *having*
+  an open host-side Glide implementation, and making it draw without a
+  window.
 
 ## Design
 
@@ -122,10 +146,47 @@ refs are to `qemu/` as prepared by `scripts/prepare-qemu.sh`.
    (`glReadPixels` into the staging buffer) to validate the whole handshake
    before the zero-copy import — explicitly a stepping stone (doc 03's
    "readback is the failure line" is about the shipped design).
-5. **Glide later:** needs either an offscreen-capable wrapper build (new
-   signature word next to `'SDL2'`) or a hidden SDL window + readback.
+5. **Glide (done on Linux, 2026-09-06).** The wrapper is **OpenGLide**
+   (LGPL, `third_party/openglide` at `ad9a3dd`), pinned as a submodule with
+   a two-patch queue (`patches/openglide/README.md`) and built by
+   `scripts/build-glide.sh` -- 121 of the 183 entry points `hw/3dfx` looks
+   up, which is all of Glide 2.x; Glide 3 and the Voodoo3 `Ext` set are not
+   there. It is the implementation upstream's own wrapper is derived from,
+   so `glidewnd.c`'s `WRAPPER_FLAG_*` word already means something to it.
+
+   The handshake is **reversed** rather than extended. Upstream hands the
+   wrapper a window (or an `SDL_Window*`, if it signed itself `'SDL2'`) and
+   the wrapper makes a context on it; instead, patch 33 gives the wrapper
+   *our* context through a new `QemuFxUiOps::glide_host_ops` ->
+   `GlideHostOps` table (`glidept/glide_host.h`: `begin` / `present` /
+   `end` / `get_proc`), passed to the wrapper's optional `setHostOps`
+   export at load time. A wrapper without the symbol, or a display that
+   registers no `glide_host_ops` (`ui/sdl2.c`), is upstream unchanged -- so
+   no new signature word was needed and `cwnd_glide2x` is untouched: the
+   provider passes the same pointer as both the SDL and the native handle,
+   and the wrapper ignores it.
+
+   OpenGLide's own windowing seam is four functions with four call sites,
+   which is why this is small: `glidept/host/window.cpp` replaces it with
+   "the host made a context current" and "the frame is done". The context
+   is `embed_gl_fx_begin`'s -- separate from the Mesa `ctx[0]`, since a
+   guest can hold both, on the same offscreen drawable, resized to the
+   Glide resolution rather than the guest's 2D mode. `grBufferSwap` reaches
+   `publish_frame` exactly as `MGLSwapBuffers` does, so the dma-buf ring
+   and the shader chain come for free.
+
+   `glide_gui_fullscreen` returns 1 deliberately: it stops `glidewnd.c`
+   upscaling a 640x480 game to the desktop's width, which would hand the
+   player a frame the CRT presets are not calibrated for (doc 03), and it
+   silences the wrapper's stderr fps counter.
+
+   Two stacks deliberately not taken -- guest-side Glide to GL over the
+   `OPENGL32.DLL` pass-through, and guest-side Glide to Direct3D over doc
+   14/15 -- are argued in `patches/openglide/README.md`.
 
 ## Order
 
-vtable patch → embed provider on Linux with readback → dma-buf import →
-macOS CGL/IOSurface → Glide.
+vtable patch -> embed provider on Linux with readback -> dma-buf import ->
+macOS CGL/IOSurface -> Glide. All done on Linux, guest included
+(`tools/glide-guest-test.sh`); the wrapper builds on macOS but nothing has
+run it there, it has no Windows build, and no Glide *title* has run yet.

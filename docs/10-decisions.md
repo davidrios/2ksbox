@@ -512,3 +512,213 @@ DLLs stay exactly as they are and remain the path wherever the driver is
 not installed. The adapter itself should need no change for 9x; if it
 does, that is a finding worth writing down rather than a licence to fork
 the register set.
+## ADR-013: hosts without Vulkan 1.3 keep the GL path; no second executor (2026-09-06, amended the same day)
+
+
+**Amended 2026-09-06:** software Vulkan is no longer refused. The first
+version of this decision turned lavapipe down on the user's behalf —
+reasoning that a software rasteriser competes for the host CPU that TCG
+is already using, so it could not be worth having. That is a judgement
+about someone else's hardware, and it is not ours to make: DXVK ranks a
+`CPU` device last but never excludes it, so the executor *does* run
+there, and whether the result beats WineD3D-in-guest on a given box is
+something only that box can answer. So a software driver now counts as
+available, with the warning that it will be very slow and the note that
+the other path may well be faster. Everything else below stands; the
+paragraphs affected say so where they used to say "refused".
+
+**Decision.** The paravirtual Direct3D device (ADR-006) requires a
+**Vulkan 1.3 device** on the host, because its executor is DXVK
+(ADR-007) and DXVK asks for exactly that. Hosts that fail the bar are
+still supported machines — they simply do not get the device. What they
+get is the path that predates it: qemu-3dfx's OpenGL pass-through with
+the Glide wrappers and **WineD3D-in-guest**, which needs no Vulkan at
+all. Three things follow, and they are the decision:
+
+1. **WineD3D is not retired by M10.** Doc 04's fallback row and doc 08's
+   "WineD3D-in-guest stays the fallback and the DX7 path" stand *after*
+   Win98 has its own display driver (ADR-012). M10 step 5 compares the
+   two stacks and picks a default per host; it does not delete one.
+   The ISO keeps `WINED3D\`, and `SETUP /GAME`'s renames stay the
+   supported way to install it next to a game.
+2. **The launcher probes and says so** rather than letting a machine
+   have no 3D in silence.
+3. **No second executor is built** on the strength of this. Doc 14 P0b's
+   escape hatch — "the executor becomes host WineD3D-over-GL or a wgpu
+   translator; the guest side is unchanged either way" — stays open and
+   stays unbuilt.
+
+**What the bar actually is.** Not "supports Vulkan": `third_party/dxvk`
+(v3.1) sets `DxvkVulkanApiVersion = VK_API_VERSION_1_3`
+(`src/dxvk/dxvk_instance.h`) and enforces it twice — as
+`VkApplicationInfo::apiVersion` at instance creation, which a pre-1.3
+loader answers with `ERROR_INCOMPATIBLE_DRIVER`, and per adapter in
+`DxvkDeviceCapabilities` (`dxvk_device_info.cpp`), which returns early on
+`properties.apiVersion < DxvkVulkanApiVersion` and leaves the adapter
+with no capabilities. Its own diagnosis for the second case is *"No
+adapters found … A Vulkan 1.3 capable setup is required."*
+
+**Why it is worth a decision.** The hosts that miss the bar are not
+antiques we can wave off; several of them are *good* boxes for this
+project, because a 2012-era x86 laptop runs KVM and is the right speed
+for the guests we target:
+
+| Host | Vulkan | Why it misses |
+|---|---|---|
+| Intel pre-Broadwell (HD 3000/4000, Sandy/Ivy Bridge) | none | Mesa's `anv` starts at Gen8 |
+| Nvidia Kepler (GTX 600/700) | 1.2 | stuck on the 470 legacy branch; NVK starts at Turing |
+| Nvidia Fermi, AMD TeraScale (HD 5000/6000) | none | no driver, either vendor's or Mesa's |
+| **macOS before 26; every Intel Mac** | none usable | ADR-007: MoltenVK is not a supported configuration and KosmicKrisp needs macOS 26 on Apple Silicon |
+
+The last row is the one that makes this concrete rather than
+hypothetical: it is the Air before it was upgraded, and it is every Intel
+Mac permanently. Each of these hosts has OpenGL 2.1 or better, which is
+all the GL pass-through has ever wanted.
+
+**Software Vulkan is used, and warned about** (the amendment). Mesa's
+lavapipe is 1.3-conformant on any CPU and costs us no code, and DXVK
+takes it: its adapter sort ranks `CPU` behind discrete, integrated and
+virtual, but the list it ranks is the list it uses, and a lavapipe-only
+host gets an adapter like any other. It will be slow — a software
+rasteriser spends the host CPU that TCG needs for the guest, on the very
+hosts that have the least of it, and the acceptance titles are DX8 with
+hardware T&L and shaders rather than a 640×480 DX7 scene. That is a
+warning, not a veto: which of the two stacks wins on a given box is a
+measurement, and refusing to start the one that might win means nobody
+ever takes it. So the probe **counts** a `VK_PHYSICAL_DEVICE_TYPE_CPU`
+device, reports "available, in software (slow)", and says in the same
+breath that WineD3D-in-guest may well be faster and both are worth
+trying. Verified against the real driver: it presents `llvmpipe` at
+Vulkan 1.4.354 and is now taken rather than turned down.
+
+**Alternatives rejected.** *Pinning an
+older DXVK for old hosts*: 1.10.3 was the last Vulkan-1.1 release, so
+this means carrying a second DXVK branch and its own patch queue for
+strictly fewer d3d9 features — the patch-queue discipline of ADR-007 is
+affordable once, not twice. *Lowering DXVK's own bar*: the 1.3 features
+are load-bearing in current DXVK, unlike the one-line geometry-shader
+patch KosmicKrisp needed. *Building the GL executor now*: it is a second
+implementation of D3D9 semantics, and nothing yet says how many users
+are behind the bar — build it when that is measured, not on a guess.
+
+**Consequences.** The Win98 3D matrix stays two-stacked for as long as
+M10 runs, which is also what gives M10 its control measurement.
+`launcher-core/src/host_gpu.rs` is the probe: it loads the Vulkan loader
+dynamically (no link-time dependency, an absent `libvulkan` is a report
+and not a crash), asks for the loader version, creates an instance at
+`min(loader, 1.3)` with `VK_KHR_portability_enumeration` when it is
+offered — the same opt-in DXVK makes, without which a Vulkan-on-Metal
+driver is invisible — and classifies every physical device by type and
+`apiVersion`.
+
+It is said in two places, because a verb nobody types is not the promise
+this ADR makes. `launcher --host-check` (`launcher_core::cli`, so both
+binaries answer it identically — ADR-014) prints the whole report and
+exits non-zero **only when the device is unavailable**: a software
+driver is slow, not absent, and a script asking "can this host do 3D"
+should hear yes. And the wizard says the one-line version under the
+acceleration row, for Windows machines only — DOS has no Direct3D to
+place. That sentence is `wizard::Form::graphics_note()`, in the shared
+model with every other note (ADR-014), so the egui build, the Qt build
+and the C ABI cannot end up telling someone different things about the
+same host; the form takes the verdict once when it opens, like
+`have_kvm`, because a probe is a whole `VkInstance` and no window should
+make one per frame. It is a warning — orange — only for the software
+case, the one that runs and disappoints; a host with no Vulkan at all
+gets a plain note, because nothing is wrong and every machine still
+runs. The `host-check` check in `scripts/test.sh` holds all of it to
+what is true on every host: no Vulkan driver must mean "unavailable", a
+non-zero exit and a pointer at WineD3D; a software driver must mean
+available, exit zero and the word "slow"; and any report must name both
+the loader and the bar. QEMU's own answer is unchanged
+and remains the backstop: `d3dpt_exec_load.c` already boots a machine
+normally and reports "no executor" when the library or the Vulkan device
+is missing.
+
+## ADR-014: two launcher front ends over one library; the toolkit gets only the widgets (2026-09-06)
+
+**Decision.** The launcher is **`launcher-core`** plus front ends that
+draw it. `launcher/` (egui/eframe) and `launcher-qt/` (Qt 6 / QML through
+cxx-qt) are both maintained; `launcher-capi/` is the same core as a C
+ABI, for a front end in another language. The line between core and front
+end is drawn at *behaviour*, not at data: a front end owns the widgets,
+when to redraw, the file dialog, and how it confirms something
+destructive. **Everything else is the core** — including each window's
+state machine, its derived labels, and the sentences it prints.
+
+**Why the line is there and not at the file formats.** It was at the file
+formats, from 2026-09-06 until later the same day: the Qt build
+`#[path]`-included ten toolkit-free modules from `launcher/src/` and
+rewrote everything else. That arrangement proves a real thing (the bundle
+format, the library, the shelf and the subprocess handling are portable —
+they compiled unchanged under a second toolkit) and it is not enough,
+because a window's *behaviour* is not a widget. Four divergences had
+already accumulated, none of which a compiler could see:
+
+- the Qt wizard had **no processor, floppy or boot-order field**, so a
+  DOS machine created there came out unthrottled — and a DOS machine's
+  processor is the setting that decides whether an era game runs at all
+  (doc 06);
+- its networking checkbox **did not follow the family**, so it and
+  `Machine::reference` disagreed about a new DOS machine;
+- the line under that checkbox said `Windows won't see a card`, on
+  machines that may run DOS;
+- and saving a *new* shader profile **dropped the parameter overrides**
+  in the egui build and kept them in the Qt build. Exactly one of those
+  was correct, and it was not the older one.
+
+Each is the same shape: a rule that lived in a `show()` function, copied
+once and then maintained in one copy. The fix is not discipline, it is
+having nowhere to put the second copy.
+
+**What it costs.** Not fewer lines: the two front ends together lost
+2,171 while the core gained 2,469 of new shared modules on top of the
+1,966 that merely moved. The core is bigger than the sum of what it
+replaced because it is documented once and has an API — `ram_note()`,
+`choose_family()` — where the duplicated versions poked fields inline.
+The saving is that there is one place to change any of it, and one place
+to read it.
+
+**What it buys beyond that.** Every toolkit-free debug verb is
+`launcher_core::cli`, so both binaries answer `--paths`, `--discs`,
+`--snapshots`, `--wizard-new`, `--preview-shader` and the rest with the
+same code — where the Qt build previously reimplemented two of them and
+lacked twenty. And `--preview-shader` on the two binaries renders
+byte-identical PNGs, which is a check that they really are linking one
+implementation rather than two that agree today.
+
+**Rejected: pick one toolkit.** The 2026-09-06 spike's finding stands —
+nothing justifies switching to Qt (egui is pure Rust, one `cargo build`
+on every platform, and its shader preview is a texture id where Qt needs
+a CPU readback), and nothing rules it out (real windows, native file
+dialogs, and a headless screenshot that is four lines of QML against
+~150 of synthetic-input plumbing). Keeping both is what makes the core's
+boundary *testable* instead of aspirational: a rule that only one front
+end can express is a rule in the wrong place, and with a second front end
+that shows up as a missing widget rather than as a design opinion.
+
+**Rejected: a Rust-only core.** A front end that is not Rust would
+otherwise need a bridge crate per language. `launcher-capi` is a thin C
+ABI — opaque handles, index-addressed rows, caller-owned strings — and
+Swift imports a C header directly, so a native macOS front end is a view
+over the same models rather than a third implementation of the launcher.
+It adds no behaviour, and `launcher-capi/examples/smoke.c` (the `capi`
+check in `scripts/test.sh`) is a working miniature front end that fails
+when a model's defaults change, exactly as the two GUIs would.
+
+**Consequences.**
+
+- Nothing that a second front end could get differently goes in a front
+  end: not a default that follows the family, not a note under a
+  checkbox, not a combo box's labels.
+- `launcher-qt` declares its own workspace, so `cargo build` at the root
+  never needs Qt 6 development files (the Mac, CI, the Flatpak). The
+  `launcher-core` path dependency crosses that boundary; Qt does not come
+  back the other way.
+- `launcher-capi` is a workspace member but not a *default* one: it
+  builds a cdylib and a staticlib of the whole launcher, which nobody
+  needs unless they are writing such a front end.
+- Packaging still ships the egui build (ADR-011's `bin/2ksbox`). Shipping
+  the Qt one would mean moving the Flatpak from `org.freedesktop.Sdk` to
+  `org.kde.Platform` and carrying Qt in the AppImage/macOS/Windows
+  builds — a packaging decision, not a code one, and not taken here.

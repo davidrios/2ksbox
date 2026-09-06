@@ -7,7 +7,7 @@ Everything below runs natively on arm64. Tested target: M1 MacBook Air.
 ```sh
 xcode-select --install                       # Apple clang + git
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install ninja meson pkg-config glib pixman sdl2 gnu-sed uv
+brew install ninja meson pkg-config glib pixman sdl2 gnu-sed uv libslirp
 brew install --cask xquartz                  # log out/in once after installing
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh      # Rust toolchain
 ```
@@ -117,6 +117,43 @@ Notes:
   a hardened, notarized `.app` (doc 07).
 - If configure complains about Python, it means uv isn't on PATH — the
   script never uses the system interpreter.
+
+## The Glide wrapper — seconds
+
+```sh
+scripts/prepare-openglide.sh && scripts/build-glide.sh   # build/glide/libglide2x.dylib
+```
+
+qemu-3dfx ships no host-side Glide library, so this is ours: OpenGLide with
+the window-less platform layer in `glidept/host/` (doc 12 §5,
+`patches/openglide/README.md`). QEMU finds it through
+`QEMU_GLIDE_LIB=build/glide/libglide2x.dylib`.
+
+The Mac needs one thing Linux does not, and it is a header problem, not a
+library one. OpenGLide says `<GL/gl.h>` and `<GL/glext.h>`; macOS has no
+`GL/` directory, because the framework keeps its headers under `OpenGL/`.
+The one `GL/` that *does* exist here is `/opt/X11/include/GL`, XQuartz's
+Mesa — pointing the build at it compiles and then binds the wrapper to a GLX
+library that will never see a CGL context, the same trap the embed backend's
+`dlsym` rule exists to avoid. So `glidept/host/macos/GL/` holds a forwarding
+`gl.h` and `glext.h`, on the include path on Darwin only, and the `glext.h`
+supplies what Apple's stops short of (it is `GL_GLEXT_VERSION 8`, from 2003,
+written before `PFNGL…PROC`): the seventeen typedefs OpenGLide names,
+`APIENTRY`, and four `EXT_paletted_texture` / `EXT_packed_pixels` enums that
+only have to exist for `PGTexture.cpp` to compile — neither extension is on
+a Mac, and OpenGLide asks the driver before it uses either.
+
+Check what it bound to; `OpenGL.framework` and `libSystem` are the only two
+lines that belong there:
+
+```sh
+otool -L build/glide/libglide2x.dylib
+nm -gU build/glide/libglide2x.dylib | grep -c '_gr\|_gu'   # 120
+```
+
+`scripts/test.sh`'s `glide-host` check does **not** run here: it drives the
+embed backend through EGL. The wrapper is built on the Air, not proven on
+it.
 
 ## Spike A, step 1: Win98 + guest wrappers (hand-run)
 

@@ -17,6 +17,8 @@
 #   dxvk    prepare-dxvk.sh -> configure-dxvk.sh -> ninja
 #   exec    build-d3dpt-exec.sh: libd3dpt_exec, the D3D executor. After
 #           `dxvk`, whose headers it compiles against.
+#   glide   prepare-openglide.sh -> build-glide.sh: libglide2x, the
+#           host-side Glide wrapper hw/3dfx dlopens (doc 12 §5).
 #   guest   guest-tools/build-wrappers.sh: the guest-tools ISO (which
 #           calls build-driver.sh for the XP display driver too)
 #
@@ -70,14 +72,14 @@ while [ $# -gt 0 ]; do
     -f|--force) FORCE=1; shift ;;
     -t|--test) RUN_TEST=1; shift ;;
     -h|--help) usage; exit 0 ;;
-    qemu|rust|dxvk|exec|guest) STAGES+=("$1"); shift ;;
+    qemu|rust|dxvk|exec|glide|guest) STAGES+=("$1"); shift ;;
     *) echo "build.sh: unknown argument '$1' (try --help)" >&2; exit 2 ;;
   esac
 done
 
 EXPLICIT=""
 if [ ${#STAGES[@]} -eq 0 ]; then
-  STAGES=(qemu rust dxvk exec guest)
+  STAGES=(qemu rust dxvk exec glide guest)
 else
   EXPLICIT=1
 fi
@@ -158,12 +160,24 @@ if want qemu; then
       echo "    patch queue, overlays and submodules unchanged - skipping prepare"
     fi
 
+    # QEMU 9.2 carries no slirp of its own, so `-netdev user` — the
+    # networking every machine this project makes is configured with —
+    # exists only if libslirp was there at configure time. Meson's
+    # `slirp` option is `auto`, so its absence is silent until a guest
+    # has no network and the launcher's own command line is refused.
+    slirp_pkg=""; have pkg-config && pkg-config --exists slirp && slirp_pkg=1
+    slirp_built=""
+    grep -q '^#define CONFIG_SLIRP' build/qemu/config-host.h 2>/dev/null && slirp_built=1
+
     # configure resets meson options and is slow, so only when needed.
     # prepare-qemu.sh deliberately preserves meson.build mtimes when the
     # content is unchanged, which is what makes this comparison meaningful.
     needs_configure=""
     [ -n "$FORCE" ] && needs_configure=1
     [ -f build/qemu/build.ninja ] || needs_configure=1
+    # libslirp installed since the last configure: configure again, or
+    # installing it would look like it had done nothing.
+    [ -n "$slirp_pkg" ] && [ -z "$slirp_built" ] && [ -f build/qemu/build.ninja ] && needs_configure=1
     for f in qemu/meson.build qemu/hw/3dfx/meson.build qemu/hw/mesa/meson.build; do
       if [ -f "$f" ] && [ -f build/qemu/build.ninja ] && [ "$f" -nt build/qemu/build.ninja ]; then
         needs_configure=1
@@ -180,7 +194,25 @@ if want qemu; then
       echo "    build/qemu is configured and no meson file moved - skipping configure"
     fi
 
+    if [ -z "$slirp_pkg" ]; then
+      case "$(uname -s)" in
+        Darwin) echo "    no libslirp: guests will have no networking (brew install libslirp, then re-run)";;
+        *)      echo "    no libslirp: guests will have no networking (install libslirp-dev / libslirp-devel, then re-run)";;
+      esac
+    fi
+
     if [ -f build/qemu/build.ninja ]; then
+      # block/cdimage.c links libdisc's Rust staticlib (patch 50) and meson
+      # takes it from target/release — which the rust stage below writes,
+      # too late for this link. So build that one crate here: a pull that
+      # only touched libdisc/src would otherwise leave qemu-system-i386 on
+      # the previous staticlib until the *next* build.sh, and it fails at
+      # run time rather than at the link ("isodir: I/O error: Is a
+      # directory" is what an old libdisc says about a folder disc).
+      if have cargo; then
+        say "qemu: cargo build --release -p libdisc (linked into qemu)"
+        cargo build --release -p libdisc ${JOBS[@]+"${JOBS[@]}"}
+      fi
       say "qemu: ninja"
       ninja -C build/qemu ${JOBS[@]+"${JOBS[@]}"} \
         qemu-system-i386 qemu-img qemu-io "libqemu-embed-i386.$SO"
@@ -236,6 +268,30 @@ if want exec; then
     say "exec: libd3dpt_exec (the D3D decoder + DXVK executor)"
     scripts/build-d3dpt-exec.sh
     BUILT+=(exec)
+  fi
+fi
+
+# --- glide ------------------------------------------------------------
+# The host-side Glide wrapper (doc 12 §5). Independent of everything else:
+# QEMU dlopens it at grGlideInit, it is not linked into anything.
+if want glide; then
+  if [ ! -f third_party/openglide/Glide.cpp ]; then
+    say "git submodule update --init (openglide)"
+    git submodule update --init --depth 1 third_party/openglide || true
+  fi
+  if [ ! -f third_party/openglide/Glide.cpp ]; then
+    skip glide "third_party/openglide missing" || true
+  else
+    say "glide: libglide2x (the host-side Glide wrapper)"
+    if STAMP_GITS="third_party/openglide" \
+       stamp_stale glide-prepare patches/openglide scripts/prepare-openglide.sh; then
+      scripts/prepare-openglide.sh
+      stamp_save
+    else
+      echo "    patch queue and submodule unchanged - skipping prepare"
+    fi
+    scripts/build-glide.sh
+    BUILT+=(glide)
   fi
 fi
 

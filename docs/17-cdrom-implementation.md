@@ -76,7 +76,7 @@ staticlib is linked into QEMU). Layout after M5a:
 | `src/subq.rs` | Q-channel synthesis + CRC-16 (§2.6), P-channel |
 | `src/mmc.rs` | responders: READ TOC formats 0/1/2, READ SUB-CHANNEL, READ CD sector layout, READ DISC INFORMATION (§4) |
 | `src/capi.rs` | `#[no_mangle] extern "C"` functions matching `libdisc/libdisc.h` exactly (§3) |
-| `src/bin/discx.rs` | the exerciser (§6.1): synthetic images, self-test through the C API, `dump`, `convert` |
+| `src/bin/discx.rs` | the exerciser (§6.1): synthetic images, self-test through the C API, `dump`, `convert`, `export`, `mktree` |
 | `qemu/cdimage.c`, `qemu/cdimage.h` | the QEMU block driver, overlaid into the tree by `prepare-qemu.sh` (§5) |
 | `libdisc.h` | the one C header (§3), overlaid next to it |
 
@@ -690,6 +690,23 @@ no-disc path.
 
 ### 5.1 `block/cdimage.c` (in the repo: `libdisc/qemu/cdimage.c`)
 
+It is also where the `isodir` protocol driver lives — a host *directory*
+served as a disc (M5g, landed 2026-09-06, `docs/tracks/m5-dirdisc.md`):
+the same state and the same read path, no `file` child, and
+`isodir:/path` instead of a probe, because a directory cannot be probed.
+It needed no QEMU patch: this file is ours.
+
+One consequence worth knowing before debugging anything here: the block
+layer probes for a **format** on top of a protocol driver it resolved
+from a filename prefix, so an `isodir` node is normally opened under a
+`raw` one (vvfat has the same shape). `cdimage_disc()` walks down through
+format nodes for that reason. When it fails to, nothing breaks visibly —
+the guest still reads files through the block layer, and only the
+commands answered from the model go missing. `CDIMAGE_TRACE=1` prints a
+line per packet **only** when the model was found, which is what the
+suite's `dirdisc` check uses (SeaBIOS probing the drive, against a plain
+`.iso` on the raw driver as the control).
+
 Model it on `block/bochs.c` (format driver, read-only). Members:
 
 ```c
@@ -955,6 +972,17 @@ Subcommands:
 - `discx convert <in.iso> <out.cue>` — cooked ISO → MODE1/2352 cue/bin
   with synthesized EDC/ECC and, with `--audio tone.wav …`, appended audio
   tracks: the way to make guest test discs from the guest-tools ISO.
+- `discx export <image> <out.iso>` — the cooked 2048-byte view written
+  out sector by sector. For a folder disc (`isodir:<dir>`, M5g) this is
+  what an ISO 9660 reader that is not ours gets handed: the `dirdisc`
+  check exports the fixture tree's volume and has xorriso (or bsdtar)
+  extract the folder back out.
+- `discx mktree <dir>` — writes that fixture tree: an empty file, a file
+  of exactly one sector and one of a sector plus a byte, 3 MB of
+  pseudo-random data, names with spaces / accents / characters Joliet
+  forbids / a pair that mangles to one 8.3 name / one at Joliet's
+  64-character limit, nine directory levels, an empty directory, and 300
+  files in one directory (more records than a sector holds).
 
 `scripts/test.sh` host stage: `run_check libdisc libdisc.log
 target/release/discx selftest build/test/disc`, and `run_check cdimage
@@ -1041,3 +1069,4 @@ scrambled image (§2.x, `ccd.rs` refuses `DataTracksScrambled=1`, but a bare
 | M5d | SafeDisc: L-EC path against a real dump, `secdrv.sys` running | launch check passes; `atapi-guest`'s flipped-sector case is the regression guard |
 | M5e | MDS/MDF (+ DPM data), CHD, a seek/read timing profile if StarForce needs it | documented result per doc 05's table |
 | M5f | disc shelf / swap in the player and launcher (with M6) | — |
+| M5g | a host directory as a disc: ISO 9660 + Joliet generated lazily from the tree (`isodir:/path`, `libdisc/src/isodir.rs`, a second BlockDriver in our own `cdimage.c`) | `discx selftest`'s `dirdisc` case round-tripped through `bsdtar`; XP copies the folder back identical (`docs/tracks/m5-dirdisc.md`) |

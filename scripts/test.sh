@@ -16,6 +16,20 @@
 #   libdisc        discx selftest (doc 17 §6.1): synthetic cue/bin, CCD and ISO
 #                  images, the CD model's reads, EDC/ECC, Q synthesis and the
 #                  MMC responders checked through libdisc's C API
+#   guest-dirdisc  the same tree served as a *folder* (isodir:<dir>): XP copies it
+#                  through cdrom.sys and every file matches the directory itself
+#   dirdisc        a host directory served as a disc (isodir, M5g): discx generates
+#                  the ISO 9660 + Joliet volume over a fixture tree, exports it and
+#                  xorriso (or bsdtar) reads the folder back out identical, and
+#                  bsdtar with Joliet off reads the 8.3 tree a DOS driver sees;
+#                  then
+#                  qemu-img reads the same bytes through the block layer and
+#                  SeaBIOS probing the drive proves the ATAPI path finds the disc
+#                  model (a plain .iso on the raw driver is the control)
+#   dirshelf       a shared folder as a disc from the launcher's side: on the shelf
+#                  under its own name, in the flat shelf file and on the boot
+#                  drive as `isodir:`, commas in the path doubled, and our QEMU
+#                  opening both folders
 #   cdimage        the cdimage block driver (patch 50) through QEMU's block layer:
 #                  qemu-img probes the cue and the ccd to "cdimage" with the
 #                  lead-out × 2048 as the size, the data track dd'd out equals the
@@ -24,7 +38,23 @@
 #                  this build, and the staged launcher asked with a scrubbed
 #                  environment whether player/qemu-img/firmware/guest-tools all
 #                  resolve inside the package (doc 07's install layout)
+#   optimizations  the wizard's fast-path switches (patches/qemu/README.md) from a
+#                  checkbox to a real QEMU: a default machine's line unchanged,
+#                  each switch on the option QEMU looks it up on, our QEMU
+#                  accepting the line the launcher writes
+#   capi           launcher-capi/examples/smoke.c: a third front end, in C, over
+#                  the same models the egui and Qt builds use — the wizard's
+#                  DOS defaults, the disc shelf, snapshots and the profile
+#                  editor, driven through include/launcher_core.h (doc 07)
+#   preview-anim   the launcher's shader preview keeps drawing (doc 07): a preset
+#                  that stands still says so and renders the same picture at any
+#                  frame number, one that does not (an interlaced CRT) says so
+#                  and renders two different pictures at two frame numbers
 #   embed-3d       tools/embed-3d-test.c: the window-less Mesa backend (Linux)
+#   glide-host     tools/glide-host-test.cpp: Glide pass-through without a guest
+#                  (Linux) — the real host wrapper loaded by hw/3dfx, opened
+#                  through glidewnd.c's handshake, a triangle checked in the
+#                  frame the frontend receives, orientation included
 #   d3dpt-exec     tools/d3dpt-exec-test.cpp: guest encoder → decoder → DXVK,
 #                  frames delivered, hostile batch refused
 #   d3dpt-dp2      tools/d3dpt-dp2-test.cpp: the display driver's records (doc 15
@@ -102,6 +132,24 @@ fi
 PASS=(); FAIL=(); SKIP=()
 log() { printf '\n==> %s\n' "$*"; }
 skip() { SKIP+=("$1: $2"); printf '  SKIP %s (%s)\n' "$1" "$2"; }
+# GNU coreutils' timeout(1) is not on a Mac (nor is gtimeout unless
+# someone installed coreutils), and a check that hangs is worse than one
+# that fails, so stand one in.
+if ! command -v timeout >/dev/null; then
+  if command -v gtimeout >/dev/null; then
+    timeout() { gtimeout "$@"; }
+  else
+    timeout() { # seconds, command...
+      local s="$1" p w rc; shift
+      "$@" & p=$!
+      ( sleep "$s"; kill -9 "$p" 2>/dev/null ) & w=$!
+      wait "$p"; rc=$?
+      kill "$w" 2>/dev/null
+      return $rc
+    }
+  fi
+fi
+
 run_check() { # name, log file, command...
   local name="$1" lf="$OUT/$2"; shift 2
   "$@" >"$lf" 2>&1; local rc=$?
@@ -109,6 +157,106 @@ run_check() { # name, log file, command...
   if [ $rc = 77 ]; then skip "$name" "$(tail -1 "$lf")"; return 0; fi
   FAIL+=("$name"); printf '  FAIL %s (exit %d) — %s\n' "$name" $rc "$lf"; tail -5 "$lf" | sed 's/^/       /'; return 1
 }
+dirdisc_check() { # a host directory served as a disc, read back by someone else's ISO 9660 reader
+  # discx's own dirdisc case (the libdisc check) proves the model reads
+  # the tree back; this one proves the *volume* is one, by handing it to
+  # a reader that is not ours and diffing the result against the folder.
+  local src="$OUT/dirsrc" ext="$OUT/dirsrc-out" iso="$OUT/dirsrc.iso" rc=0
+  # QEMU is given absolute paths: it does not run from here, and $OUT may
+  # or may not be absolute already.
+  local abs="$src" absiso="$iso"
+  case "$abs" in /*) ;; *) abs="$PWD/$abs"; absiso="$PWD/$absiso";; esac
+  target/release/discx mktree "$src" || { echo "mktree failed"; return 1; }
+  target/release/discx export "isodir:$src" "$iso" >/dev/null || { echo "export failed"; return 1; }
+  [ -d "$ext" ] && chmod -R u+w "$ext"; rm -rf "$ext"; mkdir -p "$ext"
+  # Both readers are independent of us; xorriso is preferred only because
+  # libarchive rewrites names to NFD on macOS, which no guest does.
+  local extra=()
+  if command -v xorriso >/dev/null; then
+    xorriso -osirrox on -indev "$iso" -extract / "$ext" >"$OUT/dirdisc-extract.log" 2>&1 || { echo "xorriso could not read the volume"; return 1; }
+  elif command -v bsdtar >/dev/null; then
+    bsdtar -xf "$iso" -C "$ext" >"$OUT/dirdisc-extract.log" 2>&1 || { echo "bsdtar could not read the volume"; return 1; }
+    [ "$OS" = Darwin ] && extra=(-x 'caf*')
+  else
+    echo "needs xorriso or bsdtar"; return 77
+  fi
+  chmod -R u+w "$ext"
+  # The two names Joliet cannot hold are excluded here and checked below:
+  # everything else must come back exactly as it went in.
+  diff -r -x 'semi*' -x 'star*' "${extra[@]}" "$src" "$ext" || { echo "the folder did not come back identical"; rc=1; }
+  cmp -s "$src/semi;colon.txt" "$ext/semi_colon.txt" || { echo "semi;colon.txt is not there as semi_colon.txt"; rc=1; }
+  cmp -s "$src/star*name.txt" "$ext/star_name.txt" || { echo "star*name.txt is not there as star_name.txt"; rc=1; }
+
+  # The *other* tree: ISO 9660 level 1, which is what a real-mode DOS
+  # driver reads and what Windows falls back to. bsdtar with Joliet
+  # turned off is the only reader here that will look at it, and the two
+  # colliding names are the point — a mangling that crossed their
+  # contents would pass every check that only counts files.
+  if command -v bsdtar >/dev/null; then
+    local dos="$OUT/dirsrc-83"
+    [ -d "$dos" ] && chmod -R u+w "$dos"; rm -rf "$dos"; mkdir -p "$dos"
+    if bsdtar -xf "$iso" -C "$dos" --options 'iso9660:!joliet,iso9660:!rockridge' 2>>"$OUT/dirdisc-extract.log"; then
+      chmod -R u+w "$dos"
+      for n in EMPTY.BIN README.TXT PROGRAM_.TXT CAF_.TXT SEMI_COL.TXT STAR_NAM.TXT COLLISIO.TXT COLLIS~1.TXT LLLLLLLL.TXT EXACT204.BIN ODD2049.BIN; do
+        [ -f "$dos/$n" ] || { echo "the 8.3 tree has no $n"; rc=1; }
+      done
+      [ -d "$dos/EMPTY_DI" ] || { echo "the 8.3 tree has no EMPTY_DI directory"; rc=1; }
+      grep -q '^one$' "$dos/COLLISIO.TXT" 2>/dev/null || { echo "COLLISIO.TXT is not collision-one.txt"; rc=1; }
+      grep -q '^two$' "$dos/COLLIS~1.TXT" 2>/dev/null || { echo "COLLIS~1.TXT is not collision-two.txt"; rc=1; }
+      cmp -s "$src/big.bin" "$dos/BIG.BIN" || { echo "BIG.BIN differs in the 8.3 tree"; rc=1; }
+    else
+      echo "bsdtar could not read the primary tree"; rc=1
+    fi
+  fi
+
+  # The block layer: the same bytes through QEMU's own read path.
+  if [ -x build/qemu/qemu-img ]; then
+    local info; info="$(build/qemu/qemu-img info --output=json "isodir:$abs" 2>/dev/null)"
+    echo "$info" | grep -q '"format": "isodir"' || { echo "not opened by the isodir driver"; echo "$info"; rc=1; }
+    build/qemu/qemu-img convert -O raw "isodir:$abs" "$OUT/dirsrc-qemu.iso" 2>/dev/null \
+      && cmp -s "$OUT/dirsrc-qemu.iso" "$iso" || { echo "qemu-img read the folder differently from discx"; rc=1; }
+  fi
+
+  # The drive: the ATAPI path has to find the disc model through whatever
+  # node graph the block layer built — a protocol driver reached by its
+  # filename prefix ends up under a probed `raw` format node, and a
+  # cdimage_disc() that misses it fails silently, leaving the guest with
+  # QEMU's stock answers. CDIMAGE_TRACE prints a line per packet only
+  # when the model is there, so SeaBIOS probing the drive is the proof;
+  # the same run on a plain .iso (the raw driver, no model) is the control.
+  if [ -x build/qemu/qemu-system-i386 ]; then
+    local n c
+    n="$(atapi_disc_packets "isodir:$abs" "$OUT/dirdisc-probe.log")"
+    c="$(atapi_disc_packets "$absiso" "$OUT/dirdisc-control.log")"
+    [ "${n:-0}" -gt 0 ] || { echo "the drive saw no disc model for the folder (cdimage_disc found nothing)"; rc=1; }
+    [ "${c:-0}" = 0 ] || { echo "the trace fired for a plain .iso on the raw driver: it proves nothing"; rc=1; }
+  fi
+  return $rc
+}
+
+atapi_disc_packets() { # disc, log -> packets the cdimage disc path saw while SeaBIOS probed the drive
+  local disc="$1" out="$2" pid i
+  # Both logs are markers this function waits on: a stale one from an
+  # earlier run reads as "already finished" and the machine gets killed
+  # before it has probed anything.
+  rm -f "$out" "$out.bios"
+  CDIMAGE_TRACE=1 build/qemu/qemu-system-i386 -L qemu/pc-bios -machine pc -m 64 \
+    -display none -net none -boot d -no-reboot \
+    -debugcon "file:$out.bios" -global isa-debugcon.iobase=0x402 \
+    -drive "if=none,id=cd0,media=cdrom,file=$disc" \
+    -device ide-cd,bus=ide.1,id=ide1-cd0,drive=cd0 >"$out" 2>&1 &
+  pid=$!
+  # SeaBIOS says this once it has probed every drive; it takes well under
+  # a second, and the machine would otherwise sit there with no disk.
+  for i in $(seq 1 40); do
+    grep -q "No bootable device" "$out.bios" 2>/dev/null && break
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+  grep -c "atapi-disc:" "$out" 2>/dev/null || true
+}
+
 cdimage_check() { # the block driver through qemu-img / qemu-io on the selftest images
   local d="$OUT/disc" want=$((6800 * 2048)) rc=0
   for f in mixed.cue mixed.ccd cooked.cue; do
@@ -127,7 +275,189 @@ cdimage_check() { # the block driver through qemu-img / qemu-io on the selftest 
   [ "$(nm -D build/qemu/libqemu-embed-i386.$SO 2>/dev/null | grep -c ' T _ZN3std')" = 0 ] || { echo "Rust std symbols exported from the embed library"; rc=1; }
   return $rc
 }
+host_check_probe() { # `launcher --host-check` (ADR-013), on any host
+  local rc=0 o
+  # This host's own answer: either verdict is legal, the report is not.
+  o="$(target/release/launcher --host-check 2>&1)" || true
+  case "$o" in *"Vulkan loader:"*) ;; *) echo "the report names no loader"; echo "$o"; rc=1;; esac
+  case "$o" in *"Required: a 1.3 device"*) ;; *) echo "the report names no bar"; echo "$o"; rc=1;; esac
+  # A host with no Vulkan driver at all, which every host can be made
+  # into: both loader variables, since which one is read depends on how
+  # old the loader is.
+  o="$(VK_DRIVER_FILES=/nonexistent.json VK_ICD_FILENAMES=/nonexistent.json \
+       target/release/launcher --host-check 2>&1)" \
+    && { echo "exit 0 with no Vulkan driver"; rc=1; }
+  case "$o" in *unavailable*) ;; *) echo "no Vulkan driver, yet not reported unavailable"; echo "$o"; rc=1;; esac
+  case "$o" in *WineD3D*) ;; *) echo "no Vulkan driver, yet not pointed at WineD3D"; echo "$o"; rc=1;; esac
+  # Where lavapipe is installed, the other half is testable for real: a
+  # software driver is *usable* (DXVK ranks a CPU device last but never
+  # excludes it), so the verdict is available and the warning is that it
+  # will be slow — never a refusal (ADR-013).
+  local lvp; lvp="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
+  if [ -n "$lvp" ]; then
+    o="$(VK_DRIVER_FILES="$lvp" target/release/launcher --host-check 2>&1)" \
+      || { echo "a software driver was refused instead of warned about"; echo "$o"; rc=1; }
+    case "$o" in *slow*) ;; *) echo "a software driver was not called slow"; echo "$o"; rc=1;; esac
+    case "$o" in *"software, usable but slow"*) ;; *) echo "the software device was not listed as usable"; echo "$o"; rc=1;; esac
+  fi
+  return $rc
+}
+dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M5g)
+  local rc=0 dir="$OUT/dirshelf" bundle args o spaced comma plain shelf_file
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  # Three folders, because the awkward parts of a folder name are what
+  # this is about: a space, a comma (which is what separates options in a
+  # QEMU option string), and one plain one to compare against. They go
+  # through the launcher's own headless verbs — the code the shelf
+  # window's buttons run.
+  spaced="$dir/Shared Files"; mkdir -p "$spaced"; echo hello > "$spaced/README.TXT"
+  comma="$dir/Doom,Quake"; mkdir -p "$comma"; echo hi > "$comma/GAME.TXT"
+  plain="$dir/patch13"; mkdir -p "$plain"; echo p > "$plain/PATCH.TXT"
+  : >"$dir/disk.qcow2"
+  bundle="$(target/release/launcher --new xp folders "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+
+  # On the shelf a folder is labelled by its own name, extension and all
+  # (`patch13` would lose its .3 to a file stem).
+  o="$(target/release/launcher --discs add "$spaced" "$comma" "$plain")" || { echo "--discs add failed"; rc=1; }
+  for want in "Shared Files	$spaced" "Doom,Quake	$comma" "patch13	$plain"; do
+    case "$o" in *"$want"*) ;; *) echo "not on the shelf under its own name: $want"; echo "$o"; rc=1;; esac
+  done
+
+  # The flat file the guest's own CDSHELF program reads (patch 52) names a
+  # folder the way QEMU has to be told to open one, and only that way.
+  shelf_file="$(target/release/launcher --discs publish "$(dirname "$bundle")" \
+                | sed -n 's/^shelf published to //p')"
+  if [ -n "$shelf_file" ] && [ -f "$shelf_file" ]; then
+    grep -q "	isodir:$spaced\$" "$shelf_file" || { echo "the shelf file does not name the folder as isodir:"; cat "$shelf_file"; rc=1; }
+    grep -q "	$spaced\$" "$shelf_file" && { echo "the shelf file names the folder as a plain path too"; rc=1; }
+  else
+    echo "no shelf file was published"; rc=1
+  fi
+
+  # The boot drive: the prefix, and a comma written twice so that the
+  # option string survives being parsed.
+  target/release/launcher --boot-disc "$bundle" "$spaced" >/dev/null || { echo "--boot-disc failed"; rc=1; }
+  args="$(target/release/launcher --print-args "$bundle")"
+  case "$args" in *"file=isodir:$spaced "*) ;; *) echo "the boot drive does not name the folder as isodir:"; echo "$args"; rc=1;; esac
+  target/release/launcher --boot-disc "$bundle" "$comma" >/dev/null || { echo "--boot-disc (comma) failed"; rc=1; }
+  args="$(target/release/launcher --print-args "$bundle")"
+  case "$args" in *"file=isodir:$dir/Doom,,Quake "*) ;; *) echo "the comma in the path is not doubled"; echo "$args"; rc=1;; esac
+
+  # And the point of all of it: our QEMU opens a folder as a disc, and the
+  # doubled comma reaches it as one path rather than an unknown option.
+  # Only the space-free folders are run: this check has to re-split a flat
+  # command line in the shell, which the launcher itself never does (it
+  # spawns an argv), so a space in a path is the harness's limit and not
+  # the product's.
+  if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
+    build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
+    for d in "$plain" "$comma"; do
+      target/release/launcher --boot-disc "$bundle" "$d" >/dev/null || rc=1
+      args="$(target/release/launcher --print-args "$bundle")"
+      # shellcheck disable=SC2086
+      o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n' \
+           | timeout 30 build/qemu/qemu-system-i386 $args \
+               -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
+        || { echo "our QEMU refused the folder $d"; echo "$o" | tail -3; rc=1; }
+    done
+  else
+    echo "  (no build/qemu: the command line was checked but not run)"
+  fi
+  return $rc
+}
+
+optimizations_check() { # the wizard's fast-path switches, all the way to a real QEMU
+  local rc=0 dir="$OUT/opt-switches" bundle args o
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  : >"$dir/disk.qcow2"
+  bundle="$(target/release/launcher --new xp opts "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+  # A machine nobody has touched must produce the command line it always
+  # produced: no properties, and no `[optimizations]` table in the file.
+  args="$(target/release/launcher --print-args "$bundle")"
+  case "$args" in *-cpu\ pentium3\ *) ;; *) echo "a default machine names a CPU property"; echo "$args"; rc=1;; esac
+  case "$args" in *=on*|*=off*) echo "a default machine names an optimization"; echo "$args"; rc=1;; esac
+  grep -q '^\[optimizations\]' "$bundle" && { echo "a default machine wrote an [optimizations] table"; rc=1; }
+  # Every switch, through the real form: off where it ships on, on where
+  # it ships off, and each on the option QEMU looks it up on — a CPU
+  # property on `-cpu`, an accelerator property on `-accel tcg`.
+  target/release/launcher --optimizations "$bundle" \
+    x87-fast off sse-fast off simd-fast off rep-fast off \
+    smc-same-value off inline-lookup off pinned-regs on >"$OUT/optimizations-set.log" 2>&1 \
+    || { echo "--optimizations failed"; cat "$OUT/optimizations-set.log"; rc=1; }
+  args="$(target/release/launcher --print-args "$bundle")"
+  for p in x87-fast=off sse-fast=off simd-fast=off rep-fast=off; do
+    case "$args" in *"-cpu pentium3,"*"$p"*) ;; *) echo "$p is not on -cpu"; echo "$args"; rc=1;; esac
+  done
+  for p in smc-same-value=off inline-lookup=off pinned-regs=on; do
+    case "$args" in *"-accel tcg,"*"$p"*) ;; *) echo "$p is not on -accel tcg"; echo "$args"; rc=1;; esac
+  done
+  # The point of the whole thing: our QEMU accepts the line the launcher
+  # writes. Started paused on the real binary and told to quit, so a
+  # rejected property is an exit code and not a hung guest.
+  if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
+    # A real image, because a zero-byte file is not a disk; and
+    # `audiodev=embed0` is the player's own backend, which lives inside
+    # the embed library and not out here, so a null one takes the name
+    # (the same stand-in `tools/dos-guest-test.py` uses) and the
+    # machine's device line is run verbatim.
+    build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
+    # shellcheck disable=SC2086
+    o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n' \
+         | timeout 30 build/qemu/qemu-system-i386 $args \
+             -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
+      || { echo "our QEMU refused the launcher's command line"; echo "$o" | tail -3; rc=1; }
+  else
+    echo "  (no build/qemu: the command line was checked but not run)"
+  fi
+  # "All defaults" empties the table again rather than writing every
+  # switch out at its shipped value.
+  target/release/launcher --optimizations "$bundle" defaults >/dev/null 2>&1 || rc=1
+  grep -q '^\[optimizations\]' "$bundle" \
+    && { echo "\"All defaults\" left an [optimizations] table behind"; rc=1; }
+  return $rc
+}
 have_display() { [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] || [ "$OS" = Darwin ]; }
+preview_anim_check() { # the shader preview keeps drawing (doc 07)
+  # Plenty of presets do not stand still: an interlaced CRT draws
+  # alternate fields, a phosphor afterglow decays, an NTSC signal
+  # shimmers. The editor's preview renders on demand, so unless it knows
+  # to keep asking it shows one frozen frame of all that — the bug this
+  # guards. Both front ends take the answer from `launcher_core::preview`,
+  # so it is asked here through the verb they share.
+  local moving=third_party/slang-shaders/crt/crt-beans-vga.slangp
+  local still=third_party/slang-shaders/crt/crt-lottes.slangp
+  local rc=0
+  # A preset that stands still: said to stand still, and the same picture
+  # at any frame number. Also the probe — a box with no usable GPU can
+  # answer none of this, and that is a skip, not a failure.
+  if ! PREVIEW_FRAME=0 target/release/launcher --preview-shader \
+       "$still" "$GOLDEN" "$OUT/preview-still-0.png" >"$OUT/preview-still.txt" 2>&1; then
+    sed 's/^/  /' "$OUT/preview-still.txt"
+    echo "no usable GPU for a headless preview"
+    return 77
+  fi
+  grep -qx still "$OUT/preview-still.txt" || { echo "$still: reported as animated"; rc=1; }
+  PREVIEW_FRAME=7 target/release/launcher --preview-shader \
+    "$still" "$GOLDEN" "$OUT/preview-still-7.png" >>"$OUT/preview-still.txt" 2>&1 || rc=1
+  cmp -s "$OUT/preview-still-0.png" "$OUT/preview-still-7.png" \
+    || { echo "$still: frames 0 and 7 differ — the frame number reaches a preset that does not read it"; rc=1; }
+  # A preset that does not: said to animate, and two frame numbers really
+  # are two pictures (this one interlaces, so it is half the frame).
+  PREVIEW_FRAME=0 target/release/launcher --preview-shader \
+    "$moving" "$GOLDEN" "$OUT/preview-moving-0.png" >"$OUT/preview-moving.txt" 2>&1 || rc=1
+  grep -qx animated "$OUT/preview-moving.txt" || { echo "$moving: reported as still"; rc=1; }
+  PREVIEW_FRAME=1 target/release/launcher --preview-shader \
+    "$moving" "$GOLDEN" "$OUT/preview-moving-1.png" >>"$OUT/preview-moving.txt" 2>&1 || rc=1
+  if cmp -s "$OUT/preview-moving-0.png" "$OUT/preview-moving-1.png"; then
+    echo "$moving: frames 0 and 1 are the same picture — the preview would be frozen"
+    rc=1
+  fi
+  return $rc
+}
 
 # ---------------------------------------------------------------- host stage
 host_stage() {
@@ -149,6 +479,35 @@ host_stage() {
   if [ -x build/qemu/qemu-img ] && [ -f "$OUT/disc/mixed.cue" ]; then
     run_check cdimage cdimage.log cdimage_check || true
   else skip cdimage "needs build/qemu/qemu-img and the libdisc check's images"; fi
+  if [ -x target/release/discx ]; then
+    run_check dirdisc dirdisc.log dirdisc_check || true
+  else skip dirdisc "needs target/release/discx"; fi
+  if [ -x target/release/launcher ]; then
+    run_check dirshelf dirshelf.log dirshelf_check || true
+  else skip dirshelf "needs target/release/launcher"; fi
+
+  # the host GPU probe (ADR-013): what the launcher tells someone about 3D
+  # before a machine exists. The verdict itself is a property of the box,
+  # so what is checked here is the part that has to hold on every box —
+  # that a host with no Vulkan driver at all is reported unavailable,
+  # exits non-zero and is pointed at the WineD3D path, that a software
+  # driver is warned about rather than refused, and that a report always
+  # names the loader and the bar it was judged against.
+  cargo build --release -p launcher -q 2>"$OUT/host-check-build.log" \
+    && run_check host-check host-check.log host_check_probe \
+    || { [ -x target/release/launcher ] || { FAIL+=(host-check); echo "  FAIL host-check (build)"; }; }
+
+  # the wizard's emulation-optimization switches (patches/qemu/README.md):
+  # that a machine nobody has touched still produces the command line it
+  # always produced, that each switch lands on the option QEMU looks it up
+  # on — a CPU property on `-cpu`, an accelerator property on `-accel tcg`
+  # — and that our own QEMU actually accepts the line the launcher writes.
+  # The switches' *effect* is the guest batteries' job (x87-guest,
+  # sse-guest, rep-guest, smc-guest); this is the wiring between them and
+  # a checkbox.
+  cargo build --release -p launcher -q 2>"$OUT/optimizations-build.log" \
+    && run_check optimizations optimizations.log optimizations_check \
+    || { [ -x target/release/launcher ] || { FAIL+=(optimizations); echo "  FAIL optimizations (build)"; }; }
 
   # the Linux package (M6 step 6): staged from this build and asked, with a
   # scrubbed environment, whether it resolves its own player, qemu-img,
@@ -161,6 +520,42 @@ host_stage() {
     skip package "Linux with build/qemu (libqemu-embed, qemu-img) and qemu/pc-bios only"
   fi
 
+  # the C ABI (doc 07): `launcher-core` is a library, and this proves it is
+  # usable as one — a C program creating a DOS machine through the shared
+  # wizard, putting a disc on the shelf and reading both back. It is the
+  # only check on the *third* front end's surface, so a rename or a
+  # changed default in a model shows up here as well as in the two GUIs.
+  # A scratch library and shelf, never the user's own.
+  if cargo build -p launcher-capi >"$OUT/capi-build.log" 2>&1; then
+    CAPI_LIB=""
+    for cand in target/debug/liblauncher_capi.a target/release/liblauncher_capi.a; do
+      [ -f "$cand" ] && CAPI_LIB="$cand" && break
+    done
+    # Which native libraries a Rust staticlib needs is the toolchain's
+    # to know, not ours to guess: on macOS this one wants objc, iconv and
+    # half a dozen frameworks, and the Linux list is not a subset of it.
+    # rustc will say; the old list stays as the fallback.
+    CAPI_LIBS="$(cargo rustc -q -p launcher-capi -- --print native-static-libs 2>&1 \
+                 | sed -n 's/^note: native-static-libs: //p' | tail -1)"
+    [ -n "$CAPI_LIBS" ] || CAPI_LIBS="-lstdc++ -lm -ldl -lpthread"
+    # shellcheck disable=SC2086
+    if [ -n "$CAPI_LIB" ] && cc -O1 -std=gnu11 -Ilauncher-capi/include \
+         -o build/capi-smoke launcher-capi/examples/smoke.c "$CAPI_LIB" \
+         $CAPI_LIBS >>"$OUT/capi-build.log" 2>&1; then
+      rm -rf "$OUT/capi"; mkdir -p "$OUT/capi/library"
+      : >"$OUT/capi/disc.iso"
+      run_check capi capi.log env \
+        LAUNCHER_LIBRARY_DIR="$OUT/capi/library" \
+        LAUNCHER_DISC_LIBRARY="$OUT/capi/discs.toml" \
+        LAUNCHER_SHADER_PROFILES_DIR="$OUT/capi/profiles" \
+        build/capi-smoke "$OUT/capi/library" "$OUT/capi/disc.iso" || true
+    else
+      FAIL+=(capi); echo "  FAIL capi (build)"
+    fi
+  else
+    FAIL+=(capi); echo "  FAIL capi (cargo build -p launcher-capi)"
+  fi
+
   # the embed library's Mesa backend, Linux (EGL) only, one VM per process
   if [ "$OS" = Linux ] && [ -f build/qemu/libqemu-embed-i386.so ]; then
     if cc -O1 -std=gnu11 -Iembed -o build/embed-3d-test tools/embed-3d-test.c \
@@ -169,6 +564,22 @@ host_stage() {
     else FAIL+=(embed-3d); echo "  FAIL embed-3d (build)"; fi
   else
     skip embed-3d "Linux with build/qemu/libqemu-embed-i386.so only"
+  fi
+
+  # Glide pass-through without a guest: the real host-side wrapper, loaded
+  # by hw/3dfx's own dispatcher, rendering into the window-less context.
+  # Linux (EGL) only, one VM per process, like embed-3d above.
+  if [ "$OS" = Linux ] && [ -f build/qemu/libqemu-embed-i386.so ] \
+     && [ -f build/glide/libglide2x.so ]; then
+    if c++ -O1 -std=c++17 -w -Iembed -Ithird_party/openglide -Iqemu/hw/3dfx \
+         -o build/glide-host-test tools/glide-host-test.cpp \
+         -Lbuild/qemu -lqemu-embed-i386 -Wl,-rpath,"$ROOT/build/qemu" -ldl; then
+      QEMU_GLIDE_LIB="$ROOT/build/glide/libglide2x.so" \
+        GLIDE_TEST_BMP="$OUT/glide-frame.bmp" \
+        run_check glide-host glide-host.log build/glide-host-test || true
+    else FAIL+=(glide-host); echo "  FAIL glide-host (build)"; fi
+  else
+    skip glide-host "Linux with build/glide/libglide2x.so only (scripts/build-glide.sh)"
   fi
 
   # decoder + executor without a guest
@@ -203,6 +614,15 @@ host_stage() {
     else FAIL+=(mode-sweep); echo "  FAIL mode-sweep (build)"; tail -5 "$OUT/player-build.log"; fi
   else
     skip mode-sweep "needs a display and the slang-shaders submodule"
+  fi
+
+  # the launcher's shader preview, which unlike the player renders only
+  # when asked: that it knows which presets it must keep asking about,
+  # and that a frame number really does change their picture (doc 07)
+  if [ -f third_party/slang-shaders/crt/crt-beans-vga.slangp ] && [ -x target/release/launcher ]; then
+    run_check preview-anim preview-anim.log preview_anim_check || true
+  else
+    skip preview-anim "needs the slang-shaders submodule and target/release/launcher"
   fi
 
   # the reference scene and the feature test natively over DXVK (SDL2 needs a display)
@@ -272,6 +692,10 @@ guest_stage() {
         cdtest="$OUT/CDTEST.EXE"
       else echo "  (no mingw: guest-cdimage runs without the CD audio part)"; fi
       CDTEST="$cdtest" run_check guest-cdimage guest-cdimage.log tools/xp-cdimage-test.sh "$img" "$OUT/disc/gt.cue" "$OUT/gt-iso" "$OUT/cdimage-xp" || true
+      # the same tree again, this time served as a folder rather than an
+      # image (isodir, M5g): same reference, same comparison, so the disc
+      # being generated on the fly is the only difference
+      run_check guest-dirdisc guest-dirdisc.log tools/xp-cdimage-test.sh "$img" "isodir:$OUT/gt-iso" "$OUT/gt-iso" "$OUT/dirdisc-xp" || true
     else skip guest-cdimage "could not extract or convert $iso"; fi
   else skip guest-cdimage "needs target/release/discx and bsdtar"; fi
   [ -f "$D3DPT_EXEC_LIB" ] || { skip guest "no $D3DPT_EXEC_LIB"; return; }

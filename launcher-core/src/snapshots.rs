@@ -1,26 +1,27 @@
-//! The toolkit-free half of `launcher/src/snapshots.rs`, copied.
+//! Snapshots (doc 07: "QEMU internal snapshots via in-proc QMP, surfaced
+//! in the overlay and the launcher").
 //!
-//! This is the one place the port could not just `#[path]`-include a
-//! shared module, and it is worth being explicit about why: that file
-//! holds two unrelated things in one — a `Snapshot` type with the
-//! `qemu-img` / QMP calls around it (below, pure), and `SnapshotWindow`,
-//! a struct that mixes the *state machine* (which source the list comes
-//! from, the in-flight job, the pending restore confirmation) with the
-//! egui that draws it. The state machine is toolkit-independent and this
-//! port wants it; `egui::Context` in the same file is what stops it
-//! being shared.
+//! This is the *offline* half — a machine that isn't running has no
+//! monitor to ask, so the launcher goes at the qcow2 directly with
+//! `qemu-img`, which is what QEMU's own `savevm`/`loadvm` write into.
+//! Listing goes through `qemu-img info --output=json` rather than
+//! `snapshot -l`'s column layout: the JSON is a stable interface, the
+//! table is formatted for humans and has no escaping for a tag with a
+//! space in it.
 //!
-//! So the free functions below are a verbatim copy, and the state
-//! machine is re-expressed as a QObject in `src/qt/snaps.rs`. Splitting
-//! the upstream file into `snapshots.rs` + `snapshots_ui.rs` would
-//! remove this copy — see the findings in `docs/07-launcher.md`.
-//! `control.rs`, shared verbatim, refers to `crate::snapshots::Snapshot`,
-//! so the type has to keep this module name.
-
+//! Restoring is `qemu-img snapshot -a`, which rolls the *disk* back and
+//! leaves the saved CPU/RAM state in the image for a later `loadvm` — the
+//! same thing a cold boot into a snapshot means. Reverting a running
+//! machine is the live half (`control.rs`).
+//!
+//! **Nothing here knows about a toolkit.** The window that drives it is
+//! `snapshots_ui.rs`; the two used to be one file, which made this the
+//! one shared module a second front end could not include (it copied the
+//! free half instead) and left `control.rs` — otherwise toolkit-free —
+//! importing a module that pulled in `egui::Context`. Split 2026-09-06.
 
 use crate::player;
 use std::path::Path;
-use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct Snapshot {
@@ -73,7 +74,7 @@ impl Snapshot {
 
 fn qemu_img(args: &[&str], disk: &Path) -> std::io::Result<std::process::Output> {
     let bin = player::qemu_img_binary();
-    Command::new(&bin)
+    crate::console::command(&bin)
         .args(args)
         .arg(disk)
         .output()
