@@ -101,7 +101,7 @@ games yet); `scripts/test.sh` boots a `snapshot=on` view of it.
 1. **The games, by hand in the player** (`-cpu pentium3` under KVM, the
    fresh ISO's `D3DPT\*.DLL` next to both EXEs): Max Payne's tutorial
    level plays headless — is it playable (input, fps, sound)? Vice City
-   reaches its main menu with the wrapper fix (`build/xp-game-test/vc-fixed/frames`)
+   reaches its main menu with the wrapper fix (`build/xp-game-test/vc-fixed/main-menu.png`)
    but the menu background is grey noise: **palettized (P8) textures are
    stubs** (`SetPaletteEntries` / `SetCurrentTexturePalette`; DXVK's D3D9
    has no P8 — expand to A8R8G8B8 on upload in the guest DLL, re-upload on
