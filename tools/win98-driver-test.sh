@@ -73,22 +73,37 @@ if [ "$WHAT" = install ]; then
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9v.vxd" ::/WINDOWS/INF/D3DPT9V.VXD
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9x.inf" ::/WINDOWS/INF/D3DPT9X.INF
 
-  # PnP writes the driver and the mini-VDD into the registry, and Windows is
-  # then supposed to find both from there — `display.drv=pnpdrvr.drv` in the
-  # `[boot]` section resolves through the PnP device's own key. **That path
-  # has never been seen to work here**: the boot after a clean install comes
-  # up on the VGA with neither the VxD's nor the driver's debug lines, while
-  # naming both in SYSTEM.INI works every time. So the install names them,
-  # which is also what the earlier runs of this track proved the driver on —
-  # it was hand-edited into the image then, and this is the same thing done
-  # reproducibly. Whether the registry path can be made to work is a
-  # question for later (doc 19 Section 16); it is not a thing to discover
-  # again by accident.
+  # **`NAME_IN_INI` names the driver in SYSTEM.INI instead of letting PnP
+  # pick it.** It defaults to on, and that is a statement about what is
+  # proven rather than about what is right: PnP writes both halves into the
+  # adapter's registry key and `display.drv=pnpdrvr.drv` resolves through it
+  # — that is how every 9x display driver loads, the inbox Cirrus in this
+  # same image included, and there is no PNPDRVR.DRV file because there is
+  # not meant to be one. Ours has not been seen to load that way yet; the
+  # INF grew the `DelReg` the reference driver has (a device that has run on
+  # the inbox VGA keeps a `CURRENT` key naming *that* driver, and AddReg
+  # does not remove what it does not mention) but that fix is **untested in
+  # a guest**. `NAME_IN_INI=0` is the run that tests it: install, restart,
+  # and the driver's own lines have to appear after the restart with nothing
+  # naming it. Flip the default when they do.
+  #
+  # Naming it here bypasses the selection Windows would do, which is exactly
+  # what you want when the question is "does the driver work" and exactly
+  # what you do not want when the question is "does it install".
+  # both halves into the adapter's registry key and `display.drv=pnpdrvr.drv`
+  # resolves through it — that is how every 9x display driver loads, the
+  # inbox Cirrus in this same image included, and there is no PNPDRVR.DRV
+  # file because there is not meant to be one. Naming the driver in
+  # SYSTEM.INI instead bypasses the selection Windows would do, which is
+  # exactly what you want when the question is "does the driver work" and
+  # exactly what you do not want when the question is "does it install".
+  #
   #
   # **In binary, or not at all.** SYSTEM.INI has CRLF line endings and
   # Python's text mode eats them on the way through, which has already cost
   # this track a section header and the run that noticed.
-  echo "==> naming the driver and the mini-VDD in SYSTEM.INI"
+  if [ "${NAME_IN_INI:-1}" = 1 ]; then
+  echo "==> naming the driver and the mini-VDD in SYSTEM.INI (NAME_IN_INI=1)"
   mcopy -i "$RAW@@$OFF" -n ::/WINDOWS/SYSTEM.INI "$OUT/system.ini"
   python3 - "$OUT/system.ini" <<'PYINI'
 import re, sys
@@ -101,13 +116,10 @@ def section(name):
         sys.exit("SYSTEM.INI has no [%s] section" % name.decode())
     return m.end()
 
-# [386Enh] device= for the mini-VDD: the main VDD's `minivdd=` registry
-# value is the documented way and is not the way that works here.
 if b'D3DPT9V.VXD' not in b.upper():
     at = section(b'386Enh')
     b = b[:at] + b'device=C:\\WINDOWS\\SYSTEM\\D3DPT9V.VXD\r\n' + b[at:]
 
-# [boot] display.drv= for the driver itself, replacing whatever is there.
 m = re.search(br'^display\.drv=[^\r\n]*', b, re.M | re.I)
 if m:
     b = b[:m.start()] + b'display.drv=d3dpt9x.drv' + b[m.end():]
@@ -118,6 +130,36 @@ else:
 open(p, 'wb').write(b)
 PYINI
   mcopy -i "$RAW@@$OFF" -o "$OUT/system.ini" ::/WINDOWS/SYSTEM.INI
+  fi
+
+  # **Turn the logo off and the boot log on.** A boot that stalls behind the
+  # splash screen tells you nothing at all — it is a 640x400 bitmap over
+  # whatever Windows is actually doing, and the post-install boot is exactly
+  # where this track needs to see that. Without the logo the same stall is a
+  # text screen with a name on it, and `BOOTLOG.TXT` says which driver was
+  # last loaded. MSDOS.SYS is read-only/hidden/system, so the attributes come
+  # off and go back on; and it must keep its trailing block of `x` padding
+  # comment lines, which is why this rewrites lines rather than the file.
+  echo "==> MSDOS.SYS: Logo=0, BootLog=1"
+  mattrib -i "$RAW@@$OFF" -a -r -s -h ::/MSDOS.SYS 2>/dev/null || true
+  mcopy -i "$RAW@@$OFF" -n ::/MSDOS.SYS "$OUT/msdos.sys"
+  python3 - "$OUT/msdos.sys" <<'PYMS'
+import re, sys
+p = sys.argv[1]
+b = open(p, 'rb').read()
+for name, val in ((b'Logo', b'0'), (b'BootLog', b'1')):
+    m = re.search(br'^' + name + br'=[^\r\n]*', b, re.M | re.I)
+    if m:
+        b = b[:m.start()] + name + b'=' + val + b[m.end():]
+    else:
+        o = re.search(br'^\[Options\]\r?\n', b, re.M | re.I)
+        if not o:
+            sys.exit("MSDOS.SYS has no [Options] section")
+        b = b[:o.end()] + name + b'=' + val + b'\r\n' + b[o.end():]
+open(p, 'wb').write(b)
+PYMS
+  mcopy -i "$RAW@@$OFF" -o "$OUT/msdos.sys" ::/MSDOS.SYS
+  mattrib -i "$RAW@@$OFF" +r +s +h ::/MSDOS.SYS 2>/dev/null || true
 else
   export MTOOLS_SKIP_CHECK=1
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9x.drv" ::/WINDOWS/SYSTEM/D3DPT9X.DRV
@@ -165,6 +207,25 @@ while [ $t -lt "$BOOT_WAIT" ]; do
   shots $t
 done
 bars boot
+
+# **Let the install finish.** PnP puts the driver in the registry and then
+# asks to restart, and until that restart happens the switch-over is not
+# done: the device still has the devnode the generic VGA driver was on, and
+# the boot after a run that answered No comes up on the VGA. So `install`
+# answers Yes and watches the second boot — which is the one that shows
+# whether the registry alone is enough, with `display.drv=pnpdrvr.drv` (the
+# magic name Windows writes for every PnP display driver, Cirrus included —
+# there is no such file, and there is not meant to be).
+if [ "$WHAT" = install ]; then
+  echo "==> restarting to finish the install"
+  python3 "$ROOT/tools/qmpc.py" "$SOCK" keys ret >/dev/null 2>&1 || true
+  # The post-install boot is much slower than an ordinary one — PnP
+  # re-enumerates and the registry is rebuilt — so it gets its own, longer
+  # budget. A run that cuts it short reports "the driver did not load" about
+  # a machine that is still showing the boot logo.
+  sleep "${RESTART_WAIT:-$((BOOT_WAIT * 2))}"
+  bars restart
+fi
 
 python3 "$ROOT/tools/qmpc.py" "$SOCK" screendump "$OUT/out/screen.ppm" >/dev/null
 echo "colours   $(identify -format '%wx%h %k' "$OUT/out/screen.ppm.ppm" 2>/dev/null || echo '?')  ($OUT/out/screen.png)"

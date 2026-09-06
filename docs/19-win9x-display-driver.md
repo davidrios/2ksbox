@@ -559,16 +559,44 @@ first, and the reference driver's own thunk list — which does *not* thunk
 `ExtTextOut` or `SetPalette`, and reaches the cursor entries through C — is
 the thing to hold ours against.
 
-### 16. What the install has to write, and what it may not rely on
+### 16. Installing it: what PnP does, and what ours still gets wrong
 
 PnP installs the driver from `d3dpt9x.inf` with no clicks and writes both
-halves into the registry: `drv=d3dpt9x.drv` and `minivdd=d3dpt9v.vxd` under
-the adapter's own key, with `display.drv=pnpdrvr.drv` in SYSTEM.INI's
-`[boot]` section resolving through it. **The boot after that comes up on
-the VGA**, with neither the VxD's nor the driver's debug lines — the
-registry is right, the files are in place, and nothing of ours runs.
+halves into the adapter's own registry key — `drv=d3dpt9x.drv`,
+`minivdd=d3dpt9v.vxd`, `vdd=*vdd`, `DevLoader=*vdd`, `Mode=32,640,480` —
+and then rewrites SYSTEM.INI's `[boot] display.drv` to `pnpdrvr.drv`.
 
-Naming both in SYSTEM.INI works every time:
+**That is the correct configuration, not a failure.** `pnpdrvr.drv` is the
+name Windows writes for every PnP display driver; there is no such file on
+disk and there is not meant to be one, and the pristine image in this
+repository's test loop says exactly the same thing with
+`[boot.description] display.drv=Cirrus Logic` beside it. The inbox Cirrus
+driver loads that way in this very image. Anything that has to name the
+driver in SYSTEM.INI to be loaded is working around a bug of its own.
+
+Ours is one. After a clean install and restart the boot comes up on the
+VGA: the mini-VDD loads (it is named in `[386Enh]`), the display driver
+does not, and Windows has recorded our device description in
+`[boot.description]` all the same. Two things about our INF differ from the
+reference's, and the first is the likely cause:
+
+- **No `DelReg`.** The reference deletes `Ver`, `DevLoader`, `DEFAULT`,
+  `MODES` and `CURRENT` before writing them. A display adapter that has
+  been running on the inbox VGA already has a `CURRENT` key naming that
+  driver and a `MODES` tree describing its modes, and an AddReg does not
+  remove what it does not mention, so the leftovers are what GDI resolves
+  through. The INF has that `DelReg` now. **This is untested in a guest**;
+  the run that tests it is `NAME_IN_INI=0 tools/win98-driver-test.sh
+  <image> install`, and the pass is the driver's own `d3dpt9x:` lines and
+  `linear mode on` appearing *after* the restart with nothing naming it.
+- **No 4 bpp rows.** The reference hands `MODES\4\640,480` to `vga.drv`
+  and `MODES\4\800,600` to `supervga.drv` by name. Ours listed only the
+  16 and 32 bpp modes it serves, so a machine sitting in a 16-colour mode —
+  which the test image is — had nothing to resolve to. Those rows are in
+  now too, along with `ExtModeSwitch` and `DDC`.
+
+Until that run happens, `tools/win98-driver-test.sh` names both halves in
+SYSTEM.INI itself (`NAME_IN_INI`, on by default):
 
 ```
 [386Enh]
@@ -577,11 +605,9 @@ device=C:\WINDOWS\SYSTEM\D3DPT9V.VXD
 display.drv=d3dpt9x.drv
 ```
 
-`tools/win98-driver-test.sh install` writes exactly that now, so a fresh
-image is in the proven configuration in one step rather than by hand. Why
-the registry path does not work is unanswered and worth an hour some day:
-it may be as small as a missing `DevLoader`, and until then this is not a
-thing to rediscover.
+which bypasses the selection Windows would do — the right thing when the
+question is "does the driver work", the wrong thing when the question is
+"does it install". Flip the default when the registry path is proven.
 
 Edit that file **in binary or not at all**: it has CRLF line endings, and
 Python's text mode eats them on the way through — a rewrite that did so ate

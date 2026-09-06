@@ -266,12 +266,15 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   adapter back is the mini-VDD's job. `tools/win98-driver-test.sh` reads
   that page out of VRAM and prints it after every run — believe it over the
   screendump (doc 19 §15).
-- **`install` writes the driver into SYSTEM.INI, not just the registry.**
-  PnP installs `d3dpt9x.inf` with no clicks and the registry then names both
-  halves, but the boot after that comes up on the VGA with nothing of ours
-  running; `[386Enh] device=…D3DPT9V.VXD` and `[boot] display.drv=d3dpt9x.drv`
-  work every time (doc 19 §16). Edit that file in binary — Python's text
-  mode eats its CRLFs.
+- **`display.drv=pnpdrvr.drv` is correct, not a fallback**: it is what
+  Windows writes for every PnP display driver (the inbox Cirrus in the same
+  image included), there is no such file, and it resolves through the
+  adapter's registry key. Ours does not load that way yet — the INF was
+  missing the `DelReg` that clears `CURRENT`/`DEFAULT`/`MODES` before
+  writing, which a device that has run on the inbox VGA still holds — so
+  `tools/win98-driver-test.sh` names both halves in SYSTEM.INI itself
+  (`NAME_IN_INI`, on by default) until the registry path is proven
+  (doc 19 §16). Edit that file in binary — Python's text mode eats its CRLFs.
 - **End a scripted Win98 run with the ACPI power button** (`system_powerdown`),
   not keystrokes: a modal dialog swallows them, and a machine that does not
   power off leaves the FAT dirty, so the *next* boot comes up in **safe

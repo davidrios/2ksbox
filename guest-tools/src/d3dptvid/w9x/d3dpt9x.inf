@@ -32,11 +32,25 @@ d3dpt9v.vxd=1
 
 [D3dpt]
 CopyFiles=D3dpt.Copy
+DelReg=D3dpt.DelReg
 AddReg=D3dpt.AddReg,Modes.AddReg
 
 [D3dpt.Copy]
-d3dpt9x.drv
-d3dpt9v.vxd
+d3dpt9x.drv,,,0x00000004
+d3dpt9v.vxd,,,0x00000004
+
+; **Clear the old keys before writing the new ones.** A display adapter
+; that has been running on the inbox VGA already has a `CURRENT` key
+; naming that driver and a `MODES` tree describing its modes, and an
+; AddReg does not remove what it does not mention: the leftovers then
+; decide which driver GDI loads, and it is not this one. Deleting these
+; five is what the reference driver does and it is not optional.
+[D3dpt.DelReg]
+HKR,,Ver
+HKR,,DevLoader
+HKR,DEFAULT
+HKR,MODES
+HKR,CURRENT
 
 [D3dpt.AddReg]
 HKR,,Ver,,4.0
@@ -45,13 +59,24 @@ HKR,DEFAULT,drv,,d3dpt9x.drv
 HKR,DEFAULT,vdd,,"*vdd"
 HKR,DEFAULT,minivdd,,d3dpt9v.vxd
 HKR,DEFAULT,RefreshRate,,-1
+HKR,DEFAULT,ExtModeSwitch,,0
+HKR,DEFAULT,DDC,,1
 HKR,DEFAULT,Mode,,"32,640,480"
 
 ; The mini-VDD is what claims the adapter's PCI resources; without it
 ; Windows takes the base addresses away and the display driver has
 ; nothing to map (doc 19 §11).
 
+; The mode list. 4 bpp is not ours — the driver refuses anything but 16
+; and 32 (8 bpp is a later step) — so those two rows hand the era's two
+; low-colour modes back to the inbox drivers by name, which is what a 9x
+; display INF is expected to do and what keeps a machine that is *in* one
+; of them able to boot at all.
 [Modes.AddReg]
+HKR,"MODES\4\640,480",drv,,vga.drv
+HKR,"MODES\4\640,480",vdd,,*vdd
+HKR,"MODES\4\800,600",drv,,supervga.drv
+HKR,"MODES\4\800,600",vdd,,*vdd
 HKR,"MODES\16\640,480"
 HKR,"MODES\16\800,600"
 HKR,"MODES\16\1024,768"

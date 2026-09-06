@@ -196,10 +196,12 @@ What the track starts from:
    somewhere. The pass is a Win98 desktop the harness can drive — and the
    ACPI power-button shutdown succeeding, which is the same thing said
    another way, since a faulted machine cannot shut down at all.
-   Two smaller things belong here when it does: the `minivdd=` registry
-   path that should make `install` work without touching SYSTEM.INI
-   (doc 19 §16), and whether 16 bpp — the depth the era's drivers actually
-   ran — behaves differently from the 32 bpp default.
+   Two smaller things belong here when it does: **the install** — the
+   driver does not yet load the way `pnpdrvr.drv` loads every other 9x
+   display driver, the INF has grown the reference's `DelReg` and 4 bpp
+   rows and that fix is untested in a guest (`NAME_IN_INI=0 … install`,
+   doc 19 §16) — and whether 16 bpp, the depth the era's drivers actually
+   ran, behaves differently from the 32 bpp default.
 6. **Step 1 — the split, XP unchanged.** Carve `core/` out of
    `d3dptdisp.c` per doc 19, thunk NT onto it, and prove it is a
    refactor: `scripts/test.sh all` green, `d3dpt-dp2-test` and `d3d7test`
