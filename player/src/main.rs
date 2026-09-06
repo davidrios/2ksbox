@@ -5,6 +5,7 @@
 //! keyboard and mouse are injected. No args → the M0 test pattern.
 
 mod audio;
+mod companions;
 #[cfg(target_os = "linux")]
 mod dmabuf;
 #[cfg(target_os = "macos")]
@@ -1606,6 +1607,10 @@ fn parse_shader_params(s: &str) -> Vec<(String, f32)> {
 }
 
 fn main() {
+    // An installed player tells QEMU where the package put the companions
+    // its own dlopen searches would otherwise look for in a checkout.
+    // First, before any thread: it edits the environment.
+    companions::announce();
     // player [--shader <preset.slangp>] [--shader-params <k=v,...>]
     //        [--mode-sweep <dir>] [--calib <bmp|dir>] [--] <qemu args...>
     //   no args: the M0 test pattern; --mode-sweep: doc 03's mode sweep;

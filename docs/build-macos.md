@@ -113,8 +113,9 @@ Notes:
   (x86-64-v2 feature level); our machine definitions will pin `pentium2` /
   `pentium3` models for guest compatibility — both are TCG-only here.
 - TCG needs JIT. Locally built, ad-hoc-signed binaries can `MAP_JIT` fine;
-  the `com.apple.security.cs.allow-jit` entitlement only matters once we ship
-  a hardened, notarized `.app` (doc 07).
+  the `com.apple.security.cs.allow-jit` entitlement is what keeps that true
+  under the hardened runtime a notarized `.app` must use — it is in
+  `packaging/macos/2ksbox.entitlements`, see "The app" below.
 - If configure complains about Python, it means uv isn't on PATH — the
   script never uses the system interpreter.
 
@@ -347,3 +348,85 @@ Air with Win98 + crt-lottes: p50 6–10 ms, p95 15–17 ms, max 18 ms (the
 vsync-phase floor; earlier ~32 ms readings were the saturated-FIFO bug fixed
 2026-09-02). Guest power-off closes the player cleanly. 3D inside the player: not until M3
 (a GL app is refused cleanly; a Glide app still exits QEMU).
+
+## The app — `scripts/package-macos.sh`
+
+Doc 07's "signed .app, JIT entitlement, notarized", for handing to someone
+who has none of this checked out:
+
+```sh
+scripts/package-macos.sh                       # build, stage, check, sign, notarize, dmg
+scripts/package-macos.sh --no-sign --no-dmg    # the staging and its checks alone, ~20 s
+```
+
+Notarization credentials are stored once, by hand, and the script never
+invents them:
+
+```sh
+xcrun notarytool store-credentials 2ksbox-notary \
+    --apple-id <you@example.com> --team-id <TEAMID> --password <app-specific-password>
+```
+
+**The bundle is the prefix.** `Contents` has the same
+`lib` / `libexec` / `share` shape doc 07's install layout has, so
+`launcher_core::paths` finds it by the same `share/2ksbox` marker with no
+macOS special case — except one: `MacOS/` does `bin/`'s job, because it is
+the only directory Launch Services will start a program from.
+`paths::bin_dir()` is where that single difference lives, decided from the
+running executable's own parent directory rather than the prefix's shape,
+since a plain tarball extracted on a Mac is still an ordinary Unix prefix
+with a real `bin`.
+
+**Nothing may come from outside the bundle**, and that is most of the
+script. A Linux package leans on the distribution for glib, pixman, zstd
+and the rest; the Mac that will run this has no Homebrew, no XQuartz and
+no Vulkan at all. So the whole non-system dylib closure — 20-odd
+libraries, ~14 MB — is copied into `Contents/lib/2ksbox`, every install
+name rewritten to `@rpath`, and **every `LC_RPATH` pointing out of the app
+deleted**. That last one is the trap: meson gives `libqemu-embed` one
+`LC_RPATH` per Homebrew prefix it linked against, they are searched before
+the `@loader_path` the packaging adds, and a bundle that keeps them loads
+*this* machine's Homebrew — passing every check that only looks at load
+commands, and failing on the first machine that has no Homebrew.
+
+Two dependencies are not in that closure and had to be found by other
+means:
+
+- **`libSDL3`**, which sdl2-compat `dlopen`s from `@loader_path` rather
+  than linking. QEMU's SDL display is dead weight in the embed library —
+  the player draws through wgpu — but the library is linked in and
+  something in it does call SDL, so the app carries the pair.
+- **The Vulkan driver.** DXVK `dlopen`s a loader that macOS does not have,
+  so the app carries the LunarG SDK's loader and the KosmicKrisp ICD, with
+  an ICD manifest of its own (the SDK's points into `~/VulkanSDK`).
+  Finding them needed DXVK patch 06 (`@loader_path` ahead of the bare leaf
+  names) and, on the QEMU side, `player/src/companions.rs`, which fills in
+  `QEMU_GLIDE_LIB`, `D3DPT_EXEC_LIB`, `D3DPT_DXVK_LIB` and
+  `VK_DRIVER_FILES` when an installed player finds them unset — each of
+  those `dlopen` searches starts at a `build/` directory a package does
+  not have.
+
+**The checks are the point of the script**, and they are the macOS form of
+`package-linux.sh`'s: the staged launcher is asked `--paths` with `env -i`
+from `/` and every companion must resolve inside the app; it creates a
+machine with the packaged `qemu-img` and `--print-args` must point `-L` at
+the packaged firmware; and the packaged player is run under
+`DYLD_PRINT_LIBRARIES=1`, where **every image the loader touches** must be
+inside the app, `/usr/lib` or `/System`. That last check is what caught
+both of the above.
+
+`LSMinimumSystemVersion` is **measured, not chosen**: the highest
+`LC_BUILD_VERSION` `minos` of everything the bundle carries. A bundled
+Homebrew or Vulkan SDK dylib built on a newer system sets the real floor
+whatever we would prefer to claim, and as of 2026-09-06 that is macOS 26.6
+(libslirp and sdl2-compat are the 26.0 ones; QEMU's own build targets the
+running OS unless `MACOSX_DEPLOYMENT_TARGET` says otherwise). To lower it,
+build QEMU and those dependencies against the floor first — the script
+will then report it.
+
+Signing is inside-out, every nested Mach-O before the bundle that seals
+it, `--options runtime` with `packaging/macos/2ksbox.entitlements`
+(`com.apple.security.cs.allow-jit`, without which TCG dies on its first
+translated block). `--timestamp` is required by notarization and Apple's
+timestamp service does go away for seconds at a time, so that one call
+retries; nothing else does.

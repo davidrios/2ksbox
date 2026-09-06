@@ -34,10 +34,12 @@
 #                  qemu-img probes the cue and the ccd to "cdimage" with the
 #                  lead-out × 2048 as the size, the data track dd'd out equals the
 #                  ISO, a plain .iso still probes to raw
-#   package        scripts/package-linux.sh: the Linux install layout staged from
-#                  this build, and the staged launcher asked with a scrubbed
-#                  environment whether player/qemu-img/firmware/guest-tools all
-#                  resolve inside the package (doc 07's install layout)
+#   package        scripts/package-linux.sh (or package-macos.sh on a Mac): the
+#                  install layout staged from this build, and the staged launcher
+#                  asked with a scrubbed environment whether
+#                  player/qemu-img/firmware/guest-tools all resolve inside the
+#                  package (doc 07's install layout); the .app is additionally
+#                  run and every image its loader touches must be inside it
 #   optimizations  the wizard's fast-path switches (patches/qemu/README.md) from a
 #                  checkbox to a real QEMU: a default machine's line unchanged,
 #                  each switch on the option QEMU looks it up on, our QEMU
@@ -516,8 +518,15 @@ host_stage() {
   # machine. Rolls no tarball (the check is the point, not the archive).
   if [ "$OS" = Linux ] && [ -f build/qemu/libqemu-embed-i386.so ] && [ -x build/qemu/qemu-img ] && [ -d qemu/pc-bios ]; then
     run_check package package.log scripts/package-linux.sh --no-tar --out "$OUT/package" || true
+  elif [ "$OS" = Darwin ] && [ -f build/qemu/libqemu-embed-i386.dylib ] && [ -x build/qemu/qemu-img ] && [ -d qemu/pc-bios ]; then
+    # The same question in the macOS form (docs/build-macos.md): the .app
+    # staged, and everything the loader touches when the packaged player
+    # actually runs required to be inside it. No signing — a Developer ID
+    # is not something a test suite should assume, and the checks it would
+    # protect all run before it.
+    run_check package package.log scripts/package-macos.sh --no-build --no-sign --no-dmg --out "$OUT/package" || true
   else
-    skip package "Linux with build/qemu (libqemu-embed, qemu-img) and qemu/pc-bios only"
+    skip package "Linux or macOS with build/qemu (libqemu-embed, qemu-img) and qemu/pc-bios only"
   fi
 
   # the C ABI (doc 07): `launcher-core` is a library, and this proves it is

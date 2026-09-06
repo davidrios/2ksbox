@@ -1,0 +1,37 @@
+diff --git a/src/vulkan/vulkan_loader.cpp b/src/vulkan/vulkan_loader.cpp
+index 8d9413d..6ffd874 100644
+--- a/src/vulkan/vulkan_loader.cpp
++++ b/src/vulkan/vulkan_loader.cpp
+@@ -10,18 +10,30 @@
+ namespace dxvk::vk {
+ 
+   static std::pair<HMODULE, PFN_vkGetInstanceProcAddr> loadVulkanLibrary() {
+-    static const std::array<const char*, 2> dllNames = {{
++    /* 2ksbox: a plain array, so the Apple list can be longer than the
++     * other two. */
++    static const char* const dllNames[] = {
+ #if defined(_WIN32)
+       "winevulkan.dll",
+       "vulkan-1.dll",
+ #elif defined(__APPLE__)
++      /* 2ksbox: beside us first. macOS ships no Vulkan at all, so a
++       * redistributable app carries a loader of its own next to the
++       * executor this library is linked into; dlopen resolves
++       * @loader_path against that image, where a bare leaf name would
++       * only ever find one in DYLD_LIBRARY_PATH or /usr/local/lib — and
++       * DYLD_* is stripped from a hardened, notarized process. In a
++       * checkout nothing sits there and the search falls straight
++       * through to the system's own, as before. */
++      "@loader_path/libvulkan.1.dylib",
++      "@loader_path/libvulkan.dylib",
+       "libvulkan.1.dylib",
+       "libvulkan.dylib",
+ #else
+       "libvulkan.so",
+       "libvulkan.so.1",
+ #endif
+-    }};
++    };
+ 
+     for (auto dllName : dllNames) {
+       HMODULE library = LoadLibraryA(dllName);

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- TCG is a JIT. Under the hardened runtime (which notarization
+       requires) an arm64 process may only map executable pages with
+       MAP_JIT, and only with this entitlement; without it QEMU dies the
+       moment it translates its first block. docs/build-macos.md's note
+       that a locally built, ad-hoc-signed binary needs nothing is about
+       exactly the case this file ends. -->
+  <key>com.apple.security.cs.allow-jit</key> <true/>
+</dict>
+</plist>

@@ -20,9 +20,13 @@ pub fn player_binary() -> PathBuf {
         return p.into();
     }
     if let Some(prefix) = crate::paths::install_prefix() {
-        // Flat on Windows (paths.rs), `bin/` under a Unix prefix.
+        // Flat on Windows, `bin/` under a Unix prefix, `MacOS/` inside
+        // an .app — `paths::bin_dir` knows which (and the `prefix` here
+        // is only still bound because asking for it is what proved we
+        // are installed at all).
+        let _ = prefix;
         let name = if cfg!(windows) { "2ksbox-player.exe" } else { "2ksbox-player" };
-        return if cfg!(windows) { prefix.join(name) } else { prefix.join("bin").join(name) };
+        return crate::paths::bin_dir().join(name);
     }
     let exe = std::env::current_exe().expect("current_exe");
     let dir = exe.parent().expect("executable has a parent directory");

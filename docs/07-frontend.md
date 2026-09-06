@@ -242,6 +242,16 @@ QEMU has open corrupts it.
 ## Platform packaging
 
 - macOS: signed .app, JIT entitlement, notarized; Apple Silicon native.
+  **Done 2026-09-06** — `scripts/package-macos.sh`, recipe and reasoning in
+  `docs/build-macos.md` ("The app"). The bundle *is* an install prefix:
+  `Contents` has this document's `lib`/`libexec`/`share` shape and the same
+  `share/2ksbox` marker, with `MacOS/` doing `bin/`'s job because it is the
+  only directory Launch Services will start a program from — the one macOS
+  difference, and it lives in `paths::bin_dir()`. Unlike every other target
+  the app also carries its whole non-system dylib closure, since the Mac
+  that runs it has no Homebrew, no XQuartz and no Vulkan; it is the first
+  package to ship the Glide wrapper and the Direct3D executor, which the
+  packaged player points QEMU at through `player/src/companions.rs`.
 - Windows: installer + portable zip; WHPX detection with visible
   "acceleration: …" indicator and TCG fallback.
 - Linux: Flatpak primary (bundles our patched QEMU cleanly) + distro builds.
@@ -319,9 +329,10 @@ and fails it on errors only, since the one outstanding warning (no
 screenshots) needs somewhere to host them.
 
 Still open: the Flatpak (its ID and metadata are settled by ADR-011; what
-is left is the manifest, hosted screenshots and a `flatpak-builder`), the
-macOS .app and the Windows installer, and with the latter Windows live control (a named pipe or a
-loopback port in place of the Unix monitor socket above).
+is left is the manifest, hosted screenshots and a `flatpak-builder`) and
+the Windows installer, and with the latter Windows live control (a named
+pipe or a loopback port in place of the Unix monitor socket above). The
+macOS .app landed 2026-09-06.
 
 ## Two front ends, one core
 

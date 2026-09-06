@@ -70,6 +70,31 @@ fn detect_prefix() -> Option<PathBuf> {
     prefix.join("share").join(NAME).is_dir().then(|| prefix.to_path_buf())
 }
 
+/// The directory inside the prefix that holds executables: `bin` under a
+/// Unix prefix, the flat prefix itself on Windows — and `MacOS` inside a
+/// macOS `.app`, which is the one directory Launch Services will start a
+/// program from, so a bundle spends it on `bin`'s job
+/// (`scripts/package-macos.sh`). Detected from the running executable
+/// rather than from the prefix's shape, because a plain tarball extracted
+/// on a Mac is still an ordinary Unix prefix with a `bin`.
+pub fn bin_dir() -> PathBuf {
+    let exe = std::env::current_exe().ok();
+    let Some(prefix) = install_prefix() else {
+        // A checkout: the workspace's binaries share one directory, so
+        // the running executable's own is it — and it is right for a
+        // debug build as much as a release one, which a baked-in
+        // `target/release` would not be.
+        return exe.and_then(|e| e.parent().map(Path::to_path_buf)).unwrap_or_else(|| checkout("."));
+    };
+    if cfg!(windows) {
+        return prefix.to_path_buf();
+    }
+    let in_bundle = exe
+        .and_then(|e| e.parent().map(|d| d.file_name() == Some("MacOS".as_ref())))
+        .unwrap_or(false);
+    prefix.join(if in_bundle { "MacOS" } else { "bin" })
+}
+
 /// A companion's place inside the prefix. Unix keeps the
 /// `bin`/`lib`/`libexec`/`share` split doc 07 documents; a Windows
 /// package is flat, so the same name loses the directory that only
