@@ -15,6 +15,7 @@ one. Windows had been "untested" since M1 (doc 08).
 
 - The cross toolchain: `packaging/windows/Dockerfile`,
   `scripts/win-cross.sh`.
+- The Qt reproducer: `tools/qtmin/` (its README is the recipe).
 - The build: `scripts/build-windows.sh`, the `--windows` mode of
   `scripts/configure-qemu.sh` and of `scripts/build-d3dpt-exec.sh`.
 - The package: `scripts/package-windows.sh`.
@@ -224,6 +225,42 @@ cxx-qt's cargo-only build wants. Two things had to be said:
   imports half of Qt, and nothing above it names either — it now walks
   every binary anywhere in the package.
 
+### The Qt binary's fault, found (2026-09-06)
+
+`tools/qtmin/` is the smallest cxx-qt program that can be cross-built
+here, in three rungs — no bridge, one bridge, a QML module — so that the
+rung which stops printing `qtmin: main` names the layer. **Rung 1 already
+faults**: linking `cxx-qt-lib` is enough, and neither the QML
+registration nor the bridge nor a line of ours is involved.
+
+Read out of the crash with `wine winedbg` and `objdump`:
+
+1. `_GLOBAL__sub_I_call_initializers.cpp`, a static initialiser in the
+   C++ `cxx-qt-build` generates, calls `cxx_qt_init_crate_cxx_qt`;
+2. which uses `std::call_once`, and on mingw-w64 that parks the callable
+   in `std::__once_call` — a `__thread` variable reached through
+   **emulated TLS** — and asks `pthread_once` to run `__once_proxy`;
+3. `__once_proxy` is in `libstdc++-6.dll`, and its import is bound
+   correctly (the thunk really does land in the DLL — checked in the
+   debugger, not assumed). It reads `__once_call` back through emutls;
+4. but emutls keys its storage per *libgcc*, and there are two: the exe
+   links libgcc statically — rustc does that for `x86_64-pc-windows-gnu`
+   and neither `-C link-self-contained=no` nor `-shared-libgcc` moves it
+   — while `libstdc++-6.dll` uses `libgcc_s_seh-1.dll`'s. The proxy
+   reads a slot the exe never wrote, finds `NULL`, and calls it.
+
+Which is exactly the `rip=0` with a return address inside `pthread_once`
+that every dump of `launcher-qt.exe` shows, on wine and on the user's PC.
+
+The cure is to stop the C++ runtime spanning two modules on that call: a
+statically linked `libstdc++` in the exe, a toolchain whose
+`std::call_once` does not use emutls (mingw's *win32* threads model uses
+`InitOnceExecuteOnce`), or a cxx-qt that does not use `std::call_once` in
+its crate initialiser. `-C link-arg=-static-libstdc++` alone does **not**
+do it — something on the link line still asks for the DLL and the exe
+keeps importing `__once_proxy`. That is where this got to;
+`tools/qtmin/README.md` is the recipe for the next attempt.
+
 **Open: the Qt binary does not start under wine.** It faults on a call to
 address 0 before `main` runs, with either subsystem. The egui binary in
 the same folder, with the same DLLs, answers `--paths` fine, so the
@@ -339,12 +376,11 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    The QMP monitor's `fd=` is a CRT descriptor and the QEMU beside it has
    libslirp now, which is where runs two and four stopped; what a guest
    does under WHPX is the next unknown.
-3. **The Qt binary's static initialiser**, now that real Windows has
-   agreed with wine that it never reaches `main`. Next thing to try: the
-   fifteen entries in that `.ctors` list, disassembled, against the
-   cxx-qt generated sources — or a minimal cxx-qt binary cross-built the
-   same way, which says in one build whether it is our QML registration
-   or anything cxx-qt links.
+3. **A `std::call_once` that does not span two modules**, which is the
+   Qt binary's fault, now found (above) and reproduced in three lines of
+   `tools/qtmin`. The three candidate cures are listed there; the one to
+   try first is a genuinely static `libstdc++` in the exe, since the
+   others are somebody else's toolchain or somebody else's crate.
 4. **A Win98 guest with 3D on real Windows.** The WGL backend is written
    and its sequence passes under wine (`tools/wgl-probe.exe`), but no
    guest has used it.
