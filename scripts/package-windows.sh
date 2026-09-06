@@ -309,6 +309,27 @@ echo "runtime DLLs   $copied copied from $(basename "$SYSROOT")"
 # packaged qemu-img writes a qcow2" are exactly the things a broken
 # package fails at.
 fail=0
+# The network backend every machine the launcher writes asks for
+# (`-netdev user`, bundle.rs) must exist in the QEMU beside it. It is a
+# *compiled-in* backend, through libslirp, which Fedora does not
+# package for mingw -- so the first machine ever started on a real
+# Windows PC died on "network backend 'user' is not compiled into this
+# binary" (2026-09-06), with every check here green, because none of
+# them had asked our QEMU for anything the launcher actually writes.
+# The question is put to the import table rather than to a running QEMU
+# because the package holds no qemu-system-*.exe at all -- QEMU is
+# in-process, inside libqemu-embed-i386.dll -- and the player that would
+# load it is the binary wine hangs in. net/slirp.c is libslirp's only
+# consumer, so the import is the backend.
+if imports "$STAGE/libqemu-embed-i386.dll" | grep -qi '^libslirp'; then
+  echo "qemu           -netdev user is compiled in (libslirp)"
+else
+  echo "package-windows.sh: the embed library does not link libslirp, so it has no" >&2
+  echo "  'user' network backend -- and every machine the launcher writes asks for one" >&2
+  echo "  (packaging/windows/Dockerfile builds it; Fedora has no mingw package)" >&2
+  fail=1
+fi
+
 if command -v wine >/dev/null; then
   scratch=$(mktemp -d)
   trap 'rm -rf "$scratch"' EXIT

@@ -48,6 +48,24 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         mingw64-SDL2 mingw64-gettext mingw64-win-iconv mingw64-pkg-config \
     && dnf clean all -y
 
+# libslirp, which Fedora does not package for mingw. QEMU's `-netdev
+# user` is a *compiled-in* backend, and every machine the launcher
+# generates asks for one, so without this the Windows build starts a
+# machine and QEMU answers "network backend 'user' is not compiled into
+# this binary" -- which is exactly what the first machine started on the
+# user's PC said (2026-09-06). Same release the Flatpak manifest pins,
+# for the same reason there (the runtime hasn't got it either).
+ARG LIBSLIRP=4.9.4
+RUN curl -fsSL -o /tmp/libslirp.tar.gz \
+      "https://gitlab.freedesktop.org/slirp/libslirp/-/archive/v${LIBSLIRP}/libslirp-v${LIBSLIRP}.tar.gz" \
+    && echo "3998863b020aeda34bddc567097c6efba55a78cdf6eeee6bcd42c11ef23967da  /tmp/libslirp.tar.gz" \
+       | sha256sum -c - \
+    && tar -C /tmp -xf /tmp/libslirp.tar.gz \
+    && mkdir -p /tmp/libslirp-v${LIBSLIRP}/build \
+    && (cd /tmp/libslirp-v${LIBSLIRP} && mingw64-meson --buildtype=release build) \
+    && ninja -C /tmp/libslirp-v${LIBSLIRP}/build install \
+    && rm -rf /tmp/libslirp.tar.gz /tmp/libslirp-v${LIBSLIRP}
+
 # Qt 6 for the second front end (launcher-qt, ADR-014), both halves of a
 # cross build: the mingw libraries and headers the binary links against,
 # and the *native* Qt of the same version for the tools that have to run

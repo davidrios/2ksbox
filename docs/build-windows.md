@@ -108,6 +108,15 @@ answer**: nothing of ours ever ran, so the failure is in the loader or a
 static initialiser, and the exit code says which (`0xC0000135` a DLL that
 is not there, `0xC0000142` an initialiser, `0xC0000005` a fault).
 
+One library in that sysroot is not a Fedora package: **libslirp**, built
+from source in the image (`packaging/windows/Dockerfile`). QEMU's
+`-netdev user` is compiled in rather than loaded, every machine the
+launcher writes asks for one, and there is no `mingw64-libslirp` — so
+without it a machine dies at start-up on "network backend 'user' is not
+compiled into this binary" while `configure` quietly said `slirp
+support: NO`. `package-windows.sh` checks the embed library's import
+table for it.
+
 The DLLs beside them are a **closure walked from the import tables** with
 `objdump`, not a hand-kept list — start from the four binaries, follow
 every import, ship what is in the mingw sysroot and never what is

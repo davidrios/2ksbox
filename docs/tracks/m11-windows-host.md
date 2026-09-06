@@ -165,6 +165,44 @@ the first run — which is the log doing exactly its job; and the panic
 hook's message, location and backtrace land in the log on the native
 build.
 
+### The fourth run: two answers at once (2026-09-06)
+
+`2ksbox-debug.bat` did its job on the user's PC the first time it was
+asked, and both halves of the report were new facts.
+
+**The Qt front end dies before `main` on real Windows too**: exit
+`-1073741819` = `0xC0000005`, an access violation, and no `launcher.log`
+at all. So it is not wine — the loader completes there as it does here
+and a static initialiser faults, which makes it **ours to fix** and not
+a question about wine's Qt 6 support. (What has been ruled out so far: a
+CRT mismatch — every binary in the package imports `msvcrt.dll`, Qt's
+included — and a malformed constructor list: the exe's `.ctors` is a
+well-formed `-1`, fifteen entries inside `.text`, `NULL`.) The egui
+package is the one to use meanwhile.
+
+**The egui front end started, and the machine it started did not**: the
+player's log said
+
+    network backend 'user' is not compiled into this binary
+
+`-netdev user` is a *compiled-in* backend — it is libslirp — and Fedora
+has no `mingw64-libslirp`, so the Windows QEMU had been built without it
+since the first day of this track (`slirp support: NO` in the configure
+summary, which nobody had read). The cross image now builds libslirp
+4.9.4 from source into the mingw sysroot, the same release the Flatpak
+manifest pins for the same reason, and the DLL closure picks
+`libslirp-0.dll` up on its own because QEMU imports it.
+
+Every check in `package-windows.sh` was green while this was broken,
+because none of them had ever asked our QEMU for anything the *launcher*
+writes: the wine checks start `-M pc`, and machines come from
+`bundle.rs`. There is a check for it now, and it is a static one —
+the package holds no `qemu-system-*.exe` (QEMU is in-process, inside
+`libqemu-embed-i386.dll`) and the player that would load it is the
+binary wine hangs in, so the question is put to the embed library's
+**import table**: `net/slirp.c` is libslirp's only consumer, so the
+import is the backend.
+
 ### Both front ends (2026-09-06)
 
 `scripts/package-windows.sh --qt` rolls a second, complete package whose
@@ -297,21 +335,34 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    `launcher.log` at all plus an exit code names a loader failure, and
    for the Qt package that is also the experiment that decides between
    cxx-qt's static initialisers (ours to fix) and wine (not).
-2. **Boot a machine on the user's Windows PC.** The QMP monitor's `fd=`
-   is a CRT descriptor now, which is where the second run stopped; what
-   a guest does under WHPX is the next unknown.
-3. **A Win98 guest with 3D on real Windows.** The WGL backend is written
+2. **Boot a machine on the user's Windows PC**, on the egui package.
+   The QMP monitor's `fd=` is a CRT descriptor and the QEMU beside it has
+   libslirp now, which is where runs two and four stopped; what a guest
+   does under WHPX is the next unknown.
+3. **The Qt binary's static initialiser**, now that real Windows has
+   agreed with wine that it never reaches `main`. Next thing to try: the
+   fifteen entries in that `.ctors` list, disassembled, against the
+   cxx-qt generated sources — or a minimal cxx-qt binary cross-built the
+   same way, which says in one build whether it is our QML registration
+   or anything cxx-qt links.
+4. **A Win98 guest with 3D on real Windows.** The WGL backend is written
    and its sequence passes under wine (`tools/wgl-probe.exe`), but no
    guest has used it.
-4. **The installer.** Doc 07 wants an installer as well as the portable
+5. **The installer.** Doc 07 wants an installer as well as the portable
    zip. QEMU's own `mingw32-nsis` recipe is in the cross image's reach.
-5. **Zero-copy frames** through a DXGI shared handle, the Windows answer
+6. **Zero-copy frames** through a DXGI shared handle, the Windows answer
    to the dma-buf ring and IOSurface.
-6. **A second Windows check that boots a guest**, once (1) says what
+7. **A second Windows check that boots a guest**, once (1) says what
    actually happens. The shape to aim for is `xp-driver-test.sh`'s: drive
    the machine over QMP, pull the artefacts out, diff a frame.
 
 ## Gotchas found here
+
+- **Fedora has no `mingw64-libslirp`**, and QEMU's `-netdev user` is a
+  compiled-in backend rather than a plugin: without it every machine the
+  launcher writes fails at start-up with "network backend 'user' is not
+  compiled into this binary". The cross image builds it from source. The
+  configure summary says `slirp support: NO` and nothing else does.
 
 - Fedora's default Python breaks QEMU's `mkvenv` (3.14 vs 3.8–3.13); the
   image pins 3.13 and installs a real `distlib` for it.
