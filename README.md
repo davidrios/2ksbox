@@ -84,6 +84,9 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 #   table, the geometry stage and the preset checked, a PNG of each dumped there
 # PLAYER_MODE_PARAMS=0 is the A/B control for mode analysis — the preset is left to
 #   guess the scanline count from the framebuffer height, as it did before M2
+# Ctrl+Alt+S writes the guest's own frame — its native size, no geometry stage and
+#   no CRT chain — as PLAYER_SHOT_DIR/2ksbox-NNNN.png (the next free number; the
+#   working directory when PLAYER_SHOT_DIR is unset). Ctrl+Alt+G releases the grab.
 # PLAYER_LATENCY=1 prints publish→present latency percentiles every 240 guest frames
 # PLAYER_REFRESH_MS=16 (default) is the guest frame pull interval (QEMU's own default is 30)
 # QMP: the player always attaches a control monitor over a socketpair (no socket file).

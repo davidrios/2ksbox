@@ -232,7 +232,10 @@ impl Gpu {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            // COPY_SRC so Ctrl+Alt+S can read the guest's own frame back
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -321,6 +324,39 @@ impl Gpu {
         }
     }
 
+    /// Write the guest's own frame out as a PNG: the texture QEMU
+    /// published, at the mode's own size, before the geometry stage
+    /// stretched it and before the CRT chain drew on it — a shot of what
+    /// the machine rendered, not of what the window shows. Ctrl+Alt+S.
+    ///
+    /// The imported 3D slot is shot the same way when one is on show, so
+    /// this is the guest's frame on every path, zero-copy included.
+    fn screenshot(&self) {
+        let Some((tex, _, _, _)) = self.current() else {
+            eprintln!("[shot] no guest frame yet");
+            return;
+        };
+        let (w, h, rgb) = shader_chain::read_texture(&self.device, &self.queue, tex);
+        let dir = std::env::var_os("PLAYER_SHOT_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("[shot] {}: {e}", dir.display());
+            return;
+        }
+        // numbered rather than time-stamped: a number needs no time zone to
+        // read, and the next free one is stable across runs
+        let path = (1..10_000)
+            .map(|n| dir.join(format!("2ksbox-{n:04}.png")))
+            .find(|p| !p.exists());
+        let Some(path) = path else {
+            eprintln!("[shot] {}: no free file name", dir.display());
+            return;
+        };
+        shader_chain::write_png(&path.to_string_lossy(), w, h, &rgb);
+        eprintln!("[shot] {w}x{h} guest frame → {}", path.display());
+    }
+
     fn upload(&mut self, pixels: &[u32], w: u32, h: u32) {
         self.ensure_texture(w, h);
         let (tex, _, _, _) = self.fb_tex.as_ref().unwrap();
@@ -381,13 +417,66 @@ impl Gpu {
         } else {
             (sw, sw / dar)
         };
-        ((sw - vw) / 2.0, (sh - vh) / 2.0, vw, vh)
+        // Whole pixels, always. The aspect correction makes the width
+        // fractional (320x200 at 1x is 533.33 wide), and a fractional
+        // viewport puts the picture on a sampling grid that moves with the
+        // window's size: every odd pixel of width shifts the centred origin
+        // by half a texel and the whole image crawls while the window is
+        // dragged out. Rounding costs at most half a pixel of aspect -- far
+        // inside the 0.5 % the sweep allows -- and buys a picture that stands
+        // still. It also keeps the blit exactly the size of the chain's
+        // output texture, which is integer anyway.
+        let vw = vw.round().clamp(1.0, sw);
+        let vh = vh.round().clamp(1.0, sh);
+        (((sw - vw) / 2.0).floor(), ((sh - vh) / 2.0).floor(), vw, vh)
     }
 
     /// The surface the geometry stage fits the picture into.
     fn surface_size(&self) -> (u32, u32) {
         self.forced_surface
             .unwrap_or((self.config.width, self.config.height))
+    }
+
+    /// Don't let the window be dragged below the picture's own size: under
+    /// it the geometry stage has no whole scale left and falls back to a
+    /// free fit, which is the one case where the guest's pixels are shrunk
+    /// and the mode stops being pixel-accurate. The floor is the 1x picture
+    /// -- the *displayed* size, so an aspect-corrected mode counts its
+    /// corrected width (320x200 -> 534x400), not its framebuffer's.
+    ///
+    /// Physical pixels: the surface is in physical pixels too, so this is
+    /// the same quantity the scale is computed from on any HiDPI screen.
+    /// Clamped to the monitor, or a mode larger than the screen would ask
+    /// for a window that cannot be placed.
+    fn apply_min_size(&self) {
+        if self.forced_surface.is_some() {
+            return; // headless sweep/calib: the surface is ours, not the window's
+        }
+        let m = self.mode;
+        if m.scanlines == 0 {
+            return;
+        }
+        let (mut mw, mut mh) = (
+            (m.scanlines as f32 * m.display_aspect).ceil() as u32,
+            m.scanlines,
+        );
+        if let Some(mon) = self.window.current_monitor() {
+            let s = mon.size();
+            if s.width > 0 && s.height > 0 {
+                mw = mw.min(s.width);
+                mh = mh.min(s.height);
+            }
+        }
+        self.window
+            .set_min_inner_size(Some(winit::dpi::PhysicalSize::new(mw, mh)));
+        // A window already smaller than the new floor is not grown by the
+        // minimum alone on every platform; ask for it.
+        let (w, h) = (self.config.width, self.config.height);
+        if w < mw || h < mh {
+            let _ = self
+                .window
+                .request_inner_size(winit::dpi::PhysicalSize::new(w.max(mw), h.max(mh)));
+        }
     }
 
     /// Re-analyse when the guest changes mode: log what the surface means
@@ -402,6 +491,7 @@ impl Gpu {
         }
         self.mode = mode::Mode::analyse(tw, th);
         eprintln!("[display] mode {}", self.mode.describe());
+        self.apply_min_size();
         let params = self.mode.shader_params();
         let Some(chain) = self.chain.as_ref() else {
             return;
@@ -1174,6 +1264,17 @@ impl ApplicationHandler for App {
                     && self.modifiers.alt_key()
                 {
                     self.set_grab(false);
+                    return;
+                }
+                // Ctrl+Alt+S: shoot the guest's own frame, unscaled and unshaded
+                if down
+                    && code == KeyCode::KeyS
+                    && self.modifiers.control_key()
+                    && self.modifiers.alt_key()
+                {
+                    if let Some(gpu) = self.gpu.as_ref() {
+                        gpu.screenshot();
+                    }
                     return;
                 }
                 if let (Some(vm), Some(sc)) = (self.vm(), keymap::atset1(code)) {

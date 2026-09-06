@@ -92,6 +92,32 @@ scanlines is a whole scale of the rows too, so this only refines the older
 rule. Square-pixel 4:3 modes are unchanged; 320×200 goes from the old 1.6:1
 stretch to 4:3, and so do 640×350, 640×400, 720×400 text and the mode X sizes.
 
+The rect is then rounded to **whole pixels** — size and origin both. The
+aspect correction makes the width fractional (320×200 at 1x is 533.33 wide),
+and a fractional viewport samples the picture on a grid that moves with the
+window: every odd pixel of width shifts the centred origin by half a texel, so
+the image crawls while the window is dragged out, and the blit stretches the
+chain's own (integer) output texture by a fraction on top. Rounding costs at
+most half a pixel of aspect — far inside the 0.5 % the sweep checks — and the
+picture stands still.
+
+Below the 1x picture the geometry stage has no whole scale left and falls back
+to a free fit, which is the one case where the guest's pixels are *shrunk*. The
+player therefore does not let the window go there: its minimum inner size is
+the 1x picture in physical pixels — the displayed size, so an aspect-corrected
+mode counts its corrected width (320×200 → 534×400), not its framebuffer's —
+re-applied on every mode change and clamped to the monitor, since a mode larger
+than the screen would otherwise ask for a window that cannot be placed.
+
+**Screenshots (Ctrl+Alt+S).** The shot is of the *guest's* frame — the texture
+QEMU published, read back at the mode's own size, before the geometry stage
+scaled it and before the chain drew on it — because that is the picture that
+can be compared with anything else: a golden BMP, a native run, another
+emulator. The window's own content is the shaded one and is already what
+`PLAYER_DUMP_OUT` writes. An imported 3D slot is shot the same way when one is
+on show, so the zero-copy path is covered too. Files land in `PLAYER_SHOT_DIR`
+(default: the working directory) as `2ksbox-NNNN.png`, the next free number.
+
 **Scanline count (rule 3).** A preset derives its scanline count from the input
 texture's height, or guesses from a resolution threshold. Both are wrong here,
 so mode analysis states the answer through the preset's own parameters:
