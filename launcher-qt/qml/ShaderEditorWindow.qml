@@ -31,11 +31,23 @@ Window {
     minimumWidth: 720
     minimumHeight: 420
     flags: Qt.Dialog
+    // One at a time (`WizardWindow.qml`): a secondary window blocks the
+    // grid behind it, so there is never a second one to wonder about.
+    modality: Qt.ApplicationModal
     color: palette.window
 
     // Closing the window is cancelling the edit; the flag drives the
     // window in both directions from `Main.qml`.
     onVisibleChanged: if (!visible && editor.open) editor.open = false
+
+    // Esc is Cancel, the way every other dialog on the desktop behaves.
+    // It goes through `close()` rather than hiding the window, because
+    // that is what runs `onVisibleChanged` above — the one place a
+    // model's own `open` flag is put back.
+    Shortcut {
+        sequences: [StandardKey.Cancel]
+        onActivated: root.close()
+    }
 
     /// Open on a given preset and preview image — the headless
     /// screenshot path (`src/qt/diag.rs`).

@@ -29,9 +29,21 @@ Window {
     minimumWidth: 480
     minimumHeight: 240
     flags: Qt.Dialog
+    // One at a time (`WizardWindow.qml`): a secondary window blocks the
+    // grid behind it, so there is never a second one to wonder about.
+    modality: Qt.ApplicationModal
     color: palette.window
 
     onVisibleChanged: if (!visible) root.changed()
+
+    // Esc is Cancel, the way every other dialog on the desktop behaves.
+    // It goes through `close()` rather than hiding the window, because
+    // that is what runs `onVisibleChanged` above — the one place a
+    // model's own `open` flag is put back.
+    Shortcut {
+        sequences: [StandardKey.Cancel]
+        onActivated: root.close()
+    }
 
 
     // The grab target for the headless screenshot path: a QML-declared

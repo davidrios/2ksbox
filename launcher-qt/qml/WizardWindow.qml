@@ -18,11 +18,19 @@ import QtQuick.Layouts
 import com._2ksbox.launcher
 
 // A real top-level window, not an in-window popup: the launcher's
-// secondary screens are separate windows the user can move, resize and
-// leave open beside the grid, which is what the platform already knows
-// how to do. `Qt.Dialog` keeps it transient for the launcher window (the
-// compositor stacks it above and gives it a dialog frame) without making
-// it modal — nothing here needs to block the grid.
+// secondary screens are separate windows the user can move and resize,
+// which is what the platform already knows how to do. `Qt.Dialog` keeps
+// it transient for the launcher window — the compositor stacks it above
+// and gives it a dialog frame.
+//
+// **Modal**, and every other secondary window with it (user, 2026-09-06,
+// on the first Windows build anyone else drove): they used to be
+// modeless, on the theory that someone might want one open beside the
+// grid, and what that actually bought was a launcher where the wizard,
+// the disc shelf, the snapshots list and the profile editor can all be
+// on screen at once with nothing saying which one you are answering. One
+// at a time, and Esc closes it, is what every other dialog on the
+// desktop does.
 Window {
     id: root
 
@@ -41,12 +49,22 @@ Window {
     minimumWidth: 520
     minimumHeight: 420
     flags: Qt.Dialog
+    modality: Qt.ApplicationModal
     color: palette.window
 
     // Closing the window *is* cancelling the form: the flag drives the
     // window in both directions (`Main.qml`), so clearing it here keeps
     // the two from disagreeing after a close from the title bar.
     onVisibleChanged: if (!visible && wizard.open) wizard.open = false
+
+    // Esc is Cancel, the way every other dialog on the desktop behaves.
+    // It goes through `close()` rather than hiding the window, because
+    // that is what runs `onVisibleChanged` above — the one place a
+    // model's own `open` flag is put back.
+    Shortcut {
+        sequences: [StandardKey.Cancel]
+        onActivated: root.close()
+    }
 
     Rectangle {
         id: form

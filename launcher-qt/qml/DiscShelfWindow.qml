@@ -11,9 +11,11 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 import com._2ksbox.launcher
 
-// A real top-level window — see `WizardWindow.qml`. Non-modal on
-// purpose here: swapping a disc into a running machine is something you
-// want to do *while* looking at it.
+// A real top-level window — see `WizardWindow.qml`, modal like the rest.
+// This one was modeless the longest, on the argument that swapping a
+// disc into a running machine is something you want to do *while*
+// looking at it — but the machine is another process with its own
+// window, so blocking the launcher's grid never hid it anyway.
 Window {
     id: root
 
@@ -32,9 +34,21 @@ Window {
     minimumWidth: 620
     minimumHeight: 360
     flags: Qt.Dialog
+    // One at a time (`WizardWindow.qml`): a secondary window blocks the
+    // grid behind it, so there is never a second one to wonder about.
+    modality: Qt.ApplicationModal
     color: palette.window
 
     onVisibleChanged: if (!visible) root.changed()
+
+    // Esc is Cancel, the way every other dialog on the desktop behaves.
+    // It goes through `close()` rather than hiding the window, because
+    // that is what runs `onVisibleChanged` above — the one place a
+    // model's own `open` flag is put back.
+    Shortcut {
+        sequences: [StandardKey.Cancel]
+        onActivated: root.close()
+    }
 
     Rectangle {
         id: body

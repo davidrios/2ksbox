@@ -22,7 +22,17 @@ Window {
     minimumWidth: 560
     minimumHeight: 320
     flags: Qt.Dialog
+    // One at a time (`WizardWindow.qml`): a secondary window blocks the
+    // grid behind it, so there is never a second one to wonder about.
+    modality: Qt.ApplicationModal
     color: palette.window
+
+    // Esc is Cancel, the way every other dialog on the desktop behaves.
+    // Nothing to put back here: this window keeps no flag of its own.
+    Shortcut {
+        sequences: [StandardKey.Cancel]
+        onActivated: root.close()
+    }
 
     /// The row whose "Restore" is armed and waiting for its confirming
     /// click. Restoring overwrites the disk's current state with the
