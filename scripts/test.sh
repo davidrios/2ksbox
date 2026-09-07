@@ -34,6 +34,8 @@
 #                  qemu-img probes the cue and the ccd to "cdimage" with the
 #                  lead-out × 2048 as the size, the data track dd'd out equals the
 #                  ISO, a plain .iso still probes to raw
+#   icons          scripts/gen-icons.sh --check: every checked-in size still
+#                  matches packaging/icon/2ksbox.png, the one master
 #   package        scripts/package-linux.sh (or package-macos.sh on a Mac): the
 #                  install layout staged from this build, and the staged launcher
 #                  asked with a scrubbed environment whether
@@ -571,6 +573,18 @@ host_stage() {
   # controller, and our QEMU accepts both machines.
   if [ -x target/release/launcher ]; then
     run_check pointer pointer.log pointer_check || true
+  fi
+
+  # the application icon: every size in packaging/icon/ still derived from
+  # the one master (doc 07). They are checked in because nothing that
+  # needs an icon can draw one — the launcher embeds a PNG at compile
+  # time, the Flatpak build is offline, the Windows package is
+  # cross-built without ImageMagick — so a master edited without a
+  # regenerate would ship the old picture everywhere but the repository.
+  if command -v magick >/dev/null; then
+    run_check icons icons.log scripts/gen-icons.sh --check || true
+  else
+    skip icons "needs ImageMagick"
   fi
 
   # the Linux package (M6 step 6): staged from this build and asked, with a

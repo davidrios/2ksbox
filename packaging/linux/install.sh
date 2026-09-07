@@ -31,13 +31,20 @@ done
 app=2ksbox
 appid=com._2ksbox.Launcher
 desktop_dir=$prefix/share/applications
-icon_dir=$prefix/share/icons/hicolor/scalable/apps
+# The icon arrives with the wholesale `share/` copy below, already under
+# `share/icons/hicolor/<n>x<n>/apps/` where a desktop looks for it; this
+# is only the size the desktop entry names outright, and the tree the
+# uninstall has to clear (it is the one thing this installs outside
+# `share/2ksbox`).
+icon_dir=$prefix/share/icons/hicolor
+icon_size=256
 metainfo_dir=$prefix/share/metainfo
 
 if [ "$uninstall" = 1 ]; then
   rm -rf "$prefix/lib/$app" "$prefix/libexec/$app" "$prefix/share/$app" "$prefix/share/doc/$app"
   rm -f "$prefix/bin/$app" "$prefix/bin/$app-player"
-  rm -f "$desktop_dir/$appid.desktop" "$icon_dir/$appid.svg" "$metainfo_dir/$appid.metainfo.xml"
+  rm -f "$desktop_dir/$appid.desktop" "$metainfo_dir/$appid.metainfo.xml"
+  rm -f "$icon_dir"/*/apps/"$appid.png"
   command -v update-desktop-database >/dev/null && update-desktop-database "$desktop_dir" 2>/dev/null || true
   echo "removed $app from $prefix"
   exit 0
@@ -61,11 +68,16 @@ done
 # The desktop entry ships with a bare `Exec=2ksbox`, which is only right
 # if the prefix's bin/ is on PATH. It is here that we know the absolute
 # path, so write it in.
-mkdir -p "$desktop_dir" "$icon_dir"
+#
+# `Icon=` gets the same treatment for the same reason: the bare
+# `Icon=<app id>` only resolves when the prefix's `share/` is on
+# XDG_DATA_DIRS, which a private prefix is not, so the entry names one
+# size outright. The whole set is still installed — a desktop that *does*
+# see the prefix picks the size it wants from it.
+mkdir -p "$desktop_dir"
 sed -e "s|^Exec=.*|Exec=$prefix/bin/$app|" \
-    -e "s|^Icon=.*|Icon=$icon_dir/$appid.svg|" \
+    -e "s|^Icon=.*|Icon=$icon_dir/${icon_size}x${icon_size}/apps/$appid.png|" \
     "$here/share/$app/desktop/$appid.desktop" > "$desktop_dir/$appid.desktop"
-cp -f "$here/share/$app/desktop/$appid.svg" "$icon_dir/$appid.svg"
 # AppStream metadata, so a software centre knows what this is. Copied
 # unmodified — nothing in it is path-dependent.
 mkdir -p "$metainfo_dir"

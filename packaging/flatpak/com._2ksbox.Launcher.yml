@@ -122,5 +122,12 @@ modules:
       # the sandbox the shipped `Exec=2ksbox` / `Icon=<app-id>` are
       # already right).
       - install -Dm644 packaging/linux/com._2ksbox.Launcher.desktop /app/share/applications/com._2ksbox.Launcher.desktop
-      - install -Dm644 packaging/linux/com._2ksbox.Launcher.svg /app/share/icons/hicolor/scalable/apps/com._2ksbox.Launcher.svg
       - install -Dm644 packaging/linux/com._2ksbox.Launcher.metainfo.xml /app/share/metainfo/com._2ksbox.Launcher.metainfo.xml
+      # The icon is a raster set, not one scalable file, so each size is
+      # exported under its own directory. `package-linux.sh --prefix /app`
+      # above already staged them; these are the same files put where
+      # flatpak's export looks, and 128 is the size Flathub requires.
+      - install -Dm644 packaging/icon/2ksbox-64.png /app/share/icons/hicolor/64x64/apps/com._2ksbox.Launcher.png
+      - install -Dm644 packaging/icon/2ksbox-128.png /app/share/icons/hicolor/128x128/apps/com._2ksbox.Launcher.png
+      - install -Dm644 packaging/icon/2ksbox-256.png /app/share/icons/hicolor/256x256/apps/com._2ksbox.Launcher.png
+      - install -Dm644 packaging/icon/2ksbox-512.png /app/share/icons/hicolor/512x512/apps/com._2ksbox.Launcher.png

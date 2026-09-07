@@ -230,16 +230,17 @@ while read -r f; do codesign --force --sign - "$f" >/dev/null 2>&1 || true; done
   < <(find "$C" -type f -perm +111 -exec sh -c 'file -b "$1" | grep -q Mach-O && echo "$1"' _ {} \;)
 
 # --- icon -------------------------------------------------------------
-# sips rasterizes the SVG the Linux package ships, so the two platforms
-# draw the same icon from the same one file.
+# The same PNGs the Linux package installs (`scripts/gen-icons.sh`), so
+# the three platforms draw one icon from one master. Nothing is
+# rasterized here: an .icns is a container, and iconutil is happy with a
+# partial set — 512@2x would need a 1024 the artwork does not have.
 set=$(mktemp -d)/2ksbox.iconset; mkdir -p "$set"
-for s in 16 32 64 128 256 512 1024; do
-  sips -s format png --resampleHeightWidth $s $s packaging/linux/com._2ksbox.Launcher.svg \
-    --out "$set/icon_${s}x${s}.png" >/dev/null 2>&1
+for s in 16 32 64 128 256 512; do
+  cp "packaging/icon/2ksbox-$s.png" "$set/icon_${s}x${s}.png"
 done
 # The @2x names Apple wants are the next size up under the previous name.
-for s in 16 32 128 256 512; do cp "$set/icon_$((s*2))x$((s*2)).png" "$set/icon_${s}x${s}@2x.png"; done
-rm -f "$set/icon_1024x1024.png" "$set/icon_64x64.png"
+for s in 16 32 128 256; do cp "$set/icon_$((s*2))x$((s*2)).png" "$set/icon_${s}x${s}@2x.png"; done
+rm -f "$set/icon_64x64.png"
 iconutil -c icns "$set" -o "$C/Resources/2ksbox.icns"
 
 # --- Info.plist -------------------------------------------------------

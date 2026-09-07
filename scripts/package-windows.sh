@@ -33,6 +33,8 @@
 #   guest-tools\                the guest-tools ISO
 #   shaders\                    presets, with --with-shaders
 #   doc\                        COPYING, notices, README
+#   2ksbox.ico                  the application icon, for a shortcut
+#                               (the .exes carry it as a resource too)
 #   2ksbox-debug.bat            runs the launcher from a console and
 #                               keeps its exit code -- the one thing
 #                               a silent start-up failure still has
@@ -116,6 +118,12 @@ if [ "$SHADERS" = 1 ]; then
 fi
 
 install -m644 COPYING THIRD-PARTY-NOTICES.md README.md "$STAGE/doc/"
+# The application icon (`scripts/gen-icons.sh`), the same artwork the
+# Linux and macOS packages install. Every staged .exe already carries it
+# as a resource (`packaging/windows/win-icon.rs`, from each crate's build
+# script) -- this loose copy is for the things that take a path instead:
+# a shortcut someone pins, an installer, a folder's own icon.
+install -m644 packaging/icon/2ksbox.ico "$STAGE/2ksbox.ico"
 
 # --- what to double-click when nothing happens ------------------------
 # A windowed program that dies before `main` -- a DLL the loader cannot

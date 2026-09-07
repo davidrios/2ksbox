@@ -705,10 +705,12 @@ fn main() -> eframe::Result {
     // against `com._2ksbox.Launcher.desktop` to give the window its icon
     // and its name in a task switcher, and `icon` is the same picture
     // handed over directly, for X11 and Windows where there is no such
-    // matching. The PNG is rendered from the very SVG the desktop entry
-    // points at, so the two can't drift apart.
+    // matching. It is one of the sizes `scripts/gen-icons.sh` derives
+    // from the icon the packages install, so the window and the
+    // applications menu cannot drift apart; 256 because this one is
+    // scaled down by the compositor and never up.
     let icon = {
-        let png = include_bytes!("../../packaging/linux/com._2ksbox.Launcher-128.png");
+        let png = include_bytes!("../../packaging/icon/2ksbox-256.png");
         image::load_from_memory(png).map(|img| {
             let rgba = img.to_rgba8();
             let (width, height) = rgba.dimensions();

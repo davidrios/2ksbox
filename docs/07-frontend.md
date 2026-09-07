@@ -302,7 +302,8 @@ which one it is in by looking at its own executable
 <prefix>/share/2ksbox/pc-bios/                 QEMU firmware (the player's -L)
 <prefix>/share/2ksbox/guest-tools/             the guest-tools ISO
 <prefix>/share/2ksbox/shaders/                 presets, when a package ships them
-<prefix>/share/2ksbox/desktop/                 .desktop + icon + metainfo, for install.sh
+<prefix>/share/2ksbox/desktop/                 .desktop + metainfo, for install.sh
+<prefix>/share/icons/hicolor/<n>x<n>/apps/     the application icon, at every size
 <prefix>/share/doc/2ksbox/                     COPYING, notices, README
 ```
 
@@ -331,7 +332,45 @@ machine created and translated to a command line), and rolls a tarball;
 prefix and writes the desktop entry with absolute paths. The launcher's
 window carries the same identity — `app_id` = `com._2ksbox.Launcher`,
 matching the desktop file's own name, plus the icon itself for X11 and
-Windows.
+Windows. The Qt build sets the same pair
+(`QGuiApplication::setDesktopFileName` and a `setWindowIcon` through the
+one line of C++ in `launcher-qt/src/window_icon.cpp`, since cxx-qt-lib
+binds `QImage` but not `QIcon`).
+
+**The icon is one master and one generator.** `packaging/icon/2ksbox.png`
+is the artwork — a transparent RGBA render of a beige CRT showing a green
+hill under a teal sky, which is what the whole stack is pretending to be
+— and `scripts/gen-icons.sh` derives every size from it (16…512 PNGs and
+a four-size `.ico`), all checked in. Nothing is ever scaled up: the
+master is padded with transparency to 512×512 and centred first (its
+canvas is 500×500 and the drawing inside it 431×436, so the margin it
+already has simply gets wider), and every size is a downscale of that —
+the 512 carries the artwork's own pixels, unresampled. They have to be checked in because
+none of the places that need one can draw it: `launcher` and
+`launcher-qt` embed a 256 with `include_bytes!` at compile time, the
+Flatpak build is offline, the Windows package is cross-built in a
+container without ImageMagick, and someone running `install.sh` out of a
+tarball has no build tools at all. `gen-icons.sh --check` says whether
+they still match the master. The Linux package installs the whole set
+into `share/icons/hicolor/<n>x<n>/apps/<app id>.png` — where install.sh's
+wholesale `share/` copy already puts it, so the same tree is right for a
+distro package unpacking into `/usr` and for a private prefix; the
+desktop entry additionally gets one absolute path written into `Icon=`,
+because a prefix outside `XDG_DATA_DIRS` cannot resolve a theme name.
+macOS builds its `.icns` from the same PNGs, and on Windows the `.ico`
+goes *inside* every .exe as a resource, which is the only thing Explorer
+looks at: `packaging/windows/win-icon.rs` is `include!`d by the build
+script of `launcher`, `launcher-qt` and `player`, writes a one-line `.rc`
+and runs the cross container's `x86_64-w64-mingw32-windres` over it, then
+hands the COFF object to the linker with `rustc-link-arg-bins`. A shared
+file included into three build scripts rather than a build-dependency,
+because a crate in `Cargo.lock` would have to be vendored into the
+Flatpak's offline sources for a Linux build that never uses it; a host
+with no windres gets a warning and an icon-less binary rather than a
+failed build. Verified by cross-building a binary in the container and
+finding all four images of the `.ico` inside its `.rsrc` section. The
+package ships the loose `.ico` as well, for the things that take a path:
+a pinned shortcut, an installer.
 
 The AppStream metadata (`com._2ksbox.Launcher.metainfo.xml`, installed
 into `share/metainfo`) goes with it: a software centre needs it, and

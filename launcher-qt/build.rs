@@ -10,7 +10,12 @@
 
 use cxx_qt_build::{CxxQtBuilder, QmlModule};
 
+include!("../packaging/windows/win-icon.rs");
+
 fn main() {
+    // The picture Explorer draws on the launcher: this crate is the one
+    // that becomes 2ksbox.exe in a Windows package that has Qt.
+    embed_windows_icon();
     // `appearance.cpp` calls `QQuickStyle`, and it is compiled into the
     // generated archive that the linker reaches *after* the Qt import
     // libraries `qt_module` names. On ELF that is fine; a PE import
@@ -43,6 +48,9 @@ fn main() {
     // defines the proxy locally, where the two halves agree; the file
     // compiles to nothing anywhere else.
     .cpp_file("src/once_proxy.cpp")
+    // The window icon: one call into QGuiApplication that cxx-qt-lib
+    // does not bind (it has QImage, not QIcon).
+    .cpp_file("src/window_icon.cpp")
     // Which Quick Controls style, and which colour scheme
     // (`src/appearance.cpp`) — it calls `QQuickStyle`, so the module has
     // to be linked as well as the ones the QML imports pull in.

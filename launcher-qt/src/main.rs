@@ -69,6 +69,12 @@ extern "C" {
 /// `qrc:/qt/qml/` + the module URI with `.` as `/`.
 const QML_MAIN: &str = "qrc:/qt/qml/com/_2ksbox/launcher/qml/Main.qml";
 
+unsafe extern "C" {
+    /// `src/window_icon.cpp`: `QGuiApplication::setWindowIcon` on a
+    /// `QIcon` built from these PNG bytes.
+    fn twoksbox_set_window_icon(png: *const u8, len: i32);
+}
+
 fn main() {
     // First of all: a windowed program on Windows has no stderr, so
     // anything that goes wrong on the way to the first window would
@@ -108,6 +114,18 @@ fn main() {
     unsafe { launcher_qt_choose_style() };
     launcher_core::fatal::note("QGuiApplication");
     let mut app = QGuiApplication::new();
+    // The window's own identity, the two halves the egui build sets with
+    // `with_app_id` and `with_icon`: the desktop-entry name a Wayland
+    // compositor matches a window to its launcher (and its icon) by, and
+    // the picture itself for every window system that takes one instead.
+    // The PNG is one of the sizes `scripts/gen-icons.sh` derives from the
+    // icon the packages install, so a window and the applications menu
+    // cannot show different pictures.
+    QGuiApplication::set_desktop_file_name(&QString::from(launcher_core::paths::APP_ID));
+    let png = include_bytes!("../../packaging/icon/2ksbox-256.png");
+    // SAFETY: a pointer and a length into a `'static` slice, read and
+    // copied into a QImage before the call returns.
+    unsafe { twoksbox_set_window_icon(png.as_ptr(), png.len() as i32) };
     // Light, whatever the desktop is set to: the Quick Controls style
     // paints its controls light and only the surfaces around them come
     // from the palette, so a dark system palette gets you half a theme

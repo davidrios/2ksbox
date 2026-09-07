@@ -27,7 +27,8 @@
 #   share/2ksbox/pc-bios/             QEMU firmware (the player's -L)
 #   share/2ksbox/guest-tools/         the guest-tools ISO
 #   share/2ksbox/shaders/             presets, with --with-shaders
-#   share/2ksbox/desktop/             .desktop + icon, for install.sh
+#   share/2ksbox/desktop/             .desktop + AppStream, for install.sh
+#   share/icons/hicolor/<n>x<n>/apps/ the application icon, at every size
 #   share/doc/2ksbox/                 COPYING, notices, README
 #   install.sh                        copy the above into a prefix
 #
@@ -102,8 +103,17 @@ if [ "$SHADERS" = 1 ]; then
 fi
 
 install -m644 packaging/linux/com._2ksbox.Launcher.desktop "$STAGE/share/2ksbox/desktop/"
-install -m644 packaging/linux/com._2ksbox.Launcher.svg "$STAGE/share/2ksbox/desktop/"
 install -m644 packaging/linux/com._2ksbox.Launcher.metainfo.xml "$STAGE/share/2ksbox/desktop/"
+# The icon goes in at its final path rather than beside the desktop entry:
+# `share/icons/hicolor/<n>x<n>/apps/<app id>.png` is where a desktop looks
+# for it, `install.sh` copies `share/` wholesale, and so the same tree is
+# right for a distro package that unpacks the tarball into /usr as it is
+# for a prefix install. Every size `scripts/gen-icons.sh` writes is
+# shipped: 16 for a task switcher, 512 for a software centre's banner.
+for icon in packaging/icon/2ksbox-*.png; do
+  size=${icon##*-}; size=${size%.png}
+  install -Dm644 "$icon" "$STAGE/share/icons/hicolor/${size}x${size}/apps/com._2ksbox.Launcher.png"
+done
 install -m755 packaging/linux/install.sh "$STAGE/install.sh"
 install -m644 COPYING THIRD-PARTY-NOTICES.md README.md "$STAGE/share/doc/2ksbox/"
 
