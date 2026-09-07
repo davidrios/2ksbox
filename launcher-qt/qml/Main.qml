@@ -263,7 +263,7 @@ ApplicationWindow {
         // The form's own `open` flag drives the window in both
         // directions, so a `submit()` that succeeds (which clears it)
         // puts the window away wherever it was called from.
-        onOpenChanged: open ? wizardWindow.show() : wizardWindow.close()
+        onOpenChanged: open ? wizardWindow.show() : closeIfShown(wizardWindow)
     }
     DiscModel { id: discs }
     SnapshotModel { id: snapshots }
@@ -273,7 +273,29 @@ ApplicationWindow {
         // Same shape as the wizard: the editor's own `open` flag drives
         // its window both ways, so a save (which clears it) puts the
         // window away wherever it was called from.
-        onOpenChanged: open ? shaderEditorWindow.show() : shaderEditorWindow.close()
+        onOpenChanged: open ? shaderEditorWindow.show() : closeIfShown(shaderEditorWindow)
+    }
+
+    /// Close a flag-driven window, unless it is already on its way out.
+    ///
+    /// The flag is cleared from two directions: by a button (Cancel, a
+    /// successful save), and by the window's own `onVisibleChanged` when
+    /// the title bar's close button hid it. The second one is already
+    /// inside Qt's close — `destroy()` flips `visible` and emits the
+    /// signal *before* it unregisters the modal window and hides the
+    /// platform window — so calling `close()` back from there delivers a
+    /// second close event to a window that is half gone: it deletes the
+    /// platform window from inside the first event, and the first one,
+    /// finding it null, skips the platform `setVisible(false)`. On macOS
+    /// that skipped call is `endModalSession`, so the dialog was gone
+    /// and the main window stayed locked behind it (user-reported,
+    /// 2026-09-07). `visible` is already false at that moment, which is
+    /// the tell. The `closebox` probe below counts the close events the
+    /// window receives; the `qt-close` check in `scripts/test.sh` wants
+    /// exactly one.
+    function closeIfShown(w) {
+        if (w.visible)
+            w.close()
     }
 
     WizardWindow {
@@ -333,6 +355,14 @@ ApplicationWindow {
         return null
     }
 
+    /// Close events the wizard window has received — the `closebox`
+    /// probe's count.
+    property int closeEvents: 0
+    Connections {
+        target: wizardWindow
+        function onClosing(close) { closeEvents++ }
+    }
+
     Timer {
         // A screen with no shot path is a run that only *drives* the
         // window and prints what it shows — which is the half of this
@@ -363,6 +393,20 @@ ApplicationWindow {
                 diag.note("wizard memory: shown " + wizardWindow.shownRamMb
                           + ", model " + wizard.ramMb
                           + ", range " + wizard.ramMin + ".." + wizard.ramMax)
+                break
+            case "closebox":
+                // The title bar's close button on the wizard, the way the
+                // window system delivers it — a close *event*, not
+                // `close()`, which is the path a button takes and which
+                // Qt guards against re-entry. Counts the close events the
+                // window sees (`closeIfShown` says why two is the bug)
+                // and asks whether a modal window is still registered.
+                wizard.openFresh(); profiles.refresh(); wizardWindow.show()
+                closeEvents = 0
+                const modalLeft = diag.closeModalFromWindowSystem()
+                diag.note("closebox: " + closeEvents + " close events, open="
+                          + wizard.open + ", visible=" + wizardWindow.visible
+                          + ", modal left=" + modalLeft)
                 break
             case "create":
                 // `LAUNCHER_QT_ARG=[<family>:]<name>` — the whole create

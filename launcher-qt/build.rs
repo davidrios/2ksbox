@@ -52,6 +52,10 @@ fn main() {
     // The window icon: one call into QGuiApplication that cxx-qt-lib
     // does not bind (it has QImage, not QIcon).
     .cpp_file("src/window_icon.cpp")
+    // The headless probe's stand-in for the title bar's close button
+    // (`src/close_event.cpp`): a close *event*, which nothing in
+    // cxx-qt-lib can send.
+    .cpp_file("src/close_event.cpp")
     // Which Quick Controls style, and which colour scheme
     // (`src/appearance.cpp`) — it calls `QQuickStyle`, so the module has
     // to be linked as well as the ones the QML imports pull in.

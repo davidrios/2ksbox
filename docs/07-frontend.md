@@ -502,6 +502,30 @@ with what the form says. Anything else in QML that bounds a value —
 another `SpinBox`, a `Slider` fed from properties rather than from a
 delegate's own row — is exposed the same way.
 
+A third rule, from a macOS-only bug on 2026-09-07 (user-reported): **a
+window whose model flag drives it must not `close()` itself from its own
+`visibleChanged`.** Every flag-driven dialog (the wizard, the shader
+editor) has two ways out — a button clears the flag, and `Main.qml`
+turns the flag into `close()`; or the title bar's close button hides the
+window, and the window's `onVisibleChanged` clears the flag so the model
+agrees. The second path re-entered `close()`: Qt's `destroy()` flips
+`visible` and emits the signal *before* it unregisters the modal window
+and hides the platform window, and the title bar's route carries none
+of the re-entry guard `QWindow::close()` sets for its own. The inner
+close deleted the platform window from inside the first close event, and
+the outer one, finding it gone, skipped the platform `setVisible(false)`
+— which on Cocoa is `endModalSession`. The dialog vanished and the main
+window stayed locked behind it; Linux never showed it, since nothing
+there is keyed to that call. The cure is a guard where the flag becomes
+a `close()` (`closeIfShown`: `visible` is already false at that moment),
+and the probe is the `closebox` screen, which sends the wizard a close
+*event* the way the window system does (`src/close_event.cpp`, since
+cxx-qt-lib cannot send one) and counts the close events the window
+receives: the `qt-close` check in `scripts/test.sh` wants exactly one,
+and the unguarded build gives two. The modal-window list is no oracle
+for this on the offscreen platform — the outer hide still empties it —
+which is why the check counts events rather than asking it.
+
 ### What each front end still owns
 
 Everything that is genuinely the toolkit's, and nothing else:

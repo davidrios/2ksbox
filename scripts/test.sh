@@ -35,6 +35,13 @@
 #                  handed against the range it has at that moment, so the control
 #                  and the model can disagree and nothing that asks the model
 #                  would ever notice (only if a launcher-qt has been built)
+#   qt-close       the title bar's close button on a Qt dialog: the close event
+#                  delivered the way the window system delivers it must reach
+#                  the wizard window exactly once and leave no modal window
+#                  registered — a second one is `close()` re-entered from the
+#                  window's own hide, which on macOS left the main window locked
+#                  behind a dialog that was gone (only if a launcher-qt has
+#                  been built)
 #   shelforder     the disc shelf is one list in one order: discs added in the
 #                  wrong order come back by label (case-insensitively, and disc
 #                  10 after disc 2), a later addition lands where its name
@@ -389,6 +396,28 @@ qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
   done
   return $rc
 }
+qtclose_check() { # the title bar's close button on a Qt dialog (doc 07)
+  local dir="$OUT/qtclose" bin="launcher-qt/target/release/launcher-qt" o n modal
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
+  # Cancel calls `close()`, which Qt guards against re-entry; the title
+  # bar's button hands Qt a close *event*, which it does not. A window
+  # whose `visibleChanged` clears a model flag that in turn calls
+  # `close()` re-enters from inside the first event and gets a second —
+  # and the platform hide that ends the modal session on macOS is
+  # skipped. The probe sends the event and counts what the window saw.
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=closebox LAUNCHER_QT_DELAY=250        "$bin" 2>&1 | sed -n 's/^\[diag\] closebox: //p')"
+  [ -n "$o" ] || { echo "the probe printed no closebox line"; return 1; }
+  echo "  $o"
+  n="$(printf '%s' "$o" | sed -n 's/^\([0-9]*\) close events.*/\1/p')"
+  modal="$(printf '%s' "$o" | sed -n 's/.*modal left=\(-*[0-9]*\).*/\1/p')"
+  [ "$n" = 1 ] || { echo "the wizard window saw $n close events for one click; close() re-entered from its own hide"; return 1; }
+  [ "$modal" = 0 ] || { echo "a modal window is still registered after the close (modal left=$modal)"; return 1; }
+  printf '%s' "$o" | grep -q "open=false, visible=false" \
+    || { echo "the wizard's flag or window did not follow the close: $o"; return 1; }
+  return 0
+}
 dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M5g)
   local rc=0 dir="$OUT/dirshelf" bundle args o spaced comma plain shelf_file
   rm -rf "$dir"; mkdir -p "$dir/library"
@@ -665,7 +694,11 @@ host_stage() {
   # workspace and a host with no Qt 6 builds everything else.
   if [ -x launcher-qt/target/release/launcher-qt ]; then
     run_check qt-wizard qt-wizard.log qtwizard_check || true
-  else skip qt-wizard "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"; fi
+    run_check qt-close qt-close.log qtclose_check || true
+  else
+    skip qt-wizard "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+    skip qt-close "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+  fi
 
   # the host GPU probe (ADR-013): what the launcher tells someone about 3D
   # before a machine exists. The verdict itself is a property of the box,

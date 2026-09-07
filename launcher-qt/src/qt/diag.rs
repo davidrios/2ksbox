@@ -31,7 +31,8 @@ pub mod ffi {
         /// Empty unless `LAUNCHER_QT_SHOT` is set, which is what QML
         /// checks to decide whether any of this is happening at all.
         #[qproperty(QString, shot_path)]
-        /// "", "wizard", "discs", "snapshots", "profiles", "editor".
+        /// "", "wizard", "create", "closebox", "adddisc", "discs",
+        /// "snapshots", "profiles", "editor" (`Main.qml`).
         #[qproperty(QString, screen)]
         #[qproperty(QString, arg)]
         #[qproperty(i32, delay_ms)]
@@ -41,6 +42,14 @@ pub mod ffi {
         /// in the terminal instead of producing a silent empty run.
         #[qinvokable]
         fn report(self: &Diag, ok: bool);
+
+        /// Deliver a close event to the current modal window the way
+        /// the window system does when its title bar's close button is
+        /// clicked — `src/close_event.cpp`. Returns 1 if a modal window
+        /// is still registered afterwards, 0 if none, -1 if there was
+        /// none to close.
+        #[qinvokable]
+        fn close_modal_from_window_system(self: &Diag) -> i32;
 
         /// A trace line from QML. Not `console.log`: that goes through
         /// Qt's categorised logging, which drops the `qml` category's
@@ -79,7 +88,15 @@ impl Default for DiagRust {
     }
 }
 
+unsafe extern "C" {
+    fn launcher_qt_close_modal_from_window_system() -> i32;
+}
+
 impl ffi::Diag {
+    fn close_modal_from_window_system(&self) -> i32 {
+        unsafe { launcher_qt_close_modal_from_window_system() }
+    }
+
     fn note(&self, message: &QString) {
         eprintln!("[diag] {message}");
     }
