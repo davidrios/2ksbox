@@ -36,7 +36,17 @@
 #include <gdidefs.h>
 #include <dibeng.h>
 #include <minivdd.h>
+/* valmode.h declares ValidateMode without `__loadds`, and Open Watcom takes
+ * a function's attributes from its *first* declaration: the definition
+ * below then compiles without the DS prologue every other export has, and
+ * the first thing it does — reading `wRegsSel` — goes through whatever DS
+ * the display applet's thunk left, which is not ours. The garbage it finds
+ * there becomes a selector, and Display Settings dies in a GPF the moment
+ * its Settings tab asks about the first mode (doc 19 Section 18). Hide the
+ * header's prototype from the compiler, so ours is the first. */
+#define ValidateMode ValidateMode_as_the_ddk_declares_it
 #include <valmode.h>
+#undef ValidateMode
 
 #include "d3dpt9x.h"
 #include "d3dpt9v.h"
@@ -576,10 +586,16 @@ VOID WINAPI __loadds Disable(LPPDEVICE lpDevice)
 /* ValidateMode (ordinal 700) — GDI asks before it switches. */
 UINT WINAPI __loadds ValidateMode(DISPVALMODE FAR *lpMode)
 {
-    if (!AdapterFind()) return VALMODE_NO_WRONGDRV;
-    if (!ModeOk((WORD)lpMode->dvmXRes, (WORD)lpMode->dvmYRes, (WORD)lpMode->dvmBpp))
-        return VALMODE_NO_NOMEM;
-    return VALMODE_YES;
+    UINT rc;
+    if (!AdapterFind()) rc = VALMODE_NO_WRONGDRV;
+    else if (!ModeOk((WORD)lpMode->dvmXRes, (WORD)lpMode->dvmYRes, (WORD)lpMode->dvmBpp))
+        rc = VALMODE_NO_NOMEM;
+    else rc = VALMODE_YES;
+    dbg_val("d3dpt9x: ValidateMode x", lpMode->dvmXRes);
+    dbg_val("d3dpt9x: ValidateMode y", lpMode->dvmYRes);
+    dbg_val("d3dpt9x: ValidateMode bpp", lpMode->dvmBpp);
+    dbg_val("d3dpt9x: ValidateMode ->", rc);
+    return rc;
 }
 
 /* ---------------------------------------------------------------- Control */
@@ -646,6 +662,7 @@ UINT FAR DriverInit(UINT cbHeap, UINT hModule, LPSTR lpCmdLine)
      * outside, because the answer is logged in ring 0 where port 0xE9 and
      * the DEBUG register both work. */
     AdapterFind();
+    dbg_val("d3dpt9x: cs", GetCS());
     dbg_str("d3dpt9x: DriverInit done");
     return 1;
 }

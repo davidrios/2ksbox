@@ -259,6 +259,54 @@ if bad:
              "load this module. Check the .map for an empty segment." % bad)
 PYCHK
 
+# Every export must load DGROUP before it touches a global. Open Watcom
+# takes a function's attributes from its *first* declaration, so a DDK
+# prototype without `__loadds` silently strips it from the definition, and
+# the export then reads the driver's variables through whatever DS its
+# caller had — Display Settings thunks down from 32-bit code, so that DS is
+# not ours, and `ValidateMode` turned a stack word into a selector and GPFed
+# on the first mode it was asked about (doc 19 Section 18). The three shapes
+# an entry has: a far `jmp` to the DIB Engine (`ea`), a thunk that loads ES
+# with DGROUP to push the PDEVICE (`b8 DGROUP 8e c0`), or a C function whose
+# prologue loads DS (`b8 DGROUP 8e d8`). Anything else is a function that
+# lost its `__loadds`.
+python3 - "$BUILD/d3dpt9x.drv" <<'PYDS'
+import struct, sys
+p = sys.argv[1]
+f = open(p, 'rb').read()
+ne = struct.unpack_from('<I', f, 0x3c)[0]
+segtaboff, = struct.unpack_from('<H', f, ne + 0x22)
+align = 1 << (struct.unpack_from('<H', f, ne + 0x32)[0] or 9)
+segs = [struct.unpack_from('<HHHH', f, ne + segtaboff + s * 8)
+        for s in range(struct.unpack_from('<H', f, ne + 0x1c)[0])]
+enttab, entlen = struct.unpack_from('<HH', f, ne + 0x04)
+q, ordinal, bad = ne + enttab, 1, 0
+while q < ne + enttab + entlen:
+    count, kind = f[q], f[q + 1]
+    q += 2
+    if count == 0:
+        break
+    if kind == 0:                              # unused ordinals
+        ordinal += count
+        continue
+    for _ in range(count):
+        if kind == 0xff:                       # movable entry
+            seg, off = f[q + 3], struct.unpack_from('<H', f, q + 4)[0]
+            q += 6
+        else:                                  # fixed entry in segment `kind`
+            seg, off = kind, struct.unpack_from('<H', f, q + 1)[0]
+            q += 3
+        code = f[segs[seg - 1][0] * align + off:][:12]
+        if code[:1] != b'\xea' and b'\xb8\xff\xff\x8e' not in code[:8]:
+            print("   export %d at %d:%04x starts %s — no DGROUP load"
+                  % (ordinal, seg, off, code[:8].hex(' ')))
+            bad += 1
+        ordinal += 1
+if bad:
+    sys.exit("d3dpt9x.drv: %d export(s) run on the caller's DS — a "
+             "`__loadds` was lost to an earlier prototype." % bad)
+PYDS
+
 cp "$BUILD/d3dpt9x.drv" "$BUILD/d3dpt9v.vxd" "$OUT/"
 cp "$SRC/d3dpt9x.inf" "$OUT/" 2>/dev/null || true
 

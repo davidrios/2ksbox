@@ -663,3 +663,48 @@ swallows keys, so Escape goes first.
 A machine that has faulted cannot be shut down at all — it is in the text
 screen above, waiting for a key that only reaches DOS. That is not a
 harness bug to chase; it is the fault, and the printed text screen says so.
+
+### 18. Display Settings showed one resolution (fixed 2026-09-07)
+
+With the driver installed, Display Settings offered 640×480 at 16 and 32
+bpp, 800×600 in 16 colours, and nothing else — while the registry held
+all eight `MODES\16` / `MODES\32` rows the INF writes. The rows were
+there; the applet was *asking the driver* about each one and dying.
+
+The applet (32-bit, in `rundll32`) thunks down and calls the driver's
+`ValidateMode` (ordinal 700, the export valmode.h says must exist) once
+per registry row. Ours GPFed on the first call, and the reason is a
+compiler rule: **Open Watcom takes a function's attributes from its first
+declaration.** `valmode.h` prototypes `ValidateMode` as plain `WINAPI`,
+so the `__loadds` on the definition was ignored, and the export ran on
+the caller's DS — a thunk's 16-bit alias of the applet's 32-bit stack.
+`AdapterFind()` read `wRegsSel` from that stack, found a nonzero word and
+took it for "already asked"; `ModeOk()` loaded the same word into ES for
+`RegGet(CAPS)` and faulted (`mov es,cx` with CX=0x12, GPF error code
+0x10). Every other export had the prologue, because nothing else in the
+DDK headers prototypes them. The `-d int` trace is how it was found: the
+fault sits at `031f:0021` — the CS the driver logs at `DriverInit`, and
+offset 0x21 is `RegGet` — with DS a 2 MB selector that is not ours.
+
+The 16 colour mode the applet still offered came from the `MODES\4`
+rows, which name `vga.drv`/`supervga.drv` and so are never put to us;
+why the two 640×480 entries survived the fault was not established (the
+current mode is presumably listed before the driver is asked).
+
+The fix hides the header's prototype (`#define ValidateMode …` around the
+include) so the definition is the first declaration, and
+`build-driver9x.sh` now refuses a `.drv` in which any export neither jumps
+straight to the DIB Engine nor loads DGROUP in its first eight bytes —
+the third silent failure the build catches (§13, §14 are the others).
+Proved on the `test98` image: all eight modes come back `VALMODE_YES`
+in the debug log, the slider has four stops, and applying 800×600 from
+the applet switches the adapter live (`linear mode on (800x600x32 …)`)
+and back.
+
+A note on driving the applet headless, for the next time: on a
+Portuguese Windows the Start menu's Run item is "Executar" (`e`, not
+`r` — `r` lands on nothing and `d` is "Desligar", which restarted the
+machine), `control desk.cpl,,3` from Run lost its arguments and opened
+the Control Panel folder, and Ctrl+Tab did not switch the property
+sheet's tabs. What worked: a right-click on the desktop through the USB
+tablet, Up + Enter for Properties, and a click on the tab itself.

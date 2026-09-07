@@ -385,10 +385,15 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   maps the adapter where ring 3 can reach it — `_PageReserve(PR_SHARED)` +
   `_PageCommitPhys(PC_USER|PC_WRITEABLE|PC_INCR)`, not `_MapPhysToLinear`,
   which lands in the system arena — where **this VMM refuses `PC_PRESENT`**,
-  silently, and `PC_INCR` is what stops all 128 MB aliasing onto one page. Two more silent refusals are now
+  silently, and `PC_INCR` is what stops all 128 MB aliasing onto one page. Three more silent refusals are now
   build-time checks in `build-driver9x.sh`: an NE relocation naming a
-  segment wlink dropped (KERNEL refuses the module), and a VxD whose DDB is
-  not at offset 0 of its code object (the VMM ignores it).
+  segment wlink dropped (KERNEL refuses the module), a VxD whose DDB is
+  not at offset 0 of its code object (the VMM ignores it), and an export
+  with no DGROUP load — **Open Watcom takes a function's attributes from
+  its first declaration**, so a DDK prototype without `__loadds` strips it
+  from the definition and the export reads the driver's globals through
+  the caller's DS (`ValidateMode`, doc 19 §18: Display Settings offered one
+  resolution because the applet died on the first mode it asked about).
 - **A Win98 guest on `d3dpt-vga` that "stops at a black desktop" has
   usually faulted**, and the message is a VGA *text* screen the linear frame
   buffer hides: QEMU's VGA core keeps its planes interleaved four bytes to a

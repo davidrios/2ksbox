@@ -142,7 +142,11 @@ is simply slow at 32 bpp under TCG, a `GDIINFO` USER cannot work with —
 worth chasing.
 
 Do not re-derive the three silent refusals; they are written up in doc 19
-§13 and §14 and two of them are now build-time checks.
+§13 and §14 and two of them are now build-time checks. A fourth joined
+them 2026-09-07 (doc 19 §18): an export compiled without its `__loadds`
+because a DDK header prototyped it first — `ValidateMode` GPFed under the
+Display Settings applet and the mode list looked empty. The build now
+refuses any export that does not load DGROUP.
 
 What the track starts from:
 
