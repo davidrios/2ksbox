@@ -48,10 +48,17 @@ ApplicationWindow {
                 Layout.fillWidth: true
             }
             Label {
+                // A failure to start a player is a whole sentence with
+                // a path in it, and this label is 320px wide: without
+                // the tooltip the elided head reads as nothing having
+                // happened at all.
                 text: machines.status
                 opacity: 0.7
                 elide: Text.ElideRight
                 Layout.maximumWidth: 320
+                ToolTip.visible: statusHover.hovered && machines.status !== ""
+                ToolTip.text: machines.status
+                HoverHandler { id: statusHover }
             }
         }
     }

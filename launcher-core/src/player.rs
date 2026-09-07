@@ -14,7 +14,11 @@ use std::process::Child;
 /// The `player` binary: `bin/2ksbox-player` in an installed tree
 /// (`paths.rs`), otherwise alongside the launcher's own executable, where
 /// both sit in dev (workspace binaries in the same `target/<profile>`
-/// directory). `LAUNCHER_PLAYER_BIN` overrides both.
+/// directory) — and failing that, the workspace's own
+/// `target/<profile>`, because `launcher-qt` is deliberately *not* in the
+/// root workspace (so `cargo build` never needs Qt 6) and therefore
+/// builds into `launcher-qt/target/<profile>`, where no player has ever
+/// been beside it. `LAUNCHER_PLAYER_BIN` overrides all of it.
 pub fn player_binary() -> PathBuf {
     if let Ok(p) = std::env::var("LAUNCHER_PLAYER_BIN") {
         return p.into();
@@ -28,9 +32,19 @@ pub fn player_binary() -> PathBuf {
         let name = if cfg!(windows) { "2ksbox-player.exe" } else { "2ksbox-player" };
         return crate::paths::bin_dir().join(name);
     }
+    let name = if cfg!(windows) { "player.exe" } else { "player" };
     let exe = std::env::current_exe().expect("current_exe");
     let dir = exe.parent().expect("executable has a parent directory");
-    dir.join(if cfg!(windows) { "player.exe" } else { "player" })
+    let beside = dir.join(name);
+    if beside.exists() {
+        return beside;
+    }
+    // The same profile, not a baked-in `release`: a debug launcher must
+    // find the debug player. A cross-built tree
+    // (`target/x86_64-pc-windows-gnu/release`) keeps its player beside
+    // the launcher and so never reaches here.
+    let profile = dir.file_name().unwrap_or_else(|| "release".as_ref());
+    crate::paths::checkout("target").join(profile).join(name)
 }
 
 /// What this host's hardware acceleration is called, for the wizard's

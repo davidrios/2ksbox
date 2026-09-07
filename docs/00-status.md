@@ -447,6 +447,23 @@ items nobody owns yet:
 
 ## Gotchas learned (don't relearn)
 
+- **`launcher-qt`'s Play button did nothing because the Qt build has no
+  player beside it** (fixed 2026-09-07). `player::player_binary()`'s
+  checkout answer was "the launcher's own directory", which is right for
+  the egui launcher — both are workspace binaries in one
+  `target/<profile>` — and wrong for `launcher-qt`, which is deliberately
+  *not* in the root workspace (so `cargo build` never needs Qt 6) and so
+  builds into `launcher-qt/target/<profile>/`, where no player has ever
+  been. The spawn failed with ENOENT, `MachineModel::play` put the
+  message in `machines.status`, and that label is 320px wide and elides
+  from the right: the head of the message is the bundle's path, so the
+  window looked exactly like a button that isn't wired to anything. Two
+  fixes: `player_binary()` now falls back to the workspace's own
+  `target/<profile>/player` at the *same* profile when nothing is beside
+  the executable, and the status label got a tooltip carrying the whole
+  sentence. `launcher-qt --paths` is the one-line check — it prints the
+  player path both front ends will use.
+
 - **A curved preset that smears its edge pixels outwards is a device
   feature we forgot to ask for, not the preset.** A slang preset's
   default wrap mode is `clamp_to_border` with a transparent-black border
