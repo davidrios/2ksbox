@@ -280,7 +280,13 @@ static int render(void)
     if (G.o.dump_frame >= 0 && (int)G.frame == G.o.dump_frame) {
         HRESULT hr;
         int spins = 0;
-        while ((hr = IDirect3DQuery9_GetData(X.occ, &pixels, sizeof(pixels), D3DGETDATA_FLUSH)) == S_FALSE && spins++ < 100000) ;
+        /* Poll, but yield between polls. The query's End is executed by a
+         * thread of the runtime, and a tight spin can starve it on a busy
+         * machine: on a cold DXVK pipeline cache (16 compiler threads) the
+         * native run spun 100000 times in 48 ms without the End ever being
+         * reached, and reported the frame as 0 pixels (2026-09-07). */
+        while ((hr = IDirect3DQuery9_GetData(X.occ, &pixels, sizeof(pixels), D3DGETDATA_FLUSH)) == S_FALSE && spins++ < 500)
+            Sleep(1);
         game_log("d3dfeat9: occlusion query at frame %u: %s, %lu pixels (quad C is 2 triangles at 640x480: expect ~13000)", G.frame, hr_str(hr), (unsigned long)pixels);
     }
     return 1;

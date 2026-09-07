@@ -451,6 +451,35 @@ items nobody owns yet:
 
 ## Gotchas learned (don't relearn)
 
+- **A busy-wait that starves the thread it is waiting for**: `d3dfeat9`'s
+  occlusion query, fixed 2026-09-07 (`guest-tools/src/d3dfeat9.c`). The
+  native oracle started answering `S_FALSE, 0 pixels` where the guest, on
+  the same DXVK, answered 21316 — the moment the native harness stopped
+  opening an SDL window (`win32_headless.h`, `CreateWindowA` → NULL, in
+  "no user interface at all"). `D3D9SwapChainEx::Present` returns
+  `D3D_OK` immediately with no device window, so nothing paces the
+  program: it recorded 300 frames as fast as it could while DXVK's CS
+  thread stayed behind, and at the poll `D3D9Query::m_resetCtr` was **299**
+  — 299 of its own queued `End`s not yet executed, and `GetQueryData`
+  returns S_FALSE for every one of them. The 100 000-iteration
+  `GetData(D3DGETDATA_FLUSH)` loop then made it worse rather than better:
+  a tight spin on a busy machine starves the very thread that has to run
+  those `End`s (it drained 37 of the 299 in 48 ms), and only the *first*
+  poll flushes anything — after that `considerFlush` sees no new chunk and
+  declines. `Sleep(1)` between polls fixes it outright: the backlog drains
+  in a few ms and the query resolves, cold pipeline cache or not, idle or
+  under 24 busy loops. The trigger that makes it deterministic is a **cold
+  DXVK pipeline cache** (`rm ~/.cache/dxvk/*.dxvk.bin`): 16 compiler
+  threads are exactly the load that starves the CS thread, which is why it
+  reproduced right after a DXVK rebuild and nowhere else. The executor was
+  never affected — it reads the backbuffer back every frame, and that
+  readback is the pacing the oracle has none of. Two lessons: a check that
+  only greps for a *line* proves nothing about the value in it
+  (`d3dfeat9-nat` passed throughout — only the guest-vs-native log diff
+  caught this, and the host check now requires `0x00000000` with a
+  non-zero count), and "headless" changes an API's timing, not just its
+  output.
+
 - **A CD audio track that played on after the Stop button: a guest's stop
   is `START STOP UNIT`, not `STOP PLAY/SCAN`** (fixed 2026-09-07, patch
   51). XP's `mcicda` answers MCI's `stop` with `IOCTL_CDROM_STOP_AUDIO`,

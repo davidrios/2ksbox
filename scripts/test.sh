@@ -1123,10 +1123,14 @@ host_stage() {
           && sed -n 1,2p "$OUT/d3dgame9-golden.log" | sed 's/^/       /'
       else FAIL+=(d3dgame9-nat); echo "  FAIL d3dgame9-nat (no frame) — $OUT/d3dgame9-native.log"; tail -3 "$OUT/d3dgame9-native.log"; fi
       ( cd "$OUT" && DXVK_WSI_DRIVER="${DXVK_WSI_DRIVER:-Headless}" ../d3dfeat9-native -frames 600 -dump 300 f9-native.bmp ) >"$OUT/d3dfeat9-native.log" 2>&1
-      if [ -f "$OUT/f9-native.bmp" ] && grep -q "occlusion query" "$OUT/d3dfeat9.log"; then
+      # the occlusion query must have *resolved* (S_OK), not merely been
+      # logged: a window-less client that nothing paces runs so far ahead of
+      # the CS thread that GetData spins out and reports S_FALSE with 0
+      # pixels, and then only the guest-vs-native diff notices (2026-09-07)
+      if [ -f "$OUT/f9-native.bmp" ] && grep -q "occlusion query at frame .*: 0x00000000, [1-9]" "$OUT/d3dfeat9.log"; then
         PASS+=(d3dfeat9-nat); echo "  PASS d3dfeat9-nat"
         grep "occlusion query\|getters" "$OUT/d3dfeat9.log" | sed 's/^/       /'
-      else FAIL+=(d3dfeat9-nat); echo "  FAIL d3dfeat9-nat — $OUT/d3dfeat9-native.log"; tail -3 "$OUT/d3dfeat9-native.log"; fi
+      else FAIL+=(d3dfeat9-nat); echo "  FAIL d3dfeat9-nat — $OUT/d3dfeat9-native.log"; grep "occlusion query" "$OUT/d3dfeat9.log" | sed 's/^/       /'; tail -3 "$OUT/d3dfeat9-native.log"; fi
     else FAIL+=(d3d-native); echo "  FAIL d3d native harness (build)"; fi
   else
     skip d3dgame9-nat "needs build/dxvk"
