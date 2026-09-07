@@ -41,7 +41,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
  
  static void padstr8(uint8_t *buf, int buf_size, const char *src)
  {
-@@ -71,6 +79,328 @@
+@@ -71,6 +79,339 @@ static inline int media_is_cd(IDEState *s)
      return (media_present(s) && s->nb_sectors <= CD_MAX_SECTORS);
  }
  
@@ -200,6 +200,17 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
 +    }
 +    s->atapi_audio_frame_len = 0;
 +    s->atapi_audio_status = status;
++}
++
++/*
++ * The stop a guest asks for: playback ends, the drive has no audio status
++ * to report and the position falls back to the last sector read. Both
++ * STOP PLAY/SCAN and the stop half of START STOP UNIT mean this.
++ */
++static void atapi_audio_stop_play(IDEState *s)
++{
++    atapi_audio_stop(s, 0x15);
++    s->atapi_play_lba = 0;
 +}
 +
 +/*
@@ -370,7 +381,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
  static void cd_data_to_raw(uint8_t *buf, int lba)
  {
      /* sync bytes */
-@@ -186,6 +516,13 @@
+@@ -186,6 +527,13 @@ void ide_atapi_cmd_ok(IDEState *s)
  void ide_atapi_cmd_error(IDEState *s, int sense_key, int asc)
  {
      trace_ide_atapi_cmd_error(s, sense_key, asc);
@@ -384,7 +395,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
      s->error = sense_key << 4;
      s->status = READY_STAT | ERR_STAT;
      s->nsector = (s->nsector & ~7) | ATAPI_INT_REASON_IO | ATAPI_INT_REASON_CD;
-@@ -195,6 +532,12 @@
+@@ -195,6 +543,12 @@ void ide_atapi_cmd_error(IDEState *s, int sense_key, int asc)
      ide_bus_set_irq(s->bus);
  }
  
@@ -397,7 +408,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
  void ide_atapi_io_error(IDEState *s, int ret)
  {
      /* XXX: handle more errors */
-@@ -229,6 +572,16 @@
+@@ -229,6 +583,16 @@ void ide_atapi_cmd_reply_end(IDEState *s)
  
          /* see if a new sector must be read */
          if (s->lba != -1 && s->io_buffer_index >= s->cd_sector_size) {
@@ -414,7 +425,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
              if (!s->elementary_transfer_size) {
                  ret = cd_read_sector(s);
                  if (ret < 0) {
-@@ -419,6 +772,90 @@
+@@ -419,6 +783,90 @@ eot:
      ide_set_inactive(s, false);
  }
  
@@ -505,7 +516,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
  /* start a CD-ROM read command with DMA */
  /* XXX: test if DMA is available */
  static void ide_atapi_cmd_read_dma(IDEState *s, int lba, int nb_sectors,
-@@ -445,6 +882,12 @@
+@@ -445,6 +893,12 @@ static void ide_atapi_cmd_read(IDEState *s, int lba, int nb_sectors,
      trace_ide_atapi_cmd_read(s, s->atapi_dma ? "dma" : "pio",
                               lba, nb_sectors);
      if (s->atapi_dma) {
@@ -518,7 +529,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
          ide_atapi_cmd_read_dma(s, lba, nb_sectors, sector_size);
      } else {
          ide_atapi_cmd_read_pio(s, lba, nb_sectors, sector_size);
-@@ -697,6 +1140,7 @@
+@@ -697,6 +1151,7 @@ static void cmd_request_sense(IDEState *s, uint8_t *buf)
      buf[2] = s->sense_key;
      buf[7] = 10;
      buf[12] = s->asc;
@@ -526,7 +537,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
  
      if (s->sense_key == UNIT_ATTENTION) {
          s->sense_key = NO_SENSE;
-@@ -799,7 +1243,7 @@
+@@ -799,7 +1254,7 @@ static void cmd_inquiry(IDEState *s, uint8_t *buf)
          buf[6] = 0;    /* reserved */
          buf[7] = 0;    /* reserved */
          padstr8(buf + 8, 8, "QEMU");
@@ -535,7 +546,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
          padstr8(buf + 32, 4, s->version);
          idx = 36;
      }
-@@ -809,12 +1253,69 @@
+@@ -809,12 +1264,69 @@ static void cmd_inquiry(IDEState *s, uint8_t *buf)
      ide_atapi_cmd_reply(s, idx, max_len);
  }
  
@@ -605,7 +616,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
      /* only feature 0 is supported */
      if (buf[2] != 0 || buf[3] != 0) {
          ide_atapi_cmd_error(s, ILLEGAL_REQUEST,
-@@ -904,6 +1405,17 @@
+@@ -904,6 +1416,17 @@ static void cmd_mode_sense(IDEState *s, uint8_t *buf)
              buf[19] = 0;
              buf[21] = 0;
              buf[23] = 0;
@@ -623,7 +634,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
  
              ide_atapi_cmd_reply(s, 24, max_len);
              break;
-@@ -941,6 +1453,19 @@
+@@ -941,6 +1464,19 @@ static void cmd_mode_sense(IDEState *s, uint8_t *buf)
              buf[27] = 0;
              buf[28] = 0;
              buf[29] = 0;
@@ -643,7 +654,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
              ide_atapi_cmd_reply(s, 30, max_len);
              break;
          default:
-@@ -1000,28 +1525,61 @@
+@@ -1000,28 +1536,61 @@ static void cmd_read(IDEState *s, uint8_t* buf)
          return;
      }
  
@@ -673,23 +684,21 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
  }
  
 -static void cmd_read_cd(IDEState *s, uint8_t* buf)
--{
++/* READ CD (BE) and READ CD MSF (B9) share bytes 1, 9 and 10 */
++static void atapi_read_cd_common(IDEState *s, uint8_t *buf, unsigned int lba,
++                                 unsigned int nb_sectors)
+ {
 -    unsigned int nb_sectors, lba, transfer_request;
 -
 -    /* Total logical sectors of ATAPI_SECTOR_SIZE(=2048) bytes */
 -    uint64_t total_sectors = s->nb_sectors >> 2;
--
++    unsigned int transfer_request;
+ 
 -    nb_sectors = (buf[6] << 16) | (buf[7] << 8) | buf[8];
 -    if (nb_sectors == 0) {
 -        ide_atapi_cmd_ok(s);
 -        return;
 -    }
-+/* READ CD (BE) and READ CD MSF (B9) share bytes 1, 9 and 10 */
-+static void atapi_read_cd_common(IDEState *s, uint8_t *buf, unsigned int lba,
-+                                 unsigned int nb_sectors)
-+{
-+    unsigned int transfer_request;
-+
 +#ifdef CONFIG_CDIMAGE
 +    if (atapi_disc(s)) {
 +        /* the full MMC-3 table: any field combination, C2, subchannel */
@@ -721,7 +730,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
      transfer_request = buf[9] & 0xf8;
      if (transfer_request == 0x00) {
          /* nothing */
-@@ -1050,6 +1608,48 @@
+@@ -1050,6 +1619,48 @@ static void cmd_read_cd(IDEState *s, uint8_t* buf)
      }
  }
  
@@ -770,7 +779,25 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
  static void cmd_seek(IDEState *s, uint8_t* buf)
  {
      unsigned int lba;
-@@ -1119,6 +1719,18 @@
+@@ -1091,6 +1702,17 @@ static void cmd_start_stop_unit(IDEState *s, uint8_t* buf)
+         }
+     }
+ 
++#ifdef CONFIG_CDIMAGE
++    /*
++     * A stop (start == 0) ends any audio play in progress (MMC-5 6.36).
++     * This is the one that matters: XP's mcicda stops the drive with
++     * START STOP UNIT and never sends STOP PLAY/SCAN, so a drive that
++     * listens only to 0x4e plays on after the Stop button.
++     */
++    if (!start && atapi_disc(s)) {
++        atapi_audio_stop_play(s);
++    }
++#endif
+     ide_atapi_cmd_ok(s);
+ }
+ 
+@@ -1119,6 +1741,18 @@ static void cmd_read_toc_pma_atip(IDEState *s, uint8_t* buf)
      msf = (buf[1] >> 1) & 1;
      start_track = buf[6];
  
@@ -789,7 +816,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
      switch(format) {
      case 0:
          len = cdrom_read_toc(total_sectors, buf, msf, start_track);
-@@ -1169,6 +1781,14 @@
+@@ -1169,6 +1803,14 @@ static void cmd_read_disc_information(IDEState *s, uint8_t* buf)
          return;
      }
  
@@ -804,7 +831,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
      memset(buf, 0, 34);
      buf[1] = 32;
      buf[2] = 0xe; /* last session complete, disc finalized */
-@@ -1246,6 +1866,236 @@
+@@ -1246,6 +1888,235 @@ static void cmd_set_speed(IDEState *s, uint8_t* buf)
      ide_atapi_cmd_ok(s);
  }
  
@@ -1031,8 +1058,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
 +{
 +#ifdef CONFIG_CDIMAGE
 +    if (atapi_disc(s)) {
-+        atapi_audio_stop(s, 0x15);
-+        s->atapi_play_lba = 0;
++        atapi_audio_stop_play(s);
 +    }
 +#endif
 +    ide_atapi_cmd_ok(s);
@@ -1041,7 +1067,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
  enum {
      /*
       * Only commands flagged as ALLOW_UA are allowed to run under a
-@@ -1289,15 +2139,24 @@
+@@ -1289,15 +2160,24 @@ static const struct AtapiCmd {
      [ 0x25 ] = { cmd_read_cdvd_capacity,            CHECK_READY },
      [ 0x28 ] = { cmd_read, /* (10) */               CHECK_READY },
      [ 0x2b ] = { cmd_seek,                          CHECK_READY | NONDATA },
@@ -1066,7 +1092,7 @@ unsupported). CDIMAGE_TRACE=1 prints every packet, reply and sense.
      [ 0xbe ] = { cmd_read_cd,                       CHECK_READY | CONDDATA },
      /* [1] handler detects and reports not ready condition itself */
  };
-@@ -1308,6 +2167,14 @@
+@@ -1308,6 +2188,14 @@ void ide_atapi_cmd(IDEState *s)
      const struct AtapiCmd *cmd = &atapi_cmd_table[s->io_buffer[0]];
  
      trace_ide_atapi_cmd(s, s->io_buffer[0]);

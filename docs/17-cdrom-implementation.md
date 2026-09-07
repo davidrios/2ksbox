@@ -803,7 +803,8 @@ NULL`) and pass it to handlers via a static `s->atapi_disc_cur` field
 valid for that call only — or simpler, each handler calls `atapi_disc(s)`
 itself. Add table entries: `0x42 READ SUB-CHANNEL (CHECK_READY)`, `0x45
 PLAY AUDIO(10)`, `0x47 PLAY AUDIO MSF`, `0x48 PLAY AUDIO TRACK/INDEX`,
-`0x4B PAUSE/RESUME`, `0x4E STOP PLAY/SCAN`, `0x55 MODE SELECT(10)`, `0xA5
+`0x4B PAUSE/RESUME`, `0x4E STOP PLAY/SCAN` (and `0x1B START STOP UNIT`,
+already in the table, stops the audio too), `0x55 MODE SELECT(10)`, `0xA5
 PLAY AUDIO(12)`, `0xB9 READ CD MSF`, all `CHECK_READY` (audio ones
 `NONDATA` too). With no disc attached, the new audio commands succeed as
 no-ops that leave `audio_status = 0x15` (period Linux/Windows behaviour on
@@ -903,7 +904,13 @@ Commands: PLAY AUDIO(10) `start LBA (4), length (2)`; PLAY AUDIO(12)
 6..8` (end exclusive; `FF:FF:FF` = to the end of the disc); PLAY AUDIO
 TRACK/INDEX `start track/index bytes 4,5, end 7,8` (map through
 `libdisc_track_info`); PAUSE/RESUME byte 8 bit 0 (0 pause → 0x12, 1
-resume → 0x11); STOP PLAY/SCAN → 0x15 (and `play_lba = 0`). A play range
+resume → 0x11); STOP PLAY/SCAN → 0x15 (and `play_lba = 0`). **START STOP
+UNIT with start = 0 means the same stop** (MMC-5 6.36: a stop ends any
+play in progress), and it is the one that matters: XP's `mcicda` stops the
+drive with `1b 00 00 00 00` and never sends 0x4e, so with 0x4e alone the
+Stop button left the track playing to its end (found 2026-09-07 in a
+`CDIMAGE_TRACE=1` run; the trace is also how "stop" was told from
+"pause", which mcicda sends as `4b 00 …` before every seek). A play range
 starting on a data sector → 05/64/00. `start == end` → status 0x13
 immediately. READ SUB-CHANNEL position: `play_lba` while 0x11/0x12/0x13,
 else `atapi_last_lba` (updated by every successful read command).
@@ -1002,7 +1009,9 @@ READ CD `0xF8`/subch 0, 1, 2 at LBA 0, 16, the last sector of track 1 and
 the first of track 2, READ(10) of the flipped sector (expect CHECK
 CONDITION, sense 03/11/05) and of its neighbours, READ SUB-CHANNEL format
 1/2/3, PLAY AUDIO MSF of 2 seconds of track 2 then READ SUB-CHANNEL twice
-100 ms apart (position must advance), PAUSE, STOP, GET CONFIGURATION, MODE
+100 ms apart (position must advance), PAUSE, STOP — both of them, STOP
+PLAY/SCAN and the START STOP UNIT a Windows guest sends instead, each
+followed by the sub-channel status that must read 0x15 — GET CONFIGURATION, MODE
 SENSE 0x2A and 0x0E, MODE SELECT 0x0E then MODE SENSE 0x0E back. Run the
 data commands with byte-count limits 512 and 65534 (BCL splitting in
 `ide_atapi_cmd_reply_end`). The Python side builds the disc with `discx
@@ -1025,7 +1034,10 @@ Wired into the guest stage as `atapi-guest`.
   3 s, print everything to `cdtest.log`. Run on the mixed test disc with
   `-audiodev wav,id=embed0,path=build/test/cd.wav` (headless) or the
   player's audio (by ear): the wav must contain the 1 kHz tone (Python:
-  RMS over the middle second, dominant frequency by a naive DFT).
+  RMS over the middle second, dominant frequency by a naive DFT), and the
+  `status cd mode` right after `stop cd` must not still say `playing` —
+  that line is what a drive ignoring MCI's stop looks like from inside the
+  guest, and it sat in the log unchecked until 2026-09-07.
 - Reference material (doc 09): ATAPI traces from the rig's real drive
   while a protected title checks its disc — a Windows XP SPTI logger is
   the tool to write when M5c starts (a filter driver is out of scope);

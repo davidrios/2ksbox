@@ -9,7 +9,8 @@ qemu-system-i386 with the selftest's flipped-sector image (lec.cue) as the
 CD and compares every reply with `discx dump` of the same request: the
 guest must see exactly the bytes libdisc computed, at byte-count limits 512
 (every reply split into elementary transfers) and 65534. Also checks the
-audio position replies around PLAY / PAUSE / RESUME / STOP.
+audio position replies around PLAY / PAUSE / RESUME / STOP, both stops
+(STOP PLAY/SCAN and START STOP UNIT, the one Windows sends).
 
 The same run covers the disc shelf (patch 52, cdshelf/cdshelf_proto.h): the
 drive is given a `shelf=` file, and the vendor opcode 0xD0 is driven through
@@ -218,6 +219,13 @@ TESTS = [
     ("play track 3", pkt(0x48, 0, 0, 0, 3, 1, 0, 3, 1), ("len", 0)),
     ("subq playing track 3", read_sub(1), ("pos", "track3")),
     ("stop", pkt(0x4E), ("len", 0)),
+    # A guest's Stop button is START STOP UNIT, not STOP PLAY/SCAN: XP's
+    # mcicda sends 0x1b and never 0x4e (traced 2026-09-07), so a drive that
+    # ends playback on 0x4e alone plays the track out after the button.
+    ("play track 3 again", pkt(0x48, 0, 0, 0, 3, 1, 0, 3, 1), ("len", 0)),
+    ("subq playing track 3 again", read_sub(1), ("pos", "track3again")),
+    ("start stop unit: stop", pkt(0x1B), ("len", 0)),
+    ("subq stopped by start stop unit", read_sub(1), ("pos", "sspstopped")),
     # MODE SELECT(10) page 0E: port 0 <- right at half volume, port 1 <- both muted; read back
     ("mode select 0e", (pkt(0x55, 0x10, 0, 0, 0, 0, 0, 0, 24), [0, 22, 0, 0, 0, 0, 0, 0, 0x0E, 14, 4, 0, 0, 0, 0, 0, 2, 128, 3, 0, 0, 0, 0, 0]), ("len", 0)),
     ("mode sense 0e after select", pkt(0x5A, 0, 0x0E, 0, 0, 0, 0, 0, 64), ("bytes-at", 16, [2, 128, 3, 0, 0, 0, 0, 0])),
@@ -891,6 +899,13 @@ def check(bcl, entries):
     st, t3 = pos("track3")
     if st != 0x11 or t3 is None or not (5300 <= t3 < 6800):
         failures.append("track3: status %s position %s" % (st, t3))
+    st, t3b = pos("track3again")
+    if st != 0x11 or t3b is None or not (5300 <= t3b < 6800):
+        failures.append("track3again: status %s position %s" % (st, t3b))
+    st, z2 = pos("sspstopped")
+    if st != 0x15 or z2 != 2200:
+        failures.append("stopped by start stop unit: status %s position %s "
+                        "(want 0x15 at the last read sector 2200)" % (st, z2))
     return failures
 
 

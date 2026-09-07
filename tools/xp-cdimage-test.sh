@@ -185,6 +185,13 @@ print("dominant frequency ~%d Hz" % bestf[1])
 assert 950 <= bestf[1] <= 1050, "not the 1 kHz tone"
 PY
   then echo "PASS: CD audio: the 1 kHz tone reached the audiodev"; else echo "FAIL: CD audio (cdtest.log / cd.wav under $OUT)"; rc=1; fi
+  # and the drive must stop when it is told to: mcicda's Stop is a START STOP
+  # UNIT, so a drive that ends playback on STOP PLAY/SCAN alone answers the
+  # mode query right after it with "playing" and plays the track out.
+  stopmode=$(LC_ALL=C tr -d '\r' < "$OUT/cdtest.log" 2>/dev/null | grep -A1 '"stop cd"' | grep -m1 'status cd mode' || true)
+  if [ -z "$stopmode" ]; then echo "  note: CDTEST.EXE never reached its stop step, nothing to check"
+  elif printf '%s' "$stopmode" | grep -q '"playing"'; then echo "FAIL: the drive played on after MCI stopped it ($stopmode)"; rc=1
+  else echo "PASS: the drive stopped when MCI stopped it ($stopmode)"; fi
 fi
 if [ $rc -eq 0 ]; then echo "PASS: $n files copied from the disc match the reference"; else echo "FAIL: differences above ($n reference files)"; fi
 exit $rc

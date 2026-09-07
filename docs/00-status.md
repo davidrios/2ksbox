@@ -448,6 +448,21 @@ items nobody owns yet:
 
 ## Gotchas learned (don't relearn)
 
+- **A CD audio track that played on after the Stop button: a guest's stop
+  is `START STOP UNIT`, not `STOP PLAY/SCAN`** (fixed 2026-09-07, patch
+  51). XP's `mcicda` answers MCI's `stop` with `IOCTL_CDROM_STOP_AUDIO`,
+  and what comes out of cdrom.sys on the wire is `1b 00 00 00 00` — a
+  START STOP UNIT with start = 0 — never the 0x4e our drive was listening
+  to, which nothing in the whole trace of a play/pause/resume/stop session
+  ever sends (a `CDIMAGE_TRACE=1` run is what settled it; upstream's
+  `cmd_start_stop_unit` only ever looked at the eject bit). MMC-5 6.36
+  says a stop ends any play in progress, so both commands now end it.
+  The evidence had been sitting in `build/test/cdimage-xp/cdtest.log`
+  since the check was written — `mci "stop cd"` followed by `status cd
+  mode` → `"playing"` — because the XP check only required the tone in the
+  wav and read the mode line for the record; it now fails on it, and
+  `tools/atapi-guest-test.py` sends both stops.
+
 - **`launcher-qt`'s Play button did nothing because the Qt build has no
   player beside it** (fixed 2026-09-07). `player::player_binary()`'s
   checkout answer was "the launcher's own directory", which is right for
