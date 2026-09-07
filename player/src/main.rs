@@ -47,6 +47,10 @@ struct Gpu {
     chain_bg: Option<(wgpu::BindGroup, u32, u32)>,
     /// mode analysis of the guest surface on show (doc 03 rules 2 and 3)
     mode: mode::Mode,
+    /// Where the picture goes in the host surface, in physical pixels
+    /// (x, y, w, h). The geometry stage's answer, held rather than derived:
+    /// see `guest_surface_changed`.
+    geom: (f32, f32, f32, f32),
     /// the loaded preset has no parameter to carry a scanline count: said once
     warned_no_scanline_params: bool,
     /// the mode sweep renders to a fixed surface size instead of the window's,
@@ -205,6 +209,7 @@ impl Gpu {
             chain: None,
             chain_bg: None,
             mode: mode::Mode::analyse(0, 0),
+            geom: (0.0, 0.0, 1.0, 1.0),
             warned_no_scanline_params: false,
             forced_surface: None,
         }
@@ -227,10 +232,13 @@ impl Gpu {
         }
     }
 
+    /// The host surface changed: the picture's own size did not, so the
+    /// mode analysis stands and only the fit is redone.
     fn resize(&mut self, w: u32, h: u32) {
         self.config.width = w.max(1);
         self.config.height = h.max(1);
         self.surface.configure(&self.device, &self.config);
+        self.geom = self.fit();
     }
 
     /// (Re)create the guest framebuffer texture when its size changes.
@@ -280,6 +288,9 @@ impl Gpu {
             ],
         });
         self.fb_tex = Some((tex, bg, w, h));
+        if self.ext_current.is_none() {
+            self.guest_surface_changed();
+        }
     }
 
     fn make_bind_group(&self, tex: &wgpu::Texture) -> wgpu::BindGroup {
@@ -324,6 +335,9 @@ impl Gpu {
                 }
                 self.ext[slot] = Some((tex, bg, w, h));
                 eprintln!("[3d] slot {slot}: imported {w}x{h}");
+                if self.ext_current == Some(slot) {
+                    self.guest_surface_changed();
+                }
             }
             Err(e) => {
                 eprintln!("[3d] slot {slot}: zero-copy import failed: {e}");
@@ -336,10 +350,21 @@ impl Gpu {
 
     /// Show an imported slot (Some) or the CPU-uploaded framebuffer (None).
     fn use_slot(&mut self, slot: Option<usize>) {
+        let before = self.shown_size();
         self.ext_current = match slot {
             Some(s) if self.ext.get(s).map(|e| e.is_some()).unwrap_or(false) => Some(s),
             _ => None,
         };
+        // a 3D frame and the VGA surface need not be the same size: the
+        // picture just changed, even though neither texture did
+        if self.shown_size() != before {
+            self.guest_surface_changed();
+        }
+    }
+
+    /// The size of the texture on show, if there is one.
+    fn shown_size(&self) -> Option<(u32, u32)> {
+        self.current().map(|(_, _, w, h)| (*w, *h))
     }
 
     /// The texture currently on show: an imported 3D slot or the upload.
@@ -408,7 +433,11 @@ impl Gpu {
     }
 
     /// Largest rect of the mode's own display aspect that fits the surface,
-    /// centered (doc 03 geometry stage, rules 2 and 4).
+    /// centered (doc 03 geometry stage, rules 2 and 4). Pure, and run only
+    /// when one of its two inputs changes -- `guest_surface_changed` for the
+    /// mode, `resize` for the host surface. Everything it needs about the
+    /// guest is in `self.mode`, which is why the analysis is not repeated
+    /// here.
     ///
     /// The height is an integer multiple of the guest's rows so scanlines
     /// stay even, and the width then follows the display aspect rather than
@@ -416,14 +445,13 @@ impl Gpu {
     /// 320x200 mode is a 4:3 picture, not a 1.6:1 one, and integer-scaling
     /// both axes would show it stretched. Square-pixel 4:3 modes (640x480,
     /// 800x600, …) come out exactly as they did before.
-    fn viewport(&self) -> (f32, f32, f32, f32) {
-        let Some((_, _, tw, th)) = self.current() else {
-            return (0.0, 0.0, 1.0, 1.0);
-        };
-        let (tw, th) = (*tw, *th);
+    fn fit(&self) -> (f32, f32, f32, f32) {
+        let m = self.mode;
+        if m.scanlines == 0 {
+            return (0.0, 0.0, 1.0, 1.0); // no guest surface yet
+        }
         let (sw, sh) = self.surface_size();
         let (sw, sh) = (sw as f32, sh as f32);
-        let m = mode::Mode::analyse(tw, th);
         let dar = m.display_aspect;
         // The vertical quantum is the scanline, not the guest row: on a
         // double-scanned mode they differ, and it is the scanline pitch that
@@ -455,6 +483,23 @@ impl Gpu {
         let vw = vw.round().clamp(1.0, sw);
         let vh = vh.round().clamp(1.0, sh);
         (((sw - vw) / 2.0).floor(), ((sh - vh) / 2.0).floor(), vw, vh)
+    }
+
+    /// Where the picture goes: the held answer, never a fresh computation.
+    /// A frame is drawn from this, so a mode change reaches the screen as
+    /// one step -- the analysis, the fit, the chain's output size and the
+    /// preset's parameters all move together, before anything is drawn
+    /// (doc 03 rule 5).
+    fn viewport(&self) -> (f32, f32, f32, f32) {
+        self.geom
+    }
+
+    /// Render into a fixed surface instead of the window's (the headless
+    /// mode sweep and the calibration pass). A host-surface change like any
+    /// other, so the fit follows it.
+    fn force_surface(&mut self, size: (u32, u32)) {
+        self.forced_surface = Some(size);
+        self.geom = self.fit();
     }
 
     /// The surface the geometry stage fits the picture into.
@@ -505,17 +550,33 @@ impl Gpu {
         }
     }
 
-    /// Re-analyse when the guest changes mode: log what the surface means
-    /// and tell the CRT preset this mode's scanline count (doc 03 rule 3).
-    fn update_mode(&mut self) {
+    /// The picture on show changed size. Everything the geometry stage
+    /// decides is decided here: the mode analysis, what the window may be
+    /// shrunk to, the scanline count the CRT preset is told (doc 03 rule 3)
+    /// and the fit itself.
+    ///
+    /// This is the QEMU surface change, taken where it can be acted on. The
+    /// switch itself arrives on the QEMU thread (`on_switch`), up to a
+    /// refresh tick before the first frame of the new mode: re-fitting there
+    /// would draw the *old* pixels into the new mode's box for that tick,
+    /// which is the stretched leftover rule 5 forbids. The surface's own
+    /// texture is therefore the trigger -- it is (re)created by exactly the
+    /// three things that can change what is on screen, and each of them
+    /// calls this: the guest's framebuffer upload (`ensure_texture`), a 3D
+    /// slot taken or dropped (`use_slot`), and a slot re-imported at another
+    /// size (`import_slot`). Nothing derives geometry while a frame is
+    /// drawn.
+    fn guest_surface_changed(&mut self) {
         let Some((_, _, tw, th)) = self.current() else {
             return;
         };
         let (tw, th) = (*tw, *th);
         if self.mode.width == tw && self.mode.height == th {
+            self.geom = self.fit();
             return;
         }
         self.mode = mode::Mode::analyse(tw, th);
+        self.geom = self.fit();
         eprintln!("[display] mode {}", self.mode.describe());
         self.apply_min_size();
         let params = self.mode.shader_params();
@@ -567,7 +628,6 @@ impl Gpu {
         if self.current().is_none() {
             return;
         }
-        self.update_mode();
         // CRT chain: guest texture → viewport-sized output texture (doc 03)
         let (_, _, vw, vh) = self.viewport();
         let (vw, vh) = (vw.max(1.0) as u32, vh.max(1.0) as u32);
@@ -914,7 +974,7 @@ fn sweep_step(gpu: &mut Gpu, s: &mut Sweep) -> bool {
                 }
             }
         }
-        Some(_) => {} // preset has no scanline control; update_mode said so
+        Some(_) => {} // preset has no scanline control; guest_surface_changed said so
         None if s.want_chain => bad.push("the preset did not load".to_string()),
         None => {}
     }
@@ -1200,7 +1260,7 @@ impl ApplicationHandler for App {
                 eprintln!("calib: --shader is the whole point; nothing to shade with");
                 hard_exit(1);
             }
-            gpu.forced_surface = Some(SWEEP_SURFACE);
+            gpu.force_surface(SWEEP_SURFACE);
             println!("shading {} calibration pattern(s)", files.len());
             self.gpu = Some(gpu);
             self.source = Some(Source::Calib(Calib {
@@ -1218,7 +1278,7 @@ impl ApplicationHandler for App {
             // big enough that every mode in the table gets at least two
             // output pixels per scanline, so the count is measurable for all
             // of them rather than only the low-resolution ones
-            gpu.forced_surface = Some(SWEEP_SURFACE);
+            gpu.force_surface(SWEEP_SURFACE);
             self.gpu = Some(gpu);
             println!(
                 "mode sweep into {} at {}x{}",

@@ -29,13 +29,13 @@ geometry and awaiting doc 09's photo pass. A Trinitron preset is still worth
 having in the pack as a *style*, alongside "clean sharp" and "off" — it just
 is not what this rig's tube looked like.
 
-Implementation status (2026-09-05): the chain runs in `player/src/shader.rs`
+Implementation status (2026-09-07): the chain runs in `player/src/shader.rs`
 — guest texture in, viewport-sized output texture out, then the blit pass;
 `PLAYER_DUMP_OUT` reads the shaded texture back for tests. Mode analysis
-(rules 2 and 3 below) landed in `player/src/mode.rs`; the rest of M2 —
-geometry updates driven off the QEMU surface change rather than the frame,
-overscan crop, the curated preset pack, and the mode table the M7 device is
-fed from the player — is still open.
+(rules 2 and 3 below) landed in `player/src/mode.rs`, and the geometry stage
+is event-driven since 2026-09-07 ("The geometry stage's one moment" below);
+the rest of M2 — overscan crop, the curated preset pack, and the mode table
+the M7 device is fed from the player — is still open.
 
 ## Pixel accuracy rules (all testable)
 
@@ -65,7 +65,7 @@ fed from the player — is still open.
 monitor of the era: the display aspect the picture was meant to fill, the
 number of lines the CRT actually scanned, and whether the CRTC double-scanned
 to get there. The player re-runs it whenever the surface size changes
-(`Gpu::update_mode`) and prints one line per mode change:
+(`Gpu::guest_surface_changed`) and prints one line per mode change:
 
 ```
 [display] mode 320x200 VGA 320x200 (mode 13h) — 4:3 picture, pixel aspect 0.833, 400 scanlines (double-scanned)
@@ -108,6 +108,31 @@ the 1x picture in physical pixels — the displayed size, so an aspect-corrected
 mode counts its corrected width (320×200 → 534×400), not its framebuffer's —
 re-applied on every mode change and clamped to the monitor, since a mode larger
 than the screen would otherwise ask for a window that cannot be placed.
+
+**The geometry stage's one moment (2026-09-07).** Everything above is decided
+once, when something that decides it changes, and only read while a frame is
+drawn. The deciders are two: the picture's own size and the host surface's.
+`Gpu::guest_surface_changed` answers the first — it re-runs mode analysis,
+re-applies the window's minimum size, hands the preset this mode's scanline
+count and re-fits the rect; `Gpu::resize` answers the second, where the mode
+stands and only the fit is redone. Both write one held rect (`Gpu::geom`), and
+`viewport()` is the read of it. The draw derives nothing: before this, `render`
+re-ran the analysis and the fit two or three times a frame — once to size the
+chain's output texture, once for the blit's viewport — and pushed shader
+parameters and asked the window to resize itself from inside the draw.
+
+The trigger is the QEMU surface change, taken where it can be acted on. QEMU
+announces the switch on its own thread (`on_switch`) up to one refresh tick
+before the first frame of the new mode exists; re-fitting *there* would draw
+the old mode's pixels into the new mode's box for that tick, which is exactly
+the stretched leftover rule 5 forbids. The surface's own texture is the trigger
+instead, and it is (re)created by precisely the three things that can change
+what is on screen: the guest framebuffer's upload (`ensure_texture`), a 3D slot
+taken or dropped (`use_slot` — a 3D frame and the VGA surface need not be the
+same size), and a slot re-imported at another size (`import_slot`). So a mode
+change reaches the screen as one step: the analysis, the fit, the chain's
+output size and the preset's parameters all move together, with the pixels they
+belong to.
 
 **Screenshots (Ctrl+Alt+S).** The shot is of the *guest's* frame — the texture
 QEMU published, read back at the mode's own size, before the geometry stage
