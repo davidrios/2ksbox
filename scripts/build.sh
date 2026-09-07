@@ -11,9 +11,12 @@
 #   qemu    prepare-qemu.sh (overlay + patch queue) -> configure-qemu.sh
 #           -> ninja: qemu-system-i386, qemu-img, qemu-io,
 #           libqemu-embed-i386.{so,dylib}
-#   rust    cargo build --release: player, launcher, libdisc/discx,
-#           qemu-embed, shader-chain. After `qemu`, because the player
-#           links libqemu-embed out of build/qemu.
+#   rust    cargo build --release: player, libdisc/discx, launcher-core
+#           (with its `launcherx` verb binary), qemu-embed, shader-chain.
+#           After `qemu`, because the player links libqemu-embed out of
+#           build/qemu. Then `cargo check --release --workspace` for the
+#           two non-default members, `launcher` (egui) and
+#           `launcher-capi`: maintained, built by nobody (Cargo.toml).
 #   qt      cargo build --release in launcher-qt/ (its own workspace):
 #           the Qt 6 / QML launcher, which is the one every package ships
 #           (ADR-015). Needs Qt 6 development files; SKIPped without them,
@@ -232,8 +235,16 @@ fi
 if want rust; then
   if ! have cargo; then skip rust "no cargo" || true
   else
-    say "rust: cargo build --release (workspace)"
-    cargo build --release --workspace ${JOBS[@]+"${JOBS[@]}"}
+    say "rust: cargo build --release (default members)"
+    cargo build --release ${JOBS[@]+"${JOBS[@]}"}
+    # The two members that are not default members (Cargo.toml): the
+    # egui front end, which ADR-015 keeps maintained and no packager
+    # installs, and `launcher-capi`. Checked rather than built — a
+    # release link of eframe's 70 extra crates for a binary nothing
+    # runs is the cost this stage used to pay on every build — so the
+    # maintained half is still the half that cannot rot.
+    say "rust: cargo check --release --workspace (launcher, launcher-capi)"
+    cargo check --release --workspace ${JOBS[@]+"${JOBS[@]}"}
     BUILT+=(rust)
   fi
 fi

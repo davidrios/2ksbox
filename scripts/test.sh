@@ -331,14 +331,14 @@ cdimage_check() { # the block driver through qemu-img / qemu-io on the selftest 
 host_check_probe() { # `launcher --host-check` (ADR-013), on any host
   local rc=0 o
   # This host's own answer: either verdict is legal, the report is not.
-  o="$(target/release/launcher --host-check 2>&1)" || true
+  o="$(target/release/launcherx --host-check 2>&1)" || true
   case "$o" in *"Vulkan loader:"*) ;; *) echo "the report names no loader"; echo "$o"; rc=1;; esac
   case "$o" in *"Required: a 1.3 device"*) ;; *) echo "the report names no bar"; echo "$o"; rc=1;; esac
   # A host with no Vulkan driver at all, which every host can be made
   # into: both loader variables, since which one is read depends on how
   # old the loader is.
   o="$(VK_DRIVER_FILES=/nonexistent.json VK_ICD_FILENAMES=/nonexistent.json \
-       target/release/launcher --host-check 2>&1)" \
+       target/release/launcherx --host-check 2>&1)" \
     && { echo "exit 0 with no Vulkan driver"; rc=1; }
   case "$o" in *unavailable*) ;; *) echo "no Vulkan driver, yet not reported unavailable"; echo "$o"; rc=1;; esac
   case "$o" in *WineD3D*) ;; *) echo "no Vulkan driver, yet not pointed at WineD3D"; echo "$o"; rc=1;; esac
@@ -348,7 +348,7 @@ host_check_probe() { # `launcher --host-check` (ADR-013), on any host
   # will be slow — never a refusal (ADR-013).
   local lvp; lvp="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
   if [ -n "$lvp" ]; then
-    o="$(VK_DRIVER_FILES="$lvp" target/release/launcher --host-check 2>&1)" \
+    o="$(VK_DRIVER_FILES="$lvp" target/release/launcherx --host-check 2>&1)" \
       || { echo "a software driver was refused instead of warned about"; echo "$o"; rc=1; }
     case "$o" in *slow*) ;; *) echo "a software driver was not called slow"; echo "$o"; rc=1;; esac
     case "$o" in *"software, usable but slow"*) ;; *) echo "the software device was not listed as usable"; echo "$o"; rc=1;; esac
@@ -361,13 +361,13 @@ shelforder_check() { # the disc shelf is in order by label, all the way to the g
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
   : >"$dir/disk.qcow2"
-  bundle="$(target/release/launcher --new xp shelved "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+  bundle="$(target/release/launcherx --new xp shelved "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
   # Added in an order nobody would want to read them in: mixed case, and a
   # numbered set whose tenth disc a string sort files between 1 and 2.
   for f in "zork.iso" "blood disc 10.cue" "Blood disc 2.cue" "aladdin.iso" "Blood disc 1.cue"; do
     : >"$dir/$f"
   done
-  o="$(target/release/launcher --discs add "$dir/zork.iso" "$dir/blood disc 10.cue" \
+  o="$(target/release/launcherx --discs add "$dir/zork.iso" "$dir/blood disc 10.cue" \
         "$dir/Blood disc 2.cue" "$dir/aladdin.iso" "$dir/Blood disc 1.cue")" \
     || { echo "--discs add failed"; rc=1; }
   want="aladdin Blood disc 1 Blood disc 2 blood disc 10 zork"
@@ -376,7 +376,7 @@ shelforder_check() { # the disc shelf is in order by label, all the way to the g
   # And the same order in the flat file the guest's own CDSHELF program
   # lists (patch 52) — it is served by slot number, so the order the host
   # writes is the order the guest shows and the numbers a guest loads by.
-  shelf_file="$(target/release/launcher --discs publish "$(dirname "$bundle")" \
+  shelf_file="$(target/release/launcherx --discs publish "$(dirname "$bundle")" \
                 | sed -n 's/^shelf published to //p')"
   if [ -n "$shelf_file" ] && [ -f "$shelf_file" ]; then
     got="$(cut -f1 "$shelf_file" | tr '\n' ' ')"
@@ -386,7 +386,7 @@ shelforder_check() { # the disc shelf is in order by label, all the way to the g
   fi
   # A disc added later lands where its name belongs, not at the end.
   : >"$dir/Age of Empires.iso"
-  o="$(target/release/launcher --discs add "$dir/Age of Empires.iso" | cut -f1 | head -1)"
+  o="$(target/release/launcherx --discs add "$dir/Age of Empires.iso" | cut -f1 | head -1)"
   [ "$o" = "Age of Empires" ] || { echo "a disc added later did not land in order (first row: $o)"; rc=1; }
   return $rc
 }
@@ -484,18 +484,18 @@ dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M
   comma="$dir/Doom,Quake"; mkdir -p "$comma"; echo hi > "$comma/GAME.TXT"
   plain="$dir/patch13"; mkdir -p "$plain"; echo p > "$plain/PATCH.TXT"
   : >"$dir/disk.qcow2"
-  bundle="$(target/release/launcher --new xp folders "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+  bundle="$(target/release/launcherx --new xp folders "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
 
   # On the shelf a folder is labelled by its own name, extension and all
   # (`patch13` would lose its .3 to a file stem).
-  o="$(target/release/launcher --discs add "$spaced" "$comma" "$plain")" || { echo "--discs add failed"; rc=1; }
+  o="$(target/release/launcherx --discs add "$spaced" "$comma" "$plain")" || { echo "--discs add failed"; rc=1; }
   for want in "Shared Files	$spaced" "Doom,Quake	$comma" "patch13	$plain"; do
     case "$o" in *"$want"*) ;; *) echo "not on the shelf under its own name: $want"; echo "$o"; rc=1;; esac
   done
 
   # The flat file the guest's own CDSHELF program reads (patch 52) names a
   # folder the way QEMU has to be told to open one, and only that way.
-  shelf_file="$(target/release/launcher --discs publish "$(dirname "$bundle")" \
+  shelf_file="$(target/release/launcherx --discs publish "$(dirname "$bundle")" \
                 | sed -n 's/^shelf published to //p')"
   if [ -n "$shelf_file" ] && [ -f "$shelf_file" ]; then
     grep -q "	isodir:$spaced\$" "$shelf_file" || { echo "the shelf file does not name the folder as isodir:"; cat "$shelf_file"; rc=1; }
@@ -506,11 +506,11 @@ dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M
 
   # The boot drive: the prefix, and a comma written twice so that the
   # option string survives being parsed.
-  target/release/launcher --boot-disc "$bundle" "$spaced" >/dev/null || { echo "--boot-disc failed"; rc=1; }
-  args="$(target/release/launcher --print-args "$bundle")"
+  target/release/launcherx --boot-disc "$bundle" "$spaced" >/dev/null || { echo "--boot-disc failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *"file=isodir:$spaced "*) ;; *) echo "the boot drive does not name the folder as isodir:"; echo "$args"; rc=1;; esac
-  target/release/launcher --boot-disc "$bundle" "$comma" >/dev/null || { echo "--boot-disc (comma) failed"; rc=1; }
-  args="$(target/release/launcher --print-args "$bundle")"
+  target/release/launcherx --boot-disc "$bundle" "$comma" >/dev/null || { echo "--boot-disc (comma) failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *"file=isodir:$dir/Doom,,Quake "*) ;; *) echo "the comma in the path is not doubled"; echo "$args"; rc=1;; esac
 
   # And the point of all of it: our QEMU opens a folder as a disc, and the
@@ -522,8 +522,8 @@ dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M
   if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
     build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
     for d in "$plain" "$comma"; do
-      target/release/launcher --boot-disc "$bundle" "$d" >/dev/null || rc=1
-      args="$(target/release/launcher --print-args "$bundle")"
+      target/release/launcherx --boot-disc "$bundle" "$d" >/dev/null || rc=1
+      args="$(target/release/launcherx --print-args "$bundle")"
       # shellcheck disable=SC2086
       o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n' \
            | timeout 30 build/qemu/qemu-system-i386 $args \
@@ -542,24 +542,24 @@ pointer_check() { # the wizard's pointer switch, from a checkbox to a real QEMU
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
   : >"$dir/disk.qcow2"
-  bundle="$(target/release/launcher --new xp pointer "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
-  dos="$(target/release/launcher --new dos pointer-dos "$dir/disk.qcow2")" || { echo "--new dos failed"; return 1; }
+  bundle="$(target/release/launcherx --new xp pointer "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+  dos="$(target/release/launcherx --new dos pointer-dos "$dir/disk.qcow2")" || { echo "--new dos failed"; return 1; }
   # A Windows machine gets the tablet, which is what "no grab" is made
   # of; a DOS machine does not, because its mouse drivers read the PS/2
   # controller and would find no pointer at all.
-  args="$(target/release/launcher --print-args "$bundle")"
+  args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *"-device usb-tablet"*) ;; *) echo "a new XP machine has no tablet"; echo "$args"; rc=1;; esac
-  args="$(target/release/launcher --print-args "$dos")"
+  args="$(target/release/launcherx --print-args "$dos")"
   case "$args" in *usb*) echo "a new DOS machine has a tablet it cannot read"; echo "$args"; rc=1;; esac
   # The switch itself, through the real form: the tablet goes, and the
   # controller goes with it rather than staying behind with nothing on it.
-  target/release/launcher --wizard-edit "$bundle" - - - - - - noseamless >/dev/null \
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - noseamless >/dev/null \
     || { echo "--wizard-edit noseamless failed"; rc=1; }
-  args="$(target/release/launcher --print-args "$bundle")"
+  args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *usb*) echo "turning the seamless mouse off left USB behind"; echo "$args"; rc=1;; esac
-  target/release/launcher --wizard-edit "$bundle" - - - - - - seamless >/dev/null \
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - seamless >/dev/null \
     || { echo "--wizard-edit seamless failed"; rc=1; }
-  args="$(target/release/launcher --print-args "$bundle")"
+  args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *"-device usb-tablet"*) ;; *) echo "turning it back on did not restore the tablet"; echo "$args"; rc=1;; esac
   # And the point of it: our QEMU accepts both machines. Started paused
   # on the real binary and told to quit, so a refused device is an exit
@@ -567,7 +567,7 @@ pointer_check() { # the wizard's pointer switch, from a checkbox to a real QEMU
   if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
     build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
     for b in "$bundle" "$dos"; do
-      args="$(target/release/launcher --print-args "$b")"
+      args="$(target/release/launcherx --print-args "$b")"
       # shellcheck disable=SC2086
       o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n' \
            | timeout 30 build/qemu/qemu-system-i386 $args \
@@ -586,8 +586,8 @@ family_other_check() { # the "Other" family's hardware, from the picker to a rea
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
   : >"$dir/disk.qcow2"
-  bundle="$(target/release/launcher --new other beos "$dir/disk.qcow2")" || { echo "--new other failed"; return 1; }
-  args="$(target/release/launcher --print-args "$bundle")"
+  bundle="$(target/release/launcherx --new other beos "$dir/disk.qcow2")" || { echo "--new other failed"; return 1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
   # Standard hardware, and specifically *not* ours: `d3dpt-vga` needs the
   # display driver from the guest-tools ISO, which is a Windows driver, so
   # a BeOS or Linux guest on it would come up with no display at all.
@@ -601,8 +601,8 @@ family_other_check() { # the "Other" family's hardware, from the picker to a rea
   case "$args" in *"-nic none"*) ;; *) echo "networking off did not emit -nic none, so QEMU supplies a card of its own"; echo "$args"; rc=1;; esac
   case "$args" in *"ES1370,audiodev=embed0,addr=0x04"*) ;; *) echo "no ES1370 at 0x04"; echo "$args"; rc=1;; esac
   # And the card the checkbox turns on is doc 06's, in its own slot.
-  target/release/launcher --wizard-edit "$bundle" - - - net >/dev/null || { echo "--wizard-edit net failed"; rc=1; }
-  args="$(target/release/launcher --print-args "$bundle")"
+  target/release/launcherx --wizard-edit "$bundle" - - - net >/dev/null || { echo "--wizard-edit net failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *"rtl8139,netdev=n0,addr=0x03"*) ;; *) echo "no RTL8139 at 0x03"; echo "$args"; rc=1;; esac
   # The tablet is off here by default (`default_seamless_mouse`): an
   # absolute pointer needs the guest to agree it is absolute, and these
@@ -611,16 +611,16 @@ family_other_check() { # the "Other" family's hardware, from the picker to a rea
   # And the reason the addresses are written out: removing the NIC must
   # not slide the sound card up into its slot, which an installed guest
   # would see as its card having been swapped.
-  target/release/launcher --wizard-edit "$bundle" - - - nonet >/dev/null || { echo "--wizard-edit nonet failed"; rc=1; }
-  args="$(target/release/launcher --print-args "$bundle")"
+  target/release/launcherx --wizard-edit "$bundle" - - - nonet >/dev/null || { echo "--wizard-edit nonet failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *rtl8139*) echo "turning networking off left the NIC behind"; echo "$args"; rc=1;; esac
   case "$args" in *"ES1370,audiodev=embed0,addr=0x04"*) ;; *) echo "the sound card moved when the NIC went"; echo "$args"; rc=1;; esac
-  target/release/launcher --wizard-edit "$bundle" - - - net >/dev/null || { echo "--wizard-edit net failed"; rc=1; }
+  target/release/launcherx --wizard-edit "$bundle" - - - net >/dev/null || { echo "--wizard-edit net failed"; rc=1; }
   # Started paused on the real binary and told to quit, so a device our
   # QEMU does not have is an exit code rather than a hung guest.
   if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
     build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
-    args="$(target/release/launcher --print-args "$bundle")"
+    args="$(target/release/launcherx --print-args "$bundle")"
     # shellcheck disable=SC2086
     o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n' \
          | timeout 30 build/qemu/qemu-system-i386 $args \
@@ -644,8 +644,8 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
   # which is not a choice at all.
   for f in win98:"-device d3dpt-vga,addr=0x02" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga cirrus"; do
     want="${f#*:}"; f="${f%%:*}"
-    bundle="$(target/release/launcher --new "$f" "adapter-$f" "$dir/disk.qcow2")" || { echo "--new $f failed"; return 1; }
-    args="$(target/release/launcher --print-args "$bundle")"
+    bundle="$(target/release/launcherx --new "$f" "adapter-$f" "$dir/disk.qcow2")" || { echo "--new $f failed"; return 1; }
+    args="$(target/release/launcherx --print-args "$bundle")"
     case "$args" in *"$want"*) ;; *) echo "a new $f machine is not on $want"; echo "$args"; rc=1;; esac
   done
   # The switch itself, on a Windows machine: to the Cirrus Windows has an
@@ -658,24 +658,24 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
     # A new machine has no NIC (`bundle::default_network`), and the
     # question below is whether the cards *under* the adapter move when
     # it changes — so this one is given the card first.
-    target/release/launcher --wizard-edit "$bundle" - - - net >/dev/null \
+    target/release/launcherx --wizard-edit "$bundle" - - - net >/dev/null \
       || { echo "$f: --wizard-edit net failed"; rc=1; continue; }
-    target/release/launcher --wizard-edit "$bundle" - - - - - - - cirrus >/dev/null \
+    target/release/launcherx --wizard-edit "$bundle" - - - - - - - cirrus >/dev/null \
       || { echo "$f: --wizard-edit cirrus failed"; rc=1; continue; }
-    args="$(target/release/launcher --print-args "$bundle")"
+    args="$(target/release/launcherx --print-args "$bundle")"
     case "$args" in *"-vga cirrus"*) ;; *) echo "$f: the Cirrus did not arrive"; echo "$args"; rc=1;; esac
     case "$args" in *d3dpt-vga*) echo "$f: our adapter is still there beside the Cirrus"; echo "$args"; rc=1;; esac
     case "$args" in *"netdev=n0,addr=0x03"*) ;; *) echo "$f: the NIC moved when the adapter changed"; echo "$args"; rc=1;; esac
     # The standard VGA is not on offer to Windows — XP has no driver for
     # it at all — so asking for it must leave the machine as it was rather
     # than produce a guest with no display.
-    target/release/launcher --wizard-edit "$bundle" - - - - - - - std >/dev/null \
+    target/release/launcherx --wizard-edit "$bundle" - - - - - - - std >/dev/null \
       || { echo "$f: --wizard-edit std failed"; rc=1; continue; }
-    args="$(target/release/launcher --print-args "$bundle")"
+    args="$(target/release/launcherx --print-args "$bundle")"
     case "$args" in *"-vga std"*) echo "$f: was given the standard VGA, which has no driver there"; echo "$args"; rc=1;; esac
-    target/release/launcher --wizard-edit "$bundle" - - - - - - - d3dpt >/dev/null \
+    target/release/launcherx --wizard-edit "$bundle" - - - - - - - d3dpt >/dev/null \
       || { echo "$f: --wizard-edit d3dpt failed"; rc=1; continue; }
-    args="$(target/release/launcher --print-args "$bundle")"
+    args="$(target/release/launcherx --print-args "$bundle")"
     case "$args" in *"-device d3dpt-vga,addr=0x02"*) ;; *) echo "$f: our adapter did not come back"; echo "$args"; rc=1;; esac
   done
   # Every adapter on every family, on the real binary: started paused and
@@ -685,8 +685,8 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
     for f in win98:d3dpt win98:cirrus xp:d3dpt xp:cirrus other:std other:cirrus dos:-; do
       want="${f#*:}"; f="${f%%:*}"
       bundle="$dir/library/adapter-$f/machine.toml"
-      target/release/launcher --wizard-edit "$bundle" - - - - - - - "$want" >/dev/null || { rc=1; continue; }
-      args="$(target/release/launcher --print-args "$bundle")"
+      target/release/launcherx --wizard-edit "$bundle" - - - - - - - "$want" >/dev/null || { rc=1; continue; }
+      args="$(target/release/launcherx --print-args "$bundle")"
       # shellcheck disable=SC2086
       o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n' \
            | timeout 30 build/qemu/qemu-system-i386 $args \
@@ -748,21 +748,21 @@ optimizations_check() { # the wizard's fast-path switches, all the way to a real
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
   : >"$dir/disk.qcow2"
-  bundle="$(target/release/launcher --new xp opts "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+  bundle="$(target/release/launcherx --new xp opts "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
   # A machine nobody has touched must produce the command line it always
   # produced: no properties, and no `[optimizations]` table in the file.
-  args="$(target/release/launcher --print-args "$bundle")"
+  args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *-cpu\ pentium3\ *) ;; *) echo "a default machine names a CPU property"; echo "$args"; rc=1;; esac
   case "$args" in *=on*|*=off*) echo "a default machine names an optimization"; echo "$args"; rc=1;; esac
   grep -q '^\[optimizations\]' "$bundle" && { echo "a default machine wrote an [optimizations] table"; rc=1; }
   # Every switch, through the real form: off where it ships on, on where
   # it ships off, and each on the option QEMU looks it up on — a CPU
   # property on `-cpu`, an accelerator property on `-accel tcg`.
-  target/release/launcher --optimizations "$bundle" \
+  target/release/launcherx --optimizations "$bundle" \
     x87-fast off sse-fast off simd-fast off rep-fast off \
     smc-same-value off inline-lookup off pinned-regs on >"$OUT/optimizations-set.log" 2>&1 \
     || { echo "--optimizations failed"; cat "$OUT/optimizations-set.log"; rc=1; }
-  args="$(target/release/launcher --print-args "$bundle")"
+  args="$(target/release/launcherx --print-args "$bundle")"
   for p in x87-fast=off sse-fast=off simd-fast=off rep-fast=off; do
     case "$args" in *"-cpu pentium3,"*"$p"*) ;; *) echo "$p is not on -cpu"; echo "$args"; rc=1;; esac
   done
@@ -789,7 +789,7 @@ optimizations_check() { # the wizard's fast-path switches, all the way to a real
   fi
   # "All defaults" empties the table again rather than writing every
   # switch out at its shipped value.
-  target/release/launcher --optimizations "$bundle" defaults >/dev/null 2>&1 || rc=1
+  target/release/launcherx --optimizations "$bundle" defaults >/dev/null 2>&1 || rc=1
   grep -q '^\[optimizations\]' "$bundle" \
     && { echo "\"All defaults\" left an [optimizations] table behind"; rc=1; }
   return $rc
@@ -880,23 +880,23 @@ preview_anim_check() { # the shader preview keeps drawing (doc 07)
   # A preset that stands still: said to stand still, and the same picture
   # at any frame number. Also the probe — a box with no usable GPU can
   # answer none of this, and that is a skip, not a failure.
-  if ! PREVIEW_FRAME=0 target/release/launcher --preview-shader \
+  if ! PREVIEW_FRAME=0 target/release/launcherx --preview-shader \
        "$still" "$GOLDEN" "$OUT/preview-still-0.png" >"$OUT/preview-still.txt" 2>&1; then
     sed 's/^/  /' "$OUT/preview-still.txt"
     echo "no usable GPU for a headless preview"
     return 77
   fi
   grep -qx still "$OUT/preview-still.txt" || { echo "$still: reported as animated"; rc=1; }
-  PREVIEW_FRAME=7 target/release/launcher --preview-shader \
+  PREVIEW_FRAME=7 target/release/launcherx --preview-shader \
     "$still" "$GOLDEN" "$OUT/preview-still-7.png" >>"$OUT/preview-still.txt" 2>&1 || rc=1
   cmp -s "$OUT/preview-still-0.png" "$OUT/preview-still-7.png" \
     || { echo "$still: frames 0 and 7 differ — the frame number reaches a preset that does not read it"; rc=1; }
   # A preset that does not: said to animate, and two frame numbers really
   # are two pictures (this one interlaces, so it is half the frame).
-  PREVIEW_FRAME=0 target/release/launcher --preview-shader \
+  PREVIEW_FRAME=0 target/release/launcherx --preview-shader \
     "$moving" "$GOLDEN" "$OUT/preview-moving-0.png" >"$OUT/preview-moving.txt" 2>&1 || rc=1
   grep -qx animated "$OUT/preview-moving.txt" || { echo "$moving: reported as still"; rc=1; }
-  PREVIEW_FRAME=1 target/release/launcher --preview-shader \
+  PREVIEW_FRAME=1 target/release/launcherx --preview-shader \
     "$moving" "$GOLDEN" "$OUT/preview-moving-1.png" >>"$OUT/preview-moving.txt" 2>&1 || rc=1
   if cmp -s "$OUT/preview-moving-0.png" "$OUT/preview-moving-1.png"; then
     echo "$moving: frames 0 and 1 are the same picture — the preview would be frozen"
@@ -928,10 +928,10 @@ host_stage() {
   if [ -x target/release/discx ]; then
     run_check dirdisc dirdisc.log dirdisc_check || true
   else skip dirdisc "needs target/release/discx"; fi
-  if [ -x target/release/launcher ]; then
+  if [ -x target/release/launcherx ]; then
     run_check dirshelf dirshelf.log dirshelf_check || true
     run_check shelforder shelforder.log shelforder_check || true
-  else skip dirshelf "needs target/release/launcher"; skip shelforder "needs target/release/launcher"; fi
+  else skip dirshelf "needs target/release/launcherx"; skip shelforder "needs target/release/launcherx"; fi
   # The launcher's own window (ADR-015: the Qt build is the one every
   # package installs). Still conditional, because it is its own cargo
   # workspace and a host with no Qt 6 builds everything else.
@@ -952,9 +952,9 @@ host_stage() {
   # exits non-zero and is pointed at the WineD3D path, that a software
   # driver is warned about rather than refused, and that a report always
   # names the loader and the bar it was judged against.
-  cargo build --release -p launcher -q 2>"$OUT/host-check-build.log" \
+  cargo build --release -p launcher-core --bin launcherx -q 2>"$OUT/host-check-build.log" \
     && run_check host-check host-check.log host_check_probe \
-    || { [ -x target/release/launcher ] || { FAIL+=(host-check); echo "  FAIL host-check (build)"; }; }
+    || { [ -x target/release/launcherx ] || { FAIL+=(host-check); echo "  FAIL host-check (build)"; }; }
 
   # the wizard's emulation-optimization switches (patches/qemu/README.md):
   # that a machine nobody has touched still produces the command line it
@@ -964,16 +964,16 @@ host_stage() {
   # The switches' *effect* is the guest batteries' job (x87-guest,
   # sse-guest, rep-guest, smc-guest); this is the wiring between them and
   # a checkbox.
-  cargo build --release -p launcher -q 2>"$OUT/optimizations-build.log" \
+  cargo build --release -p launcher-core --bin launcherx -q 2>"$OUT/optimizations-build.log" \
     && run_check optimizations optimizations.log optimizations_check \
-    || { [ -x target/release/launcher ] || { FAIL+=(optimizations); echo "  FAIL optimizations (build)"; }; }
+    || { [ -x target/release/launcherx ] || { FAIL+=(optimizations); echo "  FAIL optimizations (build)"; }; }
 
   # the wizard's pointer switch: a new Windows machine gets the USB tablet
   # (absolute — the host pointer is the guest cursor and the window never
   # grabs), a new DOS machine does not (its mouse drivers read the PS/2
   # controller), the checkbox adds and removes the device *and* its
   # controller, and our QEMU accepts both machines.
-  if [ -x target/release/launcher ]; then
+  if [ -x target/release/launcherx ]; then
     run_check pointer pointer.log pointer_check || true
   fi
 
@@ -982,7 +982,7 @@ host_stage() {
   # adapter, whose driver is a Windows driver — so the check is that a new
   # one comes out on standard hardware, with the cards pinned where an
   # installed guest will not see them move.
-  if [ -x target/release/launcher ]; then
+  if [ -x target/release/launcherx ]; then
     run_check family-other family-other.log family_other_check || true
   fi
 
@@ -990,7 +990,7 @@ host_stage() {
   # it has a real driver question about — Windows ours against the one it
   # has an in-box driver for, Other the two standard ones, DOS neither —
   # and changing it must not move the cards pinned below it.
-  if [ -x target/release/launcher ]; then
+  if [ -x target/release/launcherx ]; then
     run_check display-adapter display-adapter.log display_adapter_check || true
   fi
 
@@ -1155,10 +1155,10 @@ host_stage() {
   # the launcher's shader preview, which unlike the player renders only
   # when asked: that it knows which presets it must keep asking about,
   # and that a frame number really does change their picture (doc 07)
-  if [ -f third_party/slang-shaders/crt/crt-beans-vga.slangp ] && [ -x target/release/launcher ]; then
+  if [ -f third_party/slang-shaders/crt/crt-beans-vga.slangp ] && [ -x target/release/launcherx ]; then
     run_check preview-anim preview-anim.log preview_anim_check || true
   else
-    skip preview-anim "needs the slang-shaders submodule and target/release/launcher"
+    skip preview-anim "needs the slang-shaders submodule and target/release/launcherx"
   fi
 
   # the reference scene and the feature test natively over DXVK; window-less

@@ -1,11 +1,18 @@
 [workspace]
 resolver = "2"
 members = ["player", "libdisc", "launcher", "launcher-core", "launcher-capi", "qemu-embed", "shader-chain"]
-# `launcher-capi` is a member (so `cargo check --workspace` covers it and
-# it cannot rot) but not a *default* one: it builds a `cdylib` and a
-# `staticlib` of the whole launcher, which nobody needs unless they are
-# building a front end in another language. `cargo build -p launcher-capi`.
-default-members = ["player", "libdisc", "launcher", "launcher-core", "qemu-embed", "shader-chain"]
+# Two members are deliberately not *default* members — they are built by
+# name, and `cargo check --workspace` (scripts/build.sh) is what keeps
+# them from rotting. `launcher-capi` builds a `cdylib` and a `staticlib`
+# of the whole launcher, which nobody needs unless they are building a
+# front end in another language. `launcher` is the egui front end, which
+# ADR-015 keeps maintained and no packager installs: it costs 70 crates
+# nobody else in this workspace needs (eframe, accesskit, harfrust, icu)
+# for a window that no scripted check ever opens. The toolkit-free debug
+# verbs both front ends share are `launcher-core`'s `launcherx` binary,
+# so `scripts/test.sh` does not need either of them.
+# `cargo build -p launcher` / `-p launcher-capi` when you want them.
+default-members = ["player", "libdisc", "launcher-core", "qemu-embed", "shader-chain"]
 
 [workspace.package]
 version = "0.0.1"

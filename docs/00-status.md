@@ -76,7 +76,13 @@ scripts/build.sh             # ALL of it: qemu, rust, the Qt launcher, dxvk, the
 # The stages it runs, for driving one by hand:
 scripts/prepare-qemu.sh && scripts/configure-qemu.sh
 ninja -C build/qemu qemu-system-i386 qemu-img qemu-io libqemu-embed-i386.so     # .dylib on macOS
-cargo build --release
+cargo build --release                       # the default members: player, discx,
+                                            # launcher-core (and its `launcherx` verb
+                                            # binary), qemu-embed, shader-chain
+cargo check --release --workspace           # the two non-default members, `launcher`
+                                            # (egui) and `launcher-capi`: maintained,
+                                            # installed by nothing, so checked and not
+                                            # release-linked (2026-09-07)
 (cd launcher-qt && cargo build --release)   # the launcher the packages install (needs Qt 6)
 # qemu/embed/
 # is a COPY of embed/ (prepare-qemu.sh rsyncs it); a stale copy links the

@@ -687,6 +687,21 @@ lacked twenty. And `--preview-shader` on the two binaries renders
 byte-identical PNGs, which is a check that they really are linking one
 implementation rather than two that agree today.
 
+**And a third caller, with no toolkit at all** (2026-09-07).
+`launcher-core/src/bin/launcherx.rs` is `cli::run` and nothing else, ~20
+lines. It exists because the debug verbs are how the launcher is tested
+— `scripts/test.sh` invokes them 62 times — and until then the suite got
+them out of the egui binary, which meant that every build on every host
+paid for eframe and its ~70 exclusive crates (accesskit, harfrust, icu)
+to answer `--print-args`. With `launcherx` the suite needs neither
+toolkit, and `launcher` could leave the root workspace's
+`default-members`: `scripts/build.sh` builds the default members and then
+`cargo check --release --workspace`, so the front end ADR-015 keeps
+maintained still cannot rot, and no build links a 25 MB binary that no
+packager installs. The verbs `launcherx` deliberately cannot answer are
+the two that *are* a toolkit — `--pick-file` / `--pick-folder`, and the
+`--diag-*` frame grabs.
+
 **Rejected: pick one toolkit.** The 2026-09-06 spike's finding stands —
 nothing justifies switching to Qt (egui is pure Rust, one `cargo build`
 on every platform, and its shader preview is a texture id where Qt needs

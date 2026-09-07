@@ -716,7 +716,13 @@ Four checks, all of which run without a GUI click:
   rest for both binaries, where the Qt build used to reimplement two of
   them and lack the other twenty. (`--pick-file` is the one exception: it
   pops `rfd`'s dialog, and Qt's is declarative. The `--diag-*` screenshot
-  verbs are each toolkit's own, for the same reason.)
+  verbs are each toolkit's own, for the same reason.) Since 2026-09-07
+  there is a **third** caller with no toolkit behind it at all —
+  `target/release/launcherx`, `launcher-core`'s own binary — and that is
+  the one `scripts/test.sh` and `tools/dos-guest-test.py` drive, so a
+  suite that runs before every commit builds neither eframe nor Qt to ask
+  `--print-args` a question. It is also why `launcher` is no longer a
+  default member of the root workspace (ADR-014, README).
 - **A machine created through each front end's real window is the same
   machine.** `--diag-wizard-frame` drives the egui form headlessly;
   `LAUNCHER_QT_SCREEN=create LAUNCHER_QT_ARG=dos:<name>` drives the QML

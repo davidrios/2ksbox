@@ -49,7 +49,13 @@ backend later.
   Nothing that a second front end could get differently goes in a front
   end: not a default that follows the family, not a note under a
   checkbox, not a combo box's labels. Every toolkit-free debug verb is
-  `launcher_core::cli`, so both binaries answer them identically.
+  `launcher_core::cli`, so both binaries answer them identically — and so
+  does `launcherx`, `launcher-core`'s own toolkit-free binary, which is
+  what `scripts/test.sh` and `tools/dos-guest-test.py` drive. Since
+  2026-09-07 `launcher` (egui) is **not a default workspace member**:
+  `cargo build --release` skips it and its ~70 exclusive crates,
+  `scripts/build.sh` follows with `cargo check --release --workspace` so
+  it still cannot rot, and `cargo build -p launcher` builds it.
   `launcher-capi/` is the same thing as a C ABI, for a front end in
   another language. `launcher-qt` is not in the root workspace, so
   `cargo build` never needs Qt 6.
@@ -140,7 +146,8 @@ runs, for when a single stage has to be driven by hand:
 ```sh
 scripts/prepare-qemu.sh && scripts/configure-qemu.sh
 ninja -C build/qemu qemu-system-i386 qemu-img qemu-io libqemu-embed-i386.so   # .dylib on macOS
-cargo build --release
+cargo build --release                       # default members (not the egui launcher)
+cargo check --release --workspace           # `launcher` + `launcher-capi`, kept from rotting
 (cd launcher-qt && cargo build --release)   # the launcher the packages ship; needs Qt 6
 # configure-qemu.sh also builds libdisc (the CD-ROM model) and links it into QEMU (patch 50)
 # Direct3D pass-through (doc 14) needs the executor too:

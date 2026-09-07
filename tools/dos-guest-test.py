@@ -36,7 +36,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "build/dos-guest")
 QEMU = os.path.join(ROOT, "build/qemu/qemu-system-i386")
 QEMU_IMG = os.path.join(ROOT, "build/qemu/qemu-img")
-LAUNCHER = os.path.join(ROOT, "target/release/launcher")
+LAUNCHER = os.path.join(ROOT, "target/release/launcherx")
 
 spec = importlib.util.spec_from_file_location("x87gt", os.path.join(ROOT, "tools/x87-guest-test.py"))
 x87gt = importlib.util.module_from_spec(spec)
@@ -158,7 +158,7 @@ def main():
     x87gt.ensure_floppy()
     os.makedirs(OUT, exist_ok=True)
     if not os.path.exists(LAUNCHER):
-        raise SystemExit("%s not built (cargo build --release -p launcher)" % LAUNCHER)
+        raise SystemExit("%s not built (cargo build --release -p launcher-core --bin launcherx)" % LAUNCHER)
 
     failures = []
 

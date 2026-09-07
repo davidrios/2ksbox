@@ -15,8 +15,9 @@
 #           qemu-img.exe, qemu-io.exe, libqemu-embed-i386.dll, into
 #           build/win/qemu (with libdisc built for windows-gnu first)
 #   rust    cargo build --release --target x86_64-pc-windows-gnu: the
-#           player, the launcher, discx. After `qemu`, because the player
-#           links the embed DLL out of build/win/qemu.
+#           player, launcher-core, discx. After `qemu`, because the
+#           player links the embed DLL out of build/win/qemu. Not the
+#           egui launcher — a non-default member nothing installs.
 #   qt      cargo build in launcher-qt/ (its own workspace): the Qt 6 /
 #           QML front end, the second of doc 07's two maintained ones.
 #           Cross-compiled like everything else — the image carries the
@@ -93,7 +94,11 @@ fi
 
 if want rust; then
   say "rust: cargo build --release --target x86_64-pc-windows-gnu"
-  inw cargo build --release --target x86_64-pc-windows-gnu --workspace ${JOBS[@]+"${JOBS[@]}"}
+  # Default members only (Cargo.toml): the egui front end is a
+  # non-default member that no packager installs, and cross-building it
+  # cost this stage eframe's 70 extra crates inside the container. The
+  # native `scripts/build.sh` is where it is kept from rotting.
+  inw cargo build --release --target x86_64-pc-windows-gnu ${JOBS[@]+"${JOBS[@]}"}
   BUILT+=(rust)
 fi
 

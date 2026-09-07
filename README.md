@@ -148,8 +148,29 @@ installed by nothing.
 
 ```sh
 cd launcher-qt && cargo build --release # Qt 6 / QML through cxx-qt; what ships
-cargo build --release -p launcher       # egui/eframe; the second view
+cargo build --release -p launcher       # egui/eframe; the second view, not a default member
 ```
+
+Neither is a *default* member of the root workspace: `launcher` left
+`default-members` on 2026-09-07, because it costs 70
+crates nobody else needs (eframe, accesskit, harfrust, icu) for a binary
+no packager installs. `scripts/build.sh`'s `rust` stage builds the
+default members and then `cargo check --release --workspace`, so the
+front end still cannot rot unnoticed.
+
+The toolkit-free debug verbs — `--print-args`, `--new`, `--discs`,
+`--host-check`, `--wizard-edit`, everything in `launcher_core::cli` —
+are a binary of their own, so a scripted check needs neither toolkit:
+
+```sh
+cargo build --release -p launcher-core --bin launcherx
+target/release/launcherx --print-args ~/.local/share/2ksbox/machines/xp/machine.toml
+```
+
+`launcherx` is what `scripts/test.sh` and `tools/dos-guest-test.py` drive
+the launcher through. The verbs it cannot answer are the two that *are* a
+toolkit: `--pick-file` / `--pick-folder` (a real OS dialog) and the
+`--diag-*` frame grabs.
 
 `launcher-qt` declares its own workspace, so a plain `cargo build` at the
 root never needs Qt 6 development files — `scripts/build.sh` has a `qt`
