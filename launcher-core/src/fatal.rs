@@ -54,6 +54,14 @@ pub fn note(what: &str) {
     append(&format!("[start] {what}"));
 }
 
+/// One line for the log that is neither a start-up milestone nor a
+/// death: something worth having in the file when a report comes back.
+/// The player's command line is the one that matters — see
+/// [`crate::player::spawn`].
+pub fn entry(line: &str) {
+    append(line);
+}
+
 /// Say the last words: into the log always, and into a message box on
 /// Windows, where there is no console to print to and the user is
 /// looking at an empty desktop wondering what happened.

@@ -184,10 +184,25 @@ pub fn spawn(
         args.extend(extra);
     }
     let bin = player_binary();
+    let mut argv: Vec<String> = shader_args(machine);
+    argv.push("--".into());
+    argv.extend(args);
+    // The line itself, before anything is spawned: it is the first thing
+    // to ask for when a machine does not start, and until now the only
+    // way to see it was to run a debug verb by hand and hope it produced
+    // the same one. It goes to all three places a person might look —
+    // the launcher's own log (the file `2ksbox-debug.bat` collects and
+    // the one a Flatpak user can still read), the player's log beside it,
+    // and the terminal when there is one.
+    let line = command_line(&bin, &argv);
+    crate::fatal::entry(&format!("[player] {line}"));
+    if crate::console::inherits_output() {
+        eprintln!("launcher: {line}");
+    }
     let mut cmd = crate::console::command(&bin);
-    cmd.args(shader_args(machine)).arg("--").args(args);
+    cmd.args(&argv);
     if !crate::console::inherits_output() {
-        if let Some(log) = open_log(&machine.name) {
+        if let Some(log) = open_log(&machine.name, &line) {
             let dup = log.try_clone();
             cmd.stdout(log);
             if let Ok(dup) = dup {
@@ -198,6 +213,34 @@ pub fn spawn(
     cmd.spawn().map_err(|e| std::io::Error::other(format!("running {}: {e}", bin.display())))
 }
 
+/// The spawn as one line someone can paste into a shell. Quoting is the
+/// point: half of these arguments are QEMU option strings with commas and
+/// equals signs in them, and a machine or a disc image with a space in
+/// its name is ordinary — a line that cannot be pasted back is a line
+/// that misleads about what was run. Single quotes on Unix, double on
+/// Windows, which is what each shell actually parses.
+fn command_line(bin: &std::path::Path, argv: &[String]) -> String {
+    let mut out = quote(&bin.display().to_string());
+    for a in argv {
+        out.push(' ');
+        out.push_str(&quote(a));
+    }
+    out
+}
+
+fn quote(s: &str) -> String {
+    let plain = !s.is_empty()
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_=,.:/+@".contains(c));
+    if plain {
+        return s.to_string();
+    }
+    if cfg!(windows) {
+        format!("\"{}\"", s.replace('"', "\\\""))
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
 /// Where a windowless launcher puts the player's output: one file beside
 /// the machine library, appended to, so the run before last is still
 /// there when someone thinks to look.
@@ -205,7 +248,7 @@ pub fn log_path() -> Option<PathBuf> {
     crate::paths::data_dir().map(|d| d.join("player.log"))
 }
 
-fn open_log(machine: &str) -> Option<std::fs::File> {
+fn open_log(machine: &str, command: &str) -> Option<std::fs::File> {
     use std::io::Write;
     let path = log_path()?;
     if let Some(parent) = path.parent() {
@@ -217,6 +260,7 @@ fn open_log(machine: &str) -> Option<std::fs::File> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let _ = writeln!(f, "\n=== {machine} — player started, unix time {secs} ===");
+    let _ = writeln!(f, "{command}");
     Some(f)
 }
 

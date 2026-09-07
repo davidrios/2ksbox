@@ -100,7 +100,13 @@ backend later.
   on garbage bytecode; palettized textures and colour keying since v8,
   both expanded to A8R8G8B8 on the host; vertex / index buffers in VRAM
   since v9 — a `DRAW8` names the buffer and offset, the host reads it
-  from VRAM, `ddflags=0x100000` is the A/B). Win98 stays on `-vga cirrus`.
+  from VRAM, `ddflags=0x100000` is the A/B). **Win98 is on the same
+  adapter since 2026-09-07** — the launcher's Win98 machines are
+  `-vga none -device d3dpt-vga` with the M10 driver (doc 19), where they
+  used to be `-vga cirrus`; an image installed before that finds new
+  hardware on its next start and wants the driver from the guest-tools
+  ISO before it has its desktop back. The test tools keep their own
+  cirrus machines.
 
 ## Conventions
 
@@ -367,9 +373,12 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   power off leaves the FAT dirty, so the *next* boot comes up in **safe
   mode** — no driver, no VxD, an empty debug log, which reads exactly like
   the thing under test having failed.
-- Win98 runs `-vga cirrus` (inbox driver). XP runs `-vga none -device
-  d3dpt-vga` with our driver (doc 15); without the driver installed it is a
-  plain VGA (vga.sys, 800×600×4), and `-vga std` has no XP driver at all.
+- Win98 and XP both run `-vga none -device d3dpt-vga` with our driver
+  (docs 19 and 15; Win98 since 2026-09-07 — the tools in the table above
+  still boot their own `-vga cirrus` machines, which is where the inbox
+  driver is still exercised). Without our driver installed the adapter is
+  a plain VGA (on XP that is vga.sys, 800×600×4), and `-vga std` has no XP
+  driver at all.
   Kernel-mode debugging = the device's DEBUG register → QEMU log; never a
   debugger. Miniport headers: `ntdef.h`+`ddk/miniport.h`, **not** `ntddk.h`.
   dxg drops the whole HAL for `DDCAPS_GDI`, palette caps and colour-key

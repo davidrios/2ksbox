@@ -781,25 +781,43 @@ impl Machine {
         // below (`query-pci` says so), which is the opposite of what the
         // setting means.
         //
-        // The XP devices carry explicit PCI addresses because removing
-        // the NIC would otherwise slide the sound card up into its slot,
-        // and a card that moves is a hardware change an installed
-        // Windows re-detects. These are the addresses those devices
-        // already get from their `-device` order today, so pinning them
-        // changes nothing for an existing machine — it only keeps them
-        // still when the NIC comes and goes. Win98 needs none of this:
-        // its display is `-vga` (not a `-device`) and its SB16 is ISA,
-        // so its NIC is the only card in the sequence.
+        // The Windows devices carry explicit PCI addresses because
+        // removing the NIC would otherwise slide the card below it up
+        // into its slot, and a card that moves is a hardware change an
+        // installed Windows re-detects. These are the addresses those
+        // devices already get from their `-device` order today, so
+        // pinning them changes nothing for an existing machine — it only
+        // keeps them still when the NIC comes and goes. DOS needs none of
+        // it: its display is `-vga` (not a `-device`) and its SB16 is
+        // ISA, so its NIC is the only card in the sequence.
         if !self.network {
             args.extend(["-nic".into(), "none".into()]);
         }
         match self.family {
+            // The same adapter as XP since 2026-09-07 (doc 19, M10):
+            // `d3dpt-vga` with our own display driver, where this family
+            // used to get `-vga cirrus` and Windows' in-box driver. The
+            // adapter is what the whole display path is built on — the
+            // linear frame buffer the player scans out, the mode table,
+            // the page flips that pace a game — and a 98 machine on
+            // cirrus has none of it.
+            //
+            // **An existing Win98 machine sees new hardware on its next
+            // start.** That is a real consequence and not a detail: the
+            // guest finds an unknown adapter, comes up in plain VGA, and
+            // wants the driver installed from the guest-tools ISO
+            // (`SETUP`, doc 19 §16) before it has its desktop back. The
+            // machine boots either way.
             Family::Win98 => {
-                args.extend(["-vga".into(), "cirrus".into()]);
+                args.extend(["-vga".into(), "none".into()]);
+                args.extend(["-device".into(), "d3dpt-vga,addr=0x02".into()]);
                 if self.network {
                     args.extend(["-netdev".into(), "user,id=n0".into()]);
-                    args.extend(["-device".into(), "pcnet,netdev=n0".into()]); // in-box 98 driver
+                    // in-box 98 driver
+                    args.extend(["-device".into(), "pcnet,netdev=n0,addr=0x03".into()]);
                 }
+                // ISA, so it is not in the PCI sequence above and does
+                // not move when the NIC comes and goes.
                 args.extend(["-device".into(), "sb16,audiodev=embed0".into()]);
             }
             // The 1994 PC: the same chipset and the SB16 doc 06 already

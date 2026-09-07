@@ -246,6 +246,14 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
 The launcher is optional by design: hand-written bundles + the player binary
 is a fully supported path.
 
+**Every Play is logged with the line it ran** (2026-09-07): the player
+binary, its shader arguments, `--` and every QEMU argument, quoted so it
+pastes back into a shell — into `launcher.log` as `[player] …`, into the
+head of `player.log`, and onto the terminal when the launcher has one.
+The command is derived from the bundle at spawn time (the family's
+devices, the disc shelf, the QMP socket, the shader profile), so a bundle
+alone does not say what ran; this does.
+
 ### How the launcher reaches a running machine (decided at M6, 2026-09-05)
 
 Snapshots and disc swaps on a machine that is already up need the guest's
