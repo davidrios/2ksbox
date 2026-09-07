@@ -252,35 +252,47 @@ Read out of the crash with `wine winedbg` and `objdump`:
 Which is exactly the `rip=0` with a return address inside `pthread_once`
 that every dump of `launcher-qt.exe` shows, on wine and on the user's PC.
 
-The cure is to stop the C++ runtime spanning two modules on that call: a
-statically linked `libstdc++` in the exe, a toolchain whose
-`std::call_once` does not use emutls (mingw's *win32* threads model uses
-`InitOnceExecuteOnce`), or a cxx-qt that does not use `std::call_once` in
-its crate initialiser. `-C link-arg=-static-libstdc++` alone does **not**
-do it — something on the link line still asks for the DLL and the exe
-keeps importing `__once_proxy`. That is where this got to;
-`tools/qtmin/README.md` is the recipe for the next attempt.
+**Fixed the same day**, in eleven lines
+(`launcher-qt/src/once_proxy.cpp`, and the same file in the reproducer):
 
-**Open: the Qt binary does not start under wine.** It faults on a call to
-address 0 before `main` runs, with either subsystem. The egui binary in
-the same folder, with the same DLLs, answers `--paths` fine, so the
-package is not the problem, and the backtrace is one unwalkable frame at
-address 0 (which is what a jump through a null thunk looks like). Two
-candidates, in order: cxx-qt's whole-archive static initialisers (the QML
-type registration that runs before `main`, which would break on real
-Windows too), and wine's own Qt 6 support.
+```cpp
+namespace std { extern __thread void (*__once_call)(); }
+extern "C" void __once_proxy() { std::__once_call(); }
+```
 
-Two things narrow it, both from 2026-09-06's instrumentation. With
-`WINEDEBUG=+loaddll` the loader gets **all the way through** the DLL set
-— `Qt6Core`, `Qt6Gui`, `Qt6Network`, `Qt6Qml` and the system libraries
-after them — and only then faults on the main thread, so nothing is
-missing and it is initialiser code that runs. And `launcher.log` is
-**never created**, although the first statement in that binary's `main`
-is what opens it (`fatal::install("qt")`): the process does not reach
-`main` at all. That is a static initialiser, not anything the launcher
-does — the first candidate, and ours to fix if real Windows agrees. The
-packaging checks report rather than fail for `--qt` so the artefact
-exists to try there.
+A local definition is one the linker prefers over an import, so the proxy
+that runs is ours, and it reads `__once_call` through *this* module's
+emutls — the registry `call_once` just wrote it to. It is exactly what
+libstdc++'s own proxy does (`src/c++11/mutex.cc`): the function exists
+only to be a plain `void()` whose address `pthread_once` can take. It
+compiles to nothing off Windows, where the C++ runtime is one module.
+
+All three rungs of `qtmin` reach `main` with it, and **the Qt package
+passes every check the egui one does** — `--paths` from inside the
+package, its own `launcher.log`, and the packaged `qemu-img` driven
+through the wizard, all under wine. The three excuses
+`package-windows.sh` used to make for `--qt` are gone with the bug, so a
+Qt package that cannot do those things fails now.
+
+What did *not* work, for the next person who meets this: `-C
+link-arg=-static-libstdc++` (something on the link line still asks for
+the DLL, and the exe keeps importing `__once_proxy`),
+`-C link-self-contained=no`, and `-C link-arg=-shared-libgcc` — rustc
+links libgcc statically for this target regardless, so there are still
+two emutls registries. This fix makes that harmless rather than arguing
+with it.
+
+**The Qt binary did not start at all** — on wine or on the user's PC,
+where it exited `0xC0000005` — until the `std::call_once` fix above. It
+faulted on a call to address 0 before `main` ran, with either subsystem,
+while the egui binary in the same folder with the same DLLs answered
+`--paths` fine. Two things narrowed it before `tools/qtmin` named it:
+with `WINEDEBUG=+loaddll` the loader gets **all the way through** the DLL
+set — `Qt6Core`, `Qt6Gui`, `Qt6Network`, `Qt6Qml` and the system
+libraries after them — and only then faults, so nothing was missing; and
+`launcher.log` was **never created**, although the first statement in
+that binary's `main` is what opens it (`fatal::install("qt")`), so the
+process never reached `main`.
 
 ### OpenGL in the embed library
 
@@ -376,11 +388,9 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    The QMP monitor's `fd=` is a CRT descriptor and the QEMU beside it has
    libslirp now, which is where runs two and four stopped; what a guest
    does under WHPX is the next unknown.
-3. **A `std::call_once` that does not span two modules**, which is the
-   Qt binary's fault, now found (above) and reproduced in three lines of
-   `tools/qtmin`. The three candidate cures are listed there; the one to
-   try first is a genuinely static `libstdc++` in the exe, since the
-   others are somebody else's toolchain or somebody else's crate.
+3. **Run the Qt package on the PC.** It starts now, and does real work
+   under wine; whether its window comes up on Windows is the next thing
+   only that machine can say.
 4. **A Win98 guest with 3D on real Windows.** The WGL backend is written
    and its sequence passes under wine (`tools/wgl-probe.exe`), but no
    guest has used it.

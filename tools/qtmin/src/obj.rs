@@ -9,7 +9,10 @@ pub mod ffi {
     #[auto_cxx_name]
     extern "RustQt" {
         #[qobject]
-        #[cfg_attr(feature = "qml", qml_element)]
+        // Always registered as a QML type: `cfg_attr` is not one of the
+        // attributes a cxx-qt bridge accepts, and an unused registration
+        // costs the `bridge` rung nothing.
+        #[qml_element]
         #[qproperty(QString, label)]
         type Thing = super::ThingRust;
     }

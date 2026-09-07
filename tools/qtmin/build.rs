@@ -6,13 +6,16 @@ fn main() {
     {
         // Rung 1: link Qt and cxx-qt-lib, no bridge at all -- so no moc,
         // no generated C++, no static initialisers of cxx-qt's own.
-        cxx_qt_build::CxxQtBuilder::new().build();
+        cxx_qt_build::CxxQtBuilder::new().cpp_file("src/once_proxy.cpp").build();
     }
     #[cfg(all(feature = "bridge", not(feature = "qml")))]
     {
         // Rung 2: one QObject through a bridge. moc runs, generated C++
         // is compiled in, but nothing registers a QML type.
-        cxx_qt_build::CxxQtBuilder::new().file("src/obj.rs").build();
+        cxx_qt_build::CxxQtBuilder::new()
+            .file("src/obj.rs")
+            .cpp_file("src/once_proxy.cpp")
+            .build();
     }
     #[cfg(feature = "qml")]
     {
@@ -23,6 +26,7 @@ fn main() {
             cxx_qt_build::QmlModule::new("com.min").qml_files(["qml/Main.qml"]),
         )
         .file("src/obj.rs")
+        .cpp_file("src/once_proxy.cpp")
         .build();
     }
 }

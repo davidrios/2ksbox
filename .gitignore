@@ -5,6 +5,10 @@
 # written by cxx-qt-build for the QML language server; holds this
 # machine's absolute build path
 /launcher-qt/.qmlls.ini
+# `tools/qtmin` is a third cargo workspace, for the same reason, and
+# cxx-qt-build leaves the same file in it (M11)
+/tools/qtmin/target
+/tools/qtmin/.qmlls.ini
 *.o
 *.so
 *.dylib

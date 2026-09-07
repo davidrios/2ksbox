@@ -53,10 +53,30 @@ The chain, read out of the crash with `wine winedbg` and `objdump`:
 Which is the `rip=0` with a return address inside `pthread_once` that
 every crash dump of that binary shows.
 
-The cure is to stop the C++ runtime spanning two modules for this call —
-a statically linked `libstdc++` in the exe, or a toolchain whose
-`std::call_once` does not use emutls (mingw's *win32* threads model uses
-`InitOnceExecuteOnce`), or a cxx-qt that does not use `std::call_once` in
-its crate initialiser. `-C link-arg=-static-libstdc++` on its own does
-**not** do it: something on the link line still asks for the DLL, and the
-exe keeps importing `__once_proxy`. That is where this got to.
+## The fix (2026-09-06)
+
+`src/once_proxy.cpp` — eleven lines, and `launcher-qt` carries the same
+file:
+
+```cpp
+namespace std { extern __thread void (*__once_call)(); }
+extern "C" void __once_proxy() { std::__once_call(); }
+```
+
+A local definition is one the linker prefers over an import, so the
+proxy that runs is this one, and it reads `__once_call` through *this*
+module's emutls — the registry `call_once` just wrote it to. It is what
+libstdc++'s own proxy does (`src/c++11/mutex.cc`); the function exists
+only to be a plain `void()` whose address `pthread_once` can take.
+
+All three rungs print `qtmin: main` with it, and `launcher-qt.exe` now
+answers `--paths`, writes its `launcher.log` and drives the packaged
+`qemu-img` through the wizard under wine — so `package-windows.sh` no
+longer excuses the Qt package from any of its checks.
+
+What did **not** work, for the next person: `-C link-arg=-static-libstdc++`
+(something on the link line still asks for the DLL and the exe keeps
+importing `__once_proxy`), `-C link-self-contained=no`, and
+`-C link-arg=-shared-libgcc` (rustc links libgcc statically for this
+target regardless, so there are still two emutls registries — this fix
+makes that harmless instead of arguing with it).

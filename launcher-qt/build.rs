@@ -26,6 +26,14 @@ fn main() {
             "qml/ShaderEditorWindow.qml",
         ]),
     )
+    // Windows: `std::call_once` in cxx-qt's own generated crate
+    // initialiser reaches a `__once_proxy` in `libstdc++-6.dll` that
+    // reads its argument out of a different emutls registry than this
+    // binary writes it to, and calls the NULL it finds -- before `main`,
+    // so the launcher never started at all on Windows (M11). This
+    // defines the proxy locally, where the two halves agree; the file
+    // compiles to nothing anywhere else.
+    .cpp_file("src/once_proxy.cpp")
     .files([
         "src/qt/diag.rs",
         "src/qt/discs.rs",

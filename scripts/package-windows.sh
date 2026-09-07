@@ -342,21 +342,12 @@ if command -v wine >/dev/null; then
 
   resolved=$(runw 2ksbox.exe --paths || true)
   if [ -z "$resolved" ]; then
-    # The Qt front end does not start under wine at all: it faults on a
-    # null call before main runs, while the egui binary in the same
-    # folder answers perfectly (M11, tracked in
-    # docs/tracks/m11-windows-host.md; the loader gets all the way
-    # through Qt6Qml first, and the launcher's own log -- opened by the
-    # first statement in `main` -- is never created, so it is a static
-    # initialiser and not a missing DLL). Whether real Windows does the
-    # same is a question only that machine can answer, so it is reported
-    # here rather than failing a package nobody can yet check.
-    if [ "$QT" = 1 ]; then
-      echo "launcher       the Qt front end does not run under wine (unverified; try it on Windows)"
-    else
-      echo "package-windows.sh: the staged launcher printed nothing for --paths" >&2
-      fail=1
-    fi
+    # Both front ends answer this now. The Qt one could not, for as long
+    # as its `std::call_once` died before `main` (M11): that excuse is
+    # gone with the bug, so a Qt package that cannot answer fails here
+    # like any other.
+    echo "package-windows.sh: the staged launcher printed nothing for --paths" >&2
+    fail=1
   else
     printf '%s\n' "$resolved"
     # Every companion must resolve inside the package. Wine reports them
@@ -382,12 +373,6 @@ if command -v wine >/dev/null; then
   llog=$(find "$WINEPREFIX/drive_c/users" -name launcher.log 2>/dev/null | head -1)
   if [ -n "$llog" ] && grep -q -- '--- --diagnose ---' "$llog" && grep -q '\[start\] exe = ' "$llog"; then
     echo "launcher.log   start-up milestones and --diagnose, written by the staged launcher"
-  elif [ "$QT" = 1 ]; then
-    # No log at all is the sharpest thing known about this binary: the
-    # first statement in its `main` is what opens that file, so it is
-    # dying before `main` -- in the loader or a static initialiser, not
-    # in anything the launcher itself does.
-    echo "launcher.log   (none: the Qt launcher never reaches main under wine)"
   else
     echo "package-windows.sh: the staged launcher wrote no launcher.log" >&2
     fail=1
@@ -401,11 +386,6 @@ if command -v wine >/dev/null; then
   disk=$(find "$scratch" "$WINEPREFIX/drive_c/users" -name disk.qcow2 2>/dev/null | head -1)
   if [ -n "$disk" ] && [ -s "$disk" ]; then
     echo "qemu-img       created $(du -h "$disk" | cut -f1) of qcow2"
-  elif [ "$QT" = 1 ]; then
-    # Same reason: the wizard is driven through the launcher, which is
-    # the binary wine cannot start here. The egui package checks the very
-    # same qemu-img.exe, so this is not an unchecked artefact.
-    echo "qemu-img       (not exercised: the Qt launcher does not run under wine)"
   else
     echo "package-windows.sh: the packaged qemu-img did not create a disk" >&2
     fail=1
