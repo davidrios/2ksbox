@@ -60,6 +60,22 @@ pub mod ffi {
         #[qproperty(bool, accel_is_default)]
         #[qproperty(QString, graphics_note)]
         #[qproperty(bool, graphics_warning)]
+        /// The display adapter: an index into `video_labels`, which is
+        /// a *property* and not an invokable like the other label lists
+        /// because this one changes with the family — Windows chooses
+        /// between our adapter and the Cirrus, an `Other` machine
+        /// between the two standard ones — and a combo box bound to an
+        /// invokable would keep the list it was built with. Whether
+        /// there is a choice at all is the model's answer too, so the
+        /// row appears on whichever family has one.
+        #[qproperty(i32, video)]
+        #[qproperty(bool, video_applies)]
+        #[qproperty(QStringList, video_labels)]
+        #[qproperty(bool, video_is_default)]
+        #[qproperty(QString, video_note)]
+        /// Set only while editing a machine whose adapter has been
+        /// changed: the guest will find new hardware on its next start.
+        #[qproperty(QString, video_warning)]
         #[qproperty(bool, network)]
         #[qproperty(QString, network_note)]
         #[qproperty(bool, seamless_mouse)]
@@ -144,6 +160,15 @@ pub mod ffi {
         /// own note, but an index like the other combos.
         #[qinvokable]
         fn choose_boot(self: Pin<&mut Wizard>, boot: i32);
+
+        /// The display adapter, the same way — an index into
+        /// `video_labels`, this machine's family's own list.
+        #[qinvokable]
+        fn choose_video(self: Pin<&mut Wizard>, video: i32);
+
+        /// Put it back on the family's default.
+        #[qinvokable]
+        fn reset_video(self: Pin<&mut Wizard>);
 
         /// A floppy image was typed or browsed to: the boot note depends
         /// on it ("boot from floppy" with no image falls through to the
@@ -239,6 +264,12 @@ pub struct WizardRust {
     accel_warning: bool,
     accel_is_default: bool,
     graphics_note: QString,
+    video: i32,
+    video_applies: bool,
+    video_labels: QStringList,
+    video_is_default: bool,
+    video_note: QString,
+    video_warning: QString,
     graphics_warning: bool,
     network: bool,
     network_note: QString,
@@ -356,6 +387,19 @@ impl ffi::Wizard {
     fn choose_boot(mut self: Pin<&mut Self>, boot: i32) {
         let b = at(&Boot::ALL, boot);
         self.as_mut().rust_mut().form.boot = b;
+        self.publish();
+    }
+
+    fn choose_video(mut self: Pin<&mut Self>, video: i32) {
+        // Into this family's own list, not `Video::ALL`: the combo box
+        // and the model must be counting the same entries.
+        let v = at(self.rust().form.video_choices(), video);
+        self.as_mut().rust_mut().form.choose_video(v);
+        self.publish();
+    }
+
+    fn reset_video(mut self: Pin<&mut Self>) {
+        self.as_mut().rust_mut().form.reset_video();
         self.publish();
     }
 
@@ -478,6 +522,7 @@ impl ffi::Wizard {
         let (accel, accel_note, accel_warning, accel_is_default, network, network_note);
         let (seamless_mouse, seamless_mouse_note);
         let (graphics_note, graphics_warning);
+        let (video, video_applies, video_labels, video_is_default, video_note, video_warning);
         let (optimizations_mask, optimizations_summary, optimizations_note, optimizations_are_default);
         let (existing_disk, disk_path, disk_size_gb, install_media, floppy, boot, boot_note);
         let (shader_profile, advanced, advanced_toml, error);
@@ -508,6 +553,12 @@ impl ffi::Wizard {
             let graphics = f.graphics_note();
             graphics_warning = graphics.as_ref().is_some_and(|n| n.warning);
             graphics_note = qs(graphics.map(|n| n.text).unwrap_or_default());
+            video = index_of(f.video_choices(), f.video());
+            video_applies = f.video_applies();
+            video_labels = labels(f.video_choices().iter().map(|v| v.label()));
+            video_is_default = f.video_is_default();
+            video_note = qs(f.video_notes().join("\n"));
+            video_warning = qs_opt(f.video_warning());
             network = f.network();
             network_note = qs(f.network_notes().join("\n"));
             seamless_mouse = f.seamless_mouse();
@@ -551,6 +602,14 @@ impl ffi::Wizard {
         self.as_mut().set_accel_warning(accel_warning);
         self.as_mut().set_accel_is_default(accel_is_default);
         self.as_mut().set_graphics_note(graphics_note);
+        self.as_mut().set_video_applies(video_applies);
+        // The list before the index into it, like the memory range
+        // before the value that has to fit in it.
+        self.as_mut().set_video_labels(video_labels);
+        self.as_mut().set_video(video);
+        self.as_mut().set_video_is_default(video_is_default);
+        self.as_mut().set_video_note(video_note);
+        self.as_mut().set_video_warning(video_warning);
         self.as_mut().set_graphics_warning(graphics_warning);
         self.as_mut().set_network(network);
         self.as_mut().set_network_note(network_note);

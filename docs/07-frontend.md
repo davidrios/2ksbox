@@ -59,6 +59,20 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   OS/2). Someone who is not told would find out by installing an OS onto
   it. The note names what the machine has (a VESA-capable VGA, an
   RTL8139, an ES1370) and says outright that there is no 3D.
+- **The display adapter** is a picker, and the one whose *list* changes
+  with the family (`bundle::video_choices`, doc 06, added 2026-09-07):
+  Windows chooses between our own adapter with our display driver and the
+  Cirrus Windows has an in-box driver for, an `Other` machine between the
+  two standard adapters, and a DOS machine chooses nothing — its titles
+  program a VGA/VESA BIOS directly. The row hides itself on that last
+  case, and neither front end knows which family that is: it asks
+  `video_applies()` and fills the combo from `video_choices()`. On the Qt
+  side the labels are a *property* rather than an invokable for exactly
+  this reason — a combo box bound to a function keeps the list it was
+  built with. An adapter a family does not offer is refused rather than
+  stored (`std` on XP would leave the guest with no driver at all), and
+  editing an existing machine's adapter draws an orange line saying the
+  guest will find new hardware on its next start.
 - **The host's 3D** is stated, not chosen (ADR-013): under the
   acceleration row a Windows machine gets one line saying what this host
   will give the guest's Direct3D. It needs a Vulkan 1.3 device, because

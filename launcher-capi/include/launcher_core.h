@@ -177,6 +177,24 @@ size_t lc_wizard_boot(const LcWizard *w);
 void lc_wizard_set_boot(LcWizard *w, size_t boot);
 char *lc_wizard_boot_note(const LcWizard *w);
 
+/* The display adapter. Its list is per family — Windows chooses between
+   our own adapter and the one Windows has an in-box driver for, an
+   "Other" machine between the two standard ones, a DOS machine nothing —
+   so it is asked of the wizard rather than through lc_wizard_label. Ask
+   lc_wizard_video_applies before drawing the row and fill it from
+   lc_wizard_video_label; every index below is into that list. */
+bool lc_wizard_video_applies(const LcWizard *w);
+size_t lc_wizard_video_count(const LcWizard *w);
+char *lc_wizard_video_label(const LcWizard *w, size_t index);
+size_t lc_wizard_video(const LcWizard *w);
+void lc_wizard_set_video(LcWizard *w, size_t video);
+bool lc_wizard_video_is_default(const LcWizard *w);
+void lc_wizard_reset_video(LcWizard *w);
+/* Newline-separated. */
+char *lc_wizard_video_note(const LcWizard *w);
+/* "" unless editing a machine whose adapter has been changed. */
+char *lc_wizard_video_warning(const LcWizard *w);
+
 /* The plain fields, by name — one pair of accessors rather than a dozen,
  * because there is no behaviour behind them.
  *   text:  "name" "disk_path" "install_media" "floppy" "advanced_toml"

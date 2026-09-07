@@ -16,7 +16,7 @@ Modeled as a ~1998–2000 consumer PC.
 | Machine | `pc` (i440FX + PIIX) | period-correct chipset, best-tested with 9x |
 | CPU model | `pentium3` (TCG) / host-masked (KVM) | avoids CPUID features 9x mishandles; sidesteps the fast-CPU Win9x bugs (e.g. the >2.1 GHz-class IOS/NDIS crashes). **Floor is pentium3 (SSE1)**: our guest-tools wrappers are built `-march=pentium3` (upstream builds them x86-64-v2 and expects `-cpu host`/`max`) |
 | RAM | 256 MB default, **≤ 512 MB hard cap** | 9x VCache breaks above ~512 MB without patches |
-| Video | QEMU std VGA (bochs) | SoftGPU's primary target; clean mode behavior for our pipeline |
+| Video | **`-vga none -device d3dpt-vga` + our driver (doc 19), or `-vga cirrus`** — a choice since 2026-09-07 (`bundle::Video`) | ours is the whole display path: the mode table, the desktop straight from VRAM, the paced page flips, Direct3D through the driver. The Cirrus is Windows' in-box 2D driver, and the honest answer for a machine whose driver isn't installed yet or a title being A/B'd. The standard VGA is not offered on either Windows family |
 | Audio | SB16 (DOS-mode compat) + AC'97 | SB16 for DOS boxes/games, AC'97 driver in guest tools |
 | Net | PCnet (AMD) | driver in-box on 98 |
 | Storage | IDE HDD (qcow2) + our ATAPI CD | period-correct; no VirtIO for 9x |
@@ -90,7 +90,7 @@ Modeled as a ~2002–2005 PC.
 | Machine | `pc` (i440FX) | best compat with XP-era drivers; q35 unnecessary |
 | CPU | `pentium3`/host-class with sane flags | XP handles more, keep TCG features modest |
 | RAM | 512 MB–1 GB default | period-typical, snappy |
-| Video | **`-vga none -device d3dpt-vga` + our driver on both — XP since 2026-09-04 (doc 15), Win98 since 2026-09-07 (doc 19); Win98 3D also has qemu-3dfx** | d3dpt-vga: the host's mode table (640×480…1600×1200, 16/32 bpp, 60/75/85 Hz), desktop straight from VRAM; before the driver is installed it is a standard VGA (vga.sys, 800×600×4). Cirrus: XP inbox driver for 2D (up to 1024×768×16 / 800×600×24; std VGA has **no** XP driver). Wrappers for 3D do not depend on the VGA device |
+| Video | **`-vga none -device d3dpt-vga` + our driver on both — XP since 2026-09-04 (doc 15), Win98 since 2026-09-07 (doc 19); Win98 3D also has qemu-3dfx — or `-vga cirrus`, a choice in the wizard since 2026-09-07 (`bundle::Video`)** | d3dpt-vga: the host's mode table (640×480…1600×1200, 16/32 bpp, 60/75/85 Hz), desktop straight from VRAM; before the driver is installed it is a standard VGA (vga.sys, 800×600×4). Cirrus: XP inbox driver for 2D (up to 1024×768×16 / 800×600×24; std VGA has **no** XP driver, which is why it is not on offer here). Wrappers for 3D do not depend on the VGA device — but the *driver's* own Direct3D (the M7c HAL) goes with the driver |
 | Audio | AC'97 (fallback: emulated HDA) | XP AC'97 driver in guest tools |
 | Net | RTL8139 | in-box XP driver |
 | Storage | IDE + our ATAPI CD | AHCI needs F6 drivers; not worth it |
@@ -112,7 +112,7 @@ already carries "for DOS boxes/games", and nothing else.
 | CPU model | `pentium3` | deliberately *not* changed: what makes a machine feel like a 486 is the rate, not the CPUID string, and one variable at a time. Revisit if a real title is found that dislikes the model |
 | **CPU rate** | **`cpu_speed`, default 486DX2-66** | the field that makes this a DOS machine at all — see below |
 | RAM | 64 MB (4–256) | DOS uses the first megabyte; the rest is XMS for a mid-90s extender. 64 MB is generous for the era and inside what MS-DOS 6.22's own HIMEM.SYS manages |
-| Video | Cirrus GD5446 (`-vga cirrus`) | a real VGA/VESA BIOS of the period. `-vga std`'s Bochs VBE 2.0 with a linear framebuffer is arguably better for late VESA titles — an open question, not a decision |
+| Video | Cirrus GD5446 (`-vga cirrus`), **not a choice** | a real VGA/VESA BIOS of the period. The one family with no adapter picker: its titles program a VGA/VESA BIOS directly, so the adapter is a fact of the era rather than a driver question. `-vga std`'s Bochs VBE 2.0 with a linear framebuffer is arguably better for late VESA titles — an open question, not a decision |
 | Audio | SB16 | what DOS software knows how to talk to |
 | Net | none | DOS reaches a network only through a packet driver the user installs by hand; an unused card is one more device to enumerate |
 | Input | PS/2 mouse + kbd, **no USB tablet** (`seamless_mouse = false`) | a DOS mouse driver talks to the PS/2 controller; a tablet would leave the guest with no pointer at all. The player takes the pointer on a click and Ctrl+Alt+G gives it back |
@@ -176,7 +176,7 @@ box on a nineties system, and nothing of ours is on the machine at all.
 | CPU model | `pentium3` | as everywhere else; no reason for this family to differ |
 | CPU rate | unthrottled | these are OSes that read the clock, not DOS software counting a delay loop |
 | RAM | 512 MB (16–3072) | no reference machine to inherit from, so the range is the machine's own limits: a 1995 kernel at the bottom, XP's 32-bit ceiling at the top. BeOS R5 is the one guest with a lower limit of its own (1 GB), which the wizard *says* above that rather than enforces |
-| Video | **QEMU standard VGA (`-vga std`)** | the Bochs adapter with VBE 2.0 and a linear frame buffer, which is what a period VESA driver wants and what a modern Linux binds `bochs-drm` to. **Emphatically not `d3dpt-vga`**: our adapter needs our display driver, which exists for Windows only (docs 15, 19), so a BeOS or Linux guest on it would have no display at all |
+| Video | **`-vga std` or `-vga cirrus`, chosen in the wizard** (default std) | the standard VGA is the Bochs adapter with VBE 2.0 and a linear frame buffer — what a period VESA driver wants, what a modern Linux binds `bochs-drm` to, and the one a guest with no native driver can always fall back on. The Cirrus is a chip that really existed, so an era guest is likelier to have a *native* driver for it (BeOS R5 and XFree86 both ship one). **Neither is `d3dpt-vga`**: our adapter needs our display driver, which exists for Windows only (docs 15, 19), so a BeOS or Linux guest on it would have no display at all |
 | Audio | **ES1370** (Ensoniq AudioPCI) | the PCI sound card of the period both these guests drive in the box — BeOS ships an `ensoniq` add-on, Linux has `snd-ens1370` — where AC'97 needs a driver an era install may not have |
 | Net | RTL8139 | in-box on BeOS R5 and on Linux since 2.2 (`8139too`) |
 | Storage | IDE HDD + our ATAPI CD | as everywhere; the CD-ROM model (doc 17) is a drive, not a driver |
@@ -191,13 +191,59 @@ shader chain and the real CD-ROM model — the same story the DOS family
 has, on a guest modern enough to want PCI cards.
 
 The PCI addresses are pinned (`rtl8139` at `0x03`, `ES1370` at `0x04`,
-with `-vga std` taking `0x02` from the machine itself) for the reason the
-Windows families pin theirs: turning networking off would otherwise slide
-the sound card up into the NIC's slot, and a card that moves is a
-hardware change an installed guest re-detects. The `family-other` check
-in `scripts/test.sh` holds all of this — the standard VGA, the two cards
-where they belong, the absent tablet, the sound card staying put when the
-NIC goes — and ends by having our own `qemu-system-i386` accept the line.
+with the adapter taking `0x02` — measured, and the same for `-vga std`,
+`-vga cirrus` and `d3dpt-vga` alike) for the reason the Windows families
+pin theirs: turning networking off, or changing the adapter, would
+otherwise slide the sound card up into the NIC's slot, and a card that
+moves is a hardware change an installed guest re-detects. The
+`family-other` check in `scripts/test.sh` holds all of this — the
+standard VGA, the two cards where they belong, the absent tablet, the
+sound card staying put when the NIC goes — and ends by having our own
+`qemu-system-i386` accept the line.
+
+## The display adapter (added 2026-09-07)
+
+Three of the four families offer a choice of adapter, `bundle::Video`,
+written into the bundle as `video`. The list is per family, and **the
+first entry is that family's default** (`bundle::video_choices`):
+
+| Family | Offers | Default |
+|---|---|---|
+| Win98, XP | `d3dpt` (our adapter + our driver) / `cirrus` (Windows' in-box driver) | `d3dpt` |
+| Other | `std` (Bochs VGA, VBE 2.0) / `cirrus` | `std` |
+| DOS | — | — |
+
+The choice exists because there are two honest answers and nothing here
+can pick between them. On Windows, ours is what the whole display path is
+built on — the mode table, the desktop straight from VRAM, the page flips
+that pace a game (doc 15's flip chain), the Direct3D DDI — and the Cirrus
+is the right answer for a machine whose driver is not installed yet, for
+A/B'ing a title that misbehaves on ours, and for the test tools that
+still exercise the in-box driver. On `Other` there is no driver of ours
+at all and only the person installing the guest knows which standard
+adapter it has a driver for.
+
+Two rules make the field safe to hand-write:
+
+- **An adapter a family does not offer falls back to that family's
+  default** (`Machine::effective_video`), and the wizard refuses it
+  outright (`Form::choose_video`). `video = "std"` on an XP machine would
+  otherwise leave the guest with no display driver at all — there is none
+  for the Bochs adapter on XP — which is not something a stray bundle
+  field should be able to do.
+- **Every adapter lands at PCI `0x02`** — measured, `-vga std`,
+  `-vga cirrus` and `d3dpt-vga` alike — so the cards pinned below it do
+  not move when it changes under an installed guest.
+
+Changing it *is* a hardware change to a guest that is already installed:
+it finds an unknown adapter, comes up in plain VGA and wants a driver
+before the desktop is back. The wizard says so, in orange, but only while
+editing a machine whose adapter has actually been changed
+(`Form::video_warning`). The `display-adapter` check in `scripts/test.sh`
+holds the whole table: each family's default, the switch to the Cirrus
+and back, our adapter being *gone* rather than sitting beside it, the NIC
+staying at `0x03`, the standard VGA refused on Windows, and our own
+`qemu-system-i386` accepting every combination.
 
 ## Performance expectations (set honestly in-app)
 

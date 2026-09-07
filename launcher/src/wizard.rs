@@ -98,6 +98,7 @@ fn fields_ui(
     memory_ui(ui, form);
     cpu_speed_ui(ui, form);
     accel_ui(ui, form);
+    video_ui(ui, form);
     graphics_ui(ui, form);
     network_ui(ui, form);
     seamless_mouse_ui(ui, form);
@@ -135,6 +136,40 @@ fn fields_ui(
     if form.advanced {
         form.fill_advanced();
         ui.add(egui::TextEdit::multiline(&mut form.advanced_toml).code_editor().desired_rows(10));
+    }
+}
+
+/// The display adapter. Both which adapters are on offer and whether
+/// there is a choice at all come from the form (`video_choices`), so
+/// this never has to know that Windows is offered a different pair than
+/// an `Other` machine.
+fn video_ui(ui: &mut egui::Ui, form: &mut Form) {
+    if !form.video_applies() {
+        return;
+    }
+    let mut video = form.video();
+    ui.horizontal(|ui| {
+        egui::ComboBox::from_label("Display adapter")
+            .selected_text(video.label())
+            .show_ui(ui, |ui| {
+                for v in form.video_choices() {
+                    ui.selectable_value(&mut video, *v, v.label());
+                }
+            });
+        if ui.add_enabled(!form.video_is_default(), egui::Button::new("Default")).clicked() {
+            form.reset_video();
+        }
+    });
+    if video != form.video() {
+        form.choose_video(video);
+    }
+    // Above the notes, because it is about the machine rather than about
+    // the entry that happens to be selected.
+    if let Some(warning) = form.video_warning() {
+        ui.colored_label(egui::Color32::from_rgb(0xc8, 0x82, 0x00), warning);
+    }
+    for note in form.video_notes() {
+        ui.small(*note);
     }
 }
 

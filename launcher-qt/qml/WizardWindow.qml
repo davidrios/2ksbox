@@ -234,6 +234,49 @@ Window {
                     opacity: root.wizard.accelWarning ? 1.0 : 0.75
                 }
 
+                // --- the display adapter ------------------------------------
+                // Both the list and whether there is a choice at all come from
+                // the model (`videoLabels` is a property, not an invokable,
+                // because the list changes with the family); DOS is the one
+                // family with none, its adapter being a fact of the era.
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.wizard.videoApplies
+                    spacing: 8
+                    Label { text: qsTr("Display adapter"); Layout.minimumWidth: 150 }
+                    ComboBox {
+                        Layout.preferredWidth: 260
+                        model: root.wizard.videoLabels
+                        currentIndex: root.wizard.video
+                        onActivated: root.wizard.chooseVideo(currentIndex)
+                    }
+                    Button {
+                        text: qsTr("Default")
+                        enabled: !root.wizard.videoIsDefault
+                        onClicked: root.wizard.resetVideo()
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+                // About the machine rather than the entry selected, so it sits
+                // above the notes: changing this under an installed guest is a
+                // hardware change and the guest will say so.
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.wizard.videoWarning !== ""
+                    text: root.wizard.videoWarning
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    color: "#c88200"
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.wizard.videoApplies
+                    text: root.wizard.videoNote
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    opacity: 0.75
+                }
+
                 // --- the host's 3D (ADR-013) --------------------------------
                 // Stated, not chosen: the host settles which 3D stack a guest
                 // gets. Empty on a DOS machine. Orange only for the software
