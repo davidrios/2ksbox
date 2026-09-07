@@ -628,36 +628,43 @@ optimizations_check() { # the wizard's fast-path switches, all the way to a real
     && { echo "\"All defaults\" left an [optimizations] table behind"; rc=1; }
   return $rc
 }
-no_frontend_check() { # QEMU carries no front end of its own (2026-09-07)
-  # The player is the front end. It embeds QEMU, the embed library appends
-  # `-display none` itself, and it brings both halves of what a QEMU front
-  # end would do: the 3D context provider (patch 30) and the `embed`
-  # audiodev (patch 20, an SPSC ring the application owns). So QEMU is
-  # configured with no display -- --disable-sdl --disable-gtk
-  # --disable-cocoa --disable-curses --disable-spice -- and no host audio
-  # backend either: --disable-alsa --disable-pa --disable-pipewire
-  # --disable-jack --disable-oss --disable-sndio --disable-coreaudio
-  # --disable-dsound. `none` and `wav` are built unconditionally and are
-  # what the headless tools use. DXVK matches, with -Dnative_sdl2=disabled
-  # and the executor forcing DXVK_WSI_DRIVER=Headless (patch 04).
+no_optionals_check() { # the artefacts link only what we chose (2026-09-07)
+  # QEMU auto-detects a large optional surface, so what a build links is
+  # otherwise decided by which libraries the machine happened to have --
+  # which is how this box, the Mac and the Flatpak SDK end up with three
+  # different libqemu-embed. scripts/configure-qemu.sh disables the lot and
+  # this asks the built artefacts whether it stuck, because a dropped flag
+  # re-links silently and every packager starts carrying the library again.
+  # Four families, all dead for us:
   #
-  # This asks the built artefacts, not the configure summary, because a
-  # dropped flag re-links libqemu-embed silently and every packager starts
-  # carrying the library again: SDL was two DLLs in the Windows package and
-  # two dylibs in the .app, GTK is ~40 shared objects on Linux, the audio
-  # backends another 6. And it looks for a *loaded* name as well as a
-  # linked one, because that is how SDL last bit -- sdl2-compat reaching
-  # for SDL3 through LoadLibrary, on a user's PC, where no import-table
-  # walk could have seen it.
+  #   display  the player is the front end -- it embeds QEMU, the embed
+  #            library appends `-display none` itself and registers its own
+  #            3D provider (patch 30). SDL, GTK/VTE, Cocoa, curses, spice.
+  #   audio    the player's sound is patch 20's `embed` audiodev; the
+  #            headless tools use `none`, xp-cdimage-test.sh uses `wav`.
+  #   network  every bundle the launcher writes says `-netdev user` and
+  #            nothing else, so slirp stays and AF_XDP/vde go.
+  #   block    every drive is a local file -- qcow2, a raw floppy, or a
+  #            disc image through our own `cdimage` driver (doc 17). curl,
+  #            libssh, iscsi, nfs, rbd, gluster, blkio.
+  #
+  #   ...plus brlapi, a braille chardev nothing here has ever opened.
+  #
+  # It looks for a *loaded* name as well as a linked one, because that is
+  # how SDL last bit -- sdl2-compat reaching for SDL3 through LoadLibrary,
+  # on a user's PC, where no import-table walk could have seen it.
   local rc=0 f
   local names="build/qemu/libqemu-embed-i386.$SO build/qemu/qemu-system-i386"
   names="$names build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)"
   names="$names build/win/qemu/libqemu-embed-i386.dll build/win/qemu/qemu-system-i386.exe"
-  # displays: SDL, GTK/GDK, VTE, spice-server, ncurses, and Cocoa (a
-  # framework, so it is matched by name in the same list).
+  # displays (Cocoa is a framework, matched by name in the same list)
   local linked='libSDL|libgtk-|libgdk-|libvte|libspice-server|libncurses|Cocoa\.framework'
-  # host audio: ALSA, PulseAudio, PipeWire, JACK, sndio.
+  # host audio
   linked="$linked"'|libasound|libpulse|libjack|libpipewire|libsndio'
+  # network backends and network-storage block drivers
+  linked="$linked"'|libxdp|libbpf|libvdeplug|libcurl|libssh|libiscsi|libnfs|librbd|librados|libglusterfs|libblkio'
+  # braille
+  linked="$linked"'|libbrlapi'
   # loaded by name at run time: the SDL DLLs, which is the case that bit
   local loaded='SDL[23][-.0-9]*\.(so|dll|dylib)'
   # compiled in: QAPI generates one AUDIODEV_DRIVER_<X> enumerator per
@@ -676,10 +683,10 @@ no_frontend_check() { # QEMU carries no front end of its own (2026-09-07)
       *)
         if [ "$OS" = Darwin ]; then
           otool -L "$f" 2>/dev/null | grep -qE "$linked" \
-            && { echo "$f links a host front-end library"; otool -L "$f" | grep -E "$linked" | sed 's/^/    /'; rc=1; frc=1; }
+            && { echo "$f links a library we disabled"; otool -L "$f" | grep -E "$linked" | sed 's/^/    /'; rc=1; frc=1; }
         else
           ldd "$f" 2>/dev/null | grep -qE "$linked" \
-            && { echo "$f links a host front-end library"; ldd "$f" | grep -E "$linked" | sed 's/^/    /'; rc=1; frc=1; }
+            && { echo "$f links a library we disabled"; ldd "$f" | grep -E "$linked" | sed 's/^/    /'; rc=1; frc=1; }
         fi;;
     esac
     if command -v strings >/dev/null; then
@@ -811,12 +818,13 @@ host_stage() {
     skip bios-date "needs build/qemu/qemu-system-i386"
   fi
 
-  # nothing shipped links or loads a display or host-audio library (see the
-  # function for why it is asked of the artefacts, not the configure summary)
+  # nothing shipped links or loads one of the optional host libraries we
+  # disabled (see the function: it is asked of the artefacts, because the
+  # configure summary is not what a packager ends up carrying)
   if [ -f "build/qemu/libqemu-embed-i386.$SO" ] || [ -f "$D3DPT_DXVK_LIB" ]; then
-    run_check no-frontend no-frontend.log no_frontend_check || true
+    run_check no-optionals no-optionals.log no_optionals_check || true
   else
-    skip no-frontend "needs build/qemu or build/dxvk"
+    skip no-optionals "needs build/qemu or build/dxvk"
   fi
 
   # the application icon: every size in packaging/icon/ still derived from

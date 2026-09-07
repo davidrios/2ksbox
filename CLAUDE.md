@@ -204,7 +204,7 @@ GPU); don't propose wiring it in.
 | the `bios-date` check in `scripts/test.sh` | the firmware's legacy BIOS date as a **guest** reads it — F000:FFF5 out of a running `qemu-system-i386` over QMP, plus every `pc-bios/bios*.bin` agreeing — at or past the `ACPICheckDate` (12/01/99) Windows 98 setup compares against before it will install ACPI. A tree that lost `prepare-qemu.sh`'s stamp boots every existing guest fine and shows up weeks later as a *new* Win98 install that came out PnP-BIOS, with no USB tablet, AC'97 or NIC |
 | `scripts/package-flatpak.sh` | the Flatpak (doc 07's primary Linux target; manifest in `packaging/flatpak/`): a from-source build against `org.freedesktop.Sdk` — host binaries cannot be reused, the runtime's glibc is older than this host's — reusing the install layout via `package-linux.sh --prefix /app`, plus libslirp (absent from the runtime, and `-netdev user` needs it) and a build-only `distlib`. Then asks the *installed* app, in its own sandbox, whether every companion resolves under `/app` and the library under `~/.var/app`. The build is **offline** (Flathub's rule): `packaging/flatpak/cargo-sources.json` declares all 513 crates with checksums — regenerate with `scripts/gen-flatpak-cargo-sources.sh` after any dependency change. `FLATPAK_BUILD_DIR` moves the build tree off a full root filesystem |
 | `scripts/package-macos.sh` | the macOS app (doc 07's "signed .app, JIT entitlement, notarized"; recipe and reasoning in `docs/build-macos.md` → "The app"): stages the same install layout into `2ksbox.app/Contents` — where `MacOS/` does `bin/`'s job, `paths::bin_dir()` — **plus the whole non-system dylib closure**, because the Mac that will run it has no Homebrew, no XQuartz and no Vulkan: every install name rewritten to `@rpath` and every `LC_RPATH` pointing out of the app deleted (meson gives `libqemu-embed` one per Homebrew prefix, and they are searched first). First package to carry the Glide wrapper and the Direct3D executor, with the LunarG loader + KosmicKrisp ICD beside them; the packaged player names all four to QEMU through `player/src/companions.rs`. Then it asks the staged app the questions `package-linux.sh` asks, and one more: run under `DYLD_PRINT_LIBRARIES=1`, **every image the loader touches** must be inside the app. `LSMinimumSystemVersion` is measured from the bundle's own Mach-O files, not chosen. Signs inside-out with `--options runtime` + `packaging/macos/2ksbox.entitlements` (`com.apple.security.cs.allow-jit`, without which TCG dies on its first block), notarizes with `--keychain-profile`, staples, rolls a `.dmg`. The `package` check in `scripts/test.sh` on a Mac (`--no-sign --no-dmg`) |
-| the `no-frontend` check in `scripts/test.sh` | that nothing built here links or loads a display or host-audio library (2026-09-07). QEMU is configured with neither, because the player is the front end, and DXVK with `-Dnative_sdl2=disabled`. The check asks the **artefacts**, not the configure summary: `libqemu-embed`, `qemu-system-i386`, `libdxvk_d3d9` and the Windows pair in `build/win/` if they exist, for a link (`ldd`/`otool -L` against SDL, GTK/GDK, VTE, spice-server, ncurses, `Cocoa.framework`, ALSA, PulseAudio, PipeWire, JACK, sndio), for a bare library name in the binary — because the way SDL last bit was a *runtime* `LoadLibrary` that no import-table walk could see, and it bit on a user's PC, not here — and for QAPI's `AUDIODEV_DRIVER_<X>` enumerators, which exist only behind their own `CONFIG_AUDIO_<X>` and so catch the three backends that link nothing (OSS, CoreAudio, DirectSound). That last probe is what found patch 23 |
+| the `no-optionals` check in `scripts/test.sh` | that the artefacts link only what we chose (2026-09-07). QEMU auto-detects a large optional surface, so what a build links is otherwise decided by which libraries the machine had; `configure-qemu.sh` disables four dead families — display, host audio, network backends, network-storage block drivers — plus brlapi, and this asks the **artefacts**, not the configure summary, because a dropped flag re-links silently and every packager starts carrying the library again. `libqemu-embed`, `qemu-system-i386`, `libdxvk_d3d9` and the Windows pair in `build/win/` if they exist: a link (`ldd`/`otool -L`), a bare library name in the binary — the way SDL last bit was a *runtime* `LoadLibrary` that no import-table walk could see, on a user's PC — and QAPI's `AUDIODEV_DRIVER_<X>` enumerators, which exist only behind their own `CONFIG_AUDIO_<X>` and so catch the three backends that link nothing (OSS, CoreAudio, DirectSound). That last probe is what found patch 23 |
 | `scripts/gen-icons.sh` | the application icon: one master (`packaging/icon/2ksbox.png`), every size derived from it (16–512 PNGs + a four-size `.ico`) and checked in, because nothing that needs an icon can draw one — the launchers `include_bytes!` a PNG at compile time, the Flatpak build is offline, the Windows package is cross-built without ImageMagick. `--check` is the `icons` check in `scripts/test.sh`; the Windows .exes carry the .ico as a resource through `packaging/windows/win-icon.rs`, `include!`d by three build scripts |
 | `scripts/package-linux.sh` | the Linux package (doc 07's install layout, ADR-011's names — product `2ksbox`, application ID `com._2ksbox.Launcher`): stages launcher + player + embed library + `qemu-img` + firmware + guest-tools ISO into one relocatable prefix (`--with-shaders` adds the presets), then asks the **staged** launcher with `env -i` from `/` whether every companion resolves inside the package (`launcher --paths`), that the staged player `ldd`s to the package's own `libqemu-embed`, that the packaged `qemu-img` creates a disk and `--print-args` points `-L` at the packaged firmware, and that the desktop entry and the AppStream metainfo validate (`appstreamcli --no-net`, errors only); rolls a `.tar.zst` unless `--no-tar` (the `package` check in `scripts/test.sh`). `packaging/linux/install.sh` inside it copies a tree into a prefix |
 | `target/release/discx` (`cargo build --release -p libdisc`) | the CD-ROM model (doc 17): `selftest <dir>` writes synthetic cue/bin, CCD and ISO images and checks reads, EDC/ECC, Q synthesis and the MMC responders through them (the `libdisc` check in `scripts/test.sh`); `info` / `dump` print what a guest will see (cue, CCD, MDS, ISO); `scan` classifies and L-EC-verifies every sector of a real dump (the bad-sector map: SafeDisc's weak sectors show up here); `repair <image> <outdir>` writes the negative-control copy of a protected dump (every L-EC-failing sector's EDC/ECC regenerated over the dumped user data, nothing else touched, run-out sectors left alone) so a protection check can be watched to *fail*; `subscan` does the same for the stored subchannel (Q CRC failures and whether they cluster, and how often `subq::synthesize` reproduces the disc's own frames); `convert` makes a MODE1/2352 cue/bin (+ WAVE audio tracks) from an ISO; `export` writes the cooked view as an `.iso`, which is how a **folder disc** is checked — `isodir:<dir>` serves a host directory as a generated ISO 9660 + Joliet volume (M5g, `docs/tracks/m5-dirdisc.md`), `mktree` writes the fixture tree for it and the `dirdisc` check in `scripts/test.sh` has xorriso read the folder back out |
@@ -296,27 +296,36 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
 - The native Mesa backend (`mglcntx_linux.c`, the GLX one, on Linux **and**
   macOS since SDL went) is linked **weak** (patch 31) so
   `embed/mglcntx_embed.c` overrides it inside the embed library only.
-- **QEMU is built with no front end of its own** (2026-09-07): no display
-  (`--disable-sdl --disable-gtk --disable-cocoa --disable-curses
-  --disable-spice`) and no host audio backend (`--disable-alsa
-  --disable-pa --disable-pipewire --disable-jack --disable-oss
-  --disable-sndio --disable-coreaudio --disable-dsound`), because the
-  player is the front end: the embed library appends `-display none`
-  itself and brings both halves — the 3D provider (patch 30) and the
-  `embed` audiodev (patch 20). `libqemu-embed-i386.so` went from 175
-  shared libraries to **112**. `none` and `wav` audiodevs are always
-  built, which is what the headless tools use. `--disable-dsound` needed
-  patch 23 to mean anything: QEMU 9.2's guard treats *disabled* like
-  *enabled*, so DirectSound went into every Windows build regardless. DXVK matches: patch 04's
-  headless WSI only, `DXVK_WSI_DRIVER=Headless`. Two consequences to
-  remember: **standalone `qemu-system-i386` has no 3D** (it registers no
-  context provider, so pass-through is refused cleanly and the VM keeps
-  running), and **it opens no window** — QEMU falls back to starting a
-  **VNC server on `localhost:5900`** when no `-display` is given
-  (`system/vl.c`), so `-display vnc=:0` is how you look at a guest by
-  hand, and `-audiodev none` is what it can play into. Anything scripted
-  passes both already. The `no-frontend` check in `scripts/test.sh` guards
-  all of it.
+- **QEMU is built with only what we use** (2026-09-07). Four families of
+  optional host library are disabled outright, because auto-detection
+  otherwise makes the build depend on what the machine happened to have —
+  which is how this box, the Mac and the Flatpak SDK end up with three
+  different `libqemu-embed`. **Display:** `--disable-sdl --disable-gtk
+  --disable-cocoa --disable-curses --disable-spice`; the player is the
+  front end (the embed library appends `-display none` itself and brings
+  the 3D provider, patch 30). **Audio:** `--disable-alsa --disable-pa
+  --disable-pipewire --disable-jack --disable-oss --disable-sndio
+  --disable-coreaudio --disable-dsound`; the player's sound is the `embed`
+  audiodev (patch 20), and `none` and `wav` are always built, which is
+  what the headless tools use. **Network:** `--disable-af-xdp
+  --disable-vde --disable-bpf` (libbpf's one consumer is virtio-net's eBPF
+  RSS, and the bundles write pcnet / rtl8139); **slirp stays** — every
+  bundle says `-netdev user`. **Block:** `--disable-curl --disable-libssh
+  --disable-libiscsi --disable-libnfs --disable-rbd --disable-glusterfs
+  --disable-blkio`; every drive is a local file or a disc image through
+  our own `cdimage` driver. Plus `--disable-brlapi`.
+  `libqemu-embed-i386.so` went from 175 shared libraries to **93**.
+  `--disable-dsound` needed patch 23 to mean anything: QEMU 9.2's guard
+  treats *disabled* like *enabled*, so DirectSound went into every Windows
+  build regardless. DXVK matches: patch 04's headless WSI only,
+  `DXVK_WSI_DRIVER=Headless`. Two consequences to remember: **standalone
+  `qemu-system-i386` has no 3D** (it registers no context provider, so
+  pass-through is refused cleanly and the VM keeps running), and **it
+  opens no window** — QEMU falls back to starting a **VNC server on
+  `localhost:5900`** when no `-display` is given (`system/vl.c`), so
+  `-display vnc=:0` is how you look at a guest by hand, and `-audiodev
+  none` is what it can play into. Anything scripted passes both already.
+  The `no-optionals` check in `scripts/test.sh` guards all of it.
 - Never exit the process while the QEMU thread is alive (QEMU's atexit
   handlers race `qemu_cleanup`); the player joins it, headless paths use
   `_exit`. A guest power-off ends the loop while the UI still holds the

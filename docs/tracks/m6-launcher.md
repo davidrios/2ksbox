@@ -1289,9 +1289,9 @@ for 6b′ onwards, so rebase on `main` before the next push.
   had a home — `Cargo.toml`'s `repository` was still `example.invalid`),
   the macOS .app and notarization, the Windows installer/zip. The tarball
   is also only as portable as its system libraries: the embed library
-  links ~112 of them (gnutls, glib, … — SDL, GTK, VTE, spice, curses and
-  the six host audio backends all went on 2026-09-07, taking 63 with them)
-  and the package ships none, so
+  links ~93 of them (gnutls, glib, … — the displays, the six host audio
+  backends, the spare network and block drivers and brlapi all went on
+  2026-09-07, taking 82 with them) and the package ships none, so
   it installs on a machine like the one that built it — which is exactly
   the gap the Flatpak closes, and why doc 07 calls Flatpak primary.
 

@@ -116,6 +116,19 @@ fi
 # Note this is *not* `--audio-drv-list=`: that list only picks the default
 # priority order, while the libraries are pulled in by the per-driver
 # feature options below being auto-detected.
+#
+# And the same for the rest of QEMU's optional surface that no machine the
+# launcher writes can reach. Networking: every bundle says `-netdev user`
+# and nothing else, so slirp stays and AF_XDP and vde go — and so does
+# libbpf, whose one consumer is `hw/net/virtio-net.c`'s eBPF RSS steering
+# and whose device the launcher never writes (pcnet on 98, rtl8139 on XP). Block: every drive is a local file — a qcow2, a raw floppy
+# or one of doc 17's disc images through our own `cdimage` driver — so the
+# network-storage drivers go, curl and libssh because this host has them
+# and iscsi/nfs/rbd/gluster/blkio *pinned off* because another host might.
+# Auto-detection is the thing to remove here: it makes the build depend on
+# which libraries the machine happened to have, which is how the Flatpak
+# and the Mac end up with a different libqemu-embed from this box's.
+# brlapi is a braille chardev; nothing here has ever opened one.
 "$ROOT/qemu/configure" \
   --python="$PYTHON" \
   --disable-werror \
@@ -135,6 +148,17 @@ fi
   --disable-sndio \
   --disable-coreaudio \
   --disable-dsound \
+  --disable-brlapi \
+  --disable-af-xdp \
+  --disable-vde \
+  --disable-bpf \
+  --disable-curl \
+  --disable-libssh \
+  --disable-libiscsi \
+  --disable-libnfs \
+  --disable-rbd \
+  --disable-glusterfs \
+  --disable-blkio \
   --extra-cflags="$EXTRA_CFLAGS" \
   "${CFG[@]}" \
   --target-list=i386-softmmu,x86_64-softmmu \
