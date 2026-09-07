@@ -53,6 +53,19 @@ backend later.
   `launcher-capi/` is the same thing as a C ABI, for a front end in
   another language. `launcher-qt` is not in the root workspace, so
   `cargo build` never needs Qt 6.
+- **The Qt front end is the one that ships** (ADR-015, 2026-09-07): every
+  packager installs `launcher-qt` as `2ksbox` — Linux, the Flatpak (which
+  moved to `org.kde.Platform` 6.10 for Qt), macOS (`macdeployqt` before
+  our own dylib closure, `-qmldir=launcher-qt/qml` because our QML is a
+  Qt resource) and Windows (the DLLs, `plugins\platforms\qwindows.dll`
+  and the `qml\` trees, all staged by hand: there is no cross
+  `windeployqt`). `launcher/` (egui) stays maintained and is installed by
+  nothing. `scripts/build.sh` has a `qt` stage in its default set; a host
+  with no Qt 6 builds everything else and can roll no package. Every
+  packager also opens a **real window offscreen**
+  (`QT_QPA_PLATFORM=offscreen` + `LAUNCHER_QT_SHOT`) and requires a PNG,
+  because Qt's platform plugin and QML modules are named in no import
+  table and their absence is invisible to every other check.
 - Rust wherever possible; C only inside QEMU/qemu-3dfx and guest-side
   era code. Python is uv-managed (3.12; 3.14 breaks QEMU's venv).
 - Everything open source; Apple Silicon must work (TCG), not just x86 hosts.
@@ -122,6 +135,7 @@ runs, for when a single stage has to be driven by hand:
 scripts/prepare-qemu.sh && scripts/configure-qemu.sh
 ninja -C build/qemu qemu-system-i386 qemu-img qemu-io libqemu-embed-i386.so   # .dylib on macOS
 cargo build --release
+(cd launcher-qt && cargo build --release)   # the launcher the packages ship; needs Qt 6
 # configure-qemu.sh also builds libdisc (the CD-ROM model) and links it into QEMU (patch 50)
 # Direct3D pass-through (doc 14) needs the executor too:
 scripts/prepare-dxvk.sh && scripts/configure-dxvk.sh && ninja -C build/dxvk && scripts/build-d3dpt-exec.sh

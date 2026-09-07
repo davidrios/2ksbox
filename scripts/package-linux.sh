@@ -19,8 +19,20 @@
 # and qemu/pc-bios must already be there, per CLAUDE.md's build order.
 # The guest-tools ISO is included when guest-tools/out has one.
 #
+# The launcher is `launcher-qt` (ADR-015, 2026-09-07): Qt 6 / QML is the
+# front end the project ships, and `launcher/` (egui) stays a maintained
+# second view over `launcher-core` that no package installs. Qt itself is
+# **not** in the tarball -- it is ~38 MB of shared libraries, QML modules
+# and plugins that every distribution already packages, and a tarball
+# that carried its own would still have to match the host's Wayland,
+# OpenGL and fontconfig stacks. So this package depends on the system's
+# `qt6-base` + `qt6-declarative` (+ `qt6-quickcontrols2`), which the check
+# below states plainly by listing what the staged launcher resolves. The
+# Flatpak is the build for a host that has none: it gets Qt from
+# `org.kde.Platform` (packaging/flatpak/).
+#
 # The layout, relative to the tree's root (= an install prefix):
-#   bin/2ksbox                        the launcher
+#   bin/2ksbox                        the launcher (Qt 6, ADR-015)
 #   bin/2ksbox-player                 the player
 #   lib/2ksbox/libqemu-embed-i386.so
 #   libexec/2ksbox/qemu-img           ours, patched — kept off PATH
@@ -51,7 +63,7 @@ while [ $# -gt 0 ]; do
     --with-shaders) SHADERS=1; shift ;;
     --out) OUT=$2; shift 2 ;;
     --prefix) PREFIX=$2; TAR=0; shift 2 ;;
-    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
     *) echo "package-linux.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -66,9 +78,13 @@ need build/qemu/qemu-img "ninja -C build/qemu qemu-img"
 need qemu/pc-bios "scripts/prepare-qemu.sh"
 
 if [ "$BUILD" = 1 ]; then
-  cargo build --release -p launcher -p player
+  cargo build --release -p player
+  # Its own cargo workspace, so its own build command (scripts/build.sh's
+  # `qt` stage does the same thing): that boundary is what keeps Qt 6 off
+  # the root `cargo build`.
+  ( cd launcher-qt && cargo build --release )
 fi
-need target/release/launcher
+need launcher-qt/target/release/launcher-qt "scripts/build.sh qt"
 need target/release/player
 
 # Only ever clear a staging directory of our own making. `--prefix` names
@@ -76,7 +92,7 @@ need target/release/player
 [ -n "$PREFIX" ] || rm -rf "$STAGE"
 mkdir -p "$STAGE"/{bin,lib/2ksbox,libexec/2ksbox,share/2ksbox/desktop,share/doc/2ksbox}
 
-install -m755 target/release/launcher "$STAGE/bin/2ksbox"
+install -m755 launcher-qt/target/release/launcher-qt "$STAGE/bin/2ksbox"
 install -m755 target/release/player "$STAGE/bin/2ksbox-player"
 install -m755 build/qemu/libqemu-embed-i386.so "$STAGE/lib/2ksbox/"
 install -m755 build/qemu/qemu-img "$STAGE/libexec/2ksbox/"
@@ -118,6 +134,22 @@ install -m755 packaging/linux/install.sh "$STAGE/install.sh"
 install -m644 COPYING THIRD-PARTY-NOTICES.md README.md "$STAGE/share/doc/2ksbox/"
 
 # --- the check -------------------------------------------------------
+# Qt is the one thing this package does not carry, so it is the one thing
+# whose absence would be found by a user rather than here: a launcher with
+# an unresolved `libQt6Quick.so.6` says "No such file or directory" and
+# nothing else. `ldd` answers for the import tables; the QML modules and
+# the platform plugin are not in them and come from the same packages, so
+# what is listed here is also what the tarball's README has to name.
+fail=0
+missing=$(ldd "$STAGE/bin/2ksbox" | grep 'not found' || true)
+if [ -n "$missing" ]; then
+  printf '%s\n' "$missing" | sed 's/^/  /' >&2
+  echo "package-linux.sh: the staged launcher has unresolved libraries (install qt6-base and qt6-declarative)" >&2
+  fail=1
+else
+  echo "qt             $(ldd "$STAGE/bin/2ksbox" | grep -c 'libQt6') Qt 6 libraries, all from the system"
+fi
+
 # A package whose launcher still answers with the checkout it was built
 # from is not a package. Ask the staged binary itself, with `env -i` so
 # not one LAUNCHER_*/PLAYER_* knob from this shell can be what makes it
@@ -127,7 +159,6 @@ trap 'rm -rf "$scratch"' EXIT
 resolved=$(cd / && env -i HOME="$scratch" LAUNCHER_LIBRARY_DIR="$scratch/machines" \
   "$STAGE/bin/2ksbox" --paths)
 echo "$resolved"
-fail=0
 while read -r what path; do
   case "$what" in
     player|qemu-img|pc-bios|guest-tools|prefix) ;;
@@ -151,6 +182,24 @@ case "$embed" in
   "$STAGE"/lib/2ksbox/*) echo "libqemu-embed  $embed" ;;
   *) echo "package-linux.sh: the player's libqemu-embed came from $embed, not the package" >&2; fail=1 ;;
 esac
+# The window itself, which is the half `--paths` cannot reach. Qt resolves
+# its platform plugin and every QML module the views import at run time,
+# by name, from directories no import table mentions — so a package that
+# has passed every check above still opens nothing on a host whose Qt is
+# half installed, and says so in one line on a stderr a double-click has
+# nowhere to show. The launcher's own headless grab (doc 07) is the check:
+# `QT_QPA_PLATFORM=offscreen` plus `LAUNCHER_QT_SHOT`, and a PNG out the
+# other end means a real window with real QML in it.
+shot="$scratch/window.png"
+if (cd / && env -i HOME="$scratch" LAUNCHER_LIBRARY_DIR="$scratch/machines" \
+      QT_QPA_PLATFORM=offscreen LAUNCHER_QT_SHOT="$shot" LAUNCHER_QT_DELAY=1500 \
+      "$STAGE/bin/2ksbox" >/dev/null 2>&1) && [ -s "$shot" ]; then
+  echo "window         $(du -h "$shot" | cut -f1) grabbed offscreen: QML, plugins and all"
+else
+  echo "package-linux.sh: the staged launcher opened no window offscreen (Qt QML modules or platform plugin missing)" >&2
+  fail=1
+fi
+
 # The machine's own bundle-creating path, end to end: the staged launcher
 # runs the staged qemu-img to make a disk, and translates the result to a
 # command line pointing at the staged firmware.

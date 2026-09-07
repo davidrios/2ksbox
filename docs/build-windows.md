@@ -15,7 +15,6 @@ Track: `docs/tracks/m11-windows-host.md`. Names and layout: doc 07.
 scripts/win-cross.sh --build      # once: the cross container (~5 min, ~3 GB)
 scripts/build-windows.sh          # qemu, rust, qt, exec, guest-tools
 scripts/package-windows.sh        # the zip, checked under wine
-scripts/package-windows.sh --qt   # a second zip: the Qt 6 front end
 ```
 
 `build/win/package/2ksbox-<version>-windows-x86_64.zip` is the artefact.
@@ -58,7 +57,7 @@ base.
 |---|---|---|
 | `qemu` | `build/win/qemu/{qemu-system-i386,qemu-img,qemu-io}.exe`, `libqemu-embed-i386.dll` | `configure-qemu.sh --windows`; **WHPX detected and built in** |
 | `rust` | `target/x86_64-pc-windows-gnu/release/{launcher,player,discx}.exe` | the embed DLL is found in `build/win/qemu` by `qemu-embed/build.rs` |
-| `qt` | `launcher-qt/target/x86_64-pc-windows-gnu/release/launcher-qt.exe` | doc 07's other front end; its own cargo workspace, so its own stage |
+| `qt` | `launcher-qt/target/x86_64-pc-windows-gnu/release/launcher-qt.exe` | **the package's `2ksbox.exe`** (ADR-015); its own cargo workspace, so its own stage |
 | `exec` | `build/win/d3dpt/d3dpt_exec.dll`, `build/win/wgl-probe.exe` | the Direct3D decoder + executor (doc 14), and the offscreen-GL diagnostic |
 | `guest` | `guest-tools/out/guest-tools-*.iso` | guest code: host-independent, so only built if absent |
 
@@ -181,13 +180,13 @@ Linux build host it passes on an AMD card (Mesa 26.2) — green clear, red
 quad, right way up — which is how the sequence has been verified at all;
 a real Windows driver is still ahead.
 
-## The two front ends
+## Qt, which the package carries
 
-Both of doc 07's front ends cross-build, and `--qt` rolls a second,
-complete package (`…-windows-x86_64-qt.zip`) whose `2ksbox.exe` is
-`launcher-qt`. Same player, same QEMU, same guest tools: unzip the two
-side by side and the machines they show are the same machines, because
-the library under both is `launcher-core`.
+`2ksbox.exe` is `launcher-qt` (ADR-015, 2026-09-07), so the zip carries
+Qt: the DLLs, the platform plugin and the QtQuick QML trees. The egui
+build still cross-builds (`rust` stage, `launcher.exe`) and is packaged
+by nothing — run it out of `target/x86_64-pc-windows-gnu/release` when
+something needs a second opinion on a Windows machine.
 
 Qt itself crosses more easily than it sounds: Fedora ships `mingw64-qt6-*`
 to link against and a native Qt of the *same version* for the tools that
@@ -208,12 +207,17 @@ for. Two things needed saying:
   in the package, plugins and QML modules included, since each imports
   half of Qt and nothing above it says so.
 
-**The Qt package is unverified.** It builds and stages, but the binary
-faults on a null call under wine before `main` prints anything — with
-either subsystem, while the egui binary in the same folder answers
-`--paths` perfectly, so it is not the package. Whether that is wine's Qt
-6 or ours is a question only a real Windows machine can answer, and the
-packaging checks say so instead of failing.
+**The fault that used to make this unverifiable is fixed.** The Qt binary
+died on a null call before `main` — `std::call_once` in cxx-qt's own
+generated crate initialiser reaching a `__once_proxy` in
+`libstdc++-6.dll` that read its argument out of a different emutls
+registry than this binary wrote it to (`tools/qtmin/` found it in three
+rungs; `launcher-qt/src/once_proxy.cpp` is the eleven-line fix). The
+packaging checks now hold it to the same standard as any other binary:
+`--paths` must answer, and the staged launcher must open a window
+offscreen. The wine window grab is still a *report* rather than a
+verdict — wine's Qt 6 is not the target's — so the last word on a
+package is still `2ksbox-debug.bat` on a real PC.
 
 ## Acceleration
 

@@ -8,11 +8,16 @@ Everything below runs natively on arm64. Tested target: M1 MacBook Air.
 xcode-select --install                       # Apple clang + git
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 brew install ninja meson pkg-config glib pixman sdl2 gnu-sed uv libslirp
+brew install qt                              # Qt 6: the launcher, and macdeployqt
 brew install --cask xquartz                  # log out/in once after installing
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh      # Rust toolchain
 ```
 
 Why each of the odd ones:
+- **Qt 6** — the launcher is `launcher-qt` (ADR-015), and the same
+  formula brings `macdeployqt`, which is what puts Qt inside the `.app`.
+  A Mac without it still builds everything else (`scripts/build.sh` skips
+  its `qt` stage and says so); it just cannot package.
 - **XQuartz** — qemu-3dfx's Mesa pass-through uses its GLX backend on
   macOS (it dlopens `/opt/X11/lib/libGL.dylib` at runtime); the patched
   `meson.build` hardcodes `-I/opt/X11/include` and links
@@ -392,6 +397,30 @@ the `@loader_path` the packaging adds, and a bundle that keeps them loads
 *this* machine's Homebrew — passing every check that only looks at load
 commands, and failing on the first machine that has no Homebrew.
 
+**Qt is a third thing again, and `macdeployqt` is what brings it**
+(ADR-015, 2026-09-07: the launcher is `launcher-qt`). It runs *before*
+the closure above, on a bundle that already has its `Info.plist` — the
+tool reads `CFBundleExecutable` to know what to follow — and it copies
+the Qt frameworks, the cocoa platform plugin and the QtQuick QML module
+tree into `Contents/Frameworks`, `PlugIns` and `Resources/qml`. Two
+things about that:
+
+- **`-qmldir=launcher-qt/qml` is not optional.** Our QML is compiled into
+  the binary as a Qt resource (`build.rs`'s `QmlModule`), so
+  `macdeployqt`'s import scanner — which reads *source* — finds no
+  imports at all without being pointed at them, deploys no modules, and
+  the app dies on `module "QtQuick" is not installed` after starting
+  perfectly.
+- **The re-sign afterwards is not cosmetic.** `macdeployqt` rewrites load
+  commands, and on arm64 a binary whose signature no longer matches is
+  killed by the kernel with no message. The staging's ad-hoc re-sign pass
+  therefore covers every Mach-O in the bundle, and it can no longer be
+  found by "executable files": a QML plugin can arrive mode 644.
+
+The offscreen platform plugin is copied by hand beside the cocoa one,
+because the window check below needs a window that does not appear on the
+packager's screen.
+
 Two dependencies are not in that closure and had to be found by other
 means:
 
@@ -417,6 +446,16 @@ the packaged firmware; and the packaged player is run under
 `DYLD_PRINT_LIBRARIES=1`, where **every image the loader touches** must be
 inside the app, `/usr/lib` or `/System`. That last check is what caught
 both of the above.
+
+Since the launcher is Qt there is one more, and it is the only one that
+can see a whole class of failure: **the staged launcher has to open a
+real window**. `QT_QPA_PLATFORM=offscreen` with `LAUNCHER_QT_SHOT=<png>`
+(the launcher's own headless grab, doc 07) must produce a PNG, and the
+same run is watched with `DYLD_PRINT_LIBRARIES=1` so the images the QML
+engine pulls in have to be the app's own copies as well. Qt finds its
+platform plugin and its QML modules by name at run time, out of
+directories that appear in no load command — so without this check a
+bundle with no QtQuick in it passes everything and opens nothing.
 
 `LSMinimumSystemVersion` is **measured, not chosen**: the highest
 `LC_BUILD_VERSION` `minos` of everything the bundle carries. A bundled

@@ -722,3 +722,104 @@ when a model's defaults change, exactly as the two GUIs would.
   the Qt one would mean moving the Flatpak from `org.freedesktop.Sdk` to
   `org.kde.Platform` and carrying Qt in the AppImage/macOS/Windows
   builds — a packaging decision, not a code one, and not taken here.
+  **Superseded by ADR-015 (2026-09-07): that decision was taken, and the
+  Qt build is the one every package installs.** The rest of this ADR
+  stands: both front ends are still maintained, and the core still owns
+  every rule.
+
+## ADR-015: the Qt front end is the one the packages ship (2026-09-07)
+
+**Decision.** `launcher-qt` (Qt 6 / QML through cxx-qt) is **the**
+launcher of the product: it is what every packager installs as
+`bin/2ksbox` / `2ksbox.exe` / `2ksbox.app`, on Linux, in the Flatpak, on
+macOS and on Windows. `launcher/` (egui) stays a **maintained second
+front end that no package installs** — ADR-014's arrangement is unchanged
+in every other respect, and the reason for keeping it is unchanged too.
+
+**Why one of them had to become the shipped one.** ADR-014 kept both
+because the second view is what makes the core's boundary testable. It
+deliberately did not say which one a stranger gets, and that is a
+question a package has to answer: a product has one launcher, its
+screenshots show one launcher, and a bug report names one launcher. Two
+shipped front ends would double the surface every packager, every
+platform note and every support answer has to carry, for a choice no user
+asked to make.
+
+**Why the Qt one.** They are equal on behaviour by construction (the core
+owns it), so the tie is broken by what a *shipped* front end has to do
+beyond drawing:
+
+- **Real windows, and a native file dialog.** `QtQuick.Dialogs` is the
+  platform's own picker on all three systems; the egui build needs `rfd`
+  because egui has none, and its secondary screens are panels inside the
+  one window rather than windows a desktop can manage.
+- **The desktop integrations a launcher is judged by** — window
+  decorations, HiDPI, the system colour scheme, accessibility, input
+  methods — are Qt's job and not ours. They are exactly the things that
+  are nobody's fault and everybody's complaint.
+- **It is already the Windows package's launcher** (M11, 2026-09-06) and
+  the port survived that: `std::call_once` across a libstdc++ DLL
+  boundary was the last thing between it and `main`, and it was fixed
+  rather than worked around.
+- **It idles.** A `Timer` per thing being watched, off when there is
+  nothing to watch, against a frame every 16 ms whether or not anything
+  changed. On a launcher that sits open beside a running machine that is
+  the honest difference.
+
+**What it costs, plainly.** Qt is not in the binary. The Linux tarball
+gains a runtime dependency on `qt6-base` + `qt6-declarative`, the Flatpak
+moves from `org.freedesktop.Platform` 25.08 to `org.kde.Platform` 6.10
+(the same freedesktop base, so nothing else about that build changes),
+and the macOS and Windows packages carry Qt themselves — frameworks or
+DLLs, the platform plugin and the QtQuick QML module tree, none of which
+is in a load command. The one place the Qt build is *worse* also comes
+along: the shader preview goes through a second, windowless wgpu device
+and a CPU readback to a temp BMP, where eframe hands egui a live device
+and the frame is a texture id. That is doc 07's "fixable, in C++"
+(`QQuickRhiItem`), and it is now on the shipped path, which is the reason
+to fix it.
+
+**Why `launcher/` is kept.** Nothing about ADR-014's argument depended on
+which front end shipped. A rule that only one front end can express is a
+rule in the wrong place, and a second view is how that shows up as a
+missing widget instead of a design opinion — four such divergences were
+found that way. It is also the honest fallback for a host where Qt is a
+problem, and it is where the headless `--diag-*-frame` verbs live. What
+changes is that it is not installed by anything.
+
+**Rejected: ship both, side by side.** A package with `2ksbox` and
+`2ksbox-egui` in it asks the user a question they have no way to answer,
+doubles what every platform note has to say, and makes "which one were
+you running?" the first line of every bug report.
+
+**Rejected: retire `launcher/`.** It costs ~1,700 lines of view code that
+the compiler checks on every build, and it is the only thing that makes
+the core's boundary a fact rather than an intention.
+
+**Rejected: bundle Qt in the Linux tarball.** ~38 MB of libraries, QML
+modules and plugins that every distribution already ships — and a copy of
+our own would still have to agree with the host's Wayland, OpenGL and
+fontconfig. The Flatpak is the build for a host that has no Qt.
+
+**Consequences.**
+
+- `scripts/build.sh` grows a `qt` stage, and it is in the default set. It
+  is still a separate stage over a separate cargo workspace: a plain
+  `cargo build` at the root must never start needing Qt 6, which is what
+  lets the rest of the tree build on a host without it.
+- A host with no Qt 6 can build everything except the launcher, and
+  therefore cannot roll a package. `build.sh` says so in its summary and
+  `scripts/test.sh` skips the `package` check with the reason.
+- Every packager gained a check that `--paths` could never make: the
+  staged launcher opens a **real window offscreen**
+  (`QT_QPA_PLATFORM=offscreen` + `LAUNCHER_QT_SHOT`, doc 07) and has to
+  produce a PNG. Qt resolves its platform plugin and its QML modules by
+  name at run time, out of directories no import table mentions, so a
+  package can pass every other check and still open nothing.
+- The macOS bundle is deployed by `macdeployqt` before our own dylib
+  closure runs, and `-qmldir=launcher-qt/qml` is not optional: our QML is
+  compiled into the binary as a Qt resource, so the import scanner reads
+  nothing without it and deploys no modules.
+- The Flatpak's offline `cargo-sources.json` now covers **both** lock
+  files (the workspace's and `launcher-qt`'s), merged into one vendor
+  directory by `scripts/gen-flatpak-cargo-sources.sh`.

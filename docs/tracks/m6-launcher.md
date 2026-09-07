@@ -37,7 +37,11 @@ for 6b′ onwards, so rebase on `main` before the next push.
   `bundle.rs` (the `machine.toml` format, shared conceptually with the
   player but not necessarily a shared crate yet — decide when the
   player needs to read the same format), `snapshots.rs`, `discshelf.rs`.
-- `packaging/` and `scripts/package-linux.sh` (M6 step 6, 2026-09-05):
+- `launcher-core/`, `launcher-qt/` and `launcher-capi/` as well, since the
+  step-7 split (2026-09-06): the core decides, the two front ends draw,
+  the C ABI exposes the same models. `launcher-qt` is the one the
+  packages install (ADR-015).
+- `packaging/` and `scripts/package-*.sh` (M6 step 6, 2026-09-05):
   the Linux desktop entry, icon and `install.sh`, and the script that
   stages doc 07's install layout. `player/build.rs`'s rpath and the
   `package` check in `scripts/test.sh` are the two places this track
@@ -1425,12 +1429,15 @@ for 6b′ onwards, so rebase on `main` before the next push.
   waits on 2ksbox.com), and the Flathub submission itself, which also
   wants the sources as git rather than a local `type: dir`.
 
-## The Qt port (`launcher-qt/`, 2026-09-06)
+## The Qt port (`launcher-qt/`, 2026-09-06) — the shipped launcher since 2026-09-07
 
-A **spike, not a replacement**, asked for as "do a version of the
-launcher in Qt to see how it would go". Findings, numbers and the
-recommendation live in doc 07's "The Qt port" section — read that first;
-this is the build and test loop.
+Asked for as a spike — "do a version of the launcher in Qt to see how it
+would go" — and **since ADR-015 (2026-09-07) it is the launcher every
+package installs**; `launcher/` (egui) is the maintained second view that
+nothing installs. The comparison and numbers live in doc 07's "Two front
+ends, one core" (and "What shipping Qt costs" for the packaging half);
+this is the build and test loop. What that decision changed in this
+track's files is at the end of this section.
 
 It is a second front end over the same launcher, feature-complete
 against the egui build (grid, wizard, disc shelf, snapshots, shader
@@ -1915,3 +1922,42 @@ bundle on a fresh empty qcow2 and confirm a frame — no OS install
 required, just a BIOS/iPXE splash — then kill the spawned process
 (synthetic disk, no guest, no dirty-FAT concern). The `package` check
 already boots nothing but proves the whole command line and every path.
+
+## The Qt build became the shipped one (ADR-015, 2026-09-07)
+
+The decision is the user's and the ADR has the argument. What it cost in
+this track's files, and what is left:
+
+- **`scripts/build.sh` grew a `qt` stage**, in the default set, over the
+  separate cargo workspace (which stays separate: a plain `cargo build`
+  must never need Qt 6). A host without Qt 6 SKIPs it, builds everything
+  else, and can roll no package — the summary says so, and
+  `scripts/test.sh` skips the `package` check with the same reason.
+- **Every packager installs `launcher-qt` as `2ksbox`.**
+  `package-linux.sh` depends on the system's Qt (`install.sh` names the
+  packages per distribution when the loader cannot find them);
+  `packaging/flatpak/` moved to `org.kde.Platform` 6.10 (the same
+  freedesktop 25.08 base underneath, so nothing else about that build
+  changed) and `gen-flatpak-cargo-sources.sh` now merges both lock files
+  into one offline vendor directory, 554 crates; `package-macos.sh` runs
+  `macdeployqt` before its own dylib closure and re-signs Qt's Mach-O
+  files ad hoc; `package-windows.sh` lost its `--qt` flag along with the
+  second zip it used to roll.
+- **The check none of them had.** `--paths` answering correctly says
+  nothing about whether there will be a *window*: Qt finds its platform
+  plugin and its QML modules by name at run time, out of directories no
+  import table mentions. So each packager now opens a real one —
+  `QT_QPA_PLATFORM=offscreen` with `LAUNCHER_QT_SHOT=<png>`, the
+  launcher's own headless grab — and requires the PNG. On macOS the run
+  is watched with `DYLD_PRINT_LIBRARIES=1` as well, so the images the QML
+  engine pulls in must be the app's own; under wine it is a report and
+  not a verdict.
+- **Run so far: the Linux tarball only** (stages, checks, window grab,
+  all green on Arch with Qt 6.11). The Flatpak, the `.app` and the
+  Windows zip are written and unrun. In order: the Flatpak (also the
+  first offline build of the merged sources, and the first test of
+  whether the KDE SDK's `qmake6` is where cxx-qt looks), the `.app` on
+  the Air, then the Windows zip.
+- **Still owed, and now on the shipped path:** the preview's CPU readback
+  (doc 07's one place where the Qt build is worse) wants a
+  `QQuickRhiItem` importing the Vulkan image instead.

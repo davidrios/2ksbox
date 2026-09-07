@@ -129,16 +129,20 @@ machine library, the disc shelf, snapshots, shader profiles, the
 preview's render path, and every window's own state machine and the
 sentences it shows — lives in one crate, **`launcher-core`**. There are
 two maintained front ends over it, and both are views: they draw and
-forward events, and nothing else (doc 07).
+forward events, and nothing else (doc 07). **`launcher-qt` is the one
+every package installs** as `2ksbox` (ADR-015); `launcher` is kept, and
+installed by nothing.
 
 ```sh
-cargo build --release -p launcher       # egui/eframe; what scripts/build.sh builds
-cd launcher-qt && cargo build --release # Qt 6 / QML through cxx-qt
+cd launcher-qt && cargo build --release # Qt 6 / QML through cxx-qt; what ships
+cargo build --release -p launcher       # egui/eframe; the second view
 ```
 
 `launcher-qt` declares its own workspace, so a plain `cargo build` at the
-root never needs Qt 6 development files. Building it is the whole build
-command — no CMake; `cxx-qt-build` finds Qt through `qmake6`.
+root never needs Qt 6 development files — `scripts/build.sh` has a `qt`
+stage for it instead, and skips that stage (and with it any package) on a
+host with no Qt 6. Building it is the whole build command — no CMake;
+`cxx-qt-build` finds Qt through `qmake6`.
 
 Because the core is a real library, a front end in another language is a
 view over it too. **`launcher-capi`** is a C ABI over the same models —
@@ -167,8 +171,13 @@ scripts/package-linux.sh --with-shaders   # + the ~80 MB preset collection
 It stages the launcher, the player, the embed library, our `qemu-img`,
 QEMU's firmware and the guest-tools ISO into one relocatable prefix
 (doc 07's install layout), checks that the staged launcher resolves all of
-them *inside* the package with a scrubbed environment, and rolls a
-tarball. The extracted tree runs where it lands — `bin/2ksbox` — and the
+them *inside* the package with a scrubbed environment — and that it opens
+a real window offscreen, which is the only way to find out whether Qt's
+plugins and QML modules are there — and rolls a tarball. **Qt 6 is not in
+the tarball**: it needs the distribution's `qt6-base` and
+`qt6-declarative` (Debian/Ubuntu: `libqt6quick6` plus the
+`qml6-module-qtquick-*` packages), and `install.sh` names them if the
+loader cannot find them. The extracted tree runs where it lands — `bin/2ksbox` — and the
 `install.sh` inside it copies the tree into a prefix (`~/.local` by
 default) and adds a desktop entry (`com._2ksbox.Launcher.desktop`, the
 application ID the launcher's window also reports as its `app_id`):
@@ -180,8 +189,9 @@ tar xf 2ksbox-*.tar.zst && cd 2ksbox-*
 
 The tarball ships no system libraries, so it wants a host much like the
 one that built it. The **Flatpak** is the portable answer — it builds
-everything from source against `org.freedesktop.Sdk`, so the ~191
-libraries come from the runtime:
+everything from source against `org.kde.Sdk` (KDE's runtime, because that
+is where Qt 6 comes from; it is `org.freedesktop.Platform` 25.08
+underneath), so the ~191 libraries and Qt itself come from the runtime:
 
 ```sh
 scripts/package-flatpak.sh          # build, install --user, smoke check

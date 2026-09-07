@@ -660,11 +660,12 @@ host_stage() {
     run_check dirshelf dirshelf.log dirshelf_check || true
     run_check shelforder shelforder.log shelforder_check || true
   else skip dirshelf "needs target/release/launcher"; skip shelforder "needs target/release/launcher"; fi
-  # The Qt front end's own window, if this checkout has built one (it is
-  # outside the workspace, so `cargo build` never produces it).
+  # The launcher's own window (ADR-015: the Qt build is the one every
+  # package installs). Still conditional, because it is its own cargo
+  # workspace and a host with no Qt 6 builds everything else.
   if [ -x launcher-qt/target/release/launcher-qt ]; then
     run_check qt-wizard qt-wizard.log qtwizard_check || true
-  else skip qt-wizard "needs launcher-qt/target/release/launcher-qt (cd launcher-qt && cargo build --release)"; fi
+  else skip qt-wizard "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"; fi
 
   # the host GPU probe (ADR-013): what the launcher tells someone about 3D
   # before a machine exists. The verdict itself is a property of the box,
@@ -724,7 +725,11 @@ host_stage() {
   # firmware and guest-tools — the launcher's paths are otherwise baked in
   # at compile time and a regression there only shows on someone else's
   # machine. Rolls no tarball (the check is the point, not the archive).
-  if [ "$OS" = Linux ] && [ -f build/qemu/libqemu-embed-i386.so ] && [ -x build/qemu/qemu-img ] && [ -d qemu/pc-bios ]; then
+  if [ ! -x launcher-qt/target/release/launcher-qt ]; then
+    # The package installs the Qt launcher (ADR-015), so a checkout that
+    # has not built it cannot be packaged at all.
+    skip package "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+  elif [ "$OS" = Linux ] && [ -f build/qemu/libqemu-embed-i386.so ] && [ -x build/qemu/qemu-img ] && [ -d qemu/pc-bios ]; then
     run_check package package.log scripts/package-linux.sh --no-tar --out "$OUT/package" || true
   elif [ "$OS" = Darwin ] && [ -f build/qemu/libqemu-embed-i386.dylib ] && [ -x build/qemu/qemu-img ] && [ -d qemu/pc-bios ]; then
     # The same question in the macOS form (docs/build-macos.md): the .app

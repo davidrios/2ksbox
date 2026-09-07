@@ -14,6 +14,10 @@
 #   rust    cargo build --release: player, launcher, libdisc/discx,
 #           qemu-embed, shader-chain. After `qemu`, because the player
 #           links libqemu-embed out of build/qemu.
+#   qt      cargo build --release in launcher-qt/ (its own workspace):
+#           the Qt 6 / QML launcher, which is the one every package ships
+#           (ADR-015). Needs Qt 6 development files; SKIPped without them,
+#           and then this host can build no package.
 #   dxvk    prepare-dxvk.sh -> configure-dxvk.sh -> ninja
 #   exec    build-d3dpt-exec.sh: libd3dpt_exec, the D3D executor. After
 #           `dxvk`, whose headers it compiles against.
@@ -35,11 +39,11 @@
 # thanks to the stamps below, and needs no network -- which a bare
 # `guest` stage does, since it fetches wine9x.
 #
-# `launcher-qt/` is deliberately not a stage. It is the Qt port spike
-# (doc 07's "The Qt port"), it is its own cargo workspace, and building
-# it needs Qt 6 development files -- which is exactly what keeping it out
-# of the root workspace is for. Build it by hand when you want it:
-# `cd launcher-qt && cargo build`.
+# `launcher-qt/` is its own cargo workspace and stays that way (ADR-015):
+# a plain `cargo build` at the root must never start needing Qt 6, which
+# is what lets the `rust` stage, the test suite and a Mac or CI checkout
+# work on a host with no Qt at all. The `qt` stage is the one thing that
+# does need it, and it is the front end the packages install.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -53,7 +57,7 @@ FORCE=""
 STAGES=()
 
 usage() {
-  sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'
   cat <<EOF
 
 Options:
@@ -72,14 +76,14 @@ while [ $# -gt 0 ]; do
     -f|--force) FORCE=1; shift ;;
     -t|--test) RUN_TEST=1; shift ;;
     -h|--help) usage; exit 0 ;;
-    qemu|rust|dxvk|exec|glide|guest) STAGES+=("$1"); shift ;;
+    qemu|rust|qt|dxvk|exec|glide|guest) STAGES+=("$1"); shift ;;
     *) echo "build.sh: unknown argument '$1' (try --help)" >&2; exit 2 ;;
   esac
 done
 
 EXPLICIT=""
 if [ ${#STAGES[@]} -eq 0 ]; then
-  STAGES=(qemu rust dxvk exec glide guest)
+  STAGES=(qemu rust qt dxvk exec glide guest)
 else
   EXPLICIT=1
 fi
@@ -234,6 +238,26 @@ if want rust; then
   fi
 fi
 
+# --- qt ---------------------------------------------------------------
+# The launcher every package ships (ADR-015). Its own cargo workspace, so
+# it is a stage of its own rather than a member of the one above: that
+# boundary is what keeps Qt 6 off the default build path. There is no
+# CMake step -- cxx-qt-build finds Qt through `qmake6` and drives moc and
+# qmltyperegistrar itself -- so the tool to look for is qmake6.
+if want qt; then
+  if ! have cargo; then skip qt "no cargo" || true
+  elif ! have qmake6 && [ -z "${QMAKE:-}" ]; then
+    case "$(uname -s)" in
+      Darwin) skip qt "no qmake6 (brew install qt)" || true ;;
+      *)      skip qt "no qmake6 (qt6-base + qt6-declarative)" || true ;;
+    esac
+  else
+    say "qt: cargo build --release (launcher-qt)"
+    ( cd launcher-qt && cargo build --release ${JOBS[@]+"${JOBS[@]}"} )
+    BUILT+=(qt)
+  fi
+fi
+
 # --- dxvk -------------------------------------------------------------
 if want dxvk; then
   if ! have meson || ! have ninja; then skip dxvk "needs meson and ninja" || true
@@ -354,6 +378,9 @@ for s in ${SKIPPED[@]+"${SKIPPED[@]}"}; do
   case "$s" in
     exec*) [ -f "build/d3dpt/libd3dpt_exec.$SO" ] \
              && stale+=("build/d3dpt/libd3dpt_exec.$SO (scripts/build-d3dpt-exec.sh)") ;;
+    # A host with no Qt builds everything except the front end the
+    # packages install, and nothing else here would say so.
+    qt*) echo "    note: no Qt 6, so no launcher and no package from this host" ;;
   esac
 done
 if [ ${#stale[@]} -gt 0 ]; then

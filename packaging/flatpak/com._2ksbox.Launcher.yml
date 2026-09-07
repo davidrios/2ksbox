@@ -11,10 +11,20 @@
 # The binaries MUST be built inside the SDK: the host's glibc is newer
 # than the runtime's (2.44 vs 2.42 as of writing) and our embed library
 # already references GLIBC_2.43, so host-built binaries will not run here.
+#
+# The runtime is KDE's, not freedesktop's, and that is the whole of what
+# ADR-015 costs this package: the launcher is Qt 6 / QML (`launcher-qt`),
+# `org.kde.Platform` ships Qt and `org.freedesktop.Platform` does not, and
+# the alternative — building Qt as a module of this manifest — is hours of
+# build for a copy of what a runtime already has. 6.10 is a thin layer on
+# `org.freedesktop.Platform` 25.08, the base this manifest used directly
+# before, so nothing else about the build changes: same glibc, same
+# `org.freedesktop.Sdk.Extension.rust-stable//25.08`, same Python 3.13 for
+# QEMU's configure.
 app-id: com._2ksbox.Launcher
-runtime: org.freedesktop.Platform
-runtime-version: '25.08'
-sdk: org.freedesktop.Sdk
+runtime: org.kde.Platform
+runtime-version: '6.10'
+sdk: org.kde.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
 command: 2ksbox
@@ -104,7 +114,8 @@ modules:
           - third_party/dxvk
           - third_party/slang-shaders
           - .claude
-      # The 513 crates of Cargo.lock as declared sources, unpacked into
+      # Every crate of both lock files (the workspace's and
+      # `launcher-qt/`'s) as declared sources, unpacked into
       # `cargo/vendor` with a `cargo/config` that redirects crates-io at
       # them; `CARGO_HOME` above points at that directory.
       - cargo-sources.json
@@ -114,7 +125,13 @@ modules:
       # layout needs no Flatpak-specific variant.
       - scripts/configure-qemu.sh --disable-download
       - ninja -C build/qemu qemu-img libqemu-embed-i386.so
-      - cargo build --release --locked --offline -p launcher -p player
+      - cargo build --release --locked --offline -p player
+      # `launcher-qt` is its own cargo workspace (ADR-015), so it is its
+      # own build command; `CARGO_HOME` above points both at the one
+      # vendored directory, which cargo-sources.json fills from both lock
+      # files. cxx-qt-build finds Qt through `qmake6` in the SDK and
+      # drives moc and qmltyperegistrar itself — there is no CMake step.
+      - cd launcher-qt && cargo build --release --locked --offline
       - scripts/package-linux.sh --no-build --prefix /app
       # Flatpak exports these three by name, so they go where it looks
       # rather than through packaging/linux/install.sh (which rewrites

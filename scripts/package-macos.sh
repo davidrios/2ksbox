@@ -27,6 +27,16 @@
 #   XQuartz and no Vulkan. So the whole non-system dylib closure is copied
 #   in and every install name rewritten to @rpath. That is the bulk of
 #   this script.
+# * **Qt travels with the app, and `macdeployqt` is what puts it there.**
+#   The launcher is `launcher-qt` (ADR-015), so the bundle needs the Qt
+#   frameworks, the cocoa platform plugin and the QtQuick QML module tree
+#   — and only the first of those three is in a load command, which is
+#   why the closure below would never have found the other two. Qt's own
+#   deployment tool is the supported way to collect them, so it runs
+#   first and the closure runs over what it leaves. Our QML is compiled
+#   into the binary as a Qt resource, so `macdeployqt` is pointed at
+#   `launcher-qt/qml` to find the imports: without `-qmldir` its import
+#   scanner sees no QML at all and deploys no modules.
 # * **The bundle *is* the prefix.** `Contents` has the same
 #   `lib/libexec/share` shape a Unix prefix has — `launcher_core::paths`
 #   finds it by the same `share/2ksbox` marker — with `MacOS/` in the part
@@ -59,7 +69,7 @@ while [ $# -gt 0 ]; do
     --identity) IDENTITY=$2; shift 2 ;;
     --keychain-profile) PROFILE=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
-    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
     *) echo "package-macos.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -74,15 +84,20 @@ need build/qemu/libqemu-embed-i386.dylib "scripts/configure-qemu.sh && ninja -C 
 need build/qemu/qemu-img "ninja -C build/qemu qemu-img"
 need qemu/pc-bios "scripts/prepare-qemu.sh"
 
-[ "$BUILD" = 0 ] || cargo build --release -p launcher -p player
-need target/release/launcher
+if [ "$BUILD" = 1 ]; then
+  cargo build --release -p player
+  # Its own cargo workspace (ADR-015), so its own build command — the
+  # boundary that keeps Qt 6 off a plain `cargo build`.
+  ( cd launcher-qt && cargo build --release )
+fi
+need launcher-qt/target/release/launcher-qt "scripts/build.sh qt"
 need target/release/player
 
 # --- stage -----------------------------------------------------------
 rm -rf "$APP"
 mkdir -p "$C"/{MacOS,Resources,lib/2ksbox,libexec/2ksbox,share/2ksbox,share/doc/2ksbox}
 
-install -m755 target/release/launcher "$C/MacOS/2ksbox"
+install -m755 launcher-qt/target/release/launcher-qt "$C/MacOS/2ksbox"
 install -m755 target/release/player   "$C/MacOS/2ksbox-player"
 install -m755 build/qemu/libqemu-embed-i386.dylib "$C/lib/2ksbox/"
 install -m755 build/qemu/qemu-img "$C/libexec/2ksbox/"
@@ -144,6 +159,46 @@ JSON
   fi
 fi
 
+# --- Info.plist, first pass -------------------------------------------
+# `macdeployqt` below reads CFBundleExecutable out of the plist to know
+# which binary to follow, so it has to exist before Qt is deployed rather
+# than after everything is staged. It is written again at the end, when
+# the floor can be measured from what the bundle actually carries.
+write_plist() { sed -e "s/@VERSION@/$VERSION/" -e "s/@MINOS@/$1/" \
+  packaging/macos/Info.plist.in > "$C/Info.plist"; }
+write_plist 13.0
+
+# --- Qt ---------------------------------------------------------------
+# The frameworks, the cocoa platform plugin and the QtQuick QML modules
+# (ADR-015). `-qmldir` is not optional: our QML is compiled into the
+# binary as a Qt resource, so the import scanner has nothing to read
+# unless it is pointed at the sources, and a bundle deployed without it
+# starts and then dies on `module "QtQuick" is not installed`.
+QMAKE=${QMAKE:-qmake6}
+command -v "$QMAKE" >/dev/null || { echo "package-macos.sh: no $QMAKE (brew install qt); the launcher is Qt 6" >&2; exit 1; }
+QT_BINS=$("$QMAKE" -query QT_HOST_BINS)
+QT_PLUGINS=$("$QMAKE" -query QT_INSTALL_PLUGINS)
+MACDEPLOYQT=${MACDEPLOYQT:-$QT_BINS/macdeployqt}
+[ -x "$MACDEPLOYQT" ] || { echo "package-macos.sh: no macdeployqt at $MACDEPLOYQT (MACDEPLOYQT=)" >&2; exit 1; }
+echo "qt             $("$QMAKE" -query QT_VERSION) from $("$QMAKE" -query QT_INSTALL_PREFIX)"
+"$MACDEPLOYQT" "$APP" -qmldir="$ROOT/launcher-qt/qml" -no-strip
+
+# The offscreen platform plugin, which macdeployqt does not deploy (it
+# brings the cocoa one, which is the only one an app needs to run). The
+# check below asks the staged launcher for a real window without opening
+# one on the packager's screen, and that is the plugin it asks through.
+if [ -f "$QT_PLUGINS/platforms/libqoffscreen.dylib" ]; then
+  mkdir -p "$C/PlugIns/platforms"
+  install -m755 "$QT_PLUGINS/platforms/libqoffscreen.dylib" "$C/PlugIns/platforms/"
+  # It arrives with Homebrew's rpath and none of macdeployqt's, so give
+  # it the two that reach the bundle's own Frameworks — from the plugin
+  # itself, and from whatever executable loaded it.
+  install_name_tool -add_rpath "@loader_path/../../Frameworks" "$C/PlugIns/platforms/libqoffscreen.dylib" 2>/dev/null || true
+  install_name_tool -add_rpath "@executable_path/../Frameworks" "$C/PlugIns/platforms/libqoffscreen.dylib" 2>/dev/null || true
+else
+  warn "no libqoffscreen.dylib in $QT_PLUGINS/platforms; the window check below will be skipped"
+fi
+
 # --- the dylib closure ------------------------------------------------
 # Everything outside /usr/lib and /System — Homebrew's glib/pixman/zstd/…,
 # XQuartz's libGL (QEMU's opengl feature links it even though the embed
@@ -151,6 +206,15 @@ fi
 # copied into lib/2ksbox and rewritten to @rpath, transitively.
 LIBDIR="$C/lib/2ksbox"
 external() { otool -L "$1" | tail -n +2 | awk '{print $1}' | grep -E '^(/opt/|/usr/local/)' || true; }
+
+# Every Mach-O in the bundle, which since Qt arrived is no longer the same
+# thing as every executable file in it: a QML module's plugin can be mode
+# 644 and it still carries a signature that a rewritten load command
+# invalidates — and on arm64 a broken signature is SIGKILL, not a warning.
+machos() {
+  find "$C" -type f \( -perm +111 -o -name '*.dylib' \) \
+    -exec sh -c 'file -b "$1" | grep -q Mach-O && echo "$1"' _ {} \;
+}
 
 bundle_deps() {
   local file=$1 dep leaf real
@@ -219,7 +283,7 @@ while read -r f; do
       install_name_tool -delete_rpath "$rp" "$f" 2>/dev/null || true ;;
     esac
   done < <(otool -l "$f" | awk '/LC_RPATH/{r=1} r&&/path /{print $2; r=0}')
-done < <(find "$C" -type f -perm +111 -exec sh -c 'file -b "$1" | grep -q Mach-O && echo "$1"' _ {} \;)
+done < <(machos)
 
 # Rewriting a load command breaks the signature every arm64 binary must
 # have, and the kernel answers a broken one with SIGKILL and nothing else
@@ -227,7 +291,7 @@ done < <(find "$C" -type f -perm +111 -exec sh -c 'file -b "$1" | grep -q Mach-O
 # The real Developer ID signature replaces this further down; here it only
 # has to make the staged app runnable.
 while read -r f; do codesign --force --sign - "$f" >/dev/null 2>&1 || true; done \
-  < <(find "$C" -type f -perm +111 -exec sh -c 'file -b "$1" | grep -q Mach-O && echo "$1"' _ {} \;)
+  < <(machos)
 
 # --- icon -------------------------------------------------------------
 # The same PNGs the Linux package installs (`scripts/gen-icons.sh`), so
@@ -246,10 +310,11 @@ iconutil -c icns "$set" -o "$C/Resources/2ksbox.icns"
 # --- Info.plist -------------------------------------------------------
 # The floor is whatever the bundle's own Mach-O files require, which is
 # usually set by a dependency and not by us.
-minos=$(find "$C" -type f -perm +111 -exec sh -c 'file -b "$1" | grep -q Mach-O && otool -l "$1" | awk "/LC_BUILD_VERSION/{f=1} f&&/minos/{print \$2; exit}"' _ {} \; \
-  | sort -V | tail -1)
+minos=$(machos | while read -r f; do
+  otool -l "$f" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}'
+done | sort -V | tail -1)
 minos=${minos:-13.0}
-sed -e "s/@VERSION@/$VERSION/" -e "s/@MINOS@/$minos/" packaging/macos/Info.plist.in > "$C/Info.plist"
+write_plist "$minos"
 echo "minimum macOS $minos"
 
 # --- the check --------------------------------------------------------
@@ -260,7 +325,7 @@ fail=0
 while read -r f; do
   out=$(external "$f")
   [ -z "$out" ] || { echo "package-macos.sh: $f still links $(echo "$out" | tr '\n' ' ')" >&2; fail=1; }
-done < <(find "$C" -type f -perm +111 -exec sh -c 'file -b "$1" | grep -q Mach-O && echo "$1"' _ {} \;)
+done < <(machos)
 
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
@@ -293,6 +358,36 @@ if [ -n "$outside" ]; then
   fail=1
 else
   echo "loader         $(printf '%s\n' "$loaded" | grep -c "^$APP/") images from the app, the rest from the system"
+fi
+
+# The window, which `--paths` never opens and the closure could never
+# have checked: Qt loads its platform plugin and every QtQuick module by
+# name at run time, out of PlugIns/ and Resources/qml, and nothing names
+# them in a load command. So open one — offscreen, so it does not appear
+# on the packager's screen — and ask the loader the same question again
+# while it happens. A PNG out of `LAUNCHER_QT_SHOT` (doc 07) means the
+# QML engine really ran; the image list means it ran on our copy of Qt
+# and not on the Homebrew one this Mac happens to have.
+if [ -f "$C/PlugIns/platforms/libqoffscreen.dylib" ]; then
+  shot="$scratch/window.png"
+  qtloaded=$(cd / && env -i HOME="$scratch" LAUNCHER_LIBRARY_DIR="$scratch/machines" \
+    QT_QPA_PLATFORM=offscreen LAUNCHER_QT_SHOT="$shot" LAUNCHER_QT_DELAY=1500 \
+    DYLD_PRINT_LIBRARIES=1 "$C/MacOS/2ksbox" 2>&1 \
+    | sed -n 's|^dyld\[[0-9]*\]: <[^>]*> ||p')
+  if [ -s "$shot" ]; then
+    echo "window         $(du -h "$shot" | cut -f1) grabbed offscreen: QML, plugins and all"
+  else
+    echo "package-macos.sh: the staged launcher opened no window offscreen (Qt plugins or QML modules missing)" >&2
+    fail=1
+  fi
+  outside=$(printf '%s\n' "$qtloaded" | grep -v -e "^$APP/" -e '^/usr/lib/' -e '^/System/' || true)
+  if [ -n "$outside" ]; then
+    printf '%s\n' "$outside" | sed 's/^/  /' >&2
+    echo "package-macos.sh: the staged launcher loaded the above from outside the app" >&2
+    fail=1
+  fi
+else
+  echo "window         (no offscreen plugin staged; not checked)"
 fi
 
 # The bundle-creating path end to end, as package-linux.sh does it.
@@ -341,10 +436,21 @@ if [ "$SIGN" = 1 ]; then
     printf '%s\n' "$out" >&2
     return 1
   }
-  # Inside-out: every nested Mach-O before the bundle that seals it.
-  while read -r f; do sign_one "$f"; done \
-    < <(find "$C/lib" "$C/libexec" -type f \( -name '*.dylib' -o -perm +111 \) 2>/dev/null | sort -u)
-  sign_one "$C/MacOS/2ksbox-player"
+  # Inside-out: every nested Mach-O before the thing that seals it, and a
+  # framework signed as the bundle it is rather than as the file inside
+  # it — `codesign` seals a framework by its directory, and one sealed
+  # only at Versions/A/QtCore is what `--verify --deep --strict` rejects.
+  while read -r f; do
+    case "$f" in
+      "$C"/Frameworks/*.framework/*) continue ;;   # signed as a bundle below
+      "$C"/MacOS/2ksbox) continue ;;               # the app's own executable, last
+    esac
+    sign_one "$f"
+  done < <(machos | sort -u)
+  for fw in "$C"/Frameworks/*.framework; do
+    [ -d "$fw" ] && sign_one "$fw"
+  done
+  sign_one "$C/MacOS/2ksbox"
   sign_one "$APP"
   codesign --verify --deep --strict --verbose=2 "$APP"
   # The question Gatekeeper will actually ask on the other Mac. Before

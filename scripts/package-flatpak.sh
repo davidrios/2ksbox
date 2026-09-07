@@ -4,6 +4,11 @@
 # SDK: the host's glibc is newer than the runtime's, so host-built
 # binaries cannot run in it.
 #
+# The runtime is `org.kde.Platform` since ADR-015 (2026-09-07), because
+# the launcher it packages is Qt 6 / QML and KDE's runtime is where Qt
+# comes from. The first build after that change downloads a fresh ~3 GB
+# runtime + SDK pair.
+#
 #   scripts/package-flatpak.sh              build, install --user, smoke check
 #   scripts/package-flatpak.sh --no-install just build into the repo
 #   scripts/package-flatpak.sh --check      only re-run the smoke check
@@ -28,7 +33,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-install) INSTALL=0; shift ;;
     --check) ONLY_CHECK=1; shift ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) echo "package-flatpak.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -53,6 +58,25 @@ smoke() {
   case "$out" in *"/.var/app/$APPID/"*) ;; *)
     echo "package-flatpak.sh: the library is not under ~/.var/app/$APPID" >&2; fail=1 ;;
   esac
+  # And the window, which `--paths` never reaches: the launcher is Qt 6 /
+  # QML (ADR-015) and Qt resolves its platform plugin and every QtQuick
+  # module by name at run time, out of the runtime rather than out of
+  # /app. That is exactly the thing a wrong `runtime:` line would break
+  # while every check above stayed green, so ask for a real window: the
+  # launcher's own headless grab (doc 07), offscreen, and a PNG out of it.
+  local shot="${TMPDIR:-/tmp}/2ksbox-flatpak-window.png"
+  rm -f "$shot"
+  echo "==> flatpak run $APPID (offscreen window grab)"
+  flatpak run --user --command=2ksbox \
+    --env=QT_QPA_PLATFORM=offscreen --env=LAUNCHER_QT_SHOT="$shot" \
+    --env=LAUNCHER_QT_DELAY=1500 "$APPID" >/dev/null 2>&1 || true
+  if [ -s "$shot" ]; then
+    echo "window         $(du -h "$shot" | cut -f1) grabbed offscreen: QML, plugins and all"
+    rm -f "$shot"
+  else
+    echo "package-flatpak.sh: the app opened no window offscreen — Qt's QML modules or platform plugin are not in the runtime" >&2
+    fail=1
+  fi
   return $fail
 }
 

@@ -4,15 +4,14 @@
 # resolves its companions *inside* it, and roll a zip.
 #
 #   scripts/package-windows.sh                 # stage, check, zip
-#   scripts/package-windows.sh --qt            # ... the Qt 6 front end instead
 #   scripts/package-windows.sh --no-zip        # leave the staged tree only
 #   scripts/package-windows.sh --with-shaders  # include the preset collection
 #   scripts/package-windows.sh --out DIR       # default build/win/package
 #
-# `--qt` rolls a second, complete package whose `2ksbox.exe` is
-# `launcher-qt` (doc 07's other maintained front end) plus the Qt runtime
-# it needs — same player, same QEMU, same guest tools, so the two can be
-# unzipped side by side and compared on one machine.
+# `2ksbox.exe` is `launcher-qt`, the Qt 6 / QML launcher (ADR-015), and
+# the Qt runtime it needs travels with it: the DLLs, the platform plugin
+# and the QML module trees, none of which Windows has. `launcher/` (egui)
+# is still a maintained front end and is no longer packaged anywhere.
 #
 # Run it from the host (not inside scripts/win-cross.sh): the checks want
 # wine, which the cross image has no reason to carry. It builds nothing —
@@ -28,7 +27,10 @@
 #   qemu-img.exe                ours, patched
 #   libqemu-embed-i386.dll      QEMU as a library, what the player runs
 #   d3dpt_exec.dll              the Direct3D executor (doc 14)
-#   *.dll                       the mingw runtime those three need
+#   *.dll                       the mingw and Qt 6 runtimes those need
+#   plugins\                    Qt's platform plugin and friends
+#   qml\                        the QtQuick module trees the views import
+#   qt.conf                     where Qt looks for those two
 #   pc-bios\                    QEMU firmware
 #   guest-tools\                the guest-tools ISO
 #   shaders\                    presets, with --with-shaders
@@ -42,21 +44,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-ZIP=1 SHADERS=0 QT=0 OUT="$ROOT/build/win/package"
+ZIP=1 SHADERS=0 OUT="$ROOT/build/win/package"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --qt) QT=1; shift ;;
     --no-zip) ZIP=0; shift ;;
     --with-shaders) SHADERS=1; shift ;;
     --out) OUT=$2; shift 2 ;;
-    -h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "package-windows.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 NAME="2ksbox-$VERSION-windows-x86_64"
-[ "$QT" = 1 ] && NAME="$NAME-qt"
 STAGE="$OUT/$NAME"
 TARGET="$ROOT/target/x86_64-pc-windows-gnu/release"
 QT_TARGET="$ROOT/launcher-qt/target/x86_64-pc-windows-gnu/release"
@@ -65,22 +65,14 @@ Q="$ROOT/build/win/qemu"
 need() { [ -e "$1" ] || { echo "package-windows.sh: missing $1${2:+ ($2)}" >&2; exit 1; }; }
 need "$Q/libqemu-embed-i386.dll" "scripts/build-windows.sh qemu"
 need "$Q/qemu-img.exe"           "scripts/build-windows.sh qemu"
-if [ "$QT" = 1 ]; then
-  need "$QT_TARGET/launcher-qt.exe" "scripts/build-windows.sh qt"
-else
-  need "$TARGET/launcher.exe"    "scripts/build-windows.sh rust"
-fi
+need "$QT_TARGET/launcher-qt.exe" "scripts/build-windows.sh qt"
 need "$TARGET/player.exe"        "scripts/build-windows.sh rust"
 need qemu/pc-bios                "scripts/prepare-qemu.sh"
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE/doc"
 
-if [ "$QT" = 1 ]; then
-  install -m755 "$QT_TARGET/launcher-qt.exe" "$STAGE/2ksbox.exe"
-else
-  install -m755 "$TARGET/launcher.exe" "$STAGE/2ksbox.exe"
-fi
+install -m755 "$QT_TARGET/launcher-qt.exe" "$STAGE/2ksbox.exe"
 install -m755 "$TARGET/player.exe" "$STAGE/2ksbox-player.exe"
 install -m755 "$Q/qemu-img.exe" "$STAGE/"
 install -m755 "$Q/libqemu-embed-i386.dll" "$STAGE/"
@@ -182,26 +174,25 @@ chmod 644 "$STAGE/2ksbox-debug.bat"
 # imports (QtQuick pulls Controls, Layouts, Dialogs, Templates and
 # Effects with it), and a `qt.conf` so Qt resolves both relative to the
 # executable instead of to the build machine's absolute paths.
-if [ "$QT" = 1 ]; then
-  QTROOT=${WIN_QTROOT:-/usr/x86_64-w64-mingw32/sys-root/mingw/lib/qt6}
-  if [ ! -d "$QTROOT" ]; then
-    QTROOT="$ROOT/build/win/qt6"
-    echo "==> copying the mingw Qt runtime out of the cross image"
-    rm -rf "$QTROOT"      # for the same reason as the sysroot copy above
-    mkdir -p "$QTROOT"
-    scripts/win-cross.sh bash -c \
-      "cp -a /usr/x86_64-w64-mingw32/sys-root/mingw/lib/qt6/plugins \
-             /usr/x86_64-w64-mingw32/sys-root/mingw/lib/qt6/qml '$QTROOT/'"
-  fi
-  need "$QTROOT/plugins/platforms" "the cross image's mingw Qt 6"
-  mkdir -p "$STAGE/plugins" "$STAGE/qml"
-  for d in platforms imageformats iconengines styles tls; do
-    [ -d "$QTROOT/plugins/$d" ] && cp -a "$QTROOT/plugins/$d" "$STAGE/plugins/"
-  done
-  for m in QtQuick QtQml QtCore; do
-    [ -d "$QTROOT/qml/$m" ] && cp -a "$QTROOT/qml/$m" "$STAGE/qml/"
-  done
-  cat > "$STAGE/qt.conf" <<'EOF'
+QTROOT=${WIN_QTROOT:-/usr/x86_64-w64-mingw32/sys-root/mingw/lib/qt6}
+if [ ! -d "$QTROOT" ]; then
+  QTROOT="$ROOT/build/win/qt6"
+  echo "==> copying the mingw Qt runtime out of the cross image"
+  rm -rf "$QTROOT"      # for the same reason as the sysroot copy above
+  mkdir -p "$QTROOT"
+  scripts/win-cross.sh bash -c \
+    "cp -a /usr/x86_64-w64-mingw32/sys-root/mingw/lib/qt6/plugins \
+           /usr/x86_64-w64-mingw32/sys-root/mingw/lib/qt6/qml '$QTROOT/'"
+fi
+need "$QTROOT/plugins/platforms" "the cross image's mingw Qt 6"
+mkdir -p "$STAGE/plugins" "$STAGE/qml"
+for d in platforms imageformats iconengines styles tls; do
+  [ -d "$QTROOT/plugins/$d" ] && cp -a "$QTROOT/plugins/$d" "$STAGE/plugins/"
+done
+for m in QtQuick QtQml QtCore; do
+  [ -d "$QTROOT/qml/$m" ] && cp -a "$QTROOT/qml/$m" "$STAGE/qml/"
+done
+cat > "$STAGE/qt.conf" <<'EOF'
 ; Qt's own paths, relative to this executable. Without it a deployed
 ; build looks for its plugins and QML modules where they were on the
 ; machine that compiled Qt.
@@ -210,7 +201,6 @@ Prefix = .
 Plugins = plugins
 Qml2Imports = qml
 EOF
-fi
 
 # --- the DLL closure --------------------------------------------------
 # Everything our four binaries import, transitively, that is not a
@@ -384,6 +374,34 @@ if command -v wine >/dev/null; then
   else
     echo "package-windows.sh: the staged launcher wrote no launcher.log" >&2
     fail=1
+  fi
+
+  # A window, which `--paths` never opens. Qt finds its platform plugin
+  # and its QML modules by name at run time, out of `plugins\` and
+  # `qml\` beside the executable, and nothing in an import table says so
+  # -- so a package that answers every question above can still be one
+  # that shows nothing at all on a real PC. Under wine this is a report
+  # and not a verdict (wine's Qt is not the target's), but the staged
+  # files below are: `qwindows.dll` missing is a package that cannot
+  # open a window anywhere.
+  if [ -f "$STAGE/plugins/platforms/qwindows.dll" ] && [ -f "$STAGE/qml/QtQuick/qmldir" ]; then
+    echo "qt runtime     platforms\\qwindows.dll and the QtQuick modules are staged"
+  else
+    echo "package-windows.sh: no plugins\\platforms\\qwindows.dll or no qml\\QtQuick: the launcher would open no window" >&2
+    fail=1
+  fi
+  # Z: is wine's view of /, so the grab lands in the same scratch
+  # directory everything else here uses.
+  shot="$scratch/window.png"
+  winshot="Z:$(printf '%s' "$scratch" | tr '/' '\\')\\window.png"
+  (cd "$STAGE" && env -i HOME="$scratch" WINEPREFIX="$WINEPREFIX" WINEDEBUG=-all \
+      PATH="$PATH" QT_QPA_PLATFORM=offscreen LAUNCHER_QT_SHOT="$winshot" \
+      LAUNCHER_QT_DELAY=2000 wine 2ksbox.exe >/dev/null 2>&1) || true
+  if [ -s "$shot" ]; then
+    echo "window         grabbed offscreen under wine: QML, plugins and all"
+    rm -f "$shot"
+  else
+    echo "window         (no offscreen grab under wine; the real answer is 2ksbox-debug.bat on a PC)"
   fi
 
   # The bundle-creating path end to end: the staged launcher runs the

@@ -234,14 +234,14 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   socket at spawn and on every edit, so a disc added while the guest runs
   appears in its next listing.
 - Snapshots UI, bundle import/export.
-- UI toolkit: **egui/eframe** (decided at M6, 2026-09-04 — see
-  `docs/tracks/m6-launcher.md`). MIT/Apache-2.0 fits the project's
-  GPL-2.0-only + open-source stance better than Slint's non-GPLv3 tiers;
-  its default features are wgpu-backed already, unifying with the
-  player's `wgpu`/`winit` pins in `Cargo.lock`. Since 2026-09-06 there
-  is a **second, maintained front end** on Qt 6 / QML (`launcher-qt/`),
-  and everything either of them decides lives in `launcher-core/` —
-  "Two front ends, one core" below.
+- UI toolkit: **Qt 6 / QML** (`launcher-qt/`) is what the product ships
+  since ADR-015, 2026-09-07 — every package installs it as `2ksbox`.
+  `launcher/` on **egui/eframe** (decided at M6, 2026-09-04 — see
+  `docs/tracks/m6-launcher.md`; MIT/Apache-2.0 fits the project's
+  GPL-2.0-only + open-source stance better than Slint's non-GPLv3 tiers,
+  and its wgpu backend unifies with the player's `wgpu`/`winit` pins) is
+  still maintained and is installed by nothing. Everything either of them
+  decides lives in `launcher-core/` — "Two front ends, one core" below.
 
 The launcher is optional by design: hand-written bundles + the player binary
 is a fully supported path.
@@ -417,7 +417,10 @@ The launcher is **two maintained front ends over one library** (decided
 2026-09-06): `launcher/` on egui/eframe and `launcher-qt/` on Qt 6 / QML
 through cxx-qt, both views over `launcher-core/`. The Qt build began as a
 costed spike — "how would this go in Qt", answered with something that
-runs rather than an argument — and is now kept as a peer.
+runs rather than an argument — and is now kept as a peer. **Since
+ADR-015 (2026-09-07) it is also the one every package installs**, and
+`launcher/` is the second view that no package installs: what that costs
+each packager is "What shipping Qt costs" below.
 
 ### What is in the core, and why all of it
 
@@ -563,16 +566,14 @@ inline. The saving is that there is one place to change any of it.
 The Qt binary being *smaller* is not a size win: egui, wgpu and winit are
 statically linked into the egui build, while Qt is a shared library, so
 the Qt build then needs ~25 MB of `libQt6{Core,Gui,Qml,Network,DBus}`
-plus the ~13 MB QtQuick QML plugin tree present on the machine. That is a
-packaging question: on Linux the Flatpak would move from
-`org.freedesktop.Sdk` to `org.kde.Platform` (which ships Qt), and the
-AppImage/macOS/Windows builds would each have to carry Qt themselves.
+plus the ~13 MB QtQuick QML plugin tree present on the machine. That is
+the packaging question ADR-015 answered — "What shipping Qt costs" below.
 `launcher-qt` is not in the root workspace (`Cargo.toml` declares its
 own) precisely so that a plain `cargo build` never starts needing Qt 6
 development files on the Mac, in CI or in the Flatpak; the
 `launcher-core` path dependency crosses that boundary without dragging Qt
-back the other way. Build it from its own directory — that is the whole
-build command, no CMake.
+back the other way. Build it from its own directory, or with
+`scripts/build.sh qt` — that is the whole build command, no CMake.
 
 ### Proving they agree
 
@@ -662,6 +663,50 @@ launcher's logic is not the first one's?** About 3,900 lines of view code
 for the Qt build, no behaviour, and a build that is off the default path
 — and in exchange, four real divergences got found and closed, and the
 door to a native macOS front end is a C header rather than a rewrite.
+
+**2026-09-07 (ADR-015): the Qt build is the shipped one.** A package has
+to install one launcher — a product has one, its screenshots show one,
+and a bug report names one — and the two are equal on behaviour by
+construction, so the tie went to the front end that gets real windows,
+the platform's own file dialog, the desktop integrations nobody wants to
+write (decorations, HiDPI, colour scheme, accessibility, input methods),
+and a main loop that idles instead of drawing 60 frames a second beside a
+running machine. It was already the Windows package's launcher. The egui
+build stays exactly as it is and is installed by nothing: it is the
+second view that keeps the core's boundary a fact, the home of the
+`--diag-*-frame` verbs, and the fallback for a host where Qt is a
+problem. The one thing the Qt build does worse — the preview's CPU
+readback — is now on the shipped path, which is the argument for fixing
+it with a `QQuickRhiItem` rather than for keeping the door open.
+
+### What shipping Qt costs
+
+Qt is a shared library, so every packager gained a job (ADR-015):
+
+| package | how Qt gets there |
+|---|---|
+| Linux tarball (`scripts/package-linux.sh`) | not carried: a runtime dependency on `qt6-base` + `qt6-declarative`, named by `packaging/linux/install.sh` when the loader cannot find them |
+| Flatpak (`packaging/flatpak/`) | the runtime **is** Qt: `org.kde.Platform` 6.10 in place of `org.freedesktop.Platform` 25.08 — the same freedesktop base, so nothing else about that build changed |
+| macOS (`scripts/package-macos.sh`) | `macdeployqt` before our own dylib closure, with `-qmldir=launcher-qt/qml` |
+| Windows (`scripts/package-windows.sh`) | staged by hand — the DLLs through the existing import walk, plus `plugins/`, `qml/` and a `qt.conf`; Fedora's mingw has no cross `windeployqt` |
+
+Two of those need saying out loud:
+
+- **Our QML is compiled into the binary as a Qt resource** (`build.rs`'s
+  `QmlModule`), which is why an installed launcher needs no `qml/`
+  directory of its own — and why `macdeployqt` has to be pointed at
+  `launcher-qt/qml` with `-qmldir`: its import scanner reads source, and
+  a bundle deployed without it starts and then dies on `module "QtQuick"
+  is not installed`.
+- **A package can pass every other check and open nothing.** Qt resolves
+  its platform plugin and every QML module by name at run time, out of
+  directories no import table mentions, so `--paths` answering correctly
+  proves nothing about whether there will be a window. Each packager
+  therefore ends by opening a real one: `QT_QPA_PLATFORM=offscreen` with
+  `LAUNCHER_QT_SHOT=<png>` (the launcher's own headless grab), and a PNG
+  out of it. On macOS the same run is watched with
+  `DYLD_PRINT_LIBRARIES=1`, so the images the QML engine pulls in have to
+  be the app's own copies too.
 
 ### Four Qt traps, each of which cost real time
 

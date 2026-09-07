@@ -179,7 +179,10 @@ a question about wine's Qt 6 support. (What has been ruled out so far: a
 CRT mismatch — every binary in the package imports `msvcrt.dll`, Qt's
 included — and a malformed constructor list: the exe's `.ctors` is a
 well-formed `-1`, fifteen entries inside `.text`, `NULL`.) The egui
-package is the one to use meanwhile.
+package is the one to use meanwhile. **Found and fixed the same day** —
+`__once_proxy` across the libstdc++ DLL boundary, "The Qt binary's
+fault, found" below — and since ADR-015 (2026-09-07) the Qt build is the
+only package there is.
 
 **The egui front end started, and the machine it started did not**: the
 player's log said
@@ -204,11 +207,15 @@ binary wine hangs in, so the question is put to the embed library's
 **import table**: `net/slirp.c` is libslirp's only consumer, so the
 import is the backend.
 
-### Both front ends (2026-09-06)
+### Both front ends (2026-09-06) — one package since ADR-015 (2026-09-07)
 
-`scripts/package-windows.sh --qt` rolls a second, complete package whose
-`2ksbox.exe` is `launcher-qt`, so the two can be unzipped side by side on
-one machine and compared. Qt crosses better than expected: Fedora has
+`scripts/package-windows.sh --qt` rolled a second, complete package whose
+`2ksbox.exe` was `launcher-qt`, so the two could be unzipped side by side
+on one machine and compared. That flag is gone: the Qt build is the
+launcher (ADR-015), the one zip carries it and Qt, and `launcher.exe` is
+still cross-built by the `rust` stage for anyone who wants a second
+opinion out of `target/x86_64-pc-windows-gnu/release`. Qt crosses better
+than expected: Fedora has
 `mingw64-qt6-*` to link against, a native Qt of the same version for the
 tools that run here, and a `x86_64-w64-mingw32-qmake-qt6` whose `-query`
 splits `QT_INSTALL_*` (target) from `QT_HOST_*` (host) exactly the way
@@ -413,19 +420,19 @@ images and a GPU, and now a Windows host too. The Windows evidence is
 
 ## Next steps, in order
 
-1. **`2ksbox-debug.bat` from both packages on the PC**, and read the
-   `2ksbox-debug.log` it writes. It answers the run that said nothing: a
-   `launcher.log` with milestones names the step that failed, no
-   `launcher.log` at all plus an exit code names a loader failure, and
-   for the Qt package that is also the experiment that decides between
-   cxx-qt's static initialisers (ours to fix) and wine (not).
-2. **Boot a machine on the user's Windows PC**, on the egui package.
-   The QMP monitor's `fd=` is a CRT descriptor and the QEMU beside it has
-   libslirp now, which is where runs two and four stopped; what a guest
-   does under WHPX is the next unknown.
-3. **Run the Qt package on the PC.** It starts now, and does real work
-   under wine; whether its window comes up on Windows is the next thing
-   only that machine can say.
+1. **Rebuild and re-package for the ADR-015 shape**, then
+   `2ksbox-debug.bat` on the PC and read the `2ksbox-debug.log` it
+   writes: there is one zip now, its `2ksbox.exe` is the Qt launcher, and
+   nothing about that path has been run since the packager changed. A
+   `launcher.log` with milestones names the step that failed; no
+   `launcher.log` at all plus an exit code names a loader failure.
+2. **Does the window come up on Windows?** It starts and does real work
+   under wine, and the packaging check grabs one offscreen there — but
+   wine's Qt 6 is not the target's, and only that machine can say.
+3. **Boot a machine on the user's Windows PC.** The QMP monitor's `fd=`
+   is a CRT descriptor and the QEMU beside it has libslirp now, which is
+   where runs two and four stopped; what a guest does under WHPX is the
+   next unknown.
 4. **A Win98 guest with 3D on real Windows.** The WGL backend is written
    and its sequence passes under wine (`tools/wgl-probe.exe`), but no
    guest has used it.

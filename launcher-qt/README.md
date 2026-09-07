@@ -1,17 +1,20 @@
-# launcher-qt — the Qt port of the launcher (a spike)
+# launcher-qt — the launcher
 
-A second, feature-complete front end over the same launcher: machine
-grid, guided creation wizard, disc shelf, snapshots, and the shader
-profile manager with its live preview — on **Qt 6 / QML through
-[cxx-qt](https://github.com/KDAB/cxx-qt)**, where `launcher/` uses egui.
+The front end the product ships (ADR-015, 2026-09-07): the machine grid,
+the guided creation wizard, the disc shelf, snapshots, and the shader
+profile manager with its live preview, on **Qt 6 / QML through
+[cxx-qt](https://github.com/KDAB/cxx-qt)**. Every package installs this
+binary as `2ksbox`.
 
-It exists to answer "how would this go in Qt" with something that runs.
-**The findings, the numbers and the recommendation are in
-`docs/07-frontend.md`, section "The Qt port"**; the build and test loop
-is in `docs/tracks/m6-launcher.md`. Read those, not this file.
+It began as a costed spike — "how would this go in Qt", answered with
+something that runs. **The comparison, the numbers and what shipping Qt
+costs each packager are in `docs/07-frontend.md`** ("Two front ends, one
+core"); the build and test loop is in `docs/tracks/m6-launcher.md`. Read
+those, not this file.
 
-`launcher/` remains the launcher. Nothing here is wired into the
-workspace, the packaging or the test suite.
+`launcher/` (egui) is still maintained and is installed by nothing: it is
+the second view that keeps `launcher-core`'s boundary honest. Nothing
+here decides anything — every rule is in the core, and this crate is Qt.
 
 ## Building
 
@@ -21,12 +24,17 @@ nothing else beyond the usual toolchain. There is no CMake step:
 `qmltyperegistrar` itself.
 
 ```sh
+scripts/build.sh qt   # the stage that builds this, in the default set
 cd launcher-qt        # its own workspace, deliberately: see Cargo.toml
 cargo build
 ```
 
-The root `cargo build` does **not** build this crate, which is the point
-— the Mac side, CI and the Flatpak must never start needing Qt.
+The root `cargo build` still does **not** build this crate, which is the
+point even now that it is the shipped one: everything else in the tree
+has to keep building on a host with no Qt 6 (a Mac without it, CI, a
+sandbox). Such a host builds all of that and can roll no package —
+`scripts/build.sh` says so in its summary, and `scripts/test.sh` skips
+the `package` check with the reason.
 
 ## Running it against something other than your real library
 

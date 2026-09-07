@@ -3,10 +3,25 @@
 #
 # Flathub builds have no network, so the Flatpak cannot let cargo fetch
 # crates: every one has to be a declared source with a checksum, which is
-# what this file is (513 crates + their .cargo-checksum.json + the cargo
+# what this file is (every crate + its .cargo-checksum.json + the cargo
 # config that redirects crates-io at the vendor directory).
 #
-# Run it after any dependency change, and commit the result:
+# **Two lock files, one vendor directory.** `launcher-qt/` declares its own
+# cargo workspace (ADR-015) and it is the launcher the Flatpak installs, so
+# its crates have to be declared too. The generator takes one lock file at
+# a time, so it is run once per lock and the results are merged on their
+# `dest`: the two share most of their crates at identical versions, and one
+# `cargo/config` covers both because `CARGO_HOME` is the same for both
+# builds.
+#
+# The root lock file still names `launcher/`'s egui crates: the Flatpak no
+# longer builds that front end (ADR-015), so they are vendored and never
+# compiled. That costs a download and not a build, and dropping them would
+# mean generating from something other than the lock file — which is the
+# one thing here that is exact.
+#
+# Run it after any dependency change in either workspace, and commit the
+# result:
 #   scripts/gen-flatpak-cargo-sources.sh
 #
 # The generator is upstream's (flatpak/flatpak-builder-tools, MIT), pinned
@@ -33,21 +48,49 @@ if ! [ -f "$TOOL" ] || ! echo "$SHA256  $TOOL" | sha256sum -c --status; then
     rm -f "$TOOL"; exit 1; }
 fi
 
-echo "==> generating $OUT from Cargo.lock"
-uv run --quiet --python 3.12 --with aiohttp --with tomlkit --with PyYAML \
-  python "$TOOL" Cargo.lock -o "$OUT"
+LOCKS=(Cargo.lock launcher-qt/Cargo.lock)
+PARTS=()
+for lock in "${LOCKS[@]}"; do
+  part="$ROOT/build/flatpak-tools/$(echo "$lock" | tr / -).json"
+  echo "==> generating from $lock"
+  uv run --quiet --python 3.12 --with aiohttp --with tomlkit --with PyYAML \
+    python "$TOOL" "$lock" -o "$part"
+  PARTS+=("$part")
+done
 
-python3 - "$OUT" <<'EOF'
+echo "==> merging into $OUT"
+python3 - "$OUT" "${PARTS[@]}" <<'EOF'
 import json, sys
-s = json.load(open(sys.argv[1]))
+out, parts = sys.argv[1], sys.argv[2:]
+merged, seen, clashes = [], {}, []
+for part in parts:
+    for e in json.load(open(part)):
+        # A source is identified by where it lands. The same crate at the
+        # same version in both lock files is one entry; the same path with
+        # different contents is a real conflict (two versions of a crate
+        # would land in differently named directories, so this can only be
+        # the cargo config, and both generators write the same one).
+        key = (e.get("dest"), e.get("dest-filename"), e["type"])
+        if key in seen:
+            if seen[key] != e:
+                clashes.append(key)
+            continue
+        seen[key] = e
+        merged.append(e)
+assert not clashes, f"sources disagree about {clashes}"
 kinds = {}
-for e in s:
+for e in merged:
     kinds[e["type"]] = kinds.get(e["type"], 0) + 1
-crates = [e for e in s if e["type"] == "archive"]
+crates = [e for e in merged if e["type"] == "archive"]
 assert crates, "no crate archives generated"
 assert all(e["url"].startswith("https://") and e.get("sha256") for e in crates), \
     "a crate source has no https url or no checksum"
-cfg = [e for e in s if e.get("dest") == "cargo" and e.get("dest-filename", "").startswith("config")]
+cfg = [e for e in merged if e.get("dest") == "cargo" and e.get("dest-filename", "").startswith("config")]
 assert len(cfg) == 1, f"expected exactly one cargo config entry, got {len(cfg)}"
-print(f"{len(s)} sources: {kinds}")
+# cxx-qt is what the second lock file is here for; a merge that lost it
+# would be an offline build that fails hours in.
+assert any("/cxx-qt/" in e.get("url", "") for e in crates), "no cxx-qt crate: launcher-qt's lock did not make it in"
+json.dump(merged, open(out, "w"), indent=4)
+open(out, "a").write("\n")
+print(f"{len(merged)} sources: {kinds}")
 EOF
