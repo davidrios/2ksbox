@@ -285,10 +285,11 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   or past its own `ACPICheckDate`, 12/01/99, otherwise a match in
   `BIOSINFO.INF`'s `[GoodACPIBios]`; SeaBIOS says 06/23/99 and we match
   nothing, so `prepare-qemu.sh` stamps every `pc-bios/bios*.bin` to
-  12/31/99 (doc 06, the `bios-date` check). **Not yet confirmed by an
-  install** — until it is, install with `SETUP /p j`; older images are
-  repaired through Device Manager (build-macos.md). Guest wrappers must be
-  msvcrt-linked and `-march=pentium3`.
+  12/31/99 (doc 06, the `bios-date` check) and **a plain `SETUP` installs
+  ACPI — user-confirmed 2026-09-07**; `SETUP /p j` is no longer needed. An
+  image installed before the stamp is still PnP-BIOS and is repaired
+  through Device Manager (build-macos.md), not reinstalled. Guest wrappers
+  must be msvcrt-linked and `-march=pentium3`.
   **Run Win98 under TCG, not KVM** (which is also the launcher's default
   for the family): under `-accel kvm` `~/vms/win98.qcow2` loses Explorer
   at startup — an "illegal operation", then *SHELL32.DLL is linked to

@@ -175,10 +175,10 @@ brew install mingw-w64 xorriso && guest-tools/build-wrappers.sh
 #    IMPORTANT: the install must come out ACPI, or QEMU's PCI bus is left
 #    un-enumerated ("Plug and Play BIOS" with a yellow ! in Device Manager) and
 #    any PCI device added later (USB controller, AC'97, NIC) is never detected.
-#    Since 2026-09-06 prepare-qemu.sh stamps the firmware's BIOS date past the
-#    12/01/99 setup compares against (doc 06), which should make a plain SETUP
-#    install ACPI — but that is not confirmed by an install yet, so for now boot
-#    the CD to "Start computer with CD-ROM support" and run  D:\WIN98\SETUP /p j
+#    A plain SETUP does that since 2026-09-06: prepare-qemu.sh stamps the
+#    firmware's BIOS date past the 12/01/99 setup compares against (doc 06),
+#    confirmed by an install 2026-09-07. On a build from before the stamp it
+#    took  D:\WIN98\SETUP /p j  from "Start computer with CD-ROM support".
 qemu-img create -f qcow2 ~/vms/win98.qcow2 4G
 build/qemu/qemu-system-i386 -machine pc -cpu pentium3 -m 256 \
   -hda ~/vms/win98.qcow2 -cdrom ~/isos/Win98SE.iso -boot d \

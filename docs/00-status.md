@@ -517,9 +517,10 @@ items nobody owns yet:
   06/23/99 and QEMU is on none of `BIOSINFO.INF`'s four `[GoodACPIBios]`
   machines, so a plain `SETUP` installed PnP-BIOS. Since 2026-09-06
   `prepare-qemu.sh` stamps every `pc-bios/bios*.bin` to **12/31/99** (doc
-  06 has the whole decision; the `bios-date` check guards it) — **not yet
-  confirmed by an install**, so `SETUP /p j` remains the sure thing and the
-  PnP-BIOS→PCI Bus repair in build-macos.md is what fixes an older image.
+  06 has the whole decision; the `bios-date` check guards it), and
+  **a plain `SETUP` now installs ACPI — user-confirmed 2026-09-07**. An
+  image installed before that is still PnP-BIOS: repair it through Device
+  Manager (PnP-BIOS→PCI Bus, build-macos.md), don't reinstall.
 - Caps-Lock→Control on macOS reports as right Ctrl to SDL (patch 03).
 - Never `exit()` the process while the QEMU thread is alive: QEMU registers
   atexit handlers (`audio_cleanup`, exit notifiers) that then race

@@ -71,11 +71,12 @@ and RSDT creator revision ≥ 0, both hardcoded to 1 by
 `hw/acpi/aml-build.c`), which needs no firmware change at all but puts a
 vendor's name on every table.
 
-**Unverified as of 2026-09-06:** the reading above comes from the CD's own
-INFs and `sysdetmg.dll`'s strings; the install that proves a plain `SETUP`
-now comes out ACPI has not been run yet. Until it has, `SETUP /p j` stays
-the belt-and-braces answer, and the PnP-BIOS→PCI Bus repair
-(`docs/build-macos.md`) is what fixes an image installed before this.
+**Confirmed by an install, 2026-09-07** (the user, on the Win98 SE CD this
+was read out of): with the stamped date a plain `D:\WIN98\SETUP` comes out
+ACPI. `/p j` is no longer needed anywhere — it stays only as the thing that
+explains an image installed before the stamp, which is repaired through
+Device Manager (PnP-BIOS→PCI Bus, `docs/build-macos.md`) rather than
+reinstalled.
 
 ## Windows XP machine
 
