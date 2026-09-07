@@ -272,6 +272,16 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
 
 ## Gotchas that cost a day each (details in docs/00-status.md)
 
+- **Never run two builds that share the `qemu/` tree at once.**
+  `scripts/build-windows.sh` re-applies the patch queue over it
+  (`prepare-qemu.sh`) while `scripts/package-flatpak.sh`'s
+  flatpak-builder is copying that same tree into its sandbox, and the
+  copy comes out half restored and half patched. It fails deep in QEMU's
+  compile, with a missing header from a file version neither build is
+  using (`hw/3dfx/glidept_mm.c: hw/core/sysbus.h: No such file`,
+  2026-09-07). The native and Windows *outputs* are separate
+  (`build/qemu` vs `build/win/qemu`) — the *sources* are not.
+
 - **`configure`: "found no usable distlib, please install it"** — QEMU
   9.2's `mkvenv` imports `distlib.scripts` *and* `distlib.version`, and
   pip ≥ 26 trimmed its vendored copy (`scripts` yes, `version` no), so

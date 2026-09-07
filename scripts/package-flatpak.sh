@@ -4,6 +4,14 @@
 # SDK: the host's glibc is newer than the runtime's, so host-built
 # binaries cannot run in it.
 #
+# **Not at the same time as `scripts/build-windows.sh`.** Both use the one
+# `qemu/` tree: the Windows build re-applies the patch queue over it while
+# flatpak-builder is copying it into the build sandbox, and the copy comes
+# out a mix of patched and restored files. It fails deep in QEMU's compile
+# with missing headers from a version of a file neither build is using
+# (`hw/3dfx/glidept_mm.c: hw/core/sysbus.h: No such file`, 2026-09-07).
+# Run one, then the other.
+#
 # The runtime is `org.kde.Platform` since ADR-015 (2026-09-07), because
 # the launcher it packages is Qt 6 / QML and KDE's runtime is where Qt
 # comes from. The first build after that change downloads a fresh ~3 GB
@@ -33,7 +41,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-install) INSTALL=0; shift ;;
     --check) ONLY_CHECK=1; shift ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
     *) echo "package-flatpak.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
