@@ -15,11 +15,30 @@ RowLayout {
     id: root
 
     property alias label: caption.text
+    /// What the field shows. The owner writes it — usually as a binding
+    /// on the model property the path lives in — and this file never
+    /// does: a JS assignment from in here would *destroy* that binding
+    /// (QML drops a binding on the first imperative write to its
+    /// property), and the field would then keep showing the last path it
+    /// happened to be given while the model moved on underneath it. That
+    /// is what "New profile… still shows the previous preset" was
+    /// (user-reported, 2026-09-07): the shader editor's field had been
+    /// unbound by its own first edit, so the empty `presetPath` a fresh
+    /// profile publishes never reached it.
     property string value
+    /// A path the *user* chose — typed or picked in the dialog. The
+    /// owner writes it to its model, and `value` comes back through the
+    /// binding, so the data flows one way and only the model decides
+    /// what the field shows.
+    signal edited(string path)
     /// e.g. "Disc images (*.iso *.cue *.ccd *.mds)". "All files (*)" is
     /// always offered alongside: a filter that hides the file someone is
     /// looking for is worse than no filter.
     property string nameFilter: ""
+    /// What the text field is actually showing. The probes read it:
+    /// `value` is what the owner *meant* the field to show, and the two
+    /// disagreeing is the bug this field is shaped to prevent.
+    readonly property alias shownText: field.text
     /// Where the dialog opens when the field is still empty — the shader
     /// preset field points it at the preset collection, which is
     /// otherwise buried in a data directory nobody would navigate to.
@@ -38,7 +57,10 @@ RowLayout {
         Layout.fillWidth: true
         text: root.value
         selectByMouse: true
-        onTextChanged: root.value = text
+        // `textEdited`, not `textChanged`: the binding above writes this
+        // field too, and echoing that back would report the model's own
+        // value to it as a user edit.
+        onTextEdited: root.edited(text)
     }
 
     Button {
@@ -60,6 +82,6 @@ RowLayout {
                 return "file://" + root.emptyDir
             return ""
         }
-        onAccepted: root.value = selectedFile.toString().replace(/^file:\/\//, "")
+        onAccepted: root.edited(selectedFile.toString().replace(/^file:\/\//, ""))
     }
 }

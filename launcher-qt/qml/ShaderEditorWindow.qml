@@ -49,6 +49,20 @@ Window {
         onActivated: root.close()
     }
 
+    /// What the preset field is *showing* — not what the model holds.
+    /// The two can disagree (a field that has lost its binding keeps the
+    /// last path it was handed), and only a probe that asks the control
+    /// can tell: `src/qt/diag.rs`'s `saveprofile` screen.
+    readonly property string shownPreset: presetField.shownText
+
+    /// Put a path into the preset field the way typing into it does —
+    /// through the field's own `edited`, so the probe takes the user's
+    /// path through this window's handler and not a shortcut past it.
+    function typePreset(preset) { presetField.edited(preset) }
+
+    /// Click Save, handler and all — the headless probe again.
+    function clickSave() { saveButton.clicked() }
+
     /// Open on a given preset and preview image — the headless
     /// screenshot path (`src/qt/diag.rs`).
     function editPreset(preset, image) {
@@ -128,6 +142,7 @@ Window {
             }
 
             PathField {
+                id: presetField
                 Layout.fillWidth: true
                 label: qsTr("Preset (.slangp)")
                 nameFilter: root.editor.presetFilter
@@ -138,8 +153,8 @@ Window {
                 // navigate to by hand.
                 emptyDir: root.editor.presetsDir
                 value: root.editor.presetPath
-                onValueChanged: {
-                    root.editor.presetPath = value
+                onEdited: (path) => {
+                    root.editor.presetPath = path
                     root.editor.reparse()
                     root.rerender()
                 }
@@ -266,8 +281,8 @@ Window {
                         label: qsTr("Preview image")
                         nameFilter: root.editor.imageFilter
                         value: root.editor.previewImage
-                        onValueChanged: {
-                            root.editor.previewImage = value
+                        onEdited: (path) => {
+                            root.editor.previewImage = path
                             root.rerender()
                         }
                     }
@@ -316,12 +331,19 @@ Window {
             RowLayout {
                 spacing: 8
                 Button {
+                    id: saveButton
                     text: qsTr("Save")
                     onClicked: {
-                        if (root.editor.save(root.profilesDir)) {
-                            root.profiles.refresh()
+                        // Only `changed()`: this window has no profile
+                        // list of its own to refresh, and reaching for
+                        // one (`root.profiles`, which is the *other*
+                        // window's property) threw a TypeError right
+                        // here — which took the `changed()` below with
+                        // it, so a saved profile never reached the list
+                        // (user-reported, 2026-09-07). `Main.qml` is
+                        // where the models that have to be told live.
+                        if (root.editor.save(root.profilesDir))
                             root.changed()
-                        }
                     }
                 }
                 Button {

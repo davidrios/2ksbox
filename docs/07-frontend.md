@@ -561,6 +561,58 @@ and the unguarded build gives two. The modal-window list is no oracle
 for this on the offscreen platform — the outer hide still empties it —
 which is why the check counts events rather than asking it.
 
+A fourth, from the shader profile editor on 2026-09-07 (user-reported,
+two symptoms with one shape): **a component must never write the
+property its owner binds to, and a window must not reach for another
+window's model.** Saving a new profile left the list behind it unchanged,
+and the next "New profile…" came up with the last profile's preset still
+in the field.
+
+The list was the second half. `ShaderEditorWindow`'s Save handler called
+`root.profiles.refresh()` — but `profiles` is `ShaderProfilesWindow`'s
+property, not this window's, so the line threw a `TypeError` and took the
+`changed()` beside it with it. The profile was on disk and nothing was
+told. `Main.qml` is where both models are, and it already refreshes them
+on `changed()`; the editor window now emits it and stops there. The
+general form: a window's handler may only touch what that window
+declares, and the wiring between windows belongs in the file that owns
+them both.
+
+The field was the first half, and is the more general trap. `PathField`
+took `value` from its owner (`value: root.editor.presetPath`) and *also*
+assigned to it from inside (`onTextChanged: root.value = text`) — and a
+QML binding is destroyed by the first imperative write to its property.
+So the field unbound itself the moment it was first filled, and the empty
+`presetPath` that `new_profile()` publishes had nothing left to arrive
+through: the control kept the last path it had been handed while the
+model was empty. It is now a controlled component — `value` in, an
+`edited(path)` signal out, the owner writing the model, the model coming
+back through the binding — which is the shape every other model-backed
+control here already has. The wizard's three path fields had the same
+latent bug (a second "New machine" would have shown the previous
+machine's disk).
+
+The third symptom found while writing the probe belongs to the same
+window: the editor's `name`, `preset_path` and `preview_image` are edited
+*in the properties*, and `publish()` copies the model's own copy back out
+over them — so any verb that published while someone was typing wrote the
+older text back. Picking a preset (which reparses, and so publishes)
+emptied a name that had been typed first, and a preset download's 300 ms
+poll did it several times a second. Every verb that publishes now hands
+the model the current text first (`ShaderEditor::catch_up`); the two that
+must not are `new_profile` and `edit`, where the model is deliberately
+the newer one. **In a retained-mode front end, a value that lives in two
+places needs one rule about which way it flows at each moment**, and this
+window now has it written down.
+
+Only a probe that drives the *windows* sees any of the three: the model
+is right in all of them. The `saveprofile` screen does the whole flow —
+list open, New profile…, a name, a preset typed into the real field,
+Save, New profile… again — and prints the list's count either side and
+what the preset field is **showing**; the `qt-profile` check in
+`scripts/test.sh` wants `0 -> 1` and an empty field, and the unfixed
+build gives `0 -> 0` with the old preset still in it.
+
 ### What each front end still owns
 
 Everything that is genuinely the toolkit's, and nothing else:

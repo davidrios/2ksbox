@@ -444,6 +444,34 @@ ApplicationWindow {
                 snapshots.openFor(diag.arg, false); snapshotsWindow.show(); break
             case "profiles":
                 profiles.refresh(); shaderWindow.show(); break
+            case "saveprofile":
+                // `LAUNCHER_QT_ARG=<preset path>` — the flow a person
+                // does: the profile list open, New profile…, a name, a
+                // preset typed into the real field, Save, and then New
+                // profile… again. Three things only a probe that drives
+                // the *windows* can see, because the model is right in
+                // all of them (doc 07, 2026-09-07): the list behind the
+                // editor has to gain the profile that was just saved,
+                // the fresh editor's preset field has to come up empty
+                // rather than still showing the last one, and the name
+                // typed before the preset has to survive picking it —
+                // `save()` failing on `a name is required` is that one.
+                profiles.refresh()
+                shaderWindow.show()
+                const before = profiles.count
+                editor.newProfile()
+                editor.name = "Probe profile"
+                shaderEditorWindow.typePreset(diag.arg)
+                shaderEditorWindow.clickSave()
+                diag.note("saveprofile: list " + before + " -> " + profiles.count
+                          + ", editor open=" + editor.open
+                          + ", dir=" + shaderEditorWindow.profilesDir
+                          + ", error='" + editor.error + "'")
+                editor.newProfile()
+                diag.note("saveprofile: fresh preset field '"
+                          + shaderEditorWindow.shownPreset
+                          + "', model '" + editor.presetPath + "'")
+                break
             case "editor":
                 // `<preset.slangp>;<preview image>`
                 const parts = diag.arg.split(";")

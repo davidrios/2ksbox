@@ -408,7 +408,7 @@ Window {
                     label: qsTr("Disk path")
                     nameFilter: root.wizard.diskFilter()
                     value: root.wizard.diskPath
-                    onValueChanged: root.wizard.diskPath = value
+                    onEdited: (path) => root.wizard.diskPath = path
                 }
                 RowLayout {
                     Layout.fillWidth: true
@@ -429,7 +429,7 @@ Window {
                     label: qsTr("Install media (optional)")
                     nameFilter: root.wizard.mediaFilter()
                     value: root.wizard.installMedia
-                    onValueChanged: root.wizard.installMedia = value
+                    onEdited: (path) => root.wizard.installMedia = path
                 }
                 // A floppy in A:, and what the machine boots from — doc 06
                 // lists a floppy on the Win98 machine and doc 07 lists floppy
@@ -442,7 +442,7 @@ Window {
                     value: root.wizard.floppy
                     // Through an invokable, not the property: the boot note
                     // below depends on whether there is an image at all.
-                    onValueChanged: root.wizard.setFloppyPath(value)
+                    onEdited: (path) => root.wizard.setFloppyPath(path)
                 }
                 RowLayout {
                     Layout.fillWidth: true

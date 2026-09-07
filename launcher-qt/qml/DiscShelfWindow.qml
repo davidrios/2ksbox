@@ -203,6 +203,9 @@ Window {
                 Layout.fillWidth: true
                 label: qsTr("Add disc")
                 nameFilter: root.discs.discFilter
+                // The one field with no model behind it: what the user
+                // types *is* the value, until "Add to shelf" empties it.
+                onEdited: (path) => adder.value = path
             }
 
             RowLayout {

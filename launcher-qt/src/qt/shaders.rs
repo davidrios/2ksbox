@@ -382,15 +382,10 @@ impl ffi::ShaderEditor {
     }
 
     fn reparse(mut self: Pin<&mut Self>) {
-        // The property is where QML's committed text is; the model needs
-        // it before it can decide whether anything changed.
-        let preset = self.preset_path.to_string();
-        let image = self.preview_image.to_string();
-        self.as_mut().with_rows(|e| {
-            e.preset_path = preset;
-            e.preview_image_path = image;
-            e.reparse();
-        });
+        // The properties are where QML's text is; the model needs them
+        // before it can decide whether anything changed.
+        self.as_mut().catch_up();
+        self.as_mut().with_rows(|e| e.reparse());
         self.publish();
     }
 
@@ -409,14 +404,9 @@ impl ffi::ShaderEditor {
     }
 
     fn render(mut self: Pin<&mut Self>, area_w: i32, area_h: i32) {
-        {
-            // The two path fields are two-way-bound properties; catch the
-            // model up before asking whether it can render.
-            let (preset, image) = (self.preset_path.to_string(), self.preview_image.to_string());
-            let mut this = self.as_mut().rust_mut();
-            this.model.preset_path = preset;
-            this.model.preview_image_path = image;
-        }
+        // The fields are edited in the properties; catch the model up
+        // before asking whether it can render.
+        self.as_mut().catch_up();
         if !self.rust().model.renderable() {
             self.as_mut().set_preview_interval(0); // nothing to animate
             return;
@@ -441,26 +431,23 @@ impl ffi::ShaderEditor {
 
     fn save(mut self: Pin<&mut Self>, profiles_dir: &QString) -> bool {
         let dir = PathBuf::from(profiles_dir.to_string());
-        let (name, preset) = (self.name.to_string(), self.preset_path.to_string());
-        let ok = {
-            let mut this = self.as_mut().rust_mut();
-            this.model.name = name;
-            this.model.preset_path = preset;
-            this.model.save(&dir)
-        };
+        self.as_mut().catch_up();
+        let ok = self.as_mut().rust_mut().model.save(&dir);
         self.publish();
         ok
     }
 
     fn download_presets(mut self: Pin<&mut Self>) {
+        self.as_mut().catch_up();
         self.as_mut().rust_mut().presets.start_download();
         self.publish();
     }
 
-    fn poll_download(self: Pin<&mut Self>) {
+    fn poll_download(mut self: Pin<&mut Self>) {
         if !self.rust().presets.download_active() {
             return;
         }
+        self.as_mut().catch_up();
         self.publish();
     }
 }
@@ -482,6 +469,28 @@ impl cxx_qt::Initialize for ffi::ShaderEditor {
 }
 
 impl ffi::ShaderEditor {
+    /// Hand the model what the user has been typing.
+    ///
+    /// The name and the two paths are edited *in the properties* — a
+    /// text field writes one and nothing else happens until a verb runs
+    /// — while `publish` copies the model's own copy back out over them.
+    /// So every verb that publishes has to give the model the current
+    /// text first, or it publishes the older copy over what is on
+    /// screen: picking a preset (which reparses, and so publishes)
+    /// emptied the name field of a half-filled profile, and a preset
+    /// download's 300 ms poll did it several times a second
+    /// (2026-09-07). `new_profile` and `edit` are the two that must
+    /// *not* call this: there the model is deliberately the newer one.
+    fn catch_up(mut self: Pin<&mut Self>) {
+        let name = self.name.to_string();
+        let preset = self.preset_path.to_string();
+        let image = self.preview_image.to_string();
+        let mut this = self.as_mut().rust_mut();
+        this.model.name = name;
+        this.model.preset_path = preset;
+        this.model.preview_image_path = image;
+    }
+
     /// Run an editor operation that may change the parameter rows,
     /// bracketed so attached views are told.
     fn with_rows(mut self: Pin<&mut Self>, op: impl FnOnce(&mut Editor)) {

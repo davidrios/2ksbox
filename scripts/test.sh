@@ -42,6 +42,12 @@
 #                  window's own hide, which on macOS left the main window locked
 #                  behind a dialog that was gone (only if a launcher-qt has
 #                  been built)
+#   qt-profile     the Qt shader-profile windows, driven: a new profile saved from
+#                  the editor has to appear in the list behind it, and the next
+#                  New profile… has to come up with an *empty* preset field —
+#                  both are things only a probe that asks the controls can see,
+#                  because the profile is on disk and the model is empty in the
+#                  runs that fail (only if a launcher-qt has been built)
 #   shelforder     the disc shelf is one list in one order: discs added in the
 #                  wrong order come back by label (case-insensitively, and disc
 #                  10 after disc 2), a later addition lands where its name
@@ -432,6 +438,35 @@ qtclose_check() { # the title bar's close button on a Qt dialog (doc 07)
   printf '%s' "$o" | grep -q "open=false, visible=false" \
     || { echo "the wizard's flag or window did not follow the close: $o"; return 1; }
   return 0
+}
+qtprofile_check() { # the Qt shader-profile windows, driven (doc 07)
+  local rc=0 dir="$OUT/qtprofile" bin="launcher-qt/target/release/launcher-qt" o list shown
+  rm -rf "$dir"; mkdir -p "$dir/library" "$dir/profiles"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
+  # Like `qt-wizard`, this asks the *windows*. Both failures it guards
+  # against left the model right and the screen wrong (user-reported,
+  # 2026-09-07): the editor's Save handler reached for the list window's
+  # own `profiles` model, which is not a property of the editor window,
+  # and the TypeError took the `changed()` beside it with it — so the
+  # profile was written and the list behind it never heard. And the
+  # preset field wrote its own bound property, which destroys the
+  # binding that feeds it, so a fresh profile's empty path never reached
+  # the field. The preset does not have to exist: saving a profile
+  # stores the path, and an unreadable one is a parse error the editor
+  # shows rather than a refusal.
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=saveprofile LAUNCHER_QT_ARG="$dir/crt.slangp" \
+       LAUNCHER_QT_DELAY=300 "$bin" 2>&1 | sed -n 's/^\[diag\] saveprofile: //p')"
+  [ -n "$o" ] || { echo "the probe printed no saveprofile line"; return 1; }
+  printf '%s\n' "$o" | sed 's/^/  /'
+  list="$(printf '%s' "$o" | sed -n 's/.*list \([0-9]*\) -> \([0-9]*\).*/\1 \2/p')"
+  [ "$list" = "0 1" ] || { echo "the saved profile did not reach the list (list $list)"; rc=1; }
+  printf '%s' "$o" | grep -q "editor open=false" \
+    || { echo "the editor stayed open after a successful save"; rc=1; }
+  ls "$dir/profiles"/*.toml >/dev/null 2>&1 || { echo "no profile was written at all"; rc=1; }
+  shown="$(printf '%s' "$o" | sed -n "s/.*fresh preset field '\([^']*\)'.*/\1/p")"
+  [ -z "$shown" ] || { echo "New profile… still shows the last preset ($shown)"; rc=1; }
+  return $rc
 }
 dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M5g)
   local rc=0 dir="$OUT/dirshelf" bundle args o spaced comma plain shelf_file
@@ -887,9 +922,11 @@ host_stage() {
   if [ -x launcher-qt/target/release/launcher-qt ]; then
     run_check qt-wizard qt-wizard.log qtwizard_check || true
     run_check qt-close qt-close.log qtclose_check || true
+    run_check qt-profile qt-profile.log qtprofile_check || true
   else
     skip qt-wizard "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-close "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+    skip qt-profile "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
   fi
 
   # the host GPU probe (ADR-013): what the launcher tells someone about 3D
