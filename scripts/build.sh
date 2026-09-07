@@ -342,7 +342,8 @@ if want guest; then
   if STAMP_GITS="third_party/qemu-3dfx" \
      stamp_stale guest-tools guest-tools/src patches/wine9x d3dpt/d3dpt_proto.h \
        d3dpt/d3dpt_fb.h cdshelf/cdshelf_proto.h \
-       guest-tools/build-wrappers.sh guest-tools/build-driver.sh; then
+       guest-tools/build-wrappers.sh guest-tools/build-driver.sh \
+       guest-tools/build-driver9x.sh; then
     GUEST_STALE=1
   fi
   # a stamp is no good without the artifacts it claims are current

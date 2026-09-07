@@ -287,8 +287,12 @@ the main checkout rather than rebuilt.
 The 16-bit `.drv` and the ring-0 `.vxd` need **Open Watcom** (`wcc`,
 `wcc386`, `wasm`, `wlink`); mingw can make neither format, though the
 ring-3 HAL DLL — the half that will link our core — builds with the
-`i686-w64-mingw32` toolchain we already use. Installed on the Linux box at
-`~/.local/opt/open-watcom`, no sudo and nothing on the system path:
+`i686-w64-mingw32` toolchain we already use. Installed at
+`~/.local/opt/open-watcom`, no sudo and nothing on the system path — on the
+Linux box and, since 2026-09-07, on the Air as well: the same tarball
+carries a host directory per platform (`binl64` Linux x86-64, `armo64`
+macOS arm64, `bino64` macOS x86-64) and `build-driver9x.sh` picks one from
+`uname`.
 
 ```sh
 curl -L -o ow.tar.xz https://github.com/open-watcom/open-watcom-v2/releases/download/Last-CI-build/ow-snapshot.tar.xz
@@ -296,6 +300,9 @@ mkdir -p ~/.local/opt/open-watcom && tar xJf ow.tar.xz -C ~/.local/opt/open-watc
 ```
 
 `build-driver9x.sh` takes `WATCOM=` and says where to get it when missing.
+The macOS build is not byte-identical to the Linux one and need not be —
+the `.vxd` is, the `.drv` differs by one instruction selection in `Enable`
+and the displacements that shift after it (docs/build-macos.md).
 It also carries the post-link fixes both formats need — doc 19 §12 for the
 VxD's three, and the NE's expected-Windows-version and zero local heap —
 because `wlink` gets them wrong and nothing downstream complains.

@@ -10,8 +10,10 @@
 #   WATCOM=$HOME/.local/opt/open-watcom guest-tools/build-driver9x.sh
 #
 # — or install one where this script looks by default. Open Watcom v2 ships
-# Linux-hosted binaries: https://github.com/open-watcom/open-watcom-v2
-# (the Last-CI-build release's ow-snapshot.tar.xz unpacks ready to use).
+# host binaries for all of our machines in one tarball:
+# https://github.com/open-watcom/open-watcom-v2 (the Last-CI-build release's
+# ow-snapshot.tar.xz unpacks ready to use, Linux x86-64 in binl64 and macOS
+# arm64 in armo64), so this builds on the Air as well as on the rig.
 #
 # The headers this builds against are in src/d3dptvid/ddk9x/ — no Microsoft
 # DDK, same rule as the XP driver (doc 15). dibeng.lib is made here by wlib
@@ -26,13 +28,22 @@ DDK="$ROOT/guest-tools/src/d3dptvid/ddk9x"
 OUT="$ROOT/guest-tools/out/driver9x"
 WATCOM="${WATCOM:-$HOME/.local/opt/open-watcom}"
 
-[ -x "$WATCOM/binl64/wcc" ] || {
-  echo "need Open Watcom (WATCOM=$WATCOM has no binl64/wcc)"
+# The snapshot carries a host directory per platform, and the same tarball
+# has all of them: Linux x86-64 (binl64), macOS arm64 (armo64) and macOS
+# x86-64 (bino64). Nothing else about this build is host-specific.
+case "$(uname -s)/$(uname -m)" in
+  Darwin/arm64)   OWBIN=armo64 ;;
+  Darwin/x86_64)  OWBIN=bino64 ;;
+  *)              OWBIN=binl64 ;;
+esac
+
+[ -x "$WATCOM/$OWBIN/wcc" ] || {
+  echo "need Open Watcom (WATCOM=$WATCOM has no $OWBIN/wcc)"
   echo "see the header of $0 for where to get it"
   exit 1
 }
 export WATCOM
-export PATH="$WATCOM/binl64:$PATH"
+export PATH="$WATCOM/$OWBIN:$PATH"
 export INCLUDE="$WATCOM/h:$WATCOM/h/win:$DDK"
 export EDPATH="$WATCOM/eddat"
 export WIPFC="$WATCOM/wipfc"

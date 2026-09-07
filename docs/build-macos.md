@@ -170,6 +170,47 @@ nm -gU build/glide/libglide2x.dylib | grep -c '_gr\|_gu'   # 120
 embed backend through EGL. The wrapper is built on the Air, not proven on
 it.
 
+## The Win98 display driver (Open Watcom) — verified on the Air 2026-09-07
+
+The one part of `guest-tools/` that mingw cannot build — the 16-bit NE
+`.drv` and the ring-0 LE `.vxd` of doc 19 — builds here too, natively. The
+Open Watcom snapshot is one tarball with a directory per host, and it has
+an **arm64 macOS** set (`armo64`) beside the Linux one (`binl64`);
+`build-driver9x.sh` picks the directory from `uname`, and nothing else in
+that build is host-specific.
+
+```sh
+curl -L -o ow.tar.xz https://github.com/open-watcom/open-watcom-v2/releases/download/Last-CI-build/ow-snapshot.tar.xz
+mkdir -p ~/.local/opt/open-watcom && tar xJf ow.tar.xz -C ~/.local/opt/open-watcom
+guest-tools/build-driver9x.sh          # WATCOM= if it is somewhere else
+#   → guest-tools/out/driver9x/{d3dpt9x.drv,d3dpt9v.vxd,d3dpt9x.inf}
+#   build-wrappers.sh then puts them on the ISO as DRIVER9X\ — before this
+#   the Air's ISO was silently missing that folder.
+```
+
+The output is not byte-identical to the Linux build and does not need to
+be: `d3dpt9v.vxd` comes out the same byte for byte, and `d3dpt9x.drv`
+differs by one instruction selection in `Enable` (`mov dx,[mem]` where the
+x86-64 host's compiler picks `mov dx,ax` + `mov ax,[mem]` — same
+semantics, one byte shorter), which shifts the relative displacements
+after it. Same compiler version, same source; two host builds of it
+choose differently. `tools/win98-driver-test.sh` runs the guest half here
+as well — the Mac has `mtools`, and everything else the script needs is in
+the tree: `NAME_IN_INI=1 tools/win98-driver-test.sh ~/vms/win98.qcow2
+install` brought the Mac-built pair up 14 s into the boot (`d3dptvxd:
+ready`, `d3dpt9x: adapter found`, `DriverInit done`, `d3dpt-vga: linear
+mode on (640x480x32 pitch 2560 offset 0)`). The PnP path does **not** work
+on the Air's own `~/vms/win98.qcow2`, and not because of the build: that
+image was installed 2026-09-04, before `prepare-qemu.sh` began stamping
+the BIOS date, so it is a PnP-BIOS install with no ACPI in its boot log
+and nothing matches the INF — the run ends on the inbox VGA with the
+driver never named. `identify` is also absent unless ImageMagick is
+installed, so the `colours` line reads `?` here.
+
+One caveat: `wdis` from `armo64` segfaults on our 16-bit objects — but so
+does the Linux `binl64` one on the same file, so it is the disassembler,
+not the port.
+
 ## Spike A, step 1: Win98 + guest wrappers (hand-run)
 
 Goal: prove qemu-3dfx accelerates a guest on this Mac. You need your own

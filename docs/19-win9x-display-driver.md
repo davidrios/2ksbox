@@ -266,9 +266,12 @@ own copy of the HAL and they would share one window at the top of VRAM.
   `wcc386`, `wasm`, `wlink`; `system windows dll` and `system win_vxd
   dynamic`), plus a small `fixlink`-style post-pass to fix the NE/VxD
   header flags wlink leaves wrong. mingw-w64 cannot produce either
-  format. Open Watcom is not installed on this box — a new build
-  prerequisite, and one `scripts/build.sh` must treat the way it already
-  treats a missing mingw: skip the artefact and say which one is behind.
+  format. Open Watcom is a new build prerequisite, and one
+  `scripts/build.sh` must treat the way it already treats a missing mingw:
+  skip the artefact and say which one is behind. It is not a Linux-only
+  prerequisite: the snapshot has a host directory per platform and
+  `build-driver9x.sh` picks one from `uname`, so the Air builds both
+  binaries natively too (2026-09-07, docs/build-macos.md).
 - The ring-3 HAL DLL — **the one that links our core** — builds with the
   `i686-w64-mingw32` toolchain we already use; `vmhal9x` does exactly
   that, freestanding with its own tiny CRT, which is also how our NT
@@ -341,7 +344,8 @@ So the 9x work has a fixed order that the XP work did not: **the VxD comes
 before the display driver can do anything at all.** What the `.drv`-only
 attempt did establish, and what carries over unchanged:
 
-- Open Watcom builds a 16-bit NE display driver on Linux, and the binary
+- Open Watcom builds a 16-bit NE display driver on Linux — and on macOS
+  arm64, out of the same tarball's `armo64` — and the binary
   checks out: module `DISPLAY`, the ordinal export table, imports from
   `KERNEL` and `DIBENG` only, no C runtime (§9's licence question
   answered — nothing OWPL-licensed enters the binary).
