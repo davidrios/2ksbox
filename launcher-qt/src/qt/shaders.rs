@@ -194,6 +194,10 @@ pub mod ffi {
         #[inherit]
         unsafe fn end_reset_model(self: Pin<&mut ShaderEditor>);
     }
+
+    // A default constructor that runs `initialize` below, which is how
+    // QML creates this object. (A doc comment is not allowed here.)
+    impl cxx_qt::Initialize for ShaderEditor {}
 }
 
 use crate::{preview, qs, qs_opt};
@@ -457,6 +461,22 @@ impl ffi::ShaderEditor {
         if !self.rust().presets.download_active() {
             return;
         }
+        self.publish();
+    }
+}
+
+/// **Published once at construction**, because two windows read the
+/// preset-collection properties (`PresetCollection.qml`) without ever
+/// opening the editor: the profile list is where someone discovers they
+/// have no shaders at all. Until 2026-09-06 nothing published them until
+/// an editor verb ran, so the list always claimed there were no presets
+/// — with an empty size and an empty destination in the offer, since
+/// those properties were at their defaults rather than at
+/// `PresetState::Missing`'s values — and the button then downloaded 50 MB
+/// of presets over the ones already on disk. The egui build cannot have
+/// this bug: it asks the model while drawing, every frame.
+impl cxx_qt::Initialize for ffi::ShaderEditor {
+    fn initialize(self: core::pin::Pin<&mut Self>) {
         self.publish();
     }
 }

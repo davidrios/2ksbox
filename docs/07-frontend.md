@@ -437,6 +437,22 @@ all, only `choose_*`, which is what applies the rule that memory, the
 accelerator, the processor and the NIC follow the family until someone
 picks one.
 
+**What the shared core does not protect against, and what to do about
+it:** the immediate-mode build reads the model *while drawing*, so a
+value is never stale; the retained-mode one copies the model onto
+properties in a `publish()` that some verb has to call, so a property
+nobody publishes stays at its default — which looks like a real answer.
+It cost a user-visible bug on 2026-09-06: the Qt profile list always said
+"No shader presets on this machine" and offered to download them, on a
+machine that had them, because nothing published the preset-collection
+properties until an *editor* verb ran and the list opens without one. The
+tell was in the offer itself — "Download presets ()" into "" — since
+`PresetState::Missing` carries a size and a destination and a default
+`QString` does not. The rule that follows: **a QObject whose properties
+are read before any of its verbs are called must publish in
+`cxx_qt::Initialize`**, which is the constructor QML uses, and
+`ShaderEditor` now does.
+
 ### What each front end still owns
 
 Everything that is genuinely the toolkit's, and nothing else:
