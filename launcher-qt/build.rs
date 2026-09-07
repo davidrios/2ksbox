@@ -31,6 +31,7 @@ fn main() {
         // neither a QML module URI nor a D-Bus name may start with one.
         QmlModule::new("com._2ksbox.launcher").qml_files([
             "qml/Main.qml",
+            "qml/Disclosure.qml",
             "qml/PathField.qml",
             "qml/PresetCollection.qml",
             "qml/WizardWindow.qml",

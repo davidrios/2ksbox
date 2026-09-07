@@ -91,7 +91,14 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   the CD because the new disk is blank" case relies on.
 - **Our own emulator fast paths are seven checkboxes**, behind a
   disclosure headed "Emulation optimizations — 6 of 7 on" so a machine
-  with one turned off says so while the section is closed. Each is one of
+  with one turned off says so while the section is closed. A *disclosure*,
+  and in both front ends: egui's `CollapsingHeader` and, since 2026-09-06,
+  Qt's `Disclosure.qml` — a triangle that turns to point down, a label,
+  and no tick anywhere. The Qt side had opened the section with a
+  `CheckBox` for want of anything in Quick Controls that folds, and a tick
+  in front of "Emulation optimizations" says the one thing that is not
+  true: that clearing it turns the optimizations off (user, 2026-09-06).
+  Nothing whose state is "showing / hidden" gets a checkbox. Each is one of
   the QEMU patches this project maintains (`patches/qemu/README.md`) with
   the off switch that patch already carried: `x87-fast`, `sse-fast`,
   `simd-fast` and `rep-fast` are guest-CPU properties, `smc-same-value`,

@@ -1549,11 +1549,26 @@ it) and `bundle::Optimizations` (the set); `wizard::Form`'s
 `optimizations_note` — including the one thing worth saying above the
 switches, that a machine headed for KVM has no emulator in the path for
 them to be fast paths *in*. The egui build draws a `CollapsingHeader`;
-QML a `CheckBox` disclosure over a `Repeater`, whose `checked` binds to a
+QML a `Disclosure` over a `Repeater`, whose `checked` binds to a
 new `optimizationsMask` Q_PROPERTY — a bitmask because a `Q_INVOKABLE`
 would never re-evaluate, and cxx-qt has no `QList<bool>`. The C ABI gets
 `lc_wizard_optimization_enabled` and friends plus two new
 `lc_wizard_label` kinds.
+
+**The QML header was a `CheckBox` until 2026-09-06** (user-reported):
+Quick Controls has no disclosure, so a checkbox stood in for one — and a
+tick in front of "Emulation optimizations" says that clearing it turns
+the optimizations off, not that it folds seven switches away. The
+replacement is `launcher-qt/qml/Disclosure.qml`, an `AbstractButton` with
+a `Canvas` triangle that rotates 90° when the section opens ("▸" would be
+a font's problem on some desktop), the label, a hover tint taken from
+`palette.highlight` at 12 % so it is right in either colour scheme, and
+**no checked background** — a filled header is what a toggle looks like,
+so the open state is said by the triangle and by the section being there.
+`Accessible.role: Accessible.Button`, so the wrong word doesn't reach a
+screen reader either. The caller keeps its body and binds
+`visible: <id>.expanded`. Anything else in QML that folds should use it;
+nothing whose state is "showing / hidden" gets a checkbox.
 
 **Both wizards now scroll.** Seven more rows plus a sentence each was
 enough to push "Save" past the bottom of a 720-tall window: the fields go

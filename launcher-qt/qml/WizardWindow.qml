@@ -267,15 +267,22 @@ Window {
                 // labels, the sentences and the count all come from the
                 // shared form — the egui build draws the same section from
                 // the same strings.
-                CheckBox {
+                //
+                // The header is a `Disclosure`, not a checkbox: a tick in
+                // front of "Emulation optimizations" reads as the switch
+                // that turns them all off, which is not what closing a
+                // section does (user, 2026-09-06). egui draws this one as
+                // a `CollapsingHeader` for the same reason.
+                Disclosure {
                     id: optimizationsExpander
+                    Layout.fillWidth: true
                     text: qsTr("Emulation optimizations — %1").arg(root.wizard.optimizationsSummary)
                 }
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.leftMargin: 18
                     spacing: 4
-                    visible: optimizationsExpander.checked
+                    visible: optimizationsExpander.expanded
 
                     Label {
                         Layout.fillWidth: true
