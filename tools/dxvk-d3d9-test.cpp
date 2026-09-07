@@ -1,21 +1,21 @@
 /*
  * dxvk-d3d9-test: drive the native DXVK d3d9 library (the D3D executor,
- * doc 14 P0b / ADR-007) without a guest: create the device on a hidden
- * SDL2 window, clear, draw a lit textured triangle with the fixed
- * function pipeline, read the back buffer back through GetRenderTargetData
- * and write it as a 24-bit BMP (the d3dgame -dump format, diffable with
- * tools/bmpdiff.py). Prints DXVK's adapter line and per-frame timing.
+ * doc 14 P0b / ADR-007) without a guest and without a window: create the
+ * device on a NULL device window (patch 04's headless WSI), clear, draw a
+ * lit textured triangle with the fixed function pipeline, read the back
+ * buffer back through GetRenderTargetData and write it as a 24-bit BMP (the
+ * d3dgame -dump format, diffable with tools/bmpdiff.py). Prints DXVK's
+ * adapter line and per-frame timing.
  *
  * Build (macOS and Linux alike; add -ldl on Linux):
  *   c++ -std=c++17 -O2 -o build/dxvk-d3d9-test tools/dxvk-d3d9-test.cpp \
  *     -Ithird_party/dxvk/include/native -Ithird_party/dxvk/include/native/windows \
- *     -Ithird_party/dxvk/include/native/directx $(pkg-config --cflags --libs sdl2) \
+ *     -Ithird_party/dxvk/include/native/directx \
  *     -Wl,-rpath,$PWD/build/dxvk/src/d3d9
- * Run (Linux: just DXVK_WSI_DRIVER=SDL2. macOS; DXVK dlopens SDL2 and the Vulkan loader by bare name):
- *   DYLD_LIBRARY_PATH=/opt/homebrew/lib SDL_VULKAN_LIBRARY=/opt/homebrew/lib/libvulkan.dylib \
- *   VK_ICD_FILENAMES=<icd.json> DXVK_WSI_DRIVER=SDL2 DXVK_LOG_LEVEL=info \
+ * Run (Linux: just DXVK_WSI_DRIVER=Headless. macOS; DXVK dlopens the Vulkan loader by bare name):
+ *   DYLD_LIBRARY_PATH=/opt/homebrew/lib \
+ *   VK_ICD_FILENAMES=<icd.json> DXVK_WSI_DRIVER=Headless DXVK_LOG_LEVEL=info \
  *   build/dxvk-d3d9-test [out.bmp] [frames]
- * NOWINDOW=1 DXVK_WSI_DRIVER=Headless: no SDL window at all (patch 04's driver).
  * A refused device prints DXVK's reason (e.g. "Device does not support
  * required feature 'nullDescriptor'" on MoltenVK). Passes on KosmicKrisp
  * (LunarG SDK, macOS 26): <icd.json> =
@@ -23,7 +23,6 @@
  */
 #include <windows.h>
 #include <d3d9.h>
-#include <SDL.h>
 #include <dlfcn.h>
 #include <cmath>
 #include <cstdio>
@@ -71,17 +70,10 @@ int main(int argc, char **argv) {
   auto create = (IDirect3D9 *(*)(UINT))dlsym(h, "Direct3DCreate9");
   if (!create) { fprintf(stderr, "no Direct3DCreate9 in %s\n", lib); return 1; }
 
-  /* NOWINDOW=1: no SDL, NULL device window (DXVK_WSI_DRIVER=Headless, patch 04):
-   * DXVK creates no presenter and Present is a no-op, the path the paravirtual
-   * device's executor uses; the frame still comes out through GetRenderTargetData */
-  const bool nowindow = getenv("NOWINDOW") && atoi(getenv("NOWINDOW"));
-  SDL_Window *win = nullptr;
-  if (!nowindow) {
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
-    win = SDL_CreateWindow("dxvk-d3d9-test", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, W, H,
-                           SDL_WINDOW_VULKAN | SDL_WINDOW_HIDDEN);
-    if (!win) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); return 1; }
-  }
+  /* NULL device window (DXVK_WSI_DRIVER=Headless, patch 04): DXVK creates no
+   * presenter and Present is a no-op, the path the paravirtual device's
+   * executor uses; the frame still comes out through GetRenderTargetData */
+  HWND win = nullptr;
 
   IDirect3D9 *d3d = nullptr;
   try { d3d = create(D3D_SDK_VERSION); } catch (...) { d3d = nullptr; }
@@ -96,11 +88,11 @@ int main(int argc, char **argv) {
 
   D3DPRESENT_PARAMETERS pp = {};
   pp.BackBufferWidth = W; pp.BackBufferHeight = H; pp.BackBufferFormat = D3DFMT_X8R8G8B8; pp.BackBufferCount = 1;
-  pp.SwapEffect = D3DSWAPEFFECT_DISCARD; pp.hDeviceWindow = (HWND)win; pp.Windowed = TRUE;
+  pp.SwapEffect = D3DSWAPEFFECT_DISCARD; pp.hDeviceWindow = win; pp.Windowed = TRUE;
   pp.EnableAutoDepthStencil = TRUE; pp.AutoDepthStencilFormat = D3DFMT_D16;
   pp.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
   IDirect3DDevice9 *dev = nullptr;
-  hr = d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, (HWND)win, D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &dev);
+  hr = d3d->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, win, D3DCREATE_HARDWARE_VERTEXPROCESSING, &pp, &dev);
   if (FAILED(hr) || !dev) { printf("CreateDevice failed 0x%08x\n", (unsigned)hr); return 2; }
   printf("device %dx%d windowed X8R8G8B8 created\n", W, H);
 
@@ -167,6 +159,5 @@ int main(int argc, char **argv) {
   double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   printf("%d frames, %.1f ms, %.0f fps\n", frames, ms, frames * 1000.0 / ms);
   vb->Release(); tex->Release(); dev->Release(); d3d->Release();
-  if (win) { SDL_DestroyWindow(win); SDL_Quit(); }
   return 0;
 }

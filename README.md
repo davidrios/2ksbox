@@ -56,7 +56,7 @@ target/release/player        # M0: native window with test pattern (integer-scal
 
 # What build.sh runs, for driving a single stage by hand:
 scripts/prepare-qemu.sh      # overlay qemu-3dfx devices + embed/, patches, sign
-scripts/configure-qemu.sh    # configure (uv-managed python — needs uv, ninja, glib, pixman, SDL2)
+scripts/configure-qemu.sh    # configure (uv-managed python — needs uv, ninja, glib, pixman)
 ninja -C build/qemu qemu-system-i386 qemu-img qemu-io libqemu-embed-i386.so   # .dylib on macOS
 cargo build --release        # player links libqemu-embed (rpath into build/qemu)
 

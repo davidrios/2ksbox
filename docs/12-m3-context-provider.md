@@ -53,7 +53,10 @@ on both platforms instead of `glFinish`; a macOS `glide-host` check and the
 Windows build of the wrapper; a Glide *title* rather than our own program.
 
 Source survey of the patched tree (hw/mesa, hw/3dfx, ui/sdl2.c); file:line
-refs are to `qemu/` as prepared by `scripts/prepare-qemu.sh`.
+refs are to `qemu/` as prepared by `scripts/prepare-qemu.sh`. **Read the
+`ui/sdl2.c` half as history:** the seam this doc designed is in place, and
+since 2026-09-07 QEMU is built `--disable-sdl`, so that file is present in
+the tree but never compiled and the embed library is the only provider.
 
 ## Facts that shape the design
 
@@ -87,8 +90,8 @@ refs are to `qemu/` as prepared by `scripts/prepare-qemu.sh`.
   `mesa_gui_fullscreen(sizev)` is called on every swap and must be
   synchronous: `sizev[0..1]` = guest 2D surface size, `sizev[2..3]` = target
   size; making them equal disables the in-QEMU scaler (we scale in wgpu).
-- **Backends are GLX (`mglcntx_linux.c`, Linux) and SDL/native
-  (`mglcntx_sdlgl.c`, macOS)**; `MGLCreateContext/MGLMakeCurrent/
+- **Backends are GLX (`mglcntx_linux.c`) on Linux and — since patch 02 was
+  dropped with SDL — macOS as well; `mglcntx_sdlgl.c` is built by nothing**; `MGLCreateContext/MGLMakeCurrent/
   MGLSwapBuffers` are the only window-system-specific parts; the rest
   (`MGLFuncHandler`, pbuffer emulation, `MGLUpdateGuestBufo`) is reusable.
   `MesaGLGetProc` resolves extensions (`glXGetProcAddress` /

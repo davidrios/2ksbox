@@ -123,16 +123,35 @@ Windows' own (`kernel32`, `opengl32`, `d3d9`, the `api-ms-win-*` API
 sets). Copying a system DLL into the folder is how an app ends up running
 only on the machine that built it.
 
-An import table does not name what a DLL **loads at run time**, and one
-of ours does: Fedora's `mingw64-SDL2` is *sdl2-compat*, an `SDL2.dll`
-that `LoadLibrary`s `SDL3.dll`. The first package therefore died on a
+An import table does not name what a DLL **loads at run time**. The case
+that taught us was Fedora's `mingw64-SDL2`, which is *sdl2-compat*: an
+`SDL2.dll` that `LoadLibrary`s `SDL3.dll`, so the first package died on a
 real Windows PC with "Failed loading SDL3 library". So a second pass
 searches every staged binary for the name of any DLL that exists in the
 sysroot and is not staged yet, and ships that too — deliberately broader
 than the import tables, so the next runtime load is caught by the pass
-instead of by a user. (It is why `SDL3.dll`, `libEGL.dll` and
-`libGLESv2.dll` are in the folder; QEMU's SDL front end is the reason SDL
-is there at all, and the qemu-3dfx patch makes it mandatory.)
+instead of by a user.
+
+SDL itself is gone since 2026-09-07: QEMU is configured `--disable-sdl`
+(nothing we ship opens a QEMU window), so neither `SDL2.dll` nor
+`SDL3.dll` is staged any more and `mingw64-SDL2` is not installed in the
+container. (`libEGL.dll` and `libGLESv2.dll` stay: the pass that ships
+them is the same one, but the binary that names them is `libepoxy-0.dll`,
+QEMU's GL loader, not SDL.) **The consequence
+for hand-driving the cross-built emulator: `qemu-system-i386.exe` has no
+local display at all** — QEMU is configured with none on any platform
+(`--disable-sdl --disable-gtk --disable-cocoa --disable-curses
+--disable-spice`), and the cross build never had GTK to begin with. QEMU
+covers for it: given no `-display`, `qemu_setup_display()` starts a **VNC
+server on `localhost:5900`** instead (`system/vl.c`), so `-display vnc=:0`
+is how to look at a guest by hand. Anything scripted passes `-display
+none` and gets neither, and the player is the only thing that draws a
+guest anyway. The second pass
+stays — it is the net, not a fix for one library. (`win-cross.sh` builds
+the image only when it is *missing*, so refresh an existing one after a
+Dockerfile change with `scripts/win-cross.sh --build`. A stale image that
+still has SDL2 in its sysroot builds and packages correctly all the same:
+nothing references the DLL any more, so nothing stages it.)
 
 `scripts/package-windows.sh` then **runs the staged package under wine**,
 from outside the checkout with an empty environment: the launcher must

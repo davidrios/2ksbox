@@ -21,8 +21,10 @@ Modeled as a ~1998–2000 consumer PC.
 | Floppy | enabled | driver/utility sneakernet, boot disks |
 
 Known QEMU-side traps (tracked in `patches/qemu/README.md`): qemu-3dfx 3D
-only activates with `-display sdl` (standalone QEMU) — the player path
-needs the M3 context-provider work (Spike A doc); 9.2.4 TCG needs
+activates only for a frontend that registers a context provider — the
+player does (patch 30, `embed/embedfx.c`); a bare `qemu-system-i386` has
+none since SDL was dropped (2026-09-07) and refuses pass-through cleanly;
+9.2.4 TCG needs
 the upstream LSS fix (issue 2987) or Win98 faults with exception 0D on first
 boot; TCG also faults RUNDLL32 in Display Properties since 7.2 (issue 1964,
 still open as of 2026-09 — cosmetic, the OS survives; KVM/WHPX unaffected).

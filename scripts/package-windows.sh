@@ -261,11 +261,13 @@ while [ "$again" = 1 ]; do
 done
 
 # A DLL that is *loaded* rather than imported is invisible to the walk
-# above, and one of ours is: Fedora's mingw64-SDL2 is **sdl2-compat**, an
-# SDL2.dll that LoadLibrary's SDL3.dll at run time. Shipping only what the
-# import tables named gave a package whose player died with "Failed
+# above. The case that taught us was Fedora's mingw64-SDL2 — sdl2-compat,
+# an SDL2.dll that LoadLibrary's SDL3.dll at run time: shipping only what
+# the import tables named gave a package whose player died with "Failed
 # loading SDL3 library" on a machine that had no SDL of its own (found on
-# a real Windows PC, 2026-09-06).
+# a real Windows PC, 2026-09-06). QEMU is built --disable-sdl since
+# 2026-09-07 and neither DLL is staged any more, but the pass stays: it is
+# the net, not the fix for one library.
 #
 # So: every staged binary is searched for names of DLLs that exist in the
 # mingw sysroot and are not staged yet, and those are shipped too. It is
@@ -394,9 +396,15 @@ if command -v wine >/dev/null; then
   # directory everything else here uses.
   shot="$scratch/window.png"
   winshot="Z:$(printf '%s' "$scratch" | tr '/' '\\')\\window.png"
+  # `timeout`: the grab is the one call here that opens a Qt window, and a
+  # Qt window under wine can simply never come back — it does today, on
+  # this box (2026-09-07), with the offscreen platform plugin and no
+  # display. Without the bound the script hangs here forever instead of
+  # taking the "no offscreen grab" branch below, which is exactly what
+  # this call's own comment says should happen.
   (cd "$STAGE" && env -i HOME="$scratch" WINEPREFIX="$WINEPREFIX" WINEDEBUG=-all \
       PATH="$PATH" QT_QPA_PLATFORM=offscreen LAUNCHER_QT_SHOT="$winshot" \
-      LAUNCHER_QT_DELAY=2000 wine 2ksbox.exe >/dev/null 2>&1) || true
+      LAUNCHER_QT_DELAY=2000 timeout 90 wine 2ksbox.exe >/dev/null 2>&1) || true
   if [ -s "$shot" ]; then
     echo "window         grabbed offscreen under wine: QML, plugins and all"
     rm -f "$shot"

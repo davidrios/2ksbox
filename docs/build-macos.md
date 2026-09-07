@@ -7,7 +7,7 @@ Everything below runs natively on arm64. Tested target: M1 MacBook Air.
 ```sh
 xcode-select --install                       # Apple clang + git
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install ninja meson pkg-config glib pixman sdl2 gnu-sed uv libslirp
+brew install ninja meson pkg-config glib pixman gnu-sed uv libslirp
 brew install qt                              # Qt 6: the launcher, and macdeployqt
 brew install --cask xquartz                  # log out/in once after installing
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh      # Rust toolchain
@@ -23,8 +23,11 @@ Why each of the odd ones:
   `meson.build` hardcodes `-I/opt/X11/include` and links
   `-L/opt/X11/lib -lX11 -lXxf86vm -lGL -framework OpenGL`. Without it:
   `GL/glcorearb.h not found`, then link errors, then no 3D at runtime.
-- **sdl2** — the patch makes SDL2 mandatory
-  (`error('Featuring qemu-3dfx required SDL2')`).
+- **no sdl2** — qemu-3dfx makes SDL2 mandatory
+  (`error('Featuring qemu-3dfx required SDL2')`), but patch 02 removes
+  that and `configure-qemu.sh` passes `--disable-sdl`: nothing we ship
+  opens a QEMU window (2026-09-07). If you have SDL2 installed for
+  something else it is simply unused.
 - **gnu-sed** — `sign_commit` uses GNU `sed -i` syntax;
   `scripts/prepare-qemu.sh` puts Homebrew's `gsed` first on PATH when present.
 - The Khronos `GL/glcorearb.h` is additionally vendored in
@@ -39,7 +42,7 @@ SDK as an optional component. Homebrew's `vulkan-loader` and `molten-vk`
 stay installed (MoltenVK is refused by DXVK, see spike C).
 
 ```sh
-brew install vulkan-headers vulkan-loader vulkan-tools glslang     # + sdl2 meson ninja from above
+brew install vulkan-headers vulkan-loader vulkan-tools glslang     # + meson ninja from above
 curl -sSL -o vulkan-sdk.zip https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.zip
 unzip -q vulkan-sdk.zip                                          # vulkansdk-macOS-<ver>.app
 V=1.4.357.1                                                      # the version the zip carried
@@ -58,10 +61,10 @@ chosen. Then `scripts/prepare-dxvk.sh && scripts/configure-dxvk.sh && ninja
 -C build/dxvk` and the run lines in `tools/dxvk-d3d9-test.cpp` with that
 `VK_ICD_FILENAMES` (2026-09-03: both harnesses pass on the Air, see
 `patches/dxvk/README.md`). `scripts/test.sh` sets that environment
-itself on Darwin (Homebrew's loader on `DYLD_LIBRARY_PATH`,
-`SDL_VULKAN_LIBRARY`, the SDK's KosmicKrisp ICD unless
-`VK_ICD_FILENAMES` is already set): a `DYLD_*` variable exported to the
-script is stripped by SIP at its `#!/usr/bin/env bash` exec, which made
+itself on Darwin (Homebrew's loader on `DYLD_LIBRARY_PATH`, and the SDK's
+KosmicKrisp ICD unless `VK_ICD_FILENAMES` is already set): a `DYLD_*`
+variable exported to the script is stripped by SIP at its
+`#!/usr/bin/env bash` exec, which made
 the two native DXVK checks fail with `Direct3DCreate9 failed` (2026-09-04).
 
 ## Clone
@@ -110,7 +113,9 @@ build/qemu/qemu-system-i386 --version                     # 9.2.4
 printf 'info mtree\nquit\n' | build/qemu/qemu-system-i386 -machine pc -display none \
     -monitor stdio -net none 2>/dev/null | grep -E 'glidept|glidelfb|glideshm|mesapt'
 # expect the four pass-through MMIO regions
-build/qemu/qemu-system-i386 -machine pc -cpu max -m 256 -display cocoa   # BIOS screen in a window
+build/qemu/qemu-system-i386 -machine pc -cpu max -m 256 -display vnc=:0
+# ^ QEMU has no local display any more (see below); the BIOS screen is at
+#   vnc://localhost:5900 — Screen Sharing opens it
 ```
 
 Notes:
@@ -187,31 +192,44 @@ brew install mingw-w64 xorriso && guest-tools/build-wrappers.sh
 qemu-img create -f qcow2 ~/vms/win98.qcow2 4G
 build/qemu/qemu-system-i386 -machine pc -cpu pentium3 -m 256 \
   -hda ~/vms/win98.qcow2 -cdrom ~/isos/Win98SE.iso -boot d \
-  -vga cirrus -display sdl -net none \
+  -vga cirrus -display vnc=:0 -net none \
   -audiodev coreaudio,id=snd -device sb16,audiodev=snd
 # 2. after install, boot with the guest-tools ISO attached
 build/qemu/qemu-system-i386 -machine pc -cpu pentium3 -m 256 \
   -hda ~/vms/win98.qcow2 -cdrom guest-tools/out/guest-tools-3dfx-*.iso \
-  -vga cirrus -display sdl -net none \
+  -vga cirrus -display vnc=:0 -net none \
   -audiodev coreaudio,id=snd -device sb16,audiodev=snd
 ```
 
-**`-display sdl` is mandatory for 3D.** qemu-3dfx creates its host GL
-context on QEMU's SDL2 window: `sdl_display_valid()` in the patched
-`ui/sdl2.c` exits with `mesapt: invalid sdl display` otherwise, and
-`-display sdl,gl=on` is rejected too. Cocoa is fine for 2D-only sessions.
+**Standalone `qemu-system-i386` has no display and no 3D, by decision
+(2026-09-07).** QEMU is configured with no user interface at all —
+`--disable-sdl --disable-gtk --disable-cocoa --disable-curses
+--disable-spice` — because the player is the front end: it embeds QEMU,
+the embed library appends `-display none` itself, and it brings its own 3D
+context provider (patch 30) and audio backend (patch 20). Carrying SDL2
+(plus the SDL3 that Homebrew's sdl2-compat loads behind it) and Cocoa into
+the `.app` to keep a debugging path alive was not worth it.
 
-**Why 3D died with `X Error … BadDrawable, Major opcode 129 (Apple-DRI)`
-(seen on Sequoia 15.7):** upstream's macOS path is GLX-on-XQuartz. On a
-Cocoa SDL window, `ui/sdl2.c` passes the `NSWindow*` to the Mesa backend,
-which the GLX backend uses as an X11 window id — XQuartz rejects it.
-Upstream needs an X11-capable SDL2 on XQuartz (not Homebrew's). Our queue
-patch `02-mesa-sdlgl-on-darwin` builds qemu-3dfx's SDL/native-OpenGL
-backend (`mglcntx_sdlgl.c`) on macOS instead: the context is created with
-`SDL_GL_CreateContext` on the Cocoa window, Apple's `OpenGL.framework` is
-loaded, no X server at runtime. (XQuartz stays a *build-time* link
-dependency until the link flags are patched.) Rebuild after `git pull`:
-prepare → configure → ninja.
+So a guest activating pass-through on a bare `qemu-system-i386` gets its
+context refused and keeps running (patches 04 and 30), and **to see a
+guest by hand, use VNC** — which QEMU does for you: with no local display
+compiled in and no `-display` given, `qemu_setup_display()` starts a VNC
+server on `localhost:5900` (`system/vl.c`), so `open vnc://localhost:5900`
+in Screen Sharing is the window. The lines above say `-display vnc=:0`
+outright. Anything scripted passes `-display none` and gets neither.
+**3D on macOS is the player**, which registers the embed library's
+window-less backend.
+
+The history, because the symptom is memorable: upstream's macOS 3D path is
+GLX-on-XQuartz, and on a Cocoa SDL window `ui/sdl2.c` handed the `NSWindow*`
+to the GLX backend, which used it as an X11 window id — `X Error …
+BadDrawable, Major opcode 129 (Apple-DRI)` (Sequoia 15.7). Patch
+`02-mesa-sdlgl-on-darwin` worked around it by building qemu-3dfx's
+SDL/native-OpenGL backend (`mglcntx_sdlgl.c`) instead; that patch is gone
+with SDL, and Darwin now builds the same GLX file Linux does, which nothing
+calls. XQuartz stays a *build* dependency all the same: the qemu-3dfx meson
+overlay hardcodes `-L/opt/X11/lib -lX11 -lXxf86vm -lGL` into every
+emulator's link line.
 
 **Tuning knobs — `mesagl.cfg`:** qemu-3dfx reads `mesagl.cfg` from the
 *current working directory* at startup. Keys: `ExtensionsYear`,
@@ -220,14 +238,14 @@ prepare → configure → ninja.
 `FpsLimit`, `DumpShader`, `CheckError`, `FifoTrace`, `FuncTrace` (one
 `Key,value` per line). On macOS `DispTimerMS` (default 0) also selects the
 GL profile: 0 → core profile, non-zero → compatibility. Frame presentation
-on the SDL backend is `SDL_GL_SwapWindow` from the device handler; if it
-looks janky unless the mouse moves, try `DispTimerMS,16` and/or
-`ContextVsyncOff,1` / `FpsLimit,60` and report.
+is the embed backend's swap from the device handler; if it looks janky
+unless the mouse moves, try `DispTimerMS,16` and/or `ContextVsyncOff,1` /
+`FpsLimit,60` and report.
 
 **Grab workaround for desktop use:** add `-usb -device usb-tablet`. With an
-absolute pointer SDL never grabs mouse or keyboard, so no release hotkey is
-needed (Win98 SE drives a USB HID tablet with in-box drivers). Relative
-(PS/2) mode is only needed for mouselook games. If `info usb` shows the
+absolute pointer the frontend never grabs mouse or keyboard, so no release
+hotkey is needed (Win98 SE drives a USB HID tablet with in-box drivers).
+Relative (PS/2) mode is only needed for mouselook games. If `info usb` shows the
 tablet but Win98 shows nothing, the guest is a PnP-BIOS install (see the
 ACPI note above; an image installed before the BIOS-date stamp is one).
 Repair without reinstalling: copy the CD's `WIN98`
@@ -237,14 +255,11 @@ Bus"; Windows then re-detects every device (that's why the folder copy is
 needed — the CD driver goes away mid-way) and finally finds the QEMU USB
 Tablet.
 
-**Mouse/keyboard grab under `-display sdl`:** hotkey is Ctrl+Option+G
-(fullscreen: Ctrl+Option+F). With macOS's Caps Lock→Control remap, SDL reports that
-Control as *right* Control (`mod=0x0181`), which makes every hotkey dead in
-stock QEMU; our queue patch `03-sdl-darwin-either-ctrl` accepts either Control on
-macOS. Without it, `-display sdl,grab-mod=rctrl` works as a fallback.
-`Ctrl+Alt+G` deliberately does not release while the window is fullscreen;
-qemu-3dfx's `fxui_grab` re-grabs on focus while 3D is active.
-`QEMU_SDL_KEYDEBUG=1` logs keydown/modifier state if this ever regresses.
+**Mouse/keyboard grab** is the player's business (doc 03); QEMU's own
+displays are not used. The SDL hotkey lore that used to live here went with
+`--disable-sdl` (2026-09-07) — including the Caps-Lock→Control remap that
+made SDL report left Control as *right* Control and killed every Ctrl+Alt
+hotkey, which patch `03-sdl-darwin-either-ctrl` used to fix.
 
 In the guest: run `D:\SETUP.EXE` — it installs the device mapper and the
 Glide wrappers for whichever Windows this is, and its "Test programs"
@@ -323,8 +338,9 @@ Expected stderr: `glcntx: CGL (window-less)`, `drawable 800x600`,
 wglgears' own `N frames in 5.0 seconds, X FPS` lines; Esc →
 `[3d] pass-through off` and the desktop back. If the FBO is reported
 incomplete, frames are not published (desktop stays frozen) and the
-`glcntx:` lines name the failing call. Standalone `-display sdl` is
-unaffected (its backend stays, linked weak).
+`glcntx:` lines name the failing call. The native GLX backend is still
+linked (weak) into `qemu-system-i386`, but nothing registers a provider for
+it, so standalone QEMU refuses 3D rather than drawing it.
 
 ### Zero-copy (IOSurface) — verified 2026-09-03 on the Air
 
@@ -421,13 +437,8 @@ The offscreen platform plugin is copied by hand beside the cocoa one,
 because the window check below needs a window that does not appear on the
 packager's screen.
 
-Two dependencies are not in that closure and had to be found by other
-means:
+One dependency is not in that closure and had to be found by other means:
 
-- **`libSDL3`**, which sdl2-compat `dlopen`s from `@loader_path` rather
-  than linking. QEMU's SDL display is dead weight in the embed library —
-  the player draws through wgpu — but the library is linked in and
-  something in it does call SDL, so the app carries the pair.
 - **The Vulkan driver.** DXVK `dlopen`s a loader that macOS does not have,
   so the app carries the LunarG SDK's loader and the KosmicKrisp ICD, with
   an ICD manifest of its own (the SDK's points into `~/VulkanSDK`).
@@ -460,9 +471,10 @@ bundle with no QtQuick in it passes everything and opens nothing.
 `LSMinimumSystemVersion` is **measured, not chosen**: the highest
 `LC_BUILD_VERSION` `minos` of everything the bundle carries. A bundled
 Homebrew or Vulkan SDK dylib built on a newer system sets the real floor
-whatever we would prefer to claim, and as of 2026-09-06 that is macOS 26.6
-(libslirp and sdl2-compat are the 26.0 ones; QEMU's own build targets the
-running OS unless `MACOSX_DEPLOYMENT_TARGET` says otherwise). To lower it,
+whatever we would prefer to claim, and as of 2026-09-06 that was macOS 26.6
+(libslirp and sdl2-compat were the 26.0 ones; sdl2-compat is gone since
+2026-09-07, so re-measure. QEMU's own build targets the running OS unless
+`MACOSX_DEPLOYMENT_TARGET` says otherwise). To lower it,
 build QEMU and those dependencies against the floor first — the script
 will then report it.
 

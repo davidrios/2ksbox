@@ -145,13 +145,12 @@ case "$OS" in Darwin) SO=dylib;; *) SO=so;; esac
 export D3DPT_EXEC_LIB="${D3DPT_EXEC_LIB:-$ROOT/build/d3dpt/libd3dpt_exec.$SO}"
 export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)}"
 if [ "$OS" = Darwin ]; then
-  # DXVK dlopens the Vulkan loader by leaf name and SDL2 needs it too; a
-  # DYLD_* variable handed to this script is stripped by SIP at the
-  # `#!/usr/bin/env` exec, so set the documented macOS run environment
-  # here (docs/build-macos.md, patches/dxvk/README.md): Homebrew's loader,
-  # and the LunarG SDK's KosmicKrisp ICD unless the caller chose one.
+  # DXVK dlopens the Vulkan loader by leaf name; a DYLD_* variable handed
+  # to this script is stripped by SIP at the `#!/usr/bin/env` exec, so set
+  # the documented macOS run environment here (docs/build-macos.md,
+  # patches/dxvk/README.md): Homebrew's loader, and the LunarG SDK's
+  # KosmicKrisp ICD unless the caller chose one.
   export DYLD_LIBRARY_PATH="/opt/homebrew/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-  export SDL_VULKAN_LIBRARY="${SDL_VULKAN_LIBRARY:-/opt/homebrew/lib/libvulkan.dylib}"
   if [ -z "${VK_ICD_FILENAMES:-}" ]; then
     for f in "$HOME"/VulkanSDK/*/macOS/share/vulkan/icd.d/libkosmickrisp_icd.json; do
       [ -f "$f" ] && export VK_ICD_FILENAMES="$f"
@@ -629,6 +628,51 @@ optimizations_check() { # the wizard's fast-path switches, all the way to a real
     && { echo "\"All defaults\" left an [optimizations] table behind"; rc=1; }
   return $rc
 }
+no_ui_check() { # QEMU carries no user interface (2026-09-07)
+  # The player is the front end: it embeds QEMU, the embed library appends
+  # `-display none` itself, and it brings its own 3D context provider
+  # (patch 30) and audio backend (patch 20). So QEMU is configured with no
+  # display at all -- --disable-sdl --disable-gtk --disable-cocoa
+  # --disable-curses --disable-spice -- and DXVK with -Dnative_sdl2=
+  # disabled, the executor forcing DXVK_WSI_DRIVER=Headless (patch 04).
+  #
+  # This asks the built artefacts, not the configure summary, because a
+  # dropped flag re-links libqemu-embed silently and every packager starts
+  # carrying the toolkit again: SDL was two DLLs in the Windows package and
+  # two dylibs in the .app, GTK is ~40 shared libraries on Linux. And it
+  # looks for a *loaded* name as well as a linked one, because that is how
+  # SDL last bit -- sdl2-compat reaching for SDL3 through LoadLibrary, on a
+  # user's PC, where no import-table walk could have seen it.
+  local rc=0 f
+  local names="build/qemu/libqemu-embed-i386.$SO build/qemu/qemu-system-i386"
+  names="$names build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)"
+  names="$names build/win/qemu/libqemu-embed-i386.dll build/win/qemu/qemu-system-i386.exe"
+  # linked: libSDL*, libgtk-3/libgdk-3, libvte, libspice-server, ncurses.
+  # (Cocoa is a framework, so it is matched by name in the same list.)
+  local linked='libSDL|libgtk-|libgdk-|libvte|libspice-server|libncurses|Cocoa\.framework'
+  # loaded by name at run time: the SDL DLLs, which is the case that bit
+  local loaded='SDL[23][-.0-9]*\.(so|dll|dylib)'
+  for f in $names; do
+    [ -f "$f" ] || continue
+    case "$f" in
+      *.dll|*.exe) ;;   # no ldd/otool for PE; the strings pass covers it
+      *)
+        if [ "$OS" = Darwin ]; then
+          otool -L "$f" 2>/dev/null | grep -qE "$linked" \
+            && { echo "$f links a UI toolkit"; otool -L "$f" | grep -E "$linked" | sed 's/^/    /'; rc=1; }
+        else
+          ldd "$f" 2>/dev/null | grep -qE "$linked" \
+            && { echo "$f links a UI toolkit"; ldd "$f" | grep -E "$linked" | sed 's/^/    /'; rc=1; }
+        fi;;
+    esac
+    if command -v strings >/dev/null; then
+      strings -a "$f" | grep -qiE "$loaded" \
+        && { echo "$f names an SDL library to load at run time"; rc=1; }
+    fi
+    echo "  clean: $f"
+  done
+  return $rc
+}
 have_display() { [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] || [ "$OS" = Darwin ]; }
 preview_anim_check() { # the shader preview keeps drawing (doc 07)
   # Plenty of presets do not stand still: an interlaced CRT draws
@@ -745,6 +789,14 @@ host_stage() {
     run_check bios-date bios-date.log bios_date_check || true
   else
     skip bios-date "needs build/qemu/qemu-system-i386"
+  fi
+
+  # nothing shipped links or loads a UI toolkit (see the function for why
+  # it is asked of the artefacts and not of the configure summary)
+  if [ -f "build/qemu/libqemu-embed-i386.$SO" ] || [ -f "$D3DPT_DXVK_LIB" ]; then
+    run_check no-ui no-ui.log no_ui_check || true
+  else
+    skip no-ui "needs build/qemu or build/dxvk"
   fi
 
   # the application icon: every size in packaging/icon/ still derived from
@@ -896,28 +948,29 @@ host_stage() {
     skip preview-anim "needs the slang-shaders submodule and target/release/launcher"
   fi
 
-  # the reference scene and the feature test natively over DXVK (SDL2 needs a display)
-  if [ -f "$D3DPT_DXVK_LIB" ] && have_display && pkg-config --exists sdl2; then
+  # the reference scene and the feature test natively over DXVK; window-less
+  # (tools/d3dgame-native/win32_headless.h), so no display is needed
+  if [ -f "$D3DPT_DXVK_LIB" ]; then
     local flags=(-I"$DX" -I"$DX/windows" -I"$DX/directx" -Lbuild/dxvk/src/d3d9 -ldxvk_d3d9 \
-                 -Wl,-rpath,"$ROOT/build/dxvk/src/d3d9" $(pkg-config --cflags --libs sdl2))
+                 -Wl,-rpath,"$ROOT/build/dxvk/src/d3d9")
     if c++ -std=c++17 -O2 -o build/d3dgame9-native tools/d3dgame9-native.cpp "${flags[@]}" \
        && c++ -std=c++17 -O2 -o build/d3dfeat9-native tools/d3dfeat9-native.cpp "${flags[@]}"; then
       rm -f "$OUT/d3dgame9.log" "$OUT/d3dfeat9.log"
-      ( cd "$OUT" && DXVK_WSI_DRIVER="${DXVK_WSI_DRIVER:-SDL2}" ../d3dgame9-native -frames 600 -dump 300 g9-native.bmp ) >"$OUT/d3dgame9-native.log" 2>&1
+      ( cd "$OUT" && DXVK_WSI_DRIVER="${DXVK_WSI_DRIVER:-Headless}" ../d3dgame9-native -frames 600 -dump 300 g9-native.bmp ) >"$OUT/d3dgame9-native.log" 2>&1
       if [ -f "$OUT/g9-native.bmp" ]; then
         run_check d3dgame9-nat d3dgame9-golden.log tools/bmpdiff.py "$GOLDEN" "$OUT/g9-native.bmp" \
           --mask "$HUD_MASK" --tolerance 8 --max-over "$BUDGET" -o "$OUT/g9-native-vs-rig.bmp" \
           && sed -n 1,2p "$OUT/d3dgame9-golden.log" | sed 's/^/       /'
       else FAIL+=(d3dgame9-nat); echo "  FAIL d3dgame9-nat (no frame) — $OUT/d3dgame9-native.log"; tail -3 "$OUT/d3dgame9-native.log"; fi
-      ( cd "$OUT" && DXVK_WSI_DRIVER="${DXVK_WSI_DRIVER:-SDL2}" ../d3dfeat9-native -frames 600 -dump 300 f9-native.bmp ) >"$OUT/d3dfeat9-native.log" 2>&1
+      ( cd "$OUT" && DXVK_WSI_DRIVER="${DXVK_WSI_DRIVER:-Headless}" ../d3dfeat9-native -frames 600 -dump 300 f9-native.bmp ) >"$OUT/d3dfeat9-native.log" 2>&1
       if [ -f "$OUT/f9-native.bmp" ] && grep -q "occlusion query" "$OUT/d3dfeat9.log"; then
         PASS+=(d3dfeat9-nat); echo "  PASS d3dfeat9-nat"
         grep "occlusion query\|getters" "$OUT/d3dfeat9.log" | sed 's/^/       /'
       else FAIL+=(d3dfeat9-nat); echo "  FAIL d3dfeat9-nat — $OUT/d3dfeat9-native.log"; tail -3 "$OUT/d3dfeat9-native.log"; fi
     else FAIL+=(d3d-native); echo "  FAIL d3d native harness (build)"; fi
   else
-    skip d3dgame9-nat "needs build/dxvk, sdl2 and a display"
-    skip d3dfeat9-nat "needs build/dxvk, sdl2 and a display"
+    skip d3dgame9-nat "needs build/dxvk"
+    skip d3dfeat9-nat "needs build/dxvk"
   fi
 }
 

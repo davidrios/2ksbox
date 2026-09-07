@@ -245,27 +245,6 @@ for leaf in libqemu-embed-i386.dylib libglide2x.dylib libd3dpt_exec.dylib libdxv
   install_name_tool -id "@rpath/$leaf" "$LIBDIR/$leaf" 2>/dev/null || true
   install_name_tool -add_rpath "@loader_path" "$LIBDIR/$leaf" 2>/dev/null || true
 done
-# sdl2-compat is not linked to SDL3, it dlopens it — from @loader_path
-# first, which is why putting it beside sdl2-compat is enough and why no
-# walk of load commands would ever have found it. QEMU's SDL display is
-# dead weight in the embed library (the player draws through wgpu), but
-# the library is linked in and something in it does call SDL, so the app
-# carries the pair rather than finding out on a machine that has neither.
-sdl3=""
-for d in "$(brew --prefix 2>/dev/null || echo /opt/homebrew)/lib" /opt/homebrew/lib /usr/local/lib; do
-  [ -f "$d/libSDL3.dylib" ] || continue
-  sdl3=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$d/libSDL3.dylib")
-  break
-done
-if [ -f "$LIBDIR/libSDL2-2.0.0.dylib" ]; then
-  if [ -f "$sdl3" ]; then
-    install -m755 "$sdl3" "$LIBDIR/libSDL3.dylib"
-    install_name_tool -id "@rpath/libSDL3.dylib" "$LIBDIR/libSDL3.dylib" 2>/dev/null || true
-    bundle_deps "$LIBDIR/libSDL3.dylib"
-  else
-    warn "libSDL2 is bundled but SDL3 is not beside it; sdl2-compat will find no SDL3 on another Mac"
-  fi
-fi
 
 # And the executables. The player already has @loader_path/../lib/2ksbox
 # from player/build.rs.

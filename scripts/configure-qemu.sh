@@ -74,9 +74,9 @@ if [ -n "$WINDOWS" ]; then
     echo "no x86_64-w64-mingw32-gcc — run this inside scripts/win-cross.sh"; exit 1; }
 elif [ "$(uname -s)" = Darwin ]; then
   # qemu-3dfx's Darwin path is GLX via XQuartz (patched meson.build hardcodes
-  # /opt/X11) and the patch requires SDL2.
+  # /opt/X11 into every emulator's link line, so the headers must be there
+  # even though only libqemu-embed's own backend ever creates a context).
   [ -d /opt/X11/include ] || { echo "XQuartz missing: brew install --cask xquartz"; exit 1; }
-  pkg-config --exists sdl2 || { echo "SDL2 missing: brew install sdl2"; exit 1; }
   # SDK 15.4+ declares strchrnul (and friends) with an availability of 15.4;
   # QEMU detects and uses them unguarded, so a lower deployment target spams
   # -Wunguarded-availability-new. Target the running OS for local builds
@@ -86,9 +86,33 @@ elif [ "$(uname -s)" = Darwin ]; then
   fi
   echo "==> MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
 fi
+# No QEMU user interface at all (2026-09-07). The player is the front end:
+# it embeds QEMU, the embed library appends `-display none` itself
+# (embed/libqemu_embed.c), and it brings its own 3D context provider
+# (patch 30) and audio backend (patch 20). Every display QEMU can build was
+# therefore dead code that each packager still had to carry — SDL2 (and,
+# through sdl2-compat, SDL3) beside the player on Windows and macOS, GTK
+# and its whole pango/cairo/gdk chain in libqemu-embed on Linux, spice's
+# server, curses. Turning them off costs nothing we use and takes ~40
+# libraries off the Linux embed library alone.
+#
+# VNC is deliberately kept. It needs no toolkit, and it is the only way
+# left to *look at* a guest under a hand-run `qemu-system-i386` — which
+# QEMU makes automatic: with no local display compiled in and no
+# `-display` given, `qemu_setup_display()` starts a VNC server on
+# localhost:5900 instead (system/vl.c). Anything scripted passes
+# `-display none` and gets neither.
 "$ROOT/qemu/configure" \
   --python="$PYTHON" \
   --disable-werror \
+  --disable-sdl \
+  --disable-sdl-image \
+  --disable-gtk \
+  --disable-vte \
+  --disable-cocoa \
+  --disable-curses \
+  --disable-spice \
+  --disable-spice-protocol \
   --extra-cflags="$EXTRA_CFLAGS" \
   "${CFG[@]}" \
   --target-list=i386-softmmu,x86_64-softmmu \

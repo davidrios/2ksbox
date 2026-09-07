@@ -38,14 +38,16 @@ RUN dnf install -y --setopt=install_weak_deps=False python3.13 \
 ENV QEMU_PYTHON=/usr/bin/python3.13
 
 # Cross side: the mingw64 sysroot QEMU and the executor compile against.
-# libepoxy is the Mesa pass-through's GL loader; SDL2 is qemu-3dfx's
-# native UI dependency; gettext/iconv arrive as glib's own dependencies
-# but are named here because the packaging step copies their DLLs.
+# libepoxy is the Mesa pass-through's GL loader; gettext/iconv arrive as
+# glib's own dependencies but are named here because the packaging step
+# copies their DLLs. No SDL2: QEMU is configured --disable-sdl (2026-09-07)
+# — nothing we ship opens a QEMU window, and Fedora's mingw64-SDL2 is
+# sdl2-compat, which dragged SDL3.dll along at run time as well.
 RUN dnf install -y --setopt=install_weak_deps=False \
         mingw-w64-tools \
         mingw64-gcc mingw64-gcc-c++ mingw64-headers mingw64-winpthreads \
         mingw64-glib2 mingw64-pixman mingw64-zlib mingw64-libepoxy \
-        mingw64-SDL2 mingw64-gettext mingw64-win-iconv mingw64-pkg-config \
+        mingw64-gettext mingw64-win-iconv mingw64-pkg-config \
     && dnf clean all -y
 
 # libslirp, which Fedora does not package for mingw. QEMU's `-netdev

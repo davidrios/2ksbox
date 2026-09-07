@@ -73,7 +73,7 @@ overlaid into `qemu/embed/` by `prepare-qemu.sh`, like the 3dfx devices;
 
 1. `10-embed-api.patch` — meson: `shared_library('qemu-embed-<target>',
    files('embed/libqemu_embed.c'), objects: lib.extract_all_objects(...),
-   dependencies: arch_deps + [sdl], link_args…)` next to the executable.
+   dependencies: arch_deps, link_args…)` next to the executable.
    Objects are linked directly (not via archive) so `type_init`
    constructors survive. Requires `-fPIC` (configure-qemu.sh adds it).
 2. `20-embed-audio.patch` (done) — driver lives in `embed/embedaudio.c`
@@ -100,11 +100,14 @@ overlaid into `qemu/embed/` by `prepare-qemu.sh`, like the 3dfx devices;
 - `qemu_cleanup` is incomplete (`runstate.c:929` TODO): **one VM per process
   lifetime** — matches our launcher/player split (doc 02).
 - qemu-3dfx's `graphic_hw_passthrough()` makes `graphic_hw_update` skip the
-  device (`ui/console.c:147-152`) while 3D is active, and 3dfx/mesa render
-  into QEMU's SDL2 window — **and refuse to activate without it**
-  (`sdl_display_valid()` exits the process). So with `-display none` the 2D
-  path works and any 3D title kills the VM until M3 replaces the SDL-window
-  dependency (Spike A doc). The player must not advertise 3D before then.
+  device (`ui/console.c:147-152`) while 3D is active. Upstream then renders
+  into QEMU's SDL2 window and **refuses to activate without it**
+  (`sdl_display_valid()` exits the process), so with `-display none` the 2D
+  path worked and any 3D title killed the VM. **Settled in M3:** patch 30
+  puts those entry points behind a provider vtable and the embed library
+  registers a window-less one, and since 2026-09-07 QEMU is built
+  `--disable-sdl` outright — `ui/sdl2.c` is not compiled and libqemu-embed
+  no longer links SDL at all.
 
 ## Embed API (v1)
 

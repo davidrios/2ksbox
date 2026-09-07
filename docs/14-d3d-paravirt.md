@@ -100,8 +100,8 @@ guest (XP)                                  host (QEMU process, embed lib)
   cannot reach DXVK's Vulkan 1.3 gets instead: the GL pass-through with
   WineD3D in the guest, and `launcher --host-check` to say so. The off-screen test
   (`tools/dxvk-d3d9-test.cpp`) and the native build of the reference scene
-  (`tools/d3dgame9-native.cpp`, unmodified `d3dgame9.c` over a Win32-on-SDL2
-  shim) both run to DXVK's refusal on MoltenVK today and produce BMPs once
+  (`tools/d3dgame9-native.cpp`, unmodified `d3dgame9.c` over a window-less
+  Win32 shim, `tools/d3dgame-native/win32_headless.h`) both run to DXVK's refusal on MoltenVK today and produce BMPs once
   the Air is on macOS 26. **On Linux (RADV) both pass, 2026-09-03:** the
   fixed-function frame 300 vs the rig golden differs in 0.35 % of pixels
   beyond a channel tolerance of 8 (HUD masked), visually identical — DXVK

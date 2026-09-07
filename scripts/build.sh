@@ -262,7 +262,7 @@ fi
 if want dxvk; then
   if ! have meson || ! have ninja; then skip dxvk "needs meson and ninja" || true
   elif ! have glslangValidator && ! have glslang; then
-    skip dxvk "needs glslang (vulkan-headers, vulkan-loader, glslang, sdl2)" || true
+    skip dxvk "needs glslang (vulkan-headers, vulkan-loader, glslang)" || true
   else
     say "dxvk"
     if STAMP_GITS="third_party/dxvk" \

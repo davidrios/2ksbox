@@ -84,7 +84,12 @@ wrong — both of them things only a real Windows could show:
    SDL3 was never shipped and the player could not start on a machine
    without its own. `package-windows.sh` now has a second pass over the
    staged binaries' strings for sysroot DLL names that are not staged
-   yet (`SDL3.dll`, and ANGLE's `libEGL`/`libGLESv2` behind it).
+   yet (`SDL3.dll`, and ANGLE's `libEGL`/`libGLESv2`).
+   **Since 2026-09-07 neither SDL DLL is staged at all:** QEMU is
+   configured `--disable-sdl`, because nothing we ship opens a QEMU
+   window. `libEGL`/`libGLESv2` are still there — `libepoxy-0.dll`, the
+   Mesa pass-through's GL loader, names them at run time, and the same
+   pass catches that. It stays as the net for the next one.
 
 A windowless launcher has nowhere to put the player's output, which is
 precisely when a start-up failure needs reading, so `player::spawn`
@@ -351,7 +356,7 @@ Three things this needed elsewhere:
 
 - **The weak-symbol trick does not work on Windows.** Marking
   `hw/mesa/mglcntx_mingw.c`'s entry points weak the way patch 31 does for
-  GLX and SDL links the DLL fine and then leaves `qemu-system-i386.exe`
+  GLX links the DLL fine and then leaves `qemu-system-i386.exe`
   with `undefined reference to MGLCreateContext` — a COFF weak external
   is not an ELF weak definition, and ld.bfd does not fall back to the
   aliased body (the object's own calls to its own weak symbols are
@@ -469,9 +474,9 @@ images and a GPU, and now a Windows host too. The Windows evidence is
 - The launcher's Windows data directory is `%APPDATA%\2ksbox\data`
   (`directories`' own convention), not `%APPDATA%\2ksbox`.
 - A DLL loaded with `LoadLibrary` is not in any import table, so a
-  closure walked from those alone is not a closure. Fedora's SDL2 is
-  sdl2-compat and loads SDL3 that way; `package-windows.sh` has a
-  strings-based second pass for the next one.
+  closure walked from those alone is not a closure. Fedora's SDL2 was
+  sdl2-compat and loaded SDL3 that way (SDL is no longer built or staged);
+  `package-windows.sh` keeps the strings-based second pass for the next one.
 - **cmd does not wait for a windows-subsystem program**, and `start ""
   /b /wait` (which does) does not pass the console's redirection to the
   child: a `.bat` that runs a windowed program gets neither its output
