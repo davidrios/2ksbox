@@ -77,10 +77,23 @@ have square pixels — right for every SVGA mode and for anything modern a guest
 might set, where forcing 4:3 would distort a widescreen one, and identical to
 4:3 for every 4:3 mode that has square pixels anyway. What the table must carry
 is the modes where the two disagree: the VGA's 200-, 240-, 350- and 400-line
-modes, whose pixels are not square. Double-scanning is a rule rather than an
-entry — the CRTC sets its bit below ~300 lines. The rest of the entries are
-there for their names and to be swept, and are where a correction goes when one
-is measured against the reference CRT (doc 09).
+modes, whose pixels are not square. The rest of the entries are there for their
+names and to be swept, and are where a correction goes when one is measured
+against the reference CRT (doc 09).
+
+Two things are rules rather than entries, because a list of exact sizes cannot
+state them. **Double-scanning** — the CRTC sets its bit below ~300 lines. And
+the **VGA raster** itself (`vga_raster`, 2026-09-07): a size at one of the four
+VGA widths (320, 360, 640, 720 — the 8- and 9-dot character clocks and the
+halved low-resolution ones) and at most 480 lines is a 4:3 picture whether or
+not its line count is one of the round ones. A guest can scan any number of
+lines onto that one raster, and QEMU's text path does not even report the
+number it scanned: `vga_get_text_resolution` gives back `rows × cheight` with
+the last partial row dropped, so a 400-line raster with a 12-line character
+cell — XP's text-mode setup — arrives as **720×396**. Before the rule that
+missed the table and was drawn as an unlisted 1.818:1 picture, i.e. the XP
+install stretched across the window, with the log line
+`720x396 unlisted mode — 1.818:1 picture` naming it. 720×396 is in the sweep.
 
 **Geometry (rules 2 and 4).** The viewport is the largest rect of the *mode's*
 display aspect that fits, with the width following from the aspect and the

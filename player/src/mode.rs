@@ -19,8 +19,16 @@
 //! that rule anyway. What the table has to carry is the modes where the two
 //! disagree -- the VGA's 200-, 240-, 350- and 400-line modes, whose pixels
 //! are not square -- plus a name for each, and the place a correction goes
-//! when one is measured against the reference CRT (doc 09). Double-scanning
-//! is a rule, not a table entry: the CRTC sets its bit below ~300 lines.
+//! when one is measured against the reference CRT (doc 09).
+//!
+//! Two things are rules rather than entries, because a table of exact sizes
+//! cannot state them. Double-scanning: the CRTC sets its bit below ~300
+//! lines. And the VGA raster itself (`vga_raster`) -- a size at one of the
+//! four VGA widths and at most 480 lines is a 4:3 picture whether or not its
+//! line count is one of the round ones, because a guest can scan any number
+//! of lines onto that one raster and QEMU's text path does not even report
+//! the number it scanned (720x396 for a 400-line raster with a 12-line
+//! character cell, which is XP's text-mode setup).
 
 /// What a guest framebuffer size meant on the tube.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -44,6 +52,31 @@ const DAR_5_4: f32 = 5.0 / 4.0;
 /// 200- or 240-line mode on the 400/480-line raster. 350-, 400- and
 /// 480-line modes have their own vertical timing and are scanned once.
 const DOUBLE_SCAN_BELOW: u32 = 300;
+
+/// The widths a VGA can display: the 8- and 9-dot character clocks and the
+/// halved low-resolution ones. Every mode the CRTC scans at one of these is
+/// a 4:3 picture on the tube whatever its line count -- see `vga_raster`.
+const VGA_WIDTHS: &[u32] = &[320, 360, 640, 720];
+
+/// The tallest raster a VGA scans (480 lines). Above it a size is an SVGA
+/// mode, whose pixels are square.
+const VGA_LINES_MAX: u32 = 480;
+
+/// Is this size a VGA raster -- a 4:3 picture whose pixels are not square?
+///
+/// The table's exact sizes cannot answer this on their own, because the size
+/// the player is handed is not always the raster the CRTC scans. QEMU's text
+/// path reports `rows x cheight`, and the last partial row is dropped: a
+/// 400-line raster with a 12-line character cell arrives as **720x396**,
+/// which is what XP's text-mode setup programs, and an exact-match table
+/// then calls it an unlisted 1.818:1 picture and draws the install
+/// stretched. The raster did not change. A VGA has one raster and four
+/// widths, so the width plus a line count in range is what identifies it,
+/// and the odd line counts (350 with an 8-line cell -> 344, 400 with a
+/// 14-line one -> 392) come out at 4:3 like the round ones.
+fn vga_raster(width: u32, height: u32) -> bool {
+    VGA_WIDTHS.contains(&width) && height > 0 && height <= VGA_LINES_MAX
+}
 
 /// The era modes, by name. What has to be here is the first group, whose
 /// pixels are not square and whose display aspect the square-pixel rule
@@ -82,7 +115,13 @@ impl Mode {
             .iter()
             .find(|(w, h, _, _)| *w == width && *h == height)
             .map(|(_, _, dar, label)| (*dar, *label))
-            .unwrap_or((square, ""));
+            .unwrap_or_else(|| {
+                if vga_raster(width, height) {
+                    (DAR_4_3, "VGA raster (4:3)")
+                } else {
+                    (square, "")
+                }
+            });
         let doubled = height > 0 && height < DOUBLE_SCAN_BELOW;
         Mode {
             width,
@@ -159,6 +198,7 @@ impl Mode {
 /// covers the derived fallback as well as the named entries.
 pub fn sweep_sizes() -> Vec<(u32, u32)> {
     let mut v: Vec<(u32, u32)> = TABLE.iter().map(|(w, h, _, _)| (*w, *h)).collect();
-    v.push((512, 384));
+    v.push((720, 396)); // a raster the text path truncated: the `vga_raster` rule
+    v.push((512, 384)); // in no group: the square-pixel fallback
     v
 }
