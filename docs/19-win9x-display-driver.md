@@ -548,6 +548,15 @@ buffer:`). It is the single most useful thing the harness does: without it
 a fault and a slow paint look the same, and both look like the driver
 almost working.
 
+It has to prove the page *is* text first, or it invents messages: once the
+driver runs, those 32 KB are the top of the desktop, and every fourth byte
+of a 16 bpp desktop read as a character code produced three convincing
+lines of nonsense. Three things are true of a text page and of almost no
+pixel data — plane 3 untouched (plane 2 is not: that is the character
+generator), a handful of distinct attributes, and mostly spaces — and it
+takes all three, because a 32 bpp desktop passes the first on its unused
+byte.
+
 The fault itself is inside **DIBENG.DLL**, at the first instruction of a
 blit-shaped routine: `lds si,[bp+0x32]` followed by `deFlags`,
 `deBeginAccess` / `deEndAccess`, `deBitsOffset` / `deBitsSelector`,
@@ -559,44 +568,59 @@ first, and the reference driver's own thunk list — which does *not* thunk
 `ExtTextOut` or `SetPalette`, and reaches the cursor entries through C — is
 the thing to hold ours against.
 
-### 16. Installing it: what PnP does, and what ours still gets wrong
+### 16. Installing it, the way every other driver installs (2026-09-07)
 
 PnP installs the driver from `d3dpt9x.inf` with no clicks and writes both
 halves into the adapter's own registry key — `drv=d3dpt9x.drv`,
-`minivdd=d3dpt9v.vxd`, `vdd=*vdd`, `DevLoader=*vdd`, `Mode=32,640,480` —
-and then rewrites SYSTEM.INI's `[boot] display.drv` to `pnpdrvr.drv`.
+`minivdd=d3dpt9v.vxd`, `vdd=*vdd`, `DevLoader=*vdd`, `Mode` and the mode
+list — and then rewrites SYSTEM.INI's `[boot] display.drv` to
+`pnpdrvr.drv`.
 
 **That is the correct configuration, not a failure.** `pnpdrvr.drv` is the
 name Windows writes for every PnP display driver; there is no such file on
-disk and there is not meant to be one, and the pristine image in this
-repository's test loop says exactly the same thing with
-`[boot.description] display.drv=Cirrus Logic` beside it. The inbox Cirrus
-driver loads that way in this very image. Anything that has to name the
-driver in SYSTEM.INI to be loaded is working around a bug of its own.
+disk and there is not meant to be one, and the pristine test image says the
+same thing with `[boot.description] display.drv=Cirrus Logic` beside it.
+Anything that has to name the driver in SYSTEM.INI to be loaded is working
+around a bug of its own.
 
-Ours is one. After a clean install and restart the boot comes up on the
-VGA: the mini-VDD loads (it is named in `[386Enh]`), the display driver
-does not, and Windows has recorded our device description in
-`[boot.description]` all the same. Two things about our INF differ from the
-reference's, and the first is the likely cause:
+Ours was one, and the bug was in the INF: **no `DelReg`**. A display
+adapter that has been running the inbox VGA already has a `CURRENT` key
+naming that driver and a `MODES` tree describing its modes, and an AddReg
+does not remove what it does not mention — so the leftovers are what GDI
+resolves through and the new values are never reached. The reference driver
+deletes `Ver`, `DevLoader`, `DEFAULT`, `MODES` and `CURRENT` first. With
+that, and with the two 4 bpp rows that hand `MODES\4\640,480` to `vga.drv`
+and `MODES\4\800,600` to `supervga.drv` by name (a machine sitting in a
+16-colour mode has to resolve to *something*, and it is not us):
 
-- **No `DelReg`.** The reference deletes `Ver`, `DevLoader`, `DEFAULT`,
-  `MODES` and `CURRENT` before writing them. A display adapter that has
-  been running on the inbox VGA already has a `CURRENT` key naming that
-  driver and a `MODES` tree describing its modes, and an AddReg does not
-  remove what it does not mention, so the leftovers are what GDI resolves
-  through. The INF has that `DelReg` now. **This is untested in a guest**;
-  the run that tests it is `NAME_IN_INI=0 tools/win98-driver-test.sh
-  <image> install`, and the pass is the driver's own `d3dpt9x:` lines and
-  `linear mode on` appearing *after* the restart with nothing naming it.
-- **No 4 bpp rows.** The reference hands `MODES\4\640,480` to `vga.drv`
-  and `MODES\4\800,600` to `supervga.drv` by name. Ours listed only the
-  16 and 32 bpp modes it serves, so a machine sitting in a 16-colour mode —
-  which the test image is — had nothing to resolve to. Those rows are in
-  now too, along with `ExtModeSwitch` and `DDC`.
+```
+$ NAME_IN_INI=0 tools/win98-driver-test.sh ~/vms/win98.qcow2 install
+==> restarting to finish the install
+...
+d3dptvxd: Device_Init          <- from the registry's minivdd value
+d3dpt9x: DriverInit entered    <- from its drv value, through pnpdrvr.drv
+d3dpt-vga: linear mode on (800x600x16 pitch 1600 offset 0)
+shutdown   clean
+```
 
-Until that run happens, `tools/win98-driver-test.sh` names both halves in
-SYSTEM.INI itself (`NAME_IN_INI`, on by default):
+Nothing anywhere names either half. Proven 2026-09-07 on a pristine image;
+`NAME_IN_INI` defaults to off and is kept only for the other question,
+which is "does *this build* of the driver work" rather than "does it
+install".
+
+Two things about that run worth keeping. The mode came out **800x600x16**,
+not the `DEFAULT,Mode` of `32,640,480` the INF writes — Windows picked from
+the `MODES` list rather than the default, and 16 bpp is the depth the era's
+drivers actually ran, so this is the interesting configuration rather than
+a wrong one. And the run before the fix appeared to hang on the boot logo
+for eight minutes after the restart: that was **patch 22's bug, not this
+one** — Win98 turns its local APIC off, RESET did not put
+`CPUID.01H:EDX.APIC` back, and the guest span forever on the BIOS tick
+counter behind an unchanging splash screen (`docs/tracks/win98-reboot.md`).
+A frozen 9x splash screen after a restart is that until proven otherwise.
+
+`NAME_IN_INI=1` still writes, in binary because SYSTEM.INI has CRLF line
+endings and Python's text mode eats them:
 
 ```
 [386Enh]
@@ -604,15 +628,6 @@ device=C:\WINDOWS\SYSTEM\D3DPT9V.VXD
 [boot]
 display.drv=d3dpt9x.drv
 ```
-
-which bypasses the selection Windows would do — the right thing when the
-question is "does the driver work", the wrong thing when the question is
-"does it install". Flip the default when the registry path is proven.
-
-Edit that file **in binary or not at all**: it has CRLF line endings, and
-Python's text mode eats them on the way through — a rewrite that did so ate
-a section header once, which then looks exactly like Windows having
-rejected the setting.
 
 ### 17. Ending a run
 

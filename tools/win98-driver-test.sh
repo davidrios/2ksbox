@@ -73,23 +73,21 @@ if [ "$WHAT" = install ]; then
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9v.vxd" ::/WINDOWS/INF/D3DPT9V.VXD
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9x.inf" ::/WINDOWS/INF/D3DPT9X.INF
 
-  # **`NAME_IN_INI` names the driver in SYSTEM.INI instead of letting PnP
-  # pick it.** It defaults to on, and that is a statement about what is
-  # proven rather than about what is right: PnP writes both halves into the
-  # adapter's registry key and `display.drv=pnpdrvr.drv` resolves through it
-  # — that is how every 9x display driver loads, the inbox Cirrus in this
-  # same image included, and there is no PNPDRVR.DRV file because there is
-  # not meant to be one. Ours has not been seen to load that way yet; the
-  # INF grew the `DelReg` the reference driver has (a device that has run on
-  # the inbox VGA keeps a `CURRENT` key naming *that* driver, and AddReg
-  # does not remove what it does not mention) but that fix is **untested in
-  # a guest**. `NAME_IN_INI=0` is the run that tests it: install, restart,
-  # and the driver's own lines have to appear after the restart with nothing
-  # naming it. Flip the default when they do.
+  # **`NAME_IN_INI=1` names the driver in SYSTEM.INI instead of letting PnP
+  # pick it, and it is off by default because it is no longer needed.** PnP
+  # writes both halves into the adapter's registry key and
+  # `display.drv=pnpdrvr.drv` resolves through it — that is how every 9x
+  # display driver loads, the inbox Cirrus in this same image included, and
+  # there is no PNPDRVR.DRV file because there is not meant to be one.
+  # Proven 2026-09-07 on a pristine image: install, restart, and the second
+  # boot brings up the mini-VDD from the registry's `minivdd` value and the
+  # driver from its `drv` value with nothing anywhere naming either. What
+  # had been missing was the `DelReg` (doc 19 Section 16).
   #
-  # Naming it here bypasses the selection Windows would do, which is exactly
-  # what you want when the question is "does the driver work" and exactly
-  # what you do not want when the question is "does it install".
+  # Keep it for the question it answers: naming the driver here bypasses the
+  # selection Windows would do, which is what you want when the question is
+  # "does this build of the driver work" and not what you want when the
+  # question is "does it install".
   # both halves into the adapter's registry key and `display.drv=pnpdrvr.drv`
   # resolves through it — that is how every 9x display driver loads, the
   # inbox Cirrus in this same image included, and there is no PNPDRVR.DRV
@@ -102,7 +100,7 @@ if [ "$WHAT" = install ]; then
   # **In binary, or not at all.** SYSTEM.INI has CRLF line endings and
   # Python's text mode eats them on the way through, which has already cost
   # this track a section header and the run that noticed.
-  if [ "${NAME_IN_INI:-1}" = 1 ]; then
+  if [ "${NAME_IN_INI:-0}" = 1 ]; then
   echo "==> naming the driver and the mini-VDD in SYSTEM.INI (NAME_IN_INI=1)"
   mcopy -i "$RAW@@$OFF" -n ::/WINDOWS/SYSTEM.INI "$OUT/system.ini"
   python3 - "$OUT/system.ini" <<'PYINI'
@@ -255,6 +253,25 @@ for i,l in enumerate(o):
   python3 - "$OUT/out/vram.bin" <<'PYTXT'
 import sys
 v = open(sys.argv[1], 'rb').read()
+page = v[:80 * 25 * 4]
+
+# **Is this a text page at all?** Once the driver is running, the first
+# 32 KB of VRAM is the top of the desktop, and reading every fourth byte of
+# it as a character code prints stray letters — a 16 bpp desktop produced a
+# convincing-looking three lines of nonsense the first time this ran. Three
+# things are true of a real text page and of almost no pixel data: QEMU's
+# VGA leaves plane 3 alone (plane 2 it does not — that is the character
+# generator), a message screen draws on a handful of attributes, and it is
+# mostly spaces. A 32 bpp desktop passes the first of those on its unused
+# byte, which is why there are three.
+def plane(n):
+    return page[n::4]
+
+if not (sum(1 for b in plane(3) if b == 0) >= 0.99 * len(plane(3))
+        and len(set(plane(1))) <= 16
+        and sum(1 for b in plane(0) if b == 0x20) >= 0.5 * len(plane(0))):
+    sys.exit(0)
+
 rows = []
 for r in range(25):
     line = ''.join(chr(v[(r * 80 + c) * 4]) if 32 <= v[(r * 80 + c) * 4] < 127 else ' '

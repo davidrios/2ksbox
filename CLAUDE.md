@@ -330,12 +330,14 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
 - **`display.drv=pnpdrvr.drv` is correct, not a fallback**: it is what
   Windows writes for every PnP display driver (the inbox Cirrus in the same
   image included), there is no such file, and it resolves through the
-  adapter's registry key. Ours does not load that way yet — the INF was
-  missing the `DelReg` that clears `CURRENT`/`DEFAULT`/`MODES` before
-  writing, which a device that has run on the inbox VGA still holds — so
-  `tools/win98-driver-test.sh` names both halves in SYSTEM.INI itself
-  (`NAME_IN_INI`, on by default) until the registry path is proven
-  (doc 19 §16). Edit that file in binary — Python's text mode eats its CRLFs.
+  adapter's registry key. A 9x display INF therefore needs a **`DelReg`**
+  clearing `Ver`, `DevLoader`, `DEFAULT`, `MODES` and `CURRENT` first — an
+  adapter that has been running the inbox VGA still holds a `CURRENT` key
+  naming *that* driver, an AddReg does not remove what it does not mention,
+  and the leftovers are what GDI resolves through. Ours lacked it and so
+  never loaded from PnP; with it, and with `MODES\4\…` rows handing the
+  16-colour modes back to `vga.drv`/`supervga.drv`, install + restart brings
+  up both halves with nothing naming them (doc 19 §16, 2026-09-07).
 - **End a scripted Win98 run with the ACPI power button** (`system_powerdown`),
   not keystrokes: a modal dialog swallows them, and a machine that does not
   power off leaves the FAT dirty, so the *next* boot comes up in **safe
