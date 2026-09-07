@@ -323,6 +323,13 @@ fn check_msf() -> Result<(), String> {
         expect(&format!("round trip {lba}"), Msf::from_lba(lba).to_lba(), lba)?;
     }
     expect("74:00:00", Msf { m: 74, s: 0, f: 0 }.to_lba(), 332_850)?;
+    // Past either end an MSF saturates instead of failing: the openers
+    // refuse a disc that long, and nothing inside QEMU may panic on an
+    // address a guest chose (see `msf.rs`).
+    expect("last addressable", Msf::from_lba(libdisc::msf::MAX_LBA), Msf { m: 99, s: 59, f: 74 })?;
+    expect("past the end", Msf::from_lba(libdisc::msf::MAX_LBA + 1), Msf { m: 99, s: 59, f: 74 })?;
+    expect("past the end, far", Msf::from_lba(i32::MAX), Msf { m: 99, s: 59, f: 74 })?;
+    expect("before the lead-in", Msf::from_lba(-1000), Msf { m: 0, s: 0, f: 0 })?;
     expect("00:00:00", Msf { m: 0, s: 0, f: 0 }.to_lba(), -150)?;
     expect("bcd", sector::bcd(59), 0x59)?;
     expect("header lba 16", sector::header(16, 1), [0x00, 0x02, 0x16, 0x01])?;
@@ -1627,6 +1634,31 @@ fn check_dirdisc(dir: &Path) -> Result<(), String> {
     }
     drop(big);
     let _ = fs::remove_dir_all(&huge);
+
+    // A folder bigger than a disc: refused by size, and named, rather
+    // than laid out into sectors no MSF can address. Pointing the shelf
+    // at a directory of disc dumps is how a user meets this.
+    let over = dir.join("dirover");
+    let _ = fs::remove_dir_all(&over);
+    fs::create_dir_all(&over).map_err(|e| e.to_string())?;
+    let mut sparse = Vec::new();
+    for i in 0..3 {
+        let f = fs::File::create(over.join(format!("part{i}.bin"))).map_err(|e| e.to_string())?;
+        if f.set_len(400 << 20).is_err() {
+            sparse.clear();
+            break;
+        }
+        sparse.push(f);
+    }
+    if !sparse.is_empty() {
+        match Disc::open(&over) {
+            Err(e) if e.to_string().contains("a disc holds at most") => {}
+            Err(e) => return Err(format!("a 1.2 GiB folder: {e}")),
+            Ok(_) => return Err("a folder bigger than a disc was served".into()),
+        }
+    }
+    drop(sparse);
+    let _ = fs::remove_dir_all(&over);
 
     // A name that is not UTF-8 cannot be a Joliet identifier at all, so
     // it is skipped with a warning rather than mangled into something

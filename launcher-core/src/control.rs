@@ -192,6 +192,17 @@ impl Control {
     /// Put `disc` in the CD-ROM tray, replacing whatever is there.
     /// `blockdev-change-medium` does open/eject/insert/close as one
     /// command, which is what a guest expects to see from a disc swap.
+    ///
+    /// `force` is the tray lock, and it is not optional here. A guest
+    /// with a volume mounted holds the medium locked (PREVENT ALLOW
+    /// MEDIUM REMOVAL — XP does it for every open handle on the disc),
+    /// and QEMU's tray only *asks* an unforced swap to wait: it sends
+    /// the guest an eject request, refuses the command and leaves the
+    /// old disc in the drive, so the new one appears whenever the guest
+    /// happens to release the lock — when the program holding it is
+    /// closed — rather than when the user clicked Insert. The user asked
+    /// for this disc; `eject_disc` below has always forced, and the two
+    /// halves of one gesture cannot disagree about it.
     pub fn insert_disc(&mut self, disc: &Path) -> Result<(), String> {
         // No `format` argument: QEMU probes, so a `.cue`/`.ccd` still
         // lands on the `cdimage` driver (doc 17) exactly as it does on
@@ -202,7 +213,7 @@ impl Control {
             // the prefix that makes it one (`disc_library::qemu_medium`).
             // No comma doubling here: this is a JSON string, not a QEMU
             // option string.
-            serde_json::json!({"id": CDROM_ID, "filename": crate::disc_library::qemu_medium(disc)}),
+            serde_json::json!({"id": CDROM_ID, "filename": crate::disc_library::qemu_medium(disc), "force": true}),
         )
         .map(|_| ())
     }

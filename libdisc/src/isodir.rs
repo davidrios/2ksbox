@@ -47,6 +47,12 @@ const MAX_FILE: u64 = 4 << 30;
 const BIG_FILE: u64 = 2 << 30;
 /// The path table's parent field is 16 bits.
 const MAX_DIRS: usize = 65535;
+/// Sectors a disc can hold: one past the last LBA an MSF can name
+/// (`msf::MAX_LBA`), 99:59:74, about 878 MiB. A folder is served as a
+/// CD-ROM, and past this the TOC's lead-out, the subchannel and every
+/// sector header have no address for what is on it, so a tree this big
+/// is refused rather than made into a disc no drive could be.
+const MAX_SECTORS: u64 = crate::msf::MAX_LBA as u64 + 1;
 
 /// Serve `dir` as a disc.
 pub fn open(dir: &Path) -> Result<Disc> {
@@ -346,6 +352,22 @@ impl Builder {
         }
         let meta_sectors = lba;
 
+        // How big the disc will be, before anything is laid out or
+        // allocated: the sector numbers below are 32 bits and would wrap
+        // on a tree of terabytes, and a folder nobody meant to share
+        // whole — a downloads directory, a shelf of disc dumps — is
+        // the ordinary way to arrive here.
+        let data: u64 = self.nodes.iter().filter(|n| n.payload.is_some()).map(|n| sectors_for_len(n.len) as u64).sum();
+        let want = meta_sectors as u64 + data + TAIL_PAD as u64;
+        if want > MAX_SECTORS {
+            return Err(Error::Invalid(format!(
+                "{}: the folder holds {}, and a disc holds at most {} (99 minutes); share a folder that fits, or make an image of this one",
+                self.root.display(),
+                size_str(want),
+                size_str(MAX_SECTORS)
+            )));
+        }
+
         // Files, in the primary tree's order: a directory's own files
         // land next to each other, which is the order a guest reads them.
         // An empty file owns no sectors but still needs a plausible
@@ -626,6 +648,16 @@ fn dir_data_len(lens: &[usize]) -> u32 {
 
 fn sectors_for(bytes: u32) -> u32 {
     bytes.div_ceil(BLOCK as u32)
+}
+
+/// A sector count as the message about it should read.
+fn size_str(sectors: u64) -> String {
+    let mib = sectors * BLOCK as u64 / (1 << 20);
+    if mib >= 1024 {
+        format!("{:.1} GiB", mib as f64 / 1024.0)
+    } else {
+        format!("{mib} MiB")
+    }
 }
 
 fn sectors_for_len(len: u64) -> u32 {

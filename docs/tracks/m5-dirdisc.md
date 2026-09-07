@@ -155,9 +155,10 @@ proof; a real MSCDEX leg would mean shipping a CD driver, because the
 FreeDOS boot floppy `tools/x87-guest-test.py` fetches carries none.
 
 **Every refusal has a case** in `discx selftest`: a 32-level tree, a 4 GiB
-(sparse) file with no single extent that can address it, a name that is
-not UTF-8 skipped rather than mangled into something the user never
-typed, and the symlink loop from step 1.
+(sparse) file with no single extent that can address it, a folder bigger
+than a disc (three sparse files, 1.2 GiB), a name that is not UTF-8
+skipped rather than mangled into something the user never typed, and the
+symlink loop from step 1.
 
 **The bug: the shelf's C side did not know the prefix.** A folder on the
 shelf listed as `[missing on the host]` and every LOAD of one was refused
@@ -182,6 +183,34 @@ longer discarded (an eject the drive never confirmed meant the old medium
 could still be there when the new one was asked for). The shelf test
 grew the case that had never been covered: load, then load again with no
 eject between, and the new disc's files are the ones that come back.
+
+**Two more, both reported by the user on 2026-09-07 from one XP session**
+(the first folder anyone pointed at that was not a fixture tree):
+
+- **A folder bigger than a disc panicked instead of saying so.**
+  `LBA 18011910 beyond 99-minute MSF range` out of `libdisc/src/msf.rs`
+  — a ~34 GiB directory (a shelf of disc dumps is the obvious thing to
+  aim at first) laid out into sectors, and the panic came later, from
+  whichever command first converted an address to MSF: the TOC's
+  lead-out. `capi.rs` caught it and the medium became `LIBDISC_EIO`, so
+  what the user saw was a panic on stderr and a drive that would not
+  mount. Two halves to the fix. `isodir` now measures the tree against
+  the disc before laying it out and refuses with the two sizes in the
+  message ("the folder holds 34.4 GiB, and a disc holds at most 878 MiB
+  (99 minutes)"), which reaches the shelf's error line through
+  `cdimage.c`'s `error_setg`. And `Msf::from_lba` **saturates** rather
+  than asserting: this code runs inside QEMU behind a C ABI, an address
+  it cannot represent must not be able to take the machine down, and the
+  refusals above are where an unrepresentable disc is meant to be
+  caught. The `msf` check pins both ends of the clamp.
+- **Insert waited for the guest to let go.** Pressing Insert on a
+  running machine only swapped the disc "when I close the program" —
+  the program in XP holding a handle on the mounted volume. QEMU's
+  `blockdev-change-medium` takes a `force` and we were not passing it:
+  unforced, a locked tray gets an *eject request* sent to the guest, the
+  command is refused and the old disc stays, so the swap happens
+  whenever the guest next releases the lock. `control.rs::insert_disc`
+  forces, as `eject_disc` beside it always has.
 
 **Not done, and named rather than pretended:** the stale-file rule is
 covered host-side (`discx selftest`'s EMEDIUM case) and not in a guest —
@@ -308,7 +337,10 @@ Rules that are easy to get wrong, fixed here:
   CAPACITY reports.
 - **Refuse, with a message naming the path:** a file ≥ 4 GiB (single
   extent only; multi-extent is a Windows-version minefield), a tree
-  deeper than 30 levels, a symlink loop. **Warn and continue:** a tree
+  deeper than 30 levels, a symlink loop, **a tree bigger than the disc
+  itself** — 449,850 sectors, one past the last LBA an MSF can name
+  (99:59:74, ~878 MiB), measured before anything is laid out because the
+  sector numbers in the layout are 32 bits. **Warn and continue:** a tree
   deeper than 8 levels (ISO 9660's limit; Windows copes, MSCDEX may
   not), a file ≥ 2 GiB (dicey on Win98), > 65535 directories.
 - Symlinks are followed for regular files and directories, refused when
@@ -556,3 +588,20 @@ Learned in step 5:
 - A `python3 - <<'PY'` edit whose anchor does not match writes nothing
   and the shell carries on: a test run right after it silently uses the
   old file. Check the file, not the exit code.
+
+Learned from the user's own folder (2026-09-07):
+
+- **A limit the format has is a limit the builder must enforce.** Every
+  refusal in "The layout" was about one file or one path; the disc's own
+  capacity was the one nobody had written down, so the first folder that
+  was not a fixture tree walked straight past it and failed 400 sectors
+  of arithmetic later, in MSF, where nothing says "folder".
+- **An assert inside libdisc is a fault at the wrong address.** The
+  library is linked into QEMU behind a C ABI that turns a panic into
+  `LIBDISC_EIO`, so an impossible value accepted at open time surfaces
+  as an I/O error on an unrelated command much later. Validate where the
+  disc is built; make the arithmetic downstream unable to fail.
+- **An unforced tray change is a request, not a command.** QMP's
+  `blockdev-change-medium` and `eject` both default to asking a guest
+  that has locked the medium, and a refused ask looks exactly like a
+  disc that swaps itself minutes later for no reason.

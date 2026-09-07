@@ -10,6 +10,12 @@
 pub const FRAMES_PER_SECOND: u32 = 75;
 /// LBA 0 sits at MSF 00:02:00.
 pub const MSF_OFFSET: i32 = 150;
+/// The last sector an MSF can name: 99:59:74, one frame short of 100
+/// minutes. Three BCD bytes have no room past it, so a disc longer than
+/// this has sectors the TOC, the subchannel and every raw sector header
+/// cannot address at all. `isodir` refuses to build one (a folder disc
+/// is a CD-ROM: `atapi_disc_get_configuration` says so to the guest).
+pub const MAX_LBA: i32 = (99 * 60 + 59) * FRAMES_PER_SECOND as i32 + 74 - MSF_OFFSET;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Msf {
@@ -25,14 +31,18 @@ impl Msf {
         (self.m as i32 * 60 + self.s as i32) * FRAMES_PER_SECOND as i32 + self.f as i32 - MSF_OFFSET
     }
 
-    /// LBA → absolute MSF. Panics if the result would not fit in 99 minutes
-    /// (beyond any real disc).
+    /// LBA → absolute MSF, saturating at both ends of the addressable
+    /// range rather than failing: this runs inside QEMU behind a C ABI
+    /// (`capi.rs` turns a panic into `LIBDISC_EIO`), so an out-of-range
+    /// address would surface as an I/O error on whatever command
+    /// happened to convert one — the lead-out of a TOC, a sector header
+    /// — long after the disc that cannot be addressed was accepted. A
+    /// guest reads by LBA; the openers refuse an over-long disc up front
+    /// (`isodir`, [`MAX_LBA`]), and what is left here is arithmetic that
+    /// cannot bring the machine down.
     pub fn from_lba(lba: i32) -> Msf {
-        let abs = lba + MSF_OFFSET;
-        assert!(abs >= 0, "LBA {lba} precedes lead-in addressable range");
-        let abs = abs as u32;
+        let abs = (lba.clamp(-MSF_OFFSET, MAX_LBA) + MSF_OFFSET) as u32;
         let m = abs / (60 * FRAMES_PER_SECOND);
-        assert!(m <= 99, "LBA {lba} beyond 99-minute MSF range");
         let s = (abs / FRAMES_PER_SECOND) % 60;
         let f = abs % FRAMES_PER_SECOND;
         Msf {

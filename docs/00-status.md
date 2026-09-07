@@ -423,7 +423,18 @@ items nobody owns yet:
    C side did not know the `isodir:` prefix, and a disc swapped into a
    full drive left Windows reading the previous one (`CDSHELF` now
    dismounts the volume, because its own tray polling eats the drive's
-   one media-change sense).
+   one media-change sense). **Two more came out of the user's first
+   non-fixture folder, 2026-09-07:** a directory bigger than a disc was
+   laid out and then panicked in `Msf::from_lba` (`LBA 18011910 beyond
+   99-minute MSF range`) — `isodir` now measures the tree against the
+   disc's own capacity before laying it out and refuses with both sizes
+   named, and `from_lba` saturates instead of asserting, because
+   `capi.rs` turns a panic inside QEMU into an `EIO` on whatever command
+   happened to convert an address; and the shelf's **Insert** waited for
+   the guest to release the tray lock (the disc appeared "when I close
+   the program"), because `blockdev-change-medium` only *asks* a locked
+   guest unless `force` is passed, which `control.rs::insert_disc` now
+   does as `eject_disc` always has.
 6. x87 / SSE: the **M8** track (`docs/tracks/m8-tcg-fastpaths.md`).
 7. **M6** → `docs/tracks/m6-launcher.md` (opened 2026-09-04: toolkit decided; bundle format, library grid, spawning a player, the guided creation wizard, the shader profile manager with a live preview and disc-shelf editing landed; a human should click through the wizard and the shader manager once — no GUI automation available this session; step 5 is done — snapshots and disc-shelf editing, offline through `qemu-img` and live over the launcher's own `-qmp unix:` socket — and **step 6a is done**: the install layout (`launcher/src/paths.rs`, doc 07) and `scripts/package-linux.sh`, a checked, relocatable Linux tarball a stranger can install and boot from. The project is now named **2ksbox** (ADR-011) and the package carries that name plus the application ID `com._2ksbox.Launcher`; the repo/docs/data dir keep the working name. **Step 6b (the Flatpak) is done too** — it builds from source in the SDK, installs, and boots a machine with KVM inside the sandbox; what remains for Flathub is screenshots and offline cargo sources. **Step 6c (the macOS .app) is done too** — `scripts/package-macos.sh`, signed for Developer ID, hardened, notarized, stapled, `.dmg`; it carries its whole non-system dylib closure plus the Glide wrapper, the Direct3D executor and a Vulkan driver, and boots Win98 from the signed bundle. Next: an AppImage (6b′) and the Windows installer (6d, which also settles Windows live control)). **ADR-015 (2026-09-07) made the Qt build the shipped launcher and every packager was rewritten for it** — only the Linux tarball has been *run* since, so the ordered work is: (i) `scripts/package-flatpak.sh` against the new `org.kde.Platform` 6.10 runtime, which is also the first offline build of the merged `cargo-sources.json` and the first test of whether the SDK's `qmake6` is where cxx-qt looks; (ii) `scripts/package-macos.sh` on the Air, where the `macdeployqt` staging, the re-sign over Qt's own Mach-O files and the offscreen window check are all written and unrun; (iii) `scripts/build-windows.sh && scripts/package-windows.sh`, now that there is one zip rather than two. Then the preview's `QQuickRhiItem` (doc 07: the one place the Qt build is worse, and now on the shipped path).
 8. **M9** → `docs/tracks/m9-tcg-aarch64.md`: patches 17 (REP fast path)
@@ -460,6 +471,23 @@ items nobody owns yet:
    acceptance suite.
 
 ## Gotchas learned (don't relearn)
+
+- **A QMP medium change on a running guest must pass `force`.** Both
+  `blockdev-change-medium` and `eject` default to *asking*: if the guest
+  has locked the tray — XP does for every open handle on the mounted
+  volume — QEMU sends it an eject request, refuses the command and
+  leaves the old disc in the drive. The swap then happens whenever the
+  guest next releases the lock, which reads from the outside as "Insert
+  did nothing, and then the disc appeared when I closed the program"
+  (reported 2026-09-07, `launcher-core/src/control.rs`).
+- **Nothing inside `libdisc` may assert on a value a disc can hold.** It
+  is linked into QEMU behind a C ABI whose `catch_unwind` turns a panic
+  into `LIBDISC_EIO`, so an impossible address accepted when the medium
+  was opened surfaces much later as an I/O error on an unrelated
+  command — the panic text names `msf.rs`, never the folder or image
+  that caused it. Validate in the opener (`isodir` refuses a tree bigger
+  than the 99-minute MSF range), and let the arithmetic downstream
+  saturate.
 
 - **`ExitWindowsEx` from a console process never returns on Windows 98**,
   and nothing at all happens — fixed 2026-09-07 (`guest-tools/src/setup.c`).

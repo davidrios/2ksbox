@@ -254,7 +254,16 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   reaches a guest of an era whose networking nobody should trust, without
   mastering an image first. Read-only, and a snapshot of the tree as the
   tray closed: what changes on the host afterwards appears on the next
-  insert, which is what "Insert" already does.
+  insert, which is what "Insert" already does. A folder has to fit on a
+  disc: `isodir` refuses a tree past 878 MiB (the last MSF address) and
+  the shelf shows that, with both sizes, on the row's error line.
+- **Insert and Eject force the tray.** QMP's `blockdev-change-medium` and
+  `eject` both default to *asking* a guest that has locked the medium —
+  XP locks it for every open handle on the mounted volume — and a
+  refused ask leaves the old disc in the drive until the guest lets go,
+  so the user's click appears to do nothing and then takes effect minutes
+  later. The user pressed a button on this machine's own shelf; that is
+  the whole authority a `force` needs (`launcher-core/src/control.rs`).
 - **The shelf from inside the guest** (`CDSHELF`, guest-tools ISO): the
   same shelf, listed and swapped from a program running in the guest — a
   disc-2 prompt in a game is answered without leaving it. It is a
