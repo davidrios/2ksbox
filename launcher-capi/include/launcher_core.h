@@ -114,6 +114,9 @@ char *lc_wizard_title(const LcWizard *w);
  * that rule impossible to forget in a new widget. */
 size_t lc_wizard_family(const LcWizard *w);
 void lc_wizard_choose_family(LcWizard *w, size_t family);
+/* "" for every family but Other, which is the one whose hardware isn't a
+   doc 06 reference machine. */
+char *lc_wizard_family_note(const LcWizard *w);
 
 uint32_t lc_wizard_ram_mb(const LcWizard *w);
 void lc_wizard_ram_range(const LcWizard *w, uint32_t *min, uint32_t *max);

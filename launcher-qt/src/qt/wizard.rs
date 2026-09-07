@@ -42,6 +42,9 @@ pub mod ffi {
         /// An index into `family_labels()`, because that is what a QML
         /// `ComboBox` deals in. Same for `accel`, `cpu_speed` and `boot`.
         #[qproperty(i32, family)]
+        /// Empty except on `Other`, which is the one family whose
+        /// hardware isn't the reference machine doc 06 describes.
+        #[qproperty(QString, family_note)]
         #[qproperty(QString, name)]
         #[qproperty(i32, ram_mb)]
         #[qproperty(i32, ram_min)]
@@ -221,6 +224,7 @@ pub struct WizardRust {
     editing: bool,
     title: QString,
     family: i32,
+    family_note: QString,
     name: QString,
     ram_mb: i32,
     ram_min: i32,
@@ -460,6 +464,7 @@ impl ffi::Wizard {
             editing,
             title,
             family,
+            family_note,
             name,
             ram_mb,
             ram_min,
@@ -484,6 +489,7 @@ impl ffi::Wizard {
             editing = f.is_editing();
             title = QString::from(f.title());
             family = index_of(&Family::ALL, f.family());
+            family_note = qs_opt(f.family_note());
             name = qs(&f.name);
             ram_mb = f.ram_mb() as i32;
             ram_min = *range.start() as i32;
@@ -497,7 +503,8 @@ impl ffi::Wizard {
             accel_warning = note.warning;
             accel_note = qs(note.text);
             accel_is_default = f.accel_is_default();
-            // Empty on a DOS machine, which has no Direct3D to place.
+            // Empty on a DOS or Other machine, neither of which has any
+            // Direct3D to place.
             let graphics = f.graphics_note();
             graphics_warning = graphics.as_ref().is_some_and(|n| n.warning);
             graphics_note = qs(graphics.map(|n| n.text).unwrap_or_default());
@@ -528,6 +535,7 @@ impl ffi::Wizard {
         self.as_mut().set_editing(editing);
         self.as_mut().set_title(title);
         self.as_mut().set_family(family);
+        self.as_mut().set_family_note(family_note);
         self.as_mut().set_name(name);
         // The range first, then the value it has to fit in.
         self.as_mut().set_ram_min(ram_min);

@@ -408,6 +408,15 @@ pub unsafe extern "C" fn lc_wizard_choose_family(w: *mut LcWizard, family: usize
     handle_mut!(w, ()).0.choose_family(family_at(family));
 }
 
+/// The line under the family picker, or "" — only `Other` has one.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_family_note(w: *const LcWizard) -> *mut c_char {
+    out_opt(handle!(w, std::ptr::null_mut()).0.family_note())
+}
+
 /// # Safety
 /// `w` must be a live handle.
 #[no_mangle]

@@ -1,8 +1,11 @@
 # 6. Guest machines: Win98 and XP reference configs
 
-The frontend ships two "machine families" with tested defaults. These are the
+The frontend ships four "machine families" with tested defaults. These are the
 reference definitions the guided creation flow instantiates; users supply
-their own OS media and licenses.
+their own OS media and licenses. Three of them are machines this project is
+actually built around — Win98, XP, DOS — and the fourth, **Other**, is the
+catch-all for an era OS that is none of those (BeOS, a period Linux, OS/2):
+standard hardware, and none of ours.
 
 ## Windows 98 SE machine
 
@@ -159,6 +162,42 @@ corrects a guest that has fallen *behind*, so the fast settings are a
 ceiling the host may overshoot — which is why the era settings a 1993
 game wants are the accurate ones. Boot time barely moves (2.4 → 3.5 s):
 booting is mostly waiting, and waiting is not instructions.
+
+## Other machine (added 2026-09-07)
+
+For an era OS that is neither Windows nor DOS. Nothing here is tested
+against a specific guest — that is the point of the family — so every
+choice is the one with the widest chance of having had a driver in the
+box on a nineties system, and nothing of ours is on the machine at all.
+
+| Component | Choice | Rationale |
+|---|---|---|
+| Machine | `pc` (i440FX + PIIX) | the same board as the other three |
+| CPU model | `pentium3` | as everywhere else; no reason for this family to differ |
+| CPU rate | unthrottled | these are OSes that read the clock, not DOS software counting a delay loop |
+| RAM | 512 MB (16–3072) | no reference machine to inherit from, so the range is the machine's own limits: a 1995 kernel at the bottom, XP's 32-bit ceiling at the top. BeOS R5 is the one guest with a lower limit of its own (1 GB), which the wizard *says* above that rather than enforces |
+| Video | **QEMU standard VGA (`-vga std`)** | the Bochs adapter with VBE 2.0 and a linear frame buffer, which is what a period VESA driver wants and what a modern Linux binds `bochs-drm` to. **Emphatically not `d3dpt-vga`**: our adapter needs our display driver, which exists for Windows only (docs 15, 19), so a BeOS or Linux guest on it would have no display at all |
+| Audio | **ES1370** (Ensoniq AudioPCI) | the PCI sound card of the period both these guests drive in the box — BeOS ships an `ensoniq` add-on, Linux has `snd-ens1370` — where AC'97 needs a driver an era install may not have |
+| Net | RTL8139 | in-box on BeOS R5 and on Linux since 2.2 (`8139too`) |
+| Storage | IDE HDD + our ATAPI CD | as everywhere; the CD-ROM model (doc 17) is a drive, not a driver |
+| Input | PS/2 mouse + kbd, **no USB tablet** (`seamless_mouse = false`) | an absolute pointer needs the guest's USB HID stack *and* its windowing system to agree it is absolute, which an era XFree86 (an explicit input section) and BeOS do not do unconfigured — and unlike the Windows families there is no guest-tools install that would fix it. The checkbox turns it on for a guest that does handle it |
+| Acceleration | Automatic | none of these has Win9x's fast-CPU bugs, and nothing here is tuned for them either: take the host's speed when it is there |
+
+**No 3D of any kind, and no guest tools.** The Direct3D pass-through
+(doc 14), the Glide wrapper's guest half (doc 12 §5) and the display
+driver (docs 15, 19) are all Windows components; `SETUP.EXE` on the
+guest-tools ISO is a Win32 console program. This family is 2D, the CRT
+shader chain and the real CD-ROM model — the same story the DOS family
+has, on a guest modern enough to want PCI cards.
+
+The PCI addresses are pinned (`rtl8139` at `0x03`, `ES1370` at `0x04`,
+with `-vga std` taking `0x02` from the machine itself) for the reason the
+Windows families pin theirs: turning networking off would otherwise slide
+the sound card up into the NIC's slot, and a card that moves is a
+hardware change an installed guest re-detects. The `family-other` check
+in `scripts/test.sh` holds all of this — the standard VGA, the two cards
+where they belong, the absent tablet, the sound card staying put when the
+NIC goes — and ends by having our own `qemu-system-i386` accept the line.
 
 ## Performance expectations (set honestly in-app)
 

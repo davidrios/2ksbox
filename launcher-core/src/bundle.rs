@@ -20,17 +20,29 @@ pub enum Family {
     /// is `CpuSpeed`: the era's software paces itself by how fast the
     /// CPU is, and emulation is far too fast for it (doc 06).
     Dos,
+    /// Anything else of the era on the same PC: BeOS, a period Linux,
+    /// OS/2. Defined by what it *doesn't* get — our own paravirtual
+    /// adapter (`d3dpt-vga`) is a Windows display driver and the 3D
+    /// pass-through is a set of Windows DLLs, so none of it is reachable
+    /// here. What is left is hardware every one of these systems shipped
+    /// a driver for in the nineties: the Bochs/standard VGA with VBE 2.0,
+    /// an RTL8139 and an ES1370. 2D, the CRT shader chain and the real
+    /// CD-ROM model, which is the DOS family's story on a guest modern
+    /// enough to want PCI cards.
+    Other,
 }
 
 impl Family {
-    /// In the order a picker should offer them, newest first.
-    pub const ALL: [Family; 3] = [Family::Win98, Family::Xp, Family::Dos];
+    /// In the order a picker should offer them: the three the project is
+    /// actually built around first, then the catch-all.
+    pub const ALL: [Family; 4] = [Family::Win98, Family::Xp, Family::Dos, Family::Other];
 
     pub fn label(self) -> &'static str {
         match self {
             Family::Win98 => "Win98",
             Family::Xp => "XP",
             Family::Dos => "DOS",
+            Family::Other => "Other (BeOS, Linux, …)",
         }
     }
 }
@@ -512,7 +524,10 @@ pub fn default_accel(family: Family) -> Accel {
         // (`-icount` and KVM cannot coexist), so this is the only honest
         // default; `Auto` would promise KVM and not deliver it.
         Family::Win98 | Family::Dos => Accel::Tcg,
-        Family::Xp => Accel::Auto,
+        // Nothing here is tuned for an era Linux or BeOS, and neither
+        // has Win9x's fast-CPU bugs: take the host's speed when it is
+        // there, emulate when it isn't.
+        Family::Xp | Family::Other => Accel::Auto,
     }
 }
 
@@ -541,13 +556,21 @@ fn seamless_mouse_default() -> bool {
     true
 }
 
-/// Whether a *new* machine of this family gets the tablet. DOS is the
-/// one that doesn't: its mouse drivers talk to the PS/2 controller, so a
-/// tablet would leave the guest with a pointer it cannot see. (An
-/// existing bundle with no `seamless_mouse` field is unaffected, for the
-/// same reason `network_enabled_default` is unconditional.)
+/// Whether a *new* machine of this family gets the tablet. Two families
+/// don't. DOS's mouse drivers talk to the PS/2 controller, so a tablet
+/// would leave the guest with a pointer it cannot see. `Other` is off
+/// for the weaker version of the same reason: an absolute USB pointer
+/// needs the guest's USB HID stack *and* its windowing system to agree
+/// it is absolute, which an era Linux (XFree86 wants an explicit
+/// `evdev`/`usbtablet` input section) and BeOS do not do out of the box
+/// — and unlike the Windows families there is no guest-tools install
+/// that would fix it. The PS/2 mouse works everywhere, so that is what a
+/// machine we cannot test starts with; the checkbox turns it on for a
+/// guest that does handle it. (An existing bundle with no
+/// `seamless_mouse` field is unaffected, for the same reason
+/// `network_enabled_default` is unconditional.)
 pub fn default_seamless_mouse(family: Family) -> bool {
-    family != Family::Dos && seamless_mouse_default()
+    !matches!(family, Family::Dos | Family::Other) && seamless_mouse_default()
 }
 
 /// The speed a family runs at unless the machine says otherwise. Only
@@ -559,7 +582,7 @@ pub fn default_seamless_mouse(family: Family) -> bool {
 pub fn default_cpu_speed(family: Family) -> CpuSpeed {
     match family {
         Family::Dos => CpuSpeed::Dx266,
-        Family::Win98 | Family::Xp => CpuSpeed::Unthrottled,
+        Family::Win98 | Family::Xp | Family::Other => CpuSpeed::Unthrottled,
     }
 }
 
@@ -573,6 +596,10 @@ pub fn default_ram_mb(family: Family) -> u32 {
         // nothing. 64 MB is generous for the era and stays inside what
         // MS-DOS 6.22's own HIMEM.SYS manages.
         Family::Dos => 64,
+        // No family default to inherit, so the number is the one that
+        // suits the range of things this covers: an era Linux desktop or
+        // BeOS R5 is comfortable in 512 MB and neither needs more.
+        Family::Other => 512,
     }
 }
 
@@ -595,6 +622,12 @@ pub fn ram_mb_range(family: Family) -> std::ops::RangeInclusive<u32> {
         Family::Win98 => 32..=512,
         Family::Xp => 64..=3072,
         Family::Dos => 4..=256,
+        // The widest range we can honestly offer: we don't know what is
+        // going in, so the only limits are the machine's. The bottom is
+        // where a 1995 kernel still boots, the top is XP's 32-bit
+        // ceiling. BeOS R5 is the one guest with a lower one of its own
+        // (1 GB), which the wizard says rather than enforces.
+        Family::Other => 16..=3072,
     }
 }
 
@@ -842,6 +875,39 @@ impl Machine {
                     args.extend(["-device".into(), "rtl8139,netdev=n0,addr=0x03".into()]);
                 }
                 args.extend(["-device".into(), "AC97,audiodev=embed0,addr=0x04".into()]);
+            }
+            // Everything else of the era: standard hardware only, chosen
+            // for having had a driver in the box on BeOS R5 and on a
+            // period Linux alike, because there is no guest-tools install
+            // to add one afterwards.
+            //
+            // `-vga std` rather than the cirrus the DOS family gets: this
+            // is the Bochs adapter with VBE 2.0 and a linear frame
+            // buffer, which is what a VESA driver of the period wants (a
+            // modern Linux binds `bochs-drm` to it outright), and neither
+            // of these guests is a DOS title poking a Cirrus register
+            // set. It is emphatically not `d3dpt-vga`: our adapter needs
+            // our display driver, which exists for Windows only, so this
+            // family has no 3D path of any kind.
+            //
+            // The PCI addresses are pinned for the same reason the
+            // Windows families pin theirs — removing the NIC would slide
+            // the sound card up into its slot, and a card that moves is a
+            // hardware change a guest re-detects. `-vga std` takes 0x02
+            // from the machine itself, so these two follow it.
+            Family::Other => {
+                args.extend(["-vga".into(), "std".into()]);
+                if self.network {
+                    args.extend(["-netdev".into(), "user,id=n0".into()]);
+                    // in-box on BeOS R5 and on Linux since 2.2 (8139too)
+                    args.extend(["-device".into(), "rtl8139,netdev=n0,addr=0x03".into()]);
+                }
+                // The Ensoniq AudioPCI, not the AC'97 the Windows
+                // families get: it is the PCI card of the period both
+                // these guests drive in the box (BeOS ships an ensoniq
+                // add-on, Linux `snd-ens1370`), where AC'97 needs a
+                // driver an era install may not have.
+                args.extend(["-device".into(), "ES1370,audiodev=embed0,addr=0x04".into()]);
             }
         }
         // The CD-ROM drive is always attached, empty tray and all: a

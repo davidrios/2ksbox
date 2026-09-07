@@ -282,6 +282,24 @@ impl Form {
         self.ram_mb = self.ram_mb.clamp(*self.ram_range().start(), *self.ram_range().end());
     }
 
+    /// What picking this family means, under the picker. Only `Other`
+    /// has anything to say: the other three *are* the reference machines
+    /// doc 06 describes and everything else on the form explains itself,
+    /// while `Other` is defined by the two things it does not get — our
+    /// display driver and the 3D pass-through, both of which are
+    /// Windows-only — and by hardware chosen for guests we cannot test
+    /// here. Someone finding out afterwards would find out by installing
+    /// an OS onto it.
+    pub fn family_note(&self) -> Option<&'static str> {
+        (self.family == Family::Other).then_some(
+            "For an era OS that isn't Windows or DOS: BeOS, a period Linux, OS/2. \
+             Standard hardware only — a VESA-capable VGA, an RTL8139 and an ES1370 \
+             sound card, all of which these systems have drivers for in the box.\n\
+             No 3D: our display driver and the Direct3D and Glide pass-through are \
+             Windows components, so this family is 2D, the CRT shaders and the CD-ROM drive.",
+        )
+    }
+
     pub fn ram_mb(&self) -> u32 {
         self.ram_mb
     }
@@ -310,8 +328,18 @@ impl Form {
     }
 
     pub fn ram_note(&self) -> Option<&'static str> {
-        (self.family == Family::Win98 && self.ram_mb >= *self.ram_range().end())
-            .then_some("512 MB is Win98's ceiling (doc 06): more and it does not boot.")
+        match self.family {
+            Family::Win98 if self.ram_mb >= *self.ram_range().end() => {
+                Some("512 MB is Win98's ceiling (doc 06): more and it does not boot.")
+            }
+            // The range cannot enforce this one — it depends on which OS
+            // is going in, and the whole point of the family is that we
+            // don't know. A period Linux is happy with 3 GB.
+            Family::Other if self.ram_mb > 1024 => {
+                Some("Above 1 GB, BeOS R5 does not boot; most other systems of the era are fine.")
+            }
+            _ => None,
+        }
     }
 
     pub fn cpu_speed(&self) -> CpuSpeed {
@@ -391,8 +419,11 @@ impl Form {
     /// What this host will give the guest's 3D, under the acceleration
     /// row (ADR-013). Not a picker, because there is nothing to pick: the
     /// host settles it, and the only failure worth preventing is finding
-    /// out after the machine exists. A DOS machine has no Direct3D to
-    /// place and gets no line.
+    /// out after the machine exists. The two families with no Direct3D to
+    /// place get no line: DOS, and `Other` — whose guests cannot reach
+    /// the pass-through at all, since the guest half of it is a set of
+    /// Windows DLLs (`family_note` says so once, where the choice is
+    /// made).
     ///
     /// `warning` is true only for a software Vulkan driver — the
     /// executor does run there, and slowly, which is the one case where
@@ -400,7 +431,7 @@ impl Form {
     /// all is a plain note: it runs every machine, through the OpenGL
     /// pass-through with WineD3D in the guest, and nothing is wrong.
     pub fn graphics_note(&self) -> Option<AccelNote> {
-        if self.family == Family::Dos {
+        if matches!(self.family, Family::Dos | Family::Other) {
             return None;
         }
         let mut text = format!("3D: {}", self.host_gpu.headline());
@@ -458,12 +489,18 @@ impl Form {
     ///
     /// DOS is worth catching before the machine exists rather than
     /// after: its mouse drivers read the PS/2 controller, so a tablet
-    /// leaves such a guest with no pointer at all.
+    /// leaves such a guest with no pointer at all. `Other` ships with the
+    /// tablet off for the softer version of that (`default_seamless_mouse`)
+    /// and says what to look for if someone turns it on.
     pub fn seamless_mouse_notes(&self) -> &'static [&'static str] {
         match (self.seamless_mouse, self.family) {
             (true, Family::Dos) => &[
                 "The host pointer moves straight into the guest, with no grab and no hotkey.",
                 "DOS mouse drivers read the PS/2 mouse: on this family the tablet leaves the guest with no pointer at all.",
+            ],
+            (true, Family::Other) => &[
+                "The host pointer moves straight into the guest, with no grab and no hotkey: the guest gets a USB tablet, which reports where the pointer is rather than how far it moved.",
+                "Whether it works is the guest's affair here — an absolute pointer needs its USB stack and its windowing system to agree, which BeOS and an era XFree86 do not do unconfigured. Turn it off if the cursor doesn't move.",
             ],
             (true, _) => &[
                 "The host pointer moves straight into the guest, with no grab and no hotkey: the guest gets a USB tablet, which reports where the pointer is rather than how far it moved.",

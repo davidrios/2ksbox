@@ -28,7 +28,7 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
 
 - Machine library grid with last-frame thumbnails, family badge, running
   state; spawns a player per machine.
-- **Guided creation:** family (Win98/XP/DOS) → name → memory → processor →
+- **Guided creation:** family (Win98/XP/DOS/Other) → name → memory → processor →
   acceleration →
   networking → the pointer → disk size → install media → bundle from the
   reference definitions (doc 06). Advanced drawer edits the TOML. Never a QEMU
@@ -50,6 +50,15 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   tested on here. A bundle with no `accel` field follows its family
   rather than a fixed default, so nothing written before the field
   existed silently changes how it runs.
+- **"Other" is the one family with a sentence under the picker**
+  (`family_note()`, added 2026-09-07). The other three *are* the
+  reference machines doc 06 describes and the rest of the form explains
+  itself; Other is defined by what it does not get — our display adapter
+  and the whole 3D pass-through, all of them Windows components — and by
+  hardware chosen for guests nothing here tests (BeOS, a period Linux,
+  OS/2). Someone who is not told would find out by installing an OS onto
+  it. The note names what the machine has (a VESA-capable VGA, an
+  RTL8139, an ES1370) and says outright that there is no 3D.
 - **The host's 3D** is stated, not chosen (ADR-013): under the
   acceleration row a Windows machine gets one line saying what this host
   will give the guest's Direct3D. It needs a Vulkan 1.3 device, because
@@ -62,8 +71,9 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   warning rather than a note, because it works and disappoints: it says
   to expect it to be very slow and that WineD3D may well beat it, both
   being worth trying. A host with no Vulkan at all is a plain note;
-  nothing is wrong and every machine still runs. DOS machines get no
-  line. The sentence is the shared form's (`graphics_note()`), like every
+  nothing is wrong and every machine still runs. DOS and Other machines
+  get no line: neither has any Direct3D to place, since the guest half of
+  the pass-through is a set of Windows DLLs. The sentence is the shared form's (`graphics_note()`), like every
   other note under a row, so the egui build, the Qt build and the C ABI
   cannot drift; `launcher --host-check` is the same answer in full, for a
   support question or a script (`launcher-core/src/host_gpu.rs`; the
@@ -127,9 +137,9 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   options are tried in order and the first that initializes wins, which is
   exactly what `kvm:tcg` did.
 - **Networking** is one checkbox (`network` in the bundle). It follows
-  the family for a new machine — on for Win98 and XP, **off for DOS**,
-  which reaches a network only through a packet driver the user installs
-  by hand — until someone touches the box, exactly like memory and the
+  the family for a new machine — on for Win98, XP and Other, **off for
+  DOS**, which reaches a network only through a packet driver the user
+  installs by hand — until someone touches the box, exactly like memory and the
   processor. An existing bundle with no `network` field is still on
   whatever its family: turning a card off under a machine that has been
   running with one is a hardware change, not a default. The checkbox is:
@@ -145,7 +155,10 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
 - **The pointer** is the next checkbox ("Seamless mouse",
   `seamless_mouse` in the bundle), and it follows the family the same
   way: on for Win98 and XP, **off for DOS**, whose mouse drivers read the
-  PS/2 controller and would find nothing on a tablet. On, the machine
+  PS/2 controller and would find nothing on a tablet, and **off for
+  Other**, where an absolute pointer needs a guest USB stack and window
+  system we cannot vouch for and there is no guest-tools install to fix
+  it with. On, the machine
   gets `-usb -device usb-tablet` — an absolute device, so the host
   pointer *is* the guest cursor, the window never grabs and the guest's
   hardware cursor can be the host cursor (doc 03's pointer model, doc 15

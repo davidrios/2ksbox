@@ -87,6 +87,9 @@ fn fields_ui(
     if family != form.family() {
         form.choose_family(family);
     }
+    if let Some(note) = form.family_note() {
+        ui.small(note);
+    }
     ui.horizontal(|ui| {
         ui.label("Name");
         ui.text_edit_singleline(&mut form.name);

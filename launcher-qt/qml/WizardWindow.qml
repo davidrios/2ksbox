@@ -117,6 +117,19 @@ Window {
                         onActivated: root.wizard.chooseFamily(currentIndex)
                     }
 
+                    // Only "Other" has one (the model decides, not this
+                    // file); it spans both columns so it reads as a
+                    // sentence under the picker rather than a second value.
+                    Label {
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        visible: root.wizard.familyNote !== ""
+                        text: root.wizard.familyNote
+                        wrapMode: Text.Wrap
+                        font.pixelSize: 11
+                        opacity: 0.75
+                    }
+
                     Label { text: qsTr("Name") }
                     TextField {
                         Layout.fillWidth: true
