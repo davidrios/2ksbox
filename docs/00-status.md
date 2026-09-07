@@ -493,8 +493,16 @@ items nobody owns yet:
 - Guest wrappers: modern mingw-w64 links the UCRT (Win9x has none) and
   qemu-3dfx compiles `-march=x86-64-v2`; the script forces msvcrt +
   pentium3 and refuses anything else.
-- Win98 must be an ACPI install (`SETUP /p j`) or PCI hot-adds are never
-  detected; repair path in build-macos.md.
+- Win98 must be an ACPI install or PCI hot-adds are never detected (no USB
+  tablet, AC'97 or NIC; "Plug and Play BIOS" with a yellow ! in Device
+  Manager). Setup decides from the legacy BIOS date at F000:FFF5 against
+  the `ACPICheckDate` in its own machine.inf, **12/01/99**; SeaBIOS ships
+  06/23/99 and QEMU is on none of `BIOSINFO.INF`'s four `[GoodACPIBios]`
+  machines, so a plain `SETUP` installed PnP-BIOS. Since 2026-09-06
+  `prepare-qemu.sh` stamps every `pc-bios/bios*.bin` to **12/31/99** (doc
+  06 has the whole decision; the `bios-date` check guards it) — **not yet
+  confirmed by an install**, so `SETUP /p j` remains the sure thing and the
+  PnP-BIOS→PCI Bus repair in build-macos.md is what fixes an older image.
 - Caps-Lock→Control on macOS reports as right Ctrl to SDL (patch 03).
 - Never `exit()` the process while the QEMU thread is alive: QEMU registers
   atexit handlers (`audio_cleanup`, exit notifiers) that then race

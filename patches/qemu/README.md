@@ -19,6 +19,17 @@ oracle: a guest that computes the wrong number is diagnosed with one run,
 not a bisect. A machine that has changed nothing emits no property, so the
 default command line is unchanged and still runs on a stock QEMU.
 
+One change prepare makes is not a patch, because its target is a binary
+blob: it **stamps the legacy BIOS date** in every `pc-bios/bios*.bin` from
+SeaBIOS's 06/23/99 to `12/31/99`. Windows 98 setup installs ACPI — and so
+enumerates the PCI bus at all — only if that date is at least the
+`ACPICheckDate` its own `machine.inf` carries, 12/01/99; otherwise the
+machine has to be one of the four in `BIOSINFO.INF`'s `[GoodACPIBios]`, and
+we are none of them (doc 06 has the whole decision). The stamp restores the
+blob from git first, so it is deterministic like the rest of the queue, and
+the `bios-date` check in `scripts/test.sh` asks a running QEMU what a guest
+reads at F000:FFF5.
+
 **Never `git checkout` files inside `qemu/` by hand between prepare runs** and
 never rely on "already applied" heuristics — a partial tree once silently
 lost the 3dfx meson hunk (symptom: `unknown type 'glidept'`).

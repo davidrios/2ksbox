@@ -425,6 +425,49 @@ pointer_check() { # the wizard's pointer switch, from a checkbox to a real QEMU
   return $rc
 }
 
+bios_date_check() { # the legacy BIOS date, as a guest reads it out of a real QEMU
+  # Windows 98 installs ACPI — and so enumerates the PCI bus at all — only
+  # when the date at F000:FFF5 is at least the ACPICheckDate its own
+  # machine.inf carries, 12/01/99 (doc 06); an older BIOS has to be one of
+  # the four machines in BIOSINFO.INF's [GoodACPIBios], and we are not.
+  # SeaBIOS ships 06/23/99, so prepare-qemu.sh stamps every firmware image
+  # it finds. A tree that lost the stamp still boots every existing guest,
+  # and only shows up weeks later as a *new* Win98 install that came out in
+  # PnP-BIOS mode — "Plug and Play BIOS" with a yellow ! and no USB tablet,
+  # AC'97 or NIC ever detected. Hence a check on the firmware itself.
+  local rc=0 out date key f cur
+  out="$(printf '%s\n' '{"execute":"qmp_capabilities"}' \
+        '{"execute":"human-monitor-command","arguments":{"command-line":"xp /8c 0xffff5"}}' \
+        '{"execute":"quit"}' \
+        | timeout 30 build/qemu/qemu-system-i386 -L qemu/pc-bios -machine pc -m 64 \
+            -display none -S -qmp stdio -net none 2>&1)" \
+    || { echo "QEMU refused to start"; echo "$out" | tail -3; return 1; }
+  # the monitor prints the row as quoted characters; the date is the first
+  # eight of them, the rest of the row is the model byte and padding.
+  date="$(printf '%s' "$out" | sed -n 's/.*ffff5: //p' | tr -d " '" | cut -c1-8)"
+  case "$date" in
+    [0-9][0-9]/[0-9][0-9]/[0-9][0-9]) ;;
+    *) echo "no BIOS date at F000:FFF5 (read \"$date\")"; echo "$out" | tail -3; return 1 ;;
+  esac
+  echo "BIOS date $date (Win98 wants >= 12/01/99 to install ACPI)"
+  # Setup compares a two-digit year, so the key is yymmdd and a 2000s date
+  # would sort *below* the cutoff here exactly as it would there.
+  key=$(( 10#${date##*/} * 10000 + 10#${date%%/*} * 100 + 10#$(x=${date#*/}; echo "${x%%/*}") ))
+  if [ "$key" -lt 991201 ]; then
+    echo "the guest reads $date, older than Win98's ACPICheckDate 12/01/99"
+    echo "(run scripts/prepare-qemu.sh, or -f if the tree was edited by hand)"
+    rc=1
+  fi
+  # Every image carries the same day: the pc machine maps bios-256k.bin,
+  # but a package ships the lot and microvm/bios.bin are one -machine away.
+  for f in qemu/pc-bios/bios.bin qemu/pc-bios/bios-256k.bin qemu/pc-bios/bios-microvm.bin; do
+    [ -f "$f" ] || continue
+    cur="$(dd if="$f" bs=1 skip=$(( $(wc -c < "$f") - 11 )) count=8 2>/dev/null)"
+    [ "$cur" = "$date" ] || { echo "$(basename "$f") says $cur, the running firmware says $date"; rc=1; }
+  done
+  return $rc
+}
+
 optimizations_check() { # the wizard's fast-path switches, all the way to a real QEMU
   local rc=0 dir="$OUT/opt-switches" bundle args o
   rm -rf "$dir"; mkdir -p "$dir/library"
@@ -573,6 +616,15 @@ host_stage() {
   # controller, and our QEMU accepts both machines.
   if [ -x target/release/launcher ]; then
     run_check pointer pointer.log pointer_check || true
+  fi
+
+  # the firmware's legacy BIOS date, which decides whether a *new* Win98
+  # install comes out ACPI or PnP-BIOS (doc 06). Asked of a running QEMU,
+  # not of the file, because the file is only half the path.
+  if [ -x build/qemu/qemu-system-i386 ] && [ -d qemu/pc-bios ]; then
+    run_check bios-date bios-date.log bios_date_check || true
+  else
+    skip bios-date "needs build/qemu/qemu-system-i386"
   fi
 
   # the application icon: every size in packaging/icon/ still derived from

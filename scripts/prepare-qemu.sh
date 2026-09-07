@@ -101,6 +101,38 @@ for p in "$ROOT"/patches/qemu/*.patch; do
   fi
 done
 
+# SeaBIOS reports 06/23/99 as the legacy BIOS date (F000:FFF5 — the eight
+# bytes ending three from the end of every one of its images), and that one
+# string decides how Windows 98 installs. Setup's DetectACPIBIOS (sysdetmg.dll)
+# compares it against ACPICheckDate, which machine.inf on the Win98 SE CD
+# sets to "12/01/99": a BIOS at least that new is trusted to be ACPI, an
+# older one is only believed if it matches BIOSINFO.INF's [GoodACPIBios] --
+# four 1998 machines named by their ACPI OEM ids, none of them us. So a
+# plain SETUP installs in PnP-BIOS mode, where the PCI bus is never
+# enumerated: "Plug and Play BIOS" with a yellow ! in Device Manager, and
+# no device added to the bus afterwards (the USB tablet, AC'97, the NIC) is
+# ever detected. The install has to be `SETUP /p j` -- which is not
+# something a launcher can type for a user -- or the date has to be past
+# the cutoff, which is this. 12/31/99 rather than a 2000s date because the
+# comparison is on a two-digit year. Nothing else reads this field: the
+# per-machine quirks in BIOSINFO.INF that key on `date=` all want an exact
+# 1994-1996 day, and the guests' own clocks come from the RTC.
+echo "==> stamping the legacy BIOS date (Win98 installs ACPI only past 12/01/99)"
+BIOS_DATE=12/31/99
+for b in bios.bin bios-256k.bin bios-microvm.bin; do
+  f="$QEMU/pc-bios/$b"
+  [ -f "$f" ] || continue
+  git -C "$QEMU" checkout -q -- "pc-bios/$b"   # deterministic: stamp a pristine blob
+  off=$(( $(wc -c < "$f") - 11 ))
+  cur=$(dd if="$f" bs=1 skip="$off" count=8 2>/dev/null)
+  case "$cur" in
+    [0-9][0-9]/[0-9][0-9]/[0-9][0-9]) ;;
+    *) echo "    $b: no BIOS date at $off (\"$cur\") -- NOT stamped, is this SeaBIOS?" >&2; exit 1 ;;
+  esac
+  printf %s "$BIOS_DATE" | dd of="$f" bs=1 seek="$off" conv=notrunc 2>/dev/null
+  echo "    $b: $cur -> $BIOS_DATE"
+done
+
 echo "==> signing with qemu-3dfx commit"
 (cd "$QEMU" && bash "$FX/scripts/sign_commit" -git="$FX")
 

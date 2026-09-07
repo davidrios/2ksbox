@@ -314,8 +314,10 @@ From CLAUDE.md, and they bite here:
 - **End every scripted Win98 run with a Start-menu shutdown**, never a
   kill: a killed VM leaves the FAT dirty and the next boot runs ScanDisk.
   `win98-driver-test.sh` does this; a modal dialog can swallow it.
-- Win98 must be an ACPI install (`SETUP /p j`) or PCI hot-adds are never
-  seen — which is exactly how the adapter arrives.
+- Win98 must be an ACPI install or PCI hot-adds are never seen — which is
+  exactly how the adapter arrives. Since 2026-09-06 the firmware's BIOS
+  date is stamped past the 12/01/99 setup checks (doc 06), which should
+  make a plain `SETUP` do it; until an install confirms that, `SETUP /p j`.
 - Never write the user's own images: `win98-driver-test.sh` works on a raw
   copy, because mtools cannot write into a qcow2 and there is no in-guest
   shell to drive before the display works.

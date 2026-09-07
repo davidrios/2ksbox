@@ -29,12 +29,53 @@ still open as of 2026-09 — cosmetic, the OS survives; KVM/WHPX unaffected).
 
 Guest install notes (docs shipped with the app): install from user's CD image;
 apply guest-tools ISO (SoftGPU, 3dfx wrappers, AC'97, unofficial fixes the
-user opts into). **Install mode is pinned: ACPI (`SETUP /p j`).** A default (PnP-BIOS)
-install in QEMU leaves the PCI bus un-enumerated — "Plug and Play BIOS"
-with a yellow ! and no PCI hot-adds ever detected (USB tablet, AC'97, NIC).
-The launcher's guided install must pass `/p j` (or drive the PnP-BIOS→PCI
-Bus repair). Known quirks to document: DOS-compatibility-mode storage
-regressions.
+user opts into). **The install must come out ACPI.** A PnP-BIOS install
+leaves the PCI bus un-enumerated — "Plug and Play BIOS" with a yellow ! and
+no PCI hot-adds ever detected (USB tablet, AC'97, NIC). Known quirks to
+document: DOS-compatibility-mode storage regressions.
+
+### Why a plain SETUP used to install PnP-BIOS (2026-09-06)
+
+Setup's `DetectACPIBIOS` (`sysdetmg.dll`, PRECOPY1.CAB) decides from the
+**legacy BIOS date at F000:FFF5**, against the `ACPICheckDate` its own
+`machine.inf` writes:
+
+```
+; machine.inf, [BaseWinOptions] → ACPI_BASE
+;   "Add the date after which ACPI GoodBiosList will not be used"
+HKLM,Software\Microsoft\Windows\CurrentVersion\Detect,ACPICheckDate,,"12/01/99"
+```
+
+A BIOS at least that new is believed. An older one is believed only if it
+matches `BIOSINFO.INF`'s `[GoodACPIBios]` — four 1998 machines (Compaq
+Armada 19 and Capone, Intel Atlanta, Toshiba Santa Clara) named by their
+ACPI OEM ids. SeaBIOS reports **06/23/99**, five months short, and QEMU's
+tables say OEM `BOCHS `, creator `BXPC` — so no match, and setup fell back
+to PnP-BIOS. (`BadACPIBios`, all Dell/Toshiba laptops, never matched us
+either; the `ASL Compiler version < 1.0` gate in the same function only
+applies to tables whose creator id is `MSFT`, so it never fired on ours.)
+
+`SETUP /p j` forces it — it sets the `ACPIOption` value the same function
+reads — but a launcher cannot type that for someone at a DOS prompt. So
+**`scripts/prepare-qemu.sh` stamps the firmware's date to `12/31/99`**
+instead (every `pc-bios/bios*.bin`, eight ASCII bytes ending three from the
+end of each image; 1999 and not a 2000s date because the comparison is on a
+two-digit year). Nothing else reads the field — the per-machine quirks in
+`BIOSINFO.INF` that key on `date=` all want an exact 1994–96 day, and a
+guest's clock comes from the RTC. The `bios-date` check in
+`scripts/test.sh` asks a running QEMU what the guest reads there.
+
+The alternative, kept in reserve: `-machine pc,x-oem-id=COMPAQ,x-oem-table-id="CAPONE  "`
+makes us match `[CompaqCapone]` (its rules want only FACP OEM revision ≥ 1
+and RSDT creator revision ≥ 0, both hardcoded to 1 by
+`hw/acpi/aml-build.c`), which needs no firmware change at all but puts a
+vendor's name on every table.
+
+**Unverified as of 2026-09-06:** the reading above comes from the CD's own
+INFs and `sysdetmg.dll`'s strings; the install that proves a plain `SETUP`
+now comes out ACPI has not been run yet. Until it has, `SETUP /p j` stays
+the belt-and-braces answer, and the PnP-BIOS→PCI Bus repair
+(`docs/build-macos.md`) is what fixes an image installed before this.
 
 ## Windows XP machine
 
