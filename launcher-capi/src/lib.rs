@@ -651,6 +651,31 @@ pub unsafe extern "C" fn lc_wizard_network_note(w: *const LcWizard) -> *mut c_ch
 /// # Safety
 /// `w` must be a live handle.
 #[no_mangle]
+pub unsafe extern "C" fn lc_wizard_seamless_mouse(w: *const LcWizard) -> bool {
+    handle!(w, false).0.seamless_mouse()
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_choose_seamless_mouse(w: *mut LcWizard, seamless_mouse: bool) {
+    handle_mut!(w, ()).0.choose_seamless_mouse(seamless_mouse);
+}
+
+/// The lines under the pointer checkbox, newline-separated: that there
+/// is no grab and no hotkey with the tablet, and what the hotkey is
+/// without it.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_seamless_mouse_note(w: *const LcWizard) -> *mut c_char {
+    out(handle!(w, std::ptr::null_mut()).0.seamless_mouse_notes().join("\n"))
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
 pub unsafe extern "C" fn lc_wizard_boot(w: *const LcWizard) -> usize {
     index_of(&Boot::ALL, handle!(w, 0).0.boot)
 }

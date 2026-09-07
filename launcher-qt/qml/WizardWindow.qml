@@ -240,6 +240,24 @@ Window {
                     opacity: 0.75
                 }
 
+                // --- the pointer ---------------------------------------------
+                // One checkbox: does the host pointer walk into this machine
+                // (the USB tablet, an absolute device) or does the window
+                // take it (the PS/2 mouse, grabbed on a click). The
+                // sentences are the shared form's, hotkey included.
+                CheckBox {
+                    text: qsTr("Seamless mouse")
+                    checked: root.wizard.seamlessMouse
+                    onToggled: root.wizard.chooseSeamlessMouse(checked)
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: root.wizard.seamlessMouseNote
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    opacity: 0.75
+                }
+
                 // --- emulation optimizations ---------------------------------
                 // Our own QEMU fast paths (patches/qemu/README.md), one
                 // checkbox each, behind a disclosure: seven switches nobody

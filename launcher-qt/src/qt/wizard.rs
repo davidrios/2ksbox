@@ -59,6 +59,8 @@ pub mod ffi {
         #[qproperty(bool, graphics_warning)]
         #[qproperty(bool, network)]
         #[qproperty(QString, network_note)]
+        #[qproperty(bool, seamless_mouse)]
+        #[qproperty(QString, seamless_mouse_note)]
         /// Our own emulator fast paths, as a bit per `Optimization::ALL`
         /// entry — set means on. A bitmask rather than a list because a
         /// QML `CheckBox` needs a *property* to bind `checked` to (a
@@ -120,6 +122,11 @@ pub mod ffi {
 
         #[qinvokable]
         fn choose_network(self: Pin<&mut Wizard>, network: bool);
+
+        /// The pointer: the USB tablet (the host pointer walks in) or
+        /// the PS/2 mouse alone (the window grabs it).
+        #[qinvokable]
+        fn choose_seamless_mouse(self: Pin<&mut Wizard>, seamless_mouse: bool);
 
         /// Turn one fast path on or off, by its index in
         /// `optimization_labels()`.
@@ -226,6 +233,8 @@ pub struct WizardRust {
     graphics_warning: bool,
     network: bool,
     network_note: QString,
+    seamless_mouse: bool,
+    seamless_mouse_note: QString,
     optimizations_mask: i32,
     optimizations_summary: QString,
     optimizations_note: QString,
@@ -316,6 +325,11 @@ impl ffi::Wizard {
 
     fn choose_network(mut self: Pin<&mut Self>, network: bool) {
         self.as_mut().rust_mut().form.choose_network(network);
+        self.publish();
+    }
+
+    fn choose_seamless_mouse(mut self: Pin<&mut Self>, seamless_mouse: bool) {
+        self.as_mut().rust_mut().form.choose_seamless_mouse(seamless_mouse);
         self.publish();
     }
 
@@ -442,6 +456,7 @@ impl ffi::Wizard {
             cpu_is_default,
         );
         let (accel, accel_note, accel_warning, accel_is_default, network, network_note);
+        let (seamless_mouse, seamless_mouse_note);
         let (graphics_note, graphics_warning);
         let (optimizations_mask, optimizations_summary, optimizations_note, optimizations_are_default);
         let (existing_disk, disk_path, disk_size_gb, install_media, floppy, boot, boot_note);
@@ -473,6 +488,8 @@ impl ffi::Wizard {
             graphics_note = qs(graphics.map(|n| n.text).unwrap_or_default());
             network = f.network();
             network_note = qs(f.network_notes().join("\n"));
+            seamless_mouse = f.seamless_mouse();
+            seamless_mouse_note = qs(f.seamless_mouse_notes().join("\n"));
             optimizations_mask = Optimization::ALL
                 .iter()
                 .enumerate()
@@ -514,6 +531,8 @@ impl ffi::Wizard {
         self.as_mut().set_graphics_warning(graphics_warning);
         self.as_mut().set_network(network);
         self.as_mut().set_network_note(network_note);
+        self.as_mut().set_seamless_mouse(seamless_mouse);
+        self.as_mut().set_seamless_mouse_note(seamless_mouse_note);
         self.as_mut().set_optimizations_mask(optimizations_mask);
         self.as_mut().set_optimizations_summary(optimizations_summary);
         self.as_mut().set_optimizations_note(optimizations_note);

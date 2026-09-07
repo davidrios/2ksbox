@@ -6,10 +6,10 @@
 //! and calls back in when something is clicked.
 //!
 //! That split is what makes the "…_chosen" rule (memory, the
-//! accelerator, the processor and the NIC follow the family until
-//! someone touches them) impossible to get wrong in a new widget: the
-//! only way to set one of those fields is `choose_*`, which applies the
-//! rule.
+//! accelerator, the processor, the NIC and the pointer follow the
+//! family until someone touches them) impossible to get wrong in a new
+//! widget: the only way to set one of those fields is `choose_*`, which
+//! applies the rule.
 
 use crate::filepicker;
 use launcher_core::bundle::{Accel, Boot, CpuSpeed, Family, Optimization};
@@ -97,6 +97,7 @@ fn fields_ui(
     accel_ui(ui, form);
     graphics_ui(ui, form);
     network_ui(ui, form);
+    seamless_mouse_ui(ui, form);
     optimizations_ui(ui, form);
     ui.separator();
     if editing {
@@ -232,6 +233,20 @@ fn network_ui(ui: &mut egui::Ui, form: &mut Form) {
         form.choose_network(network);
     }
     for note in form.network_notes() {
+        ui.small(*note);
+    }
+}
+
+/// The pointer row: one checkbox, because there is one question here —
+/// does the host pointer walk into this machine, or does the window take
+/// it. What follows (the hotkey, and what a game that wants mouselook
+/// needs) is the form's to say (`seamless_mouse_notes`).
+fn seamless_mouse_ui(ui: &mut egui::Ui, form: &mut Form) {
+    let mut seamless = form.seamless_mouse();
+    if ui.checkbox(&mut seamless, "Seamless mouse").changed() {
+        form.choose_seamless_mouse(seamless);
+    }
+    for note in form.seamless_mouse_notes() {
         ui.small(*note);
     }
 }

@@ -44,6 +44,10 @@
 #                  checkbox to a real QEMU: a default machine's line unchanged,
 #                  each switch on the option QEMU looks it up on, our QEMU
 #                  accepting the line the launcher writes
+#   pointer        the wizard's pointer switch (doc 03's grab model): a new
+#                  Windows machine gets the USB tablet and a new DOS machine
+#                  does not, the checkbox adds and removes the device and its
+#                  controller, and our QEMU accepts both machines
 #   capi           launcher-capi/examples/smoke.c: a third front end, in C, over
 #                  the same models the egui and Qt builds use — the wizard's
 #                  DOS defaults, the disc shelf, snapshots and the profile
@@ -370,6 +374,50 @@ dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M
   return $rc
 }
 
+pointer_check() { # the wizard's pointer switch, from a checkbox to a real QEMU
+  local rc=0 dir="$OUT/pointer" bundle dos args o
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  : >"$dir/disk.qcow2"
+  bundle="$(target/release/launcher --new xp pointer "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+  dos="$(target/release/launcher --new dos pointer-dos "$dir/disk.qcow2")" || { echo "--new dos failed"; return 1; }
+  # A Windows machine gets the tablet, which is what "no grab" is made
+  # of; a DOS machine does not, because its mouse drivers read the PS/2
+  # controller and would find no pointer at all.
+  args="$(target/release/launcher --print-args "$bundle")"
+  case "$args" in *"-device usb-tablet"*) ;; *) echo "a new XP machine has no tablet"; echo "$args"; rc=1;; esac
+  args="$(target/release/launcher --print-args "$dos")"
+  case "$args" in *usb*) echo "a new DOS machine has a tablet it cannot read"; echo "$args"; rc=1;; esac
+  # The switch itself, through the real form: the tablet goes, and the
+  # controller goes with it rather than staying behind with nothing on it.
+  target/release/launcher --wizard-edit "$bundle" - - - - - - noseamless >/dev/null \
+    || { echo "--wizard-edit noseamless failed"; rc=1; }
+  args="$(target/release/launcher --print-args "$bundle")"
+  case "$args" in *usb*) echo "turning the seamless mouse off left USB behind"; echo "$args"; rc=1;; esac
+  target/release/launcher --wizard-edit "$bundle" - - - - - - seamless >/dev/null \
+    || { echo "--wizard-edit seamless failed"; rc=1; }
+  args="$(target/release/launcher --print-args "$bundle")"
+  case "$args" in *"-device usb-tablet"*) ;; *) echo "turning it back on did not restore the tablet"; echo "$args"; rc=1;; esac
+  # And the point of it: our QEMU accepts both machines. Started paused
+  # on the real binary and told to quit, so a refused device is an exit
+  # code rather than a hung guest.
+  if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
+    build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
+    for b in "$bundle" "$dos"; do
+      args="$(target/release/launcher --print-args "$b")"
+      # shellcheck disable=SC2086
+      o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n' \
+           | timeout 30 build/qemu/qemu-system-i386 $args \
+               -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
+        || { echo "our QEMU refused $b"; echo "$o" | tail -3; rc=1; }
+    done
+  else
+    echo "  (no build/qemu: the command line was checked but not run)"
+  fi
+  return $rc
+}
+
 optimizations_check() { # the wizard's fast-path switches, all the way to a real QEMU
   local rc=0 dir="$OUT/opt-switches" bundle args o
   rm -rf "$dir"; mkdir -p "$dir/library"
@@ -510,6 +558,15 @@ host_stage() {
   cargo build --release -p launcher -q 2>"$OUT/optimizations-build.log" \
     && run_check optimizations optimizations.log optimizations_check \
     || { [ -x target/release/launcher ] || { FAIL+=(optimizations); echo "  FAIL optimizations (build)"; }; }
+
+  # the wizard's pointer switch: a new Windows machine gets the USB tablet
+  # (absolute — the host pointer is the guest cursor and the window never
+  # grabs), a new DOS machine does not (its mouse drivers read the PS/2
+  # controller), the checkbox adds and removes the device *and* its
+  # controller, and our QEMU accepts both machines.
+  if [ -x target/release/launcher ]; then
+    run_check pointer pointer.log pointer_check || true
+  fi
 
   # the Linux package (M6 step 6): staged from this build and asked, with a
   # scrubbed environment, whether it resolves its own player, qemu-img,

@@ -427,6 +427,21 @@ pub struct Machine {
     /// its network by being read by a newer launcher.
     #[serde(default = "network_enabled_default")]
     pub network: bool,
+    /// Whether the machine gets the USB tablet: an *absolute* pointing
+    /// device, so the host pointer and the guest cursor are the same
+    /// pointer and the window never has to grab anything (doc 03's
+    /// pointer model, doc 06's "USB tablet optional"). `false` leaves
+    /// the machine the PS/2 mouse the chipset already gives it, which is
+    /// relative — the player then grabs on a click and Ctrl+Alt+G gives
+    /// the pointer back, which is what mouselook needs and the only
+    /// thing a DOS mouse driver can read.
+    ///
+    /// Defaults to `true` when the field is absent, which is how every
+    /// bundle written before it existed ran — the tablet was
+    /// unconditional, and a machine must not have its pointer change
+    /// under it by being read by a newer launcher.
+    #[serde(default = "seamless_mouse_default")]
+    pub seamless_mouse: bool,
     /// Primary IDE hard disk (qcow2).
     pub disk: PathBuf,
     /// The disc in the CD-ROM drive when the machine boots, if any. Just
@@ -519,6 +534,22 @@ pub fn default_network(family: Family) -> bool {
     family != Family::Dos && network_enabled_default()
 }
 
+/// The tablet is on unless a bundle says otherwise: it is what every
+/// machine had before the field existed, and desktop mousing without a
+/// grab is the right first impression of a machine.
+fn seamless_mouse_default() -> bool {
+    true
+}
+
+/// Whether a *new* machine of this family gets the tablet. DOS is the
+/// one that doesn't: its mouse drivers talk to the PS/2 controller, so a
+/// tablet would leave the guest with a pointer it cannot see. (An
+/// existing bundle with no `seamless_mouse` field is unaffected, for the
+/// same reason `network_enabled_default` is unconditional.)
+pub fn default_seamless_mouse(family: Family) -> bool {
+    family != Family::Dos && seamless_mouse_default()
+}
+
 /// The speed a family runs at unless the machine says otherwise. Only
 /// DOS is throttled: a 486DX2-66 is the machine most of the CD-ROM era
 /// was written for, and it is inside the range where the cap is exact
@@ -576,6 +607,7 @@ impl Machine {
             ram_mb: default_ram_mb(family),
             accel: Some(default_accel(family)),
             network: default_network(family),
+            seamless_mouse: default_seamless_mouse(family),
             disk,
             disc: None,
             discs: Vec::new(),
@@ -707,10 +739,16 @@ impl Machine {
             format!("pentium3{}", self.optimization_props(Knob::Cpu)),
             "-drive".into(),
             format!("file={},if=ide,index=0,media=disk", opt_value(&self.disk.display().to_string())),
-            "-usb".into(),
-            "-device".into(),
-            "usb-tablet".into(),
         ]);
+        // The pointer (doc 03). The USB tablet is an absolute device: it
+        // reports where the pointer is rather than how far it moved, so
+        // the host pointer *is* the guest cursor and nothing has to be
+        // grabbed. Without it the machine keeps the PS/2 mouse alone —
+        // relative, grabbed on a click — and the controller goes with
+        // the tablet, because the tablet is the only thing on it.
+        if self.seamless_mouse {
+            args.extend(["-usb".into(), "-device".into(), "usb-tablet".into()]);
+        }
         // The CPU rate, when the machine asks for one. `align=on` is the
         // whole point and not a detail: `-icount shift=N` on its own only
         // makes the *guest's* clock a function of instructions retired,

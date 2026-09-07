@@ -7,8 +7,8 @@
  * still whole and still means the same thing as the Rust one. It creates
  * a DOS machine through the wizard and checks the answers the shared
  * form gives: 64 MB, a period processor, emulated because a throttle
- * needs TCG, no network card. Then a disc onto the shelf, the machine
- * seen from the library, and the shelf read back.
+ * needs TCG, no network card and no USB tablet. Then a disc onto the
+ * shelf, the machine seen from the library, and the shelf read back.
  *
  * Everything it prints is checked by the caller, so a change that
  * silently alters one of those defaults fails here as well as in the two
@@ -93,6 +93,21 @@ int main(int argc, char **argv) {
     char *note = lc_wizard_network_note(w);
     check("...and it says so", note && strstr(note, "No network adapter") != NULL, note);
     lc_string_free(note);
+
+    /* And no USB tablet: a DOS mouse driver reads the PS/2 controller,
+     * so an absolute device would leave the guest with no pointer. The
+     * checkbox is the same one the two GUIs draw. */
+    check("no USB tablet either", !lc_wizard_seamless_mouse(w), NULL);
+    char *pointer = lc_wizard_seamless_mouse_note(w);
+    check("...and it names the hotkey", pointer && strstr(pointer, "Ctrl+Alt+G") != NULL, pointer);
+    lc_string_free(pointer);
+    lc_wizard_choose_seamless_mouse(w, true);
+    check("turning it on takes", lc_wizard_seamless_mouse(w), NULL);
+    pointer = lc_wizard_seamless_mouse_note(w);
+    check("...and DOS says the tablet leaves it blind",
+          pointer && strstr(pointer, "no pointer at all") != NULL, pointer);
+    lc_string_free(pointer);
+    lc_wizard_choose_seamless_mouse(w, false);
 
     /* The memory range is per family and a value outside it is clamped
      * here rather than refused at save time. */

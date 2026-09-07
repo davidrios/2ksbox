@@ -17,7 +17,7 @@ Modeled as a ~1998–2000 consumer PC.
 | Audio | SB16 (DOS-mode compat) + AC'97 | SB16 for DOS boxes/games, AC'97 driver in guest tools |
 | Net | PCnet (AMD) | driver in-box on 98 |
 | Storage | IDE HDD (qcow2) + our ATAPI CD | period-correct; no VirtIO for 9x |
-| Input | PS/2 mouse + kbd; USB tablet optional | PS/2 relative mode for games (see doc 03) |
+| Input | PS/2 mouse + kbd; USB tablet optional | the bundle's `seamless_mouse` (doc 07), on by default here: the tablet is absolute, so nothing is grabbed; off leaves the PS/2 relative mode games want (see doc 03) |
 | Floppy | enabled | driver/utility sneakernet, boot disks |
 
 Known QEMU-side traps (tracked in `patches/qemu/README.md`): qemu-3dfx 3D
@@ -49,7 +49,7 @@ Modeled as a ~2002–2005 PC.
 | Audio | AC'97 (fallback: emulated HDA) | XP AC'97 driver in guest tools |
 | Net | RTL8139 | in-box XP driver |
 | Storage | IDE + our ATAPI CD | AHCI needs F6 drivers; not worth it |
-| Input | PS/2 + USB tablet toggle | same grab semantics as 98 |
+| Input | PS/2 + USB tablet toggle | same grab semantics as 98 (`seamless_mouse`, on by default) |
 
 Notes: SP3 recommended; activation is the user's affair with their own
 license (volume/retail as they possess) — the project ships nothing related
@@ -70,6 +70,7 @@ already carries "for DOS boxes/games", and nothing else.
 | Video | Cirrus GD5446 (`-vga cirrus`) | a real VGA/VESA BIOS of the period. `-vga std`'s Bochs VBE 2.0 with a linear framebuffer is arguably better for late VESA titles — an open question, not a decision |
 | Audio | SB16 | what DOS software knows how to talk to |
 | Net | none | DOS reaches a network only through a packet driver the user installs by hand; an unused card is one more device to enumerate |
+| Input | PS/2 mouse + kbd, **no USB tablet** (`seamless_mouse = false`) | a DOS mouse driver talks to the PS/2 controller; a tablet would leave the guest with no pointer at all. The player takes the pointer on a click and Ctrl+Alt+G gives it back |
 | Storage | IDE HDD + our ATAPI CD | the CD-ROM model (doc 17) and the disc shelf both already speak DOS: `CDSHELF.COM` is a DOS program |
 | Floppy | `floppy` + `boot` on the machine | a DOS machine usually boots from one |
 

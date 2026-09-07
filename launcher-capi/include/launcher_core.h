@@ -161,6 +161,15 @@ void lc_wizard_choose_network(LcWizard *w, bool network);
 /* Newline-separated. */
 char *lc_wizard_network_note(const LcWizard *w);
 
+/* The pointer: the USB tablet (absolute — the host pointer is the guest
+ * cursor, nothing is grabbed) or the PS/2 mouse alone (relative, grabbed
+ * on a click, Ctrl+Alt+G to release). Off for a new DOS machine, whose
+ * mouse drivers cannot read a tablet. */
+bool lc_wizard_seamless_mouse(const LcWizard *w);
+void lc_wizard_choose_seamless_mouse(LcWizard *w, bool seamless_mouse);
+/* Newline-separated. */
+char *lc_wizard_seamless_mouse_note(const LcWizard *w);
+
 size_t lc_wizard_boot(const LcWizard *w);
 void lc_wizard_set_boot(LcWizard *w, size_t boot);
 char *lc_wizard_boot_note(const LcWizard *w);

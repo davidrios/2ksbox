@@ -30,8 +30,8 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   state; spawns a player per machine.
 - **Guided creation:** family (Win98/XP/DOS) → name → memory → processor →
   acceleration →
-  networking → disk size → install media → bundle from the reference
-  definitions (doc 06). Advanced drawer edits the TOML. Never a QEMU
+  networking → the pointer → disk size → install media → bundle from the
+  reference definitions (doc 06). Advanced drawer edits the TOML. Never a QEMU
   command line.
 - **Memory and acceleration** are the two machine settings worth exposing
   next to the family, and the same form edits them on an existing
@@ -135,6 +135,21 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   order already gave them, so the NIC's absence doesn't slide the sound
   card into its slot and make an installed guest re-detect hardware. An
   absent `network` field means on, as every bundle written before it ran.
+- **The pointer** is the next checkbox ("Seamless mouse",
+  `seamless_mouse` in the bundle), and it follows the family the same
+  way: on for Win98 and XP, **off for DOS**, whose mouse drivers read the
+  PS/2 controller and would find nothing on a tablet. On, the machine
+  gets `-usb -device usb-tablet` — an absolute device, so the host
+  pointer *is* the guest cursor, the window never grabs and the guest's
+  hardware cursor can be the host cursor (doc 03's pointer model, doc 15
+  for the cursor). Off, the machine has only the PS/2 mouse the chipset
+  already gives it: the player takes the pointer on a click and
+  Ctrl+Alt+G gives it back, which is the relative movement mouselook
+  needs — a game whose view sticks instead of turning is this checkbox,
+  not a bug. The controller goes with the device (there is nothing else
+  on it). An absent `seamless_mouse` field means on, as every bundle
+  written before it ran, for the same reason `network`'s does: the
+  pointer must not change under a machine that has been running.
 - **Shader presets come with the launcher or are downloaded by it:** a
   source checkout has the `third_party/slang-shaders` submodule, and a
   machine without one (no `--recurse-submodules`, or a packaged build)
@@ -375,7 +390,8 @@ noticed until the models were merged:
   side. One of those two was a bug for a year of nobody looking.
 
 None of those is expressible now. A front end reads `ram_note()`,
-`accel_note()`, `network_notes()` and prints them; it fills a combo box
+`accel_note()`, `network_notes()`, `seamless_mouse_notes()` and prints
+them; it fills a combo box
 from `Family::ALL`/`CpuSpeed::ALL` and their `label()`s rather than
 retyping the strings; and a field with a *consequence* has no setter at
 all, only `choose_*`, which is what applies the rule that memory, the
@@ -483,8 +499,8 @@ Four checks, all of which run without a GUI click:
   `LAUNCHER_QT_SCREEN=create LAUNCHER_QT_ARG=dos:<name>` drives the QML
   one under `QT_QPA_PLATFORM=offscreen`. The two `machine.toml`s differ
   only in the name and the disk path — `family`, `ram_mb = 64`,
-  `accel = "tcg"`, `network = false`, `boot`, `cpu_speed = "486dx2-66"`
-  all match. Before the split, four of those six were wrong on the Qt
+  `accel = "tcg"`, `network = false`, `seamless_mouse = false`, `boot`,
+  `cpu_speed = "486dx2-66"` all match. Before the split, four of those six were wrong on the Qt
   side or absent.
 
 **The `#[path]` arrangement it replaced survived its own first test** —
@@ -528,8 +544,8 @@ launcher-capi`.
 possible form, and it is a *test*: `scripts/test.sh host`'s `capi` check
 builds it and runs it against a scratch library, creating a DOS machine
 through the shared wizard and checking the answers (64 MB, a period
-processor, emulated, no network card), then the disc shelf, the library
-and the profile editor. A rename or a changed default in a model fails
+processor, emulated, no network card and no USB tablet), then the disc
+shelf, the library and the profile editor. A rename or a changed default in a model fails
 there as well as in the two GUIs.
 
 What a third front end still owes is what the other two own: a file

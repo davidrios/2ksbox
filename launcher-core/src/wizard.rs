@@ -1,13 +1,14 @@
 //! The guided creation form (doc 07): family → name → memory →
-//! processor → acceleration → networking → disk → install media → a
+//! processor → acceleration → networking → the pointer → disk →
+//! install media → a
 //! bundle written from doc 06's reference defaults. The same form edits
 //! an existing bundle (`open_edit`), where `submit` writes back in place
 //! instead of reserving a new library directory. An advanced toggle
 //! edits the raw TOML instead — still never a QEMU command line.
 //!
 //! **Everything except the widgets is here**, including the sentences.
-//! A front end reads `ram_note()`, `accel_note()`, `network_notes()` and
-//! prints them; it does not compose its own. The Qt port used to, and
+//! A front end reads `ram_note()`, `accel_note()`, `network_notes()`,
+//! `seamless_mouse_notes()` and prints them; it does not compose its own. The Qt port used to, and
 //! the two builds ended up telling the user different things about the
 //! same checkbox ("Windows won't see a card" against "the guest won't
 //! see a card"), which is a small symptom of the real problem: it also
@@ -97,6 +98,11 @@ pub struct Form {
     /// machine — which they did, briefly, on 2026-09-06.
     network: bool,
     network_chosen: bool,
+    /// Whether the host pointer walks into this machine (the USB tablet)
+    /// or the window grabs it (the PS/2 mouse alone). Follows the family
+    /// like the fields above: DOS cannot read a tablet at all.
+    seamless_mouse: bool,
+    seamless_mouse_chosen: bool,
     /// The CPU the guest should feel like, with the same rule — it is
     /// the field that makes a DOS machine a DOS machine, so switching
     /// family to DOS must bring it along.
@@ -146,6 +152,8 @@ impl Default for Form {
             accel_chosen: false,
             network: bundle::default_network(Family::Win98),
             network_chosen: false,
+            seamless_mouse: bundle::default_seamless_mouse(Family::Win98),
+            seamless_mouse_chosen: false,
             cpu_speed: bundle::default_cpu_speed(Family::Win98),
             cpu_speed_chosen: false,
             optimizations: Optimizations::default(),
@@ -189,6 +197,8 @@ impl Form {
             accel_chosen: true,
             network: machine.network,
             network_chosen: true,
+            seamless_mouse: machine.seamless_mouse,
+            seamless_mouse_chosen: true,
             cpu_speed: machine.effective_cpu_speed(),
             cpu_speed_chosen: true,
             optimizations: machine.optimizations.clone(),
@@ -262,6 +272,9 @@ impl Form {
         }
         if !self.network_chosen {
             self.network = bundle::default_network(family);
+        }
+        if !self.seamless_mouse_chosen {
+            self.seamless_mouse = bundle::default_seamless_mouse(family);
         }
         // The new family's ceiling may be below the memory already in
         // the field (Win98 stops at 512 MB), so the clamp is part of the
@@ -425,6 +438,43 @@ impl Form {
         }
     }
 
+    pub fn seamless_mouse(&self) -> bool {
+        self.seamless_mouse
+    }
+
+    pub fn choose_seamless_mouse(&mut self, seamless_mouse: bool) {
+        self.seamless_mouse = seamless_mouse;
+        self.seamless_mouse_chosen = true;
+    }
+
+    /// One checkbox again, because there is one question: does the host
+    /// pointer walk into this machine, or does the window take it. Both
+    /// answers are right for something — a desktop wants the first, a
+    /// game that turns the view with the mouse needs the second — so
+    /// what the sentences have to carry is the hotkey (a grabbed pointer
+    /// with no way out is the worst thing this form can produce) and the
+    /// symptom that sends someone back here: mouselook against an
+    /// absolute device does not turn, it sticks.
+    ///
+    /// DOS is worth catching before the machine exists rather than
+    /// after: its mouse drivers read the PS/2 controller, so a tablet
+    /// leaves such a guest with no pointer at all.
+    pub fn seamless_mouse_notes(&self) -> &'static [&'static str] {
+        match (self.seamless_mouse, self.family) {
+            (true, Family::Dos) => &[
+                "The host pointer moves straight into the guest, with no grab and no hotkey.",
+                "DOS mouse drivers read the PS/2 mouse: on this family the tablet leaves the guest with no pointer at all.",
+            ],
+            (true, _) => &[
+                "The host pointer moves straight into the guest, with no grab and no hotkey: the guest gets a USB tablet, which reports where the pointer is rather than how far it moved.",
+            ],
+            (false, _) => &[
+                "The PS/2 mouse alone: click the window to take the pointer, Ctrl+Alt+G to give it back.",
+                "That is the relative movement mouselook needs — a game whose view sticks instead of turning wants this off.",
+            ],
+        }
+    }
+
     pub fn optimizations(&self) -> &Optimizations {
         &self.optimizations
     }
@@ -504,6 +554,7 @@ impl Form {
                 ram_mb: self.ram_mb,
                 accel: Some(self.accel),
                 network: self.network,
+                seamless_mouse: self.seamless_mouse,
                 disk,
                 disc: None,
                 discs: Vec::new(),
@@ -528,6 +579,11 @@ impl Form {
         // what the machine gets, even when it is the family's default.
         machine.accel = Some(if self.accel_chosen { self.accel } else { bundle::default_accel(self.family) });
         machine.network = if self.network_chosen { self.network } else { bundle::default_network(self.family) };
+        machine.seamless_mouse = if self.seamless_mouse_chosen {
+            self.seamless_mouse
+        } else {
+            bundle::default_seamless_mouse(self.family)
+        };
         machine.cpu_speed =
             Some(if self.cpu_speed_chosen { self.cpu_speed } else { bundle::default_cpu_speed(self.family) });
         // Only what someone turned off is in here, so this is a clone

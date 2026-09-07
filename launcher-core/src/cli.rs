@@ -151,7 +151,7 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // a bundle, change the fields given, save it back in place.
             // `-` keeps a field as it is.
             let usage =
-                "usage: --wizard-edit <machine.toml> <new-name|-> [ram-mb|-] [auto|kvm|tcg|-] [net|nonet] [cpu-speed|-] [boot|-]";
+                "usage: --wizard-edit <machine.toml> <new-name|-> [ram-mb|-] [auto|kvm|tcg|-] [net|nonet] [cpu-speed|-] [boot|-] [seamless|noseamless]";
             let path: PathBuf = args.next().expect(usage).into();
             let new_name = args.next().expect(usage);
             let mut form = wizard::Form::default();
@@ -199,6 +199,16 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                         .find(|b| b.label().eq_ignore_ascii_case(label))
                         .unwrap_or_else(|| panic!("unknown boot order {label:?}; {usage}"))
                 }
+            }
+            // The pointer, the same way: with the tablet there is no
+            // grab at all, without it the player takes the pointer on a
+            // click. It is the one field whose effect is a *device* on
+            // the command line, so `--print-args` is the check.
+            match args.next().as_deref() {
+                None | Some("-") => {}
+                Some("seamless") => form.choose_seamless_mouse(true),
+                Some("noseamless") => form.choose_seamless_mouse(false),
+                Some(other) => panic!("the pointer is seamless or noseamless, not {other:?}; {usage}"),
             }
             match form.submit(&library::default_dir()) {
                 Some(saved) => println!("{}", saved.display()),
