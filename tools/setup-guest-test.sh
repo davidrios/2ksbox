@@ -27,9 +27,15 @@
 # there (tools/guestwait.sh) and BOOT_WAIT / WARMUP_WAIT are only the caps
 # on that wait.
 #
+# REBOOT=1 runs the other half of the installer instead: `SETUP /ALL
+# /REBOOT`, and the proof is a second SeaBIOS banner on the debugcon —
+# the machine really reset. It is its own mode because the restart lands
+# in the middle of the `dir`s the normal run ends with, and because the
+# 9x restart is a thing that has silently not worked (see below).
+#
 # Env: OUT=dir (default build/setup-test), BOOT_WAIT=s (cap, 300),
 # WARMUP_WAIT=s (cap, 300), NO_WARMUP=1, NO_KVM=1, FORCE_KVM=1 (Win98 under
-# KVM), KEEP=1.
+# KVM), REBOOT=1, KEEP=1.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -56,6 +62,17 @@ setup_line() {  # $1 = arguments to SETUP.EXE
   local d
   for d in D E F G; do printf 'if exist %s:\\SETUP.EXE %s:\\SETUP.EXE %s > COM1\n' "$d" "$d" "$1"; done
 }
+if [ -n "${REBOOT:-}" ]; then
+  # /REBOOT only: SETUP returns as soon as it has handed the restart off, so
+  # the batch runs to SETUPDONE and the machine goes down a few seconds
+  # later. Anything after this line would run into the restart.
+  {
+    echo '@echo off'
+    echo 'echo ==== install and restart > COM1'
+    setup_line '/ALL /REBOOT'
+    echo 'echo SETUPDONE > COM1'
+  } > "$OUT/RUN.BAT"
+else
 {
   echo '@echo off'
   echo 'echo ==== list > COM1'
@@ -78,6 +95,7 @@ setup_line() {  # $1 = arguments to SETUP.EXE
   fi
   echo 'echo SETUPDONE > COM1'
 } > "$OUT/RUN.BAT"
+fi
 sed -i 's/\r$//; s/$/\r/' "$OUT/RUN.BAT"
 rm -f "$FLOPPY"
 mkfs.fat -C -F 12 "$FLOPPY" 1440 >/dev/null
@@ -135,11 +153,20 @@ else
 fi
 if [ "$FAMILY" = win98 ] && [ -z "${NO_WARMUP:-}" ]; then warmup; fi
 
+SEA="$OUT/seabios-$FAMILY.log"
+DBG=()
+if [ -n "${REBOOT:-}" ]; then
+  # a screendump proves nothing about a reset (CLAUDE.md): the firmware's
+  # own banner does
+  rm -f "$SEA"
+  DBG=(-chardev "file,path=$SEA,id=sea" -device isa-debugcon,iobase=0x402,chardev=sea)
+fi
 "$QEMU" -L "$ROOT/qemu/pc-bios" "${ACCEL[@]}" -machine pc "${HW[@]}" \
-  -hda "$OVL" -fda "$FLOPPY" -boot c -cdrom "$ISO" \
+  -hda "$OVL" -fda "$FLOPPY" -boot c -cdrom "$ISO" "${DBG[@]}" \
   -usb -device usb-tablet -display none \
   -qmp "unix:$SOCK,server,nowait" -serial "file:$LOG" -monitor none > "$QLOG" 2>&1 &
 QPID=$!
+banners() { grep -c '^SeaBIOS (version' "$SEA" 2>/dev/null || echo 0; }
 Q() { python3 "$ROOT/tools/qmpc.py" "$SOCK" "$@"; }
 
 GW_PID=$QPID
@@ -148,11 +175,27 @@ gw_wait_sock "$SOCK" || exit 1
 # may still be starting, or a message box may be in front of it), so keep
 # knocking until the guest's own output turns up on COM1 — that, and not a
 # sleep, is what says the shell is there.
+# before the install, not after: SETUP returns as soon as it has handed the
+# restart off, so by the time SETUPDONE is on the wire the POST may already
+# have been written and the count would never be seen to rise
+base=$(banners)
 gw_poke_until "$SOCK" "$FAMILY" "$SHELL_CMD" "${BOOT_WAIT:-300}" test -s "$LOG" || {
   Q screendump "$OUT/$FAMILY-noshell.png" || true
   echo "the guest never ran anything: see $OUT/$FAMILY-noshell.png and $QLOG"
 }
 gw_wait_log "$LOG" SETUPDONE "${WAIT_SECS:-240}" || true
+if [ -n "${REBOOT:-}" ]; then
+  # SETUP hands the restart off and returns, so SETUPDONE comes first and
+  # the POST follows; measured at ~20 s on the Air under TCG
+  reset_seen=0
+  for _ in $(seq 1 "${RESET_WAIT:-24}"); do
+    [ "$(banners)" -gt "$base" ] && { reset_seen=1; break; }
+    kill -0 $QPID 2>/dev/null || break
+    sleep 5
+  done
+  # and it must come back up, not sit in ScanDisk or safe mode
+  [ "$reset_seen" = 1 ] && gw_wait_quiet "$SOCK" "${WARMUP_WAIT:-300}" 10 || true
+fi
 Q screendump "$OUT/$FAMILY-end.png" || true
 if [ "$FAMILY" = win98 ]; then
   # a Win98 run ends with a Start-menu shutdown, never a kill (CLAUDE.md)
@@ -178,6 +221,17 @@ echo "----"
 want "SETUPDONE" "the batch ran to the end"
 want "2ksbox guest tools" "SETUP started"
 want "Installed." "the install finished without errors"
+if [ -n "${REBOOT:-}" ]; then
+  want "restarting Windows" "SETUP said it was restarting"
+  if [ "${reset_seen:-0}" = 1 ]; then
+    echo "PASS  the machine really restarted ($base -> $(banners) POSTs)"
+  else
+    echo "FAIL  the machine never restarted (still $base POSTs, see $QLOG)"
+    fails=$((fails + 1))
+  fi
+  if [ "$fails" = 0 ]; then echo "setup guest test ($FAMILY, reboot): PASS"; exit 0; fi
+  echo "setup guest test ($FAMILY, reboot): FAIL ($fails checks)"; exit 1
+fi
 want "GLIDE2X.DLL ->" "SETUP copied the Glide wrappers"
 want "CDSHELF.EXE ->" "SETUP copied the disc shelf tool"
 want "WGLGEARS.EXE" "the test programs are in C:\\2KSBOX (Windows' own dir)"

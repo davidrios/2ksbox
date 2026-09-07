@@ -398,20 +398,64 @@ static int install_selected(void)
     return bad;
 }
 
+/* The restart itself, in whichever process can actually perform it.
+ *
+ * On NT this is the whole of it: take SE_SHUTDOWN_NAME and call.
+ *
+ * On 9x the call must not be made by *this* process. Measured on Windows 98
+ * 4.10.2222 (2026-09-07): ExitWindowsEx from a console process never
+ * returns and no shutdown begins at all — no dialog, an untouched desktop,
+ * the machine still up five minutes later. The thread stuck inside it holds
+ * the Win16Mutex, so pumping messages does not rescue it either: a second
+ * thread pumping while a first one calls goes down with it, and the whole
+ * process is then deaf to USER. What the console costs is the process's own
+ * message queue — a console app's window belongs to the DOS box hosting it,
+ * not to us — so the same call from a process started with DETACHED_PROCESS,
+ * which has no console at all, restarts the machine cleanly. That process is
+ * this one again, run as `SETUP /REBOOTNOW`, so the disc carries no second
+ * binary for it.
+ *
+ * The variants that do not work, so nobody spends the day again:
+ * `rundll32 shell32.dll,SHExitWindowsEx 2` does nothing; `rundll32
+ * krnl386.exe,exitkernel` does bring Windows down, but as a forced exit that
+ * leaves the FAT dirty and the next boot in ScanDisk. */
 static void reboot_now(void)
 {
     HANDLE tok;
     TOKEN_PRIVILEGES tp;
 
     say("restarting Windows");
-    if (g_nt && OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &tok)) {
+
+    if (!g_nt) {
+        char self[MAX_PATH], cmd[MAX_PATH + 16];
+        STARTUPINFOA si;
+        PROCESS_INFORMATION pi;
+
+        GetModuleFileNameA(NULL, self, sizeof self);
+        snprintf(cmd, sizeof cmd, "\"%s\" /REBOOTNOW", self);
+        memset(&si, 0, sizeof si);
+        si.cb = sizeof si;
+        if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE, DETACHED_PROCESS,
+                           NULL, NULL, &si, &pi)) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            return;
+        }
+        say("    could not start the restart (error %lu) - restart Windows yourself",
+            GetLastError());
+        return;
+    }
+
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &tok)) {
         LookupPrivilegeValueA(NULL, SE_SHUTDOWN_NAME, &tp.Privileges[0].Luid);
         tp.PrivilegeCount = 1;
         tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
         AdjustTokenPrivileges(tok, FALSE, &tp, 0, NULL, NULL);
         CloseHandle(tok);
     }
-    ExitWindowsEx(EWX_REBOOT | EWX_FORCE, 0);
+    if (!ExitWindowsEx(EWX_REBOOT | EWX_FORCE, 0))
+        say("    Windows refused the restart (error %lu) - restart it yourself",
+            GetLastError());
 }
 
 /* --------------------------------------------------------- the interface */
@@ -551,6 +595,16 @@ int main(int argc, char **argv)
     int game = 0;
     const char *game_dir = NULL, *logfile = NULL;
 
+    /* The detached second copy of ourselves that reboot_now() starts on 9x:
+     * no console, no log, nothing but the call this program cannot make in
+     * the process the user ran. Handled before anything else, so it neither
+     * prints nor truncates SETUP.LOG. */
+    if (argc == 2 && (argv[1][0] == '/' || argv[1][0] == '-')
+        && !stricmp(argv[1] + 1, "rebootnow")) {
+        ExitWindowsEx(EWX_REBOOT | EWX_FORCE, 0);
+        return 0;
+    }
+
     ver.dwOSVersionInfoSize = sizeof ver;
     GetVersionExA(&ver);
     g_nt = ver.dwPlatformId == VER_PLATFORM_WIN32_NT;
@@ -596,8 +650,6 @@ int main(int argc, char **argv)
     open_log(logfile);
     say("2ksbox guest tools - %s", osname);
     say("files from %s", g_root);
-    if (!g_nt)
-        say("(Windows 98/Me uses the emulated Cirrus adapter; the display driver is 2000/XP only)");
 
     if (mode_list) { say(""); print_components(); say(""); print_sets(); return 0; }
     if (game_dir) return copy_game_set(game, game_dir);

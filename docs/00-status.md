@@ -451,6 +451,30 @@ items nobody owns yet:
 
 ## Gotchas learned (don't relearn)
 
+- **`ExitWindowsEx` from a console process never returns on Windows 98**,
+  and nothing at all happens — fixed 2026-09-07 (`guest-tools/src/setup.c`).
+  `SETUP /ALL` on 9x stages the display driver and then says "restarting
+  Windows", and the machine simply stayed up: no shutdown, no dialog, an
+  untouched desktop five minutes later, `ExitWindowsEx(EWX_REBOOT |
+  EWX_FORCE, 0)` still not back. Measured on 4.10.2222 under TCG. The
+  thread stuck inside the call holds the **Win16Mutex**, so the obvious
+  repair makes it worse rather than better: calling on a worker thread
+  while the main thread pumps messages loses *both* threads, and the
+  process is then deaf to USER entirely — a pump cannot rescue a lock it
+  needs itself. What the console costs is the process's own message queue
+  (a console app's window belongs to the DOS box hosting it, not to it),
+  and the fix is therefore to make the call from a process that has no
+  console: `SETUP.EXE` re-execs itself as `SETUP /REBOOTNOW` with
+  `DETACHED_PROCESS`, that copy calls `ExitWindowsEx`, and the machine
+  restarts in ~20 s — no second binary on the ISO. **The near misses, so
+  nobody spends the day again:** `rundll32 shell32.dll,SHExitWindowsEx 2`
+  launches and does nothing; `rundll32 krnl386.exe,exitkernel` *does* bring
+  Windows down, but as a forced exit that leaves the FAT dirty and the next
+  boot in ScanDisk. NT was never affected and keeps its own path, which now
+  reports a refusal instead of printing the same sentence and stopping.
+  Guard: `REBOOT=1 tools/setup-guest-test.sh <image> win98` — the proof is
+  a second SeaBIOS banner on the debugcon, never a screendump.
+
 - **A busy-wait that starves the thread it is waiting for**: `d3dfeat9`'s
   occlusion query, fixed 2026-09-07 (`guest-tools/src/d3dfeat9.c`). The
   native oracle started answering `S_FALSE, 0 pixels` where the guest, on
