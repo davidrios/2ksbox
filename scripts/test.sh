@@ -80,9 +80,11 @@
 #                  controller, and our QEMU accepts both machines
 #   family-other   the "Other" family (doc 06): a machine for an era OS that is
 #                  neither Windows nor DOS gets standard hardware and none of
-#                  ours — the Bochs VGA rather than d3dpt-vga, an RTL8139 and an
-#                  ES1370 at pinned slots, no USB tablet — the sound card stays
-#                  put when the NIC goes, and our QEMU accepts the line
+#                  ours — the Bochs VGA rather than d3dpt-vga, no network card
+#                  until someone asks for one and an ES1370 at its pinned slot,
+#                  no USB tablet — the RTL8139 arrives at 0x03 when the box is
+#                  ticked, the sound card stays put when the NIC goes, and our
+#                  QEMU accepts the line
 #   display-adapter the wizard's display-adapter picker (doc 06): each family
 #                  offers the adapters it has a driver question about and starts
 #                  on the right one, an adapter a family doesn't offer is refused
@@ -591,8 +593,17 @@ family_other_check() { # the "Other" family's hardware, from the picker to a rea
   # a BeOS or Linux guest on it would come up with no display at all.
   case "$args" in *"-vga std"*) ;; *) echo "an Other machine is not on the standard VGA"; echo "$args"; rc=1;; esac
   case "$args" in *d3dpt-vga*) echo "an Other machine got our own adapter, which has no driver for it"; echo "$args"; rc=1;; esac
-  case "$args" in *"rtl8139,netdev=n0,addr=0x03"*) ;; *) echo "no RTL8139 at 0x03"; echo "$args"; rc=1;; esac
+  # No card at all until someone asks for one — the default for every
+  # family since 2026-09-07 (`bundle::default_network`): these guests
+  # stopped getting security fixes twenty years ago, so a machine nobody
+  # has been asked about is off the network.
+  case "$args" in *rtl8139*|*-netdev*) echo "a new machine came with a network card"; echo "$args"; rc=1;; esac
+  case "$args" in *"-nic none"*) ;; *) echo "networking off did not emit -nic none, so QEMU supplies a card of its own"; echo "$args"; rc=1;; esac
   case "$args" in *"ES1370,audiodev=embed0,addr=0x04"*) ;; *) echo "no ES1370 at 0x04"; echo "$args"; rc=1;; esac
+  # And the card the checkbox turns on is doc 06's, in its own slot.
+  target/release/launcher --wizard-edit "$bundle" - - - net >/dev/null || { echo "--wizard-edit net failed"; rc=1; }
+  args="$(target/release/launcher --print-args "$bundle")"
+  case "$args" in *"rtl8139,netdev=n0,addr=0x03"*) ;; *) echo "no RTL8139 at 0x03"; echo "$args"; rc=1;; esac
   # The tablet is off here by default (`default_seamless_mouse`): an
   # absolute pointer needs the guest to agree it is absolute, and these
   # guests get no guest-tools install to make them.
@@ -644,6 +655,11 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
   # change an installed guest re-detects.
   for f in win98 xp; do
     bundle="$dir/library/adapter-$f/machine.toml"
+    # A new machine has no NIC (`bundle::default_network`), and the
+    # question below is whether the cards *under* the adapter move when
+    # it changes — so this one is given the card first.
+    target/release/launcher --wizard-edit "$bundle" - - - net >/dev/null \
+      || { echo "$f: --wizard-edit net failed"; rc=1; continue; }
     target/release/launcher --wizard-edit "$bundle" - - - - - - - cirrus >/dev/null \
       || { echo "$f: --wizard-edit cirrus failed"; rc=1; continue; }
     args="$(target/release/launcher --print-args "$bundle")"
@@ -792,8 +808,8 @@ no_optionals_check() { # the artefacts link only what we chose (2026-09-07)
   #            3D provider (patch 30). SDL, GTK/VTE, Cocoa, curses, spice.
   #   audio    the player's sound is patch 20's `embed` audiodev; the
   #            headless tools use `none`, xp-cdimage-test.sh uses `wav`.
-  #   network  every bundle the launcher writes says `-netdev user` and
-  #            nothing else, so slirp stays and AF_XDP/vde go.
+  #   network  a bundle with networking on says `-netdev user` and nothing
+  #            else, so slirp stays and AF_XDP/vde go.
   #   block    every drive is a local file -- qcow2, a raw floppy, or a
   #            disc image through our own `cdimage` driver (doc 17). curl,
   #            libssh, iscsi, nfs, rbd, gluster, blkio.

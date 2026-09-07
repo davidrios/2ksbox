@@ -18,7 +18,7 @@ Modeled as a ~1998–2000 consumer PC.
 | RAM | 256 MB default, **≤ 512 MB hard cap** | 9x VCache breaks above ~512 MB without patches |
 | Video | **`-vga none -device d3dpt-vga` + our driver (doc 19), or `-vga cirrus`** — a choice since 2026-09-07 (`bundle::Video`) | ours is the whole display path: the mode table, the desktop straight from VRAM, the paced page flips, Direct3D through the driver. The Cirrus is Windows' in-box 2D driver, and the honest answer for a machine whose driver isn't installed yet or a title being A/B'd. The standard VGA is not offered on either Windows family |
 | Audio | SB16 (DOS-mode compat) + AC'97 | SB16 for DOS boxes/games, AC'97 driver in guest tools |
-| Net | PCnet (AMD) | driver in-box on 98 |
+| Net | PCnet (AMD), **off on a new machine** | driver in-box on 98. The card is what the wizard's networking checkbox gives the machine; since 2026-09-07 a new machine of every family starts without one (doc 07, `bundle::default_network`) — an unpatched guest is not put on a network before anyone asks |
 | Storage | IDE HDD (qcow2) + our ATAPI CD | period-correct; no VirtIO for 9x |
 | Input | PS/2 mouse + kbd; USB tablet optional | the bundle's `seamless_mouse` (doc 07), on by default here: the tablet is absolute, so nothing is grabbed; off leaves the PS/2 relative mode games want (see doc 03) |
 | Floppy | enabled | driver/utility sneakernet, boot disks |
@@ -94,7 +94,7 @@ Modeled as a ~2002–2005 PC.
 | RAM | 512 MB–1 GB default | period-typical, snappy |
 | Video | **`-vga none -device d3dpt-vga` + our driver on both — XP since 2026-09-04 (doc 15), Win98 since 2026-09-07 (doc 19); Win98 3D also has qemu-3dfx — or `-vga cirrus`, a choice in the wizard since 2026-09-07 (`bundle::Video`)** | d3dpt-vga: the host's mode table (640×480…1600×1200, 16/32 bpp, 60/75/85 Hz), desktop straight from VRAM; before the driver is installed it is a standard VGA (vga.sys, 800×600×4). Cirrus: XP inbox driver for 2D (up to 1024×768×16 / 800×600×24; std VGA has **no** XP driver, which is why it is not on offer here). Wrappers for 3D do not depend on the VGA device — but the *driver's* own Direct3D (the M7c HAL) goes with the driver |
 | Audio | AC'97 (fallback: emulated HDA) | XP AC'97 driver in guest tools |
-| Net | RTL8139 | in-box XP driver |
+| Net | RTL8139, **off on a new machine** | in-box XP driver; the checkbox gives it, and a new machine starts without one (doc 07) |
 | Storage | IDE + our ATAPI CD | AHCI needs F6 drivers; not worth it |
 | Input | PS/2 + USB tablet toggle | same grab semantics as 98 (`seamless_mouse`, on by default) |
 
@@ -116,7 +116,7 @@ already carries "for DOS boxes/games", and nothing else.
 | RAM | 64 MB (4–256) | DOS uses the first megabyte; the rest is XMS for a mid-90s extender. 64 MB is generous for the era and inside what MS-DOS 6.22's own HIMEM.SYS manages |
 | Video | Cirrus GD5446 (`-vga cirrus`), **not a choice** | a real VGA/VESA BIOS of the period. The one family with no adapter picker: its titles program a VGA/VESA BIOS directly, so the adapter is a fact of the era rather than a driver question. `-vga std`'s Bochs VBE 2.0 with a linear framebuffer is arguably better for late VESA titles — an open question, not a decision |
 | Audio | SB16 | what DOS software knows how to talk to |
-| Net | none | DOS reaches a network only through a packet driver the user installs by hand; an unused card is one more device to enumerate |
+| Net | none | DOS reaches a network only through a packet driver the user installs by hand; an unused card is one more device to enumerate. The one family that has never had one by default — since 2026-09-07 the others start without one too, for a different reason (doc 07) |
 | Input | PS/2 mouse + kbd, **no USB tablet** (`seamless_mouse = false`) | a DOS mouse driver talks to the PS/2 controller; a tablet would leave the guest with no pointer at all. The player takes the pointer on a click and Ctrl+Alt+G gives it back |
 | Storage | IDE HDD + our ATAPI CD | the CD-ROM model (doc 17) and the disc shelf both already speak DOS: `CDSHELF.COM` is a DOS program |
 | Floppy | `floppy` + `boot` on the machine | a DOS machine usually boots from one |
@@ -180,7 +180,7 @@ box on a nineties system, and nothing of ours is on the machine at all.
 | RAM | 512 MB (16–3072) | no reference machine to inherit from, so the range is the machine's own limits: a 1995 kernel at the bottom, XP's 32-bit ceiling at the top. BeOS R5 is the one guest with a lower limit of its own (1 GB), which the wizard *says* above that rather than enforces |
 | Video | **`-vga std` or `-vga cirrus`, chosen in the wizard** (default std) | the standard VGA is the Bochs adapter with VBE 2.0 and a linear frame buffer — what a period VESA driver wants, what a modern Linux binds `bochs-drm` to, and the one a guest with no native driver can always fall back on. The Cirrus is a chip that really existed, so an era guest is likelier to have a *native* driver for it (BeOS R5 and XFree86 both ship one). **Neither is `d3dpt-vga`**: our adapter needs our display driver, which exists for Windows only (docs 15, 19), so a BeOS or Linux guest on it would have no display at all |
 | Audio | **ES1370** (Ensoniq AudioPCI) | the PCI sound card of the period both these guests drive in the box — BeOS ships an `ensoniq` add-on, Linux has `snd-ens1370` — where AC'97 needs a driver an era install may not have |
-| Net | RTL8139 | in-box on BeOS R5 and on Linux since 2.2 (`8139too`) |
+| Net | RTL8139, **off on a new machine** | in-box on BeOS R5 and on Linux since 2.2 (`8139too`); the checkbox gives it, and a new machine starts without one (doc 07) |
 | Storage | IDE HDD + our ATAPI CD | as everywhere; the CD-ROM model (doc 17) is a drive, not a driver |
 | Input | PS/2 mouse + kbd, **no USB tablet** (`seamless_mouse = false`) | an absolute pointer needs the guest's USB HID stack *and* its windowing system to agree it is absolute, which an era XFree86 (an explicit input section) and BeOS do not do unconfigured — and unlike the Windows families there is no guest-tools install that would fix it. The checkbox turns it on for a guest that does handle it |
 | Acceleration | Automatic | none of these has Win9x's fast-CPU bugs, and nothing here is tuned for them either: take the host's speed when it is there |
@@ -199,9 +199,10 @@ pin theirs: turning networking off, or changing the adapter, would
 otherwise slide the sound card up into the NIC's slot, and a card that
 moves is a hardware change an installed guest re-detects. The
 `family-other` check in `scripts/test.sh` holds all of this — the
-standard VGA, the two cards where they belong, the absent tablet, the
-sound card staying put when the NIC goes — and ends by having our own
-`qemu-system-i386` accept the line.
+standard VGA, the absent card, the sound card at its own address, the
+RTL8139 arriving at `0x03` when the box is ticked, the absent tablet and
+the sound card staying put when the NIC goes again — and ends by having
+our own `qemu-system-i386` accept the line.
 
 ## The display adapter (added 2026-09-07)
 

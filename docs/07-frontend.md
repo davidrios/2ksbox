@@ -150,13 +150,21 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   the two spellings together. It is the same code path — two `-accel`
   options are tried in order and the first that initializes wins, which is
   exactly what `kvm:tcg` did.
-- **Networking** is one checkbox (`network` in the bundle). It follows
-  the family for a new machine — on for Win98, XP and Other, **off for
-  DOS**, which reaches a network only through a packet driver the user
-  installs by hand — until someone touches the box, exactly like memory and the
-  processor. An existing bundle with no `network` field is still on
-  whatever its family: turning a card off under a machine that has been
-  running with one is a hardware change, not a default. The checkbox is:
+- **Networking** is one checkbox (`network` in the bundle), and since
+  2026-09-07 (the user's decision) a new machine of **every** family
+  starts with it **off**. These are unpatched systems — the note under
+  the box has always said so — and a machine that is on a network before
+  anyone was asked about it is the wrong way round; the box is right
+  there for the machine that wants one, and ticking it later is a card
+  *appearing*, which Windows handles far better than one disappearing.
+  DOS had never got one anyway, for a reason of its own: it reaches a
+  network only through a packet driver the user installs by hand. The
+  default still follows the family until someone touches the box, exactly
+  like memory and the processor — the families simply agree at the
+  moment. An existing bundle with no `network` field is untouched by any
+  of this and still has its card, whatever its family: taking one away
+  from a machine that has been running with it is a hardware change, not
+  a default. The checkbox is:
   the machine either has doc 06's per-family NIC on QEMU's user-mode NAT
   — outbound through the host, nothing on the network able to reach the
   guest — or it has no adapter at all, so Windows never sees a card, asks
@@ -165,7 +173,9 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   asks for none; and XP's PCI devices carry the explicit addresses their
   order already gave them, so the NIC's absence doesn't slide the sound
   card into its slot and make an installed guest re-detect hardware. An
-  absent `network` field means on, as every bundle written before it ran.
+  absent `network` field means on, as every bundle written before it ran;
+  a new machine means off, and the two are separate answers for that
+  reason (`network_enabled_default` and `default_network`).
 - **The pointer** is the next checkbox ("Seamless mouse",
   `seamless_mouse` in the bundle), and it follows the family the same
   way: on for Win98 and XP, **off for DOS**, whose mouse drivers read the

@@ -621,22 +621,35 @@ pub fn default_accel(family: Family) -> Accel {
     }
 }
 
-/// Networking is on unless a bundle says otherwise: an era machine came
-/// with a network card, and this is what every machine did before the
-/// field existed.
+/// Networking is on unless a bundle says otherwise: this is what every
+/// machine did before the field existed, and a machine must not lose its
+/// card by being read by a newer launcher. It is *not* what a new
+/// machine gets — that is `default_network`, and since 2026-09-07 it is
+/// off for every family.
 fn network_enabled_default() -> bool {
     true
 }
 
-/// Whether a *new* machine of this family gets a card. DOS is the one
-/// that doesn't: it reaches a network only through a packet driver the
-/// user installs by hand, so the card would be an unused device the
-/// guest still enumerates. (An existing bundle with no `network` field
-/// is unaffected — that is `network_enabled_default`, and it stays on
-/// for every family, because turning a card off under a machine that has
-/// been running with one is a hardware change, not a default.)
-pub fn default_network(family: Family) -> bool {
-    family != Family::Dos && network_enabled_default()
+/// Whether a *new* machine of this family gets a card. **None of them
+/// do** (the user's decision, 2026-09-07): these guests stopped getting
+/// security fixes twenty years ago, so a machine that is on a network
+/// before anyone asked for it is the wrong way round — the checkbox is
+/// right there in the wizard for the machine that wants one, and turning
+/// it on later is a card appearing, which Windows handles far better
+/// than one disappearing. DOS had never got one anyway, for a reason of
+/// its own: it reaches a network only through a packet driver the user
+/// installs by hand, so the card would be an unused device the guest
+/// still enumerates.
+///
+/// The family is still the argument, because that is what a default here
+/// is allowed to depend on and one of them may want a card again.
+///
+/// (An existing bundle with no `network` field is unaffected — that is
+/// `network_enabled_default`, which stays *on* for every family, because
+/// taking a card away from a machine that has been running with one is a
+/// hardware change and not a default.)
+pub fn default_network(_family: Family) -> bool {
+    false
 }
 
 /// The tablet is on unless a bundle says otherwise: it is what every

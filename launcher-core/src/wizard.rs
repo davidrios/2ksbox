@@ -103,10 +103,11 @@ pub struct Form {
     /// emulated, XP is automatic — `bundle::default_accel`).
     accel_chosen: bool,
     /// Whether the machine gets a network adapter at all. Follows the
-    /// family until someone touches it, like memory and the accelerator:
-    /// DOS is the one family that doesn't get a card, and without this
-    /// the form and `Machine::reference` disagree about a new DOS
-    /// machine — which they did, briefly, on 2026-09-06.
+    /// family until someone touches it, like memory and the accelerator
+    /// — `bundle::default_network`, which since 2026-09-07 is off for
+    /// every family. The follow is still what keeps the form and
+    /// `Machine::reference` from disagreeing about a new machine, which
+    /// they did, briefly, on 2026-09-06.
     network: bool,
     network_chosen: bool,
     /// Whether the host pointer walks into this machine (the USB tablet)
