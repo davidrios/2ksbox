@@ -36,7 +36,11 @@
 #   first and the closure runs over what it leaves. Our QML is compiled
 #   into the binary as a Qt resource, so `macdeployqt` is pointed at
 #   `launcher-qt/qml` to find the imports: without `-qmldir` its import
-#   scanner sees no QML at all and deploys no modules.
+#   scanner sees no QML at all and deploys no modules. What it collects
+#   is then pruned and rewired — it deploys whole plugin categories and
+#   QML module trees out of Homebrew's one shared Qt prefix, and leaves
+#   both what we never asked for and stale Homebrew rpaths behind. The
+#   two passes after it say why in full.
 # * **The bundle *is* the prefix.** `Contents` has the same
 #   `lib/libexec/share` shape a Unix prefix has — `launcher_core::paths`
 #   finds it by the same `share/2ksbox` marker — with `MacOS/` in the part
@@ -181,7 +185,92 @@ QT_PLUGINS=$("$QMAKE" -query QT_INSTALL_PLUGINS)
 MACDEPLOYQT=${MACDEPLOYQT:-$QT_BINS/macdeployqt}
 [ -x "$MACDEPLOYQT" ] || { echo "package-macos.sh: no macdeployqt at $MACDEPLOYQT (MACDEPLOYQT=)" >&2; exit 1; }
 echo "qt             $("$QMAKE" -query QT_VERSION) from $("$QMAKE" -query QT_INSTALL_PREFIX)"
-"$MACDEPLOYQT" "$APP" -qmldir="$ROOT/launcher-qt/qml" -no-strip
+#
+# Its "ERROR: Cannot resolve rpath @rpath/Qt<X>.framework/…" pairs are
+# folded into one line: they are the over-collection described below,
+# they come two lines each and by the dozen, and real trouble here is a
+# different shape and a non-zero exit. What it collected is checked
+# afterwards, at the bottom, rather than read out of this scroll.
+"$MACDEPLOYQT" "$APP" -qmldir="$ROOT/launcher-qt/qml" -no-strip 2>&1 | awk '
+  /^ERROR: Cannot resolve rpath/ { n++; pair=1; next }
+  /^ERROR:  using QList/ && pair  { pair=0; next }
+  { pair=0; print }
+  END { if (n) printf "macdeployqt    %d unresolved framework references, pruned below\n", n }'
+
+# What macdeployqt left half-rewritten. It copies a plain dependency
+# dylib into Frameworks/ and rewrites the *reference* to it, but when the
+# reference was already `@rpath/libfoo.dylib` — which Homebrew's own
+# dylibs increasingly are, brotli 1.2.0 among them — there is nothing to
+# rewrite, and the copy keeps both its Homebrew install name and
+# Homebrew's `@loader_path/../lib` rpath. From Contents/Frameworks that
+# rpath points at Contents/lib, where nothing of Qt's lives, so the
+# sibling it names resolves nowhere and the first thing to load it (here:
+# QtNetwork → libbrotlidec → libbrotlicommon) dies on a machine that has
+# no Homebrew to fall back on. So give every plain dylib in there the
+# same two things the closure below gives its own: an `@rpath` id, and
+# `@loader_path` to find its siblings with.
+for f in "$C/Frameworks"/*.dylib; do
+  [ -f "$f" ] || continue
+  install_name_tool -id "@rpath/$(basename "$f")" "$f" 2>/dev/null || true
+  install_name_tool -add_rpath "@loader_path" "$f" 2>/dev/null || true
+done
+
+# What macdeployqt collected that can never load. Homebrew's Qt is
+# modular — qtbase, qtdeclarative, qtvirtualkeyboard, … each its own
+# prefix — and every installed formula symlinks its plugins and QML
+# modules into one shared tree, while macdeployqt deploys plugin
+# *categories* and QML module *directories* whole. So a launcher that
+# imports QtQuick, Controls, Dialogs and Layouts comes out carrying
+# QtQuick.VirtualKeyboard, Scene2D/3D, Pdf, Timeline and
+# QtQml.StateMachine as well, and the frameworks those name live in
+# prefixes macdeployqt never walked into: that is the
+# "ERROR: Cannot resolve rpath @rpath/QtVirtualKeyboard.framework/…" it
+# prints and carries on from. A plugin whose framework is in no copy of
+# the bundle cannot be dlopened on any machine, so drop it rather than
+# sign 25 MB of files that would fail their first import. The point is
+# not the megabytes: it is that a real unresolved dependency then shows
+# up as a missing file in the check below instead of as one more line in
+# that scroll. Pruning too much is caught too — the offscreen window
+# further down opens on the QML modules that survive this.
+#
+# The one thing to know about the shape of what it deployed: a QML
+# module's plugin under Resources/qml is a **symlink** into PlugIns, not
+# a copy. So the binaries are pruned first and the modules left holding a
+# dangling link go after them, which is also what keeps a module from
+# surviving as .qml files with no plugin — an import would then fail as
+# "plugin cannot be loaded" instead of "module is not installed".
+missing_fw() {  # frameworks a Mach-O names that the bundle does not carry
+  otool -L "$1" | awk '{print $1}' \
+    | sed -n 's|^@rpath/\([^/]*\.framework\)/.*|\1|p' | sort -u \
+    | while read -r fw; do [ -d "$C/Frameworks/$fw" ] || echo "$fw"; done
+}
+
+pruned=0 prunedk=0
+while read -r f; do
+  miss=$(missing_fw "$f" | tr '\n' ' ')
+  [ -n "$miss" ] || continue
+  echo "qt prune       ${f#"$C/"} (needs ${miss% })"
+  prunedk=$((prunedk + $(du -k "$f" | cut -f1))); pruned=$((pruned+1))
+  rm -f "$f"
+done < <(find "$C/PlugIns" "$C/Resources/qml" -type f -name '*.dylib' 2>/dev/null | sort)
+
+# The modules those plugins belonged to: a dangling link is a plugin
+# that has just gone. Take the whole module directory — but only once
+# nothing under it still resolves, so a module that shares a directory
+# with a plugin we kept is never taken with it.
+while read -r l; do
+  [ -L "$l" ] || continue        # its module went with an earlier link
+  mod=$(dirname "$l")
+  if [ -f "$mod/qmldir" ] && [ "$mod" != "$C/Resources/qml" ] \
+     && [ -z "$(find "$mod" -name '*.dylib' -exec test -e {} \; -print -quit)" ]; then
+    echo "qt prune       ${mod#"$C/"} (its plugin went)"
+    prunedk=$((prunedk + $(du -sk "$mod" | cut -f1)))
+    rm -rf "$mod"
+  else
+    rm -f "$l"
+  fi
+done < <(find "$C/Resources/qml" -type l ! -exec test -e {} \; -print 2>/dev/null | sort -r)
+[ "$pruned" = 0 ] || echo "qt prune       $pruned plugins and their modules, $((prunedk/1024)) MB"
 
 # The offscreen platform plugin, which macdeployqt does not deploy (it
 # brings the cocoa one, which is the only one an app needs to run). The
@@ -190,14 +279,27 @@ echo "qt             $("$QMAKE" -query QT_VERSION) from $("$QMAKE" -query QT_INS
 if [ -f "$QT_PLUGINS/platforms/libqoffscreen.dylib" ]; then
   mkdir -p "$C/PlugIns/platforms"
   install -m755 "$QT_PLUGINS/platforms/libqoffscreen.dylib" "$C/PlugIns/platforms/"
-  # It arrives with Homebrew's rpath and none of macdeployqt's, so give
-  # it the two that reach the bundle's own Frameworks — from the plugin
-  # itself, and from whatever executable loaded it.
-  install_name_tool -add_rpath "@loader_path/../../Frameworks" "$C/PlugIns/platforms/libqoffscreen.dylib" 2>/dev/null || true
-  install_name_tool -add_rpath "@executable_path/../Frameworks" "$C/PlugIns/platforms/libqoffscreen.dylib" 2>/dev/null || true
 else
   warn "no libqoffscreen.dylib in $QT_PLUGINS/platforms; the window check below will be skipped"
 fi
+
+# Every plugin has to be able to reach the bundle's own Frameworks, and
+# on this Qt not one of them can: they arrive carrying Homebrew's
+# `@loader_path/../../../../lib` and nothing else, which from
+# Contents/PlugIns/<category> points at the *build directory* — that is
+# the path in macdeployqt's own "using QList(…)" complaints. It gets away
+# with it for the plugins whose Qt references it rewrote to
+# @executable_path; the ones Homebrew already built with @rpath
+# references (libqsvg, libqsvgicon, the multimedia plugin here) resolve
+# nowhere and fail their dlopen with the framework sitting right there.
+# So give each of them both ways in: from itself, and from whatever
+# executable loaded it — the second is what covers a QML plugin, which
+# Resources/qml reaches through a symlink and whose @loader_path is
+# therefore not the directory the file is really in.
+while read -r f; do
+  install_name_tool -add_rpath "@loader_path/../../Frameworks" "$f" 2>/dev/null || true
+  install_name_tool -add_rpath "@executable_path/../Frameworks" "$f" 2>/dev/null || true
+done < <(find "$C/PlugIns" -type f -name '*.dylib' 2>/dev/null)
 
 # --- the dylib closure ------------------------------------------------
 # Everything outside /usr/lib and /System — Homebrew's glib/pixman/zstd/…,
@@ -304,6 +406,52 @@ fail=0
 while read -r f; do
   out=$(external "$f")
   [ -z "$out" ] || { echo "package-macos.sh: $f still links $(echo "$out" | tr '\n' ' ')" >&2; fail=1; }
+done < <(machos)
+
+# And every @rpath dependency must resolve through the binary's own
+# rpaths, inside the bundle. A file that fails this cannot load on any
+# machine — but on *this* one it is invisible, because the Homebrew copy
+# it was built against is still on disk for the parts of the loader that
+# would otherwise complain. It is what the prune above leaves behind if
+# it missed something, and what a half-rewritten install name (see the
+# Frameworks pass) looks like from here.
+# dyld expands @rpath with the rpaths of every image in the chain that
+# led to the load, not only the one holding the reference — which is why
+# a Qt plugin whose own rpath is Homebrew's stale
+# `@loader_path/../../../../lib` still finds QtSvg: the executable that
+# dlopened it has `@executable_path/../Frameworks`. So the check has to
+# know the same thing, or it fails files that demonstrably work.
+exe_rpaths=""
+for x in "$C/MacOS/2ksbox" "$C/MacOS/2ksbox-player"; do
+  [ -f "$x" ] || continue
+  while read -r rp; do
+    rp=${rp//@loader_path/$C\/MacOS}; rp=${rp//@executable_path/$C\/MacOS}
+    exe_rpaths="$exe_rpaths $rp"
+  done < <(otool -l "$x" | awk '/LC_RPATH/{r=1} r&&/path /{print $2; r=0}')
+done
+
+unresolved() {
+  local f=$1 id rps dep rp cand ok
+  id=$(otool -D "$f" | tail -n +2)
+  rps=$(otool -l "$f" | awk '/LC_RPATH/{r=1} r&&/path /{print $2; r=0}')
+  # `|| true`: a binary with no @rpath dependency at all is the normal
+  # case, and grep's empty-handed 1 would end the script under pipefail.
+  otool -L "$f" | tail -n +2 | awk '{print $1}' | { grep '^@rpath/' || true; } | sort -u \
+    | while read -r dep; do
+        if [ "$dep" != "$id" ]; then      # its own install name is no dependency
+          ok=0
+          for rp in $rps $exe_rpaths; do
+            cand=${rp//@loader_path/$(dirname "$f")}
+            cand=${cand//@executable_path/$C\/MacOS}
+            if [ -e "$cand/${dep#@rpath/}" ]; then ok=1; break; fi
+          done
+          [ "$ok" = 1 ] || echo "${dep#@rpath/}"
+        fi
+      done
+}
+while read -r f; do
+  miss=$(unresolved "$f" | tr '\n' ' ')
+  [ -z "$miss" ] || { echo "package-macos.sh: $f needs ${miss% }, which its rpaths do not reach" >&2; fail=1; }
 done < <(machos)
 
 scratch=$(mktemp -d)

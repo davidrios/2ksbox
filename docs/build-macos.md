@@ -437,6 +437,42 @@ things about that:
   therefore covers every Mach-O in the bundle, and it can no longer be
   found by "executable files": a QML plugin can arrive mode 644.
 
+- **It brings more than we asked for, and less than it needs**
+  (2026-09-07). Homebrew's Qt is modular — `qtbase`, `qtdeclarative`,
+  `qtvirtualkeyboard`, … each its own prefix — and every installed
+  formula symlinks its plugins and QML modules into one shared tree,
+  while `macdeployqt` deploys plugin *categories* and QML module
+  *directories* whole. So a launcher that imports `QtQuick`,
+  `QtQuick.Controls`, `.Dialogs` and `.Layouts` comes out carrying
+  `QtQuick.VirtualKeyboard`, `Scene2D`/`Scene3D`, `Pdf`, `Timeline` and
+  `QtQml.StateMachine` as well, whose frameworks live in prefixes the
+  tool never walked into: 34 `ERROR: Cannot resolve rpath
+  "@rpath/QtVirtualKeyboard.framework/…"` pairs, printed and carried on
+  from (the script folds them into one line, because what was collected
+  is checked at the end rather than read out of that scroll). None of
+  those plugins can be `dlopen`ed on any machine, so the staging
+  **prunes** them: the binary under `PlugIns`, then the QML module left
+  holding a dangling link — a module's plugin under `Resources/qml` is a
+  **symlink** into `PlugIns`, not a copy, which is the one thing to know
+  about the shape of what was deployed. 19 plugins and their modules, 6 MB.
+- **And the same cause leaves what it does keep half-wired.** Homebrew's
+  dylibs and Qt plugins now reference `@rpath/…` where they used to name
+  an absolute path, so `macdeployqt` finds nothing to rewrite and the
+  copy keeps *Homebrew's* rpath: `@loader_path/../../../../lib`, which
+  from `Contents/PlugIns/<category>` is the **build directory** (that is
+  the path in the tool's own "using QList(…)" line), and
+  `@loader_path/../lib` for a plain dylib in `Contents/Frameworks`, which
+  is `Contents/lib`. `libqsvg`, `libqsvgicon` and the multimedia plugin
+  therefore resolved nowhere with `QtSvg.framework` sitting beside them,
+  and `libbrotlicommon` kept its Homebrew install name. The staging gives
+  every plugin both ways into `Contents/Frameworks` — from itself and
+  from whatever executable loaded it, the second being what covers a QML
+  plugin reached through that symlink, whose `@loader_path` is not the
+  directory the file is really in — and every plain dylib in
+  `Frameworks` an `@rpath` id and `@loader_path`, the same two things the
+  closure gives its own. The hand-patched rpaths the offscreen plugin
+  used to need are part of that pass now.
+
 The offscreen platform plugin is copied by hand beside the cocoa one,
 because the window check below needs a window that does not appear on the
 packager's screen.
@@ -454,8 +490,13 @@ One dependency is not in that closure and had to be found by other means:
   not have.
 
 **The checks are the point of the script**, and they are the macOS form of
-`package-linux.sh`'s: the staged launcher is asked `--paths` with `env -i`
-from `/` and every companion must resolve inside the app; it creates a
+`package-linux.sh`'s: no Mach-O in the bundle may name an `@rpath`
+dependency that nothing in the bundle resolves — expanded the way dyld
+expands it, with the rpaths of the app's own executables as well as the
+file's, since dyld searches the whole chain that led to a load and a
+stricter rule would fail plugins that demonstrably work; the staged
+launcher is asked `--paths` with `env -i` from `/` and every companion
+must resolve inside the app; it creates a
 machine with the packaged `qemu-img` and `--print-args` must point `-L` at
 the packaged firmware; and the packaged player is run under
 `DYLD_PRINT_LIBRARIES=1`, where **every image the loader touches** must be

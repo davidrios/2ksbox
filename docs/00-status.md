@@ -480,6 +480,32 @@ items nobody owns yet:
   non-zero count), and "headless" changes an API's timing, not just its
   output.
 
+- **`macdeployqt` deploys by the directory, and Homebrew's Qt is one
+  shared directory** (fixed 2026-09-07, `scripts/package-macos.sh`). It
+  copies plugin *categories* and QML module *trees* whole, and every
+  installed `qt*` formula symlinks its own into one prefix, so the macOS
+  bundle for a launcher that imports `QtQuick`, Controls, Dialogs and
+  Layouts came out carrying `QtQuick.VirtualKeyboard`, `Scene2D`/`3D`,
+  `Pdf`, `Timeline` and `QtQml.StateMachine`, whose frameworks are in
+  formulae we do not have — the 34 `ERROR: Cannot resolve rpath
+  "@rpath/QtVirtualKeyboard.framework/…"` pairs it prints and continues
+  past. The staging now prunes what can never load (19 plugins and their
+  modules, 6 MB) and folds those pairs into one line. Two things that
+  cost the afternoon: a QML module's plugin under `Resources/qml` is a
+  **symlink** into `PlugIns`, not a copy, so "PlugIns/quick is a
+  duplicate, drop it" dangles all 58 and the launcher opens nothing; and
+  the same tool leaves what it *does* keep half-wired, because Homebrew's
+  libraries now reference `@rpath/…` where they used to name an absolute
+  path and there is then nothing for it to rewrite — `libqsvg`,
+  `libqsvgicon` and the multimedia plugin had only Homebrew's
+  `@loader_path/../../../../lib` (the *build directory* from
+  `Contents/PlugIns/…`) and resolved nowhere with `QtSvg.framework`
+  beside them, and `libbrotlicommon` kept its Homebrew install name. Both
+  are guarded by a new check: **no Mach-O may name an `@rpath` dependency
+  the bundle cannot resolve**, expanded as dyld expands it — the file's
+  own rpaths plus the loading executables', because dyld searches the
+  whole chain and a stricter rule fails plugins that work.
+
 - **A CD audio track that played on after the Stop button: a guest's stop
   is `START STOP UNIT`, not `STOP PLAY/SCAN`** (fixed 2026-09-07, patch
   51). XP's `mcicda` answers MCI's `stop` with `IOCTL_CDROM_STOP_AUDIO`,
