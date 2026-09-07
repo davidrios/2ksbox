@@ -18,10 +18,13 @@
 #
 # The image is never written: everything goes to a qcow2 overlay under
 # build/dirdisc-guest. Local only (needs a guest image), so not in
-# scripts/test.sh. Env: OUT=dir, BOOT_WAIT=s, NO_KVM=1, KEEP=1.
+# scripts/test.sh. The boot is not slept out: the run knocks on the Run
+# dialog until the guest answers over COM1 (tools/guestwait.sh).
+# Env: OUT=dir, BOOT_WAIT=s (the cap on that wait, 300), NO_KVM=1, KEEP=1.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 IMG="${1:?image.qcow2}"; FAMILY="${2:-win98}"
 OUT="${OUT:-$ROOT/build/dirdisc-guest}"; mkdir -p "$OUT"
 OVL="$OUT/overlay.qcow2"; FLOPPY="$OUT/tools.img"; SRC="$OUT/shared"
@@ -88,30 +91,22 @@ fi
 QPID=$!
 Q() { python3 "$ROOT/tools/qmpc.py" "$SOCK" "$@"; }
 
-sleep "${BOOT_WAIT:-$([ "$FAMILY" = win98 ] && echo 120 || echo 45)}"
-Q screendump "$OUT/$FAMILY-boot.png" || true
-for attempt in $(seq 1 "${ATTEMPTS:-4}"); do
-  Q keys ret || true; sleep 3
-  Q keys esc || true; sleep 1
-  if [ "$FAMILY" = win98 ]; then Q keys ctrl+esc || true; sleep 3; Q keys r || true
-  else Q keys meta_l+r || true; fi
-  sleep 3
-  Q screendump "$OUT/$FAMILY-run$attempt.png" || true
-  Q type "$SHELL_CMD" || true; Q keys ret || true
-  for i in $(seq 1 30); do sleep 1; [ -s "$LOG" ] && break; done
-  [ -s "$LOG" ] && break
-  echo "attempt $attempt: nothing on the serial line yet, retrying"
-  sleep 20
-done
-for i in $(seq 1 "${WAIT_SECS:-120}"); do sleep 1; grep -q DIRDISCDONE "$LOG" 2>/dev/null && break; done
+GW_PID=$QPID
+gw_wait_sock "$SOCK" || exit 1
+# knock on the Run dialog until the guest's own output turns up on COM1
+gw_poke_until "$SOCK" "$FAMILY" "$SHELL_CMD" "${BOOT_WAIT:-300}" test -s "$LOG" || {
+  Q screendump "$OUT/$FAMILY-noshell.png" || true
+  echo "the guest never ran anything: see $OUT/$FAMILY-noshell.png and $QLOG"
+}
+gw_wait_log "$LOG" DIRDISCDONE "${WAIT_SECS:-120}" || true
 Q screendump "$OUT/$FAMILY-end.png" || true
 if [ "$FAMILY" = win98 ]; then
   # a Win98 run ends with a Start-menu shutdown, never a kill (CLAUDE.md)
   Q keys ctrl+esc || true; sleep 2; Q keys u || true; sleep 2; Q keys ret || true
-  for i in $(seq 1 90); do sleep 1; kill -0 $QPID 2>/dev/null || break; done
+  gw_wait_exit "$QPID" 90 || true
 else
   Q json '{"execute":"system_powerdown"}' >/dev/null || true
-  for i in $(seq 1 60); do sleep 1; kill -0 $QPID 2>/dev/null || break; done
+  gw_wait_exit "$QPID" 60 || true
 fi
 kill -0 $QPID 2>/dev/null && { [ -n "${KEEP:-}" ] || kill $QPID 2>/dev/null || true; }
 wait $QPID 2>/dev/null || true

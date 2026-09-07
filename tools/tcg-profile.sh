@@ -20,7 +20,9 @@
 # other, the generated-code samples mapped to guest addresses (kernel vs
 # user, hot pages, hot instructions).
 #
-# Env: OUT (build/tcg-profile/<name>), BOOT_WAIT (60 s to the desktop),
+# Env: OUT (build/tcg-profile/<name>), BOOT_WAIT (the cap on waiting for
+# the desktop, 300 s — the boot is not slept out: the run waits for the
+# guest's disks to go quiet, and on VGA=d3dpt for the adapter's mode line),
 # WARM (20 s after the command), SECS (30 s of sampling), CPU (pentium3;
 # add ,x87-fast=off etc.), MEM (512), VGA (cirrus | d3dpt = -vga none
 # -device d3dpt-vga with the executor, for the M7 images), CDROM (a disc as
@@ -42,13 +44,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 IMG="${1:?image.qcow2}"; NAME="${2:?name}"; GUEST_CMD="${3:-}"
 OUT="${OUT:-$ROOT/build/tcg-profile/$NAME}"; mkdir -p "$OUT"
 OS="$(uname -s)"
 CDROM="${CDROM:-$(ls -t "$ROOT"/guest-tools/out/guest-tools-3dfx-*.iso 2>/dev/null | head -1)}"
 CPU="${CPU:-pentium3}"; MEM="${MEM:-512}"
 PERFMAP="${PERFMAP:-1}"; [ "$PERFMAP" = 0 ] && PERFMAP=   # PERFMAP=0: no -perfmap (its writer costs ~12 % of the vCPU on a retranslation-bound game; fps runs)
-BOOT_WAIT="${BOOT_WAIT:-60}"; WARM="${WARM:-20}"; SECS="${SECS:-30}"
+BOOT_WAIT="${BOOT_WAIT:-300}"; WARM="${WARM:-20}"; SECS="${SECS:-30}"
 
 VGA_ARGS=(-vga cirrus)
 [ "${VGA:-cirrus}" = d3dpt ] && VGA_ARGS=(-vga none -device d3dpt-vga)
@@ -87,13 +90,21 @@ HMP() { Q json "{\"execute\":\"human-monitor-command\",\"arguments\":{\"command-
 finish() {
   if [ "${KEEP:-0}" = 1 ]; then echo "KEEP=1: guest left running, pid $QPID, QMP $SOCK"; return; fi
   Q json '{"execute":"system_powerdown"}' >/dev/null 2>&1 || true
-  for _ in $(seq 30); do kill -0 $QPID 2>/dev/null || break; sleep 2; done
+  gw_wait_exit "$QPID" 90 || true
   kill $QPID 2>/dev/null || true
 }
 trap finish EXIT
 
-echo "== $NAME: pid $QPID, booting ($BOOT_WAIT s)"
-sleep "$BOOT_WAIT"
+echo "== $NAME: pid $QPID, booting"
+GW_PID=$QPID
+gw_wait_sock "$SOCK" || exit 1
+# This machine has no serial line and (unless VGA=d3dpt) no adapter of ours
+# to ask, and the command below must be typed exactly once — starting a game
+# twice would wreck the sample — so the boot is not knocked on: it ends when
+# the guest stops reading its disk, which is as close to "the desktop is
+# settled" as a machine that cannot answer questions gets (tools/guestwait.sh).
+[ "${VGA:-cirrus}" = d3dpt ] && { gw_wait_log "$LOG" "linear mode on" "$BOOT_WAIT" || true; }
+gw_wait_quiet "$SOCK" "$BOOT_WAIT" 8 || true
 Q screendump "$OUT/desktop.png" >/dev/null || true
 if [ -n "$GUEST_CMD" ]; then
   Q keys esc; sleep 1; Q keys meta_l+r; sleep 3

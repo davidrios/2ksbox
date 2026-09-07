@@ -24,7 +24,10 @@
 # and logs (default build/xp-driver-test), NO_KVM=1, CPU=pentium3 (the KVM CPU model), GAME_ISO=game.iso (the
 # game disc takes the CD-ROM drive the game was installed from, D:; the
 # driver ISO moves to the next drive, F: after the E: scratch), and for `cmd` / `bat`:
-# CMD_WAIT=s (one wait, default 30) or SHOTS=n SHOT_EVERY=s (n screendumps
+# CMD_WAIT=s (the cap on waiting for the command to say it is done over
+# COM1, default 300; BOOT_WAIT=s is the cap on finding the shell at all,
+# REBOOT_WAIT=s the cap on `install`'s restart — none of the three is a
+# sleep any more, see tools/guestwait.sh) or SHOTS=n SHOT_EVERY=s (n screendumps
 # cmd-01.png … every s seconds — for watching a game start; SHOT_KEYS="26:esc"
 # presses a key right before screendump n). Needs
 # guest-tools/build-driver.sh run first (guest-tools/out/d3dpt-driver.iso),
@@ -34,6 +37,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|d3d7|d3dgame8|shtest|cktest|ebtest|cmd|bat}"; shift 2
 OUT="${OUT:-$ROOT/build/xp-driver-test}"; mkdir -p "$OUT"
 ISO="$ROOT/guest-tools/out/d3dpt-driver.iso"
@@ -52,7 +56,7 @@ stage_bat() {  # the Run dialog truncates long lines: stage a batch file on the 
 if [ "$MODE" = ddtest ]; then
   printf '%s\n' '@echo off' 'cd /d E:\' 'for %%b in (8 16 32) do (' \
     '  D:\DRIVER\DDTEST.EXE 640 480 %%b 300' '  copy ddtest.log E:\dd%%b.log > nul' '  copy ddtest.bmp E:\dd%%b.bmp > nul' ')' \
-    'D:\DRIVER\DDTEST.EXE 640 480 32 200 -windowed' 'copy ddtest.log E:\ddwin.log > nul' > "$OUT/ddtest.bat"
+    'D:\DRIVER\DDTEST.EXE 640 480 32 200 -windowed' 'copy ddtest.log E:\ddwin.log > nul' 'echo DDDONE > COM1' > "$OUT/ddtest.bat"
   stage_bat "$OUT/ddtest.bat"
 fi
 if [ "$MODE" = d3dgame8 ]; then
@@ -62,13 +66,20 @@ if [ "$MODE" = d3dgame8 ]; then
   [ -f "$FULL_ISO" ] || { echo "no guest-tools ISO (TESTS\\D3DGAME8.EXE): run guest-tools/build-wrappers.sh"; exit 1; }
   ISO="$FULL_ISO"
   printf '%s\n' '@echo off' 'mkdir E:\G8' 'copy D:\TESTS\D3DGAME8.EXE E:\G8\ > nul' 'cd /d E:\G8' \
-    'D3DGAME8.EXE -frames 600 -dump 300 E:\G8.BMP' 'copy d3dgame8.log E:\g8.log > nul' 'echo done > E:\G8DONE.TXT' > "$OUT/g8.bat"
+    'D3DGAME8.EXE -frames 600 -dump 300 E:\G8.BMP' 'copy d3dgame8.log E:\g8.log > nul' 'echo done > E:\G8DONE.TXT' 'echo G8DONE > COM1' > "$OUT/g8.bat"
   stage_bat "$OUT/g8.bat"
 fi
 SOCK="$OUT/qmp.sock"; rm -f "$SOCK"
 ACCEL=(-cpu pentium3)
 [ -e /dev/kvm ] && [ -z "${NO_KVM:-}" ] && ACCEL=(-accel kvm -cpu "${CPU:-host}")   # CPU=pentium3: Max Payne's JPEG decoder mis-decodes on a modern family
 LOG="$OUT/qemu-$MODE.log"
+# The guest's own line out. The scratch disk cannot be asked anything while
+# the guest is running — XP's lazy writer can hold a small FAT write for
+# minutes (tools/xp-cdimage-test.sh found that the hard way) — so every
+# command this script types ends by echoing a marker to COM1, and the run
+# waits for the marker instead of sleeping for as long as the command has
+# ever taken.
+SER="$OUT/serial-$MODE.log"; rm -f "$SER"
 VGA_ARGS=(-vga none -device "d3dpt-vga,ddflags=${DDFLAGS:-0}")
 [ -n "${VGA:-}" ] && VGA_ARGS=(-vga "$VGA")     # VGA=cirrus: the control run on XP's inbox driver (no Direct3D)
 CD2=()
@@ -79,45 +90,69 @@ export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.
 "$ROOT/build/qemu/qemu-system-i386" -L "$ROOT/qemu/pc-bios" "${ACCEL[@]}" -machine pc -m 512 \
   -hda "$IMG" -hdb "$SCRATCH" -cdrom "$CD1" "${CD2[@]}" "${VGA_ARGS[@]}" \
   -net none -usb -device usb-tablet -display none -qmp "unix:$SOCK,server,nowait" \
-  -serial none -monitor none ${QEMU_EXTRA:-} > "$LOG" 2>&1 &
+  -serial "file:$SER" -monitor none ${QEMU_EXTRA:-} > "$LOG" 2>&1 &
 QPID=$!
 Q() { python3 "$ROOT/tools/qmpc.py" "$SOCK" "$@"; }
 run() {  # one chained guest command line in a console that stays open
   Q keys esc; sleep 1; Q keys meta_l+r; sleep 2
+  Q type ' '; Q keys backspace          # the first key after the chord is lost, and Run opens on its last command
   Q type "cmd /k $1"; Q keys ret
+}
+run_until() {  # <marker> <cap> <command line> — run it, and wait for it to say it is done
+  local mark=$1 cap=$2; shift 2
+  run "$* & echo $mark > COM1"
+  gw_wait_log "$SER" "$mark" "$cap" || true
 }
 pull() { mcopy -n -i "$SCRATCH@@1048576" "::/$1" "$OUT/$1" 2>/dev/null && echo "-- $1" && cat "$OUT/$1"; }
 finish() {
   Q screendump "$OUT/$MODE-end.png" || true
   Q json '{"execute":"system_powerdown"}' >/dev/null || true
-  sleep 20; wait $QPID || true
+  gw_wait_exit "$QPID" 90 || true
+  kill $QPID 2>/dev/null || true; wait $QPID 2>/dev/null || true
   echo "---- $LOG (device side)"; grep -v "^WARNING" "$LOG" | sed 's/qemu-system-i386: info: //' | tail -40
 }
 
-sleep "${BOOT_WAIT:-45}"
+GW_PID=$QPID
+gw_wait_sock "$SOCK" || exit 1
+# No fixed boot sleep: knock on the Run dialog until the guest runs
+# something and says so on COM1 (tools/guestwait.sh). `install` is the mode
+# where the driver is not in the image yet, so there is no adapter line to
+# wait for either — the knocking is what works on every mode.
+gw_poke_until "$SOCK" xp 'cmd /c echo SHELLUP > COM1' "${BOOT_WAIT:-300}" grep -q SHELLUP "$SER" || {
+  Q screendump "$OUT/$MODE-noshell.png" || true
+  echo "the guest never reached its shell: see $OUT/$MODE-noshell.png and $LOG"
+}
 case "$MODE" in
   install)
-    run 'D:\DRIVER\DRVINST.EXE'
-    sleep 15; Q screendump "$OUT/install-done.png"
+    # a shorter cap than the rest: if DRVINST ever turns out not to return,
+    # the restart below still works — cmd buffers the typed line until it does
+    run_until DRVDONE "${CMD_WAIT:-180}" 'D:\DRIVER\DRVINST.EXE'
+    Q screendump "$OUT/install-done.png"
+    # the count to beat: the machine has to program the desktop mode once
+    # more, after the restart, and that — not a screendump of a desktop
+    # that looks the same either way — is the proof it came back on our
+    # driver (nothing at all here on the first install: the count is 0)
+    seen=$(grep -c "linear mode on" "$LOG" 2>/dev/null || true)
+    want=$(( ${seen:-0} + 1 ))
     Q type 'shutdown -r -t 0'; Q keys ret
-    sleep 60; Q screendump "$OUT/install-rebooted.png"
+    gw_wait_count "$LOG" "linear mode on" "$want" "${REBOOT_WAIT:-300}" || true
+    Q screendump "$OUT/install-rebooted.png"
     finish ;;
   ddtest)
     run 'E:\RUN.BAT'                                        # 8 / 16 / 32 bpp chains, then windowed (staged above)
     sleep 5; Q screendump "$OUT/ddtest-fullscreen.png"      # the 8 bpp chain: the palette shows in the dump
-    sleep 55
+    gw_wait_log "$SER" DDDONE "${CMD_WAIT:-300}" || true
     finish
     pull dd8.log; pull dd16.log; pull dd32.log; pull ddwin.log
     for b in 8 16 32; do mcopy -n -i "$SCRATCH@@1048576" "::/dd$b.bmp" "$OUT/dd$b.bmp" 2>/dev/null || true; done ;;
   modes)
-    run 'D:\DRIVER\SETMODE.EXE 1024 768 32 85 & D:\DRIVER\SETMODE.EXE 800 600 16 75 & D:\DRIVER\SETMODE.EXE 1024 768 32 85 & D:\DRIVER\SETMODE.EXE > E:\modes.log'
-    sleep 25
+    run_until MODESDONE "${CMD_WAIT:-180}" 'D:\DRIVER\SETMODE.EXE 1024 768 32 85 & D:\DRIVER\SETMODE.EXE 800 600 16 75 & D:\DRIVER\SETMODE.EXE 1024 768 32 85 & D:\DRIVER\SETMODE.EXE > E:\modes.log'
     finish
     pull modes.log ;;
   d3d7)
-    run 'D:\DRIVER\D3D7TEST.EXE 640 480 32 300 & copy d3d7test.log E:\d3d7.log & copy d3d7test.bmp E:\d3d7.bmp'
+    run 'D:\DRIVER\D3D7TEST.EXE 640 480 32 300 & copy d3d7test.log E:\d3d7.log & copy d3d7test.bmp E:\d3d7.bmp & echo D3D7DONE > COM1'
     sleep 8; Q screendump "$OUT/d3d7-fullscreen.png"
-    sleep 30
+    gw_wait_log "$SER" D3D7DONE "${CMD_WAIT:-300}" || true
     finish
     pull d3d7.log
     mcopy -n -i "$SCRATCH@@1048576" ::/d3d7.bmp "$OUT/d3d7.bmp" 2>/dev/null || true
@@ -128,7 +163,9 @@ case "$MODE" in
     fi ;;
   d3dgame8)
     run 'E:\RUN.BAT'
-    for _ in $(seq 40); do sleep 3; mcopy -n -i "$SCRATCH@@1048576" ::/G8DONE.TXT "$OUT/G8DONE.TXT" 2>/dev/null && break; done
+    # COM1, not G8DONE.TXT on the scratch disk: the file is written the
+    # moment the run ends but XP's lazy writer decides when the host sees it
+    gw_wait_log "$SER" G8DONE "${CMD_WAIT:-300}" || true
     sleep 2; Q screendump "$OUT/d3dgame8-end.png" || true
     finish
     pull g8.log
@@ -139,24 +176,24 @@ case "$MODE" in
         && echo "-- d3dgame8: frame within budget of the native d3d9 frame" || echo "-- d3dgame8: FRAME DIFFERS ($OUT/g8-diff.bmp)"
     else echo "-- d3dgame8: no frame ($OUT/G8.BMP) or no native oracle (build/test/g9-native.bmp: run scripts/test.sh host)"; fi ;;
   shtest)
-    run 'cd /d %TEMP% & D:\DRIVER\SHTEST.EXE & copy shtest.log E:\'
+    run 'cd /d %TEMP% & D:\DRIVER\SHTEST.EXE & copy shtest.log E:\ & echo SHDONE > COM1'
     sleep 8; Q screendump "$OUT/shtest-window.png" || true
-    sleep 17
+    gw_wait_log "$SER" SHDONE "${CMD_WAIT:-300}" || true
     finish
     pull shtest.log
     if grep -q 'shtest: [1-9][0-9]* cases, 0 failed' "$OUT/shtest.log" 2>/dev/null; then echo "-- shtest: PASS"; else echo "-- shtest: FAIL (see $OUT/shtest.log and the device log)"; fi ;;
   cktest)
-    run 'cd /d %TEMP% & D:\DRIVER\CKTEST.EXE & copy cktest.log E:\ & copy ck*.bmp E:\'
+    run 'cd /d %TEMP% & D:\DRIVER\CKTEST.EXE & copy cktest.log E:\ & copy ck*.bmp E:\ & echo CKDONE > COM1'
     sleep 8; Q screendump "$OUT/cktest-fullscreen.png" || true
-    sleep 17
+    gw_wait_log "$SER" CKDONE "${CMD_WAIT:-300}" || true
     finish
     pull cktest.log
     for n in 1 2 3 4 5 6; do mcopy -n -i "$SCRATCH@@1048576" "::/ck$n.bmp" "$OUT/ck$n.bmp" 2>/dev/null || true; done
     if grep -q 'cktest: [1-9][0-9]* cases, 0 failed' "$OUT/cktest.log" 2>/dev/null; then echo "-- cktest: PASS"; else echo "-- cktest: FAIL (see $OUT/cktest.log and the device log)"; fi ;;
   ebtest)
-    run "cd /d %TEMP% & D:\\DRIVER\\EBTEST.EXE ${*:-} & copy ebtest.log E:\\ & copy eb*.bmp E:\\"    # extra args: e.g. -rgb, the software-device control
+    run "cd /d %TEMP% & D:\\DRIVER\\EBTEST.EXE ${*:-} & copy ebtest.log E:\\ & copy eb*.bmp E:\\ & echo EBDONE > COM1"    # extra args: e.g. -rgb, the software-device control
     sleep 8; Q screendump "$OUT/ebtest-fullscreen.png" || true
-    sleep 17
+    gw_wait_log "$SER" EBDONE "${CMD_WAIT:-300}" || true
     finish
     pull ebtest.log
     for n in 1 2 3 4 5 6; do mcopy -n -i "$SCRATCH@@1048576" "::/eb$n.bmp" "$OUT/eb$n.bmp" 2>/dev/null || true; done

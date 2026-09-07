@@ -19,11 +19,16 @@
 # build/cdshelf-test. CDSHELF.EXE rides in on a floppy so its drive is A: on
 # both families, and the guest is driven through the Run dialog over QMP.
 #
-# Env: OUT=dir (default build/cdshelf-test), BOOT_WAIT=s, NO_KVM=1,
-# KEEP=1 (leave the VM running on failure).
+# Nothing here sleeps out the boot: the run knocks on the Run dialog
+# until the guest answers over COM1 (tools/guestwait.sh), and BOOT_WAIT
+# is only the cap on that wait.
+#
+# Env: OUT=dir (default build/cdshelf-test), BOOT_WAIT=s (cap, 300),
+# NO_KVM=1, KEEP=1 (leave the VM running on failure).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 IMG="${1:?image.qcow2}"; FAMILY="${2:-xp}"
 OUT="${OUT:-$ROOT/build/cdshelf-test}"; mkdir -p "$OUT"
 OVL="$OUT/overlay.qcow2"
@@ -151,42 +156,27 @@ fi
 QPID=$!
 Q() { python3 "$ROOT/tools/qmpc.py" "$SOCK" "$@"; }
 
-sleep "${BOOT_WAIT:-$([ "$FAMILY" = win98 ] && echo 120 || echo 60)}"
-Q screendump "$OUT/$FAMILY-boot.png" || true
+GW_PID=$QPID
+gw_wait_sock "$SOCK" || exit 1
 # Typing into the Run dialog is the only way in, and it can miss: the shell
 # may still be starting, or (Win98, first boot of a fresh overlay) an
-# "illegal operation" box may be in front of it. So each attempt dismisses
-# whatever is there, opens Run, types, and then waits to see whether any
-# output actually arrived before trying again. The screendump of every
-# attempt is kept — it is the only way to see what the guest was showing.
-for attempt in $(seq 1 "${ATTEMPTS:-4}"); do
-  Q keys ret || true; sleep 3          # close a message box, if any
-  Q keys esc || true; sleep 1
-  if [ "$FAMILY" = win98 ]; then Q keys ctrl+esc || true; sleep 3; Q keys r || true
-  else Q keys meta_l+r || true; fi
-  sleep 3
-  Q screendump "$OUT/$FAMILY-run$attempt.png" || true
-  Q type "$SHELL_CMD" || true; Q keys ret || true
-  for i in $(seq 1 30); do
-    sleep 1
-    [ -s "$LOG" ] && break
-  done
-  [ -s "$LOG" ] && break
-  echo "attempt $attempt: nothing on the serial line yet, retrying"
-  sleep 20
-done
-for i in $(seq 1 "${WAIT_SECS:-150}"); do
-  sleep 1
-  grep -q CDSHELFDONE "$LOG" 2>/dev/null && break
-done
+# "illegal operation" box may be in front of it. So keep knocking until the
+# guest's own output turns up on COM1 — that is what says the shell is
+# there, and it says it the second it is true rather than after a sleep
+# long enough for the slowest machine anyone has run this on.
+gw_poke_until "$SOCK" "$FAMILY" "$SHELL_CMD" "${BOOT_WAIT:-300}" test -s "$LOG" || {
+  Q screendump "$OUT/$FAMILY-noshell.png" || true
+  echo "the guest never ran anything: see $OUT/$FAMILY-noshell.png and $QLOG"
+}
+gw_wait_log "$LOG" CDSHELFDONE "${WAIT_SECS:-150}" || true
 Q screendump "$OUT/$FAMILY-end.png" || true
 if [ "$FAMILY" = win98 ]; then
   # a Win98 run ends with a Start-menu shutdown, never a kill (CLAUDE.md)
   Q keys ctrl+esc || true; sleep 2; Q keys u || true; sleep 2; Q keys ret || true
-  for i in $(seq 1 90); do sleep 1; kill -0 $QPID 2>/dev/null || break; done
+  gw_wait_exit "$QPID" 90 || true
 else
   Q json '{"execute":"system_powerdown"}' >/dev/null || true
-  for i in $(seq 1 60); do sleep 1; kill -0 $QPID 2>/dev/null || break; done
+  gw_wait_exit "$QPID" 60 || true
 fi
 if kill -0 $QPID 2>/dev/null; then
   [ -n "${KEEP:-}" ] || { kill $QPID 2>/dev/null || true; }

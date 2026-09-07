@@ -28,7 +28,14 @@
 #   colours     the screendump's colour count: 16 or fewer means Windows
 #               fell back to VGA and the driver is not driving the screen.
 #
-# `BOOT_WAIT=<s>` buys more time on a slow run, `SHOTS=<s>` adds a screendump
+# The boot is not slept out: the adapter says `linear mode on` the moment the
+# driver programs the desktop mode, so the run waits for that and then lets
+# the desktop paint for SETTLE seconds. A driver that never loads never says
+# it, and then — and only then — the whole BOOT_WAIT is spent before the run
+# reports what it found.
+#
+# `BOOT_WAIT=<s>` is that cap (it buys more time on a slow run), `SETTLE=<s>`
+# is the paint time after the mode switch, `SHOTS=<s>` adds a screendump
 # every <s> seconds (`t<n>.png` in the output directory) so that a screen
 # which is merely filling in slowly can be told from one that stopped
 # changing, and `OUT=` moves the outputs.
@@ -39,6 +46,7 @@ set -euo pipefail
 IMG="${1:?usage: win98-driver-test.sh <win98.qcow2> [boot|install]}"
 WHAT="${2:-boot}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 OUT="${OUT:-$ROOT/build/w98}"
 DRV="$ROOT/guest-tools/out/driver9x"
 QEMU="${QEMU_BIN:-$ROOT/build/qemu/qemu-system-i386}"
@@ -196,14 +204,26 @@ shots() {
 # The boot, in SHOTS-second (or single-jump) steps, with the BARs read at
 # the three moments that have ever differed.
 sleep 6;  bars bios
-step=${SHOTS:-24}
+GW_PID=$VM
+step=${SHOTS:-8}
 t=6
+mode_at=
 while [ $t -lt "$BOOT_WAIT" ]; do
   n=$(( t + step > BOOT_WAIT ? BOOT_WAIT - t : step ))
   sleep $n; t=$(( t + n ))
   [ $t -ge 30 ] && [ $(( t - n )) -lt 30 ] && bars 30s
   shots $t
+  gw_dead && { echo "==> the guest exited after ${t}s"; break; }
+  # the driver programming the mode is the milestone; the desktop still has
+  # to paint, and SETTLE is the only part of this that is a guess
+  if [ -z "$mode_at" ] && grep -q "linear mode on" "$OUT/out/stderr.log" 2>/dev/null; then
+    mode_at=$t
+    echo "==> the driver programmed the mode after ${t}s; ${SETTLE:-25}s to paint"
+    sleep "${SETTLE:-25}"; t=$(( t + ${SETTLE:-25} )); shots $t
+    break
+  fi
 done
+[ -n "$mode_at" ] || echo "==> no 'linear mode on' in ${t}s: the driver never programmed the mode"
 bars boot
 
 # **Let the install finish.** PnP puts the driver in the registry and then
@@ -220,8 +240,14 @@ if [ "$WHAT" = install ]; then
   # The post-install boot is much slower than an ordinary one — PnP
   # re-enumerates and the registry is rebuilt — so it gets its own, longer
   # budget. A run that cuts it short reports "the driver did not load" about
-  # a machine that is still showing the boot logo.
-  sleep "${RESTART_WAIT:-$((BOOT_WAIT * 2))}"
+  # a machine that is still showing the boot logo. It waits for the mode to
+  # be programmed a second time (the first was this boot's), and only a
+  # driver that never loads spends the whole budget.
+  seen=$(grep -c "linear mode on" "$OUT/out/stderr.log" 2>/dev/null || true)
+  want=$(( ${seen:-0} + 1 ))
+  if gw_wait_count "$OUT/out/stderr.log" "linear mode on" "$want" "${RESTART_WAIT:-$((BOOT_WAIT * 2))}"; then
+    sleep "${SETTLE:-25}"
+  fi
   bars restart
 fi
 

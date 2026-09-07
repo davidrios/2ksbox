@@ -24,6 +24,7 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+. "$ROOT/tools/guestwait.sh"
 IMG="${1:?xp image}"; DISC="${2:?disc image}"; REF="${3:?reference dir}"; OUT="${4:-$ROOT/build/test/cdimage-xp}"
 mkdir -p "$OUT"
 for t in mcopy mmd; do command -v $t >/dev/null || { echo "needs $t"; exit 2; }; done
@@ -113,13 +114,11 @@ teardown() {
 fail() { echo "FAIL: $*"; teardown fail; exit 1; }
 for _ in $(seq 50); do [ -S "$SOCK" ] && break; sleep 0.2; done
 [ -S "$SOCK" ] || { tail -5 "$qlog"; fail "no QMP socket"; }
-deadline=$(( $(date +%s) + ${BOOT_TIMEOUT:-300} )); t0=$(date +%s)
-sleep 25
-while ! started; do
-  if [ "$(date +%s)" -ge "$deadline" ] || ! kill -0 "$QEMU_PID" 2>/dev/null; then tail -5 "$qlog"; fail "RUN.BAT did not start within the timeout"; fi
-  qmp keys meta_l+r; sleep 1; qmp keys ctrl+a; qmp type 'E:\RUN.BAT'; qmp keys ret
-  for _ in $(seq 10); do started && break; sleep 1; done
-done
+t0=$(date +%s); GW_PID=$QEMU_PID
+# no head start: the knocking begins at once and stops the moment the guest
+# answers (tools/guestwait.sh), which on this image is around half a minute
+gw_poke_until "$SOCK" xp 'E:\RUN.BAT' "${BOOT_TIMEOUT:-300}" started \
+  || { tail -5 "$qlog"; fail "RUN.BAT did not start within the timeout"; }
 echo "RUN.BAT started after $(( $(date +%s) - t0 )) s"
 deadline=$(( $(date +%s) + 600 ))
 while ! finished; do

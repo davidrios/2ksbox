@@ -11,7 +11,9 @@
 # guest's writes never reach the file), types the command over QMP,
 # redirects the console into A:\SSEBENCH.TXT, polls the floppy image for
 # the file, powers down and pulls it out with mcopy. Env: OUT=dir
-# (default build/xp-ssebench), BOOT_WAIT=seconds (45), BENCH_WAIT=max
+# (default build/xp-ssebench), BOOT_WAIT=seconds (the cap on waiting for
+# the guest's shell, which is knocked on rather than slept out: 300),
+# BENCH_WAIT=max
 # seconds to wait for the result (900), GUEST_ISO=path, ITER=n (SSEBENCH
 # -iter n, default 1), ARGS='-only convert' (extra SSEBENCH arguments). Prints
 # the SSE slow-path counters (info registers) before and after the run.
@@ -19,6 +21,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 IMG="${1:?image.qcow2}"; shift
 CONFIGS=("$@"); [ ${#CONFIGS[@]} -gt 0 ] || CONFIGS=(pentium3 pentium3,sse-fast=off pentium3,sse-fast=off,x87-fast=off)
 OUT="${OUT:-$ROOT/build/xp-ssebench}"; mkdir -p "$OUT"
@@ -38,8 +41,17 @@ for cfg in "${CONFIGS[@]}"; do
     -display none -qmp "unix:$SOCK,server,nowait" -serial none -monitor none > "$LOG" 2>&1 &
   QPID=$!
   Q() { python3 "$ROOT/tools/qmpc.py" "$SOCK" "$@"; }
-  echo "== -cpu $cfg: booting (${BOOT_WAIT:-45} s)"
-  sleep "${BOOT_WAIT:-45}"
+  echo "== -cpu $cfg: booting"
+  GW_PID=$QPID
+  gw_wait_sock "$SOCK" || exit 1
+  # No serial port on this machine, by decision — it is a benchmark, and the
+  # measured machine stays the one the numbers were taken on. So the proof
+  # that the shell is there is a marker on the same floppy the results come
+  # back on: a removable drive, which XP writes through rather than holding
+  # in its lazy writer (tools/guestwait.sh).
+  gw_poke_until "$SOCK" xp 'cmd /c echo ready > A:\READY.TXT' "${BOOT_WAIT:-300}" \
+    mcopy -n -o -i "$FDD" ::/READY.TXT "$OUT/.ready-$tag.txt" \
+    || echo "   the guest never reached its shell (see $LOG)"
   Q keys esc; sleep 1; Q keys meta_l+r; sleep 4
   Q type ' '; Q keys backspace          # the first key after the chord is lost
   Q json '{"execute":"human-monitor-command","arguments":{"command-line":"info registers"}}' | grep -o 'SSE-fast[^\\]*' > "$OUT/stat-$tag-before.txt" || true
@@ -57,7 +69,7 @@ for cfg in "${CONFIGS[@]}"; do
   Q json '{"execute":"human-monitor-command","arguments":{"command-line":"info registers"}}' | grep -o 'SSE-fast[^\\]*' > "$OUT/stat-$tag-after.txt" || true
   echo "   slow paths before: $(cat "$OUT/stat-$tag-before.txt")"; echo "   slow paths after:  $(cat "$OUT/stat-$tag-after.txt")"
   Q json '{"execute":"system_powerdown"}' >/dev/null || true
-  for _ in $(seq 40); do kill -0 $QPID 2>/dev/null || break; sleep 2; done
+  gw_wait_exit "$QPID" 120 || true
   kill $QPID 2>/dev/null || true; wait $QPID 2>/dev/null || true; rm -f "$SOCK"
   if mcopy -n -i "$FDD" ::/SSEBENCH.TXT "$OUT/ssebench-$tag.txt" 2>/dev/null; then
     mcopy -n -i "$FDD" ::/SSEBENC2.TXT "$OUT/ssebench-$tag-2.txt" 2>/dev/null || true

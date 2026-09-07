@@ -19,6 +19,7 @@
 # Env: FIFA_ISO (default /mnt/data2/david/Downloads/oldstuff/FIFA2000.ISO).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 MODE="${1:?kvm|tcg}"; IMG="${2:?image.qcow2}"; OUT="${3:-$ROOT/build/xp-driver-test/fifa-match-$MODE}"
 FIFA_ISO="${FIFA_ISO:-/mnt/data2/david/Downloads/oldstuff/FIFA2000.ISO}"
 ISO="$ROOT/guest-tools/out/d3dpt-driver.iso"
@@ -68,7 +69,13 @@ lclick() {  # x y (of 640x480) wait name: a 1.5 s left click, the menus ignore s
   sleep "$3"; Q screendump "$OUT/$4.png"
 }
 t0=$(date +%s); T() { echo "[$(( $(date +%s) - t0 ))s] $*"; }
-sleep $(( 45 * SLOW + 5 )); T "desktop"
+GW_PID=$QPID
+gw_wait_sock "$SOCK" || exit 1
+# the adapter says when the display driver has the desktop; only the
+# painting after it is a guess
+gw_wait_log "$OUT/qemu.log" "linear mode on" $(( 150 * SLOW )) \
+  || { echo "the desktop never came up on our driver:"; tail -5 "$OUT/qemu.log"; exit 1; }
+sleep $(( 8 * SLOW )); T "desktop"
 n0=$(grep -c "linear mode on (640x480" "$OUT/qemu.log")
 Q keys esc; sleep 1; Q keys meta_l+r; sleep 2; Q type 'cmd /k E:\RUN.BAT'; Q keys ret
 # bounded: QEMU can refuse to start at all (another process holding the

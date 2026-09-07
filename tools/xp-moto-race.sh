@@ -27,7 +27,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMG="${1:?image.qcow2}"; NAME="${2:?name}"; BIN="${3:-$ROOT/build/qemu/qemu-system-i386}"
 MOTO="${MOTO:-$HOME/vms/Moto.Racer.1997.DSI.CD/MOTO_RACER.mds}"; FIFA="${FIFA:-$HOME/vms/FIFA2000.ISO}"
 OUT="$ROOT/build/tcg-profile/$NAME"; mkdir -p "$OUT"
-KEEP=1 QEMU_BIN="$BIN" CDS="$MOTO:$FIFA" VGA=d3dpt MEM=1024 BOOT_WAIT="${BOOT_WAIT:-120}" WARM=25 SECS=1 \
+KEEP=1 QEMU_BIN="$BIN" CDS="$MOTO:$FIFA" VGA=d3dpt MEM=1024 BOOT_WAIT="${BOOT_WAIT:-300}" WARM=25 SECS=1 \
   "$ROOT/tools/tcg-profile.sh" "$IMG" "$NAME" 'cmd /k cd /d C:\Arquiv~1\MotoRacer & MOTO.EXE' > "$OUT/run.log" 2>&1
 SOCK=$(grep -o '/tmp/tcgprof-[0-9]*.sock' "$OUT/run.log" | head -1)
 QPID=$(grep -o 'pid [0-9]*' "$OUT/run.log" | head -1 | cut -d' ' -f2)

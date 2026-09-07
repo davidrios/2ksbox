@@ -26,6 +26,7 @@
 # default host), DDFLAGS (the device's bisection knob).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 MODE="${1:?install|play|vm|stop}"
 SOCK=/tmp/xp-moto.sock
 MOTO_MDS="${MOTO_MDS:-/mnt/data2/david/Downloads/oldstuff/Moto.Racer.1997.DSI.CD/MOTO_RACER.mds}"
@@ -57,7 +58,8 @@ if [ "$MODE" = vm ]; then
   echo "VM started: log $OUT/qemu.log, QMP $SOCK (python3 tools/qmpc.py $SOCK screendump x.png)"; exit 0
 fi
 
-until grep -q "linear mode on (800x600x" "$OUT/qemu.log" 2>/dev/null; do sleep 2; done   # the desktop, 32 or 16 bpp
+gw_wait_log "$OUT/qemu.log" "linear mode on (800x600x" "${DESKTOP_WAIT:-300}" \
+  || { echo "the desktop never came up on our driver:"; tail -5 "$OUT/qemu.log"; exit 1; }   # the desktop, 32 or 16 bpp
 sleep 12; T "desktop"
 Q keys esc
 if [ "$MODE" = install ]; then
@@ -76,7 +78,8 @@ fi
 # the game wants a 16 bpp desktop ("16 bit screen mode required!" otherwise)
 Q keys meta_l+r; sleep 2; Q type 'F:\DRIVER\SETMODE.EXE 800 600 16'; Q keys ret; sleep 5
 Q keys meta_l+r; sleep 2; Q type 'cmd /c cd /d "C:\Arquivos de programas\MotoRacer" & MOTO.EXE'; Q keys ret
-until grep -q "linear mode on (640x480x16" "$OUT/qemu.log"; do sleep 2; done
+gw_wait_log "$OUT/qemu.log" "linear mode on (640x480x16" "${GAME_WAIT:-300}" \
+  || { echo "the game never switched to 640x480x16:"; tail -5 "$OUT/qemu.log"; exit 1; }
 T "game up at 640x480x16"
 # The menus, driven by what the screen shows (tools/motoracer-state.py
 # classifies a screendump): the title takes an Enter (a click on it starts

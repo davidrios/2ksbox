@@ -23,10 +23,11 @@
 # The image is never written: everything goes to a qcow2 overlay under
 # build/glide-test. Win98 runs emulated by decision (CLAUDE.md: under KVM
 # this image's Explorer dies at startup and there is no Start menu to type
-# into). Even so this image boots in well under a minute under TCG, so the
-# whole run is about four minutes; the waits below are that plus slack.
+# into). Even so this image boots in well under a minute under TCG, and
+# nothing below sleeps out a boot: each one ends when the guest says so
+# (tools/guestwait.sh), and BOOT_WAIT / WARMUP_WAIT are only the caps.
 #
-# Env: OUT=dir, BOOT_WAIT=s, WARMUP_WAIT=s, NO_WARMUP=1, RES=7 (the Glide
+# Env: OUT=dir, BOOT_WAIT=s (cap, 300), WARMUP_WAIT=s (cap, 300), NO_WARMUP=1, RES=7 (the Glide
 # resolution, glidewnd.c's table), REUSE=1 (keep the last overlay, which
 # already has the wrapper installed and Win98 settled: halves the run),
 # DUMP_SEQ=n (the player writes its own shaded frame #n to frame.png and
@@ -35,6 +36,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 IMG="${1:?image.qcow2}"
 OUT="${OUT:-$ROOT/build/glide-test}"; mkdir -p "$OUT"
 OVL="$OUT/overlay.qcow2"
@@ -116,14 +118,19 @@ HW=(-cpu pentium3 -machine pc -m 256 -vga cirrus
 # needs no shell; the second boot comes up settled. Bare QEMU is fine for
 # this one: nothing 3D happens.
 if [ -z "${NO_WARMUP:-}" ]; then
-  echo "==> warm-up boot (${WARMUP_WAIT:-90}s)"
+  echo "==> warm-up boot"
   "$QEMU" -L "$ROOT/qemu/pc-bios" "${HW[@]}" -hda "$OVL" -boot c \
     -display none -qmp "unix:$SOCK,server,nowait" -monitor none \
     > "$OUT/warmup.log" 2>&1 &
   WPID=$!
-  sleep "${WARMUP_WAIT:-90}"
+  # The shell is the one thing this boot cannot be asked about — Explorer
+  # dying is what it exists to absorb — so it waits on the disks: the
+  # re-detection reads from end to end, and when the reads stop it is over.
+  GW_PID=$WPID
+  gw_wait_sock "$SOCK" && gw_wait_quiet "$SOCK" "${WARMUP_WAIT:-300}" 10 || true
   python3 "$ROOT/tools/qmpc.py" "$SOCK" json '{"execute":"system_powerdown"}' >/dev/null 2>&1 || true
-  for _ in $(seq 1 120); do sleep 1; kill -0 $WPID 2>/dev/null || break; done
+  gw_wait_exit "$WPID" 120 || true
+  GW_PID=
   kill $WPID 2>/dev/null || true; wait $WPID 2>/dev/null || true
   rm -f "$SOCK"
 fi
@@ -142,32 +149,20 @@ fi
 QPID=$!
 Q() { python3 "$ROOT/tools/qmpc.py" "$SOCK" "$@"; }
 
-sleep "${BOOT_WAIT:-60}"
-Q screendump "$OUT/boot.png" || true
+GW_PID=$QPID
+gw_wait_sock "$SOCK" || exit 1
 # Typing into the Run dialog is the only way in and it can miss (the shell
-# may still be starting, or a message box may be in front of it), so each
-# attempt dismisses whatever is there, opens Run, types, and waits to see
-# whether any output actually arrived.
-for attempt in $(seq 1 "${ATTEMPTS:-4}"); do
-  Q keys ret || true; sleep 3
-  Q keys esc || true; sleep 1
-  Q keys ctrl+esc || true; sleep 3; Q keys r || true
-  sleep 3
-  Q screendump "$OUT/run$attempt.png" || true
-  Q type 'command /c A:\RUN.BAT' || true; Q keys ret || true
-  for i in $(seq 1 30); do sleep 1; [ -s "$LOG" ] && break; done
-  [ -s "$LOG" ] && break
-  echo "attempt $attempt: nothing on the serial line yet, retrying"
-  sleep 20
-done
-for i in $(seq 1 "${WAIT_SECS:-420}"); do
-  sleep 1
-  grep -q GLIDEDONE "$LOG" 2>/dev/null && break
-done
+# may still be starting, or a message box may be in front of it), so keep
+# knocking until the guest's own output turns up on COM1.
+gw_poke_until "$SOCK" win98 'command /c A:\RUN.BAT' "${BOOT_WAIT:-300}" test -s "$LOG" || {
+  Q screendump "$OUT/noshell.png" || true
+  echo "the guest never ran anything: see $OUT/noshell.png and $QLOG"
+}
+gw_wait_log "$LOG" GLIDEDONE "${WAIT_SECS:-420}" || true
 Q screendump "$OUT/end.png" || true
 # a Win98 run ends with a Start-menu shutdown, never a kill (CLAUDE.md)
 Q keys ctrl+esc || true; sleep 2; Q keys u || true; sleep 2; Q keys ret || true
-for i in $(seq 1 90); do sleep 1; kill -0 $QPID 2>/dev/null || break; done
+gw_wait_exit "$QPID" 90 || true
 kill $QPID 2>/dev/null || true; wait $QPID 2>/dev/null || true
 rm -f "$SOCK"
 

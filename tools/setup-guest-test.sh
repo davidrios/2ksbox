@@ -23,11 +23,17 @@
 # The image is never written: everything goes to a qcow2 overlay under
 # build/setup-test.
 #
-# Env: OUT=dir (default build/setup-test), BOOT_WAIT=s, WARMUP_WAIT=s,
-# NO_WARMUP=1, NO_KVM=1, FORCE_KVM=1 (Win98 under KVM), KEEP=1.
+# Nothing here sleeps out a boot: the run waits for the guest to say it is
+# there (tools/guestwait.sh) and BOOT_WAIT / WARMUP_WAIT are only the caps
+# on that wait.
+#
+# Env: OUT=dir (default build/setup-test), BOOT_WAIT=s (cap, 300),
+# WARMUP_WAIT=s (cap, 300), NO_WARMUP=1, NO_KVM=1, FORCE_KVM=1 (Win98 under
+# KVM), KEEP=1.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 IMG="${1:?image.qcow2}"; FAMILY="${2:-xp}"
 OUT="${OUT:-$ROOT/build/setup-test}"; mkdir -p "$OUT"
 OVL="$OUT/overlay-$FAMILY.qcow2"
@@ -92,10 +98,16 @@ warmup() {
     -hda "$OVL" -boot c -display none -qmp "unix:$SOCK,server,nowait" -monitor none \
     > "$OUT/warmup-$FAMILY.log" 2>&1 &
   pid=$!
-  sleep "${WARMUP_WAIT:-180}"
+  # The shell is the one thing this boot cannot be asked about — Explorer
+  # dying is the very thing it exists to absorb — so it waits on the disks
+  # instead: the re-detection is disk-heavy from end to end, and when the
+  # reads stop it is over, one way or the other (tools/guestwait.sh).
+  GW_PID=$pid
+  gw_wait_sock "$SOCK" && gw_wait_quiet "$SOCK" "${WARMUP_WAIT:-300}" 10 || true
   python3 "$ROOT/tools/qmpc.py" "$SOCK" screendump "$OUT/$FAMILY-warmup.png" >/dev/null 2>&1 || true
   python3 "$ROOT/tools/qmpc.py" "$SOCK" json '{"execute":"system_powerdown"}' >/dev/null 2>&1 || true
-  for _ in $(seq 1 120); do sleep 1; kill -0 $pid 2>/dev/null || break; done
+  gw_wait_exit "$pid" 120 || true
+  GW_PID=
   kill $pid 2>/dev/null || true
   wait $pid 2>/dev/null || true
   rm -f "$SOCK"
@@ -130,37 +142,25 @@ if [ "$FAMILY" = win98 ] && [ -z "${NO_WARMUP:-}" ]; then warmup; fi
 QPID=$!
 Q() { python3 "$ROOT/tools/qmpc.py" "$SOCK" "$@"; }
 
-sleep "${BOOT_WAIT:-$([ "$FAMILY" = win98 ] && echo 180 || echo 60)}"
-Q screendump "$OUT/$FAMILY-boot.png" || true
+GW_PID=$QPID
+gw_wait_sock "$SOCK" || exit 1
 # Typing into the Run dialog is the only way in and it can miss (the shell
-# may still be starting, or a message box may be in front of it), so each
-# attempt dismisses whatever is there, opens Run, types, and waits to see
-# whether any output actually arrived. Every attempt's screendump is kept.
-for attempt in $(seq 1 "${ATTEMPTS:-4}"); do
-  Q keys ret || true; sleep 3
-  Q keys esc || true; sleep 1
-  if [ "$FAMILY" = win98 ]; then Q keys ctrl+esc || true; sleep 3; Q keys r || true
-  else Q keys meta_l+r || true; fi
-  sleep 3
-  Q screendump "$OUT/$FAMILY-run$attempt.png" || true
-  Q type "$SHELL_CMD" || true; Q keys ret || true
-  for i in $(seq 1 30); do sleep 1; [ -s "$LOG" ] && break; done
-  [ -s "$LOG" ] && break
-  echo "attempt $attempt: nothing on the serial line yet, retrying"
-  sleep 20
-done
-for i in $(seq 1 "${WAIT_SECS:-240}"); do
-  sleep 1
-  grep -q SETUPDONE "$LOG" 2>/dev/null && break
-done
+# may still be starting, or a message box may be in front of it), so keep
+# knocking until the guest's own output turns up on COM1 — that, and not a
+# sleep, is what says the shell is there.
+gw_poke_until "$SOCK" "$FAMILY" "$SHELL_CMD" "${BOOT_WAIT:-300}" test -s "$LOG" || {
+  Q screendump "$OUT/$FAMILY-noshell.png" || true
+  echo "the guest never ran anything: see $OUT/$FAMILY-noshell.png and $QLOG"
+}
+gw_wait_log "$LOG" SETUPDONE "${WAIT_SECS:-240}" || true
 Q screendump "$OUT/$FAMILY-end.png" || true
 if [ "$FAMILY" = win98 ]; then
   # a Win98 run ends with a Start-menu shutdown, never a kill (CLAUDE.md)
   Q keys ctrl+esc || true; sleep 2; Q keys u || true; sleep 2; Q keys ret || true
-  for i in $(seq 1 90); do sleep 1; kill -0 $QPID 2>/dev/null || break; done
+  gw_wait_exit "$QPID" 90 || true
 else
   Q json '{"execute":"system_powerdown"}' >/dev/null || true
-  for i in $(seq 1 60); do sleep 1; kill -0 $QPID 2>/dev/null || break; done
+  gw_wait_exit "$QPID" 60 || true
 fi
 kill -0 $QPID 2>/dev/null && [ -z "${KEEP:-}" ] && kill $QPID 2>/dev/null || true
 wait $QPID 2>/dev/null || true

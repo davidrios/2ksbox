@@ -44,6 +44,7 @@
 # newest Dr. Watson report's main-thread stack when there is one.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+. "$ROOT/tools/guestwait.sh"
 
 stacks() {  # the newest report in a drwtsn32.log (UTF-16): module list + every thread's stack
   local txt; txt=$(iconv -f utf-16 -t utf-8 "$1" 2>/dev/null || iconv -f cp1252 -t utf-8 "$1")
@@ -81,6 +82,11 @@ fi
   printf '@echo off\r\n'
   printf 'if not "%%1"=="min" (start /min "" cmd /c "%%~f0" min & exit)\r\n'
   printf 'set O=%%~d0\r\n'
+  # the run is knocked on until this file turns up on the stick (a removable
+  # drive, so XP writes it through instead of holding it back); the guard is
+  # what keeps a second knock from starting the game twice
+  printf 'if exist %%O%%\\STARTED.TXT exit\r\n'
+  printf 'echo started > %%O%%\\STARTED.TXT\r\n'
   printf 'cd /d "%s"\r\n' "$GAMEDIR"
   printf '%s\r\n' "$PRE"
   printf 'ping -n 3 127.0.0.1 > nul\r\n'                # a key-up from the Run dialog must not reach the game
@@ -117,21 +123,23 @@ cleanup() { kill -0 $QEMU 2>/dev/null && { python3 tools/qmpc.py "$SOCK" json '{
 trap cleanup EXIT
 qmp() { python3 tools/qmpc.py "$SOCK" "$@" >/dev/null; }
 shot() { python3 tools/qmpc.py "$SOCK" screendump "$OUT/$1.png" >/dev/null 2>&1 || true; }
-for _ in $(seq 50); do [ -S "$SOCK" ] && break; sleep 0.2; done
-sleep "${BOOT_WAIT:-30}"
+GW_PID=$QEMU
+gw_wait_sock "$SOCK" || exit 1
 t0=$(date +%s)
+# No boot sleep: knock on the Run dialog from the start and let the guest
+# say when it has the command (tools/guestwait.sh). RUN.BAT's own marker on
+# the stick is the proof — the D3D device attaching comes later, and on a
+# NO_ATTACH run it never comes at all.
+gw_poke_until "$SOCK" xp 'cmd /c for %d in (D E F G H I) do if exist %d:\RUN.BAT %d:\RUN.BAT' "${BOOT_WAIT:-300}" \
+  mcopy -n -i "$FAT" ::/STARTED.TXT "$OUT/STARTED.TXT" \
+  || { echo "  the guest never ran RUN.BAT"; shot no-shell; }
 if [ "${NO_ATTACH:-0}" = 1 ]; then
-  qmp keys meta_l+r; sleep 1; qmp keys ctrl+a
-  qmp type 'cmd /c for %d in (D E F G H I) do if exist %d:\RUN.BAT %d:\RUN.BAT'; qmp keys ret
-  echo "  RUN.BAT typed, no device attach expected"
+  echo "  RUN.BAT running after $(( $(date +%s) - t0 )) s, no device attach expected"
+elif gw_wait_log "$QLOG" ", attached (" "${ATTACH_WAIT:-240}"; then
+  echo "  device attached after $(( $(date +%s) - t0 )) s"
+else
+  echo "  no device attach within ${ATTACH_WAIT:-240} s"; shot no-attach
 fi
-while [ "${NO_ATTACH:-0}" != 1 ] && ! grep -q ", attached (" "$QLOG"; do
-  if [ $(( $(date +%s) - t0 )) -gt 240 ] || ! kill -0 $QEMU 2>/dev/null; then echo "  no device attach within 240 s"; shot no-attach; break; fi
-  qmp keys meta_l+r; sleep 1; qmp keys ctrl+a
-  qmp type 'cmd /c for %d in (D E F G H I) do if exist %d:\RUN.BAT %d:\RUN.BAT'; qmp keys ret
-  for _ in $(seq 20); do grep -q ", attached (" "$QLOG" && break; sleep 1; done
-done
-[ "${NO_ATTACH:-0}" = 1 ] || { grep -q ", attached (" "$QLOG" && echo "  device attached after $(( $(date +%s) - t0 )) s"; }
 IFS=, read -ra KS <<< "${KEYS:-}"
 for k in "${KS[@]}"; do sleep "${k%%:*}"; echo "  key ${k#*:} at $(( $(date +%s) - t0 )) s ($(grep -c 'present #' "$QLOG") k presents)"; qmp keys "${k#*:}"; done
 n=0

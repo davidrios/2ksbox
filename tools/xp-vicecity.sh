@@ -32,6 +32,7 @@
 # Theft Auto Vice City); run on an overlay of it, never on the user's image.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 MODE="${1:?play|vm|attach|stop}"
 SOCK=/tmp/xp-vc.sock
 VC_ISO="${VC_ISO:-/mnt/data2/david/Downloads/oldstuff/FLT-VCB.iso01.iso}"
@@ -68,7 +69,8 @@ if [ "$MODE" != attach ]; then
   # the desktop: its mode switch comes at the logon screen, the desktop itself
   # some seconds (KVM) or a couple of minutes (TCG) later — keys typed before
   # it are lost (the first TCG run sat at the screen saver)
-  until grep -q "linear mode on (800x600x" "$OUT/qemu.log" 2>/dev/null; do sleep 2; done
+  gw_wait_log "$OUT/qemu.log" "linear mode on (800x600x" "${DESKTOP_WAIT_MAX:-300}" \
+    || { echo "the desktop never came up on our driver:"; tail -5 "$OUT/qemu.log"; exit 1; }
   sleep "${DESKTOP_WAIT:-$([ -n "${NO_KVM:-}" ] && echo 120 || echo 15)}"; T "desktop"
 else
   [ -S "$SOCK" ] || { echo "no VM at $SOCK (vm mode first)"; exit 1; }
@@ -79,7 +81,8 @@ Q keys meta_l+r; sleep 2; Q type 'E:\RUN.BAT'; Q keys ret
 if [ "$MODE" = vm ]; then
   echo "VM started, game launching: log $OUT/qemu.log, QMP $SOCK (python3 tools/qmpc.py $SOCK screendump x.png)"; exit 0
 fi
-until grep -q "d3dptdisp: d3d context 0x" "$OUT/qemu.log" 2>/dev/null; do sleep 2; done
+gw_wait_log "$OUT/qemu.log" "d3dptdisp: d3d context 0x" "${GAME_WAIT:-600}" \
+  || { echo "the game never created a Direct3D context:"; tail -5 "$OUT/qemu.log"; exit 1; }
 T "game up (a Direct3D context)"
 # The legal screens and the intro movie run into the main menu on their
 # own (Start Game / Options / Quit Game). The pointer sits on Options at

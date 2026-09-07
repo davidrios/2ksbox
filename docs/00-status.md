@@ -120,6 +120,9 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -cpu pentium3 -m 512 -
 tools/qmpc.py /tmp/qmp.sock keys meta_l+r; tools/qmpc.py /tmp/qmp.sock type 'cmd /c xcopy D:\D3DPT E:\D3DPT\ /I /Y'; tools/qmpc.py /tmp/qmp.sock keys ret
 tools/qmpc.py /tmp/qmp.sock keys meta_l+r; tools/qmpc.py /tmp/qmp.sock type 'E:\D3DPT\D3DGAME9.EXE -frames 600 -dump 300 E:\OUT\G9.BMP'; tools/qmpc.py /tmp/qmp.sock keys ret
 tools/qmpc.py /tmp/qmp.sock json '{"execute":"system_powerdown"}'   # clean XP shutdown
+# no guest tool sleeps out a boot: . tools/guestwait.sh, then gw_poke_until / gw_wait_log /
+# gw_wait_quiet (BOOT_WAIT is the cap on giving up, not a wait). Each says on stderr what it
+# waited for and for how long, so a run's log shows where its time went.
 mcopy -i ~/vms/scratch.img@@1048576 ::/OUT/G9.BMP g9.bmp && tools/bmpdiff.py reference/d3d/rig-2026-09-03/d3dgame9-w300-ff.bmp g9.bmp --mask 0,368,270,112
 # host log: qemu-system-i386: info: d3dpt: … (device, executor, and every guest DLL log line)
 # a raw disc with CD audio in the player (doc 17): the explicit drive form instead of -cdrom, audiodev = the player's
@@ -462,6 +465,42 @@ items nobody owns yet:
   mode` → `"playing"` — because the XP check only required the tone in the
   wav and read the mode line for the record; it now fails on it, and
   `tools/atapi-guest-test.py` sends both stops.
+
+- **A guest test's boot wait was a sleep sized for the slowest machine
+  anyone had run it on** (fixed 2026-09-07, `tools/guestwait.sh`). Every
+  guest tool opened with `sleep $BOOT_WAIT` — 45 to 180 seconds, and 180
+  twice over in `setup-guest-test.sh`, which slept out a warm-up boot and
+  then the real one. Measured on the Air under TCG, fresh overlays: XP's
+  Run dialog took its first command at **~26 s** and Win98's at **~23 s**;
+  the adapter says `d3dpt-vga: linear mode on` **9 s** into an XP boot, and
+  the disks go quiet at **~33 s**. So the sleeps were wrong in both
+  directions — 15 to 20 minutes of padding across one pass of the guest
+  tools, more on the rig where KVM boots these in a fraction of the time
+  and the sleeps never changed, and still too short on a host that is busy
+  that day, which is exactly when a test should keep working. They are all
+  gone: `tools/guestwait.sh` waits for something the guest actually did and
+  the old `BOOT_WAIT` is only the cap on giving up. Its three signals, in
+  order of what they prove, are `gw_wait_log` / `gw_wait_count` (a line our
+  own device wrote — the mode switch, and *two* of them is the only honest
+  proof a machine restarted), `gw_wait_quiet` (QMP `query-blockstats`: the
+  disks stopped, for the cirrus machines with no serial line, and for a
+  warm-up boot whose whole point is that its shell may be dead), and
+  `gw_poke_until` — knock on the Run dialog until the guest runs something
+  and says so on COM1, which is the only one that proves a shell is there.
+  End to end on the Air, that is 36-46 s for XP and ~118 s for Win98 (whose
+  guest is ready at ~23 s: QMP is starved of the lock while the vCPU
+  translates a boot, so the knocking is slower than the guest) — against
+  sleeps of 45 and 180, and of a machine that actually answered.
+  **Not a screendump**, ever: `vga_draw_text` keeps drawing over a dead
+  machine (doc 19 §15). The knocking is the retry loop half these tools
+  already had, started at second zero instead of after a sleep long enough
+  to make the first try succeed. Two things that came out of the same work:
+  `xp-driver-test.sh` machines now have a serial line, because every
+  command it types ends by echoing a marker to COM1 — the scratch disk
+  cannot be asked anything while the guest runs, XP's lazy writer holds
+  small FAT writes for minutes — and `grep -c` prints `0` *and* exits 1, so
+  `$(grep -c x f || echo 0)` is the two-line string `0\n0` and every
+  arithmetic use of it is broken.
 
 - **`launcher-qt`'s Play button did nothing because the Qt build has no
   player beside it** (fixed 2026-09-07). `player::player_binary()`'s

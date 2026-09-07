@@ -39,17 +39,21 @@
 #
 # Env: OUT=dir, QEMU=binary (an A/B against another build), BIOS=0 (use the
 # binary's own firmware instead of qemu/pc-bios, for a stock-QEMU control),
-# BOOT_WAIT=s (default 120), WATCH=s (default 150), MIN_READS=n (default
+# The first boot is not slept out: this test already counts the guest's
+# disk reads, so it waits for them to stop instead (tools/guestwait.sh)
+# and BOOT_WAIT is the cap on that.
+# BOOT_WAIT=s (the cap, default 300), WATCH=s (default 150), MIN_READS=n (default
 # 5000: a full Win98 boot is ~60000, a frozen one ~400).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 IMG="${1:?image.qcow2}"
 MODES="${2:-both}"
 [ "$MODES" = both ] && MODES="qmp guest"
 OUT="${OUT:-$ROOT/build/win98-reboot}"
 QEMU="${QEMU:-$ROOT/build/qemu/qemu-system-i386}"
-BOOT_WAIT="${BOOT_WAIT:-120}"
+BOOT_WAIT="${BOOT_WAIT:-300}"
 WATCH="${WATCH:-150}"
 MIN_READS="${MIN_READS:-5000}"
 # an AF_UNIX path is capped at 108 bytes and a build/ path under a deep
@@ -93,7 +97,7 @@ banners() {
 fail=0
 for MODE in $MODES; do
   D="$OUT/$MODE"; rm -rf "$D"; mkdir -p "$D"; rm -f "$SOCK"
-  echo "==> $MODE: fresh overlay, booting (${BOOT_WAIT}s)"
+  echo "==> $MODE: fresh overlay, booting"
   "$ROOT/build/qemu/qemu-img" create -q -f qcow2 -b "$IMG" -F qcow2 "$D/ovl.qcow2"
 
   # doc 06's Win98 machine, emulated (see the header)
@@ -108,8 +112,11 @@ for MODE in $MODES; do
   QPID=$!
   trap 'kill $QPID 2>/dev/null || true; rm -f "$SOCK"' EXIT
 
-  sleep 5
-  sleep "$BOOT_WAIT"
+  GW_PID=$QPID
+  gw_wait_sock "$SOCK" || exit 1
+  # the same reads this test counts, used the other way round: the boot is
+  # over when the guest stops making them
+  gw_wait_quiet "$SOCK" "$BOOT_WAIT" 10 || true
   qmp screendump "$D/desktop.png" >/dev/null || true
   before=$(reads); banners_before=$(banners)
   echo "    before: $before reads, LVT0 $(lvt0), $banners_before POST(s)"
@@ -144,10 +151,10 @@ for MODE in $MODES; do
   qmp keys ctrl+esc >/dev/null 2>&1 || true; sleep 2
   qmp keys u >/dev/null 2>&1 || true; sleep 2
   qmp keys ret >/dev/null 2>&1 || true
-  for _ in $(seq 1 40); do sleep 1; kill -0 $QPID 2>/dev/null || break; done
+  gw_wait_exit "$QPID" 40 || true
   if kill -0 $QPID 2>/dev/null; then
     qmp json '{"execute":"system_powerdown"}' >/dev/null 2>&1 || true
-    for _ in $(seq 1 40); do sleep 1; kill -0 $QPID 2>/dev/null || break; done
+    gw_wait_exit "$QPID" 40 || true
   fi
   kill $QPID 2>/dev/null || true; wait $QPID 2>/dev/null || true
   trap - EXIT; rm -f "$SOCK"

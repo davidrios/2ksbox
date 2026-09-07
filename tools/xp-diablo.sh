@@ -18,6 +18,7 @@
 # oldstuff folder's), CPU (KVM model, default host).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/guestwait.sh"
 MODE="${1:?install|play|vm|stop}"
 SOCK=/tmp/xp-diablo.sock
 DIABLO_ISO="${DIABLO_ISO:-/mnt/data2/david/Downloads/oldstuff/Diablo.iso}"
@@ -49,7 +50,8 @@ if [ "$MODE" = vm ]; then
   echo "VM started: log $OUT/qemu.log, QMP $SOCK (python3 tools/qmpc.py $SOCK screendump x.png)"; exit 0
 fi
 
-until grep -q "linear mode on (800x600x32" "$OUT/qemu.log" 2>/dev/null; do sleep 2; done
+gw_wait_log "$OUT/qemu.log" "linear mode on (800x600x32" "${DESKTOP_WAIT:-300}" \
+  || { echo "the desktop never came up on our driver:"; tail -5 "$OUT/qemu.log"; exit 1; }
 sleep 12; T "desktop"
 Q keys esc; Q keys meta_l+r; sleep 2
 if [ "$MODE" = install ]; then
@@ -61,7 +63,8 @@ if [ "$MODE" = install ]; then
 else
   Q type 'C:\Diablo\Diablo.exe'; Q keys ret
 fi
-until grep -q "linear mode on (640x480x8" "$OUT/qemu.log"; do sleep 2; done
+gw_wait_log "$OUT/qemu.log" "linear mode on (640x480x8" "${GAME_WAIT:-300}" \
+  || { echo "the game never switched to 640x480x8:"; tail -5 "$OUT/qemu.log"; exit 1; }
 T "game up at 640x480x8"; sleep 12
 Q keys esc; sleep 6                                # skips the intro cinematic
 prev=""
