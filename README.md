@@ -88,6 +88,9 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 #   no CRT chain — as PLAYER_SHOT_DIR/2ksbox-NNNN.png (the next free number; the
 #   working directory when PLAYER_SHOT_DIR is unset). Ctrl+Alt+G releases the grab.
 # PLAYER_LATENCY=1 prints publish→present latency percentiles every 240 guest frames
+# PLAYER_REFRESH_LOG=1 prints a guest frame counter every 100 frames — whether the
+#   guest is drawing at all. Off by default: a machine left running printed it for
+#   as long as it was up, which buries the lines that mean something
 # PLAYER_REFRESH_MS=16 (default) is the guest frame pull interval (QEMU's own default is 30)
 # QMP: the player always attaches a control monitor over a socketpair (no socket file).
 #   PLAYER_QMP=1 logs every QMP event (SHUTDOWN/RESET/STOP/... are logged regardless)

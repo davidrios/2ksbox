@@ -250,6 +250,17 @@ Target: **≤ 1 host frame added** between guest frame completion and photons at
   is uniform 0–16.7 ms (p50 ≈ 8, max ≈ 17). Photons follow at the next
   scan-out. Guest-draw→publish (0–`PLAYER_REFRESH_MS`) is before the
   measured window and does not show up in this number.
+- **The player is quiet unless something is off** (2026-09-07,
+  user-asked): the display path's own frame counter
+  (`[display] refresh #N`, every 100 guest frames) was on
+  unconditionally, which is bring-up scaffolding — on a machine left
+  running it is a line or two a second for as long as the guest is up,
+  and it buries the lines that mean something (a mode switch, a
+  transitional frame blanked, the input queue's own complaints). It is
+  `PLAYER_REFRESH_LOG=1` now, beside `PLAYER_LATENCY` and
+  `PLAYER_CURSOR_LOG`. What still prints unasked is what a normal run
+  should never say twice: the mode analysis for each mode the guest sets,
+  and anything that went wrong.
 
 ## Input path (same budget)
 

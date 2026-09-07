@@ -495,6 +495,20 @@ unsafe extern "C" fn on_3d_frame_ready(ud: *mut c_void, slot: c_int) {
 /// window is the guest's transitional fill and is shown as black.
 const SWITCH_GRACE: std::time::Duration = std::time::Duration::from_millis(1500);
 
+/// `PLAYER_REFRESH_LOG=1`: a frame counter every hundred guest frames.
+///
+/// It was on unconditionally, which is bring-up scaffolding — on a
+/// machine left running it is a line or two a second for as long as the
+/// guest is up, and it buries everything the player prints when
+/// something is actually wrong (user, 2026-09-07). It still answers the
+/// one question nothing else does — whether the guest is drawing at all
+/// — so it stays, behind a knob like `PLAYER_CURSOR_LOG` and
+/// `PLAYER_LATENCY`. Read once: this sits in the publish path.
+fn refresh_log() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("PLAYER_REFRESH_LOG").is_some())
+}
+
 /// Every pixel the same colour (sampled every 61st plus the last one).
 fn is_uniform(px: &[u32]) -> bool {
     match px.first() {
@@ -564,7 +578,7 @@ unsafe extern "C" fn on_refresh_done(ud: *mut c_void) {
     front.seq += 1;
     front.published = std::time::Instant::now();
     let waker = waker.clone();
-    if front.seq % 100 == 0 {
+    if front.seq % 100 == 0 && refresh_log() {
         eprintln!("[display] refresh #{}", front.seq);
     }
     if let (Some(vm), Some(sc)) = (vm.as_ref(), script.as_mut()) {

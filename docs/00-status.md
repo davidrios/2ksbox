@@ -128,6 +128,9 @@ guest-tools/build-driver.sh && tools/xp-driver-test.sh ~/vms/winxp-m7c.qcow2 ddt
 ```
 Player env knobs: `PLAYER_DUMP`, `PLAYER_DUMP_OUT`, `PLAYER_DUMP_SEQ`,
 `PLAYER_KEYS`, `PLAYER_AUDIO_NULL`, `PLAYER_LATENCY`, `PLAYER_REFRESH_MS`,
+`PLAYER_REFRESH_LOG` (the `[display] refresh #N` counter, off since
+2026-09-07 — it printed for as long as a machine was up and buried
+everything that means something),
 `PLAYER_SHADER`, `PLAYER_QMP`, `PLAYER_QMP_EXEC` (README). Firmware must be passed with `-L qemu/pc-bios`
 until machine bundles exist. Test image: FreeDOS 1.3 floppy
 (`build/images/144m/x86BOOT.img`, git-ignored; `tools/x87-guest-test.py`
