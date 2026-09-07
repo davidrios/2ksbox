@@ -1952,12 +1952,16 @@ this track's files, and what is left:
   is watched with `DYLD_PRINT_LIBRARIES=1` as well, so the images the QML
   engine pulls in must be the app's own; under wine it is a report and
   not a verdict.
-- **Run so far: the Linux tarball only** (stages, checks, window grab,
-  all green on Arch with Qt 6.11). The Flatpak, the `.app` and the
-  Windows zip are written and unrun. In order: the Flatpak (also the
-  first offline build of the merged sources, and the first test of
-  whether the KDE SDK's `qmake6` is where cxx-qt looks), the `.app` on
-  the Air, then the Windows zip.
+- **Run so far: the Linux tarball and the Flatpak.** The tarball stages
+  and checks green on Arch with Qt 6.11. The Flatpak built **offline**
+  against `org.kde.Sdk` 6.10 from the merged `cargo-sources.json` — the
+  SDK's `qmake6` is where cxx-qt looks, so `launcher-qt` needs nothing
+  said to it — installs, resolves every companion under `/app`, and
+  opens a QML window offscreen on the runtime's own Qt. **The sandbox
+  has a `/tmp` of its own**, which is what made that last check fail the
+  first time on a package that was fine: the grab has to be written
+  under `$HOME`, the same path on both sides. Left: the `.app` on the
+  Air, then the Windows zip.
 - **Still owed, and now on the shipped path:** the preview's CPU readback
   (doc 07's one place where the Qt build is worse) wants a
   `QQuickRhiItem` importing the Vulkan image instead.

@@ -64,7 +64,11 @@ smoke() {
   # /app. That is exactly the thing a wrong `runtime:` line would break
   # while every check above stayed green, so ask for a real window: the
   # launcher's own headless grab (doc 07), offscreen, and a PNG out of it.
-  local shot="${TMPDIR:-/tmp}/2ksbox-flatpak-window.png"
+  # Under $HOME, not /tmp: the sandbox has a /tmp of its own, so a grab
+  # written there lands nowhere this shell can see it and the check fails
+  # on a package that is perfectly fine (it did, first time). `$HOME` is
+  # the same path on both sides, and this app has `--filesystem=host`.
+  local shot="$HOME/.2ksbox-flatpak-window.png"
   rm -f "$shot"
   echo "==> flatpak run $APPID (offscreen window grab)"
   flatpak run --user --command=2ksbox \
