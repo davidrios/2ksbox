@@ -199,9 +199,13 @@ What the track starts from:
    **The install is done too** (2026-09-07, doc 19 §16): the INF grew the
    reference's `DelReg` and its 4 bpp rows, and PnP alone now brings up
    both halves on the boot after the restart, at 800x600x16, with nothing
-   naming them. What remains of this step is the guest-tools ISO — the 9x
-   driver is not on it and `SETUP.EXE` has no 98/Me display component
-   (step 7's first half, and now unblocked).
+   naming them. **And it is on the guest-tools ISO** as `DRIVER9X\`, with
+   `SETUP.EXE`'s display-driver component offered on 98/Me — three files
+   into `WINDOWS\INF` and a restart, because on 9x there is no installer
+   to run. `tools/setup-guest-test.sh <image> win98` checks the copies (the
+   driver coming up is `win98-driver-test.sh`'s job, on a machine that has
+   the device). Open Watcom is not a prerequisite of the ISO: a host
+   without it builds one without the 98 driver and says so.
 6. **Step 1 — the split, XP unchanged.** Carve `core/` out of
    `d3dptdisp.c` per doc 19, thunk NT onto it, and prove it is a
    refactor: `scripts/test.sh all` green, `d3dpt-dp2-test` and `d3d7test`

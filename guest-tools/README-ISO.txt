@@ -23,8 +23,17 @@ GLIDE\    the device mapper and the 3dfx Glide wrappers.
 DRIVER\   the 2000/XP display driver for the paravirtual adapter. Boot
           the machine with -vga none -device d3dpt-vga, then run
           DRVINST.EXE -reboot. DRIVER\README.TXT lists its own test
-          programs (DDTEST, D3D7TEST, SHTEST, ...). Not for Windows 9x,
-          which runs the emulated Cirrus adapter.
+          programs (DDTEST, D3D7TEST, SHTEST, ...). Windows 9x wants
+          DRIVER9X\ instead; SETUP picks for you.
+
+DRIVER9X\ the Windows 98/Me display driver for the same adapter, and the
+          same rule about the machine: -vga none -device d3dpt-vga. There
+          is nothing to run - copy D3DPT9X.INF, D3DPT9X.DRV and
+          D3DPT9V.VXD into C:\WINDOWS\INF (SETUP does) and restart; Plug
+          and Play matches the adapter and installs the driver with no
+          clicks, then asks to restart once more. Both halves matter: the
+          .DRV draws, and the .VXD is what claims the adapter's PCI
+          resources, without which Windows takes them away again.
 
 D3DPT\    Direct3D 8/9 through the paravirtual device, per game: copy
           D3D8.DLL / D3D9.DLL next to the game's EXE. DDRAW.DLL as well

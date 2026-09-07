@@ -228,12 +228,11 @@ static int step_glide(void)
  * installer (signing policy, the Logo dialog, UpdateDriverForPlugAndPlay)
  * and says 2 when the machine has to restart before the driver can take
  * the adapter over from the boot VGA one. */
-static int step_driver(void)
+static int step_driver_nt(void)
 {
     char cmd[PATHBUF * 2 + 8], inf[PATHBUF], exe[PATHBUF];
     int rc;
 
-    say("Display adapter driver (d3dpt-vga):");
     iso(exe, "DRIVER\\DRVINST.EXE");
     iso(inf, "DRIVER\\D3DPTVID.INF");
     if (GetFileAttributesA(exe) == INVALID_FILE_ATTRIBUTES) {
@@ -248,6 +247,54 @@ static int step_driver(void)
         return 1;
     }
     return 0;
+}
+
+/* The 9x half installs itself, which is the whole point of an INF: dropped
+ * into WINDOWS\INF it matches PCI\VEN_1234&DEV_3D00, and the next boot
+ * installs the driver with no clicks and no installer of ours (doc 19 §16).
+ * There is nothing to run here, so this step is three file copies.
+ *
+ * The binaries go beside the INF because that is where Windows looks for a
+ * CopyFiles source, and into SYSTEM as well because that is the arrangement
+ * the driver has actually been proven in — the INF's own CopyFiles should
+ * make the second pair redundant, and it is three kilobytes to not find out
+ * the hard way on somebody's machine.
+ *
+ * A restart is not optional here and not merely recommended: nothing of this
+ * driver exists to Windows until the boot that enumerates the adapter
+ * against the new INF. */
+static int step_driver_9x(void)
+{
+    static const char *const all[] = { "D3DPT9X.INF", "D3DPT9X.DRV", "D3DPT9V.VXD", NULL };
+    static const char *const bin[] = { "D3DPT9X.DRV", "D3DPT9V.VXD", NULL };
+    char infdir[PATHBUF], probe[PATHBUF];
+    int bad;
+
+    iso(probe, "DRIVER9X\\D3DPT9X.INF");
+    if (GetFileAttributesA(probe) == INVALID_FILE_ATTRIBUTES) {
+        say("    not on this disc");
+        return 1;
+    }
+    snprintf(infdir, sizeof infdir, "%s\\INF", g_win);
+    CreateDirectoryA(infdir, NULL);
+
+    bad  = copy_set("DRIVER9X", infdir, all);
+    bad |= copy_set("DRIVER9X", g_sys, bin);
+    if (bad) {
+        say("    failed. The machine must run with -vga none -device d3dpt-vga.");
+        return 1;
+    }
+    g_reboot = 1;
+    return 0;
+}
+
+/* Both families want this adapter driven properly; only the way in differs.
+ * On NT a user-mode installer hands the INF to the setup API, on 9x the INF
+ * is left where PnP will find it. */
+static int step_driver(void)
+{
+    say("Display adapter driver (d3dpt-vga):");
+    return g_nt ? step_driver_nt() : step_driver_9x();
 }
 
 /* CDSHELF.EXE into the Windows directory: it is a thing you want to reach
@@ -276,7 +323,7 @@ typedef struct {
 } Component;
 
 static Component g_comp[MAX_COMPONENTS] = {
-    { "Display adapter driver (d3dpt-vga)", "needs a restart",              0, 1, 1, step_driver,  0 },
+    { "Display adapter driver (d3dpt-vga)", "needs a restart",              1, 1, 1, step_driver,  0 },
     { "Glide and the device mapper",        "also needed by OPENGL32.DLL",  1, 1, 1, step_glide,   0 },
     { "Disc shelf tool",                    "CDSHELF.EXE in the Windows folder", 1, 1, 1, step_cdshelf, 0 },
     { "Test programs",                      "in C:\\2KSBOX",                1, 1, 0, step_tests,   0 },

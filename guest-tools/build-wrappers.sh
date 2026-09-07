@@ -253,6 +253,26 @@ nasm -f bin -o "$OUT/iso/CDSHELF/cdshelf.com" "$ROOT/guest-tools/src/cdshelf.asm
 "$ROOT/guest-tools/build-driver.sh" >/dev/null
 mkdir -p "$OUT/iso/DRIVER" && cp "$ROOT"/guest-tools/out/driver/* "$OUT/iso/DRIVER/"
 
+# The Win98/Me display driver for the same adapter (doc 19, M10), staged as
+# DRIVER9X\. A separate folder and not a second copy in DRIVER\: the ISO's
+# rule is one folder per role, and "the display driver" is two roles here —
+# nothing on this disc is wanted by both families, and SETUP picks the folder
+# from the Windows it is running on.
+#
+# It needs a **second toolchain**, Open Watcom, because a 16-bit NE `.drv`
+# and a ring-0 LE `.vxd` are formats mingw cannot make. That is a
+# prerequisite this script will not install, so a host without it still
+# builds a usable ISO — with the 98 driver missing from it, said out loud,
+# because a silently smaller ISO is how a guest ends up being told a
+# component is "not on this disc".
+if "$ROOT/guest-tools/build-driver9x.sh" >/dev/null 2>&1; then
+  mkdir -p "$OUT/iso/DRIVER9X" && cp "$ROOT"/guest-tools/out/driver9x/*.drv \
+    "$ROOT"/guest-tools/out/driver9x/*.vxd "$ROOT"/guest-tools/out/driver9x/*.inf \
+    "$OUT/iso/DRIVER9X/"
+else
+  echo "note: no Open Watcom (WATCOM=), so the Win98 display driver is not on this ISO" >&2
+fi
+
 # SETUP.EXE at the root: the installer that reads the folders above and
 # knows which of them this guest's Windows wants (guest-tools/src/setup.c).
 i686-w64-mingw32-gcc -O2 -Wall -o "$OUT/iso/setup.exe" "$ROOT/guest-tools/src/setup.c" \

@@ -619,6 +619,17 @@ one** — Win98 turns its local APIC off, RESET did not put
 counter behind an unchanging splash screen (`docs/tracks/win98-reboot.md`).
 A frozen 9x splash screen after a restart is that until proven otherwise.
 
+**On the guest-tools ISO this is `DRIVER9X\`**, and `SETUP.EXE`'s display
+adapter component now offers itself on 98/Me: it copies `D3DPT9X.INF`,
+`D3DPT9X.DRV` and `D3DPT9V.VXD` into `WINDOWS\INF` (and the two binaries
+into `SYSTEM` as well, which the INF's own `CopyFiles` ought to make
+redundant and which is three kilobytes against finding out otherwise on
+somebody's machine) and asks for a restart. There is deliberately no
+installer to run on this side — the INF is the installer, and the boot is
+what runs it. The 9x driver needs Open Watcom, which the ISO build does not
+require: a host without it builds an ISO without that folder and says so
+rather than shipping a disc whose component answers "not on this disc".
+
 `NAME_IN_INI=1` still writes, in binary because SYSTEM.INI has CRLF line
 endings and Python's text mode eats them:
 
