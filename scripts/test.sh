@@ -172,9 +172,15 @@ if ! command -v timeout >/dev/null; then
     timeout() { # seconds, command...
       local s="$1" p w rc; shift
       "$@" & p=$!
-      ( sleep "$s"; kill -9 "$p" 2>/dev/null ) & w=$!
+      # The watchdog gets none of the command's descriptors: a caller
+      # reading the output through a pipe (`o="$(timeout … | sed …)"`)
+      # waits for every writer to close it, so a watchdog that inherited
+      # stdout held the pipe for the whole limit and every Qt check took
+      # its full 120 s on a Mac without coreutils (2026-09-07). Afterwards
+      # the sleep is killed with the subshell, or it lives on orphaned.
+      ( sleep "$s"; kill -9 "$p" 2>/dev/null ) >/dev/null 2>&1 </dev/null & w=$!
       wait "$p"; rc=$?
-      kill "$w" 2>/dev/null
+      pkill -P "$w" 2>/dev/null; kill "$w" 2>/dev/null
       return $rc
     }
   fi
