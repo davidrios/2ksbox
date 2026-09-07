@@ -52,6 +52,17 @@ pub fn start_dir(value: &str) -> Option<PathBuf> {
 /// else the OS default. Its own function so `cli`'s `--browse-start`
 /// verb can check the choice without popping a modal dialog only a human
 /// could answer.
+///
+/// **Only the shader editor's preset field passes an `empty_dir`**, and
+/// deliberately: a `.slangp` lives in a checkout's `third_party/` or a
+/// downloaded copy under the platform data directory, and neither is
+/// somewhere a person would navigate to by hand. A disk image, an
+/// install ISO, a floppy, a disc or a screenshot are all files the user
+/// already knows where they put, so those fields want the platform
+/// picker's own last-used location, which is what `None` asks for. The
+/// asymmetry looks like a bug from the outside — two "Browse…" buttons
+/// in one window opening in different places (2026-09-06, user-reported)
+/// — so it is written down here rather than inferred from call sites.
 pub fn browse_start(value: &str, empty_dir: Option<&Path>) -> Option<PathBuf> {
     start_dir(value).or_else(|| empty_dir.map(|d| d.to_path_buf()))
 }

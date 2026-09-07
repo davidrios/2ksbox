@@ -27,6 +27,7 @@ mod wizard;
 // The shared half, reachable as `crate::…` from the modules above the
 // way it was when these were files in this crate.
 use launcher_core::machines::Machines;
+use launcher_core::editor::PRESET_FILTER;
 use launcher_core::{cli, disc_library, library, paths, shader_library};
 use std::path::{Path, PathBuf};
 
@@ -409,11 +410,25 @@ fn main() -> eframe::Result {
             // the portal/NSOpenPanel/IFileDialog wiring works, since this
             // session has no GUI click automation to drive the wizard's
             // "Browse…" button through an actual dialog. An optional arg
-            // (a path field's current value, file or directory) exercises
-            // the same start-directory extraction `path_field` uses. No
-            // Qt twin: that build's dialog is declarative, in QML.
-            let start_dir = args.next().and_then(|v| filepicker::start_dir(&v));
-            match filepicker::pick_file_headless(None, start_dir.as_deref()) {
+            // is a path field's current value, file or directory. No Qt
+            // twin: that build's dialog is declarative, in QML.
+            //
+            // It goes through `browse_start` with the preset collection
+            // as the empty-field fallback, exactly as the shader
+            // editor's preset field does — the case that matters most
+            // and the one this verb used to miss, since it called
+            // `start_dir` and so could only ever test a field that
+            // already had a value. The chosen directory is printed
+            // before the dialog opens, so a run that lands somewhere
+            // else says whether the decision or the dialog was wrong.
+            let value = args.next().unwrap_or_default();
+            let presets = launcher_core::shader_source::presets_dir();
+            let start_dir = filepicker::browse_start(&value, presets.as_deref());
+            match &start_dir {
+                Some(dir) => println!("opening in {}", dir.display()),
+                None => println!("opening in (OS default)"),
+            }
+            match filepicker::pick_file_headless(Some(PRESET_FILTER), start_dir.as_deref()) {
                 Some(path) => println!("{}", path.display()),
                 None => println!("(cancelled)"),
             }
