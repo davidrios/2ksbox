@@ -109,6 +109,10 @@ modules:
           # — and QEMU's own configure treats a tree with no .git as a
           # tarball build, which is exactly what we want here.
           - target
+          # `launcher-qt` is its own cargo workspace, so it has its own
+          # target/ — 3+ GB, and `target` above is a path from the source
+          # root, not a name matched at every level.
+          - launcher-qt/target
           - build
           - .git
           - third_party/dxvk
