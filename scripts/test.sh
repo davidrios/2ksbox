@@ -30,6 +30,11 @@
 #                  under its own name, in the flat shelf file and on the boot
 #                  drive as `isodir:`, commas in the path doubled, and our QEMU
 #                  opening both folders
+#   qt-wizard      what the Qt wizard's memory field *shows* on each family, beside
+#                  what the shared form says: a spin box bounds the value it is
+#                  handed against the range it has at that moment, so the control
+#                  and the model can disagree and nothing that asks the model
+#                  would ever notice (only if a launcher-qt has been built)
 #   shelforder     the disc shelf is one list in one order: discs added in the
 #                  wrong order come back by label (case-insensitively, and disc
 #                  10 after disc 2), a later addition lands where its name
@@ -355,6 +360,35 @@ shelforder_check() { # the disc shelf is in order by label, all the way to the g
   [ "$o" = "Age of Empires" ] || { echo "a disc added later did not land in order (first row: $o)"; rc=1; }
   return $rc
 }
+qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
+  local rc=0 dir="$OUT/qtwizard" bin="launcher-qt/target/release/launcher-qt" f o shown model lo hi
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  # A scratch library, never the user's own — the window lists it on the
+  # way up. Offscreen, so a check never throws a window on the desktop.
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
+  # The model is right and the control disagrees is a whole class of Qt
+  # bug (a spin box bounds the value it is handed against the range it
+  # has at that moment, and does not revisit it when the range widens),
+  # and it is invisible to everything that asks the model — which is what
+  # every other launcher check does. So this asks the *window*: it opens
+  # the real wizard headlessly on each family and prints what its memory
+  # field holds beside what the form says it should.
+  for f in win98 xp dos; do
+    o="$(timeout 120 env LAUNCHER_QT_SCREEN=wizard LAUNCHER_QT_ARG="$f" LAUNCHER_QT_DELAY=250 \
+         "$bin" 2>&1 | sed -n 's/^\[diag\] wizard memory: //p')"
+    if [ -z "$o" ]; then echo "$f: the wizard printed no memory line"; rc=1; continue; fi
+    shown="$(printf '%s' "$o" | sed -n 's/^shown \([0-9]*\).*/\1/p')"
+    model="$(printf '%s' "$o" | sed -n 's/.*model \([0-9]*\).*/\1/p')"
+    lo="$(printf '%s' "$o" | sed -n 's/.*range \([0-9]*\)\.\..*/\1/p')"
+    hi="$(printf '%s' "$o" | sed -n 's/.*range [0-9]*\.\.\([0-9]*\).*/\1/p')"
+    [ "$shown" = "$model" ] || { echo "$f: the memory field shows $shown, the form says $model"; rc=1; }
+    [ "$model" -ge "$lo" ] && [ "$model" -le "$hi" ] \
+      || { echo "$f: $model is outside the family's own range $lo..$hi"; rc=1; }
+    echo "  $f: $o"
+  done
+  return $rc
+}
 dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M5g)
   local rc=0 dir="$OUT/dirshelf" bundle args o spaced comma plain shelf_file
   rm -rf "$dir"; mkdir -p "$dir/library"
@@ -626,6 +660,11 @@ host_stage() {
     run_check dirshelf dirshelf.log dirshelf_check || true
     run_check shelforder shelforder.log shelforder_check || true
   else skip dirshelf "needs target/release/launcher"; skip shelforder "needs target/release/launcher"; fi
+  # The Qt front end's own window, if this checkout has built one (it is
+  # outside the workspace, so `cargo build` never produces it).
+  if [ -x launcher-qt/target/release/launcher-qt ]; then
+    run_check qt-wizard qt-wizard.log qtwizard_check || true
+  else skip qt-wizard "needs launcher-qt/target/release/launcher-qt (cd launcher-qt && cargo build --release)"; fi
 
   # the host GPU probe (ADR-013): what the launcher tells someone about 3D
   # before a machine exists. The verdict itself is a property of the box,

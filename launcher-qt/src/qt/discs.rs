@@ -338,7 +338,6 @@ impl ffi::DiscModel {
             filter = qs(name_filter(DISC_FILTER));
         }
         self.as_mut().set_count(count);
-        self.as_mut().set_open(open);
         self.as_mut().set_title(title);
         self.as_mut().set_for_machine(for_machine);
         self.as_mut().set_boot_label(boot_label);
@@ -347,5 +346,8 @@ impl ffi::DiscModel {
         self.as_mut().set_error(error);
         self.as_mut().set_guest_tools_iso(iso);
         self.as_mut().set_disc_filter(filter);
+        // Last: `open` is what `Main.qml` shows the window on, so
+        // everything its first frame draws is current by then.
+        self.as_mut().set_open(open);
     }
 }

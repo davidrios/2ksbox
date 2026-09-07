@@ -476,6 +476,29 @@ are read before any of its verbs are called must publish in
 `cxx_qt::Initialize`**, which is the constructor QML uses, and
 `ShaderEditor` now does.
 
+The same class again on 2026-09-07, and worth its own rule: **a control
+that clamps must be given its range before its value.** The Qt wizard
+opened a fresh Win98 machine on **32 MB** — the bottom of that family's
+range, where the form said 256 (user-reported). Nothing was wrong with
+the form: `publish()` set `ram_mb` before `ram_min`/`ram_max`, and a
+`SpinBox` bounds the value it is handed against the range it has *at that
+moment* and does not revisit it when the range widens — so 256 arrived
+into the model's initial `0..0`, became 0, and was pushed up to 32 when
+the minimum landed. The value binding never re-evaluated, because the
+model's number had not changed again. Three things follow, all of them
+now true: ranges are published before the values inside them, `Wizard`
+publishes in `cxx_qt::Initialize` so a window built at start-up binds to
+a form that means something rather than to zeroes, and `open` is
+published **last**, since that is what shows the window. It is a bug the
+immediate-mode build cannot have — egui's `DragValue` is handed a range
+and a value in the same call, every frame — and it is invisible to
+everything that asks the *model*, which is what every other check does:
+hence `qt-wizard` in `scripts/test.sh`, which opens the real window
+headlessly on each family and compares what the memory field **shows**
+with what the form says. Anything else in QML that bounds a value —
+another `SpinBox`, a `Slider` fed from properties rather than from a
+delegate's own row — is exposed the same way.
+
 ### What each front end still owns
 
 Everything that is genuinely the toolkit's, and nothing else:

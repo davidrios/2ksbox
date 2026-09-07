@@ -327,7 +327,10 @@ ApplicationWindow {
     }
 
     Timer {
-        running: diag.shotPath !== ""
+        // A screen with no shot path is a run that only *drives* the
+        // window and prints what it shows — which is the half of this
+        // that needs no GPU, and the only half that works on a busy one.
+        running: diag.shotPath !== "" || diag.screen !== ""
         interval: diag.delayMs
         onTriggered: {
             diag.note("arming screen=" + diag.screen + " shot=" + diag.shotPath)
@@ -345,6 +348,14 @@ ApplicationWindow {
                 const families = ["win98", "xp", "dos"]
                 if (families.indexOf(diag.arg) >= 0)
                     wizard.chooseFamily(families.indexOf(diag.arg))
+                // What the memory field ended up showing, beside what the
+                // model says it should: a spin box bounds the value it is
+                // handed against the range it has at that moment, so the
+                // two can disagree and nothing but a picture would say so
+                // (they did: a fresh Win98 machine showed 32 MB).
+                diag.note("wizard memory: shown " + wizardWindow.shownRamMb
+                          + ", model " + wizard.ramMb
+                          + ", range " + wizard.ramMin + ".." + wizard.ramMax)
                 break
             case "create":
                 // `LAUNCHER_QT_ARG=[<family>:]<name>` — the whole create
@@ -399,6 +410,10 @@ ApplicationWindow {
         id: grabTimer
         interval: diag.delayMs
         onTriggered: {
+            if (diag.shotPath === "") {   // driven, not photographed
+                Qt.quit()
+                return
+            }
             const cb = function (result) {
                 diag.report(result.saveToFile(diag.shotPath))
                 Qt.quit()

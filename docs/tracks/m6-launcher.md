@@ -1690,6 +1690,47 @@ ABI the same question (including `disc 2` before `disc 10`), and both
 real windows were driven headlessly on a seven-disc scratch shelf
 (`--diag-shelf-frame`, `LAUNCHER_QT_SCREEN=discs`).
 
+## The memory field showed 32 MB (2026-09-07, user-reported)
+
+**The report:** "new machine button on qt gui right after opening the app
+is showing 32mb memory for win98". It did, and 32 is not a default
+anywhere — it is the *bottom of the Win98 memory range*.
+
+**Why.** The form was right the whole time (`--wizard-new`, the C ABI and
+the egui build all say 256). What was wrong was the order the Qt model
+published in: `set_ram_mb` before `set_ram_min`/`set_ram_max`. A
+`SpinBox` bounds the value it is handed against the range it has *at that
+moment*, and does not revisit it when the range widens later — and the
+window is built at start-up, so the range it had was `WizardRust`'s
+`#[derive(Default)]` zeroes. 256 arrived into `0..0`, became 0, and was
+lifted to 32 when the minimum landed; the `value:` binding never fired
+again because the model's number had not changed since.
+
+**The fix**, three parts, all in `src/qt/wizard.rs`:
+
+* the **range before the value** in `publish()`, with a comment saying
+  why (this is the general rule for any control that clamps);
+* `Wizard` publishes in **`cxx_qt::Initialize`**, so a window QML builds
+  at start-up binds to a form that means something instead of to zeroes —
+  the same rule `ShaderEditor` got when the preset collection was read
+  before any verb ran;
+* **`open` last** in every model's `publish()` (`wizard`, `discs`,
+  `snaps`, `shaders`), because `Main.qml` shows the window on that flag
+  and everything the first frame draws should be current by then.
+
+**Checked, and it has to be checked from the window.** Nothing that asks
+the *model* can see this — the model was right — so the headless path
+grew a way to drive a screen without photographing it: with
+`LAUNCHER_QT_SCREEN` set and `LAUNCHER_QT_SHOT` empty, the diag timers
+run the script, print what the window holds and quit, which also means it
+needs no GPU (`grabToImage` never completes while something else is
+holding the card — a running player, say). `WizardWindow` exposes
+`shownRamMb` (the spin box's own value), the wizard case prints it beside
+the model's, and the new `qt-wizard` check in `scripts/test.sh` opens the
+real window on all three families and fails if the two disagree. Against
+the unfixed binary it says `win98: the memory field shows 32, the form
+says 256`; against the fixed one, 256 / 512 / 64.
+
 ## Next steps, in order
 
 1. ~~**The machine bundle format**~~ — done above.

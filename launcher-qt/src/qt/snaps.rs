@@ -210,11 +210,13 @@ impl ffi::SnapshotModel {
             error = qs_opt(m.error());
         }
         self.as_mut().set_count(count);
-        self.as_mut().set_open(open);
         self.as_mut().set_title(title);
         self.as_mut().set_running(running);
         self.as_mut().set_busy(busy);
         self.as_mut().set_status(status);
         self.as_mut().set_error(error);
+        // Last: `open` is what `Main.qml` shows the window on, so
+        // everything its first frame draws is current by then.
+        self.as_mut().set_open(open);
     }
 }

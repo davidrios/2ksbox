@@ -198,6 +198,11 @@ pub mod ffi {
         #[qinvokable]
         fn floppy_filter(self: &Wizard) -> QString;
     }
+
+    // Publish the form's defaults from the constructor (see the impl
+    // below): a doc comment here is an attribute, which cxx-qt refuses on
+    // a trait impl.
+    impl cxx_qt::Initialize for Wizard {}
 }
 
 use crate::{qs, qs_opt};
@@ -439,6 +444,16 @@ impl ffi::Wizard {
     /// The form, onto the properties — every one through its own setter,
     /// so each notify fires for the values that actually moved. Read
     /// out first, written after: the setters take `&mut self`.
+    ///
+    /// **Order matters here, twice.** A control that clamps — the memory
+    /// `SpinBox` — must be given its *range* before its value, because
+    /// Qt bounds the value it is handed against the range it has at that
+    /// moment and does not revisit it when the range widens later: the
+    /// memory field showed a fresh Win98 machine as 32 MB, the bottom of
+    /// its range, because 256 arrived while the range was still the
+    /// model's initial 0..0 (user, 2026-09-06). And `open` goes **last**,
+    /// because it is what `Main.qml` shows the window on — everything the
+    /// first frame draws should already be current when it does.
     fn publish(mut self: Pin<&mut Self>) {
         let (
             open,
@@ -510,14 +525,14 @@ impl ffi::Wizard {
             advanced_toml = qs(&f.advanced_toml);
             error = qs_opt(f.error.as_deref());
         }
-        self.as_mut().set_open(open);
         self.as_mut().set_editing(editing);
         self.as_mut().set_title(title);
         self.as_mut().set_family(family);
         self.as_mut().set_name(name);
-        self.as_mut().set_ram_mb(ram_mb);
+        // The range first, then the value it has to fit in.
         self.as_mut().set_ram_min(ram_min);
         self.as_mut().set_ram_max(ram_max);
+        self.as_mut().set_ram_mb(ram_mb);
         self.as_mut().set_ram_note(ram_note);
         self.as_mut().set_ram_is_default(ram_is_default);
         self.as_mut().set_cpu_speed(cpu_speed);
@@ -548,5 +563,18 @@ impl ffi::Wizard {
         self.as_mut().set_advanced(advanced);
         self.as_mut().set_advanced_toml(advanced_toml);
         self.as_mut().set_error(error);
+        self.as_mut().set_open(open);
+    }
+}
+
+/// Publish once at construction, so the window QML builds at start-up
+/// binds to a form that means something instead of to the zeroes a
+/// `#[derive(Default)]` leaves behind. Same reason as
+/// `ShaderEditor`'s: a retained-mode property read before any verb has
+/// run is read at its default, and here that default was a memory range
+/// of 0..0 for the spin box to clamp against.
+impl cxx_qt::Initialize for ffi::Wizard {
+    fn initialize(self: Pin<&mut Self>) {
+        self.publish();
     }
 }

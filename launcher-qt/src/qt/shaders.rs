@@ -534,7 +534,6 @@ impl ffi::ShaderEditor {
             preset_filter = qs(name_filter(PRESET_FILTER));
             image_filter = qs(name_filter(IMAGE_FILTER));
         }
-        self.as_mut().set_open(open);
         self.as_mut().set_count(count);
         self.as_mut().set_name(name);
         self.as_mut().set_preset_path(preset_path);
@@ -547,5 +546,8 @@ impl ffi::ShaderEditor {
         self.as_mut().set_presets_download_size(size);
         self.as_mut().set_preset_filter(preset_filter);
         self.as_mut().set_image_filter(image_filter);
+        // Last: `open` is what `Main.qml` shows the window on, so
+        // everything its first frame draws is current by then.
+        self.as_mut().set_open(open);
     }
 }

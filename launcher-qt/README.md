@@ -67,4 +67,20 @@ LAUNCHER_QT_ARG="/path/crt-aperture.slangp;/path/frame.png" \
 
 `QT_QPA_PLATFORM=offscreen` renders with no display, but `grabToImage`
 needs a real session to hand back a picture — take the shots against a
-running X/Wayland session.
+running X/Wayland session, and one whose GPU is not already being held by
+something like a running player: the grab then never completes and the
+process sits there.
+
+**`LAUNCHER_QT_SCREEN` with no `LAUNCHER_QT_SHOT`** drives the same
+scripts without photographing anything: the window is opened, whatever
+that screen prints (`diag.note`) goes to stderr, and the process quits.
+No GPU, no session, and it is what a check reads — the `qt-wizard` check
+in `scripts/test.sh` uses it to compare what the memory spin box *shows*
+with what the shared form says, which is the one thing asking the model
+cannot tell you.
+
+```sh
+QT_QPA_PLATFORM=offscreen LAUNCHER_QT_SCREEN=wizard LAUNCHER_QT_ARG=win98 \
+  ./target/release/launcher-qt
+# [diag] wizard memory: shown 256, model 256, range 32..512
+```

@@ -43,6 +43,15 @@ Window {
     /// The item the headless screenshot path grabs — see `Main.qml`.
     property Item grabItem: form
 
+    /// What the memory spin box is *showing*, which is not always what
+    /// the model says: a control that clamps holds the value it was
+    /// given against the range it had at that moment, so a publish in
+    /// the wrong order leaves the two disagreeing and only a screenshot
+    /// would ever notice. The headless path prints it (`Main.qml`), and
+    /// the `qt-wizard` check in `scripts/test.sh` compares it with the
+    /// model's own number.
+    readonly property int shownRamMb: ram.value
+
     title: wizard.title
     width: 660
     height: 720
