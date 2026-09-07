@@ -193,6 +193,22 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   property of the person, not of the machine that installed it first. A
   machine keeps only which disc is in its drive at boot; the rest are
   swapped in while it runs. One-click guest-tools ISO attach.
+- **The shelf is in order by label** (2026-09-06, user-asked), not in the
+  order discs were added: a collection is something a title is looked up
+  in, and "whenever I happened to rip it" is not an order anyone can
+  search. Case-insensitively, and **digit runs compare as numbers**,
+  because disc sets are numbered and a plain string sort files `disc 10`
+  between `disc 1` and `disc 2`. It is an invariant of `DiscLibrary`
+  rather than a sort each view does for itself — the two GUIs, the C ABI,
+  `--discs` and the flat file the in-guest CDSHELF program lists all show
+  one order, and they *must*: that file is addressed by slot number, so a
+  view that sorted for itself would offer a disc under one number and
+  load another. Two consequences for a front end: a row index is only
+  good until the next edit (an add lands where the name belongs, a rename
+  moves the row), and a *rename in progress* must not re-sort — Qt gets
+  that for free from `editingFinished`, while the egui build re-sorts
+  when the field loses focus, or the row would slide out from under the
+  cursor typing into it.
 - **A host folder is a disc too** ("Add folder…", both front ends): the
   shelf takes a directory, and the machine's drive is given
   `isodir:<path>`, which generates an ISO 9660 + Joliet volume over the

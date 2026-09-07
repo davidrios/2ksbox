@@ -18,6 +18,9 @@
 //! `dirty` while drawing and calls `flush` at the end of the frame,
 //! while Qt's `TextField` has an `editingFinished` and calls `set_label`
 //! then `flush` once. Both go through the same two methods.
+//!
+//! The rows are in the shelf's own order — by label, `disc_library`'s
+//! invariant — so a row number is only good until the next edit.
 
 use crate::bundle::Machine;
 use crate::control;
@@ -125,13 +128,32 @@ impl Shelf {
 
     /// Rename one row. The retained-mode path: the field reports a
     /// finished edit and this is what it calls.
+    ///
+    /// The row moves to where the new name belongs (the shelf is kept in
+    /// order by label), so a caller holding row numbers must re-read them
+    /// — which is what Qt's `beginResetModel` bracket around every shelf
+    /// operation already does.
     pub fn set_label(&mut self, row: usize, label: &str) {
         let Some(disc) = self.library.discs.get_mut(row) else { return };
         if disc.label == label {
             return;
         }
         disc.label = label.to_string();
+        self.library.sort();
         self.dirty = true;
+    }
+
+    /// Put the shelf back in order after the rows were edited in place
+    /// through `discs_mut`.
+    ///
+    /// Separate from `mark_dirty` because an immediate-mode field is
+    /// edited a keystroke at a time, and re-sorting on each of them would
+    /// slide the row out from under the cursor typing into it: the egui
+    /// build marks the shelf dirty as it draws and calls this when the
+    /// field loses focus, which is the same moment Qt's `editingFinished`
+    /// reaches `set_label`.
+    pub fn resort(&mut self) {
+        self.library.sort();
     }
 
     /// The machine's boot disc, or `None` for an empty tray.

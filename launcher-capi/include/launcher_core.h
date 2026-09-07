@@ -195,7 +195,13 @@ bool lc_wizard_submit(LcWizard *w, const char *library_dir);
 char *lc_wizard_saved_path(const LcWizard *w);
 char *lc_wizard_error(const LcWizard *w);
 
-/* --- the disc shelf ------------------------------------------------- */
+/* --- the disc shelf -------------------------------------------------
+ *
+ * The rows are in the shelf's own order — by label, numbers in a label
+ * compared as numbers — so a row index is only good until the next edit:
+ * an add lands where the name belongs and a rename moves the row. Look a
+ * disc up by lc_shelf_path() rather than remembering an index across one.
+ */
 
 typedef struct LcShelf LcShelf;
 
@@ -212,7 +218,8 @@ char *lc_shelf_path(const LcShelf *s, size_t row);
 bool lc_shelf_is_boot(const LcShelf *s, size_t row);
 /* Renaming is not saving: call lc_shelf_flush when the edit is
  * finished, so a field being typed into doesn't write the file on every
- * keystroke. */
+ * keystroke. The row moves to where the new name belongs, so re-read the
+ * rows after one. */
 void lc_shelf_set_label(LcShelf *s, size_t row, const char *label);
 void lc_shelf_add(LcShelf *s, const char *path);
 void lc_shelf_add_guest_tools(LcShelf *s);

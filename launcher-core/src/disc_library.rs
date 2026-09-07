@@ -13,8 +13,19 @@
 //! Entries are labelled because that's the other half of the point: a
 //! shelf of `d1.cue`, `disc2.cue`, `cd1.iso` is not a library. The label
 //! defaults to the file name and is editable.
+//!
+//! **The shelf is kept in order by label**, not in the order things were
+//! added: a collection is something you look a title up in, and the order
+//! in which discs happened to be ripped is not an order anyone can search.
+//! It is an invariant of `DiscLibrary` rather than a sort each view does
+//! for itself, so every consumer agrees — both GUIs, the C ABI, the
+//! `--discs` verb, and the flat file the in-guest CDSHELF program lists,
+//! which is written straight out of this list and addressed by slot
+//! number (a view that sorted for itself would show a disc under one
+//! number and load another).
 
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
 /// What a file dialog should offer when picking a disc. A (label,
@@ -79,14 +90,79 @@ pub fn default_label(path: &Path) -> String {
     name.map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string())
 }
 
+/// The shelf's order: by label, the way a shelf of discs is looked
+/// through.
+///
+/// Case-insensitive, because nobody thinks of `blood2.cue` as coming
+/// after `Zork`, and **digit runs compare as numbers**, because disc sets
+/// are numbered and a plain string sort puts `Disc 10` between `Disc 1`
+/// and `Disc 2`. Equal labels are broken by path, so the order is total
+/// and two rips with the same name keep a stable position.
+pub fn compare(a: &Disc, b: &Disc) -> Ordering {
+    label_cmp(&a.label, &b.label).then_with(|| a.path.cmp(&b.path))
+}
+
+fn label_cmp(a: &str, b: &str) -> Ordering {
+    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        let (ca, cb) = match (x.peek().copied(), y.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(ca), Some(cb)) => (ca, cb),
+        };
+        let ordering = if ca.is_ascii_digit() && cb.is_ascii_digit() {
+            let (na, nb) = (digits(&mut x), digits(&mut y));
+            // Compared by value without parsing: a leading-zero-trimmed
+            // run is ordered by length first, so an eleven-digit number
+            // in a label can't overflow anything.
+            let (ta, tb) = (na.trim_start_matches('0'), nb.trim_start_matches('0'));
+            ta.len().cmp(&tb.len()).then_with(|| ta.cmp(tb))
+        } else {
+            x.next();
+            y.next();
+            lower(ca).cmp(&lower(cb))
+        };
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+}
+
+fn digits(it: &mut std::iter::Peekable<std::str::Chars>) -> String {
+    let mut run = String::new();
+    while let Some(c) = it.peek().copied().filter(char::is_ascii_digit) {
+        run.push(c);
+        it.next();
+    }
+    run
+}
+
+fn lower(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
+}
+
 impl DiscLibrary {
+    /// Put the shelf back in order. Called by everything that can
+    /// disturb it — a load, an add, a rename — so a caller never has to
+    /// remember to.
+    pub fn sort(&mut self) {
+        self.discs.sort_by(compare);
+    }
+
     /// Read the shelf. A missing file is an empty shelf, not an error —
     /// that's just a fresh install. A *corrupt* one is an error, so a
     /// hand-edit gone wrong is reported instead of silently discarding
     /// the collection by overwriting it with an empty one.
     pub fn load(path: &Path) -> std::io::Result<DiscLibrary> {
         match std::fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text).map_err(std::io::Error::other),
+            // Sorted on the way in, so a hand-edited file (or one an
+            // older launcher wrote in the order discs were added) comes
+            // up in order like any other.
+            Ok(text) => toml::from_str::<DiscLibrary>(&text).map_err(std::io::Error::other).map(|mut l| {
+                l.sort();
+                l
+            }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(DiscLibrary::default()),
             Err(e) => Err(e),
         }
@@ -112,6 +188,7 @@ impl DiscLibrary {
             return false;
         }
         self.discs.push(Disc { label: default_label(&path), path });
+        self.sort();
         true
     }
 

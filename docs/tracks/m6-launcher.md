@@ -1650,6 +1650,46 @@ kind: `crt-lottes` (still, and the same picture at frames 0 and 7) and
 `crt-beans-vga` (animated, and half the pixels different between frames 0
 and 1).
 
+## The shelf is in order (2026-09-06)
+
+The disc shelf was in the order discs were added, which is fine for a
+list of three and useless for a collection — so it is now kept in order
+by label (user-asked), case-insensitively, with **digit runs compared as
+numbers**: a shelf of `Blood disc 1 / 2 / 10` reads in that order and not
+`1, 10, 2`.
+
+The sort is an invariant of `DiscLibrary` (`sort()` on load, on add, on a
+rename) rather than something each view does, because the shelf is not
+only shown in the two GUIs: the same list is written to the flat
+`<label>\t<path>` file the in-guest CDSHELF program lists (patch 52), and
+that file is addressed **by slot number**. A view that sorted its own
+rows would show a disc as number 3 and load number 5.
+
+Two consequences a front end has to carry:
+
+* **A row index is only good until the next edit.** An add lands where
+  the name belongs; a rename moves the row. Qt already brackets every
+  shelf operation in `beginResetModel`/`endResetModel`, so it needed no
+  change at all; the C ABI's `smoke.c` now looks a row up by path
+  (`shelf_row`) instead of assuming the disc it just added is last, and
+  the header says so.
+* **A rename must not re-sort while it is being typed.** Qt gets that
+  from `editingFinished` → `set_label`, which is the finished edit. The
+  egui build writes into the row a keystroke at a time, so it calls the
+  new `Shelf::resort()` when the field reports `lost_focus()` — sorting
+  on `changed()` would slide the row out from under the cursor, and the
+  grid's cells are addressed by position, so the next keystroke would
+  land on another disc.
+
+**Checked** by the new `shelforder` check in `scripts/test.sh`: five
+discs added in a deliberately wrong order through the launcher's own
+`--discs` verb, read back in order, a sixth added later landing in the
+middle rather than at the end, and the same order in the file
+`--discs publish` writes for the guest. The `capi` smoke test asks the C
+ABI the same question (including `disc 2` before `disc 10`), and both
+real windows were driven headlessly on a seven-disc scratch shelf
+(`--diag-shelf-frame`, `LAUNCHER_QT_SCREEN=discs`).
+
 ## Next steps, in order
 
 1. ~~**The machine bundle format**~~ — done above.

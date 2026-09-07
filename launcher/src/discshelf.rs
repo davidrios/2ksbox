@@ -103,6 +103,11 @@ impl DiscShelfWindow {
         let for_machine = self.shelf.for_machine();
         let boot = self.shelf.boot().map(|p| p.to_path_buf());
         let mut dirty = false;
+        // A finished rename puts the row where the new name belongs; a
+        // rename in progress must not, or the row slides out from under
+        // the cursor typing into it (the grid's cells are addressed by
+        // position, so the next keystroke would land on another disc).
+        let mut finished_rename = false;
         egui::Grid::new("disc-shelf-grid").striped(true).num_columns(4).show(ui, |ui| {
             for (row, disc) in self.shelf.discs_mut().iter_mut().enumerate() {
                 ui.horizontal(|ui| {
@@ -128,8 +133,12 @@ impl DiscShelfWindow {
                 // the width its cells actually claim, and a bare
                 // TextEdit in one claims almost nothing.
                 let label_size = egui::vec2(190.0, ui.spacing().interact_size.y);
-                if ui.add_sized(label_size, egui::TextEdit::singleline(&mut disc.label)).changed() {
+                let label_field = ui.add_sized(label_size, egui::TextEdit::singleline(&mut disc.label));
+                if label_field.changed() {
                     dirty = true;
+                }
+                if label_field.lost_focus() {
+                    finished_rename = true;
                 }
                 let name =
                     disc.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| full.clone());
@@ -141,6 +150,9 @@ impl DiscShelfWindow {
         });
         if dirty {
             self.shelf.mark_dirty();
+        }
+        if finished_rename {
+            self.shelf.resort();
         }
         if let Some(row) = remove {
             self.shelf.remove_row(row);

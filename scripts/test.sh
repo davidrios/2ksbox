@@ -30,6 +30,11 @@
 #                  under its own name, in the flat shelf file and on the boot
 #                  drive as `isodir:`, commas in the path doubled, and our QEMU
 #                  opening both folders
+#   shelforder     the disc shelf is one list in one order: discs added in the
+#                  wrong order come back by label (case-insensitively, and disc
+#                  10 after disc 2), a later addition lands where its name
+#                  belongs, and the flat file the in-guest CDSHELF program lists
+#                  by slot number carries that same order
 #   cdimage        the cdimage block driver (patch 50) through QEMU's block layer:
 #                  qemu-img probes the cue and the ccd to "cdimage" with the
 #                  lead-out × 2048 as the size, the data track dd'd out equals the
@@ -315,6 +320,41 @@ host_check_probe() { # `launcher --host-check` (ADR-013), on any host
   fi
   return $rc
 }
+shelforder_check() { # the disc shelf is in order by label, all the way to the guest
+  local rc=0 dir="$OUT/shelforder" bundle o shelf_file got want
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  : >"$dir/disk.qcow2"
+  bundle="$(target/release/launcher --new xp shelved "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+  # Added in an order nobody would want to read them in: mixed case, and a
+  # numbered set whose tenth disc a string sort files between 1 and 2.
+  for f in "zork.iso" "blood disc 10.cue" "Blood disc 2.cue" "aladdin.iso" "Blood disc 1.cue"; do
+    : >"$dir/$f"
+  done
+  o="$(target/release/launcher --discs add "$dir/zork.iso" "$dir/blood disc 10.cue" \
+        "$dir/Blood disc 2.cue" "$dir/aladdin.iso" "$dir/Blood disc 1.cue")" \
+    || { echo "--discs add failed"; rc=1; }
+  want="aladdin Blood disc 1 Blood disc 2 blood disc 10 zork"
+  got="$(printf '%s\n' "$o" | cut -f1 | tr '\n' ' ')"
+  case "$got" in "$want "*) ;; *) echo "the shelf is not in order by label"; echo "  got:  $got"; echo "  want: $want"; rc=1;; esac
+  # And the same order in the flat file the guest's own CDSHELF program
+  # lists (patch 52) — it is served by slot number, so the order the host
+  # writes is the order the guest shows and the numbers a guest loads by.
+  shelf_file="$(target/release/launcher --discs publish "$(dirname "$bundle")" \
+                | sed -n 's/^shelf published to //p')"
+  if [ -n "$shelf_file" ] && [ -f "$shelf_file" ]; then
+    got="$(cut -f1 "$shelf_file" | tr '\n' ' ')"
+    case "$got" in "$want "*) ;; *) echo "the guest's shelf file is not in order by label"; echo "  got: $got"; rc=1;; esac
+  else
+    echo "no shelf file was published"; rc=1
+  fi
+  # A disc added later lands where its name belongs, not at the end.
+  : >"$dir/Age of Empires.iso"
+  o="$(target/release/launcher --discs add "$dir/Age of Empires.iso" | cut -f1 | head -1)"
+  [ "$o" = "Age of Empires" ] || { echo "a disc added later did not land in order (first row: $o)"; rc=1; }
+  return $rc
+}
 dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M5g)
   local rc=0 dir="$OUT/dirshelf" bundle args o spaced comma plain shelf_file
   rm -rf "$dir"; mkdir -p "$dir/library"
@@ -584,7 +624,8 @@ host_stage() {
   else skip dirdisc "needs target/release/discx"; fi
   if [ -x target/release/launcher ]; then
     run_check dirshelf dirshelf.log dirshelf_check || true
-  else skip dirshelf "needs target/release/launcher"; fi
+    run_check shelforder shelforder.log shelforder_check || true
+  else skip dirshelf "needs target/release/launcher"; skip shelforder "needs target/release/launcher"; fi
 
   # the host GPU probe (ADR-013): what the launcher tells someone about 3D
   # before a machine exists. The verdict itself is a property of the box,

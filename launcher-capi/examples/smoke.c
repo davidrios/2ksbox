@@ -52,6 +52,20 @@ static long label_index(uint32_t kind, const char *want) {
     }
 }
 
+/* Which row a disc is on, by path. The shelf is ordered by label, so a
+ * disc that was just added is not necessarily the last row — and a
+ * renamed one moves. Every front end looks a row up like this rather
+ * than remembering an index across an edit. */
+static size_t shelf_row(LcShelf *s, const char *path) {
+    for (size_t i = 0; i < lc_shelf_count(s); i++) {
+        char *p = lc_shelf_path(s, i);
+        int hit = p && strcmp(p, path) == 0;
+        lc_string_free(p);
+        if (hit) return i;
+    }
+    return (size_t)-1;
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "usage: %s <library dir> <disc image>\n", argv[0]);
@@ -184,12 +198,33 @@ int main(int argc, char **argv) {
     check("a disc went on", lc_shelf_count(s) == before + 1, NULL);
     check("...and the shelf was written", lc_shelf_take_saved(s), NULL);
     check("...only once", !lc_shelf_take_saved(s), NULL);
-    check("the new disc boots nothing yet", !lc_shelf_is_boot(s, lc_shelf_count(s) - 1), NULL);
-    check("make it the boot disc", lc_shelf_set_boot(s, lc_shelf_count(s) - 1), NULL);
-    check("...it is", lc_shelf_is_boot(s, lc_shelf_count(s) - 1), NULL);
-    lc_shelf_set_label(s, lc_shelf_count(s) - 1, "a renamed disc");
+    size_t row = shelf_row(s, disc);
+    check("the new disc is on a row", row != (size_t)-1, NULL);
+    check("the new disc boots nothing yet", !lc_shelf_is_boot(s, row), NULL);
+    check("make it the boot disc", lc_shelf_set_boot(s, row), NULL);
+    check("...it is", lc_shelf_is_boot(s, row), NULL);
+    lc_shelf_set_label(s, row, "a renamed disc");
     lc_shelf_flush(s);
-    check_str("a label is editable", lc_shelf_label(s, lc_shelf_count(s) - 1), "a renamed disc");
+    row = shelf_row(s, disc);
+    check_str("a label is editable", lc_shelf_label(s, row), "a renamed disc");
+    /* The shelf is ordered by label, not by the order discs were added:
+     * one list, which every front end shows and which the in-guest
+     * CDSHELF program reads by slot number off the flat file written
+     * from it. Numbers in a label sort as numbers, because disc sets are
+     * numbered and `disc 10` does not come between `disc 1` and `disc 2`
+     * on anybody's shelf. (Paths that don't exist are still discs — the
+     * shelf records what it was given.) */
+    lc_shelf_add(s, "zulu.iso");
+    lc_shelf_add(s, "disc 10.iso");
+    lc_shelf_add(s, "disc 2.iso");
+    lc_shelf_flush(s);
+    check("four discs on the shelf", lc_shelf_count(s) == before + 4, NULL);
+    check("...the numbered ones in number order",
+          shelf_row(s, "disc 2.iso") < shelf_row(s, "disc 10.iso"), NULL);
+    check("...and zulu last, wherever it was added",
+          shelf_row(s, "zulu.iso") == lc_shelf_count(s) - 1, NULL);
+    check("...with the renamed disc ahead of both, by its new name",
+          shelf_row(s, disc) < shelf_row(s, "disc 2.iso"), NULL);
     lc_shelf_free(s);
     lc_string_free(shelf_path);
 
