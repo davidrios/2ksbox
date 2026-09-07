@@ -1,0 +1,64 @@
+RESET has to restore CPUID.01H:EDX.APIC, not only IA32_APIC_BASE.EN.
+
+A guest that switches its local APIC off through IA32_APIC_BASE (Windows 98
+does, on the way out of a session) makes apic_set_base() clear the enable
+bit *and* the CPUID feature bit -- correct, that is what the hardware does.
+RESET puts the enable bit back in apic_reset_common() but nothing ever puts
+the feature bit back, so the next boot runs on a CPU that reports no local
+APIC while the APIC is enabled again. SeaBIOS then prints "No apic - only
+the main cpu is present", skips smp_setup() and never programs LINT0 as
+ExtINT; pic_irq_request() meanwhile sees an enabled APIC and routes the
+i8259's output into it, where apic_accept_pic_intr() refuses it because
+LINT0 is masked. Every PIC interrupt is dropped: the guest hangs on the
+first BIOS-tick wait of its boot (Win98's IO.SYS, or the countdown of an
+install CD's boot menu) with the timer IRQ pending in the 8259 for ever.
+
+Reproduced on QEMU 9.2.4 and, unchanged, on a stock 11.1.0. The guard is
+tools/win98-reboot-test.sh; the patch README row has the whole story.
+
+--- a/include/hw/i386/apic_internal.h
++++ b/include/hw/i386/apic_internal.h
+@@ -190,6 +190,10 @@
+     hwaddr vapic_paddr; /* note: persistence via kvmvapic */
+     bool legacy_instance_id;
+     uint32_t extended_log_dest;
++    /* CPUID.01H:EDX.APIC as the CPU model configures it: a guest that turns
++     * the APIC off through IA32_APIC_BASE clears the feature bit with the
++     * enable bit, and RESET has to bring both back (apic_reset_common). */
++    bool cpuid_apic;
+ };
+ 
+ typedef struct VAPICState {
+--- a/hw/intc/apic_common.c
++++ b/hw/intc/apic_common.c
+@@ -257,6 +257,20 @@
+     s->apicbase = APIC_DEFAULT_ADDRESS | bsp | MSR_IA32_APICBASE_ENABLE;
+     s->id = s->initial_apic_id;
+ 
++    /*
++     * The enable bit is back (line above), so the CPUID feature bit that
++     * follows it on real hardware has to come back too: apic_set_base()
++     * clears CPUID.01H:EDX.APIC when a guest switches the APIC off through
++     * IA32_APIC_BASE, and nothing else ever sets it again. Leaving it clear
++     * across a reset tells the next boot's firmware that this CPU has no
++     * local APIC, so it never programs LINT0 as ExtINT -- while the enable
++     * bit being set again routes the i8259's output through the APIC, whose
++     * masked LINT0 then drops every PIC interrupt on the floor.
++     */
++    if (s->cpuid_apic) {
++        cpu_set_apic_feature(&s->cpu->env);
++    }
++
+     kvm_reset_irq_delivered();
+ 
+     s->vapic_paddr = 0;
+@@ -284,6 +298,9 @@
+         return;
+     }
+ 
++    /* what the CPU model advertises, for apic_reset_common() to restore */
++    s->cpuid_apic = !!(s->cpu->env.features[FEAT_1_EDX] & CPUID_APIC);
++
+     /* Note: We need at least 1M to map the VAPIC option ROM */
+     if (!vapic && s->vapic_control & VAPIC_ENABLE_MASK &&
+             current_machine->ram_size >= 1024 * 1024) {

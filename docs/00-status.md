@@ -171,9 +171,26 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   pass-through; Glide to D3D over doc 14/15 with nGlide or dgVoodoo2) and
   why neither was taken.
 
-- Warm reboot of Win98 freezes on the Air (cold start works; Linux reboot
-  paths verified fine). Untriaged: needs `-monitor stdio` → `info registers`
-  / `info pic`, `-machine pc,hpet=off` test, and a stock-QEMU comparison.
+- **Warm reboot of Win98 froze on the first frame — fixed 2026-09-06,
+  `patches/qemu/22-upstream-apic-reset-cpuid`.** Not a Mac problem after
+  all (it was filed as "freezes on the Air", cold start works): it
+  reproduces on Linux on every restart, and on a **stock QEMU 11.1.0**
+  too, so it is an upstream bug we now carry a patch for. Win98 turns its
+  local APIC off through `IA32_APIC_BASE`, which also clears
+  `CPUID.01H:EDX.APIC`; `apic_reset_common()` puts the enable bit back at
+  RESET and never the feature bit, so the next POST is told the CPU has no
+  local APIC. SeaBIOS then skips `smp_setup()` and never sets `LINT0` to
+  ExtINT, while the re-enabled APIC swallows the i8259's output at a
+  masked LINT0 — every PIC interrupt is dropped and the guest spins for
+  ever on IO.SYS's first wait for the BIOS tick at 0040:006C. **The
+  blinking cursor over a dead screen is a red herring**: `vga_draw_text`
+  blinks it on the host side, with no guest running at all, which is why
+  an install CD's boot menu can sit there with a live caret and a frozen
+  countdown. Diagnosis path worth reusing: `info registers` twice (EIP
+  identical = the guest is not moving), `info pic` (`irr=11 imr=b8 isr=00`
+  = a timer interrupt pending and never taken), `info lapic` (`LVT0
+  masked`), then `x /24i` at CS:IP to read the loop. Guard:
+  `tools/win98-reboot-test.sh`.
 - SDL standalone on macOS: 3D presentation janky unless the mouse moves
   (`SDL_GL_SwapWindow` from the vCPU thread; try `mesagl.cfg`
   `DispTimerMS,16`). Not relevant once M3 lands.

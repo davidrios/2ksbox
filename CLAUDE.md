@@ -182,6 +182,7 @@ GPU); don't propose wiring it in.
 | `scripts/test.sh [host\|guest\|all]` | the whole suite below, PASS/FAIL/SKIP per check, outputs in `build/test/`; `TEST_KEEP=1` leaves XP running on failure |
 | `SETUP.EXE` (guest-tools ISO root; `guest-tools/src/setup.c`) | installs the guest tools from inside the machine, and the reason the ISO's folders are what they are: one folder per role, one copy of every file, and SETUP knows which of them *this* Windows wants (98/Me: Glide + `FXMEMMAP.VXD`; 2000/XP: Glide + `FXPTL.SYS` with the MAPMEM service, and the `d3dpt-vga` display driver). A console program, so a guest test drives it: `SETUP /ALL` installs everything applicable, `SETUP /LIST` prints the lists, `SETUP /GAME <n> <dir>` copies one per-game file set next to a game's EXE (that is where WineD3D's `WINED9.DLL` → `D3D9.DLL` renames happen, so the disc carries no second copy). Writes `SETUP.LOG` |
 | `tools/setup-guest-test.sh <image> [xp\|win98]` | `SETUP.EXE` in a real guest, headless, on both families: `/LIST`, `/ALL`, `/GAME 3 C:\2KSBOX`, then **Windows' own `dir`** on everything that should now exist (and `net start MAPMEM` on NT) over COM1 — the installer's own exit code is not the evidence. XP boots on `-vga none -device d3dpt-vga` so the display-driver component has a device to bind to, and the QEMU log's `d3dptvid: adapter found` is checked too; Win98 boots on cirrus and the run fails if that component is even offered. Overlay only, never the image. Local only (needs a guest image), not in `scripts/test.sh` |
+| `tools/win98-reboot-test.sh <image> [qmp\|guest\|both]` | a Win98 guest survives a **restart** (patch 22): boots an overlay headless, resets it both ways — a QMP `system_reset` and the Start menu's Shut Down → Restart — and requires a second SeaBIOS banner on the debugcon (the machine really reset) plus a whole boot's worth of disk reads after it (the guest really ran) with `LVT0` back to ExtINT. A screendump is no evidence here: the freeze this guards leaves a splash screen with a **blinking text caret**, drawn by `vga_draw_text` on the host with no guest running at all. `QEMU=`/`BIOS=0` runs the stock-QEMU control. Overlay only, never the image. Local only (needs a guest image), not in `scripts/test.sh` |
 | `launcher-capi/examples/smoke.c` | a third front end, in C, over the same models the egui and Qt builds use (`launcher-capi/include/launcher_core.h`): creates a DOS machine through the shared wizard and checks its answers (64 MB, a period processor, emulated, no network card, our own emulator fast paths all at their shipped setting and a checkbox that changes the count), then the disc shelf, the library and the profile editor. The `capi` check in `scripts/test.sh`; a scratch library, never the user's own. A changed default in a model fails here as well as in the two GUIs |
 | `tools/x87-fast-test.c` | patch 05's x87 fast path equals the real x87 (x86-64 host oracle) |
 | the `optimizations` check in `scripts/test.sh` | the wizard's "Emulation optimizations" switches (`patches/qemu/README.md`, doc 07) from a checkbox to a real QEMU: a machine nobody has touched emits no property and writes no `[optimizations]` table, each switch lands on the option QEMU looks it up on (`-cpu` for the four CPU properties, `-accel tcg` for the three accelerator ones), our own `qemu-system-i386` accepts the exact line the launcher writes with all seven flipped, and "All defaults" empties the table again. The switches' *effect* is the guest batteries' job; this is the wiring between them and a checkbox |
@@ -294,6 +295,16 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   missing export SHLWAPI.DLL:GetFileAttributesA* — so there is no Start
   menu and no way to drive the guest (2026-09-06). The same image is
   fine under TCG.
+- **A guest frozen on its first frame with a blinking caret is not a hung
+  emulator, it is a guest that never gets a timer interrupt.** The caret is
+  `vga_draw_text`'s, drawn on the host side with no guest running at all,
+  so it blinks over a dead machine — which is why a boot menu can sit
+  there with a live caret and a countdown that never moves. Diagnose with
+  `info registers` twice (same EIP = not moving), `info pic` (an unmasked
+  `irr` bit with `isr=00` = an interrupt pending and never taken) and
+  `info lapic` (`LVT0 masked` = the APIC is swallowing the i8259). That
+  exact case was Win98's restart, fixed by patch 22
+  (`tools/win98-reboot-test.sh` guards it).
 - The **Win98 display driver** (M10, doc 19) is 16-bit, and that changes
   two things nothing warns about. `d3dpt-vga`'s register BAR is
   `valid.min_access_size = 4`: a 16-bit compiler turns `*(DWORD __far *)p`
