@@ -526,7 +526,7 @@ fn main() -> eframe::Result {
             return Ok(());
         }
         Some("--diag-wizard-frame") => {
-            // The same, for the machine form: `new <win98|xp|dos>` opens
+            // The same, for the machine form: `new <win98|xp|dos|other>` opens
             // it as "New machine", `edit <machine.toml>` as "Edit
             // machine". The dump is how the memory, processor and
             // acceleration rows are checked for real — they render per
@@ -535,7 +535,7 @@ fn main() -> eframe::Result {
             // the acceleration hint depends on this host — and a click
             // script drives them.
             let usage =
-                "usage: launcher --diag-wizard-frame new <win98|xp|dos> | edit <machine.toml> -- <out.png> [<screen WxH>] [<script>]";
+                "usage: launcher --diag-wizard-frame new <win98|xp|dos|other> | edit <machine.toml> -- <out.png> [<screen WxH>] [<script>]";
             let mode = args.next().expect(usage);
             let arg = args.next().expect(usage);
             let mut form = launcher_core::wizard::Form::default();

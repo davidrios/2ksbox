@@ -47,6 +47,7 @@ pub fn parse_family(arg: Option<&str>, usage: &str) -> Family {
         Some("win98") => Family::Win98,
         Some("xp") => Family::Xp,
         Some("dos") => Family::Dos,
+        Some("other") => Family::Other,
         _ => panic!("{usage}"),
     }
 }
@@ -126,7 +127,7 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             crate::fatal::record("--diagnose", &text);
         }
         "--new" => {
-            let usage = "usage: --new <win98|xp|dos> <name> <disk.qcow2>";
+            let usage = "usage: --new <win98|xp|dos|other> <name> <disk.qcow2>";
             let family = parse_family(args.next().as_deref(), usage);
             let name = args.next().expect(usage);
             let disk = args.next().expect(usage).into();
@@ -136,7 +137,7 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
         "--wizard-new" => {
             // Headless equivalent of the "New machine" window: the real
             // form's `submit`, disk creation via qemu-img included.
-            let usage = "usage: --wizard-new <win98|xp|dos> <name> <disk-size-gb>";
+            let usage = "usage: --wizard-new <win98|xp|dos|other> <name> <disk-size-gb>";
             let family = parse_family(args.next().as_deref(), usage);
             let name = args.next().expect(usage);
             let size_gb: u32 = args.next().expect(usage).parse().expect("disk size must be a number");
@@ -151,7 +152,7 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // a bundle, change the fields given, save it back in place.
             // `-` keeps a field as it is.
             let usage =
-                "usage: --wizard-edit <machine.toml> <new-name|-> [ram-mb|-] [auto|kvm|tcg|-] [net|nonet] [cpu-speed|-] [boot|-] [seamless|noseamless]";
+                "usage: --wizard-edit <machine.toml> <new-name|-> [ram-mb|-] [auto|kvm|tcg|-] [net|nonet] [cpu-speed|-] [boot|-] [seamless|noseamless] [d3dpt|std|cirrus|-]";
             let path: PathBuf = args.next().expect(usage).into();
             let new_name = args.next().expect(usage);
             let mut form = wizard::Form::default();
@@ -209,6 +210,20 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 Some("seamless") => form.choose_seamless_mouse(true),
                 Some("noseamless") => form.choose_seamless_mouse(false),
                 Some(other) => panic!("the pointer is seamless or noseamless, not {other:?}; {usage}"),
+            }
+            // The display adapter. Which names a family accepts is the
+            // form's business (`video_choices`); one it does not offer is
+            // a no-op here rather than an error, so a script can set the
+            // same field on every machine it walks.
+            match args.next().as_deref() {
+                None | Some("-") => {}
+                // `choose_video` refuses one this family does not offer,
+                // which is what makes `std` a no-op on an XP machine
+                // rather than a machine with no driver.
+                Some("d3dpt") => form.choose_video(bundle::Video::D3dpt),
+                Some("std") => form.choose_video(bundle::Video::Std),
+                Some("cirrus") => form.choose_video(bundle::Video::Cirrus),
+                Some(other) => panic!("the adapter is d3dpt, std or cirrus, not {other:?}; {usage}"),
             }
             match form.submit(&library::default_dir()) {
                 Some(saved) => println!("{}", saved.display()),

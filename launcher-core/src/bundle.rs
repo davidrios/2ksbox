@@ -20,17 +20,29 @@ pub enum Family {
     /// is `CpuSpeed`: the era's software paces itself by how fast the
     /// CPU is, and emulation is far too fast for it (doc 06).
     Dos,
+    /// Anything else of the era on the same PC: BeOS, a period Linux,
+    /// OS/2. Defined by what it *doesn't* get — our own paravirtual
+    /// adapter (`d3dpt-vga`) is a Windows display driver and the 3D
+    /// pass-through is a set of Windows DLLs, so none of it is reachable
+    /// here. What is left is hardware every one of these systems shipped
+    /// a driver for in the nineties: the Bochs/standard VGA with VBE 2.0,
+    /// an RTL8139 and an ES1370. 2D, the CRT shader chain and the real
+    /// CD-ROM model, which is the DOS family's story on a guest modern
+    /// enough to want PCI cards.
+    Other,
 }
 
 impl Family {
-    /// In the order a picker should offer them, newest first.
-    pub const ALL: [Family; 3] = [Family::Win98, Family::Xp, Family::Dos];
+    /// In the order a picker should offer them: the three the project is
+    /// actually built around first, then the catch-all.
+    pub const ALL: [Family; 4] = [Family::Win98, Family::Xp, Family::Dos, Family::Other];
 
     pub fn label(self) -> &'static str {
         match self {
             Family::Win98 => "Win98",
             Family::Xp => "XP",
             Family::Dos => "DOS",
+            Family::Other => "Other (BeOS, Linux, …)",
         }
     }
 }
@@ -118,6 +130,89 @@ impl CpuSpeed {
             CpuSpeed::Dx33 => "386DX-33 (~8 M)",
             CpuSpeed::At286 => "286-12 (~4 M)",
         }
+    }
+}
+
+/// The display adapter, on the families that have a choice of one.
+///
+/// The choice exists because there are two honest answers and nothing
+/// here can pick between them. On Windows it is *our* adapter and driver
+/// (docs 15, 19) against the in-box driver Windows already has: ours is
+/// what the whole display path is built on — the mode table, the linear
+/// frame buffer the player scans out, the page flips that pace a game,
+/// the Direct3D DDI — and the Cirrus is what a machine falls back to
+/// when the driver is not installed yet, when it is being A/B'd against,
+/// or when a title misbehaves on it. On `Other` there is no driver of
+/// ours at all, so it is one standard adapter against another and only
+/// the person installing the guest knows which has a driver in the box.
+///
+/// Every entry is an adapter with a real VGA BIOS, so any of them boots
+/// anything; the difference is what the guest finds a driver for.
+/// Which entries a family offers is `video_choices`, and the **first of
+/// them is that family's default**.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Video {
+    /// `d3dpt-vga`, our own paravirtual adapter, driven by our display
+    /// driver from the guest-tools ISO (docs 15, 19). Windows only —
+    /// there is no driver for it anywhere else, and a guest without one
+    /// comes up on the plain VGA the device also is.
+    #[serde(rename = "d3dpt")]
+    D3dpt,
+    /// QEMU's standard VGA: the Bochs adapter, VBE 2.0 and a linear
+    /// frame buffer. What a period VESA driver wants, and what a modern
+    /// Linux binds `bochs-drm` to. **No XP driver at all** (XP falls back
+    /// to 800×600×4 vga.sys), which is why the Windows families do not
+    /// offer it.
+    Std,
+    /// Cirrus Logic GD5446. A chip that really existed, so a guest of
+    /// the era is likely to have a *native* driver for it: Windows 98 and
+    /// XP both have one in the box, and so do BeOS R5 and XFree86.
+    Cirrus,
+}
+
+impl Video {
+    /// Every variant, for serde round-trips and label lookups. **Not what
+    /// a picker offers** — that is `video_choices(family)`, because half
+    /// of these are wrong on any given family.
+    pub const ALL: [Video; 3] = [Video::D3dpt, Video::Std, Video::Cirrus];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Video::D3dpt => "Our own adapter (d3dpt-vga)",
+            Video::Std => "Standard VGA (Bochs, VBE 2.0)",
+            Video::Cirrus => "Cirrus Logic GD5446",
+        }
+    }
+
+    /// The arguments that put this adapter on the machine. Our own is a
+    /// `-device` on a machine with no `-vga` at all, and it carries the
+    /// same PCI address the plain `-vga` adapters are given by the
+    /// machine itself (0x02, measured), so the cards pinned below it do
+    /// not move when the adapter is changed under an installed guest.
+    fn args(self) -> [&'static str; 2] {
+        match self {
+            Video::D3dpt => ["-device", "d3dpt-vga,addr=0x02"],
+            Video::Std => ["-vga", "std"],
+            Video::Cirrus => ["-vga", "cirrus"],
+        }
+    }
+}
+
+/// The adapters a family offers, **first one its default**, or empty
+/// where there is nothing to choose.
+///
+/// The Windows families choose between our adapter and the one Windows
+/// has an in-box driver for; they are not offered the standard VGA,
+/// which has no XP driver at all. `Other` chooses between the two
+/// standard adapters, since nothing of ours runs there. DOS chooses
+/// nothing: it is the one family whose adapter is a period *fact* rather
+/// than a driver question — its titles program a VGA/VESA BIOS directly.
+pub fn video_choices(family: Family) -> &'static [Video] {
+    match family {
+        Family::Win98 | Family::Xp => &[Video::D3dpt, Video::Cirrus],
+        Family::Other => &[Video::Std, Video::Cirrus],
+        Family::Dos => &[],
     }
 }
 
@@ -486,6 +581,13 @@ pub struct Machine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_speed: Option<CpuSpeed>,
 
+    /// The display adapter, on a family that has a choice of one
+    /// (`default_video` — `Other` alone today). Absent = that family's
+    /// default, and on every other family the field is not read at all:
+    /// their adapter is what their driver is written for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<Video>,
+
     /// Which of our own emulator fast paths this machine runs with
     /// (`Optimization`), holding only what someone turned off — absent
     /// means all of them at their shipped setting.
@@ -512,7 +614,10 @@ pub fn default_accel(family: Family) -> Accel {
         // (`-icount` and KVM cannot coexist), so this is the only honest
         // default; `Auto` would promise KVM and not deliver it.
         Family::Win98 | Family::Dos => Accel::Tcg,
-        Family::Xp => Accel::Auto,
+        // Nothing here is tuned for an era Linux or BeOS, and neither
+        // has Win9x's fast-CPU bugs: take the host's speed when it is
+        // there, emulate when it isn't.
+        Family::Xp | Family::Other => Accel::Auto,
     }
 }
 
@@ -541,13 +646,21 @@ fn seamless_mouse_default() -> bool {
     true
 }
 
-/// Whether a *new* machine of this family gets the tablet. DOS is the
-/// one that doesn't: its mouse drivers talk to the PS/2 controller, so a
-/// tablet would leave the guest with a pointer it cannot see. (An
-/// existing bundle with no `seamless_mouse` field is unaffected, for the
-/// same reason `network_enabled_default` is unconditional.)
+/// Whether a *new* machine of this family gets the tablet. Two families
+/// don't. DOS's mouse drivers talk to the PS/2 controller, so a tablet
+/// would leave the guest with a pointer it cannot see. `Other` is off
+/// for the weaker version of the same reason: an absolute USB pointer
+/// needs the guest's USB HID stack *and* its windowing system to agree
+/// it is absolute, which an era Linux (XFree86 wants an explicit
+/// `evdev`/`usbtablet` input section) and BeOS do not do out of the box
+/// — and unlike the Windows families there is no guest-tools install
+/// that would fix it. The PS/2 mouse works everywhere, so that is what a
+/// machine we cannot test starts with; the checkbox turns it on for a
+/// guest that does handle it. (An existing bundle with no
+/// `seamless_mouse` field is unaffected, for the same reason
+/// `network_enabled_default` is unconditional.)
 pub fn default_seamless_mouse(family: Family) -> bool {
-    family != Family::Dos && seamless_mouse_default()
+    !matches!(family, Family::Dos | Family::Other) && seamless_mouse_default()
 }
 
 /// The speed a family runs at unless the machine says otherwise. Only
@@ -559,8 +672,18 @@ pub fn default_seamless_mouse(family: Family) -> bool {
 pub fn default_cpu_speed(family: Family) -> CpuSpeed {
     match family {
         Family::Dos => CpuSpeed::Dx266,
-        Family::Win98 | Family::Xp => CpuSpeed::Unthrottled,
+        Family::Win98 | Family::Xp | Family::Other => CpuSpeed::Unthrottled,
     }
+}
+
+/// The adapter a family starts on, or `None` when it has no choice to
+/// make. Always the first of `video_choices`, so the list and the
+/// default cannot disagree: our own adapter on Windows, where the whole
+/// display path is built on it, and the standard VGA on `Other`, the one
+/// with a VESA path every guest can fall back on when it has no native
+/// driver at all.
+pub fn default_video(family: Family) -> Option<Video> {
+    video_choices(family).first().copied()
 }
 
 /// doc 06's RAM default for a family.
@@ -573,6 +696,10 @@ pub fn default_ram_mb(family: Family) -> u32 {
         // nothing. 64 MB is generous for the era and stays inside what
         // MS-DOS 6.22's own HIMEM.SYS manages.
         Family::Dos => 64,
+        // No family default to inherit, so the number is the one that
+        // suits the range of things this covers: an era Linux desktop or
+        // BeOS R5 is comfortable in 512 MB and neither needs more.
+        Family::Other => 512,
     }
 }
 
@@ -595,6 +722,12 @@ pub fn ram_mb_range(family: Family) -> std::ops::RangeInclusive<u32> {
         Family::Win98 => 32..=512,
         Family::Xp => 64..=3072,
         Family::Dos => 4..=256,
+        // The widest range we can honestly offer: we don't know what is
+        // going in, so the only limits are the machine's. The bottom is
+        // where a 1995 kernel still boots, the top is XP's 32-bit
+        // ceiling. BeOS R5 is the one guest with a lower one of its own
+        // (1 GB), which the wizard says rather than enforces.
+        Family::Other => 16..=3072,
     }
 }
 
@@ -616,6 +749,7 @@ impl Machine {
             floppy: None,
             boot: None,
             cpu_speed: Some(default_cpu_speed(family)),
+            video: default_video(family),
             optimizations: Optimizations::default(),
         }
     }
@@ -722,6 +856,39 @@ impl Machine {
         self.cpu_speed.unwrap_or_else(|| default_cpu_speed(self.family))
     }
 
+    /// The adapter this machine runs on, or `None` where the family
+    /// settles it. A `video` naming an adapter this family does not
+    /// offer falls back to its default rather than being obeyed:
+    /// `video = "std"` on an XP machine would leave the guest with no
+    /// driver at all (there is none for the Bochs adapter on XP), which
+    /// is not something a stray bundle field should be able to do.
+    pub fn effective_video(&self) -> Option<Video> {
+        let choices = video_choices(self.family);
+        let default = *choices.first()?;
+        Some(match self.video {
+            Some(v) if choices.contains(&v) => v,
+            _ => default,
+        })
+    }
+
+    /// The `-vga` / `-device` pair that puts the machine's adapter on it.
+    /// `-vga none` first for every choice, so the machine never gets the
+    /// default adapter *as well as* the one it asked for.
+    fn video_args(&self) -> Vec<String> {
+        let mut args = vec!["-vga".to_string(), "none".to_string()];
+        if let Some(video) = self.effective_video() {
+            let [flag, value] = video.args();
+            // `-vga <name>` replaces the `none` above rather than adding
+            // to it; our own adapter is a `-device` and keeps it.
+            if flag == "-vga" {
+                args = vec![flag.to_string(), value.to_string()];
+            } else {
+                args.extend([flag.to_string(), value.to_string()]);
+            }
+        }
+        args
+    }
+
     pub fn effective_boot(&self) -> Boot {
         self.boot.unwrap_or_default()
     }
@@ -781,25 +948,45 @@ impl Machine {
         // below (`query-pci` says so), which is the opposite of what the
         // setting means.
         //
-        // The XP devices carry explicit PCI addresses because removing
-        // the NIC would otherwise slide the sound card up into its slot,
-        // and a card that moves is a hardware change an installed
-        // Windows re-detects. These are the addresses those devices
-        // already get from their `-device` order today, so pinning them
-        // changes nothing for an existing machine — it only keeps them
-        // still when the NIC comes and goes. Win98 needs none of this:
-        // its display is `-vga` (not a `-device`) and its SB16 is ISA,
-        // so its NIC is the only card in the sequence.
+        // The Windows devices carry explicit PCI addresses because
+        // removing the NIC would otherwise slide the card below it up
+        // into its slot, and a card that moves is a hardware change an
+        // installed Windows re-detects. These are the addresses those
+        // devices already get from their `-device` order today, so
+        // pinning them changes nothing for an existing machine — it only
+        // keeps them still when the NIC comes and goes. DOS needs none of
+        // it: its display is `-vga` (not a `-device`) and its SB16 is
+        // ISA, so its NIC is the only card in the sequence.
         if !self.network {
             args.extend(["-nic".into(), "none".into()]);
         }
         match self.family {
+            // The same adapter as XP since 2026-09-07 (doc 19, M10):
+            // `d3dpt-vga` with our own display driver, where this family
+            // used to get `-vga cirrus` and Windows' in-box driver. The
+            // adapter is what the whole display path is built on — the
+            // linear frame buffer the player scans out, the mode table,
+            // the page flips that pace a game — and a 98 machine on
+            // cirrus has none of it. Which is why it is now a *choice*
+            // (`video_choices`, 2026-09-07): the Cirrus is the honest
+            // answer for a machine whose driver is not installed yet, and
+            // the A/B for a title that misbehaves on ours.
+            //
+            // **Changing it is a hardware change to an installed guest.**
+            // That is a real consequence and not a detail: the guest
+            // finds an unknown adapter, comes up in plain VGA, and wants
+            // a driver — ours from the guest-tools ISO (`SETUP`, doc 19
+            // §16), or Windows' own for the Cirrus — before it has its
+            // desktop back. The machine boots either way.
             Family::Win98 => {
-                args.extend(["-vga".into(), "cirrus".into()]);
+                args.extend(self.video_args());
                 if self.network {
                     args.extend(["-netdev".into(), "user,id=n0".into()]);
-                    args.extend(["-device".into(), "pcnet,netdev=n0".into()]); // in-box 98 driver
+                    // in-box 98 driver
+                    args.extend(["-device".into(), "pcnet,netdev=n0,addr=0x03".into()]);
                 }
+                // ISA, so it is not in the PCI sequence above and does
+                // not move when the NIC comes and goes.
                 args.extend(["-device".into(), "sb16,audiodev=embed0".into()]);
             }
             // The 1994 PC: the same chipset and the SB16 doc 06 already
@@ -816,14 +1003,42 @@ impl Machine {
                 args.extend(["-device".into(), "sb16,audiodev=embed0".into()]);
             }
             Family::Xp => {
-                args.extend(["-vga".into(), "none".into()]);
-                args.extend(["-device".into(), "d3dpt-vga,addr=0x02".into()]);
+                args.extend(self.video_args());
                 if self.network {
                     args.extend(["-netdev".into(), "user,id=n0".into()]);
                     // in-box XP driver
                     args.extend(["-device".into(), "rtl8139,netdev=n0,addr=0x03".into()]);
                 }
                 args.extend(["-device".into(), "AC97,audiodev=embed0,addr=0x04".into()]);
+            }
+            // Everything else of the era: standard hardware only, chosen
+            // for having had a driver in the box on BeOS R5 and on a
+            // period Linux alike, because there is no guest-tools install
+            // to add one afterwards.
+            //
+            // Its two adapters are the two *standard* ones — never
+            // `d3dpt-vga`, which needs our display driver and so exists
+            // for Windows only — so this family has no 3D path of any
+            // kind whichever is picked.
+            //
+            // The PCI addresses are pinned for the same reason the
+            // Windows families pin theirs — removing the NIC would slide
+            // the sound card up into its slot, and a card that moves is a
+            // hardware change a guest re-detects. Every adapter here
+            // takes 0x02 (measured), so these two follow it.
+            Family::Other => {
+                args.extend(self.video_args());
+                if self.network {
+                    args.extend(["-netdev".into(), "user,id=n0".into()]);
+                    // in-box on BeOS R5 and on Linux since 2.2 (8139too)
+                    args.extend(["-device".into(), "rtl8139,netdev=n0,addr=0x03".into()]);
+                }
+                // The Ensoniq AudioPCI, not the AC'97 the Windows
+                // families get: it is the PCI card of the period both
+                // these guests drive in the box (BeOS ships an ensoniq
+                // add-on, Linux `snd-ens1370`), where AC'97 needs a
+                // driver an era install may not have.
+                args.extend(["-device".into(), "ES1370,audiodev=embed0,addr=0x04".into()]);
             }
         }
         // The CD-ROM drive is always attached, empty tray and all: a

@@ -318,7 +318,10 @@ fn index_of<T: PartialEq + Copy>(all: &[T], value: T) -> usize {
 }
 
 /// The label for one choice in a combo box, or NULL past the end:
-/// `kind` is 0 family, 1 acceleration, 2 processor, 3 boot order. Both
+/// `kind` is 0 family, 1 acceleration, 2 processor, 3 boot order (4 and
+/// 5 are an optimization's label and note). The display adapter is not
+/// here: its list is per family, so it is `lc_wizard_video_label` on a
+/// live wizard instead. Both
 /// Rust front ends fill their pickers this way rather than retyping the
 /// strings, and so should a third.
 #[no_mangle]
@@ -406,6 +409,15 @@ pub unsafe extern "C" fn lc_wizard_family(w: *const LcWizard) -> usize {
 #[no_mangle]
 pub unsafe extern "C" fn lc_wizard_choose_family(w: *mut LcWizard, family: usize) {
     handle_mut!(w, ()).0.choose_family(family_at(family));
+}
+
+/// The line under the family picker, or "" — only `Other` has one.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_family_note(w: *const LcWizard) -> *mut c_char {
+    out_opt(handle!(w, std::ptr::null_mut()).0.family_note())
 }
 
 /// # Safety
@@ -695,6 +707,96 @@ pub unsafe extern "C" fn lc_wizard_set_boot(w: *mut LcWizard, boot: usize) {
 #[no_mangle]
 pub unsafe extern "C" fn lc_wizard_boot_note(w: *const LcWizard) -> *mut c_char {
     out_opt(handle!(w, std::ptr::null_mut()).0.boot_note())
+}
+
+/// The display adapter. Its list is per family — Windows chooses between
+/// our own adapter and the Cirrus Windows has a driver for, an `Other`
+/// machine between the two standard ones, and a DOS machine chooses
+/// nothing — so it is asked of a live wizard rather than through
+/// `lc_wizard_label`. Ask `lc_wizard_video_applies` before drawing the
+/// row, and fill it from `lc_wizard_video_label`.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_video_applies(w: *const LcWizard) -> bool {
+    handle!(w, false).0.video_applies()
+}
+
+/// How many adapters this machine's family offers.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_video_count(w: *const LcWizard) -> usize {
+    handle!(w, 0).0.video_choices().len()
+}
+
+/// The label for one of them, or NULL past the end.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_video_label(w: *const LcWizard, index: usize) -> *mut c_char {
+    match handle!(w, std::ptr::null_mut()).0.video_choices().get(index) {
+        Some(v) => out(v.label()),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Which of them is selected, as an index into that list.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_video(w: *const LcWizard) -> usize {
+    let form = &handle!(w, 0).0;
+    index_of(form.video_choices(), form.video())
+}
+
+/// Pick one, by the same index. One past the end is ignored.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_set_video(w: *mut LcWizard, video: usize) {
+    let form = &mut handle_mut!(w, ()).0;
+    if let Some(v) = form.video_choices().get(video).copied() {
+        form.choose_video(v);
+    }
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_video_is_default(w: *const LcWizard) -> bool {
+    handle!(w, false).0.video_is_default()
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_reset_video(w: *mut LcWizard) {
+    handle_mut!(w, ()).0.reset_video();
+}
+
+/// What the chosen adapter is for, newline-separated.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_video_note(w: *const LcWizard) -> *mut c_char {
+    out(handle!(w, std::ptr::null_mut()).0.video_notes().join("\n"))
+}
+
+/// "Changing this machine's adapter is a hardware change", or "" — set
+/// only while editing a machine whose adapter has been changed.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_video_warning(w: *const LcWizard) -> *mut c_char {
+    out_opt(handle!(w, std::ptr::null_mut()).0.video_warning())
 }
 
 /// The plain text and flag fields, by name: "name", "disk_path",

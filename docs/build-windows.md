@@ -98,6 +98,14 @@ then says so in a message box, and `eframe`'s own error through the same
 door. `--diagnose` writes `--paths` and `--host-check` in there too,
 rather than printing them where a double-clicked program has no stdout.
 
+**And every Play writes the line it ran** (2026-09-07): the whole player
+command — binary, shader arguments, `--`, and every QEMU argument — goes
+into `launcher.log` as `[player] …`, into the head of `player.log`, and
+to the terminal when the launcher was started from one. Quoted so it can
+be pasted back into a shell, because the next question after "the machine
+did not start" is always "what was it started with", and a bundle plus a
+debug verb is a reconstruction rather than an answer.
+
 `2ksbox-debug.bat` at the top of the package is the double-click for all
 of it: it runs the launcher from a console — through `start "" /b /wait`,
 because cmd does not wait for a windows-subsystem program and would

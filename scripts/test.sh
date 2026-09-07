@@ -72,6 +72,16 @@
 #                  Windows machine gets the USB tablet and a new DOS machine
 #                  does not, the checkbox adds and removes the device and its
 #                  controller, and our QEMU accepts both machines
+#   family-other   the "Other" family (doc 06): a machine for an era OS that is
+#                  neither Windows nor DOS gets standard hardware and none of
+#                  ours — the Bochs VGA rather than d3dpt-vga, an RTL8139 and an
+#                  ES1370 at pinned slots, no USB tablet — the sound card stays
+#                  put when the NIC goes, and our QEMU accepts the line
+#   display-adapter the wizard's display-adapter picker (doc 06): each family
+#                  offers the adapters it has a driver question about and starts
+#                  on the right one, an adapter a family doesn't offer is refused
+#                  rather than written, the cards below it don't move when it
+#                  changes, and our QEMU accepts every one of them
 #   capi           launcher-capi/examples/smoke.c: a third front end, in C, over
 #                  the same models the egui and Qt builds use — the wizard's
 #                  DOS defaults, the disc shelf, snapshots and the profile
@@ -386,7 +396,7 @@ qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
   # every other launcher check does. So this asks the *window*: it opens
   # the real wizard headlessly on each family and prints what its memory
   # field holds beside what the form says it should.
-  for f in win98 xp dos; do
+  for f in win98 xp dos other; do
     o="$(timeout 120 env LAUNCHER_QT_SCREEN=wizard LAUNCHER_QT_ARG="$f" LAUNCHER_QT_DELAY=250 \
          "$bin" 2>&1 | sed -n 's/^\[diag\] wizard memory: //p')"
     if [ -z "$o" ]; then echo "$f: the wizard printed no memory line"; rc=1; continue; fi
@@ -529,6 +539,111 @@ pointer_check() { # the wizard's pointer switch, from a checkbox to a real QEMU
     done
   else
     echo "  (no build/qemu: the command line was checked but not run)"
+  fi
+  return $rc
+}
+
+family_other_check() { # the "Other" family's hardware, from the picker to a real QEMU
+  local rc=0 dir="$OUT/family-other" bundle args o
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  : >"$dir/disk.qcow2"
+  bundle="$(target/release/launcher --new other beos "$dir/disk.qcow2")" || { echo "--new other failed"; return 1; }
+  args="$(target/release/launcher --print-args "$bundle")"
+  # Standard hardware, and specifically *not* ours: `d3dpt-vga` needs the
+  # display driver from the guest-tools ISO, which is a Windows driver, so
+  # a BeOS or Linux guest on it would come up with no display at all.
+  case "$args" in *"-vga std"*) ;; *) echo "an Other machine is not on the standard VGA"; echo "$args"; rc=1;; esac
+  case "$args" in *d3dpt-vga*) echo "an Other machine got our own adapter, which has no driver for it"; echo "$args"; rc=1;; esac
+  case "$args" in *"rtl8139,netdev=n0,addr=0x03"*) ;; *) echo "no RTL8139 at 0x03"; echo "$args"; rc=1;; esac
+  case "$args" in *"ES1370,audiodev=embed0,addr=0x04"*) ;; *) echo "no ES1370 at 0x04"; echo "$args"; rc=1;; esac
+  # The tablet is off here by default (`default_seamless_mouse`): an
+  # absolute pointer needs the guest to agree it is absolute, and these
+  # guests get no guest-tools install to make them.
+  case "$args" in *usb*) echo "a new Other machine has a tablet it may not be able to read"; echo "$args"; rc=1;; esac
+  # And the reason the addresses are written out: removing the NIC must
+  # not slide the sound card up into its slot, which an installed guest
+  # would see as its card having been swapped.
+  target/release/launcher --wizard-edit "$bundle" - - - nonet >/dev/null || { echo "--wizard-edit nonet failed"; rc=1; }
+  args="$(target/release/launcher --print-args "$bundle")"
+  case "$args" in *rtl8139*) echo "turning networking off left the NIC behind"; echo "$args"; rc=1;; esac
+  case "$args" in *"ES1370,audiodev=embed0,addr=0x04"*) ;; *) echo "the sound card moved when the NIC went"; echo "$args"; rc=1;; esac
+  target/release/launcher --wizard-edit "$bundle" - - - net >/dev/null || { echo "--wizard-edit net failed"; rc=1; }
+  # Started paused on the real binary and told to quit, so a device our
+  # QEMU does not have is an exit code rather than a hung guest.
+  if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
+    build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
+    args="$(target/release/launcher --print-args "$bundle")"
+    # shellcheck disable=SC2086
+    o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n' \
+         | timeout 30 build/qemu/qemu-system-i386 $args \
+             -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
+      || { echo "our QEMU refused the Other machine"; echo "$o" | tail -3; rc=1; }
+  else
+    echo "  (no build/qemu: the command line was checked but not run)"
+  fi
+  return $rc
+}
+
+display_adapter_check() { # the wizard's adapter picker, from a combo box to a real QEMU
+  local rc=0 dir="$OUT/display-adapter" bundle args o f want
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  : >"$dir/disk.qcow2"
+  # What each family starts on. Windows on our own adapter, because the
+  # whole display path is built on it (docs 15, 19); Other on the standard
+  # VGA, the one every guest can fall back on; DOS on the era's Cirrus,
+  # which is not a choice at all.
+  for f in win98:"-device d3dpt-vga,addr=0x02" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga cirrus"; do
+    want="${f#*:}"; f="${f%%:*}"
+    bundle="$(target/release/launcher --new "$f" "adapter-$f" "$dir/disk.qcow2")" || { echo "--new $f failed"; return 1; }
+    args="$(target/release/launcher --print-args "$bundle")"
+    case "$args" in *"$want"*) ;; *) echo "a new $f machine is not on $want"; echo "$args"; rc=1;; esac
+  done
+  # The switch itself, on a Windows machine: to the Cirrus Windows has an
+  # in-box driver for, and back. Our adapter must be *gone* when it is —
+  # a machine with both would show the guest two displays — and the cards
+  # pinned below it must not move, because a card that moves is a hardware
+  # change an installed guest re-detects.
+  for f in win98 xp; do
+    bundle="$dir/library/adapter-$f/machine.toml"
+    target/release/launcher --wizard-edit "$bundle" - - - - - - - cirrus >/dev/null \
+      || { echo "$f: --wizard-edit cirrus failed"; rc=1; continue; }
+    args="$(target/release/launcher --print-args "$bundle")"
+    case "$args" in *"-vga cirrus"*) ;; *) echo "$f: the Cirrus did not arrive"; echo "$args"; rc=1;; esac
+    case "$args" in *d3dpt-vga*) echo "$f: our adapter is still there beside the Cirrus"; echo "$args"; rc=1;; esac
+    case "$args" in *"netdev=n0,addr=0x03"*) ;; *) echo "$f: the NIC moved when the adapter changed"; echo "$args"; rc=1;; esac
+    # The standard VGA is not on offer to Windows — XP has no driver for
+    # it at all — so asking for it must leave the machine as it was rather
+    # than produce a guest with no display.
+    target/release/launcher --wizard-edit "$bundle" - - - - - - - std >/dev/null \
+      || { echo "$f: --wizard-edit std failed"; rc=1; continue; }
+    args="$(target/release/launcher --print-args "$bundle")"
+    case "$args" in *"-vga std"*) echo "$f: was given the standard VGA, which has no driver there"; echo "$args"; rc=1;; esac
+    target/release/launcher --wizard-edit "$bundle" - - - - - - - d3dpt >/dev/null \
+      || { echo "$f: --wizard-edit d3dpt failed"; rc=1; continue; }
+    args="$(target/release/launcher --print-args "$bundle")"
+    case "$args" in *"-device d3dpt-vga,addr=0x02"*) ;; *) echo "$f: our adapter did not come back"; echo "$args"; rc=1;; esac
+  done
+  # Every adapter on every family, on the real binary: started paused and
+  # told to quit, so a machine QEMU will not build is an exit code.
+  if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
+    build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
+    for f in win98:d3dpt win98:cirrus xp:d3dpt xp:cirrus other:std other:cirrus dos:-; do
+      want="${f#*:}"; f="${f%%:*}"
+      bundle="$dir/library/adapter-$f/machine.toml"
+      target/release/launcher --wizard-edit "$bundle" - - - - - - - "$want" >/dev/null || { rc=1; continue; }
+      args="$(target/release/launcher --print-args "$bundle")"
+      # shellcheck disable=SC2086
+      o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n' \
+           | timeout 30 build/qemu/qemu-system-i386 $args \
+               -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
+        || { echo "our QEMU refused $f on $want"; echo "$o" | tail -3; rc=1; }
+    done
+  else
+    echo "  (no build/qemu: the command lines were checked but not run)"
   fi
   return $rc
 }
@@ -807,6 +922,23 @@ host_stage() {
   # controller, and our QEMU accepts both machines.
   if [ -x target/release/launcher ]; then
     run_check pointer pointer.log pointer_check || true
+  fi
+
+  # the "Other" family (doc 06): the machine for an era OS that is neither
+  # Windows nor DOS is defined by what it does *not* get — our display
+  # adapter, whose driver is a Windows driver — so the check is that a new
+  # one comes out on standard hardware, with the cards pinned where an
+  # installed guest will not see them move.
+  if [ -x target/release/launcher ]; then
+    run_check family-other family-other.log family_other_check || true
+  fi
+
+  # the display-adapter picker (doc 06): each family offers the adapters
+  # it has a real driver question about — Windows ours against the one it
+  # has an in-box driver for, Other the two standard ones, DOS neither —
+  # and changing it must not move the cards pinned below it.
+  if [ -x target/release/launcher ]; then
+    run_check display-adapter display-adapter.log display_adapter_check || true
   fi
 
   # the firmware's legacy BIOS date, which decides whether a *new* Win98

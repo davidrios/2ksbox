@@ -1736,9 +1736,10 @@ needs no GPU (`grabToImage` never completes while something else is
 holding the card — a running player, say). `WizardWindow` exposes
 `shownRamMb` (the spin box's own value), the wizard case prints it beside
 the model's, and the new `qt-wizard` check in `scripts/test.sh` opens the
-real window on all three families and fails if the two disagree. Against
+real window on every family and fails if the two disagree. Against
 the unfixed binary it says `win98: the memory field shows 32, the form
-says 256`; against the fixed one, 256 / 512 / 64.
+says 256`; against the fixed one, 256 / 512 / 64 (and 512 for the
+`Other` family added 2026-09-07).
 
 ## Next steps, in order
 

@@ -28,7 +28,7 @@
 //! directly.
 
 use crate::browse::Filter;
-use crate::bundle::{self, Accel, Boot, CpuSpeed, Family, Machine, Optimization, Optimizations};
+use crate::bundle::{self, Accel, Boot, CpuSpeed, Family, Machine, Optimization, Optimizations, Video};
 use crate::disc_library::DISC_FILTER;
 use crate::{host_gpu, library, player};
 use std::path::{Path, PathBuf};
@@ -48,6 +48,10 @@ struct EditTarget {
     bundle_path: PathBuf,
     shader: Option<PathBuf>,
     original_toml: String,
+    /// The adapter the bundle had when it was opened, so the form can
+    /// warn that changing it is a hardware change to a guest that is
+    /// already installed (`video_warning`).
+    video: Video,
 }
 
 /// The acceleration hint under the picker, and whether it is a warning
@@ -65,6 +69,13 @@ pub struct Form {
     /// A floppy image in A:, or empty for an empty drive.
     pub floppy: String,
     pub boot: Boot,
+    /// The display adapter, on a family that has a choice of one
+    /// (`video_applies`). Private, unlike `boot`: it is the one field
+    /// whose *list* changes with the family — Windows chooses between our
+    /// adapter and the Cirrus, `Other` between the two standard ones — so
+    /// a value carried across a family switch can be one the new family
+    /// does not offer, and `choose_family` has to put it back.
+    video: Video,
     pub existing_disk: bool,
     pub disk_path: String,
     pub disk_size_gb: u32,
@@ -136,6 +147,7 @@ impl Default for Form {
             name: String::new(),
             floppy: String::new(),
             boot: Boot::default(),
+            video: bundle::default_video(Family::Win98).unwrap_or(Video::Std),
             existing_disk: false,
             disk_path: String::new(),
             disk_size_gb: 2,
@@ -204,11 +216,19 @@ impl Form {
             optimizations: machine.optimizations.clone(),
             floppy: machine.floppy.as_ref().map(|f| f.display().to_string()).unwrap_or_default(),
             boot: machine.effective_boot(),
+            // A DOS machine has no adapter of its own; the field only
+            // matters once the family switches to one that has.
+            video: machine.effective_video().unwrap_or(Video::Std),
             existing_disk: true,
             disk_path: machine.disk.display().to_string(),
             install_media: machine.boot_disc().map(|d| d.display().to_string()).unwrap_or_default(),
             shader_profile: machine.shader_profile.clone(),
-            editing: Some(EditTarget { bundle_path, shader: machine.shader.clone(), original_toml }),
+            editing: Some(EditTarget {
+                bundle_path,
+                shader: machine.shader.clone(),
+                original_toml,
+                video: machine.effective_video().unwrap_or(Video::Std),
+            }),
             ..Default::default()
         };
     }
@@ -276,10 +296,37 @@ impl Form {
         if !self.seamless_mouse_chosen {
             self.seamless_mouse = bundle::default_seamless_mouse(family);
         }
+        // The adapter has no "chosen" flag of its own because the new
+        // family may simply not offer what is in the field — our own
+        // adapter is not on offer for BeOS. Keep it when it survives the
+        // switch, take the new family's default when it doesn't.
+        if !bundle::video_choices(family).contains(&self.video) {
+            if let Some(default) = bundle::default_video(family) {
+                self.video = default;
+            }
+        }
         // The new family's ceiling may be below the memory already in
         // the field (Win98 stops at 512 MB), so the clamp is part of the
         // switch rather than something the drawing code remembers to do.
         self.ram_mb = self.ram_mb.clamp(*self.ram_range().start(), *self.ram_range().end());
+    }
+
+    /// What picking this family means, under the picker. Only `Other`
+    /// has anything to say: the other three *are* the reference machines
+    /// doc 06 describes and everything else on the form explains itself,
+    /// while `Other` is defined by the two things it does not get — our
+    /// display driver and the 3D pass-through, both of which are
+    /// Windows-only — and by hardware chosen for guests we cannot test
+    /// here. Someone finding out afterwards would find out by installing
+    /// an OS onto it.
+    pub fn family_note(&self) -> Option<&'static str> {
+        (self.family == Family::Other).then_some(
+            "For an era OS that isn't Windows or DOS: BeOS, a period Linux, OS/2. \
+             Standard hardware only — a VESA-capable VGA, an RTL8139 and an ES1370 \
+             sound card, all of which these systems have drivers for in the box.\n\
+             No 3D: our display driver and the Direct3D and Glide pass-through are \
+             Windows components, so this family is 2D, the CRT shaders and the CD-ROM drive.",
+        )
     }
 
     pub fn ram_mb(&self) -> u32 {
@@ -310,8 +357,18 @@ impl Form {
     }
 
     pub fn ram_note(&self) -> Option<&'static str> {
-        (self.family == Family::Win98 && self.ram_mb >= *self.ram_range().end())
-            .then_some("512 MB is Win98's ceiling (doc 06): more and it does not boot.")
+        match self.family {
+            Family::Win98 if self.ram_mb >= *self.ram_range().end() => {
+                Some("512 MB is Win98's ceiling (doc 06): more and it does not boot.")
+            }
+            // The range cannot enforce this one — it depends on which OS
+            // is going in, and the whole point of the family is that we
+            // don't know. A period Linux is happy with 3 GB.
+            Family::Other if self.ram_mb > 1024 => {
+                Some("Above 1 GB, BeOS R5 does not boot; most other systems of the era are fine.")
+            }
+            _ => None,
+        }
     }
 
     pub fn cpu_speed(&self) -> CpuSpeed {
@@ -391,8 +448,11 @@ impl Form {
     /// What this host will give the guest's 3D, under the acceleration
     /// row (ADR-013). Not a picker, because there is nothing to pick: the
     /// host settles it, and the only failure worth preventing is finding
-    /// out after the machine exists. A DOS machine has no Direct3D to
-    /// place and gets no line.
+    /// out after the machine exists. The two families with no Direct3D to
+    /// place get no line: DOS, and `Other` — whose guests cannot reach
+    /// the pass-through at all, since the guest half of it is a set of
+    /// Windows DLLs (`family_note` says so once, where the choice is
+    /// made).
     ///
     /// `warning` is true only for a software Vulkan driver — the
     /// executor does run there, and slowly, which is the one case where
@@ -400,7 +460,7 @@ impl Form {
     /// all is a plain note: it runs every machine, through the OpenGL
     /// pass-through with WineD3D in the guest, and nothing is wrong.
     pub fn graphics_note(&self) -> Option<AccelNote> {
-        if self.family == Family::Dos {
+        if matches!(self.family, Family::Dos | Family::Other) {
             return None;
         }
         let mut text = format!("3D: {}", self.host_gpu.headline());
@@ -458,12 +518,18 @@ impl Form {
     ///
     /// DOS is worth catching before the machine exists rather than
     /// after: its mouse drivers read the PS/2 controller, so a tablet
-    /// leaves such a guest with no pointer at all.
+    /// leaves such a guest with no pointer at all. `Other` ships with the
+    /// tablet off for the softer version of that (`default_seamless_mouse`)
+    /// and says what to look for if someone turns it on.
     pub fn seamless_mouse_notes(&self) -> &'static [&'static str] {
         match (self.seamless_mouse, self.family) {
             (true, Family::Dos) => &[
                 "The host pointer moves straight into the guest, with no grab and no hotkey.",
                 "DOS mouse drivers read the PS/2 mouse: on this family the tablet leaves the guest with no pointer at all.",
+            ],
+            (true, Family::Other) => &[
+                "The host pointer moves straight into the guest, with no grab and no hotkey: the guest gets a USB tablet, which reports where the pointer is rather than how far it moved.",
+                "Whether it works is the guest's affair here — an absolute pointer needs its USB stack and its windowing system to agree, which BeOS and an era XFree86 do not do unconfigured. Turn it off if the cursor doesn't move.",
             ],
             (true, _) => &[
                 "The host pointer moves straight into the guest, with no grab and no hotkey: the guest gets a USB tablet, which reports where the pointer is rather than how far it moved.",
@@ -530,6 +596,87 @@ impl Form {
             }
     }
 
+    pub fn video(&self) -> Video {
+        self.video
+    }
+
+    /// Which adapters this machine's family offers, first one its
+    /// default — what a picker fills itself from, so no front end has to
+    /// know that Windows is offered a different pair than `Other`.
+    pub fn video_choices(&self) -> &'static [Video] {
+        bundle::video_choices(self.family)
+    }
+
+    /// Whether there is an adapter to choose at all, so a front end
+    /// shows or hides the row without knowing which family that is. Only
+    /// DOS has none: its titles program a VGA/VESA BIOS directly, so its
+    /// adapter is a fact of the era rather than a driver question.
+    pub fn video_applies(&self) -> bool {
+        !self.video_choices().is_empty()
+    }
+
+    pub fn video_is_default(&self) -> bool {
+        Some(self.video) == bundle::default_video(self.family)
+    }
+
+    /// An adapter this family does not offer is refused rather than
+    /// stored: the list is per family and a front end may be a frame
+    /// behind on it.
+    pub fn choose_video(&mut self, video: Video) {
+        if self.video_choices().contains(&video) {
+            self.video = video;
+        }
+    }
+
+    pub fn reset_video(&mut self) {
+        if let Some(default) = bundle::default_video(self.family) {
+            self.video = default;
+        }
+    }
+
+    /// What the chosen adapter means *for this family*. The same Cirrus
+    /// is Windows' in-box driver on one machine and a period XFree86
+    /// driver on another, and what it costs is different too: on Windows
+    /// it is the whole display path (docs 15, 19) that goes with it.
+    pub fn video_notes(&self) -> &'static [&'static str] {
+        match (self.video, self.family) {
+            (Video::D3dpt, _) => &[
+                "Our own adapter and display driver: the mode table, the desktop straight from video memory, the page flips that pace a game, and Direct3D through the driver itself.",
+                "It needs the driver installed from the guest-tools ISO. Until it is, the guest comes up on the plain VGA the same device also is.",
+            ],
+            (Video::Cirrus, Family::Win98 | Family::Xp) => &[
+                "The Cirrus GD5446, which Windows has a driver for in the box: 2D only, and none of our display path — no mode table, no paced flips, no Direct3D through the driver.",
+                "The right answer for a machine whose driver isn't installed yet, and the A/B for a title that misbehaves on ours.",
+            ],
+            (Video::Cirrus, _) => &[
+                "A chip that really existed, so a guest of the era is likely to have a native driver for it: BeOS R5 and XFree86 both ship one.",
+                "In exchange it is the weaker VESA adapter of the two. Try it when the standard VGA leaves the guest in plain VGA.",
+            ],
+            (Video::Std, _) => &[
+                "The Bochs adapter: VBE 2.0 and a linear frame buffer, which is what a period VESA driver wants and what a modern Linux binds bochs-drm to.",
+                "The safe answer — a guest with no native driver still gets its VESA modes.",
+            ],
+        }
+    }
+
+    /// The one thing worth saying above the picker rather than under one
+    /// of its entries: changing this on a machine that already has an OS
+    /// installed is a hardware change, and the guest will say so.
+    pub fn video_warning(&self) -> Option<&'static str> {
+        (self.is_editing() && !self.video_is_default_for_machine()).then_some(
+            "This machine already exists: changing its adapter makes the guest find new hardware on its next start, \
+             and it will want a driver for it before the desktop comes back.",
+        )
+    }
+
+    /// Whether the adapter is still the one the bundle was opened with.
+    fn video_is_default_for_machine(&self) -> bool {
+        match &self.editing {
+            Some(edit) => edit.video == self.video,
+            None => true,
+        }
+    }
+
     /// The one thing the boot picker can say that isn't obvious: a
     /// machine told to boot from a floppy it hasn't got.
     pub fn boot_note(&self) -> Option<&'static str> {
@@ -563,6 +710,7 @@ impl Form {
                 floppy: None,
                 boot: None,
                 cpu_speed: None,
+                video: None,
                 optimizations: Optimizations::default(),
             },
             None => Machine::reference(self.family, self.name.clone(), disk),
@@ -590,6 +738,10 @@ impl Form {
         // of "nothing" for almost every machine (`Optimizations`).
         machine.optimizations = self.optimizations.clone();
         machine.boot = Some(self.boot);
+        // Written only on a family that has a choice, so switching a
+        // machine to DOS cannot leave a `video` behind that the family
+        // ignores and the next reader has to wonder about.
+        machine.video = bundle::video_choices(self.family).contains(&self.video).then_some(self.video);
         machine.floppy = Some(self.floppy.trim()).filter(|f| !f.is_empty()).map(PathBuf::from);
         machine.shader_profile = self.shader_profile.clone();
         // The single slot this form has is the machine's *boot* disc;

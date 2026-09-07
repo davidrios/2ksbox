@@ -117,6 +117,19 @@ Window {
                         onActivated: root.wizard.chooseFamily(currentIndex)
                     }
 
+                    // Only "Other" has one (the model decides, not this
+                    // file); it spans both columns so it reads as a
+                    // sentence under the picker rather than a second value.
+                    Label {
+                        Layout.columnSpan: 2
+                        Layout.fillWidth: true
+                        visible: root.wizard.familyNote !== ""
+                        text: root.wizard.familyNote
+                        wrapMode: Text.Wrap
+                        font.pixelSize: 11
+                        opacity: 0.75
+                    }
+
                     Label { text: qsTr("Name") }
                     TextField {
                         Layout.fillWidth: true
@@ -219,6 +232,49 @@ Window {
                     // refuse to start.
                     color: root.wizard.accelWarning ? "#c88200" : palette.windowText
                     opacity: root.wizard.accelWarning ? 1.0 : 0.75
+                }
+
+                // --- the display adapter ------------------------------------
+                // Both the list and whether there is a choice at all come from
+                // the model (`videoLabels` is a property, not an invokable,
+                // because the list changes with the family); DOS is the one
+                // family with none, its adapter being a fact of the era.
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.wizard.videoApplies
+                    spacing: 8
+                    Label { text: qsTr("Display adapter"); Layout.minimumWidth: 150 }
+                    ComboBox {
+                        Layout.preferredWidth: 260
+                        model: root.wizard.videoLabels
+                        currentIndex: root.wizard.video
+                        onActivated: root.wizard.chooseVideo(currentIndex)
+                    }
+                    Button {
+                        text: qsTr("Default")
+                        enabled: !root.wizard.videoIsDefault
+                        onClicked: root.wizard.resetVideo()
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+                // About the machine rather than the entry selected, so it sits
+                // above the notes: changing this under an installed guest is a
+                // hardware change and the guest will say so.
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.wizard.videoWarning !== ""
+                    text: root.wizard.videoWarning
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    color: "#c88200"
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.wizard.videoApplies
+                    text: root.wizard.videoNote
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    opacity: 0.75
                 }
 
                 // --- the host's 3D (ADR-013) --------------------------------

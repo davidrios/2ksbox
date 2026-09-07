@@ -296,9 +296,17 @@ neutral descriptor. The 9x side is then three binaries of which only one
 
 ## What else moves when this lands
 
-- `-vga cirrus` stops being the Win98 answer: the launcher's Win98
-  reference machine gets `-vga none -device d3dpt-vga`, and CLAUDE.md's
-  "Win98 stays on `-vga cirrus`" line goes.
+- ~~`-vga cirrus` stops being the Win98 answer~~ — **done 2026-09-07**:
+  every Win98 machine the launcher writes is `-vga none -device
+  d3dpt-vga,addr=0x02` (with the NIC pinned below it at `0x03`, so it
+  cannot slide when networking is turned off), and CLAUDE.md's "Win98
+  stays on `-vga cirrus`" line is gone. It applies to machines that
+  already exist, since the command line is derived from the family at
+  launch rather than stored in the bundle: such a guest finds an unknown
+  adapter on its next start, comes up in plain VGA, and wants the driver
+  installed from the guest-tools ISO (§16) before it has its desktop
+  back. The test tools keep their own cirrus machines — that is where the
+  inbox driver stays exercised.
 - `SETUP.EXE` grows a display-driver component for the 98/Me role. Today
   `tools/setup-guest-test.sh win98` *fails the run if that component is
   even offered*; that check inverts, and the Win98 boot in it moves onto

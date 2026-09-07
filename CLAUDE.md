@@ -100,7 +100,13 @@ backend later.
   on garbage bytecode; palettized textures and colour keying since v8,
   both expanded to A8R8G8B8 on the host; vertex / index buffers in VRAM
   since v9 — a `DRAW8` names the buffer and offset, the host reads it
-  from VRAM, `ddflags=0x100000` is the A/B). Win98 stays on `-vga cirrus`.
+  from VRAM, `ddflags=0x100000` is the A/B). **Win98 is on the same
+  adapter since 2026-09-07** — the launcher's Win98 machines are
+  `-vga none -device d3dpt-vga` with the M10 driver (doc 19), where they
+  used to be `-vga cirrus`; an image installed before that finds new
+  hardware on its next start and wants the driver from the guest-tools
+  ISO before it has its desktop back. The test tools keep their own
+  cirrus machines.
 
 ## Conventions
 
@@ -201,6 +207,8 @@ GPU); don't propose wiring it in.
 | `tools/x87-fast-test.c` | patch 05's x87 fast path equals the real x87 (x86-64 host oracle) |
 | the `optimizations` check in `scripts/test.sh` | the wizard's "Emulation optimizations" switches (`patches/qemu/README.md`, doc 07) from a checkbox to a real QEMU: a machine nobody has touched emits no property and writes no `[optimizations]` table, each switch lands on the option QEMU looks it up on (`-cpu` for the four CPU properties, `-accel tcg` for the three accelerator ones), our own `qemu-system-i386` accepts the exact line the launcher writes with all seven flipped, and "All defaults" empties the table again. The switches' *effect* is the guest batteries' job; this is the wiring between them and a checkbox |
 | the `pointer` check in `scripts/test.sh` | the wizard's "Seamless mouse" switch (doc 07, doc 03's grab model) from a checkbox to a real QEMU: a new Windows machine gets `-usb -device usb-tablet` (absolute — the host pointer is the guest cursor and the window never grabs), a new DOS machine gets neither (its mouse drivers read the PS/2 controller and would find nothing), turning it off removes the device *and* its controller and turning it back on restores them, and our own `qemu-system-i386` accepts both machines' lines |
+| the `family-other` check in `scripts/test.sh` | the **Other** family (doc 06) — a machine for an era OS that is neither Windows nor DOS (BeOS, a period Linux, OS/2) — from the picker to a real QEMU: a new one comes out on standard hardware and none of ours (`-vga std`, never `d3dpt-vga`, whose driver is a Windows driver), an RTL8139 at `0x03` and an ES1370 at `0x04`, no USB tablet, the sound card staying in its slot when the NIC is turned off, and our own `qemu-system-i386` accepting the line |
+| the `display-adapter` check in `scripts/test.sh` | the wizard's display-adapter picker (doc 06, `bundle::Video`): each family offers the adapters it has a real driver question about and starts on the right one (Win98/XP `d3dpt-vga` or `cirrus`, Other `std` or `cirrus`, DOS neither), an adapter a family doesn't offer is refused rather than written (`std` on XP would leave the guest with no driver), our adapter is *gone* rather than beside the Cirrus when it changes, the NIC stays at `0x03`, and our own `qemu-system-i386` accepts every combination |
 | the `bios-date` check in `scripts/test.sh` | the firmware's legacy BIOS date as a **guest** reads it — F000:FFF5 out of a running `qemu-system-i386` over QMP, plus every `pc-bios/bios*.bin` agreeing — at or past the `ACPICheckDate` (12/01/99) Windows 98 setup compares against before it will install ACPI. A tree that lost `prepare-qemu.sh`'s stamp boots every existing guest fine and shows up weeks later as a *new* Win98 install that came out PnP-BIOS, with no USB tablet, AC'97 or NIC |
 | `scripts/package-flatpak.sh` | the Flatpak (doc 07's primary Linux target; manifest in `packaging/flatpak/`): a from-source build against `org.freedesktop.Sdk` — host binaries cannot be reused, the runtime's glibc is older than this host's — reusing the install layout via `package-linux.sh --prefix /app`, plus libslirp (absent from the runtime, and `-netdev user` needs it) and a build-only `distlib`. Then asks the *installed* app, in its own sandbox, whether every companion resolves under `/app` and the library under `~/.var/app`. The build is **offline** (Flathub's rule): `packaging/flatpak/cargo-sources.json` declares all 513 crates with checksums — regenerate with `scripts/gen-flatpak-cargo-sources.sh` after any dependency change. `FLATPAK_BUILD_DIR` moves the build tree off a full root filesystem |
 | `scripts/package-macos.sh` | the macOS app (doc 07's "signed .app, JIT entitlement, notarized"; recipe and reasoning in `docs/build-macos.md` → "The app"): stages the same install layout into `2ksbox.app/Contents` — where `MacOS/` does `bin/`'s job, `paths::bin_dir()` — **plus the whole non-system dylib closure**, because the Mac that will run it has no Homebrew, no XQuartz and no Vulkan: every install name rewritten to `@rpath` and every `LC_RPATH` pointing out of the app deleted (meson gives `libqemu-embed` one per Homebrew prefix, and they are searched first). First package to carry the Glide wrapper and the Direct3D executor, with the LunarG loader + KosmicKrisp ICD beside them; the packaged player names all four to QEMU through `player/src/companions.rs`. Then it asks the staged app the questions `package-linux.sh` asks, and one more: run under `DYLD_PRINT_LIBRARIES=1`, **every image the loader touches** must be inside the app. `LSMinimumSystemVersion` is measured from the bundle's own Mach-O files, not chosen. Signs inside-out with `--options runtime` + `packaging/macos/2ksbox.entitlements` (`com.apple.security.cs.allow-jit`, without which TCG dies on its first block), notarizes with `--keychain-profile`, staples, rolls a `.dmg`. The `package` check in `scripts/test.sh` on a Mac (`--no-sign --no-dmg`) |
@@ -398,9 +406,18 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   power off leaves the FAT dirty, so the *next* boot comes up in **safe
   mode** — no driver, no VxD, an empty debug log, which reads exactly like
   the thing under test having failed.
-- Win98 runs `-vga cirrus` (inbox driver). XP runs `-vga none -device
-  d3dpt-vga` with our driver (doc 15); without the driver installed it is a
-  plain VGA (vga.sys, 800×600×4), and `-vga std` has no XP driver at all.
+- Win98 and XP both run `-vga none -device d3dpt-vga` with our driver
+  (docs 19 and 15; Win98 since 2026-09-07 — the tools in the table above
+  still boot their own `-vga cirrus` machines, which is where the inbox
+  driver is still exercised). **Since 2026-09-07 that is the launcher's
+  *default*, not the only option**: the wizard has a display-adapter
+  picker (`bundle::Video`, `video` in the bundle) offering `cirrus` on
+  both Windows families, `std` or `cirrus` on the new Other family, and
+  nothing on DOS. Changing it under an installed guest is a hardware
+  change — new adapter, plain VGA, wants a driver — which the wizard says
+  in orange. Without our driver installed the adapter is
+  a plain VGA (on XP that is vga.sys, 800×600×4), and `-vga std` has no XP
+  driver at all.
   Kernel-mode debugging = the device's DEBUG register → QEMU log; never a
   debugger. Miniport headers: `ntdef.h`+`ddk/miniport.h`, **not** `ntddk.h`.
   dxg drops the whole HAL for `DDCAPS_GDI`, palette caps and colour-key
