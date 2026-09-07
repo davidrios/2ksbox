@@ -57,6 +57,14 @@ mod qt {
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 
+// `src/appearance.cpp`: the Quick Controls style and the colour scheme,
+// neither of which cxx-qt-lib binds.
+extern "C" {
+    fn launcher_qt_choose_style();
+    fn launcher_qt_set_scheme(scheme: i32);
+    fn launcher_qt_appearance() -> *const std::ffi::c_char;
+}
+
 /// Where `build.rs`'s QML module lands in the binary's resource tree:
 /// `qrc:/qt/qml/` + the module URI with `.` as `/`.
 const QML_MAIN: &str = "qrc:/qt/qml/com/_2ksbox/launcher/qml/Main.qml";
@@ -94,8 +102,30 @@ fn main() {
         }
     }
 
+    // Before the application exists, because a style cannot be chosen
+    // after one has been used. Windows and macOS keep their own; the
+    // rest get Fusion instead of Basic (`src/appearance.cpp`).
+    unsafe { launcher_qt_choose_style() };
     launcher_core::fatal::note("QGuiApplication");
     let mut app = QGuiApplication::new();
+    // Light, whatever the desktop is set to: the Quick Controls style
+    // paints its controls light and only the surfaces around them come
+    // from the palette, so a dark system palette gets you half a theme
+    // (`src/appearance.cpp`). `LAUNCHER_QT_SCHEME=system` hands the
+    // desktop's own palette back, `=dark` forces the other one.
+    unsafe {
+        launcher_qt_set_scheme(match std::env::var("LAUNCHER_QT_SCHEME").as_deref() {
+            Ok("system") => 0,
+            Ok("dark") => 2,
+            _ => 1,
+        })
+    };
+    // What actually took, not what was asked for: the style a report
+    // came from is the first thing to know when a window is the wrong
+    // colour.
+    launcher_core::fatal::note(&unsafe {
+        std::ffi::CStr::from_ptr(launcher_qt_appearance())
+    }.to_string_lossy());
     launcher_core::fatal::note("QML engine");
     let mut engine = QQmlApplicationEngine::new();
     if let Some(mut engine) = engine.as_mut() {

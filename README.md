@@ -200,6 +200,13 @@ which is what to send when the launcher itself did not come up. On
 Windows, where the launcher is a windowed program with no stdout at all,
 `2ksbox-debug.bat` in the package does that for you.
 
+The Qt front end draws in **light colours whatever the desktop is set
+to** — its Quick Controls style paints controls light and takes only the
+surfaces around them from the palette, so a dark system palette gets you
+half a theme. `LAUNCHER_QT_SCHEME=system` hands the desktop's own palette
+back and `=dark` forces the other one; `launcher.log` records the style
+and the colours a run actually got.
+
 CI (`.github/workflows/ci.yml`) is currently manual-only — trigger it from the
 Actions tab (`workflow_dispatch`).
 

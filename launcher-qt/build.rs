@@ -11,6 +11,15 @@
 use cxx_qt_build::{CxxQtBuilder, QmlModule};
 
 fn main() {
+    // `appearance.cpp` calls `QQuickStyle`, and it is compiled into the
+    // generated archive that the linker reaches *after* the Qt import
+    // libraries `qt_module` names. On ELF that is fine; a PE import
+    // library only satisfies symbols that are already undefined when the
+    // linker walks past it, so the Windows build needs it named again at
+    // the end -- which is what a `rustc-link-arg` is (M11).
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        println!("cargo::rustc-link-arg=-lQt6QuickControls2");
+    }
     CxxQtBuilder::new_qml_module(
         // The same reverse-DNS identity as the rest of the product
         // (ADR-011): `com._2ksbox.…`, the leading digit escaped because
@@ -34,6 +43,11 @@ fn main() {
     // defines the proxy locally, where the two halves agree; the file
     // compiles to nothing anywhere else.
     .cpp_file("src/once_proxy.cpp")
+    // Which Quick Controls style, and which colour scheme
+    // (`src/appearance.cpp`) — it calls `QQuickStyle`, so the module has
+    // to be linked as well as the ones the QML imports pull in.
+    .cpp_file("src/appearance.cpp")
+    .qt_module("QuickControls2")
     .files([
         "src/qt/diag.rs",
         "src/qt/discs.rs",

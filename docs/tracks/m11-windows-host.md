@@ -294,6 +294,41 @@ libraries after them — and only then faults, so nothing was missing; and
 that binary's `main` is what opens it (`fatal::install("qt")`), so the
 process never reached `main`.
 
+### Dark mode, and half a theme (2026-09-06)
+
+The Qt launcher runs on the user's PC now, and the first thing it showed
+is that a Windows set to dark mode got it "all mixed up between dark and
+light". Reproduced here by forcing a dark palette on the launcher and
+grabbing a frame: the window and its labels go dark and every *control*
+stays light, because a Quick Controls style paints its buttons, fields
+and combo boxes from its own colours and only the surfaces around them
+come from the palette.
+
+So the launcher is a light-mode application, on every platform and
+whatever the desktop says (`launcher-qt/src/appearance.cpp`): the colour
+scheme is requested *and* a matching palette is handed over, because
+`setColorScheme` is only a request — Windows honours it, this checkout's
+Wayland session and the offscreen plugin do not, and the palette is what
+the controls actually read. `LAUNCHER_QT_SCHEME=system` gives the
+desktop's own back, `=dark` forces the other one.
+
+The style is left alone where a platform has a real one. Asking
+`QQuickStyle::name()` is what makes Qt resolve a style — the environment
+variable, then a config file, then the platform's own — so Windows has
+already answered "Windows" by the time we ask and keeps it; only the
+platforms whose default is "Basic" (no system colours at all) are given
+Fusion. The start-up log now carries the line that settles all of this:
+
+    [start] style Windows, scheme light, window #efefef, base #ffffff
+
+Two things that cost a build each: `QQuickStyle` needs
+`.qt_module("QuickControls2")`, and on Windows that is not enough — the
+generated archive holding `appearance.cpp` is linked *after* the Qt
+import libraries, and a PE import library only satisfies symbols already
+undefined when the linker walks past it, so `build.rs` names
+`-lQt6QuickControls2` again as a `rustc-link-arg`. On ELF the same code
+links either way, which is why it built here and not there.
+
 ### OpenGL in the embed library
 
 Written the same day: `embed/mglcntx_embed.c` grew a Windows branch using
