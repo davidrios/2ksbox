@@ -253,12 +253,12 @@ staying at `0x03`, the standard VGA refused on Windows, and our own
 | Host | Win98 | XP |
 |---|---|---|
 | Linux/Windows x86 (KVM/WHPX) | vastly faster than period hardware | near-native |
-| Apple Silicon (TCG) | comfortably faster than a period PC | usable; vs. the rig's P4 1.7 (M1 Air, 2026-09-02, `reference/benchmarks/`): boots as fast, integer 1.3–2× faster (7-Zip 0.996/1.511 vs 0.742/0.776 GIPS), x87 FP at 31 % with patch 05 (Super PI 1M 6:33 vs 2:02; 9:49 = 21 % before it — Pentium II→III class). State both in-app. |
+| Apple Silicon (TCG) | comfortably faster than a period PC | usable; vs. the rig's P4 1.7 (M1 Air, `reference/benchmarks/`): boots as fast, integer 1.3–2× faster (7-Zip 0.996/1.511 vs 0.742/0.776 GIPS). x87 FP reached 104 % of the real P4 with patch 06 (Super PI 1M 1:57 vs 2:02; 1:25.3 with patch 14 W^X tracking; down from 9:49 unpatched). SSE/SIMD inline TCG (patches 11/12) matches or exceeds the real P4 on key kernels. State both in-app. |
 
-The XP-on-Apple-Silicon row is the one architectural risk in the guest story;
-it gets benchmarked in milestone M1, not discovered in M4. Baselines come from
-the reference rig (P4 + GeForce 6200, doc 09): expectations are stated as a
-percentage of that real machine's benchmark scores, not adjectives.
+The XP-on-Apple-Silicon row was the major architectural risk in the guest story;
+it was benchmarked in milestone M1 and optimized through M8/M9. Baselines come
+from the reference rig (P4 + GeForce 6200, doc 09): expectations are stated as
+a percentage of that real machine's benchmark scores, not adjectives.
 
 ## Snapshots and storage
 

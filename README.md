@@ -13,13 +13,14 @@ first-class target.
 
 | Piece | Status |
 |---|---|
-| x86 emulation/virtualization | Exists — QEMU (TCG on ARM hosts, KVM/WHPX on x86) |
-| Guest 3D acceleration | Exists — qemu-3dfx (integrate, package, test) |
-| Win9x guest GPU drivers | Exists — SoftGPU + qemu-3dfx guest wrappers (package) |
+| x86 emulation/virtualization | Exists — QEMU fork (slimmer: 93 shared libraries; custom TCG fast paths for x87, SSE, SIMD, REP string, same-value SMC, and inline TB lookup; KVM/WHPX on x86) |
+| Guest 3D acceleration | **We build & integrate** — Paravirtual Direct3D device (`d3dpt`, DXVK native host executor) + qemu-3dfx GL pass-through + OpenGLide host Glide wrapper |
+| Guest display drivers | **We build** — Native `d3dpt-vga` drivers: XP miniport + display driver with DirectDraw/Direct3D DX8 DDI; Win98 mini-VDD + 16-bit DIB engine driver; SoftGPU/WineD3D as fallback |
 | CRT shader ecosystem | Exists — libretro slang shaders via librashader (library, not RetroArch) |
-| **Player: in-process QEMU + pixel-accurate CRT-shaded display** | **We build** (Rust, wgpu + librashader) |
-| **Companion launcher (machine library, guided creation)** | **We build** (Rust: `launcher-core` + an egui and a Qt front end) |
-| **Raw CD-ROM backend (cue/bin, subchannel, C2, CD-DA)** | **We build** (Rust "libdisc"; libmirage as reference) |
+| **Player: in-process QEMU + pixel-accurate CRT-shaded display** | **We build** (Rust, wgpu + librashader, mode analysis, event-driven geometry, low-latency audio) |
+| **Companion launcher (library, creation wizard, disc shelf)** | **We build** (Rust: `launcher-core` library; shipped `launcher-qt` in Qt 6 / QML via cxx-qt; maintained `launcher` in egui; `launcher-capi` for C/Swift) |
+| **Raw CD-ROM backend (cue/bin, subchannel, C2, CD-DA, dir-as-CD)** | **We build** (Rust "libdisc"; ATAPI patches; live disc shelf; `isodir:` directory mounting) |
+| **Guest machine families** | **We build** — Win98, XP, DOS (with cycle-throttled CPU rates), and Other (BeOS, period Linux, OS/2) |
 
 Authentic-hardware Win98 emulation (real Voodoo, real S3) is 86Box's territory
 and explicitly **out of scope** — we don't duplicate that work.
@@ -30,15 +31,27 @@ and explicitly **out of scope** — we don't duplicate that work.
 1. [Goals and non-goals](docs/01-goals.md)
 2. [Architecture: in-process QEMU, process model, threading](docs/02-architecture.md)
 3. [Display pipeline: pixel accuracy, CRT shaders, latency](docs/03-display-pipeline.md)
-4. [3D acceleration: qemu-3dfx and guest drivers](docs/04-3d-acceleration.md)
-5. [CD-ROM backend: raw images and copy protection](docs/05-cdrom-backend.md)
-6. [Guest machines: Win98 and XP reference configs](docs/06-guest-machines.md)
-7. [Frontend: machine library, UX, input, audio](docs/07-frontend.md)
+4. [3D acceleration: qemu-3dfx, paravirtual D3D, and guest drivers](docs/04-3d-acceleration.md)
+5. [CD-ROM backend: raw images, copy protection, and directory discs](docs/05-cdrom-backend.md)
+6. [Guest machines: Win98, XP, DOS, and Other reference configs](docs/06-guest-machines.md)
+7. [Frontend: machine library, UX, input, audio, and packaging](docs/07-frontend.md)
 8. [Roadmap and milestones](docs/08-roadmap.md)
 9. [Reference hardware rig](docs/09-reference-hardware.md)
-10. [Decision records](docs/10-decisions.md)
+10. [Decision records (ADRs 001–015)](docs/10-decisions.md)
 11. [M1 embed API design](docs/11-m1-embed-api.md)
-12. [M3 window-less GL context provider design](docs/12-m3-context-provider.md)
+12. [M3 window-less GL and Glide context provider design](docs/12-m3-context-provider.md)
+13. [x87 shadow doubles: the FPU stack as host doubles in TCG](docs/13-x87-inline-tcg.md)
+14. [Paravirtual Direct3D device for XP and Win98](docs/14-d3d-paravirt.md)
+15. [A real XP display driver: d3dpt-vga, miniport + Direct3D DDI](docs/15-guest-display-driver.md)
+16. [SSE on the host FPU: scalar and packed ops inline in TCG](docs/16-sse-inline-tcg.md)
+17. [CD-ROM backend: implementation specification](docs/17-cdrom-implementation.md)
+18. [Pinned guest registers: the x86 register file in TCG](docs/18-pinned-guest-registers.md)
+19. [A native Win98 display driver: d3dpt9x](docs/19-win9x-display-driver.md)
+
+### Platform build guides and tracks
+- [Building and packaging on macOS (Apple Silicon)](docs/build-macos.md)
+- [Building and packaging for Windows (cross-build from Linux)](docs/build-windows.md)
+- [Parallel development tracks](docs/tracks/) (M4, M5, M5g, M6, M7, M8, M9, M10, M11)
 
 ## Building
 
@@ -205,7 +218,16 @@ not land on your root filesystem.
 The Flatpak builds with no network, as Flathub requires: every crate is a
 declared source with a checksum in `packaging/flatpak/cargo-sources.json`.
 Run `scripts/gen-flatpak-cargo-sources.sh` and commit the result whenever
-a dependency changes. `launcher --paths` prints where a given build looks for each
+a dependency changes.
+
+## Packaging (macOS and Windows)
+
+- **macOS (`2ksbox.app` / `.dmg`):** Built natively on Apple Silicon (`scripts/package-macos.sh`). The bundle includes the full non-system dylib closure (with unused Qt modules pruned to save 6 MB and dyld `@rpath` resolution verified), the OpenGLide wrapper, the Direct3D executor, and the LunarG Vulkan loader + KosmicKrisp ICD. Signed for Developer ID with the hardened runtime and `com.apple.security.cs.allow-jit` entitlement, notarized and stapled. Details in [docs/build-macos.md](docs/build-macos.md).
+- **Windows (`.zip`):** Cross-built from Linux via a Fedora mingw-w64 container (`scripts/win-cross.sh --build`, `scripts/build-windows.sh`, `scripts/package-windows.sh`). Packages `2ksbox.exe` (Qt launcher), `2ksbox-player.exe`, `libqemu-embed-i386.dll`, `d3dpt_exec.dll`, `qemu-img.exe`, WHPX acceleration, firmware, and guest tools into a portable zip. Details in [docs/build-windows.md](docs/build-windows.md).
+
+## Diagnostics and logs
+
+`launcher --paths` prints where a given build looks for each
 companion — the first thing to ask when something says a file is missing;
 `launcher --diagnose` prints the same plus this host's 3D and *files* it
 in the launcher's own log (`launcher.log`, beside the machine library),

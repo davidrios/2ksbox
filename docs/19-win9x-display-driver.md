@@ -624,7 +624,7 @@ a wrong one. And the run before the fix appeared to hang on the boot logo
 for eight minutes after the restart: that was **patch 22's bug, not this
 one** — Win98 turns its local APIC off, RESET did not put
 `CPUID.01H:EDX.APIC` back, and the guest span forever on the BIOS tick
-counter behind an unchanging splash screen (`docs/tracks/win98-reboot.md`).
+counter behind an unchanging splash screen (`patches/qemu/README.md` patch 22; `docs/00-status.md`).
 A frozen 9x splash screen after a restart is that until proven otherwise.
 
 **On the guest-tools ISO this is `DRIVER9X\`**, and `SETUP.EXE`'s display

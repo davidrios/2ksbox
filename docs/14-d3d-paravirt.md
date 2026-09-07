@@ -17,21 +17,21 @@ instead of emulating a GPU.
 ## Shape
 
 ```
-guest (XP)                                  host (QEMU process, embed lib)
+guest (XP / Win98)                          host (QEMU process, embed lib)
  game.exe                                   d3dpt device (hw/d3dpt/)
    └ d3d9.dll  (ours, C, LGPL parts)  ──FIFO──▶  decoder / resource mirror
    └ d3d8.dll  (d3d8to9-style over d3d9)          └ executor: DXVK d3d9 (C++ behind a C shim)
- shared memory: cmd ring + data pages             └ Vulkan → MoltenVK (macOS) / native (Linux, Windows)
- FXPTL.SYS (qemu-3dfx MAPMEM) maps the device     present → embed_fx_frame / zero-copy ring (doc 12)
+ shared memory: cmd ring + data pages             └ Vulkan → KosmicKrisp (macOS, ADR-007) / native (Linux, Windows)
+ d3dpt-vga / FXPTL.SYS maps the device            present → embed_fx_frame / zero-copy ring (doc 12)
 ```
 
 - **Transport:** the qemu-3dfx model — a PCI device with an MMIO doorbell
   page and a guest-physical shared area (command ring, argument data, bulk
-  pages for Lock/Unlock uploads). The guest maps it through the FXPTL.SYS
-  `\\.\MAPMEM` ioctl already installed for the GL wrapper (doc 00 gotcha);
-  a proper PnP driver is a later polish item. Batched: the guest writes
-  commands until a sync point (Present, Lock readback, GetRenderTargetData,
-  queries, device creation) and rings the doorbell once.
+  pages for Lock/Unlock uploads). The guest maps it through the `d3dpt-vga`
+  driver (or FXPTL.SYS `\\.\MAPMEM` ioctl for legacy setup); a proper
+  PnP INF driver is implemented for both Win98 (M10, doc 19) and XP (M7, doc 15).
+  Batched: the guest writes commands until a sync point (Present, Lock readback,
+  GetRenderTargetData, queries, device creation) and rings the doorbell once.
 - **Guest `d3d9.dll`:** COM objects for IDirect3D9 / Device / Swapchain /
   the resource interfaces. Each method is either *forward* (append
   opcode + args), *shadow* (state the app reads back — GetRenderState,
@@ -54,8 +54,8 @@ guest (XP)                                  host (QEMU process, embed lib)
   d3d9 is a complete D3D9 implementation with a Windows-free build (the
   former dxvk-native, upstream since 2.0) that needs a WSI shim; we give it
   an off-screen swapchain whose backbuffer we read/blit into the existing
-  frame path (IOSurface ring on macOS, dma-buf on Linux). MoltenVK on macOS
-  is the one platform-specific risk (below).
+  frame path (IOSurface ring on macOS, dma-buf on Linux). KosmicKrisp on macOS
+  provides the required Vulkan 1.3 environment (ADR-007).
 - **Present:** the device presents explicitly at `Present`, once per frame,
   into `embed_fx_frame` / the zero-copy ring — none of the front-buffer
   flush heuristics the GL path needed.
@@ -176,8 +176,9 @@ guest (XP)                                  host (QEMU process, embed lib)
 
 ## Risks
 
-- **MoltenVK feature gaps** for DXVK's d3d9 (P0 decides). Known gaps have
-  shrunk each year; D3D9-era workloads need less than D3D11.
+- **Host Vulkan capabilities:** MoltenVK lacked required Vulkan features and
+  was superseded by Mesa's KosmicKrisp on macOS (ADR-007). Hosts lacking
+  Vulkan 1.3 fall back to GL pass-through + WineD3D (ADR-013).
 - **FIFO cost under TCG:** each MMIO doorbell is a TCG exit; batching per
   frame keeps it to a few per frame. qemu-3dfx's numbers (500+ fps wglgears
   on the Air) bound the transport.

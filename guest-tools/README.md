@@ -19,6 +19,8 @@ GLIDE\      the device mapper + Glide: GLIDE*.DLL, FXMEMMAP.VXD (9x),
             OPENGL32.DLL or D3DPT\ — both reach the device through it
 DRIVER\     the 2000/XP display driver for d3dpt-vga and its own test
             programs; also shipped alone as d3dpt-driver.iso
+DRIVER9X\   the Win98/Me display driver for d3dpt-vga (D3DPT9X.INF,
+            D3DPT9X.DRV, D3DPT9V.VXD; built with Open Watcom)
 D3DPT\      per game: D3D8.DLL D3D9.DLL DDRAW.DLL DINPUT.DLL over our
             paravirtual device (doc 14)
 OPENGL\     per game: OPENGL32.DLL, the GL pass-through wrapper

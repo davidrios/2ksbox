@@ -135,9 +135,9 @@ Player env knobs: `PLAYER_DUMP`, `PLAYER_DUMP_OUT`, `PLAYER_DUMP_SEQ`,
 `PLAYER_KEYS`, `PLAYER_AUDIO_NULL`, `PLAYER_LATENCY`, `PLAYER_REFRESH_MS`,
 `PLAYER_REFRESH_LOG` (the `[display] refresh #N` counter, off since
 2026-09-07 — it printed for as long as a machine was up and buried
-everything that means something),
-`PLAYER_SHADER`, `PLAYER_QMP`, `PLAYER_QMP_EXEC` (README). Firmware must be passed with `-L qemu/pc-bios`
-until machine bundles exist. Test image: FreeDOS 1.3 floppy
+`PLAYER_SHADER`, `PLAYER_QMP`, `PLAYER_QMP_EXEC` (README). Machine bundles
+handle firmware paths automatically; when running standalone QEMU manually pass
+`-L qemu/pc-bios`. Test image: FreeDOS 1.3 floppy
 (`build/images/144m/x86BOOT.img`, git-ignored; `tools/x87-guest-test.py`
 fetches FD13-FloppyEdition.zip from ibiblio and extracts it).
 macOS specifics: `docs/build-macos.md`. x87 tests need `brew install nasm
@@ -252,9 +252,8 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 - XP has no driver for `-vga std` (Bochs VBE): basic 640×480×16. The M4
   test loop runs XP with `-vga cirrus` (inbox GD5446 driver); the M7 track
   replaces it with `-vga none -device d3dpt-vga` + our driver (doc 15),
-  which is where XP is headed.
-- Pixel aspect / mode table not implemented (720×400 shows 9:5) — M2.
-- `enable_cache` for librashader off (needs `Features::PIPELINE_CACHE`).
+- Pixel aspect / mode analysis resolved in M2 (720×400 detected as 4:3 DAR
+  with double-scan scanline count; event-driven geometry updates in player).
 - `prepare-qemu.sh` must be followed by `configure-qemu.sh` when meson
   files change; the script keeps `werror` off and unchanged mtimes stable.
 - x87 under TCG was all helper calls into 80-bit softfloat; patch 05 does
@@ -433,7 +432,7 @@ items nobody owns yet:
    faster fps oracle for the games (the 60-dumps/s probe saturates at
    ~40), and the HVF VM port the probe found feasible.
 
-8. **M10** → `docs/tracks/m10-win98-driver.md` (opened 2026-09-06): the
+9. **M10** → `docs/tracks/m10-win98-driver.md` (opened 2026-09-06): the
    native Win98 display driver, and the split of XP's driver into a
    shared core that makes it cheap. Step 0 (the 9x driver model) closed
    the same day out of `vmdisp9x` / `vmhal9x` — doc 19 has the answers,
@@ -445,9 +444,10 @@ items nobody owns yet:
    adapter through the mini-VDD, sets the mode (`linear mode on
    (640x480x32 …)`) and GDI draws into guest VRAM. Three silent failures
    stood between it and that, all written up in doc 19 §13/§14 and two of
-   them now build-time checks. Open: the shell never appears — a black
-   desktop and the wait cursor (doc 19 §15). Then the split (a refactor,
-   which must land green on XP before any 9x code exists).
+   them now build-time checks. Desktop shell resolved 2026-09-07 (INF PnP
+   installation via `pnpdrvr.drv` and `DelReg`; boots straight to desktop at
+   800x600x16 or chosen mode). Left: complete DirectDraw/D3D HAL integration
+   and test against 9x acceptance suite.
 
 ## Gotchas learned (don't relearn)
 

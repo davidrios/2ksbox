@@ -81,6 +81,11 @@ heap overrun fault where it happens, `stacks <drwtsn32.log>` re-reads a
 report. In the player: `D3DPT_DUMP_DIR`/`D3DPT_DUMP_EVERY` for frames,
 `d3dpt_trace.on` next to the EXE for the DLL's call trace.
 
+Guest test pacing: `tools/guestwait.sh` synchronizes against actual guest signals
+rather than arbitrary sleeps. In `d3dfeat9`, occlusion query polling yields
+between iterations (`Sleep(0)`) so the host executor processes query results
+without vCPU spinlock starvation (2026-09-07).
+
 ## Build / run / test
 
 ```sh
