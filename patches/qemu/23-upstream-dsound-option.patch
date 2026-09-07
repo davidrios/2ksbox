@@ -1,0 +1,29 @@
+Honour --disable-dsound. QEMU 9.2's guard is
+
+    if not get_option('dsound').auto() or (host_os == 'windows' and have_system)
+
+and `not auto()` is true for **disabled** as much as for enabled, so a
+disabled option walks straight into the block and `dsound` is declared
+anyway as soon as dsound.h is present. The option is then never consulted
+again -- unlike its neighbour `coreaudio`, which passes
+`required: get_option('coreaudio')` to `dependency()` and does the right
+thing. So on a Windows (cross-)build --disable-dsound was silently
+ignored: CONFIG_AUDIO_DSOUND stayed set, dsoundaudio.c was compiled into
+libqemu-embed-i386.dll and -lole32 -ldxguid were linked, for a backend
+nothing can reach (2ksbox's audio is patch 20's `embed` audiodev).
+
+Skip the block outright when the option is disabled; `enabled` still
+forces the check and its error, `auto` still detects on Windows.
+
+--- a/meson.build
++++ b/meson.build
+@@ -1707,7 +1707,8 @@
+   endif
+ endif
+ dsound = not_found
+-if not get_option('dsound').auto() or (host_os == 'windows' and have_system)
++if not get_option('dsound').disabled() and \
++   (not get_option('dsound').auto() or (host_os == 'windows' and have_system))
+   if cc.has_header('dsound.h')
+     dsound = declare_dependency(link_args: ['-lole32', '-ldxguid'])
+   endif

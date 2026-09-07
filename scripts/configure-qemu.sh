@@ -102,6 +102,20 @@ fi
 # `-display` given, `qemu_setup_display()` starts a VNC server on
 # localhost:5900 instead (system/vl.c). Anything scripted passes
 # `-display none` and gets neither.
+#
+# The host audio backends go for the same reason: the player's audio is
+# patch 20's `embed` audiodev, an SPSC ring the embedding application owns
+# (docs/11), every machine the launcher writes says `audiodev=embed0`, and
+# every headless tool says `audiodev=none`. ALSA, PulseAudio, PipeWire,
+# JACK, OSS, sndio, CoreAudio and DirectSound were all compiled in and
+# linked and none of them was ever opened. `none` and `wav` are built
+# unconditionally (audio/meson.build) and `embed` is ours, so what the
+# tree actually uses is untouched — `tools/xp-cdimage-test.sh` still
+# captures CD-DA through `-audiodev wav`.
+#
+# Note this is *not* `--audio-drv-list=`: that list only picks the default
+# priority order, while the libraries are pulled in by the per-driver
+# feature options below being auto-detected.
 "$ROOT/qemu/configure" \
   --python="$PYTHON" \
   --disable-werror \
@@ -113,6 +127,14 @@ fi
   --disable-curses \
   --disable-spice \
   --disable-spice-protocol \
+  --disable-alsa \
+  --disable-pa \
+  --disable-pipewire \
+  --disable-jack \
+  --disable-oss \
+  --disable-sndio \
+  --disable-coreaudio \
+  --disable-dsound \
   --extra-cflags="$EXTRA_CFLAGS" \
   "${CFG[@]}" \
   --target-list=i386-softmmu,x86_64-softmmu \

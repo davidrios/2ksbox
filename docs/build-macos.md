@@ -193,18 +193,19 @@ qemu-img create -f qcow2 ~/vms/win98.qcow2 4G
 build/qemu/qemu-system-i386 -machine pc -cpu pentium3 -m 256 \
   -hda ~/vms/win98.qcow2 -cdrom ~/isos/Win98SE.iso -boot d \
   -vga cirrus -display vnc=:0 -net none \
-  -audiodev coreaudio,id=snd -device sb16,audiodev=snd
+  -audiodev none,id=snd -device sb16,audiodev=snd   # no host audio backend is built
 # 2. after install, boot with the guest-tools ISO attached
 build/qemu/qemu-system-i386 -machine pc -cpu pentium3 -m 256 \
   -hda ~/vms/win98.qcow2 -cdrom guest-tools/out/guest-tools-3dfx-*.iso \
   -vga cirrus -display vnc=:0 -net none \
-  -audiodev coreaudio,id=snd -device sb16,audiodev=snd
+  -audiodev none,id=snd -device sb16,audiodev=snd   # no host audio backend is built
 ```
 
 **Standalone `qemu-system-i386` has no display and no 3D, by decision
 (2026-09-07).** QEMU is configured with no user interface at all —
 `--disable-sdl --disable-gtk --disable-cocoa --disable-curses
---disable-spice` — because the player is the front end: it embeds QEMU,
+--disable-spice`, and no host audio backend either (`--disable-coreaudio`
+and the rest) — because the player is the front end: it embeds QEMU,
 the embed library appends `-display none` itself, and it brings its own 3D
 context provider (patch 30) and audio backend (patch 20). Carrying SDL2
 (plus the SDL3 that Homebrew's sdl2-compat loads behind it) and Cocoa into
@@ -216,7 +217,10 @@ guest by hand, use VNC** — which QEMU does for you: with no local display
 compiled in and no `-display` given, `qemu_setup_display()` starts a VNC
 server on `localhost:5900` (`system/vl.c`), so `open vnc://localhost:5900`
 in Screen Sharing is the window. The lines above say `-display vnc=:0`
-outright. Anything scripted passes `-display none` and gets neither.
+outright, and `-audiodev none` because CoreAudio is not built either (the
+player's sound is patch 20's `embed` audiodev; `wav` is the other one that
+always exists, and is how `tools/xp-cdimage-test.sh` captures CD-DA).
+Anything scripted passes `-display none` and gets neither.
 **3D on macOS is the player**, which registers the embed library's
 window-less backend.
 

@@ -628,48 +628,68 @@ optimizations_check() { # the wizard's fast-path switches, all the way to a real
     && { echo "\"All defaults\" left an [optimizations] table behind"; rc=1; }
   return $rc
 }
-no_ui_check() { # QEMU carries no user interface (2026-09-07)
-  # The player is the front end: it embeds QEMU, the embed library appends
-  # `-display none` itself, and it brings its own 3D context provider
-  # (patch 30) and audio backend (patch 20). So QEMU is configured with no
-  # display at all -- --disable-sdl --disable-gtk --disable-cocoa
-  # --disable-curses --disable-spice -- and DXVK with -Dnative_sdl2=
-  # disabled, the executor forcing DXVK_WSI_DRIVER=Headless (patch 04).
+no_frontend_check() { # QEMU carries no front end of its own (2026-09-07)
+  # The player is the front end. It embeds QEMU, the embed library appends
+  # `-display none` itself, and it brings both halves of what a QEMU front
+  # end would do: the 3D context provider (patch 30) and the `embed`
+  # audiodev (patch 20, an SPSC ring the application owns). So QEMU is
+  # configured with no display -- --disable-sdl --disable-gtk
+  # --disable-cocoa --disable-curses --disable-spice -- and no host audio
+  # backend either: --disable-alsa --disable-pa --disable-pipewire
+  # --disable-jack --disable-oss --disable-sndio --disable-coreaudio
+  # --disable-dsound. `none` and `wav` are built unconditionally and are
+  # what the headless tools use. DXVK matches, with -Dnative_sdl2=disabled
+  # and the executor forcing DXVK_WSI_DRIVER=Headless (patch 04).
   #
   # This asks the built artefacts, not the configure summary, because a
   # dropped flag re-links libqemu-embed silently and every packager starts
-  # carrying the toolkit again: SDL was two DLLs in the Windows package and
-  # two dylibs in the .app, GTK is ~40 shared libraries on Linux. And it
-  # looks for a *loaded* name as well as a linked one, because that is how
-  # SDL last bit -- sdl2-compat reaching for SDL3 through LoadLibrary, on a
-  # user's PC, where no import-table walk could have seen it.
+  # carrying the library again: SDL was two DLLs in the Windows package and
+  # two dylibs in the .app, GTK is ~40 shared objects on Linux, the audio
+  # backends another 6. And it looks for a *loaded* name as well as a
+  # linked one, because that is how SDL last bit -- sdl2-compat reaching
+  # for SDL3 through LoadLibrary, on a user's PC, where no import-table
+  # walk could have seen it.
   local rc=0 f
   local names="build/qemu/libqemu-embed-i386.$SO build/qemu/qemu-system-i386"
   names="$names build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)"
   names="$names build/win/qemu/libqemu-embed-i386.dll build/win/qemu/qemu-system-i386.exe"
-  # linked: libSDL*, libgtk-3/libgdk-3, libvte, libspice-server, ncurses.
-  # (Cocoa is a framework, so it is matched by name in the same list.)
+  # displays: SDL, GTK/GDK, VTE, spice-server, ncurses, and Cocoa (a
+  # framework, so it is matched by name in the same list).
   local linked='libSDL|libgtk-|libgdk-|libvte|libspice-server|libncurses|Cocoa\.framework'
+  # host audio: ALSA, PulseAudio, PipeWire, JACK, sndio.
+  linked="$linked"'|libasound|libpulse|libjack|libpipewire|libsndio'
   # loaded by name at run time: the SDL DLLs, which is the case that bit
   local loaded='SDL[23][-.0-9]*\.(so|dll|dylib)'
+  # compiled in: QAPI generates one AUDIODEV_DRIVER_<X> enumerator per
+  # audio backend, each behind its own `if: CONFIG_AUDIO_<X>` (qapi/
+  # audio.json), so the name is in the binary exactly when the backend is
+  # built. That catches the three with no shared object of their own --
+  # OSS, CoreAudio, DirectSound -- and it is how patch 23 was found: on
+  # Windows `--disable-dsound` was a no-op and dsoundaudio.c went in
+  # anyway. NONE, WAV and our EMBED are the three that must be there.
+  local builtin_audio='AUDIODEV_DRIVER_(ALSA|PA|PIPEWIRE|JACK|OSS|SNDIO|COREAUDIO|DSOUND|SDL|SPICE)$'
   for f in $names; do
     [ -f "$f" ] || continue
+    local frc=0
     case "$f" in
       *.dll|*.exe) ;;   # no ldd/otool for PE; the strings pass covers it
       *)
         if [ "$OS" = Darwin ]; then
           otool -L "$f" 2>/dev/null | grep -qE "$linked" \
-            && { echo "$f links a UI toolkit"; otool -L "$f" | grep -E "$linked" | sed 's/^/    /'; rc=1; }
+            && { echo "$f links a host front-end library"; otool -L "$f" | grep -E "$linked" | sed 's/^/    /'; rc=1; frc=1; }
         else
           ldd "$f" 2>/dev/null | grep -qE "$linked" \
-            && { echo "$f links a UI toolkit"; ldd "$f" | grep -E "$linked" | sed 's/^/    /'; rc=1; }
+            && { echo "$f links a host front-end library"; ldd "$f" | grep -E "$linked" | sed 's/^/    /'; rc=1; frc=1; }
         fi;;
     esac
     if command -v strings >/dev/null; then
       strings -a "$f" | grep -qiE "$loaded" \
-        && { echo "$f names an SDL library to load at run time"; rc=1; }
+        && { echo "$f names an SDL library to load at run time"; rc=1; frc=1; }
+      local built
+      built=$(strings -a "$f" | grep -oE "$builtin_audio" | sort -u | tr '\n' ' ')
+      [ -n "$built" ] && { echo "$f has host audio backends compiled in: $built"; rc=1; frc=1; }
     fi
-    echo "  clean: $f"
+    [ "$frc" = 0 ] && echo "  clean: $f"
   done
   return $rc
 }
@@ -791,12 +811,12 @@ host_stage() {
     skip bios-date "needs build/qemu/qemu-system-i386"
   fi
 
-  # nothing shipped links or loads a UI toolkit (see the function for why
-  # it is asked of the artefacts and not of the configure summary)
+  # nothing shipped links or loads a display or host-audio library (see the
+  # function for why it is asked of the artefacts, not the configure summary)
   if [ -f "build/qemu/libqemu-embed-i386.$SO" ] || [ -f "$D3DPT_DXVK_LIB" ]; then
-    run_check no-ui no-ui.log no_ui_check || true
+    run_check no-frontend no-frontend.log no_frontend_check || true
   else
-    skip no-ui "needs build/qemu or build/dxvk"
+    skip no-frontend "needs build/qemu or build/dxvk"
   fi
 
   # the application icon: every size in packaging/icon/ still derived from
