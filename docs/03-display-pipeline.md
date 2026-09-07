@@ -256,9 +256,28 @@ Target: **≤ 1 host frame added** between guest frame completion and photons at
 - winit event → QEMU input injection directly on the event thread.
 - Pointer: absolute (USB tablet) for desktop use; **relative capture mode**
   (PS/2 semantics + host cursor grab) for mouselook — the Win98/XP FPS case is
-  the whole point. Hotkey toggles grab.
+  the whole point. Hotkey toggles grab. Which of the two a machine has is
+  the bundle's `seamless_mouse` (doc 07's "Seamless mouse" checkbox): with
+  the tablet the player never grabs at all and the guest's hardware cursor
+  can be the host cursor, without it a click takes the pointer and
+  Ctrl+Alt+G gives it back. The player follows the guest either way
+  (`mouse_is_absolute`), so a machine can be switched without touching it.
 - Keyboard: full scancode set (Pause/PrtSc correctness); host shortcuts
   suppressed while grabbed.
+
+### Sampling outside the picture
+
+A preset that curves the picture samples the guest's frame outside its own
+edges at the corners and along the sides. What comes back there must be
+**transparent black**, not the nearest pixel: the slang default wrap mode
+is `clamp_to_border` and presets are written against it. librashader's
+wgpu runtime downgrades every such sampler to `clamp_to_edge`, without a
+word, on a device opened without `ADDRESS_MODE_CLAMP_TO_BORDER` — so the
+device the chain runs on is opened with it
+(`shader_chain::required_features`, used by the player, the launcher's
+egui device and the preview's headless one). Without it the outermost row
+and column are smeared over everything outside the tube. The player says
+which it got at startup (`[shader] clamp-to-border sampling: …`).
 
 ## 3D and the pipeline
 

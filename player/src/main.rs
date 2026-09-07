@@ -69,6 +69,12 @@ impl Gpu {
         .expect("no suitable GPU adapter");
         let desc = wgpu::DeviceDescriptor {
             label: Some("player"),
+            // What the CRT chain needs of this adapter: clamp-to-border
+            // sampling, without which librashader quietly samples
+            // clamp-to-edge and a curved preset smears its outermost
+            // pixels across everything outside the tube
+            // (`shader_chain::required_features`).
+            required_features: shader_chain::required_features(&adapter),
             ..Default::default()
         };
         // Linux: open the device with the dma-buf import extensions so 3D
@@ -87,6 +93,25 @@ impl Gpu {
         };
         if zero_copy {
             eprintln!("[3d] zero-copy dma-buf import available");
+        }
+        // The CRT chain's border sampling, said out loud once. Without
+        // it librashader samples clamp-to-edge (see
+        // `shader_chain::required_features`) and a curved preset smears
+        // its outermost pixels over everything outside the tube; whether
+        // that is this adapter's limit or our own descriptor having lost
+        // the feature is the difference worth printing, since the
+        // picture looks the same either way.
+        let border = wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER;
+        match (device.features().contains(border), adapter.features().contains(border)) {
+            (true, _) => eprintln!("[shader] clamp-to-border sampling: on"),
+            (false, true) => eprintln!(
+                "[shader] clamp-to-border sampling: off although this adapter has it \
+                 — curved presets will smear their edge pixels"
+            ),
+            (false, false) => eprintln!(
+                "[shader] clamp-to-border sampling: off, this adapter has none \
+                 — curved presets will smear their edge pixels"
+            ),
         }
 
         let size = window.inner_size();

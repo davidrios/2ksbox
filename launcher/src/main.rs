@@ -203,6 +203,30 @@ impl LauncherApp {
     }
 }
 
+/// eframe's own wgpu setup, plus the one feature the shader preview
+/// needs of the device it borrows from egui.
+///
+/// The preview runs the same librashader chain the player does, on
+/// egui's device rather than one of its own, so the device egui opens
+/// has to be opened the way the player opens its own — otherwise a
+/// curved preset previews with its edge pixels smeared outwards and
+/// looks nothing like what the player will draw
+/// (`shader_chain::required_features`). The default descriptor is
+/// wrapped rather than replaced: everything else egui asks for (its
+/// limits, its label) is still egui's business.
+fn wgpu_configuration() -> eframe::egui_wgpu::WgpuConfiguration {
+    let mut config = eframe::egui_wgpu::WgpuConfiguration::default();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut config.wgpu_setup {
+        let base = std::sync::Arc::clone(&setup.device_descriptor);
+        setup.device_descriptor = std::sync::Arc::new(move |adapter| {
+            let mut desc = base(adapter);
+            desc.required_features |= shader_chain::required_features(adapter);
+            desc
+        });
+    }
+    config
+}
+
 /// A windowless wgpu device/queue, the same way eframe opens one at
 /// startup — for the diagnostic verbs below, which run real egui frames
 /// with no window to put them in.
@@ -210,7 +234,7 @@ fn headless_render_state() -> eframe::egui_wgpu::RenderState {
     let instance =
         eframe::wgpu::Instance::new(eframe::wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     pollster::block_on(eframe::egui_wgpu::RenderState::create(
-        &eframe::egui_wgpu::WgpuConfiguration::default(),
+        &wgpu_configuration(),
         &instance,
         None,
         eframe::egui_wgpu::RendererOptions::default(),
@@ -700,7 +724,7 @@ fn main() -> eframe::Result {
     launcher_core::fatal::note("opening the window");
     let started = eframe::run_native(
         paths::NAME,
-        eframe::NativeOptions { viewport, ..Default::default() },
+        eframe::NativeOptions { viewport, wgpu_options: wgpu_configuration(), ..Default::default() },
         Box::new(|cc| {
             let mut shader_manager = shader_manager::ShaderManager::default();
             if let Some(spec) = debug_shader_preview {

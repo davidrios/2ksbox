@@ -44,6 +44,11 @@
 #                  checkbox to a real QEMU: a default machine's line unchanged,
 #                  each switch on the option QEMU looks it up on, our QEMU
 #                  accepting the line the launcher writes
+#   mode-sweep     the player's display path without a guest (doc 03, M2): every
+#                  mode through mode analysis, the geometry stage and a real CRT
+#                  preset — and that the device it opened kept
+#                  ADDRESS_MODE_CLAMP_TO_BORDER, without which librashader
+#                  samples clamp-to-edge and curved presets smear
 #   pointer        the wizard's pointer switch (doc 03's grab model): a new
 #                  Windows machine gets the USB tablet and a new DOS machine
 #                  does not, the checkbox adds and removes the device and its
@@ -677,6 +682,16 @@ host_stage() {
     if cargo build --release -p player -q 2>"$OUT/player-build.log"; then
       run_check mode-sweep mode-sweep.log \
         target/release/player --shader "$preset" --mode-sweep "$OUT/mode-sweep" || true
+      # The chain's border sampling, from the run that just happened: the
+      # player names the *reason* it is off, and "although this adapter
+      # has it" is the one that is our own descriptor's fault — a device
+      # opened without `ADDRESS_MODE_CLAMP_TO_BORDER` makes librashader
+      # sample clamp-to-edge, and every curved preset then smears its
+      # outermost pixels over everything outside the tube.
+      if grep -q "clamp-to-border sampling: off although" "$OUT/mode-sweep.log"; then
+        FAIL+=(mode-sweep-border)
+        echo "  FAIL mode-sweep-border (the device dropped clamp-to-border)"
+      fi
     else FAIL+=(mode-sweep); echo "  FAIL mode-sweep (build)"; tail -5 "$OUT/player-build.log"; fi
   else
     skip mode-sweep "needs a display and the slang-shaders submodule"

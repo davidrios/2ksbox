@@ -427,6 +427,24 @@ items nobody owns yet:
 
 ## Gotchas learned (don't relearn)
 
+- **A curved preset that smears its edge pixels outwards is a device
+  feature we forgot to ask for, not the preset.** A slang preset's
+  default wrap mode is `clamp_to_border` with a transparent-black border
+  (RetroArch's own default), and librashader's wgpu runtime *silently*
+  substitutes `clamp_to_edge` when the device was opened without
+  `ADDRESS_MODE_CLAMP_TO_BORDER` — `samplers.rs`: "if the device doesn't
+  have clamp to border support, approximate it with clamp to edge". The
+  picture that comes out has the outermost row and column of the guest's
+  frame repeated forever over everything the curvature maps outside the
+  tube. `shader_chain::required_features(adapter)` is the one place that
+  says so, and the player, the launcher's egui device and the preview's
+  own headless device all open with it (2026-09-06). The player prints
+  `[shader] clamp-to-border sampling: on|off` once at startup and names
+  which of the two reasons an "off" is, and the `mode-sweep` check fails
+  on the reason that is ours. A preset that draws its own black border
+  (crt-geom, the gizmo curvators) looked right either way, which is why
+  this survived so long.
+
 - **Win98 wants TCG, not KVM.** Booted with `-accel kvm -cpu pentium3`,
   `~/vms/win98.qcow2` comes up with Explorer dead: first "this program has
   performed an illegal operation", then, on every restart of the shell,

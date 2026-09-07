@@ -11,6 +11,28 @@ use librashader::runtime::wgpu::{FilterChain, FilterChainOptions, WgpuOutputView
 use librashader::runtime::{FilterChainParameters, Size, Viewport};
 use std::path::Path;
 
+/// The device features a filter chain needs, of those this adapter has —
+/// **request these when opening the device the chain will run on.**
+///
+/// There is one, and it is not an optimization. A slang preset's default
+/// wrap mode is `clamp_to_border` (RetroArch's own default, and what
+/// `WrapMode::default()` is in librashader), with the border transparent
+/// black; librashader's wgpu runtime silently *downgrades* every such
+/// sampler to `clamp_to_edge` on a device opened without
+/// `ADDRESS_MODE_CLAMP_TO_BORDER` (`samplers.rs`: "if the device doesn't
+/// have clamp to border support, approximate it with clamp to edge").
+/// A preset that curves the picture samples outside it at the corners
+/// and along the edges, and what it gets back then is the outermost row
+/// of pixels smeared outwards forever instead of black — the reported
+/// "outside the curve is glitched, it repeats the last colour".
+///
+/// Masked by what the adapter actually has, so this is always safe to
+/// pass: a device that cannot do it is opened without it, and presets
+/// look the way they did before rather than failing to open.
+pub fn required_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    adapter.features() & wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER
+}
+
 pub struct Chain {
     chain: FilterChain,
     frame_count: usize,

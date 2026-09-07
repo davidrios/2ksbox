@@ -99,6 +99,11 @@ impl Preview {
         let adapter_info = adapter.get_info();
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("shader preview"),
+            // The preview has to show what the player will show, so it
+            // opens its device with the same feature: without it a
+            // curved preset previews with its edge pixels smeared
+            // outwards (`shader_chain::required_features`).
+            required_features: shader_chain::required_features(&adapter),
             ..Default::default()
         }))
         .map_err(|e| format!("requesting a device: {e}"))?;
