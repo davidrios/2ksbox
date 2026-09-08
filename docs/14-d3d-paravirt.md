@@ -174,6 +174,29 @@ guest (XP / Win98)                          host (QEMU process, embed lib)
   acceptance bar, last. The Quake/Duke ports are OpenGL and already
   covered by the qemu-3dfx pass-through; useful for the GL side only.
 
+## Shipping it (2026-09-07)
+
+The executor is two files and QEMU finds neither through a link: it
+`dlopen`s `libd3dpt_exec` by a search that starts at `build/d3dpt`, and
+the executor then `dlopen`s DXVK's `d3d9` the same way. A package that
+carries the player and not those two has XP guests that fall back to
+WineD3D with nothing said anywhere, so every packager stages **both or
+neither** — the macOS app since 2026-09-06, the Linux tarball and the
+Flatpak since 2026-09-07 (`lib/2ksbox/libd3dpt_exec.so` +
+`libdxvk_d3d9.so.0`, the second installed under the soname the executor
+looks up, since nothing links it). The Flatpak builds them in its own
+sandbox against the runtime's libraries; `third_party/dxvk` is in the
+copied source tree for that reason and because the executor needs its
+`include/native` headers to compile. No Vulkan driver travels with the
+Linux packages: the host's is the right one there, and a host below
+Vulkan 1.3 keeps GL + WineD3D (ADR-013). The packaged player names both
+files to QEMU through `player/src/companions.rs`, and `player
+--companions` prints what that rule resolved — which is what the
+packagers check, rather than restating the layout in a script. Pointing
+`tools/d3dpt-exec-test` at a staged pair (`D3DPT_EXEC_LIB` /
+`D3DPT_DXVK_LIB`) is the cheap proof that the files themselves work: real
+batches, real frames, the hostile batch still refused.
+
 ## Risks
 
 - **Host Vulkan capabilities:** MoltenVK lacked required Vulkan features and

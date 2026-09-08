@@ -61,6 +61,25 @@ smoke() {
       echo "package-flatpak.sh: $what resolved outside /app: $path" >&2; fail=1 ;;
     esac
   done <<< "$out"
+  # The three companions QEMU dlopens by name — the Glide wrapper, the
+  # Direct3D executor, the DXVK it runs on. They are in no import table, so
+  # nothing above would notice their absence; the packaged *player* is what
+  # knows where they should be (`player/src/companions.rs`), and
+  # `--companions` prints what that rule resolved. Inside the sandbox the
+  # answer has to be under /app, and "(not shipped)" means the build made
+  # one and did not stage it — or did not make it at all.
+  echo "==> flatpak run $APPID --companions"
+  local comp
+  comp=$(flatpak run --user --command=2ksbox-player "$APPID" --companions) || return 1
+  echo "$comp"
+  while read -r what path; do
+    case "$what" in glide|d3dpt-exec|dxvk) ;; *) continue ;; esac
+    case "$path" in
+      /app/*) ;;
+      "(not"*) echo "package-flatpak.sh: the app ships no $what (its build step failed, or staged nothing)" >&2; fail=1 ;;
+      *) echo "package-flatpak.sh: $what is $path, outside /app" >&2; fail=1 ;;
+    esac
+  done <<< "$comp"
   # The data directory is the one thing a Flatpak deliberately moves: it
   # lands under ~/.var/app/<app-id>, not ~/.local/share.
   case "$out" in *"/.var/app/$APPID/"*) ;; *)

@@ -115,7 +115,12 @@ modules:
           - launcher-qt/target
           - build
           - .git
-          - third_party/dxvk
+          # `third_party/dxvk` used to be skipped here, when nothing in the
+          # sandbox built it. It comes along now (63 MB, its subprojects
+          # vendored and no meson wraps, so the build stays offline): the
+          # Direct3D executor needs its `include/native` headers even to
+          # compile, and the runtime's own libraries are what its d3d9 has
+          # to link. Patched on the host, like the QEMU tree above.
           - third_party/slang-shaders
           - .claude
       # Every crate of both lock files (the workspace's and
@@ -145,6 +150,16 @@ modules:
       # it wants. Without this the sandbox's guests get no Glide at all:
       # `hw/3dfx` dlopens the library by name and finds nothing.
       - scripts/build-glide.sh
+      # DXVK and the Direct3D executor (doc 14), for the same reason and
+      # with the same constraint: the SDK has meson, ninja, glslang and
+      # the Vulkan headers, DXVK's subprojects are vendored and it declares
+      # no meson wrap, so this builds offline. Only `d3d9` and only against
+      # patch 04's headless WSI — the executor never presents. No Vulkan
+      # driver is packaged: the runtime's GL/Vulkan extension supplies the
+      # host's, and a host below Vulkan 1.3 keeps GL + WineD3D (ADR-013).
+      - scripts/configure-dxvk.sh
+      - ninja -C build/dxvk
+      - scripts/build-d3dpt-exec.sh
       - scripts/package-linux.sh --no-build --prefix /app
       # Flatpak exports these three by name, so they go where it looks
       # rather than through packaging/linux/install.sh (which rewrites

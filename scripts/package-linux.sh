@@ -36,6 +36,8 @@
 #   bin/2ksbox-player                 the player
 #   lib/2ksbox/libqemu-embed-i386.so
 #   lib/2ksbox/libglide2x.so          the Glide wrapper, when one is built
+#   lib/2ksbox/libd3dpt_exec.so       the Direct3D executor, and the DXVK
+#   lib/2ksbox/libdxvk_d3d9.so.0        it runs on — both or neither
 #   libexec/2ksbox/qemu-img           ours, patched — kept off PATH
 #   share/2ksbox/pc-bios/             QEMU firmware (the player's -L)
 #   share/2ksbox/guest-tools/         the guest-tools ISO
@@ -108,6 +110,21 @@ if [ -f build/glide/libglide2x.so ]; then
   install -m755 build/glide/libglide2x.so "$STAGE/lib/2ksbox/"
 else
   echo "package-linux.sh: no build/glide/libglide2x.so (scripts/build.sh glide); packaging without Glide — 3dfx titles will not run"
+fi
+# The Direct3D executor and the DXVK it runs on (doc 14), found the same
+# way and staged together: the executor `dlopen`s DXVK by the name
+# `companions.rs` puts in `D3DPT_DXVK_LIB`, so one without the other is a
+# package whose XP guests fall back to WineD3D anyway. DXVK's real file
+# carries its full version; it is installed under the soname the executor
+# asks for, since nothing here links it and only that name is looked up.
+# No Vulkan travels with the package: on Linux the system's driver is the
+# right one, and a host below Vulkan 1.3 keeps the GL + WineD3D path by
+# decision (ADR-013).
+if [ -f build/d3dpt/libd3dpt_exec.so ] && [ -f build/dxvk/src/d3d9/libdxvk_d3d9.so.0 ]; then
+  install -m755 build/d3dpt/libd3dpt_exec.so "$STAGE/lib/2ksbox/"
+  install -m755 build/dxvk/src/d3d9/libdxvk_d3d9.so.0 "$STAGE/lib/2ksbox/libdxvk_d3d9.so.0"
+else
+  echo "package-linux.sh: no Direct3D executor (scripts/build.sh dxvk exec); packaging without it — XP Direct3D will fall back to WineD3D"
 fi
 rm -rf "$STAGE/share/2ksbox/pc-bios"   # a re-run must replace it, not nest inside it
 cp -a qemu/pc-bios "$STAGE/share/2ksbox/pc-bios"
@@ -203,32 +220,37 @@ esac
 # the layout here is the point: a package that stages a file the player
 # looks for somewhere else passes every other check in this script.
 companions=$(cd / && env -i "$STAGE/bin/2ksbox-player" --companions)
-while read -r what path; do
-  case "$what" in
-    glide|d3dpt-exec|dxvk) ;;
-    *) continue ;;
+while read -r what file; do
+  got=$(printf '%s\n' "$companions" | awk -v w="$what" '$1 == w { print $2 }')
+  if [ ! -f "$STAGE/lib/2ksbox/$file" ]; then
+    # Not built on this host — the staging step above already said which
+    # guests lose what. All that is left to check is that the player is not
+    # about to hand QEMU somebody else's copy instead.
+    case "$got" in
+      "(not"|"") ;;
+      *) echo "package-linux.sh: $what is not in the package, but the player found $got" >&2; fail=1 ;;
+    esac
+    continue
+  fi
+  case "$got" in
+    "$STAGE"/*) printf '%-15s%s\n' "$what" "$got" ;;
+    *) echo "package-linux.sh: $file is staged but the player answered ${got:-nothing}" >&2; fail=1 ;;
   esac
-  case "$path" in
-    "(not"*) continue ;;                       # not built here; warned about above
-    "$STAGE"/*) printf '%-15s%s\n' "$what" "$path" ;;
-    *) echo "package-linux.sh: the staged player's $what came from $path, not the package" >&2; fail=1 ;;
-  esac
-done <<< "$companions"
-if [ -f "$STAGE/lib/2ksbox/libglide2x.so" ]; then
-  case "$companions" in
-    *"glide          $STAGE"*) ;;
-    *) echo "package-linux.sh: libglide2x.so is staged but the player did not find it" >&2; fail=1 ;;
-  esac
-  # It links the system's libGL, like every other GL program on the host;
-  # a package that carried an unresolvable one would fail at grGlideInit,
-  # inside QEMU, as "Glide pass-through off" and nothing else.
-  missing=$(ldd "$STAGE/lib/2ksbox/libglide2x.so" | grep 'not found' || true)
+  # Each of these links the system's own GL / Vulkan stack, like every
+  # other such program on the host; an unresolvable one fails deep inside
+  # QEMU ("Glide pass-through off", "Direct3D pass-through off") and
+  # nowhere a user would look.
+  missing=$(ldd "$STAGE/lib/2ksbox/$file" | grep 'not found' || true)
   if [ -n "$missing" ]; then
     printf '%s\n' "$missing" | sed 's/^/  /' >&2
-    echo "package-linux.sh: the staged Glide wrapper has unresolved libraries" >&2
+    echo "package-linux.sh: the staged $file has unresolved libraries" >&2
     fail=1
   fi
-fi
+done <<EOF
+glide       libglide2x.so
+d3dpt-exec  libd3dpt_exec.so
+dxvk        libdxvk_d3d9.so.0
+EOF
 # The window itself, which is the half `--paths` cannot reach. Qt resolves
 # its platform plugin and every QML module the views import at run time,
 # by name, from directories no import table mentions — so a package that
