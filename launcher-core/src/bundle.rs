@@ -326,7 +326,7 @@ impl Accel {
 ///
 /// They therefore only exist under emulation. A machine running on KVM
 /// executes on the host CPU directly and none of these is reachable;
-/// the form says so rather than showing seven switches that do nothing.
+/// the form says so rather than showing eight switches that do nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Optimization {
     X87Fast,
@@ -334,6 +334,7 @@ pub enum Optimization {
     SimdFast,
     RepFast,
     SmcSameValue,
+    SoftImm,
     InlineLookup,
     PinnedRegs,
 }
@@ -354,12 +355,13 @@ impl Optimization {
     /// In the order the form lists them: the arithmetic fast paths
     /// first, in the order they were written, then the two that are
     /// about translation, then the experimental one.
-    pub const ALL: [Optimization; 7] = [
+    pub const ALL: [Optimization; 8] = [
         Optimization::X87Fast,
         Optimization::SseFast,
         Optimization::SimdFast,
         Optimization::RepFast,
         Optimization::SmcSameValue,
+        Optimization::SoftImm,
         Optimization::InlineLookup,
         Optimization::PinnedRegs,
     ];
@@ -374,6 +376,7 @@ impl Optimization {
             Optimization::SimdFast => "simd-fast",
             Optimization::RepFast => "rep-fast",
             Optimization::SmcSameValue => "smc-same-value",
+            Optimization::SoftImm => "soft-imm",
             Optimization::InlineLookup => "inline-lookup",
             Optimization::PinnedRegs => "pinned-regs",
         }
@@ -385,7 +388,10 @@ impl Optimization {
             | Optimization::SseFast
             | Optimization::SimdFast
             | Optimization::RepFast => Knob::Cpu,
-            Optimization::SmcSameValue | Optimization::InlineLookup | Optimization::PinnedRegs => Knob::Tcg,
+            Optimization::SmcSameValue
+            | Optimization::SoftImm
+            | Optimization::InlineLookup
+            | Optimization::PinnedRegs => Knob::Tcg,
         }
     }
 
@@ -406,6 +412,7 @@ impl Optimization {
             Optimization::SimdFast => "MMX and SSE integer instructions inline",
             Optimization::RepFast => "Block string moves as whole-page copies",
             Optimization::SmcSameValue => "Skip retranslation when code is rewritten unchanged",
+            Optimization::SoftImm => "Read patched operands from the guest's code as it runs",
             Optimization::InlineLookup => "Find the next block without leaving generated code",
             Optimization::PinnedRegs => "Keep guest registers in host registers (experimental)",
         }
@@ -435,6 +442,11 @@ impl Optimization {
             Optimization::SmcSameValue => {
                 "Self-modifying code usually writes back the bytes already there, and rewriting a \
                  value with itself cannot invalidate anything. Moto Racer's race: 7.3 to 21.7 fps."
+            }
+            Optimization::SoftImm => {
+                "A game that patches the operands of its own inner loop -- every software renderer \
+                 of the era does -- has them read from its code as it runs, so the patch costs \
+                 nothing instead of a retranslation. Moto Racer's race: 41 to 58 fps."
             }
             Optimization::InlineLookup => {
                 "Every return and indirect jump finds its next block in generated code rather than \

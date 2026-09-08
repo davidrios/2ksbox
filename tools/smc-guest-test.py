@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Self-modifying code under TCG with the same-value store skip on and off
-(patch 18, M9 track): a DOS program patches its own instructions the ways the
-software-rendered games do — an immediate rewritten with new values from
+"""Self-modifying code under TCG with the same-value store skip and the
+run-time reading of patched operands on and off (patches 18 and 24, M9 track):
+a DOS program patches its own instructions the ways the software-rendered
+games do — an immediate rewritten with new values from
 another block and from the block being executed (precise SMC), rewritten
 with the value already there, an opcode byte flipped, 16- and 8-bit partial
 patches of an imm32, a routine overwritten by `rep movsd` (the probe path)
-with new and with identical bytes, and an imm32 straddling a page boundary
-written by one crossing store — and prints a checksum of what the patched
-code computed. Boots it on the FreeDOS test floppy (fetched by
-tools/x87-guest-test.py on first use) under `-accel tcg,smc-same-value=on`
-and `=off`; every checksum must equal the architectural result.
+with new and with identical bytes, an imm32 straddling a page boundary
+written by one crossing store, a memory operand's disp32 rewritten per call
+(a texture base), a sign-extended imm8, an instruction whose modrm and whose
+immediate are both patched, and one store that covers the tail of an
+immediate *and* the opcode bytes after it — and prints a checksum of what the
+patched code computed. Boots it on the FreeDOS test floppy (fetched by
+tools/x87-guest-test.py on first use) under all four combinations of
+`-accel tcg,smc-same-value=on|off,soft-imm=on|off`; every checksum must equal
+the architectural result. The soft-imm runs also have to *reach* the path:
+the run asserts QEMU traced blocks translated that way and writes absorbed by
+them, so a battery that stopped exercising it fails instead of passing.
 
     tools/smc-guest-test.py            # needs nasm, mtools, build/qemu
 
@@ -39,6 +46,10 @@ EXPECTED = {
     "G": (0x2222 + 0x2222 + 0x1111) & M,                       # rep movsd: new body, same body, old body
     "H": sum(range(N)) & M,                                    # imm32 across a page boundary, new values
     "I": (N * 0x5555) & M,                                     # the same, rewritten with the same value
+    "J": sum(range(N)) & M,                                    # a memory operand's disp32 patched per call
+    "K": sum(((i & 0xff) ^ 0x80) - 0x80 for i in range(N)) & M,  # a sign-extended imm8 patched per call
+    "L": sum(i if i % 2 == 0 else -i for i in range(N)) & M,   # modrm and imm32 of one instruction
+    "M": sum(((i << 16) + 1) for i in range(N)) & M,           # a store over an immediate's tail and the next opcode
 }
 
 ASM = r"""
@@ -217,6 +228,84 @@ start:
     mov al, 'I'
     call report
 
+    ; J: the disp32 of a memory operand rewritten before every call, the way a
+    ; span loop rewrites its texture base
+    xor eax, eax
+    xor bx, bx
+.jfill:                         ; area[i] = i
+    mov [area + bx], eax
+    add bx, 4
+    inc eax
+    cmp eax, N
+    jb .jfill
+    xor si, si
+    xor edi, edi
+.lj:
+    movzx eax, si
+    shl eax, 2
+    add eax, area
+    mov [routJ_disp], eax
+    call routJ
+    add edi, eax
+    inc si
+    cmp si, N
+    jb .lj
+    mov al, 'J'
+    call report
+
+    ; K: a sign-extended imm8 rewritten before every call
+    xor si, si
+    xor edi, edi
+.lk:
+    mov ax, si
+    mov [routK_imm], al
+    call routK
+    add edi, eax
+    inc si
+    cmp si, N
+    jb .lk
+    mov al, 'K'
+    call report
+
+    ; L: one instruction whose modrm (add <-> sub) and whose imm32 are both
+    ; patched: the immediate may be read at run time, the modrm may not
+    xor si, si
+    xor edi, edi
+.ll:
+    mov al, 0C0h                ; /0 = add eax, imm32
+    test si, 1
+    jz .l1
+    mov al, 0E8h                ; /5 = sub eax, imm32
+.l1:
+    mov [routL_modrm], al
+    movzx eax, si
+    mov [routL_imm], eax
+    call routL
+    add edi, eax
+    inc si
+    cmp si, N
+    jb .ll
+    mov al, 'L'
+    call report
+
+    ; M: one store over the tail of an immediate *and* the two opcode bytes
+    ; after it (rewritten with what is already there): a block cannot survive
+    ; that, however soft its immediate is
+    mov dword [routM_imm], 0
+    xor si, si
+    xor edi, edi
+.lm:
+    movzx eax, si
+    or eax, 83660000h           ; bytes +6,+7 back as they were: 66 83
+    mov [routM_imm + 2], eax
+    call routM
+    add edi, eax
+    inc si
+    cmp si, N
+    jb .lm
+    mov al, 'M'
+    call report
+
     mov si, str_done
     call puts
     int 20h
@@ -254,6 +343,32 @@ tmplH:                          ; mov eax, imm32; ret — 7 bytes, the imm32 at 
     db 66h, 0B8h
     dd 0
     db 0C3h
+
+routJ:                          ; a32 mov eax, [disp32]; ret
+    db 66h, 67h, 8Bh, 05h
+routJ_disp:
+    dd 0
+    ret
+routK:                          ; add eax, imm8 (sign-extended); ret
+    xor eax, eax
+    db 66h, 83h, 0C0h
+routK_imm:
+    db 0
+    ret
+routL:                          ; add/sub eax, imm32; ret
+    xor eax, eax
+    db 66h, 81h
+routL_modrm:
+    db 0C0h
+routL_imm:
+    dd 0
+    ret
+routM:                          ; mov eax, imm32; add eax, 1; ret
+    db 66h, 0B8h
+routM_imm:
+    dd 0
+    db 66h, 83h, 0C0h, 01h
+    ret
 
 putc:
     push ax
@@ -306,12 +421,13 @@ area: times 8192 db 0
 """
 
 
-def run_qemu(mode, img, log):
+def run_qemu(opts, img, log, trace=None):
     p = x87gt.subprocess.Popen([
-        x87gt.QEMU, "-machine", "pc", *x87gt.tcg_opts("smc-same-value=" + mode),
+        x87gt.QEMU, "-machine", "pc", *x87gt.tcg_opts(*opts),
         "-cpu", "pentium3", "-m", "64",
         "-L", os.path.join(ROOT, "qemu/pc-bios"), "-display", "none", "-net", "none",
         "-fda", img, "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
+        *(["-d", "trace:soft_imm_block,trace:soft_imm_absorb", "-D", trace] if trace else []),
     ])
     t0 = x87gt.time.time()
     try:
@@ -322,7 +438,7 @@ def run_qemu(mode, img, log):
             if os.path.exists(log) and b"DONE" in open(log, "rb").read()[-16:]:
                 break
         else:
-            raise SystemExit("timeout waiting for DONE (smc-same-value=%s)" % mode)
+            raise SystemExit("timeout waiting for DONE (%s)" % ",".join(opts))
     finally:
         if p.poll() is None:
             p.terminate()
@@ -353,28 +469,48 @@ def main():
     x87gt.sh("mcopy", "-o", "-i", img, com, "::SMCTEST.COM")
 
     bad = 0
-    for mode in ("on", "off"):
-        log = os.path.join(OUT, "serial-%s.log" % mode)
-        if os.path.exists(log):
-            os.unlink(log)
-        lines = run_qemu(mode, img, log)
-        got = {}
-        for l in lines:
-            parts = l.split()
-            if len(parts) == 2 and parts[0] in EXPECTED and len(parts[1]) == 8:
-                got[parts[0]] = int(parts[1], 16)
-        for k in sorted(EXPECTED):
-            if k not in got:
-                print("FAIL: smc-same-value=%s case %s missing" % (mode, k))
-                bad += 1
-            elif got[k] != EXPECTED[k]:
-                print("FAIL: smc-same-value=%s case %s: got %08x expected %08x" % (mode, k, got[k], EXPECTED[k]))
-                bad += 1
-        print("smc-same-value=%s: %d/%d cases right" % (mode, len(EXPECTED) - sum(1 for k in EXPECTED if got.get(k) != EXPECTED[k]), len(EXPECTED)))
+    # every combination of the two switches: each is an oracle for the other
+    for same in ("on", "off"):
+        for soft in ("on", "off"):
+            name = "same-%s-soft-%s" % (same, soft)
+            log = os.path.join(OUT, "serial-%s.log" % name)
+            trace = os.path.join(OUT, "trace-%s.log" % name) if soft == "on" else None
+            for f in (log, trace):
+                if f and os.path.exists(f):
+                    os.unlink(f)
+            lines = run_qemu(["smc-same-value=" + same, "soft-imm=" + soft],
+                             img, log, trace)
+            got = {}
+            for l in lines:
+                parts = l.split()
+                if len(parts) == 2 and parts[0] in EXPECTED and len(parts[1]) == 8:
+                    got[parts[0]] = int(parts[1], 16)
+            for k in sorted(EXPECTED):
+                if k not in got:
+                    print("FAIL: %s case %s missing" % (name, k))
+                    bad += 1
+                elif got[k] != EXPECTED[k]:
+                    print("FAIL: %s case %s: got %08x expected %08x"
+                          % (name, k, got[k], EXPECTED[k]))
+                    bad += 1
+            right = sum(1 for k in EXPECTED if got.get(k) == EXPECTED[k])
+            note = ""
+            if trace:
+                # the path has to be reached, or this battery passes by not testing it
+                text = open(trace).read() if os.path.exists(trace) else ""
+                blocks = text.count("soft_imm_block")
+                absorbed = text.count("soft_imm_absorb")
+                note = "  (%d blocks read their operands at run time, %d writes absorbed)" % (
+                    blocks, absorbed)
+                if blocks == 0 or absorbed == 0:
+                    print("FAIL: %s never reached the soft-imm path" % name)
+                    bad += 1
+            print("%s: %d/%d cases right%s" % (name, right, len(EXPECTED), note))
     if bad:
         print("FAIL: %d mismatches" % bad)
         return 1
-    print("PASS: %d cases, smc-same-value=on == off == the architecture" % len(EXPECTED))
+    print("PASS: %d cases, every smc-same-value / soft-imm combination "
+          "== the architecture" % len(EXPECTED))
     return 0
 
 

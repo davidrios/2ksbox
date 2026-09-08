@@ -116,8 +116,8 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   Automatic emits no `-boot` at all, which is what every bundle written
   before the field did and what the wizard's "boot the installer from
   the CD because the new disk is blank" case relies on.
-- **Our own emulator fast paths are seven checkboxes**, behind a
-  disclosure headed "Emulation optimizations — 6 of 7 on" so a machine
+- **Our own emulator fast paths are eight checkboxes**, behind a
+  disclosure headed "Emulation optimizations — 7 of 8 on" so a machine
   with one turned off says so while the section is closed. A *disclosure*,
   and in both front ends: egui's `CollapsingHeader` and, since 2026-09-06,
   Qt's `Disclosure.qml` — a triangle that turns to point down, a label,

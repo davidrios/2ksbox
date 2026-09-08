@@ -672,8 +672,12 @@ def write_shelf():
 def run_qemu(img, log, done=b"DONE", qemu_log="qemu.log"):
     if os.path.exists(log):
         os.unlink(log)
+    # QEMU_TCG_OPTS=<prop>=off runs the battery against an accelerator switch,
+    # the way the DOS batteries do (tools/x87-guest-test.py's tcg_opts)
+    tcg = [o for o in os.environ.get("QEMU_TCG_OPTS", "").split(",") if o]
     p = subprocess.Popen([
         QEMU, "-machine", "pc", "-cpu", "pentium3", "-m", "64",
+        *(["-accel", ",".join(["tcg"] + tcg)] if tcg else []),
         "-L", os.path.join(ROOT, "qemu/pc-bios"), "-display", "none", "-net", "none",
         "-fda", img, "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
         "-drive", "if=none,id=cd0,media=cdrom,file=" + DISC,
@@ -891,8 +895,15 @@ def check(bcl, entries):
     if st != 0x11 or r is None or q2 is None or r < q2:
         failures.append("resumed: status %s position %s" % (st, r))
     st, z = pos("stopped")
-    if st != 0x15 or z != 2200:
-        failures.append("stopped: status %s position %s (want 0x15 at the last read sector 2200)" % (st, z))
+    # Where the head is after a stop, which patch 54 changed on purpose: it
+    # stays where playback ended, and no longer falls back to the last sector
+    # *read* (a data address that has nothing to do with the head — XP asked
+    # for track 3 after a stop and was told "track 01, 00:00:17", its own
+    # volume descriptor). So: no audio status, and the head inside track 2
+    # at or past where it was last seen playing.
+    if st != 0x15 or z is None or r is None or not (r <= z < T2 + 300):
+        failures.append("stopped: status %s position %s (want 0x15 with the head "
+                        "where playback ended, %s..%d)" % (st, z, r, T2 + 300))
     st, c = pos("completed")
     if st != 0x13 or c != T2 + 10:
         failures.append("completed: status %s position %s (want 0x13 at %d)" % (st, c, T2 + 10))
@@ -903,9 +914,10 @@ def check(bcl, entries):
     if st != 0x11 or t3b is None or not (5300 <= t3b < 6800):
         failures.append("track3again: status %s position %s" % (st, t3b))
     st, z2 = pos("sspstopped")
-    if st != 0x15 or z2 != 2200:
+    # The same for the stop a Windows guest actually sends, after track 3
+    if st != 0x15 or z2 is None or not (5300 <= z2 < 6800):
         failures.append("stopped by start stop unit: status %s position %s "
-                        "(want 0x15 at the last read sector 2200)" % (st, z2))
+                        "(want 0x15 with the head in track 3, 5300..6800)" % (st, z2))
     return failures
 
 

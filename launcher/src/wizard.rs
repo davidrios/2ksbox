@@ -290,7 +290,7 @@ fn seamless_mouse_ui(ui: &mut egui::Ui, form: &mut Form) {
 }
 
 /// Our own emulator fast paths, one checkbox each, behind a disclosure
-/// because seven switches nobody needs to touch would push the fields
+/// because eight switches nobody needs to touch would push the fields
 /// that matter off the bottom of the window. The header carries the
 /// count, so a machine with one turned off says so while closed.
 fn optimizations_ui(ui: &mut egui::Ui, form: &mut Form) {
