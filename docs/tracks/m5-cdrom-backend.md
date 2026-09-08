@@ -40,6 +40,88 @@ fresh off `main` if one grows.
   `-drive`/`-device ide-cd,audiodev=` lines in M5b), `CLAUDE.md` (the
   testing-tools table), `docs/00-status.md` outside the M5 row.
 
+## State (2026-09-08: the drive corrects what its L-EC can, as a drive does)
+
+A user's Warcraft 3 dump has **92 L-EC failures**, and its in-game video
+stops in the middle -- at one of them. We were refusing every sector whose
+EDC/ECC does not verify, where a real drive runs its decoder first and
+hands the repaired bytes over; only what the decoder cannot fix is a
+medium error.
+
+- **The EDC decides, the parity repairs** (`sector::verify_or_correct`, in
+  front of every cooked read: `read_cooked`, so the block driver and
+  `qemu-img` too, and the cooked shapes of `mmc::read_cd_sector`). The EDC
+  is a CRC-32 over exactly the bytes a cooked read delivers, so a sector
+  whose EDC comes out is handed over as it stands however wrong its parity
+  is -- and **that is what this disc needed**: all 92 of its failures are
+  EDC-clean, the damage is in the parity fields alone. Only a wrong EDC
+  gives `ecc::correct` work: single-symbol Reed-Solomon over the P and Q
+  codewords, passes alternated up to four rounds, the EDC the verdict there
+  too, so a mis-correction cannot pass. **Raw reads are untouched** --
+  dumping and protection both need the stored bytes as stored.
+- Measured on the selftest disc: parity destroyed wholesale with the EDC
+  intact reads straight through (the Warcraft 3 shape); one wrong byte
+  anywhere the parity covers (user data, the header, the EDC field, a P or
+  Q parity byte), two scattered errors, and bursts to **96 bytes** all come
+  back byte-exact through the decoder; 128 bytes, a body of `0x55` filler,
+  a zeroed sector and a wrong EDC over intact-looking parity all stay
+  unreadable. The `lec` check in `discx selftest` is that battery, and
+  `tools/atapi-guest-test.py` asks a real guest for both kinds (the
+  fixture now carries LBA 1000 unreadable and LBA 1010 repairable).
+- **The protection argument, and what still has to be checked on the rig.**
+  A protection band is corrupted far past one symbol per codeword --
+  DiscImageCreator writes the whole body as `0x55`, "replaced at 0x55
+  except header" -- so the decoder cannot touch it, and doc 17 6.x already
+  found that neither tested scheme reads a band sector at all. `discx scan`
+  now splits a disc's L-EC failures into read-anyway / repaired /
+  unreadable: **on FIFA 2002, Age of Mythology disc 1 and Settlers 3 CD01
+  every failure must land in "unreadable"**, and FIFA 2002 must still
+  install and reach its menus. Their bands are `0x55` over the body, so
+  their EDC is wrong and step 1 cannot pass them either -- but that is an
+  argument, not a measurement. Neither dump is on the Air; run both on the
+  rig before this is called done.
+- `LIBDISC_NO_CORRECT=1` restores the old behaviour (every L-EC failure a
+  medium error) for that A/B.
+
+## State (2026-09-08: read speed does not change the bytes; there is no speed model)
+
+Asked because two games look like a bad read — Max Payne's "Corrupt JPEG
+data" boxes and a Warcraft 3 video that stops in the middle — whether what
+a guest reads off the CD can depend on how fast it asks for it.
+
+- **It cannot, on any path we can drive.** `tools/cd-rate-guest-test.py`
+  (new) reads one range of sectors 34 ways from a DOS program — PIO and
+  bus-master DMA, 1 / 8 / ~31 sectors a request, byte-count limits 2048 /
+  8192 / 65534, 2048 and 2352-byte sectors, unpaced and paced to 1x / 4x /
+  16x — and folds every byte into a rolling checksum. All 34 passes agree,
+  on the raw `.iso` driver and on `cdimage`/libdisc alike, and both equal
+  the host's checksum of the image. The whole of `DINO-MAP.iso` (Max
+  Payne's disc, 350 720 sectors) reads back with **zero refused sectors**
+  and a checksum equal to the file. So neither game's symptom is the disc
+  path handing over wrong bytes.
+- **The drive has no speed model at all.** It advertises 4x in mode page
+  0x2A (`atapi.c:1508`) and accepts `SET CD SPEED`, which is a no-op, and
+  delivers as fast as the host manages (580 MB/s measured over a whole
+  disc under TCG). QEMU's own block throttle is the only lever, and it
+  reaches **one of the two drivers**: with
+  `-drive file=x.iso,media=cdrom,throttling.bps-read=614400` the guest
+  measures 666 KB/s, and with the same option on the same data as a `.cue`
+  it measures 10 705 KB/s — because the stock path goes through
+  `blk_pread` / `ide_buffered_readv` and `atapi_disc_read_sector` reads
+  straight from libdisc, never touching a BlockBackend
+  (`THROTTLE=` in the tool runs that A/B). So a cdimage disc cannot be
+  slowed down by any means today, and the two drivers answer the same
+  disc at speeds an order of magnitude apart.
+- Open: whether an era-authentic delivery rate matters to a title that
+  paces itself on CD reads (the way the DirectDraw flip chain matters,
+  doc 15). Testing that needs a delay in the ATAPI disc path — a `speed=`
+  property on `ide-cd` that both drivers honour — which is not written.
+- Trap found on the way, worth keeping: a guest that programs the PIIX
+  bus-master engine must set **PCI_COMMAND_MASTER** itself. Without it
+  QEMU runs the engine into a disabled address space: the status register
+  reports a clean finish, the drive reports no error, and not one byte is
+  written. DOS and the BIOS leave it clear; Windows' IDE driver sets it.
+
 ## State (2026-09-05, late: the negative control failed, and it matters)
 
 - **Both titles also run from their repaired discs, so the protection results

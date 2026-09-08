@@ -104,6 +104,44 @@ pub fn has_sync_header(raw: &[u8; 2352], kind: SectorKind) -> bool {
 }
 
 /// L-EC verification of a raw sector of the given kind.
+/// What a drive does before it hands user data over: verify the sector's
+/// L-EC, and on a mismatch run the P/Q decoder over it, so that only what
+/// the decoder **cannot** fix is a medium error. On success `raw` holds the
+/// corrected sector; on failure it is untouched.
+///
+/// This is the difference between a dump with a few bad bytes (which a real
+/// drive reads straight through) and a protection band (whose sectors are
+/// corrupted far past one symbol per codeword and keep failing, which is
+/// what the check on the disc is looking for).
+pub fn verify_or_correct(raw: &mut [u8; 2352], kind: SectorKind) -> crate::Result<()> {
+    // The EDC decides. It is a CRC-32 over exactly the bytes a cooked read
+    // delivers, so when it comes out those bytes are intact and any
+    // disagreement is in parity fields the guest never sees — a drive hands
+    // the sector over, and recomputing 276 parity bytes to disagree with it
+    // would only be slower. The sync pattern is checked because an all-zero
+    // sector's EDC is zero and would otherwise verify (the zero filler a
+    // dump tool writes over a sector it could not read).
+    if correction_enabled() && ecc::edc_ok(raw, kind) && has_sync_header(raw, kind) {
+        return Ok(());
+    }
+    if verify(raw, kind).is_ok() {
+        return Ok(());
+    }
+    // A wrong EDC is the only thing that gives the P/Q decoder work to do.
+    if correction_enabled() && ecc::correct(raw, kind).is_some() {
+        return Ok(());
+    }
+    Err(crate::Error::Medium)
+}
+
+/// `LIBDISC_NO_CORRECT=1` turns the decoder off — every L-EC failure a
+/// medium error, the behaviour before 2026-09-08 — as the A/B for a disc
+/// whose protection check is being watched to fail.
+fn correction_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LIBDISC_NO_CORRECT").is_none())
+}
+
 pub fn verify(raw: &[u8; 2352], kind: SectorKind) -> ecc::Lec {
     if kind.is_data() && !has_sync_header(raw, kind) {
         return ecc::Lec::NoSync;

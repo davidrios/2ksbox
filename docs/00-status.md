@@ -151,6 +151,57 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **A cooked read is decided by the EDC and repaired by the parity, the way
+  a drive does** (2026-09-08, doc 17 2.5, `docs/tracks/m5-cdrom-backend.md`).
+  Found from a user's Warcraft 3 dump: **92 L-EC failures**, and the in-game
+  video stops in the middle -- at one of them. We were refusing every sector
+  whose EDC/ECC does not verify. Two steps now sit behind
+  `sector::verify_or_correct`, in front of every cooked read (`read_cooked`,
+  so the block driver and `qemu-img` too, and the cooked shapes of
+  `READ CD`). **The EDC decides**: it is a CRC-32 over exactly the bytes a
+  cooked read delivers, so a sector whose EDC comes out is handed over
+  however wrong its parity is -- which is what this disc needed, since all
+  92 of its failures are EDC-clean (the parity fields are wrong, the data is
+  not). Only a wrong EDC gives **`ecc::correct`** work: single-symbol
+  Reed-Solomon per P and Q codeword, passes alternated up to four rounds,
+  the EDC the verdict there too, so a mis-correction cannot pass. **Raw
+  reads are untouched**: dumping and protection both need the stored bytes
+  as stored, and `sector_info` / `discx scan` still count what fails *as
+  stored*. Measured on the selftest disc: wholesale-wrong parity over an
+  intact EDC reads straight through; one wrong byte anywhere the parity
+  covers, two scattered errors and bursts to 96 bytes come back byte-exact
+  through the decoder; 128 bytes, a `0x55`-filled body (what
+  DiscImageCreator writes over an unreadable sector), a zeroed sector and a
+  wrong EDC over intact-looking parity all stay unreadable. **Still to do on
+  the rig, and this is not done until it is:** `discx scan` splits a disc's
+  failures into read-anyway / repaired / unreadable, and on FIFA 2002, Age
+  of Mythology disc 1 and Settlers 3 CD01 **every one must land in
+  unreadable** (their bands are `0x55` over the body, so their EDC is wrong
+  and step 1 cannot pass them -- but that is an argument, not a
+  measurement), with FIFA 2002 still reaching its menus.
+  `LIBDISC_NO_CORRECT=1` turns both steps off for that A/B. Neither dump is
+  on the Air.
+
+- **The CD-ROM drive has no speed model, and the one throttle there is
+  reaches only half the drives** (2026-09-08). It advertises 4x in mode
+  page 0x2A and treats `SET CD SPEED` as a no-op; a whole-disc read runs
+  at 580 MB/s under TCG. `-drive ...,throttling.bps-read=` holds a `.iso`
+  to the rate asked (measured: 614400 -> 666 KB/s in the guest) because
+  that path goes through the block layer, and does nothing at all to a
+  `.cue` / `.ccd` / `.mds` (10 705 KB/s on the same data), because
+  `atapi_disc_read_sector` reads from libdisc directly. Asked because two
+  games look like a bad read (Max Payne's "Corrupt JPEG data", a Warcraft
+  3 video stopping in the middle): **the bytes are not the problem** --
+  `tools/cd-rate-guest-test.py` reads one range 34 ways (PIO and
+  bus-master DMA, 1/8/~31 sectors a request, three byte-count limits,
+  2048 and 2352-byte sectors, unpaced and paced to 1x/4x/16x) and every
+  pass agrees with every other and with the host's own checksum, on both
+  drivers; the whole of `DINO-MAP.iso` reads back with zero refused
+  sectors. What is untested is whether a title that paces itself on CD
+  reads minds the drive being 100x too fast, and testing that needs a
+  delay in the ATAPI disc path (a `speed=` on `ide-cd` both drivers
+  honour) that nobody has written. See `docs/tracks/m5-cdrom-backend.md`.
+
 - **Hosts below Vulkan 1.3 get no Direct3D device** (ADR-013, 2026-09-06).
   DXVK 3.1 asks for `VK_API_VERSION_1_3` at instance creation and rejects
   every adapter below it, so pre-Broadwell Intel, Nvidia Kepler and older,

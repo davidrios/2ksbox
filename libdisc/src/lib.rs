@@ -629,9 +629,10 @@ impl Disc {
         Ok(SectorInfo { kind, track, index, lec_ok })
     }
 
-    /// The 2048 user bytes of a Mode 1 / Mode 2 form 1 sector after L-EC
-    /// verification: `Err(Medium)` on a mismatch, `Err(Mode)` for audio,
-    /// gap and form 2 sectors (what a drive answers to READ(10)).
+    /// The 2048 user bytes of a Mode 1 / Mode 2 form 1 sector after L-EC:
+    /// errors the P/Q decoder can fix are corrected the way a drive's
+    /// decoder does, `Err(Medium)` for what it cannot, `Err(Mode)` for
+    /// audio, gap and form 2 sectors (what a drive answers to READ(10)).
     pub fn read_cooked(&self, lba: i32, out: &mut [u8; 2048]) -> Result<()> {
         let mut raw = [0u8; 2352];
         let (kind, _, _) = self.classify(lba)?;
@@ -640,9 +641,7 @@ impl Disc {
             SectorKind::Mode1 | SectorKind::Mode2Form1 => kind,
             SectorKind::Audio | SectorKind::Gap | SectorKind::Mode2Form2 | SectorKind::Mode2Formless => return Err(Error::Mode),
         };
-        if !sector::verify(&raw, kind).is_ok() {
-            return Err(Error::Medium);
-        }
+        sector::verify_or_correct(&mut raw, kind)?;
         let (off, _) = sector::user_data_range(kind).unwrap();
         out.copy_from_slice(&raw[off..off + 2048]);
         Ok(())

@@ -5,8 +5,9 @@ Builds a DOS program (NASM, .COM) that talks to the secondary IDE channel
 (0x170/0x376: -cdrom is its master) directly by PIO — PACKET commands, the
 DRQ/byte-count loop, REQUEST SENSE on CHECK CONDITION — and hex-dumps every
 reply on COM1. Boots it on the FreeDOS test floppy under our
-qemu-system-i386 with the selftest's flipped-sector image (lec.cue) as the
-CD and compares every reply with `discx dump` of the same request: the
+qemu-system-i386 with the selftest's damaged image (lec.cue: sector 1000
+unreadable, sector 1010 one wrong byte the drive's P/Q decoder repairs) as
+the CD and compares every reply with `discx dump` of the same request: the
 guest must see exactly the bytes libdisc computed, at byte-count limits 512
 (every reply split into elementary transfers) and 65534. Also checks the
 audio position replies around PLAY / PAUSE / RESUME / STOP, both stops
@@ -42,7 +43,7 @@ DISCX = os.path.join(ROOT, "target/release/discx")
 FLOPPY = os.path.join(ROOT, "build/images/144m/x86BOOT.img")
 OUT = os.path.join(ROOT, "build/atapi-guest")
 DISC_DIR = os.path.join(ROOT, "build/test/disc")
-DISC = os.path.join(DISC_DIR, "lec.cue")       # mixed.cue with sector 1000 flipped
+DISC = os.path.join(DISC_DIR, "lec.cue")       # mixed.cue, sector 1000 unreadable, 1010 repairable
 TOC_DISC = os.path.join(DISC_DIR, "mixed.cue")  # same layout, for the responders
 SHELF = os.path.join(OUT, "shelf.txt")         # what -device ide-cd,shelf= reads
 CD_ID = "ide1-cd0"                             # the id a medium change addresses
@@ -109,7 +110,7 @@ def read10(lba, n):
 # ---------------------------------------------------------------- the disc shelf
 
 # cdshelf/cdshelf_proto.h. The shelf the drive is given below: slot 0 is the
-# disc the machine boots with (lec.cue, sector 1000 deliberately corrupt), slot
+# disc the machine boots with (lec.cue, sector 1000 deliberately unreadable), slot
 # 1 the same layout without the corruption — which is how a LOAD is proven to
 # have actually changed the medium and not just returned a good status. Slot 2's
 # label is longer than the protocol's 64 bytes (it must come back truncated, not
@@ -176,6 +177,12 @@ TESTS = [
     ("read10 999", read10(999, 1), ("dump", [["readcooked", "999"]], None)),
     ("read10 1001", read10(1001, 1), ("dump", [["readcooked", "1001"]], None)),
     ("read10 1000 (flipped)", read10(1000, 1), ("err", 3, 0x11, 5)),
+    # sector 1010 has one wrong byte, which a drive's L-EC decoder repairs before
+    # it hands the user data over: the guest must get the sector, not a sense, and
+    # a raw request must still deliver the damaged bytes as they are stored
+    ("read10 1010 (repaired by the decoder)", read10(1010, 1), ("dump", [["readcooked", "1010"]], None)),
+    ("read cd 1010 cooked (repaired)", read_cd(1010, 1, 2, 0x10, 0), ("dump", [["readcooked", "1010"]], None)),
+    ("read cd 1010 raw (still as stored)", read_cd(1010, 1, 2, 0xF8, 0), ("dump", [["readcd", "1010", "2", "0xf8", "0"]], None)),
     ("read10 999..1002 (flipped inside)", read10(999, 3), ("err", 3, 0x11, 5)),
     ("read10 20..24", read10(20, 4), ("dump", [["readcooked", str(l)] for l in (20, 21, 22, 23)], None)),
     ("read10 audio", read10(T2, 1), ("err", 5, 0x64, 0)),

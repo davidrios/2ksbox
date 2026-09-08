@@ -303,8 +303,10 @@ fn field_ranges(kind: SectorKind) -> [(usize, usize); 5] {
 /// whole raw sector when every main field is selected, the sector's own
 /// user data for a user-data-only request, and refuses the rest with
 /// `Err(Mode)` (a drive's ILLEGAL MODE FOR THIS TRACK). A user-data request
-/// without EDC/ECC verifies L-EC (`Err(Medium)` on a mismatch); a raw
-/// request delivers the stored bytes.
+/// without EDC/ECC is a cooked read: L-EC is verified, what the P/Q decoder
+/// can fix is corrected and only the rest is `Err(Medium)`. A raw request
+/// delivers the stored bytes, uncorrected — which is what dumping a disc
+/// and reading a protection band both depend on.
 pub fn read_cd_sector(disc: &Disc, lba: i32, expected_type: u8, byte9: u8, byte10: u8, out: &mut [u8]) -> Result<usize> {
     let total = read_cd_length(expected_type, byte9, byte10)?;
     if out.len() < total {
@@ -321,8 +323,8 @@ pub fn read_cd_sector(disc: &Disc, lba: i32, expected_type: u8, byte9: u8, byte1
     // a request for user data without the EDC/ECC field is a cooked read: L-EC is
     // verified and a mismatch is a MEDIUM ERROR, as READ(10) on a drive; a raw
     // request (EDC/ECC selected) delivers the bytes as dumped, C2 says what failed
-    if kind.is_data() && sel[3] && !sel[4] && !crate::sector::verify(&raw, kind).is_ok() {
-        return Err(Error::Medium);
+    if kind.is_data() && sel[3] && !sel[4] {
+        crate::sector::verify_or_correct(&mut raw, kind)?;
     }
     let mut pos = 0;
     if main > 0 {

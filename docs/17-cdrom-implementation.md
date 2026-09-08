@@ -47,9 +47,12 @@ Decisions this fixes (all consistent with doc 05 / ADR-004; do not reopen):
 4. **Copy-protection fidelity comes from modelling the drive, not from
    lists of bad sectors.** A raw dump of a SafeDisc disc contains sectors
    whose EDC/ECC are wrong on purpose. We verify L-EC on every cooked read of
-   a Mode 1 / Mode 2 form 1 sector and fail exactly like a drive would
-   (MEDIUM ERROR, L-EC uncorrectable). No annotation file, nothing patched,
-   nothing bypassed.
+   a Mode 1 / Mode 2 form 1 sector, correct what the P/Q parity can locate
+   the way the drive's own decoder does, and fail on the rest exactly like a
+   drive would (MEDIUM ERROR, L-EC uncorrectable) — a protection band is
+   damaged far past what two parity symbols per codeword can place, so it
+   still fails, while an imperfect dump of an ordinary disc still reads
+   (§2.5). No annotation file, nothing patched, nothing bypassed.
 5. **Plain `.iso` stays on QEMU's `raw` driver by default** (probe score 0 for
    ISO), so the existing behaviour is bit-identical and stays the regression
    baseline. `format=cdimage` on an `.iso` is allowed and the exerciser
@@ -280,10 +283,57 @@ compare with the stored bytes. Result `Ok`, `EdcMismatch`, `EccMismatch`
 or `NoSync` (no sync pattern / wrong mode byte in a data track: an
 audio-format tail, or the zero filler a dump tool writes for an
 unreadable sector — an all-zero sector's EDC and parity are zero and would
-verify otherwise; C2 reports every byte bad). **No correction is attempted**: a dump made by a drive
-already holds what that drive read; a mismatch means "this sector fails
-L-EC on a real drive", which is exactly the SafeDisc signal. Cooked reads
-of a mismatching sector return `Err(Medium)`. Raw reads return the bytes.
+verify otherwise; C2 reports every byte bad).
+
+**A cooked read is decided by the EDC, and repaired by the parity only when
+the EDC fails** (2026-09-08). Two steps, in this order.
+
+**1. The EDC alone says whether the delivered bytes are intact**
+(`ecc::edc_ok`). It is a CRC-32 over exactly what a cooked read hands over —
+sync, header and the 2048 user bytes for Mode 1, subheader and data for form
+1 — so when it comes out, those bytes are good to 2^-32 and any disagreement
+is in *parity fields the guest never sees*. The sector is delivered as it
+stands and the parity is not even computed (which makes every good sector's
+read cheaper too). The sync pattern is still checked first, because an
+all-zero sector's EDC is zero and would otherwise verify. A real dump is
+what settled this: a Warcraft 3 disc with **92 L-EC failures, every one of
+them EDC-clean** — the parity fields are wrong, the data is not — whose
+in-game video stopped in the middle because we were refusing sectors whose
+contents were provably right.
+
+**2. A wrong EDC is what gives the decoder work** (`ecc::correct`). Each P
+and Q codeword carries two parity symbols, which locate one wrong symbol in
+it: the XOR of a codeword's symbols is zero and so is
+the XOR weighted by `alpha^(m+1-i)`, so a single error of magnitude `s0` at
+position `i` shows up as `s1/s0 = alpha^(m+1-i)`. Correct one per codeword,
+alternate the passes (each can reach a codeword the other cannot, and Q's
+data includes P), up to four rounds — and **the EDC is the verdict here
+too**: a sector is only accepted, and only written back, when its own
+CRC-32 comes out afterwards, so a mis-correction cannot pass. Measured on the selftest
+disc: a burst up to **96 bytes** is recovered exactly (consecutive sector
+bytes fall in different codewords, which is what the interleave is for),
+128 bytes is not, and neither is a body of filler or a zeroed sector.
+
+Only what the decoder cannot fix is `Err(Medium)` on a cooked read. **Raw
+reads still return the stored bytes, uncorrected** — dumping a disc and
+reading a protection band both depend on that — and `sector_info`'s `lec`
+still reports whether the sector verifies *as stored*, which is what
+`discx scan` counts when a dump is being diagnosed. `scan` splits those
+failures the way a guest meets them — read anyway because the EDC is intact,
+read after the decoder repairs them, or unreadable — and lists the LBAs of
+the last kind. `LIBDISC_NO_CORRECT=1` turns both steps off for the A/B
+(every L-EC failure a medium error, the behaviour before 2026-09-08).
+
+Why this is the drive's behaviour and not a bypass: a real drive's L-EC
+hardware corrects before it hands user data over — that is what the parity
+is *for* — and a protection band survives it untouched, because those
+sectors are corrupted far past one symbol per codeword (DiscImageCreator
+writes the whole body as `0x55`, "replaced at 0x55 except header"). Without
+this, an ordinary dump with a handful of imperfect sectors gives a guest
+hard read errors where the original disc gives it data. And a protection
+band fails **both** steps, not just the second: its sectors' user data is
+replaced, so their EDC is wrong — which is what `scan`'s "with the EDC wrong
+too" column counts, and what the Warcraft 3 dump had none of.
 C2 pointers (READ CD with C2 requested): set the bit for every byte whose
 recomputed parity disagrees — approximate, good enough for checks that
 only count errors; refine when a dump with recorded C2 data exists.
@@ -459,10 +509,14 @@ schemes we have tested, the L-EC band is not what the check reads**, and doc
 05's ProtectCD row premise — "a dump carrying both the data and the Q anomaly"
 — is wrong twice over: neither anomaly is read.
 
-This does not make §2.5 wrong; verifying L-EC and never correcting it is still
-the right drive behaviour, and `atapi-guest-test.py` proves we deliver the
-errors. It means no protection we have yet met depends on it. The scheme that
-does is still to be found.
+This does not make §2.5 wrong; verifying L-EC and reporting what cannot be
+corrected is still the right drive behaviour, and `atapi-guest-test.py`
+proves we deliver the errors. It means no protection we have yet met depends
+on it. The scheme that does is still to be found. (It also means the decoder
+added on 2026-09-08 cannot have weakened either check: neither reads a
+sector in the band at all, and the band's sectors are uncorrectable anyway —
+`discx scan` prints how many of a disc's L-EC failures the decoder repairs,
+and on both of these dumps that number must be 0.)
 
 **A harness finding worth its own line:** the check *rejects* when the CD
 shares the boot disk's IDE channel (`-drive media=cdrom` lands at index 1 =

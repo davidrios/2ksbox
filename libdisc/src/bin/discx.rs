@@ -376,25 +376,93 @@ fn check_raw_synth(dir: &Path, raw1: &[u8]) -> Result<(), String> {
 }
 
 fn check_lec(dir: &Path) -> Result<(), String> {
-    let mut bin = fs::read(dir.join("mixed.bin")).map_err(|e| e.to_string())?;
-    let at = 1000 * 2352 + 500;
-    bin[at] ^= 0x5A;
-    fs::write(dir.join("lec.bin"), &bin).map_err(|e| e.to_string())?;
+    let good = fs::read(dir.join("mixed.bin")).map_err(|e| e.to_string())?;
     let cue = fs::read_to_string(dir.join("mixed.cue")).map_err(|e| e.to_string())?.replace("mixed.bin", "lec.bin");
     fs::write(dir.join("lec.cue"), cue).map_err(|e| e.to_string())?;
-    let disc = CDisc::open(&dir.join("lec.cue"))?;
-    expect("read_cooked of the flipped sector", disc.read_cooked(1000).err(), Some(capi::LIBDISC_EMEDIUM))?;
+    let at = 1000 * 2352;
+    let want: Vec<u8> = good[at + 16..at + 16 + 2048].to_vec();
+
+    // Damage a copy of the image and open it. Everything below asks the same
+    // question of it: what does a *drive* hand over for this sector?
+    let damaged = |edit: &dyn Fn(&mut Vec<u8>)| -> Result<CDisc, String> {
+        let mut bin = good.clone();
+        edit(&mut bin);
+        fs::write(dir.join("lec.bin"), &bin).map_err(|e| e.to_string())?;
+        CDisc::open(&dir.join("lec.cue"))
+    };
+    let flip = |off: usize, n: usize| move |bin: &mut Vec<u8>| {
+        for i in 0..n {
+            bin[at + off + i] ^= 0x5A;
+        }
+    };
+
+    // A drive's L-EC decoder repairs what the P and Q parity can locate --
+    // one wrong symbol per codeword -- and hands the *original* bytes over.
+    // Consecutive sector bytes fall in different codewords, so a burst is
+    // spread across them and a long one is still repairable; past that two
+    // errors land in one codeword and the sector is unreadable, which is
+    // what a protection band looks like (doc 17 §2.5).
+    for n in [1usize, 2, 8, 32, 96] {
+        let d = damaged(&flip(500, n))?;
+        expect(&format!("{n}-byte burst corrected"), d.read_cooked(1000).map(|b| b.to_vec()), Ok(want.clone()))?;
+    }
+    for n in [128usize, 600] {
+        let d = damaged(&flip(500, n))?;
+        expect(&format!("{n}-byte burst unreadable"), d.read_cooked(1000).err(), Some(capi::LIBDISC_EMEDIUM))?;
+    }
+    // the same for one wrong byte in each of the fields the parity covers
+    for (off, name) in [(13usize, "header"), (2064, "EDC"), (2100, "P parity"), (2300, "Q parity")] {
+        let d = damaged(&flip(off, 1))?;
+        expect(&format!("one wrong {name} byte corrected"), d.read_cooked(1000).map(|b| b.to_vec()), Ok(want.clone()))?;
+    }
+    // Parity destroyed wholesale while the EDC stays intact: the bytes a
+    // cooked read delivers are provably good — the EDC is a CRC-32 over
+    // exactly those — so a drive hands the sector over and the parity is
+    // never consulted. This is the shape of a real dump found 2026-09-08
+    // (a Warcraft 3 disc, 92 sectors, every one of them EDC-clean).
+    let d = damaged(&|bin: &mut Vec<u8>| bin[at + 2076..at + 2352].fill(0x5A))?;
+    expect("wrong parity with an intact EDC still reads", d.read_cooked(1000).map(|b| b.to_vec()), Ok(want.clone()))?;
+    expect("... and read_cd cooked too", d.read_cd(1000, 2, 0x10, 0).map(|v| v[..2048].to_vec()), Ok(want.clone()))?;
+    // but a wrong EDC with intact parity is data that changed: unreadable
+    let d = damaged(&|bin: &mut Vec<u8>| {
+        bin[at + 2064..at + 2068].copy_from_slice(&[0x5A, 0x5A, 0x5A, 0x5A]);
+        bin[at + 2076..at + 2352].fill(0x5A);
+    })?;
+    expect("a wrong EDC the decoder cannot repair", d.read_cooked(1000).err(), Some(capi::LIBDISC_EMEDIUM))?;
+
+    // two errors far enough apart to be in different codewords: both go
+    let d = damaged(&|bin: &mut Vec<u8>| {
+        bin[at + 100] ^= 0x5A;
+        bin[at + 1500] ^= 0xA5;
+    })?;
+    expect("two scattered errors corrected", d.read_cooked(1000).map(|b| b.to_vec()), Ok(want.clone()))?;
+
+    // What a dump tool writes over a sector it could not read -- the whole
+    // body one filler byte, the header left alone (DiscImageCreator's
+    // "replaced at 0x55 except header") -- is exactly what a protection
+    // check reads, and it must stay unreadable.
+    let d = damaged(&|bin: &mut Vec<u8>| bin[at + 16..at + 2352].fill(0x55))?;
+    expect("a filled sector body is unreadable", d.read_cooked(1000).err(), Some(capi::LIBDISC_EMEDIUM))?;
+    expect("read_cd cooked of a filled body", d.read_cd(1000, 2, 0x10, 0).err(), Some(capi::LIBDISC_EMEDIUM))?;
+    expect("read_cd raw of a filled body", d.read_cd(1000, 2, 0xF8, 0).map(|v| v.len()), Ok(2352))?;
+
+    // Back to the single flipped byte: correcting it must not change what a
+    // *raw* read delivers. Dumping a disc and reading a protection band
+    // both depend on the stored bytes coming back as stored.
+    let disc = damaged(&flip(500, 1))?;
     let r = disc.read_raw(1000).map_err(|e| e.to_string())?;
-    expect("flipped byte", r[500], bin[at])?;
+    expect("raw read still holds the damage", r[500], good[at + 500] ^ 0x5A)?;
+    expect("read_cd raw still holds the damage", disc.read_cd(1000, 2, 0xF8, 0).map(|v| v[500]), Ok(good[at + 500] ^ 0x5A))?;
+    // ... and sector_info still reports the stored sector as failing, which
+    // is what `discx scan` counts when a dump is being diagnosed
     let info = disc.sector_info(1000).map_err(|e| e.to_string())?;
     expect("sector_info", info, LibdiscSectorInfo { kind: 1, track: 1, index: 1, lec: 0 })?;
-    // READ CD: a cooked request (user data, no EDC/ECC) fails like READ(10); a raw one delivers the bytes
-    expect("read_cd cooked of the flipped sector", disc.read_cd(1000, 2, 0x10, 0).err(), Some(capi::LIBDISC_EMEDIUM))?;
-    expect("read_cd type 0 cooked of the flipped sector", disc.read_cd(1000, 0, 0x10, 0).err(), Some(capi::LIBDISC_EMEDIUM))?;
-    expect("read_cd header+user of the flipped sector", disc.read_cd(1000, 2, 0x30, 0).err(), Some(capi::LIBDISC_EMEDIUM))?;
-    expect("read_cd raw of the flipped sector", disc.read_cd(1000, 2, 0xF8, 0).map(|v| v.len()), Ok(2352))?;
+    // every cooked shape of READ CD corrects, every raw one does not
+    expect("read_cd cooked corrected", disc.read_cd(1000, 2, 0x10, 0).map(|v| v.len()), Ok(2048))?;
+    expect("read_cd type 0 cooked corrected", disc.read_cd(1000, 0, 0x10, 0).map(|v| v[..2048].to_vec()), Ok(want.clone()))?;
+    expect("read_cd header+user corrected", disc.read_cd(1000, 2, 0x30, 0).map(|v| v.len()), Ok(2052))?;
     expect("read_cd user+edc of the flipped sector", disc.read_cd(1000, 2, 0x18, 0).map(|v| v.len()), Ok(2336))?;
-    // READ CD with C2 pointers: ≥ 1 bit set, block error byte set; the raw bytes still delivered
+    // READ CD with C2 pointers: >= 1 bit set, block error byte set; the raw bytes still delivered
     let rc = disc.read_cd(1000, 2, 0xFA, 0).map_err(|e| format!("read_cd c2: {e}"))?;
     expect("read_cd c2 length", rc.len(), 2352 + 294)?;
     if rc[..2352] != r[..] {
@@ -414,34 +482,34 @@ fn check_lec(dir: &Path) -> Result<(), String> {
         disc.read_cooked(lba).map_err(|e| format!("neighbour {lba}: {e}"))?;
         expect(&format!("neighbour {lba} lec"), disc.sector_info(lba).map_err(|e| e.to_string())?.lec, 1)?;
     }
-    // a zero-filled sector (what a dump tool writes for an unreadable one) fails too
-    let mut bin3 = fs::read(dir.join("mixed.bin")).map_err(|e| e.to_string())?;
-    bin3[1200 * 2352..1201 * 2352].fill(0);
-    fs::write(dir.join("lec.bin"), &bin3).map_err(|e| e.to_string())?;
-    let d = CDisc::open(&dir.join("lec.cue"))?;
+    drop(disc);
+
+    // a zero-filled sector (what other dump tools write for an unreadable
+    // one) has no sync pattern to anchor the addresses on: nothing to decode
+    let d = damaged(&|bin: &mut Vec<u8>| bin[1200 * 2352..1201 * 2352].fill(0))?;
     expect("zero-filled sector cooked", d.read_cooked(1200).err(), Some(capi::LIBDISC_EMEDIUM))?;
     expect("zero-filled sector info", d.sector_info(1200).map(|i| i.lec), Ok(0))?;
     let rc = d.read_cd(1200, 2, 0xFA, 0).map_err(|e| e.to_string())?;
     if rc[2352..].iter().any(|&b| b != 0xFF) {
         return Err("C2 bits of a zero-filled sector are not all set".into());
     }
-    // an EDC-only mismatch (byte 2064) and a parity-only mismatch (byte 2100) both fail
-    for (off, name) in [(2064usize, "edc"), (2100usize, "parity")] {
-        let mut bin2 = fs::read(dir.join("mixed.bin")).map_err(|e| e.to_string())?;
-        bin2[1500 * 2352 + off] ^= 1;
-        fs::write(dir.join("lec.bin"), &bin2).map_err(|e| e.to_string())?;
-        let d = CDisc::open(&dir.join("lec.cue"))?;
-        expect(&format!("{name} mismatch"), d.read_cooked(1500).err(), Some(capi::LIBDISC_EMEDIUM))?;
-    }
+    drop(d);
+
+    // Leave the image the guest tools boot with carrying one of each: LBA
+    // 1000 has the body a dump tool writes over a sector it could not read
+    // (unreadable, whatever the decoder tries), and LBA 1010 one wrong byte
+    // (which a drive repairs and hands over). tools/atapi-guest-test.py
+    // asks a real guest for both.
+    let mut bin = good.clone();
+    bin[at + 16..at + 2352].fill(0x55);
+    bin[1010 * 2352 + 500] ^= 0x5A;
     fs::write(dir.join("lec.bin"), &bin).map_err(|e| e.to_string())?;
+    let d = CDisc::open(&dir.join("lec.cue"))?;
+    expect("the fixture's unreadable sector", d.read_cooked(1000).err(), Some(capi::LIBDISC_EMEDIUM))?;
+    expect("the fixture's correctable sector", d.read_cooked(1010).map(|b| b.to_vec()),
+           Ok(good[1010 * 2352 + 16..1010 * 2352 + 16 + 2048].to_vec()))?;
     Ok(())
 }
-
-/// `repair` builds the negative control for a protection check, so what it
-/// must never do is *restore* anything: a repaired sector has to read cleanly
-/// while still carrying the bytes the dump had. Corrupt a sector, repair the
-/// image, and check both halves of that — the sector now verifies, its user
-/// data is still the corrupted data, and no other byte of the file moved.
 fn check_repair(dir: &Path) -> Result<(), String> {
     let mut bin = fs::read(dir.join("mixed.bin")).map_err(|e| e.to_string())?;
     let at = 1000 * 2352 + 500;
@@ -965,6 +1033,9 @@ fn scan(disc: &Disc, first: i32, count: Option<i32>) -> Result<(), String> {
     let mut no_sync = 0u64;
     let mut q_bad = 0u64;
     let mut q_seen = 0u64;
+    let mut edc_intact = 0u64;
+    let mut correctable = 0u64;
+    let mut hard: Vec<i32> = Vec::new();
     let mut raw = [0u8; 2352];
     let mut sub = [0u8; 96];
     let t0 = std::time::Instant::now();
@@ -985,6 +1056,24 @@ fn scan(disc: &Disc, first: i32, count: Option<i32>) -> Result<(), String> {
                     lec_fail.push(lba);
                 }
             }
+            if lec_fail.last() == Some(&lba) {
+                // What a guest actually sees. The EDC covers exactly the
+                // bytes a cooked read delivers, so a sector whose EDC comes
+                // out is read as it stands however wrong its parity is;
+                // otherwise the P/Q decoder gets a go, and only what it
+                // cannot repair is a medium error — which is what a
+                // protection check is looking for.
+                if libdisc::ecc::edc_ok(&raw, kind) && sector::has_sync_header(&raw, kind) {
+                    edc_intact += 1;
+                } else {
+                    let mut work = raw;
+                    if libdisc::ecc::correct(&mut work, kind).is_some() {
+                        correctable += 1;
+                    } else {
+                        hard.push(lba);
+                    }
+                }
+            }
         }
         if lba % 7 == 0 {
             disc.read_sub(lba, &mut sub).map_err(|e| format!("{lba}: {e}"))?;
@@ -1002,6 +1091,22 @@ fn scan(disc: &Disc, first: i32, count: Option<i32>) -> Result<(), String> {
         }
     }
     outln!("  L-EC failures   {} ({} with the EDC wrong too, {} without a sync pattern)", lec_fail.len(), edc_only, no_sync);
+    if !lec_fail.is_empty() {
+        outln!("  a guest reads   {edc_intact} anyway (the EDC is intact, only the parity disagrees)");
+        outln!("                  {correctable} after the P/Q decoder repairs them");
+        outln!("  unreadable      {}", hard.len());
+    }
+    if !hard.is_empty() {
+        let mut ranges: Vec<(i32, i32)> = Vec::new();
+        for &l in &hard {
+            match ranges.last_mut() {
+                Some(r) if r.1 + 1 == l => r.1 = l,
+                _ => ranges.push((l, l)),
+            }
+        }
+        let shown: Vec<String> = ranges.iter().take(40).map(|(a, b)| if a == b { a.to_string() } else { format!("{a}-{b}") }).collect();
+        outln!("  unreadable LBAs {}{}", shown.join(" "), if ranges.len() > 40 { format!(" … ({} ranges)", ranges.len()) } else { String::new() });
+    }
     if !lec_fail.is_empty() {
         let mut ranges: Vec<(i32, i32)> = Vec::new();
         for &l in &lec_fail {
