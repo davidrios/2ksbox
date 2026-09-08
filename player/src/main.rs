@@ -1697,10 +1697,17 @@ fn main() {
     // First, before any thread: it edits the environment.
     companions::announce();
     // player [--shader <preset.slangp>] [--shader-params <k=v,...>]
-    //        [--mode-sweep <dir>] [--calib <bmp|dir>] [--] <qemu args...>
+    //        [--mode-sweep <dir>] [--calib <bmp|dir>] [--companions]
+    //        [--] <qemu args...>
     //   no args: the M0 test pattern; --mode-sweep: doc 03's mode sweep;
     //   --calib: shade doc 09's calibration patterns. All three: no guest.
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // What the package put where, out of the binary that has to find it:
+    // no window, no QEMU, nothing to clean up. The packagers' check.
+    if args.first().map(String::as_str) == Some("--companions") {
+        companions::report();
+        return;
+    }
     let mut shader: Option<std::path::PathBuf> =
         std::env::var("PLAYER_SHADER").ok().map(Into::into);
     let mut shader_params = std::env::var("PLAYER_SHADER_PARAMS")

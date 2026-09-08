@@ -27,7 +27,10 @@
 # nothing below sleeps out a boot: each one ends when the guest says so
 # (tools/guestwait.sh), and BOOT_WAIT / WARMUP_WAIT are only the caps.
 #
-# Env: OUT=dir, BOOT_WAIT=s (cap, 300), WARMUP_WAIT=s (cap, 300), NO_WARMUP=1, RES=7 (the Glide
+# Env: PACKAGE=<staged tree|prefix> (run it out of a package instead of the
+# checkout, with nothing pointed at the wrapper by hand — the packaged
+# player's own rule has to find it), OUT=dir,
+# BOOT_WAIT=s (cap, 300), WARMUP_WAIT=s (cap, 300), NO_WARMUP=1, RES=7 (the Glide
 # resolution, glidewnd.c's table), REUSE=1 (keep the last overlay, which
 # already has the wrapper installed and Win98 settled: halves the run),
 # DUMP_SEQ=n (the player writes its own shaded frame #n to frame.png and
@@ -46,14 +49,32 @@ QLOG="$OUT/player.log"
 # an AF_UNIX path is capped at 108 bytes and a build/ path under a deep
 # checkout is already close: keep the socket short and outside the tree
 SOCK="${SOCK:-/tmp/2ks-glide.sock}"
-PLAYER="$ROOT/target/release/player"
 QEMU="$ROOT/build/qemu/qemu-system-i386"
-WRAPPER="$ROOT/build/glide/libglide2x.so"
-ISO="$(ls -t "$ROOT"/guest-tools/out/guest-tools-3dfx-*.iso 2>/dev/null | head -1)"
 EXE="$OUT/GLIDETEST.EXE"
+# PACKAGE=<staged tree or install prefix> runs the whole thing out of a
+# package rather than the checkout: its player, its firmware, its
+# guest-tools ISO — and, the point of it, **no `QEMU_GLIDE_LIB`**, so the
+# only thing that can find the wrapper is the packaged player's own rule
+# (`player/src/companions.rs`). That is the half `scripts/package-linux.sh`
+# cannot check: it can watch the player resolve a path, not a guest draw
+# through it. The warm-up boot below stays the checkout's QEMU either way —
+# a package ships no `qemu-system-i386` (the player embeds it), and nothing
+# 3D happens in that boot.
+PKG="${PACKAGE:-}"
+if [ -n "$PKG" ]; then
+  PLAYER="$PKG/bin/2ksbox-player"
+  BIOS="$PKG/share/2ksbox/pc-bios"
+  WRAPPER="$PKG/lib/2ksbox/libglide2x.so"
+  ISO="$(ls -t "$PKG"/share/2ksbox/guest-tools/guest-tools-*.iso 2>/dev/null | head -1)"
+else
+  PLAYER="$ROOT/target/release/player"
+  BIOS="$ROOT/qemu/pc-bios"
+  WRAPPER="$ROOT/build/glide/libglide2x.so"
+  ISO="$(ls -t "$ROOT"/guest-tools/out/guest-tools-3dfx-*.iso 2>/dev/null | head -1)"
+fi
 
-[ -x "$PLAYER" ] || { echo "no $PLAYER: cargo build --release"; exit 1; }
-[ -f "$WRAPPER" ] || { echo "no $WRAPPER: scripts/build-glide.sh"; exit 1; }
+[ -x "$PLAYER" ] || { echo "no $PLAYER: ${PKG:+scripts/package-linux.sh}${PKG:-cargo build --release}"; exit 1; }
+[ -f "$WRAPPER" ] || { echo "no $WRAPPER: ${PKG:+the package carries no Glide wrapper}${PKG:-scripts/build-glide.sh}"; exit 1; }
 [ -f "$ISO" ] || { echo "no guest-tools ISO: guest-tools/build-wrappers.sh"; exit 1; }
 
 # GLIDETEST.EXE goes on the floppy rather than the ISO, so this runs against
@@ -135,14 +156,18 @@ if [ -z "${NO_WARMUP:-}" ]; then
   rm -f "$SOCK"
 fi
 
-echo "==> the player, with the guest-tools ISO and the run floppy"
-export QEMU_GLIDE_LIB="$WRAPPER" GLIDE_HOST_LOG="$OUT/wrapper.log"
+echo "==> the player, with the guest-tools ISO and the run floppy${PKG:+ (out of $PKG)}"
+export GLIDE_HOST_LOG="$OUT/wrapper.log"
+# In a checkout QEMU's own search starts at build/glide and this is only
+# belt and braces; out of a package it is the thing under test, so it is
+# left unset and the player has to name the wrapper itself.
+[ -n "$PKG" ] || export QEMU_GLIDE_LIB="$WRAPPER"
 # the shaded frame, for eyes only: the dump ends the player, so it is off
 # unless asked for (and then the run has no verdict, by construction)
 if [ -n "${DUMP_SEQ:-}" ]; then
   export PLAYER_DUMP_OUT="$OUT/frame.png" PLAYER_DUMP_SEQ="$DUMP_SEQ"
 fi
-"$PLAYER" -- -L "$ROOT/qemu/pc-bios" "${HW[@]}" \
+"$PLAYER" -- -L "$BIOS" "${HW[@]}" \
   -hda "$OVL" -fda "$FLOPPY" -boot c -cdrom "$ISO" \
   -qmp "unix:$SOCK,server,nowait" -serial "file:$LOG" \
   > "$QLOG" 2>&1 &

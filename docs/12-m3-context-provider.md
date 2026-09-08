@@ -187,6 +187,21 @@ the tree but never compiled and the embed library is the only provider.
    `OPENGL32.DLL` pass-through, and guest-side Glide to Direct3D over doc
    14/15 -- are argued in `patches/openglide/README.md`.
 
+   **The wrapper has to be in the package, and nothing else says so**
+   (2026-09-07). `hw/3dfx` finds it by `dlopen`ing a name, not through an
+   import table, so a package that ships everything else and not this one
+   file has a guest whose `grGlideInit` finds nothing -- and no linker,
+   `ldd` or loader check anywhere can notice. `package-linux.sh` stages it
+   into `lib/2ksbox/` (the Flatpak builds it in the sandbox first, against
+   the runtime's libGL, since the tarball's copy is linked to the host's),
+   the macOS app has carried it since 2026-09-06, and the packaged player
+   names it to QEMU through `QEMU_GLIDE_LIB` in `player/src/companions.rs`.
+   The check is the staged binary's own answer -- `player --companions`,
+   which prints what that rule resolved -- because a script that restates
+   the layout is exactly what disagrees with it later. `PACKAGE=<tree>
+   tools/glide-guest-test.sh` then runs the guest battery out of the
+   package with nothing pointed at the wrapper by hand.
+
 ## Order
 
 vtable patch -> embed provider on Linux with readback -> dma-buf import ->

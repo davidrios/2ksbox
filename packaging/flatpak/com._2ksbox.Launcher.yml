@@ -136,6 +136,15 @@ modules:
       # files. cxx-qt-build finds Qt through `qmake6` in the SDK and
       # drives moc and qmltyperegistrar itself — there is no CMake step.
       - cd launcher-qt && cargo build --release --locked --offline
+      # The Glide wrapper (doc 12 §5), built here for the same reason the
+      # binaries above are: it links the runtime's libGL, not the host's.
+      # Only the *compile* runs here — `third_party/openglide` arrives
+      # already patched, exactly as the QEMU submodule does, because
+      # `scripts/prepare-openglide.sh` needs the git checkout that this
+      # copied tree is not. The SDK has GL/gl.h and libGL.so, which is all
+      # it wants. Without this the sandbox's guests get no Glide at all:
+      # `hw/3dfx` dlopens the library by name and finds nothing.
+      - scripts/build-glide.sh
       - scripts/package-linux.sh --no-build --prefix /app
       # Flatpak exports these three by name, so they go where it looks
       # rather than through packaging/linux/install.sh (which rewrites

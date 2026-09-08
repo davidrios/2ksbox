@@ -66,6 +66,34 @@ fn set_if_unset_and_present(var: &str, path: PathBuf) {
     unsafe { std::env::set_var(var, path) };
 }
 
+/// The names `--companions` prints, in the order this module sets them.
+const VARS: [(&str, &str); 4] = [
+    ("glide", "QEMU_GLIDE_LIB"),
+    ("d3dpt-exec", "D3DPT_EXEC_LIB"),
+    ("dxvk", "D3DPT_DXVK_LIB"),
+    ("vulkan-icd", "VK_DRIVER_FILES"),
+];
+
+/// What `announce` resolved, one line each — the answer to "did this
+/// package ship the thing, and is the copy it found its own?". Called
+/// after `announce`, so a name with a path is either the package's file or
+/// the caller's own override, and a name without one is a companion this
+/// build has none of. `scripts/package-linux.sh` asks the *staged* player
+/// this instead of restating the layout, which is what catches a rule that
+/// moved on one side only.
+pub fn report() {
+    match install_prefix() {
+        Some(prefix) => println!("prefix         {}", prefix.display()),
+        None => println!("prefix         (a checkout: QEMU's own searches find build/…)"),
+    }
+    for (name, var) in VARS {
+        match std::env::var_os(var) {
+            Some(value) => println!("{name:<14} {}", Path::new(&value).display()),
+            None => println!("{name:<14} (not shipped)"),
+        }
+    }
+}
+
 /// Point QEMU's own `dlopen` searches at the package. A no-op in a
 /// checkout, where those searches already find `build/…`.
 pub fn announce() {

@@ -35,6 +35,7 @@
 #   bin/2ksbox                        the launcher (Qt 6, ADR-015)
 #   bin/2ksbox-player                 the player
 #   lib/2ksbox/libqemu-embed-i386.so
+#   lib/2ksbox/libglide2x.so          the Glide wrapper, when one is built
 #   libexec/2ksbox/qemu-img           ours, patched — kept off PATH
 #   share/2ksbox/pc-bios/             QEMU firmware (the player's -L)
 #   share/2ksbox/guest-tools/         the guest-tools ISO
@@ -96,6 +97,18 @@ install -m755 launcher-qt/target/release/launcher-qt "$STAGE/bin/2ksbox"
 install -m755 target/release/player "$STAGE/bin/2ksbox-player"
 install -m755 build/qemu/libqemu-embed-i386.so "$STAGE/lib/2ksbox/"
 install -m755 build/qemu/qemu-img "$STAGE/libexec/2ksbox/"
+# The Glide wrapper (doc 12 §5). qemu-3dfx's `hw/3dfx` only *dispatches*:
+# at `grGlideInit` it dlopens a `libglide2x` and looks up 183 entry points,
+# and the search that finds `build/glide` in a checkout finds nothing in a
+# package — so without this file an installed guest has no Glide at all,
+# silently, and `grSstWinOpen` fails. `player/src/companions.rs` names the
+# packaged copy to QEMU through `QEMU_GLIDE_LIB`; the check below asks the
+# staged player whether it really found this one.
+if [ -f build/glide/libglide2x.so ]; then
+  install -m755 build/glide/libglide2x.so "$STAGE/lib/2ksbox/"
+else
+  echo "package-linux.sh: no build/glide/libglide2x.so (scripts/build.sh glide); packaging without Glide — 3dfx titles will not run"
+fi
 rm -rf "$STAGE/share/2ksbox/pc-bios"   # a re-run must replace it, not nest inside it
 cp -a qemu/pc-bios "$STAGE/share/2ksbox/pc-bios"
 
@@ -182,6 +195,40 @@ case "$embed" in
   "$STAGE"/lib/2ksbox/*) echo "libqemu-embed  $embed" ;;
   *) echo "package-linux.sh: the player's libqemu-embed came from $embed, not the package" >&2; fail=1 ;;
 esac
+# The companions QEMU dlopens late by name — the Glide wrapper here, the
+# Direct3D executor and its DXVK on the packages that carry them. They are
+# in no import table, so `ldd` above says nothing about them; the staged
+# player's own rule (`player/src/companions.rs`) does, and `--companions`
+# prints what that rule resolved. Asking the binary rather than restating
+# the layout here is the point: a package that stages a file the player
+# looks for somewhere else passes every other check in this script.
+companions=$(cd / && env -i "$STAGE/bin/2ksbox-player" --companions)
+while read -r what path; do
+  case "$what" in
+    glide|d3dpt-exec|dxvk) ;;
+    *) continue ;;
+  esac
+  case "$path" in
+    "(not"*) continue ;;                       # not built here; warned about above
+    "$STAGE"/*) printf '%-15s%s\n' "$what" "$path" ;;
+    *) echo "package-linux.sh: the staged player's $what came from $path, not the package" >&2; fail=1 ;;
+  esac
+done <<< "$companions"
+if [ -f "$STAGE/lib/2ksbox/libglide2x.so" ]; then
+  case "$companions" in
+    *"glide          $STAGE"*) ;;
+    *) echo "package-linux.sh: libglide2x.so is staged but the player did not find it" >&2; fail=1 ;;
+  esac
+  # It links the system's libGL, like every other GL program on the host;
+  # a package that carried an unresolvable one would fail at grGlideInit,
+  # inside QEMU, as "Glide pass-through off" and nothing else.
+  missing=$(ldd "$STAGE/lib/2ksbox/libglide2x.so" | grep 'not found' || true)
+  if [ -n "$missing" ]; then
+    printf '%s\n' "$missing" | sed 's/^/  /' >&2
+    echo "package-linux.sh: the staged Glide wrapper has unresolved libraries" >&2
+    fail=1
+  fi
+fi
 # The window itself, which is the half `--paths` cannot reach. Qt resolves
 # its platform plugin and every QML module the views import at run time,
 # by name, from directories no import table mentions — so a package that

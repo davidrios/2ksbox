@@ -386,12 +386,22 @@ items nobody owns yet:
    what is left there is a macOS `glide-host` check (the CGL side of
    `tools/glide-host-test.cpp`, which is EGL today) and a Glide guest on
    the Air, while M11's cross build still has no glide stage at all;
-   **packaging** -- `package-linux.sh` does not stage
-   `libglide2x.so` yet, so outside a build tree only `QEMU_GLIDE_LIB`
-   finds it (the macOS app does stage it, 2026-09-06:
-   `scripts/package-macos.sh` plus `player/src/companions.rs`, which fills
-   `QEMU_GLIDE_LIB` in for an installed player -- the Linux package can
-   copy both); and the old item, **fence-based sync instead of
+   **packaging is done on Linux since 2026-09-07** -- `package-linux.sh`
+   stages `lib/2ksbox/libglide2x.so` and the Flatpak builds the wrapper
+   inside the sandbox (one more `build-commands` line, against the
+   runtime's own libGL), so an installed guest has Glide without
+   `QEMU_GLIDE_LIB` in the environment; the macOS app has staged it since
+   2026-09-06 and Windows has no wrapper to stage yet. What checks it is
+   the **staged player**, not the script: `player --companions` prints what
+   `player/src/companions.rs` resolved for the Glide wrapper, the Direct3D
+   executor and DXVK, and the packager requires each answer to be inside
+   the package -- a file staged where the player does not look passes every
+   other check there is. End to end, `PACKAGE=<tree>
+   tools/glide-guest-test.sh ~/vms/win98.qcow2` runs the guest battery out
+   of a package with nothing pointed at the wrapper by hand.
+   **The Direct3D executor and DXVK are still not staged on Linux**, which
+   is the same gap one door down (doc 14; the macOS app carries both).
+   And the old item, **fence-based sync instead of
    `glFinish`**, untouched since 2026-09-03.
 2. **M2**: mode analysis landed 2026-09-05 (pixel aspect and the double-scan
    scanline count, doc 03, `mode-sweep` in the suite), and the geometry stage
