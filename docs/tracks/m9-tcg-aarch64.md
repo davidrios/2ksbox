@@ -1051,6 +1051,90 @@ a plume that covers the screen (a hard brake from top speed, or the motocross
 tracks' dirt), i.e. the same loop with far more spans. The mechanism is the same
 either way; only the number in a fix's A/B needs the bigger repro.
 
+## Patch 24: soft immediates — the block outlives its patches (2026-09-08)
+
+The user's pick after the tyre-smoke finding above. Patch 18 took the 94 % of
+code-page stores that rewrite the value already there; this takes the rest, by
+changing what a patched operand *is*.
+
+**The idea.** A block at a physical address that four guest writes have thrown
+away is translated again with its immediates and displacements emitted as
+**host loads of the guest's own code bytes** instead of constants — the field
+lives where the guest is writing it, so the guest's store is the update and
+there is nothing to keep in step. The block then only has to survive the
+write, and for that it carries the list of byte ranges it reads that way: a
+store landing entirely inside them changes nothing about the code translated
+from the rest of the bytes, so it invalidates nothing.
+
+Two properties make this safe to reason about:
+
+- **Emitting the load is correct on its own.** It reads memory at execution
+  time, which is what the architecture says the instruction's operand is. The
+  field list is only an optimisation of the *write* side.
+- **A field is registered exactly where the load is emitted.** An emitter that
+  keeps the constant never registers, so a stale use is not expressible. That
+  is why the immediate whitelist is by emitter (ADD, OR, ADC, SBB, AND, SUB,
+  XOR, MOV — which is CMP and TEST too, the group-1 table spells them that
+  way) and not by opcode: those take the immediate through `gen_load` and
+  nowhere else, while the shifts, the jumps, `INT`, `RET` and the SSE lane
+  selectors read `decode->immediate` directly in their emitter and must keep a
+  constant. Displacements need no whitelist — an address is a runtime value
+  anyway — except the two MPX forms that read `a.disp` without going through
+  `gen_lea_modrm_1`, which is why registration lives in that function.
+
+**Where the pieces are** (`patches/qemu/24-soft-immediates.patch`):
+`accel/tcg/tb-softimm.c` + `include/exec/tb-softimm.h` (the counters, the
+per-block field lists in a bump arena reset by `tb_flush`, the coverage test),
+`translate-all.c` (`soft_imm_begin` at `restart_translate`, `soft_imm_attach`
+after the code is generated), `tb-maint.c` (the counter on the write path, and
+`soft_imm_absorbs__locked` at the top of `tb_invalidate_phys_range_fast`),
+`target/i386/tcg/` (`gen_soft_field`, and its two call sites), `tcg-all.c`
+(`-accel tcg,soft-imm=off`, default on).
+
+**The self-correcting part.** A block that goes soft and is thrown away
+*anyway* — patched somewhere the generated code baked in, an opcode or an
+operand of an instruction that keeps its constant — is worse off than before:
+it pays for the loads and still retranslates. Four such strikes and the
+address gives up and goes back to constants. The first build without that rule
+showed it: the DOS battery's `smc-same-value=off` control had **104,857**
+translations of one block in FreeDOS that could never be absorbed. With it,
+that run translates 23 soft blocks and absorbs *more* writes than before.
+
+**The oracle** is `tools/smc-guest-test.py`, extended: 13 DOS cases now,
+including the four this patch is about — a memory operand's disp32 rewritten
+per call (a texture base), a sign-extended imm8, one instruction whose modrm
+*and* whose immediate are patched (the immediate may be read at run time, the
+modrm may not), and one store that covers the tail of an immediate *and* the
+two opcode bytes after it (which no block can survive, however soft its
+immediate). It runs all four combinations of `soft-imm` and `smc-same-value`,
+and asserts the path was reached — QEMU's own `soft_imm_block` and
+`soft_imm_absorb` trace events, counted — so a battery that stops exercising
+the feature fails instead of passing.
+
+**Result, Moto Racer's race** (`tools/xp-moto-race.sh` with the cycled
+throttle/brake harness, `DDFLAGS=32`, one binary, `soft-imm` off then on):
+
+| in the race | off | on |
+|---|---|---|
+| TB invalidations/s, throttle / brake | 31,045 / 36,548 | 0 / 1 |
+| host code generated | 30–36 MiB/s | 0.03 MiB/s |
+| frames/s (the driver's own flip counter) | 41 mean, 32.4 worst | **58 mean, 44.8 worst** |
+
+The fps probe cannot see this — it saturates at ~52 dumps/s and reports 51.9
+against 51.3 — so the number above is the display driver's own
+`d3dpt-vga: N page flips in 5.0 s`, which is the guest's real frame rate and
+was the item this track's patch-19 section asked for. **The game is now at the
+60 Hz flip cap for most of the race**, where before it ran 32–53, so the true
+speedup is larger than 41 % and the cap hides it.
+
+A second A/B with the cap taken off (`DDFLAGS=32800`, `DDF_NO_VSYNC`;
+`moto-novsync-off` / `-on`) reads 44 → 56 fps mean in the race with the same
+invalidation collapse (35,175 / 40,726 a second → 0 / 1). **Treat that pair as
+indicative, not as the number**: the `on` run shared the machine with a
+`scripts/test.sh host`, which can only have cost it, and the 15 s windows land
+on different track sections each time (the patch-19 section's warning). The
+clean pair is the capped one in the table.
+
 ## Next steps, in order
 
 Done on the way: patch 13 (`-perfmap` on Darwin), patch 14 (the
@@ -1112,21 +1196,18 @@ above):
 5. **Barriers off on one vCPU** (~4 %): only after an audit of every
    reader of guest RAM outside the BQL; as a machine property, not an
    env var.
-6. **Self-modifying rasterizers, the changed-value half** — patch 18 took the
-   94 % that were same-value; the section above (2026-09-08) is the game whose
-   patches *do* change: Moto Racer's translucent span loop, 14 immediate fields
-   rewritten per use, which is what the tyre smoke costs. Two shapes for it,
-   the user's pick:
-   - **Soft immediates** (days): a TB that keeps being invalidated is
-     retranslated with its immediate and disp fields read from a **per-TB
-     constant pool** — plain RW host memory from an arena reset at `tb_flush`,
-     one host load per use instead of a materialized constant — and registered
-     as byte ranges the store slow path *updates* instead of invalidating.
-     `gen_load`'s `case X86_OP_IMM` and the decoder's `decode->immediate` /
-     `decode->mem.disp` are the choke points; branch targets and anything that
-     decides the TB's shape stay constants. Ceiling: the 29–33 % of the vCPU
-     that is translation in this game, minus a load per patched operand per
-     iteration.
+6. ~~**Self-modifying rasterizers, the changed-value half**~~ — **patch 24**
+   (2026-09-08, its section above): soft immediates, the first of the two
+   shapes below, chosen by the user. The race 41 → 58 fps, invalidations
+   36,500/s → 1/s. What is left of the idea, if a workload ever asks: the
+   fields are per block and only on its first page, `CF_PARALLEL` is left
+   alone, and the whitelist is eight emitters — a guest that patched the
+   operand of a shift or a jump would still retranslate. For the record, the
+   two shapes were:
+   - **Soft immediates** (days) — built, and simpler than costed here: the
+     fields are read from the guest's own code bytes rather than from a pool
+     the store side has to refresh, so there is no pool and nothing to keep in
+     step.
    - **A cheap-translation mode** (half a day): a TB invalidated more than N
      times is retranslated with `tcg_optimize` and the liveness passes skipped.
      Bounded by their share — `liveness_pass_1` 5.6 %, `tcg_optimize` 2.2 %,

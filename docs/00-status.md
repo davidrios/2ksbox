@@ -477,20 +477,45 @@ items nobody owns yet:
    patch 21 (pinned guest registers, doc 18) built the same night and
    **off by default** with two open items (a boot crash at 8 pinned, a
    stall at the flags-helper call; the track doc's patch 21 section);
-   next: close those and turn it on, then the same-value skip's leftovers
-   — **which 2026-09-08 gave a name and a workload**: the user's report
-   that Moto Racer's software renderer "almost hangs" when braking emits
-   tyre smoke is a *second* self-patching rasterizer, a translucent
-   RGB565 span loop at `0x4357f0` whose 14 immediate fields are rewritten
-   per use with values that really change, so patch 18's compare cannot
-   skip them; every brake onset doubles the host code generated (30–36 →
-   57–69 MiB/s) and the traced translations of its page go 3.0k/s →
-   11.6k/s. The two shapes for a fix (soft immediates through a per-TB
-   constant pool; a cheap-translation mode for repeatedly invalidated
-   TBs) are costed in the track doc's "tyre smoke" section, with the new
-   per-second harness (`tools/moto-watch.py`) that found it. Then a
-   faster fps oracle for the games (the 60-dumps/s probe saturates at
-   ~40), and the HVF VM port the probe found feasible.
+   next: close those and turn it on. The same-value skip's leftovers are
+   **done, 2026-09-08**: the user's report that Moto Racer's software
+   renderer "almost hangs" when braking emits tyre smoke turned out to be
+   a *second* self-patching rasterizer — a translucent RGB565 span loop
+   at `0x4357f0` whose 14 immediate fields are rewritten per use with
+   values that really change, so patch 18's compare could not skip them;
+   every brake onset doubled the host code generated (30–36 → 57–69
+   MiB/s). Found with a new per-second harness (`tools/moto-watch.py`:
+   `info jit` at 4 Hz with a screendump a second, driving the bike over
+   the same QMP connection, tracing `translate_block` over one throttle
+   phase and one brake phase, and `WATCH_MEMSAVE=` for `smc-diff.py`),
+   and fixed by **patch 24, soft immediates**: a block four guest writes
+   have thrown away is retranslated with its immediates and displacements
+   emitted as host loads of the guest's own code bytes, so the guest's
+   store *is* the update, and a write landing entirely inside the fields
+   it reads that way invalidates nothing. `-accel tcg,soft-imm=off` is
+   the oracle and the eighth launcher checkbox;
+   `tools/smc-guest-test.py` grew to 13 cases across all four
+   combinations of the two SMC switches and asserts the path is reached.
+   **The race: 41 → 58 fps on the display driver's own flip counter (the
+   fps probe saturates at 52 and cannot see it), worst window 32.4 →
+   44.8, TB invalidations 36,500/s → 1/s** — the game now sits at the
+   60 Hz flip cap for most of the race. Then the HVF VM port the probe
+   found feasible.
+   **Found on the way, and not an M9 bug:** `atapi-guest` had been failing
+   since patch 54 landed (2026-09-07 22:18, `1f0aa6f`). That patch changed
+   on purpose where the drive reports its head after a stop — it stays
+   where playback ended instead of falling back to the last sector *read*
+   — and the DOS battery still asserted the old contract ("0x15 at the
+   last read sector 2200"); its commit ran `scripts/test.sh host`, and
+   `atapi-guest` is in the **guest** stage, so nothing ran it against the
+   change. The two assertions now say what patch 54 says (the head inside
+   track 2 at or past where it was last seen playing, and inside track 3
+   for the START STOP UNIT case). Two traps to know: the battery prints
+   the audio status in *decimal*, so the alarming "status 21" was `0x15`
+   all along, and `prepare-qemu.sh` restores only files a *current* patch
+   touches, so removing a patch from the queue to A/B it leaves its edits
+   in any file nothing else touches (plus its untracked new files) —
+   `git checkout` those and re-run prepare, and check the switch first.
 
 9. **M10** → `docs/tracks/m10-win98-driver.md` (opened 2026-09-06): the
    native Win98 display driver, and the split of XP's driver into a

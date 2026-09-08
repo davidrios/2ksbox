@@ -772,13 +772,13 @@ optimizations_check() { # the wizard's fast-path switches, all the way to a real
   # property on `-cpu`, an accelerator property on `-accel tcg`.
   target/release/launcherx --optimizations "$bundle" \
     x87-fast off sse-fast off simd-fast off rep-fast off \
-    smc-same-value off inline-lookup off pinned-regs on >"$OUT/optimizations-set.log" 2>&1 \
+    smc-same-value off soft-imm off inline-lookup off pinned-regs on >"$OUT/optimizations-set.log" 2>&1 \
     || { echo "--optimizations failed"; cat "$OUT/optimizations-set.log"; rc=1; }
   args="$(target/release/launcherx --print-args "$bundle")"
   for p in x87-fast=off sse-fast=off simd-fast=off rep-fast=off; do
     case "$args" in *"-cpu pentium3,"*"$p"*) ;; *) echo "$p is not on -cpu"; echo "$args"; rc=1;; esac
   done
-  for p in smc-same-value=off inline-lookup=off pinned-regs=on; do
+  for p in smc-same-value=off soft-imm=off inline-lookup=off pinned-regs=on; do
     case "$args" in *"-accel tcg,"*"$p"*) ;; *) echo "$p is not on -accel tcg"; echo "$args"; rc=1;; esac
   done
   # The point of the whole thing: our QEMU accepts the line the launcher
