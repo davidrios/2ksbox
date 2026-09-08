@@ -82,6 +82,22 @@ backend later.
   the fallback/DX7 path only; don't sink more time into wine9x bugs. The
   reference workload is `guest-tools/src/d3dgame9.c` / `d3dgame8.c`,
   golden on the rig first.
+- **A hardware Vulkan 1.3 device is the executor's floor, and WineD3D is
+  never retired** (ADR-013, 2026-09-06). `third_party/dxvk` v3.1 sets
+  `DxvkVulkanApiVersion = VK_API_VERSION_1_3` and enforces it both at
+  instance creation and per adapter, so pre-Broadwell Intel, Nvidia Kepler
+  and older, AMD TeraScale, and macOS before 26 / every Intel Mac are below
+  it — all of them otherwise fine 2ksbox hosts, which is why they keep the
+  OpenGL pass-through with WineD3D *in the guest*, which needs no Vulkan at
+  all. Never propose deleting the `WINED3D\` ISO folder, `SETUP /GAME`'s
+  renames or doc 04/08's fallback rows. **Software Vulkan is used, not
+  refused**: DXVK ranks a CPU device last but never excludes it, so
+  lavapipe works — the launcher reports "available, in software (slow)" and
+  says WineD3D may beat it. Deciding for the user which of two working
+  stacks is too slow was the mistake; warn and let the box answer. The
+  probe is `launcher-core/src/host_gpu.rs` / `launcher --host-check`, and
+  its sentence for the wizard is the shared `wizard::Form::graphics_note()`,
+  never a front end's own.
 - **The host-side Glide wrapper is our own build of OpenGLide** (doc 12 §5,
   2026-09-06). qemu-3dfx's `hw/3dfx` only *dispatches* -- it `dlopen`s a
   `libglide2x` and looks up 183 entry points -- and upstream ships that
@@ -121,6 +137,18 @@ backend later.
   `Claude-Session:` trailer**, even though the harness asks for it.
 - Push right after every commit; the Mac side builds from the pushed branch.
 - CI (`.github/workflows/ci.yml`) is manual-trigger only for now.
+- **Never run `cargo fmt` over a package.** `player/src/` is not
+  rustfmt-clean and there is no fmt gate, so a package-wide format rewrites
+  files the change never touched and buries the real diff. Write new code in
+  rustfmt style by hand; `rustfmt <one new file>` on a file you authored
+  whole is fine.
+- **Never sleep-poll beside a long job.** Start the job itself in the
+  background and wait for its completion notification; a wait a job really
+  needs (a guest booting) goes *inside* that job's script, never in a
+  sibling shell. Polling waiters add nothing the harness doesn't do and
+  compete for CPU with the TCG guests they are watching — and for the same
+  reason, never run two TCG guests at once on one box: they starve each
+  other and a run that is merely slow reads as a failure.
 - Docs are part of every change: update `docs/00-status.md` (and the
   relevant design doc / patch README row) in the same commit.
 - **Testing policy: no unit tests. Integration and end-to-end tests only.**
@@ -285,6 +313,14 @@ GPU); don't propose wiring it in.
 Guest images are not in the repo (`~/vms/win98.qcow2`, `~/vms/winxp.qcow2`;
 wglgears lives at `C:\WINDOWS\Desktop\GAMEDIR`; on Linux `~/vms/scratch.img`
 is a FAT32 disk attached as `-hdb`, E: in XP, read with `mcopy -i img@@1048576`).
+**The user's own images are read-only for a session** — they play on them by
+hand and keep their own installs in them, and most of the guest tools boot
+`-hda <image>` with no `-snapshot`, so a run writes what it booted. Boot a
+qcow2 overlay (`qemu-img create -f qcow2 -b <image> -F qcow2 <scratch>`) or a
+copy, never the image; reading one (`qemu-img info`, a 7z listing) is fine.
+While an overlay's QEMU runs, the backing image holds a **read lock** and
+anything writing it fails with "Failed to get write lock" — sequence those
+runs.
 The Direct3D device test loop is in `docs/00-status.md`'s cheat sheet. **End scripted Win98 runs with a
 Start-menu shutdown** (`qmpc.py … keys ctrl+esc`, `keys u`, `keys ret`),
 never by killing the player — a killed VM leaves the FAT dirty and every
@@ -303,11 +339,14 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   2026-09-07). The native and Windows *outputs* are separate
   (`build/qemu` vs `build/win/qemu`) — the *sources* are not.
 
-- **A QEMU build belongs to one checkout and is never shared.** Every
-  worktree builds its own `qemu/` into its own `build/qemu` and runs its
-  own binaries; a session must not borrow another checkout's
-  `build/qemu`, point `QEMU_BIN` / `QEMU_IMG` at one, or configure its
-  sources into one. Two reasons, both paid for already. A borrowed build
+- **A build belongs to one checkout and is never shared.** That covers
+  every artefact, not just QEMU: `build/qemu` and its binaries, `target/`,
+  the DXVK build and the D3D executor, the Glide wrapper, the guest-tools
+  ISO, the 9x/XP driver binaries. Every worktree builds its own and runs
+  only its own; a session must not borrow another checkout's outputs, point
+  `QEMU_BIN` / `QEMU_IMG` (or any other `*_BIN`-shaped variable) at one,
+  configure its sources into one, or run a script from another checkout's
+  directory. Two reasons, both paid for already. A borrowed build
   is a build of *someone else's* patch queue: the branch under test is
   not the branch running, and a `D3DPT_PROTO_VERSION` or `D3DPT_FB_VERSION`
   bump on either side shows up as `protocol mismatch` or a guest that
@@ -318,6 +357,19 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   "Source dir" first when that happens). `scripts/build.sh` in the
   checkout you are working in is the whole answer; the cost is ~15 min
   once, and it is cheaper than one wrong verdict.
+
+- **Four traps in driving a headless guest run**, each of which looks like
+  the thing under test failing. A `pgrep -f '<pattern>'` whose pattern
+  appears in the calling command line matches the wrapper and never ends —
+  and `pkill -f` kills the session's own shell (exit 144); use a literal
+  that cannot self-match (`patter[n]`) or the background-task notification.
+  To find or stop QEMU use `ps -C qemu-system-i386 -o pid=`, never
+  `pgrep/pkill -x`: the name is 17 characters, `comm` truncates at 15
+  ("qemu-system-i38"), so `-x` matches nothing and silently leaves a process
+  holding the image's write lock. An output directory deep in a scratchpad
+  path makes the QMP socket fail with `AF_UNIX path too long` and the run
+  silently does nothing — keep `OUT=` short. And editing a bash script while
+  an instance of it is running breaks that instance; copy it first.
 
 - **`configure`: "found no usable distlib, please install it"** — QEMU
   9.2's `mkvenv` imports `distlib.scripts` *and* `distlib.version`, and
