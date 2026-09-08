@@ -482,6 +482,17 @@ items nobody owns yet:
 
 ## Gotchas learned (don't relearn)
 
+- **Every Windows family stops a CD with a different command, and MCI's
+  own answer is not evidence.** Measured 2026-09-07 with
+  `tools/cdaudio-guest-test.sh`: XP stops with START STOP UNIT (`1b`) and
+  brackets each play with PAUSE/SEEK/PAUSE/PLAY, while **Win9x sends one
+  PLAY AUDIO MSF and two SEEKs for a whole play/pause/stop session** —
+  on 9x a seek *is* the stop (patch 54). What made this hard to see is
+  that `mcicda` answers `status mode` from the state it *commanded*, so
+  Win98 reported "stopped" while the drive played the rest of the disc
+  out. Ask the drive (the audio status in a `CDIMAGE_TRACE=1` run) and
+  the speaker (the audiodev's wav: 61 s of audio for a 4 s play) instead.
+
 - **A QMP medium change on a running guest must pass `force`.** Both
   `blockdev-change-medium` and `eject` default to *asking*: if the guest
   has locked the tray — XP does for every open handle on the mounted

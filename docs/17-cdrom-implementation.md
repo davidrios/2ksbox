@@ -916,16 +916,35 @@ Commands: PLAY AUDIO(10) `start LBA (4), length (2)`; PLAY AUDIO(12)
 6..8` (end exclusive; `FF:FF:FF` = to the end of the disc); PLAY AUDIO
 TRACK/INDEX `start track/index bytes 4,5, end 7,8` (map through
 `libdisc_track_info`); PAUSE/RESUME byte 8 bit 0 (0 pause → 0x12, 1
-resume → 0x11); STOP PLAY/SCAN → 0x15 (and `play_lba = 0`). **START STOP
-UNIT with start = 0 means the same stop** (MMC-5 6.36: a stop ends any
-play in progress), and it is the one that matters: XP's `mcicda` stops the
-drive with `1b 00 00 00 00` and never sends 0x4e, so with 0x4e alone the
-Stop button left the track playing to its end (found 2026-09-07 in a
-`CDIMAGE_TRACE=1` run; the trace is also how "stop" was told from
-"pause", which mcicda sends as `4b 00 …` before every seek). A play range
-starting on a data sector → 05/64/00. `start == end` → status 0x13
-immediately. READ SUB-CHANNEL position: `play_lba` while 0x11/0x12/0x13,
-else `atapi_last_lba` (updated by every successful read command).
+resume → 0x11); STOP PLAY/SCAN → 0x15. A play range starting on a data
+sector → 05/64/00. `start == end` → status 0x13 immediately.
+
+**Three commands stop a play, and each family only sends one of them.**
+Measured on both, 2026-09-07, with `tools/cdaudio-guest-test.sh` (which
+runs `CDTEST.EXE` under `CDIMAGE_TRACE=1` and prints what the guest sent):
+
+- **XP** brackets every play with `PAUSE, SEEK, PAUSE, PLAY` and stops
+  with **START STOP UNIT** `1b 00 00 00 00` — never 0x4e. With 0x4e alone
+  the Stop button left the track playing to its end.
+- **Win98** sends **one PLAY AUDIO MSF and two SEEKs for the whole
+  session** — no 0x4e, no 0x1b, no 0x4b at all. On 9x **a seek is the
+  stop**: `mcicda` seeks to where playback should end and then reports
+  "stopped" on its own authority, so a drive that treats a seek as
+  advisory plays the rest of the disc out behind a stopped MCI. That was
+  the user's "the stop doesn't work on Win98": 11 MB of audio in the
+  audiodev's wav for a four-second play. A SEEK therefore ends playback
+  (patch 54) and leaves the head where it was sent.
+- A **data read** does not, although real drives abandon playback for
+  one: Win98's CDFS re-reads the volume descriptors several times a
+  second for the whole play (532 READ(10)s in one session), so a drive
+  that stopped audio on a read would never play a note under it.
+
+READ SUB-CHANNEL position: `play_lba` while 0x11/0x12/0x13, else
+`atapi_last_lba` — **the head**, which is where a play ended, where a
+seek was sent, or the last sector read, in that order of recency. Getting
+that last part wrong is visible: while it was only ever the last *read*,
+XP answered "track 01, 00:00:17" — its own volume descriptor — when asked
+where the drive was after a stop.
 
 The player passes an audiodev already (`embed0`, see the cheat sheet in
 doc 00); once the property exists the cheat-sheet lines change from

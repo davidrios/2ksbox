@@ -1,0 +1,95 @@
+A seek stops CD audio, because on Win9x a seek IS the stop (doc 17 §5.4).
+
+Reported by the user: MCI's "stop cd" does not stop the drive on Win98, and
+XP's positions read oddly. Both were measured with the new
+tools/cdaudio-guest-test.sh, which runs CDTEST.EXE on either family under
+CDIMAGE_TRACE=1 and prints the audio commands the guest actually sent.
+
+Win98's whole play / pause / stop session through MCI is **one PLAY AUDIO MSF
+and two SEEKs**. Its mcicda sends no STOP PLAY/SCAN, no START STOP UNIT and no
+PAUSE/RESUME at all: it seeks to where playback should end and then reports
+"stopped" on its own authority. cmd_seek validated the LBA and returned OK, so
+the drive played the rest of the disc out behind an MCI that believed it had
+stopped it -- 11 MB of audio in the audiodev's wav from a four-second play.
+MMC-3 has the seek end playback (the head goes elsewhere, so it cannot go on),
+so that is what it does now, and the head is left where it was sent.
+
+XP is the control and loses nothing by it: it brackets every play with
+PAUSE, SEEK, PAUSE, PLAY -- so its seeks only ever happen while playback is
+already stopped -- and it stops with START STOP UNIT, which was already
+handled. Its 812 KB of wav for the same four seconds is what correct looks
+like beside Win98's 11 MB.
+
+Data reads are deliberately not treated the same way, although a real drive
+does abandon playback for one: Win98's CDFS re-reads the volume descriptors
+several times a second for the whole play (532 READ(10)s in that session), so
+a drive that stopped audio on a read would never play a note under it.
+
+The second half is the position. Once there was no audio status left to
+return, the position replies fell back to the last sector *read*, which is a
+data address that has nothing to do with the drive's head: XP, asked to play
+track 3 after a stop, answered "track 01, 00:00:17" -- LBA 17 being its own
+volume descriptor, read seconds earlier. The head now stays where playback
+ended, and a seek puts it where it was sent, which is also what makes Win9x's
+seek-as-stop report the position its own MCI shows.
+diff --git a/hw/ide/atapi.c b/hw/ide/atapi.c
+index a8ba896..33a1cb9 100644
+--- a/hw/ide/atapi.c
++++ b/hw/ide/atapi.c
+@@ -230,6 +230,16 @@ static void atapi_audio_stop(IDEState *s, uint8_t status)
+ {
+     if (s->atapi_audio_status == 0x11) {
+         s->atapi_play_lba = atapi_audio_position(s);
++        /*
++         * The head stays where playback ended, and that is what the position
++         * replies report once there is no audio status left to return.
++         * Without this they fall back to the last sector *read*, so a guest
++         * that stops the drive and asks where it is gets told about whatever
++         * file it happened to read last: XP answered "track 01, 00:00:17"
++         * after being asked to play track 3, LBA 17 being its own volume
++         * descriptor (measured 2026-09-07).
++         */
++        s->atapi_last_lba = s->atapi_play_lba;
+     }
+     if (s->atapi_play_timer) {
+         timer_del(s->atapi_play_timer);
+@@ -249,7 +259,6 @@ static void atapi_audio_stop(IDEState *s, uint8_t status)
+ static void atapi_audio_stop_play(IDEState *s)
+ {
+     atapi_audio_stop(s, 0x15);
+-    s->atapi_play_lba = 0;
+ }
+ 
+ /*
+@@ -1719,6 +1728,31 @@ static void cmd_seek(IDEState *s, uint8_t* buf)
+         return;
+     }
+ 
++#ifdef CONFIG_CDIMAGE
++    /*
++     * A seek ends any audio play in progress and leaves the head where it
++     * was sent (MMC-3: the head goes elsewhere, so playback cannot go on).
++     *
++     * This is not a detail — it is how Win9x stops a CD. Its mcicda sends
++     * neither STOP PLAY/SCAN nor START STOP UNIT: a whole play / pause /
++     * stop session through MCI is one PLAY AUDIO MSF and two SEEKs, and
++     * then it reports "stopped" on its own authority. A drive that treats a
++     * seek as advisory therefore plays the rest of the disc out behind an
++     * MCI that believes it is stopped. XP is the control and loses nothing:
++     * it seeks only while already paused (PAUSE, SEEK, PAUSE, PLAY) and
++     * stops with START STOP UNIT. Both measured 2026-09-07 with
++     * tools/cdaudio-guest-test.sh, which is also what guards this.
++     *
++     * Data reads are deliberately *not* treated this way: Win98's CDFS
++     * re-reads the volume descriptors several times a second throughout a
++     * play (532 READ(10)s in that session), so a drive that stopped audio
++     * on a read would never play a note under it.
++     */
++    if (atapi_disc(s)) {
++        atapi_audio_stop_play(s);
++        s->atapi_last_lba = lba;
++    }
++#endif
+     ide_atapi_cmd_ok(s);
+ }
+ 
