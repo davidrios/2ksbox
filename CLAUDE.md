@@ -377,6 +377,18 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   the fallback fails. Install the real `distlib` for that interpreter (the
   Flatpak manifest ships a wheel as a build-only module); it is not a
   Flatpak-specific problem, any modern-pip environment hits it.
+- **On macOS, `/opt/homebrew/lib` on `DYLD_LIBRARY_PATH` breaks every image
+  decode in the process.** dyld searches that variable by leaf name ahead of
+  the path an image asked for, and ImageIO `dlopen`s its codecs as
+  `libGIF.dylib` / `libPng.dylib` / `libTIFF.dylib` / `libJPEG.dylib` — all
+  four of which that directory answers with a Homebrew library on this
+  case-insensitive filesystem, so ImageIO calls a plugin ABI into a stranger
+  and takes `SIGBUS` at `0xbad4007`. It killed the player on its first mouse
+  grab (winit hides a cursor by decoding a GIF; ours is raw RGBA now).
+  `scripts/test.sh` and `tools/tcg-profile.sh` therefore put only
+  `/opt/homebrew/opt/vulkan-loader/lib` — the loader DXVK needs, and nothing
+  else — on that variable. Unsetting it at runtime does not help; dyld read
+  it at exec. Doc 00's gotchas has the diagnosis.
 - macOS embed backend: never call `gl*`/`CGL*`/`IOSurface*` by link — the
   build also links XQuartz's Mesa libGL and the symbol binds there (a GLX
   library that sees no CGL context and silently no-ops). `dlsym` from the

@@ -73,7 +73,11 @@ case "$OS" in Darwin) SO=dylib;; *) SO=so;; esac
 export D3DPT_EXEC_LIB="${D3DPT_EXEC_LIB:-$ROOT/build/d3dpt/libd3dpt_exec.$SO}"
 export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)}"
 if [ "$OS" = Darwin ]; then  # docs/build-macos.md: Homebrew's loader, the LunarG KosmicKrisp ICD
-  export DYLD_LIBRARY_PATH="/opt/homebrew/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+  # the loader's own keg, never all of `/opt/homebrew/lib`, which shadows
+  # ImageIO's codecs by leaf name (docs/00-status.md, 2026-09-08)
+  VKLIB=/opt/homebrew/opt/vulkan-loader/lib
+  [ -d "$VKLIB" ] || VKLIB=/opt/homebrew/lib
+  export DYLD_LIBRARY_PATH="$VKLIB${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
   if [ -z "${VK_ICD_FILENAMES:-}" ]; then
     for f in "$HOME"/VulkanSDK/*/macOS/share/vulkan/icd.d/libkosmickrisp_icd.json; do
       [ -f "$f" ] && export VK_ICD_FILENAMES="$f"

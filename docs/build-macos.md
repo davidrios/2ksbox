@@ -66,6 +66,16 @@ KosmicKrisp ICD unless `VK_ICD_FILENAMES` is already set): a `DYLD_*`
 variable exported to the script is stripped by SIP at its
 `#!/usr/bin/env bash` exec, which made
 the two native DXVK checks fail with `Direct3DCreate9 failed` (2026-09-04).
+Put **only the loader's own keg** there —
+`/opt/homebrew/opt/vulkan-loader/lib`, which is what the scripts do — and
+never all of `/opt/homebrew/lib`: dyld searches `DYLD_LIBRARY_PATH` by leaf
+name ahead of the path an image asked for, and ImageIO `dlopen`s its codecs
+as `libGIF.dylib` / `libPng.dylib` / `libTIFF.dylib` / `libJPEG.dylib`,
+every one of which that directory answers with a Homebrew library on this
+case-insensitive filesystem. Anything in the process that then decodes an
+image dies of SIGBUS inside ImageIO (docs/00-status.md, 2026-09-08). It is
+worth checking the **shell** a launcher is started from for the same
+export.
 
 ## Clone
 

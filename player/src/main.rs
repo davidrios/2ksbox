@@ -773,6 +773,16 @@ struct App {
     /// the framebuffer) keeps the host cursor hidden over the image.
     guest_cursor: Option<CustomCursor>,
     guest_cursor_seq: u64,
+    /// A fully transparent cursor, and the only way the player hides one.
+    /// winit's own `set_cursor_visible(false)` builds its invisible cursor by
+    /// decoding a 16x16 GIF, which on macOS is ImageIO — and ImageIO
+    /// `dlopen`s its codecs by leaf name, so `/opt/homebrew/lib` on
+    /// `DYLD_LIBRARY_PATH` (which is how a dev checkout finds the Vulkan
+    /// loader) hands it Homebrew's `libgif` for its own `libGIF.dylib` on a
+    /// case-insensitive filesystem: the decode then branches through a
+    /// poisoned pointer and the player dies of SIGBUS on the first grab
+    /// (2026-09-08). A cursor built from raw RGBA never reaches ImageIO.
+    blank_cursor: Option<CustomCursor>,
     /// The pointer is over the image (CursorMoved inside the viewport).
     pointer_inside: bool,
     /// What the window's cursor was last set to (wakes come every frame).
@@ -1114,20 +1124,35 @@ impl App {
     }
 
     fn set_grab(&mut self, on: bool) {
-        let Some(gpu) = &self.gpu else { return };
+        let Some(window) = self.gpu.as_ref().map(|g| g.window.clone()) else { return };
         if on {
-            if gpu.window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
-                let _ = gpu.window.set_cursor_grab(CursorGrabMode::Confined);
+            if window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
+                let _ = window.set_cursor_grab(CursorGrabMode::Confined);
             }
-            gpu.window.set_cursor_visible(false);
-            gpu.window
-                .set_title("2ksbox player — mouse grabbed (Ctrl+Alt+G releases)");
+            self.hide_cursor(&window);
+            self.cursor_applied = HostCursor::Hidden;
+            window.set_title("2ksbox player — mouse grabbed (Ctrl+Alt+G releases)");
         } else {
-            let _ = gpu.window.set_cursor_grab(CursorGrabMode::None);
-            gpu.window.set_cursor_visible(true);
-            gpu.window.set_title("2ksbox player");
+            let _ = window.set_cursor_grab(CursorGrabMode::None);
+            window.set_title("2ksbox player");
         }
         self.grabbed = on;
+        // a hidden pointer is a shape now, so releasing the grab has to put
+        // the right shape back rather than just turn the cursor on again
+        if !on {
+            self.apply_cursor();
+        }
+    }
+
+    /// Hide the pointer over the window: our transparent shape, never
+    /// `set_cursor_visible(false)` (see `blank_cursor`).
+    fn hide_cursor(&self, window: &Window) {
+        let Some(blank) = &self.blank_cursor else {
+            window.set_cursor_visible(false);
+            return;
+        };
+        window.set_cursor(Cursor::Custom(blank.clone()));
+        window.set_cursor_visible(true);
     }
 
     /// Window pixel → guest framebuffer coordinates (None outside the image).
@@ -1202,7 +1227,7 @@ impl App {
                 gpu.window.set_cursor(Cursor::Custom(self.guest_cursor.clone().unwrap()));
                 gpu.window.set_cursor_visible(true);
             }
-            HostCursor::Hidden => gpu.window.set_cursor_visible(false),
+            HostCursor::Hidden => self.hide_cursor(&gpu.window),
         }
         self.cursor_applied = want;
     }
@@ -1230,6 +1255,10 @@ impl ApplicationHandler for App {
             .with_title("2ksbox player")
             .with_inner_size(LogicalSize::new(1280.0, 960.0));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
+        // see `blank_cursor`: hiding the pointer is a shape of our own
+        self.blank_cursor = CustomCursor::from_rgba(vec![0u8; 16 * 16 * 4], 16, 16, 0, 0)
+            .ok()
+            .map(|src| event_loop.create_custom_cursor(src));
 
         let mut gpu = Gpu::new(window);
 

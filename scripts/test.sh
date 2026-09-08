@@ -168,7 +168,14 @@ if [ "$OS" = Darwin ]; then
   # the documented macOS run environment here (docs/build-macos.md,
   # patches/dxvk/README.md): Homebrew's loader, and the LunarG SDK's
   # KosmicKrisp ICD unless the caller chose one.
-  export DYLD_LIBRARY_PATH="/opt/homebrew/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+  # The loader's own keg, never all of `/opt/homebrew/lib`: DYLD_LIBRARY_PATH
+  # is searched by leaf name ahead of the path an image asks for, and ImageIO
+  # `dlopen`s its codecs as `libGIF.dylib` / `libPng.dylib` / `libTIFF.dylib`
+  # / `libJPEG.dylib`, every one of which that directory answers on a
+  # case-insensitive filesystem (docs/00-status.md, 2026-09-08).
+  VKLIB=/opt/homebrew/opt/vulkan-loader/lib
+  [ -d "$VKLIB" ] || VKLIB=/opt/homebrew/lib
+  export DYLD_LIBRARY_PATH="$VKLIB${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
   if [ -z "${VK_ICD_FILENAMES:-}" ]; then
     for f in "$HOME"/VulkanSDK/*/macOS/share/vulkan/icd.d/libkosmickrisp_icd.json; do
       [ -f "$f" ] && export VK_ICD_FILENAMES="$f"

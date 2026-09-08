@@ -540,6 +540,30 @@ items nobody owns yet:
 
 ## Gotchas learned (don't relearn)
 
+- **`DYLD_LIBRARY_PATH=/opt/homebrew/lib` makes every macOS image decode
+  crash, and the player's first mouse grab is one.** ImageIO does not
+  compile its codecs in; it `dlopen`s them out of its own bundle as
+  `libGIF.dylib`, `libPng.dylib`, `libTIFF.dylib` and `libJPEG.dylib` — and
+  dyld searches `DYLD_LIBRARY_PATH` **by leaf name, ahead of the path the
+  image asked for**, so on a case-insensitive filesystem that directory
+  answers all four with Homebrew's `giflib` / `libpng` / `libtiff` /
+  `jpeg-turbo`. ImageIO then calls a plugin ABI into a stranger's library:
+  the GIF reader branches through a poisoned pointer and the process takes
+  `EXC_BAD_ACCESS (SIGBUS)`, `EXC_ARM_DA_ALIGN at 0xbad4007`, with
+  `IIO_Reader_GIF::parse` the only honest frame. It bit the **player** on
+  2026-09-08: winit hides a cursor by decoding a 16x16 transparent **GIF**
+  into an `NSCursor`, so `set_cursor_visible(false)` — Ctrl+Alt+G, or the
+  pointer moving over the image — killed a player started from a shell that
+  had exported the variable for DXVK. Two fixes, both in this commit: the
+  player builds its hidden pointer from raw RGBA
+  (`App::blank_cursor`, `NSBitmapImageRep`, no ImageIO on any path), and
+  `scripts/test.sh` / `tools/tcg-profile.sh` put only the loader's own keg
+  (`/opt/homebrew/opt/vulkan-loader/lib`) on `DYLD_LIBRARY_PATH`, which
+  shadows nothing. Diagnosis is three lines: `DYLD_PRINT_LIBRARIES=1`, and
+  a Homebrew `libgif`/`libtiff` in a process that reads no images is the
+  whole story. Unsetting the variable at runtime does **not** help — dyld
+  captured it at exec.
+
 - **Every Windows family stops a CD with a different command, and MCI's
   own answer is not evidence.** Measured 2026-09-07 with
   `tools/cdaudio-guest-test.sh`: XP stops with START STOP UNIT (`1b`) and
