@@ -663,3 +663,29 @@ swallows keys, so Escape goes first.
 A machine that has faulted cannot be shut down at all — it is in the text
 screen above, waiting for a key that only reaches DOS. That is not a
 harness bug to chase; it is the fault, and the printed text screen says so.
+
+### 18. Display settings: resolution list and `ValidateMode` DS reloading (2026-09-07)
+
+After driver installation in Windows 98, Display Properties -> Settings tab
+showed only 640x480 (with high/true color) and 800x600 (16 colors only), with
+no other resolutions available on the slider.
+
+The root cause was inside `ValidateMode` (ordinal 700):
+1. **`__loadds` dropped by Open Watcom:** In `guest-tools/src/d3dptvid/ddk9x/valmode.h`,
+   the prototype was declared without `__loadds` (`extern UINT WINAPI ValidateMode(DISPVALMODE FAR *lpMode);`).
+   Open Watcom silently discards `__loadds` on a function definition if an earlier prototype
+   lacked it. As a result, `ValidateMode` in `d3dpt9x.drv` did not reload `DS` from `DGROUP` on entry.
+2. **Failure during mode enumeration:** When `DESKCP16.DLL` enumerated resolutions
+   from the registry's `MODES` key and invoked `ValidateMode`, `DS` was still pointing to caller
+   memory (`DESKCP16`'s segment). `AdapterFind()` dereferenced static driver variables against the
+   wrong `DS`, failed, and returned `VALMODE_NO_WRONGDRV` (1).
+3. **Why 800x600 16-color appeared:** `DESKCP16.DLL` specifically checks whether the driver for a mode
+   is `vga.drv` or `supervga.drv`. If so, it skips calling `ValidateMode`. The INF maps `MODES\4\800,600`
+   to `supervga.drv`, so that mode bypassed validation while all `d3dpt9x.drv` modes failed.
+4. **Fix:** Adding `__loadds` to [`valmode.h`](file:///home/david/work/2ksbox_2/guest-tools/src/d3dptvid/ddk9x/valmode.h)
+   and explicit `#pragma aux ValidateMode loadds;` in [`d3dpt9x.c`](file:///home/david/work/2ksbox_2/guest-tools/src/d3dptvid/w9x/d3dpt9x.c)
+   forces Watcom to emit the standard DS reload prologue (`push ds; mov ax, DGROUP; mov ds, ax`).
+
+With the fix, all registered modes (640x480, 800x600, 1024x768, 1280x1024 in both 16-bit High Color
+and 32-bit True Color) pass validation, appear on the slider, and live mode changes apply correctly on the fly.
+

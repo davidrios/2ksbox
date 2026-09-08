@@ -16,5 +16,5 @@ typedef struct {
 } DISPVALMODE;
 
 /* Must be exported by name from driver. Recommended ordinal is 700. */
-extern UINT WINAPI ValidateMode( DISPVALMODE FAR *lpMode );
+extern UINT WINAPI __loadds ValidateMode( DISPVALMODE FAR *lpMode );
 

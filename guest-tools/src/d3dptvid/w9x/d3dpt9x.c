@@ -573,7 +573,10 @@ VOID WINAPI __loadds Disable(LPPDEVICE lpDevice)
     }
 }
 
-/* ValidateMode (ordinal 700) — GDI asks before it switches. */
+/* ValidateMode (ordinal 700) — GDI asks before it switches.
+ * Open Watcom discards __loadds on definition if prior prototype lacked it,
+ * so loadds pragma ensures DS is reloaded from DGROUP on entry. */
+#pragma aux ValidateMode loadds;
 UINT WINAPI __loadds ValidateMode(DISPVALMODE FAR *lpMode)
 {
     if (!AdapterFind()) return VALMODE_NO_WRONGDRV;
