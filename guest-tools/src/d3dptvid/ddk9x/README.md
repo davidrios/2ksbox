@@ -7,7 +7,11 @@ driver, and for the same reason: **the Microsoft DDK is not used here.**
 
 `gdidefs.h`, `dibeng.h`, `minivdd.h`, `valmode.h`, `winhack.h`,
 `vmm.h` (the ring-0 VMM services, structures and control messages the
-mini-VDD is written against), `dibeng.def` and `dibeng.lbc` are taken
+mini-VDD is written against), `ddrawi.h` and `dmemmgr.h` (the DirectDraw
+driver interface the 16-bit half publishes its HAL through — the
+`DDHALINFO` it builds, the `DCICMD` escape it answers and the
+`DD32BITDRIVERDATA` that names the ring-3 DLL, doc 19 §2), `dibeng.def`
+and `dibeng.lbc` are taken
 verbatim from **JHRobotics'
 `vmdisp9x`** (`https://github.com/JHRobotics/vmdisp9x`, MIT, © 2022
 JHRobotics, deriving from Michal Necasek's Win9x video minidriver), whose

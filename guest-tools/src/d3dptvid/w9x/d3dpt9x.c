@@ -48,6 +48,8 @@
 #include <valmode.h>
 #undef ValidateMode
 
+#include <ddrawi.h>
+
 #include "d3dpt9x.h"
 #include "d3dpt9v.h"
 #include "../../../../d3dpt/d3dpt_fb.h"
@@ -63,6 +65,7 @@ WORD  OurVMHandle = 0;
 DWORD VDDEntryPoint = 0;
 
 DWORD dwVramSize = 0;
+DWORD dwVramLin = 0, dwRegsLin = 0;     /* what the ring-3 HAL needs (d3dpt9v.h) */
 WORD  wRegsSel = 0, wVramSel = 0;
 DWORD dwPitch = 0;
 
@@ -71,6 +74,7 @@ WORD wEnabled = 0;
 RGBQUAD FAR *lpColorTable = 0;
 
 static BYTE bReEnabling = 0;
+static WORD wDDLines = 0;       /* the first DCICOMMAND escapes, logged */
 static WORD wDIBPdevSize = 0;
 
 /* ------------------------------------------------------- no CRT, no helpers */
@@ -79,10 +83,7 @@ static WORD wDIBPdevSize = 0;
  * the two things the compiler would otherwise pull in come from here: a
  * 16x16 -> 32 bit multiply, which also keeps __U4M out of the object, and
  * a far memset. */
-static DWORD MulW(WORD a, WORD b);
-#pragma aux MulW = "mul bx" parm [ax] [bx] value [dx ax];
-
-static void ZeroFar(void __far *p, WORD n)
+void ZeroFar(void __far *p, WORD n)
 {
     BYTE __far *q = p;
     while (n--) *q++ = 0;
@@ -104,12 +105,14 @@ static WORD CallVDD_Register(void);
     "mov    word ptr [wRegsSel], ax"     \
     "mov    word ptr [wVramSel], dx"     \
     "mov    dword ptr [dwVramSize], ecx" \
+    "mov    dword ptr [dwVramLin], esi"  \
+    "mov    dword ptr [dwRegsLin], edi"  \
     "mov    ax, 1"                  \
     "jmp    vdd_done"               \
     "vdd_fail:"                     \
     "xor    ax, ax"                 \
     "vdd_done:"                     \
-    value [ax] modify [bx cx dx si];
+    value [ax] modify [bx cx dx si di];
 
 /* The main VDD's own entries, the ones every 9x display driver calls around
  * a mode change. They do not go to our mini-VDD — it hooks only
@@ -238,6 +241,8 @@ BOOL AdapterFind(void)
     dbg_val("d3dpt9x: regs sel", wRegsSel);
     dbg_val("d3dpt9x: vram sel", wVramSel);
     dbg_val("d3dpt9x: vram", dwVramSize);
+    dbg_val("d3dpt9x: regs lin", dwRegsLin);
+    dbg_val("d3dpt9x: vram lin", dwVramLin);
 
     if (RegGet(D3DPT_FB_REG_MAGIC) != D3DPT_FB_MAGIC ||
         RegGet(D3DPT_FB_REG_VERSION) != D3DPT_FB_VERSION) {
@@ -601,14 +606,83 @@ UINT WINAPI __loadds ValidateMode(DISPVALMODE FAR *lpMode)
 /* ---------------------------------------------------------------- Control */
 
 #define QUERYESCSUPPORT 8
+/* DCICOMMAND itself comes from gdidefs.h */
+
+/* the DirectDraw sub-commands of DCICOMMAND (doc 19 §2) */
+#define DDCREATEDRIVEROBJECT    10
+#define DDGET32BITDRIVERNAME    11
+#define DDNEWCALLBACKFNS        12
+#define DDVERSIONINFO           13
 
 LONG WINAPI __loadds Control(LPVOID lpDevice, UINT function,
                              LPVOID lpInput, LPVOID lpOutput)
 {
+    /* Only the escapes: GDI sends a handful of others at startup and
+     * they are not what this counter is for. */
+    if (function == DCICOMMAND && wDDLines < 24) {
+        dbg_val("d3dpt9x: Control fn", function);
+        dbg_str("");
+    }
     if (function == QUERYESCSUPPORT) {
         WORD code = *(WORD FAR *)lpInput;
         if (code == QUERYESCSUPPORT) return 1;
+        if (code == DCICOMMAND) {
+            /* **The answer is the HAL version, not "yes".** DirectDraw
+             * reads this return value to decide what the driver is: a
+             * plain 1 means DCI and nothing more, and it then sends one
+             * DCI DCICREATEPRIMARYSURFACE and never asks a DirectDraw
+             * question again — no DDVERSIONINFO, no
+             * DDGET32BITDRIVERNAME, no HAL (2026-09-07, and the only
+             * symptom was a HAL with dwCaps 0x02000000 and no video
+             * memory). */
+            if (wDDLines < 24) {
+                wDDLines++;
+                dbg_val("d3dpt9x: QUERYESCSUPPORT(DCICOMMAND) ->", DD_HAL_VERSION);
+                dbg_str("");
+            }
+            return DD_HAL_VERSION;
+        }
         /* everything else the DIB Engine answers for us */
+    }
+    if (function == DCICOMMAND && lpInput != 0) {
+        DCICMD_t FAR *cmd = (DCICMD_t FAR *)lpInput;
+
+        /* The first few, always: whether this escape arrives at all is
+         * the question the DirectDraw half stands or falls on, and a
+         * driver that simply never hears it looks exactly like one whose
+         * answers were wrong (2026-09-07). */
+        if (wDDLines < 24) {
+            wDDLines++;
+            dbg_val("d3dpt9x: DCICOMMAND version", cmd->dwVersion);
+            dbg_val(" command", cmd->dwCommand);
+            dbg_str("");
+        }
+
+        /* Only the DirectDraw version of this escape is ours. The DCI
+         * one (dwVersion == DCI_VERSION) belongs to the DIB Engine, and
+         * so does anything from a runtime newer than we know: handing
+         * those back rather than failing them is what keeps DirectDraw
+         * working under an emulator at all (the reference driver found
+         * this the hard way). */
+        if (cmd->dwVersion != DD_VERSION) {
+            return DIB_Control(lpDevice, function, lpInput, lpOutput);
+        }
+        switch (cmd->dwCommand) {
+        case DDCREATEDRIVEROBJECT:
+            if (!DDCreateDriverObject()) return 0;
+            *(DWORD FAR *)lpOutput = DDHinstance();
+            return 1;
+        case DDGET32BITDRIVERNAME:
+            return DDGet32BitDriverName((struct DD32BITDRIVERDATA FAR *)lpOutput) ? 1 : 0;
+        case DDNEWCALLBACKFNS:
+            return DDNewCallbackFns((struct DCICMD FAR *)lpInput) ? 1 : 0;
+        case DDVERSIONINFO:
+            DDGetVersion((struct DDVERSIONDATA FAR *)lpOutput);
+            return 1;
+        default:
+            dbg_val("d3dpt9x: unknown DD escape", cmd->dwCommand);
+            return 0;
+        }
     }
     return DIB_Control(lpDevice, function, lpInput, lpOutput);
 }

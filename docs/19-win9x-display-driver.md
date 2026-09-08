@@ -821,3 +821,106 @@ two kilobytes — because the old single translation unit inlined
 the split cannot. Nothing was removed: the set of functions before and
 after differs only by the additions, plus `surf_format` / `surf_caps` /
 `surf_next_mip`, which are now the NT half of `d3dpt_os_surf`.
+
+### 20. Publishing the HAL: the chain works, the runtime does not bite yet (2026-09-08)
+
+M10 step 3's first half. All three of the 9x binaries now exist —
+`d3dpt9x.drv` (16-bit, Watcom), `d3dpt9v.vxd` (ring 0, Watcom) and
+**`d3dpt9hl.dll`** (ring 3, mingw, the only one that will link the core)
+— and the whole publication path of §2 runs end to end in a real guest:
+
+```
+d3dpt9x: QUERYESCSUPPORT(DCICOMMAND) -> 0x00000100
+d3dpt9x: DCICOMMAND version=00000200 command=0000000d   (DDVERSIONINFO)
+d3dpt9x: DCICOMMAND version=00000200 command=0000000b   (DDGET32BITDRIVERNAME)
+d3dpt9dd: shared block at=8a7cf000 regs linear=80018000 vram linear=80019000
+d3dpthal: DriverInit, block at 0x8a7cf000 regs 0x80018000 vram 0x80019000
+          mode 0x028001e0 bpp 0x00000020
+d3dpt9x: DCICOMMAND version=00000200 command=0000000c   (DDNEWCALLBACKFNS)
+d3dpt9x: DCICOMMAND version=00000200 command=0000000a   (DDCREATEDRIVEROBJECT)
+d3dpt9dd: hal for mode=028001e0 dd callbacks=00000011
+d3dpt9dd:   the DLL read magic=42463344 version=00000004
+d3dpt9dd: DirectDraw took the HAL
+```
+
+Read the fourth and fifth lines together, because between them is the
+thing this step existed to prove: **DirectDraw loaded our DLL into the
+probe's own process, called `DriverInit` there, and the DLL read the
+adapter's `MAGIC` and `VERSION` registers** — `42463344` is `D3FB` —
+**straight through the linear address the mini-VDD mapped, from ring 3,
+with no ioctl.** That settles §8's open question in favour of its first
+option: the doorbell can be a direct register write, the same cost
+profile as XP, and the VxD needs no `DeviceIoControl` handler at all.
+
+**What is not done.** `DDHAL_SetInfo` returns TRUE, and the 32-bit
+runtime then keeps using its own HEL anyway: `ddprobe` still sees
+`dwCaps 0x02000000`, no video memory, and `E_NOTIMPL` from
+`WaitForVerticalBlank` — the one callback the DLL publishes. So the
+16-bit half is satisfied and the 32-bit half is not, and the next
+session's question is exactly that seam. What has been ruled out
+already: the callbacks' flags and table offsets (checked against the
+DDI), the DLL's module handle (published through the block and returned
+from `DDCREATEDRIVEROBJECT`, `hinstance=6ff40000`), the video-memory
+heap (one linear heap behind the primary), the mode list, and the
+pointer *kind* in `DDHALINFO` (below).
+
+**Three facts this cost, each of which looked like something else:**
+
+1. **`QUERYESCSUPPORT(DCICOMMAND)` must answer `DD_HAL_VERSION`, not 1.**
+   The return value is how DirectDraw learns what kind of driver this is.
+   Answering 1 — the obvious "yes, supported" — tells it DCI and nothing
+   more: it sends one DCI `DCICREATEPRIMARYSURFACE` (version `0x100`,
+   command 1) and never asks a DirectDraw question again. No
+   `DDVERSIONINFO`, no `DDGET32BITDRIVERNAME`, no HAL, and no error
+   anywhere — the driver simply looks like a 1994 DCI driver forever.
+2. **DPMI cannot tell you a GDT selector's base.** The `.drv` holds
+   selectors onto the register page and VRAM, and the ring-3 DLL needs
+   the linear addresses behind them; `int 31h AX=0006` is the obvious
+   way and it is wrong here, because the mini-VDD builds those selectors
+   in the **GDT** and DPMI only knows the LDT. It answers with junk and
+   ignores its own carry flag: the DLL was handed a register page at
+   `0x28d7`. The VxD knows both addresses — it now returns the register
+   page's in `EDI` alongside VRAM's in `ESI` (`d3dpt9v.h`), and nobody
+   has to derive anything.
+3. **The pointers in `DDHALINFO` are 16-bit far pointers, not linear
+   addresses** — `lpDDCallbacks`, `lpDDSurfaceCallbacks`,
+   `lpDDPaletteCallbacks`, `lpModeInfo`, `vmiData.pvmList`. It is the
+   *16-bit* runtime that walks them. Handing it linear addresses instead
+   makes `DDHAL_SetInfo` refuse the whole HALINFO. The tables still live
+   in the shared block, but for the other reason: the DLL reads them too,
+   by offset from the block's linear base.
+
+**The shared block** (`w9x/d3dpt9hal.h`) is what the two halves agree on:
+a magic and a version the DLL refuses to read past, the adapter's two
+linear addresses and VRAM size, the current mode, the `cb32` table the
+DLL fills, the DLL's own module handle, the DirectDraw tables themselves,
+and a word for serialising the command window between processes (§8's
+second question, still open and not yet needed). It is allocated by the
+`.drv` through DPMI, which puts it in the shared arena above 2 GiB —
+`8a7cf000` — where every process can see it. Both toolchains compile it,
+so every field is a fixed-width type and the 16-bit half asserts at
+compile time that each DDI structure fits the slot reserved for it.
+
+**How to run it.** Nothing on a Win98 desktop calls `DirectDrawCreate`,
+so `tools/win98-driver-test.sh` grew a way to start a program:
+`PROG=<file.exe>` stages it and names it in WIN.INI's `[windows] run=`,
+which the shell honours once it is up — this harness has no serial line
+and no shell to type at, so that is the only hook there is. The program
+built for this is `ddprobe.exe`: it creates a DirectDraw object, prints
+the HAL and HEL caps and calls `WaitForVerticalBlank` twice, leaves
+`C:\DDPROBE.LOG` for the harness to read back, and draws nothing.
+
+```sh
+WATCOM=$HOME/.local/opt/open-watcom guest-tools/build-driver9x.sh
+PROG=guest-tools/out/driver9x/ddprobe.exe \
+  tools/win98-driver-test.sh ~/.local/share/2ksbox/machines/test98/disk.qcow2 install
+```
+
+**A build check came with it**, in the same spirit as §13/§14/§18's: a
+freestanding DLL has no CRT startup, so its entry point has to be named
+by hand — and `ld` only *warns* when it cannot find one, leaving
+`AddressOfEntryPoint` zero. Windows would then call address zero the
+moment DirectDraw loads the DLL into a game, which on 9x is a silent
+reboot. `build-driver9x.sh` fails the build on a zero entry point, on a
+missing `DriverInit` export, on an import from anything but `kernel32`,
+and on an instruction past the Pentium III floor.

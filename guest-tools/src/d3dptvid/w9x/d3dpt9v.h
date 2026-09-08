@@ -25,8 +25,15 @@
  * above: minivdd.h's VDD_REGISTER_DISPLAY_DRIVER_INFO. Repeated here so
  * the two halves cannot drift. The answer is
  *   EAX = selector onto the register page   ECX = VRAM bytes
- *   EDX = selector onto VRAM                ESI = VRAM's ring-0 linear address
- * and carry set means the adapter is not usable. */
+ *   EDX = selector onto VRAM                ESI = VRAM's linear address
+ *                                           EDI = the register page's linear
+ * and carry set means the adapter is not usable.
+ *
+ * The two linear addresses are not a convenience: the ring-3 HAL DLL is
+ * 32-bit and has no idea what a selector is, and DPMI cannot tell it —
+ * these selectors are GDT ones the mini-VDD built, and DPMI's "get
+ * segment base" only knows the LDT (2026-09-07). The VxD is the only
+ * thing that knows both, so it says both. */
 #define D3DPT_VDD_REGISTER_INFO 0x83
 
 /* The selectors handed back are DPL 3: the display driver is ring-3 code

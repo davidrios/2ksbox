@@ -28,6 +28,20 @@
 #   colours     the screendump's colour count: 16 or fewer means Windows
 #               fell back to VGA and the driver is not driving the screen.
 #
+# `PROG=<file.exe>` stages a program and names it in WIN.INI's `run=`, so
+# Windows starts it once the shell is up — this harness has nothing to
+# type at, so that is how anything gets exercised. The DirectDraw half of
+# the driver needs it: nothing on a Win98 desktop calls DirectDrawCreate
+# on its own, and until something does, the DCICOMMAND escapes and the
+# ring-3 HAL are never reached (doc 19 §2). The probe built for exactly
+# that is `guest-tools/out/driver9x/ddprobe.exe`:
+#
+#   PROG=guest-tools/out/driver9x/ddprobe.exe \
+#     tools/win98-driver-test.sh <image> install
+#
+# and the evidence is `d3dpt9dd:` / `d3dpthal:` lines in the guest log
+# plus the DDPROBE.LOG it leaves on C:.
+#
 # The boot is not slept out: the adapter says `linear mode on` the moment the
 # driver programs the desktop mode, so the run waits for that and then lets
 # the desktop paint for SETTLE seconds. A driver that never loads never says
@@ -80,6 +94,12 @@ if [ "$WHAT" = install ]; then
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9x.drv" ::/WINDOWS/INF/D3DPT9X.DRV
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9v.vxd" ::/WINDOWS/INF/D3DPT9V.VXD
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9x.inf" ::/WINDOWS/INF/D3DPT9X.INF
+  # the ring-3 HAL, if this host could build it: DirectDraw loads it by
+  # the name the .drv gives it, so it only ever has to be in SYSTEM
+  if [ -f "$DRV/d3dpt9hl.dll" ]; then
+    mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9hl.dll" ::/WINDOWS/SYSTEM/D3DPT9HL.DLL
+    mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9hl.dll" ::/WINDOWS/INF/D3DPT9HL.DLL
+  fi
 
   # **`NAME_IN_INI=1` names the driver in SYSTEM.INI instead of letting PnP
   # pick it, and it is off by default because it is no longer needed.** PnP
@@ -136,6 +156,40 @@ else:
 open(p, 'wb').write(b)
 PYINI
   mcopy -i "$RAW@@$OFF" -o "$OUT/system.ini" ::/WINDOWS/SYSTEM.INI
+  fi
+
+  # **PROG=<file.exe> runs a program once the shell is up.** This harness
+  # has no way to drive the guest — no serial line, no shell, nothing to
+  # type at until the display works — so the way to exercise anything is
+  # to have Windows start it for us. WIN.INI's `[windows] run=` is that
+  # hook: it is a full command line, it runs after the shell, and it
+  # needs no shortcut in a Start menu whose folder names are in whatever
+  # language the image was installed in. The program's own evidence is
+  # whatever it leaves on C:; the driver's is in the QEMU log.
+  #
+  # In binary, like SYSTEM.INI above, and for the same reason.
+  if [ -n "${PROG:-}" ]; then
+    [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
+    pbase="$(basename "$PROG" | tr a-z A-Z)"
+    echo "==> staging $pbase and naming it in WIN.INI's run="
+    mcopy -i "$RAW@@$OFF" -o "$PROG" "::/$pbase"
+    mcopy -i "$RAW@@$OFF" -n ::/WINDOWS/WIN.INI "$OUT/win.ini"
+    python3 - "$OUT/win.ini" "$pbase" <<'PYWIN'
+import re, sys
+p, prog = sys.argv[1], sys.argv[2].encode()
+b = open(p, 'rb').read()
+line = b'run=C:\\' + prog
+m = re.search(br'^run=[^\r\n]*', b, re.M | re.I)
+if m:
+    b = b[:m.start()] + line + b[m.end():]
+else:
+    m = re.search(br'^\[windows\]\r?\n', b, re.M | re.I)
+    if not m:
+        sys.exit("WIN.INI has no [windows] section")
+    b = b[:m.end()] + line + b'\r\n' + b[m.end():]
+open(p, 'wb').write(b)
+PYWIN
+    mcopy -i "$RAW@@$OFF" -o "$OUT/win.ini" ::/WINDOWS/WIN.INI
   fi
 
   # **Turn the logo off and the boot log on.** A boot that stalls behind the
@@ -311,6 +365,13 @@ for line in rows:
 PYTXT
 }
 text_screen
+# whatever PROG left behind, if it left anything (the guest is down by now)
+for f in DDPROBE.LOG; do
+  if mcopy -i "$RAW@@$OFF" -n "::/$f" "$OUT/out/$f" 2>/dev/null; then
+    echo "$f:"
+    sed 's/^/          /' "$OUT/out/$f"
+  fi
+done
 echo "0xE9      $(wc -c < "$OUT/out/dbg.log") bytes"
 sed 's/^/          /' "$OUT/out/dbg.log" | head -20
 echo "guest:    $(grep -c 'd3dpt-vga: guest' "$OUT/out/stderr.log" || true) lines"

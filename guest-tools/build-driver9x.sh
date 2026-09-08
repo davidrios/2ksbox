@@ -61,6 +61,8 @@ CFLAGS=(-q -wx -wcd=303 -s -zu -zls -zW -6 -fp6 -I"$DDK" -I"$SRC")
 
 echo "==> d3dpt9x.obj"
 ( cd "$BUILD" && wcc "${CFLAGS[@]}" -fo=d3dpt9x.obj "$SRC/d3dpt9x.c" )
+echo "==> d3dpt9dd.obj (the DirectDraw escapes)"
+( cd "$BUILD" && wcc "${CFLAGS[@]}" -fo=d3dpt9dd.obj "$SRC/d3dpt9dd.c" )
 echo "==> dibthunk.obj"
 ( cd "$BUILD" && wasm -q -fo=dibthunk.obj "$SRC/dibthunk.asm" )
 
@@ -85,6 +87,7 @@ echo "==> d3dpt9x.drv (16-bit NE, module DISPLAY)"
 cat > "$BUILD/d3dpt9x.lnk" <<'LNK'
 system windows dll initglobal
 file d3dpt9x.obj
+file d3dpt9dd.obj
 file dibthunk.obj
 name d3dpt9x.drv
 option map=d3dpt9x.map
@@ -317,6 +320,56 @@ if bad:
     sys.exit("d3dpt9x.drv: %d export(s) run on the caller's DS — a "
              "`__loadds` was lost to an earlier prototype." % bad)
 PYDS
+
+# ---------------------------------------------------------------------------
+# The ring-3 HAL DLL. This one is *not* Watcom's: on 9x the DirectDraw /
+# Direct3D HAL is an ordinary user-mode Win32 DLL loaded into the game's
+# own process (doc 19 §1), so it builds with the same i686 mingw-w64 the
+# XP driver and the guest wrappers use — and it is the only 9x binary
+# that links the OS-independent core. A host with no mingw still gets a
+# working display driver; it just gets no DirectDraw with it, and says so.
+#
+# Note the include path: *not* $DDK. Those are the 16-bit interface
+# headers, full of `__far`; the 32-bit DirectDraw driver headers
+# (ddrawi.h, d3dhal.h, dmemmgr.h) are ones mingw-w64 ships itself, and
+# they are the ones this half wants.
+HALCC=i686-w64-mingw32-gcc
+if command -v "$HALCC" >/dev/null; then
+  echo "==> d3dpt9hl.dll (the ring-3 DirectDraw / Direct3D HAL)"
+  "$HALCC" -O2 -Wall -Wno-unused-function -shared -nostdlib -ffreestanding \
+     -fno-stack-protector -mno-stack-arg-probe -fno-asynchronous-unwind-tables \
+     -fno-ident -march=pentium3 -mtune=generic -fno-tree-loop-distribute-patterns \
+     -Wl,--enable-stdcall-fixup -Wl,--entry,_DllMain@12 \
+     -I"$SRC" \
+     -o "$BUILD/d3dpt9hl.dll" "$SRC/d3dpthal.c" "$SRC/d3dpthal.def" -lgcc
+  # Loaded into every game's address space, so it must pull in no runtime
+  # and must not reach past the pentium3 floor the guests are built to.
+  bad="$(i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | awk '/DLL Name:/ {print $3}' \
+         | grep -ivE '^(kernel32\.dll)$' || true)"
+  [ -z "$bad" ] || { echo "ERROR: d3dpt9hl.dll imports from $bad"; exit 1; }
+  n=$(i686-w64-mingw32-objdump -d "$BUILD/d3dpt9hl.dll" | grep -cE '\b(movdq[au]|movapd|movupd|pshufd|paddq|cvtsd2|cvtsi2sd|xorpd|andpd|popcnt|pshufb)\b' || true)
+  [ "$n" -eq 0 ] || { echo "ERROR: d3dpt9hl.dll contains $n SSE2+ instructions (pentium3 floor)"; exit 1; }
+  i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | grep -qE '^\s+\[.*\]  *[0-9a-f]+ DriverInit$' \
+    || { echo "ERROR: d3dpt9hl.dll does not export DriverInit"; exit 1; }
+  # A freestanding DLL has no CRT startup, so the entry point has to be
+  # named by hand — and ld only *warns* when it cannot find one, leaving
+  # AddressOfEntryPoint zero. Windows then calls address zero the moment
+  # DirectDraw loads this into a game, which on 9x is a silent reboot.
+  ep=$(i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | awk '/AddressOfEntryPoint/ {print $2}')
+  [ -n "$ep" ] && [ "$ep" != "00000000" ] \
+    || { echo "ERROR: d3dpt9hl.dll has no entry point (AddressOfEntryPoint $ep)"; exit 1; }
+  cp "$BUILD/d3dpt9hl.dll" "$OUT/"
+
+  # The smallest thing that makes DirectDraw initialise, so that the
+  # escapes above are reached at all: a Win98 desktop never calls
+  # DirectDrawCreate on its own (doc 19 §2).
+  echo "==> ddprobe.exe (makes DirectDraw initialise, for the harness)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic -mwindows \
+     -o "$OUT/ddprobe.exe" "$SRC/ddprobe.c" -lddraw -ldxguid -luser32
+else
+  echo "==> no $HALCC: skipping d3dpt9hl.dll (no DirectDraw on 9x from this build)"
+fi
 
 cp "$BUILD/d3dpt9x.drv" "$BUILD/d3dpt9v.vxd" "$OUT/"
 cp "$SRC/d3dpt9x.inf" "$OUT/" 2>/dev/null || true

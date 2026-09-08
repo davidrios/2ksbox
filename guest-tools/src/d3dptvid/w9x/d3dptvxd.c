@@ -318,6 +318,7 @@ static void __stdcall register_display_driver_proc(DWORD vm, PCRS_32 state)
         state->Client_EDX = 0;
         state->Client_ECX = 0;
         state->Client_ESI = 0;
+        state->Client_EDI = 0;
         state->Client_EFlags |= 0x1;    /* carry: nothing to give */
         return;
     }
@@ -334,6 +335,7 @@ static void __stdcall register_display_driver_proc(DWORD vm, PCRS_32 state)
     state->Client_EDX = wVramSel;
     state->Client_ECX = dwVramSize;
     state->Client_ESI = dwVramLin;
+    state->Client_EDI = dwRegsLin;
     state->Client_EFlags &= 0xfffffffeuL;
     dbg_str("d3dptvxd: display driver registered");
 }

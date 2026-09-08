@@ -237,10 +237,28 @@ What the track starts from:
    superset and a mode-list utility (doc 19 §6). Installed by INF from the
    guest-tools ISO; `SETUP.EXE` grows the component and
    `tools/setup-guest-test.sh win98`'s "never offered" check inverts.
-8. **Step 3 — the DirectDraw DDI on 9x** (98's M7b): the VRAM heap, the
-   flip chain against the frame counter, `DdMapMemory`'s equivalent,
-   8 bpp palettized modes. `DDTEST.EXE` and `CDTEST`-style guest probes
-   run on 98 as they do on XP.
+8. **Step 3 — the DirectDraw DDI on 9x** (98's M7b). **The publication
+   chain landed 2026-09-08** (doc 19 §20): the third binary exists —
+   `w9x/d3dpthal.c` → `d3dpt9hl.dll`, ring 3, mingw, the one that will
+   link the core — the `.drv` answers all four `DCICOMMAND` escapes
+   (`w9x/d3dpt9dd.c`), the two halves share a block through the linear
+   address the escape hands over (`w9x/d3dpt9hal.h`), and in a real
+   guest DirectDraw loads the DLL into the probe's process, calls
+   `DriverInit` there, and **the DLL reads the adapter's registers from
+   ring 3** — which settles doc 19 §8's first question: the doorbell can
+   be a direct register write, no VxD ioctl. `DDHAL_SetInfo` returns
+   TRUE.
+   **Open, and the next session's first job:** the 32-bit runtime keeps
+   using its own HEL anyway — `ddprobe` sees `dwCaps 0x02000000`, no
+   video memory and `E_NOTIMPL` from the one callback the DLL publishes.
+   The 16-bit half is satisfied and the 32-bit half is not; doc 19 §20
+   lists what has already been ruled out (flags, table offsets, module
+   handle, heap, mode list, pointer kind), so start at that seam rather
+   than re-checking those.
+   Then the rest of M7b: the VRAM heap in earnest, the flip chain
+   against the frame counter, `DdMapMemory`'s equivalent, 8 bpp
+   palettized modes. `DDTEST.EXE` and `CDTEST`-style guest probes run on
+   98 as they do on XP.
 9. **Step 4 — the Direct3D DDI on 9x** (98's M7c): the core's DP2 walker
    under the 9x HAL. Two decisions land here, both new on 9x (doc 19 §8):
    whether the doorbell is a mapped register page or a VxD ioctl, and how
@@ -276,6 +294,22 @@ user's qcow2, so it is also the reset button — and the way out of safe
 mode. `boot` re-stages only the two
 binaries, which is what an edit-build-test cycle wants. `BOOT_WAIT=190`
 buys more time on a slow run; `OUT=` moves the outputs.
+
+`PROG=<file.exe>` stages a program and names it in WIN.INI's
+`[windows] run=` so the shell starts it — this harness has no serial line
+and nothing to type at, and it is how the DirectDraw half gets exercised
+at all (nothing on a Win98 desktop calls `DirectDrawCreate`):
+
+```sh
+PROG=guest-tools/out/driver9x/ddprobe.exe \
+  tools/win98-driver-test.sh ~/.local/share/2ksbox/machines/test98/disk.qcow2 install
+```
+
+**`~/vms/win98.qcow2` is not the image for this track**: it is a Sep-4
+install from before the BIOS-date stamp, PnP does not match our INF on
+it, and the run ends on the inbox VGA with an empty log. The user's
+`~/.local/share/2ksbox/machines/test98/disk.qcow2` is the one the driver
+installs on (the harness copies it and never writes it).
 
 `install` writes the SYSTEM.INI configuration itself now — `[386Enh]
 device=C:\WINDOWS\SYSTEM\D3DPT9V.VXD` and `[boot] display.drv=d3dpt9x.drv`

@@ -23,6 +23,7 @@ D3dpt.Copy=11
 [SourceDisksFiles]
 d3dpt9x.drv=1
 d3dpt9v.vxd=1
+d3dpt9hl.dll=1
 
 [Manufacturer]
 %Mfg%=Mfg.2ksbox
@@ -38,6 +39,9 @@ AddReg=D3dpt.AddReg,Modes.AddReg
 [D3dpt.Copy]
 d3dpt9x.drv,,,0x00000004
 d3dpt9v.vxd,,,0x00000004
+; the ring-3 DirectDraw / Direct3D HAL: DirectDraw loads it into the
+; game's own process, named by the .drv rather than by any registry key
+d3dpt9hl.dll,,,0x00000004
 
 ; **Clear the old keys before writing the new ones.** A display adapter
 ; that has been running on the inbox VGA already has a `CURRENT` key
