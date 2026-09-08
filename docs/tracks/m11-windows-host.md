@@ -34,10 +34,31 @@ one. Windows had been "untested" since M1 (doc 08).
   `scripts/configure-qemu.sh`, `qemu-embed/build.rs`, and the shared
   layer of `embed/mglcntx_embed.c` (M3's file).
 
-## State (2026-09-06)
+## State (2026-09-06; the Qt package built 2026-09-08)
 
-The whole stack cross-builds and packages. `scripts/build-windows.sh`
-then `scripts/package-windows.sh` produce a ~92 MB zip holding
+The whole stack cross-builds and packages. **The first cross build since
+ADR-015 made `2ksbox.exe` the Qt launcher ran 2026-09-08**, from a
+worktree that had no `build/win` of its own (a Windows build belongs to
+its checkout like every other): `qemu rust qt exec` in 424 s, then
+`package-windows.sh` green — 412 MB staged, a **146 MB zip** (the older
+~92 MB figure below is the egui launcher's, before Qt's runtime, plugins
+and QML trees came along). The staged launcher answered `--paths` and
+wrote its `launcher.log`, the packaged `qemu-img.exe` wrote a qcow2, and
+`wgl-probe.exe` drew its frame. The one thing wine still will not do is
+open the Qt window offscreen — a report, not a verdict, and the real
+answer is `2ksbox-debug.bat` on the PC.
+
+That run also added the check the Linux packages needed
+(2026-09-07): the staged **player** must answer `--companions` with the
+libraries QEMU `LoadLibrary`s by name rather than through an import
+table. On Windows that is `d3dpt_exec.dll` — staged, and resolved inside
+the package — with `glide` and `dxvk` legitimately "(not shipped)": there
+is no Glide wrapper for Windows yet (M3: the cross build has no glide
+stage), and DXVK is not built there because the host has a real
+Direct3D 9 and a `d3d9.dll` beside the player would override it.
+
+`scripts/build-windows.sh`
+then `scripts/package-windows.sh` produce a zip holding
 `2ksbox.exe`, `2ksbox-player.exe`, `qemu-img.exe`,
 `libqemu-embed-i386.dll` (all 20 embed API entry points exported),
 `d3dpt_exec.dll`, the mingw runtime closure, `pc-bios\`, the guest-tools

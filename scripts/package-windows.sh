@@ -363,6 +363,34 @@ if command -v wine >/dev/null; then
     done <<< "$resolved"
   fi
 
+  # The libraries QEMU `dlopen`s (`LoadLibrary`s) by name rather than
+  # through an import table — here that is the Direct3D executor, and a
+  # DXVK `d3d9.dll` if one was ever dropped in. Nothing above can see
+  # them: they are in no import table, and the Linux packages shipped
+  # without them for months for exactly that reason (2026-09-07). The
+  # staged *player* knows where they should be
+  # (`player/src/companions.rs`), so ask it.
+  companions=$(runw 2ksbox-player.exe --companions || true)
+  if [ -n "$companions" ]; then
+    printf '%s\n' "$companions"
+    while read -r what file; do
+      [ -f "$STAGE/$file" ] || continue          # not built here; warned above
+      got=$(printf '%s\n' "$companions" | awk -v w="$what" '$1 == w { print $2 }')
+      win=$(printf '%s' "$got" | tr '\\' '/' | sed 's|^[A-Za-z]:||')
+      case "$win" in
+        *"/$NAME/$file") ;;
+        *) echo "package-windows.sh: $file is staged but the player answered ${got:-nothing}" >&2; fail=1 ;;
+      esac
+    done <<EOF
+glide       glide2x.dll
+d3dpt-exec  d3dpt_exec.dll
+dxvk        d3d9.dll
+EOF
+  else
+    echo "package-windows.sh: the staged player printed nothing for --companions" >&2
+    fail=1
+  fi
+
   # The package has to be able to say why it failed, which is the whole
   # of `launcher-core/src/fatal.rs`: a windowed program's start-up
   # failure has no stdout, so it goes into a log instead. Here that log

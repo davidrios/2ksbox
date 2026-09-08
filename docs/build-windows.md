@@ -172,9 +172,13 @@ stages it.)
 
 `scripts/package-windows.sh` then **runs the staged package under wine**,
 from outside the checkout with an empty environment: the launcher must
-answer `--paths` with paths inside the package, and the packaged
-`qemu-img.exe` must actually write a qcow2 — which is also what proves
-the DLL closure, since it cannot start with one missing. Wine is not the
+answer `--paths` with paths inside the package, the **player** must
+answer `--companions` with the staged Direct3D executor (and a DXVK
+`d3d9.dll` where one exists) — the libraries QEMU `LoadLibrary`s by name,
+which are in no import table and which every Linux package silently
+shipped without until 2026-09-07 — and the packaged `qemu-img.exe` must
+actually write a qcow2, which is also what proves the DLL closure, since
+it cannot start with one missing. Wine is not the
 target and a failure there is investigated rather than believed, but a
 package that fails these has not been built correctly for any Windows.
 
