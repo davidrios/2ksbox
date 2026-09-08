@@ -80,6 +80,13 @@ static d3dpt_hal9 __far *pHal;          /* through our own selector */
 static DWORD dwHalLinear;               /* the same block, as the DLL sees it */
 static LPDDHAL_SETINFO lpSetInfo;       /* DirectDraw's, from DDNEWCALLBACKFNS */
 
+static void HalMode(void);
+
+/* the bisection knob, read off the adapter (see D9F_* in d3dpt9x.h). Read
+ * on every use rather than cached: the escapes arrive from more than one
+ * place and there is no init this file owns that runs before all of them. */
+#define DDF() RegGet(D3DPT_FB_REG_DDFLAGS)
+
 /* The tables live in the shared block (see d3dpt9hal.h): these are just
  * the far pointers at them, and the linear addresses DDHALINFO carries. */
 #define HALFIELD(type, field) ((type __far *)&pHal->field[0])
@@ -293,18 +300,42 @@ static BOOL BuildHalInfo(void)
     /* DDCAPS_GDI is normal on 9x and fatal on NT (doc 19 §5): here it
      * says the primary is the same memory GDI draws into, which it is. */
     hi->ddCaps.dwCaps = DDCAPS_GDI | DDCAPS_BLTQUEUE;
-    hi->ddCaps.dwCaps2 = DDCAPS2_CERTIFIED;
-    hi->ddCaps.dwVidMemTotal = pHal->vram_size - start;
-    hi->ddCaps.dwVidMemFree = pHal->vram_size - start;
+    /* **Never DDCAPS2_CERTIFIED**, which is what this step cost
+     * (2026-09-08, doc 19 §21). "Certified" is something the runtime
+     * grants, not something a driver claims, and DirectDraw's HALINFO
+     * validator refuses a driver that claims it — `testb $1,0x68(%ebx);
+     * jne fail` on `ddCaps.dwCaps2`. The refusal is invisible from here:
+     * the *16-bit* `DDHAL_SetInfo` stores the HALINFO and returns TRUE,
+     * and the 32-bit half throws the whole driver object away
+     * afterwards, so the driver sees "DirectDraw took the HAL" and every
+     * application sees a HAL with dwCaps DDCAPS_NOHARDWARE, no video
+     * memory and not one callback ever entered. `D9F_CERTIFIED` puts it
+     * back, for when that has to be seen again. */
+    hi->ddCaps.dwCaps2 = (DDF() & D9F_CERTIFIED) ? DDCAPS2_CERTIFIED : 0;
     hi->ddCaps.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_PRIMARYSURFACE |
                                 DDSCAPS_FLIP | DDSCAPS_VIDEOMEMORY;
+    hi->ddCaps.dwVidMemTotal = pHal->vram_size - start;
+    hi->ddCaps.dwVidMemFree = pHal->vram_size - start;
 
     hi->dwMonitorFrequency = 0;
-    hi->dwFlags = DDHALINFO_MODEXILLEGAL;
+    /* DDHALINFO_ISPRIMARYDISPLAY is what the reference driver sets and
+     * what we are — it becomes DDRAWI_DISPLAYDRV on the runtime's side.
+     * It was missing until 2026-09-08 and it is *not* what was wrong
+     * then (a boot with it removed again behaves identically, doc 19
+     * §21); it is here because it is true. */
+    hi->dwFlags = DDHALINFO_ISPRIMARYDISPLAY | DDHALINFO_MODEXILLEGAL;
     /* the module DirectDraw loaded our 32-bit callbacks out of, and the
      * driver's own PDEVICE */
     hi->hInstance = pHal->dll_hinstance;
     hi->lpPDevice = (LPVOID)lpDriverPDevice;
+    dbg_val("d3dpt9dd:   ddflags", DDF());
+    dbg_str("");
+    dbg_val("d3dpt9dd:   halinfo flags", hi->dwFlags);
+    dbg_val(" caps", hi->ddCaps.dwCaps);
+    dbg_str("");
+    dbg_val("d3dpt9dd:   heap", hp->fpStart);
+    dbg_val("..", hp->fpEnd);
+    dbg_str("");
     return TRUE;
 }
 
@@ -346,6 +377,9 @@ BOOL DDNewCallbackFns(DCICMD_t __far *lpCmd)
 void DDGetVersion(DDVERSIONDATA_t __far *lpVer)
 {
     ZeroFar(lpVer, sizeof(DDVERSIONDATA_t));
+    /* The reference driver's answer, and the runtime does not mind:
+     * DirectX 6.1 in the test guest takes 0x700 as happily as 0x100
+     * (measured 2026-09-08, both ways). */
     lpVer->dwHALVersion = DD_RUNTIME_VERSION;
 }
 

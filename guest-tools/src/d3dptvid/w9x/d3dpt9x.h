@@ -41,6 +41,18 @@ void ZeroFar(void __far *p, WORD n);
 DWORD MulW(WORD a, WORD b);
 #pragma aux MulW = "mul bx" parm [ax] [bx] value [dx ax];
 
+/* **The 9x half of `-device d3dpt-vga,ddflags=N`** (doc 19 §21). One
+ * register, two drivers: the NT core owns the low half of DDFLAGS
+ * (`core/d3dpt_core.h`'s `DDF_*`) and everything 9x-only lives in the
+ * high half, so the two can never collide.
+ *
+ * `D9F_CERTIFIED` is the repro for the bug that cost this step: it puts
+ * `DDCAPS2_CERTIFIED` back in the caps, which makes the 32-bit runtime
+ * throw the whole HAL away *after* the 16-bit half accepted it. Kept
+ * because the failure is silent at both ends and this is the only way
+ * to see it happen again on purpose. */
+#define D9F_CERTIFIED    0x01000000ul   /* the repro: claim DDCAPS2_CERTIFIED again */
+
 /* the DirectDraw half (d3dpt9dd.c): the DCICOMMAND escapes through which
  * a 16-bit .drv publishes its 32-bit HAL (doc 19 §2) */
 struct DCICMD;

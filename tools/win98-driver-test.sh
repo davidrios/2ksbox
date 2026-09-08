@@ -48,6 +48,10 @@
 # it, and then — and only then — the whole BOOT_WAIT is spent before the run
 # reports what it found.
 #
+# `DDFLAGS=<n>` passes the adapter's bisection knob through
+# (`-device d3dpt-vga,ddflags=N`); the 9x driver reads the high half of it
+# (`D9F_*` in `w9x/d3dpt9x.h`), the NT one the low half.
+#
 # `BOOT_WAIT=<s>` is that cap (it buys more time on a slow run), `SETTLE=<s>`
 # is the paint time after the mode switch, `SHOTS=<s>` adds a screendump
 # every <s> seconds (`t<n>.png` in the output directory) so that a screen
@@ -221,15 +225,35 @@ PYMS
   mcopy -i "$RAW@@$OFF" -o "$OUT/msdos.sys" ::/MSDOS.SYS
   mattrib -i "$RAW@@$OFF" +r +s +h ::/MSDOS.SYS 2>/dev/null || true
 else
+  # A `boot` re-stages every binary the run is testing, and nothing else.
+  # The three that change while this track is being worked on are the two
+  # Watcom ones and the ring-3 HAL DLL — and `PROG`, which is the only way
+  # anything on this desktop calls DirectDraw at all. Re-staging them here
+  # is what makes an edit-build-test cycle on the DirectDraw half cost one
+  # boot rather than a whole `install` (which re-converts the image).
+  # WIN.INI already names PROG from the install that set it up; a different
+  # PROG than that one needs the install again.
   export MTOOLS_SKIP_CHECK=1
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9x.drv" ::/WINDOWS/SYSTEM/D3DPT9X.DRV
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9v.vxd" ::/WINDOWS/SYSTEM/D3DPT9V.VXD
+  [ -f "$DRV/d3dpt9hl.dll" ] &&
+    mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9hl.dll" ::/WINDOWS/SYSTEM/D3DPT9HL.DLL
+  if [ -n "${PROG:-}" ]; then
+    [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
+    mcopy -i "$RAW@@$OFF" -o "$PROG" "::/$(basename "$PROG" | tr a-z A-Z)"
+  fi
 fi
+
+# A stale log read back after a run that never wrote one is a whole session
+# spent on the wrong evidence: delete what the last run left before this one
+# starts, so what comes out at the end is this run's or nothing.
+mdel -i "$RAW@@$OFF" ::/DDPROBE.LOG 2>/dev/null || true
 
 rm -f "$OUT/out/dbg.log" "$OUT/out/stderr.log" "$OUT/out"/t*.ppm* "$OUT/out"/t*.png
 echo "==> booting on -vga none -device d3dpt-vga"
 "$QEMU" -L "$ROOT/qemu/pc-bios" -machine pc -m 256 -accel tcg \
-  -drive file="$RAW",format=raw,if=ide,index=0 -vga none -device d3dpt-vga \
+  -drive file="$RAW",format=raw,if=ide,index=0 -vga none \
+  -device d3dpt-vga${DDFLAGS:+,ddflags=$DDFLAGS} \
   -net none -display none -rtc base=localtime \
   -debugcon file:"$OUT/out/dbg.log" -qmp unix:"$SOCK",server,nowait \
   > "$OUT/out/stderr.log" 2>&1 &

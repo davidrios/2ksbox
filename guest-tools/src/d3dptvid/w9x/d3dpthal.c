@@ -91,7 +91,15 @@ static DWORD __stdcall WaitForVerticalBlank32(d3dpt_ddhal_waitvb *d)
 {
     ULONG f, i;
     volatile ULONG spin = 0;
+    static int said;
 
+    /* Once, and only once: that this is entered at all is the thing
+     * being proved, and a line per frame would drown the log. */
+    if (!said) {
+        said = 1;
+        dbg_hex("d3dpthal: WaitForVerticalBlank, flags ", d->dwFlags);
+        dbg_puts("\n");
+    }
     d->ddRVal = DD_OK;
     if (!regs) {
         d->ddRVal = DDERR_UNSUPPORTED;

@@ -248,17 +248,25 @@ What the track starts from:
    ring 3** — which settles doc 19 §8's first question: the doorbell can
    be a direct register write, no VxD ioctl. `DDHAL_SetInfo` returns
    TRUE.
-   **Open, and the next session's first job:** the 32-bit runtime keeps
-   using its own HEL anyway — `ddprobe` sees `dwCaps 0x02000000`, no
-   video memory and `E_NOTIMPL` from the one callback the DLL publishes.
-   The 16-bit half is satisfied and the 32-bit half is not; doc 19 §20
-   lists what has already been ruled out (flags, table offsets, module
-   handle, heap, mode list, pointer kind), so start at that seam rather
-   than re-checking those.
-   Then the rest of M7b: the VRAM heap in earnest, the flip chain
-   against the frame counter, `DdMapMemory`'s equivalent, 8 bpp
-   palettized modes. `DDTEST.EXE` and `CDTEST`-style guest probes run on
-   98 as they do on XP.
+   **And the runtime bit the same day** (doc 19 §21): the seam was one
+   bit, `DDCAPS2_CERTIFIED`, which the driver claimed and DirectDraw's
+   HALINFO validator refuses. It is invisible from the driver because
+   the 16-bit `DDHAL_SetInfo` only stores the structure and returns
+   TRUE, and it is 32-bit `ddraw.dll` that validates it afterwards and
+   silently builds an emulation-only object instead. Found by pulling
+   the guest's own `DDRAW.DLL` out of the image and disassembling the
+   validator, whose whole rule list is now in doc 19 §21 — including
+   the 9x statement of doc 15's NT caps rules (`DDCAPS_BLT` needs a
+   `Blt` callback *and* SRCCOPY in `dwRops`; each surface cap needs its
+   `vmiData` alignment non-zero and even). `ddprobe` now reads back our
+   own `dwCaps 0x480`, 126 MB of video memory, a primary that is
+   `DDSCAPS_VIDEOMEMORY` and a video-memory-only offscreen surface that
+   allocates and locks. Five things were ruled out with a boot each
+   first, listed there so nobody repeats them.
+   **Next: the rest of M7b** — the VRAM heap in earnest, the surface
+   callbacks, the flip chain against the frame counter, `DdMapMemory`'s
+   equivalent, 8 bpp palettized modes. `DDTEST.EXE` and `CDTEST`-style
+   guest probes run on 98 as they do on XP.
 9. **Step 4 — the Direct3D DDI on 9x** (98's M7c): the core's DP2 walker
    under the 9x HAL. Two decisions land here, both new on 9x (doc 19 §8):
    whether the doorbell is a mapped register page or a VxD ioctl, and how
@@ -310,6 +318,14 @@ install from before the BIOS-date stamp, PnP does not match our INF on
 it, and the run ends on the inbox VGA with an empty log. The user's
 `~/.local/share/2ksbox/machines/test98/disk.qcow2` is the one the driver
 installs on (the harness copies it and never writes it).
+
+A `boot` re-stages `d3dpt9hl.dll` and `PROG` as well as the two Watcom
+binaries and deletes the last run's `C:\DDPROBE.LOG` from the image, so
+an edit-build-test cycle on the DirectDraw half is one boot rather than a
+whole `install`, and a log read back at the end is this run's or nothing.
+`DDFLAGS=<n>` passes the adapter's bisection knob through; the 9x driver
+reads the high half of it (`D9F_*` in `w9x/d3dpt9x.h`), the NT one the low
+half.
 
 `install` writes the SYSTEM.INI configuration itself now — `[386Enh]
 device=C:\WINDOWS\SYSTEM\D3DPT9V.VXD` and `[boot] display.drv=d3dpt9x.drv`

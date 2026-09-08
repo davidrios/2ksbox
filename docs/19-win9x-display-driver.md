@@ -852,8 +852,8 @@ with no ioctl.** That settles §8's open question in favour of its first
 option: the doorbell can be a direct register write, the same cost
 profile as XP, and the VxD needs no `DeviceIoControl` handler at all.
 
-**What is not done.** `DDHAL_SetInfo` returns TRUE, and the 32-bit
-runtime then keeps using its own HEL anyway: `ddprobe` still sees
+**What was not done then, and is now: §21.** `DDHAL_SetInfo` returned
+TRUE and the 32-bit runtime kept using its own HEL anyway: `ddprobe` still sees
 `dwCaps 0x02000000`, no video memory, and `E_NOTIMPL` from
 `WaitForVerticalBlank` — the one callback the DLL publishes. So the
 16-bit half is satisfied and the 32-bit half is not, and the next
@@ -924,3 +924,97 @@ moment DirectDraw loads the DLL into a game, which on 9x is a silent
 reboot. `build-driver9x.sh` fails the build on a zero entry point, on a
 missing `DriverInit` export, on an import from anything but `kernel32`,
 and on an instruction past the Pentium III floor.
+
+### 21. The runtime read the HALINFO and threw it away (2026-09-08)
+
+§20 left the DirectDraw half exactly one fact short: the chain ran, the
+DLL was loaded into the game's process, `DDHAL_SetInfo` returned TRUE —
+and `ddprobe` still saw `dwCaps 0x02000000` (`DDCAPS_NOHARDWARE`), no
+video memory, `DDERR_NODIRECTDRAWHW` from a video-memory surface and not
+one of the DLL's callbacks ever entered. The 16-bit half was satisfied
+and the 32-bit half was not.
+
+**The cause is one bit: `DDCAPS2_CERTIFIED` in `ddCaps.dwCaps2`.**
+"Certified" is something the *runtime* says about a driver, never
+something a driver says about itself, and DirectDraw's HALINFO validator
+refuses any driver that claims it.
+
+**Why it is invisible.** The two halves of the runtime do different jobs.
+The 16-bit `DDHAL_SetInfo` a driver calls from `DDCREATEDRIVEROBJECT`
+only *stores* the HALINFO — it validates nothing, and returns TRUE. The
+validation happens afterwards, in 32-bit `ddraw.dll`, in the function
+that builds the `DDRAWI_DIRECTDRAW_GBL` out of the stored HALINFO; when
+that returns NULL its caller silently builds an emulation-only object
+instead. So the driver's own log says "DirectDraw took the HAL", every
+application sees a HAL that was never published, and nothing anywhere
+says which of the two happened.
+
+**How it was found**, since no amount of guessing had moved it: the
+guest's own `DDRAW.DLL` (DirectX 6.1, 299 008 bytes, `ImageBase`
+`0xbaaa0000`) was pulled out of the image with mtools and disassembled.
+`DirectDrawCreate` → the escape routine at `0xbaab6634` (five
+`push $0xc03` sites, one per `DCICOMMAND`) → the object builder at
+`0xbaab3dc7` → its first gate, the HALINFO validator at `0xbaab4d63`. The
+validator is a plain list of rules, and reading it is worth more than any
+documentation of the interface:
+
+| the rule | what the driver must do |
+|---|---|
+| `dwSize` is 0x130, or 0x1cc, or larger | the DX3 or the DX5+ `DDHALINFO`; ours is 0x1cc |
+| the whole structure is readable | it is `IsBadReadPtr`'d for `dwSize` bytes |
+| every heap has a non-zero `fpStart`, and is not `VIDMEM_ISNONLOCAL` | a heap that is `VIDMEM_ISHEAP` also needs `DDCAPS2_NONLOCALVIDMEM` |
+| `vmiData.ddpfDisplay.dwSize == 32` | and if it is `DDPF_PALETTEINDEXED8`, `dwRGBBitCount == 8` |
+| each callback table's `dwSize` is a multiple of 4 and at least its own minimum | 0x28 or ≥0x30 for `DDHAL_DDCALLBACKS`, ≥0x40 for the surface table, ≥0x10 for the palette one, ≥0x1c for the execute-buffer one |
+| every callback a `dwFlags` bit claims passes `IsBadCodePtr` | the bit's index is the entry's index, counting from the first pointer |
+| `ddsCaps.dwCaps` has no `DDSCAPS_OPTIMIZED` | |
+| **`ddCaps.dwCaps2` has no `DDCAPS2_CERTIFIED`** | `testb $0x1,0x68(%ebx); jne fail` — this is the one we were failing |
+| `dwNumModes > 0` implies `lpModeInfo != NULL` | |
+
+And two rules from the builder itself, which are the 9x statement of the
+caps rules doc 15 learned the hard way on NT:
+
+- **`DDCAPS_BLT` requires a `Blt` callback** *and* requires SRCCOPY
+  (ROP 0xCC) to be set in `ddCaps.dwRops` — claiming the cap with either
+  missing throws the whole HAL away, exactly as a claimed cap without its
+  callback does to dxg.
+- **`DDSCAPS_OFFSCREENPLAIN`, `_OVERLAY`, `_TEXTURE` and `_ZBUFFER` each
+  require their `vmiData` alignment** to be non-zero *and even*.
+
+**What was ruled out on the way**, each by a boot of its own, so that no
+one repeats them: `DDHALINFO_ISPRIMARYDISPLAY` (missing at first — it is
+correct to set and it is not what was wrong), `DDHALINFO_MODEXILLEGAL`
+either way, `dwHALVersion` as `DD_HAL_VERSION` or `DD_RUNTIME_VERSION`
+(DirectX 6.1 takes both), the reference driver's whole rich caps set,
+`dwVidMemTotal`/`Free` left zero, and `EmulationOnly` in the registry
+(absent). The bisection they were run with is the 9x half of
+`-device d3dpt-vga,ddflags=N`: the `.drv` reads the same DDFLAGS register
+the NT core does, in the **high half** so the two can never collide
+(`D9F_*` in `w9x/d3dpt9x.h`), and `tools/win98-driver-test.sh` takes
+`DDFLAGS=`. One bit is kept, `D9F_CERTIFIED`, which puts the bad bit back:
+a failure this silent at both ends is worth being able to reproduce.
+
+**What the fix bought, measured in the guest** (`ddprobe`, on the
+`test98` machine): `HAL dwCaps 0x00000480` — our own `DDCAPS_GDI |
+DDCAPS_BLTQUEUE`, where it had been `DDCAPS_NOHARDWARE` alone —
+`132 972 544` bytes of video memory total and free, which is the heap
+the `.drv` published; a primary surface whose caps are
+`DDSCAPS_VIDEOMEMORY | DDSCAPS_LOCALVIDMEM` rather than
+`DDSCAPS_SYSTEMMEMORY`; and a 64x64 `DDSCAPS_OFFSCREENPLAIN |
+DDSCAPS_VIDEOMEMORY` surface — the request the HEL cannot satisfy at all
+— created and locked. DirectDraw is allocating out of the adapter.
+
+**Still open, and the next step's to settle.** `WaitForVerticalBlank`
+answers `E_NOTIMPL` and the DLL's callback is never entered, at any
+cooperative level; the runtime fetches the 32-bit entry from its merged
+table at `+0x98` but gates on `+0x18` of the same block being non-zero,
+and that word is what has not been traced yet. It is not worth another
+disassembly on its own: the surface callbacks are M7b's next work and
+they answer the same question — whether a published callback is entered
+at all — with a lot more of the driver behind it.
+
+The harness grew two things in the same session, both of which this cost:
+a `boot` re-stages `d3dpt9hl.dll` and `PROG` as well as the two Watcom
+binaries, so an edit-build-test cycle on the DirectDraw half is one boot
+rather than a whole `install`; and it deletes `C:\DDPROBE.LOG` from the
+image before booting, because a stale log read back after a run that
+wrote none is a session spent on the wrong evidence.
