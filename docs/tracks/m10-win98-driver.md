@@ -274,14 +274,18 @@ What the track starts from:
    entries in **its own** address space — and a DLL in the private arena
    has a different address in every process (DDHELP `0x00b50000`, the
    probe's own `LoadLibrary` `0x00ca0000`, its `GetModuleHandle` NULL).
-   **The blocker, and the next session's first job:** the ring-3 HAL has
-   to be mapped in the shared arena above 2 GiB, as the reference driver's
-   `0xB00B0000` is, and this Windows 98 relocates it out of there whatever
-   base is asked for — including the reference's own — while removing the
-   relocation table to force the issue makes `LoadLibrary` fail. Doc 19
-   §22 lists what was tried. Until it is solved the 16-bit half withholds
-   any callback below `0x80000000` and logs why, which keeps the HAL, the
-   video-memory heap and the mode list.
+   **The blocker is resolved (2026-09-08, doc 19 §23):** Windows 9x's PE
+   loader requires every section of a DLL based above 0x80000000 to carry
+   `IMAGE_SCN_MEM_SHARED` (`0x10000000`), otherwise it treats the image as
+   containing private process state and relocates it down into the
+   per-process private arena (`< 0x80000000`). Mingw's `ld` does not offer
+   a switch to mark all sections shared; `build-driver9x.sh` now
+   post-processes `d3dpt9hl.dll` to set `IMAGE_SCN_MEM_SHARED` on every
+   section and recalculates the PE checksum. In the guest, `d3dpt9hl.dll`
+   loads at `0xB00B0000` for both DDHELP and game processes, DirectDraw
+   takes the HAL with its callbacks enabled (`dd callbacks=0x00000033`),
+   and `WaitForVerticalBlank`, `CanCreateSurface`, and `CreateSurface` are
+   entered cleanly by the runtime.
    **Then the rest of M7b** — the VRAM heap in earnest, the surface
    callbacks, the flip chain against the frame counter, `DdMapMemory`'s
    equivalent, 8 bpp palettized modes. `DDTEST.EXE` and `CDTEST`-style

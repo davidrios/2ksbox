@@ -394,6 +394,50 @@ if command -v "$HALCC" >/dev/null; then
   ep=$(i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | awk '/AddressOfEntryPoint/ {print $2}')
   [ -n "$ep" ] && [ "$ep" != "00000000" ] \
     || { echo "ERROR: d3dpt9hl.dll has no entry point (AddressOfEntryPoint $ep)"; exit 1; }
+
+  # Windows 9x relocates any DLL in the shared arena (>= 0x80000000) down into
+  # the private per-process arena unless every section is marked shared
+  # (IMAGE_SCN_MEM_SHARED = 0x10000000). DirectDraw loads the HAL in DDHELP.EXE,
+  # but games validate callbacks in their own processes. Marking all sections
+  # shared keeps the DLL at HAL_BASE across all processes.
+  python3 - "$BUILD/d3dpt9hl.dll" <<'PYPE'
+import struct, sys
+p = sys.argv[1]
+f = bytearray(open(p, 'rb').read())
+pe = struct.unpack_from('<I', f, 0x3c)[0]
+assert f[pe:pe+4] == b'PE\x00\x00', 'not a PE module: %r' % f[pe:pe+4]
+
+coff = pe + 4
+num_sections = struct.unpack_from('<H', f, coff + 2)[0]
+opt_hdr_size = struct.unpack_from('<H', f, coff + 16)[0]
+opt_hdr = coff + 20
+sec_tab = opt_hdr + opt_hdr_size
+IMAGE_SCN_MEM_SHARED = 0x10000000
+
+for i in range(num_sections):
+    o = sec_tab + i * 40
+    name = f[o:o+8].rstrip(b'\x00').decode('latin1')
+    chars = struct.unpack_from('<I', f, o + 36)[0]
+    struct.pack_into('<I', f, o + 36, chars | IMAGE_SCN_MEM_SHARED)
+    print("   section %-8s: flags %08x -> %08x (shared)" % (name, chars, chars | IMAGE_SCN_MEM_SHARED))
+
+chk_off = opt_hdr + 64
+struct.pack_into('<I', f, chk_off, 0)
+flen = len(f)
+padded = f if flen % 2 == 0 else f + b'\x00'
+total = 0
+for i in range(0, len(padded), 2):
+    word, = struct.unpack_from('<H', padded, i)
+    total += word
+    total = (total >> 16) + (total & 0xffff)
+total = (total >> 16) + (total & 0xffff)
+total = (total + flen) & 0xffffffff
+struct.pack_into('<I', f, chk_off, total)
+print("   PE checksum: -> %08x" % total)
+
+open(p, 'wb').write(f)
+PYPE
+
   cp "$BUILD/d3dpt9hl.dll" "$OUT/"
 
   # The smallest thing that makes DirectDraw initialise, so that the

@@ -93,6 +93,7 @@ for i in range(4):
 if [ "$WHAT" = install ]; then
   export MTOOLS_SKIP_CHECK=1
   echo "==> staging the driver and its INF (PnP installs it on the next boot)"
+  mattrib -i "$RAW@@$OFF" -r ::/WINDOWS/SYSTEM/D3DPT9* ::/WINDOWS/INF/D3DPT9* 2>/dev/null || true
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9x.drv" ::/WINDOWS/SYSTEM/D3DPT9X.DRV
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9v.vxd" ::/WINDOWS/SYSTEM/D3DPT9V.VXD
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9x.drv" ::/WINDOWS/INF/D3DPT9X.DRV
@@ -176,6 +177,7 @@ PYINI
     [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
     pbase="$(basename "$PROG" | tr a-z A-Z)"
     echo "==> staging $pbase and naming it in WIN.INI's run="
+    mattrib -i "$RAW@@$OFF" -r "::/$pbase" 2>/dev/null || true
     mcopy -i "$RAW@@$OFF" -o "$PROG" "::/$pbase"
     mcopy -i "$RAW@@$OFF" -n ::/WINDOWS/WIN.INI "$OUT/win.ini"
     python3 - "$OUT/win.ini" "$pbase" <<'PYWIN'
@@ -234,12 +236,14 @@ else
   # WIN.INI already names PROG from the install that set it up; a different
   # PROG than that one needs the install again.
   export MTOOLS_SKIP_CHECK=1
+  mattrib -i "$RAW@@$OFF" -r ::/WINDOWS/SYSTEM/D3DPT9* 2>/dev/null || true
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9x.drv" ::/WINDOWS/SYSTEM/D3DPT9X.DRV
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9v.vxd" ::/WINDOWS/SYSTEM/D3DPT9V.VXD
   [ -f "$DRV/d3dpt9hl.dll" ] &&
     mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9hl.dll" ::/WINDOWS/SYSTEM/D3DPT9HL.DLL
   if [ -n "${PROG:-}" ]; then
     [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
+    mattrib -i "$RAW@@$OFF" -r "::/$(basename "$PROG" | tr a-z A-Z)" 2>/dev/null || true
     mcopy -i "$RAW@@$OFF" -o "$PROG" "::/$(basename "$PROG" | tr a-z A-Z)"
   fi
 fi

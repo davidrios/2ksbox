@@ -1095,3 +1095,91 @@ took: the display mode, a primary surface and a video-memory-only one
 each described and locked, and `GetModuleHandle` / `LoadLibrary` /
 `IsBadCodePtr` on the HAL itself — the last three being the runtime's own
 test, run where the runtime runs it.
+
+### 23. The shared arena solved: IMAGE_SCN_MEM_SHARED (2026-09-08)
+
+§22 ended on a hard blocker: `d3dpt9hl.dll` linked at `0xB00B0000` was
+relocated by Windows 98 to `0x00b50000` in `DDHELP.EXE`, making its
+callback addresses unreachable in game processes. Forcing the base by
+stripping the relocation table caused `LoadLibrary` to fail outright.
+
+**The cause is a PE section characteristic: `IMAGE_SCN_MEM_SHARED`
+(`0x10000000`).** The Windows 9x kernel splits the 4 GiB virtual address
+space into a per-process private arena (0–2 GiB) and a system/shared arena
+above 2 GiB (`0x80000000`–`0xBFFFFFFF`), where mapped pages share the same
+linear address and page tables across all Win32 and 16-bit processes. The
+loader's rule: a PE DLL based above `0x80000000` is only permitted into the
+shared arena if **every section** is marked shared (`IMAGE_SCN_MEM_SHARED`).
+If any section lacks this flag, the loader considers it a private module
+and relocates it down into the per-process private arena (`< 0x80000000`).
+If relocations were stripped to prevent that, the loader has no choice but
+to fail `LoadLibrary`.
+
+**Why mingw produces non-shared sections.** GNU `ld` provides `-shared` to
+build a shared library (DLL), but provides no switch to set
+`IMAGE_SCN_MEM_SHARED` on section headers (unlike MSVC's `/SECTION:...,S`).
+Standard mingw-w64 `.text`, `.rdata`, `.bss`, `.edata`, `.idata`, and
+`.reloc` sections are all emitted without the shared bit.
+
+**The fix:** A post-link Python step in `guest-tools/build-driver9x.sh`
+walks the section table of `d3dpt9hl.dll`, ORs `IMAGE_SCN_MEM_SHARED` into
+each section's `Characteristics`, and recalculates the PE `CheckSum` in the
+optional header.
+
+**The harness fix that came with it.** `tools/win98-driver-test.sh` stalled
+in `mcopy` on the install run: when an image already had driver files
+staged from a previous install, Windows or setup had given them the FAT
+Read-Only attribute (`R`). Even with `mcopy -o`, `mtools` stops and prompts
+`file is read only, overwrite anyway (y/n) ?` on stdin, hanging headless
+runs before QEMU is ever spawned. The harness now runs `mattrib -r` across
+the target driver and probe paths before each copy.
+
+**What the fix bought, measured in the guest** (`ddprobe.exe` on `test98`):
+
+```
+DDPROBE.LOG:
+          ddprobe: start
+          GetModuleHandle(d3dpt9hl.dll) -> 00000000
+          LoadLibrary(d3dpt9hl.dll)     -> b00b0000
+            DriverInit b00b1270  IsBadCodePtr 0
+          DirectDrawCreate -> 0x00000000
+          GetCaps -> 0x00000000
+            HAL dwCaps      0x00000480
+            HAL dwCaps2     0x00080000
+            HAL vidmem      132972544 total, 132972544 free
+            HEL dwCaps      0xf4c08241
+          GetDisplayMode -> 0x00000000  640x480x32 pitch 2560
+          WaitForVerticalBlank (no coop level) -> 0x00000000
+          SetCooperativeLevel -> 0x00000000
+          WaitForVerticalBlank -> 0x00000000
+          WaitForVerticalBlank (end) -> 0x00000000
+          CreateSurface(primary) -> 0x00000000
+            primary GetSurfaceDesc -> 0x00000000
+            primary 640x480 pitch 2560 caps 0x1000c200
+            primary Lock -> 0x00000000  lpSurface 0add4ae4  pitch 2560
+          CreateSurface(64x64 vidmem) -> 0x00000000
+            offscreen GetSurfaceDesc -> 0x00000000
+            offscreen 64x64 pitch 256 caps 0x10004040
+            offscreen Lock -> 0x00000000  lpSurface 0af00ae4  pitch 256
+          ddprobe: done
+```
+
+And in the QEMU stderr log:
+```
+d3dpthal: DriverInit, block at 0x8a7ba000 regs 0x80018000 vram 0x80019000 mode 0x028001e0 bpp 0x00000020
+d3dpthal:   in C:\WINDOWS\SYSTEM\DDHELP.EXE pid 0xfffe2541
+d3dpthal:   published vblank 0xb00b1090 cansurf 0xb00b11c0 hinstance 0xb00b0000
+d3dpt9dd:   dd callbacks=00000033
+d3dpt9dd:   hinstance=b00b0000
+d3dpt9dd: DirectDraw took the HAL
+d3dpthal: WaitForVerticalBlank, flags 0x00000001
+d3dpthal: CanCreateSurface, caps 0x00004200
+d3dpthal: CreateSurface, caps 0x00004200 count 0x00000001
+```
+
+Both in `DDHELP.EXE` and in `ddprobe.exe`, `d3dpt9hl.dll` is at `0xB00B0000`.
+`IsBadCodePtr` evaluates to 0 in the application's process. The 16-bit
+driver publishes all non-zero callbacks (`dd callbacks=0x00000033`).
+DirectDraw accepts the HAL and invokes `WaitForVerticalBlank`,
+`CanCreateSurface`, and `CreateSurface` in the 32-bit DLL. The publication
+chain and shared-memory model for the ring-3 HAL are complete.
