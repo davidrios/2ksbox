@@ -286,10 +286,17 @@ What the track starts from:
    takes the HAL with its callbacks enabled (`dd callbacks=0x00000033`),
    and `WaitForVerticalBlank`, `CanCreateSurface`, and `CreateSurface` are
    entered cleanly by the runtime.
-   **Then the rest of M7b** — the VRAM heap in earnest, the surface
-   callbacks, the flip chain against the frame counter, `DdMapMemory`'s
-   equivalent, 8 bpp palettized modes. `DDTEST.EXE` and `CDTEST`-style
-   guest probes run on 98 as they do on XP.
+   **Step 3 is done (2026-09-08, doc 19 §24):** `d3dpt9hl.dll` links the
+   OS-independent core (`core_flip.c`, `core_caps.c`, `core_surf.c`,
+   `core_ctx.c`, `core_dp2.c`) with freestanding `memcpy`/`memset` and 6
+   `d3dpt_os_*` hooks. Surface callbacks (`Flip`, `GetFlipStatus`,
+   `GetBltStatus`, `Lock`, `Unlock`, `DestroySurface`, `SetColorKey`) are
+   implemented in `d3dpthal.c`. Fullscreen flip chains and vertical blank
+   pacing against `D3DPT_FB_REG_FRAMES` (~60 Hz) are verified in the real
+   guest via `ddprobe.exe` (`Flip 0..4` succeed with 14–20 ms deltas; QEMU
+   logs alternating scanout offsets `0 -> 1228800 -> 0`). 8 bpp modes and
+   hardware palette programming against `D3DPT_FB_REG_PALETTE` via
+   `SetPalette` (ordinal 22) are wired and verified.
 9. **Step 4 — the Direct3D DDI on 9x** (98's M7c): the core's DP2 walker
    under the 9x HAL. Two decisions land here, both new on 9x (doc 19 §8):
    whether the doorbell is a mapped register page or a VxD ioctl, and how

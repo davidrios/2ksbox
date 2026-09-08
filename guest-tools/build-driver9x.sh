@@ -357,15 +357,18 @@ HALCC=i686-w64-mingw32-gcc
 # base it actually got and says so rather than running on a bad one.
 HAL_BASE=0xB00B0000
 if command -v "$HALCC" >/dev/null; then
-  echo "==> d3dpt9hl.dll (the ring-3 DirectDraw / Direct3D HAL)"
+  CORE="$ROOT/guest-tools/src/d3dptvid/core"
   "$HALCC" -O2 -Wall -Wno-unused-function -shared -nostdlib -ffreestanding \
      -fno-stack-protector -mno-stack-arg-probe -fno-asynchronous-unwind-tables \
      -fno-ident -march=pentium3 -mtune=generic -fno-tree-loop-distribute-patterns \
      -Wl,--enable-stdcall-fixup -Wl,--entry,_DllMain@12 \
      -Wl,--image-base,$HAL_BASE \
      -Wl,--disable-dynamicbase,--disable-nxcompat,--subsystem,windows \
-     -I"$SRC" \
-     -o "$BUILD/d3dpt9hl.dll" "$SRC/d3dpthal.c" "$SRC/d3dpthal.def" -lgcc -lkernel32
+     -I"$SRC" -I"$CORE" \
+     -o "$BUILD/d3dpt9hl.dll" "$SRC/d3dpthal.c" "$SRC/d3dpthal.def" \
+     "$CORE/core_flip.c" "$CORE/core_caps.c" "$CORE/core_surf.c" \
+     "$CORE/core_ctx.c" "$CORE/core_dp2.c" \
+     -lgcc -lkernel32
   # `-nostdlib` drops the default libraries, so kernel32 is named on
   # purpose: it is the one import this DLL is allowed (the check below
   # enforces exactly that), and the OS services the core will ask for —

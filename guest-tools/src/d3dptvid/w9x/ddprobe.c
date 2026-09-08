@@ -190,6 +190,51 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         surf = NULL;
     }
 
+    /* Flip chain test: exclusive fullscreen mode allows creating a complex
+     * flipping primary surface and exercising Flip32 and its vblank pacing. */
+    {
+        HWND hwnd = CreateWindowA("STATIC", "ddprobe", WS_POPUP, 0, 0, 100, 100, NULL, NULL, inst, NULL);
+        hr = IDirectDraw_SetCooperativeLevel(dd, hwnd, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
+        logf_("SetCooperativeLevel(exclusive) -> 0x%08lx", (unsigned long)hr);
+        if (SUCCEEDED(hr)) {
+            LPDIRECTDRAWSURFACE prim = NULL;
+            LPDIRECTDRAWSURFACE back = NULL;
+
+            memset(&sd, 0, sizeof(sd));
+            sd.dwSize = sizeof(sd);
+            sd.dwFlags = DDSD_CAPS | DDSD_BACKBUFFERCOUNT;
+            sd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_FLIP | DDSCAPS_COMPLEX;
+            sd.dwBackBufferCount = 1;
+            hr = IDirectDraw_CreateSurface(dd, &sd, &prim, NULL);
+            logf_("CreateSurface(flip chain) -> 0x%08lx", (unsigned long)hr);
+            if (SUCCEEDED(hr) && prim) {
+                DDSCAPS caps;
+                describe("flipping primary", prim);
+
+                memset(&caps, 0, sizeof(caps));
+                caps.dwCaps = DDSCAPS_BACKBUFFER;
+                hr = IDirectDrawSurface_GetAttachedSurface(prim, &caps, &back);
+                logf_("GetAttachedSurface(back) -> 0x%08lx", (unsigned long)hr);
+                if (SUCCEEDED(hr) && back) {
+                    int frame;
+                    describe("back buffer", back);
+                    for (frame = 0; frame < 5; frame++) {
+                        DWORD t0 = GetTickCount();
+                        hr = IDirectDrawSurface_Flip(prim, NULL, DDFLIP_WAIT);
+                        DWORD t1 = GetTickCount();
+                        logf_("  Flip %d -> 0x%08lx  dt %lu ms", frame, (unsigned long)hr, (unsigned long)(t1 - t0));
+                    }
+                    IDirectDrawSurface_Release(back);
+                }
+                IDirectDrawSurface_Release(prim);
+            }
+            IDirectDraw_SetCooperativeLevel(dd, GetDesktopWindow(), DDSCL_NORMAL);
+        }
+        if (hwnd) {
+            DestroyWindow(hwnd);
+        }
+    }
+
     IDirectDraw_Release(dd);
     logf_("ddprobe: done");
     if (log_file) fclose(log_file);

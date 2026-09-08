@@ -586,8 +586,11 @@ items nobody owns yet:
    `ValidateMode` call ran on the caller's DS because the DDK prototype
    without `__loadds` was the first declaration Open Watcom saw (doc 19
    §18), which is now the third silent failure `build-driver9x.sh` catches.
-   Left: complete DirectDraw/D3D HAL integration and test against 9x
-   acceptance suite.
+   DirectDraw DDI complete 2026-09-08 (doc 19 §24, M10 Step 3): `d3dpt9hl.dll`
+   links the core, surface callbacks (`Flip`, `GetFlipStatus`, `Lock`, `Unlock`,
+   `DestroySurface`, `SetColorKey`) implemented, flip-chain pacing against
+   `D3DPT_FB_REG_FRAMES` (~60 Hz) verified in guest, 8 bpp hardware palette
+   programming wired. Next: Step 4 (Direct3D DDI on 9x).
 
 ## Gotchas learned (don't relearn)
 

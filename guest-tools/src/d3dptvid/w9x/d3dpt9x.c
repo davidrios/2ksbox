@@ -263,12 +263,13 @@ static BOOL ModeOk(WORD x, WORD y, WORD bpp)
 
     if (!wRegsSel) return FALSE;
     caps = RegGet(D3DPT_FB_REG_CAPS);
+    if (bpp == 8 && !(caps & D3DPT_FB_CAP_BPP8)) return FALSE;
     if (bpp == 16 && !(caps & D3DPT_FB_CAP_BPP16)) return FALSE;
     if (bpp == 32 && !(caps & D3DPT_FB_CAP_BPP32)) return FALSE;
-    if (bpp != 16 && bpp != 32) return FALSE;   /* 8 bpp is a later step */
+    if (bpp != 8 && bpp != 16 && bpp != 32) return FALSE;
     if (x < 320 || y < 200) return FALSE;
 
-    need = MulW(x, (WORD)(y * (bpp / 8)));
+    need = MulW(x, (WORD)(y * ((bpp + 7) / 8)));
     return need <= dwVramSize;
 }
 
@@ -318,7 +319,7 @@ int PhysicalEnable(void)
         return 0;
     }
 
-    dwPitch = MulW(wScrX, wBpp / 8);
+    dwPitch = MulW(wScrX, (wBpp + 7) / 8);
 
     /* The VDD virtualises the VGA for every VM and has to be told before
      * and after the hardware stops being one. */
@@ -420,8 +421,8 @@ void ReadDisplayConfig(void)
 
     if (x && y) { wScrX = x; wScrY = y; }
     if (bpp)    wBpp = bpp;
-    if (wBpp != 16 && wBpp != 32) wBpp = 32;    /* until 8 bpp lands */
-    wPalettized = 0;
+    if (wBpp != 8 && wBpp != 16 && wBpp != 32) wBpp = 32;
+    wPalettized = (wBpp == 8) ? 1 : 0;
 }
 
 /* ------------------------------------------------------------ GDI: Enable */
@@ -487,7 +488,8 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
          * driver manages, which is what it is; FIVE6FIVE is what tells the
          * Engine a 16 bpp mode is 5-6-5 rather than 5-5-5. */
         lpEng->deFlags        = MINIDRIVER | VRAM | OFFSCREEN |
-                                (wBpp == 16 ? FIVE6FIVE : 0);
+                                (wBpp == 16 ? FIVE6FIVE : 0) |
+                                (wBpp == 8 ? PALETTIZED : 0);
         lpEng->deWidth        = wScrX;
         lpEng->deHeight       = wScrY;
         lpEng->deWidthBytes   = (WORD)dwPitch;
@@ -502,6 +504,15 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
         lpEng->deVersion      = VER_DIBENG;
         lpEng->deBeginAccess  = BeginAccess;
         lpEng->deEndAccess    = EndAccess;
+
+        if (wBpp == 8) {
+            WORD i;
+            RGBQUAD FAR *ct = (RGBQUAD FAR *)((LPBYTE)lpInfo + sizeof(BITMAPINFOHEADER));
+            for (i = 0; i < 256; i++) {
+                DWORD c = ((DWORD)ct[i].rgbRed << 16) | ((DWORD)ct[i].rgbGreen << 8) | (DWORD)ct[i].rgbBlue;
+                RegPut((WORD)(D3DPT_FB_REG_PALETTE + 4 * i), c);
+            }
+        }
 
         wEnabled = 1;
         dbg_str("d3dpt9x: enabled");
@@ -555,12 +566,20 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
         wDIBPdevSize = lpInfo->dpDEVICEsize;
         lpInfo->dpNumBrushes  = -1;
         lpInfo->dpNumPens     = -1;
-        lpInfo->dpNumColors   = -1;
-        lpInfo->dpNumPalReg   = 0;
-        lpInfo->dpPalReserved = 0;
-        lpInfo->dpColorRes    = 0;
+        if (wBpp == 8) {
+            lpInfo->dpNumColors   = 20;
+            lpInfo->dpNumPalReg   = 256;
+            lpInfo->dpPalReserved = 20;
+            lpInfo->dpColorRes    = 18;
+            lpInfo->dpRaster     |= RC_PALETTE;
+        } else {
+            lpInfo->dpNumColors   = -1;
+            lpInfo->dpNumPalReg   = 0;
+            lpInfo->dpPalReserved = 0;
+            lpInfo->dpColorRes    = 0;
+        }
         lpInfo->dpRaster     |= RC_DIBTODEV;
-        lpInfo->dpDEVICEsize += sizeof(BITMAPINFOHEADER);
+        lpInfo->dpDEVICEsize += sizeof(BITMAPINFOHEADER) + (wBpp <= 8 ? 256 * sizeof(RGBQUAD) : 0);
 
         return sizeof(GDIINFO);
     }
@@ -585,6 +604,28 @@ VOID WINAPI __loadds Disable(LPPDEVICE lpDevice)
         DIB_Disable(lpDevice);
         PhysicalDisable();
         wEnabled = 0;
+    }
+}
+
+typedef struct {
+    BYTE r, g, b, flags;
+} D3DPT_PALENTRY;
+
+VOID WINAPI __loadds SetPalette(WORD nStartIndex, WORD nNumEntries,
+                                D3DPT_PALENTRY FAR *lpPalette)
+{
+    WORD i;
+
+    DIB_SetPaletteExt(nStartIndex, nNumEntries, lpPalette, lpDriverPDevice);
+
+    if (wBpp == 8 && wRegsSel && lpPalette) {
+        if (nStartIndex >= 256) return;
+        if (nNumEntries > 256 - nStartIndex) nNumEntries = 256 - nStartIndex;
+        for (i = 0; i < nNumEntries; i++) {
+            D3DPT_PALENTRY FAR *p = &lpPalette[i];
+            DWORD c = ((DWORD)p->r << 16) | ((DWORD)p->g << 8) | (DWORD)p->b;
+            RegPut((WORD)(D3DPT_FB_REG_PALETTE + 4 * (nStartIndex + i)), c);
+        }
     }
 }
 

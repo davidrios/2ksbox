@@ -52,7 +52,6 @@ assume  ds:nothing, es:nothing
 DIBTHK  EnumObj,              _lpDriverPDevice
 DIBTHK  RealizeObject,        _lpDriverPDevice
 DIBTHK  DibBlt,               _wPalettized
-DIBTHK  SetPalette,           _lpDriverPDevice
 DIBTHK  GetPalette,           _lpDriverPDevice
 DIBTHK  SetPaletteTranslate,  _lpDriverPDevice
 DIBTHK  GetPaletteTranslate,  _lpDriverPDevice

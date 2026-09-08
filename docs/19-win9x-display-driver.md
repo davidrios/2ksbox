@@ -1183,3 +1183,88 @@ driver publishes all non-zero callbacks (`dd callbacks=0x00000033`).
 DirectDraw accepts the HAL and invokes `WaitForVerticalBlank`,
 `CanCreateSurface`, and `CreateSurface` in the 32-bit DLL. The publication
 chain and shared-memory model for the ring-3 HAL are complete.
+
+### 24. Step 3 — DirectDraw DDI: Core linking, surface callbacks, flip pacing, and 8 bpp (2026-09-08)
+
+With the ring-3 HAL DLL loading in the shared arena and reachable across all
+processes, Step 3 (Win98's M7b) is implemented in full:
+
+1. **Linking the OS-independent core (`d3dpt9hl.dll`):**
+   - The DLL now compiles and links all five core source files from
+     `guest-tools/src/d3dptvid/core/`: `core_flip.c`, `core_caps.c`,
+     `core_surf.c`, `core_ctx.c`, and `core_dp2.c`.
+   - Freestanding runtime: provides minimal `memcpy` and `memset` without CRT.
+   - The six required `d3dpt_os_*` hooks are implemented in `w9x/d3dpthal.c`:
+     `d3dpt_os_alloc` and `d3dpt_os_free` (Win32 process heap),
+     `d3dpt_os_ticks` (`QueryPerformanceCounter` / `Frequency`),
+     `d3dpt_os_surf` (`DDRAWI_DDRAWSURFACE_LCL` -> `d3dpt_surf_desc`),
+     `d3dpt_os_attached` (`lpAttachList` traversal), and
+     `d3dpt_os_next_mip` (`DDSCAPS_MIPMAP` traversal).
+   - Only `KERNEL32.dll` is imported (7 functions: `GetCurrentProcessId`,
+     `GetModuleFileNameA`, `GetProcessHeap`, `HeapAlloc`, `HeapFree`,
+     `QueryPerformanceCounter`, `QueryPerformanceFrequency`).
+   - **VRAM address translation:** On NT, `fpPrimary` is 0 and surface video
+     memory offsets are zero-based. On Win9x, `vmiData.fpPrimary` is the
+     linear address `pHal->vram_linear` (`0x80019000`), so all video memory
+     allocations have linear addresses. `d3dpt_os_surf` subtracts
+     `pHal->vram_linear` for non-sysmem surfaces, keeping `d3dpt_surf_desc.vidmem`
+     as the true offset into `core.fb`.
+
+2. **DirectDraw Surface Callbacks:**
+   - Declared typed structures in `w9x/ddhal32.h` (`d3dpt_ddhal_destroysurface`,
+     `d3dpt_ddhal_flip`, `d3dpt_ddhal_getflipstatus`, `d3dpt_ddhal_getbltstatus`,
+     `d3dpt_ddhal_lock`, `d3dpt_ddhal_unlock`, `d3dpt_ddhal_blt`,
+     `d3dpt_ddhal_setcolorkey`).
+   - Implemented callbacks in `d3dpthal.c` and wired into `h->cb32`:
+     - `Flip32`: Paced presentation. When `flip_done(&core)` is false, waits for
+       vertical blank with `wait_frame(&core)` if `DDFLIP_WAIT` is specified,
+       or returns `DDERR_WASSTILLDRAWING`. Registers moved surfaces and executes
+       `d3d_readback` on live render targets. Writes the target's VRAM offset
+       to `D3DPT_FB_REG_OFFSET` and calls `flip_issued(&core)`.
+     - `GetFlipStatus32`: Checks `flip_done(&core)` against `D3DPT_FB_REG_FRAMES`.
+     - `GetBltStatus32`: Returns `DD_OK`.
+     - `Lock32`: Performs readback on live render targets before access.
+     - `Unlock32`: Marks modified texture or target surfaces via `D3DPT_OP_VRAM_DIRTY`.
+     - `DestroySurface32`: Releases surface tracking via `surf_forget` and `D3DPT_OP_VRAM_RELEASE`.
+     - `SetColorKey32`: Sets source colorkey via `surf_colorkey_set`.
+
+3. **Flip Chain & VSync Verification in Real Guest (`ddprobe.exe`):**
+   - In exclusive fullscreen mode (`DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN`),
+     created a complex flipping primary chain (`DDSCAPS_PRIMARYSURFACE |
+     DDSCAPS_FLIP | DDSCAPS_COMPLEX`, `dwBackBufferCount = 1`) and retrieved
+     the attached back buffer (`DDSCAPS_BACKBUFFER`).
+   - Issued five consecutive `Flip(..., DDFLIP_WAIT)` calls:
+     ```
+     CreateSurface(flip chain) -> 0x00000000
+       flipping primary Lock -> 0x00000000  lpSurface 80019000  pitch 2560
+     GetAttachedSurface(back) -> 0x00000000
+       back buffer Lock -> 0x00000000  lpSurface 80145000  pitch 2560
+       Flip 0 -> 0x00000000  dt 6 ms
+       Flip 1 -> 0x00000000  dt 14 ms
+       Flip 2 -> 0x00000000  dt 16 ms
+       Flip 3 -> 0x00000000  dt 14 ms
+       Flip 4 -> 0x00000000  dt 20 ms
+     ```
+   - QEMU stderr confirmed scanout offset alternation in hardware:
+     ```
+     d3dpthal: Flip curr 0x8adbaae4 targ 0x8adbb630
+     d3dpt-vga: scanout offset 0 -> 1228800
+     d3dpt-vga: scanout offset 1228800 -> 0
+     d3dpt-vga: scanout offset 0 -> 1228800
+     d3dpt-vga: scanout offset 1228800 -> 0
+     ```
+   - Frame pacing against `D3DPT_FB_REG_FRAMES` (~60 Hz) is established.
+
+4. **8 bpp Mode & Hardware Palette:**
+   - `d3dpt9x.c`: Handled `bpp == 8` in `ModeOk` (checking `D3DPT_FB_CAP_BPP8`)
+     and `ReadDisplayConfig`.
+   - In `Enable(GDIINFO)`: Set `dpNumColors = 20`, `dpNumPalReg = 256`,
+     `dpPalReserved = 20`, `dpColorRes = 18`, `RC_PALETTE`, and sized
+     `dpDEVICEsize` to accommodate 256 `RGBQUAD` color table entries.
+   - In `Enable(hardware)`: Set `PALETTIZED` flag on DIB Engine and initialized
+     hardware palette registers `D3DPT_FB_REG_PALETTE` (0x400..0x7fc).
+   - In `d3dpt9x.c`: Implemented `SetPalette` export (ordinal 22), removing the
+     stub thunk from `dibthunk.asm`. Calls `DIB_SetPaletteExt` and converts
+     `PALETTEENTRY` (R, G, B) into `0x00RRGGBB` format for `D3DPT_FB_REG_PALETTE`.
+   - `d3dpt9x.inf`: Added `MODES\8` entries for 640x480, 800x600, 1024x768, 1280x1024.
+

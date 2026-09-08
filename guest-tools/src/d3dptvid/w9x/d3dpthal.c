@@ -34,7 +34,10 @@
 #include <winbase.h>
 #include <wingdi.h>
 #include <ddraw.h>
+#include <ddrawi.h>
 
+#include "d3dpt_ddi.h"
+#include "d3dpt_core.h"
 #include "ddhal32.h"
 #include "d3dpt9hal.h"
 #include "../../../../d3dpt/d3dpt_fb.h"
@@ -42,63 +45,129 @@
 static d3dpt_hal9 *hal;                 /* the block, shared with the .drv */
 static HINSTANCE dll_instance;          /* ours, from DllMain */
 static volatile ULONG *regs;            /* the adapter's register page */
+static d3dpt_core core;
 
-/* ------------------------------------------------------------ debug log */
+/* ------------------------------------------------------------ freestanding helpers */
 
-/* Through the adapter's DEBUG register, into the QEMU log — the same
- * channel both other halves use, and the only one that has ever been
- * seen from ring 3 in this guest (port 0xE9 has not: doc 19's traps). */
-static void dbg_puts(const char *s)
+void *memcpy(void *dst, const void *src, size_t n)
 {
-    if (!regs) {
-        return;
+    char *d = (char *)dst;
+    const char *s = (const char *)src;
+    while (n--) {
+        *d++ = *s++;
     }
-    while (*s) {
-        regs[D3DPT_FB_REG_DEBUG / 4] = (unsigned char)*s++;
+    return dst;
+}
+
+void *memset(void *dst, int c, size_t n)
+{
+    char *d = (char *)dst;
+    while (n--) {
+        *d++ = (char)c;
+    }
+    return dst;
+}
+
+/* ------------------------------------------------------------ OS hooks for core */
+
+void *d3dpt_os_alloc(ULONG bytes)
+{
+    return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bytes);
+}
+
+void d3dpt_os_free(void *p)
+{
+    if (p) {
+        HeapFree(GetProcessHeap(), 0, p);
     }
 }
 
-static void dbg_hex(const char *tag, ULONG v)
+void d3dpt_os_ticks(LONGLONG *now, LONGLONG *freq)
 {
-    static const char hex[] = "0123456789abcdef";
-    char buf[12];
-    int i;
-
-    dbg_puts(tag);
-    buf[0] = '0'; buf[1] = 'x';
-    for (i = 0; i < 8; i++) {
-        buf[2 + i] = hex[(v >> (28 - 4 * i)) & 0xf];
+    if (freq) {
+        QueryPerformanceFrequency((LARGE_INTEGER *)freq);
     }
-    buf[10] = 0;
-    dbg_puts(buf);
+    QueryPerformanceCounter((LARGE_INTEGER *)now);
 }
 
-/* --------------------------------------------------------- the callbacks */
+BOOL d3dpt_os_surf(d3dpt_core *c, void *os, d3dpt_surf_desc *out)
+{
+    LPDDRAWI_DDRAWSURFACE_LCL s = (LPDDRAWI_DDRAWSURFACE_LCL)os;
 
-/* Wait for the adapter's frame counter to move. This is the whole of the
- * HAL for now, and it is here first on purpose: it needs no surface, no
- * heap and no protocol, so what it proves is exactly the thing that has
- * to be proved before anything else is written — that DirectDraw loads
- * this DLL into a game's process, calls into it, and that the register
- * page the mini-VDD mapped is readable from ring 3 there.
- *
- * Bounded like the XP driver's (doc 15): a device that has stopped
- * counting must not stop the guest with it, so the wait gives up. There
- * is no performance counter here that is worth a ring transition, so the
- * bound is a spin count rather than a clock — generous, because being
- * late is harmless and being early is a busy loop that never ends. */
+    if (!s || !s->lpGbl) {
+        return FALSE;
+    }
+    out->os = os;
+    out->handle = (s->lpSurfMore) ? s->lpSurfMore->dwSurfaceHandle : 0;
+    out->caps = s->ddsCaps.dwCaps;
+    out->caps2 = (s->lpSurfMore) ? s->lpSurfMore->ddsCapsEx.dwCaps2 : 0;
+    out->flags = s->dwFlags;
+    out->w = s->lpGbl->wWidth;
+    out->h = s->lpGbl->wHeight;
+    out->pitch = (ULONG)s->lpGbl->lPitch;
+    out->linear = s->lpGbl->dwLinearSize;
+    out->vidmem = (ULONG)s->lpGbl->fpVidMem;
+    if (hal && !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY) && out->vidmem >= hal->vram_linear) {
+        out->vidmem -= hal->vram_linear;
+    }
+    if (s->dwFlags & DDRAWISURF_HASPIXELFORMAT) {
+        out->fmt = pf_format(&s->lpGbl->ddpfSurface);
+        out->pf_flags = s->lpGbl->ddpfSurface.dwFlags;
+    } else {
+        out->fmt = c->bpp == 32 ? D3DFMT_X8R8G8B8_ : D3DFMT_R5G6B5_;
+        out->pf_flags = 0xffffffffu;
+    }
+    out->ck_lo = s->ddckCKSrcBlt.dwColorSpaceLowValue;
+    out->ck_hi = s->ddckCKSrcBlt.dwColorSpaceHighValue;
+    out->ck_dst_lo = s->ddckCKDestBlt.dwColorSpaceLowValue;
+    return TRUE;
+}
+
+ULONG d3dpt_os_attached(void *os, void **out, ULONG max)
+{
+    LPDDRAWI_DDRAWSURFACE_LCL s = (LPDDRAWI_DDRAWSURFACE_LCL)os;
+    LPATTACHLIST a;
+    ULONG n = 0;
+
+    for (a = s->lpAttachList; a && n < max; a = a->lpLink) {
+        LPDDRAWI_DDRAWSURFACE_LCL t = a->lpAttached;
+        if (t && t->lpGbl && !(t->ddsCaps.dwCaps & DDSCAPS_MIPMAP)) {
+            out[n++] = t;
+        }
+    }
+    return n;
+}
+
+void *d3dpt_os_next_mip(void *os)
+{
+    LPDDRAWI_DDRAWSURFACE_LCL s = (LPDDRAWI_DDRAWSURFACE_LCL)os;
+    LPATTACHLIST a;
+
+    for (a = s->lpAttachList; a; a = a->lpLink) {
+        LPDDRAWI_DDRAWSURFACE_LCL t = a->lpAttached;
+        if (t && t->lpGbl && (t->ddsCaps.dwCaps & DDSCAPS_MIPMAP) && t != s &&
+            (t->lpGbl->wWidth < s->lpGbl->wWidth || t->lpGbl->wHeight < s->lpGbl->wHeight)) {
+            return t;
+        }
+    }
+    return NULL;
+}
+
+static inline ULONG surf_handle(LPDDRAWI_DDRAWSURFACE_LCL s)
+{
+    return (s && s->lpSurfMore) ? s->lpSurfMore->dwSurfaceHandle : 0;
+}
+
+/* --------------------------------------------------------- DirectDraw callbacks */
+
 static DWORD __stdcall WaitForVerticalBlank32(d3dpt_ddhal_waitvb *d)
 {
-    ULONG f, i;
-    volatile ULONG spin = 0;
     static int said;
 
-    /* Once, and only once: that this is entered at all is the thing
-     * being proved, and a line per frame would drown the log. */
     if (!said) {
         said = 1;
-        dbg_hex("d3dpthal: WaitForVerticalBlank, flags ", d->dwFlags);
-        dbg_puts("\n");
+        dbg_hex(&core, "d3dpthal: WaitForVerticalBlank, flags ", d->dwFlags);
+        dbg_puts(&core, "\n");
     }
     d->ddRVal = DD_OK;
     if (!regs) {
@@ -108,19 +177,10 @@ static DWORD __stdcall WaitForVerticalBlank32(d3dpt_ddhal_waitvb *d)
     switch (d->dwFlags) {
     case DDWAITVB_BLOCKBEGIN:
     case DDWAITVB_BLOCKEND:
-        f = regs[D3DPT_FB_REG_FRAMES / 4];
-        for (i = 0; i < 2000000ul; i++) {
-            if (regs[D3DPT_FB_REG_FRAMES / 4] != f) {
-                break;
-            }
-            spin = i;
-        }
-        (void)spin;
+        wait_frame(&core);
         break;
     case DDWAITVB_I_TESTVB:
-        /* "is it in a vertical blank now": we have no such register, and
-         * saying yes is the answer that keeps a caller from spinning */
-        d->bIsInVB = TRUE;
+        d->bIsInVB = FALSE;
         break;
     default:
         d->ddRVal = DDERR_INVALIDPARAMS;
@@ -129,54 +189,187 @@ static DWORD __stdcall WaitForVerticalBlank32(d3dpt_ddhal_waitvb *d)
     return DDHAL_DRIVER_HANDLED;
 }
 
-/* The two surface-creation callbacks, published so that the question the
- * vertical blank left open can be answered before a surface layer is
- * written on top of the assumption: **is a callback this DLL publishes
- * entered at all?** Both decline, so the runtime allocates out of our
- * heap exactly as it already does and nothing that works stops working;
- * all they add is a line saying what was asked for. When the surface
- * layer proper is written (M7b) these are where it starts. */
 static DWORD __stdcall CanCreateSurface32(d3dpt_ddhal_cancreatesurface *d)
 {
     static int said;
 
     if (!said) {
         said = 1;
-        dbg_hex("d3dpthal: CanCreateSurface, caps ",
+        dbg_hex(&core, "d3dpthal: CanCreateSurface, caps ",
                 d->lpDDSurfaceDesc ? d->lpDDSurfaceDesc->ddsCaps.dwCaps : 0);
-        dbg_puts("\n");
+        dbg_puts(&core, "\n");
     }
-    return DDHAL_DRIVER_NOTHANDLED;
+    if (!d->bIsDifferentPixelFormat) {
+        d->ddRVal = DD_OK;
+        return DDHAL_DRIVER_HANDLED;
+    }
+    if (core.d3d && d->lpDDSurfaceDesc && pf_format(&d->lpDDSurfaceDesc->ddpfPixelFormat) != 0) {
+        d->ddRVal = DD_OK;
+        return DDHAL_DRIVER_HANDLED;
+    }
+    d->ddRVal = DDERR_INVALIDPIXELFORMAT;
+    return DDHAL_DRIVER_HANDLED;
 }
 
 static DWORD __stdcall CreateSurface32(d3dpt_ddhal_createsurface *d)
 {
+    DDSURFACEDESC *sd = d->lpDDSurfaceDesc;
+    ULONG i, f;
     static int said;
 
     if (!said) {
         said = 1;
-        dbg_hex("d3dpthal: CreateSurface, caps ",
-                d->lpDDSurfaceDesc ? d->lpDDSurfaceDesc->ddsCaps.dwCaps : 0);
-        dbg_hex(" count ", d->dwSCnt);
-        dbg_puts("\n");
+        dbg_hex(&core, "d3dpthal: CreateSurface, caps ",
+                sd ? sd->ddsCaps.dwCaps : 0);
+        dbg_hex(&core, " count ", d->dwSCnt);
+        dbg_puts(&core, "\n");
+    }
+    d->ddRVal = DD_OK;
+    if (!sd || !(sd->ddpfPixelFormat.dwFlags & DDPF_FOURCC) || !fmt_is_dxt(sd->ddpfPixelFormat.dwFourCC)) {
+        return DDHAL_DRIVER_NOTHANDLED;
+    }
+    f = sd->ddpfPixelFormat.dwFourCC;
+    for (i = 0; i < d->dwSCnt; i++) {
+        LPDDRAWI_DDRAWSURFACE_LCL s = (LPDDRAWI_DDRAWSURFACE_LCL)d->lplpSList[i];
+        LPDDRAWI_DDRAWSURFACE_GBL g = s ? s->lpGbl : NULL;
+        ULONG size;
+
+        if (!g) {
+            continue;
+        }
+        size = surf_dxt_size(f, g->wWidth, g->wHeight);
+        g->dwLinearSize = size;
+        if (!(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+            g->dwBlockSizeX = size;
+            g->dwBlockSizeY = 1;
+            g->fpVidMem = DDHAL_PLEASEALLOC_BLOCKSIZE;
+        }
+        if (i == 0) {
+            sd->dwFlags |= DDSD_LINEARSIZE;
+            sd->dwLinearSize = size;
+        }
     }
     return DDHAL_DRIVER_NOTHANDLED;
 }
 
-/* DirectDraw is done with us. Nothing to release: the block belongs to
- * the .drv and the mappings to the mini-VDD. */
 static DWORD __stdcall DestroyDriver32(d3dpt_ddhal_destroydriver *d)
 {
     d->ddRVal = DD_OK;
     return DDHAL_DRIVER_HANDLED;
 }
 
+static DWORD __stdcall DestroySurface32(d3dpt_ddhal_destroysurface *d)
+{
+    LPDDRAWI_DDRAWSURFACE_LCL s = (LPDDRAWI_DDRAWSURFACE_LCL)d->lpDDSurface;
+    ULONG h = surf_handle(s);
+
+    surf_forget(h);
+    if (s && !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+        d3d_handle_op(&core, D3DPT_OP_VRAM_RELEASE, h);
+    }
+    d->ddRVal = DD_OK;
+    return DDHAL_DRIVER_NOTHANDLED;
+}
+
+static DWORD __stdcall Flip32(d3dpt_ddhal_flip *d)
+{
+    ULONG offset;
+    LPDDRAWI_DDRAWSURFACE_LCL curr;
+    LPDDRAWI_DDRAWSURFACE_LCL targ;
+    static int said;
+
+    if (!regs) {
+        d->ddRVal = DDERR_UNSUPPORTED;
+        return DDHAL_DRIVER_HANDLED;
+    }
+    if (!said) {
+        said = 1;
+        dbg_hex(&core, "d3dpthal: Flip curr ", (ULONG)(ULONG_PTR)d->lpSurfCurr);
+        dbg_hex(&core, " targ ", (ULONG)(ULONG_PTR)d->lpSurfTarg);
+        dbg_puts(&core, "\n");
+    }
+    if (!flip_done(&core)) {
+        if (!(d->dwFlags & DDFLIP_WAIT)) {
+            d->ddRVal = DDERR_WASSTILLDRAWING;
+            return DDHAL_DRIVER_HANDLED;
+        }
+        wait_frame(&core);
+        core.flip_pending = FALSE;
+    }
+    curr = (LPDDRAWI_DDRAWSURFACE_LCL)d->lpSurfCurr;
+    targ = (LPDDRAWI_DDRAWSURFACE_LCL)d->lpSurfTarg;
+    if (d3d_ctx_live) {
+        d3d_register_moved(&core, curr);
+        d3d_register_moved(&core, targ);
+        d3d_readback(&core, surf_handle(targ));
+    }
+    if (targ && targ->lpGbl) {
+        offset = (ULONG)targ->lpGbl->fpVidMem;
+        if (hal && offset >= hal->vram_linear) {
+            offset -= hal->vram_linear;
+        }
+        regs[D3DPT_FB_REG_OFFSET / 4] = offset;
+        flip_issued(&core);
+    }
+    d->ddRVal = DD_OK;
+    return DDHAL_DRIVER_HANDLED;
+}
+
+static DWORD __stdcall GetFlipStatus32(d3dpt_ddhal_getflipstatus *d)
+{
+    d->ddRVal = (regs && !flip_done(&core)) ? DDERR_WASSTILLDRAWING : DD_OK;
+    return DDHAL_DRIVER_HANDLED;
+}
+
+static DWORD __stdcall GetBltStatus32(d3dpt_ddhal_getbltstatus *d)
+{
+    d->ddRVal = DD_OK;
+    return DDHAL_DRIVER_HANDLED;
+}
+
+static DWORD __stdcall Lock32(d3dpt_ddhal_lock *d)
+{
+    LPDDRAWI_DDRAWSURFACE_LCL s = (LPDDRAWI_DDRAWSURFACE_LCL)d->lpDDSurface;
+
+    if (d3d_ctx_live && s && surf_is_target(s->ddsCaps.dwCaps)) {
+        d3d_register_moved(&core, s);
+        d3d_readback(&core, surf_handle(s));
+    }
+    d->ddRVal = DD_OK;
+    return DDHAL_DRIVER_NOTHANDLED;
+}
+
+static DWORD __stdcall Unlock32(d3dpt_ddhal_unlock *d)
+{
+    LPDDRAWI_DDRAWSURFACE_LCL s = (LPDDRAWI_DDRAWSURFACE_LCL)d->lpDDSurface;
+
+    if (core.d3d && s && !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY) &&
+        ((s->ddsCaps.dwCaps & DDSCAPS_TEXTURE) || (d3d_ctx_live && surf_is_target(s->ddsCaps.dwCaps)))) {
+        d3d_handle_op(&core, D3DPT_OP_VRAM_DIRTY, surf_handle(s));
+    }
+    d->ddRVal = DD_OK;
+    return DDHAL_DRIVER_NOTHANDLED;
+}
+
+static DWORD __stdcall Blt32(d3dpt_ddhal_blt *d)
+{
+    return DDHAL_DRIVER_NOTHANDLED;
+}
+
+static DWORD __stdcall SetColorKey32(d3dpt_ddhal_setcolorkey *d)
+{
+    LPDDRAWI_DDRAWSURFACE_LCL s = (LPDDRAWI_DDRAWSURFACE_LCL)d->lpDDSurface;
+
+    if (core.d3d && s && (d->dwFlags & DDCKEY_SRCBLT) && !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY) &&
+        (s->ddsCaps.dwCaps & DDSCAPS_TEXTURE)) {
+        surf_colorkey_set(&core, surf_handle(s), d->ckNew.dwColorSpaceLowValue, d->ckNew.dwColorSpaceHighValue);
+    }
+    d->ddRVal = DD_OK;
+    return DDHAL_DRIVER_HANDLED;
+}
+
 /* ------------------------------------------------------------ DriverInit */
 
-/* Called by DirectDraw, in the game's process, with the linear address
- * the .drv put in DD32BITDRIVERDATA::dwContext. Returning zero means
- * "no 32-bit HAL", which DirectDraw accepts quietly — so every reason to
- * fail says so through the register first, while it still can. */
 DWORD __stdcall DriverInit(LPVOID ptr)
 {
     d3dpt_hal9 *h = (d3dpt_hal9 *)ptr;
@@ -184,79 +377,74 @@ DWORD __stdcall DriverInit(LPVOID ptr)
     if (!h) {
         return 0;
     }
-    /* Validate before dereferencing anything else: a stale .drv or a
-     * stale DLL in WINDOWS\SYSTEM is a real possibility, and on 9x a
-     * wrong pointer is a silent reboot rather than an error. The
-     * register page is not usable until the magic says the block is
-     * ours, so this check cannot be logged — it is the one failure that
-     * has to be silent. */
     if (h->magic != D3DPT_HAL9_MAGIC || h->size != sizeof(d3dpt_hal9)) {
         return 0;
     }
     regs = (volatile ULONG *)h->regs_linear;
     if (h->version != D3DPT_HAL9_VERSION) {
-        dbg_hex("d3dpthal: shared block version ", h->version);
-        dbg_hex(" but this DLL speaks ", D3DPT_HAL9_VERSION);
-        dbg_puts(" — install both halves from the same guest-tools ISO\n");
+        dbg_hex(&core, "d3dpthal: shared block version ", h->version);
+        dbg_hex(&core, " but this DLL speaks ", D3DPT_HAL9_VERSION);
+        dbg_puts(&core, " — install both halves from the same guest-tools ISO\n");
         regs = 0;
         return 0;
     }
     hal = h;
-    /* Before anything else, and through the block rather than the log:
-     * see the note in d3dpt9hal.h. */
     h->dll_reg_magic = regs[D3DPT_FB_REG_MAGIC / 4];
     h->dll_reg_version = regs[D3DPT_FB_REG_VERSION / 4];
 
-    dbg_hex("d3dpthal: DriverInit, block at ", (ULONG)(ULONG_PTR)h);
-    dbg_hex(" regs ", h->regs_linear);
-    dbg_hex(" vram ", h->vram_linear);
-    dbg_hex(" mode ", (h->width << 16) | h->height);
-    dbg_hex(" bpp ", h->bpp);
-    dbg_puts("\n");
+    core.regs = regs;
+    core.fb = (PVOID)h->vram_linear;
+    core.fb_len = h->vram_size;
+    core.w = h->width;
+    core.h = h->height;
+    core.bpp = h->bpp;
+    core.pitch = h->pitch;
+    core.cmd_offset = (h->vram_size > D3DPT_FB_CURSOR_BYTES + D3DPT_SHM_SIZE) ?
+                      h->vram_size - D3DPT_FB_CURSOR_BYTES - D3DPT_SHM_SIZE : 0;
+    d3d_init(&core);
 
-    /* **Below 2 GiB is not a working HAL.** DirectDraw loads this DLL in
-     * DDHELP.EXE and publishes the callbacks below as flat addresses, and
-     * the process that validates them is the *game's*: a module in the
-     * private arena is mapped only where it was loaded, and every
-     * application gets its own address for it (measured — DDHELP got
-     * 0x00b50000 and the probe's own LoadLibrary got 0x00ca0000). Only a
-     * module in the shared arena above 0x80000000 means the same thing in
-     * both, which is why this is linked where it is. If the loader
-     * relocated us anyway, the callbacks would be refused with no message
-     * at either end, so say it here while there is somewhere to say it. */
+    dbg_hex(&core, "d3dpthal: DriverInit, block at ", (ULONG)(ULONG_PTR)h);
+    dbg_hex(&core, " regs ", h->regs_linear);
+    dbg_hex(&core, " vram ", h->vram_linear);
+    dbg_hex(&core, " mode ", (h->width << 16) | h->height);
+    dbg_hex(&core, " bpp ", h->bpp);
+    dbg_puts(&core, "\n");
+
     if ((ULONG)(ULONG_PTR)dll_instance < 0x80000000ul) {
-        dbg_hex("d3dpthal: relocated out of the shared arena, to ",
+        dbg_hex(&core, "d3dpthal: relocated out of the shared arena, to ",
                 (ULONG)(ULONG_PTR)dll_instance);
-        dbg_puts(" — the callbacks would be bad pointers in every game\n");
+        dbg_puts(&core, " — the callbacks would be bad pointers in every game\n");
     }
     h->dll_hinstance = (unsigned long)(ULONG_PTR)dll_instance;
     h->cb32.WaitForVerticalBlank = (unsigned long)(ULONG_PTR)WaitForVerticalBlank32;
-    h->cb32.CanCreateSurface = (unsigned long)(ULONG_PTR)CanCreateSurface32;
-    h->cb32.CreateSurface = (unsigned long)(ULONG_PTR)CreateSurface32;
-    h->cb32.DestroyDriver = (unsigned long)(ULONG_PTR)DestroyDriver32;
+    h->cb32.CanCreateSurface     = (unsigned long)(ULONG_PTR)CanCreateSurface32;
+    h->cb32.CreateSurface        = (unsigned long)(ULONG_PTR)CreateSurface32;
+    h->cb32.DestroyDriver        = (unsigned long)(ULONG_PTR)DestroyDriver32;
+    h->cb32.DestroySurface       = (unsigned long)(ULONG_PTR)DestroySurface32;
+    h->cb32.Flip                 = (unsigned long)(ULONG_PTR)Flip32;
+    h->cb32.GetFlipStatus        = (unsigned long)(ULONG_PTR)GetFlipStatus32;
+    h->cb32.GetBltStatus         = (unsigned long)(ULONG_PTR)GetBltStatus32;
+    h->cb32.Lock                 = (unsigned long)(ULONG_PTR)Lock32;
+    h->cb32.Unlock               = (unsigned long)(ULONG_PTR)Unlock32;
+    h->cb32.Blt                  = (unsigned long)(ULONG_PTR)Blt32;
+    h->cb32.SetColorKeySurface   = (unsigned long)(ULONG_PTR)SetColorKey32;
     h->dll_ready = 1;
-    /* **Whose process is this?** The callbacks published here are flat
-     * addresses in it, and DirectDraw's HALINFO validator `IsBadCodePtr`s
-     * every one of them — in whichever process is building a DirectDraw
-     * object, which is not necessarily this one. If the escapes are
-     * answered once for the system rather than once per process, a
-     * pointer that is perfectly good here is a bad pointer there
-     * (2026-09-08). The name is the only way to tell the two stories
-     * apart, and it costs one kernel32 call at init. */
+
     {
         char name[128];
         DWORD n = GetModuleFileNameA(NULL, name, sizeof(name) - 1);
 
         name[n < sizeof(name) ? n : sizeof(name) - 1] = 0;
-        dbg_puts("d3dpthal:   in ");
-        dbg_puts(name);
-        dbg_hex(" pid ", GetCurrentProcessId());
-        dbg_puts("\n");
+        dbg_puts(&core, "d3dpthal:   in ");
+        dbg_puts(&core, name);
+        dbg_hex(&core, " pid ", GetCurrentProcessId());
+        dbg_puts(&core, "\n");
     }
-    dbg_hex("d3dpthal:   published vblank ", h->cb32.WaitForVerticalBlank);
-    dbg_hex(" cansurf ", h->cb32.CanCreateSurface);
-    dbg_hex(" hinstance ", h->dll_hinstance);
-    dbg_puts("\n");
+    dbg_hex(&core, "d3dpthal:   published vblank ", h->cb32.WaitForVerticalBlank);
+    dbg_hex(&core, " cansurf ", h->cb32.CanCreateSurface);
+    dbg_hex(&core, " flip ", h->cb32.Flip);
+    dbg_hex(&core, " hinstance ", h->dll_hinstance);
+    dbg_puts(&core, "\n");
     return 1;
 }
 
@@ -268,3 +456,4 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
     }
     return TRUE;
 }
+

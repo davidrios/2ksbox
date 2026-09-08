@@ -34,6 +34,10 @@
 #define DDWAITVB_I_TESTVB   0x80000006ul
 #endif
 
+#ifndef DDHAL_PLEASEALLOC_BLOCKSIZE
+#define DDHAL_PLEASEALLOC_BLOCKSIZE 0x00000002ul
+#endif
+
 typedef struct d3dpt_ddhal_waitvb {
     void *lpDD;                 /* the runtime's DirectDraw object */
     DWORD dwFlags;              /* DDWAITVB_* */
@@ -72,5 +76,86 @@ typedef struct d3dpt_ddhal_destroydriver {
     HRESULT ddRVal;             /* out */
     void *DestroyDriver;
 } d3dpt_ddhal_destroydriver;
+
+/* Surface callbacks (DDHAL_DDSURFACECALLBACKS) */
+
+typedef struct d3dpt_ddhal_destroysurface {
+    void *lpDD;
+    void *lpDDSurface;          /* DDRAWI_DDRAWSURFACE_LCL* */
+    HRESULT ddRVal;             /* out */
+    void *DestroySurface;
+} d3dpt_ddhal_destroysurface;
+
+typedef struct d3dpt_ddhal_flip {
+    void *lpDD;
+    void *lpSurfCurr;           /* DDRAWI_DDRAWSURFACE_LCL* */
+    void *lpSurfTarg;           /* DDRAWI_DDRAWSURFACE_LCL* */
+    DWORD dwFlags;              /* DDFLIP_* */
+    HRESULT ddRVal;             /* out */
+    void *Flip;
+    void *lpSurfCurrLeft;
+    void *lpSurfTargLeft;
+} d3dpt_ddhal_flip;
+
+typedef struct d3dpt_ddhal_getflipstatus {
+    void *lpDD;
+    void *lpDDSurface;          /* DDRAWI_DDRAWSURFACE_LCL* */
+    DWORD dwFlags;              /* DDGFS_* */
+    HRESULT ddRVal;             /* out */
+    void *GetFlipStatus;
+} d3dpt_ddhal_getflipstatus;
+
+typedef struct d3dpt_ddhal_getbltstatus {
+    void *lpDD;
+    void *lpDDSurface;          /* DDRAWI_DDRAWSURFACE_LCL* */
+    DWORD dwFlags;              /* DDGBS_* */
+    HRESULT ddRVal;             /* out */
+    void *GetBltStatus;
+} d3dpt_ddhal_getbltstatus;
+
+typedef struct d3dpt_ddhal_lock {
+    void *lpDD;
+    void *lpDDSurface;          /* DDRAWI_DDRAWSURFACE_LCL* */
+    DWORD bHasRect;
+    RECTL rArea;
+    LPVOID lpSurfData;
+    HRESULT ddRVal;             /* out */
+    void *Lock;
+    DWORD dwFlags;              /* DDLOCK_* */
+} d3dpt_ddhal_lock;
+
+typedef struct d3dpt_ddhal_unlock {
+    void *lpDD;
+    void *lpDDSurface;          /* DDRAWI_DDRAWSURFACE_LCL* */
+    HRESULT ddRVal;             /* out */
+    void *Unlock;
+} d3dpt_ddhal_unlock;
+
+typedef struct d3dpt_ddhal_blt {
+    void *lpDD;
+    void *lpDDDestSurface;      /* DDRAWI_DDRAWSURFACE_LCL* */
+    RECTL rDest;
+    void *lpDDSrcSurface;       /* DDRAWI_DDRAWSURFACE_LCL* */
+    RECTL rSrc;
+    DWORD dwFlags;              /* DDBLT_* */
+    DWORD dwROPFlags;
+    DDBLTFX bltFX;
+    HRESULT ddRVal;             /* out */
+    void *Blt;
+    BOOL IsClipped;
+    RECTL rOrigDest;
+    RECTL rOrigSrc;
+    DWORD dwRectCnt;
+    LPRECT prDestRects;
+} d3dpt_ddhal_blt;
+
+typedef struct d3dpt_ddhal_setcolorkey {
+    void *lpDD;
+    void *lpDDSurface;          /* DDRAWI_DDRAWSURFACE_LCL* */
+    DWORD dwFlags;              /* DDCKEY_* */
+    DDCOLORKEY ckNew;
+    HRESULT ddRVal;             /* out */
+    void *SetColorKey;
+} d3dpt_ddhal_setcolorkey;
 
 #endif
