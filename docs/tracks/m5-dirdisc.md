@@ -19,7 +19,13 @@ stale-file rule (host-side only for now), and Win98's `CDSHELF.EXE`
 printing nothing to a redirected stdout, which is M5's and predates this
 track.
 
-## State (2026-09-06: steps 1–5 landed)
+## State (2026-09-07: steps 1–6 landed)
+
+**Step 6 (2026-09-07)** raised the ceiling: a folder disc is a CD while it
+fits on one and a DVD-ROM above that (patch 53), up to a dual-layer DVD-9,
+and Win98 under TCG read marker files planted at 703 MiB, 878 MiB, 2 GiB,
+4 GiB and 7.8 GiB of one — `BIG=1 tools/dirdisc-guest-test.sh`.
+
 
 `libdisc/src/isodir.rs` generates the volume, `discx` exercises it, and
 `scripts/test.sh`'s new **`dirdisc`** check hands the result to an ISO
@@ -337,10 +343,13 @@ Rules that are easy to get wrong, fixed here:
   CAPACITY reports.
 - **Refuse, with a message naming the path:** a file ≥ 4 GiB (single
   extent only; multi-extent is a Windows-version minefield), a tree
-  deeper than 30 levels, a symlink loop, **a tree bigger than the disc
-  itself** — 449,850 sectors, one past the last LBA an MSF can name
-  (99:59:74, ~878 MiB), measured before anything is laid out because the
-  sector numbers in the layout are 32 bits. **Warn and continue:** a tree
+  deeper than 30 levels, a symlink loop, **a tree bigger than any real
+  medium** — 4,173,824 sectors, a dual-layer DVD-9, measured before
+  anything is laid out because the sector numbers in the layout are 32
+  bits. (Up to an 80-minute CD the disc *is* a CD; above that the drive
+  reports a DVD-ROM profile, patch 53, and the CD's own ceiling — the
+  last LBA an MSF can name, 99:59:74, ~878 MiB — stops applying.)
+  **Warn and continue:** a tree
   deeper than 8 levels (ISO 9660's limit; Windows copes, MSCDEX may
   not), a file ≥ 2 GiB (dicey on Win98), > 65535 directories.
 - Symlinks are followed for regular files and directories, refused when
@@ -474,6 +483,25 @@ is the handoff.
    *Acceptance:* all three families read the same folder; `scripts/test.sh
    all` green; doc 05's guest-visibility section, doc 17 §5.1, the tools
    table in `CLAUDE.md` and this file's state updated.
+6. **A folder bigger than a CD** — *done 2026-09-07*, asked for by the
+   user after a 34 GiB directory panicked (see the two bugs above). The
+   ceiling was never a property of the folder: a CD's MSF runs out at
+   99:59:74 and QEMU's own `media_is_dvd()` already calls anything past
+   an 80-minute CD a DVD, so patch 53 makes the disc model report the
+   profile the medium actually is — DVD-ROM current with CD-ROM still
+   listed, the DVD Read feature, mode page 2A's DVD-ROM read bit — and
+   `isodir`'s ceiling becomes a dual-layer DVD-9 (4,173,824 sectors,
+   8.1 GiB), the largest medium there is to claim to be. `READ DVD
+   STRUCTURE` needed nothing. With a CD in the tray every answer is
+   unchanged, byte for byte.
+   *Acceptance:* `discx selftest` refuses a 9 GiB folder and serves a
+   1000 MiB one whose volume descriptor and last sector both read back;
+   `scripts/test.sh host` green; and `BIG=1 tools/dirdisc-guest-test.sh`
+   measures the **guest's** own ceiling rather than assuming one — sparse
+   filler with a marker file after 703 MiB, 878 MiB, 2 GiB, 4 GiB and
+   7.8 GiB, each one `type`d back over COM1. **Win98 (TCG) read all five**
+   on 2026-09-07, which is the answer to "does a DVD work in Win98": its
+   CDFS addresses a DVD-sized ISO 9660 volume without complaint.
 
 ## Gotchas (read before step 1; add to as you go)
 

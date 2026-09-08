@@ -255,8 +255,9 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   mastering an image first. Read-only, and a snapshot of the tree as the
   tray closed: what changes on the host afterwards appears on the next
   insert, which is what "Insert" already does. A folder has to fit on a
-  disc: `isodir` refuses a tree past 878 MiB (the last MSF address) and
-  the shelf shows that, with both sizes, on the row's error line.
+  disc: up to an 80-minute CD it is one, above that the drive reports a
+  DVD-ROM, and past a dual-layer DVD-9 (8.1 GiB) `isodir` refuses the
+  tree — the shelf shows that, with both sizes, on the row's error line.
 - **Insert and Eject force the tray.** QMP's `blockdev-change-medium` and
   `eject` both default to *asking* a guest that has locked the medium —
   XP locks it for every open handle on the mounted volume — and a

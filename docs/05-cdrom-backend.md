@@ -105,7 +105,9 @@ Beyond what QEMU has today:
   ISO 9660 + Joliet volume (`isodir:/path`) — the way to hand a guest a
   pile of files without burning an image or booting a network stack.
   Read-only and snapshotted when the tray closes, like a disc that was
-  burned. M5g, opened 2026-09-06: `docs/tracks/m5-dirdisc.md`.
+  burned. A CD while it fits on one, a DVD-ROM above that and refused
+  past a dual-layer DVD-9 — Win98 and XP both read 7.8 GiB of one.
+  M5g, opened 2026-09-06: `docs/tracks/m5-dirdisc.md`.
 
 ## Acceptance tests (M5 exit criteria)
 

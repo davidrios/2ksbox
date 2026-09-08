@@ -434,7 +434,17 @@ items nobody owns yet:
    the guest to release the tray lock (the disc appeared "when I close
    the program"), because `blockdev-change-medium` only *asks* a locked
    guest unless `force` is passed, which `control.rs::insert_disc` now
-   does as `eject_disc` always has.
+   does as `eject_disc` always has. **Step 6 then raised the ceiling
+   rather than keeping it** (2026-09-07): the limit was a *CD's*, and
+   QEMU's own `media_is_dvd()` already calls anything past an 80-minute
+   CD a DVD, so patch 53 reports the profile the medium actually is
+   (DVD-ROM current, CD-ROM still listed, the DVD Read feature, mode
+   page 2A's DVD-ROM bit — a CD in the tray answers byte for byte what
+   it did) and `isodir` now stops at a dual-layer DVD-9, 8.1 GiB.
+   `BIG=1 tools/dirdisc-guest-test.sh` measures the guest's own ceiling
+   with marker files planted at 703 MiB / 878 MiB / 2 / 4 / 7.8 GiB:
+   **Win98 under TCG read all five**, so its CDFS handles a DVD-sized
+   ISO 9660 volume.
 6. x87 / SSE: the **M8** track (`docs/tracks/m8-tcg-fastpaths.md`).
 7. **M6** → `docs/tracks/m6-launcher.md` (opened 2026-09-04: toolkit decided; bundle format, library grid, spawning a player, the guided creation wizard, the shader profile manager with a live preview and disc-shelf editing landed; a human should click through the wizard and the shader manager once — no GUI automation available this session; step 5 is done — snapshots and disc-shelf editing, offline through `qemu-img` and live over the launcher's own `-qmp unix:` socket — and **step 6a is done**: the install layout (`launcher/src/paths.rs`, doc 07) and `scripts/package-linux.sh`, a checked, relocatable Linux tarball a stranger can install and boot from. The project is now named **2ksbox** (ADR-011) and the package carries that name plus the application ID `com._2ksbox.Launcher`; the repo/docs/data dir keep the working name. **Step 6b (the Flatpak) is done too** — it builds from source in the SDK, installs, and boots a machine with KVM inside the sandbox; what remains for Flathub is screenshots and offline cargo sources. **Step 6c (the macOS .app) is done too** — `scripts/package-macos.sh`, signed for Developer ID, hardened, notarized, stapled, `.dmg`; it carries its whole non-system dylib closure plus the Glide wrapper, the Direct3D executor and a Vulkan driver, and boots Win98 from the signed bundle. Next: an AppImage (6b′) and the Windows installer (6d, which also settles Windows live control)). **ADR-015 (2026-09-07) made the Qt build the shipped launcher and every packager was rewritten for it** — only the Linux tarball has been *run* since, so the ordered work is: (i) `scripts/package-flatpak.sh` against the new `org.kde.Platform` 6.10 runtime, which is also the first offline build of the merged `cargo-sources.json` and the first test of whether the SDK's `qmake6` is where cxx-qt looks; (ii) `scripts/package-macos.sh` on the Air, where the `macdeployqt` staging, the re-sign over Qt's own Mach-O files and the offscreen window check are all written and unrun; (iii) `scripts/build-windows.sh && scripts/package-windows.sh`, now that there is one zip rather than two. Then the preview's `QQuickRhiItem` (doc 07: the one place the Qt build is worse, and now on the shipped path).
 8. **M9** → `docs/tracks/m9-tcg-aarch64.md`: patches 17 (REP fast path)

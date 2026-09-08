@@ -11,10 +11,12 @@ pub const FRAMES_PER_SECOND: u32 = 75;
 /// LBA 0 sits at MSF 00:02:00.
 pub const MSF_OFFSET: i32 = 150;
 /// The last sector an MSF can name: 99:59:74, one frame short of 100
-/// minutes. Three BCD bytes have no room past it, so a disc longer than
-/// this has sectors the TOC, the subchannel and every raw sector header
-/// cannot address at all. `isodir` refuses to build one (a folder disc
-/// is a CD-ROM: `atapi_disc_get_configuration` says so to the guest).
+/// minutes. Three BCD bytes have no room past it, so on a disc longer
+/// than this the TOC's lead-out, the subchannel and every raw sector
+/// header have no address for what is beyond — which is a CD's limit,
+/// not a disc's: past an 80-minute CD the drive reports a DVD-ROM
+/// profile (`atapi_disc_get_configuration`) and nothing asks for MSF at
+/// all. That is why `from_lba` saturates here instead of failing.
 pub const MAX_LBA: i32 = (99 * 60 + 59) * FRAMES_PER_SECOND as i32 + 74 - MSF_OFFSET;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,9 +39,10 @@ impl Msf {
     /// address would surface as an I/O error on whatever command
     /// happened to convert one — the lead-out of a TOC, a sector header
     /// — long after the disc that cannot be addressed was accepted. A
-    /// guest reads by LBA; the openers refuse an over-long disc up front
-    /// (`isodir`, [`MAX_LBA`]), and what is left here is arithmetic that
-    /// cannot bring the machine down.
+    /// guest reads a DVD by LBA and never asks for these fields; the
+    /// openers refuse a disc past any real medium up front ([`MAX_LBA`],
+    /// `isodir`'s `MAX_SECTORS`), and what is left here is arithmetic
+    /// that cannot bring the machine down.
     pub fn from_lba(lba: i32) -> Msf {
         let abs = (lba.clamp(-MSF_OFFSET, MAX_LBA) + MSF_OFFSET) as u32;
         let m = abs / (60 * FRAMES_PER_SECOND);

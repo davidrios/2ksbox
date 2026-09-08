@@ -47,12 +47,14 @@ const MAX_FILE: u64 = 4 << 30;
 const BIG_FILE: u64 = 2 << 30;
 /// The path table's parent field is 16 bits.
 const MAX_DIRS: usize = 65535;
-/// Sectors a disc can hold: one past the last LBA an MSF can name
-/// (`msf::MAX_LBA`), 99:59:74, about 878 MiB. A folder is served as a
-/// CD-ROM, and past this the TOC's lead-out, the subchannel and every
-/// sector header have no address for what is on it, so a tree this big
-/// is refused rather than made into a disc no drive could be.
-const MAX_SECTORS: u64 = crate::msf::MAX_LBA as u64 + 1;
+/// Sectors a disc can hold: a dual-layer DVD-9, the largest medium the
+/// drive we present a folder through could physically be. Up to an
+/// 80-minute CD (`CD_MAX_SECTORS` in QEMU's `atapi.c`) the disc is a
+/// CD-ROM; above it the device reports a DVD-ROM profile and MSF stops
+/// meaning anything, which is why the CD's own ceiling
+/// (`msf::MAX_LBA`, 99:59:74) is not the limit here. Past a DVD-9 there
+/// is no medium left to claim to be, so the tree is refused.
+const MAX_SECTORS: u64 = 4_173_824;
 
 /// Serve `dir` as a disc.
 pub fn open(dir: &Path) -> Result<Disc> {
@@ -361,7 +363,7 @@ impl Builder {
         let want = meta_sectors as u64 + data + TAIL_PAD as u64;
         if want > MAX_SECTORS {
             return Err(Error::Invalid(format!(
-                "{}: the folder holds {}, and a disc holds at most {} (99 minutes); share a folder that fits, or make an image of this one",
+                "{}: the folder holds {}, and a disc holds at most {} (a dual-layer DVD); share a folder that fits, or make an image of this one",
                 self.root.display(),
                 size_str(want),
                 size_str(MAX_SECTORS)

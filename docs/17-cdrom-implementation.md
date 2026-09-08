@@ -120,14 +120,18 @@ Rules:
   150-sector pregap of track 1 is *not* in the file and is never addressed).
 - The lead-out LBA of the last session is what `sector_count()` returns
   and what READ CAPACITY / TOC point A2 use.
-- **A disc ends at `msf::MAX_LBA`** (449,849 — MSF 99:59:74, ~878 MiB):
+- **A *CD* ends at `msf::MAX_LBA`** (449,849 — MSF 99:59:74, ~878 MiB):
   three BCD bytes have no address past it, so the TOC's lead-out, the
-  subchannel and every sector header could not name what is beyond.
-  `Msf::from_lba` saturates there rather than failing — this code runs
-  inside QEMU, where `capi.rs` turns a panic into an `EIO` on whatever
-  command happened to convert an address — so **the opener is where an
-  over-long disc has to be refused**, and `isodir` does it by measuring
-  the tree before it lays anything out.
+  subchannel and every sector header could not name what is beyond. A
+  *disc* does not: past an 80-minute CD (`CD_MAX_SECTORS`, 360,000 of
+  our sectors) the drive reports a **DVD-ROM** profile (patch 53) and
+  nothing asks for an MSF, so the model goes on to a dual-layer DVD-9,
+  4,173,824 sectors, which is where `isodir` stops (there is no larger
+  medium to claim to be). `Msf::from_lba` saturates rather than failing
+  — this code runs inside QEMU, where `capi.rs` turns a panic into an
+  `EIO` on whatever command happened to convert an address — so **the
+  opener is where a disc past any real medium has to be refused**, and
+  `isodir` does it by measuring the tree before it lays anything out.
 - Sector reads go through one function: `Disc::read_raw(lba) -> [u8; 2352]`
   (stored raw, or synthesized from cooked per §2.5) and
   `Disc::read_sub(lba) -> [u8; 96]` (stored, or synthesized per §2.6).

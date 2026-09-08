@@ -20,7 +20,17 @@
 # build/dirdisc-guest. Local only (needs a guest image), so not in
 # scripts/test.sh. The boot is not slept out: the run knocks on the Run
 # dialog until the guest answers over COM1 (tools/guestwait.sh).
-# Env: OUT=dir, BOOT_WAIT=s (the cap on that wait, 300), NO_KVM=1, KEEP=1.
+#
+# BIG=1 asks a different question: where does *this guest's* file system
+# stop? The folder is then sparse filler with a small marker file after
+# each interesting offset — an 80-minute CD (703 MiB, where the drive
+# starts reporting a DVD-ROM profile), a 99-minute one (878 MiB, past
+# every MSF address), 2 GiB, 4 GiB and a nearly full DVD-9 — and each
+# marker the guest can `type` back is proof its driver reached that
+# offset. Costs no host disk: the filler is never written.
+#
+# Env: OUT=dir, BOOT_WAIT=s (the cap on that wait, 300), NO_KVM=1, KEEP=1,
+#      BIG=1, MARKS="703 878 2048 4096 8000" (MiB, overrides the offsets).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,31 +43,62 @@ QEMU="$ROOT/build/qemu/qemu-system-i386"
 [ -x "$QEMU" ] || { echo "no $QEMU: build QEMU first"; exit 1; }
 
 # The shared folder itself.
-rm -rf "$SRC"; mkdir -p "$SRC/Patch Notes"
+rm -rf "$SRC"; mkdir -p "$SRC"
 printf 'a folder is a disc\r\n' > "$SRC/FOLDER.TXT"
-printf 'long names survive\r\n' > "$SRC/Patch Notes/Read Me First.txt"
 : > "$SRC/EMPTY.BIN"
 head -c 2048 /dev/zero | tr '\0' 'A' > "$SRC/EXACT.BIN"
 head -c 2049 /dev/zero | tr '\0' 'B' > "$SRC/ODD.BIN"
+
+# The offsets a BIG run plants a marker after, and the files that carry
+# them. `isodir` lays a directory's files out in identifier order, so one
+# rising index over filler and markers alike puts each marker exactly
+# where its name says. Filler is capped at 1000 MiB a file: two ISO 9660
+# limits (4 GiB an extent) and one Win98 warning (2 GiB) live above that,
+# and neither is what this run is asking about.
+MARK_FILES=(); MARK_TAGS=(); MARK_MIB=()
+if [ -n "${BIG:-}" ]; then
+  at=0; idx=0
+  for mib in ${MARKS:-703 878 2048 4096 8000}; do
+    while [ "$at" -lt "$mib" ]; do
+      chunk=$((mib - at)); [ "$chunk" -gt 1000 ] && chunk=1000
+      truncate -s "${chunk}M" "$(printf '%s/X%04d.BIN' "$SRC" "$idx")"
+      at=$((at + chunk)); idx=$((idx + 1))
+    done
+    name="$(printf 'X%04d.TXT' "$idx")"; idx=$((idx + 1))
+    printf 'MARK%s ok\r\n' "$mib" > "$SRC/$name"
+    MARK_FILES+=("$name"); MARK_TAGS+=("MARK$mib ok"); MARK_MIB+=("$mib")
+    echo "    marker at $mib MiB: $name"
+  done
+else
+  mkdir -p "$SRC/Patch Notes"
+  printf 'long names survive\r\n' > "$SRC/Patch Notes/Read Me First.txt"
+fi
 
 # One batch for both families: COMMAND.COM (98) and CMD.EXE (XP) both take
 # it, and every line goes to COM1, which needs no writable disk in the
 # guest. The CD's letter differs per image, so both D: and E: are tried
 # and one of them prints a "not found" — cheaper than teaching this script
 # every image's drive letters.
-cat > "$OUT/RUN.BAT" <<'BAT'
-@echo off
-echo ==== the folder as a disc > COM1
-dir /b D:\ > COM1
-dir /b E:\ > COM1
-type D:\FOLDER.TXT > COM1
-type E:\FOLDER.TXT > COM1
-dir /b "D:\Patch Notes" > COM1
-dir /b "E:\Patch Notes" > COM1
-type "D:\Patch Notes\Read Me First.txt" > COM1
-type "E:\Patch Notes\Read Me First.txt" > COM1
-echo DIRDISCDONE > COM1
-BAT
+{
+  echo '@echo off'
+  echo 'echo ==== the folder as a disc > COM1'
+  echo 'dir /b D:\ > COM1'
+  echo 'dir /b E:\ > COM1'
+  echo 'type D:\FOLDER.TXT > COM1'
+  echo 'type E:\FOLDER.TXT > COM1'
+  if [ ${#MARK_FILES[@]} -gt 0 ]; then
+    for f in "${MARK_FILES[@]}"; do
+      echo "type D:\\$f > COM1"
+      echo "type E:\\$f > COM1"
+    done
+  else
+    echo 'dir /b "D:\Patch Notes" > COM1'
+    echo 'dir /b "E:\Patch Notes" > COM1'
+    echo 'type "D:\Patch Notes\Read Me First.txt" > COM1'
+    echo 'type "E:\Patch Notes\Read Me First.txt" > COM1'
+  fi
+  echo 'echo DIRDISCDONE > COM1'
+} > "$OUT/RUN.BAT"
 python3 - "$OUT/RUN.BAT" <<'CRLF'
 import sys
 p = sys.argv[1]
@@ -118,9 +159,18 @@ echo "----"
 want "DIRDISCDONE" "the batch ran to the end"
 want "FOLDER.TXT" "the guest listed the generated volume"
 want "a folder is a disc" "the guest read a file out of the folder"
-want "Read Me First.txt" "long names survived (Joliet)"
-want "long names survive" "the guest read a file from a directory with a space in its name"
 want "EMPTY.BIN" "the empty file is in the listing"
+if [ ${#MARK_FILES[@]} -gt 0 ]; then
+  # Each marker is one offset the guest's own file system driver reached.
+  # These are a measurement, not a regression: the first one that fails is
+  # this guest's ceiling, and the run says so rather than only failing.
+  for i in "${!MARK_TAGS[@]}"; do
+    want "${MARK_TAGS[$i]}" "the guest read a file past ${MARK_MIB[$i]} MiB (${MARK_FILES[$i]})"
+  done
+else
+  want "Read Me First.txt" "long names survived (Joliet)"
+  want "long names survive" "the guest read a file from a directory with a space in its name"
+fi
 if [ "$fails" = 0 ]; then
   echo "dirdisc guest test ($FAMILY): PASS"
 else

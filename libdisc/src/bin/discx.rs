@@ -1635,8 +1635,8 @@ fn check_dirdisc(dir: &Path) -> Result<(), String> {
     drop(big);
     let _ = fs::remove_dir_all(&huge);
 
-    // A folder bigger than a disc: refused by size, and named, rather
-    // than laid out into sectors no MSF can address. Pointing the shelf
+    // A folder bigger than any disc: refused by size, and named, rather
+    // than laid out into sectors nothing can address. Pointing the shelf
     // at a directory of disc dumps is how a user meets this.
     let over = dir.join("dirover");
     let _ = fs::remove_dir_all(&over);
@@ -1644,7 +1644,9 @@ fn check_dirdisc(dir: &Path) -> Result<(), String> {
     let mut sparse = Vec::new();
     for i in 0..3 {
         let f = fs::File::create(over.join(format!("part{i}.bin"))).map_err(|e| e.to_string())?;
-        if f.set_len(400 << 20).is_err() {
+        // Just under the single-extent limit each, so what refuses this
+        // folder is its total and not one file in it.
+        if f.set_len(3 << 30).is_err() {
             sparse.clear();
             break;
         }
@@ -1653,12 +1655,44 @@ fn check_dirdisc(dir: &Path) -> Result<(), String> {
     if !sparse.is_empty() {
         match Disc::open(&over) {
             Err(e) if e.to_string().contains("a disc holds at most") => {}
-            Err(e) => return Err(format!("a 1.2 GiB folder: {e}")),
+            Err(e) => return Err(format!("a 9 GiB folder: {e}")),
             Ok(_) => return Err("a folder bigger than a disc was served".into()),
         }
     }
     drop(sparse);
     let _ = fs::remove_dir_all(&over);
+
+    // And the other side of that line: a folder past an 80-minute CD is
+    // laid out and served, because the drive reports it as a DVD-ROM
+    // (`CD_MAX_SECTORS` in QEMU's atapi.c is 360,000 of our sectors).
+    // The file is sparse, so this costs no disk and reads as zeros.
+    let dvd = dir.join("dirdvd");
+    let _ = fs::remove_dir_all(&dvd);
+    fs::create_dir_all(&dvd).map_err(|e| e.to_string())?;
+    fs::write(dvd.join("readme.txt"), b"past the CD ceiling\r\n").map_err(|e| e.to_string())?;
+    let filler = fs::File::create(dvd.join("filler.bin")).map_err(|e| e.to_string())?;
+    if filler.set_len(1000 << 20).is_ok() {
+        drop(filler);
+        let c = CDisc::open(&dvd)?;
+        if c.sector_count() <= 360_000 {
+            return Err(format!("a 1000 MiB folder came out {} sectors", c.sector_count()));
+        }
+        let pvd = c.read_cooked(16).map_err(|rc| format!("pvd: rc {rc}"))?;
+        expect("dvd pvd id", &pvd[1..6], b"CD001".as_slice())?;
+        expect(
+            "dvd volume space size",
+            u32::from_le_bytes([pvd[80], pvd[81], pvd[82], pvd[83]]),
+            c.sector_count(),
+        )?;
+        // The far end of the volume answers too: the tail padding is the
+        // last thing a guest's read-ahead runs into, past 878 MiB where a
+        // CD's own addressing would have stopped.
+        let last = c.sector_count() - 1;
+        if c.read_cooked(last).map_err(|rc| format!("last sector: rc {rc}"))? != [0u8; 2048] {
+            return Err("the last sector of a DVD-sized folder is not padding".into());
+        }
+    }
+    let _ = fs::remove_dir_all(&dvd);
 
     // A name that is not UTF-8 cannot be a Joliet identifier at all, so
     // it is skipped with a warning rather than mangled into something
