@@ -29,7 +29,7 @@
 #include <ddk/miniport.h>
 #include <ntddvdeo.h>
 #include <ddk/video.h>
-#include "../../../d3dpt/d3dpt_fb.h"
+#include "../../../../d3dpt/d3dpt_fb.h"
 
 #define DEBUG_LOG 1
 

@@ -210,15 +210,27 @@ What the track starts from:
    driver coming up is `win98-driver-test.sh`'s job, on a machine that has
    the device). Open Watcom is not a prerequisite of the ISO: a host
    without it builds one without the 98 driver and says so.
-6. **Step 1 — the split, XP unchanged.** Carve `core/` out of
-   `d3dptdisp.c` per doc 19, thunk NT onto it, and prove it is a
-   refactor: `scripts/test.sh all` green, `d3dpt-dp2-test` and `d3d7test`
-   against the same golden BMP, `shtest` / `cktest` / `ebtest` / `dxttest`
-   at the same case counts, `d3dgame8` still matching the native oracle,
-   Moto Racer and Vice City still drawing (`tools/xp-driver-test.sh`,
-   `tools/xp-motoracer.sh`, `tools/xp-vicecity.sh`). Land this on its own
-   — a 9x bug on top of an unproven refactor is two bugs wearing one
-   coat.
+6. ~~**Step 1 — the split, XP unchanged**~~ **done 2026-09-07** (doc 19
+   §19): `d3dptdisp.c`'s 3 708 lines are 1 975 of `nt/` plus 1 940 of
+   `core/` in five files, and the core includes no DDK header of either
+   family. Two boundaries rather than one — the DDI *payloads* (the caps
+   shapes, the DP2 command header, `D3DCAPS8`) are identical on both and
+   moved to `core/d3dpt_ddi.h` as one definition, while the surface
+   *objects* differ and meet in `d3dpt_surf_desc`, filled by the layer.
+   Six `d3dpt_os_*` hooks are the whole of what the core asks of the OS,
+   and `build-driver.sh` now proves that with `nm` over the core objects
+   alone (the source cannot enforce it, and a stray `Eng*` would build
+   here and fault on 9x). Proved a refactor by the M7 battery on a fresh
+   overlay: `d3d7` byte-identical to the golden host frame, `shtest` 9/9,
+   `cktest` 4/4, `ebtest` 5/5, `dxttest` as documented, and `d3dgame8`
+   pixel-identical to the pre-split driver in a second overlay (fps
+   counter masked). One real bug on the way, worth knowing before writing
+   the 9x layer: a DDK constant transcribed into the core header wrong
+   (`DDSCAPS_EXECUTEBUFFER` is `0x00800000`, not `0x800`) took out
+   protocol v9's video-memory *vertex* buffers alone and showed up as one
+   failing `shtest` case — doc 19 §19. The core's three DirectDraw
+   -internal bits are now checked against the DDK's at compile time, and
+   the 9x layer should carry the same three lines against `ddrawi.h`.
 7. **Step 2 — the 9x framebuffer driver** (98's M7a): the desktop on the
    adapter, `d3dptvid: adapter found` from the device, no copy inside
    QEMU. Modes come from the INF on 9x, so decide there between an INF
@@ -247,10 +259,12 @@ What the track starts from:
 The 9x half, which is what this track is actually building right now:
 
 ```sh
-# QEMU comes from the main checkout: this worktree has no build/ and does
-# not need one until the split (step 5) touches XP.
-export QEMU_BIN=$HOME/work/2ksbox/build/qemu/qemu-system-i386
-export QEMU_IMG=$HOME/work/2ksbox/build/qemu/qemu-img
+# QEMU is this checkout's own: a build belongs to one checkout and is never
+# borrowed (CLAUDE.md), because a borrowed one runs someone else's patch
+# queue and meson remembers whose sources it was configured from.
+scripts/build.sh                                                   # once, ~15 min
+export QEMU_BIN=$PWD/build/qemu/qemu-system-i386
+export QEMU_IMG=$PWD/build/qemu/qemu-img
 
 WATCOM=$HOME/.local/opt/open-watcom guest-tools/build-driver9x.sh   # d3dpt9x.drv + d3dpt9v.vxd + INF
 tools/win98-driver-test.sh ~/vms/win98.qcow2 install                # fresh raw copy, PnP installs, reboot prompt
@@ -278,9 +292,8 @@ scripts/test.sh                                      # host stage (~30 s); `all`
 tools/xp-driver-test.sh ~/vms/winxp-m7c.qcow2 d3d7   # XP's regression oracle across the split
 ```
 
-That needs a built `build/qemu` in this worktree — `scripts/build.sh` once,
-~15 min from scratch on the Linux box; `build/dxvk` may be symlinked from
-the main checkout rather than rebuilt.
+That needs this checkout's own `build/qemu` — `scripts/build.sh` once,
+~15 min from scratch on the Linux box, and not another checkout's.
 
 ### The second toolchain
 

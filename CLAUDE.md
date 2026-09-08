@@ -301,6 +301,22 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   2026-09-07). The native and Windows *outputs* are separate
   (`build/qemu` vs `build/win/qemu`) — the *sources* are not.
 
+- **A QEMU build belongs to one checkout and is never shared.** Every
+  worktree builds its own `qemu/` into its own `build/qemu` and runs its
+  own binaries; a session must not borrow another checkout's
+  `build/qemu`, point `QEMU_BIN` / `QEMU_IMG` at one, or configure its
+  sources into one. Two reasons, both paid for already. A borrowed build
+  is a build of *someone else's* patch queue: the branch under test is
+  not the branch running, and a `D3DPT_PROTO_VERSION` or `D3DPT_FB_VERSION`
+  bump on either side shows up as `protocol mismatch` or a guest that
+  never attaches. And meson records an absolute source path, so a worktree
+  that configured into the main `build/qemu` silently makes every later
+  build there compile the *worktree's* sources — a fix that passed stops
+  passing with no change to explain it (check `build/qemu/meson-logs/`'s
+  "Source dir" first when that happens). `scripts/build.sh` in the
+  checkout you are working in is the whole answer; the cost is ~15 min
+  once, and it is cheaper than one wrong verdict.
+
 - **`configure`: "found no usable distlib, please install it"** — QEMU
   9.2's `mkvenv` imports `distlib.scripts` *and* `distlib.version`, and
   pip ≥ 26 trimmed its vendored copy (`scripts` yes, `version` no), so

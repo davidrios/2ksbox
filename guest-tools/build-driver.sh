@@ -15,6 +15,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/guest-tools/src/d3dptvid"
+NT="$SRC/nt"        # the NT layer: the miniport and the display driver
+CORE="$SRC/core"    # the OS-independent core both this and the 9x HAL link
+CORE_SRC=("$CORE/core_dp2.c" "$CORE/core_surf.c" "$CORE/core_caps.c" "$CORE/core_ctx.c" "$CORE/core_flip.c")
 OUT="$ROOT/guest-tools/out/driver"
 CC=i686-w64-mingw32-gcc
 command -v "$CC" >/dev/null || { echo "need $CC (mingw-w64)"; exit 1; }
@@ -40,10 +43,38 @@ KFLAGS=(-O2 -Wall -Wno-unused-function -nostdlib -shared -ffreestanding
 rm -rf "$OUT" && mkdir -p "$OUT"
 echo "==> d3dptvid.sys (video miniport)"
 "$CC" "${KFLAGS[@]}" -I"$DDK_INC" -Wl,--entry,_DriverEntry@8 -Wl,--exclude-all-symbols \
-  -o "$OUT/d3dptvid.sys" "$SRC/d3dptvid.c" "$SRC/kcrt.c" -lvideoprt -lntoskrnl -lgcc
+  -o "$OUT/d3dptvid.sys" "$NT/d3dptvid.c" "$SRC/kcrt.c" -lvideoprt -lntoskrnl -lgcc
+# The core is compiled on its own first, and then asked what it needs from
+# outside itself. On NT it is linked into a kernel DLL and on 9x into a
+# ring-3 one, so it may call no operating-system service at all (doc 19,
+# "The split"): every undefined symbol it has must be one of its own, one
+# of the d3dpt_os_* hooks the per-OS layer provides, or memcpy / memset.
+# Nothing enforces that in the source, and a single Eng* call that slipped
+# in would build here and fault on 9x, where there is no win32k at all.
+echo "==> the OS-independent core"
+CORE_OBJ=()
+for c in "${CORE_SRC[@]}"; do
+  o="$OUT/$(basename "${c%.c}").o"
+  "$CC" -O2 -Wall -Wno-unused-function -ffreestanding -fno-stack-protector -mno-stack-arg-probe \
+       -fno-asynchronous-unwind-tables -fno-ident -march=pentium3 -mtune=generic \
+       -fno-tree-loop-distribute-patterns -I"$SRC/ddk" -c -o "$o" "$c"
+  CORE_OBJ+=("$o")
+done
+bad="$(i686-w64-mingw32-nm --undefined-only "${CORE_OBJ[@]}" | awk '{print $2}' | sort -u \
+       | grep -vE '^_?(memcpy|memset|d3dpt_os_[a-z_]+)$' \
+       | while read -r sym; do
+           i686-w64-mingw32-nm --defined-only "${CORE_OBJ[@]}" | awk '{print $3}' | grep -qx "$sym" || echo "$sym"
+         done)"
+if [ -n "$bad" ]; then
+  echo "ERROR: the core calls out of itself: $bad"
+  echo "       (it must reach the OS only through the d3dpt_os_* hooks)"
+  exit 1
+fi
+
 echo "==> d3dptdisp.dll (display driver)"
 "$CC" "${KFLAGS[@]}" -I"$SRC/ddk" -Wl,--entry,_DrvEnableDriver@12 -Wl,--kill-at \
-  -o "$OUT/d3dptdisp.dll" "$SRC/d3dptdisp.c" "$SRC/kcrt.c" "$SRC/d3dptdisp.def" -lwin32k -lgcc
+  -o "$OUT/d3dptdisp.dll" "$NT/d3dptdisp.c" "${CORE_OBJ[@]}" "$SRC/kcrt.c" "$NT/d3dptdisp.def" -lwin32k -lgcc
+rm -f "${CORE_OBJ[@]}"
 echo "==> drvinst.exe (installer, user mode, msvcrt)"
 "$CC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 -mtune=generic \
   -o "$OUT/drvinst.exe" "$SRC/drvinst.c" -ladvapi32 -luser32
@@ -91,7 +122,7 @@ done
 
 crlf() { awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }'; }
 crlf < "$ROOT/guest-tools/README-DRIVER.txt" > "$OUT/README.TXT"
-crlf < "$SRC/d3dptvid.inf" > "$OUT/d3dptvid.inf"
+crlf < "$NT/d3dptvid.inf" > "$OUT/d3dptvid.inf"
 
 # 8.3 upper-case names for the ISO folder
 ( cd "$OUT" && for f in *; do u="$(echo "$f" | tr a-z A-Z)"; [ "$f" = "$u" ] || mv "$f" "$u"; done )

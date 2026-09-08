@@ -79,26 +79,31 @@ about NT.
   if they do not, one struct changing is one file changing.
 - GDI: NT's `Drv*` DDI against 9x's `.drv` DDI over the DIB engine.
 
-Proposed layout (names to settle when the first file moves):
+The layout, as it landed (2026-09-07; §19 has how it went):
 
 ```
 guest-tools/src/d3dptvid/
-  core/     d3dpt_core.h  the core's types and the hooks it calls back into
-            core_dp2.c    the DP2 walker
-            core_surf.c   surfaces, formats, registration, keys, palettes
-            core_caps.c   the caps and format tables
-            core_ctx.c    contexts, targets, clear, readback
-            core_flip.c   the flip chain and the vertical blank
-  nt/       d3dptdisp.c   Drv* + the dxg callbacks, thunked onto the core
-            d3dptvid.c    the video miniport
+  core/     d3dpt_ddi.h   the DDI structures that are the same on every
+                          Windows: the DirectX caps shapes, the DP2
+                          command header and its token numbers, D3DCAPS8
+            d3dpt_core.h  the core's types, the hooks it calls back into
+            core_dp2.c    the DP2 walker                        (784 lines)
+            core_surf.c   surfaces, formats, registration, keys (453)
+            core_caps.c   the caps and format tables            (328)
+            core_flip.c   the heap layout, the vertical blank,
+                          the debug log, the command window     (196)
+            core_ctx.c    contexts, targets, clear, readback    (179)
+  nt/       d3dptdisp.c   Drv* + the dxg callbacks and the OS hooks,
+                          thunked onto the core                 (1975)
+            d3dptvid.c    the video miniport                    (555)
             d3dptdisp.def, d3dptvid.inf
-  w9x/      d3dpthal.c    the ring-3 HAL DLL: the DDHAL / D3DHAL callbacks,
-                          thunked onto the same core (mingw, like NT's)
-            d3dptmini.c   the 16-bit .drv: GDI over the DIB engine, modes,
-                          palette, cursor, the DCICOMMAND escapes (Watcom)
+  w9x/      d3dpt9x.c     the 16-bit .drv: GDI over the DIB engine, modes,
+                          palette, cursor (Watcom), + dibthunk.asm, res/
             d3dptvxd.c    the mini-VDD: the adapter, VRAM, the DOS boxes (Watcom)
-            d3dptvid.inf
-  ddk/      vendored headers (per OS as needed)
+            d3dpt9x.inf
+            d3dpthal.c    to come: the ring-3 HAL DLL, the DDHAL / D3DHAL
+                          callbacks thunked onto the same core (mingw, like NT's)
+  ddk/      the NT DDI headers; ddk9x/ the 9x ones
 ```
 
 Only `w9x/d3dpthal.c` links the core; the other two 9x binaries never see
@@ -712,3 +717,107 @@ machine), `control desk.cpl,,3` from Run lost its arguments and opened
 the Control Panel folder, and Ctrl+Tab did not switch the property
 sheet's tabs. What worked: a right-click on the desktop through the USB
 tablet, Up + Enter for Properties, and a click on the tab itself.
+
+### 19. The split, as it landed (2026-09-07)
+
+`d3dptdisp.c` was 3 708 lines against the NT DDI. It is now 1 975 lines
+of NT plus 1 940 of core in five files, and the core includes no DDK
+header of either family. XP is unchanged: the same driver, the same
+answers, the same log lines.
+
+**Two boundaries, not one.** The plan above said "a neutral descriptor",
+and that turned out to be the answer for exactly one of the two kinds of
+structure the driver handles:
+
+- The **DDI payloads** — `D3DDEVICEDESC_V1`, `D3DPRIMCAPS`, the extended
+  caps, `D3DCAPS8`, the `DP2COMMAND` header, the `GetDriverInfo2` shapes
+  — are the same on NT and 9x, field for field (§3). They were already
+  *our* definitions rather than a DDK's: the vendored `d3dnthal.h` is a
+  ReactOS-derived transcription, spelled out with trailing underscores so
+  a kernel build never has to reach `d3dtypes.h`. So they moved out of it
+  into **`core/d3dpt_ddi.h`**, one definition, and `d3dnthal.h` includes
+  that and keeps only what is genuinely NT: the callback *data*
+  structures (`D3DNTHAL_CONTEXTCREATEDATA` and friends) and the callback
+  tables. The 9x `d3dhal.h` will do the same, and the day one of the two
+  disagrees is the day the disagreement gets its own struct.
+- The **surface objects** are not the same: NT's `DD_SURFACE_LOCAL` and
+  9x's `DDRAWI_DDRAWSURFACE_LCL` hold the same facts under the same names
+  at different offsets. That is where `d3dpt_surf_desc` goes — a flat
+  record of everything the core reads off a surface (handle, caps,
+  caps2, flags, w, h, pitch, linear size, `fpVidMem`, the resolved
+  D3DFORMAT, the pixel format's flags for the log, the source colour
+  key). The core also keeps the OS's object as an opaque `void *`,
+  because a colour key set *after* a texture was mirrored is read off it
+  when the texture is next bound.
+
+**Six hooks, and nothing else.** The core reaches the OS through
+`d3dpt_os_alloc` / `d3dpt_os_free` (NT: `EngAllocMem` with the pool tag),
+`d3dpt_os_ticks` (`EngQueryPerformanceCounter` / `Frequency`, the flip
+timeout's clock), `d3dpt_os_surf` (fill a descriptor),
+`d3dpt_os_attached` (the surfaces attached to this one that are *not*
+mip levels — a flip chain's other buffers, a Z buffer) and
+`d3dpt_os_next_mip`. The attach-list walks stayed shaped as they were:
+the *filtering* moved into the hook, the breadth-first search over a
+chain stayed in the core, where the comment about GTA 2's unregistered
+back buffer belongs.
+
+**And the constraint is now a build check.** `build-driver.sh` compiles
+the five core files on their own and asks `nm` what they still want from
+outside: every undefined symbol must be one of the core's own, one of the
+`d3dpt_os_*` hooks, or `memcpy` / `memset`. Nothing in the *source* stops
+a `Eng*` call from being written into the core — it would build fine here
+and fault on 9x, where there is no `win32k` at all — so the check is the
+only thing that does. It was proved by breaking it on purpose:
+`ERROR: the core calls out of itself: _EngDebugPrint`.
+
+**What stayed in the layer, and why.** The callback *tables* dxg is
+handed (`D3DNTHAL_CALLBACKS`, `DD_D3DBUFCALLBACKS`) name this file's
+functions, so filling them is the layer's; what they *claim* is
+`core_caps.c`'s. `d3d_caps_init` used to do both, and pulling the tables
+out of it left them uninitialised for one build — the kind of mistake
+this refactor is most likely to make, and the reason to run the whole M7
+suite rather than trust that it compiles. `DdCreateSurface`'s sizing of a
+compressed surface for dxg's heap stayed too (the arithmetic is
+`surf_dxt_size` in the core; the DDK dance around `fpVidMem =
+DDHAL_PLEASEALLOC_BLOCKSIZE` is NT's), as did every `Drv*` entry, the
+mode list, the palette, the hardware cursor and the memory mapping.
+
+**The DirectDraw *API* structures are not the problem.** `DDPIXELFORMAT`,
+`DDSURFACEDESC`, `DDSCAPS` and the `DDRAWISURF_*` flag values come from
+the public `ddraw.h` and are identical on both; the core uses them
+directly. Only `DDSCAPS_EXECUTEBUFFER` needed spelling out, because
+mingw's public header has dropped the DirectX 3 name that the DirectX 8
+runtime's vertex and index buffers still arrive under.
+
+**The one bug it introduced, and what it cost.** Moving a constant is
+the hazard this arrangement has: `DDSCAPS_EXECUTEBUFFER` is not in
+mingw's public `ddraw.h`, so the core header spelled it out — as
+`0x00000800`, which is `DDRAWISURF_HASCKEYSRCBLT`'s value, not its. The
+right one is `0x00800000`; the DDKs write it `DDSCAPS_RESERVED2`, the
+name it was renamed to when execute buffers left the public API. Nothing
+failed to build, and the NT layer was unaffected (it includes
+`ddrawint.h`, whose definition won the `#ifndef`), so only the *core*
+believed it — and what the core uses it for is deciding whether a
+surface is a vertex or index buffer. The DirectX 8 runtime's vertex
+buffers carry no `DDSCAPS2_VERTEXBUFFER` (its index buffers do carry
+`DDSCAPS2_INDEXBUFFER`, which is why only half the path broke), so
+protocol v9's video-memory vertex buffers quietly stopped being
+recognised. `SHTEST`'s "vs 1.1 from a vertex + index buffer" case drew
+the *previous* case's colour and the run came back `9 cases, 1 failed`.
+That is the whole argument for running the guest battery over a
+refactor: it compiles, it installs, it draws a perfect D3D7TEST frame,
+and one case in nine says the value is wrong.
+
+The fix is not just the right number. The core now defines its three
+DirectDraw-internal bits under its own names
+(`DDSCAPS_EXECUTEBUFFER_`, `DDRAWISURF_HASCKEYSRCBLT_`,
+`DDRAWISURF_HASPIXELFORMAT_`) and the NT layer, which can see both, fails
+to compile if any of them disagrees with the DDK's. The 9x layer will
+carry the same three lines against `ddrawi.h`.
+
+**The size the driver lost.** `.text` went from 0xa890 to 0xa070 — about
+two kilobytes — because the old single translation unit inlined
+`d3d_register_at` and the pixel-format helpers into several callers and
+the split cannot. Nothing was removed: the set of functions before and
+after differs only by the additions, plus `surf_format` / `surf_caps` /
+`surf_next_mip`, which are now the NT half of `d3dpt_os_surf`.

@@ -143,7 +143,7 @@ DDK is used. What it took:
 ## M7b — the DirectDraw DDI (2026-09-04)
 
 What Microsoft's `ddraw.dll` → `dxg.sys` sees behind the display driver
-(`d3dptdisp.c`, bottom half; the DDI header is ReactOS' public-domain
+(`nt/d3dptdisp.c` over `core/`, doc 19 §19; the DDI header is ReactOS' public-domain
 `ddrawint.h`, vendored in `guest-tools/src/d3dptvid/ddk/`):
 
 - **The primary is a device surface GDI still draws on.** `EngCreateDeviceSurface`
@@ -272,7 +272,7 @@ Two halves:
   `ENABLE`, 60 Hz if the guest left `HZ` unset. Same register, same
   contract (a monotonic counter ticking at the display's rate), so no
   `D3DPT_FB_VERSION` bump and an older driver still works against it.
-- **The driver (`d3dptdisp.c`).** `DdFlip` remembers `FRAMES` at the flip;
+- **The driver (`nt/d3dptdisp.c`).** `DdFlip` remembers `FRAMES` at the flip;
   until it moves the flip is in the air. A second `DdFlip` in that window
   waits (`DDFLIP_WAIT`) or returns `DDERR_WASSTILLDRAWING`, and
   `DdGetFlipStatus` answers `DDERR_WASSTILLDRAWING` for both `DDGFS_CANFLIP`

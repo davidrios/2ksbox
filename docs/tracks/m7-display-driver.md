@@ -10,8 +10,11 @@ picture and the track rules, then this file, then doc 15.
 - QEMU device: `d3dpt/hw/d3dpt_vga.c`, register set `d3dpt/d3dpt_fb.h`
   (bump `D3DPT_FB_VERSION` on any change; device and miniport check it),
   the shared executor loader `d3dpt/hw/d3dpt_exec_load.[ch]`.
-- Guest driver: `guest-tools/src/d3dptvid/` (miniport `d3dptvid.c`, display
-  driver `d3dptdisp.c`, `kcrt.c`, INF, `drvinst.c`, `setmode.c`, `ddtest.c`,
+- Guest driver: `guest-tools/src/d3dptvid/` — since the M10 split
+  (2026-09-07, doc 19 §19) the NT half is `nt/` (miniport `nt/d3dptvid.c`,
+  display driver `nt/d3dptdisp.c`, its INF and .def) over the
+  OS-independent `core/`, which is where the DP2 walker, the surface
+  table, the caps and the flip chain now live; also `kcrt.c`, `drvinst.c`, `setmode.c`, `ddtest.c`,
   `d3d7test.c`, `ditest.c`, `dxttest.c`, `shtest.c`, `cktest.c`, `ebtest.c`, vendored DDK headers `ddk/` incl. the self-contained
   `d3dnthal.h`), `guest-tools/build-driver.sh` (also run by
   `build-wrappers.sh`, stages `DRIVER\` on the ISO).

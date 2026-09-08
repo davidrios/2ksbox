@@ -1,7 +1,7 @@
 /*
  * d3dpt_exec_ddi.cpp — the display driver's records of the paravirtual
  * Direct3D executor (doc 15, M7c): what the XP display driver
- * (guest-tools/src/d3dptvid/d3dptdisp.c) sends through the d3dpt-vga
+ * (guest-tools/src/d3dptvid/nt/d3dptdisp.c) sends through the d3dpt-vga
  * adapter's command window when dxg.sys drives its Direct3D DDI.
  *
  * The model: every DirectDraw surface stays in guest VRAM (dxg's heap),

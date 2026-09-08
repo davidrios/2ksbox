@@ -3,7 +3,7 @@
  * display adapter (doc 15, ADR-008 / M7a).
  *
  * ONE header for both sides: the QEMU device model (d3dpt/hw/d3dpt_vga.c)
- * and the XP video miniport (guest-tools/src/d3dptvid/d3dptvid.c). Plain
+ * and the XP video miniport (guest-tools/src/d3dptvid/nt/d3dptvid.c). Plain
  * C, fixed-width types only: the miniport is a kernel-mode PE with no
  * CRT and includes this next to video.h.
  *
