@@ -334,14 +334,43 @@ PYDS
 # (ddrawi.h, d3dhal.h, dmemmgr.h) are ones mingw-w64 ships itself, and
 # they are the ones this half wants.
 HALCC=i686-w64-mingw32-gcc
+# **Above 2 GiB, and that is not a preference.** DirectDraw loads this DLL
+# and calls DriverInit in `DDHELP.EXE`, not in the application — so the
+# callback addresses it publishes are flat pointers in DDHELP's address
+# space, and the HALINFO validator that IsBadCodePtr's them runs in the
+# *game's*. Windows 9x maps a DLL based in the shared arena (0x80000000 -
+# 0xBFFFFFFF) at one address for every process, which is what makes one
+# set of pointers mean the same thing in both; a DLL based below that is
+# private to whoever loaded it and every callback it publishes is a bad
+# pointer everywhere else. The symptom is a HAL that is refused with no
+# message at all (doc 19 §22). The reference driver bases its at
+# 0xB00B0000 for the same reason, and this is deliberately its
+# neighbourhood.
+#
+# **The address has to be one this Windows will actually give.** A base
+# it will not honour is relocated into the private arena instead, and the
+# DLL then publishes callbacks no other process can reach; 0xB3D00000 and
+# 0xB00D0000 both came back as 0x00b50000 on this guest (2026-09-08), and
+# stripping the relocation table to force the issue only turned that into
+# `LoadLibrary` failing outright. So the value is the reference driver's
+# own, which is known to load on a 9x guest — and `DriverInit` checks the
+# base it actually got and says so rather than running on a bad one.
+HAL_BASE=0xB00B0000
 if command -v "$HALCC" >/dev/null; then
   echo "==> d3dpt9hl.dll (the ring-3 DirectDraw / Direct3D HAL)"
   "$HALCC" -O2 -Wall -Wno-unused-function -shared -nostdlib -ffreestanding \
      -fno-stack-protector -mno-stack-arg-probe -fno-asynchronous-unwind-tables \
      -fno-ident -march=pentium3 -mtune=generic -fno-tree-loop-distribute-patterns \
      -Wl,--enable-stdcall-fixup -Wl,--entry,_DllMain@12 \
+     -Wl,--image-base,$HAL_BASE \
+     -Wl,--disable-dynamicbase,--disable-nxcompat,--subsystem,windows \
      -I"$SRC" \
-     -o "$BUILD/d3dpt9hl.dll" "$SRC/d3dpthal.c" "$SRC/d3dpthal.def" -lgcc
+     -o "$BUILD/d3dpt9hl.dll" "$SRC/d3dpthal.c" "$SRC/d3dpthal.def" -lgcc -lkernel32
+  # `-nostdlib` drops the default libraries, so kernel32 is named on
+  # purpose: it is the one import this DLL is allowed (the check below
+  # enforces exactly that), and the OS services the core will ask for —
+  # allocate, free, a performance counter — all come from it.
+  #
   # Loaded into every game's address space, so it must pull in no runtime
   # and must not reach past the pentium3 floor the guests are built to.
   bad="$(i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | awk '/DLL Name:/ {print $3}' \
@@ -355,6 +384,13 @@ if command -v "$HALCC" >/dev/null; then
   # named by hand — and ld only *warns* when it cannot find one, leaving
   # AddressOfEntryPoint zero. Windows then calls address zero the moment
   # DirectDraw loads this into a game, which on 9x is a silent reboot.
+  # The shared-arena base, checked rather than assumed: getting it wrong
+  # costs a HAL that is silently refused, and nothing downstream says so.
+  ib=$(i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | awk '/ImageBase/ {print $2}')
+  [ $((16#$ib)) -ge $((0x80000000)) ] || {
+    echo "ERROR: d3dpt9hl.dll is based at 0x$ib, below the Win9x shared arena;"
+    echo "       DDHELP's callbacks would be bad pointers in every game"; exit 1; }
+
   ep=$(i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | awk '/AddressOfEntryPoint/ {print $2}')
   [ -n "$ep" ] && [ "$ep" != "00000000" ] \
     || { echo "ERROR: d3dpt9hl.dll has no entry point (AddressOfEntryPoint $ep)"; exit 1; }

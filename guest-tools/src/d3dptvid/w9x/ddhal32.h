@@ -43,6 +43,30 @@ typedef struct d3dpt_ddhal_waitvb {
     void *WaitForVerticalBlank; /* the runtime's own pointer back to us */
 } d3dpt_ddhal_waitvb;
 
+/* The two DirectDraw-object callbacks that stand between an application
+ * asking for a surface and the runtime allocating one. `CanCreateSurface`
+ * is the veto — the driver says whether it could back this description at
+ * all — and `CreateSurface` is where a driver that wants to place the
+ * surface itself does so, by writing `fpVidMem` into the surface objects
+ * the runtime passes in. Declining either is legal on 9x and leaves the
+ * work to the runtime, which is what both do for now. */
+typedef struct d3dpt_ddhal_cancreatesurface {
+    void *lpDD;
+    LPDDSURFACEDESC lpDDSurfaceDesc;
+    DWORD bIsDifferentPixelFormat;
+    HRESULT ddRVal;             /* out */
+    void *CanCreateSurface;
+} d3dpt_ddhal_cancreatesurface;
+
+typedef struct d3dpt_ddhal_createsurface {
+    void *lpDD;
+    LPDDSURFACEDESC lpDDSurfaceDesc;
+    void **lplpSList;           /* the surfaces, as DDRAWI_DDRAWSURFACE_LCL* */
+    DWORD dwSCnt;
+    HRESULT ddRVal;             /* out */
+    void *CreateSurface;
+} d3dpt_ddhal_createsurface;
+
 typedef struct d3dpt_ddhal_destroydriver {
     void *lpDD;
     HRESULT ddRVal;             /* out */

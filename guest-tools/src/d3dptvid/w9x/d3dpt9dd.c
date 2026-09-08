@@ -81,6 +81,7 @@ static DWORD dwHalLinear;               /* the same block, as the DLL sees it */
 static LPDDHAL_SETINFO lpSetInfo;       /* DirectDraw's, from DDNEWCALLBACKFNS */
 
 static void HalMode(void);
+static WORD wHalUnreachable;            /* said once, not once per call */
 
 /* the bisection knob, read off the adapter (see D9F_* in d3dpt9x.h). Read
  * on every use rather than cached: the escapes arrive from more than one
@@ -177,6 +178,42 @@ static void BuildPixelFormat(DDPIXELFORMAT_t __far *pf)
 /* Copy the callbacks the DLL published into the tables DirectDraw reads,
  * and set the matching flag for each. A zero in cb32 simply means the
  * DLL does not implement that one and DirectDraw's own HEL does it. */
+/* Whether a callback the DLL published is worth handing to DirectDraw.
+ *
+ * **The addresses are DDHELP.EXE's, and the runtime checks them in the
+ * game's process** (doc 19 §22). DirectDraw loads the 32-bit HAL and
+ * calls `DriverInit` in `DDHELP.EXE`, once for the machine; every
+ * application then validates the stored HALINFO in *its own* address
+ * space, `IsBadCodePtr` on every entry a flag claims, and refuses the
+ * whole driver object if one fails. A module in the private arena is
+ * mapped only where it was loaded and gets a different address in each
+ * process (measured 2026-09-08: DDHELP had it at 0x00b50000 and the
+ * probe's own LoadLibrary at 0x00ca0000), so those entries are bad
+ * pointers everywhere else and the HAL is thrown away — losing the video
+ * memory heap and the mode list with it, which do work.
+ *
+ * Until the DLL can be got into the shared arena above 2 GiB, where one
+ * address means the same thing in every process, publishing a callback
+ * costs the whole HAL and buys nothing. So they are withheld, and said
+ * to be withheld: a DirectDraw that does its own drawing out of our
+ * video memory is worth more than one that does its own drawing out of
+ * its own. */
+static BOOL HalReachable(DWORD fn)
+{
+    if (fn == 0) {
+        return FALSE;
+    }
+    if (fn < 0x80000000ul) {
+        if (!wHalUnreachable) {
+            wHalUnreachable = 1;
+            dbg_val("d3dpt9dd: the 32-bit HAL is at", fn);
+            dbg_str(", below the shared arena: callbacks withheld");
+        }
+        return FALSE;
+    }
+    return TRUE;
+}
+
 static void BuildCallbacks(void)
 {
     DDHAL_DDCALLBACKS_t __far *pcbDD = HALFIELD(DDHAL_DDCALLBACKS_t, cb_dd);
@@ -193,9 +230,28 @@ static void BuildCallbacks(void)
     cbSurf.dwSize = sizeof(cbSurf);
     cbPal.dwSize = sizeof(cbPal);
 
+/* **`DWORD __far *`, and the `__far` is the whole thing.** The tables
+ * live in the shared block, so `&(tab).member` is a far pointer; this
+ * file is compiled in the small model, where a plain `DWORD *` is a
+ * *near* pointer, so `*(DWORD *)&…` silently truncates it to its offset
+ * and stores through DS — into the driver's own data segment, at
+ * whatever offset the block's field happens to have. The slot itself
+ * stays zero.
+ *
+ * What that looks like from outside is the reason it is worth a comment
+ * (2026-09-08): the flags land, because `(tab).dwFlags |= flag` goes
+ * through the far struct properly, so the driver's log and DirectDraw
+ * both say the callbacks are published — and DirectDraw's HALINFO
+ * validator agrees, because it only `IsBadCodePtr`s entries that are
+ * non-zero. The HAL is accepted with a table of nulls and every call
+ * goes to the runtime's own HEL. The cast is needed at all because the
+ * member is a 16-bit far function pointer and what goes in it is a
+ * 32-bit flat address. */
+/* And a callback is only published if it can be *reached*: see
+ * `HalReachable` below. */
 #define CB(tab, member, field, flag)                                    \
-    if (pHal->cb32.field) {                                             \
-        *(DWORD *)&(tab).member = pHal->cb32.field;                     \
+    if (HalReachable(pHal->cb32.field)) {                               \
+        *(DWORD __far *)&(tab).member = pHal->cb32.field;               \
         (tab).dwFlags |= (flag);                                        \
     }
     CB(cbDD, DestroyDriver, DestroyDriver, DDHAL_CB32_DESTROYDRIVER)
@@ -223,6 +279,15 @@ static void BuildCallbacks(void)
 #undef CB
     dbg_val("d3dpt9dd:   dd callbacks", cbDD.dwFlags);
     dbg_val(" surface callbacks", cbSurf.dwFlags);
+    dbg_str("");
+    /* Read the table back through the far pointer rather than trusting
+     * the store: the runtime `IsBadCodePtr`s every entry a flag claims
+     * and refuses the whole HALINFO if one is bad, so what is actually
+     * in the slots is the thing to know. */
+    dbg_val("d3dpt9dd:   cbDD size", (DWORD)sizeof(cbDD));
+    dbg_val(" destroy", *(DWORD __far *)&cbDD.DestroyDriver);
+    dbg_val(" cansurf", *(DWORD __far *)&cbDD.CanCreateSurface);
+    dbg_val(" vblank", *(DWORD __far *)&cbDD.WaitForVerticalBlank);
     dbg_str("");
 #undef cbDD
 #undef cbSurf

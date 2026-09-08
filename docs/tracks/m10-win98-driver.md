@@ -263,7 +263,26 @@ What the track starts from:
    `DDSCAPS_VIDEOMEMORY` and a video-memory-only offscreen surface that
    allocates and locks. Five things were ruled out with a boot each
    first, listed there so nobody repeats them.
-   **Next: the rest of M7b** — the VRAM heap in earnest, the surface
+   **And then the callbacks turned out not to be reachable at all**
+   (doc 19 §22, the same day). Publishing two more of them showed that
+   *none* is ever entered, for two reasons stacked on each other: a
+   `*(DWORD *)&far` store in the small model was truncating every
+   callback address to its offset (so §21's accepted HAL had an empty
+   table, which is why it was accepted); and with that fixed, DirectDraw
+   refuses the HAL, because it loads the DLL and calls `DriverInit` in
+   **`DDHELP.EXE`** while every application `IsBadCodePtr`s the published
+   entries in **its own** address space — and a DLL in the private arena
+   has a different address in every process (DDHELP `0x00b50000`, the
+   probe's own `LoadLibrary` `0x00ca0000`, its `GetModuleHandle` NULL).
+   **The blocker, and the next session's first job:** the ring-3 HAL has
+   to be mapped in the shared arena above 2 GiB, as the reference driver's
+   `0xB00B0000` is, and this Windows 98 relocates it out of there whatever
+   base is asked for — including the reference's own — while removing the
+   relocation table to force the issue makes `LoadLibrary` fail. Doc 19
+   §22 lists what was tried. Until it is solved the 16-bit half withholds
+   any callback below `0x80000000` and logs why, which keeps the HAL, the
+   video-memory heap and the mode list.
+   **Then the rest of M7b** — the VRAM heap in earnest, the surface
    callbacks, the flip chain against the frame counter, `DdMapMemory`'s
    equivalent, 8 bpp palettized modes. `DDTEST.EXE` and `CDTEST`-style
    guest probes run on 98 as they do on XP.

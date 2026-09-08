@@ -1003,14 +1003,11 @@ the `.drv` published; a primary surface whose caps are
 DDSCAPS_VIDEOMEMORY` surface — the request the HEL cannot satisfy at all
 — created and locked. DirectDraw is allocating out of the adapter.
 
-**Still open, and the next step's to settle.** `WaitForVerticalBlank`
-answers `E_NOTIMPL` and the DLL's callback is never entered, at any
-cooperative level; the runtime fetches the 32-bit entry from its merged
-table at `+0x98` but gates on `+0x18` of the same block being non-zero,
-and that word is what has not been traced yet. It is not worth another
-disassembly on its own: the surface callbacks are M7b's next work and
-they answer the same question — whether a published callback is entered
-at all — with a lot more of the driver behind it.
+**Still open when this was written, and answered in §22:**
+`WaitForVerticalBlank` answers `E_NOTIMPL` and the DLL's callback is
+never entered. It turned out not to be about the vertical blank at all —
+no callback the DLL publishes is entered, for two reasons, and the HAL
+accepted here was accepted with an empty callback table.
 
 The harness grew two things in the same session, both of which this cost:
 a `boot` re-stages `d3dpt9hl.dll` and `PROG` as well as the two Watcom
@@ -1018,3 +1015,83 @@ binaries, so an edit-build-test cycle on the DirectDraw half is one boot
 rather than a whole `install`; and it deletes `C:\DDPROBE.LOG` from the
 image before booting, because a stale log read back after a run that
 wrote none is a session spent on the wrong evidence.
+
+### 22. Where the 32-bit HAL has to live (2026-09-08)
+
+§21 got the HAL accepted and left one thing open: `WaitForVerticalBlank`
+answered `E_NOTIMPL` and the DLL's callback was never entered. Publishing
+two more callbacks — `CanCreateSurface` and `CreateSurface`, both
+log-and-decline — answered it: **no callback the DLL publishes is ever
+entered**, so it was never a vertical-blank quirk. Two separate causes,
+one hiding the other.
+
+**The first is a near pointer.** The tables live in the shared block, so
+`&cbDD.WaitForVerticalBlank` is a far pointer; `d3dpt9dd.c` is compiled
+in the small model, where a plain `DWORD *` is a *near* pointer. The
+`*(DWORD *)&…` that stored each 32-bit callback address therefore
+truncated the far pointer to its offset and stored through DS, into the
+driver's own data segment. The slots stayed zero.
+
+From outside, that reads as success at every step: `dwFlags |= flag` goes
+through the far struct properly, so the driver logs the callbacks as
+published and DirectDraw sees the flags; and DirectDraw's validator only
+`IsBadCodePtr`s entries that are *non-zero*, so a table of nulls sails
+through. §21's accepted HAL was standing on exactly that — the video
+memory and the mode list were real, the callback table was empty.
+
+**The second is the address space, and it is the real problem.** With the
+store fixed the entries are genuine — and DirectDraw then refuses the
+whole HAL. Following it back through the runtime, with the probe asking
+the same questions from inside the guest:
+
+- **DirectDraw loads the 32-bit HAL and calls `DriverInit` in
+  `DDHELP.EXE`**, once for the machine, not once per application. The DLL
+  logs its own `GetModuleFileNameA(NULL)` and that is the answer.
+- **Every application then validates the stored HALINFO in its own
+  address space.** `IsBadCodePtr` on each published entry, and the whole
+  driver object is thrown away if one fails.
+- **A DLL in the private arena has a different address in every
+  process.** Measured: DDHELP had it at `0x00b50000`, and the probe's own
+  `LoadLibrary` of the same file got `0x00ca0000`; the probe's
+  `GetModuleHandle` was NULL beforehand, so the application does not have
+  it at all. DDHELP's callback addresses are bad pointers everywhere else,
+  which is precisely what `IsBadCodePtr` says.
+
+So the ring-3 HAL must live in the **shared arena above 2 GiB**, where one
+address means the same thing in every process — which is why the
+reference driver bases `vmhal9x.dll` at `0xB00B0000`. **And this Windows
+98 will not put it there.** `--image-base` at `0xB3D00000`, `0xB00D0000`
+and `0xB00B0000` — the reference's own value — were all relocated to
+`0x00b50000`; clearing `--dynamicbase` / `--nxcompat` and building as a
+GUI subsystem image changed nothing; and removing the relocation table
+outright, so the loader must honour the base or fail, made `LoadLibrary`
+fail (no `d3dpthal:` line at all, which is at least loud). How the
+reference gets its DLL mapped there is the question the next session
+starts on.
+
+**Where that leaves the driver.** The far-pointer store is fixed, because
+it is a real bug whatever happens next. But a callback that cannot be
+reached costs the *whole* HAL — the video-memory heap and the mode list
+with it, which do work — and buys nothing, so the 16-bit half now
+withholds any `cb32` entry below `0x80000000` and says so:
+
+```
+d3dpthal: relocated out of the shared arena, to 0x00b50000
+d3dpt9dd: the 32-bit HAL is at=00b511a0, below the shared arena: callbacks withheld
+d3dpt9dd:   dd callbacks=00000000
+```
+
+with `dwCaps 0x480`, 126 MB of video memory and both surfaces allocating
+and locking, as in §21. A DirectDraw that does its own drawing out of our
+video memory is worth more than one that does its own drawing out of its
+own, and the reason it is doing so is now a line in the log rather than a
+truncated pointer.
+
+**Three smaller things the same session settled.** The DLL links against
+`kernel32` on purpose now (`-nostdlib` drops it, and the core's `alloc`,
+`free` and performance counter will all come from there). The build fails
+a DLL based below `0x80000000`. And `ddprobe` asks the questions this
+took: the display mode, a primary surface and a video-memory-only one
+each described and locked, and `GetModuleHandle` / `LoadLibrary` /
+`IsBadCodePtr` on the HAL itself — the last three being the runtime's own
+test, run where the runtime runs it.

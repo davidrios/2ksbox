@@ -88,6 +88,27 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     log_file = fopen("C:\\DDPROBE.LOG", "w");
     logf_("ddprobe: start");
 
+    /* **The runtime's own test, run here.** DirectDraw loads the 32-bit
+     * HAL and calls DriverInit in DDHELP.EXE, and then validates the
+     * callbacks it published with `IsBadCodePtr` — in *this* process. So
+     * the question that decides everything is whether this process has
+     * the DLL at all, and at which address; `GetModuleHandle` answers it
+     * without loading anything, and `LoadLibrary` says where the system
+     * put it (on 9x a module has one base for the whole machine). */
+    {
+        HMODULE m = GetModuleHandleA("d3dpt9hl.dll");
+        HMODULE l;
+
+        logf_("GetModuleHandle(d3dpt9hl.dll) -> %p", m);
+        l = LoadLibraryA("d3dpt9hl.dll");
+        logf_("LoadLibrary(d3dpt9hl.dll)     -> %p", l);
+        if (l) {
+            FARPROC f = GetProcAddress(l, "DriverInit");
+            logf_("  DriverInit %p  IsBadCodePtr %d", f, f ? IsBadCodePtr(f) : -1);
+            FreeLibrary(l);
+        }
+    }
+
     hr = DirectDrawCreate(NULL, &dd, NULL);
     logf_("DirectDrawCreate -> 0x%08lx", (unsigned long)hr);
     if (FAILED(hr) || !dd) {

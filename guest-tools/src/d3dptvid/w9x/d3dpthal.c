@@ -129,6 +129,40 @@ static DWORD __stdcall WaitForVerticalBlank32(d3dpt_ddhal_waitvb *d)
     return DDHAL_DRIVER_HANDLED;
 }
 
+/* The two surface-creation callbacks, published so that the question the
+ * vertical blank left open can be answered before a surface layer is
+ * written on top of the assumption: **is a callback this DLL publishes
+ * entered at all?** Both decline, so the runtime allocates out of our
+ * heap exactly as it already does and nothing that works stops working;
+ * all they add is a line saying what was asked for. When the surface
+ * layer proper is written (M7b) these are where it starts. */
+static DWORD __stdcall CanCreateSurface32(d3dpt_ddhal_cancreatesurface *d)
+{
+    static int said;
+
+    if (!said) {
+        said = 1;
+        dbg_hex("d3dpthal: CanCreateSurface, caps ",
+                d->lpDDSurfaceDesc ? d->lpDDSurfaceDesc->ddsCaps.dwCaps : 0);
+        dbg_puts("\n");
+    }
+    return DDHAL_DRIVER_NOTHANDLED;
+}
+
+static DWORD __stdcall CreateSurface32(d3dpt_ddhal_createsurface *d)
+{
+    static int said;
+
+    if (!said) {
+        said = 1;
+        dbg_hex("d3dpthal: CreateSurface, caps ",
+                d->lpDDSurfaceDesc ? d->lpDDSurfaceDesc->ddsCaps.dwCaps : 0);
+        dbg_hex(" count ", d->dwSCnt);
+        dbg_puts("\n");
+    }
+    return DDHAL_DRIVER_NOTHANDLED;
+}
+
 /* DirectDraw is done with us. Nothing to release: the block belongs to
  * the .drv and the mappings to the mini-VDD. */
 static DWORD __stdcall DestroyDriver32(d3dpt_ddhal_destroydriver *d)
@@ -180,10 +214,49 @@ DWORD __stdcall DriverInit(LPVOID ptr)
     dbg_hex(" bpp ", h->bpp);
     dbg_puts("\n");
 
+    /* **Below 2 GiB is not a working HAL.** DirectDraw loads this DLL in
+     * DDHELP.EXE and publishes the callbacks below as flat addresses, and
+     * the process that validates them is the *game's*: a module in the
+     * private arena is mapped only where it was loaded, and every
+     * application gets its own address for it (measured — DDHELP got
+     * 0x00b50000 and the probe's own LoadLibrary got 0x00ca0000). Only a
+     * module in the shared arena above 0x80000000 means the same thing in
+     * both, which is why this is linked where it is. If the loader
+     * relocated us anyway, the callbacks would be refused with no message
+     * at either end, so say it here while there is somewhere to say it. */
+    if ((ULONG)(ULONG_PTR)dll_instance < 0x80000000ul) {
+        dbg_hex("d3dpthal: relocated out of the shared arena, to ",
+                (ULONG)(ULONG_PTR)dll_instance);
+        dbg_puts(" — the callbacks would be bad pointers in every game\n");
+    }
     h->dll_hinstance = (unsigned long)(ULONG_PTR)dll_instance;
     h->cb32.WaitForVerticalBlank = (unsigned long)(ULONG_PTR)WaitForVerticalBlank32;
+    h->cb32.CanCreateSurface = (unsigned long)(ULONG_PTR)CanCreateSurface32;
+    h->cb32.CreateSurface = (unsigned long)(ULONG_PTR)CreateSurface32;
     h->cb32.DestroyDriver = (unsigned long)(ULONG_PTR)DestroyDriver32;
     h->dll_ready = 1;
+    /* **Whose process is this?** The callbacks published here are flat
+     * addresses in it, and DirectDraw's HALINFO validator `IsBadCodePtr`s
+     * every one of them — in whichever process is building a DirectDraw
+     * object, which is not necessarily this one. If the escapes are
+     * answered once for the system rather than once per process, a
+     * pointer that is perfectly good here is a bad pointer there
+     * (2026-09-08). The name is the only way to tell the two stories
+     * apart, and it costs one kernel32 call at init. */
+    {
+        char name[128];
+        DWORD n = GetModuleFileNameA(NULL, name, sizeof(name) - 1);
+
+        name[n < sizeof(name) ? n : sizeof(name) - 1] = 0;
+        dbg_puts("d3dpthal:   in ");
+        dbg_puts(name);
+        dbg_hex(" pid ", GetCurrentProcessId());
+        dbg_puts("\n");
+    }
+    dbg_hex("d3dpthal:   published vblank ", h->cb32.WaitForVerticalBlank);
+    dbg_hex(" cansurf ", h->cb32.CanCreateSurface);
+    dbg_hex(" hinstance ", h->dll_hinstance);
+    dbg_puts("\n");
     return 1;
 }
 
