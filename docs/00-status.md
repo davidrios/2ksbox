@@ -478,7 +478,17 @@ items nobody owns yet:
    **off by default** with two open items (a boot crash at 8 pinned, a
    stall at the flags-helper call; the track doc's patch 21 section);
    next: close those and turn it on, then the same-value skip's leftovers
-   (the 6 % of changed-value patches still retranslate; the walk), a
+   — **which 2026-09-08 gave a name and a workload**: the user's report
+   that Moto Racer's software renderer "almost hangs" when braking emits
+   tyre smoke is a *second* self-patching rasterizer, a translucent
+   RGB565 span loop at `0x4357f0` whose 14 immediate fields are rewritten
+   per use with values that really change, so patch 18's compare cannot
+   skip them; every brake onset doubles the host code generated (30–36 →
+   57–69 MiB/s) and the traced translations of its page go 3.0k/s →
+   11.6k/s. The two shapes for a fix (soft immediates through a per-TB
+   constant pool; a cheap-translation mode for repeatedly invalidated
+   TBs) are costed in the track doc's "tyre smoke" section, with the new
+   per-second harness (`tools/moto-watch.py`) that found it. Then a
    faster fps oracle for the games (the 60-dumps/s probe saturates at
    ~40), and the HVF VM port the probe found feasible.
 

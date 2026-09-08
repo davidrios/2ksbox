@@ -25,7 +25,9 @@
 # guest's disks to go quiet, and on VGA=d3dpt for the adapter's mode line),
 # WARM (20 s after the command), SECS (30 s of sampling), CPU (pentium3;
 # add ,x87-fast=off etc.), MEM (512), VGA (cirrus | d3dpt = -vga none
-# -device d3dpt-vga with the executor, for the M7 images), CDROM (a disc as
+# -device d3dpt-vga with the executor, for the M7 images), DDFLAGS (that
+# adapter's bisection register: 32 = no Direct3D, which puts a title on its
+# own software renderer), CDROM (a disc as
 # D:, default the newest guest-tools ISO), CDS='a.mds:b.iso' (more discs
 # after it, each an ide-cd with CD audio through the AC97 card, so a game's
 # disc sits where the player puts it; .mds/.cue/.ccd go through the cdimage
@@ -54,7 +56,9 @@ PERFMAP="${PERFMAP:-1}"; [ "$PERFMAP" = 0 ] && PERFMAP=   # PERFMAP=0: no -perfm
 BOOT_WAIT="${BOOT_WAIT:-300}"; WARM="${WARM:-20}"; SECS="${SECS:-30}"
 
 VGA_ARGS=(-vga cirrus)
-[ "${VGA:-cirrus}" = d3dpt ] && VGA_ARGS=(-vga none -device d3dpt-vga)
+# DDFLAGS: the adapter's bisection register (d3dpt/hw/d3dpt_vga.c); 32 = DDF_NO_D3D,
+# i.e. a DirectDraw-only driver, which is how a title is put on its own software renderer
+[ "${VGA:-cirrus}" = d3dpt ] && VGA_ARGS=(-vga none -device "d3dpt-vga,ddflags=${DDFLAGS:-0}")
 # the game discs and the sound card, as under the player (tools/xp-game-test.sh's CDS=)
 SND_ARGS=(-audiodev none,id=snd0); [ "${SND:-${CDS:+1}}" = 1 ] && SND_ARGS+=(-device AC97,audiodev=snd0)
 # IDE slots: the disk is ide.0/0, CDROM (-cdrom = index 2) ide.1/0; the CDS discs take the two slave slots
