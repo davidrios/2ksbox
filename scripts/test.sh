@@ -632,39 +632,51 @@ family_other_check() { # the "Other" family's hardware, from the picker to a rea
   return $rc
 }
 
+# The command line an adapter name lands as (`bundle::Video::args`), so
+# the checks below can name the pick rather than repeat its arguments.
+vga_args() {
+  case "$1" in
+    d3dpt) echo "-device d3dpt-vga,addr=0x02";;
+    *)     echo "-vga $1";;
+  esac
+}
+
 display_adapter_check() { # the wizard's adapter picker, from a combo box to a real QEMU
-  local rc=0 dir="$OUT/display-adapter" bundle args o f want
+  local rc=0 dir="$OUT/display-adapter" bundle args o f want other first
   rm -rf "$dir"; mkdir -p "$dir/library"
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
   : >"$dir/disk.qcow2"
-  # What each family starts on. Windows on our own adapter, because the
-  # whole display path is built on it (docs 15, 19); Other on the standard
-  # VGA, the one every guest can fall back on; DOS on the era's Cirrus,
-  # which is not a choice at all.
-  for f in win98:"-device d3dpt-vga,addr=0x02" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga cirrus"; do
+  # What each family starts on. XP on our own adapter, because the whole
+  # display path is built on it (doc 15); Win98 on the Cirrus and the
+  # driver Windows has in the box, ours there being much the newer of the
+  # two (doc 19); Other on the standard VGA, the one every guest can fall
+  # back on; DOS on the era's Cirrus, which is not a choice at all.
+  for f in win98:"-vga cirrus" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga cirrus"; do
     want="${f#*:}"; f="${f%%:*}"
     bundle="$(target/release/launcherx --new "$f" "adapter-$f" "$dir/disk.qcow2")" || { echo "--new $f failed"; return 1; }
     args="$(target/release/launcherx --print-args "$bundle")"
     case "$args" in *"$want"*) ;; *) echo "a new $f machine is not on $want"; echo "$args"; rc=1;; esac
   done
-  # The switch itself, on a Windows machine: to the Cirrus Windows has an
-  # in-box driver for, and back. Our adapter must be *gone* when it is —
-  # a machine with both would show the guest two displays — and the cards
-  # pinned below it must not move, because a card that moves is a hardware
-  # change an installed guest re-detects.
-  for f in win98 xp; do
+  # The switch itself, on a Windows machine: away from the adapter the
+  # family starts on and back again — which is a different direction on
+  # each of them, since 98 starts on the Cirrus and XP on ours. The one
+  # it left must be *gone* — a machine with both would show the guest two
+  # displays — and the cards pinned below it must not move, because a
+  # card that moves is a hardware change an installed guest re-detects.
+  for f in win98:cirrus:d3dpt xp:d3dpt:cirrus; do
+    other="${f##*:}"; f="${f%:*}"; first="${f#*:}"; f="${f%%:*}"
     bundle="$dir/library/adapter-$f/machine.toml"
     # A new machine has no NIC (`bundle::default_network`), and the
     # question below is whether the cards *under* the adapter move when
     # it changes — so this one is given the card first.
     target/release/launcherx --wizard-edit "$bundle" - - - net >/dev/null \
       || { echo "$f: --wizard-edit net failed"; rc=1; continue; }
-    target/release/launcherx --wizard-edit "$bundle" - - - - - - - cirrus >/dev/null \
-      || { echo "$f: --wizard-edit cirrus failed"; rc=1; continue; }
+    target/release/launcherx --wizard-edit "$bundle" - - - - - - - "$other" >/dev/null \
+      || { echo "$f: --wizard-edit $other failed"; rc=1; continue; }
     args="$(target/release/launcherx --print-args "$bundle")"
-    case "$args" in *"-vga cirrus"*) ;; *) echo "$f: the Cirrus did not arrive"; echo "$args"; rc=1;; esac
-    case "$args" in *d3dpt-vga*) echo "$f: our adapter is still there beside the Cirrus"; echo "$args"; rc=1;; esac
+    case "$args" in *"$(vga_args "$other")"*) ;; *) echo "$f: the $other adapter did not arrive"; echo "$args"; rc=1;; esac
+    case "$args" in *"$(vga_args "$first")"*) echo "$f: the $first adapter is still there beside the $other"; echo "$args"; rc=1;; esac
     case "$args" in *"netdev=n0,addr=0x03"*) ;; *) echo "$f: the NIC moved when the adapter changed"; echo "$args"; rc=1;; esac
     # The standard VGA is not on offer to Windows — XP has no driver for
     # it at all — so asking for it must leave the machine as it was rather
@@ -673,10 +685,10 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
       || { echo "$f: --wizard-edit std failed"; rc=1; continue; }
     args="$(target/release/launcherx --print-args "$bundle")"
     case "$args" in *"-vga std"*) echo "$f: was given the standard VGA, which has no driver there"; echo "$args"; rc=1;; esac
-    target/release/launcherx --wizard-edit "$bundle" - - - - - - - d3dpt >/dev/null \
-      || { echo "$f: --wizard-edit d3dpt failed"; rc=1; continue; }
+    target/release/launcherx --wizard-edit "$bundle" - - - - - - - "$first" >/dev/null \
+      || { echo "$f: --wizard-edit $first failed"; rc=1; continue; }
     args="$(target/release/launcherx --print-args "$bundle")"
-    case "$args" in *"-device d3dpt-vga,addr=0x02"*) ;; *) echo "$f: our adapter did not come back"; echo "$args"; rc=1;; esac
+    case "$args" in *"$(vga_args "$first")"*) ;; *) echo "$f: the $first adapter did not come back"; echo "$args"; rc=1;; esac
   done
   # Every adapter on every family, on the real binary: started paused and
   # told to quit, so a machine QEMU will not build is an exit code.

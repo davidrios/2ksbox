@@ -106,13 +106,14 @@ backend later.
   on garbage bytecode; palettized textures and colour keying since v8,
   both expanded to A8R8G8B8 on the host; vertex / index buffers in VRAM
   since v9 — a `DRAW8` names the buffer and offset, the host reads it
-  from VRAM, `ddflags=0x100000` is the A/B). **Win98 is on the same
-  adapter since 2026-09-07** — the launcher's Win98 machines are
-  `-vga none -device d3dpt-vga` with the M10 driver (doc 19), where they
-  used to be `-vga cirrus`; an image installed before that finds new
-  hardware on its next start and wants the driver from the guest-tools
-  ISO before it has its desktop back. The test tools keep their own
-  cirrus machines.
+  from VRAM, `ddflags=0x100000` is the A/B). **Win98 can run the same
+  adapter since 2026-09-07** — a launcher Win98 machine takes
+  `-vga none -device d3dpt-vga` with the M10 driver (doc 19) when it is
+  picked, but its *default* is Windows' own `-vga cirrus`
+  (`bundle::video_choices`), so ours is one pick away rather than
+  automatic; an image whose adapter is changed either way
+  finds new hardware on its next start and wants a driver before it has
+  its desktop back. The test tools keep their own cirrus machines.
 
 ## Conventions
 
@@ -423,13 +424,17 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
 - Win98 and XP both run `-vga none -device d3dpt-vga` with our driver
   (docs 19 and 15; Win98 since 2026-09-07 — the tools in the table above
   still boot their own `-vga cirrus` machines, which is where the inbox
-  driver is still exercised). **Since 2026-09-07 that is the launcher's
-  *default*, not the only option**: the wizard has a display-adapter
-  picker (`bundle::Video`, `video` in the bundle) offering `cirrus` on
-  both Windows families, `std` or `cirrus` on the new Other family, and
-  nothing on DOS. Changing it under an installed guest is a hardware
-  change — new adapter, plain VGA, wants a driver — which the wizard says
-  in orange. Without our driver installed the adapter is
+  driver is still exercised). **Since 2026-09-07 the adapter is a choice**:
+  the wizard has a display-adapter picker (`bundle::Video`, `video` in the
+  bundle) offering `d3dpt` or `cirrus` on both Windows families, `std` or
+  `cirrus` on the new Other family, and nothing on DOS. The **defaults are
+  opposite ends of that pair** (`bundle::video_choices`, first entry wins):
+  XP starts on ours, Win98 on the `cirrus` and Windows' in-box driver
+  (2026-09-07, user decision — the 9x driver is much the newer of the two,
+  so a new 98 machine comes up on the driver Windows already has and is
+  moved to ours deliberately). Changing it under an installed guest is a
+  hardware change — new adapter, plain VGA, wants a driver — which the
+  wizard says in orange. Without our driver installed the adapter is
   a plain VGA (on XP that is vga.sys, 800×600×4), and `-vga std` has no XP
   driver at all.
   Kernel-mode debugging = the device's DEBUG register → QEMU log; never a

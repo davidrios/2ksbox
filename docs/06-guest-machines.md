@@ -16,7 +16,7 @@ Modeled as a ~1998–2000 consumer PC.
 | Machine | `pc` (i440FX + PIIX) | period-correct chipset, best-tested with 9x |
 | CPU model | `pentium3` (TCG) / host-masked (KVM) | avoids CPUID features 9x mishandles; sidesteps the fast-CPU Win9x bugs (e.g. the >2.1 GHz-class IOS/NDIS crashes). **Floor is pentium3 (SSE1)**: our guest-tools wrappers are built `-march=pentium3` (upstream builds them x86-64-v2 and expects `-cpu host`/`max`) |
 | RAM | 256 MB default, **≤ 512 MB hard cap** | 9x VCache breaks above ~512 MB without patches |
-| Video | **`-vga none -device d3dpt-vga` + our driver (doc 19), or `-vga cirrus`** — a choice since 2026-09-07 (`bundle::Video`) | ours is the whole display path: the mode table, the desktop straight from VRAM, the paced page flips, Direct3D through the driver. The Cirrus is Windows' in-box 2D driver, and the honest answer for a machine whose driver isn't installed yet or a title being A/B'd. The standard VGA is not offered on either Windows family |
+| Video | **`-vga cirrus` (the default) or `-vga none -device d3dpt-vga` + our driver (doc 19)** — a choice since 2026-09-07 (`bundle::Video`) | ours is the whole display path: the mode table, the desktop straight from VRAM, the paced page flips, Direct3D through the driver. The Cirrus is Windows' in-box 2D driver and where this family **starts** (2026-09-07): the 9x driver of ours is much newer than XP's, so a new 98 machine comes up on the driver Windows already has and is moved to ours deliberately. The standard VGA is not offered on either Windows family |
 | Audio | SB16 (DOS-mode compat) + AC'97 | SB16 for DOS boxes/games, AC'97 driver in guest tools |
 | Net | PCnet (AMD), **off on a new machine** | driver in-box on 98. The card is what the wizard's networking checkbox gives the machine; since 2026-09-07 a new machine of every family starts without one (doc 07, `bundle::default_network`) — an unpatched guest is not put on a network before anyone asks |
 | Storage | IDE HDD (qcow2) + our ATAPI CD | period-correct; no VirtIO for 9x |
@@ -212,7 +212,8 @@ first entry is that family's default** (`bundle::video_choices`):
 
 | Family | Offers | Default |
 |---|---|---|
-| Win98, XP | `d3dpt` (our adapter + our driver) / `cirrus` (Windows' in-box driver) | `d3dpt` |
+| XP | `d3dpt` (our adapter + our driver) / `cirrus` (Windows' in-box driver) | `d3dpt` |
+| Win98 | `cirrus` / `d3dpt` | `cirrus` |
 | Other | `std` (Bochs VGA, VBE 2.0) / `cirrus` | `std` |
 | DOS | — | — |
 
@@ -225,6 +226,14 @@ A/B'ing a title that misbehaves on ours, and for the test tools that
 still exercise the in-box driver. On `Other` there is no driver of ours
 at all and only the person installing the guest knows which standard
 adapter it has a driver for.
+
+The two Windows families therefore **start at opposite ends of the same
+pair**. XP starts on ours: the driver has been the whole display path
+there since 2026-09-04 and every game the M4 and M7 tracks were built on
+runs through it. Win98 starts on the Cirrus (2026-09-07, user decision):
+ours runs there too (doc 19, M10) and is one pick away, but that driver
+is a day old against XP's, so a machine the wizard makes comes up on the
+driver Windows already has in the box.
 
 Two rules make the field safe to hand-write:
 
@@ -243,8 +252,8 @@ it finds an unknown adapter, comes up in plain VGA and wants a driver
 before the desktop is back. The wizard says so, in orange, but only while
 editing a machine whose adapter has actually been changed
 (`Form::video_warning`). The `display-adapter` check in `scripts/test.sh`
-holds the whole table: each family's default, the switch to the Cirrus
-and back, our adapter being *gone* rather than sitting beside it, the NIC
+holds the whole table: each family's default, the switch away from it and
+back (a different direction on each Windows family), our adapter being *gone* rather than sitting beside it, the NIC
 staying at `0x03`, the standard VGA refused on Windows, and our own
 `qemu-system-i386` accepting every combination.
 

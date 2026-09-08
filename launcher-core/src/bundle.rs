@@ -204,13 +204,23 @@ impl Video {
 ///
 /// The Windows families choose between our adapter and the one Windows
 /// has an in-box driver for; they are not offered the standard VGA,
-/// which has no XP driver at all. `Other` chooses between the two
+/// which has no XP driver at all. They start on opposite ends of that
+/// pair: XP on ours, Win98 on the Cirrus. `Other` chooses between the two
 /// standard adapters, since nothing of ours runs there. DOS chooses
 /// nothing: it is the one family whose adapter is a period *fact* rather
 /// than a driver question — its titles program a VGA/VESA BIOS directly.
 pub fn video_choices(family: Family) -> &'static [Video] {
     match family {
-        Family::Win98 | Family::Xp => &[Video::D3dpt, Video::Cirrus],
+        // XP starts on ours: the driver has been the whole display path
+        // there since 2026-09-04 and every game the M4/M7 tracks were
+        // built on runs through it.
+        Family::Xp => &[Video::D3dpt, Video::Cirrus],
+        // Win98 starts on the Cirrus (2026-09-07). Ours runs there too
+        // (doc 19) and is one pick away, but the 9x driver is a day old
+        // against XP's, so a machine the wizard makes comes up on the
+        // driver Windows already has in the box and moves to ours when
+        // whoever installed the guest decides to.
+        Family::Win98 => &[Video::Cirrus, Video::D3dpt],
         Family::Other => &[Video::Std, Video::Cirrus],
         Family::Dos => &[],
     }
@@ -691,10 +701,11 @@ pub fn default_cpu_speed(family: Family) -> CpuSpeed {
 
 /// The adapter a family starts on, or `None` when it has no choice to
 /// make. Always the first of `video_choices`, so the list and the
-/// default cannot disagree: our own adapter on Windows, where the whole
-/// display path is built on it, and the standard VGA on `Other`, the one
-/// with a VESA path every guest can fall back on when it has no native
-/// driver at all.
+/// default cannot disagree: our own adapter on XP, where the whole
+/// display path is built on it, Windows' in-box Cirrus on Win98, whose
+/// driver of ours is newer than that, and the standard VGA on `Other`,
+/// the one with a VESA path every guest can fall back on when it has no
+/// native driver at all.
 pub fn default_video(family: Family) -> Option<Video> {
     video_choices(family).first().copied()
 }
@@ -974,16 +985,15 @@ impl Machine {
             args.extend(["-nic".into(), "none".into()]);
         }
         match self.family {
-            // The same adapter as XP since 2026-09-07 (doc 19, M10):
-            // `d3dpt-vga` with our own display driver, where this family
-            // used to get `-vga cirrus` and Windows' in-box driver. The
-            // adapter is what the whole display path is built on — the
-            // linear frame buffer the player scans out, the mode table,
-            // the page flips that pace a game — and a 98 machine on
-            // cirrus has none of it. Which is why it is now a *choice*
-            // (`video_choices`, 2026-09-07): the Cirrus is the honest
-            // answer for a machine whose driver is not installed yet, and
-            // the A/B for a title that misbehaves on ours.
+            // The adapter is a *choice* here since 2026-09-07
+            // (`video_choices`): `d3dpt-vga` with our own display driver
+            // (doc 19, M10) — the linear frame buffer the player scans
+            // out, the mode table, the page flips that pace a game,
+            // Direct3D through the driver — or the Cirrus and the in-box
+            // driver Windows already has, which has none of that and is
+            // where this family **starts**: the 9x driver is much newer
+            // than XP's, so a new 98 machine comes up on Windows' own and
+            // is moved to ours deliberately.
             //
             // **Changing it is a hardware change to an installed guest.**
             // That is a real consequence and not a detail: the guest

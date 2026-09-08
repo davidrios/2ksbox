@@ -645,7 +645,11 @@ impl Form {
                 "Our own adapter and display driver: the mode table, the desktop straight from video memory, the page flips that pace a game, and Direct3D through the driver itself.",
                 "It needs the driver installed from the guest-tools ISO. Until it is, the guest comes up on the plain VGA the same device also is.",
             ],
-            (Video::Cirrus, Family::Win98 | Family::Xp) => &[
+            (Video::Cirrus, Family::Win98) => &[
+                "The Cirrus GD5446, which Windows 98 has a driver for in the box, and where a new 98 machine starts: 2D only, and none of our display path — no mode table, no paced flips, no Direct3D through the driver.",
+                "Our own adapter is the step up from it, once its driver is installed from the guest-tools ISO.",
+            ],
+            (Video::Cirrus, Family::Xp) => &[
                 "The Cirrus GD5446, which Windows has a driver for in the box: 2D only, and none of our display path — no mode table, no paced flips, no Direct3D through the driver.",
                 "The right answer for a machine whose driver isn't installed yet, and the A/B for a title that misbehaves on ours.",
             ],

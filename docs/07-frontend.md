@@ -64,8 +64,11 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   Windows chooses between our own adapter with our display driver and the
   Cirrus Windows has an in-box driver for, an `Other` machine between the
   two standard adapters, and a DOS machine chooses nothing — its titles
-  program a VGA/VESA BIOS directly. The row hides itself on that last
-  case, and neither front end knows which family that is: it asks
+  program a VGA/VESA BIOS directly. Which of them a new machine starts on
+  is the list's own first entry, and the two Windows families sit at
+  opposite ends of the same pair: XP on ours, Win98 on the Cirrus
+  (2026-09-07 — the 9x driver is much the newer of the two, doc 06). The
+  row hides itself on the DOS case, and neither front end knows which family that is: it asks
   `video_applies()` and fills the combo from `video_choices()`. On the Qt
   side the labels are a *property* rather than an invokable for exactly
   this reason — a combo box bound to a function keeps the list it was
