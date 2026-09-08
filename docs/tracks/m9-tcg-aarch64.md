@@ -973,6 +973,84 @@ helpers skip it); `cc_dst`/`cc_src` as the next pinning candidates if a
 budget ever allows; the x86-64 backend's five callee-saved registers for
 the rig.
 
+## The tyre smoke: a second self-patching rasterizer (2026-09-08)
+
+The user's report: in Moto Racer's **software renderer** the game "works pretty
+well most of the time now, but when you brake some smoke is emitted from the
+tyres and that almost hangs the game". It is the patch-18 pathology again, in a
+routine patch 18 cannot help with — and finding it needed a way to measure *one
+effect* rather than a lap, because a 20 s sample and an fps probe both report the
+mean and the smoke lasts a second.
+
+**The tools that came out of it** (this track owns them):
+
+- `tools/moto-watch.py` — one row per second of a running guest: TB
+  invalidations and bytes of code generated (`info jit` at 4 Hz over QMP), a
+  screendump a second, and the seconds with the most invalidations named and
+  kept. A fourth argument (`4:3`) cycles the bike's own controls over the same
+  connection — QEMU serves one QMP client at a time, so the thing that measures
+  has to be the thing that drives. `WATCH_TRACE_LOG=` turns QEMU's
+  `translate_block` trace on for one whole throttle phase and one whole brake
+  phase (`log trace:translate_block` over QMP, the log sliced by the byte
+  offsets it noted) and prints the guest pages retranslated in each;
+  `WATCH_MEMSAVE=` saves the code pages twice inside the same phase for
+  `tools/smc-diff.py`; `WATCH_SAMPLE_PID=` takes a macOS `sample` of one phase.
+- `tools/xp-moto-race.sh` gained `RACE_BRAKE=1` (throttle and brake measured
+  apart), `RACE_WATCH=<s>` / `RACE_CYCLE=A:B` / `RACE_TRACE=1` (the watcher
+  above), `RACE_STAGE=demo` (watch the attract demo, no menus), and passes
+  `RACE_SAMPLE` / `RACE_MEMSAVE` through to the watcher so both land inside a
+  brake. `tools/tcg-profile.sh` gained `DDFLAGS=` — the adapter's bisection
+  register, and `DDFLAGS=32` (`DDF_NO_D3D`) is how a title is put back on its own
+  software renderer now that the M7 driver answers its HAL probe. `tools/tcg-fps.py`
+  prints its per-second counts under the total.
+
+**The measurement** (M1 Air, `winxp-m7.qcow2`, `-cpu pentium3`, DDFLAGS=32, the
+practice race on Speed Bay, throttle and brake cycled 4 s / 3 s and 8 s / 6 s):
+
+| | throttle | brake | at the brake's first second |
+|---|---|---|---|
+| TB invalidations/s | 31,000–35,400 | 38,100–42,300 | 50,000–51,200 |
+| host code generated | 30–36 MiB/s | | **57–69 MiB/s** |
+
+Every brake onset is a peak, in every run (seconds 7, 14, 28, 43 of one run;
+14, 28 of the next). The vCPU in a sampled brake: **translation + lookup 32.7 %**
+(`liveness_pass_1` 5.6, `tb_invalidate_phys_page_range__locked` 4.3,
+`tcg_reg_alloc_op` 2.8, `sys_icache_invalidate` 2.6, `tcg_optimize` 2.2),
+generated code 25.4 %, softmmu 3.3 % (the perf map's own 15.2 % on top).
+
+**What braking wakes up.** `translate_block` traced over one phase of each kind
+names it — the guest pages retranslated, per second:
+
+| page | throttle | brake |
+|---|---|---|
+| `0x436000` (the texture span loop, doc's patch-18 section) | 28,400/s | 16,200/s |
+| `0x435000` | 3,000/s | **11,600/s** |
+
+and `smc-diff.py` on two captures taken inside one brake says what page
+`0x435000` is: at `0x4357f1`–`0x435851`, `shl edx, 5` / `and eax, 0x1f` /
+`shl ebp, 0x10` / `mov ax, [ecx*2 + disp32]` / `mov edx, 0xf800f81f` /
+`shl edx, 0xb` / `shr ebp, 0xa` / `and eax, 0x3e0` / `and ebp, 0x7c0` /
+`add esi, imm32` / `adc ebx, imm32` / `adc cl, imm8` / `cmp edi, imm32` — the
+RGB565 channel masks and shift counts of a **translucent span loop**, patched
+into the instruction stream. **14 immediate fields per use** (19 imm32, 13 imm8,
+5 disp32 across both routines in the capture), and the unpatched capture still
+holds the template's `0x12345678` / `0x12` placeholders, so the game rewrites all
+of them every time with values that really change: this is the 6 % that
+patch 18's compare-before-invalidate cannot skip, and the smoke is made of it.
+
+**The same race on the M7 HAL** (`DDFLAGS=0`, the game's Direct3D 5 renderer,
+which our driver now answers — the `D3D: NOT DETECTED` lead of the 2026-09-05
+list is closed): 77–120 frames/s, 100,000 draws in 5 s, and the TB invalidate
+count does not move at all over a 20 s sample. The software renderer is the
+workload; the smoke is its worst minute.
+
+**Not reproduced: the magnitude.** Headless the harness brakes at moderate speed
+and the smoke is a thin trail behind the rear wheel (`build/tcg-profile/moto-sw-hard/watch/w15.png`),
+worth 1.3–1.9× of translation work, not a hang. What the user sees is presumably
+a plume that covers the screen (a hard brake from top speed, or the motocross
+tracks' dirt), i.e. the same loop with far more spans. The mechanism is the same
+either way; only the number in a fix's A/B needs the bigger repro.
+
 ## Next steps, in order
 
 Done on the way: patch 13 (`-perfmap` on Darwin), patch 14 (the
@@ -1034,9 +1112,25 @@ above):
 5. **Barriers off on one vCPU** (~4 %): only after an audit of every
    reader of guest RAM outside the BQL; as a machine property, not an
    env var.
-6. ~~**Self-modifying rasterizers**~~ — patch 18 (compare-before-invalidate
-   was the whole story: 94 % of the writes were same-value). Left: the
-   changed-value 6 % (a per-page interval structure for the walk, or
-   "soft immediates" if a game shows up whose patches do change), and
+6. **Self-modifying rasterizers, the changed-value half** — patch 18 took the
+   94 % that were same-value; the section above (2026-09-08) is the game whose
+   patches *do* change: Moto Racer's translucent span loop, 14 immediate fields
+   rewritten per use, which is what the tyre smoke costs. Two shapes for it,
+   the user's pick:
+   - **Soft immediates** (days): a TB that keeps being invalidated is
+     retranslated with its immediate and disp fields read from a **per-TB
+     constant pool** — plain RW host memory from an arena reset at `tb_flush`,
+     one host load per use instead of a materialized constant — and registered
+     as byte ranges the store slow path *updates* instead of invalidating.
+     `gen_load`'s `case X86_OP_IMM` and the decoder's `decode->immediate` /
+     `decode->mem.disp` are the choke points; branch targets and anything that
+     decides the TB's shape stay constants. Ceiling: the 29–33 % of the vCPU
+     that is translation in this game, minus a load per patched operand per
+     iteration.
+   - **A cheap-translation mode** (half a day): a TB invalidated more than N
+     times is retranslated with `tcg_optimize` and the liveness passes skipped.
+     Bounded by their share — `liveness_pass_1` 5.6 %, `tcg_optimize` 2.2 %,
+     `init_ts_info` 0.9 % — against worse code in the block that runs the spans.
+   Also left:
    ~~`_tlv_get_addr` 8.8 % in the race~~ — patch 19 (it was mostly the
    store slow path's nested RCU locks, not the translator): 2.5 % left.
