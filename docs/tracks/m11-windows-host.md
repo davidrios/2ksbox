@@ -426,6 +426,17 @@ where a guest's 3D actually fails.
    build dropped next to the player, which the loader prefers because it
    searches the executable's directory first. `access()` became a
    `fopen` probe and `%zu` needs `__USE_MINGW_ANSI_STDIO`.
+   **Weighed again 2026-09-08 and kept** (user decision): the package
+   ships no DXVK for Windows, because the OS has a Direct3D 9 of its own
+   and DXVK is one `d3d9.dll` away for anyone who wants it. What that
+   costs, so nobody has to rediscover it: Windows is then the only build
+   whose D3D path has no oracle — `d3dgame9-nat` / `d3dfeat9-nat` are
+   golden frames *from DXVK*, and a system d3d9 is a different rasteriser
+   — and no batch has ever run through the executor there at all (the
+   wine pass covers the launcher, `qemu-img.exe`, the DLL closure and
+   `wgl-probe.exe`, not the executor). If that changes, DXVK carries its
+   own mingw cross file (`build-win64.txt`) and the container has the
+   toolchain, so the stage is small.
 6. **The package layout.** A Unix prefix's `bin`/`lib`/`libexec`/`share`
    split is wrong on Windows, where the loader wants the DLLs beside the
    exe and the user wants one folder. `paths.rs` now knows both shapes;
