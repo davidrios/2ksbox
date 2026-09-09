@@ -50,6 +50,7 @@ static char g_sys[MAX_PATH];     /* WINDOWS\SYSTEM or WINDOWS\system32 */
 static char g_win[MAX_PATH];     /* WINDOWS */
 static int g_nt;                 /* 2000/XP rather than 98/Me */
 static int g_reboot;             /* a step said the machine must restart */
+static int g_installing;         /* inside install_selected: a locked system file may be replaced on the next boot rather than failing */
 static FILE *g_log;
 static char g_log_path[PATHBUF];  /* where the log actually went, as an absolute path */
 
@@ -78,12 +79,59 @@ static void say(const char *fmt, ...)
 
 /* ------------------------------------------------------------ file steps */
 
+/* A file that cannot be overwritten because it is in use — the display
+ * driver we are reinstalling is the one Windows is drawing with, the mapper
+ * .SYS is the one its service has loaded — is not a failure: stage the new
+ * copy beside the target, on the hard disk where a boot-time rename can
+ * still find it once the CD is gone, and schedule the swap for the next
+ * restart. NT has MoveFileEx for exactly this; 9x has no such call and does
+ * it through WINDOWS\WININIT.INI, whose [rename] section WININIT.EXE applies
+ * once, before the GUI, on the next boot (`Dest=Src` renames Src to Dest).
+ * The driver step reboots anyway, so the new file is live after the restart
+ * it was already going to ask for. */
+static int replace_on_reboot(const char *src, const char *dstdir, const char *name)
+{
+    char dst[PATHBUF], stage[PATHBUF], base[MAX_PATH], *dot;
+
+    snprintf(dst, sizeof dst, "%s\\%s", dstdir, name);
+    /* an 8.3-safe sibling (BASE.NEW, one dot): WININIT.INI needs short names,
+     * and BASE.EXT.NEW would be a long name with a generated alias */
+    lstrcpynA(base, name, sizeof base);
+    if ((dot = strrchr(base, '.')) != NULL) *dot = 0;
+    snprintf(stage, sizeof stage, "%s\\%s.NEW", dstdir, base);
+
+    SetFileAttributesA(stage, FILE_ATTRIBUTE_NORMAL);
+    if (!CopyFileA(src, stage, FALSE)) {
+        say("    %s: in use, and staging a replacement failed (error %lu)", name, (unsigned long)GetLastError());
+        return 1;
+    }
+    if (g_nt) {
+        if (!MoveFileExA(stage, dst, MOVEFILE_DELAY_UNTIL_REBOOT | MOVEFILE_REPLACE_EXISTING)) {
+            say("    %s: in use, and scheduling the replace failed (error %lu)", name, (unsigned long)GetLastError());
+            DeleteFileA(stage);
+            return 1;
+        }
+    } else {
+        char ini[PATHBUF];
+        snprintf(ini, sizeof ini, "%s\\WININIT.INI", g_win);
+        if (!WritePrivateProfileStringA("rename", dst, stage, ini)) {
+            say("    %s: in use, and scheduling the replace failed (error %lu)", name, (unsigned long)GetLastError());
+            DeleteFileA(stage);
+            return 1;
+        }
+    }
+    g_reboot = 1;
+    say("    %s: in use; the new copy replaces it on restart", name);
+    return 0;
+}
+
 /* Copy one file and say so. A missing source is worth naming: it means
  * this ISO was built without that piece (no mingw DDK, say), not that the
  * user did anything wrong. */
 static int copy_one(const char *src, const char *dstdir, const char *name)
 {
     char dst[PATHBUF];
+    DWORD err;
 
     snprintf(dst, sizeof dst, "%s\\%s", dstdir, name);
     if (GetFileAttributesA(src) == INVALID_FILE_ATTRIBUTES) {
@@ -92,12 +140,21 @@ static int copy_one(const char *src, const char *dstdir, const char *name)
     }
     /* a read-only copy from a previous install would refuse to be replaced */
     SetFileAttributesA(dst, FILE_ATTRIBUTE_NORMAL);
-    if (!CopyFileA(src, dst, FALSE)) {
-        say("    %s: copy failed, error %lu", name, (unsigned long)GetLastError());
-        return 1;
+    if (CopyFileA(src, dst, FALSE)) {
+        say("    %s -> %s", name, dstdir);
+        return 0;
     }
-    say("    %s -> %s", name, dstdir);
-    return 0;
+    /* Locked because it is loaded (the running display driver, a started
+     * .SYS): replace it on the next boot instead of failing — but only while
+     * installing a component, not for a per-game copy, and only when the
+     * target is really there to be replaced. */
+    err = GetLastError();
+    if (g_installing
+        && (err == ERROR_SHARING_VIOLATION || err == ERROR_ACCESS_DENIED || err == ERROR_USER_MAPPED_FILE)
+        && GetFileAttributesA(dst) != INVALID_FILE_ATTRIBUTES)
+        return replace_on_reboot(src, dstdir, name);
+    say("    %s: copy failed, error %lu", name, (unsigned long)err);
+    return 1;
 }
 
 /* Copy `names` (NULL-terminated) from an ISO folder into `dstdir`. */
@@ -391,11 +448,13 @@ static int install_selected(void)
 {
     int i, bad = 0, any = 0;
 
+    g_installing = 1;   /* a locked system file may now be swapped on reboot rather than failing */
     for (i = 0; i < g_ncomp; i++) {
         if (!g_comp[i].on) continue;
         any = 1;
         bad |= g_comp[i].run();
     }
+    g_installing = 0;
     if (!any) { say("nothing selected"); return 0; }
     say("");
     if (bad) say("Finished with errors - see the lines above.");
