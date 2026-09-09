@@ -629,6 +629,21 @@ adapter. That is the first protection check this project has watched fail and
 then pass on a change to the drive model alone — the negative control M5 step 8
 has been missing since 2026-09-05.
 
+**What this does *not* fix, and the reason to say so.** The two binaries in
+that folder are not the same program, and the user runs the other one:
+`CRIMSON.EXE` is dated **2025-11-02** and is byte-for-byte the size of the
+no-CD patch beside the dump (`oldstuff/C_SKIES_FIX/crimson.exe`, 2560000
+bytes). It never touches the disc, so it was never affected by any of this,
+and the symptom the user actually reported — Crimson Skies *renders* badly —
+is a rendering bug on the patched EXE, still open and nothing to do with the
+CD (their own `GAMEZ.ERR` has it enumerating `[d3dpt9hl.dll]` and taking
+`Direct3D HAL +++++OK`, and `GAMEZ.OUT` has every subsystem PASSED through
+`dshell(void): STARTING`: it reaches the DX7 DDI and draws the wrong thing —
+doc 19's territory, not this one). What §2.6c establishes is about the
+*unpatched* `CRIMSON2.EXE`, which is a fixture we happen to have rather than
+a game anyone here plays. The finding is worth having on its own terms; it is
+not the answer to that bug report.
+
 **The cleanest corroboration is a second SafeDisc title on the same drive.**
 NFS Porsche Unleashed (`nfs_porsche/*.mds`, `clcd16.dll` / `clokspl.exe` /
 `PORSCHE.ICD` all present) works for the user, and `discx scan` finds **0 L-EC

@@ -140,6 +140,12 @@ a guest reads off the CD can depend on how fast it asks for it.
     shape a dumping tool uses on a real drive, so §2.5's dumping case stands).
     With the error delivered the loader decrypts `CRIMSON.ICD` and the game
     starts.
+  - and the caveat, because it is easy to read this as a bug report closed:
+    the **user runs the patched `CRIMSON.EXE`** (dated 2025-11-02, the size of
+    `oldstuff/C_SKIES_FIX/crimson.exe`), which never reads the disc. Their
+    actual complaint about this title is that it *renders* badly, which is the
+    DX7 DDI's problem and still open. `CRIMSON2.EXE` is a protection fixture
+    we happen to have, not a game anyone here plays.
 
 ## State (2026-09-05, late: the negative control failed, and it matters)
 
