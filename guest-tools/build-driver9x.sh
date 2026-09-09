@@ -387,7 +387,16 @@ if command -v "$HALCC" >/dev/null; then
   # it has failed twice on a DLL that was perfectly good — a rebuild with
   # identical inputs passed both times. A build check that cries wolf is
   # worse than no check: the name appears nowhere else in this output.
-  i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | grep -qE '\bDriverInit$' \
+  #
+  # And it must not pipe objdump *into* `grep -q`: grep closes the pipe on
+  # the match, objdump takes SIGPIPE (141), and under `set -o pipefail`
+  # (line 23) the pipeline then reports failure even though the export was
+  # found — a race that failed roughly one build in eight on a good DLL,
+  # only under the CPU load of a full build (2026-09-09). Every other check
+  # here reads objdump's whole output first; this one now does too, matching
+  # against a here-string so there is no upstream process to signal.
+  hlexp="$(i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll")"
+  grep -qE '\bDriverInit(@4)?$' <<<"$hlexp" \
     || { echo "ERROR: d3dpt9hl.dll does not export DriverInit"; exit 1; }
   # A freestanding DLL has no CRT startup, so the entry point has to be
   # named by hand — and ld only *warns* when it cannot find one, leaving

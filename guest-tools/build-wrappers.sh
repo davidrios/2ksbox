@@ -272,12 +272,18 @@ mkdir -p "$OUT/iso/DRIVER" && cp "$ROOT"/guest-tools/out/driver/* "$OUT/iso/DRIV
 # builds a usable ISO — with the 98 driver missing from it, said out loud,
 # because a silently smaller ISO is how a guest ends up being told a
 # component is "not on this disc".
-if "$ROOT/guest-tools/build-driver9x.sh" >/dev/null 2>&1; then
+if drv9x_log="$("$ROOT/guest-tools/build-driver9x.sh" 2>&1)"; then
   mkdir -p "$OUT/iso/DRIVER9X" && cp "$ROOT"/guest-tools/out/driver9x/*.drv \
     "$ROOT"/guest-tools/out/driver9x/*.vxd "$ROOT"/guest-tools/out/driver9x/*.inf \
     "$OUT/iso/DRIVER9X/"
 else
-  echo "note: no Open Watcom (WATCOM=), so the Win98 display driver is not on this ISO" >&2
+  # Say *why*, not just "no Watcom": the driver build fails for other
+  # reasons too (a HAL that will not link, a bad export), and blaming
+  # Watcom for those sends the next person looking in the wrong place.
+  # build-driver9x.sh's own first line is "need Open Watcom …" when that
+  # is the cause; otherwise its last lines are the real error.
+  echo "note: the Win98 display driver is NOT on this ISO — build-driver9x.sh failed:" >&2
+  printf '%s\n' "$drv9x_log" | tail -3 | sed 's/^/    /' >&2
 fi
 
 # SETUP.EXE at the root: the installer that reads the folders above and
