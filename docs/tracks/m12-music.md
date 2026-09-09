@@ -64,17 +64,27 @@ the 3dfx ones.
   MPU-401 (`fe fe` — both ACKs), puts it in UART mode and plays A4; both
   notes are in the wav QEMU recorded. 11 s for the pair.
 
+**The MT-32 is unverified, by decision (2026-09-09).** No one here has
+CM-32L ROMs and the user is not going to get any, so `mt32-tone` will go
+on SKIPping and the engine's *sound* has never been heard. What is
+proved is everything around it: the option, the form's refusal without a
+ROM directory, the size-based ROM finder and its message for an original
+MT-32's half-size PCM ROM. `moont` claims sample accuracy against Munt
+and is taken at its word until someone with a dump runs
+`synthx selftest --roms <dir>` — which is a minute's work and is the
+first thing to do if a title sounds wrong on it. Do **not** treat this
+as a task waiting to be done here.
+
 ## Next steps
 
-1. **The MT-32, once.** `synthx selftest --roms <dir>` on a machine that
-   has the ROMs: it is the one engine no check here has ever run.
-2. **Win98 in front of it.** Whether "MPU-401 Compatible" from Add New
+1. **Win98 in front of it.** Whether "MPU-401 Compatible" from Add New
    Hardware really drives the port, and whether `mpu401`'s default
    IRQ 9 collides with the ACPI SCI on an ACPI Win98 install — the
    device raises it only to hand over an ACK, so if it does, the answer
    is to write `irq=` off in the bundle or move it.
-3. **A DOS game with real MIDI music**, which is the point of all of it.
-4. **The host MIDI port** (doc 20 §8.1), the first thing deliberately
+2. **A DOS game with real MIDI music**, which is the point of all of it:
+   the General MIDI path, which is the one every check here covers.
+3. **The host MIDI port** (doc 20 §8.1), the first thing deliberately
    outside these stages.
 
 ## Rules
