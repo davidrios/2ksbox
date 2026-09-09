@@ -209,7 +209,8 @@ makes an axis a position; the `pad` check pins it.
   together. **Path A, not step 0** — see above.
 - `patches/qemu/26-usb-gamepad.patch` — path A.
 - `patches/qemu/27-gameport.patch` — path B.
-  (25 is M12's OPL3/MPU-401 patch; 26–27 are free and sit in the input
+  (M12's OPL3/MPU-401 patch landed as **60**, not the 25 this doc first
+  guessed at; 26–27 are free and sit in the input
   gap below the 3dfx band at 30.)
 - In `launcher-core/src/bundle.rs`: `Pad`, `pad_choices`, the per-family
   defaults and the arguments. The machine form's row in `wizard.rs` and

@@ -195,6 +195,37 @@ char *lc_wizard_video_note(const LcWizard *w);
 /* "" unless editing a machine whose adapter has been changed. */
 char *lc_wizard_video_warning(const LcWizard *w);
 
+/* The sound card and what is on the MIDI port (doc 20 §6). Two lists,
+   both per family like the adapter's — 98 chooses between a Sound
+   Blaster, an AC'97 and a Gravis, XP between the AC'97 and the SB16 —
+   and neither is ever empty ("no sound card" and "no MIDI port" are
+   entries), so there is no _applies to ask first. The FM chip is in
+   neither list: it comes with the card that carried one, which is what
+   lc_wizard_sound_note says. */
+size_t lc_wizard_sound_count(const LcWizard *w);
+char *lc_wizard_sound_label(const LcWizard *w, size_t index);
+size_t lc_wizard_sound(const LcWizard *w);
+void lc_wizard_set_sound(LcWizard *w, size_t sound);
+bool lc_wizard_sound_is_default(const LcWizard *w);
+void lc_wizard_reset_sound(LcWizard *w);
+char *lc_wizard_sound_note(const LcWizard *w);
+char *lc_wizard_sound_warning(const LcWizard *w);
+
+size_t lc_wizard_music_count(const LcWizard *w);
+char *lc_wizard_music_label(const LcWizard *w, size_t index);
+size_t lc_wizard_music(const LcWizard *w);
+void lc_wizard_set_music(LcWizard *w, size_t music);
+bool lc_wizard_music_is_default(const LcWizard *w);
+void lc_wizard_reset_music(LcWizard *w);
+char *lc_wizard_music_note(const LcWizard *w);
+/* Whether to offer the two files behind the port; the paths themselves
+   are lc_wizard_get/set's "soundfont" and "mt32_roms". The bank is
+   optional (empty = the one the package ships), the ROM directory is
+   not: lc_wizard_submit refuses an MT-32 machine without it, because
+   nothing of Roland's can be shipped with this program. */
+bool lc_wizard_soundfont_applies(const LcWizard *w);
+bool lc_wizard_mt32_roms_applies(const LcWizard *w);
+
 /* The plain fields, by name — one pair of accessors rather than a dozen,
  * because there is no behaviour behind them.
  *   text:  "name" "disk_path" "install_media" "floppy" "advanced_toml"

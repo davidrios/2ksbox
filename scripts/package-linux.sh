@@ -129,6 +129,14 @@ fi
 rm -rf "$STAGE/share/2ksbox/pc-bios"   # a re-run must replace it, not nest inside it
 cp -a qemu/pc-bios "$STAGE/share/2ksbox/pc-bios"
 
+# The General MIDI bank the machine form's MIDI port plays through
+# (doc 20 §4). Not optional like the shader presets: a machine whose
+# music picker is on its default has nothing to play through without it,
+# and 5.7 MB is not a size worth making anyone think about. The *player*
+# names it to QEMU (LIBSYNTH_SF2, companions.rs), which is what the check
+# below asks it.
+install -Dm644 soundfonts/TimGM6mb.sf2 "$STAGE/share/2ksbox/soundfonts/TimGM6mb.sf2"
+
 # The guest-tools ISO: the newest one, the same choice the launcher's
 # "Add guest-tools ISO" button makes in a checkout.
 iso=$(ls -t guest-tools/out/guest-tools-*.iso 2>/dev/null | head -1 || true)
@@ -212,6 +220,15 @@ case "$embed" in
   "$STAGE"/lib/2ksbox/*) echo "libqemu-embed  $embed" ;;
   *) echo "package-linux.sh: the player's libqemu-embed came from $embed, not the package" >&2; fail=1 ;;
 esac
+# The one companion that is not a library: the General MIDI bank. Same
+# question, same answer — the staged player's own rule has to find the
+# copy this package staged, not one left in a checkout.
+sf2=$(cd / && env -i "$STAGE/bin/2ksbox-player" --companions | awk '$1 == "soundfont" { print $2 }')
+case "$sf2" in
+  "$STAGE"/*) printf '%-15s%s\n' soundfont "$sf2" ;;
+  *) echo "package-linux.sh: the bank is staged but the player answered ${sf2:-nothing}" >&2; fail=1 ;;
+esac
+
 # The companions QEMU dlopens late by name — the Glide wrapper here, the
 # Direct3D executor and its DXVK on the packages that carry them. They are
 # in no import table, so `ldd` above says nothing about them; the staged

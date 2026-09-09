@@ -86,6 +86,10 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 # PLAYER_KEYS="120:enter,360:ctrl+g" presses keys/chords at guest frames (headless input test);
 #   each press is held PLAYER_KEYS_HOLD frames (default 6 ≈ 100 ms) — a down+up in one flush is a
 #   zero-length press that a game polling the keyboard state never sees
+# LIBSYNTH_SF2=<file.sf2> is the General MIDI bank the machine's MIDI port plays through
+#   (doc 20). The player sets it itself — the packaged bank, or `soundfonts/` in a checkout —
+#   so this is only for trying another bank; a machine that names its own wins over both.
+# LIBSYNTH_MT32_ROMS=<dir> the same for the Roland CM-32L's ROMs, which are the user's own
 # PLAYER_AUDIO_NULL=1 keeps the audio ring without a device and logs QEMU's writes
 # PLAYER_AUDIO_MS=60 (default) is the audio cushion QEMU keeps ahead of the host audio
 #   thread: the output latency, and how late QEMU's main loop may run (TCG, the D3D

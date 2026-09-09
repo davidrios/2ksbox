@@ -112,13 +112,36 @@ every sample came from — a fine thing to point a user at, a poor thing
 to put inside a GPL package). Any `.sf2` can be picked instead, and the
 machine form says so.
 
-**The MT-32 ROMs are the user's own.** Roland's control and PCM ROMs are
-not redistributable and nothing here carries them: the device is pointed
-at a *directory* and the two images are found by size (64 KiB control,
-1 MiB PCM) rather than by name, because every dump in circulation names
-them differently. Without them the option is offered but refuses to
-start the machine, with a sentence saying what is missing — never a
-machine that boots and is silent.
+**Where the bank comes from is not the bundle's business.** A machine
+that simply says `synth=gm` is the normal case, and the device finds the
+file the way QEMU finds every other companion of ours (the Glide
+wrapper's search, patch 33): the `soundfont=` property, then
+`LIBSYNTH_SF2` — which a packaged player sets to its own copy
+(`player/src/companions.rs`) — then `soundfonts/TimGM6mb.sf2` in a
+checkout. So the same machine file works in a checkout, in a package and
+on someone else's install, and a bundle only ever names a bank the user
+chose themselves.
+
+**The MT-32 ROMs are the user's own.** An MT-32 is a sampler: the LA
+synthesis engine is emulated, but the *sounds* are two Roland ROM chips
+— a 64 KiB control ROM (the firmware, the timbre and parameter tables)
+and a 1 MiB PCM ROM (the waveforms) — and neither is redistributable.
+Nothing here carries them. The device is pointed at a *directory* and
+the two images are found **by size rather than by name**, because every
+dump in circulation names them differently (`CM32L_CONTROL.ROM`,
+`cm32l_ctrl.rom`, `ctrl_cm32l_1_02.rom`…). Without them the option is
+offered but refuses to start the machine, with a sentence saying what is
+missing — never a machine that boots and is silent.
+
+**It is a CM-32L, and that decides which dump works.** `moont` emulates
+the CM-32L: the MT-32's superset, with the 33 extra PCM samples the
+later machines added, and what a CM-64 or an LAPC-I has inside it. A
+game written for an MT-32 plays on it — that is what the hardware was
+for — but the ROMs are not interchangeable: an *original* MT-32's PCM
+ROM is 512 KiB, half the size, and is refused with a sentence that says
+so rather than "nothing found". Someone who has only MT-32 dumps needs
+CM-32L ones, or the engine would have to become Munt itself (doc 20 §2
+took that trade deliberately).
 
 ## 5. The devices
 
@@ -176,6 +199,15 @@ default**.
 | Roland MT-32 / CM-32L | the user's ROMs |
 | None | no MPU-401 device at all — not a port that swallows notes, which is worse than no port: a game would pick it and play to nobody |
 
+**Win98 and DOS start on General MIDI; XP and `Other` start on None.**
+The first two have no synthesizer of their own — 98's MIDI output is the
+FM chip and a DOS machine has nothing else at all — so the port is what
+makes their music sound like music. XP ships a wavetable synthesizer
+with the operating system, and `Other` is the family we add no drivers
+to, so a port neither would use by default is hardware for nothing; both
+offer it one pick away, which is how an old game gets a real MT-32 under
+XP.
+
 The FM chip is **not** in that picker: it comes with the card that had
 one, exactly as the hardware did. Picking SB16 or AdLib puts an OPL3 on
 the machine; picking AC'97 or the ES1370 does not. A game therefore
@@ -202,7 +234,25 @@ Integration and end-to-end only, as the policy requires.
 |---|---|
 | `libsynth` (`synthx selftest`) | the three engines through the **C API the devices use**: the AdLib detection sequence (status 0x00 → 0xC0 → 0x00 across a timer), a 440 Hz FM note measured by Goertzel against its neighbours, the same note through the **shipped bank** (so a truncated or unreadable bank in a package fails here), a running-status note-off with a real-time byte wedged inside the note-on, and the CM-32L when ROMs are given |
 | `music` (`scripts/test.sh`) | the two pickers from a checkbox to a real QEMU: each family offers what doc 06 says, the first entry is what a new machine gets, an entry a family does not offer is refused rather than written, the FM chip follows the card, and our own `qemu-system-i386` accepts every combination |
-| `tools/midi-guest-test.py` | the whole chain with a guest in it: a DOS program writes an AdLib note and an MPU-401 melody under `-audiodev wav`, and the **wav** is what is checked — the notes are there, at the pitches the program asked for. A device that accepts every write and plays nothing passes every other check and fails this one |
+| `duke-guest` (`tools/duke-guest-test.py`) | **a real game of 1996**, which is what all of it is for: Duke Nukem 3D's own Apogee Sound System finds our MPU-401 where a period driver looks for it and plays the game's score on it — ~1000 bytes and 300-450 note-ons per 5 s across 5 to 8 MIDI channels, 70 s of audible recording. It runs from nothing: the DOS build is copied off the user's own disc (read-only), a FAT disk is made, the game's own SETUP.EXE is driven once for a config, and the disc goes back in the drive because the game checks for it. Local only, and never in `scripts/test.sh` — it needs a game |
+| `midi-guest` (`tools/midi-guest-test.py`) | the whole chain with a guest in it: a DOS program runs the AdLib detection sequence at the ports, plays 440 Hz on the OPL3, then resets an MPU-401, puts it in UART mode and plays A4 through it — and the **wav QEMU recorded** is what is checked, not the program's own opinion. Two boots, one per device: both are asked the same question and one file with two notes in it cannot answer it twice. ~11 s in the guest stage |
+
+## 7.1 What the devices say about themselves
+
+Both print one line every 5 s while the guest is driving them, in the
+habit of `d3dpt-vga: N page flips in 5.0 s`, and nothing at all when it
+is not:
+
+    opl3: 2466 register writes, 516 key-ons in 5.0 s
+    mpu401: 1245 bytes, 415 note-ons on 6 channels in 5.0 s
+
+This is the first question to ask of a game that is silent, and it
+separates the two cases that look identical from the outside: a game
+that never wrote to the port (its setup names another device, or found
+nothing where it looked) and one that is writing to a port that is not
+playing. Duke Nukem 3D's *Sound Blaster* music entry is the first case —
+it refuses to initialize and writes nothing — while its *AdLib* entry,
+which probes 0x388, fills the log.
 
 ## 8. Not here (and the order to add it)
 

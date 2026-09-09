@@ -50,6 +50,12 @@
 #                  both are things only a probe that asks the controls can see,
 #                  because the profile is on disk and the model is empty in the
 #                  runs that fail (only if a launcher-qt has been built)
+#   qt-shelf       the Qt disc shelf's "Add disc" field, driven through the half a
+#                  real file dialog cannot be: a disc *picked* goes on the shelf
+#                  by itself and leaves the field empty, rather than waiting for
+#                  a second click on "Add to shelf" — the model is right either
+#                  way, so only a probe that asks the window can tell them apart
+#                  (only if a launcher-qt has been built)
 #   qt-firstrun    the Qt first-run shader offer, driven: Qt's own MessageDialog
 #                  is really up on a launcher with no preset collection (it is
 #                  shown on a property that has to be published before the first
@@ -114,6 +120,19 @@
 #                  on the right one, an adapter a family doesn't offer is refused
 #                  rather than written, the cards below it don't move when it
 #                  changes, and our QEMU accepts every one of them
+#   libsynth       synthx selftest (doc 20 §7): the three music engines through the
+#                  C API the QEMU devices drive them through — the AdLib detection
+#                  sequence a game runs before it will play a note, a 440 Hz FM
+#                  note measured against its neighbours, the same note through the
+#                  General MIDI bank the packages ship, and a running-status
+#                  note-off with a real-time byte wedged inside the note-on
+#   music          the sound-card and MIDI-port pickers (doc 20 §6) from a combo
+#                  box to a real QEMU — each family's default is the card it
+#                  always had, the FM chip follows the card that carried one, a
+#                  card a family doesn't offer is refused rather than written, an
+#                  MT-32 with no ROMs is refused at the form — and then the two
+#                  devices *sounding*: the monitor writes the ports a guest would
+#                  and the note has to be in the wav QEMU recorded
 #   capi           launcher-capi/examples/smoke.c: a third front end, in C, over
 #                  the same models the egui and Qt builds use — the wizard's
 #                  DOS defaults, the disc shelf, snapshots and the profile
@@ -151,6 +170,12 @@
 #   rep-guest      tools/rep-guest-test.py: a DOS rep movs/stos battery (widths,
 #                  address sizes, DF, page crossings, overlaps), rep-fast on/off
 #                  identical and equal to a model of the instruction (patch 17)
+#   midi-guest     tools/midi-guest-test.py: the music devices as a *guest* meets
+#                  them (doc 20) — a DOS program runs the AdLib detection sequence,
+#                  plays 440 Hz on the OPL3, then resets an MPU-401, puts it in UART
+#                  mode and plays A4 through it; the wav QEMU's own backend recorded
+#                  is what is checked, so a device that takes every write and plays
+#                  nothing fails here. Two boots, ~11 s
 #   smc-guest      tools/smc-guest-test.py: self-modifying code (patched immediates,
 #                  same-value rewrites, opcode flips, a crossing store), smc-same-value
 #                  on/off both architecturally right (patch 18)
@@ -461,7 +486,9 @@ shaderdefaults_check() { # the first-run shader offer and its starter profiles (
   # preset's own defaults, which is an *empty* override table.
   o="$(target/release/launcherx --default-profiles third_party/slang-shaders)" \
     || { echo "--default-profiles failed"; return 1; }
-  [ "$(printf '%s\n' "$o" | wc -l)" = 3 ] || { echo "not three profiles: $o"; rc=1; }
+  # `-eq`, not `=`: BSD `wc` pads its count with spaces and the string
+  # compare then fails on macOS for a library that is exactly right.
+  [ "$(printf '%s\n' "$o" | wc -l)" -eq 3 ] || { echo "not three profiles: $o"; rc=1; }
   for n in crt-aperture crt-royale apple-ii; do
     if [ ! -f "$dir/profiles/$n.toml" ]; then echo "no $n.toml"; rc=1; continue; fi
     o="$(sed -n '/^\[params\]/,$p' "$dir/profiles/$n.toml" | grep -c '=' || true)"
@@ -478,7 +505,7 @@ shaderdefaults_check() { # the first-run shader offer and its starter profiles (
   # slowly filling the library with copies.
   o="$(target/release/launcherx --default-profiles third_party/slang-shaders)"
   case "$o" in "(nothing to add"*) ;; *) echo "a second run added profiles again: $o"; rc=1;; esac
-  [ "$(ls "$dir/profiles"/*.toml | wc -l)" = 3 ] || { echo "the profile library is not still three"; rc=1; }
+  [ "$(ls "$dir/profiles"/*.toml | wc -l)" -eq 3 ] || { echo "the profile library is not still three"; rc=1; }
   return $rc
 }
 qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
@@ -633,6 +660,31 @@ qtprofile_check() { # the Qt shader-profile windows, driven (doc 07)
   ls "$dir/profiles"/*.toml >/dev/null 2>&1 || { echo "no profile was written at all"; rc=1; }
   shown="$(printf '%s' "$o" | sed -n "s/.*fresh preset field '\([^']*\)'.*/\1/p")"
   [ -z "$shown" ] || { echo "New profile… still shows the last preset ($shown)"; rc=1; }
+  return $rc
+}
+qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
+  local rc=0 dir="$OUT/qtshelf" bin="launcher-qt/target/release/launcher-qt" o count field
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
+  : > "$dir/game.iso"
+  # A file dialog belongs to the window system and cannot be opened
+  # offscreen, so the probe hands the field the path the dialog would
+  # have — every line of the wiring under test is downstream of that.
+  # What it guards: a picked disc is on the shelf without a second click
+  # (user-reported, 2026-09-09, "Browse… only fills the field"), and the
+  # field it came through is left empty, so the button beside it goes
+  # back to being for typing.
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=pickdisc LAUNCHER_QT_ARG="$dir/game.iso" LAUNCHER_QT_DELAY=300 \
+       "$bin" 2>&1 | sed -n 's/^\[diag\] pickdisc: //p')"
+  [ -n "$o" ] || { echo "the probe printed no pickdisc line"; return 1; }
+  echo "  $o"
+  count="$(printf '%s' "$o" | sed -n 's/^shelf \([0-9]*\),.*/\1/p')"
+  field="$(printf '%s' "$o" | sed -n 's/.*field \[\(.*\)\], status.*/\1/p')"
+  [ "$count" = 1 ] || { echo "the picked disc did not reach the shelf (it holds $count)"; rc=1; }
+  [ -z "$field" ] || { echo "the picked path was left in the field ($field)"; rc=1; }
+  grep -q "game.iso" "$dir/discs.toml" 2>/dev/null \
+    || { echo "the shelf file never gained the disc"; rc=1; }
   return $rc
 }
 dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M5g)
@@ -969,6 +1021,148 @@ pointer_check() { # the wizard's pointer switch, from a checkbox to a real QEMU
   else
     echo "  (no build/qemu: the command line was checked but not run)"
   fi
+  return $rc
+}
+
+libsynth_check() { # the music engines through their C API (doc 20 §7)
+  local dir="$OUT/libsynth"
+  rm -rf "$dir"; mkdir -p "$dir"
+  # The bank the packages ship is what the General MIDI cases play
+  # through, deliberately: a truncated or unreadable bank in a package is
+  # exactly the failure a fixture written for the occasion never sees.
+  target/release/synthx selftest "$dir" --sf2 soundfonts/TimGM6mb.sf2 ${MT32_ROMS:+--roms "$MT32_ROMS"}
+}
+
+# One MPU-401 or OPL3 port write, as the human monitor spells it.
+port_write() { printf 'o /b %s %s\n' "$1" "$2"; }
+
+# The register writes an AdLib driver makes to hold a 440 Hz note: OPL3
+# mode on, one channel of two operators, additive, both outputs, key on.
+# fnum 580 at block 4 is 440 Hz on a chip clocked at 49716 Hz.
+opl_note_script() {
+  port_write 0x38a 0x05; port_write 0x38b 0x01
+  port_write 0x388 0x01; port_write 0x389 0x20
+  local op
+  for op in 0 3; do
+    port_write 0x388 "$((0x20 + op))"; port_write 0x389 0x01
+    port_write 0x388 "$((0x40 + op))"; port_write 0x389 0x00
+    port_write 0x388 "$((0x60 + op))"; port_write 0x389 0xf0
+    port_write 0x388 "$((0x80 + op))"; port_write 0x389 0x77
+  done
+  port_write 0x388 0xc0; port_write 0x389 0x31
+  port_write 0x388 0xa0; port_write 0x389 0x44
+  port_write 0x388 0xb0; port_write 0x389 0x32
+}
+
+# What a driver writes to an MPU-401: reset, UART mode, then a program
+# change and a note-on for A4 — the note the checks measure.
+mpu_note_script() {
+  port_write 0x331 0xff
+  port_write 0x331 0x3f
+  port_write 0x330 0xc0; port_write 0x330 0x00
+  port_write 0x330 0x90; port_write 0x330 0x45; port_write 0x330 0x64
+}
+
+music_check() { # the two pickers, and then the devices actually sounding
+  local rc=0 dir="$OUT/music" bundle args f want o
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  : >"$dir/disk.qcow2"
+  # What each family starts on. Every family keeps the card it already
+  # had — 98 and DOS the Sound Blaster, XP the AC'97, Other the Ensoniq —
+  # so opening an existing machine changes no hardware; what is new is
+  # the MIDI port on the two families that have no synthesizer of their
+  # own, and the OPL3 that comes with the cards that carried one.
+  for f in win98:sb16 dos:sb16 xp:AC97 other:ES1370; do
+    want="${f#*:}"; f="${f%%:*}"
+    bundle="$(target/release/launcherx --new "$f" "music-$f" "$dir/disk.qcow2")" || { echo "--new $f failed"; return 1; }
+    args="$(target/release/launcherx --print-args "$bundle")"
+    case "$args" in *"$want,audiodev=embed0"*) ;; *) echo "a new $f machine has no $want"; echo "$args"; rc=1;; esac
+  done
+  # The FM chip follows the card, the way buying one did: an SB16 carries
+  # an OPL3 (and mirrors it at the card's own base, where an SB-aware
+  # driver looks), an AC'97 and an Ensoniq carry none.
+  for f in win98 dos; do
+    args="$(target/release/launcherx --print-args "$dir/library/music-$f/machine.toml")"
+    case "$args" in *"opl3,audiodev=embed0,sbbase=0x220"*) ;; *) echo "$f: the SB16 came without its OPL3"; echo "$args"; rc=1;; esac
+    case "$args" in *"mpu401,audiodev=embed0,synth=gm"*) ;; *) echo "$f: no General MIDI port on a family that has no synthesizer of its own"; echo "$args"; rc=1;; esac
+  done
+  for f in xp other; do
+    args="$(target/release/launcherx --print-args "$dir/library/music-$f/machine.toml")"
+    case "$args" in *opl3*) echo "$f: an FM chip arrived with a card that never had one"; echo "$args"; rc=1;; esac
+    case "$args" in *mpu401*) echo "$f: a MIDI port arrived on a family whose default is none"; echo "$args"; rc=1;; esac
+  done
+  # The switch itself, on the 98 machine: to the AC'97 (which takes the
+  # SB16 *and* its FM away, and lands in the pinned PCI slot), to the
+  # Gravis, and back.
+  bundle="$dir/library/music-win98/machine.toml"
+  target/release/launcherx --music "$bundle" ac97 >/dev/null || { echo "--music ac97 failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *"AC97,audiodev=embed0,addr=0x04"*) ;; *) echo "98: the AC'97 did not arrive at its pinned slot"; echo "$args"; rc=1;; esac
+  case "$args" in *sb16*|*opl3*) echo "98: the SB16 or its FM is still there beside the AC'97"; echo "$args"; rc=1;; esac
+  target/release/launcherx --music "$bundle" gus none >/dev/null || { echo "--music gus failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *"gus,audiodev=embed0"*) ;; *) echo "98: no Gravis"; echo "$args"; rc=1;; esac
+  case "$args" in *mpu401*) echo "98: the MIDI port survived being turned off"; echo "$args"; rc=1;; esac
+  # A card this family does not offer is refused rather than written: an
+  # ES1370 on Windows is a card 98 has no driver for, and a stray field
+  # should not be able to produce one.
+  target/release/launcherx --music "$bundle" es1370 >/dev/null || { echo "--music es1370 failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *ES1370*) echo "98: was given the Ensoniq, which is not on offer there"; echo "$args"; rc=1;; esac
+  target/release/launcherx --music "$bundle" sb16 gm >/dev/null || { echo "--music sb16 gm failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *"sb16,audiodev=embed0"*) ;; *) echo "98: the SB16 did not come back"; echo "$args"; rc=1;; esac
+  # The MT-32 has no default and no fallback: nothing of Roland's ships,
+  # so a machine asked for one without ROMs must be refused at the form
+  # rather than at the guest's first note.
+  if target/release/launcherx --music "$bundle" - mt32 >/dev/null 2>&1; then
+    echo "98: an MT-32 machine with no ROM directory was saved"; rc=1
+  fi
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *mt32*) echo "98: the refused MT-32 was written anyway"; echo "$args"; rc=1;; esac
+  target/release/launcherx --music "$bundle" - mt32 - "$dir/roms" >/dev/null || { echo "--music mt32 with a directory failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *"synth=mt32,romdir=$dir/roms"*) ;; *) echo "98: the MT-32's ROM directory did not reach the device"; echo "$args"; rc=1;; esac
+  target/release/launcherx --music "$bundle" - gm >/dev/null || { echo "--music gm failed"; rc=1; }
+
+  if [ ! -x build/qemu/qemu-system-i386 ] || [ ! -x build/qemu/qemu-img ]; then
+    echo "  (no build/qemu: the command lines were checked but not run)"
+    return $rc
+  fi
+  build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
+  # Every card on every family, on the real binary: started paused and
+  # told to quit, so a machine QEMU will not build is an exit code. The
+  # bank is named the way the player names it (companions.rs), because a
+  # machine that says synth=gm and nothing else is the normal case.
+  export LIBSYNTH_SF2="$PWD/soundfonts/TimGM6mb.sf2"
+  for f in win98:sb16 win98:ac97 win98:gus win98:none dos:sb16 dos:gus dos:adlib xp:ac97 xp:sb16 other:es1370 other:ac97; do
+    want="${f#*:}"; f="${f%%:*}"
+    bundle="$dir/library/music-$f/machine.toml"
+    target/release/launcherx --music "$bundle" "$want" >/dev/null || { echo "$f: --music $want failed"; rc=1; continue; }
+    args="$(target/release/launcherx --print-args "$bundle")"
+    # shellcheck disable=SC2086
+    o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n' \
+         | timeout 30 build/qemu/qemu-system-i386 $args \
+             -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
+      || { echo "our QEMU refused the $f machine with the $want card"; echo "$o" | tail -3; rc=1; }
+  done
+  # And the half no command line can show: the devices *sounding*. The
+  # monitor writes the same ports a guest would, QEMU's own wav backend
+  # records what its mixer produced, and the note has to be in the file —
+  # a device that accepts every write and plays nothing passes everything
+  # above and fails here.
+  rm -f "$dir/opl.wav" "$dir/midi.wav"
+  { opl_note_script; sleep 2; echo quit; } \
+    | timeout 60 build/qemu/qemu-system-i386 -display none -monitor stdio \
+        -audiodev "wav,id=w,path=$dir/opl.wav" -device opl3,audiodev=w >/dev/null 2>&1
+  target/release/synthx wavtone "$dir/opl.wav" 440 || rc=1
+  { mpu_note_script; sleep 2; echo quit; } \
+    | timeout 60 build/qemu/qemu-system-i386 -display none -monitor stdio \
+        -audiodev "wav,id=w,path=$dir/midi.wav" \
+        -device "mpu401,audiodev=w,synth=gm,soundfont=$PWD/soundfonts/TimGM6mb.sf2" >/dev/null 2>&1
+  target/release/synthx wavtone "$dir/midi.wav" 440 || rc=1
   return $rc
 }
 
@@ -1352,11 +1546,13 @@ host_stage() {
     run_check qt-wizard qt-wizard.log qtwizard_check || true
     run_check qt-close qt-close.log qtclose_check || true
     run_check qt-profile qt-profile.log qtprofile_check || true
+    run_check qt-shelf qt-shelf.log qtshelf_check || true
     run_check qt-firstrun qt-firstrun.log qtfirstrun_check || true
   else
     skip qt-wizard "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-close "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-profile "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+    skip qt-shelf "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-firstrun "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
   fi
 
@@ -1409,6 +1605,21 @@ host_stage() {
   # installed guest will not see them move.
   if [ -x target/release/launcherx ]; then
     run_check family-other family-other.log family_other_check || true
+  fi
+
+  # the music engines (doc 20): the three of them through the same C API
+  # the two QEMU devices drive them through, including the bank the
+  # packages ship — no guest, no QEMU, ~3 s.
+  if [ -x target/release/synthx ]; then
+    run_check libsynth libsynth.log libsynth_check || true
+  else
+    skip libsynth "needs target/release/synthx (cargo build --release -p libsynth)"
+  fi
+
+  # the sound-card and MIDI-port pickers (doc 20 §6), and then the two
+  # devices sounding into a wav QEMU recorded itself.
+  if [ -x target/release/launcherx ] && [ -x target/release/synthx ]; then
+    run_check music music.log music_check || true
   fi
 
   # the display-adapter picker (doc 06): each family offers the adapters
@@ -1637,6 +1848,7 @@ guest_stage() {
       run_check smc-guest smc-guest.log python3 tools/smc-guest-test.py || true
       run_check sse-guest sse-guest.log python3 tools/sse-guest-test.py || true
       run_check atapi-guest atapi-guest.log python3 tools/atapi-guest-test.py || true
+      run_check midi-guest midi-guest.log python3 tools/midi-guest-test.py || true
     # **One skip per battery, not one skip standing for five.** Every DOS
     # battery is gated on the same floppy, and this used to report the whole
     # group as a single `SKIP x87-guest` — so a fresh worktree, which has no
@@ -1647,10 +1859,10 @@ guest_stage() {
     # including `atapi-guest`, which is the only check that reads a disc from
     # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
     # weak-sector rule, which that battery is the regression guard for).
-    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest; do
+    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest; do
       skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
     done; fi
-  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest; do
+  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest; do
     skip "$c" "needs nasm, mtools and build/qemu"
   done; fi
   if [ "$OS" != Linux ]; then skip guest "Linux only for now (mkfs.fat, sfdisk, mtools)"; return; fi

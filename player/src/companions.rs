@@ -15,6 +15,13 @@
 //!   has no Vulkan at all, so a redistributable app carries a loader and
 //!   an ICD of its own; on Linux the system's driver is the right one and
 //!   nothing is set.
+//! * `LIBSYNTH_SF2` — the General MIDI bank the `mpu401` device plays
+//!   through (doc 20 §4). Not a `dlopen`, but the same problem: a
+//!   machine says `synth=gm` and the file that answers it lives wherever
+//!   this build was installed, which is not something to freeze into
+//!   every machine's bundle. **Set in a checkout too**, unlike the four
+//!   above, because there QEMU has no search of its own to fall back on
+//!   — a library is found beside the binary, a SoundFont is not.
 //!
 //! Only ever *when the caller left them unset*: a developer running the
 //! packaged player with `D3DPT_EXEC_LIB=` pointing at a fresh build is
@@ -57,6 +64,11 @@ fn in_prefix(prefix: &Path, installed: &str) -> PathBuf {
     prefix.join(installed)
 }
 
+/// The bank the packages ship (doc 20 §4, `soundfonts/README.md`). One
+/// name in one place: the packagers stage this file and this is what
+/// names it to QEMU.
+pub const SOUNDFONT: &str = "TimGM6mb.sf2";
+
 fn set_if_unset_and_present(var: &str, path: PathBuf) {
     if std::env::var_os(var).is_some() || !path.exists() {
         return;
@@ -67,11 +79,12 @@ fn set_if_unset_and_present(var: &str, path: PathBuf) {
 }
 
 /// The names `--companions` prints, in the order this module sets them.
-const VARS: [(&str, &str); 4] = [
+const VARS: [(&str, &str); 5] = [
     ("glide", "QEMU_GLIDE_LIB"),
     ("d3dpt-exec", "D3DPT_EXEC_LIB"),
     ("dxvk", "D3DPT_DXVK_LIB"),
     ("vulkan-icd", "VK_DRIVER_FILES"),
+    ("soundfont", "LIBSYNTH_SF2"),
 ];
 
 /// What `announce` resolved, one line each — the answer to "did this
@@ -97,6 +110,19 @@ pub fn report() {
 /// Point QEMU's own `dlopen` searches at the package. A no-op in a
 /// checkout, where those searches already find `build/…`.
 pub fn announce() {
+    // The bank first, because it is the one companion that also has to
+    // be found in a checkout: `soundfonts/` in the source tree, the
+    // package's own copy otherwise.
+    match install_prefix() {
+        Some(prefix) => set_if_unset_and_present(
+            "LIBSYNTH_SF2",
+            in_prefix(&prefix, &format!("share/2ksbox/soundfonts/{SOUNDFONT}")),
+        ),
+        None => set_if_unset_and_present(
+            "LIBSYNTH_SF2",
+            Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../soundfonts")).join(SOUNDFONT),
+        ),
+    }
     let Some(prefix) = install_prefix() else { return };
     let dylib = |stem: &str| {
         let ext = if cfg!(target_os = "macos") {

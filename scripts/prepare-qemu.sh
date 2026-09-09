@@ -60,6 +60,9 @@ mkdir -p "$QEMU/hw/d3dpt"
 rsync -rc --delete --exclude d3dpt_proto.h --exclude d3dpt_fb.h --exclude d3dpt_exec.h "$ROOT/d3dpt/hw/" "$QEMU/hw/d3dpt/"
 rsync -c "$ROOT/d3dpt/d3dpt_proto.h" "$ROOT/d3dpt/d3dpt_fb.h" "$ROOT/d3dpt/exec/d3dpt_exec.h" "$QEMU/hw/d3dpt/"
 
+echo "==> overlaying libsynth/ (the music devices: hw/audio/opl3.c + mpu401.c, doc 20)"
+rsync -c "$ROOT/libsynth/qemu/opl3.c" "$ROOT/libsynth/qemu/mpu401.c" "$ROOT/libsynth/libsynth.h" "$QEMU/hw/audio/"
+
 echo "==> overlaying libdisc/ (CD-ROM image block driver: block/cdimage.c, doc 17)"
 rsync -c "$ROOT/libdisc/qemu/cdimage.c" "$QEMU/block/"
 rsync -c "$ROOT/libdisc/qemu/cdimage.h" "$ROOT/libdisc/libdisc.h" "$QEMU/include/block/"

@@ -35,6 +35,10 @@ else
   CARGO_TARGET=""
 fi
 LIBDISC_DIR="$ROOT/target${CARGO_TARGET:+/$CARGO_TARGET}/release"
+# libsynth's staticlib is built by the same cargo invocation family and
+# lands in the same directory; named separately because the two meson
+# options are separate and either can be pointed elsewhere.
+LIBSYNTH_DIR="$LIBDISC_DIR"
 
 PYVER="$(cat "$ROOT/.python-version")"
 if [ -n "${QEMU_PYTHON:-}" ]; then
@@ -56,6 +60,12 @@ echo "==> python: $PYTHON ($("$PYTHON" -V 2>&1))"
 # has no QEMU dependency, so no cycle with the player.
 echo "==> cargo build --release -p libdisc${CARGO_TARGET:+ --target $CARGO_TARGET}"
 (cd "$ROOT" && cargo build --release -p libdisc ${CARGO_TARGET:+--target "$CARGO_TARGET"})
+
+# libsynth (the music engines, libsynth/): the same arrangement for
+# hw/audio/opl3.c and hw/audio/mpu401.c (patch 25, doc 20). Also no QEMU
+# dependency, so no cycle with the player.
+echo "==> cargo build --release -p libsynth${CARGO_TARGET:+ --target $CARGO_TARGET}"
+(cd "$ROOT" && cargo build --release -p libsynth ${CARGO_TARGET:+--target "$CARGO_TARGET"})
 
 mkdir -p "$BUILD"
 cd "$BUILD"
@@ -163,6 +173,7 @@ fi
   "${CFG[@]}" \
   --target-list=i386-softmmu,x86_64-softmmu \
   -Dlibdisc_dir="$LIBDISC_DIR" \
+  -Dlibsynth_dir="$LIBSYNTH_DIR" \
   "$@"
 
 # QEMU's configure writes `werror = true` into its native file for git

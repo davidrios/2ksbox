@@ -31,32 +31,79 @@ the 3dfx ones.
 
 ## State
 
-- **Stage 1 done (2026-09-09): the engines.** `libsynth` builds as an
-  rlib and a staticlib; `synthx selftest` passes the OPL3 detection
-  sequence, an FM note measured at 440 Hz, the shipped bank through the
-  MIDI byte-stream path, and a running-status note-off with a real-time
-  byte inside the note-on. MT-32 SKIPs without ROMs.
-- Stages 2–5 (the devices and the patch; the pickers; packaging; the
-  guest test) are the ordered next steps below.
+**Stages 1–4 landed 2026-09-09; a machine has music.**
+
+- **The engines.** `libsynth` builds as an rlib and a staticlib;
+  `synthx selftest` passes the OPL3 detection sequence, an FM note
+  measured at 440 Hz, the shipped bank through the MIDI byte-stream
+  path, and a running-status note-off with a real-time byte inside the
+  note-on. The MT-32 case SKIPs without ROMs — it has never been run
+  here, which is the one engine still unproven (see below).
+- **The devices**, behind **patch 60** (not 25: a number below 50 would
+  have had to fight patch 50's `meson.build` hunks for context).
+  `-device opl3[,sbbase=]` and `-device mpu401,synth=gm|mt32`, both
+  overlaid from `libsynth/qemu/`, both accepted by our own
+  `qemu-system-i386`, and both *sounding* into a wav.
+- **The pickers.** `bundle::Sound` / `bundle::Music` with doc 20 §6's
+  per-family choices and defaults, in `launcher-core` and drawn by both
+  front ends, the C API (`lc_wizard_sound_*`, `lc_wizard_music_*`) and
+  `launcherx --music`. The `music` check covers all of it.
+- **Packaging.** `soundfonts/TimGM6mb.sf2` into all four packages, found
+  through `LIBSYNTH_SF2` by `player/src/companions.rs`; the Linux
+  packager asks the staged player where the bank is, as it does for the
+  Glide wrapper. The three new crates are in the Flatpak's
+  `cargo-sources.json` — added by hand from `Cargo.lock`'s checksums
+  (verified against the downloaded `.crate` files), because
+  `scripts/gen-flatpak-cargo-sources.sh` does not run on macOS
+  (`sha256sum` usage differs); a Linux session should re-run the
+  generator and confirm it produces the same three entries.
+
+- **The guest end-to-end** (`tools/midi-guest-test.py`, the `midi-guest`
+  check): a DOS program under TCG runs the AdLib detection sequence
+  (`OPL status 00 c0 00`), plays 440 Hz on the OPL3, then resets an
+  MPU-401 (`fe fe` — both ACKs), puts it in UART mode and plays A4; both
+  notes are in the wav QEMU recorded. 11 s for the pair.
+
+**The MT-32 is unverified, by decision (2026-09-09).** No one here has
+CM-32L ROMs and the user is not going to get any, so `mt32-tone` will go
+on SKIPping and the engine's *sound* has never been heard. What is
+proved is everything around it: the option, the form's refusal without a
+ROM directory, the size-based ROM finder and its message for an original
+MT-32's half-size PCM ROM. `moont` claims sample accuracy against Munt
+and is taken at its word until someone with a dump runs
+`synthx selftest --roms <dir>` — which is a minute's work and is the
+first thing to do if a title sounds wrong on it. Do **not** treat this
+as a task waiting to be done here.
+
+- **A real game, 2026-09-09** (`tools/duke-guest-test.py`): Duke Nukem
+  3D (Atomic Edition, the user's own disc) plays its score through our
+  MPU-401 — 300-450 note-ons per 5 s across 5 to 8 MIDI channels — from
+  a run that starts with nothing: the DOS build is copied off the disc,
+  a FAT disk is made, the game's own SETUP.EXE is driven for a config,
+  and the disc goes back in the drive because the game checks for it.
+  The OPL3 plays the same game's music too (2466 register writes, 516
+  key-ons in 5 s), but only when SETUP launches the game itself; from a
+  batch file the game says "Couldn't find selected sound card" whatever
+  the config says, which is the game's own business — the same OPL3
+  answers the `midi-guest` battery and the `music` check from a standing
+  start. Both devices now print what the guest is doing to them every
+  5 s, which is what made all of this diagnosable.
 
 ## Next steps
 
-1. **The devices.** `libsynth/qemu/opl3.c` and `mpu401.c`, patch 25, the
-   `-Dlibsynth_dir` build wiring in `scripts/configure-qemu.sh`, the
-   overlay in `prepare-qemu.sh`. Done when our `qemu-system-i386`
-   accepts `-device opl3,audiodev=…` and `-device mpu401,synth=gm,…`
-   and a `-audiodev wav` run has sound in the file.
-2. **The pickers.** `bundle::Sound` / `bundle::Music`, the per-family
-   choices and defaults of doc 20 §6, the arguments, the wizard rows in
-   both front ends, the `music` check in `scripts/test.sh`, and the
-   `capi` smoke's expectations.
-3. **Packaging.** The bank into `share/2ksbox/soundfonts/`, the
-   `LIBSYNTH_SF2` fallback in `player/src/companions.rs` (the
-   `QEMU_GLIDE_LIB` pattern), and the four packagers' checks.
-4. **The guest end-to-end.** `tools/midi-guest-test.py`: a DOS program
-   playing an AdLib note and an MPU-401 melody, checked in the wav.
-5. **The host MIDI port** (doc 20 §8.1), which is the first thing that
-   is deliberately outside the stages above.
+1. **Win98 in front of it.** Whether "MPU-401 Compatible" from Add New
+   Hardware really drives the port, and whether `mpu401`'s default
+   IRQ 9 collides with the ACPI SCI on an ACPI Win98 install — the
+   device raises it only to hand over an ACK, so if it does, the answer
+   is to write `irq=` off in the bundle or move it.
+2. **Duke's FM entry from a batch file**, if anyone cares: `MusicDevice
+   = 2` with `MidiPort = 0x388` and `BLASTER` exported still gets
+   "Couldn't find selected sound card" unless SETUP.EXE starts the game.
+   A curiosity, not a blocker — and possibly QEMU's `sb16` rather than
+   our OPL3, since that game's *Sound Blaster* music entry refuses on
+   every path tried.
+3. **The host MIDI port** (doc 20 §8.1), the first thing deliberately
+   outside these stages.
 
 ## Rules
 

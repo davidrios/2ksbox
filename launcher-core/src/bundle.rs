@@ -347,6 +347,193 @@ pub fn default_pad(family: Family) -> Pad {
     pad_choices(family).first().copied().unwrap_or(Pad::None)
 }
 
+/// The digital sound card, and — for the two cards that carried one —
+/// the FM chip that comes with it (doc 20 §6).
+///
+/// The era's split is the reason this is a choice at all: a Sound
+/// Blaster is what a DOS game knows how to find and what Windows 98 has
+/// a driver for in the box, and an AC'97 is what a machine of 2001 has
+/// and what sounds better. Neither is right for both families.
+///
+/// **The FM chip is not in this list, on purpose.** A card either had
+/// one or it did not: an SB16 carries a YMF262 at 0x388 and at its own
+/// base, an AdLib *is* one, and an AC'97, an ES1370 and a Gravis have
+/// none. So picking a card here decides whether the machine has FM, the
+/// way buying one did — and a game that only knows AdLib music finds it
+/// on exactly the machines where it would have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Sound {
+    /// Sound Blaster 16 at 0x220 (IRQ 5, DMA 1/5) **and its OPL3**.
+    /// What `BLASTER=A220 I5 D1 H5 T6` describes, and the card every
+    /// DOS title of the CD-ROM era has a driver for.
+    Sb16,
+    /// The Intel AC'97 codec: 2001's card, and XP's in-box driver.
+    /// 98 has a driver for it in the guest tools (doc 06), not in the
+    /// box. No FM at all — a DOS box inside such a machine has no music.
+    Ac97,
+    /// Ensoniq AudioPCI (ES1370): doc 06's card for the `Other`
+    /// family, the one BeOS R5 and a period Linux both drive in the box.
+    Es1370,
+    /// Gravis Ultrasound: a wavetable card, so its *music* is its own —
+    /// no MPU-401 and no FM involved — and the guest needs Gravis's own
+    /// drivers and its `ULTRASND` line before anything comes out of it.
+    Gus,
+    /// An AdLib and nothing else: the OPL3 at 0x388, no digital audio at
+    /// all. The 1990 machine, for a title that predates sampled sound.
+    Adlib,
+    /// No sound card. The machine keeps whatever the *music* picker
+    /// gives it, which is a real configuration: an MPU-401 and a module
+    /// was how music was done before cards could play samples.
+    None,
+}
+
+impl Sound {
+    /// Every variant, for serde round-trips and label lookups. **Not
+    /// what a picker offers** — that is `sound_choices(family)`.
+    pub const ALL: [Sound; 6] = [Sound::Sb16, Sound::Ac97, Sound::Es1370, Sound::Gus, Sound::Adlib, Sound::None];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Sound::Sb16 => "Sound Blaster 16 (with FM)",
+            Sound::Ac97 => "Intel AC'97",
+            Sound::Es1370 => "Ensoniq AudioPCI (ES1370)",
+            Sound::Gus => "Gravis Ultrasound",
+            Sound::Adlib => "AdLib (FM only)",
+            Sound::None => "No sound card",
+        }
+    }
+
+    /// The name a bundle and the debug verbs use.
+    pub fn key(self) -> &'static str {
+        match self {
+            Sound::Sb16 => "sb16",
+            Sound::Ac97 => "ac97",
+            Sound::Es1370 => "es1370",
+            Sound::Gus => "gus",
+            Sound::Adlib => "adlib",
+            Sound::None => "none",
+        }
+    }
+
+    /// The devices this card is. The PCI cards carry their address for
+    /// the reason every pinned address here exists: removing the NIC
+    /// above them must not slide them into its slot, which an installed
+    /// guest would see as its sound card having been swapped.
+    fn args(self) -> Vec<String> {
+        let device = |spec: &str| vec!["-device".to_string(), spec.to_string()];
+        match self {
+            // Two devices, because the card is two chips: the SB16 for
+            // digital audio and the OPL3 that sits at 0x388 *and* is
+            // mirrored at the card's own base, which is where an
+            // SB-aware driver looks for it.
+            Sound::Sb16 => {
+                let mut v = device("sb16,audiodev=embed0");
+                v.extend(device("opl3,audiodev=embed0,sbbase=0x220"));
+                v
+            }
+            Sound::Adlib => device("opl3,audiodev=embed0"),
+            Sound::Ac97 => device("AC97,audiodev=embed0,addr=0x04"),
+            Sound::Es1370 => device("ES1370,audiodev=embed0,addr=0x04"),
+            Sound::Gus => device("gus,audiodev=embed0"),
+            Sound::None => Vec::new(),
+        }
+    }
+}
+
+/// What is behind the machine's MIDI port (doc 20 §6): an MPU-401 at
+/// 0x330 and the synthesizer that plays what the guest writes to it.
+///
+/// This is the *music* half of a period machine's audio, and the half
+/// QEMU never had — there is no MPU-401 device in it at all, so a game
+/// offering "General MIDI" or "Roland MT-32" in its setup program had
+/// nothing to talk to here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Music {
+    /// A SoundFont General MIDI synthesizer. The bank we ship unless
+    /// `soundfont` names another, and which bank it is matters more to
+    /// how the music sounds than anything else on this screen.
+    Gm,
+    /// A Roland CM-32L — the MT-32 family — which needs the user's own
+    /// ROM images in `mt32_roms`. What a 1990 title means by "Roland".
+    Mt32,
+    /// No MIDI port on the machine at all. Deliberately not "a port
+    /// that swallows notes": a game that found one would pick it and
+    /// play to nobody, which is worse than not offering it.
+    None,
+}
+
+impl Music {
+    pub const ALL: [Music; 3] = [Music::Gm, Music::Mt32, Music::None];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Music::Gm => "General MIDI (SoundFont)",
+            Music::Mt32 => "Roland MT-32 / CM-32L",
+            Music::None => "No MIDI port",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Music::Gm => "gm",
+            Music::Mt32 => "mt32",
+            Music::None => "none",
+        }
+    }
+}
+
+/// The cards a family offers, **first one its default**.
+///
+/// Every family keeps the card it already had as its first entry, so no
+/// existing machine changes hardware by being opened: 98 and DOS on the
+/// Sound Blaster, XP on the AC'97, `Other` on the Ensoniq. What is new
+/// is that the others are reachable — an AC'97 in a 98 machine that
+/// wants the better codec, a Gravis in a DOS machine for the games
+/// written for one, an AdLib for a 1990 title, and nothing at all.
+pub fn sound_choices(family: Family) -> &'static [Sound] {
+    match family {
+        // Windows has the SB16 driver in the box and a DOS box inside 98
+        // finds the card it expects; the AC'97 needs the guest-tools
+        // driver (doc 06) and gives the machine no FM.
+        Family::Win98 => &[Sound::Sb16, Sound::Ac97, Sound::Gus, Sound::None],
+        Family::Dos => &[Sound::Sb16, Sound::Gus, Sound::Adlib, Sound::None],
+        // XP's own driver, and the card doc 06 has always given it.
+        Family::Xp => &[Sound::Ac97, Sound::Sb16, Sound::None],
+        // Standard hardware only, as everywhere else in this family:
+        // both of these had a driver in the box on BeOS R5 and on a
+        // period Linux, where nothing of ours can be installed after.
+        Family::Other => &[Sound::Es1370, Sound::Ac97, Sound::None],
+    }
+}
+
+/// What is on the MIDI port, **first one the family's default**.
+///
+/// The two families with no synthesizer of their own get one: a DOS
+/// machine has nothing but the card's FM otherwise, and Windows 98's
+/// own MIDI output is that same FM chip. XP ships a wavetable
+/// synthesizer with the operating system and `Other` is a family we add
+/// no drivers to, so both start with no port — it is one pick away when
+/// a game wants a real MT-32.
+pub fn music_choices(family: Family) -> &'static [Music] {
+    match family {
+        Family::Win98 | Family::Dos => &[Music::Gm, Music::Mt32, Music::None],
+        Family::Xp | Family::Other => &[Music::None, Music::Gm, Music::Mt32],
+    }
+}
+
+/// The card a family starts on. Always the first of `sound_choices`.
+pub fn default_sound(family: Family) -> Sound {
+    sound_choices(family).first().copied().unwrap_or(Sound::None)
+}
+
+/// What a family's MIDI port starts as. Always the first of
+/// `music_choices`.
+pub fn default_music(family: Family) -> Music {
+    music_choices(family).first().copied().unwrap_or(Music::None)
+}
+
 /// Which drive the machine boots from. `Auto` leaves the order to QEMU,
 /// which tries the hard disk, then the floppy, then the CD — the right
 /// answer for an installed Windows and for the wizard's "boot the
@@ -742,6 +929,32 @@ pub struct Machine {
     )]
     pub pad: Option<Pad>,
 
+    /// The sound card (`Sound`). Absent = the family's default, which
+    /// is the card that family already had, so a bundle written before
+    /// this field existed describes the same machine it always did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<Sound>,
+
+    /// What is on the MIDI port (`Music`). Absent = the family's
+    /// default: a General MIDI synthesizer on the two families with no
+    /// synthesizer of their own, no port at all on the other two.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub music: Option<Music>,
+
+    /// A SoundFont bank of the user's own, for `Music::Gm`. Absent =
+    /// the one the package ships, which the *player* names to QEMU
+    /// (`LIBSYNTH_SF2`, `player/src/companions.rs`) rather than the
+    /// bundle: where an installed tree keeps its resources is not
+    /// something to freeze into a machine's file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soundfont: Option<PathBuf>,
+
+    /// The directory holding the user's own Roland ROMs, for
+    /// `Music::Mt32`. There is no default and there never will be:
+    /// nothing of Roland's is redistributable (doc 20 §4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mt32_roms: Option<PathBuf>,
+
     /// Which of our own emulator fast paths this machine runs with
     /// (`Optimization`), holding only what someone turned off — absent
     /// means all of them at their shipped setting.
@@ -918,6 +1131,10 @@ impl Machine {
             boot: None,
             cpu_speed: Some(default_cpu_speed(family)),
             video: default_video(family),
+            sound: Some(default_sound(family)),
+            music: Some(default_music(family)),
+            soundfont: None,
+            mt32_roms: None,
             pad: Some(default_pad(family)),
             optimizations: Optimizations::default(),
         }
@@ -1072,6 +1289,57 @@ impl Machine {
         args
     }
 
+    /// The card this machine has. One the family does not offer falls
+    /// back to its default rather than being obeyed, for the reason
+    /// `effective_video` does the same: a stray field should not be
+    /// able to produce a machine whose guest has no driver.
+    pub fn effective_sound(&self) -> Sound {
+        let choices = sound_choices(self.family);
+        match self.sound {
+            Some(s) if choices.contains(&s) => s,
+            _ => default_sound(self.family),
+        }
+    }
+
+    /// What is on this machine's MIDI port.
+    pub fn effective_music(&self) -> Music {
+        let choices = music_choices(self.family);
+        match self.music {
+            Some(m) if choices.contains(&m) => m,
+            _ => default_music(self.family),
+        }
+    }
+
+    /// The sound card and the MIDI port, as devices (doc 20 §6).
+    ///
+    /// The bank for a General MIDI port is named here **only when the
+    /// user chose one**: the one we ship is a companion of the player's,
+    /// found by the player's own rule the way the Glide wrapper is, so
+    /// that a package that moves does not invalidate every machine file
+    /// in the library.
+    fn audio_args(&self) -> Vec<String> {
+        let mut args = self.effective_sound().args();
+        let music = self.effective_music();
+        if music != Music::None {
+            let mut spec = format!("mpu401,audiodev=embed0,synth={}", music.key());
+            match music {
+                Music::Gm => {
+                    if let Some(sf2) = &self.soundfont {
+                        spec.push_str(&format!(",soundfont={}", opt_value(&sf2.display().to_string())));
+                    }
+                }
+                Music::Mt32 => {
+                    if let Some(dir) = &self.mt32_roms {
+                        spec.push_str(&format!(",romdir={}", opt_value(&dir.display().to_string())));
+                    }
+                }
+                Music::None => {}
+            }
+            args.extend(["-device".to_string(), spec]);
+        }
+        args
+    }
+
     pub fn effective_boot(&self) -> Boot {
         self.boot.unwrap_or_default()
     }
@@ -1180,9 +1448,7 @@ impl Machine {
                     // in-box 98 driver
                     args.extend(["-device".into(), "pcnet,netdev=n0,addr=0x03".into()]);
                 }
-                // ISA, so it is not in the PCI sequence above and does
-                // not move when the NIC comes and goes.
-                args.extend(["-device".into(), "sb16,audiodev=embed0".into()]);
+                args.extend(self.audio_args());
             }
             // The 1994 PC: the same chipset and the SB16 doc 06 already
             // puts on the Win98 machine "for DOS boxes/games", the cirrus
@@ -1195,7 +1461,7 @@ impl Machine {
                     args.extend(["-netdev".into(), "user,id=n0".into()]);
                     args.extend(["-device".into(), "pcnet,netdev=n0".into()]);
                 }
-                args.extend(["-device".into(), "sb16,audiodev=embed0".into()]);
+                args.extend(self.audio_args());
             }
             Family::Xp => {
                 args.extend(self.video_args());
@@ -1204,7 +1470,7 @@ impl Machine {
                     // in-box XP driver
                     args.extend(["-device".into(), "rtl8139,netdev=n0,addr=0x03".into()]);
                 }
-                args.extend(["-device".into(), "AC97,audiodev=embed0,addr=0x04".into()]);
+                args.extend(self.audio_args());
             }
             // Everything else of the era: standard hardware only, chosen
             // for having had a driver in the box on BeOS R5 and on a
@@ -1233,7 +1499,7 @@ impl Machine {
                 // these guests drive in the box (BeOS ships an ensoniq
                 // add-on, Linux `snd-ens1370`), where AC'97 needs a
                 // driver an era install may not have.
-                args.extend(["-device".into(), "ES1370,audiodev=embed0,addr=0x04".into()]);
+                args.extend(self.audio_args());
             }
         }
         // The CD-ROM drive is always attached, empty tray and all: a

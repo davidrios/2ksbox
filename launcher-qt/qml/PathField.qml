@@ -31,6 +31,17 @@ RowLayout {
     /// binding, so the data flows one way and only the model decides
     /// what the field shows.
     signal edited(string path)
+    /// The same path, but only when it came from the *dialog* rather
+    /// than the keyboard — for a field where choosing a file is the whole
+    /// answer and not a step towards one (the disc shelf's adder acts on
+    /// it at once). `edited` is emitted for it too, so a field that has
+    /// no use for the distinction never has to know about this one.
+    signal picked(string path)
+    /// What the dialog does with the file it was given, as a function so
+    /// a probe can take the same path: a real `FileDialog` belongs to the
+    /// window system and cannot be opened offscreen, and everything worth
+    /// checking is downstream of this line (`Main.qml`'s `pickdisc`).
+    function acceptPath(path) { root.edited(path); root.picked(path) }
     /// e.g. "Disc images (*.iso *.cue *.ccd *.mds)". "All files (*)" is
     /// always offered alongside: a filter that hides the file someone is
     /// looking for is worse than no filter.
@@ -82,6 +93,6 @@ RowLayout {
                 return "file://" + root.emptyDir
             return ""
         }
-        onAccepted: root.edited(selectedFile.toString().replace(/^file:\/\//, ""))
+        onAccepted: root.acceptPath(selectedFile.toString().replace(/^file:\/\//, ""))
     }
 }

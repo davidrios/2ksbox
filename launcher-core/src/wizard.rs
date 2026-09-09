@@ -29,7 +29,8 @@
 
 use crate::browse::Filter;
 use crate::bundle::{
-    self, Accel, Boot, CpuSpeed, Family, Machine, Optimization, Optimizations, Pad, Video,
+    self, Accel, Boot, CpuSpeed, Family, Machine, Music, Optimization, Optimizations, Pad, Sound,
+    Video,
 };
 use crate::disc_library::DISC_FILTER;
 use crate::{host_gpu, library, player};
@@ -37,6 +38,10 @@ use std::path::{Path, PathBuf};
 
 pub const DISK_FILTER: Filter<'static> = ("Disk images", &["qcow2", "img", "raw"]);
 pub const FLOPPY_FILTER: Filter<'static> = ("Floppy images", &["img", "ima", "vfd", "flp"]);
+/// A General MIDI bank for the machine's MIDI port (doc 20 §4). SF2
+/// only: the engine reads SoundFont 2, and an `.sf3`'s samples are
+/// Vorbis-compressed.
+pub const SOUNDFONT_FILTER: Filter<'static> = ("SoundFont banks", &["sf2"]);
 /// Re-exported so a front end drawing this form needs one import for its
 /// three file fields; the constant itself belongs to the shelf.
 pub const MEDIA_FILTER: Filter<'static> = DISC_FILTER;
@@ -54,6 +59,9 @@ struct EditTarget {
     /// warn that changing it is a hardware change to a guest that is
     /// already installed (`video_warning`).
     video: Video,
+    /// The same, for the sound card: a guest that already has a driver
+    /// for one card finds another on its next start (`sound_warning`).
+    sound: Sound,
     /// The gamepad setting the bundle had when it was opened, for the
     /// same reason: gaining or losing the USB controller is a hardware
     /// change (`pad_warning`).
@@ -82,6 +90,19 @@ pub struct Form {
     /// a value carried across a family switch can be one the new family
     /// does not offer, and `choose_family` has to put it back.
     video: Video,
+    /// The sound card, and what is on the MIDI port (doc 20 §6).
+    /// Private for the same reason `video` is: each family offers a
+    /// different list, so a value carried across a family switch can be
+    /// one the new family does not have.
+    sound: Sound,
+    music: Music,
+    /// A SoundFont bank of the user's own, or empty for the one we
+    /// ship. A plain file field, like the floppy.
+    pub soundfont: String,
+    /// The directory holding the user's own Roland ROMs. There is no
+    /// default: `Music::Mt32` without it is a machine that refuses to
+    /// start, so `submit` says so instead (doc 20 §4).
+    pub mt32_roms: String,
     /// What a host gamepad does for this machine (M13). Private for the
     /// same reason `video` is, and since path A for a concrete one: `Usb`
     /// is offered on the Windows families and on `Other` but never on
@@ -162,6 +183,10 @@ impl Default for Form {
             floppy: String::new(),
             boot: Boot::default(),
             video: bundle::default_video(Family::Win98).unwrap_or(Video::Std),
+            sound: bundle::default_sound(Family::Win98),
+            music: bundle::default_music(Family::Win98),
+            soundfont: String::new(),
+            mt32_roms: String::new(),
             pad: bundle::default_pad(Family::Win98),
             existing_disk: false,
             disk_path: String::new(),
@@ -234,6 +259,10 @@ impl Form {
             // A DOS machine has no adapter of its own; the field only
             // matters once the family switches to one that has.
             video: machine.effective_video().unwrap_or(Video::Std),
+            sound: machine.effective_sound(),
+            music: machine.effective_music(),
+            soundfont: machine.soundfont.as_ref().map(|f| f.display().to_string()).unwrap_or_default(),
+            mt32_roms: machine.mt32_roms.as_ref().map(|d| d.display().to_string()).unwrap_or_default(),
             pad: machine.effective_pad(),
             existing_disk: true,
             disk_path: machine.disk.display().to_string(),
@@ -244,6 +273,7 @@ impl Form {
                 shader: machine.shader.clone(),
                 original_toml,
                 video: machine.effective_video().unwrap_or(Video::Std),
+                sound: machine.effective_sound(),
                 pad: machine.effective_pad(),
             }),
             ..Default::default()
@@ -317,6 +347,15 @@ impl Form {
         // family may simply not offer what is in the field — our own
         // adapter is not on offer for BeOS. Keep it when it survives the
         // switch, take the new family's default when it doesn't.
+        // The card and the MIDI port follow the same rule as the
+        // adapter, and for the same reason: a Gravis is not on offer to
+        // XP, and an ES1370 not to DOS.
+        if !bundle::sound_choices(family).contains(&self.sound) {
+            self.sound = bundle::default_sound(family);
+        }
+        if !bundle::music_choices(family).contains(&self.music) {
+            self.music = bundle::default_music(family);
+        }
         if !bundle::video_choices(family).contains(&self.video) {
             if let Some(default) = bundle::default_video(family) {
                 self.video = default;
@@ -685,6 +724,137 @@ impl Form {
         }
     }
 
+    // --- the sound card and the MIDI port (doc 20 §6) ---------------
+
+    pub fn sound(&self) -> Sound {
+        self.sound
+    }
+
+    /// The cards this family offers. Never empty: "no sound card" is an
+    /// entry, so every family has a picker.
+    pub fn sound_choices(&self) -> &'static [Sound] {
+        bundle::sound_choices(self.family)
+    }
+
+    pub fn sound_is_default(&self) -> bool {
+        self.sound == bundle::default_sound(self.family)
+    }
+
+    pub fn choose_sound(&mut self, sound: Sound) {
+        if self.sound_choices().contains(&sound) {
+            self.sound = sound;
+        }
+    }
+
+    pub fn reset_sound(&mut self) {
+        self.sound = bundle::default_sound(self.family);
+    }
+
+    pub fn music(&self) -> Music {
+        self.music
+    }
+
+    pub fn music_choices(&self) -> &'static [Music] {
+        bundle::music_choices(self.family)
+    }
+
+    pub fn music_is_default(&self) -> bool {
+        self.music == bundle::default_music(self.family)
+    }
+
+    pub fn choose_music(&mut self, music: Music) {
+        if self.music_choices().contains(&music) {
+            self.music = music;
+        }
+    }
+
+    pub fn reset_music(&mut self) {
+        self.music = bundle::default_music(self.family);
+    }
+
+    /// Whether the SoundFont field is worth showing at all.
+    pub fn soundfont_applies(&self) -> bool {
+        self.music == Music::Gm
+    }
+
+    /// Whether the ROM directory field is, and it is not optional there.
+    pub fn mt32_roms_applies(&self) -> bool {
+        self.music == Music::Mt32
+    }
+
+    /// What the card does for the guest's *music*, which is the half of
+    /// this screen that is not obvious: whether the machine has FM at
+    /// all, and what the guest has to do before it hears anything.
+    pub fn sound_notes(&self) -> &'static [&'static str] {
+        match (self.sound, self.family) {
+            (Sound::Sb16, Family::Dos) => &[
+                "The card DOS titles know how to find, and its OPL3: AdLib music works with nothing installed.",
+                "Its line for AUTOEXEC.BAT is BLASTER=A220 I5 D1 H5 P330 T6 — the P330 is what points a game at the MIDI port.",
+            ],
+            (Sound::Sb16, _) => &[
+                "Windows has this driver in the box, and a DOS box inside the guest finds the card it expects.",
+                "It carries the OPL3, so a game that only knows AdLib music has something to play on.",
+            ],
+            (Sound::Ac97, Family::Win98) => &[
+                "Better sound than the SB16, but 98 has no driver for it in the box — install ours from the guest tools first.",
+                "No FM chip: a DOS game inside this machine will find no AdLib music. Its MIDI port still works.",
+            ],
+            (Sound::Ac97, _) => &[
+                "XP's own driver, and the card this family has always had.",
+                "No FM chip — nothing of the era needs one here.",
+            ],
+            (Sound::Es1370, _) => &[
+                "The PCI card of the period BeOS R5 and a period Linux both drive with a driver they already have.",
+            ],
+            (Sound::Gus, _) => &[
+                "A wavetable card: its music is its own, and the games written for one sound better on it than on anything else of the era.",
+                "The guest needs Gravis's own drivers and its ULTRASND line before it makes any sound at all.",
+                "No FM chip, and no Sound Blaster compatibility except through Gravis's own emulation.",
+            ],
+            (Sound::Adlib, _) => &[
+                "The 1990 machine: FM music and no digital audio at all, so a game's speech and sound effects will be silent.",
+            ],
+            (Sound::None, _) => &[
+                "No card at all. The machine can still have a MIDI port, which is how music was done before cards could play samples.",
+            ],
+        }
+    }
+
+    /// What is behind the MIDI port, and what it needs.
+    pub fn music_notes(&self) -> &'static [&'static str] {
+        match (self.music, self.family) {
+            (Music::Gm, Family::Win98) => &[
+                "An MPU-401 at 0x330 with a General MIDI synthesizer behind it — far better than the FM chip, which is what 98's own MIDI output uses otherwise.",
+                "Windows finds it only after \"MPU-401 Compatible\" is added from Add New Hardware, and picked in Multimedia.",
+                "Leave the bank empty for the one we ship; a bank of your own changes how everything sounds more than any other setting here.",
+            ],
+            (Music::Gm, _) => &[
+                "An MPU-401 at 0x330 with a General MIDI synthesizer behind it: what a game means by \"General MIDI\" or \"MPU-401\" on its setup screen.",
+                "Leave the bank empty for the one we ship; a bank of your own changes how everything sounds more than any other setting here.",
+            ],
+            (Music::Mt32, _) => &[
+                "What a 1990 title means by \"Roland\": an MT-32 family module, which its music was written for and which sounds nothing like General MIDI.",
+                "It needs your own Roland CM-32L ROM images — nothing of Roland's is shipped with this program — and the machine will not start without them.",
+            ],
+            (Music::None, _) => &[
+                "No MIDI port. A game offering General MIDI or Roland will find nothing and fall back to its FM or digital music.",
+            ],
+        }
+    }
+
+    /// The same warning the adapter carries, for the same reason: a
+    /// guest that is already installed re-detects a card that changed.
+    pub fn sound_warning(&self) -> Option<&'static str> {
+        let changed = match &self.editing {
+            Some(edit) => edit.sound != self.sound,
+            None => false,
+        };
+        changed.then_some(
+            "This machine already exists: changing its sound card makes the guest find new hardware on its next start, \
+             and a game inside it will have to be told about the new card as well.",
+        )
+    }
+
     /// The one thing worth saying above the picker rather than under one
     /// of its entries: changing this on a machine that already has an OS
     /// installed is a hardware change, and the guest will say so.
@@ -807,6 +977,10 @@ impl Form {
                 boot: None,
                 cpu_speed: None,
                 video: None,
+                sound: None,
+                music: None,
+                soundfont: None,
+                mt32_roms: None,
                 pad: None,
                 optimizations: Optimizations::default(),
             },
@@ -839,6 +1013,21 @@ impl Form {
         // machine to DOS cannot leave a `video` behind that the family
         // ignores and the next reader has to wonder about.
         machine.video = bundle::video_choices(self.family).contains(&self.video).then_some(self.video);
+        // Written out explicitly, like the accelerator: what the form
+        // showed is what the machine gets, even when it is the family's
+        // default — a bundle that names its card cannot be changed
+        // under the user by a later change to what that default is.
+        machine.sound = Some(self.sound);
+        machine.music = Some(self.music);
+        // Only the user's own files, and only where they mean anything:
+        // a bank left behind on a machine whose port was turned off is a
+        // field the next reader has to wonder about.
+        machine.soundfont = (self.music == Music::Gm)
+            .then(|| Some(self.soundfont.trim()).filter(|f| !f.is_empty()).map(PathBuf::from))
+            .flatten();
+        machine.mt32_roms = (self.music == Music::Mt32)
+            .then(|| Some(self.mt32_roms.trim()).filter(|d| !d.is_empty()).map(PathBuf::from))
+            .flatten();
         // Same rule as `video`: only a setting this family offers is
         // written. Every family offers both today, so this always
         // writes; the guard is here for when path A makes `Usb` a
@@ -898,6 +1087,15 @@ impl Form {
     fn write(&self, library_dir: &Path) -> std::io::Result<PathBuf> {
         if self.name.trim().is_empty() {
             return Err(std::io::Error::other("a name is required"));
+        }
+        // The one field with no default and no fallback: an MT-32
+        // machine with no ROMs is a machine that fails to start, and
+        // failing here says so while there is still a form to fix it in
+        // (doc 20 §4).
+        if self.music == Music::Mt32 && self.mt32_roms.trim().is_empty() {
+            return Err(std::io::Error::other(
+                "the Roland MT-32 needs a directory holding your own CM-32L ROM images",
+            ));
         }
         if let Some(edit) = &self.editing {
             let bundle_path = edit.bundle_path.clone();
