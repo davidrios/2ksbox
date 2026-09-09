@@ -1743,3 +1743,68 @@ else in system memory, and DirectDraw can satisfy a lock on the primary from
 So the next step is to make that path visible — and to run the game at
 1024x768x16, which is the mode it actually renders in and which no run has
 yet captured a frame of.
+
+### 28. Crimson Skies: it was Direct3D after all, and the bug was the executor's (2026-09-09)
+
+§27 eliminated Direct3D on a run whose device log had no `ddi:` line for the
+title screen. The next session found the opposite on the same image and
+the same disc: the **main menu** (the screen with the logo, the winged
+emblem and the six buttons — the one §26's table calls the title screen)
+is drawn by Direct3D, about 57 textured quads a frame through the DX7 HAL,
+FVF `0x1c4`, eight 256×256 A4R4G4B4 textures bound one at a time as
+`tss 0.0`. The opening splash before it is not, and a run that stopped
+there saw no `ddi:` at all. The §27 eliminations were made on the wrong
+screen, and everything they concluded about GDI and the primary surface
+is moot for this bug.
+
+#### The diagnosis, and what it was not
+
+Two sessions worked it as a texture problem — staleness (`D3DPT_DDI_REREAD=1`:
+no change), the VRAM → host upload (a readback of DXVK's own copy showed the
+crimson logo intact), the bind path (every `SetTexture` succeeded). None of
+those was it, and the `D3DPT_DP2_TRACE` frame had the answer in its first
+lines all along: the state snapshot at the frame start reads
+`tss 0: 1=0x3 … 4=0x4`, i.e. `COLOROP = SELECTARG2` — the diffuse, which
+every vertex carries as `ffffffff` — while `ALPHAOP` used the texture. A
+white silhouette with the texture's alpha is exactly that, not a texture
+gone wrong.
+
+Why the colour op was `SELECTARG2` is in an earlier run's full trace (the
+context's first DP2 calls): the game sets the DirectX 5
+`TEXTUREMAPBLEND` render state (`rs 21 = 2`, `MODULATE`) **with no texture
+bound**, then its own `COLORARG2` and `ALPHAARG2` (`tss 0.3` / `0.6` =
+`DIFFUSE`), and from then on only binds textures per draw. The executor's
+legacy-blend emulation (doc 15 "The white menu text") answered the first
+with "no texture: the diffuse alone" and re-evaluates on each bind only
+while its `legacy_blend` flag is set — and that flag was cleared by *any*
+stage-0 state 1–6, the two ARGs included. So the blend was decided once,
+without a texture, and never again. GTA 2 had shown the first half of this
+on XP (doc 15); Crimson Skies shows that an argument is not an op. The
+executor keeps two flags now, one per op, ended only by the app's own
+`COLOROP` / `ALPHAOP`; `tools/d3dpt-dp2-test.cpp` has the sequence and
+fails on the old executor with both cells at the diffuse.
+
+**Verified in the game the same day**: driven headless to the menu on the
+rebuilt executor, the traced frame (23 draws; the earlier 57 counted a
+transition) has the red and silver logo, the gold winged skull and the
+six gold buttons over the photograph, and its snapshot reads
+`tss 0: 1=0x4` — `MODULATE` — where the broken run's read `0x3`
+(`build/w98game/crimson-menu-fixed.png` on this box).
+
+This is host-side, in `d3dpt/exec/d3dpt_exec_ddi.cpp`, shared by XP and
+9x; nothing in the 9x driver was wrong, and the §27 A/B against Cirrus was
+right for the wrong reason (Cirrus has no 3D, so the game takes a different
+path there).
+
+#### Driving the game headless (what the two sessions learned)
+
+`tools/win98-game-test.sh` with `GUEST_CMD=$'cd C:\\ARQUIV~1\\MICROS~1\\CRIMSO~1\r\nCRIMSON.EXE'`,
+`CDS=` the `C_SKIES.cue`, a large `RUN_SECS`, `TRACE=1`, on a copy of the
+user's `claude98` machine. The game opens a *Select Video Device* dialog on
+the desktop, whose OK button is at 496,302 on the 800×600 desktop: the
+machine has no tablet, so `qmpc.py relclick x y` walks the PS/2 mouse there
+in paced steps reading the position back from the adapter's cursor
+registers (`CLICKS=` uses it unless `TABLET=1`). Then the splash, and
+Space a couple of times to the menu; touch `frames/trace.on` there. Each
+run has its own QMP socket at `OUT/qmp.sock` now — a shared name under
+`/tmp` was unlinked by the other run's QEMU on exit.

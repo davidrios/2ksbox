@@ -356,16 +356,16 @@ What the track starts from:
    Then the doc 04 acceptance matrix proper, against
    the same titles on the Glide/WineD3D stack: which is faster, which is
    correct, and what the launcher should default to.
-   **Open, and ours: Crimson Skies** (doc 19 §27). Briefly written up as a
-   SafeDisc failure on a parallel session's finding — wrongly: that session
-   measured `CRIMSON2.EXE`, the original loader, while the user runs the
-   patched no-CD `CRIMSON.EXE` and reported bad *graphics*. `VGA=cirrus`
-   renders its title screen correctly; we render the logo, emblem and every
-   menu button as solid `0xffff` in the right silhouette. No Direct3D runs
-   at all and the DirectDraw HAL is never called for a blit, so it is GDI
-   through the DIB Engine — whose setup has been diffed against
-   `vmdisp9x`'s field by field and agrees. Next bisect: the same screen at
-   32 bpp.
+   **Crimson Skies: fixed 2026-09-09, and it was the executor, not the
+   driver** (doc 19 §28, doc 15 "The white menu text"). Recorded first as a
+   SafeDisc failure (wrong binary), then as GDI (wrong screen: §27's
+   eliminations were made on the splash, and the menu with the white logo
+   and buttons is Direct3D — 57 textured quads a frame). The game sets
+   `TEXTUREMAPBLEND MODULATE` with no texture bound, then its own
+   `COLORARG2` / `ALPHAARG2`, then a texture per draw; the executor's
+   legacy blend was ended by the ARGs and stayed at "no texture: the
+   diffuse", white. Two flags now, one per op, ended only by the app's own
+   op; `d3dpt-dp2-test` covers it.
    **Not ours:** NFS Porsche's silence is guest sound configuration.
 
 ## Build / test loop

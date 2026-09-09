@@ -229,10 +229,16 @@ static DWORD __stdcall CanCreateSurface32(d3dpt_ddhal_cancreatesurface *d)
 {
     static int said;
 
-    if (!said) {
-        said = 1;
+    if (said < 48) {
+        said++;
         dbg_hex(&core, "d3dpthal: CanCreateSurface, caps ",
                 d->lpDDSurfaceDesc ? d->lpDDSurfaceDesc->ddsCaps.dwCaps : 0);
+        dbg_hex(&core, " diffpf ", d->bIsDifferentPixelFormat);
+        if (d->lpDDSurfaceDesc) {
+            dbg_hex(&core, " pf ", d->lpDDSurfaceDesc->ddpfPixelFormat.dwFlags);
+            dbg_hex(&core, " bpp ", d->lpDDSurfaceDesc->ddpfPixelFormat.dwRGBBitCount);
+            dbg_hex(&core, " rmask ", d->lpDDSurfaceDesc->ddpfPixelFormat.dwRBitMask);
+        }
         dbg_puts(&core, "\n");
     }
     if (!d->bIsDifferentPixelFormat) {
@@ -253,11 +259,20 @@ static DWORD __stdcall CreateSurface32(d3dpt_ddhal_createsurface *d)
     ULONG i, f;
     static int said;
 
-    if (!said) {
-        said = 1;
+    if (said < 48) {
+        said++;
         dbg_hex(&core, "d3dpthal: CreateSurface, caps ",
                 sd ? sd->ddsCaps.dwCaps : 0);
         dbg_hex(&core, " count ", d->dwSCnt);
+        if (sd) {
+            dbg_hex(&core, " w ", sd->dwWidth);
+            dbg_hex(&core, " h ", sd->dwHeight);
+            dbg_hex(&core, " flags ", sd->dwFlags);
+            dbg_hex(&core, " pf ", sd->ddpfPixelFormat.dwFlags);
+            dbg_hex(&core, " bpp ", sd->ddpfPixelFormat.dwRGBBitCount);
+            dbg_hex(&core, " rmask ", sd->ddpfPixelFormat.dwRBitMask);
+            dbg_hex(&core, " amask ", sd->ddpfPixelFormat.dwRGBAlphaBitMask);
+        }
         dbg_puts(&core, "\n");
     }
     d->ddRVal = DD_OK;
@@ -454,11 +469,18 @@ static DWORD __stdcall Lock32(d3dpt_ddhal_lock *d)
 {
     LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl((void *)d->lpDDSurface);
 
-    if (locks_said < 8) {
+    if (locks_said < 64) {
         locks_said++;
         dbg_hex(&core, "d3dpthal: Lock32 s=", (ULONG)(ULONG_PTR)s);
         dbg_hex(&core, " caps=", s ? s->ddsCaps.dwCaps : 0);
         dbg_hex(&core, " ctx_live=", d3d_ctx_live);
+        if (s && s->lpGbl) {
+            dbg_hex(&core, " wh=", ((ULONG)s->lpGbl->wWidth << 16) | s->lpGbl->wHeight);
+            dbg_hex(&core, " pitch=", (ULONG)s->lpGbl->lPitch);
+            dbg_hex(&core, " vidmem=", (ULONG)s->lpGbl->fpVidMem);
+        }
+        dbg_hex(&core, " flags=", d->dwFlags);
+        dbg_hex(&core, " hasrect=", d->bHasRect);
         dbg_puts(&core, "\n");
     }
     if (d3d_ctx_live && s && surf_is_target(s->ddsCaps.dwCaps)) {
@@ -493,7 +515,7 @@ static ULONG blts_said;
 
 static DWORD __stdcall Blt32(d3dpt_ddhal_blt *d)
 {
-    if (blts_said < 24) {
+    if (blts_said < 64) {
         LPDDRAWI_DDRAWSURFACE_LCL dst = d ? surf_lcl(d->lpDDDestSurface) : NULL;
         LPDDRAWI_DDRAWSURFACE_LCL src = d ? surf_lcl(d->lpDDSrcSurface) : NULL;
 
@@ -506,6 +528,13 @@ static DWORD __stdcall Blt32(d3dpt_ddhal_blt *d)
             dbg_hex(&core, " src bpp ", src->lpGbl->ddpfSurface.dwRGBBitCount);
             dbg_hex(&core, " src pf ", src->lpGbl->ddpfSurface.dwFlags);
             dbg_hex(&core, " src rmask ", src->lpGbl->ddpfSurface.dwRBitMask);
+        }
+        if (d) {
+            dbg_hex(&core, " dst ", ((ULONG)d->rDest.left << 16) | (d->rDest.top & 0xffff));
+            dbg_hex(&core, "..", ((ULONG)d->rDest.right << 16) | (d->rDest.bottom & 0xffff));
+            dbg_hex(&core, " src ", ((ULONG)d->rSrc.left << 16) | (d->rSrc.top & 0xffff));
+            dbg_hex(&core, "..", ((ULONG)d->rSrc.right << 16) | (d->rSrc.bottom & 0xffff));
+            dbg_hex(&core, " fill ", d->bltFX.dwFillColor);
         }
         dbg_puts(&core, "\n");
     }

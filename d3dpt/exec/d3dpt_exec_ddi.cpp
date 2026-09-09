@@ -164,7 +164,11 @@ struct Ddi {
     std::unordered_map<uint32_t, Palette> palettes;
     uint32_t ckey_rs = 0, stage_tex[8] = {};    /* the surface handle bound at each stage */
     bool ckey_forced = false, ckey_alpha_ovr = false;
-    bool legacy_blend = false;          /* TEXTUREMAPBLEND set since the app's last explicit stage-0 op: the blend follows the texture */
+    /* TEXTUREMAPBLEND / TEXTUREHANDLE in effect for stage 0's colour op and
+     * for its alpha op: each half follows the bound texture until the app
+     * sets that op itself. Its ARGs are not its ops: Crimson Skies sets
+     * COLORARG2 / ALPHAARG2 after the blend and leaves both ops to it */
+    bool legacy_cop = false, legacy_aop = false;
     uint32_t pal_lines = 0;                     /* palette / colour-key events logged (the first few) */
     uint32_t dp2_calls = 0, draws = 0, readbacks = 0;
     uint32_t untracked = 0;                     /* target pixels the guest wrote without VRAM_DIRTY (uploaded or kept) */
@@ -1199,7 +1203,7 @@ struct Dp2 {
      * apply_ckey overrides it for a keyed texture anyway), else from the
      * diffuse. */
     static bool legacy_texture_state(uint32_t s) { return s == 1 || s == 3 || s == 5 || s == 6 || s == 17 || s == 18 || s == 21; }
-    void apply_mapblend() {
+    void apply_mapblend(bool args) {
         uint32_t blend = d.rs_set[21] ? d.rs_val[21] : 2 /* MODULATE */;
         VramSurf *t = d.stage_tex[0] ? surf(x, d.stage_tex[0]) : nullptr;
         bool tex_alpha = t && (fmt_has_alpha(t->d.format) || t->ckey || needs_expand(*t));
@@ -1213,16 +1217,21 @@ struct Dp2 {
             default: cop = D3DTOP_MODULATE; aop = tex_alpha ? D3DTOP_SELECTARG1 : D3DTOP_SELECTARG2; break;   /* MODULATE, MODULATEMASK */
             }
         }
-        tr("map blend %u with%s texture: colour op %u alpha op %u", blend, t ? "" : "out", cop, aop);
-        stage_state(0, 2, D3DTA_TEXTURE); stage_state(0, 3, D3DTA_DIFFUSE);
-        stage_state(0, 5, D3DTA_TEXTURE); stage_state(0, 6, D3DTA_DIFFUSE);
-        stage_state(0, 1, cop); stage_state(0, 4, aop);
+        tr("map blend %u with%s texture: colour op %u%s alpha op %u%s", blend, t ? "" : "out",
+           cop, d.legacy_cop ? "" : " (the app's)", aop, d.legacy_aop ? "" : " (the app's)");
+        if (args) {
+            stage_state(0, 2, D3DTA_TEXTURE); stage_state(0, 3, D3DTA_DIFFUSE);
+            stage_state(0, 5, D3DTA_TEXTURE); stage_state(0, 6, D3DTA_DIFFUSE);
+        }
+        if (d.legacy_cop) stage_state(0, 1, cop);
+        if (d.legacy_aop) stage_state(0, 4, aop);
     }
     void legacy_render_state(uint32_t s, uint32_t v) {
         switch (s) {
         case 1:                                                             /* TEXTUREHANDLE: the surface handle */
+            d.legacy_cop = d.legacy_aop = true;
             stage_state(0, 0, v);
-            apply_mapblend();
+            apply_mapblend(true);
             break;
         case 3: x.dev->SetSamplerState(0, D3DSAMP_ADDRESSU, v); x.dev->SetSamplerState(0, D3DSAMP_ADDRESSV, v); break;   /* TEXTUREADDRESS */
         case 5: case 6: {                                                   /* WRAPU / WRAPV: WRAP0 bits */
@@ -1239,7 +1248,7 @@ struct Dp2 {
             x.dev->SetSamplerState(0, D3DSAMP_MIPFILTER, mipf[i]);
             break;
         }
-        case 21: d.legacy_blend = true; apply_mapblend(); break;            /* TEXTUREMAPBLEND */
+        case 21: d.legacy_cop = d.legacy_aop = true; apply_mapblend(true); break;   /* TEXTUREMAPBLEND */
         }
     }
 
@@ -1452,13 +1461,16 @@ struct Dp2 {
                 if (need > left) return fail("truncated TEXTURESTAGESTATE");
                 for (uint32_t i = 0; i < count; i++) {
                     uint32_t stg = u16(q + 8 * i), st = u16(q + 8 * i + 2), v = u32(q + 8 * i + 4);
-                    if (stg == 0 && st >= 1 && st <= 6) d.legacy_blend = false;     /* the app's own ops from now on */
+                    if (stg == 0 && st == 1) d.legacy_cop = false;                  /* the app's own op from now on */
+                    if (stg == 0 && st == 4) d.legacy_aop = false;
                     stage_state(stg, st, v);
                     /* a DirectX 6 title picks its blend with TEXTUREMAPBLEND once (no texture bound
                      * yet: the diffuse alone) and binds textures as a stage state per draw; the
                      * DX6 runtime passes both through, so the blend is re-evaluated for the
-                     * texture now bound (GTA 2's menu text drew as white boxes, 2026-09-05) */
-                    if (stg == 0 && st == 0 && d.legacy_blend) apply_mapblend();
+                     * texture now bound (GTA 2's menu text drew as white boxes, 2026-09-05). Only
+                     * an op the app set itself ends that — not an ARG (Crimson Skies' menu drew
+                     * white silhouettes, 2026-09-09: COLORARG2 set after the blend had ended it) */
+                    if (stg == 0 && st == 0 && (d.legacy_cop || d.legacy_aop)) apply_mapblend(false);
                 }
                 break;
             case DP2_INDEXEDTRIANGLELIST2: {
@@ -1972,7 +1984,11 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
         if (!s) { r->hr = (uint32_t)D3DERR_INVALIDCALL; return true; }
         bool had = s->rendered;
         r->hr = had ? (uint32_t)readback(x, *x.ddi, *s) : (uint32_t)S_FALSE;
-        if (x.ddi->trace && had) {
+        if (x.ddi->trace && had && !x.ddi->trace_draws) {
+            /* a readback with no draw before it (Crimson Skies reads its target back
+             * after every render-target switch): not the frame that was asked for */
+            x.log("ddi: trace: readback of %u with no draw, the frame goes on", a->handle);
+        } else if (x.ddi->trace && had) {
             x.ddi->trace = false;
             unlink(x.ddi->trace_flag);
             x.log("ddi: trace: frame ends (readback of %u)", a->handle);

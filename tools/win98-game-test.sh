@@ -36,7 +36,12 @@
 #                       KEYS and CLICKS are timed from the end of it.
 #   SHOTS=n             screendump every n s into shots/ (10; 0 turns it off)
 #   KEYS="60:ret,90:esc"  QMP keys at t seconds after the desktop is up
-#   CLICKS="70:320,240" left click at t seconds, in screen coordinates
+#   CLICKS="70:320,240" left click at t seconds, in screen coordinates.
+#                       Without TABLET=1 it is done with the PS/2 mouse,
+#                       walked there in paced steps with the position read
+#                       back from the adapter's cursor registers (qmpc.py
+#                       relclick) — the machine the user plays on has no
+#                       tablet either
 #   JIGGLE=1            move the mouse every second (relative events, like a
 #                       hand on it): the reported cursor glitches only show
 #                       up while the pointer is moving, and a screendump of a
@@ -59,7 +64,8 @@
 #   RAW=path            the raw working copy (default build/w98game/guest.raw)
 #   FRESH=1             re-convert it from the image before staging
 #   BOOT_WAIT=s         cap on waiting for the desktop (150)
-#   OUT=dir             default build/w98game/<name>
+#   OUT=dir             default build/w98game/<name>; also where the QMP
+#                       socket lives (qmp.sock), for driving a run by hand
 #
 # Output: OUT/qemu.log (the device and the driver's own lines), OUT/dbg.log
 # (port 0xE9 — the .drv and the VxD, which speak before the register page is
@@ -80,7 +86,11 @@ RAW="${RAW:-$ROOT/build/w98game/guest.raw}"
 QEMU="${QEMU_BIN:-$ROOT/build/qemu/qemu-system-i386}"
 QIMG="${QEMU_IMG:-$ROOT/build/qemu/qemu-img}"
 DRV="$ROOT/guest-tools/out/driver9x"
-SOCK="/tmp/claude-$(id -u)/w98game.sock"
+# In OUT, not a fixed path: two checkouts running this at once shared one
+# socket name, and when the other's QEMU exited it unlinked *this* run's
+# socket (2026-09-09 — every later QMP verb failed silently, the run could
+# not even be powered off). Keep OUT short: AF_UNIX paths are 108 bytes.
+SOCK="$OUT/qmp.sock"
 BOOT_WAIT="${BOOT_WAIT:-150}"
 RUN_SECS="${RUN_SECS:-180}"
 SHOTS="${SHOTS:-10}"
@@ -234,7 +244,8 @@ while [ $r -lt "$RUN_SECS" ]; do
       at=${spec%%:*}
       if [ "$at" -le "$r" ] && [ "$at" -gt "$prev" ]; then
         xy="${spec#*:}"; echo "    t+${r}s click $xy"
-        qmp click "${xy%%,*}" "${xy##*,}"
+        if [ "${TABLET:-0}" = 1 ]; then qmp click "${xy%%,*}" "${xy##*,}"
+        else qmp relclick "${xy%%,*}" "${xy##*,}"; fi
       fi
     done
   fi
