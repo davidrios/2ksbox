@@ -356,10 +356,17 @@ What the track starts from:
    Then the doc 04 acceptance matrix proper, against
    the same titles on the Glide/WineD3D stack: which is faster, which is
    correct, and what the launcher should default to.
-   **Not ours:** Crimson Skies fails on its disc, not on the driver — its
-   own `GAMEZ.ERR` shows it taking our `Direct3D HAL` and every subsystem
-   initialising, and a parallel session traced it to a SafeDisc 1.50 weak-
-   sector check that our ATAPI model answers without a check condition.
+   **Open, and ours: Crimson Skies** (doc 19 §27). Briefly written up as a
+   SafeDisc failure on a parallel session's finding — wrongly: that session
+   measured `CRIMSON2.EXE`, the original loader, while the user runs the
+   patched no-CD `CRIMSON.EXE` and reported bad *graphics*. `VGA=cirrus`
+   renders its title screen correctly; we render the logo, emblem and every
+   menu button as solid `0xffff` in the right silhouette. No Direct3D runs
+   at all and the DirectDraw HAL is never called for a blit, so it is GDI
+   through the DIB Engine — whose setup has been diffed against
+   `vmdisp9x`'s field by field and agrees. Next bisect: the same screen at
+   32 bpp.
+   **Not ours:** NFS Porsche's silence is guest sound configuration.
 
 ## Build / test loop
 

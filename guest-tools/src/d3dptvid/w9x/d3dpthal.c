@@ -485,21 +485,65 @@ static DWORD __stdcall Unlock32(d3dpt_ddhal_unlock *d)
     return DDHAL_DRIVER_NOTHANDLED;
 }
 
+/* Declined, always — this driver has no blitter and DirectDraw's own is
+ * what draws. It logs, because "which blits does the runtime hand us, and
+ * with what" is not answerable any other way and is the question behind a
+ * 2D title that comes out wrong. First 24 only. */
+static ULONG blts_said;
+
 static DWORD __stdcall Blt32(d3dpt_ddhal_blt *d)
 {
+    if (blts_said < 24) {
+        LPDDRAWI_DDRAWSURFACE_LCL dst = d ? surf_lcl(d->lpDDDestSurface) : NULL;
+        LPDDRAWI_DDRAWSURFACE_LCL src = d ? surf_lcl(d->lpDDSrcSurface) : NULL;
+
+        blts_said++;
+        dbg_hex(&core, "d3dpthal: Blt flags ", d ? d->dwFlags : 0);
+        dbg_hex(&core, " rop ", d ? d->dwROPFlags : 0);
+        dbg_hex(&core, " dst caps ", dst ? dst->ddsCaps.dwCaps : 0);
+        dbg_hex(&core, " src caps ", src ? src->ddsCaps.dwCaps : 0);
+        if (src && src->lpGbl) {
+            dbg_hex(&core, " src bpp ", src->lpGbl->ddpfSurface.dwRGBBitCount);
+            dbg_hex(&core, " src pf ", src->lpGbl->ddpfSurface.dwFlags);
+            dbg_hex(&core, " src rmask ", src->lpGbl->ddpfSurface.dwRBitMask);
+        }
+        dbg_puts(&core, "\n");
+    }
     return DDHAL_DRIVER_NOTHANDLED;
 }
+
+static ULONG keys_said;
 
 static DWORD __stdcall SetColorKey32(d3dpt_ddhal_setcolorkey *d)
 {
     LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl((void *)d->lpDDSurface);
+    BOOL ours;
 
-    if (core.d3d && s && (d->dwFlags & DDCKEY_SRCBLT) && !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY) &&
-        (s->ddsCaps.dwCaps & DDSCAPS_TEXTURE)) {
-        cmd_lock_acquire();
-        surf_colorkey_set(&core, surf_handle(s), d->ckNew.dwColorSpaceLowValue, d->ckNew.dwColorSpaceHighValue);
-        cmd_lock_release();
+    /* **Only a texture's key is ours.** This layer sets a colour key on the
+     * host's copy of a *texture*, for the Direct3D path; it has no blitter,
+     * so a key on any other surface is one DirectDraw's own blitter has to
+     * apply. Saying DDHAL_DRIVER_HANDLED for those told the runtime the
+     * hardware had taken the key when nothing had, and the key was then
+     * applied by nobody. */
+    ours = core.d3d && s && (d->dwFlags & DDCKEY_SRCBLT) &&
+           !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY) &&
+           (s->ddsCaps.dwCaps & DDSCAPS_TEXTURE);
+
+    if (keys_said < 16) {
+        keys_said++;
+        dbg_hex(&core, "d3dpthal: SetColorKey flags ", d ? d->dwFlags : 0);
+        dbg_hex(&core, " caps ", s ? s->ddsCaps.dwCaps : 0);
+        dbg_hex(&core, " lo ", d ? d->ckNew.dwColorSpaceLowValue : 0);
+        dbg_hex(&core, " hi ", d ? d->ckNew.dwColorSpaceHighValue : 0);
+        dbg_puts(&core, ours ? " -> texture\n" : " -> DirectDraw's\n");
     }
+
+    if (!ours) {
+        return DDHAL_DRIVER_NOTHANDLED;
+    }
+    cmd_lock_acquire();
+    surf_colorkey_set(&core, surf_handle(s), d->ckNew.dwColorSpaceLowValue, d->ckNew.dwColorSpaceHighValue);
+    cmd_lock_release();
     d->ddRVal = DD_OK;
     return DDHAL_DRIVER_HANDLED;
 }

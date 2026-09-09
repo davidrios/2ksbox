@@ -1508,26 +1508,19 @@ a game and watches it, it does not click through menus, so what was
 reproduced is the mechanism and not the match. The same caveat applies to
 LEGO Island, where the before-picture was never taken.
 
-#### Two of the six were never the driver
+#### One of the six was never the driver
 
-**Crimson Skies** gets past it entirely. The game's own `GAMEZ.ERR`, left in
-its install directory, shows it enumerating
-`[d3dpt9hl.dll] - 2ksbox d3dpt-vga display adapter`, skipping RGB Emulation
-(*"does not interface with hardware"*) and taking
-`Direct3D HAL - +++++OK`; `GAMEZ.OUT` shows every subsystem `PASSED` through
-`dshell(void): STARTING`. The only errors in either file are MCI CD-audio
-ones. A parallel session traced the failure to a **SafeDisc 1.50 weak-sector
-check**: the disc carries an L-EC band of 579 sectors that doc 17 §6 says
-SafeDisc 1.x does not write, and unlike the other protected titles this one
-*reads* it — three probe rounds, each ending on the first raw `READ CD` that
-lands on a band sector — while our ATAPI model answers all 157 reads without
-a check condition, because `read_cd_sector` skips L-EC verification when the
-EDC/ECC field is selected.
+**NFS Porsche 2000's** silence is not the display driver. Worth recording
+that Total Annihilation's sound initialised in this harness with the same
+SB16, so the card and its driver are broadly working in that image; the
+Porsche silence and the `dxdiag` crash beside it want their own look.
 
-**NFS Porsche 2000's** silence is not the display driver either. Worth
-recording that Total Annihilation's sound initialised in this harness with
-the same SB16, so the card and its driver are broadly working in that image;
-the Porsche silence and the `dxdiag` crash beside it want their own look.
+**Crimson Skies was recorded here as a second one, and that was wrong** —
+see §27. A parallel session found a real SafeDisc 1.50 weak-sector bug in
+our CD-ROM model and fixed it, and this section originally passed that on as
+the answer to the user's report. It is not: they run a patched, no-CD
+executable, and their complaint was that it renders badly. The rendering bug
+is this driver's and is open.
 
 #### The DirectDraw heap ran 64 MB into the command window
 
@@ -1631,3 +1624,71 @@ immediately, and the run then blocked in `wait $VM` forever on a guest that
 had swallowed the power button. And the run clock counted loop iterations
 rather than seconds, so a tick that takes 1.6 s made `RUN_SECS=240` run for
 six minutes and every `KEYS=` entry land late.
+
+### 27. Crimson Skies: not the disc, and not Direct3D either (2026-09-09)
+
+§26 recorded Crimson Skies as "not the driver" on the strength of a parallel
+session's SafeDisc finding. **That was wrong, and the way it was wrong is
+worth keeping.** The install has two binaries: `CRIMSON2.EXE`
+(2000-08-27) is the original SafeDisc loader, and `CRIMSON.EXE` is dated
+**2025-11-02** and is a no-CD patch the user applied over it. The other
+session measured the first; the user runs the second, which never touches
+the disc. Both of us had the dates and sizes in front of us. A protection
+failure and a rendering failure in the same directory are not the same bug,
+and "the game in that folder is fixed" is not a claim anyone had earned.
+
+The user's own words were "the graphics were glitched", and that is what it
+is.
+
+#### The A/B
+
+`tools/win98-game-test.sh` with `VGA=cirrus` is the control CLAUDE.md
+describes, and on this it is decisive. Same image, same disc, same machine,
+one variable:
+
+| | our `d3dpt-vga` + driver | `-vga cirrus`, Windows' in-box driver |
+|---|---|---|
+| title screen | logo, emblem and all six menu buttons are **solid white** in the correct silhouette | renders correctly — red/silver logo, gold winged skull, gold buttons |
+| colours in the dump | 682 | 4150 |
+
+So it is ours.
+
+#### What it is not
+
+Three negatives from the instrumented run, each of which removes a whole
+area:
+
+- **No Direct3D at all.** `ddi:` count 0, no executor frames, for the entire
+  title screen. The DX7/DX8 DDI that §25 proved is not running yet.
+- **No DirectDraw blit.** With `Blt32` and `SetColorKey32` logging every
+  call, neither fires — nor `Lock32`. The game creates exactly one
+  video-memory surface (`CreateSurface, caps 0x00004200` = `VIDEOMEMORY |
+  PRIMARYSURFACE`) and nothing else; every other surface is system memory.
+- **Not a colour conversion.** The bad pixels read back from VRAM as
+  literally `0xffff` — every bit set — while the background beside them is a
+  sane `0x4021`. A 5-5-5 / 5-6-5 mix-up or a wrong mask shifts colours; it
+  does not saturate every channel of one shape and leave its neighbour
+  alone.
+
+What that leaves is **GDI drawing through the DIB Engine into VRAM**, which
+is the driver's own path and the one the desktop uses successfully all day.
+The shapes and positions are right and only the fill is wrong, which says
+the addressing is right and something about the *operation* is not — an
+all-ones result is the signature of a raster op or a fill, not of a copy.
+
+The driver's engine setup was diffed against `vmdisp9x`'s `enable.c` field
+by field on the strength of that: `deFlags` (`MINIDRIVER | VRAM | OFFSCREEN`
+plus `FIVE6FIVE` at 16 bpp), `deBitsPixel`, `deWidthBytes`, `deDeltaScan`,
+`deBitsSelector`, the `BITMAPINFOHEADER` (`BI_RGB` with no masks — the
+reference does the same, so the 16 bpp header is not the bug), `dpCaps1`,
+`dpRaster`, `dpNumColors`. They agree, bar `C1_GAMMA_RAMP` and an 8 bpp
+`RC_SAVEBITMAP`. So the remaining candidates are inside what the Engine is
+asked to *do* rather than how it was set up.
+
+**Still open.** The repro is ten minutes and the control is one environment
+variable, which is the part worth having. The next thing to try is the
+cheapest bisect nobody has run yet: the same screen on a **32 bpp** desktop.
+If it comes out right, this is specific to the 16 bpp path; if it comes out
+white too, it is not about pixel format at all and the search moves to
+brush/mask realisation (`RealizeObject`, `BitmapBits`, `SelectBitmap` — all
+of which this driver forwards to the Engine unchanged).

@@ -381,7 +381,13 @@ if command -v "$HALCC" >/dev/null; then
   [ -z "$bad" ] || { echo "ERROR: d3dpt9hl.dll imports from $bad"; exit 1; }
   n=$(i686-w64-mingw32-objdump -d "$BUILD/d3dpt9hl.dll" | grep -cE '\b(movdq[au]|movapd|movupd|pshufd|paddq|cvtsd2|cvtsi2sd|xorpd|andpd|popcnt|pshufb)\b' || true)
   [ "$n" -eq 0 ] || { echo "ERROR: d3dpt9hl.dll contains $n SSE2+ instructions (pentium3 floor)"; exit 1; }
-  i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | grep -qE '^\s+\[.*\]  *[0-9a-f]+ DriverInit$' \
+  # `\bDriverInit$`, not a column-by-column match of objdump's export line.
+  # The strict form (`\[.*\]  *[0-9a-f]+ DriverInit$`) depends on how many
+  # hex digits objdump prints for the export RVA and how it spaces them, and
+  # it has failed twice on a DLL that was perfectly good — a rebuild with
+  # identical inputs passed both times. A build check that cries wolf is
+  # worse than no check: the name appears nowhere else in this output.
+  i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | grep -qE '\bDriverInit$' \
     || { echo "ERROR: d3dpt9hl.dll does not export DriverInit"; exit 1; }
   # A freestanding DLL has no CRT startup, so the entry point has to be
   # named by hand — and ld only *warns* when it cannot find one, leaving
