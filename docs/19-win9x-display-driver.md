@@ -1841,3 +1841,24 @@ quads are the last two textured fans (vertices 80–87) of a 92-vertex,
 `build/w98game/CRIMSON-INVESTIGATION.md`, a `D3DPT_DP2_TRACE` frame at the
 menu, and the per-draw `.ppm` dumps read at rows 527–569. Distinct from the
 fixed legacy-blend bug and cosmetic (one button's bottom edge).
+
+#### Measured: which driver files Win98 locks while running (2026-09-09)
+
+Reinstalling the driver over the running one is not a rare case, and Win98
+does lock the files that matter. Probed on `claude98` with the driver
+active (`d3dpt9x: adapter found`, `linear mode on`), by copying each file
+to a backup and then trying to copy it back over the live one:
+
+| file | overwrite the running copy |
+|---|---|
+| `D3DPT9X.DRV` (16-bit display driver, held by GDI) | **fails — locked** |
+| `D3DPT9V.VXD` (VxD, held by the VMM)               | **fails — locked** |
+| `D3DPT9HL.DLL` (ring-3 HAL, loaded per game)       | succeeds — writable |
+
+So the intuition that "9x lets you overwrite any running module" is only
+true for an ordinary on-demand DLL (the HAL, which the probe overwrote
+fine). The display `.DRV` and the statically-loaded `.VXD` — the two files
+`SETUP` copies into `WINDOWS\SYSTEM` — are held open, and a plain reinstall
+fails the copy. That is why `copy_one` schedules a boot-time replace for a
+locked system file (`WININIT.INI [rename]` on 9x, `MoveFileEx` on NT): on
+9x it is needed for the display driver itself, not just as an NT nicety.
