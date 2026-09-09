@@ -1245,8 +1245,22 @@ guest_stage() {
       run_check smc-guest smc-guest.log python3 tools/smc-guest-test.py || true
       run_check sse-guest sse-guest.log python3 tools/sse-guest-test.py || true
       run_check atapi-guest atapi-guest.log python3 tools/atapi-guest-test.py || true
-    else skip x87-guest "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"; fi
-  else skip x87-guest "needs nasm, mtools and build/qemu"; fi
+    # **One skip per battery, not one skip standing for five.** Every DOS
+    # battery is gated on the same floppy, and this used to report the whole
+    # group as a single `SKIP x87-guest` — so a fresh worktree, which has no
+    # `build/images/144m/x86BOOT.img` until something fetches it, came back
+    # "37 passed, 1 skipped" while the main checkout ran the same suite as
+    # "42 passed, 0 skipped". The two numbers look like two different suites
+    # and are in fact the same one, minus everything that needs a DOS guest —
+    # including `atapi-guest`, which is the only check that reads a disc from
+    # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
+    # weak-sector rule, which that battery is the regression guard for).
+    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest; do
+      skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
+    done; fi
+  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest; do
+    skip "$c" "needs nasm, mtools and build/qemu"
+  done; fi
   if [ "$OS" != Linux ]; then skip guest "Linux only for now (mkfs.fat, sfdisk, mtools)"; return; fi
   for t in mkfs.fat sfdisk mcopy mmd; do command -v $t >/dev/null || { skip guest "needs $t"; return; }; done
   [ -f "$img" ] || { skip guest "no XP image at $img (WINXP_IMG)"; return; }
