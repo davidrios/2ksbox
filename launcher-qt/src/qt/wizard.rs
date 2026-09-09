@@ -76,6 +76,18 @@ pub mod ffi {
         /// Set only while editing a machine whose adapter has been
         /// changed: the guest will find new hardware on its next start.
         #[qproperty(QString, video_warning)]
+        /// What a host gamepad does for this machine (M13): an index
+        /// into `pad_labels`, a property for the same reason
+        /// `video_labels` is — DOS is offered no USB controller, having
+        /// no USB stack, so the list changes with the family.
+        #[qproperty(i32, pad)]
+        #[qproperty(bool, pad_applies)]
+        #[qproperty(QStringList, pad_labels)]
+        #[qproperty(bool, pad_is_default)]
+        #[qproperty(QString, pad_note)]
+        /// Set only while editing a machine that is gaining or losing
+        /// the USB controller: a hardware change the guest will notice.
+        #[qproperty(QString, pad_warning)]
         #[qproperty(bool, network)]
         #[qproperty(QString, network_note)]
         #[qproperty(bool, seamless_mouse)]
@@ -169,6 +181,14 @@ pub mod ffi {
         /// Put it back on the family's default.
         #[qinvokable]
         fn reset_video(self: Pin<&mut Wizard>);
+
+        /// The gamepad, the same way — an index into `pad_labels`.
+        #[qinvokable]
+        fn choose_pad(self: Pin<&mut Wizard>, pad: i32);
+
+        /// Put it back on the family's default.
+        #[qinvokable]
+        fn reset_pad(self: Pin<&mut Wizard>);
 
         /// A floppy image was typed or browsed to: the boot note depends
         /// on it ("boot from floppy" with no image falls through to the
@@ -270,6 +290,12 @@ pub struct WizardRust {
     video_is_default: bool,
     video_note: QString,
     video_warning: QString,
+    pad: i32,
+    pad_applies: bool,
+    pad_labels: QStringList,
+    pad_is_default: bool,
+    pad_note: QString,
+    pad_warning: QString,
     graphics_warning: bool,
     network: bool,
     network_note: QString,
@@ -385,6 +411,17 @@ impl ffi::Wizard {
             let v = at(form.video_choices(), video);
             form.choose_video(v);
         });
+    }
+
+    fn choose_pad(self: Pin<&mut Self>, pad: i32) {
+        self.edit(|form| {
+            let p = at(form.pad_choices(), pad);
+            form.choose_pad(p);
+        });
+    }
+
+    fn reset_pad(self: Pin<&mut Self>) {
+        self.edit(Form::reset_pad);
     }
 
     fn reset_video(self: Pin<&mut Self>) {
@@ -522,6 +559,7 @@ impl ffi::Wizard {
         let (seamless_mouse, seamless_mouse_note);
         let (graphics_note, graphics_warning);
         let (video, video_applies, video_labels, video_is_default, video_note, video_warning);
+        let (pad, pad_applies, pad_labels, pad_is_default, pad_note, pad_warning);
         let (optimizations_mask, optimizations_summary, optimizations_note, optimizations_are_default);
         let (existing_disk, disk_path, disk_size_gb, install_media, floppy, boot, boot_note);
         let (shader_profile, advanced, advanced_toml, error);
@@ -558,6 +596,12 @@ impl ffi::Wizard {
             video_is_default = f.video_is_default();
             video_note = qs(f.video_notes().join("\n"));
             video_warning = qs_opt(f.video_warning());
+            pad = index_of(f.pad_choices(), f.pad());
+            pad_applies = f.pad_applies();
+            pad_labels = labels(f.pad_choices().iter().map(|p| p.label()));
+            pad_is_default = f.pad_is_default();
+            pad_note = qs(f.pad_notes().join("\n"));
+            pad_warning = qs_opt(f.pad_warning());
             network = f.network();
             network_note = qs(f.network_notes().join("\n"));
             seamless_mouse = f.seamless_mouse();
@@ -609,6 +653,13 @@ impl ffi::Wizard {
         self.as_mut().set_video_is_default(video_is_default);
         self.as_mut().set_video_note(video_note);
         self.as_mut().set_video_warning(video_warning);
+        self.as_mut().set_pad_applies(pad_applies);
+        // The list before the index, for the same reason as the adapter's.
+        self.as_mut().set_pad_labels(pad_labels);
+        self.as_mut().set_pad(pad);
+        self.as_mut().set_pad_is_default(pad_is_default);
+        self.as_mut().set_pad_note(pad_note);
+        self.as_mut().set_pad_warning(pad_warning);
         self.as_mut().set_graphics_warning(graphics_warning);
         self.as_mut().set_network(network);
         self.as_mut().set_network_note(network_note);

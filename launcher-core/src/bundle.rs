@@ -249,8 +249,21 @@ pub enum Pad {
     /// visible cause. Someone who wants a pad says so.
     #[default]
     None,
+    /// A real USB HID gamepad on the machine (`-usb -device
+    /// usb-gamepad`, patch 26). Two sticks, an 8-way hat and twelve
+    /// buttons, which XP, Windows 98 SE and Me all bind their in-box HID
+    /// stack to with **nothing installed** — DirectInput and `joy.cpl`
+    /// see it on the first boot after it is added. This is the entry a
+    /// game of the era can actually use: it enumerates as a controller,
+    /// and the sticks are analog.
+    ///
+    /// Not offered on DOS, which has no USB stack at all — that is what
+    /// path B's gameport is for. Windows 98 *first edition* is the doubt
+    /// on the 9x side: its USB support predates the HID class being
+    /// reliable, and it may want the USB supplement.
+    Usb,
     /// The pad presses keys: the player maps its controls onto the key
-    /// events it already sends, against `pad::default_key_bindings`.
+    /// events it already sends, against `gamepad::default_key_bindings`.
     /// Reaches **every** guest — DOS, Win98 FE, XP, `Other` — because
     /// there is no device for the guest to support. The cost is that it
     /// is a mapping and not a controller: no analog anything, and a game
@@ -259,11 +272,12 @@ pub enum Pad {
 }
 
 impl Pad {
-    pub const ALL: [Pad; 2] = [Pad::None, Pad::Keys];
+    pub const ALL: [Pad; 3] = [Pad::None, Pad::Usb, Pad::Keys];
 
     pub fn label(self) -> &'static str {
         match self {
             Pad::None => "No gamepad",
+            Pad::Usb => "USB gamepad",
             Pad::Keys => "Gamepad presses keys",
         }
     }
@@ -276,6 +290,7 @@ impl Pad {
     pub fn name(self) -> &'static str {
         match self {
             Pad::None => "none",
+            Pad::Usb => "usb",
             Pad::Keys => "keys",
         }
     }
@@ -306,14 +321,24 @@ where
 
 /// What each family offers, **first one its default**.
 ///
-/// Every family gets the same pair, because neither entry is a device:
-/// `Keys` happens entirely in the player and reaches a guest that has
-/// never heard of a controller. That changes as soon as path A lands —
-/// `Usb` belongs on the Windows families and on `Other`, and never on
-/// DOS, which has no USB stack — and this function is where that
-/// asymmetry will live.
-pub fn pad_choices(_family: Family) -> &'static [Pad] {
-    &[Pad::None, Pad::Keys]
+/// The asymmetry is `Usb`: a USB HID gamepad needs a guest with a USB
+/// stack, which DOS has not got at all. DOS is left with `Keys`, and the
+/// controller it could really use is path B's gameport.
+///
+/// Every family starts on `None`, and that is a decision rather than
+/// caution. A machine nobody asked for a pad on should not grow a device
+/// in its Device Manager, and it is the same call this project already
+/// made for networking, which is off on new machines because a guest that
+/// waits on DHCP at boot is worse than one with no network. A pad is one
+/// pick away either way.
+pub fn pad_choices(family: Family) -> &'static [Pad] {
+    match family {
+        // No USB stack, so no HID gamepad. Nothing to warn about — the
+        // entry simply is not offered, the way the display-adapter picker
+        // does not offer an adapter a family has no driver for.
+        Family::Dos => &[Pad::None, Pad::Keys],
+        Family::Xp | Family::Win98 | Family::Other => &[Pad::None, Pad::Usb, Pad::Keys],
+    }
 }
 
 /// The pad setting a family starts on. Always the first of
@@ -1071,8 +1096,21 @@ impl Machine {
         // grabbed. Without it the machine keeps the PS/2 mouse alone —
         // relative, grabbed on a click — and the controller goes with
         // the tablet, because the tablet is the only thing on it.
+        // ...and the gamepad (M13 path A), which needs the same
+        // controller. `-usb` goes on once for both: QEMU takes a second
+        // one, but it is the kind of line nobody reads twice, and a
+        // machine whose pointer is turned off must still get a
+        // controller for its pad rather than a `-device usb-gamepad`
+        // with no bus to attach to.
+        let pad_usb = self.effective_pad() == Pad::Usb;
+        if self.seamless_mouse || pad_usb {
+            args.push("-usb".into());
+        }
         if self.seamless_mouse {
-            args.extend(["-usb".into(), "-device".into(), "usb-tablet".into()]);
+            args.extend(["-device".into(), "usb-tablet".into()]);
+        }
+        if pad_usb {
+            args.extend(["-device".into(), "usb-gamepad".into()]);
         }
         // The CPU rate, when the machine asks for one. `align=on` is the
         // whole point and not a detail: `-icount shift=N` on its own only

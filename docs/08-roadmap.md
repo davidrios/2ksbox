@@ -253,10 +253,21 @@ because they reach different guests:
   the arrows) release only when the last holder does, and a stick crossing
   centre releases before it presses. Not yet seen arriving in a real
   guest: `tools/pad-guest-test.sh` is still to write.
-- **Path A `usb-gamepad`** (patch 26): a gamepad report descriptor and
-  packer on `hw/usb/dev-hid.c`'s plumbing, plus a joystick event class in
-  the input core. XP, Win98 SE and Me see it on their inbox HID stack
-  with nothing to install; DOS cannot.
+- **Path A `usb-gamepad`** ✅ 2026-09-09 (patch 26): a whole device —
+  `gamepad/qemu/dev-gamepad.c`, two analog sticks, an 8-way hat with a
+  null state and twelve buttons in a six-byte report, built under
+  `CONFIG_USB_HID`. Driven by absolute state through embed API v8
+  (`qemu_embed_pad_state`), so a dropped update is corrected rather than
+  leaving a button held; a second one is refused at realize. The
+  joystick event class the plan wanted was dropped: QEMU's input core is
+  built around consoles and a gamepad has no console affinity, so the
+  shim calls the device directly — which is not upstreamable as it
+  stands, and the track doc says so. XP, Win98 SE and Me should see it on
+  their in-box HID stack with nothing to install; DOS cannot, and is not
+  offered it. **No guest has enumerated it yet** —
+  `tools/hid-descriptor-check.py` checks the descriptor bytes and the
+  `pad` check watches a real `qemu-system-i386` attach it to the bus,
+  but `tools/pad-guest-test.sh` is still to write.
 - **Path B the gameport** (patch 27): four RC one-shots at 0x201,
   computed against `QEMU_CLOCK_VIRTUAL` on read. The only path that
   reaches DOS, and the 9x analog stack (`VJOYD` / `MSANALOG`). The

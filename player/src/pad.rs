@@ -377,6 +377,35 @@ impl Pads {
         self.pressed.get(&(control, positive)).copied().unwrap_or(false)
     }
 
+    /// The pad as the USB HID report carries it (M13 path A): four axis
+    /// bytes, a hat position and a bitmap of twelve buttons.
+    ///
+    /// The axes go out **shaped**, so the deadzone applies to the guest's
+    /// analog reading too, not only to the key mapping. That is the right
+    /// answer and not the obvious one: a guest calibrating the stick in
+    /// `joy.cpl` calibrates what it is given, and handing it the raw
+    /// value would make it discover the drift and compensate for it
+    /// twice.
+    pub fn hid_state(&self) -> ([u8; 4], u8, u16) {
+        let mut axes = [0x80u8; 4];
+        for (i, c) in gamepad::HID_AXES.iter().enumerate() {
+            axes[i] = gamepad::hid_axis(self.values.get(c).copied().unwrap_or(0.0));
+        }
+        let hat = gamepad::hid_hat(
+            self.is_pressed(Control::DpadUp, true),
+            self.is_pressed(Control::DpadRight, true),
+            self.is_pressed(Control::DpadDown, true),
+            self.is_pressed(Control::DpadLeft, true),
+        );
+        let mut buttons = 0u16;
+        for (bit, c) in gamepad::HID_BUTTONS.iter().enumerate() {
+            if self.is_pressed(*c, true) {
+                buttons |= 1 << bit;
+            }
+        }
+        (axes, hat, buttons)
+    }
+
     /// Every half a digital consumer currently calls pressed, in a stable
     /// order.
     fn pressed_now(&self) -> Vec<&'static str> {
@@ -493,6 +522,9 @@ impl KeyMap {
 pub enum Mode {
     #[default]
     None,
+    /// The pad is a USB HID device on the machine (path A). The player
+    /// sends it state; the guest's own driver does the rest.
+    Usb,
     Keys,
 }
 
@@ -500,6 +532,7 @@ impl Mode {
     pub fn parse(name: &str) -> Option<Mode> {
         match name {
             "none" => Some(Mode::None),
+            "usb" => Some(Mode::Usb),
             "keys" => Some(Mode::Keys),
             _ => None,
         }
@@ -547,13 +580,29 @@ pub fn sweep(frames: u64) -> i32 {
     // `--pad keys` makes the sweep show the key mapping too, which is how
     // path C is checked without a guest: the same `KeyMap` the player
     // runs, against the same scripted pad.
-    let mut keys = match mode_from_env() {
+    let mode = mode_from_env();
+    let mut keys = match mode {
         Mode::Keys => Some(KeyMap::new(gamepad::default_key_bindings())),
-        Mode::None => None,
+        Mode::Usb | Mode::None => None,
     };
     let mut total = 0usize;
+    let mut last_hid: Option<([u8; 4], u8, u16)> = None;
     for frame in 1..=frames {
         total += pads.poll(frame).len();
+        // `--pad usb` shows the report the guest would be handed, so the
+        // packing is checked without a guest: this is the same
+        // `hid_state()` the player sends through qemu_embed_pad_state.
+        if mode == Mode::Usb {
+            let hid = pads.hid_state();
+            if last_hid != Some(hid) {
+                last_hid = Some(hid);
+                let (axes, hat, buttons) = hid;
+                println!(
+                    "pad-hid: frame {frame} axes {:02x} {:02x} {:02x} {:02x} hat {} buttons {:012b}",
+                    axes[0], axes[1], axes[2], axes[3], hat, buttons
+                );
+            }
+        }
         if let Some(km) = keys.as_mut() {
             for (sc, down) in km.apply(&pads) {
                 println!(

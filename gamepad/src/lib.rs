@@ -278,6 +278,77 @@ impl Shaping {
     }
 }
 
+// --- the USB HID report (M13 path A) --------------------------------
+
+/// The buttons of the HID report, in bit order — button 1 is bit 0.
+///
+/// This *is* the contract with `gamepad/qemu/dev-gamepad.c`'s report
+/// descriptor: the guest sees "button 5" and means whatever is fifth
+/// here. It is therefore the order a person will see in `joy.cpl`'s
+/// button lights, and reordering it silently rebinds every game anyone
+/// has configured. The order is the one every pad of the DirectInput era
+/// used: the four face buttons, the shoulders, the triggers, then the
+/// menu and stick buttons.
+pub const HID_BUTTONS: [Control; 12] = [
+    Control::South,
+    Control::East,
+    Control::West,
+    Control::North,
+    Control::LeftShoulder,
+    Control::RightShoulder,
+    Control::LeftTrigger,
+    Control::RightTrigger,
+    Control::Select,
+    Control::Start,
+    Control::LeftStickPress,
+    Control::RightStickPress,
+];
+
+/// The axes of the report, in byte order: X, Y, Z, Rz.
+pub const HID_AXES: [Control; 4] = [
+    Control::LeftStickX,
+    Control::LeftStickY,
+    Control::RightStickX,
+    Control::RightStickY,
+];
+
+/// The hat's released position, matching `USB_GAMEPAD_HAT_NULL`.
+pub const HID_HAT_NULL: u8 = 8;
+
+/// A shaped axis (-1.0..=1.0) as the byte the report carries: 0..255
+/// with 0x80 centred.
+///
+/// `128` and not `127` for centre, because that is what the device's own
+/// reset writes and what a guest calibrating the stick will see as rest.
+/// The two halves are therefore very slightly asymmetric (127 of range
+/// below, 127 above), which no guest of this era can perceive and every
+/// real pad has too.
+pub fn hid_axis(shaped: f32) -> u8 {
+    let v = shaped.clamp(-1.0, 1.0);
+    (128.0 + v * 127.0).round().clamp(0.0, 255.0) as u8
+}
+
+/// The four d-pad directions as a HID hat position: 0..7 clockwise from
+/// north, or [`HID_HAT_NULL`] for released.
+///
+/// Opposite directions held together cancel — a real d-pad cannot do it
+/// and a guest handed "north and south" would have to invent an answer.
+pub fn hid_hat(up: bool, right: bool, down: bool, left: bool) -> u8 {
+    let (up, down) = if up && down { (false, false) } else { (up, down) };
+    let (left, right) = if left && right { (false, false) } else { (left, right) };
+    match (up, right, down, left) {
+        (true, false, false, false) => 0,
+        (true, true, false, false) => 1,
+        (false, true, false, false) => 2,
+        (false, true, true, false) => 3,
+        (false, false, true, false) => 4,
+        (false, false, true, true) => 5,
+        (false, false, false, true) => 6,
+        (true, false, false, true) => 7,
+        _ => HID_HAT_NULL,
+    }
+}
+
 /// What one control does, for a machine whose pad is `Pad::Keys`.
 ///
 /// An axis binds *twice* — once per direction — because a key has no

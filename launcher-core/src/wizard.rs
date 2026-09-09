@@ -54,6 +54,10 @@ struct EditTarget {
     /// warn that changing it is a hardware change to a guest that is
     /// already installed (`video_warning`).
     video: Video,
+    /// The gamepad setting the bundle had when it was opened, for the
+    /// same reason: gaining or losing the USB controller is a hardware
+    /// change (`pad_warning`).
+    pad: Pad,
 }
 
 /// The acceleration hint under the picker, and whether it is a warning
@@ -78,13 +82,13 @@ pub struct Form {
     /// a value carried across a family switch can be one the new family
     /// does not offer, and `choose_family` has to put it back.
     video: Video,
-    /// What a host gamepad does for this machine (M13). Public, unlike
-    /// `video`: every family offers the same pair today, so no value can
-    /// be stranded by a family switch and `choose_family` has nothing to
-    /// put back. That changes when path A lands and `Usb` exists on the
-    /// Windows families but not DOS — at which point this becomes
-    /// private and gains the same guard `video` has.
-    pub pad: Pad,
+    /// What a host gamepad does for this machine (M13). Private for the
+    /// same reason `video` is, and since path A for a concrete one: `Usb`
+    /// is offered on the Windows families and on `Other` but never on
+    /// DOS, which has no USB stack, so a value carried across a family
+    /// switch can be one the new family does not offer and
+    /// `choose_family` has to put it back.
+    pad: Pad,
     pub existing_disk: bool,
     pub disk_path: String,
     pub disk_size_gb: u32,
@@ -240,6 +244,7 @@ impl Form {
                 shader: machine.shader.clone(),
                 original_toml,
                 video: machine.effective_video().unwrap_or(Video::Std),
+                pad: machine.effective_pad(),
             }),
             ..Default::default()
         };
@@ -316,6 +321,11 @@ impl Form {
             if let Some(default) = bundle::default_video(family) {
                 self.video = default;
             }
+        }
+        // The same for the gamepad: switching a machine to DOS strands a
+        // `Usb` setting, because DOS has no USB stack to attach it to.
+        if !bundle::pad_choices(family).contains(&self.pad) {
+            self.pad = bundle::default_pad(family);
         }
         // The new family's ceiling may be below the memory already in
         // the field (Win98 stops at 512 MB), so the clamp is part of the
@@ -693,17 +703,21 @@ impl Form {
         }
     }
 
+    pub fn pad(&self) -> Pad {
+        self.pad
+    }
+
     /// What this family offers a gamepad, first one its default — what a
     /// picker fills itself from.
     pub fn pad_choices(&self) -> &'static [Pad] {
         bundle::pad_choices(self.family)
     }
 
-    /// Whether there is anything to choose. Always true today; it exists
-    /// so a front end's row is written against the model rather than
-    /// against the fact that today's list is never empty.
+    /// Whether there is anything to choose. True on every family — even
+    /// DOS has `None` against `Keys` — but written against the model so a
+    /// front end's row does not depend on that staying true.
     pub fn pad_applies(&self) -> bool {
-        !self.pad_choices().is_empty()
+        self.pad_choices().len() > 1
     }
 
     pub fn pad_is_default(&self) -> bool {
@@ -732,11 +746,31 @@ impl Form {
             Pad::None => &[
                 "A controller plugged into the host does nothing. The machine's keyboard and mouse are unaffected.",
             ],
+            Pad::Usb => &[
+                "A real USB controller on the machine: two analog sticks, an 8-way hat and twelve buttons, which DirectInput and the Game Controllers panel both see.",
+                "Windows XP, 98 SE and Me need nothing installed — they bind their own HID driver to it on the first start after it is added. Windows 98 first edition may want the USB supplement.",
+            ],
             Pad::Keys => &[
                 "The pad presses keys: the d-pad and left stick are the arrow keys, and the four face buttons are Ctrl, Alt, Space and Enter — what a DOS or early-Windows action game reads by default.",
-                "It is a mapping, not a controller. There is no analog steering, and a game that asks DirectInput for a joystick still finds none: that needs the USB gamepad, which this build does not have yet.",
+                "It is a mapping, not a controller: no analog steering, and a game that asks DirectInput for a joystick still finds none. The choice for DOS, and for a game that only ever read the keyboard.",
             ],
         }
+    }
+
+    /// The one thing worth saying above the picker: adding or removing a
+    /// USB controller on a machine that already has an OS installed is a
+    /// hardware change, and the guest will notice on its next start. The
+    /// same sentence the adapter picker earns, for the same reason.
+    pub fn pad_warning(&self) -> Option<&'static str> {
+        let changed = match &self.editing {
+            Some(edit) => (edit.pad == Pad::Usb) != (self.pad == Pad::Usb),
+            None => false,
+        };
+        changed.then_some(
+            "This machine already exists: adding or removing the USB controller makes the guest \
+             find new hardware on its next start. Windows installs its own driver for it, but it \
+             will say so.",
+        )
     }
 
     /// The one thing the boot picker can say that isn't obvious: a

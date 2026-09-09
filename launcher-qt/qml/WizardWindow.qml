@@ -288,6 +288,47 @@ Window {
                     opacity: 0.75
                 }
 
+                // --- the gamepad (M13) --------------------------------------
+                // Same shape as the adapter above, and a property list for the
+                // same reason: DOS is offered no USB controller, having no USB
+                // stack at all, so the list changes with the family.
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.wizard.padApplies
+                    spacing: 8
+                    Label { text: qsTr("Gamepad"); Layout.minimumWidth: 150 }
+                    ComboBox {
+                        Layout.preferredWidth: 260
+                        model: root.wizard.padLabels
+                        currentIndex: root.wizard.pad
+                        onActivated: root.wizard.choosePad(currentIndex)
+                    }
+                    Button {
+                        text: qsTr("Default")
+                        enabled: !root.wizard.padIsDefault
+                        onClicked: root.wizard.resetPad()
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+                // Adding or removing the USB controller is a hardware change,
+                // so it is about the machine and sits above the notes.
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.wizard.padWarning !== ""
+                    text: root.wizard.padWarning
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    color: "#c88200"
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.wizard.padApplies
+                    text: root.wizard.padNote
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    opacity: 0.75
+                }
+
                 // --- the host's 3D (ADR-013) --------------------------------
                 // Stated, not chosen: the host settles which 3D stack a guest
                 // gets. Empty on a DOS machine. Orange only for the software

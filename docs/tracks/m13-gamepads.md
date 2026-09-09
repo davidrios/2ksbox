@@ -9,11 +9,12 @@ Opened 2026-09-09 with the design for all three guest-facing paths,
 written before any of them was built, because which one to build first is
 a product decision and the three do not share a guest end.
 
-**Step 0 and path C landed 2026-09-09.** A pad now presses keys in a
-guest, on every family, with nothing installed in the guest and no QEMU
-patch. Paths A and B — the devices — are still ahead. See "State" below
-for what is in, what the plan got wrong, and the one claim that is not
-yet proved against a real guest.
+**Step 0, path C and path A landed 2026-09-09.** A machine can now have
+a real USB HID gamepad (`-device usb-gamepad`, patch 26) that XP, 98 SE
+and Me drive with nothing installed, or map the pad onto keys for every
+other guest. Path B — the gameport, and DOS — is still ahead. See "State"
+below for what is in, what the plan got wrong, and what is not yet proved
+against a real guest.
 
 Gamepads were a post-v1 candidate in doc 08 until this track opened.
 
@@ -42,8 +43,8 @@ device do we write".
 
 ## State
 
-Step 0 is done and green in `scripts/test.sh host` (31 passed, 0 failed).
-What exists:
+All of step 0, path C and path A are in, and `scripts/test.sh host` is
+green (31 passed, 0 failed). What exists, in the order it was built:
 
 - **`gamepad/`** — a new workspace crate holding the abstract pad:
   `Control` (20 controls, face buttons named by *position* so a binding
@@ -61,9 +62,12 @@ What exists:
   feature or a sandbox with no `/dev/input` reports itself.
 - **`player --pad-sweep <frames>`** — the scripted pad with no window, no
   QEMU and no guest.
-- **`bundle::Pad`** (`none` / `keys`), `pad_choices`, `default_pad`, the
-  `pad` field, `Form::choose_pad` / `pad_notes`, and the ninth
-  `--wizard-edit` argument.
+- **`bundle::Pad`** — `none` (the default on every family), `usb` and
+  `keys` — with `pad_choices`, `default_pad`, the `pad` field,
+  `Form::choose_pad` / `pad_notes` / `pad_warning`, and the ninth
+  `--wizard-edit` argument. Every family starts on `none` for the reason
+  networking does: a machine nobody asked for a pad on should not grow a
+  device in its Device Manager.
 - **The `pad` check** in `scripts/test.sh`.
 - Packaging: `--device=input` in the Flatpak manifest, and
   `cargo-sources.json` regenerated (1109 → 1133 sources).
@@ -95,16 +99,54 @@ Then **path C** (same day):
   passes it, and `launcherx --print-player-args` shows what a bundle
   resolves to without spawning anything.
 
+Then **path A** (same day) — the device QEMU did not have:
+
+- **`gamepad/qemu/dev-gamepad.c`** — `usb-gamepad`, overlaid into
+  `hw/usb/` by `prepare-qemu.sh` and built by **patch 26** under
+  `CONFIG_USB_HID`. Two analog sticks as X/Y and Z/Rz, an 8-way hat *with
+  a null state* and twelve buttons, in a six-byte report. Its own file
+  and not a fourth kind in `dev-hid.c`, because every machine here
+  already has a `usb-tablet` on that code.
+- **Absolute state, not events** (`usb_gamepad_set_state`, embed API
+  **v8**). The host always knows the whole pad, so sending all of it
+  cannot desync — a dropped update is corrected by the next one, where a
+  dropped event leaves a button held forever. The device compares against
+  what it holds and NAKs the interrupt endpoint while nothing has
+  changed, so a motionless pad never wakes the guest.
+- A second `-device usb-gamepad` is **refused at realize**, not silently
+  ignored: the host drives one pad, and two would leave whichever the
+  lookup found first as the only live one.
+- **`tools/hid-descriptor-check.py`** parses the shipped descriptor bytes
+  and checks the collections balance, that the input items total exactly
+  `GAMEPAD_REPORT_LEN`, and that the hat has its null state. None of that
+  is readable from this side at run time, and each failure produces a
+  device that enumerates, appears in `joy.cpl` and is wrong. The `pad`
+  check also mutates two copies and requires the checker to complain, so
+  the check cannot pass by having stopped working.
+- **Both front ends** gained the row — the Qt one that ships and the egui
+  one ADR-015 keeps maintained. Worth saying plainly because step 0 and
+  path C did *not*: the setting existed in the model and was reachable
+  only by editing `machine.toml` by hand. It is a picker in both now.
+
 ### Not proved yet
 
-**Keys have not been seen arriving in a real guest.** Everything above is
-checked against the scripted pad with no guest — the mapping, the
-ordering, the shared keys, the scancodes — and the chain from a bundle to
-`--pad keys` is checked too, but `tools/pad-guest-test.sh` is not written
-and no guest has been booted with a pad. The box had another session's
-TCG guests running throughout, and CLAUDE.md forbids a second one. That
-tool is the first thing to do on a free box: boot with `--pad keys` and
-`PLAYER_PAD_SCRIPT`, and let the guest's own `dir`/COM1 say what it saw.
+**No guest has seen any of this.** Everything is checked without one —
+the key mapping, the ordering, the shared keys, the scancodes, the HID
+report packing, the descriptor bytes, and that a real `qemu-system-i386`
+attaches the device to its bus (`info usb` says *2ksbox USB Gamepad*).
+What is *not* checked is the only thing that finally matters: that
+Windows enumerates it, binds a driver, and shows a working controller in
+`joy.cpl`. `tools/pad-guest-test.sh` is not written and no guest has been
+booted with a pad — the box had another session's TCG guests running
+throughout, and CLAUDE.md forbids a second one.
+
+That tool is the first thing to do on a free box, and it should cover
+both paths: `--pad keys` with `PLAYER_PAD_SCRIPT`, proved by the guest's
+own `dir`/COM1; and `--pad usb`, proved by a guest-side probe that
+enumerates DirectInput and reads the axes back
+(`guest-tools/src/padtest.c`, also unwritten). Until then path A's guest
+claims — XP/98 SE/Me needing nothing installed — rest on how the HID
+class is specified, not on having watched it happen.
 
 Also untried: a **real controller**. `gilrs` enumerates here (a foot
 pedal is what is plugged into this box), so the button and axis mapping
@@ -132,7 +174,22 @@ not just the detail.
    `gamepad` crate and the deciding half stayed in `launcher-core` as
    `bundle::Pad`.
 
-A third thing the plan simply did not foresee: **a control not yet seen
+3. **The joystick event class was the wrong way in.** The plan
+   recommended adding one to QEMU's input core (`qapi/ui.json`,
+   `ui/input.c`) so the device could register a `QemuInputHandler` like
+   `hid_mouse_handler`, on the grounds that it is the upstream-shaped
+   version. It is not just more code — it is the wrong *model*. QEMU's
+   input core is built around consoles and pointer/keyboard semantics
+   (`qemu_input_is_absolute(con)`, handler activation, per-console
+   routing), and a gamepad has no console affinity at all; forcing it
+   through would have meant describing the device as something it is
+   not. Path A instead exports `usb_gamepad_set_state()` and the embed
+   shim calls it from the input bottom half, under the same BQL the rest
+   of the queue drains under. The cost is honest: this is **not**
+   upstreamable as it stands, and if the device is ever offered upstream
+   the event class is the version to write.
+
+A fourth thing the plan simply did not foresee: **a control not yet seen
 counts as centred, not as unknown.** The obvious version emits a "change"
 the first time a resting stick reports itself, because the map has no
 entry for it. Harmless for a key and not harmless at all once path B
@@ -187,7 +244,7 @@ The deadzone, the axis curve and the binding table are **launcher-core's**,
 not the player's — ADR-014 is explicit that a default which follows the
 family does not live in a front end, and a pad binding is exactly that.
 
-## Path A — a USB HID gamepad
+## Path A — a USB HID gamepad  ✅
 
 A new `usb-gamepad`, modelled on `hw/usb/dev-hid.c`. The descriptor,
 endpoint and polling plumbing there is all reusable; what is new is a
@@ -336,8 +393,9 @@ Integration and end-to-end only, per the policy.
    `PLAYER_PAD_SCRIPT`.~~ **Done 2026-09-09.**
 2. ~~**Path C** — the key mapping.~~ **Done 2026-09-09**, except
    `tools/pad-guest-test.sh` — see "Not proved yet".
-3. **Path A** — `usb-gamepad`, with the joystick event class in the input
-   core. The main event: XP and 98 SE with nothing to install.
+3. ~~**Path A** — `usb-gamepad`.~~ **Done 2026-09-09**, except the guest
+   proof — see "Not proved yet". (The joystick event class in QEMU's
+   input core was *not* the way; see the third correction below.)
 4. **Path B** — the gameport, for DOS and the 9x analog stack. Last
    because it is the one with a timing model to get wrong.
 

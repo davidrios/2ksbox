@@ -103,6 +103,12 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 # Gamepad (M13, docs/tracks/m13-gamepads.md). `player --pads` says what this host
 #   can read, which is the one place a build without the `gilrs` feature or a
 #   sandbox with no /dev/input reports itself.
+# --pad usb (or PLAYER_PAD=usb) sends the pad to the machine's `usb-gamepad`
+#   (patch 26): two analog sticks, an 8-way hat and twelve buttons, which XP,
+#   Windows 98 SE and Me all see through their own HID driver with nothing
+#   installed — DirectInput and joy.cpl find it on the first start after the
+#   device is added. The launcher adds `-usb -device usb-gamepad` for a machine
+#   whose `pad = "usb"`. Not offered on DOS, which has no USB stack.
 # --pad keys (or PLAYER_PAD=keys) maps the pad onto the keys the player already
 #   sends: d-pad and left stick are the arrows, the four face buttons are Ctrl,
 #   Alt, Space and Enter, Start is Esc. The launcher writes it from the machine's

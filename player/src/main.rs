@@ -1170,6 +1170,26 @@ impl App {
         vm.input_flush();
     }
 
+    /// The pad's current state to the guest's `usb-gamepad` (M13 path A).
+    ///
+    /// The whole pad every time, not a change: `usb_gamepad_set_state`
+    /// compares against what it holds and does nothing when they match,
+    /// so an untouched controller costs one comparison per published
+    /// frame and never wakes the guest. Sending changes instead would
+    /// put the "did anything move" question on this side of a queue that
+    /// is allowed to drop, and a dropped button-up is a button held down
+    /// in the guest forever.
+    fn apply_pad_usb(&mut self) {
+        if self.pad_mode != pad::Mode::Usb {
+            return;
+        }
+        let Some(pads) = self.pads.as_ref() else { return };
+        let (axes, hat, buttons) = pads.hid_state();
+        let Some(vm) = self.vm() else { return };
+        vm.pad_state(axes, hat, buttons);
+        vm.input_flush();
+    }
+
     /// Let go of everything the pad is holding in the guest.
     fn release_pad_keys(&mut self) {
         let Some(km) = self.pad_keys.as_mut() else { return };
@@ -1723,6 +1743,7 @@ impl ApplicationHandler for App {
         // is how someone works out whether the controller is seen at all
         // before deciding to turn it on.
         self.apply_pad_keys();
+        self.apply_pad_usb();
         // QEMU published a frame (multiple wakes coalesce into one redraw)
         if let Some(gpu) = &self.gpu {
             gpu.window.request_redraw();
