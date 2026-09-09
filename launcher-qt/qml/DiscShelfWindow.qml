@@ -28,6 +28,15 @@ Window {
     /// The item the headless screenshot path grabs — see `Main.qml`.
     property Item grabItem: body
 
+    /// What the "Add disc" field is showing, and the dialog's own result
+    /// delivered to it — the probe's way in (`Main.qml`'s `pickdisc`).
+    /// A real `FileDialog` is the window system's and cannot be driven
+    /// offscreen, so the probe hands the field the path the dialog would
+    /// have; `acceptPath` is the line the dialog itself runs, so the
+    /// whole wiring under test is downstream of it.
+    readonly property alias shownAdd: adder.shownText
+    function pickDisc(path) { adder.acceptPath(path) }
+
     title: discs.title
     width: 880
     height: 600
@@ -206,6 +215,14 @@ Window {
                 // The one field with no model behind it: what the user
                 // types *is* the value, until "Add to shelf" empties it.
                 onEdited: (path) => adder.value = path
+                // A disc chosen in the dialog goes on the shelf there and
+                // then: the dialog already asked the question "Add to
+                // shelf" is there to ask, so leaving the path sitting in
+                // the field reads as a picker that did nothing
+                // (user-reported, 2026-09-09). "Add folder…" below has
+                // always worked that way. The field and its button stay
+                // for a path someone *types*.
+                onPicked: (path) => { root.discs.add(path); adder.value = "" }
             }
 
             RowLayout {

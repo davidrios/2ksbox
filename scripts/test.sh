@@ -50,6 +50,12 @@
 #                  both are things only a probe that asks the controls can see,
 #                  because the profile is on disk and the model is empty in the
 #                  runs that fail (only if a launcher-qt has been built)
+#   qt-shelf       the Qt disc shelf's "Add disc" field, driven through the half a
+#                  real file dialog cannot be: a disc *picked* goes on the shelf
+#                  by itself and leaves the field empty, rather than waiting for
+#                  a second click on "Add to shelf" — the model is right either
+#                  way, so only a probe that asks the window can tell them apart
+#                  (only if a launcher-qt has been built)
 #   qt-firstrun    the Qt first-run shader offer, driven: Qt's own MessageDialog
 #                  is really up on a launcher with no preset collection (it is
 #                  shown on a property that has to be published before the first
@@ -648,6 +654,31 @@ qtprofile_check() { # the Qt shader-profile windows, driven (doc 07)
   ls "$dir/profiles"/*.toml >/dev/null 2>&1 || { echo "no profile was written at all"; rc=1; }
   shown="$(printf '%s' "$o" | sed -n "s/.*fresh preset field '\([^']*\)'.*/\1/p")"
   [ -z "$shown" ] || { echo "New profile… still shows the last preset ($shown)"; rc=1; }
+  return $rc
+}
+qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
+  local rc=0 dir="$OUT/qtshelf" bin="launcher-qt/target/release/launcher-qt" o count field
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
+  : > "$dir/game.iso"
+  # A file dialog belongs to the window system and cannot be opened
+  # offscreen, so the probe hands the field the path the dialog would
+  # have — every line of the wiring under test is downstream of that.
+  # What it guards: a picked disc is on the shelf without a second click
+  # (user-reported, 2026-09-09, "Browse… only fills the field"), and the
+  # field it came through is left empty, so the button beside it goes
+  # back to being for typing.
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=pickdisc LAUNCHER_QT_ARG="$dir/game.iso" LAUNCHER_QT_DELAY=300 \
+       "$bin" 2>&1 | sed -n 's/^\[diag\] pickdisc: //p')"
+  [ -n "$o" ] || { echo "the probe printed no pickdisc line"; return 1; }
+  echo "  $o"
+  count="$(printf '%s' "$o" | sed -n 's/^shelf \([0-9]*\),.*/\1/p')"
+  field="$(printf '%s' "$o" | sed -n 's/.*field \[\(.*\)\], status.*/\1/p')"
+  [ "$count" = 1 ] || { echo "the picked disc did not reach the shelf (it holds $count)"; rc=1; }
+  [ -z "$field" ] || { echo "the picked path was left in the field ($field)"; rc=1; }
+  grep -q "game.iso" "$dir/discs.toml" 2>/dev/null \
+    || { echo "the shelf file never gained the disc"; rc=1; }
   return $rc
 }
 dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M5g)
@@ -1282,11 +1313,13 @@ host_stage() {
     run_check qt-wizard qt-wizard.log qtwizard_check || true
     run_check qt-close qt-close.log qtclose_check || true
     run_check qt-profile qt-profile.log qtprofile_check || true
+    run_check qt-shelf qt-shelf.log qtshelf_check || true
     run_check qt-firstrun qt-firstrun.log qtfirstrun_check || true
   else
     skip qt-wizard "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-close "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-profile "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+    skip qt-shelf "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-firstrun "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
   fi
 

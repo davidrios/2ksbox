@@ -51,8 +51,20 @@ pub fn pick_folder_headless(start_dir: Option<&std::path::Path>) -> Option<std::
 /// A labeled text field with a "Browse…" button. Typing directly is still
 /// allowed (a path the user already knows, or one on a mount the picker
 /// can't reach); the button is a convenience, not the only way in.
-pub fn path_field(ui: &mut egui::Ui, label: &str, value: &mut String, filter: Option<Filter>) {
-    path_field_in(ui, label, value, filter, None);
+///
+/// Returns the path the user just chose *in the dialog*, for the fields
+/// where picking a file is the whole answer and not a step towards one —
+/// the disc shelf's adder, which puts it on the shelf there and then
+/// (`launcher_core::shelf::Shelf::add`). Typing is unaffected: it goes
+/// into `value` and nowhere else. Most callers ignore the return, since
+/// their field *is* where the path belongs.
+pub fn path_field(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    filter: Option<Filter>,
+) -> Option<std::path::PathBuf> {
+    path_field_in(ui, label, value, filter, None)
 }
 
 /// The same for a field that names a *directory* — the MT-32's ROMs are
@@ -82,15 +94,19 @@ pub fn path_field_in(
     value: &mut String,
     filter: Option<Filter>,
     empty_dir: Option<&std::path::Path>,
-) {
+) -> Option<std::path::PathBuf> {
     ui.horizontal(|ui| {
         ui.label(label);
         ui.text_edit_singleline(value);
+        let mut picked = None;
         if ui.button("Browse…").clicked() {
             let start = browse_start(value, empty_dir);
             if let Some(path) = pick_file_headless(filter, start.as_deref()) {
                 *value = path.display().to_string();
+                picked = Some(path);
             }
         }
-    });
+        picked
+    })
+    .inner
 }

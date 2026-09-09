@@ -512,6 +512,18 @@ ApplicationWindow {
                 diag.note("shelf now " + discs.count + " discs, status: " + discs.status)
                 discShelfWindow.show()
                 break
+            case "pickdisc":
+                // `LAUNCHER_QT_ARG=<path>` through the "Add disc"
+                // field's *dialog*, not the model: a picked disc goes on
+                // the shelf on its own, and the field it came through is
+                // left empty (2026-09-09). Nothing that asks the model
+                // can see either half.
+                discs.openLibrary(machines.discLibraryPath())
+                discShelfWindow.show()
+                discShelfWindow.pickDisc(diag.arg)
+                diag.note("pickdisc: shelf " + discs.count + ", field ["
+                          + discShelfWindow.shownAdd + "], status: " + discs.status)
+                break
             case "discs":
                 if (diag.arg === "")
                     discs.openLibrary(machines.discLibraryPath())

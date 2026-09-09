@@ -298,6 +298,24 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   that for free from `editingFinished`, while the egui build re-sorts
   when the field loses focus, or the row would slide out from under the
   cursor typing into it.
+- **"Browse…" adds the disc, it does not fill a box** (2026-09-09,
+  user-reported): a file chosen in the dialog is on the shelf before the
+  dialog has finished closing. The dialog already asked the question
+  "Add to shelf" was there to ask a second time, and a picker whose only
+  visible effect is a path in a text field reads as one that did nothing.
+  "Add folder…" beside it was always this way, which is half of why the
+  other button looked broken. The field and its button stay, for a path
+  someone *types* — a mount the picker cannot reach, or one already on
+  the clipboard — and nothing is lost by the immediacy: a disc added by
+  mistake is one "Remove" away, and the shelf is a list of what you own,
+  not a document being drafted. Both front ends carry it (egui's
+  `path_field` hands its caller the path the *dialog* produced, Qt's
+  `PathField` has a `picked` signal beside `edited`), because it is a
+  decision, and the check that guards it is `qt-shelf` in
+  `scripts/test.sh`: a real file dialog belongs to the window system and
+  cannot be opened offscreen, so the probe hands the field the path the
+  dialog would have and asks the *window* whether the shelf grew and the
+  field emptied.
 - **A host folder is a disc too** ("Add folder…", both front ends): the
   shelf takes a directory, and the machine's drive is given
   `isodir:<path>`, which generates an ISO 9660 + Joliet volume over the
