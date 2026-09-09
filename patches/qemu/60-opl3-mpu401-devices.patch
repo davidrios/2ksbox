@@ -1,0 +1,80 @@
+Build the two music devices (hw/audio/opl3.c and hw/audio/mpu401.c,
+overlaid from libsynth/qemu/ by scripts/prepare-qemu.sh) when
+-Dlibsynth_dir names the directory holding liblibsynth.a, the Rust
+staticlib of the FM / General MIDI / CM-32L engines (libsynth/, built by
+scripts/configure-qemu.sh). The same arrangement patch 50 uses for
+libdisc, and for the same reason: the engines are ours, the wiring is
+the patch. Doc 20 §1 and §5.
+
+QEMU has no MPU-401 at all, and its sb16 carries no OPL — so before
+this, a guest's *music* had nowhere to go, whatever its sound card.
+
+--- a/hw/audio/meson.build
++++ b/hw/audio/meson.build
+@@ -11,6 +11,11 @@ system_ss.add(when: 'CONFIG_MARVELL_88W8618', if_true: files('marvell_88w8618.c'
+ system_ss.add(when: 'CONFIG_PCSPK', if_true: files('pcspk.c'))
+ system_ss.add(when: 'CONFIG_PL041', if_true: files('pl041.c', 'lm4549.c'))
+ system_ss.add(when: 'CONFIG_SB16', if_true: files('sb16.c'))
++# win98-xp-virt: the music devices — an OPL3 with the timers a detection
++# routine reads, and the MPU-401 QEMU has never had — over libsynth's
++# engines. Both files are overlaid by scripts/prepare-qemu.sh, and they
++# are built exactly when that staticlib was given (doc 20 §5).
++system_ss.add(when: libsynth, if_true: files('opl3.c', 'mpu401.c'))
+ system_ss.add(when: 'CONFIG_VT82C686', if_true: files('via-ac97.c'))
+ system_ss.add(when: 'CONFIG_WM8750', if_true: files('wm8750.c'))
+ system_ss.add(when: ['CONFIG_VIRTIO_SND', 'CONFIG_VIRTIO'], if_true: files('virtio-snd.c'))
+--- a/meson.build
++++ b/meson.build
+@@ -2025,6 +2025,25 @@ if get_option('libdisc_dir') != ''
+                                link_args: libdisc_libs)
+ endif
+ 
++# win98-xp-virt: libsynth, the music engines (a Rust staticlib built by
++# scripts/configure-qemu.sh) behind hw/audio/opl3.c and hw/audio/mpu401.c;
++# doc 20 §1. Same arrangement as libdisc above, and the same per-platform
++# link libraries, because it is the same Rust runtime underneath.
++libsynth = not_found
++if get_option('libsynth_dir') != ''
++  libsynth_lib = cc.find_library('libsynth', dirs: [get_option('libsynth_dir')],
++                                 static: true, required: true)
++  if host_os == 'darwin'
++    libsynth_libs = ['-liconv']
++  elif host_os == 'windows'
++    libsynth_libs = ['-lkernel32', '-lntdll', '-luserenv', '-lws2_32', '-ldbghelp']
++  else
++    libsynth_libs = ['-ldl', '-lm', '-lrt', '-lutil', '-lgcc_s']
++  endif
++  libsynth = declare_dependency(dependencies: [libsynth_lib, threads],
++                                link_args: libsynth_libs)
++endif
++
+ lzo = not_found
+ if not get_option('lzo').auto() or have_system
+   lzo = cc.find_library('lzo2', has_headers: ['lzo/lzo1x.h'],
+@@ -2441,6 +2460,7 @@ config_host_data.set('CONFIG_POSIX', host_os != 'windows')
+ config_host_data.set('CONFIG_WIN32', host_os == 'windows')
+ config_host_data.set('CONFIG_LZO', lzo.found())
+ config_host_data.set('CONFIG_CDIMAGE', libdisc.found())
++config_host_data.set('CONFIG_LIBSYNTH', libsynth.found())
+ config_host_data.set('CONFIG_MPATH', mpathpersist.found())
+ config_host_data.set('CONFIG_BLKIO', blkio.found())
+ if blkio.found()
+@@ -4855,6 +4875,7 @@ summary_info += {'TPM support':       have_tpm}
+ summary_info += {'libssh support':    libssh}
+ summary_info += {'lzo support':       lzo}
+ summary_info += {'cdimage (libdisc)':  libdisc}
++summary_info += {'music (libsynth)':   libsynth}
+ summary_info += {'snappy support':    snappy}
+ summary_info += {'bzip2 support':     libbzip2}
+ summary_info += {'lzfse support':     liblzfse}
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -198,6 +198,8 @@ option('lzfse', type : 'feature', value : 'auto',
+        description: 'lzfse support for DMG images')
+ option('libdisc_dir', type : 'string', value : '',
+        description: 'directory holding liblibdisc.a (win98-xp-virt: the CD-ROM image block driver, block/cdimage.c)')
++option('libsynth_dir', type : 'string', value : '',
++       description: 'directory holding liblibsynth.a (win98-xp-virt: the music engines behind hw/audio/opl3.c and hw/audio/mpu401.c)')
+ option('lzo', type : 'feature', value : 'auto',
+        description: 'lzo compression support')
+ option('rbd', type : 'feature', value : 'auto',

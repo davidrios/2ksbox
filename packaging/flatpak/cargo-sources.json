@@ -2901,6 +2901,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/moont/moont-1.0.0.crate",
+        "sha256": "a40ac0fccd2350245fcb1054c31dd19fc78a2a645b2841b50285b89683b8240c",
+        "dest": "cargo/vendor/moont-1.0.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"a40ac0fccd2350245fcb1054c31dd19fc78a2a645b2841b50285b89683b8240c\", \"files\": {}}",
+        "dest": "cargo/vendor/moont-1.0.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/moxcms/moxcms-0.8.1.crate",
         "sha256": "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b",
         "dest": "cargo/vendor/moxcms-0.8.1"
@@ -3013,6 +3026,19 @@
         "type": "inline",
         "contents": "{\"package\": \"0b577e2d69827c4740cba2b52efaad1c4cc7c73042860b199710b3575c68438d\", \"files\": {}}",
         "dest": "cargo/vendor/nom_locate-5.0.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/nuked-opl3/nuked-opl3-0.1.0.crate",
+        "sha256": "fe763ce652db623a34372b1628588faaee86af83195175acee070d92d1fe27b7",
+        "dest": "cargo/vendor/nuked-opl3-0.1.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"fe763ce652db623a34372b1628588faaee86af83195175acee070d92d1fe27b7\", \"files\": {}}",
+        "dest": "cargo/vendor/nuked-opl3-0.1.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -4378,6 +4404,19 @@
         "type": "inline",
         "contents": "{\"package\": \"cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f\", \"files\": {}}",
         "dest": "cargo/vendor/rustversion-1.0.23",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/rustysynth/rustysynth-1.3.6.crate",
+        "sha256": "e3ca93af923df5fc03beddbf464242620fd24daa9e10f9ecd56eb9571eb7ba38",
+        "dest": "cargo/vendor/rustysynth-1.3.6"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"e3ca93af923df5fc03beddbf464242620fd24daa9e10f9ecd56eb9571eb7ba38\", \"files\": {}}",
+        "dest": "cargo/vendor/rustysynth-1.3.6",
         "dest-filename": ".cargo-checksum.json"
     },
     {

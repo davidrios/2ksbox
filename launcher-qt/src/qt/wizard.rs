@@ -76,6 +76,24 @@ pub mod ffi {
         /// Set only while editing a machine whose adapter has been
         /// changed: the guest will find new hardware on its next start.
         #[qproperty(QString, video_warning)]
+        /// The sound card and what is on the MIDI port (doc 20 §6), the
+        /// same shape as the adapter above and for the same reason:
+        /// each family offers a different list. `soundfont` and
+        /// `mt32_roms` are the two files only the user can supply, and
+        /// `*_applies` says which of them this port needs.
+        #[qproperty(i32, sound)]
+        #[qproperty(QStringList, sound_labels)]
+        #[qproperty(bool, sound_is_default)]
+        #[qproperty(QString, sound_note)]
+        #[qproperty(QString, sound_warning)]
+        #[qproperty(i32, music)]
+        #[qproperty(QStringList, music_labels)]
+        #[qproperty(bool, music_is_default)]
+        #[qproperty(QString, music_note)]
+        #[qproperty(QString, soundfont)]
+        #[qproperty(bool, soundfont_applies)]
+        #[qproperty(QString, mt32_roms)]
+        #[qproperty(bool, mt32_roms_applies)]
         #[qproperty(bool, network)]
         #[qproperty(QString, network_note)]
         #[qproperty(bool, seamless_mouse)]
@@ -170,6 +188,25 @@ pub mod ffi {
         #[qinvokable]
         fn reset_video(self: Pin<&mut Wizard>);
 
+        /// The sound card and the MIDI port, as indices into their own
+        /// family's list, with the same reset each.
+        #[qinvokable]
+        fn choose_sound(self: Pin<&mut Wizard>, sound: i32);
+        #[qinvokable]
+        fn reset_sound(self: Pin<&mut Wizard>);
+        #[qinvokable]
+        fn choose_music(self: Pin<&mut Wizard>, music: i32);
+        #[qinvokable]
+        fn reset_music(self: Pin<&mut Wizard>);
+
+        /// The two files behind the MIDI port. Invokable rather than a
+        /// writable property for the reason `set_floppy_path` is: what
+        /// the form shows under the picker depends on them.
+        #[qinvokable]
+        fn set_soundfont_path(self: Pin<&mut Wizard>, soundfont: &QString);
+        #[qinvokable]
+        fn set_mt32_roms_path(self: Pin<&mut Wizard>, romdir: &QString);
+
         /// A floppy image was typed or browsed to: the boot note depends
         /// on it ("boot from floppy" with no image falls through to the
         /// hard disk), so this is the one text field with a consequence.
@@ -225,6 +262,10 @@ pub mod ffi {
 
         #[qinvokable]
         fn floppy_filter(self: &Wizard) -> QString;
+
+        /// The bank the General MIDI port plays through.
+        #[qinvokable]
+        fn soundfont_filter(self: &Wizard) -> QString;
     }
 
     // Publish the form's defaults from the constructor (see the impl
@@ -239,7 +280,7 @@ use cxx_qt_lib::{QString, QStringList};
 use launcher_core::browse::name_filter;
 use launcher_core::bundle::{Accel, Boot, CpuSpeed, Family, Optimization};
 use launcher_core::library;
-use launcher_core::wizard::{Form, DISK_FILTER, FLOPPY_FILTER, MEDIA_FILTER};
+use launcher_core::wizard::{Form, DISK_FILTER, FLOPPY_FILTER, MEDIA_FILTER, SOUNDFONT_FILTER};
 use std::path::PathBuf;
 use std::pin::Pin;
 
@@ -270,6 +311,19 @@ pub struct WizardRust {
     video_is_default: bool,
     video_note: QString,
     video_warning: QString,
+    sound: i32,
+    sound_labels: QStringList,
+    sound_is_default: bool,
+    sound_note: QString,
+    sound_warning: QString,
+    music: i32,
+    music_labels: QStringList,
+    music_is_default: bool,
+    music_note: QString,
+    soundfont: QString,
+    soundfont_applies: bool,
+    mt32_roms: QString,
+    mt32_roms_applies: bool,
     graphics_warning: bool,
     network: bool,
     network_note: QString,
@@ -391,6 +445,38 @@ impl ffi::Wizard {
         self.edit(Form::reset_video);
     }
 
+    fn choose_sound(self: Pin<&mut Self>, sound: i32) {
+        self.edit(|form| {
+            let c = at(form.sound_choices(), sound);
+            form.choose_sound(c);
+        });
+    }
+
+    fn reset_sound(self: Pin<&mut Self>) {
+        self.edit(Form::reset_sound);
+    }
+
+    fn choose_music(self: Pin<&mut Self>, music: i32) {
+        self.edit(|form| {
+            let m = at(form.music_choices(), music);
+            form.choose_music(m);
+        });
+    }
+
+    fn reset_music(self: Pin<&mut Self>) {
+        self.edit(Form::reset_music);
+    }
+
+    fn set_soundfont_path(self: Pin<&mut Self>, soundfont: &QString) {
+        let soundfont = soundfont.to_string();
+        self.edit(|form| form.soundfont = soundfont);
+    }
+
+    fn set_mt32_roms_path(self: Pin<&mut Self>, romdir: &QString) {
+        let romdir = romdir.to_string();
+        self.edit(|form| form.mt32_roms = romdir);
+    }
+
     fn set_floppy_path(self: Pin<&mut Self>, floppy: &QString) {
         let floppy = floppy.to_string();
         self.edit(|form| form.floppy = floppy);
@@ -446,6 +532,10 @@ impl ffi::Wizard {
 
     fn floppy_filter(&self) -> QString {
         qs(name_filter(FLOPPY_FILTER))
+    }
+
+    fn soundfont_filter(&self) -> QString {
+        qs(name_filter(SOUNDFONT_FILTER))
     }
 }
 
@@ -522,6 +612,9 @@ impl ffi::Wizard {
         let (seamless_mouse, seamless_mouse_note);
         let (graphics_note, graphics_warning);
         let (video, video_applies, video_labels, video_is_default, video_note, video_warning);
+        let (sound, sound_labels, sound_is_default, sound_note, sound_warning);
+        let (music, music_labels, music_is_default, music_note);
+        let (soundfont, soundfont_applies, mt32_roms, mt32_roms_applies);
         let (optimizations_mask, optimizations_summary, optimizations_note, optimizations_are_default);
         let (existing_disk, disk_path, disk_size_gb, install_media, floppy, boot, boot_note);
         let (shader_profile, advanced, advanced_toml, error);
@@ -558,6 +651,19 @@ impl ffi::Wizard {
             video_is_default = f.video_is_default();
             video_note = qs(f.video_notes().join("\n"));
             video_warning = qs_opt(f.video_warning());
+            sound = index_of(f.sound_choices(), f.sound());
+            sound_labels = labels(f.sound_choices().iter().map(|c| c.label()));
+            sound_is_default = f.sound_is_default();
+            sound_note = qs(f.sound_notes().join("\n"));
+            sound_warning = qs_opt(f.sound_warning());
+            music = index_of(f.music_choices(), f.music());
+            music_labels = labels(f.music_choices().iter().map(|m| m.label()));
+            music_is_default = f.music_is_default();
+            music_note = qs(f.music_notes().join("\n"));
+            soundfont = qs(&f.soundfont);
+            soundfont_applies = f.soundfont_applies();
+            mt32_roms = qs(&f.mt32_roms);
+            mt32_roms_applies = f.mt32_roms_applies();
             network = f.network();
             network_note = qs(f.network_notes().join("\n"));
             seamless_mouse = f.seamless_mouse();
@@ -609,6 +715,20 @@ impl ffi::Wizard {
         self.as_mut().set_video_is_default(video_is_default);
         self.as_mut().set_video_note(video_note);
         self.as_mut().set_video_warning(video_warning);
+        // The lists before the indices into them, as everywhere else.
+        self.as_mut().set_sound_labels(sound_labels);
+        self.as_mut().set_sound(sound);
+        self.as_mut().set_sound_is_default(sound_is_default);
+        self.as_mut().set_sound_note(sound_note);
+        self.as_mut().set_sound_warning(sound_warning);
+        self.as_mut().set_music_labels(music_labels);
+        self.as_mut().set_music(music);
+        self.as_mut().set_music_is_default(music_is_default);
+        self.as_mut().set_music_note(music_note);
+        self.as_mut().set_soundfont(soundfont);
+        self.as_mut().set_soundfont_applies(soundfont_applies);
+        self.as_mut().set_mt32_roms(mt32_roms);
+        self.as_mut().set_mt32_roms_applies(mt32_roms_applies);
         self.as_mut().set_graphics_warning(graphics_warning);
         self.as_mut().set_network(network);
         self.as_mut().set_network_note(network_note);

@@ -15,6 +15,9 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+// FolderDialog, for the one field that names a directory (the MT-32's
+// ROMs) rather than a file.
+import QtQuick.Dialogs
 import com._2ksbox.launcher
 
 // A real top-level window, not an in-window popup: the launcher's
@@ -286,6 +289,109 @@ Window {
                     wrapMode: Text.Wrap
                     font.pixelSize: 11
                     opacity: 0.75
+                }
+
+                // --- the sound card and the MIDI port (doc 20 §6) -----------
+                // Two pickers rather than one: the card is what the guest
+                // plays sound *effects* on and what it needs a driver for,
+                // the port is what its *music* is played by, and a machine
+                // of the era had both. The FM chip is in neither list — it
+                // comes with the card that carried one, as it did on the
+                // hardware, which is what the card's note says.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Label { text: qsTr("Sound card"); Layout.minimumWidth: 150 }
+                    ComboBox {
+                        Layout.preferredWidth: 260
+                        model: root.wizard.soundLabels
+                        currentIndex: root.wizard.sound
+                        onActivated: root.wizard.chooseSound(currentIndex)
+                    }
+                    Button {
+                        text: qsTr("Default")
+                        enabled: !root.wizard.soundIsDefault
+                        onClicked: root.wizard.resetSound()
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.wizard.soundWarning !== ""
+                    text: root.wizard.soundWarning
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    color: "#c88200"
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: root.wizard.soundNote
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    opacity: 0.75
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Label { text: qsTr("Music (MIDI)"); Layout.minimumWidth: 150 }
+                    ComboBox {
+                        Layout.preferredWidth: 260
+                        model: root.wizard.musicLabels
+                        currentIndex: root.wizard.music
+                        onActivated: root.wizard.chooseMusic(currentIndex)
+                    }
+                    Button {
+                        text: qsTr("Default")
+                        enabled: !root.wizard.musicIsDefault
+                        onClicked: root.wizard.resetMusic()
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: root.wizard.musicNote
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    opacity: 0.75
+                }
+                // The bank is optional — empty means the one we ship — and
+                // the ROMs are not: an MT-32 machine without them is refused
+                // when the form is saved, because nothing of Roland's can be
+                // shipped with this program.
+                PathField {
+                    Layout.fillWidth: true
+                    visible: root.wizard.soundfontApplies
+                    label: qsTr("SoundFont (optional)")
+                    nameFilter: root.wizard.soundfontFilter()
+                    value: root.wizard.soundfont
+                    onEdited: (path) => root.wizard.setSoundfontPath(path)
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.wizard.mt32RomsApplies
+                    spacing: 8
+                    Label { text: qsTr("MT-32 ROMs"); Layout.minimumWidth: 150 }
+                    TextField {
+                        id: mt32RomsField
+                        Layout.fillWidth: true
+                        text: root.wizard.mt32Roms
+                        placeholderText: qsTr("a directory holding your own CM-32L control and PCM ROMs")
+                        onEditingFinished: root.wizard.setMt32RomsPath(text)
+                    }
+                    Button {
+                        // A directory, so Qt's FolderDialog rather than the
+                        // PathField above: no name filter can express "a
+                        // folder" (the disc shelf's "Add folder…" has the
+                        // same problem).
+                        text: qsTr("Browse…")
+                        onClicked: mt32RomsDialog.open()
+                    }
+                }
+                FolderDialog {
+                    id: mt32RomsDialog
+                    title: qsTr("Where your Roland CM-32L ROMs are")
+                    currentFolder: root.wizard.mt32Roms !== "" ? "file://" + root.wizard.mt32Roms : ""
+                    onAccepted: root.wizard.setMt32RomsPath(selectedFolder.toString().replace(/^file:\/\//, ""))
                 }
 
                 // --- the host's 3D (ADR-013) --------------------------------

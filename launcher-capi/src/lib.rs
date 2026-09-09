@@ -799,8 +799,177 @@ pub unsafe extern "C" fn lc_wizard_video_warning(w: *const LcWizard) -> *mut c_c
     out_opt(handle!(w, std::ptr::null_mut()).0.video_warning())
 }
 
+/// The sound card, and what is on the machine's MIDI port (doc 20 §6).
+/// Two lists, both per family like the adapter's above — 98 chooses
+/// between a Sound Blaster, an AC'97 and a Gravis, XP between the AC'97
+/// and the SB16 — so both are asked of a live wizard. Neither list is
+/// ever empty ("no sound card" and "no MIDI port" are entries), so there
+/// is no `_applies` to ask first.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_sound_count(w: *const LcWizard) -> usize {
+    handle!(w, 0).0.sound_choices().len()
+}
+
+/// The label for one of them, or NULL past the end.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_sound_label(w: *const LcWizard, index: usize) -> *mut c_char {
+    match handle!(w, std::ptr::null_mut()).0.sound_choices().get(index) {
+        Some(c) => out(c.label()),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Which card is selected, as an index into that list.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_sound(w: *const LcWizard) -> usize {
+    let form = &handle!(w, 0).0;
+    index_of(form.sound_choices(), form.sound())
+}
+
+/// Pick one, by the same index. One past the end is ignored.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_set_sound(w: *mut LcWizard, sound: usize) {
+    let form = &mut handle_mut!(w, ()).0;
+    if let Some(c) = form.sound_choices().get(sound).copied() {
+        form.choose_sound(c);
+    }
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_sound_is_default(w: *const LcWizard) -> bool {
+    handle!(w, false).0.sound_is_default()
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_reset_sound(w: *mut LcWizard) {
+    handle_mut!(w, ()).0.reset_sound();
+}
+
+/// What the chosen card is and is not — whether it carries an FM chip,
+/// and what the guest needs before it makes a sound — newline-separated.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_sound_note(w: *const LcWizard) -> *mut c_char {
+    out(handle!(w, std::ptr::null_mut()).0.sound_notes().join("\n"))
+}
+
+/// "Changing this machine's card is a hardware change", or "".
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_sound_warning(w: *const LcWizard) -> *mut c_char {
+    out_opt(handle!(w, std::ptr::null_mut()).0.sound_warning())
+}
+
+/// How many MIDI ports this machine's family offers.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_music_count(w: *const LcWizard) -> usize {
+    handle!(w, 0).0.music_choices().len()
+}
+
+/// The label for one of them, or NULL past the end.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_music_label(w: *const LcWizard, index: usize) -> *mut c_char {
+    match handle!(w, std::ptr::null_mut()).0.music_choices().get(index) {
+        Some(m) => out(m.label()),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Which is selected, as an index into that list.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_music(w: *const LcWizard) -> usize {
+    let form = &handle!(w, 0).0;
+    index_of(form.music_choices(), form.music())
+}
+
+/// Pick one, by the same index. One past the end is ignored.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_set_music(w: *mut LcWizard, music: usize) {
+    let form = &mut handle_mut!(w, ()).0;
+    if let Some(m) = form.music_choices().get(music).copied() {
+        form.choose_music(m);
+    }
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_music_is_default(w: *const LcWizard) -> bool {
+    handle!(w, false).0.music_is_default()
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_reset_music(w: *mut LcWizard) {
+    handle_mut!(w, ()).0.reset_music();
+}
+
+/// What the chosen port is, newline-separated.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_music_note(w: *const LcWizard) -> *mut c_char {
+    out(handle!(w, std::ptr::null_mut()).0.music_notes().join("\n"))
+}
+
+/// Whether this port needs a bank of the user's own to be *offered* —
+/// the two paths themselves are plain text fields, `lc_wizard_get` /
+/// `lc_wizard_set`'s "soundfont" and "mt32_roms". The bank is optional
+/// (empty means the one the package ships); the ROM directory is not,
+/// and `lc_wizard_submit` refuses an MT-32 machine without it, since
+/// nothing of Roland's is redistributable.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_soundfont_applies(w: *const LcWizard) -> bool {
+    handle!(w, false).0.soundfont_applies()
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_mt32_roms_applies(w: *const LcWizard) -> bool {
+    handle!(w, false).0.mt32_roms_applies()
+}
+
 /// The plain text and flag fields, by name: "name", "disk_path",
-/// "install_media", "floppy", "advanced_toml", "shader_profile". One
+/// "install_media", "floppy", "soundfont", "mt32_roms",
+/// "advanced_toml", "shader_profile". One
 /// pair of accessors rather than a dozen, because these have no
 /// behaviour behind them — a field with a consequence has a `choose_*`
 /// above instead, and there is no way to reach one from here.
@@ -815,6 +984,8 @@ pub unsafe extern "C" fn lc_wizard_get(w: *const LcWizard, field: *const c_char)
         "disk_path" => out(f.disk_path.clone()),
         "install_media" => out(f.install_media.clone()),
         "floppy" => out(f.floppy.clone()),
+        "soundfont" => out(f.soundfont.clone()),
+        "mt32_roms" => out(f.mt32_roms.clone()),
         "advanced_toml" => out(f.advanced_toml.clone()),
         "shader_profile" => out(f.shader_profile.clone().unwrap_or_default()),
         _ => std::ptr::null_mut(),
@@ -832,6 +1003,8 @@ pub unsafe extern "C" fn lc_wizard_set(w: *mut LcWizard, field: *const c_char, v
         "disk_path" => f.disk_path = value,
         "install_media" => f.install_media = value,
         "floppy" => f.floppy = value,
+        "soundfont" => f.soundfont = value,
+        "mt32_roms" => f.mt32_roms = value,
         "advanced_toml" => f.advanced_toml = value,
         "shader_profile" => f.shader_profile = Some(value).filter(|v| !v.is_empty()),
         _ => return false,

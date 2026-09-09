@@ -112,6 +112,16 @@ every sample came from — a fine thing to point a user at, a poor thing
 to put inside a GPL package). Any `.sf2` can be picked instead, and the
 machine form says so.
 
+**Where the bank comes from is not the bundle's business.** A machine
+that simply says `synth=gm` is the normal case, and the device finds the
+file the way QEMU finds every other companion of ours (the Glide
+wrapper's search, patch 33): the `soundfont=` property, then
+`LIBSYNTH_SF2` — which a packaged player sets to its own copy
+(`player/src/companions.rs`) — then `soundfonts/TimGM6mb.sf2` in a
+checkout. So the same machine file works in a checkout, in a package and
+on someone else's install, and a bundle only ever names a bank the user
+chose themselves.
+
 **The MT-32 ROMs are the user's own.** Roland's control and PCM ROMs are
 not redistributable and nothing here carries them: the device is pointed
 at a *directory* and the two images are found by size (64 KiB control,
@@ -175,6 +185,15 @@ default**.
 | General MIDI (SoundFont) | the shipped bank, or the user's own |
 | Roland MT-32 / CM-32L | the user's ROMs |
 | None | no MPU-401 device at all — not a port that swallows notes, which is worse than no port: a game would pick it and play to nobody |
+
+**Win98 and DOS start on General MIDI; XP and `Other` start on None.**
+The first two have no synthesizer of their own — 98's MIDI output is the
+FM chip and a DOS machine has nothing else at all — so the port is what
+makes their music sound like music. XP ships a wavetable synthesizer
+with the operating system, and `Other` is the family we add no drivers
+to, so a port neither would use by default is hardware for nothing; both
+offer it one pick away, which is how an old game gets a real MT-32 under
+XP.
 
 The FM chip is **not** in that picker: it comes with the card that had
 one, exactly as the hardware did. Picking SB16 or AdLib puts an OPL3 on

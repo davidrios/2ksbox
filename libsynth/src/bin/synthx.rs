@@ -4,6 +4,9 @@
 //!                                   one .wav per case in <outdir> (listen to what failed)
 //!   synthx bank <file.sf2>          a note rendered through that bank: what the file is worth
 //!   synthx opl <out.wav> [seconds]  the FM tone the selftest programs, to hear by hand
+//!   synthx wavtone <file.wav> <hz>  a wav really holds that note: what the `music` check asks
+//!                                   of a wav QEMU's own audiodev recorded, with the guest's
+//!                                   ports written by the monitor rather than by us
 //!
 //! `--sf2 <file>` (or `LIBSYNTH_SF2`) is the SoundFont the General MIDI
 //! checks play through; without either it is the bank the packages ship,
@@ -51,6 +54,28 @@ fn main() {
             Some(p) => bank_info(Path::new(p)),
             None => usage(),
         },
+        "wavtone" => match (positional.get(1), positional.get(2)) {
+            (Some(p), Some(hz)) => {
+                let freq: f32 = hz.parse().unwrap_or(0.0);
+                match read_wav(Path::new(p)) {
+                    Ok((rate, pcm)) => match tone_at(&pcm, rate, freq) {
+                        Ok(note) => {
+                            println!("PASS wavtone          {p}: {note}");
+                            0
+                        }
+                        Err(why) => {
+                            println!("FAIL wavtone          {p}: {why}");
+                            1
+                        }
+                    },
+                    Err(e) => {
+                        println!("FAIL wavtone          {p}: {e}");
+                        1
+                    }
+                }
+            }
+            _ => usage(),
+        },
         "opl" => match positional.get(1) {
             Some(p) => {
                 let secs: f32 = positional.get(2).and_then(|s| s.parse().ok()).unwrap_or(2.0);
@@ -67,7 +92,7 @@ fn main() {
 }
 
 fn usage() -> i32 {
-    eprintln!("usage: synthx selftest <outdir> [--sf2 <file>] [--roms <dir>] | bank <in.sf2> | opl <out.wav> [seconds]");
+    eprintln!("usage: synthx selftest <outdir> [--sf2 <file>] [--roms <dir>] | bank <in.sf2> | opl <out.wav> [seconds] | wavtone <in.wav> <hz>");
     2
 }
 
@@ -337,6 +362,47 @@ fn tone_at(pcm: &[i16], rate: u32, freq: f32) -> Result<String, String> {
         ));
     }
     Ok(format!("{freq:.0} Hz at {want:.4}, {:.0}× its neighbours, {level:.4} RMS", want / worst.max(1e-9)))
+}
+
+/// A 16-bit PCM wav back in, for the checks that measure what QEMU's own
+/// `wav` audiodev recorded. Only the two chunks that backend writes, in
+/// the order it writes them.
+fn read_wav(path: &Path) -> Result<(u32, Vec<i16>), String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    if bytes.len() < 44 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err("not a RIFF/WAVE file".into());
+    }
+    let u32at = |o: usize| u32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]);
+    let u16at = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]);
+    let (mut pos, mut rate, mut channels, mut bits) = (12usize, 0u32, 0u16, 0u16);
+    while pos + 8 <= bytes.len() {
+        let id = &bytes[pos..pos + 4];
+        let size = u32at(pos + 4) as usize;
+        let body = pos + 8;
+        if id == b"fmt " && body + 16 <= bytes.len() {
+            channels = u16at(body + 2);
+            rate = u32at(body + 4);
+            bits = u16at(body + 14);
+        } else if id == b"data" {
+            let end = (body + size).min(bytes.len());
+            if bits != 16 || channels == 0 {
+                return Err(format!("{bits}-bit, {channels} channels: not 16-bit PCM"));
+            }
+            let mut pcm: Vec<i16> = bytes[body..end]
+                .chunks_exact(2)
+                .map(|c| i16::from_le_bytes([c[0], c[1]]))
+                .collect();
+            // Everything downstream measures the left channel of a
+            // stereo stream; a mono recording is doubled rather than
+            // special-cased.
+            if channels == 1 {
+                pcm = pcm.into_iter().flat_map(|s| [s, s]).collect();
+            }
+            return Ok((rate, pcm));
+        }
+        pos = body + size + (size & 1);
+    }
+    Err("no data chunk".into())
 }
 
 fn write_wav(path: &Path, rate: u32, pcm: &[i16]) {

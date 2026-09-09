@@ -131,6 +131,24 @@ backend later.
   finds new hardware on its next start and wants a driver before it has
   its desktop back. The test tools keep their own cirrus machines.
 
+- **A guest's music is ours too** (doc 20, M12, 2026-09-09). QEMU has no
+  MPU-401 at all and its `sb16` carries no OPL, so a game that asked a
+  Sound Blaster for *music* played to nobody here. `libsynth/` is a Rust
+  staticlib in `libdisc`'s shape — `nuked-opl3`, `rustysynth` and `moont`
+  (a Munt port), all pure Rust so no package gains a system library —
+  linked into QEMU behind two devices of ours, `hw/audio/opl3.c` (a
+  YMF262 at 0x388 and at a Sound Blaster's own base, timers included:
+  they are what an AdLib detection routine reads) and
+  `hw/audio/mpu401.c` (UART mode, `synth=gm|mt32`). **In QEMU, not in the
+  player**: music and the sound card then mix on one clock, and a
+  headless run can capture music to a wav — which is what the `music`
+  check does, by writing the ports from the monitor. The machine form
+  has a **sound-card** picker and a **music** picker (`bundle::Sound` /
+  `bundle::Music`); the FM chip is in neither, it comes with the card
+  that carried one. The bank ships (`soundfonts/TimGM6mb.sf2`, GPL-2) and
+  is found by the player's own rule, `LIBSYNTH_SF2`; **the MT-32's ROMs
+  are the user's own and nothing of Roland's is ever added here**.
+
 ## Conventions
 
 - Commit messages end with `Co-Authored-By: Claude …` only — **no
@@ -178,7 +196,8 @@ ninja -C build/qemu qemu-system-i386 qemu-img qemu-io libqemu-embed-i386.so   # 
 cargo build --release                       # default members (not the egui launcher)
 cargo check --release --workspace           # `launcher` + `launcher-capi`, kept from rotting
 (cd launcher-qt && cargo build --release)   # the launcher the packages ship; needs Qt 6
-# configure-qemu.sh also builds libdisc (the CD-ROM model) and links it into QEMU (patch 50)
+# configure-qemu.sh also builds libdisc (the CD-ROM model) and libsynth (the music
+# engines, doc 20) and links both into QEMU (patches 50 and 60)
 # Direct3D pass-through (doc 14) needs the executor too:
 scripts/prepare-dxvk.sh && scripts/configure-dxvk.sh && ninja -C build/dxvk && scripts/build-d3dpt-exec.sh
 # Glide pass-through (doc 12 §5) needs the host-side wrapper, which qemu-3dfx
@@ -242,6 +261,8 @@ GPU); don't propose wiring it in.
 | `tools/win98-driver-test.sh <image> [boot\|install]` | the Win98/Me display driver in a real guest, headless (doc 19, M10): installs the three binaries and the INF, boots on `-vga none -device d3dpt-vga` and reports the adapter's BARs, the driver's own `d3dpt9x:` / `d3dpt9dd:` / `d3dpthal:` lines through the DEBUG register, the screendump's colour count (16 or fewer = Windows fell back to VGA) and the VGA **text** page read out of VRAM, which is where a fatal exception writes itself (doc 19 §15) — believe that over the screendump. `PROG=<file.exe>` stages a program and names it in WIN.INI's `[windows] run=` so the shell starts it: this harness has no serial line and nothing to type at, and it is how the DirectDraw half is exercised at all, since nothing on a Win98 desktop calls `DirectDrawCreate`. The probe built for that is `ddprobe.exe` (creates a DirectDraw object, logs the HAL and HEL caps and calls WaitForVerticalBlank, leaves `C:\DDPROBE.LOG`). Works on a raw copy, never the user's image; the image it installs on is the driver-installed `test98` machine, not `~/vms/win98.qcow2` (a pre-BIOS-stamp install PnP does not match). Local only, not in `scripts/test.sh` |
 | `tools/win98-reboot-test.sh <image> [qmp\|guest\|both]` | a Win98 guest survives a **restart** (patch 22): boots an overlay headless, resets it both ways — a QMP `system_reset` and the Start menu's Shut Down → Restart — and requires a second SeaBIOS banner on the debugcon (the machine really reset) plus a whole boot's worth of disk reads after it (the guest really ran) with `LVT0` back to ExtINT. A screendump is no evidence here: the freeze this guards leaves a splash screen with a **blinking text caret**, drawn by `vga_draw_text` on the host with no guest running at all. `QEMU=`/`BIOS=0` runs the stock-QEMU control. Overlay only, never the image. Local only (needs a guest image), not in `scripts/test.sh` |
 | `launcher-capi/examples/smoke.c` | a third front end, in C, over the same models the egui and Qt builds use (`launcher-capi/include/launcher_core.h`): creates a DOS machine through the shared wizard and checks its answers (64 MB, a period processor, emulated, no network card, our own emulator fast paths all at their shipped setting and a checkbox that changes the count), then the disc shelf, the library and the profile editor. The `capi` check in `scripts/test.sh`; a scratch library, never the user's own. A changed default in a model fails here as well as in the two GUIs |
+| `target/release/synthx` (`cargo build --release -p libsynth`) | the music engines (doc 20) without QEMU: `selftest <dir>` runs the AdLib detection sequence, a 440 Hz FM note measured by Goertzel against its neighbours, the same note through the **shipped bank** byte by byte down the MPU-401's own path, and a running-status note-off with a real-time byte inside the note-on (the `libsynth` check; `--roms <dir>` adds the CM-32L, which otherwise SKIPs); `wavtone <file.wav> <hz>` is what the `music` check asks of a wav QEMU recorded; `bank <file.sf2>` says whether a bank of your own plays; `opl <out.wav>` writes the FM tone to listen to |
+| the `music` check in `scripts/test.sh` | the sound-card and music pickers (doc 20 §6) from a combo box to a real QEMU — each family's default is the card it always had, the FM chip follows the card, a card a family doesn't offer is refused, an MT-32 with no ROMs is refused at the form — and then the two devices **sounding**: the human monitor writes the ports a guest would (`o /b 0x388 …`, `o /b 0x330 …`), QEMU's own `wav` audiodev records what its mixer made of it, and the note has to be in the file |
 | `tools/x87-fast-test.c` | patch 05's x87 fast path equals the real x87 (x86-64 host oracle) |
 | the `optimizations` check in `scripts/test.sh` | the wizard's "Emulation optimizations" switches (`patches/qemu/README.md`, doc 07) from a checkbox to a real QEMU: a machine nobody has touched emits no property and writes no `[optimizations]` table, each switch lands on the option QEMU looks it up on (`-cpu` for the four CPU properties, `-accel tcg` for the three accelerator ones), our own `qemu-system-i386` accepts the exact line the launcher writes with all seven flipped, and "All defaults" empties the table again. The switches' *effect* is the guest batteries' job; this is the wiring between them and a checkbox |
 | the `pointer` check in `scripts/test.sh` | the wizard's "Seamless mouse" switch (doc 07, doc 03's grab model) from a checkbox to a real QEMU: a new Windows machine gets `-usb -device usb-tablet` (absolute — the host pointer is the guest cursor and the window never grabs), a new DOS machine gets neither (its mouse drivers read the PS/2 controller and would find nothing), turning it off removes the device *and* its controller and turning it back on restores them, and our own `qemu-system-i386` accepts both machines' lines |

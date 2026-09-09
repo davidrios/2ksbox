@@ -55,6 +55,22 @@ pub fn path_field(ui: &mut egui::Ui, label: &str, value: &mut String, filter: Op
     path_field_in(ui, label, value, filter, None);
 }
 
+/// The same for a field that names a *directory* — the MT-32's ROMs are
+/// two files whose names nobody agrees on, so the machine form asks for
+/// the folder they are in (doc 20 §4).
+pub fn dir_field(ui: &mut egui::Ui, label: &str, value: &mut String) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.text_edit_singleline(value);
+        if ui.button("Browse…").clicked() {
+            let start = browse_start(value, None);
+            if let Some(path) = pick_folder_headless(start.as_deref()) {
+                *value = path.display().to_string();
+            }
+        }
+    });
+}
+
 /// The same, with somewhere for the dialog to open when the field is
 /// still empty — the shader preset field points it at the preset
 /// collection, which is otherwise buried in a data directory nobody

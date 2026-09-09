@@ -123,6 +123,45 @@ int main(int argc, char **argv) {
     lc_string_free(pointer);
     lc_wizard_choose_seamless_mouse(w, false);
 
+    /* The sound card and the MIDI port (doc 20 §6). A DOS machine starts
+     * on the Sound Blaster — the card its games know how to find — and
+     * on a General MIDI port, because a DOS machine has no synthesizer
+     * of its own otherwise. The FM chip is in neither list: it comes
+     * with the card that carried one, which is what the note says. */
+    char *card = lc_wizard_sound_label(w, lc_wizard_sound(w));
+    check("a DOS machine starts on the Sound Blaster",
+          card && strstr(card, "Sound Blaster 16") != NULL, card);
+    lc_string_free(card);
+    check("...which is the family's own default", lc_wizard_sound_is_default(w), NULL);
+    char *card_note = lc_wizard_sound_note(w);
+    check("...and its note names the AUTOEXEC line",
+          card_note && strstr(card_note, "BLASTER=A220") != NULL, card_note);
+    lc_string_free(card_note);
+    char *port = lc_wizard_music_label(w, lc_wizard_music(w));
+    check("and on a General MIDI port", port && strstr(port, "General MIDI") != NULL, port);
+    lc_string_free(port);
+    check("the bank field is offered with it", lc_wizard_soundfont_applies(w), NULL);
+    check("...and the ROM one is not", !lc_wizard_mt32_roms_applies(w), NULL);
+    /* The Ensoniq is not on offer here — it is the `Other` family's card
+     * — so asking for it must leave the machine as it was. */
+    size_t cards = lc_wizard_sound_count(w);
+    lc_wizard_set_sound(w, cards + 4);
+    check("a card past the end of the list is ignored", lc_wizard_sound_is_default(w), NULL);
+    /* An MT-32 asks for ROMs this program will never ship, so picking it
+     * turns the ROM field on — and saving without one is refused, which
+     * `lc_wizard_submit` reports below in the machine this builds. */
+    for (size_t i = 0; i < lc_wizard_music_count(w); i++) {
+        char *label = lc_wizard_music_label(w, i);
+        if (label && strstr(label, "MT-32") != NULL) {
+            lc_wizard_set_music(w, i);
+        }
+        lc_string_free(label);
+    }
+    check("picking the MT-32 asks for its ROMs", lc_wizard_mt32_roms_applies(w), NULL);
+    check("...and stops asking for a bank", !lc_wizard_soundfont_applies(w), NULL);
+    lc_wizard_reset_music(w);
+    check("\"Default\" puts the port back", lc_wizard_music_is_default(w), NULL);
+
     /* The memory range is per family and a value outside it is clamped
      * here rather than refused at save time. */
     uint32_t min = 0, max = 0;

@@ -31,32 +31,50 @@ the 3dfx ones.
 
 ## State
 
-- **Stage 1 done (2026-09-09): the engines.** `libsynth` builds as an
-  rlib and a staticlib; `synthx selftest` passes the OPL3 detection
-  sequence, an FM note measured at 440 Hz, the shipped bank through the
-  MIDI byte-stream path, and a running-status note-off with a real-time
-  byte inside the note-on. MT-32 SKIPs without ROMs.
-- Stages 2–5 (the devices and the patch; the pickers; packaging; the
-  guest test) are the ordered next steps below.
+**Stages 1–4 landed 2026-09-09; a machine has music.**
+
+- **The engines.** `libsynth` builds as an rlib and a staticlib;
+  `synthx selftest` passes the OPL3 detection sequence, an FM note
+  measured at 440 Hz, the shipped bank through the MIDI byte-stream
+  path, and a running-status note-off with a real-time byte inside the
+  note-on. The MT-32 case SKIPs without ROMs — it has never been run
+  here, which is the one engine still unproven (see below).
+- **The devices**, behind **patch 60** (not 25: a number below 50 would
+  have had to fight patch 50's `meson.build` hunks for context).
+  `-device opl3[,sbbase=]` and `-device mpu401,synth=gm|mt32`, both
+  overlaid from `libsynth/qemu/`, both accepted by our own
+  `qemu-system-i386`, and both *sounding* into a wav.
+- **The pickers.** `bundle::Sound` / `bundle::Music` with doc 20 §6's
+  per-family choices and defaults, in `launcher-core` and drawn by both
+  front ends, the C API (`lc_wizard_sound_*`, `lc_wizard_music_*`) and
+  `launcherx --music`. The `music` check covers all of it.
+- **Packaging.** `soundfonts/TimGM6mb.sf2` into all four packages, found
+  through `LIBSYNTH_SF2` by `player/src/companions.rs`; the Linux
+  packager asks the staged player where the bank is, as it does for the
+  Glide wrapper. The three new crates are in the Flatpak's
+  `cargo-sources.json` — added by hand from `Cargo.lock`'s checksums
+  (verified against the downloaded `.crate` files), because
+  `scripts/gen-flatpak-cargo-sources.sh` does not run on macOS
+  (`sha256sum` usage differs); a Linux session should re-run the
+  generator and confirm it produces the same three entries.
 
 ## Next steps
 
-1. **The devices.** `libsynth/qemu/opl3.c` and `mpu401.c`, patch 25, the
-   `-Dlibsynth_dir` build wiring in `scripts/configure-qemu.sh`, the
-   overlay in `prepare-qemu.sh`. Done when our `qemu-system-i386`
-   accepts `-device opl3,audiodev=…` and `-device mpu401,synth=gm,…`
-   and a `-audiodev wav` run has sound in the file.
-2. **The pickers.** `bundle::Sound` / `bundle::Music`, the per-family
-   choices and defaults of doc 20 §6, the arguments, the wizard rows in
-   both front ends, the `music` check in `scripts/test.sh`, and the
-   `capi` smoke's expectations.
-3. **Packaging.** The bank into `share/2ksbox/soundfonts/`, the
-   `LIBSYNTH_SF2` fallback in `player/src/companions.rs` (the
-   `QEMU_GLIDE_LIB` pattern), and the four packagers' checks.
-4. **The guest end-to-end.** `tools/midi-guest-test.py`: a DOS program
-   playing an AdLib note and an MPU-401 melody, checked in the wav.
-5. **The host MIDI port** (doc 20 §8.1), which is the first thing that
-   is deliberately outside the stages above.
+1. **The guest end-to-end.** `tools/midi-guest-test.py`: a DOS program
+   that plays an AdLib note and an MPU-401 melody under `-audiodev wav`,
+   with the wav as the evidence. Everything above proves the chain from
+   the *ports* down; nothing yet proves a guest's own driver finds the
+   two devices.
+2. **The MT-32, once.** `synthx selftest --roms <dir>` on a machine that
+   has the ROMs: it is the one engine no check here has ever run.
+3. **Win98 in front of it.** Whether "MPU-401 Compatible" from Add New
+   Hardware really drives the port, and whether `mpu401`'s default
+   IRQ 9 collides with the ACPI SCI on an ACPI Win98 install — the
+   device raises it only to hand over an ACK, so if it does, the answer
+   is to write `irq=` off in the bundle or move it.
+4. **A DOS game with real MIDI music**, which is the point of all of it.
+5. **The host MIDI port** (doc 20 §8.1), the first thing deliberately
+   outside these stages.
 
 ## Rules
 

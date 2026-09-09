@@ -14,7 +14,7 @@
 //! screenshot verbs render real frames — synthetic egui input on one
 //! side, `QT_QPA_PLATFORM=offscreen` and `grabToImage` on the other.
 
-use crate::bundle::{self, Family, Machine, Optimization};
+use crate::bundle::{self, Family, Machine, Music, Optimization, Sound};
 use crate::{browse, control, disc_library, firstrun, library, machines, player, preview, shader_library,
     shader_profile, shader_source, shelf, snaps, wizard};
 use std::path::{Path, PathBuf};
@@ -277,6 +277,77 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                     if form.optimizations().is_default(opt) { "default" } else { "changed" }
                 );
             }
+        }
+        "--music" => {
+            // Headless equivalent of the machine form's two audio rows
+            // (doc 20 §6): the sound card, what is on the MIDI port, and
+            // the two files only the user can supply. With no arguments
+            // it reports, which is also how a bundle is read back after
+            // a change — the state, and whether it is the family's.
+            let usage = "usage: --music <machine.toml> [card|-] [gm|mt32|none|-] [soundfont|-] [romdir|-]";
+            let path: PathBuf = args.next().expect(usage).into();
+            let mut form = wizard::Form::default();
+            form.open_edit_path(path);
+            if let Some(e) = &form.error {
+                panic!("{e}");
+            }
+            let mut changed = false;
+            // A card this family does not offer is a no-op rather than
+            // an error, like the adapter in --wizard-edit: a script can
+            // then set the same field on every machine it walks.
+            match args.next().as_deref() {
+                None | Some("-") => {}
+                Some(key) => {
+                    changed = true;
+                    form.choose_sound(
+                        Sound::ALL
+                            .into_iter()
+                            .find(|c| c.key() == key)
+                            .unwrap_or_else(|| panic!("unknown sound card {key:?}; {usage}")),
+                    );
+                }
+            }
+            match args.next().as_deref() {
+                None | Some("-") => {}
+                Some(key) => {
+                    changed = true;
+                    form.choose_music(
+                        Music::ALL
+                            .into_iter()
+                            .find(|m| m.key() == key)
+                            .unwrap_or_else(|| panic!("unknown MIDI port {key:?}; {usage}")),
+                    );
+                }
+            }
+            for (field, value) in [(0, args.next()), (1, args.next())] {
+                let Some(value) = value else { continue };
+                if value == "-" {
+                    continue;
+                }
+                changed = true;
+                let value = if value == "none" { String::new() } else { value };
+                if field == 0 {
+                    form.soundfont = value;
+                } else {
+                    form.mt32_roms = value;
+                }
+            }
+            if changed && form.submit(&library::default_dir()).is_none() {
+                eprintln!("[music] {}", form.error.unwrap_or_default());
+                return Some(1);
+            }
+            println!(
+                "card\t{}\t{}",
+                form.sound().key(),
+                if form.sound_is_default() { "default" } else { "changed" }
+            );
+            println!(
+                "music\t{}\t{}",
+                form.music().key(),
+                if form.music_is_default() { "default" } else { "changed" }
+            );
+            println!("soundfont\t{}", if form.soundfont.is_empty() { "(the one we ship)" } else { &form.soundfont });
+            println!("romdir\t{}", if form.mt32_roms.is_empty() { "(none)" } else { &form.mt32_roms });
         }
         "--boot-disc" => {
             // Headless equivalent of a row's "Boot" button: which disc is
