@@ -237,11 +237,15 @@ tablet and keyboard only), and no joystick class in the input core — so
 each guest-facing path is new code in the patch queue. Three of them,
 because they reach different guests:
 
-- **Step 0 the host end:** `gilrs` in the player (evdev / XInput /
-  GameController), the binding + deadzone model in `launcher-core`, embed
-  API v8 (`qemu_embed_pad_axis` / `_btn` / `_hat`), and
-  `PLAYER_PAD_SCRIPT` — a synthetic pad, without which no headless check
-  can drive a controller and the whole track is hand-testing only.
+- **Step 0 the host end** ✅ 2026-09-09: `gilrs` in the player (evdev /
+  XInput / GameController), the abstract pad and its shaping in the new
+  `gamepad/` crate — shared the way `shader-chain` is, because the player
+  must not depend on the launcher — `bundle::Pad` (`none` / `keys`) and
+  its wizard row in `launcher-core`, `player --pads` and
+  `--pad-sweep`, and `PLAYER_PAD_SCRIPT`, a synthetic pad, without which
+  no headless check can drive a controller and the whole track is
+  hand-testing only. The `pad` check guards it. Embed API v8 moved to
+  path A, where it has a consumer.
 - **Path C the key mapping:** pad → the key and mouse events the player
   already sends. Every guest, no QEMU patch, no analog.
 - **Path A `usb-gamepad`** (patch 26): a gamepad report descriptor and

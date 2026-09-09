@@ -28,7 +28,9 @@
 //! directly.
 
 use crate::browse::Filter;
-use crate::bundle::{self, Accel, Boot, CpuSpeed, Family, Machine, Optimization, Optimizations, Video};
+use crate::bundle::{
+    self, Accel, Boot, CpuSpeed, Family, Machine, Optimization, Optimizations, Pad, Video,
+};
 use crate::disc_library::DISC_FILTER;
 use crate::{host_gpu, library, player};
 use std::path::{Path, PathBuf};
@@ -76,6 +78,13 @@ pub struct Form {
     /// a value carried across a family switch can be one the new family
     /// does not offer, and `choose_family` has to put it back.
     video: Video,
+    /// What a host gamepad does for this machine (M13). Public, unlike
+    /// `video`: every family offers the same pair today, so no value can
+    /// be stranded by a family switch and `choose_family` has nothing to
+    /// put back. That changes when path A lands and `Usb` exists on the
+    /// Windows families but not DOS — at which point this becomes
+    /// private and gains the same guard `video` has.
+    pub pad: Pad,
     pub existing_disk: bool,
     pub disk_path: String,
     pub disk_size_gb: u32,
@@ -149,6 +158,7 @@ impl Default for Form {
             floppy: String::new(),
             boot: Boot::default(),
             video: bundle::default_video(Family::Win98).unwrap_or(Video::Std),
+            pad: bundle::default_pad(Family::Win98),
             existing_disk: false,
             disk_path: String::new(),
             disk_size_gb: 2,
@@ -220,6 +230,7 @@ impl Form {
             // A DOS machine has no adapter of its own; the field only
             // matters once the family switches to one that has.
             video: machine.effective_video().unwrap_or(Video::Std),
+            pad: machine.effective_pad(),
             existing_disk: true,
             disk_path: machine.disk.display().to_string(),
             install_media: machine.boot_disc().map(|d| d.display().to_string()).unwrap_or_default(),
@@ -682,6 +693,52 @@ impl Form {
         }
     }
 
+    /// What this family offers a gamepad, first one its default — what a
+    /// picker fills itself from.
+    pub fn pad_choices(&self) -> &'static [Pad] {
+        bundle::pad_choices(self.family)
+    }
+
+    /// Whether there is anything to choose. Always true today; it exists
+    /// so a front end's row is written against the model rather than
+    /// against the fact that today's list is never empty.
+    pub fn pad_applies(&self) -> bool {
+        !self.pad_choices().is_empty()
+    }
+
+    pub fn pad_is_default(&self) -> bool {
+        self.pad == bundle::default_pad(self.family)
+    }
+
+    /// A setting this family does not offer is refused rather than
+    /// stored, the same way `choose_video` refuses an adapter.
+    pub fn choose_pad(&mut self, pad: Pad) {
+        if self.pad_choices().contains(&pad) {
+            self.pad = pad;
+        }
+    }
+
+    pub fn reset_pad(&mut self) {
+        self.pad = bundle::default_pad(self.family);
+    }
+
+    /// What the chosen setting means. `Keys` needs its limitation said
+    /// plainly and in the picker, not discovered: someone who turns it on
+    /// for a Direct3D game will otherwise conclude the pad is broken,
+    /// when what is actually true is that the game asked DirectInput and
+    /// there is no controller for it to find yet.
+    pub fn pad_notes(&self) -> &'static [&'static str] {
+        match self.pad {
+            Pad::None => &[
+                "A controller plugged into the host does nothing. The machine's keyboard and mouse are unaffected.",
+            ],
+            Pad::Keys => &[
+                "The pad presses keys: the d-pad and left stick are the arrow keys, and the four face buttons are Ctrl, Alt, Space and Enter — what a DOS or early-Windows action game reads by default.",
+                "It is a mapping, not a controller. There is no analog steering, and a game that asks DirectInput for a joystick still finds none: that needs the USB gamepad, which this build does not have yet.",
+            ],
+        }
+    }
+
     /// The one thing the boot picker can say that isn't obvious: a
     /// machine told to boot from a floppy it hasn't got.
     pub fn boot_note(&self) -> Option<&'static str> {
@@ -716,6 +773,7 @@ impl Form {
                 boot: None,
                 cpu_speed: None,
                 video: None,
+                pad: None,
                 optimizations: Optimizations::default(),
             },
             None => Machine::reference(self.family, self.name.clone(), disk),
@@ -747,6 +805,12 @@ impl Form {
         // machine to DOS cannot leave a `video` behind that the family
         // ignores and the next reader has to wonder about.
         machine.video = bundle::video_choices(self.family).contains(&self.video).then_some(self.video);
+        // Same rule as `video`: only a setting this family offers is
+        // written. Every family offers both today, so this always
+        // writes; the guard is here for when path A makes `Usb` a
+        // Windows-only entry and a machine switched to DOS must not
+        // keep it.
+        machine.pad = bundle::pad_choices(self.family).contains(&self.pad).then_some(self.pad);
         machine.floppy = Some(self.floppy.trim()).filter(|f| !f.is_empty()).map(PathBuf::from);
         machine.shader_profile = self.shader_profile.clone();
         // The single slot this form has is the machine's *boot* disc;

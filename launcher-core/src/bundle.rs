@@ -226,6 +226,102 @@ pub fn video_choices(family: Family) -> &'static [Video] {
     }
 }
 
+/// What a host gamepad does for this machine (M13,
+/// `docs/tracks/m13-gamepads.md`).
+///
+/// Only two entries today, and that is the honest state rather than a
+/// simplification: the other two guest-facing paths are devices QEMU
+/// does not have yet. A `usb-gamepad` (patch 26) will add `Usb` for XP,
+/// Win98 SE and Me, which see a HID pad on their in-box stack with
+/// nothing to install; a gameport at 0x201 (patch 27) will add
+/// `Gameport`, the only path that reaches DOS. Until each device exists
+/// its entry stays out of `pad_choices`, so the launcher can never write
+/// a command line our own `qemu-system-i386` would reject — the same
+/// rule the display-adapter picker follows for an adapter a family has
+/// no driver for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Pad {
+    /// A controller plugged into the host does nothing. The default, and
+    /// not merely the conservative choice: with `Keys` a resting stick
+    /// that drifts past the threshold holds an arrow key down, and on a
+    /// desktop that is a cursor sliding across the screen with no
+    /// visible cause. Someone who wants a pad says so.
+    #[default]
+    None,
+    /// The pad presses keys: the player maps its controls onto the key
+    /// events it already sends, against `pad::default_key_bindings`.
+    /// Reaches **every** guest — DOS, Win98 FE, XP, `Other` — because
+    /// there is no device for the guest to support. The cost is that it
+    /// is a mapping and not a controller: no analog anything, and a game
+    /// that enumerates DirectInput or reads 0x201 still finds nothing.
+    Keys,
+}
+
+impl Pad {
+    pub const ALL: [Pad; 2] = [Pad::None, Pad::Keys];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Pad::None => "No gamepad",
+            Pad::Keys => "Gamepad presses keys",
+        }
+    }
+
+    /// The name this serializes to. Must agree with the `rename_all`
+    /// above — `pad_lenient` reads through this, so a disagreement would
+    /// make every bundle's `pad` field fall back to the default in
+    /// silence. The `pad` check in `scripts/test.sh` writes a machine
+    /// and reads it back to prove they still agree.
+    pub fn name(self) -> &'static str {
+        match self {
+            Pad::None => "none",
+            Pad::Keys => "keys",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Pad> {
+        Pad::ALL.into_iter().find(|p| p.name() == name)
+    }
+}
+
+/// Reads `pad` **leniently**: a value this build has never heard of
+/// becomes `None` — the family default — instead of failing the whole
+/// bundle.
+///
+/// Unlike every other enum in this file, `Pad` is *known* to be gaining
+/// variants: paths A and B of the M13 track add `usb` and `gameport`,
+/// and the track doc says so. Once they land, a machine someone made in
+/// a newer build and opened in an older one would otherwise refuse to
+/// load at all — not "the pad setting was ignored" but "this machine
+/// does not exist", losing its disk, its discs and its shader profile
+/// over a field about a controller. That trade is never worth it, so
+/// this one field is read the forgiving way.
+fn pad_lenient<'de, D>(d: D) -> Result<Option<Pad>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(d)?.and_then(|s| Pad::from_name(&s)))
+}
+
+/// What each family offers, **first one its default**.
+///
+/// Every family gets the same pair, because neither entry is a device:
+/// `Keys` happens entirely in the player and reaches a guest that has
+/// never heard of a controller. That changes as soon as path A lands —
+/// `Usb` belongs on the Windows families and on `Other`, and never on
+/// DOS, which has no USB stack — and this function is where that
+/// asymmetry will live.
+pub fn pad_choices(_family: Family) -> &'static [Pad] {
+    &[Pad::None, Pad::Keys]
+}
+
+/// The pad setting a family starts on. Always the first of
+/// `pad_choices`, so the list and the default cannot disagree.
+pub fn default_pad(family: Family) -> Pad {
+    pad_choices(family).first().copied().unwrap_or(Pad::None)
+}
+
 /// Which drive the machine boots from. `Auto` leaves the order to QEMU,
 /// which tries the hard disk, then the floppy, then the CD — the right
 /// answer for an installed Windows and for the wizard's "boot the
@@ -610,6 +706,17 @@ pub struct Machine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<Video>,
 
+    /// What a host gamepad does for this machine (`Pad`). Absent = that
+    /// family's default, which is `Pad::None` everywhere — so a bundle
+    /// written before this field existed keeps behaving exactly as it
+    /// did, which for a gamepad means ignoring one.
+    #[serde(
+        default,
+        deserialize_with = "pad_lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pad: Option<Pad>,
+
     /// Which of our own emulator fast paths this machine runs with
     /// (`Optimization`), holding only what someone turned off — absent
     /// means all of them at their shipped setting.
@@ -786,6 +893,7 @@ impl Machine {
             boot: None,
             cpu_speed: Some(default_cpu_speed(family)),
             video: default_video(family),
+            pad: Some(default_pad(family)),
             optimizations: Optimizations::default(),
         }
     }
@@ -905,6 +1013,20 @@ impl Machine {
             Some(v) if choices.contains(&v) => v,
             _ => default,
         })
+    }
+
+    /// What this machine does with a host gamepad: its own setting, or
+    /// its family's default. A `pad` naming a setting this family does
+    /// not offer falls back the way `effective_video` does. That is also
+    /// where a bundle from a *later* launcher lands: `pad_lenient` has
+    /// already turned its unknown `usb` or `gameport` into `None`, and
+    /// this turns `None` into the family's default.
+    pub fn effective_pad(&self) -> Pad {
+        let choices = pad_choices(self.family);
+        match self.pad {
+            Some(p) if choices.contains(&p) => p,
+            _ => default_pad(self.family),
+        }
     }
 
     /// The `-vga` / `-device` pair that puts the machine's adapter on it.

@@ -12,6 +12,9 @@ mod dmabuf;
 mod iosurface;
 mod keymap;
 mod mode;
+// The host end of a gamepad (M13). Polled from `user_event`, on the UI
+// thread, once per published guest frame.
+mod pad;
 mod pattern;
 mod qemu_vm;
 mod qmp;
@@ -759,6 +762,10 @@ struct App {
     /// press to us and its release to the app that took over, and the guest
     /// would otherwise keep the Windows key down forever.
     keys_down: Vec<u32>,
+    /// The host gamepad, when this run has one to read (M13). `None` is
+    /// the ordinary case: no controller plugged in, no script, or a host
+    /// with no input access at all.
+    pads: Option<pad::Pads>,
     /// Set on CloseRequested: no further calls into the VM handle, which the
     /// QEMU thread is about to destroy.
     closing: bool,
@@ -1251,6 +1258,11 @@ impl ApplicationHandler for App {
         if self.gpu.is_some() {
             return;
         }
+        // Built here rather than in `main`: on macOS a HID source wants
+        // the run loop, and `resumed` is the first point at which the UI
+        // thread is running one.
+        self.pads = pad::Pads::from_env();
+
         let attrs = Window::default_attributes()
             .with_title("2ksbox player")
             .with_inner_size(LogicalSize::new(1280.0, 960.0));
@@ -1635,6 +1647,21 @@ impl ApplicationHandler for App {
                 }
             }
         }
+        // The gamepad, once per published guest frame. Here and not on
+        // the redraw: a wake arrives for every publish, but an occluded
+        // or minimized window is redrawn for none of them, and a pad that
+        // stopped being read whenever the window went behind a terminal
+        // would fail in exactly the headless runs the scripted source
+        // exists for.
+        if let (Some(pads), Some(Source::Qemu { display, .. })) = (self.pads.as_mut(), &self.source)
+        {
+            // Step 0 reads the pad and says what it saw; nothing is sent
+            // to the guest yet. Path C binds these to keys — `Pads`
+            // already holds the pressed/released answer for it
+            // (`is_pressed`), so what lands here is the binding lookup
+            // and `vm.key`, not another copy of the shaping.
+            let _events = pads.poll(display.published_seq());
+        }
         // QEMU published a frame (multiple wakes coalesce into one redraw)
         if let Some(gpu) = &self.gpu {
             gpu.window.request_redraw();
@@ -1736,6 +1763,18 @@ fn main() {
     if args.first().map(String::as_str) == Some("--companions") {
         companions::report();
         return;
+    }
+    // What gamepads this host can read, out of the binary that reads
+    // them: the answer no one can get from outside the process.
+    if args.first().map(String::as_str) == Some("--pads") {
+        pad::report();
+        return;
+    }
+    // The host end of the gamepad against a scripted pad: no window, no
+    // QEMU, nothing to clean up. The `pad` check.
+    if args.first().map(String::as_str) == Some("--pad-sweep") && args.len() >= 2 {
+        let frames: u64 = args[1].parse().unwrap_or(0);
+        std::process::exit(pad::sweep(frames));
     }
     let mut shader: Option<std::path::PathBuf> =
         std::env::var("PLAYER_SHADER").ok().map(Into::into);

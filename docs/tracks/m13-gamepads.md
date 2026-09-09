@@ -5,10 +5,13 @@ Read `docs/00-status.md` first for the global picture and the track
 rules, then this file, then doc 03 §"Input" for the grab model the pad
 has to sit beside and doc 07 §"Input" for what the front ends show.
 
-Opened 2026-09-09. Nothing is implemented — this doc is the design for
-all three guest-facing paths, written before any of them is built,
-because which one to build first is a product decision and the three do
-not share a guest end.
+Opened 2026-09-09 with the design for all three guest-facing paths,
+written before any of them was built, because which one to build first is
+a product decision and the three do not share a guest end.
+
+**Step 0 landed 2026-09-09.** The host end reads a pad, shapes it and
+says what it saw; nothing reaches a guest yet, which is path C. See
+"State" below for what is in and what the plan got wrong.
 
 Gamepads were a post-v1 candidate in doc 08 until this track opened.
 
@@ -35,16 +38,82 @@ not assumed:
 So the question is not "which QEMU device do we turn on", it is "which
 device do we write".
 
-## Scope and files (this track would own them)
+## State
 
-- `player/src/pad.rs` — the host end: `gilrs` → deadzone/curve → the
-  embed input queue. Plus `PLAYER_PAD_SCRIPT` (below).
+Step 0 is done and green in `scripts/test.sh host` (31 passed, 0 failed).
+What exists:
+
+- **`gamepad/`** — a new workspace crate holding the abstract pad:
+  `Control` (20 controls, face buttons named by *position* so a binding
+  does not move between an Xbox pad and a DualShock), `Shaping` (the
+  deadzone rescale and the two press thresholds) and `Binding` +
+  `default_key_bindings` for path C. Its own crate, shared the way
+  `shader-chain` is, for the reason under "What the plan got wrong".
+- **`player/src/pad.rs`** — the host end. Two sources behind one trait:
+  `gilrs` (verified enumerating on Linux) and `PLAYER_PAD_SCRIPT`.
+  Polled from `user_event`, on the **UI thread**, once per published
+  guest frame — not the QEMU thread, because on macOS a HID source wants
+  the process's run loop and the QEMU thread has none.
+- **`player --pads`** — what this host can actually read, out of the
+  binary that has to read it. The only place a build without the `gilrs`
+  feature or a sandbox with no `/dev/input` reports itself.
+- **`player --pad-sweep <frames>`** — the scripted pad with no window, no
+  QEMU and no guest.
+- **`bundle::Pad`** (`none` / `keys`), `pad_choices`, `default_pad`, the
+  `pad` field, `Form::choose_pad` / `pad_notes`, and the ninth
+  `--wizard-edit` argument.
+- **The `pad` check** in `scripts/test.sh`.
+- Packaging: `--device=input` in the Flatpak manifest, and
+  `cargo-sources.json` regenerated (1109 → 1133 sources).
+
+Verified rather than assumed: the KDE SDK **and** the Platform runtime
+both carry `libudev.so.1` and `libudev.pc`, which `gilrs` needs on Linux
+through `libudev-sys`; and `gilrs` cross-compiles clean for
+`x86_64-pc-windows-gnu`, so the Windows package is not at risk.
+
+Not done, and deliberately: nothing is sent to a guest. `Pads::is_pressed`
+is the hook path C picks up.
+
+### What the plan got wrong
+
+Two corrections, both worth keeping because the reasoning was wrong and
+not just the detail.
+
+1. **Embed API v8 does not belong in step 0.** The original scope put
+   `qemu_embed_pad_axis` / `_btn` / `_hat` here. There is nothing to
+   receive them: path C sends *keys* through the existing
+   `qemu_embed_key`, and the pad functions have no consumer until path A
+   or B has a device. Adding them now would have been dead API across a
+   version bump that every machine must rebuild for. **The v8 bump moves
+   to path A.**
+2. **The model could not live in `launcher-core`.** ADR-014 says a
+   binding and a deadzone are launcher-core's, and that is still true of
+   the *choices* — but the player cannot depend on launcher-core without
+   inverting the architecture: the player is the runtime, the launcher is
+   the manager that spawns it, and the player would end up carrying the
+   whole machine library. The precedent was already in the tree
+   (`shader-chain`, shared by both), so the shared half became the
+   `gamepad` crate and the deciding half stayed in `launcher-core` as
+   `bundle::Pad`.
+
+A third thing the plan simply did not foresee: **a control not yet seen
+counts as centred, not as unknown.** The obvious version emits a "change"
+the first time a resting stick reports itself, because the map has no
+entry for it. Harmless for a key and not harmless at all once path B
+makes an axis a position; the `pad` check pins it.
+
+## Scope and files (this track owns them)
+
+- `gamepad/` — the abstract pad, shared by the player and (from path C)
+  `launcher-core`. ✅
+- `player/src/pad.rs` — the host end: `gilrs` and the scripted source,
+  the shaping, `--pads` and `--pad-sweep`. ✅
 - `embed/libqemu_embed.{h,c}` — API **v8**: `qemu_embed_pad_axis` /
   `_btn` / `_hat`, enqueued from any thread and drained by the existing
   `qemu_embed_input_flush`, exactly like `qemu_embed_key`. Header
   `QEMU_EMBED_API_VERSION` (currently 7, `embed/libqemu_embed.h:138`)
   and `qemu-embed`'s `API_VERSION` (`qemu-embed/src/lib.rs:11`) move
-  together.
+  together. **Path A, not step 0** — see above.
 - `patches/qemu/26-usb-gamepad.patch` — path A.
 - `patches/qemu/27-gameport.patch` — path B.
   (25 is M12's OPL3/MPU-401 patch; 26–27 are free and sit in the input
@@ -57,7 +126,7 @@ device do we write".
 - `scripts/test.sh`: the `pad` check. `tools/pad-guest-test.sh`.
 - `packaging/flatpak/com._2ksbox.Launcher.yml` — one line, see Traps.
 
-## Step 0 — the host end, and the thing that makes this testable
+## Step 0 — the host end, and the thing that makes this testable  ✅
 
 Before any guest path, two pieces both of them need.
 
@@ -227,8 +296,8 @@ Integration and end-to-end only, per the policy.
 
 ## Next steps, in order
 
-1. **Step 0** — `gilrs` in the player, the launcher-core binding model,
-   and `PLAYER_PAD_SCRIPT`. Nothing else is testable without it.
+1. ~~**Step 0** — `gilrs` in the player, the binding model, and
+   `PLAYER_PAD_SCRIPT`.~~ **Done 2026-09-09.**
 2. **Path C** — the key mapping. Smallest, reaches every guest, and it
    exercises the whole host end and the launcher model against a guest
    that needs no new device.
@@ -242,11 +311,17 @@ DOS games that never read a joystick and for Win98 FE.
 
 ## Traps
 
-- **The Flatpak sees no input devices.** `finish-args` is
-  `--device=kvm` and `--device=dri` and nothing else
-  (`packaging/flatpak/com._2ksbox.Launcher.yml:32`). A gamepad needs
-  `--device=input`. One line, invisible until someone plugs a pad into
-  the Flatpak and nothing happens.
+- ~~**The Flatpak sees no input devices.**~~ Fixed in step 0:
+  `--device=input` is in `finish-args`. It was invisible until someone
+  plugged a pad into the Flatpak and nothing happened, which is why
+  `player --pads` exists — run it *inside* the sandbox to tell "no
+  controller" from "no permission".
+- **`gilrs` links libudev on Linux** (through `libudev-sys`), so the
+  player has a system dependency it did not have before. Checked in step
+  0: `org.kde.Sdk` 6.10 has `libudev.pc` and `org.kde.Platform` 6.10 has
+  `libudev.so.1`, so the Flatpak builds and runs. A host or sandbox
+  without it builds `--no-default-features` and gets the scripted pad
+  only, which the feature exists for.
 - **The embed API version.** Header and the `qemu-embed` crate move
   together, and every machine rebuilds the library before the player
   links, or it is `undefined symbol _qemu_embed_…`.

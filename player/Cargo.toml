@@ -5,8 +5,21 @@ edition.workspace = true
 license.workspace = true
 description = "Standalone player: in-process QEMU + wgpu/librashader display (doc 02/03). M0: native window + test pattern."
 
+# On by default, so what a build reads a gamepad with is decided here
+# and not by what the machine happened to have — the same rule
+# `configure-qemu.sh` follows for QEMU's optional libraries. The feature
+# exists as a deliberate escape hatch, not as auto-detection: on Linux
+# `gilrs` links libudev, and a host or sandbox without it builds with
+# `--no-default-features` and gets a player whose only pad is
+# `PLAYER_PAD_SCRIPT`.
+[features]
+default = ["gilrs"]
+gilrs = ["dep:gilrs"]
+
 [dependencies]
 qemu-embed = { path = "../qemu-embed" }
+gamepad = { path = "../gamepad" }
+gilrs = { version = "0.11", optional = true }
 winit = "0.30"
 libc = "0.2"
 serde_json = "1"

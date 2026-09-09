@@ -100,6 +100,22 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 # Ctrl+Alt+S writes the guest's own frame — its native size, no geometry stage and
 #   no CRT chain — as PLAYER_SHOT_DIR/2ksbox-NNNN.png (the next free number; the
 #   working directory when PLAYER_SHOT_DIR is unset). Ctrl+Alt+G releases the grab.
+# Gamepad (M13 step 0, docs/tracks/m13-gamepads.md). The host end only: the pad is
+#   read, shaped and logged, and nothing reaches the guest yet — that is path C.
+#   `player --pads` says what this host can read, which is the one place a build
+#   without the `gilrs` feature or a sandbox with no /dev/input reports itself.
+# PLAYER_PAD_SCRIPT="30:lx=1.0,45:south=1,51:south=0" is a synthetic pad: set a
+#   control to a value at a guest frame number. Frames, not milliseconds, so a run
+#   lands in the same place in the guest's execution every time (as PLAYER_KEYS does).
+#   Controls: lx/ly/rx/ry (axes, -1.0..1.0; negative is left/up), south/east/west/
+#   north, dpad_up/down/left/right, l1/r1/l2/r2, l3/r3, select/start (0 or 1).
+#   It wins over real hardware, so a test is not perturbed by what is plugged in.
+# PLAYER_PAD_LOG=1 prints every shaped reading with its press/release transitions
+# PLAYER_PAD_SHAPING="0.30,0.55,0.40" overrides deadzone,press,release — the press
+#   and release thresholds differ on purpose, and release must be the lower of the
+#   two: with one number a stick held at it chatters at the poll rate
+# player --pad-sweep <frames> replays PLAYER_PAD_SCRIPT with no window, no QEMU and
+#   no guest, and prints what came out — the `pad` check in scripts/test.sh
 # PLAYER_LATENCY=1 prints publish→present latency percentiles every 240 guest frames
 # PLAYER_REFRESH_LOG=1 prints a guest frame counter every 100 frames — whether the
 #   guest is drawing at all. Off by default: a machine left running printed it for

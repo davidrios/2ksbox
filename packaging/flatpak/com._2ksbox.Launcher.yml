@@ -34,6 +34,11 @@ finish-args:
   # for the shader chain and the guest's 3D.
   - --device=kvm
   - --device=dri
+  # A gamepad (M13). `--device=dri` does not cover /dev/input, and
+  # without this the player's gilrs source comes up seeing no controller
+  # at all — silently, since a host with nothing plugged in looks the
+  # same. `player --pads` inside the sandbox is what tells the two apart.
+  - --device=input
   # Wayland first, X11 as the fallback the player's winit build expects.
   - --socket=wayland
   - --socket=fallback-x11
