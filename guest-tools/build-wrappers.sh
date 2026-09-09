@@ -173,11 +173,11 @@ cp "$W"/README.md "$OUT/iso/WINED3D/WINE9X.TXT"
 # (gen_vtbl.py) and checked in.
 i686-w64-mingw32-gcc -O2 -Wall -shared -o "$OUT/iso/D3DPT/d3d9.dll" "$ROOT/guest-tools/src/d3dpt/d3d9.c" \
   "$FX/wrappers/fxlib/fxlibnt.c" "$FX/wrappers/fxlib/fxlib9x.c" -I"$FX/wrappers/fxlib" \
-  -static-libgcc -Wl,--kill-at -lgdi32 -luser32 -lpsapi
+  -static-libgcc -Wl,--kill-at -lgdi32 -luser32
 # Direct3D 8 over the same device (doc 14 P4): d3d8.c includes d3d9.c, one DLL.
 i686-w64-mingw32-gcc -O2 -Wall -shared -o "$OUT/iso/D3DPT/d3d8.dll" "$ROOT/guest-tools/src/d3dpt/d3d8.c" \
   "$FX/wrappers/fxlib/fxlibnt.c" "$FX/wrappers/fxlib/fxlib9x.c" -I"$FX/wrappers/fxlib" \
-  -static-libgcc -Wl,--kill-at -lgdi32 -luser32 -lpsapi
+  -static-libgcc -Wl,--kill-at -lgdi32 -luser32
 # DirectDraw 7 shim (d3dpt/ddraw.c): forwards to the system ddraw.dll and
 # reports 256 MB of video memory. RenderWare launchers (GTA Vice City) ask
 # DirectDraw, not Direct3D, and refuse the Cirrus adapter's 4 MB.
@@ -197,10 +197,17 @@ i686-w64-mingw32-gcc -O2 -Wall -shared -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcr
 # by which folder it came from — SETUP.EXE's /GAME does that.
 # Reference workloads (doc 14 P0a): the same deterministic game-like scene on
 # Direct3D 9 and Direct3D 8; -frames N -dump N x.bmp for golden images.
-i686-w64-mingw32-gcc -O2 -o "$T/d3dgame9.exe" "$ROOT/guest-tools/src/d3dgame9.c" -ld3d9 -lgdi32 -luser32
-i686-w64-mingw32-gcc -O2 -o "$T/d3dgame8.exe" "$ROOT/guest-tools/src/d3dgame8.c" -ld3d8 -lgdi32 -luser32
+# msvcrt, never the UCRT: modern mingw defaults to api-ms-win-crt-*.dll, which
+# no era Windows has — a UCRT-linked build runs only on an image that happens
+# to carry the redistributable, and dies before main() everywhere else (it did
+# on Win98, silently: the process never reached DirectDraw). M10, 2026-09-08.
+i686-w64-mingw32-gcc -O2 -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 \
+  -o "$T/d3dgame9.exe" "$ROOT/guest-tools/src/d3dgame9.c" -ld3d9 -lgdi32 -luser32
+i686-w64-mingw32-gcc -O2 -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 \
+  -o "$T/d3dgame8.exe" "$ROOT/guest-tools/src/d3dgame8.c" -ld3d8 -lgdi32 -luser32
 # Feature test (doc 14 P3): shaders, declarations, state blocks, queries, cube maps, surfaces.
-i686-w64-mingw32-gcc -O2 -o "$T/d3dfeat9.exe" "$ROOT/guest-tools/src/d3dfeat9.c" -ld3d9 -lgdi32 -luser32
+i686-w64-mingw32-gcc -O2 -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 \
+  -o "$T/d3dfeat9.exe" "$ROOT/guest-tools/src/d3dfeat9.c" -ld3d9 -lgdi32 -luser32
 # D3D9 smoke test (guest-tools/src/d3d9test.c): adapter string, HAL caps,
 # x87 control word after CreateDevice, spinning triangle with fps.
 i686-w64-mingw32-gcc -O2 -o "$T/d3d9test.exe" "$ROOT/guest-tools/src/d3d9test.c" -ld3d9 -lgdi32 -luser32

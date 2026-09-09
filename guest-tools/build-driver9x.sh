@@ -474,6 +474,11 @@ PYPE
      -march=pentium3 -mtune=generic \
      -o "$OUT/dxttest.exe" "$ROOT/guest-tools/src/d3dptvid/dxttest.c" -ld3d8 -lgdi32 -luser32
 
+  echo "==> d3dgame8.exe (the M4 DX8 reference scene, no wrapper DLL)"
+  "$HALCC" -O2 -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/d3dgame8.exe" "$ROOT/guest-tools/src/d3dgame8.c" -ld3d8 -lgdi32 -luser32
+
   echo "==> shtest.exe (vertex / pixel shaders 1.x through d3d8.dll on the DX8 DDI)"
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
      -march=pentium3 -mtune=generic \

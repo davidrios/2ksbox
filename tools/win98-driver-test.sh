@@ -75,7 +75,62 @@ BOOT_WAIT="${BOOT_WAIT:-150}"
 # What a PROG may leave in C:\ — deleted before the run and read back after,
 # so what comes out at the end is this run's or nothing. One list, because
 # three copies of it is how a new test's log silently never gets collected.
-PROG_OUTPUTS="DDPROBE.LOG D3D7TEST.LOG D3D7TEST.BMP EBTEST.LOG EB1.BMP EB2.BMP EB3.BMP EB4.BMP EB5.BMP CKTEST.LOG DXTTEST.LOG SHTEST.LOG"
+PROG_OUTPUTS="DDPROBE.LOG D3D7TEST.LOG D3D7TEST.BMP EBTEST.LOG EB1.BMP EB2.BMP EB3.BMP EB4.BMP EB5.BMP CKTEST.LOG DXTTEST.LOG SHTEST.LOG D3DGAME8.LOG G8.BMP 3DMARK.TXT"
+
+# Stage PROG in C:\ and name it in WIN.INI's [windows] run=, with PROG_ARGS
+# after it, so the shell starts it at logon. This guest has no serial line and
+# nothing to type at, so `run=` is the only way anything here calls DirectDraw
+# or Direct3D at all. One function because the install and boot paths both do
+# it and two copies is how they drift.
+stage_prog() {
+  # **`run=` takes a program, never arguments.** Windows 9x drops anything
+  # after the path — measured 2026-09-08: d3dgame8 logged `arg[0]` alone, so
+  # its `-frames 600 -dump 300` never arrived, it rendered without end and was
+  # still running when the shutdown came (which is why the machine would not
+  # power off). So `run=` names a batch file and the batch carries the command
+  # line. That is also what lets a run drive a program that is *installed* in
+  # the guest rather than staged, which cannot be copied to C:\ because it
+  # needs its own directory: give GUEST_CMD the lines to run, in 8.3 names
+  # (COMMAND.COM has no use for long ones).
+  : > "$OUT/run.bat"
+  printf '@echo off\r\n' >> "$OUT/run.bat"
+  if [ -n "${GUEST_CMD:-}" ]; then
+    printf '%s\r\n' "$GUEST_CMD" >> "$OUT/run.bat"
+    echo "==> RUN.BAT: $GUEST_CMD"
+  else
+    pbase="$(basename "$PROG" | tr a-z A-Z)"
+    echo "==> staging $pbase${PROG_ARGS:+ $PROG_ARGS} and running it from RUN.BAT"
+    mattrib -i "$RAW@@$OFF" -r "::/$pbase" 2>/dev/null || true
+    mcopy -i "$RAW@@$OFF" -o "$PROG" "::/$pbase"
+    printf 'C:\\%s %s\r\n' "$pbase" "${PROG_ARGS:-}" >> "$OUT/run.bat"
+  fi
+  # Close the DOS box the batch runs in. Without this COMMAND.COM sits there
+  # after the program is launched, and a run then ends with "the machine did
+  # not power off" — which leaves the FAT dirty and makes the *next* boot a
+  # ScanDisk (or safe mode), i.e. it looks exactly like the thing under test
+  # having failed. Launching a Windows program from a batch returns at once,
+  # so exiting here does not cut the program short.
+  printf 'exit\r\n' >> "$OUT/run.bat"
+  mattrib -i "$RAW@@$OFF" -r ::/RUN.BAT 2>/dev/null || true
+  mcopy -i "$RAW@@$OFF" -o "$OUT/run.bat" ::/RUN.BAT
+  mcopy -i "$RAW@@$OFF" -n ::/WINDOWS/WIN.INI "$OUT/win.ini"
+  python3 - "$OUT/win.ini" <<'PYWIN'
+import re, sys
+p = sys.argv[1]
+b = open(p, 'rb').read()
+line = b'run=C:\\RUN.BAT'
+m = re.search(br'^run=[^\r\n]*', b, re.M | re.I)
+if m:
+    b = b[:m.start()] + line + b[m.end():]
+else:
+    m = re.search(br'^\[windows\]\r?\n', b, re.M | re.I)
+    if not m:
+        sys.exit("WIN.INI has no [windows] section")
+    b = b[:m.end()] + line + b'\r\n' + b[m.end():]
+open(p, 'wb').write(b)
+PYWIN
+  mcopy -i "$RAW@@$OFF" -o "$OUT/win.ini" ::/WINDOWS/WIN.INI
+}
 
 [ -x "$QEMU" ] || { echo "no QEMU at $QEMU (QEMU_BIN= to point elsewhere)"; exit 1; }
 [ -f "$DRV/d3dpt9x.drv" ] || { echo "run guest-tools/build-driver9x.sh first"; exit 1; }
@@ -178,29 +233,9 @@ PYINI
   # whatever it leaves on C:; the driver's is in the QEMU log.
   #
   # In binary, like SYSTEM.INI above, and for the same reason.
-  if [ -n "${PROG:-}" ]; then
-    [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
-    pbase="$(basename "$PROG" | tr a-z A-Z)"
-    echo "==> staging $pbase and naming it in WIN.INI's run="
-    mattrib -i "$RAW@@$OFF" -r "::/$pbase" 2>/dev/null || true
-    mcopy -i "$RAW@@$OFF" -o "$PROG" "::/$pbase"
-    mcopy -i "$RAW@@$OFF" -n ::/WINDOWS/WIN.INI "$OUT/win.ini"
-    python3 - "$OUT/win.ini" "$pbase" <<'PYWIN'
-import re, sys
-p, prog = sys.argv[1], sys.argv[2].encode()
-b = open(p, 'rb').read()
-line = b'run=C:\\' + prog
-m = re.search(br'^run=[^\r\n]*', b, re.M | re.I)
-if m:
-    b = b[:m.start()] + line + b[m.end():]
-else:
-    m = re.search(br'^\[windows\]\r?\n', b, re.M | re.I)
-    if not m:
-        sys.exit("WIN.INI has no [windows] section")
-    b = b[:m.end()] + line + b'\r\n' + b[m.end():]
-open(p, 'wb').write(b)
-PYWIN
-    mcopy -i "$RAW@@$OFF" -o "$OUT/win.ini" ::/WINDOWS/WIN.INI
+  if [ -n "${PROG:-}${GUEST_CMD:-}" ]; then
+    [ -n "${GUEST_CMD:-}" ] || [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
+    stage_prog
   fi
 
   # **Turn the logo off and the boot log on.** A boot that stalls behind the
@@ -246,28 +281,9 @@ else
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9v.vxd" ::/WINDOWS/SYSTEM/D3DPT9V.VXD
   [ -f "$DRV/d3dpt9hl.dll" ] &&
     mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9hl.dll" ::/WINDOWS/SYSTEM/D3DPT9HL.DLL
-  if [ -n "${PROG:-}" ]; then
-    [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
-    pbase="$(basename "$PROG" | tr a-z A-Z)"
-    mattrib -i "$RAW@@$OFF" -r "::/$pbase" 2>/dev/null || true
-    mcopy -i "$RAW@@$OFF" -o "$PROG" "::/$pbase"
-    mcopy -i "$RAW@@$OFF" -n ::/WINDOWS/WIN.INI "$OUT/win.ini"
-    python3 - "$OUT/win.ini" "$pbase" <<'PYWIN'
-import re, sys
-p, prog = sys.argv[1], sys.argv[2].encode()
-b = open(p, 'rb').read()
-line = b'run=C:\\' + prog
-m = re.search(br'^run=[^\r\n]*', b, re.M | re.I)
-if m:
-    b = b[:m.start()] + line + b[m.end():]
-else:
-    m = re.search(br'^\[windows\]\r?\n', b, re.M | re.I)
-    if not m:
-        sys.exit("WIN.INI has no [windows] section")
-    b = b[:m.end()] + line + b'\r\n' + b[m.end():]
-open(p, 'wb').write(b)
-PYWIN
-    mcopy -i "$RAW@@$OFF" -o "$OUT/win.ini" ::/WINDOWS/WIN.INI
+  if [ -n "${PROG:-}${GUEST_CMD:-}" ]; then
+    [ -n "${GUEST_CMD:-}" ] || [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
+    stage_prog
   fi
 fi
 
