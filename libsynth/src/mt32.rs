@@ -42,6 +42,12 @@ impl Mt32 {
     }
 }
 
+/// The PCM ROM of an *original* MT-32 — half the CM-32L's. Not a size we
+/// can use (the engine is a CM-32L), but much the likeliest thing to
+/// find in a directory someone points at this, so it is worth saying so
+/// rather than reporting that nothing was found.
+const MT32_PCM_SIZE: usize = 512 * 1024;
+
 /// The two ROM images in a directory, by size rather than by name: a
 /// control ROM is exactly 64 KiB and a PCM ROM exactly 1 MiB, and the
 /// dumps people have are called CM32L_CONTROL.ROM, cm32l_ctrl.rom,
@@ -50,6 +56,7 @@ fn find_roms(dir: &Path) -> Result<(Vec<u8>, Vec<u8>), String> {
     let entries = std::fs::read_dir(dir)
         .map_err(|e| format!("MT-32 ROM directory {}: {e}", dir.display()))?;
     let (mut control, mut pcm) = (None, None);
+    let mut mt32_pcm = false;
     for entry in entries.flatten() {
         let path = entry.path();
         let len = match entry.metadata() {
@@ -59,23 +66,41 @@ fn find_roms(dir: &Path) -> Result<(Vec<u8>, Vec<u8>), String> {
         let slot = match len {
             cm32l::CONTROL_SIZE => &mut control,
             cm32l::PCM_SIZE => &mut pcm,
+            MT32_PCM_SIZE => {
+                mt32_pcm = true;
+                continue;
+            }
             _ => continue,
         };
         if slot.is_none() {
             *slot = Some(path);
         }
     }
-    let read = |what: &str, p: Option<std::path::PathBuf>| -> Result<Vec<u8>, String> {
+    let read = |what: &str, want: usize, p: Option<std::path::PathBuf>| -> Result<Vec<u8>, String> {
         let p = p.ok_or_else(|| {
-            format!(
-                "no CM-32L {what} ROM in {} (looking for a {} byte file)",
-                dir.display(),
-                if what == "control" { cm32l::CONTROL_SIZE } else { cm32l::PCM_SIZE }
-            )
+            let mut msg = format!(
+                "no CM-32L {what} ROM in {} (looking for a {want} byte file)",
+                dir.display()
+            );
+            // The one wrong answer worth naming: an original MT-32's PCM
+            // ROM is half the size, and this engine is a CM-32L. A game
+            // written for an MT-32 plays on a CM-32L — the module is a
+            // superset — but the ROMs are not interchangeable.
+            if mt32_pcm && want == cm32l::PCM_SIZE {
+                msg.push_str(concat!(
+                    ". There is a 524288 byte one here, which is an original ",
+                    "MT-32's: this emulates the CM-32L, whose PCM ROM is 1 MiB ",
+                    "— a CM-32L, CM-64 or LAPC-I dump is what it wants",
+                ));
+            }
+            msg
         })?;
         std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))
     };
-    Ok((read("control", control)?, read("PCM", pcm)?))
+    Ok((
+        read("control", cm32l::CONTROL_SIZE, control)?,
+        read("PCM", cm32l::PCM_SIZE, pcm)?,
+    ))
 }
 
 impl Voice for Mt32 {

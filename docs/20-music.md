@@ -122,13 +122,26 @@ checkout. So the same machine file works in a checkout, in a package and
 on someone else's install, and a bundle only ever names a bank the user
 chose themselves.
 
-**The MT-32 ROMs are the user's own.** Roland's control and PCM ROMs are
-not redistributable and nothing here carries them: the device is pointed
-at a *directory* and the two images are found by size (64 KiB control,
-1 MiB PCM) rather than by name, because every dump in circulation names
-them differently. Without them the option is offered but refuses to
-start the machine, with a sentence saying what is missing — never a
-machine that boots and is silent.
+**The MT-32 ROMs are the user's own.** An MT-32 is a sampler: the LA
+synthesis engine is emulated, but the *sounds* are two Roland ROM chips
+— a 64 KiB control ROM (the firmware, the timbre and parameter tables)
+and a 1 MiB PCM ROM (the waveforms) — and neither is redistributable.
+Nothing here carries them. The device is pointed at a *directory* and
+the two images are found **by size rather than by name**, because every
+dump in circulation names them differently (`CM32L_CONTROL.ROM`,
+`cm32l_ctrl.rom`, `ctrl_cm32l_1_02.rom`…). Without them the option is
+offered but refuses to start the machine, with a sentence saying what is
+missing — never a machine that boots and is silent.
+
+**It is a CM-32L, and that decides which dump works.** `moont` emulates
+the CM-32L: the MT-32's superset, with the 33 extra PCM samples the
+later machines added, and what a CM-64 or an LAPC-I has inside it. A
+game written for an MT-32 plays on it — that is what the hardware was
+for — but the ROMs are not interchangeable: an *original* MT-32's PCM
+ROM is 512 KiB, half the size, and is refused with a sentence that says
+so rather than "nothing found". Someone who has only MT-32 dumps needs
+CM-32L ones, or the engine would have to become Munt itself (doc 20 §2
+took that trade deliberately).
 
 ## 5. The devices
 
