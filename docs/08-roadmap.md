@@ -229,9 +229,34 @@ can capture it to a wav.
 - **M12d packaging:** the bank into `share/2ksbox/soundfonts/`.
 - **M12e the guest end-to-end:** `tools/midi-guest-test.py`.
 
+## M13 — Gamepads  (Planned; `docs/tracks/m13-gamepads.md`)
+
+Opened 2026-09-09 out of doc 08's post-v1 list. QEMU has **nothing** to
+build on — no gameport, no gamepad HID (`hw/input/hid.h` knows mouse,
+tablet and keyboard only), and no joystick class in the input core — so
+each guest-facing path is new code in the patch queue. Three of them,
+because they reach different guests:
+
+- **Step 0 the host end:** `gilrs` in the player (evdev / XInput /
+  GameController), the binding + deadzone model in `launcher-core`, embed
+  API v8 (`qemu_embed_pad_axis` / `_btn` / `_hat`), and
+  `PLAYER_PAD_SCRIPT` — a synthetic pad, without which no headless check
+  can drive a controller and the whole track is hand-testing only.
+- **Path C the key mapping:** pad → the key and mouse events the player
+  already sends. Every guest, no QEMU patch, no analog.
+- **Path A `usb-gamepad`** (patch 26): a gamepad report descriptor and
+  packer on `hw/usb/dev-hid.c`'s plumbing, plus a joystick event class in
+  the input core. XP, Win98 SE and Me see it on their inbox HID stack
+  with nothing to install; DOS cannot.
+- **Path B the gameport** (patch 27): four RC one-shots at 0x201,
+  computed against `QEMU_CLOCK_VIRTUAL` on read. The only path that
+  reaches DOS, and the 9x analog stack (`VJOYD` / `MSANALOG`). The
+  busy-wait timing risk is bounded by the DOS family's existing
+  `-icount shift=N,align=on`.
+
 ## Post-v1 candidates
 
-Recording/streaming, gamepads / DirectInput, CRT bezel packs, VRR pacing,
+Recording/streaming, CRT bezel packs, VRR pacing,
 suspend/resume, a host MIDI port for a real module (doc 20 §8),
 upstreaming campaign (libdisc, embed API).
 
