@@ -160,6 +160,7 @@ if want qemu; then
     if STAMP_GITS="qemu third_party/qemu-3dfx" \
        stamp_stale qemu-prepare patches/qemu embed d3dpt/hw d3dpt/d3dpt_proto.h \
          d3dpt/d3dpt_fb.h d3dpt/exec/d3dpt_exec.h libdisc/qemu libdisc/libdisc.h \
+         libsynth/qemu libsynth/libsynth.h \
          scripts/prepare-qemu.sh third_party/qemu-3dfx/00-qemu92x-mesa-glide.patch; then
       scripts/prepare-qemu.sh
       stamp_save

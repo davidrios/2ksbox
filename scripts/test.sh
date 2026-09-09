@@ -831,7 +831,7 @@ mpu_note_script() {
 }
 
 music_check() { # the two pickers, and then the devices actually sounding
-  local rc=0 dir="$OUT/music" bundle args f want o
+  local rc=0 dir="$OUT/music" bundle args f want o irr
   rm -rf "$dir"; mkdir -p "$dir/library"
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
@@ -930,6 +930,28 @@ music_check() { # the two pickers, and then the devices actually sounding
         -audiodev "wav,id=w,path=$dir/midi.wav" \
         -device "mpu401,audiodev=w,synth=gm,soundfont=$PWD/soundfonts/TimGM6mb.sf2" >/dev/null 2>&1
   target/release/synthx wavtone "$dir/midi.wav" 440 || rc=1
+  # And the interrupt the MIDI port must *not* raise (doc 20 §5.1,
+  # 2026-09-09). A real MPU-401's line is IRQ 2/9; QEMU's PIIX4 puts the
+  # ACPI SCI on IRQ 9, and an ACPI Windows 98 owns it, so the ACK a
+  # driver's reset queues is an interrupt no handler can acknowledge —
+  # the line stays high, the handler is re-entered on every IRET, and
+  # the guest triple-faults. Duke Nukem 3D's SETUP rebooted a machine
+  # doing exactly this. The reset is written the way a driver writes it
+  # and the PIC is asked what is pending; a guest's own answer to that
+  # is a spontaneous reboot, which no headless run could tell from a
+  # hang, so it is asked here of the hardware instead.
+  o="$(printf 'o /b 0x331 0xff\ninfo pic\nquit\n' \
+       | timeout 30 build/qemu/qemu-system-i386 -display none -monitor stdio \
+           -audiodev none,id=w \
+           -device "mpu401,audiodev=w,synth=gm,soundfont=$PWD/soundfonts/TimGM6mb.sf2" 2>&1)"
+  irr="$(printf '%s\n' "$o" | sed -n 's/.*pic1: irr=\([0-9a-f]*\).*/\1/p' | tail -1)"
+  if [ -z "$irr" ]; then
+    echo "could not read the slave PIC back after an MPU-401 reset"; rc=1
+  elif [ $(( 0x$irr & 2 )) -ne 0 ]; then
+    echo "the MPU-401 left IRQ 9 asserted after a reset (pic1 irr=$irr):"
+    echo "  an ACPI Win98 guest triple-faults on it — doc 20 §5.1"
+    rc=1
+  fi
   return $rc
 }
 
