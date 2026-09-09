@@ -444,7 +444,16 @@ fn check_lec(dir: &Path) -> Result<(), String> {
     let d = damaged(&|bin: &mut Vec<u8>| bin[at + 16..at + 2352].fill(0x55))?;
     expect("a filled sector body is unreadable", d.read_cooked(1000).err(), Some(capi::LIBDISC_EMEDIUM))?;
     expect("read_cd cooked of a filled body", d.read_cd(1000, 2, 0x10, 0).err(), Some(capi::LIBDISC_EMEDIUM))?;
-    expect("read_cd raw of a filled body", d.read_cd(1000, 2, 0xF8, 0).map(|v| v.len()), Ok(2352))?;
+    // A *raw* read of it is unreadable too, and that is the whole protection
+    // question: Crimson Skies' SafeDisc 1.50.020 reads its band with exactly
+    // this CDB (byte 9 = 0xF8) and it is the read failing that it looks for.
+    // Delivering the stored bytes told it the disc was clean and it refused to
+    // start (doc 17 §2.6c, 2026-09-09).
+    expect("read_cd raw of a filled body", d.read_cd(1000, 2, 0xF8, 0).err(), Some(capi::LIBDISC_EMEDIUM))?;
+    // ... unless C2 error flags were asked for, which is how a dumping tool
+    // gets an unreadable sector's bytes out of a real drive: the sector comes
+    // over with the field that says which bytes the drive could not trust.
+    expect("read_cd raw+C2 of a filled body", d.read_cd(1000, 2, 0xFA, 0).map(|v| v.len()), Ok(2352 + 294))?;
 
     // Back to the single flipped byte: correcting it must not change what a
     // *raw* read delivers. Dumping a disc and reading a protection band

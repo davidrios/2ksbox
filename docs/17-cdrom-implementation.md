@@ -582,6 +582,82 @@ which is replayed verbatim; synthesis only has to be *plausible*.
 When a `.sub` file exists, it wins for every sector it covers; sectors
 past its end (a truncated `.sub`) are synthesized.
 
+### 2.6c The protection that does read the band (2026-09-09)
+
+§2.6b closed with "for both schemes we have tested, the L-EC band is not what
+the check reads", and an open question: find one that depends on it. **Crimson
+Skies is it**, and it changed the model.
+
+The title is the user's own install (`claude98`, Windows 98), where the
+installed `CRIMSON.EXE` had been replaced with a no-CD patch and the original
+loader renamed to `CRIMSON2.EXE`. That original is a genuine **SafeDisc
+1.50.020** wrapper — `BoG_ *90.0&!!` at 0x29250 with version dwords
+`(1, 50, 20)`, the `SafeDisc` / `Secdrv` / `SAFEDISC_ERROR_%08lx` strings, the
+C-Dilla data-preparation splash paths, and `CRIMSON.ICD` beside it as the
+encrypted original. So a cracked binary is not the explanation here either.
+
+**Two things it disproves at once.**
+
+- **A SafeDisc 1.x disc can carry an L-EC band.** §6.x's rule — "the SafeDisc
+  *version* decides whether an L-EC band exists: 2.x writes one, 1.x (The Sims,
+  Rayman 2) writes none" — is wrong as stated. `C_SKIES.cue` (an Aaru 5.4.1
+  dump) carries **579 sectors from LBA 807 to 10018**, every one of them
+  *without a sync pattern at all* — not DiscImageCreator's "replaced at 0x55
+  except header", but whatever the drive handed back, and not merely scrambled
+  either (descrambling them produces no sync and no header). The rule that
+  survives is narrower: the dumps we have of 1.x titles differ, and the only
+  way to know is `discx scan`.
+- **The check reads the band, and it is the *error* it is looking for.** The
+  probe is three rounds of an anchor `READ(10)` at LBA 800 followed by a single
+  pseudo-random sector in ~1400..10000 read **raw** — `READ CD`, byte 9 =
+  `0xF8`, all five main fields — and in the baseline every one of the three
+  rounds terminated on the first probe that landed on a band sector (5438,
+  4154, 8953). At a 6.3 % band density that is not chance: the loader
+  recognises a weak sector from the garbage that comes back. Then it read LBA
+  10267 and a handful of filesystem sectors and put up *"Cannot locate the
+  CD-ROM — Please insert the correct CD-ROM, select OK and restart
+  application"*.
+
+**The A/B.** Same image, same disc, same machine, one variable: make a raw
+READ CD of a sector whose L-EC does not hold return `03/11/05` the way a drive
+does. Baseline — 4 band sectors read, all answered with data, refused. With
+the error delivered — the failing read is answered `sense 03 asc 11`, the
+loader does REQUEST SENSE and *carries on probing* (so the round-termination
+above was content recognition, not the verdict), and the game **launches**:
+`CRIMSON.ICD` decrypted, its "Select Video Device" dialog up on our own
+adapter. That is the first protection check this project has watched fail and
+then pass on a change to the drive model alone — the negative control M5 step 8
+has been missing since 2026-09-05.
+
+**The cleanest corroboration is a second SafeDisc title on the same drive.**
+NFS Porsche Unleashed (`nfs_porsche/*.mds`, `clcd16.dll` / `clokspl.exe` /
+`PORSCHE.ICD` all present) works for the user, and `discx scan` finds **0 L-EC
+failures over all 281279 sectors**: no band, nothing for the check to trip on.
+One SafeDisc title with a band failed, one without a band passes, and the band
+is the difference.
+
+**What changed in the model** (`mmc::read_cd_sector`). The raw path used to
+deliver the stored bytes whatever their parity said, on the reasoning that
+"dumping a disc and reading a protection band both depend on the stored bytes
+coming back as stored". The first half is right and the second was exactly
+backwards. The rule now is:
+
+- user data selected, EDC/ECC **not** selected → a cooked read, as before:
+  verify, correct what the P/Q decoder can, `Err(Medium)` for the rest;
+- user data **and** EDC/ECC selected, **no C2 field asked for** → the stored
+  bytes, but only if the sector is readable at all; a sector `discx scan`
+  calls *unreadable* is `Err(Medium)`, because that is what a drive answers;
+- **C2 error flags asked for** (byte 9 bits 1-2) → the stored bytes regardless,
+  with the C2 field saying which of them the drive could not trust. This is
+  precisely how a real dumping tool gets an unreadable sector out of a real
+  drive, so the dumping case of §2.5 keeps working.
+
+The readability test is the same `verify_or_correct` the cooked path uses, so
+the two paths agree about which sectors exist and a correctable single-byte
+error still round-trips through a raw read with its damage intact. `discx
+selftest`'s `lec` case carries both halves (`read_cd raw of a filled body`,
+`read_cd raw+C2 of a filled body`).
+
 ## 3. The C API (`libdisc/libdisc.h`)
 
 One header for the crate, the block driver and atapi.c, like
@@ -742,6 +818,16 @@ in order: sync, header, subheader, user data, EDC/ECC, C2, subchannel
 
 MSF form: start MSF inclusive, end MSF exclusive, both → LBA via
 `Msf::to_lba`.
+
+**L-EC applies to a raw read too.** A request selecting user data without
+EDC/ECC is a cooked read (verify, correct, `Err(Medium)` for the rest). One
+selecting both is raw, and it delivers the stored bytes only when the sector
+is readable at all — an unreadable one is `Err(Medium)`, as a drive answers —
+**unless C2 error flags were asked for**, which is how a dumping tool gets an
+unreadable sector's bytes out of a real drive and is therefore the one shape
+that hands them over regardless. §2.6c: a protection band read raw is read to
+watch the read *fail*, and the older rule ("a raw request delivers the bytes
+as dumped") is what kept Crimson Skies' SafeDisc 1.x from starting.
 
 ### 4.4 READ DISC INFORMATION (0x51)
 
@@ -1134,12 +1220,16 @@ Wired into the guest stage as `atapi-guest`.
 Checked with `discx scan` over six real dumps; the details and the per-disc
 table are in the M5 track doc. Two rules came out of it:
 
-- **The SafeDisc *version* decides whether an L-EC band exists, not the
-  dumping tool.** SafeDisc 2.x writes deliberately corrupt sectors near the
-  start of the data track (Age of Mythology 580 from LBA 825, FIFA 2002 584
-  from LBA 811); SafeDisc 1.x writes none at all (The Sims, Rayman 2, both
-  0 failures over a complete disc) and checks the medium some other way. A
-  1.x title is not an L-EC fixture however it was dumped.
+- ~~**The SafeDisc *version* decides whether an L-EC band exists, not the
+  dumping tool.**~~ **Disproved 2026-09-09 (§2.6c).** It read: 2.x writes
+  deliberately corrupt sectors near the start of the data track (Age of
+  Mythology 580 from LBA 825, FIFA 2002 584 from LBA 811) and 1.x writes none
+  at all (The Sims, Rayman 2, both 0 failures over a complete disc). The 2.x
+  half stands; the 1.x half does not — **Crimson Skies is SafeDisc 1.50.020
+  and its dump carries 579 sectors from LBA 807**, and its check is the only
+  one measured so far that actually reads its band. NFS Porsche Unleashed is
+  1.x with no band, so 1.x discs differ among themselves: `discx scan` is the
+  only way to know, and a 1.x title may well be an L-EC fixture.
 - **DiscImageCreator / redump sets do carry the 2.x band.** `/sf` replaces
   each bad sector's user data with `0x55` and leaves the header and the
   wrong parity alone ("N unmatch sector is replaced at 0x55 except header"
@@ -1163,7 +1253,7 @@ scrambled image (§2.x, `ccd.rs` refuses `DataTracksScrambled=1`, but a bare
 | M5a | cue/bin + ISO model, EDC/ECC, Q synthesis, C API, `discx`, `cdimage` driver, patch 50/51 data path + TOC + READ CD + subchannel | `discx selftest`, `qemu-img info`, `atapi-guest`, XP/Win98 copy from a converted ISO |
 | M5b | CD-DA (play/pause/stop/position, page 0x0E/0x2A, `audiodev`), player cheat-sheet lines, swap over QMP | `CDTEST.EXE` tone in the wav, Win98 CD Player by ear |
 | M5c | CCD + `.sub` replay, raw TOC verbatim, a SecuROM title from an owned dump | the title's launch check passes on the Air and the Linux box |
-| M5d | SafeDisc: L-EC path against a real dump, `secdrv.sys` running | launch check passes; `atapi-guest`'s flipped-sector case is the regression guard |
+| M5d | SafeDisc: L-EC path against a real dump, `secdrv.sys` running | **done 2026-09-09** (§2.6c): Crimson Skies' SafeDisc 1.50.020 launch check passes once a raw READ CD of an unreadable sector fails as a drive's does. Regression guards: `discx selftest`'s `lec` case (both halves of the raw rule) and `atapi-guest`'s flipped-sector case |
 | M5e | MDS/MDF (+ DPM data), CHD, a seek/read timing profile if StarForce needs it | documented result per doc 05's table |
 | M5f | disc shelf / swap in the player and launcher (with M6) | — |
 | M5g | a host directory as a disc: ISO 9660 + Joliet generated lazily from the tree (`isodir:/path`, `libdisc/src/isodir.rs`, a second BlockDriver in our own `cdimage.c`) | `discx selftest`'s `dirdisc` case round-tripped through `bsdtar`; XP copies the folder back identical (`docs/tracks/m5-dirdisc.md`) |

@@ -122,6 +122,25 @@ a guest reads off the CD can depend on how fast it asks for it.
   reports a clean finish, the drive reports no error, and not one byte is
   written. DOS and the BIOS leave it clear; Windows' IDE driver sets it.
 
+## State (2026-09-09: the negative control arrived, and step 8 is closed)
+
+- **Crimson Skies' SafeDisc 1.50.020 is the check that reads its band** — the
+  first this project has watched fail, and then pass on a change to our drive
+  model alone. Full account in doc 17 §2.6c; the three things to carry:
+  - a **SafeDisc 1.x disc can have an L-EC band** (579 sectors, LBA 807..10018,
+    none of them with a sync pattern), so §6.x's version rule is disproved and
+    `discx scan` is the only way to know. NFS Porsche Unleashed is 1.x with no
+    band at all, and works — one with, one without, same drive.
+  - the check reads single band sectors **raw** (`READ CD`, byte 9 `0xF8`) with
+    an anchor `READ(10)` at LBA 800 between each, and every round ended on its
+    first band hit: it recognises a weak sector by what comes back.
+  - what it wants is the **read to fail**. `mmc::read_cd_sector` verified L-EC
+    only on cooked reads; now a raw read of a sector `discx scan` calls
+    unreadable is `Err(Medium)` too, unless C2 error flags were requested (the
+    shape a dumping tool uses on a real drive, so §2.5's dumping case stands).
+    With the error delivered the loader decrypts `CRIMSON.ICD` and the game
+    starts.
+
 ## State (2026-09-05, late: the negative control failed, and it matters)
 
 - **Both titles also run from their repaired discs, so the protection results
