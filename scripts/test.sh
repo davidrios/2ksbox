@@ -127,6 +127,12 @@
 #                  MT-32 with no ROMs is refused at the form — and then the two
 #                  devices *sounding*: the monitor writes the ports a guest would
 #                  and the note has to be in the wav QEMU recorded
+#   sb16-irq       the Sound Blaster's interrupt line (patch 25), asked of the
+#                  card and the PIC: a DSP reset clears the pending interrupt
+#                  and makes none, and a silence block's is one the driver's
+#                  read of the status port can acknowledge — an assertion that
+#                  cannot be acknowledged holds the line and every interrupt
+#                  after it is lost to the edge-triggered i8259
 #   capi           launcher-capi/examples/smoke.c: a third front end, in C, over
 #                  the same models the egui and Qt builds use — the wizard's
 #                  DOS defaults, the disc shelf, snapshots and the profile
@@ -830,6 +836,69 @@ mpu_note_script() {
   port_write 0x330 0x90; port_write 0x330 0x45; port_write 0x330 0x64
 }
 
+# The Sound Blaster's interrupt, asked of the card and the PIC and
+# nothing else (patch 25). Every count below is a *rising edge* of IRQ 5
+# — `info irq` only counts 0→1 — which is the whole point: the card holds
+# its line until the DSP status port is read, so an assertion nobody can
+# acknowledge holds it for good and every block after it is a level 1
+# into an already-high line, an edge-triggered i8259 sees nothing, and
+# the card is deaf until the next reset. Duke Nukem 3D's SETUP.EXE plays
+# its "Test Sound FX Card" once and says "Playback failed, possibly due
+# to an invalid or conflicting IRQ" every time after.
+sb16_irq_check() {
+  local rc=0 o n1 n2 n3 n4
+  # A block size first: `0x1c` with none set leaves the device with
+  # block_size -1, and a DMA that then ran would spin in sb16.c's
+  # left_till_irq wrap. The channel is masked at power-up, so nothing
+  # transfers here — `0x1c` is only how a guest says "auto-init", which
+  # is the state the old reset fabricated an interrupt out of.
+  o="$( { port_write 0x22c 0x48; port_write 0x22c 0xff; port_write 0x22c 0x01
+          port_write 0x22c 0x1c;               echo "info irq"
+          port_write 0x226 0x01; port_write 0x226 0x00
+                                               echo "info irq"
+          # A one-sample silence block (DSP 0x80): its end is an ordinary
+          # 8-bit interrupt and must be acknowledgeable, so the same
+          # block a second time has to reach the PIC a second time.
+          port_write 0x22c 0x80; port_write 0x22c 0x00; port_write 0x22c 0x00
+                                               echo "info irq"
+          printf 'i /b 0x22e\n'
+          port_write 0x22c 0x80; port_write 0x22c 0x00; port_write 0x22c 0x00
+                                               echo "info irq"; echo quit
+        } | timeout 60 build/qemu/qemu-system-i386 -display none -monitor stdio \
+              -audiodev none,id=w -device sb16,audiodev=w 2>&1 \
+            | tr '\r' '\n' \
+            | awk '/^IRQ statistics for/ { isa = ($0 ~ /isa-i8259/)
+                                 if (isa) { b++; v[b] = 0 }
+                                 next }
+                   /^ 5:/ && isa { v[b] = $2 }
+                   END { for (i = 1; i <= b; i++) print v[i] }')"
+  # Four readings, one per `info irq`, the master PIC's: after the DMA
+  # command, after the DSP reset, after one silence block, after the
+  # second. An absent line is no interrupt at all, which is 0.
+  set -- $(printf '%s\n' "$o")
+  n1="${1:-0}"; n2="${2:-0}"; n3="${3:-0}"; n4="${4:-0}"
+  if [ "$n1" != 0 ]; then
+    echo "the sb16 raised IRQ 5 on an auto-init DMA command alone ($n1)"; rc=1
+  fi
+  if [ "$n2" != "$n1" ]; then
+    echo "a DSP reset raised IRQ 5 (count $n1 -> $n2):"
+    echo "  hardware clears the pending interrupt there, it does not make one,"
+    echo "  and the guest resetting the DSP has its own IRQ masked — the edge"
+    echo "  is latched in the PIC, unowned, and Windows never unmasks again"
+    rc=1
+  fi
+  if [ "$n3" != "$((n2 + 1))" ]; then
+    echo "a silence block (DSP 0x80) did not raise IRQ 5 (count $n2 -> $n3)"; rc=1
+  fi
+  if [ "$n4" != "$((n3 + 1))" ]; then
+    echo "the second silence block never reached the PIC (count $n3 -> $n4):"
+    echo "  the first one's interrupt sets no status bit, so the driver's read"
+    echo "  of the DSP status port cannot lower the line and no edge follows"
+    rc=1
+  fi
+  return $rc
+}
+
 music_check() { # the two pickers, and then the devices actually sounding
   local rc=0 dir="$OUT/music" bundle args f want o irr
   rm -rf "$dir"; mkdir -p "$dir/library"
@@ -1399,6 +1468,13 @@ host_stage() {
   # devices sounding into a wav QEMU recorded itself.
   if [ -x target/release/launcherx ] && [ -x target/release/synthx ]; then
     run_check music music.log music_check || true
+  fi
+
+  # The Sound Blaster's interrupt line (patch 25): no guest, ~1 s. The
+  # card and the PIC are asked directly, because what breaks is invisible
+  # from the command line and shows up two programs later.
+  if [ -x build/qemu/qemu-system-i386 ]; then
+    run_check sb16-irq sb16-irq.log sb16_irq_check || true
   fi
 
   # the display-adapter picker (doc 06): each family offers the adapters

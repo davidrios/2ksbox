@@ -1,0 +1,76 @@
+The Sound Blaster's DSP reset must not fabricate an interrupt, and the
+silence block's must be one the guest can acknowledge.
+
+Three ways `sb16` asserts IRQ 5 with nothing behind it that a driver can
+clear. The card holds its line until the DSP status port is read (that is
+the hardware, and QEMU models it); an assertion with no bit set in mixer
+register 0x82 therefore holds the line for good, and on the edge-triggered
+ISA PIC every later block completion is then a level-1 into an already-high
+line -- no edge, no interrupt, the card is deaf until the next DSP reset.
+
+  * `reset()` pulsed the line when auto-init DMA was running: a raise and
+    an immediate lower, an interrupt no hardware generates and no status
+    bit accompanies. On an edge-triggered i8259 the pulse latches IRR
+    while the guest, which is resetting the DSP precisely because it is
+    *finished*, has IRQ 5 masked -- so the bit stays pending, unowned and
+    unacknowledgeable. Windows' VPICD will not unmask a physical IRQ in
+    that state, and the next program to want the card never sees an
+    interrupt at all.
+  * `aux_timer()` (the end of a silence block, DSP command 0x80) raised
+    the line without setting the status bit, so the driver's `in 0x2xE`
+    could not clear it.
+  * command 0x80's short-block path raised it inline, the same way.
+
+Found through Duke Nukem 3D's SETUP.EXE on a Windows 98 guest: its "Test
+Sound FX Card" plays once and every attempt after it fails with "Playback
+failed, possibly due to an invalid or conflicting IRQ", because the DSP
+reset ending the first test leaves IRQ 5 latched in the master PIC
+(`info pic`: `pic0 irr=20 imr=b8`) and the second test's DMA blocks then
+raise a line that is already high. The card itself has nothing pending
+across it -- mixer 0x82 reads 0x00 -- which is what says the interrupt was
+never the card's.
+
+A DSP reset clears the pending interrupt and drops the line, and cancels a
+silence block that has not expired: without that, the timer fires after the
+reset and asserts the line behind the guest's back.
+
+--- a/hw/audio/sb16.c
++++ b/hw/audio/sb16.c
+@@ -198,6 +198,11 @@ static void aux_timer (void *opaque)
+ {
+     SB16State *s = opaque;
+     s->can_write = 1;
++    /* The silence block is over, and its end is an ordinary 8-bit DSP
++       interrupt: the status bit has to be set or the driver's read of
++       the DSP status port will not acknowledge it and the line stays
++       asserted for good. */
++    s->mixer_regs[0x82] |= 1;
+     qemu_irq_raise (s->pic);
+ }
+ 
+@@ -801,6 +806,7 @@ static void complete (SB16State *s)
+                 bytes = samples << s->fmt_stereo << (s->fmt_bits == 16);
+                 ticks = muldiv64(bytes, NANOSECONDS_PER_SECOND, freq);
+                 if (ticks < NANOSECONDS_PER_SECOND / 1024) {
++                    s->mixer_regs[0x82] |= 1;
+                     qemu_irq_raise (s->pic);
+                 }
+                 else {
+@@ -895,11 +901,13 @@ static void legacy_reset (SB16State *s)
+ 
+ static void reset (SB16State *s)
+ {
+-    qemu_irq_lower (s->pic);
+-    if (s->dma_auto) {
+-        qemu_irq_raise (s->pic);
+-        qemu_irq_lower (s->pic);
++    /* A DSP reset clears any pending interrupt and drops the line; it
++       does not raise one, and a silence block that has not expired yet
++       must not raise one behind the guest's back either. */
++    if (s->aux_ts) {
++        timer_del (s->aux_ts);
+     }
++    qemu_irq_lower (s->pic);
+ 
+     s->mixer_regs[0x82] = 0;
+     s->dma_auto = 0;
