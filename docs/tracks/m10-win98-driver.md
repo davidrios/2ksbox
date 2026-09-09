@@ -167,11 +167,13 @@ What the track starts from:
 
 1. ~~**Step 0 — establish the 9x driver model**~~ **done 2026-09-06**,
    from `vmdisp9x` and `vmhal9x`; the answers are doc 19's "What 9x does
-   differently" and the State section above. One question of that section
-   is left for a guest to answer rather than a source tree: whether a
-   driver claiming DDI 8 may leave out the pre-DP2 HAL entries
-   (`RenderState`, `RenderPrimitive`, `DrawOnePrimitive`, `TextureCreate`)
-   that NT dropped and `vmhal9x` still implements.
+   differently" and the State section above. The one question of that
+   section that a source tree could not answer — whether a driver claiming
+   DDI 8 may leave out the pre-DP2 HAL entries (`RenderState`,
+   `RenderPrimitive`, `DrawOnePrimitive`, `TextureCreate`) that NT dropped
+   and `vmhal9x` still implements — **a guest answered on 2026-09-08: it
+   may.** Ours implements none of them and `SHTEST` passes 9/9 through
+   `d3d8.dll`, which drives the driver by `DrawPrimitives2` alone.
 2. ~~**Get Open Watcom building a "hello world" `.drv`**~~ **done
    2026-09-06**: `guest-tools/build-driver9x.sh` builds `d3dpt9x.drv`
    (module `DISPLAY`, the ordinal exports, `oembin` resources, imports
@@ -315,9 +317,16 @@ What the track starts from:
    reads. Seventeen `DrawPrimitives2` calls, contexts, textures and every
    `d3d_readback` returned success against a header nothing had written; the
    only witness was the *absence* of any `ddi:` line in the host log. Read
-   `D3DPT_FB_REG_CMD_OFFSET`, as `nt/` always has. Still to run on 98:
-   `CKTEST`, `DXTTEST` and `SHTEST` (the DX8 half — in scope, step 0 settled
-   that, and now reachable because the guest has DirectX 9).
+   `D3DPT_FB_REG_CMD_OFFSET`, as `nt/` always has. **The DX8 half passes
+   too**: `SHTEST` 9 cases 0 failed (vs 1.1 and ps 1.1 through `d3d8.dll`,
+   hardware vertex processing, `vs 1.1 (96 constants) / ps 1.4`), `CKTEST`
+   4 cases 0 failed (palettized textures with a live `SetEntries`, source
+   colour keying on and off), and `DXTTEST` creating every format in every
+   pool with no unexpected HRESULT — which answers step 0's last open
+   question by demonstration: **a DDI-8 driver may leave out the pre-DP2
+   HAL entries** `vmhal9x` still implements, because ours does and
+   `d3d8.dll` drives it through `DrawPrimitives2` alone. The whole M7c
+   matrix now reproduces on 98 with no change to `core/`.
 10. **Step 5 — the titles.** The doc 04 Win98 acceptance matrix through
    the driver, against the same titles on the Glide/WineD3D stack: which
    is faster, which is correct, and what the launcher should default to.

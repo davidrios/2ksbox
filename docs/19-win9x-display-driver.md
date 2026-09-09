@@ -1363,6 +1363,42 @@ DirectDraw, and **Direct3D wants DirectX 7 or later in the guest**. And
 D3D globals published, and `ddprobe` reads back `DDCAPS_3D | DDCAPS_COLORKEY`
 where 6.1 gave `BLTQUEUE | GDI` alone.
 
+**The DirectX 8 half passes too, and with it step 0's last open question**
+(2026-09-08, the same day). `SHTEST` reports **9 cases, 0 failed** — vs 1.1
+through a declaration and its constants, from user memory and from a vertex
++ index buffer, a declaration-only shader, `D3DVSD_CONST`, ps 1.1 with a
+constant and with a texture, and the FVF path again — with the runtime
+reporting `vs 1.1 (96 constants), ps 1.4` and creating the device with
+**hardware vertex processing**. `CKTEST` reports **4 cases, 0 failed**: a
+`DDPF_PALETTEINDEXED8` texture with its own `IDirectDrawPalette`,
+`SetEntries` re-colouring it live, and a source colour key with
+`COLORKEYENABLE` on and off. `DXTTEST` creates every format (X8R8G8B8,
+R5G6B5, A4R4G4B4, DXT1, DXT3, DXT5) in every pool (DEFAULT, MANAGED,
+SYSTEMMEM); the only non-zero HRESULTs in its whole log are the six
+`LockRect` calls on `D3DPOOL_DEFAULT`, which must fail, and the MANAGED
+readbacks show the red and blue block texels (`0xf800` / `0x001f` — the
+display is R5G6B5). Note that `DXTTEST` has no pass/fail line and no stored
+XP log to diff against, so it is read against its documented behaviour
+rather than against a reference run; the other three have hard verdicts.
+
+`SHTEST` passing is what settles it. Step 0 recorded, from reading
+`vmhal9x`, that "DDI 8 works on 9x" and left one question behind: *whether
+a driver claiming DDI 8 may leave out the pre-DP2 HAL entries
+(`RenderState`, `RenderPrimitive`, `DrawOnePrimitive`, `TextureCreate`)
+that NT dropped and `vmhal9x` still implements*. **It may**: ours does not
+implement them, and 9x's `d3d8.dll` drives it through `DrawPrimitives2`
+alone. Both of doc 15's negotiation traps were right in the 9x layer first
+time as well — the HAL-info flag without which the runtime never asks and
+silently stays on the DX7 path, and the rule that `dwActualSize` is checked
+against the size *inside* the GDI2 header while `dwExpectedSize` still
+holds the previous query's, so an answer clamped to the outer size makes
+the runtime drop the driver altogether.
+
+So the whole M7c feature matrix now reproduces on Win98 — DirectX 3
+through 8, hardware T&L, vs/ps 1.x, palettes, colour keys, the compressed
+formats — on a driver whose only difference from XP's is its per-OS layer,
+and every one of these passed without a change to `core/`.
+
 **A trap for whoever updates the image next.** Installing DirectX means
 booting the machine in the launcher, whose Win98 default is `-vga cirrus`
 (`bundle::video_choices`) — so Windows re-detects a Cirrus, rebinds the

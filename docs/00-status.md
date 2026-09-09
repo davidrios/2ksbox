@@ -610,7 +610,16 @@ items nobody owns yet:
    (doc 19 §25), because the in-box 6.1 is an older DDI generation than the one
    `core/` was proven against, and three DirectX 6 accommodations were deleted
    on the evidence of one-shot logs that never fired across two rendering runs.
-   Next: Step 5, the doc 04 Win98 title matrix through the driver against the
+   **And the DX8 half passes the same day**: `SHTEST` 9 cases 0 failed
+   (vs/ps 1.x through `d3d8.dll`, hardware vertex processing), `CKTEST` 4
+   cases 0 failed (palettized textures, live `SetEntries`, source colour
+   keying), `DXTTEST` creating every format in every pool with no
+   unexpected HRESULT. That answers step 0's last open question by
+   demonstration — **a DDI-8 driver may omit the pre-DP2 HAL entries**
+   `vmhal9x` still implements — and means the whole M7c matrix (DirectX 3
+   through 8, hardware T&L, shaders, palettes, colour keys, the compressed
+   formats) reproduces on Win98 with no change to `core/`. Next: Step 5,
+   the doc 04 Win98 title matrix through the driver against the
    Glide/WineD3D control.
 
 ## Gotchas learned (don't relearn)

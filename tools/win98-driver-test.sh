@@ -72,6 +72,11 @@ RAW="$OUT/win98-m10.raw"
 SOCK="/tmp/claude-$(id -u)/w98m10.sock"
 BOOT_WAIT="${BOOT_WAIT:-150}"
 
+# What a PROG may leave in C:\ — deleted before the run and read back after,
+# so what comes out at the end is this run's or nothing. One list, because
+# three copies of it is how a new test's log silently never gets collected.
+PROG_OUTPUTS="DDPROBE.LOG D3D7TEST.LOG D3D7TEST.BMP EBTEST.LOG EB1.BMP EB2.BMP EB3.BMP EB4.BMP EB5.BMP CKTEST.LOG DXTTEST.LOG SHTEST.LOG"
+
 [ -x "$QEMU" ] || { echo "no QEMU at $QEMU (QEMU_BIN= to point elsewhere)"; exit 1; }
 [ -f "$DRV/d3dpt9x.drv" ] || { echo "run guest-tools/build-driver9x.sh first"; exit 1; }
 mkdir -p "$OUT/out" "$(dirname "$SOCK")"
@@ -269,7 +274,7 @@ fi
 # A stale log read back after a run that never wrote one is a whole session
 # spent on the wrong evidence: delete what the last run left before this one
 # starts, so what comes out at the end is this run's or nothing.
-for f in DDPROBE.LOG D3D7TEST.LOG D3D7TEST.BMP EBTEST.LOG EB1.BMP EB2.BMP EB3.BMP EB4.BMP EB5.BMP; do
+for f in $PROG_OUTPUTS; do
   mdel -i "$RAW@@$OFF" "::/$f" 2>/dev/null || true
 done
 
@@ -414,7 +419,7 @@ PYTXT
 }
 text_screen
 # whatever PROG left behind, if it left anything
-for f in DDPROBE.LOG D3D7TEST.LOG D3D7TEST.BMP EBTEST.LOG EB1.BMP EB2.BMP EB3.BMP EB4.BMP EB5.BMP; do
+for f in $PROG_OUTPUTS; do
   rm -f "$OUT/out/$f"
   if mcopy -i "$RAW@@$OFF" -n "::/$f" "$OUT/out/$f" 2>/dev/null; then
     echo "$f:"
@@ -473,7 +478,7 @@ else
   echo "shutdown   clean"
 fi
 
-for f in DDPROBE.LOG D3D7TEST.LOG D3D7TEST.BMP EBTEST.LOG EB1.BMP EB2.BMP EB3.BMP EB4.BMP EB5.BMP; do
+for f in $PROG_OUTPUTS; do
   rm -f "$OUT/out/$f"
   if mcopy -i "$RAW@@$OFF" -n "::/$f" "$OUT/out/$f" 2>/dev/null; then
     echo "post-shutdown $f:"

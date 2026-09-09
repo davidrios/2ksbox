@@ -460,6 +460,24 @@ PYPE
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
      -march=pentium3 -mtune=generic \
      -o "$OUT/d3d7test.exe" "$ROOT/guest-tools/src/d3dptvid/d3d7test.c" -lddraw -ldxguid -lgdi32 -luser32
+
+  # The DX8 half. Reachable on 98 only because a 2ksbox Win98 machine runs
+  # DirectX 9 (doc 19 §25): these need d3d8.dll, which the in-box 6.1 has not
+  # got, and they exercise the GDI2 negotiation GetDriverInfo answers.
+  echo "==> cktest.exe (palettized textures and colour keying through the DX7 HAL)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/cktest.exe" "$ROOT/guest-tools/src/d3dptvid/cktest.c" -lddraw -ldxguid -lgdi32 -luser32
+
+  echo "==> dxttest.exe (which texture formats d3d8.dll creates, per pool)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/dxttest.exe" "$ROOT/guest-tools/src/d3dptvid/dxttest.c" -ld3d8 -lgdi32 -luser32
+
+  echo "==> shtest.exe (vertex / pixel shaders 1.x through d3d8.dll on the DX8 DDI)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/shtest.exe" "$ROOT/guest-tools/src/d3dptvid/shtest.c" -ld3d8 -lgdi32 -luser32
 else
   echo "==> no $HALCC: skipping d3dpt9hl.dll (no DirectDraw on 9x from this build)"
 fi
