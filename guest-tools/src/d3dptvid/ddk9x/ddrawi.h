@@ -8,7 +8,7 @@
 #define DD_ROP_SPACE		(256/32)	// space required to store ROP array
 
 #ifndef ULONG_PTR
-#define ULONG_PTR LPDWORD
+#define ULONG_PTR DWORD
 #endif
 
 #ifndef HRESULT

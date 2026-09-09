@@ -514,6 +514,9 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
             }
         }
 
+        /* Notify DirectDraw of mode changes so primary surface pitch and format update */
+        DDCreateDriverObject(1);
+
         wEnabled = 1;
         dbg_str("d3dpt9x: enabled");
         return 1;
@@ -710,7 +713,7 @@ LONG WINAPI __loadds Control(LPVOID lpDevice, UINT function,
         }
         switch (cmd->dwCommand) {
         case DDCREATEDRIVEROBJECT:
-            if (!DDCreateDriverObject()) return 0;
+            if (!DDCreateDriverObject(0)) return 0;
             *(DWORD FAR *)lpOutput = DDHinstance();
             return 1;
         case DDGET32BITDRIVERNAME:

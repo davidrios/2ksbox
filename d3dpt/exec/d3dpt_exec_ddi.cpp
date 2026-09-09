@@ -447,6 +447,11 @@ static HRESULT readback(Exec &x, Ddi &d, VramSurf &s) {
     D3DLOCKED_RECT lr;
     if (FAILED(d.stage->LockRect(&lr, nullptr, D3DLOCK_READONLY))) return E_FAIL;
     uint32_t row = fmt_row_bytes(s.d.format, s.d.width), bpp = fmt_row_bytes(s.d.format, 1), kept = 0;
+    if (d.trace || d.readbacks < 5) {
+        uint32_t px0 = *(const uint32_t *)lr.pBits;
+        x.log("ddi: readback: %u (%ux%u fmt %u pitch %u) -> vram 0x%x (px0 0x%08x)",
+              s.d.handle, s.d.width, s.d.height, s.d.format, s.d.pitch, s.d.offset, px0);
+    }
     bool have = s.shadow.size() == (size_t)row * s.d.height && bpp;
     if (!have) s.shadow.resize((size_t)row * s.d.height);
     for (uint32_t yy = 0; yy < s.d.height; yy++) {

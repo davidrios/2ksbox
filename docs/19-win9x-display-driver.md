@@ -1268,3 +1268,105 @@ processes, Step 3 (Win98's M7b) is implemented in full:
      `PALETTEENTRY` (R, G, B) into `0x00RRGGBB` format for `D3DPT_FB_REG_PALETTE`.
    - `d3dpt9x.inf`: Added `MODES\8` entries for 640x480, 800x600, 1024x768, 1280x1024.
 
+
+### 25. Step 4 — the Direct3D DDI on 9x, and the window that was 16 KiB low (2026-09-08)
+
+**Both halves pass, to the same bar XP is held to.** `EBTEST.EXE` — the
+DirectX 3 face: `IDirect3D` v1, execute buffers, `PROCESSVERTICES` COPY and
+TRANSFORM, clipped and unclipped triangles, `TEXTUREHANDLE` binding and a
+colour-keyed texture — reports **5 cases, 0 failed** in a real Win98 guest.
+`D3D7TEST.EXE`'s frame, drawn by Windows' own `d3dim700.dll` through our DX7
+HAL and executed by DXVK on the host, is **byte-identical to
+`d3dpt-dp2-test`'s golden frame**: `0 of 307200 pixels differ, max channel
+difference 0`. The runtime enumerates `Direct3D HAL` *and* `Direct3D T&L
+HAL`, takes a Z buffer at 16 / 32 / 32+stencil, switches to 640x480x32 from
+an 800x600x16 desktop, and runs 300 frames in 5072 ms — **59.1 fps**, which
+is the flip pacing of §24 holding under a real 3D load rather than a
+coincidence.
+
+**The one bug, and it is the same bug as §19's.** Everything above was
+black on the first run — all five `ebtest` cases, including the one that is
+nothing but a viewport `Clear`. Every call returned `S_OK`: seventeen
+`DrawPrimitives2` calls, a context on the back buffer, textures registered,
+`PROCESSVERTICES` bouncing to the runtime exactly as the core's DX3 bounce
+protocol intends, and `d3d_readback` returning `DD_OK` every time. The tell
+was in the host log rather than the guest's: **not one `ddi:` line**, so no
+batch had ever reached the executor.
+
+The 9x layer derived the Direct3D command window from the VRAM size:
+
+```c
+core.cmd_offset = h->vram_size - D3DPT_FB_CURSOR_BYTES - D3DPT_SHM_SIZE;   /* 0x03ffc000 */
+```
+
+The device places it at `vram_size - D3DPT_SHM_SIZE` (`d3dpt_vga.c`;
+`d3dpt-vga: Direct3D executor ready, window at 64 MiB`) — `0x04000000`. The
+cursor is not in that sum. So the driver encoded its batches 16 KiB below
+the window the executor reads, rang the doorbell, and every submission
+succeeded against a header nothing had written. The NT layer has never
+derived it — it reads the adapter's own `D3DPT_FB_REG_CMD_OFFSET` — and the
+9x layer does now.
+
+**Why this is worth a section of its own:** it is the second instance on
+this track of one failure shape — *a value the core needs, re-derived in a
+second place instead of read from the one authority, failing silently and
+looking like something else entirely*. The first was `DDSCAPS_EXECUTEBUFFER`
+transcribed as `0x800` (§19), which killed protocol v9's vertex buffers and
+showed up as a single failing `shtest` case. Neither produced a diagnostic
+anywhere. When a 9x symptom is "the calls all succeed and nothing is drawn",
+suspect an address or a constant the layer computed for itself before
+suspecting the logic, and diff the layer against `nt/` — the NT driver is
+the reference implementation of every one of these values.
+
+**Three DirectX 6 accommodations were deleted, on evidence.** The step-4
+implementation was written against an image with the in-box DirectX 6.1,
+and had grown code for that runtime's older DDI generation. Rather than
+delete it by inference, each was instrumented with a one-shot log and two
+full rendering runs were made (`ebtest`, the DirectX 3 path, which is where
+a pre-DX7 interface pointer would appear at all, and `d3d7test`):
+
+- `unwrap_surf()`, which sniffed a pointer to tell `DDRAWI_DDRAWSURFACE_INT *`
+  from `..._LCL *` because DirectX 6 passes an interface in
+  `D3DHAL_CONTEXTCREATEDATA` / `D3DHAL_SETRENDERTARGETDATA` — its branch was
+  never taken; it is a plain cast (`surf_lcl`) now, as on NT;
+- `Clear_32`, the pre-`Clear2` CALLBACKS2 entry — never entered; CALLBACKS2
+  publishes `SetRenderTarget` alone now, which is what `nt/d3dptdisp.c` has
+  always done, and the suspect `dwFillDepth / 4294967295.0f` conversion went
+  with it;
+- `d3d7test.c`'s DirectX 6 `IDirect3D3` path — unreachable once
+  `DirectDrawCreateEx` exists.
+
+This is the code half of the decision in the next paragraph: a driver that
+serves two runtime generations is a driver with two untested halves.
+
+**A 2ksbox Win98 machine runs the last DirectX (9.0c).** The in-box
+DirectX 6.1 (`DDRAW.DLL` 4.06.03.0518, no `DirectDrawCreateEx`) is an
+*older DDI generation* than the one `core/` was proven against on XP, so
+serving it meant new code with no XP precedent and no pixel oracle — the
+DX7 path of `D3D7TEST` cannot even run there. With 9.0c installed
+(`ddraw` / `d3d8` / `d3d9` 4.9.0.904, `d3dim.dll` at the DirectX 7
+generation) the guest's runtime is the one XP has, and **the DX8 DDI we
+already have serves DirectX 3 through 8 through the runtime's own
+translation** — which is the direction the superset runs. Raising our own
+DDI to 9 would be the opposite trade: strictly additive, deleting nothing,
+and buying only what doc 04's matrix already routes to M4's per-game
+`d3d9.dll`. `vmhal9x` reaches the same conclusion for the same reason: DDI
+8, "forward compatible with DirectX runtime… allows to run DirectX 9
+programs and games".
+
+Two consequences. The desktop and DirectDraw halves are unaffected — they
+are GDI and the DIB Engine, and plain DirectDraw worked on 6.1 — so the
+honest statement is that stock Win98 gets the accelerated desktop and
+DirectDraw, and **Direct3D wants DirectX 7 or later in the guest**. And
+§21's HALINFO validation rules, which were reverse-engineered from the
+6.1 `DDRAW.DLL`, still hold on the 4.9 one: it accepts our HALINFO with the
+D3D globals published, and `ddprobe` reads back `DDCAPS_3D | DDCAPS_COLORKEY`
+where 6.1 gave `BLTQUEUE | GDI` alone.
+
+**A trap for whoever updates the image next.** Installing DirectX means
+booting the machine in the launcher, whose Win98 default is `-vga cirrus`
+(`bundle::video_choices`) — so Windows re-detects a Cirrus, rebinds the
+display to the in-box driver and drops `D3DPT9V.VXD` from `[386Enh]`.
+`[boot] display.drv=pnpdrvr.drv` still looks right, and `[boot.description]`
+is where it says `Cirrus Logic 5446 PCI` instead. `win98-driver-test.sh
+<image> install` puts it all back; a `boot` would not.

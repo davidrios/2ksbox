@@ -44,7 +44,9 @@
  * copy of one of them in WINDOWS\SYSTEM is exactly the thing that
  * happens, and on 9x a wrong pointer is a silent reboot. */
 #define D3DPT_HAL9_MAGIC   0x39335044ul     /* 'DP39' */
-#define D3DPT_HAL9_VERSION 4
+#define D3DPT_HAL9_VERSION 6
+
+#define D3DPT_HAL9_MAX_MODES 32
 
 /* the 32-bit callbacks the DLL publishes; each is a flat function
  * pointer, zero when the DLL does not implement it. The names are the
@@ -74,6 +76,12 @@ typedef struct d3dpt_hal9_cb32 {
     unsigned long SetPalette;
     /* the ones DirectDraw asks for by GUID rather than by table */
     unsigned long GetDriverInfo;
+    /* execute buffer pseudo-object callbacks */
+    unsigned long CanCreateExecuteBuffer;
+    unsigned long CreateExecuteBuffer;
+    unsigned long DestroyExecuteBuffer;
+    unsigned long LockExecuteBuffer;
+    unsigned long UnlockExecuteBuffer;
 } d3dpt_hal9_cb32;
 
 typedef struct d3dpt_hal9 {
@@ -110,6 +118,10 @@ typedef struct d3dpt_hal9 {
     unsigned long dll_reg_magic;
     unsigned long dll_reg_version;
 
+    /* Direct3D exports */
+    unsigned long d3dhal_global;        /* flat pointer to D3DHAL_GLOBALDRIVERDATA */
+    unsigned long d3dhal_callbacks;     /* flat pointer to D3DHAL_CALLBACKS */
+
     /* The DirectDraw tables themselves live here, not in the 16-bit
      * driver's own data segment, and that is not tidiness. DDHALINFO
      * carries pointers — to the callback tables, the mode list, the
@@ -129,7 +141,9 @@ typedef struct d3dpt_hal9 {
     unsigned long cb_dd[24];            /* DDHAL_DDCALLBACKS */
     unsigned long cb_surf[32];          /* DDHAL_DDSURFACECALLBACKS */
     unsigned long cb_pal[8];            /* DDHAL_DDPALETTECALLBACKS */
-    unsigned long modeinfo[16];         /* DDHALMODEINFO */
+    unsigned long cb_exebuf[8];         /* DDHAL_DDEXEBUFCALLBACKS */
+    unsigned long fourcc[4];            /* FourCC codes */
+    unsigned long modeinfo[D3DPT_HAL9_MAX_MODES * 9]; /* DDHALMODEINFO (32 modes * 9 dwords) */
     unsigned long heap[8];              /* VIDMEM */
 
     /* The one command window at the top of VRAM has one writer on NT,
@@ -138,6 +152,8 @@ typedef struct d3dpt_hal9 {
      * so submissions are serialised on this word with a locked exchange
      * (doc 19 §8). Zero means free. */
     unsigned long cmd_lock;
+    unsigned long cmd_lock_owner;
+    unsigned long cmd_lock_depth;
 } d3dpt_hal9;
 
 #endif

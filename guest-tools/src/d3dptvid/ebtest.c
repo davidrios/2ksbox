@@ -107,9 +107,14 @@ static DWORD readback(LPDIRECTDRAWSURFACE back, int x, int y)
     DWORD px = 0xdeadbeef;
     HRESULT hr;
 
+    static int said_lock;
     memset(&sd, 0, sizeof sd); sd.dwSize = sizeof sd;
     hr = back->lpVtbl->Lock(back, NULL, &sd, DDLOCK_WAIT | DDLOCK_READONLY, NULL);
     if (FAILED(hr)) { logp("  Lock(back) %08lx\n", hr); return px; }
+    if (!said_lock) {
+        said_lock = 1;
+        logp("  Lock(back): surf=%p pitch=%lu bpp=%lu\n", sd.lpSurface, sd.lPitch, sd.ddpfPixelFormat.dwRGBBitCount);
+    }
     if (sd.ddpfPixelFormat.dwRGBBitCount == 16) {
         WORD v = *(WORD *)((BYTE *)sd.lpSurface + y * sd.lPitch + x * 2);
         px = ((DWORD)(v >> 11) << 19) | ((DWORD)((v >> 5) & 0x3f) << 10) | ((DWORD)(v & 0x1f) << 3);

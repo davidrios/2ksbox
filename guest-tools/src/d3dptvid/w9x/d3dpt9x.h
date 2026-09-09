@@ -61,7 +61,7 @@ struct DDVERSIONDATA;
 BOOL DDGet32BitDriverName(struct DD32BITDRIVERDATA __far *dd32);
 BOOL DDNewCallbackFns(struct DCICMD __far *lpCmd);
 void DDGetVersion(struct DDVERSIONDATA __far *lpVer);
-BOOL DDCreateDriverObject(void);
+BOOL DDCreateDriverObject(BOOL bReset);
 DWORD DDHinstance(void);
 
 /* the adapter's registers, through wRegsSel */

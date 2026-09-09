@@ -297,15 +297,27 @@ What the track starts from:
    logs alternating scanout offsets `0 -> 1228800 -> 0`). 8 bpp modes and
    hardware palette programming against `D3DPT_FB_REG_PALETTE` via
    `SetPalette` (ordinal 22) are wired and verified.
-9. **Step 4 — the Direct3D DDI on 9x** (98's M7c): the core's DP2 walker
-   under the 9x HAL. Two decisions land here, both new on 9x (doc 19 §8):
-   whether the doorbell is a mapped register page or a VxD ioctl, and how
-   the single command window at the top of VRAM is serialised now that
-   every process has its own copy of the HAL. `D3D7TEST.EXE`'s frame must match
-   `d3dpt-dp2-test`'s BMP exactly, the same oracle XP is held to. Then
-   `EBTEST` (the DX3 path, which is most of the 98 matrix), `CKTEST`,
-   `DXTTEST`, and `SHTEST` — the DX8 half is in scope on 98 too, step 0
-   settled that.
+9. ~~**Step 4 — the Direct3D DDI on 9x**~~ **the DX3 and DX7 faces pass
+   2026-09-08** (doc 19 §25). `EBTEST` reports **5 cases, 0 failed** and
+   `D3D7TEST`'s frame is **byte-identical** to `d3dpt-dp2-test`'s
+   (`0 of 307200 pixels differ, max channel difference 0`) — the same oracle
+   XP is held to. HAL *and* T&L HAL enumerate, the Z buffer offers
+   16 / 32 / 32+stencil, `SetDisplayMode` to 640x480x32 from an 800x600x16
+   desktop works (so `SetMode32` is sound), and 300 frames run at 59.1 fps,
+   which is §24's flip pacing holding under a real 3D load. Both of doc 19
+   §8's open decisions are settled: the doorbell is a **direct register
+   write** from ring 3 (§20), and the command window is serialised on the
+   shared block's `cmd_lock` — the HAL DLL's data is shared across every
+   process (§23), so there is one core and one encoder, not one per process.
+   **The bug worth carrying** was the second instance of §19's failure
+   shape: the layer derived `cmd_offset` from the VRAM size and subtracted
+   the cursor too, so it encoded batches 16 KiB below the window the device
+   reads. Seventeen `DrawPrimitives2` calls, contexts, textures and every
+   `d3d_readback` returned success against a header nothing had written; the
+   only witness was the *absence* of any `ddi:` line in the host log. Read
+   `D3DPT_FB_REG_CMD_OFFSET`, as `nt/` always has. Still to run on 98:
+   `CKTEST`, `DXTTEST` and `SHTEST` (the DX8 half — in scope, step 0 settled
+   that, and now reachable because the guest has DirectX 9).
 10. **Step 5 — the titles.** The doc 04 Win98 acceptance matrix through
    the driver, against the same titles on the Glide/WineD3D stack: which
    is faster, which is correct, and what the launcher should default to.
@@ -342,6 +354,20 @@ at all (nothing on a Win98 desktop calls `DirectDrawCreate`):
 PROG=guest-tools/out/driver9x/ddprobe.exe \
   tools/win98-driver-test.sh ~/.local/share/2ksbox/machines/test98/disk.qcow2 install
 ```
+
+**The guest runs DirectX 9.0c, by decision (doc 19 §25).** The in-box
+DirectX 6.1 is an older DDI generation than the one `core/` was proven
+against on XP, and cannot run `D3D7TEST`'s DX7 path at all, so there is no
+pixel oracle on it. Three DirectX 6 accommodations were deleted from the 9x
+layer when the guest was updated — `unwrap_surf()`'s pointer sniffing, the
+CALLBACKS2 `Clear` entry, `d3d7test.c`'s `IDirect3D3` path — each on the
+evidence of a one-shot log that never fired across a full `ebtest` and a
+`d3d7test`, not on inference. **Installing DirectX rebinds the display to
+Cirrus**: it means booting the machine in the launcher, whose Win98 default
+is `-vga cirrus`, so Windows re-detects that adapter, `[386Enh]` loses its
+`D3DPT9V.VXD` line and `[boot.description]` reads `Cirrus Logic 5446 PCI`
+(`[boot] display.drv=pnpdrvr.drv` still looks right, which is the confusing
+part). Run `install`, not `boot`, after any hand session on the image.
 
 **`~/vms/win98.qcow2` is not the image for this track**: it is a Sep-4
 install from before the BIOS-date stamp, PnP does not match our INF on

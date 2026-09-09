@@ -243,15 +243,35 @@ else
     mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9hl.dll" ::/WINDOWS/SYSTEM/D3DPT9HL.DLL
   if [ -n "${PROG:-}" ]; then
     [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
-    mattrib -i "$RAW@@$OFF" -r "::/$(basename "$PROG" | tr a-z A-Z)" 2>/dev/null || true
-    mcopy -i "$RAW@@$OFF" -o "$PROG" "::/$(basename "$PROG" | tr a-z A-Z)"
+    pbase="$(basename "$PROG" | tr a-z A-Z)"
+    mattrib -i "$RAW@@$OFF" -r "::/$pbase" 2>/dev/null || true
+    mcopy -i "$RAW@@$OFF" -o "$PROG" "::/$pbase"
+    mcopy -i "$RAW@@$OFF" -n ::/WINDOWS/WIN.INI "$OUT/win.ini"
+    python3 - "$OUT/win.ini" "$pbase" <<'PYWIN'
+import re, sys
+p, prog = sys.argv[1], sys.argv[2].encode()
+b = open(p, 'rb').read()
+line = b'run=C:\\' + prog
+m = re.search(br'^run=[^\r\n]*', b, re.M | re.I)
+if m:
+    b = b[:m.start()] + line + b[m.end():]
+else:
+    m = re.search(br'^\[windows\]\r?\n', b, re.M | re.I)
+    if not m:
+        sys.exit("WIN.INI has no [windows] section")
+    b = b[:m.end()] + line + b'\r\n' + b[m.end():]
+open(p, 'wb').write(b)
+PYWIN
+    mcopy -i "$RAW@@$OFF" -o "$OUT/win.ini" ::/WINDOWS/WIN.INI
   fi
 fi
 
 # A stale log read back after a run that never wrote one is a whole session
 # spent on the wrong evidence: delete what the last run left before this one
 # starts, so what comes out at the end is this run's or nothing.
-mdel -i "$RAW@@$OFF" ::/DDPROBE.LOG 2>/dev/null || true
+for f in DDPROBE.LOG D3D7TEST.LOG D3D7TEST.BMP EBTEST.LOG EB1.BMP EB2.BMP EB3.BMP EB4.BMP EB5.BMP; do
+  mdel -i "$RAW@@$OFF" "::/$f" 2>/dev/null || true
+done
 
 rm -f "$OUT/out/dbg.log" "$OUT/out/stderr.log" "$OUT/out"/t*.ppm* "$OUT/out"/t*.png
 echo "==> booting on -vga none -device d3dpt-vga"
@@ -333,8 +353,8 @@ if [ "$WHAT" = install ]; then
   bars restart
 fi
 
-python3 "$ROOT/tools/qmpc.py" "$SOCK" screendump "$OUT/out/screen.ppm" >/dev/null
-echo "colours   $(identify -format '%wx%h %k' "$OUT/out/screen.ppm.ppm" 2>/dev/null || echo '?')  ($OUT/out/screen.png)"
+python3 "$ROOT/tools/qmpc.py" "$SOCK" screendump "$OUT/out/screen.png" >/dev/null
+echo "colours   $(identify -format '%wx%h %k' "$OUT/out/screen.png" 2>/dev/null || echo '?')  ($OUT/out/screen.png)"
 
 # **What the screen shows is not all Windows is saying.** When the guest
 # faults, Windows puts its message up in VGA *text* mode — and the adapter is
@@ -393,11 +413,15 @@ for line in rows:
 PYTXT
 }
 text_screen
-# whatever PROG left behind, if it left anything (the guest is down by now)
-for f in DDPROBE.LOG; do
+# whatever PROG left behind, if it left anything
+for f in DDPROBE.LOG D3D7TEST.LOG D3D7TEST.BMP EBTEST.LOG EB1.BMP EB2.BMP EB3.BMP EB4.BMP EB5.BMP; do
+  rm -f "$OUT/out/$f"
   if mcopy -i "$RAW@@$OFF" -n "::/$f" "$OUT/out/$f" 2>/dev/null; then
     echo "$f:"
-    sed 's/^/          /' "$OUT/out/$f"
+    case "$f" in
+      *.BMP) echo "          (extracted bitmap: $OUT/out/$f)" ;;
+      *)     sed 's/^/          /' "$OUT/out/$f" ;;
+    esac
   fi
 done
 echo "0xE9      $(wc -c < "$OUT/out/dbg.log") bytes"
@@ -442,9 +466,20 @@ fi
 if kill -0 $VM 2>/dev/null; then
   # What is on the screen *now* is the only evidence of what refused to go
   # away, and without it the next run is spent finding out.
-  python3 "$ROOT/tools/qmpc.py" "$SOCK" screendump "$OUT/out/stuck.ppm" >/dev/null 2>&1 || true
+  python3 "$ROOT/tools/qmpc.py" "$SOCK" screendump "$OUT/out/stuck.png" >/dev/null 2>&1 || true
   echo "shutdown   the machine did not power off — the next boot is a ScanDisk"
   echo "           or safe mode. What was on screen: $OUT/out/stuck.png"
 else
   echo "shutdown   clean"
 fi
+
+for f in DDPROBE.LOG D3D7TEST.LOG D3D7TEST.BMP EBTEST.LOG EB1.BMP EB2.BMP EB3.BMP EB4.BMP EB5.BMP; do
+  rm -f "$OUT/out/$f"
+  if mcopy -i "$RAW@@$OFF" -n "::/$f" "$OUT/out/$f" 2>/dev/null; then
+    echo "post-shutdown $f:"
+    case "$f" in
+      *.BMP) echo "          (extracted bitmap: $OUT/out/$f)" ;;
+      *)     sed 's/^/          /' "$OUT/out/$f" ;;
+    esac
+  fi
+done

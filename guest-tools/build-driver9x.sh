@@ -450,6 +450,16 @@ PYPE
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
      -march=pentium3 -mtune=generic -mwindows \
      -o "$OUT/ddprobe.exe" "$SRC/ddprobe.c" -lddraw -ldxguid -luser32
+
+  echo "==> ebtest.exe (DirectX 3 execute buffers and texture handles)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/ebtest.exe" "$ROOT/guest-tools/src/d3dptvid/ebtest.c" -lddraw -ldxguid -lgdi32 -luser32
+
+  echo "==> d3d7test.exe (the DX7 HAL scene, the oracle against d3dpt-dp2-test)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/d3d7test.exe" "$ROOT/guest-tools/src/d3dptvid/d3d7test.c" -lddraw -ldxguid -lgdi32 -luser32
 else
   echo "==> no $HALCC: skipping d3dpt9hl.dll (no DirectDraw on 9x from this build)"
 fi
