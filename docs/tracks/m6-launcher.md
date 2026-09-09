@@ -1983,11 +1983,25 @@ through no shader at all, which is most of the product missing.
 
 So a launcher that finds **no collection at all** now asks once, on the
 way up, as a modal question over the grid. The model is
-`launcher_core::firstrun` — the decision to ask, the question's words,
-both button labels, the download's steps and what a "yes" earns — and the
-two front ends are views over it exactly as everywhere else: egui's
-`Modal` in `LauncherApp::first_run_ui`, QML's `FirstRunDialog.qml` bound
-to `src/qt/firstrun.rs`.
+`launcher_core::firstrun` — the decision to ask, **the words at every
+step**, the download and what a "yes" earns — and the two front ends are
+views over it exactly as everywhere else: egui's `Modal` in
+`LauncherApp::first_run_ui`, and on the Qt side a real `MessageDialog`
+(`FirstRunDialog.qml`, `FirstRunResultDialog.qml`) over
+`src/qt/firstrun.rs`.
+
+The words being the model's goes further here than elsewhere, and had to:
+the first cut had each front end formatting "Downloading shader presets…
+12.3 MB" for itself, once in Rust and once in QML — the same sentence
+written twice, which is the entire thing this crate exists to prevent.
+One `state()` poll now answers with a `Message { step, headline, detail }`
+and neither front end writes a word of it. The buttons are the single
+deliberate exception: Qt takes the platform's standard ones (Yes/No,
+Retry/Cancel, OK), because a native confirmation dialog with hand-written
+button text is what looks wrong on every desktop at once, while egui —
+which has no standard buttons — takes `confirm_label()` /
+`cancel_label()` from the model. Hence the size and the destination live
+in the question rather than only on a button.
 
 Three things in it are worth keeping written down.
 
@@ -2016,18 +2030,57 @@ Three things in it are worth keeping written down.
   both front ends' editors, or the profile manager sits there offering
   to download what has just been downloaded.
 
+### The Qt dialog answered its own question (same day)
+
+The first Qt cut was a hand-built one: a `Dialog` popup with a
+`contentItem` of labels and a `RowLayout` of buttons whose text came from
+the model, its visibility following the model's step. The user's reply to
+it was the right one — *"why do you insist in doing inline custom dialogs
+in the qt frontend if qt already has the correct components?"* — and
+rebuilding it on `MessageDialog` turned up something worth the trip.
+
+**`MessageDialog.accept()` emits `rejected()`.** Measured here on the
+Quick fallback: a Yes/No dialog, `firstRunDialog.accept()`, and the only
+signal that came out was `rejected` — and `close()` behaves the same way.
+So a dialog that follows a model's step *answers its own question*: Yes
+started the download, the step changed, the code closed the dialog to get
+out of the way, and the close came back as a "No" that put the offer
+away — with the marker already written, so it never asked again. The
+symptom in the probe was the whole flow collapsing to `step=` and
+`busy=false` in one beat, with no download ever running.
+
+The fix is a better shape anyway, and it is now trap 5 in doc 07: **one
+dialog per thing there is to answer, opened when that step arrives and
+closed only by the person pressing one of its buttons.** The offer is two
+— `FirstRunDialog.qml` (the question, Yes/No) and
+`FirstRunResultDialog.qml` (the outcome, Retry/Cancel or OK) — and the
+step between them, the download, gets no dialog at all: it has nothing to
+answer, so it runs in the launcher's header with a `BusyIndicator` and
+the model's own line, instead of locking the window for a minute over a
+job the user has already agreed to. Nothing is opened or closed to follow
+the model except the initial `open()` of each, and a probe that wants to
+press a button emits the dialog's `accepted` / `rejected` *signal* —
+which is what a press delivers — never the like-named method.
+
 Checked two ways, in the shape this track has settled on. `shader-defaults`
 drives `launcherx` — a launcher with no collection asks and one with a
 collection does not, "Not now" is remembered, and a "yes" writes three
 profiles naming presets librashader really parses, by absolute path, with
-no overrides, once. `qt-firstrun` asks the real dialog through
+no overrides, once. `qt-firstrun` asks the real dialogs through
 `LAUNCHER_QT_SCREEN=firstrun`, because a model that is right about having
 no presets and a dialog that never appears look identical from anywhere
 else — the `cxx_qt::Initialize` trap this track has now paid for three
-times. Neither downloads anything: the 50 MB is `shader_source`'s
-long-standing code, and it was run end to end by hand once
-(`launcherx --first-run accept`: 50 MB fetched, three profiles written
-pointing into it, the question never asked again).
+times. It wants the question to be application-modal (`modality=2`) with
+the platform's Yes and No (`buttons=81920`) and the model's own text in
+it, No to answer the offer, and — pointing the download at a path that
+cannot be created, so it fails at once and the check needs no network —
+Yes to start a download that is *not* in a dialog, followed by the result
+dialog with Retry and Cancel (`buttons=4718592`) and the model's failure
+line. That last sequence is the one that was broken above. Neither check
+downloads anything: the 50 MB is `shader_source`'s long-standing code,
+and it was run end to end by hand once (`launcherx --first-run accept`:
+50 MB fetched, three profiles written pointing into it, the question
+never asked again).
 
 The egui half has the same treatment for a hand-driven run,
 `launcher --diag-firstrun-frame <out.png> [WxH] [<script>]`: the real

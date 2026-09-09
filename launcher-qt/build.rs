@@ -33,6 +33,7 @@ fn main() {
             "qml/Main.qml",
             "qml/Disclosure.qml",
             "qml/FirstRunDialog.qml",
+            "qml/FirstRunResultDialog.qml",
             "qml/PathField.qml",
             "qml/PresetCollection.qml",
             "qml/WizardWindow.qml",

@@ -229,17 +229,32 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   rather than four hundred `.slangp` files to guess from. A name the
   profile library already holds is never written a second time:
   `shader_library::create` deduplicates the slug, so re-running this
-  would otherwise hand back `crt-royale-2`. The whole model — including
-  both button labels and the question's words — is
-  `launcher_core::firstrun`, and both front ends are views over it:
-  egui's `Modal` and QML's `FirstRunDialog.qml`. `launcherx --first-run
-  [status|accept|decline]` and `--default-profiles [<collection>]` are
-  the same flow without a toolkit (the `shader-defaults` and
-  `qt-firstrun` checks). One thing that only shows up when a collection
-  arrives *late*: the profile manager caches "there is none" for the life
-  of the process, so accepting the offer calls
-  `editor::Presets::forget` on the way out, or the manager goes on
-  offering to download what has just been downloaded.
+  would otherwise hand back `crt-royale-2`. The model is
+  `launcher_core::firstrun`, and it holds **the words at every step** —
+  `Message { step, headline, detail }` from one `state()` poll, because
+  both front ends had been formatting "Downloading shader presets… 12.3
+  MB" separately, once in Rust and once in QML, which is the drift this
+  crate exists to prevent. Each front end lays those two strings out in
+  its own idiom: Qt's `MessageDialog` puts them in `text` and
+  `informativeText`, egui stacks them in a `Modal`. **The buttons are
+  the one thing that differs, deliberately.** Qt uses the platform's
+  standard buttons — Yes/No, Retry/Cancel, OK — because that is what a
+  native confirmation dialog is, and a native dialog with hand-written
+  button text is what looks wrong on every desktop at once; egui, which
+  has no standard buttons, takes `confirm_label()` / `cancel_label()`
+  from the model. Which is why the size and the destination are in the
+  *question* and not only on a button. The Qt side is two dialogs and not
+  one — the question and the outcome — for the reason in "Five Qt traps"
+  below, and the download between them has no dialog at all: it needs no
+  answer, so it runs in the launcher's header rather than locking the
+  window for a minute. `launcherx --first-run [status|accept|decline]`
+  and `--default-profiles [<collection>]` are the same flow without a
+  toolkit (the `shader-defaults` and `qt-firstrun` checks). One thing
+  that only shows up when a collection arrives *late*: the profile
+  manager caches "there is none" for the life of the process, so
+  accepting the offer calls `editor::Presets::forget` on the way out, or
+  the manager goes on offering to download what has just been
+  downloaded.
 - **The preview moves when the preset does** (fixed 2026-09-06): plenty of
   presets do not draw the same picture every frame — an interlaced CRT
   puts up alternate fields, a phosphor afterglow decays over several,
@@ -909,7 +924,7 @@ Two of those need saying out loud:
   `DYLD_PRINT_LIBRARIES=1`, so the images the QML engine pulls in have to
   be the app's own copies too.
 
-### Four Qt traps, each of which cost real time
+### Five Qt traps, each of which cost real time
 
 1. **cxx-qt's generated property setter skips the notify when the value
    already matches** — it compares first, to avoid binding loops. So
@@ -936,6 +951,24 @@ Two of those need saying out loud:
    good) and not by assignment (which it may simply ignore, as it did
    here for the height but not the width). A window that wants two very
    different sizes should be two windows.
+5. **A `MessageDialog` cannot be driven from outside: `accept()` and
+   `close()` both come back as `rejected()`** (measured 2026-09-09 on
+   the Quick fallback — `firstRunDialog.accept()` on a Yes/No dialog
+   emitted `rejected` and nothing else). So a dialog whose visibility
+   follows a model *answers its own question* the moment the model
+   moves: the first-run offer's Yes started the download, the model's
+   step changed, the code closed the dialog to get out of the way, and
+   the close arrived back as a "No" that put the whole offer away — with
+   the marker already written, so it never asked again. The rule that
+   falls out of it is a good one anyway: **one dialog per thing there is
+   to answer, opened when that step arrives and closed only by the
+   person pressing one of its buttons.** The offer is two — the question
+   (`FirstRunDialog.qml`) and the outcome
+   (`FirstRunResultDialog.qml`) — and the step in between, the download,
+   has no dialog at all because it has nothing to answer. A probe that
+   wants to press a button emits the dialog's own `accepted` /
+   `rejected` signal, which is what a press delivers; it must not call
+   the like-named *methods*.
 
 ## Out of scope for v1
 

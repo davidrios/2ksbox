@@ -50,12 +50,16 @@
 #                  both are things only a probe that asks the controls can see,
 #                  because the profile is on disk and the model is empty in the
 #                  runs that fail (only if a launcher-qt has been built)
-#   qt-firstrun    the Qt first-run shader offer, driven: the dialog is really up
-#                  on a launcher with no preset collection (it is shown on a
-#                  property that has to be published before the first frame),
-#                  its words are the shared model's, "Not now" closes it, and
-#                  the next start comes up with nothing over the grid (only if a
-#                  launcher-qt has been built)
+#   qt-firstrun    the Qt first-run shader offer, driven: Qt's own MessageDialog
+#                  is really up on a launcher with no preset collection (it is
+#                  shown on a property that has to be published before the first
+#                  frame), application-modal, with the platform's Yes/No and the
+#                  shared model's words in it; No answers the offer and the next
+#                  start comes up with nothing over the grid; and Yes leads to a
+#                  download that is *not* in a dialog and then to a Retry/Cancel
+#                  result dialog — the sequence that broke when one dialog
+#                  followed the model, since accept()/close() both emit
+#                  rejected() (only if a launcher-qt has been built)
 #   shader-defaults the first-run shader offer without a toolkit: a launcher with
 #                  no collection asks and one with a collection does not, "Not
 #                  now" is remembered so the question is asked exactly once, and
@@ -486,20 +490,51 @@ qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
        "$bin" 2>&1 | sed -n 's/^\[diag\] firstrun/firstrun/p')"
   [ -n "$o" ] || { echo "the probe printed no firstrun line"; return 1; }
   printf '%s\n' "$o" | sed 's/^/  /'
-  printf '%s' "$o" | grep -q "firstrun: open=true, dialog=true, state=asking" \
+  printf '%s' "$o" | grep -q "firstrun: open=true, dialog=true, step=asking" \
     || { echo "the dialog was not up on a launcher with no presets"; rc=1; }
-  # The words are the shared model's, not this front end's (ADR-014): the
-  # egui build shows the same ones, and a label typed into QML is exactly
-  # the kind of thing that used to drift between the two.
-  printf '%s' "$o" | grep -q "confirm=Download (~50 MB), cancel=Not now" \
-    || { echo "the buttons are not the model's labels"; rc=1; }
-  printf '%s' "$o" | grep -q "firstrun declined: open=false, dialog=false" \
-    || { echo "'Not now' did not close the dialog"; rc=1; }
+  # It is Qt's own confirmation dialog, application-modal (2), with the
+  # platform's Yes (0x4000) and No (0x10000) — 81920 together. Neither
+  # the modality nor the buttons are things this project draws, and a
+  # hand-built row of buttons in a popup is what this replaced.
+  printf '%s' "$o" | grep -q "modality=2, buttons=81920" \
+    || { echo "not an application-modal Yes/No dialog"; rc=1; }
+  # The words in it are the shared model's (ADR-014): the egui build
+  # shows the same two strings, and a sentence typed into QML is exactly
+  # what used to drift between the two front ends.
+  printf '%s' "$o" | grep -q "firstrun text: There are no CRT shader presets" \
+    || { echo "the dialog's text is not the model's headline"; rc=1; }
+  printf '%s' "$o" | grep -q "slang-shaders (~50 MB) into $dir/empty" \
+    || { echo "the dialog does not say what it will download or where"; rc=1; }
+  # No, through the dialog's own rejected signal — the wiring from a
+  # standard button to the model's verb, not a call into the model.
+  printf '%s' "$o" | grep -q "firstrun declined: open=false, step=$" \
+    || { echo "the dialog's No did not answer the offer"; rc=1; }
   [ -f "$dir/profiles/first-run.txt" ] || { echo "declining through the window wrote no marker"; rc=1; }
+
   # Asked once: the next start comes up on the grid, with nothing over it.
   o="$(timeout 120 env LAUNCHER_QT_SCREEN=firstrun LAUNCHER_QT_DELAY=300 "$bin" 2>&1 \
        | sed -n 's/^\[diag\] firstrun: //p')"
   case "$o" in "open=false, dialog=false"*) ;; *) echo "the offer came back on the next start: $o"; rc=1;; esac
+
+  # Yes, and then what replaces the question. The download is pointed at
+  # a path that cannot be created, so it fails at once and the run needs
+  # no network: what is being checked is the *sequence* — the question
+  # answered, the download not in a dialog at all (`busy`, which is what
+  # the header shows), and then a second dialog with its own words and
+  # the platform's Retry (0x80000) + Cancel (0x400000) = 4718592. It is
+  # the transition a single dialog followed a model through until
+  # 2026-09-09, when following one turned out to answer it: a
+  # MessageDialog's `accept()` and `close()` both emit `rejected()`.
+  rm -rf "$dir/profiles"; mkdir -p "$dir/profiles"
+  o="$(timeout 120 env LAUNCHER_SHADERS_DIR=/proc/nowhere/shaders LAUNCHER_QT_SCREEN=firstrun \
+       LAUNCHER_QT_ARG=accept LAUNCHER_QT_DELAY=300 "$bin" 2>&1 | sed -n 's/^\[diag\] firstrun/firstrun/p')"
+  printf '%s\n' "$o" | sed 's/^/  /'
+  printf '%s' "$o" | grep -q "firstrun accepted: dialog=true, step=running, busy=true" \
+    || { echo "Yes did not start the download"; rc=1; }
+  printf '%s' "$o" | grep -q "firstrun settled: result=true, step=failed, buttons=4718592" \
+    || { echo "the failure did not come back as a Retry/Cancel dialog"; rc=1; }
+  printf '%s' "$o" | grep -q "text=Couldn't download the shader presets" \
+    || { echo "the result dialog is not showing the model's failure line"; rc=1; }
   return $rc
 }
 qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)

@@ -1,13 +1,12 @@
 //! The first-run shader offer (`launcher_core::firstrun`), as one
 //! QObject over the shared model.
 //!
-//! Nothing here decides anything: whether to ask at all, the question's
-//! words, the two button labels, when the download is finished and which
-//! starter profiles it earned are all the core model's — this is the
-//! projection QML binds to, in the same shape the profile manager's
-//! preset row already uses (`""` / `"running:<MB>"` / `"failed:<msg>"`,
-//! plus `"asking"` and `"done:<line>"` for the two steps only this
-//! window has).
+//! Nothing here decides anything: whether to ask at all, the words at
+//! every step, when the download is finished and which starter profiles
+//! it earned are all the core model's. This is the projection QML binds
+//! to — a `step` naming which answers are possible, and the two strings
+//! that go with it, which `FirstRunDialog.qml` hands to a real
+//! `MessageDialog` as its `text` and `informativeText`.
 
 #[cxx_qt::bridge]
 pub mod ffi {
@@ -20,19 +19,22 @@ pub mod ffi {
     extern "RustQt" {
         #[qobject]
         #[qml_element]
-        /// Whether the dialog should be on screen at all — false for
-        /// every start after the first, and for any launcher that came
-        /// with a preset collection.
+        /// Whether the offer is live at all — false for every start
+        /// after the first, and for any launcher that came with a preset
+        /// collection. `busy` is the download specifically, which is the
+        /// one step that is not a dialog.
         #[qproperty(bool, open)]
-        /// "asking", "running:<MB>", "failed:<message>", "done:<line>",
-        /// or "" when there is nothing to show.
-        #[qproperty(QString, state)]
-        /// The question, the confirm and the cancel, all from the model
-        /// so the two front ends cannot ask this differently.
+        #[qproperty(bool, busy)]
+        /// Which answers are possible: "asking", "running", "failed",
+        /// "done", or "" for nothing at all. `FirstRunDialog.qml` turns
+        /// it into the dialog's standard buttons.
+        #[qproperty(QString, step)]
+        /// The words, from the model at every step: the dialog's `text`
+        /// and `informativeText`, and the header's line while the
+        /// download runs.
         #[qproperty(QString, title)]
-        #[qproperty(QString, question)]
-        #[qproperty(QString, confirm_label)]
-        #[qproperty(QString, cancel_label)]
+        #[qproperty(QString, headline)]
+        #[qproperty(QString, detail)]
         type FirstRun = super::FirstRunRust;
 
         /// Yes — remember the answer and start the download.
@@ -72,11 +74,11 @@ use std::pin::Pin;
 #[derive(Default)]
 pub struct FirstRunRust {
     open: bool,
-    state: QString,
+    busy: bool,
+    step: QString,
     title: QString,
-    question: QString,
-    confirm_label: QString,
-    cancel_label: QString,
+    headline: QString,
+    detail: QString,
 
     /// The model. Everything above is a projection of it.
     model: firstrun::FirstRun,
@@ -138,31 +140,32 @@ impl ffi::FirstRun {
     /// The model onto the properties — every one through its own setter,
     /// which is the rule the whole port is written around (`main.rs`).
     fn publish(mut self: Pin<&mut Self>) {
-        let (open, state, title, question, confirm, cancel);
+        let (open, busy, step, title, headline, detail);
         {
             // `state()` advances a finished download into the starter
             // profiles, so it needs `&mut`.
             let this = &mut *self.as_mut().rust_mut();
-            state = match this.model.state() {
-                Step::Idle => QString::default(),
-                Step::Asking => QString::from("asking"),
-                Step::Downloading(mb) => qs(format!("running:{mb:.1}")),
-                Step::Failed(e) => qs(format!("failed:{e}")),
-                Step::Done(line) => qs(format!("done:{line}")),
-            };
+            let message = this.model.state();
+            step = QString::from(match message.step {
+                Step::Idle => "",
+                Step::Asking => "asking",
+                Step::Downloading => "running",
+                Step::Failed => "failed",
+                Step::Done => "done",
+            });
+            headline = qs(message.headline);
+            detail = qs(message.detail);
             open = this.model.open();
-            question = qs(this.model.question());
-            confirm = qs(this.model.confirm_label());
-            cancel = QString::from(this.model.cancel_label());
+            busy = this.model.busy();
             title = QString::from(firstrun::TITLE);
         }
-        self.as_mut().set_state(state);
         self.as_mut().set_title(title);
-        self.as_mut().set_question(question);
-        self.as_mut().set_confirm_label(confirm);
-        self.as_mut().set_cancel_label(cancel);
-        // Last: `open` is what `Main.qml` shows the dialog on, so
-        // everything its first frame draws is current by then.
+        self.as_mut().set_headline(headline);
+        self.as_mut().set_detail(detail);
+        self.as_mut().set_busy(busy);
         self.as_mut().set_open(open);
+        // Last: `step` is what the dialog follows, so every word it will
+        // show is already in place when it is told to open.
+        self.as_mut().set_step(step);
     }
 }

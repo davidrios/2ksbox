@@ -230,18 +230,38 @@ fn first_run_ui(ctx: &egui::Context, first_run: &mut launcher_core::firstrun::Fi
     if !first_run.open() {
         return false;
     }
-    let step = first_run.state();
+    let message = first_run.state();
     let mut arrived = false;
     egui::Modal::new(egui::Id::new("first-run")).show(ctx, |ui| {
         ui.set_max_width(480.0);
         ui.heading(TITLE);
         ui.add_space(8.0);
-        match step {
-            // `open()` said otherwise; nothing to draw.
+        // The words are the model's, every step of the way — egui and Qt
+        // both showed this and both formatted it, which is the drift
+        // `launcher-core` exists to prevent.
+        ui.horizontal(|ui| {
+            if message.step == Step::Downloading {
+                ui.spinner();
+            }
+            let headline = egui::RichText::new(&message.headline);
+            ui.label(if message.step == Step::Failed {
+                headline.color(egui::Color32::RED)
+            } else {
+                headline.strong()
+            });
+        });
+        if !message.detail.is_empty() {
+            ui.add_space(4.0);
+            ui.label(&message.detail);
+        }
+        ui.add_space(12.0);
+        // egui has no standard buttons, so these words come from the
+        // model too (`firstrun::confirm_label`); Qt's `MessageDialog`
+        // uses the platform's own.
+        match message.step {
+            // `open()` said otherwise; nothing to answer.
             Step::Idle => {}
             Step::Asking => {
-                ui.label(first_run.question());
-                ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button(first_run.confirm_label()).clicked() {
                         first_run.accept();
@@ -251,18 +271,12 @@ fn first_run_ui(ctx: &egui::Context, first_run: &mut launcher_core::firstrun::Fi
                     }
                 });
             }
-            Step::Downloading(mb) => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(format!("Downloading shader presets… {mb:.1} MB"));
-                });
+            Step::Downloading => {
                 // The download runs on its own thread and nothing else
-                // would wake the UI to show it moving.
+                // would wake the UI to show the megabytes moving.
                 ui.ctx().request_repaint();
             }
-            Step::Failed(err) => {
-                ui.colored_label(egui::Color32::RED, format!("Couldn't download the shader presets: {err}"));
-                ui.add_space(12.0);
+            Step::Failed => {
                 ui.horizontal(|ui| {
                     if ui.button("Try again").clicked() {
                         first_run.retry();
@@ -272,9 +286,7 @@ fn first_run_ui(ctx: &egui::Context, first_run: &mut launcher_core::firstrun::Fi
                     }
                 });
             }
-            Step::Done(line) => {
-                ui.label(line);
-                ui.add_space(12.0);
+            Step::Done => {
                 if ui.button("OK").clicked() {
                     first_run.dismiss();
                     arrived = true;

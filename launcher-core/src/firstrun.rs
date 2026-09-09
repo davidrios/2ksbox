@@ -36,20 +36,39 @@ use std::path::{Path, PathBuf};
 /// reason its sentences are: two views of one question.
 pub const TITLE: &str = "Download shader presets?";
 
-/// What the dialog is showing right now. `Idle` is "no dialog" — the
-/// answer for every start after the first, and for every launcher that
-/// already has a collection.
+/// Which step the offer is on — that is, which answers it can take.
+/// `Idle` is "nothing on screen": the answer for every start after the
+/// first, and for every launcher that already has a collection.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Step {
     Idle,
-    /// The question is up: `question()`, with a confirm and a cancel.
+    /// A question, with a confirm and a cancel.
     Asking,
-    /// Megabytes fetched so far. There is no total (see `shader_source`).
-    Downloading(f64),
-    /// The download failed; the message, with a retry beside it.
-    Failed(String),
-    /// It worked: what arrived and which profiles were added, for the
-    /// one line the dialog shows before it is dismissed.
-    Done(String),
+    /// A download in flight. Not a question: there is nothing to answer
+    /// and nothing to press.
+    Downloading,
+    /// It failed, and can be retried or given up on.
+    Failed,
+    /// It worked; there is one thing to say and an acknowledgement.
+    Done,
+}
+
+/// The step *and the words that go with it*, from one poll.
+///
+/// The words are here rather than in a front end because both of them
+/// showed the same sentence and formatted it separately — "Downloading
+/// shader presets… 12.3 MB" existed twice, in Rust and in QML, which is
+/// the exact drift `launcher-core` exists to make impossible. A front
+/// end lays `headline` and `detail` out the way its toolkit does
+/// (Qt's `MessageDialog` puts them in `text` and `informativeText`);
+/// neither writes one.
+pub struct Message {
+    pub step: Step,
+    /// The situation, in one line.
+    pub headline: String,
+    /// What follows from it — the question itself, the megabytes so far,
+    /// the error, what was installed. May be several paragraphs.
+    pub detail: String,
 }
 
 /// The offer's whole state machine. Built by `check`, polled by `state`
@@ -93,32 +112,20 @@ impl FirstRun {
         self.download.is_some()
     }
 
-    /// The question itself. It names the size and the destination for
-    /// the same reason the profile manager's row does: 50 MB on a phone
-    /// tether is a decision, and a download that lands somewhere unnamed
-    /// is one nobody can undo.
-    pub fn question(&self) -> String {
-        format!(
-            "There are no CRT shader presets on this machine yet — they are what makes a \
-             machine look like the monitor it was played on.\n\n\
-             Download libretro's slang-shaders ({size}) into {dir}?\n\n\
-             {count} ready-made profiles are added with them: {names}.",
-            size = shader_source::DOWNLOAD_SIZE,
-            dir = shader_source::install_dir().display(),
-            count = shader_source::DEFAULT_PROFILES.len(),
-            names = shader_source::default_profile_names(),
-        )
-    }
-
-    /// The confirm button's words, size included — the same phrasing the
-    /// profile manager's own button uses.
+    /// The confirm button's words, for a toolkit that has no standard
+    /// buttons of its own to use (egui). A toolkit that *does* — Qt's
+    /// `MessageDialog` is a platform confirmation dialog, and on Windows
+    /// and macOS it is the system's own — uses those, because a native
+    /// dialog with hand-written button text is the thing that looks
+    /// wrong on every desktop at once. Which is why the size and the
+    /// destination are in the question and not only on the button.
     pub fn confirm_label(&self) -> String {
         format!("Download ({})", shader_source::DOWNLOAD_SIZE)
     }
 
-    /// The cancel button's words. "Not now" rather than "Cancel": the
-    /// offer does not come back, and the profile manager's button is
-    /// where it is taken up later.
+    /// The cancel button's words, under the same rule. "Not now" rather
+    /// than "Cancel": the offer does not come back, and the profile
+    /// manager's button is where it is taken up later.
     pub fn cancel_label(&self) -> &'static str {
         "Not now"
     }
@@ -151,13 +158,19 @@ impl FirstRun {
         self.outcome = None;
     }
 
-    /// What to draw, turning a finished download into the starter
-    /// profiles on the way past. Safe to call as often as a front end
-    /// likes.
-    pub fn state(&mut self) -> Step {
+    /// What to say and what can be answered, turning a finished download
+    /// into the starter profiles on the way past. Safe to call as often
+    /// as a front end likes — a repaint, or a timer.
+    pub fn state(&mut self) -> Message {
         if let Some(download) = &self.download {
             match download.status() {
-                Status::Running(bytes) => return Step::Downloading(bytes as f64 / 1_000_000.0),
+                Status::Running(bytes) => {
+                    return Message {
+                        step: Step::Downloading,
+                        headline: "Downloading shader presets…".into(),
+                        detail: format!("{:.1} MB so far.", bytes as f64 / 1_000_000.0),
+                    }
+                }
                 Status::Done(dir) => {
                     self.download = None;
                     self.outcome = Some(Ok(self.install_defaults(&dir)));
@@ -169,10 +182,34 @@ impl FirstRun {
             }
         }
         match &self.outcome {
-            Some(Ok(done)) => Step::Done(done.clone()),
-            Some(Err(err)) => Step::Failed(err.clone()),
-            None if self.asking => Step::Asking,
-            None => Step::Idle,
+            Some(Ok(detail)) => Message {
+                step: Step::Done,
+                headline: "Shader presets installed.".into(),
+                detail: detail.clone(),
+            },
+            Some(Err(err)) => Message {
+                step: Step::Failed,
+                headline: "Couldn't download the shader presets.".into(),
+                detail: err.clone(),
+            },
+            // The question names the size and the destination for the
+            // same reason the profile manager's row does: 50 MB on a
+            // phone tether is a decision, and a download that lands
+            // somewhere unnamed is one nobody can undo.
+            None if self.asking => Message {
+                step: Step::Asking,
+                headline: "There are no CRT shader presets on this machine yet.".into(),
+                detail: format!(
+                    "They are what makes a machine look like the monitor it was played on.\n\n\
+                     Download libretro's slang-shaders ({size}) into {dir}?\n\n\
+                     {count} ready-made profiles are added with them: {names}.",
+                    size = shader_source::DOWNLOAD_SIZE,
+                    dir = shader_source::install_dir().display(),
+                    count = shader_source::DEFAULT_PROFILES.len(),
+                    names = shader_source::default_profile_names(),
+                ),
+            },
+            None => Message { step: Step::Idle, headline: String::new(), detail: String::new() },
         }
     }
 

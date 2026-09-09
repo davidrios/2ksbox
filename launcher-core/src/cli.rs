@@ -442,14 +442,15 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                     // and the line below is the outcome, printed once.
                     while model.busy() {
                         std::thread::sleep(Duration::from_millis(500));
-                        if let firstrun::Step::Downloading(mb) = model.state() {
-                            println!("running: {mb:.1} MB");
+                        let message = model.state();
+                        if message.step == firstrun::Step::Downloading {
+                            println!("running: {}", message.detail);
                         }
                     }
                 }
                 Some(other) => panic!("unknown first-run action {other:?}; {usage}"),
             }
-            if let firstrun::Step::Failed(_) = print_first_run(&mut model) {
+            if print_first_run(&mut model) == firstrun::Step::Failed {
                 return Some(1);
             }
         }
@@ -567,19 +568,25 @@ pub fn print_snapshots(window: &snaps::Snapshots) {
     }
 }
 
-/// One line for whatever the first-run dialog would be showing, in the
-/// same `<state>[: <text>]` shape the Qt bridge hands QML — so what the
-/// suite reads and what a window draws come from one `state()` call.
+/// One line for whatever the first-run dialog would be showing: the
+/// step, then the words the dialog itself would put on screen, newlines
+/// flattened so a check can grep one line. Both come from a single
+/// `state()`, so what the suite reads is what a window draws.
 fn print_first_run(model: &mut firstrun::FirstRun) -> firstrun::Step {
-    let step = model.state();
-    match &step {
-        firstrun::Step::Idle => println!("idle"),
-        firstrun::Step::Asking => println!("asking: {}", model.question().replace('\n', " ")),
-        firstrun::Step::Downloading(mb) => println!("running: {mb:.1} MB"),
-        firstrun::Step::Failed(e) => println!("failed: {e}"),
-        firstrun::Step::Done(line) => println!("done: {line}"),
+    let message = model.state();
+    let name = match message.step {
+        firstrun::Step::Idle => "idle",
+        firstrun::Step::Asking => "asking",
+        firstrun::Step::Downloading => "running",
+        firstrun::Step::Failed => "failed",
+        firstrun::Step::Done => "done",
+    };
+    if message.step == firstrun::Step::Idle {
+        println!("idle");
+    } else {
+        println!("{name}: {} {}", message.headline, message.detail.replace('\n', " "));
     }
-    step
+    message.step
 }
 
 /// Where every companion resolved, as text — one line each, the format
