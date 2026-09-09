@@ -285,16 +285,23 @@ static void mpu401_realizefn(DeviceState *dev, Error **errp)
 
     rate = libsynth_midi_rate(s->midi);
     if (rate) {
-        if (!AUD_register_card(TYPE_MPU401, &s->card, errp)) {
-            return;
-        }
         as.freq = rate;
         as.nchannels = 2;
         as.fmt = AUDIO_FORMAT_S16;
         as.endianness = AUDIO_HOST_ENDIANNESS;
+        /* Both failures below leave the device unrealized, so unrealize
+         * will not run: the synthesizer is given back here. */
+        if (!AUD_register_card(TYPE_MPU401, &s->card, errp)) {
+            libsynth_midi_free(s->midi);
+            s->midi = NULL;
+            return;
+        }
         s->voice = AUD_open_out(&s->card, s->voice, TYPE_MPU401, s,
                                 mpu401_callback, &as);
         if (!s->voice) {
+            libsynth_midi_free(s->midi);
+            s->midi = NULL;
+            AUD_remove_card(&s->card);
             error_setg(errp, "mpu401: opening the audio voice failed");
             return;
         }

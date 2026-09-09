@@ -170,6 +170,10 @@ static void opl3_realizefn(DeviceState *dev, Error **errp)
     as.endianness = AUDIO_HOST_ENDIANNESS;
     s->voice = AUD_open_out(&s->card, s->voice, TYPE_OPL3, s, opl3_callback, &as);
     if (!s->voice) {
+        /* Realize failed, so unrealize will not run: give the chip back
+         * here rather than leaving it to a process exit. */
+        libsynth_opl_free(s->chip);
+        s->chip = NULL;
         error_setg(errp, "opl3: opening the audio voice failed");
         return;
     }
