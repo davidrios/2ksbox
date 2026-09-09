@@ -474,7 +474,9 @@ shaderdefaults_check() { # the first-run shader offer and its starter profiles (
   # preset's own defaults, which is an *empty* override table.
   o="$(target/release/launcherx --default-profiles third_party/slang-shaders)" \
     || { echo "--default-profiles failed"; return 1; }
-  [ "$(printf '%s\n' "$o" | wc -l)" = 3 ] || { echo "not three profiles: $o"; rc=1; }
+  # `-eq`, not `=`: BSD `wc` pads its count with spaces and the string
+  # compare then fails on macOS for a library that is exactly right.
+  [ "$(printf '%s\n' "$o" | wc -l)" -eq 3 ] || { echo "not three profiles: $o"; rc=1; }
   for n in crt-aperture crt-royale apple-ii; do
     if [ ! -f "$dir/profiles/$n.toml" ]; then echo "no $n.toml"; rc=1; continue; fi
     o="$(sed -n '/^\[params\]/,$p' "$dir/profiles/$n.toml" | grep -c '=' || true)"
@@ -491,7 +493,7 @@ shaderdefaults_check() { # the first-run shader offer and its starter profiles (
   # slowly filling the library with copies.
   o="$(target/release/launcherx --default-profiles third_party/slang-shaders)"
   case "$o" in "(nothing to add"*) ;; *) echo "a second run added profiles again: $o"; rc=1;; esac
-  [ "$(ls "$dir/profiles"/*.toml | wc -l)" = 3 ] || { echo "the profile library is not still three"; rc=1; }
+  [ "$(ls "$dir/profiles"/*.toml | wc -l)" -eq 3 ] || { echo "the profile library is not still three"; rc=1; }
   return $rc
 }
 qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
