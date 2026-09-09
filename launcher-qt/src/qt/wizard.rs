@@ -325,93 +325,79 @@ impl ffi::Wizard {
         self.publish();
     }
 
-    fn choose_family(mut self: Pin<&mut Self>, family: i32) {
+    fn choose_family(self: Pin<&mut Self>, family: i32) {
         let f = at(&Family::ALL, family);
-        self.as_mut().rust_mut().form.choose_family(f);
-        self.publish();
+        self.edit(|form| form.choose_family(f));
     }
 
-    fn choose_ram(mut self: Pin<&mut Self>, ram_mb: i32) {
-        self.as_mut().rust_mut().form.choose_ram_mb(ram_mb.max(0) as u32);
-        self.publish();
+    fn choose_ram(self: Pin<&mut Self>, ram_mb: i32) {
+        self.edit(|form| form.choose_ram_mb(ram_mb.max(0) as u32));
     }
 
-    fn reset_ram(mut self: Pin<&mut Self>) {
-        self.as_mut().rust_mut().form.reset_ram();
-        self.publish();
+    fn reset_ram(self: Pin<&mut Self>) {
+        self.edit(Form::reset_ram);
     }
 
-    fn choose_cpu_speed(mut self: Pin<&mut Self>, cpu_speed: i32) {
+    fn choose_cpu_speed(self: Pin<&mut Self>, cpu_speed: i32) {
         let s = at(&CpuSpeed::ALL, cpu_speed);
-        self.as_mut().rust_mut().form.choose_cpu_speed(s);
-        self.publish();
+        self.edit(|form| form.choose_cpu_speed(s));
     }
 
-    fn reset_cpu_speed(mut self: Pin<&mut Self>) {
-        self.as_mut().rust_mut().form.reset_cpu_speed();
-        self.publish();
+    fn reset_cpu_speed(self: Pin<&mut Self>) {
+        self.edit(Form::reset_cpu_speed);
     }
 
-    fn choose_accel(mut self: Pin<&mut Self>, accel: i32) {
+    fn choose_accel(self: Pin<&mut Self>, accel: i32) {
         let a = at(&Accel::ALL, accel);
-        self.as_mut().rust_mut().form.choose_accel(a);
-        self.publish();
+        self.edit(|form| form.choose_accel(a));
     }
 
-    fn reset_accel(mut self: Pin<&mut Self>) {
-        self.as_mut().rust_mut().form.reset_accel();
-        self.publish();
+    fn reset_accel(self: Pin<&mut Self>) {
+        self.edit(Form::reset_accel);
     }
 
-    fn choose_network(mut self: Pin<&mut Self>, network: bool) {
-        self.as_mut().rust_mut().form.choose_network(network);
-        self.publish();
+    fn choose_network(self: Pin<&mut Self>, network: bool) {
+        self.edit(|form| form.choose_network(network));
     }
 
-    fn choose_seamless_mouse(mut self: Pin<&mut Self>, seamless_mouse: bool) {
-        self.as_mut().rust_mut().form.choose_seamless_mouse(seamless_mouse);
-        self.publish();
+    fn choose_seamless_mouse(self: Pin<&mut Self>, seamless_mouse: bool) {
+        self.edit(|form| form.choose_seamless_mouse(seamless_mouse));
     }
 
-    fn choose_optimization(mut self: Pin<&mut Self>, index: i32, on: bool) {
+    fn choose_optimization(self: Pin<&mut Self>, index: i32, on: bool) {
         let opt = at(&Optimization::ALL, index);
-        self.as_mut().rust_mut().form.choose_optimization(opt, on);
-        self.publish();
+        self.edit(|form| form.choose_optimization(opt, on));
     }
 
-    fn reset_optimizations(mut self: Pin<&mut Self>) {
-        self.as_mut().rust_mut().form.reset_optimizations();
-        self.publish();
+    fn reset_optimizations(self: Pin<&mut Self>) {
+        self.edit(Form::reset_optimizations);
     }
 
-    fn choose_boot(mut self: Pin<&mut Self>, boot: i32) {
+    fn choose_boot(self: Pin<&mut Self>, boot: i32) {
         let b = at(&Boot::ALL, boot);
-        self.as_mut().rust_mut().form.boot = b;
-        self.publish();
+        self.edit(|form| form.boot = b);
     }
 
-    fn choose_video(mut self: Pin<&mut Self>, video: i32) {
-        // Into this family's own list, not `Video::ALL`: the combo box
-        // and the model must be counting the same entries.
-        let v = at(self.rust().form.video_choices(), video);
-        self.as_mut().rust_mut().form.choose_video(v);
-        self.publish();
+    fn choose_video(self: Pin<&mut Self>, video: i32) {
+        self.edit(|form| {
+            // Into this family's own list, not `Video::ALL`: the combo
+            // box and the model must be counting the same entries.
+            let v = at(form.video_choices(), video);
+            form.choose_video(v);
+        });
     }
 
-    fn reset_video(mut self: Pin<&mut Self>) {
-        self.as_mut().rust_mut().form.reset_video();
-        self.publish();
+    fn reset_video(self: Pin<&mut Self>) {
+        self.edit(Form::reset_video);
     }
 
-    fn set_floppy_path(mut self: Pin<&mut Self>, floppy: &QString) {
-        self.as_mut().rust_mut().form.floppy = floppy.to_string();
-        self.publish();
+    fn set_floppy_path(self: Pin<&mut Self>, floppy: &QString) {
+        let floppy = floppy.to_string();
+        self.edit(|form| form.floppy = floppy);
     }
 
-    fn fill_advanced(mut self: Pin<&mut Self>) {
-        self.as_mut().pull();
-        self.as_mut().rust_mut().form.fill_advanced();
-        self.publish();
+    fn fill_advanced(self: Pin<&mut Self>) {
+        self.edit(Form::fill_advanced);
     }
 
     fn submit(mut self: Pin<&mut Self>) -> bool {
@@ -464,6 +450,19 @@ impl ffi::Wizard {
 }
 
 impl ffi::Wizard {
+    /// Every verb that changes the form does the same three things, in
+    /// this order. **The `pull` is not optional**: QML's text fields and
+    /// check boxes write the *property* and nothing else, so a form that
+    /// has not been caught up still holds what it was opened with — and
+    /// the `publish` at the end writes that back over what the user
+    /// typed. A machine name entered and then followed by any combo box
+    /// disappeared exactly that way (user, 2026-09-08).
+    fn edit(mut self: Pin<&mut Self>, change: impl FnOnce(&mut Form)) {
+        self.as_mut().pull();
+        change(&mut self.as_mut().rust_mut().form);
+        self.publish();
+    }
+
     /// The plain, two-way-bound text fields, back into the form. A QML
     /// `TextField` writes its property and nothing else, so this catches
     /// the form up before anything reads it.

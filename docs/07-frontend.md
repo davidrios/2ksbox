@@ -636,6 +636,30 @@ what the preset field is **showing**; the `qt-profile` check in
 `scripts/test.sh` wants `0 -> 1` and an empty field, and the unfixed
 build gives `0 -> 0` with the old preset still in it.
 
+**And the wizard had the same third symptom, unnoticed, until a user hit
+it on 2026-09-08:** a machine name typed into the Name field vanished the
+moment any combo box was touched. `Wizard::pull` — the wizard's
+`catch_up`, written the same day for the same reason — existed but was
+called by two verbs only, `fill_advanced` and `submit`. Every `choose_*`
+and `reset_*` went straight to the form and then published, so the form's
+own (still empty, or still the machine's old) name went back over what
+had been typed, and the `text:` binding put the empty string in the field
+in front of the user. **Typing does not break the binding**, which is
+what makes this visible rather than merely wrong: a QML binding is
+destroyed by a write from *JavaScript*, and a keystroke is a write from
+C++ — the binding stays live and re-evaluates on the model's very next
+notify. Six fields were exposed, not one: the name, both path fields, the
+disk size, the advanced TOML and the shader profile. Every form-changing
+verb now goes through one `Wizard::edit(|form| …)` — pull, change,
+publish, in that order and never any other — because the rule only holds
+if there is one place it can be forgotten.
+
+`qt-wizard` grew the probe for it: it types a name into the real field
+(with `insert`, which is what a key press does — a JS assignment would
+unbind the field and hide the bug), moves the family combo box, and
+prints what the field is **showing** beside what the model holds. The
+unfixed build says `shown [] model []`.
+
 ### What each front end still owns
 
 Everything that is genuinely the toolkit's, and nothing else:

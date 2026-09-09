@@ -30,11 +30,13 @@
 #                  under its own name, in the flat shelf file and on the boot
 #                  drive as `isodir:`, commas in the path doubled, and our QEMU
 #                  opening both folders
-#   qt-wizard      what the Qt wizard's memory field *shows* on each family, beside
-#                  what the shared form says: a spin box bounds the value it is
-#                  handed against the range it has at that moment, so the control
-#                  and the model can disagree and nothing that asks the model
-#                  would ever notice (only if a launcher-qt has been built)
+#   qt-wizard      what the Qt wizard's fields *show* on each family, beside what
+#                  the shared form says: a spin box bounds the value it is
+#                  handed against the range it has at that moment, and a model
+#                  that republishes a form nobody caught up puts a stale name
+#                  back over a typed one — both are disagreements between the
+#                  control and the model that nothing which asks the model would
+#                  ever notice (only if a launcher-qt has been built)
 #   qt-close       the title bar's close button on a Qt dialog: the close event
 #                  delivered the way the window system delivers it must reach
 #                  the wizard window exactly once and leave no modal window
@@ -398,7 +400,7 @@ shelforder_check() { # the disc shelf is in order by label, all the way to the g
   return $rc
 }
 qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
-  local rc=0 dir="$OUT/qtwizard" bin="launcher-qt/target/release/launcher-qt" f o shown model lo hi
+  local rc=0 dir="$OUT/qtwizard" bin="launcher-qt/target/release/launcher-qt" f o out shown model lo hi
   rm -rf "$dir"; mkdir -p "$dir/library"
   # A scratch library, never the user's own — the window lists it on the
   # way up. Offscreen, so a check never throws a window on the desktop.
@@ -412,8 +414,9 @@ qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
   # the real wizard headlessly on each family and prints what its memory
   # field holds beside what the form says it should.
   for f in win98 xp dos other; do
-    o="$(timeout 120 env LAUNCHER_QT_SCREEN=wizard LAUNCHER_QT_ARG="$f" LAUNCHER_QT_DELAY=250 \
-         "$bin" 2>&1 | sed -n 's/^\[diag\] wizard memory: //p')"
+    out="$(timeout 120 env LAUNCHER_QT_SCREEN=wizard LAUNCHER_QT_ARG="$f" LAUNCHER_QT_DELAY=250 \
+           "$bin" 2>&1)"
+    o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] wizard memory: //p')"
     if [ -z "$o" ]; then echo "$f: the wizard printed no memory line"; rc=1; continue; fi
     shown="$(printf '%s' "$o" | sed -n 's/^shown \([0-9]*\).*/\1/p')"
     model="$(printf '%s' "$o" | sed -n 's/.*model \([0-9]*\).*/\1/p')"
@@ -423,6 +426,17 @@ qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
     [ "$model" -ge "$lo" ] && [ "$model" -le "$hi" ] \
       || { echo "$f: $model is outside the family's own range $lo..$hi"; rc=1; }
     echo "  $f: $o"
+    # The same class of bug from the other side, and the one a user hit:
+    # a name typed into the field and then a combo box touched. A text
+    # field writes the model *property* alone, so a verb that republishes
+    # the form without catching it up first puts the form's own (empty)
+    # name back, and the name disappears from a window that never asked
+    # it to (2026-09-08).
+    o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] wizard name: //p')"
+    shown="$(printf '%s' "$o" | sed -n 's/^shown \[\(.*\)\] model \[.*\]$/\1/p')"
+    model="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] model \[\(.*\)\]$/\1/p')"
+    [ "$shown" = "Typed name" ] || { echo "$f: the name field lost what was typed (shows: $shown)"; rc=1; }
+    [ "$model" = "Typed name" ] || { echo "$f: the model lost the typed name (holds: $model)"; rc=1; }
   done
   return $rc
 }

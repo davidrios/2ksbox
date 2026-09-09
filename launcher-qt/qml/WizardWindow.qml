@@ -52,6 +52,16 @@ Window {
     /// model's own number.
     readonly property int shownRamMb: ram.value
 
+    /// What the name field is showing, and a way to *type* into it. A JS
+    /// assignment would not do: writing the field's `text` from QML
+    /// destroys the `text:` binding, and it is precisely the binding
+    /// surviving a keystroke that makes the model able to wipe the name
+    /// out from under the user (`src/qt/wizard.rs`'s `edit`). `insert`
+    /// is what a key press does, so the `qt-wizard` check sees what the
+    /// user sees.
+    readonly property alias shownName: nameField.text
+    function typeName(text) { nameField.insert(nameField.length, text) }
+
     title: wizard.title
     width: 660
     height: 720
@@ -132,6 +142,7 @@ Window {
 
                     Label { text: qsTr("Name") }
                     TextField {
+                        id: nameField
                         Layout.fillWidth: true
                         text: root.wizard.name
                         selectByMouse: true

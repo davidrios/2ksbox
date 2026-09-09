@@ -383,6 +383,12 @@ ApplicationWindow {
                 // order `familyLabels()` hands the combo box, so the two
                 // cannot get out of step.
                 const families = ["win98", "xp", "dos", "other"]
+                // Typed *before* the family moves, because the order is
+                // the bug: a text field writes the model property and
+                // nothing else, so a verb that republishes the form
+                // without catching it up first writes the form's stale,
+                // empty name back over what was typed (user, 2026-09-08).
+                wizardWindow.typeName("Typed name")
                 if (families.indexOf(diag.arg) >= 0)
                     wizard.chooseFamily(families.indexOf(diag.arg))
                 // What the memory field ended up showing, beside what the
@@ -393,6 +399,8 @@ ApplicationWindow {
                 diag.note("wizard memory: shown " + wizardWindow.shownRamMb
                           + ", model " + wizard.ramMb
                           + ", range " + wizard.ramMin + ".." + wizard.ramMax)
+                diag.note("wizard name: shown [" + wizardWindow.shownName
+                          + "] model [" + wizard.name + "]")
                 break
             case "closebox":
                 // The title bar's close button on the wizard, the way the
