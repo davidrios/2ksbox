@@ -159,6 +159,25 @@ pub fn shader_args(machine: &Machine) -> Vec<String> {
     args
 }
 
+/// The `--pad <setting>` argument `spawn` passes to `player` for this
+/// machine's gamepad setting (M13, `docs/tracks/m13-gamepads.md`).
+///
+/// Nothing at all for a machine with the pad off, which is every machine
+/// by default — the player's own default is the same, so the quiet case
+/// costs no argument. Split out beside [`shader_args`] and for the same
+/// reason: `--print-player-args` can show what a bundle resolves to
+/// without spawning anything.
+///
+/// Only the *setting* crosses; the bindings themselves are the shared
+/// `gamepad` crate's `default_key_bindings`, which both sides read. When
+/// a machine can carry its own map, this is where it will be written out.
+pub fn pad_args(machine: &Machine) -> Vec<String> {
+    match machine.effective_pad() {
+        crate::bundle::Pad::None => Vec::new(),
+        p => vec!["--pad".to_string(), p.name().to_string()],
+    }
+}
+
 /// Spawn `player` on `machine`. Inherits the launcher's stdout/stderr
 /// when there is a terminal to inherit — and when there is not (a
 /// double-clicked launcher on Windows, which has no console at all and
@@ -185,6 +204,7 @@ pub fn spawn(
     }
     let bin = player_binary();
     let mut argv: Vec<String> = shader_args(machine);
+    argv.extend(pad_args(machine));
     argv.push("--".into());
     argv.extend(args);
     // The line itself, before anything is spawned: it is the first thing

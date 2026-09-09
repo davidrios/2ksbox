@@ -246,8 +246,13 @@ because they reach different guests:
   no headless check can drive a controller and the whole track is
   hand-testing only. The `pad` check guards it. Embed API v8 moved to
   path A, where it has a consumer.
-- **Path C the key mapping:** pad → the key and mouse events the player
-  already sends. Every guest, no QEMU patch, no analog.
+- **Path C the key mapping** ✅ 2026-09-09: pad → the key events the
+  player already sends, `--pad keys` written from `bundle::Pad`. Every
+  guest, no QEMU patch, no analog. The mapping recomputes the wanted set
+  of keys each poll and diffs it, so shared keys (d-pad *and* stick on
+  the arrows) release only when the last holder does, and a stick crossing
+  centre releases before it presses. Not yet seen arriving in a real
+  guest: `tools/pad-guest-test.sh` is still to write.
 - **Path A `usb-gamepad`** (patch 26): a gamepad report descriptor and
   packer on `hw/usb/dev-hid.c`'s plumbing, plus a joystick event class in
   the input core. XP, Win98 SE and Me see it on their inbox HID stack

@@ -9,9 +9,11 @@ Opened 2026-09-09 with the design for all three guest-facing paths,
 written before any of them was built, because which one to build first is
 a product decision and the three do not share a guest end.
 
-**Step 0 landed 2026-09-09.** The host end reads a pad, shapes it and
-says what it saw; nothing reaches a guest yet, which is path C. See
-"State" below for what is in and what the plan got wrong.
+**Step 0 and path C landed 2026-09-09.** A pad now presses keys in a
+guest, on every family, with nothing installed in the guest and no QEMU
+patch. Paths A and B — the devices — are still ahead. See "State" below
+for what is in, what the plan got wrong, and the one claim that is not
+yet proved against a real guest.
 
 Gamepads were a post-v1 candidate in doc 08 until this track opened.
 
@@ -71,8 +73,42 @@ both carry `libudev.so.1` and `libudev.pc`, which `gilrs` needs on Linux
 through `libudev-sys`; and `gilrs` cross-compiles clean for
 `x86_64-pc-windows-gnu`, so the Windows package is not at risk.
 
-Not done, and deliberately: nothing is sent to a guest. `Pads::is_pressed`
-is the hook path C picks up.
+Then **path C** (same day):
+
+- **`KeyMap`** in `player/src/pad.rs` — the pad's pressed halves as key
+  presses. It recomputes the wanted set of scancodes every poll and diffs
+  it against what is held, rather than reacting to transitions. Two
+  reasons, both load-bearing: a diff cannot drift into a key stuck down
+  in the guest (which outlives the mistake and cannot be cleared from the
+  host), and a *set union* handles the default map's shared keys — both
+  the d-pad and the left stick drive the arrows, so `left` has two
+  holders and must not be released when only the first lets go.
+- Releases are emitted **before** presses in the same batch, and the
+  batch is one `input_flush`. A stick swung across centre changes both
+  halves in one poll; the other order leaves a guest that samples between
+  the two calls holding both arrows.
+- `lift_all_keys` (focus loss) now goes through the map rather than
+  behind its back, or the map would still believe the key was down and
+  never press it again.
+- **`launcher_core::player::pad_args`** writes `--pad keys` from
+  `bundle::Pad`, beside `shader_args` and for the same reason; `spawn`
+  passes it, and `launcherx --print-player-args` shows what a bundle
+  resolves to without spawning anything.
+
+### Not proved yet
+
+**Keys have not been seen arriving in a real guest.** Everything above is
+checked against the scripted pad with no guest — the mapping, the
+ordering, the shared keys, the scancodes — and the chain from a bundle to
+`--pad keys` is checked too, but `tools/pad-guest-test.sh` is not written
+and no guest has been booted with a pad. The box had another session's
+TCG guests running throughout, and CLAUDE.md forbids a second one. That
+tool is the first thing to do on a free box: boot with `--pad keys` and
+`PLAYER_PAD_SCRIPT`, and let the guest's own `dir`/COM1 say what it saw.
+
+Also untried: a **real controller**. `gilrs` enumerates here (a foot
+pedal is what is plugged into this box), so the button and axis mapping
+is compiled and enumerated but never felt.
 
 ### What the plan got wrong
 
@@ -236,7 +272,7 @@ four with a Y-cable), and a calibration step the user has to do once per
 guest. An analog stick's centre drifts; that is period-accurate and still
 annoying.
 
-## Path C — map the pad onto keys and the mouse
+## Path C — map the pad onto keys and the mouse  ✅ (the keys half)
 
 No guest device. `player/src/pad.rs` turns buttons and stick directions
 into the key and mouse events the player already sends, against a
@@ -298,9 +334,8 @@ Integration and end-to-end only, per the policy.
 
 1. ~~**Step 0** — `gilrs` in the player, the binding model, and
    `PLAYER_PAD_SCRIPT`.~~ **Done 2026-09-09.**
-2. **Path C** — the key mapping. Smallest, reaches every guest, and it
-   exercises the whole host end and the launcher model against a guest
-   that needs no new device.
+2. ~~**Path C** — the key mapping.~~ **Done 2026-09-09**, except
+   `tools/pad-guest-test.sh` — see "Not proved yet".
 3. **Path A** — `usb-gamepad`, with the joystick event class in the input
    core. The main event: XP and 98 SE with nothing to install.
 4. **Path B** — the gameport, for DOS and the 9x analog stack. Last

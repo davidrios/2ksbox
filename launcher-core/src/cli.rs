@@ -65,6 +65,16 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             let machine = Machine::load(Path::new(&path)).expect("load bundle");
             println!("{}", player::shader_args(&machine).join(" "));
         }
+        "--print-player-args" => {
+            // Everything the launcher puts on the player's own command
+            // line, before the `--` that hands the rest to QEMU. What
+            // `--print-args` is for the guest, this is for the player.
+            let path = args.next().expect("usage: --print-player-args <machine.toml>");
+            let machine = Machine::load(Path::new(&path)).expect("load bundle");
+            let mut argv = player::shader_args(&machine);
+            argv.extend(player::pad_args(&machine));
+            println!("{}", argv.join(" "));
+        }
         "--play" => {
             let path = PathBuf::from(args.next().expect("usage: --play <machine.toml>"));
             let machine = Machine::load(&path).expect("load bundle");

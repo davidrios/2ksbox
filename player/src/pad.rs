@@ -22,8 +22,8 @@
 //! could not be met at all. It is the piece the rest of M13 is built on,
 //! which is why step 0 exists.
 
-use gamepad::{Control, Shaping};
-use std::collections::BTreeMap;
+use gamepad::{Binding, Control, Shaping};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// One control moved. `value` is the shaped reading: -1.0..=1.0 for an
 /// axis, 0.0 or 1.0 for a button.
@@ -265,10 +265,12 @@ pub struct Pads {
     /// The shaped value each control last reported, so `poll` can emit a
     /// change rather than a level and a consumer never sees a repeat.
     values: BTreeMap<Control, f32>,
-    /// Which controls a digital consumer currently calls pressed. Kept
-    /// here rather than worked out per event because hysteresis needs the
-    /// previous answer (`Shaping::pressed`).
-    pressed: BTreeMap<Control, bool>,
+    /// Which control *halves* a digital consumer currently calls pressed
+    /// — `(control, positive)`. Kept here rather than worked out per
+    /// event because hysteresis needs the previous answer
+    /// (`Shaping::half_pressed`), and per half rather than per control
+    /// because the two halves of a stick are two different keys.
+    pressed: BTreeMap<(Control, bool), bool>,
     log: bool,
 }
 
@@ -336,20 +338,28 @@ impl Pads {
             if previous == shaped {
                 continue;
             }
-            let was = self.pressed.get(&ev.control).copied().unwrap_or(false);
-            let now = self.shaping.pressed(shaped, was);
-            self.pressed.insert(ev.control, now);
+            // Both halves, every time. An axis swung straight across
+            // centre changes them both in one reading, and the release
+                // of the half being left has to be seen as well as the
+            // press of the half being entered.
+            let mut note = String::new();
+            for positive in [false, true] {
+                let half = (ev.control, positive);
+                let was = self.pressed.get(&half).copied().unwrap_or(false);
+                let now = self.shaping.half_pressed(shaped, positive, was);
+                self.pressed.insert(half, now);
+                if was != now {
+                    note.push(' ');
+                    note.push_str(half_name(ev.control, positive));
+                    note.push_str(if now { " press" } else { " release" });
+                }
+            }
             if self.log {
                 eprintln!(
-                    "[pad] frame {frame} {} raw {:+.3} shaped {:+.3}{}",
+                    "[pad] frame {frame} {} raw {:+.3} shaped {:+.3}{note}",
                     ev.control.name(),
                     ev.value,
                     shaped,
-                    match (was, now) {
-                        (false, true) => " press",
-                        (true, false) => " release",
-                        _ => "",
-                    }
                 );
             }
             out.push(Event {
@@ -360,21 +370,139 @@ impl Pads {
         out
     }
 
-    /// Whether a digital consumer should currently call `control`
-    /// pressed. Path C's key mapping reads this rather than the value, so
-    /// the hysteresis is applied in exactly one place.
-    #[allow(dead_code, reason = "path C's entry point; --pad-sweep prints it")]
-    pub fn is_pressed(&self, control: Control) -> bool {
-        self.pressed.get(&control).copied().unwrap_or(false)
+    /// Whether a digital consumer should currently call one half of a
+    /// control pressed. The key mapping reads this rather than the value,
+    /// so the hysteresis is applied in exactly one place.
+    pub fn is_pressed(&self, control: Control, positive: bool) -> bool {
+        self.pressed.get(&(control, positive)).copied().unwrap_or(false)
     }
 
-    /// Every control a digital consumer currently calls pressed, in a
-    /// stable order.
-    fn pressed_now(&self) -> Vec<Control> {
-        Control::ALL
-            .into_iter()
-            .filter(|&c| self.is_pressed(c))
-            .collect()
+    /// Every half a digital consumer currently calls pressed, in a stable
+    /// order.
+    fn pressed_now(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        for c in Control::ALL {
+            for positive in [false, true] {
+                if self.is_pressed(c, positive) {
+                    out.push(half_name(c, positive));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// What to call one half of a control in a log line.
+///
+/// A button has only the positive half and is just its own name; an axis
+/// names the direction, because "lx" alone in a line about a key press
+/// does not say which key.
+fn half_name(control: Control, positive: bool) -> &'static str {
+    if !control.is_axis() {
+        return control.name();
+    }
+    match (control, positive) {
+        (Control::LeftStickX, false) => "lx-",
+        (Control::LeftStickX, true) => "lx+",
+        (Control::LeftStickY, false) => "ly-",
+        (Control::LeftStickY, true) => "ly+",
+        (Control::RightStickX, false) => "rx-",
+        (Control::RightStickX, true) => "rx+",
+        (Control::RightStickY, false) => "ry-",
+        (Control::RightStickY, true) => "ry+",
+        _ => control.name(),
+    }
+}
+
+// --- path C: the pad presses keys -----------------------------------
+
+/// Turns the pad's pressed halves into key presses (M13 path C).
+///
+/// The whole of it is one idea: **recompute the wanted set every poll and
+/// diff it against what is held.** The obvious alternative — react to
+/// each transition as it arrives — has to get every one of them right
+/// forever, and the failure mode is a key stuck down in the guest, which
+/// outlives the mistake and cannot be cleared from the host. A diff
+/// cannot drift: whatever the pad did, one poll later the guest's keys
+/// are exactly what the bindings say they should be.
+///
+/// It also gets *shared keys* right for free, which is not a corner case:
+/// the default map binds both the d-pad and the left stick to the arrow
+/// keys, so `left` has two holders. Counting presses and releases would
+/// release the key when either let go; a set union releases it when the
+/// last one does.
+pub struct KeyMap {
+    bindings: Vec<Binding>,
+    /// AT set-1 scancodes currently down in the guest because of the pad.
+    held: BTreeSet<u32>,
+}
+
+impl KeyMap {
+    pub fn new(bindings: Vec<Binding>) -> KeyMap {
+        KeyMap {
+            bindings,
+            held: BTreeSet::new(),
+        }
+    }
+
+    /// What the guest's keys should now be, given the pad, as the
+    /// changes needed to get there: `(scancode, down)`.
+    ///
+    /// Releases are emitted before presses. It matters on exactly one
+    /// motion and that motion is common: a stick swung from one side to
+    /// the other crosses centre inside a single poll, and pressing
+    /// `right` before releasing `left` leaves a guest that samples
+    /// between the two calls holding both.
+    pub fn apply(&mut self, pads: &Pads) -> Vec<(u32, bool)> {
+        let want: BTreeSet<u32> = self
+            .bindings
+            .iter()
+            .filter(|b| pads.is_pressed(b.control, b.positive))
+            .map(|b| b.key)
+            .collect();
+        let mut out: Vec<(u32, bool)> =
+            self.held.difference(&want).map(|&k| (k, false)).collect();
+        out.extend(want.difference(&self.held).map(|&k| (k, true)));
+        self.held = want;
+        out
+    }
+
+    /// Let go of everything, for the moments when the guest must not be
+    /// left holding a key the pad can no longer release: the window
+    /// losing focus, and the pad being unplugged.
+    pub fn release_all(&mut self) -> Vec<(u32, bool)> {
+        let out = self.held.iter().map(|&k| (k, false)).collect();
+        self.held.clear();
+        out
+    }
+
+    /// What a binding calls a scancode, for the log.
+    pub fn key_name(&self, key: u32) -> &'static str {
+        self.bindings
+            .iter()
+            .find(|b| b.key == key)
+            .map(|b| b.key_name)
+            .unwrap_or("?")
+    }
+}
+
+/// What the machine told the player to do with a pad: `--pad none` or
+/// `--pad keys`, resolved by `launcher-core` from `bundle::Pad` and
+/// passed on the command line the way `--shader` is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    #[default]
+    None,
+    Keys,
+}
+
+impl Mode {
+    pub fn parse(name: &str) -> Option<Mode> {
+        match name {
+            "none" => Some(Mode::None),
+            "keys" => Some(Mode::Keys),
+            _ => None,
+        }
     }
 }
 
@@ -416,14 +544,67 @@ pub fn sweep(frames: u64) -> i32 {
     let Some(mut pads) = Pads::from_env() else {
         return 2;
     };
+    // `--pad keys` makes the sweep show the key mapping too, which is how
+    // path C is checked without a guest: the same `KeyMap` the player
+    // runs, against the same scripted pad.
+    let mut keys = match mode_from_env() {
+        Mode::Keys => Some(KeyMap::new(gamepad::default_key_bindings())),
+        Mode::None => None,
+    };
     let mut total = 0usize;
     for frame in 1..=frames {
         total += pads.poll(frame).len();
+        if let Some(km) = keys.as_mut() {
+            for (sc, down) in km.apply(&pads) {
+                println!(
+                    "pad-key: frame {frame} {} {:#06x} {}",
+                    km.key_name(sc),
+                    sc,
+                    if down { "down" } else { "up" }
+                );
+            }
+        }
     }
-    let held: Vec<&str> = pads.pressed_now().iter().map(|c| c.name()).collect();
+    let held = pads.pressed_now();
     println!("pad-sweep: {frames} frames, {total} events");
     println!("pad-sweep: held at end: {}", if held.is_empty() { "none".to_string() } else { held.join(" ") });
+    if let Some(km) = keys.as_mut() {
+        // Whatever the pad is still holding at the end is still down in
+        // the guest, so say so: a sweep that ends with keys held is a
+        // script that did not let go, not a leak.
+        let stuck: Vec<&str> = km.held.iter().map(|&k| km.key_name(k)).collect();
+        println!(
+            "pad-sweep: keys down at end: {}",
+            if stuck.is_empty() { "none".to_string() } else { stuck.join(" ") }
+        );
+    }
     0
+}
+
+fn mode_from_env() -> Mode {
+    resolve_mode(None)
+}
+
+/// What this run does with a pad: `--pad keys` if given, else
+/// `PLAYER_PAD`, else nothing. `launcher-core` writes the argument from
+/// `bundle::Pad`, the same way it writes `--shader` from the machine's
+/// shader profile; the variable is for driving the player by hand.
+///
+/// An unknown name is a complaint and then `none`, not a refusal: a
+/// bundle from a later launcher can name a setting this player has never
+/// heard of, and the machine must still run.
+pub fn resolve_mode(cli: Option<&str>) -> Mode {
+    let named = match cli {
+        Some(v) => Some(v.to_string()),
+        None => std::env::var("PLAYER_PAD").ok(),
+    };
+    match named {
+        None => Mode::None,
+        Some(v) => Mode::parse(&v).unwrap_or_else(|| {
+            eprintln!("[pad] no such gamepad setting {v:?}; using none");
+            Mode::None
+        }),
+    }
 }
 
 /// `PLAYER_PAD_SHAPING="deadzone,threshold,release"` overrides the three

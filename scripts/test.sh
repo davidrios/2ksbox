@@ -716,16 +716,23 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
     grep -q '^pad = "none"' "$b" || { echo "a new machine did not come out with the pad off"; grep '^pad' "$b"; rc=1; }
   done
   # Neither setting is a device, so neither may add anything to the
-  # command line. This is what makes step 0 shippable on its own: the
-  # `usb` and `gameport` entries do not exist yet, and until their
-  # devices do, the launcher cannot write a line QEMU would refuse.
+  # *guest's* command line. This is what makes the track shippable a path
+  # at a time: the `usb` and `gameport` entries do not exist yet, and
+  # until their devices do, the launcher cannot write a line QEMU would
+  # refuse.
   args="$(target/release/launcherx --print-args "$bundle")"
   local before="$args"
+  # A machine with the pad off says nothing to the player either.
+  o="$(target/release/launcherx --print-player-args "$bundle")"
+  [ -z "$o" ] || { echo "a machine with the pad off still passed the player something: $o"; rc=1; }
   target/release/launcherx --wizard-edit "$bundle" - - - - - - - - keys >/dev/null \
     || { echo "--wizard-edit keys failed"; rc=1; }
   grep -q '^pad = "keys"' "$bundle" || { echo "the pad setting did not stick"; grep '^pad' "$bundle"; rc=1; }
   args="$(target/release/launcherx --print-args "$bundle")"
   [ "$args" = "$before" ] || { echo "turning the gamepad on changed the QEMU command line"; diff <(echo "$before") <(echo "$args"); rc=1; }
+  # ...and the whole of what it does say is the setting (path C).
+  o="$(target/release/launcherx --print-player-args "$bundle")"
+  [ "$o" = "--pad keys" ] || { echo "expected '--pad keys' for the player, got: $o"; rc=1; }
   target/release/launcherx --wizard-edit "$bundle" - - - - - - - - none >/dev/null \
     || { echo "--wizard-edit none failed"; rc=1; }
   grep -q '^pad = "none"' "$bundle" || { echo "turning it back off did not stick"; rc=1; }
@@ -757,8 +764,11 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
       || { echo "an axis over the press threshold was not pressed"; echo "$o"; rc=1; }
     echo "$o" | grep -q '^\[pad\] frame 15 lx .* release$' \
       && { echo "an axis inside the hysteresis band chattered"; echo "$o"; rc=1; }
+    # `lx+`, not `lx`: the state is per *half*, because the two ends of a
+    # stick are two different keys (path C) and a magnitude test cannot
+    # tell them apart.
     held="$(echo "$o" | sed -n 's/^pad-sweep: held at end: //p')"
-    [ "$held" = lx ] || { echo "expected lx still held at the end, got: $held"; echo "$o"; rc=1; }
+    [ "$held" = "lx+" ] || { echo "expected lx+ still held at the end, got: $held"; echo "$o"; rc=1; }
     # A malformed script is refused loudly. A typo here otherwise reads
     # exactly like a pad that does not work.
     for bad in '5:nope=1' '5:lx=2.0' '5:south=0.5' 'bad'; do
@@ -770,6 +780,45 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
     # place a sandbox with no input access reports itself.
     o="$(target/release/player --pads 2>&1)" || { echo "--pads failed"; echo "$o"; rc=1; }
     case "$o" in gamepads:*) ;; *) echo "--pads said something unexpected: $o"; rc=1;; esac
+
+    # --- path C: the pad presses keys -------------------------------
+    # Two controls on one key. The default map puts both the d-pad and
+    # the left stick on the arrows, so `left` has two holders: pressing
+    # the second must not press the key again, and releasing the *first*
+    # must not release it. Counting instead of unioning gets this wrong,
+    # and the guest is left with an arrow key stuck down.
+    o="$(PLAYER_PAD=keys PLAYER_PAD_SCRIPT='5:dpad_left=1,10:lx=-1.0,15:dpad_left=0,20:lx=0.0' \
+         target/release/player --pad-sweep 25 2>&1)" || { echo "$o"; rc=1; }
+    [ "$(echo "$o" | grep -c '^pad-key: ')" = 2 ] \
+      || { echo "two controls on one key did not produce exactly one down and one up"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-key: frame 5 left .* down$' \
+      || { echo "the first holder did not press the key"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-key: frame 20 left .* up$' \
+      || { echo "the key was not released when the last holder let go"; echo "$o"; rc=1; }
+    # A stick swung across centre inside one poll: the key being left has
+    # to go up *before* the key being entered goes down, or a guest that
+    # samples between them sees both arrows held.
+    o="$(PLAYER_PAD=keys PLAYER_PAD_SCRIPT='5:lx=-1.0,10:lx=1.0,15:lx=0.0' \
+         target/release/player --pad-sweep 20 2>&1)" || { echo "$o"; rc=1; }
+    [ "$(echo "$o" | grep '^pad-key: frame 10 ' | head -1 | grep -c ' left .* up$')" = 1 ] \
+      || { echo "crossing centre did not release the old direction first"; echo "$o"; rc=1; }
+    [ "$(echo "$o" | grep '^pad-key: frame 10 ' | tail -1 | grep -c ' right .* down$')" = 1 ] \
+      || { echo "crossing centre did not press the new direction"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-sweep: keys down at end: none$' \
+      || { echo "a script that let go left keys down in the guest"; echo "$o"; rc=1; }
+    # The whole default map reaches real scancodes. `up` is the one to
+    # check by number: the stick's negative Y is up on the screen and +1
+    # on the wire, so a missing flip here sends the guest `down`.
+    o="$(PLAYER_PAD=keys PLAYER_PAD_SCRIPT='2:ly=-1.0,4:south=1' \
+         target/release/player --pad-sweep 6 2>&1)" || { echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-key: frame 2 up 0xe048 down$' \
+      || { echo "stick up did not send the up arrow (0xe048)"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-key: frame 4 ctrl 0x001d down$' \
+      || { echo "the bottom face button did not send ctrl (0x1d)"; echo "$o"; rc=1; }
+    # With the pad off nothing is mapped, whatever the controller does.
+    o="$(PLAYER_PAD_SCRIPT='5:south=1' target/release/player --pad-sweep 10 2>&1)" || { echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-key: ' \
+      && { echo "a machine with the pad off still pressed a key"; echo "$o"; rc=1; }
   else
     echo "  (no target/release/player: the machine setting was checked, the host end was not)"
   fi

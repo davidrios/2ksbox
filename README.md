@@ -100,10 +100,16 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 # Ctrl+Alt+S writes the guest's own frame — its native size, no geometry stage and
 #   no CRT chain — as PLAYER_SHOT_DIR/2ksbox-NNNN.png (the next free number; the
 #   working directory when PLAYER_SHOT_DIR is unset). Ctrl+Alt+G releases the grab.
-# Gamepad (M13 step 0, docs/tracks/m13-gamepads.md). The host end only: the pad is
-#   read, shaped and logged, and nothing reaches the guest yet — that is path C.
-#   `player --pads` says what this host can read, which is the one place a build
-#   without the `gilrs` feature or a sandbox with no /dev/input reports itself.
+# Gamepad (M13, docs/tracks/m13-gamepads.md). `player --pads` says what this host
+#   can read, which is the one place a build without the `gilrs` feature or a
+#   sandbox with no /dev/input reports itself.
+# --pad keys (or PLAYER_PAD=keys) maps the pad onto the keys the player already
+#   sends: d-pad and left stick are the arrows, the four face buttons are Ctrl,
+#   Alt, Space and Enter, Start is Esc. The launcher writes it from the machine's
+#   own setting (`pad` in the bundle), the way it writes --shader. Works on every
+#   guest, because there is no device for the guest to support; a game that asks
+#   DirectInput for a joystick still finds none — that needs the USB gamepad.
+#   `launcherx --print-player-args <machine.toml>` shows what a bundle resolves to.
 # PLAYER_PAD_SCRIPT="30:lx=1.0,45:south=1,51:south=0" is a synthetic pad: set a
 #   control to a value at a guest frame number. Frames, not milliseconds, so a run
 #   lands in the same place in the guest's execution every time (as PLAYER_KEYS does).
@@ -115,7 +121,8 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 #   and release thresholds differ on purpose, and release must be the lower of the
 #   two: with one number a stick held at it chatters at the poll rate
 # player --pad-sweep <frames> replays PLAYER_PAD_SCRIPT with no window, no QEMU and
-#   no guest, and prints what came out — the `pad` check in scripts/test.sh
+#   no guest, and prints what came out — with --pad keys, the key presses too.
+#   The `pad` check in scripts/test.sh
 # PLAYER_LATENCY=1 prints publish→present latency percentiles every 240 guest frames
 # PLAYER_REFRESH_LOG=1 prints a guest frame counter every 100 frames — whether the
 #   guest is drawing at all. Off by default: a machine left running printed it for

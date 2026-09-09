@@ -229,11 +229,26 @@ impl Shaping {
         }
     }
 
-    /// Whether a digital consumer should now call this axis pressed,
-    /// given the shaped value and whether it was pressed a moment ago.
-    /// `was` is what makes it hysteresis rather than a comparison.
-    pub fn pressed(self, shaped: f32, was: bool) -> bool {
-        let m = shaped.abs();
+    /// Whether a digital consumer should now call **one half** of an axis
+    /// pressed, given the shaped value and whether that half was pressed
+    /// a moment ago. `was` is what makes it hysteresis rather than a
+    /// comparison.
+    ///
+    /// Per half, not per axis, because the two halves are different
+    /// things to everything downstream: stick-left and stick-right are
+    /// two keys, and an axis swung straight through centre from one to
+    /// the other has to release the first before pressing the second.
+    /// A magnitude test cannot express that — it says "pressed" the whole
+    /// way across, and the guest would hold both arrow keys at once.
+    ///
+    /// `positive` picks the half: `true` is right / down, `false` is left
+    /// / up. A value on the other side of centre is never that half's
+    /// press, whatever its magnitude.
+    pub fn half_pressed(self, shaped: f32, positive: bool, was: bool) -> bool {
+        let m = if positive { shaped } else { -shaped };
+        if m <= 0.0 {
+            return false;
+        }
         if was {
             m >= self.release
         } else {
