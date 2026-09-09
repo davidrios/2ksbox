@@ -1710,10 +1710,36 @@ reinstalling anything, `CURRENT` survives, and the desktop comes back up at
 `ChangeDisplaySettings` from inside the guest — which is what `gdiprobe`
 should do for itself.
 
-**Still open.** The repro is ten minutes and the control is one environment
-variable, which is the part worth having. The next thing to try is the
-cheapest bisect nobody has run yet: the same screen on a **32 bpp** desktop.
-If it comes out right, this is specific to the 16 bpp path; if it comes out
-white too, it is not about pixel format at all and the search moves to
-brush/mask realisation (`RealizeObject`, `BitmapBits`, `SelectBitmap` — all
-of which this driver forwards to the Engine unchanged).
+#### The depth bisect, and why it did not answer
+
+`setbpp.exe` sets the desktop depth from the batch file
+(`SETBPP 32` before the game), and it works: *"before 16 bpp, asking for 32
+… ChangeDisplaySettings -> 0 (ok) … after 32 bpp"*, with
+`linear mode on (800x600x32 pitch 3200)` from the device to confirm it. The
+title screen came out white anyway.
+
+**That does not mean depth is not the axis, and reading it that way was a
+mistake made here first.** The device log from the same run has
+`linear mode on (1024x768x16 pitch 2048)` a few hundred lines later, through
+GDI's `Enable (hardware)` path — *the game sets its own mode, and it picks
+16 bpp whatever the desktop was doing*. So the run changed the depth the
+game was started from and not the depth it rendered at. What was actually
+established is narrower: the **desktop's** depth does not matter, because
+the game overrides it.
+
+#### Where it stands
+
+Eliminated, each by measurement rather than argument: Direct3D, the
+DirectDraw blit callbacks, colour-format conversion, GDI through the DIB
+Engine (57 probe cases at 16 and 32 bpp, including screen readback and a
+screen → memory → screen round trip; the only failures are at 8 bpp and are
+the probe's own palette quantisation, not the driver's), and the engine
+configuration itself.
+
+What is left is the one path none of that instrumentation covers: the game
+creates **exactly one** video-memory surface, the primary, keeps everything
+else in system memory, and DirectDraw can satisfy a lock on the primary from
+`vmiData.fpPrimary` and `lDisplayPitch` without calling the driver at all.
+So the next step is to make that path visible — and to run the game at
+1024x768x16, which is the mode it actually renders in and which no run has
+yet captured a frame of.

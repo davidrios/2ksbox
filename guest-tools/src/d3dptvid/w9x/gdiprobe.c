@@ -294,6 +294,100 @@ static void battery(void)
         }
     }
 
+    /* 8. **Reading the screen back**, which is the half of compositing the
+     * cases above never touch. Anything that blends — msimg32's AlphaBlend,
+     * a TransparentBlt emulation, a game's own "read the background, mix,
+     * write it back" — reads the destination first, and a read that returns
+     * all-ones turns every blend white while leaving plain copies perfect.
+     * That is the shape of the bug this probe was written for. */
+    {
+        BITMAPINFO *bi = (BITMAPINFO *)calloc(1, sizeof(BITMAPINFOHEADER) + 16);
+        int stride = ((W * 24 + 31) / 32) * 4;
+        unsigned char *bits = (unsigned char *)calloc(1, (size_t)stride * H);
+        HDC mdc = CreateCompatibleDC(dc);
+        HBITMAP mb = CreateCompatibleBitmap(dc, W, H);
+        HBITMAP oldb = SelectObject(mdc, mb);
+        int got;
+
+        fill(dc, RGB(0, 128, 255));
+
+        bi->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bi->bmiHeader.biWidth = W;
+        bi->bmiHeader.biHeight = H;
+        bi->bmiHeader.biPlanes = 1;
+        bi->bmiHeader.biBitCount = 24;
+        bi->bmiHeader.biCompression = BI_RGB;
+        got = GetDIBits(dc, GetCurrentObject(dc, OBJ_BITMAP), 0, H, bits, bi, DIB_RGB_COLORS);
+        logf_("GetDIBits(screen, 24 bpp) -> %d rows\n", got);
+
+        /* BitBlt the screen into a memory bitmap and read *that* back, which
+         * is what every compositor actually does. */
+        BitBlt(mdc, 0, 0, W, H, dc, X, Y, SRCCOPY);
+        memset(bits, 0, (size_t)stride * H);
+        got = GetDIBits(mdc, mb, 0, H, bits, bi, DIB_RGB_COLORS);
+        cases++;
+        {
+            /* bottom-up: row 0 of the buffer is the bottom line */
+            unsigned char *px = bits + (size_t)stride * (H - 1 - 10) + 10 * 3;
+            COLORREF back = RGB(px[2], px[1], px[0]);
+
+            if (!near_(back, RGB(0, 128, 255))) failed++;
+            logf_("%-46s          got %06lx want %06lx%s%s\n",
+                  "BitBlt(screen->mem) + GetDIBits", (unsigned long)back,
+                  (unsigned long)RGB(0, 128, 255),
+                  near_(back, RGB(0, 128, 255)) ? "  PASS" : "  FAIL",
+                  back == 0x00ffffffUL ? "  (all ones)" : "");
+        }
+
+        /* and straight back out again — a full read/modify/write round trip */
+        fill(dc, RGB(0, 0, 0));
+        BitBlt(dc, X, Y, W, H, mdc, 0, 0, SRCCOPY);
+        check("round trip: screen -> mem -> screen", dc, X + 10, Y + 10, RGB(0, 128, 255));
+
+        SelectObject(mdc, oldb);
+        DeleteObject(mb);
+        DeleteDC(mdc);
+        free(bits);
+        free(bi);
+    }
+
+    /* 9. StretchDIBits, the other DIB entry, and a pattern brush, which is
+     * how a tiled or textured fill reaches the Engine. */
+    {
+        BITMAPINFO *bi = (BITMAPINFO *)calloc(1, sizeof(BITMAPINFOHEADER) + 16);
+        int stride = ((8 * 24 + 31) / 32) * 4;
+        unsigned char *bits = (unsigned char *)calloc(1, (size_t)stride * 8);
+        int i, j;
+
+        bi->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bi->bmiHeader.biWidth = 8;
+        bi->bmiHeader.biHeight = 8;
+        bi->bmiHeader.biPlanes = 1;
+        bi->bmiHeader.biBitCount = 24;
+        bi->bmiHeader.biCompression = BI_RGB;
+        for (j = 0; j < 8; j++) {
+            unsigned char *row = bits + (size_t)stride * j;
+            for (i = 0; i < 8; i++) { row[i*3+0] = 255; row[i*3+1] = 0; row[i*3+2] = 128; }
+        }
+        fill(dc, RGB(0, 0, 0));
+        StretchDIBits(dc, X, Y, W, H, 0, 0, 8, 8, bits, bi, DIB_RGB_COLORS, SRCCOPY);
+        check("StretchDIBits(24 bpp) scaled up", dc, X + 10, Y + 10, RGB(128, 0, 255));
+        free(bits);
+        free(bi);
+    }
+    {
+        HBITMAP pat = solid_bitmap(dc, 8, 8, RGB(0, 200, 100));
+        HBRUSH br = CreatePatternBrush(pat);
+        HBRUSH oldbr = SelectObject(dc, br);
+
+        fill(dc, RGB(0, 0, 0));
+        PatBlt(dc, X, Y, W, H, PATCOPY);
+        check("PatBlt(PATCOPY, pattern brush)", dc, X + 10, Y + 10, RGB(0, 200, 100));
+        SelectObject(dc, oldbr);
+        DeleteObject(br);
+        DeleteObject(pat);
+    }
+
     fill(dc, RGB(0, 0, 0));
     ReleaseDC(NULL, dc);
 }
