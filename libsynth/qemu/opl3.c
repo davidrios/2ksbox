@@ -21,6 +21,7 @@
 #include "hw/isa/isa.h"
 #include "hw/qdev-properties.h"
 #include "audio/audio.h"
+#include "qemu/error-report.h"
 #include "qom/object.h"
 
 #include "libsynth.h"
@@ -54,6 +55,20 @@ struct Opl3State {
      * machine should not spend a core on a chip nobody programmed. */
     bool active;
 
+    /* The register address each file has latched, for the report below
+     * (the chip's own copy is libsynth's). */
+    uint8_t latched[2];
+
+    /* What the guest has been writing, reported every 5 s while it is
+     * writing anything. A game whose music is silent is either not
+     * touching the chip at all or touching it and being ignored, and
+     * these two numbers separate those cases before anything else is
+     * looked at: a key-on is a write to 0xB0..0xB8 with bit 5 set.
+     */
+    int64_t report_ns;
+    unsigned writes;
+    unsigned keyons;
+
     /* What the last render produced and the mixer has not taken yet. A
      * short write must not cost the frames that were already made. */
     uint8_t buf[OPL3_BUF_BYTES];
@@ -78,6 +93,33 @@ static void opl3_sync(Opl3State *s)
     libsynth_opl_advance(s->chip, delta / 1000);
 }
 
+/* One data write, for the report. The address it lands on is the one
+ * latched a moment ago, which is why that is kept. */
+static void opl3_count(Opl3State *s, uint8_t val)
+{
+    int64_t now;
+
+    s->writes++;
+    if ((s->latched[0] & 0xF8) == 0xB0 && (val & 0x20)) {
+        s->keyons++;
+    }
+    now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    if (s->report_ns == 0) {
+        s->report_ns = now;
+        return;
+    }
+    if (now - s->report_ns < 5 * NANOSECONDS_PER_SECOND) {
+        return;
+    }
+    if (s->writes) {
+        info_report("opl3: %u register writes, %u key-ons in 5.0 s",
+                    s->writes, s->keyons);
+    }
+    s->report_ns = now;
+    s->writes = 0;
+    s->keyons = 0;
+}
+
 /* The four ports are the two register files: even = address, odd = data,
  * the upper pair being the OPL3 extension. Both the 0x388 pair and the
  * Sound Blaster mirror land here, and `nport & 3` is all that separates
@@ -94,8 +136,10 @@ static void opl3_write(void *opaque, uint32_t nport, uint32_t val)
     opl3_sync(s);
     if (a & 1) {
         libsynth_opl_data(s->chip, a >> 1, val);
+        opl3_count(s, val);
     } else {
         libsynth_opl_address(s->chip, a >> 1, val);
+        s->latched[a >> 1] = val;
     }
 }
 
@@ -112,6 +156,26 @@ static uint32_t opl3_read(void *opaque, uint32_t nport)
 
 static const MemoryRegionPortio opl3_portio_list[] = {
     { 0, 4, 1, .read = opl3_read, .write = opl3_write },
+    PORTIO_END_OF_LIST(),
+};
+
+/* The Sound Blaster mirror is two blocks, not one: 2x0-2x3 is the OPL3's
+ * two register files, and **2x8/2x9 is the OPL2-compatible pair** that
+ * every card from the SB Pro on also decodes there (QEMU's own `adlib`
+ * puts its chip at `port` and `port + 8` for the same reason). A driver
+ * that probes an SB's FM synth rather than the AdLib address looks at
+ * 2x8 and would otherwise find nothing. `& 3` puts 2x8/2x9 on the first
+ * register file, which is what the compatible pair is.
+ *
+ * It is fidelity, not a fix for anything known: Duke Nukem 3D's *Sound
+ * Blaster* music entry still refuses to initialize with it, while its
+ * *AdLib* entry — which probes 0x388 — plays (2026-09-09,
+ * tools/duke-guest-test.py). What that entry wants beyond an FM chip at
+ * the card's own base is an open question and may be QEMU's sb16
+ * rather than this device. */
+static const MemoryRegionPortio opl3_sb_portio_list[] = {
+    { 0, 4, 1, .read = opl3_read, .write = opl3_write },
+    { 8, 2, 1, .read = opl3_read, .write = opl3_write },
     PORTIO_END_OF_LIST(),
 };
 
@@ -182,7 +246,7 @@ static void opl3_realizefn(DeviceState *dev, Error **errp)
     portio_list_init(&s->port_list, OBJECT(s), opl3_portio_list, s, TYPE_OPL3);
     portio_list_add(&s->port_list, isa_address_space_io(&s->parent_obj), s->port);
     if (s->sbbase) {
-        portio_list_init(&s->sb_port_list, OBJECT(s), opl3_portio_list, s,
+        portio_list_init(&s->sb_port_list, OBJECT(s), opl3_sb_portio_list, s,
                          "opl3-sb");
         portio_list_add(&s->sb_port_list, isa_address_space_io(&s->parent_obj),
                         s->sbbase);

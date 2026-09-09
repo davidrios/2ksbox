@@ -75,6 +75,20 @@ and is taken at its word until someone with a dump runs
 first thing to do if a title sounds wrong on it. Do **not** treat this
 as a task waiting to be done here.
 
+- **A real game, 2026-09-09** (`tools/duke-guest-test.py`): Duke Nukem
+  3D (Atomic Edition, the user's own disc) plays its score through our
+  MPU-401 — 300-450 note-ons per 5 s across 5 to 8 MIDI channels — from
+  a run that starts with nothing: the DOS build is copied off the disc,
+  a FAT disk is made, the game's own SETUP.EXE is driven for a config,
+  and the disc goes back in the drive because the game checks for it.
+  The OPL3 plays the same game's music too (2466 register writes, 516
+  key-ons in 5 s), but only when SETUP launches the game itself; from a
+  batch file the game says "Couldn't find selected sound card" whatever
+  the config says, which is the game's own business — the same OPL3
+  answers the `midi-guest` battery and the `music` check from a standing
+  start. Both devices now print what the guest is doing to them every
+  5 s, which is what made all of this diagnosable.
+
 ## Next steps
 
 1. **Win98 in front of it.** Whether "MPU-401 Compatible" from Add New
@@ -82,8 +96,12 @@ as a task waiting to be done here.
    IRQ 9 collides with the ACPI SCI on an ACPI Win98 install — the
    device raises it only to hand over an ACK, so if it does, the answer
    is to write `irq=` off in the bundle or move it.
-2. **A DOS game with real MIDI music**, which is the point of all of it:
-   the General MIDI path, which is the one every check here covers.
+2. **Duke's FM entry from a batch file**, if anyone cares: `MusicDevice
+   = 2` with `MidiPort = 0x388` and `BLASTER` exported still gets
+   "Couldn't find selected sound card" unless SETUP.EXE starts the game.
+   A curiosity, not a blocker — and possibly QEMU's `sb16` rather than
+   our OPL3, since that game's *Sound Blaster* music entry refuses on
+   every path tried.
 3. **The host MIDI port** (doc 20 §8.1), the first thing deliberately
    outside these stages.
 

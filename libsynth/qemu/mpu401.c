@@ -30,6 +30,8 @@
 #include "hw/irq.h"
 #include "hw/qdev-properties.h"
 #include "audio/audio.h"
+#include "qemu/error-report.h"
+#include "qemu/timer.h"
 #include "qom/object.h"
 
 #include "libsynth.h"
@@ -78,6 +80,15 @@ struct Mpu401State {
     int pending;
     int pos;
 
+    /* What the guest has been sending, reported every 5 s while it is
+     * sending anything (`d3dpt-vga: N page flips in 5.0 s`'s habit).
+     * The question this answers is the first one to ask of a game that
+     * is silent: did it write to the port at all? */
+    int64_t report_ns;
+    unsigned bytes;
+    unsigned notes;
+    uint16_t channels;
+
     PortioList port_list;
 };
 
@@ -109,6 +120,8 @@ static void mpu401_reset_port(Mpu401State *s)
     mpu401_irq(s);
     libsynth_midi_reset(s->midi);
 }
+
+static void mpu401_count(Mpu401State *s, uint8_t byte);
 
 static uint32_t mpu401_read(void *opaque, uint32_t nport)
 {
@@ -168,6 +181,43 @@ static void mpu401_write(void *opaque, uint32_t nport, uint32_t val)
      * UART mode is played too: a driver that skips the handshake is
      * commoner than one that means something else by it. */
     libsynth_midi_write(s->midi, val & 0xFF);
+    mpu401_count(s, val & 0xFF);
+}
+
+/* A note-on with a non-zero velocity is what "the guest is playing
+ * music" looks like from here. Running status is why this counts a
+ * status byte's channel rather than pairing bytes: the count is a sign
+ * of life, not a transcript — libsynth's parser is the transcript. */
+static void mpu401_count(Mpu401State *s, uint8_t byte)
+{
+    int64_t now;
+
+    s->bytes++;
+    if ((byte & 0xF0) == 0x90) {
+        s->notes++;
+        s->channels |= 1 << (byte & 0x0F);
+    }
+    now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    if (s->report_ns == 0) {
+        s->report_ns = now;
+        return;
+    }
+    if (now - s->report_ns < 5 * NANOSECONDS_PER_SECOND) {
+        return;
+    }
+    if (s->bytes) {
+        unsigned n = 0;
+
+        for (int i = 0; i < 16; i++) {
+            n += (s->channels >> i) & 1;
+        }
+        info_report("mpu401: %u bytes, %u note-ons on %u channel%s in 5.0 s",
+                    s->bytes, s->notes, n, n == 1 ? "" : "s");
+    }
+    s->report_ns = now;
+    s->bytes = 0;
+    s->notes = 0;
+    s->channels = 0;
 }
 
 static const MemoryRegionPortio mpu401_portio_list[] = {

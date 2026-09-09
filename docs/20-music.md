@@ -234,7 +234,25 @@ Integration and end-to-end only, as the policy requires.
 |---|---|
 | `libsynth` (`synthx selftest`) | the three engines through the **C API the devices use**: the AdLib detection sequence (status 0x00 → 0xC0 → 0x00 across a timer), a 440 Hz FM note measured by Goertzel against its neighbours, the same note through the **shipped bank** (so a truncated or unreadable bank in a package fails here), a running-status note-off with a real-time byte wedged inside the note-on, and the CM-32L when ROMs are given |
 | `music` (`scripts/test.sh`) | the two pickers from a checkbox to a real QEMU: each family offers what doc 06 says, the first entry is what a new machine gets, an entry a family does not offer is refused rather than written, the FM chip follows the card, and our own `qemu-system-i386` accepts every combination |
+| `duke-guest` (`tools/duke-guest-test.py`) | **a real game of 1996**, which is what all of it is for: Duke Nukem 3D's own Apogee Sound System finds our MPU-401 where a period driver looks for it and plays the game's score on it — ~1000 bytes and 300-450 note-ons per 5 s across 5 to 8 MIDI channels, 70 s of audible recording. It runs from nothing: the DOS build is copied off the user's own disc (read-only), a FAT disk is made, the game's own SETUP.EXE is driven once for a config, and the disc goes back in the drive because the game checks for it. Local only, and never in `scripts/test.sh` — it needs a game |
 | `midi-guest` (`tools/midi-guest-test.py`) | the whole chain with a guest in it: a DOS program runs the AdLib detection sequence at the ports, plays 440 Hz on the OPL3, then resets an MPU-401, puts it in UART mode and plays A4 through it — and the **wav QEMU recorded** is what is checked, not the program's own opinion. Two boots, one per device: both are asked the same question and one file with two notes in it cannot answer it twice. ~11 s in the guest stage |
+
+## 7.1 What the devices say about themselves
+
+Both print one line every 5 s while the guest is driving them, in the
+habit of `d3dpt-vga: N page flips in 5.0 s`, and nothing at all when it
+is not:
+
+    opl3: 2466 register writes, 516 key-ons in 5.0 s
+    mpu401: 1245 bytes, 415 note-ons on 6 channels in 5.0 s
+
+This is the first question to ask of a game that is silent, and it
+separates the two cases that look identical from the outside: a game
+that never wrote to the port (its setup names another device, or found
+nothing where it looked) and one that is writing to a port that is not
+playing. Duke Nukem 3D's *Sound Blaster* music entry is the first case —
+it refuses to initialize and writes nothing — while its *AdLib* entry,
+which probes 0x388, fills the log.
 
 ## 8. Not here (and the order to add it)
 

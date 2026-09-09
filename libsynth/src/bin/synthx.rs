@@ -4,6 +4,8 @@
 //!                                   one .wav per case in <outdir> (listen to what failed)
 //!   synthx bank <file.sf2>          a note rendered through that bank: what the file is worth
 //!   synthx opl <out.wav> [seconds]  the FM tone the selftest programs, to hear by hand
+//!   synthx wavlevel <file.wav>      how loud a wav is, and for how much of its length: what a
+//!                                   *music* check asks, since a score is not one frequency
 //!   synthx wavtone <file.wav> <hz>  a wav really holds that note: what the `music` check asks
 //!                                   of a wav QEMU's own audiodev recorded, with the guest's
 //!                                   ports written by the monitor rather than by us
@@ -54,6 +56,28 @@ fn main() {
             Some(p) => bank_info(Path::new(p)),
             None => usage(),
         },
+        "wavlevel" => match positional.get(1) {
+            Some(p) => match read_wav(Path::new(p)) {
+                Ok((rate, pcm)) => {
+                    let (level, peak, busy) = level(&pcm, rate);
+                    // A score is not a tone, so this is all a wav can
+                    // honestly be asked: is there sound in it, and for
+                    // how much of its length. Half a second of audible
+                    // signal is more than a click and less than a tune.
+                    let verdict = if busy >= 0.5 { "PASS" } else { "FAIL" };
+                    println!(
+                        "{verdict} wavlevel         {p}: {:.4} RMS, peak {:.3}, audible for {:.1} s",
+                        level, peak, busy
+                    );
+                    i32::from(verdict == "FAIL")
+                }
+                Err(e) => {
+                    println!("FAIL wavlevel         {p}: {e}");
+                    1
+                }
+            },
+            None => usage(),
+        },
         "wavtone" => match (positional.get(1), positional.get(2)) {
             (Some(p), Some(hz)) => {
                 let freq: f32 = hz.parse().unwrap_or(0.0);
@@ -92,7 +116,7 @@ fn main() {
 }
 
 fn usage() -> i32 {
-    eprintln!("usage: synthx selftest <outdir> [--sf2 <file>] [--roms <dir>] | bank <in.sf2> | opl <out.wav> [seconds] | wavtone <in.wav> <hz>");
+    eprintln!("usage: synthx selftest <outdir> [--sf2 <file>] [--roms <dir>] | bank <in.sf2> | opl <out.wav> [seconds] | wavtone <in.wav> <hz> | wavlevel <in.wav>");
     2
 }
 
@@ -341,6 +365,20 @@ fn goertzel(pcm: &[i16], rate: u32, freq: f32) -> f32 {
         s1 = s0;
     }
     ((s1 * s1 + s2 * s2 - coeff * s1 * s2).max(0.0).sqrt() / n as f64) as f32
+}
+
+/// Overall level, peak, and how many seconds of the file are audible —
+/// the three numbers that say whether a *piece of music* is in there.
+/// "Audible" is measured in 100 ms blocks, so a quiet passage inside a
+/// score does not end the count and a single click does not start one.
+fn level(pcm: &[i16], rate: u32) -> (f32, f32, f32) {
+    let peak = pcm.iter().map(|&s| (s as f32 / 32768.0).abs()).fold(0.0f32, f32::max);
+    let block = (rate as usize / 10).max(1) * 2;
+    let audible = pcm
+        .chunks(block)
+        .filter(|c| rms(c) > 0.002)
+        .count();
+    (rms(pcm), peak, audible as f32 / 10.0)
 }
 
 /// The pitch test every tone check shares: the note must be *there*
