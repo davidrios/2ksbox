@@ -1,0 +1,26 @@
+[package]
+name = "libsynth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The music engines behind the OPL3 and MPU-401 devices: FM, SoundFont General MIDI, Roland CM-32L (doc 20)"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+# Three engines, all pure Rust and all computation: no host device, no
+# system library, nothing to add to a package's dylib closure — the same
+# reason libdisc can be linked into QEMU (doc 20 §2). A host MIDI *port*
+# is deliberately not here: that is a host device and belongs on the
+# player's side of the embed API, beside the audio output.
+[dependencies]
+# Nuked-OPL3, the cycle-accurate YMF262 core, ported to Rust. Its
+# `Opl3Device` layer is the part QEMU's own adlib lacks: the two timers
+# and the status register every AdLib detection routine reads.
+nuked-opl3 = "0.1"
+# A SoundFont 2 synthesizer. Renders at any rate, so the voice runs at
+# the audiodev's own.
+rustysynth = "1.3"
+# Munt's CM-32L, in Rust and sample-accurate against it. ROMs are the
+# user's own: nothing of Roland's is in this repository.
+moont = "1.0"

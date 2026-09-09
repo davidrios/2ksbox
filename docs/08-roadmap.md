@@ -211,10 +211,29 @@ Done, all through the in-process embed path:
   debug logging (`launcher.log`, panic hook, `2ksbox-debug.bat`), cxx-qt emutls proxy fix (`once_proxy.cpp`),
   light-mode default appearance, WGL backend for OpenGL.
 
+## M12 — Music  (Active; doc 20, `docs/tracks/m12-music.md`)
+
+The half of a period machine's audio QEMU never had: an **OPL3** (Nuked)
+at 0x388 and at the Sound Blaster's own base, an **MPU-401** at 0x330,
+and behind it either a **SoundFont General MIDI** synthesizer or a
+**Roland CM-32L**; QEMU's own **Gravis Ultrasound** offered as a card.
+All three engines are pure Rust in `libsynth/`, linked into QEMU the way
+`libdisc` is, so music mixes on the guest's own clock and a headless run
+can capture it to a wav.
+
+- **M12a the engines** ✅ 2026-09-09: `libsynth` + `synthx selftest`
+  (OPL detection, an FM note, the shipped GPL-2 bank, running status).
+- **M12b the devices:** `hw/audio/opl3.c`, `hw/audio/mpu401.c`, patch 25.
+- **M12c the pickers:** `bundle::Sound` / `bundle::Music`, per-family
+  defaults (doc 20 §6), both front ends, the `music` check.
+- **M12d packaging:** the bank into `share/2ksbox/soundfonts/`.
+- **M12e the guest end-to-end:** `tools/midi-guest-test.py`.
+
 ## Post-v1 candidates
 
 Recording/streaming, gamepads / DirectInput, CRT bezel packs, VRR pacing,
-suspend/resume, upstreaming campaign (libdisc, embed API).
+suspend/resume, a host MIDI port for a real module (doc 20 §8),
+upstreaming campaign (libdisc, embed API).
 
 ## Standing risks
 

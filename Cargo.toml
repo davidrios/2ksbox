@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["player", "libdisc", "launcher", "launcher-core", "launcher-capi", "qemu-embed", "shader-chain"]
+members = ["player", "libdisc", "libsynth", "launcher", "launcher-core", "launcher-capi", "qemu-embed", "shader-chain"]
 # Two members are deliberately not *default* members — they are built by
 # name, and `cargo check --workspace` (scripts/build.sh) is what keeps
 # them from rotting. `launcher-capi` builds a `cdylib` and a `staticlib`
@@ -12,13 +12,13 @@ members = ["player", "libdisc", "launcher", "launcher-core", "launcher-capi", "q
 # verbs both front ends share are `launcher-core`'s `launcherx` binary,
 # so `scripts/test.sh` does not need either of them.
 # `cargo build -p launcher` / `-p launcher-capi` when you want them.
-default-members = ["player", "libdisc", "launcher-core", "qemu-embed", "shader-chain"]
+default-members = ["player", "libdisc", "libsynth", "launcher-core", "qemu-embed", "shader-chain"]
 
 [workspace.package]
 version = "0.0.1"
 edition = "2021"
 # The default for crates that link QEMU (`player`, `qemu-embed`) or its
-# device model (`libdisc`). `launcher`, `launcher-core` and
+# device model (`libdisc`, `libsynth`). `launcher`, `launcher-core` and
 # `shader-chain` opt out with `GPL-2.0-or-later` — see ADR-009 in
 # docs/10-decisions.md.
 license = "GPL-2.0-only"
