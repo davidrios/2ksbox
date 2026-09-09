@@ -88,14 +88,50 @@ as a task waiting to be done here.
   answers the `midi-guest` battery and the `music` check from a standing
   start. Both devices now print what the guest is doing to them every
   5 s, which is what made all of this diagnosable.
+- **The MIDI port has no interrupt line** (2026-09-09, doc 20 §5.1). It
+  shipped on the hardware's own IRQ 2/9 and that is where QEMU's PIIX4
+  puts the ACPI SCI, so on an ACPI Win98 — every machine the launcher
+  installs — the ACK a driver's reset queues was an interrupt no handler
+  could acknowledge. The line is held until the guest reads the data
+  port, exactly as the hardware holds it, so the handler was re-entered
+  on every `IRET`: 234 nested `INT 0x59`, the ring-0 stack walked off
+  its end, #PF → #DF → triple fault, and QEMU reset the machine —
+  Windows rebooting in front of the user. Found from a user report and
+  reproduced headless on the user's own `win98-2` machine with Duke's
+  own `SETUP.EXE` (Choose Music Card → General Midi → 0x330 → **Test
+  Music Card**), A/B'd against `irq=255`, which plays the theme song
+  instead. `duke-guest` could never have caught it: DOS leaves IRQ 9
+  masked. The `music` check now writes the reset from the monitor and
+  requires the slave PIC to have nothing pending. Fixing it also
+  uncovered that `libsynth/qemu` was missing from `scripts/build.sh`'s
+  `qemu-prepare` stamp, so edits to either device were silently not
+  rebuilt.
+- **And the *sound* card's interrupt, one menu row up** (2026-09-09,
+  doc 20 §5.2, patch 25). Same guest, same SETUP.EXE, same shape of bug
+  in QEMU's own `sb16`: **Test Sound FX Card** plays once and every press
+  after it fails with "Playback failed, possibly due to an invalid or
+  conflicting IRQ". A Sound Blaster holds its line until the DSP status
+  port is read, so an interrupt asserted with no bit set in mixer 0x82
+  holds it for good — and the ISA PIC is edge-triggered, so every block
+  completion after that is a level 1 into an already-high line and the
+  card is deaf. `reset()` pulsed the line whenever auto-init DMA was
+  running (an interrupt no hardware makes) and the guest doing that reset
+  is one that has finished, with IRQ 5 masked: `pic0 irr=20 imr=b8`, the
+  edge latched and unowned, and Windows' VPICD never unmasks it again.
+  The end of a silence block (DSP 0x80) raised without the status bit
+  too. Diagnosed by tracing `pic_set_irq` and `memory_region_ops_write`
+  from QMP around the two presses — every DSP byte the game wrote against
+  every transition of the line — and confirmed by reading mixer 0x82 from
+  the monitor in between, which said the card was holding nothing. New
+  `sb16-irq` check.
 
 ## Next steps
 
 1. **Win98 in front of it.** Whether "MPU-401 Compatible" from Add New
-   Hardware really drives the port, and whether `mpu401`'s default
-   IRQ 9 collides with the ACPI SCI on an ACPI Win98 install — the
-   device raises it only to hand over an ACK, so if it does, the answer
-   is to write `irq=` off in the bundle or move it.
+   Hardware really drives the port. (The other half of this item —
+   whether the default IRQ 9 collides with the ACPI SCI — was answered
+   on 2026-09-09: it does, catastrophically. See State above; the device
+   now has no interrupt line at all.)
 2. **Duke's FM entry from a batch file**, if anyone cares: `MusicDevice
    = 2` with `MidiPort = 0x388` and `BLASTER` exported still gets
    "Couldn't find selected sound card" unless SETUP.EXE starts the game.

@@ -12,6 +12,9 @@ mod dmabuf;
 mod iosurface;
 mod keymap;
 mod mode;
+// The host end of a gamepad (M13). Polled from `user_event`, on the UI
+// thread, once per published guest frame.
+mod pad;
 mod pattern;
 mod qemu_vm;
 mod qmp;
@@ -759,6 +762,14 @@ struct App {
     /// press to us and its release to the app that took over, and the guest
     /// would otherwise keep the Windows key down forever.
     keys_down: Vec<u32>,
+    /// The host gamepad, when this run has one to read (M13). `None` is
+    /// the ordinary case: no controller plugged in, no script, or a host
+    /// with no input access at all.
+    pads: Option<pad::Pads>,
+    /// What the machine says a pad does (`--pad`, from `bundle::Pad`).
+    pad_mode: pad::Mode,
+    /// The pad's keys, while `pad_mode` is `Keys` and there is a pad.
+    pad_keys: Option<pad::KeyMap>,
     /// Set on CloseRequested: no further calls into the VM handle, which the
     /// QEMU thread is about to destroy.
     closing: bool,
@@ -1111,6 +1122,12 @@ impl App {
 
     /// Release every key the guest still sees as held (focus loss).
     fn lift_all_keys(&mut self) {
+        // The pad's keys too, and through the `KeyMap` rather than behind
+        // its back: a pad holding a direction when the window loses focus
+        // must both stop pressing it in the guest *and* have the map
+        // agree it is no longer down, or the next poll sees no change and
+        // never presses it again.
+        self.release_pad_keys();
         let keys = std::mem::take(&mut self.keys_down);
         if keys.is_empty() {
             return;
@@ -1121,6 +1138,73 @@ impl App {
             }
             vm.input_flush();
         }
+    }
+
+    /// The pad's current controls as key presses in the guest. Does
+    /// nothing unless the machine asked for `--pad keys`.
+    fn apply_pad_keys(&mut self) {
+        let (Some(pads), Some(km)) = (self.pads.as_ref(), self.pad_keys.as_mut()) else {
+            return;
+        };
+        let changes = km.apply(pads);
+        if changes.is_empty() {
+            return;
+        }
+        let log = std::env::var("PLAYER_PAD_LOG").is_ok();
+        let named: Vec<(u32, bool, &'static str)> =
+            changes.iter().map(|&(sc, d)| (sc, d, km.key_name(sc))).collect();
+        let Some(vm) = self.vm() else { return };
+        for (sc, down, name) in named {
+            let qcode = qemu_embed::atset1_to_qcode(sc);
+            if qcode == 0 {
+                continue;
+            }
+            if log {
+                eprintln!("[pad] key {name} {}", if down { "down" } else { "up" });
+            }
+            vm.key(qcode, down);
+        }
+        // One flush for the whole batch: a stick crossing centre is a
+        // release and a press together, and the guest should see them in
+        // the same drain rather than a frame apart.
+        vm.input_flush();
+    }
+
+    /// The pad's current state to the guest's `usb-gamepad` (M13 path A).
+    ///
+    /// The whole pad every time, not a change: `usb_gamepad_set_state`
+    /// compares against what it holds and does nothing when they match,
+    /// so an untouched controller costs one comparison per published
+    /// frame and never wakes the guest. Sending changes instead would
+    /// put the "did anything move" question on this side of a queue that
+    /// is allowed to drop, and a dropped button-up is a button held down
+    /// in the guest forever.
+    fn apply_pad_usb(&mut self) {
+        if self.pad_mode != pad::Mode::Usb {
+            return;
+        }
+        let Some(pads) = self.pads.as_ref() else { return };
+        let (axes, hat, buttons) = pads.hid_state();
+        let Some(vm) = self.vm() else { return };
+        vm.pad_state(axes, hat, buttons);
+        vm.input_flush();
+    }
+
+    /// Let go of everything the pad is holding in the guest.
+    fn release_pad_keys(&mut self) {
+        let Some(km) = self.pad_keys.as_mut() else { return };
+        let changes = km.release_all();
+        if changes.is_empty() {
+            return;
+        }
+        let Some(vm) = self.vm() else { return };
+        for (sc, _) in changes {
+            let qcode = qemu_embed::atset1_to_qcode(sc);
+            if qcode != 0 {
+                vm.key(qcode, false);
+            }
+        }
+        vm.input_flush();
     }
 
     fn set_grab(&mut self, on: bool) {
@@ -1251,6 +1335,14 @@ impl ApplicationHandler for App {
         if self.gpu.is_some() {
             return;
         }
+        // Built here rather than in `main`: on macOS a HID source wants
+        // the run loop, and `resumed` is the first point at which the UI
+        // thread is running one.
+        self.pads = pad::Pads::from_env();
+        if self.pads.is_some() && self.pad_mode == pad::Mode::Keys {
+            self.pad_keys = Some(pad::KeyMap::new(gamepad::default_key_bindings()));
+        }
+
         let attrs = Window::default_attributes()
             .with_title("2ksbox player")
             .with_inner_size(LogicalSize::new(1280.0, 960.0));
@@ -1635,6 +1727,23 @@ impl ApplicationHandler for App {
                 }
             }
         }
+        // The gamepad, once per published guest frame. Here and not on
+        // the redraw: a wake arrives for every publish, but an occluded
+        // or minimized window is redrawn for none of them, and a pad that
+        // stopped being read whenever the window went behind a terminal
+        // would fail in exactly the headless runs the scripted source
+        // exists for.
+        if let (Some(pads), Some(Source::Qemu { display, .. })) = (self.pads.as_mut(), &self.source)
+        {
+            pads.poll(display.published_seq());
+        }
+        // ...and then what the machine says that means. Split from the
+        // poll above because the pad is read whatever the setting — a
+        // machine with the pad off still logs under PLAYER_PAD_LOG, which
+        // is how someone works out whether the controller is seen at all
+        // before deciding to turn it on.
+        self.apply_pad_keys();
+        self.apply_pad_usb();
         // QEMU published a frame (multiple wakes coalesce into one redraw)
         if let Some(gpu) = &self.gpu {
             gpu.window.request_redraw();
@@ -1737,6 +1846,18 @@ fn main() {
         companions::report();
         return;
     }
+    // What gamepads this host can read, out of the binary that reads
+    // them: the answer no one can get from outside the process.
+    if args.first().map(String::as_str) == Some("--pads") {
+        pad::report();
+        return;
+    }
+    // The host end of the gamepad against a scripted pad: no window, no
+    // QEMU, nothing to clean up. The `pad` check.
+    if args.first().map(String::as_str) == Some("--pad-sweep") && args.len() >= 2 {
+        let frames: u64 = args[1].parse().unwrap_or(0);
+        std::process::exit(pad::sweep(frames));
+    }
     let mut shader: Option<std::path::PathBuf> =
         std::env::var("PLAYER_SHADER").ok().map(Into::into);
     let mut shader_params = std::env::var("PLAYER_SHADER_PARAMS")
@@ -1751,6 +1872,14 @@ fn main() {
         shader_params = parse_shader_params(&args[1]);
         args.drain(0..2);
     }
+    // What a host gamepad does for this machine (M13), written by
+    // `launcher-core` from `bundle::Pad`.
+    let mut pad_cli: Option<String> = None;
+    if args.first().map(String::as_str) == Some("--pad") && args.len() >= 2 {
+        pad_cli = Some(args[1].clone());
+        args.drain(0..2);
+    }
+    let pad_mode = pad::resolve_mode(pad_cli.as_deref());
     let mut sweep = None;
     if args.first().map(String::as_str) == Some("--mode-sweep") && args.len() >= 2 {
         sweep = Some(std::path::PathBuf::from(args[1].clone()));
@@ -1772,6 +1901,7 @@ fn main() {
         shader_params,
         sweep,
         calib,
+        pad_mode,
         proxy: Some(event_loop.create_proxy()),
         ..Default::default()
     };

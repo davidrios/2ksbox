@@ -1,0 +1,31 @@
+Build the USB HID gamepad (hw/usb/dev-gamepad.c, overlaid from
+gamepad/qemu/ by scripts/prepare-qemu.sh). M13 path A,
+docs/tracks/m13-gamepads.md.
+
+QEMU has no gamepad of any kind — hw/input/hid.h knows HID_MOUSE,
+HID_TABLET and HID_KEYBOARD and nothing else, and the input core has no
+axis event a joystick could ride — so this is a whole device rather than
+a switch to turn on. It is its own file, not a fourth kind in dev-hid.c,
+because every machine this project makes already has a usb-tablet on that
+code and a gamepad has no business perturbing it.
+
+Wired under CONFIG_USB_HID rather than a symbol of its own: that config
+is `bool / default y / depends on USB` (hw/usb/Kconfig), so it is exactly
+"this machine has USB", which is the only condition a gamepad has. A
+machine built without USB gets neither.
+
+The host side drives it through usb_gamepad_set_state()
+(gamepad/qemu/usb-gamepad.h), called from the embed shim's input bottom
+half under the BQL — absolute state rather than events, so a dropped
+update is corrected by the next one instead of leaving a button held.
+
+--- a/hw/usb/meson.build
++++ b/hw/usb/meson.build
+@@ -34,6 +34,7 @@
+ # emulated usb devices
+ system_ss.add(when: 'CONFIG_USB_HUB', if_true: files('dev-hub.c'))
+ system_ss.add(when: 'CONFIG_USB_HID', if_true: files('dev-hid.c'))
++system_ss.add(when: 'CONFIG_USB_HID', if_true: files('dev-gamepad.c'))
+ system_ss.add(when: 'CONFIG_USB_TABLET_WACOM', if_true: files('dev-wacom.c'))
+ system_ss.add(when: 'CONFIG_USB_STORAGE_CORE', if_true: files('dev-storage.c'))
+ system_ss.add(when: 'CONFIG_USB_STORAGE_BOT', if_true: files('dev-storage-bot.c'))

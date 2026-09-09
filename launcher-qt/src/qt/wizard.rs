@@ -94,6 +94,18 @@ pub mod ffi {
         #[qproperty(bool, soundfont_applies)]
         #[qproperty(QString, mt32_roms)]
         #[qproperty(bool, mt32_roms_applies)]
+        /// What a host gamepad does for this machine (M13): an index
+        /// into `pad_labels`, a property for the same reason
+        /// `video_labels` is — DOS is offered no USB controller, having
+        /// no USB stack, so the list changes with the family.
+        #[qproperty(i32, pad)]
+        #[qproperty(bool, pad_applies)]
+        #[qproperty(QStringList, pad_labels)]
+        #[qproperty(bool, pad_is_default)]
+        #[qproperty(QString, pad_note)]
+        /// Set only while editing a machine that is gaining or losing
+        /// the USB controller: a hardware change the guest will notice.
+        #[qproperty(QString, pad_warning)]
         #[qproperty(bool, network)]
         #[qproperty(QString, network_note)]
         #[qproperty(bool, seamless_mouse)]
@@ -206,6 +218,13 @@ pub mod ffi {
         fn set_soundfont_path(self: Pin<&mut Wizard>, soundfont: &QString);
         #[qinvokable]
         fn set_mt32_roms_path(self: Pin<&mut Wizard>, romdir: &QString);
+        /// The gamepad, the same way — an index into `pad_labels`.
+        #[qinvokable]
+        fn choose_pad(self: Pin<&mut Wizard>, pad: i32);
+
+        /// Put it back on the family's default.
+        #[qinvokable]
+        fn reset_pad(self: Pin<&mut Wizard>);
 
         /// A floppy image was typed or browsed to: the boot note depends
         /// on it ("boot from floppy" with no image falls through to the
@@ -324,6 +343,12 @@ pub struct WizardRust {
     soundfont_applies: bool,
     mt32_roms: QString,
     mt32_roms_applies: bool,
+    pad: i32,
+    pad_applies: bool,
+    pad_labels: QStringList,
+    pad_is_default: bool,
+    pad_note: QString,
+    pad_warning: QString,
     graphics_warning: bool,
     network: bool,
     network_note: QString,
@@ -439,6 +464,17 @@ impl ffi::Wizard {
             let v = at(form.video_choices(), video);
             form.choose_video(v);
         });
+    }
+
+    fn choose_pad(self: Pin<&mut Self>, pad: i32) {
+        self.edit(|form| {
+            let p = at(form.pad_choices(), pad);
+            form.choose_pad(p);
+        });
+    }
+
+    fn reset_pad(self: Pin<&mut Self>) {
+        self.edit(Form::reset_pad);
     }
 
     fn reset_video(self: Pin<&mut Self>) {
@@ -615,6 +651,7 @@ impl ffi::Wizard {
         let (sound, sound_labels, sound_is_default, sound_note, sound_warning);
         let (music, music_labels, music_is_default, music_note);
         let (soundfont, soundfont_applies, mt32_roms, mt32_roms_applies);
+        let (pad, pad_applies, pad_labels, pad_is_default, pad_note, pad_warning);
         let (optimizations_mask, optimizations_summary, optimizations_note, optimizations_are_default);
         let (existing_disk, disk_path, disk_size_gb, install_media, floppy, boot, boot_note);
         let (shader_profile, advanced, advanced_toml, error);
@@ -664,6 +701,12 @@ impl ffi::Wizard {
             soundfont_applies = f.soundfont_applies();
             mt32_roms = qs(&f.mt32_roms);
             mt32_roms_applies = f.mt32_roms_applies();
+            pad = index_of(f.pad_choices(), f.pad());
+            pad_applies = f.pad_applies();
+            pad_labels = labels(f.pad_choices().iter().map(|p| p.label()));
+            pad_is_default = f.pad_is_default();
+            pad_note = qs(f.pad_notes().join("\n"));
+            pad_warning = qs_opt(f.pad_warning());
             network = f.network();
             network_note = qs(f.network_notes().join("\n"));
             seamless_mouse = f.seamless_mouse();
@@ -729,6 +772,13 @@ impl ffi::Wizard {
         self.as_mut().set_soundfont_applies(soundfont_applies);
         self.as_mut().set_mt32_roms(mt32_roms);
         self.as_mut().set_mt32_roms_applies(mt32_roms_applies);
+        self.as_mut().set_pad_applies(pad_applies);
+        // The list before the index, for the same reason as the adapter's.
+        self.as_mut().set_pad_labels(pad_labels);
+        self.as_mut().set_pad(pad);
+        self.as_mut().set_pad_is_default(pad_is_default);
+        self.as_mut().set_pad_note(pad_note);
+        self.as_mut().set_pad_warning(pad_warning);
         self.as_mut().set_graphics_warning(graphics_warning);
         self.as_mut().set_network(network);
         self.as_mut().set_network_note(network_note);

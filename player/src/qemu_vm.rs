@@ -219,6 +219,19 @@ impl Display {
     }
 
     /// dma-buf slots offered since the last call (import them on the GPU thread).
+    /// How many frames QEMU has *published*, whether or not any of them
+    /// reached the screen.
+    ///
+    /// Not the same number as the `last_seq` the render path keeps: that
+    /// one only moves when a frame is actually presented, and an occluded
+    /// window presents nothing. `PLAYER_PAD_SCRIPT` is keyed on this one
+    /// so a headless run — which is every scripted run — advances the
+    /// script at the guest's own rate rather than stopping dead behind a
+    /// terminal window.
+    pub fn published_seq(&self) -> u64 {
+        self.0.lock().unwrap().front.seq
+    }
+
     pub fn take_dmabufs(&self) -> Vec<DmaBuf> {
         std::mem::take(&mut self.0.lock().unwrap().dmabufs)
     }
