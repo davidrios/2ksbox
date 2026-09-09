@@ -340,6 +340,119 @@ static void __stdcall register_display_driver_proc(DWORD vm, PCRS_32 state)
     dbg_str("d3dptvxd: display driver registered");
 }
 
+/* ------------------------------------------------- the screen switch
+ *
+ * **A DOS box takes the screen away, and somebody has to give it back.**
+ * When a VM goes full-screen the main VDD switches the adapter from the
+ * display driver's hi-res mode to VGA and lets the DOS program program the
+ * VGA registers itself. Our adapter is a VGA *and* a linear frame buffer,
+ * and while `D3DPT_FB_REG_ENABLE` is set the device scans out the linear
+ * one — so the DOS program writes VGA memory at A0000 and nothing of it
+ * reaches the screen, which goes on showing the frozen desktop. Every
+ * full-screen DOS game "glitches out", whatever mode it asks for.
+ *
+ * The main VDD tells the mini-VDD when this is about to happen and when it
+ * is over; nothing else in the system knows about the register. The way
+ * back is the display driver's `RestoreDesktopMode`, which the VDD calls
+ * through the callback registered with `VDD_DRIVER_REGISTER` and which
+ * writes every mode register including ENABLE — so `POST_VGA_TO_HIRES`
+ * only has to make sure, and the device keeps width/height/bpp/pitch across
+ * an ENABLE of 0 anyway.
+ *
+ * **Measured 2026-09-09**, Alt+Enter on a DOS box and back: all four are
+ * called, in order, with the display driver's callback in the middle —
+ *
+ *     d3dptvxd: hi-res -> VGA
+ *     d3dptvxd: hi-res -> VGA done
+ *     d3dptvxd: VGA -> hi-res
+ *     d3dpt9x: RestoreDesktopMode
+ *     d3dptvxd: VGA -> hi-res done
+ *
+ * — and with the ENABLE write in `PRE_HIRES_TO_VGA`, Blood renders
+ * full-screen at 640x480 through the device's VGA core for the whole of its
+ * attract demo, then the desktop comes back. Which of these the VDD calls
+ * for a given kind of switch is not something the DDK headers say, so they
+ * all log; that log is what the round trip above was read off.
+ *
+ * One thing to know if this ever looks wrong again: judging it from an
+ * *interim* read of the log is how it gets misread. Half way through that
+ * run only the first two lines existed and the screen was still the frozen
+ * desktop — the DOS box had not left its prompt yet — which reads exactly
+ * like a one-way switch into a black screen. Wait for the run to end. */
+static void __stdcall hires_to_vga_proc(void)
+{
+    dbg_str("d3dptvxd: hi-res -> VGA");
+    if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 0;
+}
+
+static void __stdcall post_hires_to_vga_proc(void)
+{
+    dbg_str("d3dptvxd: hi-res -> VGA done");
+}
+
+static void __stdcall pre_vga_to_hires_proc(void)
+{
+    dbg_str("d3dptvxd: VGA -> hi-res");
+}
+
+static void __stdcall vga_to_hires_proc(void)
+{
+    dbg_str("d3dptvxd: VGA -> hi-res done");
+    if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 1;
+}
+
+/* The VDD calls a dispatch entry with EBX = VM and EBP = client registers.
+ * These four want neither, so each thunk is a register-preserving call with
+ * carry clear on the way out ("handled, no objection").
+ *
+ * Written out four times rather than from a macro: Open Watcom's inline
+ * assembler does not take the callee's name through a macro parameter — it
+ * assembles a call to nothing and the compiler then warns that the function
+ * is "defined, but not referenced", which is the only sign you get. */
+static void __declspec(naked) hires_to_vga_entry(void)
+{
+    _asm {
+        pushad
+        call hires_to_vga_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) post_hires_to_vga_entry(void)
+{
+    _asm {
+        pushad
+        call post_hires_to_vga_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) pre_vga_to_hires_entry(void)
+{
+    _asm {
+        pushad
+        call pre_vga_to_hires_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) vga_to_hires_entry(void)
+{
+    _asm {
+        pushad
+        call vga_to_hires_proc
+        popad
+        clc
+        retn
+    }
+}
+
 /* The main VDD calls a dispatch entry with EBX = VM, EBP = client
  * registers, and expects the flags left alone; this is the thunk that
  * turns that into a C call. */
@@ -368,9 +481,13 @@ void __stdcall Device_Init_proc(DWORD VM)
 
     VDD_Get_Mini_Dispatch_Table();
     dbg_val("d3dptvxd: dispatch entries", DispatchTableLength);
-    if (DispatchTable && DispatchTableLength >= 0x31)
+    if (DispatchTable && DispatchTableLength >= 0x31) {
         DispatchTable[VDD_REGISTER_DISPLAY_DRIVER] = (DWORD)register_display_driver_entry;
-    else
+        DispatchTable[VDD_PRE_HIRES_TO_VGA]  = (DWORD)hires_to_vga_entry;
+        DispatchTable[VDD_POST_HIRES_TO_VGA] = (DWORD)post_hires_to_vga_entry;
+        DispatchTable[VDD_PRE_VGA_TO_HIRES]  = (DWORD)pre_vga_to_hires_entry;
+        DispatchTable[VDD_POST_VGA_TO_HIRES] = (DWORD)vga_to_hires_entry;
+    } else
         dbg_str("d3dptvxd: the VDD's dispatch table is not the shape we expect");
 
     dbg_str("d3dptvxd: ready");

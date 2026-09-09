@@ -31,6 +31,9 @@
 #   CDS="a.cue:b.mds"   discs after the disk, colon-separated. .cue/.mds/.ccd
 #                       go through our own cdimage driver (doc 17).
 #   RUN_SECS=n          how long to let it run after the desktop is up (180)
+#   SETTLE=n            seconds to let the desktop paint after the driver
+#                       programs the mode, before the run clock starts (30).
+#                       KEYS and CLICKS are timed from the end of it.
 #   SHOTS=n             screendump every n s into shots/ (10; 0 turns it off)
 #   KEYS="60:ret,90:esc"  QMP keys at t seconds after the desktop is up
 #   CLICKS="70:320,240" left click at t seconds, in screen coordinates
@@ -206,29 +209,42 @@ while [ $t -lt "$BOOT_WAIT" ]; do
     grep -q "linear mode on" "$OUT/qemu.log" 2>/dev/null && break
   elif [ $t -ge 40 ]; then break; fi
 done
-echo "==> desktop after ${t}s; ${RUN_SECS}s of run"
+# `linear mode on` is the driver programming the mode, which is minutes
+# before the shell is up under TCG — the desktop still has to paint, and
+# SETTLE is the only part of this that is a guess. KEYS and CLICKS are timed
+# from the end of it, so a run that types at the desktop instead of at the
+# game is a SETTLE that was too short.
+echo "==> mode after ${t}s, ${SETTLE:-30}s to paint"
+sleep "${SETTLE:-30}"
+echo "==> ${RUN_SECS}s of run"
 shot t000
 
 # The run: one tick a second, so KEYS and CLICKS land near their times and
 # JIGGLE looks like a hand on the mouse rather than one teleport.
-r=0
+r=0; prev=-1; r0=$(date +%s); last_shot=0
 while [ $r -lt "$RUN_SECS" ]; do
-  sleep 1; r=$((r+1))
+  sleep 1; prev=$r; r=$(( $(date +%s) - r0 ))
   gw_dead && { echo "==> the guest exited ${r}s into the run"; break; }
   for spec in $(printf '%s' "${KEYS:-}" | tr ',' ' '); do
-    [ "${spec%%:*}" = "$r" ] && { echo "    t+${r}s keys ${spec#*:}"; qmp keys "${spec#*:}"; }
+    at=${spec%%:*}
+    [ "$at" -le "$r" ] && [ "$at" -gt "$prev" ] && { echo "    t+${r}s keys ${spec#*:}"; qmp keys "${spec#*:}"; }
   done
   if [ -n "${CLICKS:-}" ]; then
     for spec in $(printf '%s' "$CLICKS" | tr ' ' '\n'); do
-      case "$spec" in "$r":*) xy="${spec#*:}"; echo "    t+${r}s click $xy"
-        qmp click "${xy%%,*}" "${xy##*,}" ;; esac
+      at=${spec%%:*}
+      if [ "$at" -le "$r" ] && [ "$at" -gt "$prev" ]; then
+        xy="${spec#*:}"; echo "    t+${r}s click $xy"
+        qmp click "${xy%%,*}" "${xy##*,}"
+      fi
     done
   fi
   if [ "${JIGGLE:-0}" = 1 ]; then
     dx=$(( (r % 7) * 9 - 27 )); dy=$(( (r % 5) * 11 - 22 ))
     qmp json "{\"execute\":\"input-send-event\",\"arguments\":{\"events\":[{\"type\":\"rel\",\"data\":{\"axis\":\"x\",\"value\":$dx}},{\"type\":\"rel\",\"data\":{\"axis\":\"y\",\"value\":$dy}}]}}"
   fi
-  [ "$SHOTS" != 0 ] && [ $((r % SHOTS)) = 0 ] && shot "t$(printf '%03d' $r)"
+  if [ "$SHOTS" != 0 ] && [ $((r - last_shot)) -ge "$SHOTS" ]; then
+    last_shot=$r; shot "t$(printf '%03d' $r)"
+  fi
 done
 shot zfinal
 
@@ -237,7 +253,7 @@ shot zfinal
 # no driver — which reads exactly like the driver having failed.
 echo "==> power button"
 qmp json '{"execute":"system_powerdown"}'
-gw_wait_exit 90 || { echo "==> did not power off in 90s (a modal dialog swallows the button); killing"; kill $VM 2>/dev/null || true; }
+gw_wait_exit "$VM" 90 || { echo "==> did not power off in 90s (a modal dialog swallows the button); killing"; kill $VM 2>/dev/null || true; }
 wait $VM 2>/dev/null || true
 trap - EXIT
 

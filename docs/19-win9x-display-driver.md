@@ -1492,9 +1492,42 @@ Three details that are not obvious:
 
 The A/B is in the screendumps: with the driver the image was installed with,
 the Windows arrow is composited into every dump; with this one it is in none
-of them, and the desktop, TA's menu and LEGO Island's Information Center all
-come up correct. A screendump showing no pointer is now the expected result
-on 9x as it already was on XP.
+of them, and `d3dpt-vga: cursor 32x32 hot 0,0 defined` in the host log is
+the sprite taking its place. The desktop, TA's menu and LEGO Island's
+Information Center all come up correct. A screendump showing no pointer is
+now the expected result on 9x as it already was on XP, and the player
+composites the sprite itself when the pointer is grabbed
+(`present_guest_frame`'s `composite_cursor`), so a machine without
+`seamless_mouse` still shows one.
+
+**What is proven here and what is not.** Proven: the Engine's pointer was in
+the frame buffer, TA locks the visible primary every frame, and with the
+sprite nothing of the pointer reaches VRAM. *Not* proven: the user's own
+symptom, which is inside a Total Annihilation skirmish — this harness starts
+a game and watches it, it does not click through menus, so what was
+reproduced is the mechanism and not the match. The same caveat applies to
+LEGO Island, where the before-picture was never taken.
+
+#### Two of the six were never the driver
+
+**Crimson Skies** gets past it entirely. The game's own `GAMEZ.ERR`, left in
+its install directory, shows it enumerating
+`[d3dpt9hl.dll] - 2ksbox d3dpt-vga display adapter`, skipping RGB Emulation
+(*"does not interface with hardware"*) and taking
+`Direct3D HAL - +++++OK`; `GAMEZ.OUT` shows every subsystem `PASSED` through
+`dshell(void): STARTING`. The only errors in either file are MCI CD-audio
+ones. A parallel session traced the failure to a **SafeDisc 1.50 weak-sector
+check**: the disc carries an L-EC band of 579 sectors that doc 17 §6 says
+SafeDisc 1.x does not write, and unlike the other protected titles this one
+*reads* it — three probe rounds, each ending on the first raw `READ CD` that
+lands on a band sector — while our ATAPI model answers all 157 reads without
+a check condition, because `read_cd_sector` skips L-EC verification when the
+EDC/ECC field is selected.
+
+**NFS Porsche 2000's** silence is not the display driver either. Worth
+recording that Total Annihilation's sound initialised in this harness with
+the same SB16, so the card and its driver are broadly working in that image;
+the Porsche silence and the `dxdiag` crash beside it want their own look.
 
 #### The DirectDraw heap ran 64 MB into the command window
 
@@ -1532,3 +1565,69 @@ wrong — the first Total Annihilation run caught it as a Windows message box
 whose greys came out red. It now fills the table with Windows' own default
 (the twenty static system colours at the two ends, a 6-6-6 cube between them
 and a grey ramp in the spare twenty) and programs the device from that.
+
+#### A full-screen DOS box, and the four calls nobody documents
+
+Blood is the 1997 Build-engine game and it is **DOS**, so what it needs from
+this driver is not a DirectDraw path at all — it is a screen switch. When a
+VM goes full-screen the main VDD takes the adapter from the display driver's
+hi-res mode to VGA and lets the DOS program drive it; while
+`D3DPT_FB_REG_ENABLE` is set our device scans out the linear frame buffer
+instead, so the program writes VGA memory and none of it reaches the screen.
+That is a whole class of title, and it is the one the user described as
+glitching "no matter what screen configuration I have".
+
+The main VDD is the only thing in the system that knows a switch is
+happening, and the mini-VDD is the only thing that knows about the register,
+so the fix is four dispatch entries: `PRE_HIRES_TO_VGA` turns the linear
+frame buffer off and `POST_VGA_TO_HIRES` turns it back on, with
+`POST_HIRES_TO_VGA` and `PRE_VGA_TO_HIRES` logging so that the order is
+readable. Which of the four the VDD calls for a given kind of switch is not
+something the DDK headers say — this is what a real switch does:
+
+```
+d3dptvxd: hi-res -> VGA
+d3dptvxd: hi-res -> VGA done
+d3dptvxd: VGA -> hi-res
+d3dpt9x: RestoreDesktopMode
+d3dptvxd: VGA -> hi-res done
+```
+
+All four, in order, with the display driver's own callback in the middle —
+`RestoreDesktopMode`, registered through `VDD_DRIVER_REGISTER`, which writes
+every mode register including `ENABLE`, so the way back was already
+half-built. **With that in, Blood renders full-screen at 640x480 through the
+device's VGA core for the whole of its attract demo, and the desktop comes
+back afterwards.**
+
+Two runs were needed before the display was reached at all, and both
+failures look like the driver:
+
+- `run=C:\RUN.BAT` starts in `C:\`, and a DOS/4GW program's stub looks for
+  `dos4gw.exe` in the **current** directory: *"Stub exec failed: dos4gw.exe
+  — No such file or directory"*. `GUEST_CMD` takes one CRLF line per line
+  now, so a `cd` can precede the EXE.
+- Then *"src\sound.cpp(508): Sound Blaster not responding on selected
+  port."* — this image's `AUTOEXEC.BAT` has no `SET BLASTER=`, which is what
+  every DOS game of the era reads to find the card. The Windows side has
+  sound (Total Annihilation initialises against the same SB16); the DOS side
+  does not. Guest configuration rather than the driver, and very likely part
+  of what the user saw.
+
+**And one way to misread the result, which cost an hour here.** Judged from
+an *interim* read of the log, half way through the run, only the first two
+lines existed and the screen was still the frozen desktop — the DOS box had
+not left its `PAUSE` prompt yet — which reads exactly like a one-way switch
+into a black screen with no way back, and the write was backed out on that
+reading. It was the run not being over. The screendumps say it plainly once
+it is: twenty at 800x600 (the desktop), then thirty at 640x480, every one of
+them different from the last. Wait for the run to end, and diff the shots
+rather than looking at one.
+
+Two harness bugs came out of the same hour and are fixed: `gw_wait_exit`
+takes `[pid] [cap]`, so `gw_wait_exit 90` made 90 the **pid** — `kill -0 90`
+on a kernel thread fails for a normal user, the wait returned success
+immediately, and the run then blocked in `wait $VM` forever on a guest that
+had swallowed the power button. And the run clock counted loop iterations
+rather than seconds, so a tick that takes 1.6 s made `RUN_SECS=240` run for
+six minutes and every `KEYS=` entry land late.

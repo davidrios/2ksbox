@@ -339,11 +339,21 @@ What the track starts from:
    window; and the **8 bpp default palette**, which was whatever bytes were
    in the PDEVICE allocation. Total Annihilation and LEGO Island both run
    correctly headless with those in.
-   **Open:** the DOS box — Blood is the DOS Build-engine game, and a
-   full-screen DOS VM needs the adapter handed back to its VGA, which is the
-   mini-VDD's `PRE_HIRES_TO_VGA` / `POST_VGA_TO_HIRES` pair. Those four
-   dispatch entries are hooked and log what the VDD actually calls; **not
-   yet run in a guest**. Then the doc 04 acceptance matrix proper, against
+   **The DOS box works too, 2026-09-09.** Blood is the DOS Build-engine
+   game, so what it wants is a screen switch, not a DirectDraw path: the
+   mini-VDD now hooks `PRE_HIRES_TO_VGA` / `POST_HIRES_TO_VGA` /
+   `PRE_VGA_TO_HIRES` / `POST_VGA_TO_HIRES` and turns
+   `D3DPT_FB_REG_ENABLE` off and on around the switch, so the device hands
+   the scanout back to its VGA core for the VM. All four are called, in
+   order, with the display driver's own `RestoreDesktopMode` in the middle,
+   and Blood renders full-screen at 640x480 for the whole of its attract
+   demo. Two guest-configuration findings came with it: `GUEST_CMD` needs a
+   `cd` before a DOS/4GW EXE or its stub cannot find `dos4gw.exe`, and this
+   image's `AUTOEXEC.BAT` has no `SET BLASTER=`, so every DOS game fails its
+   sound-card probe before it draws anything. Doc 19 §26 also records how
+   this was misread once, from an interim log read on a run that was not
+   over.
+   Then the doc 04 acceptance matrix proper, against
    the same titles on the Glide/WineD3D stack: which is faster, which is
    correct, and what the launcher should default to.
    **Not ours:** Crimson Skies fails on its disc, not on the driver — its

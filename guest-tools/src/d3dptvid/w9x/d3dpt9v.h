@@ -21,6 +21,15 @@
 #define VDD_REGISTER_DISPLAY_DRIVER 0
 #define VDD__Get_Mini_Dispatch_Table 14
 
+/* The four the main VDD calls around a screen switch — a full-screen DOS
+ * box taking the adapter to VGA and giving it back. Repeated from
+ * minivdd.h's function list (which the VxD does not include; it builds
+ * against vmm.h alone) for the same reason as the line above. */
+#define VDD_PRE_HIRES_TO_VGA        4
+#define VDD_POST_HIRES_TO_VGA       5
+#define VDD_PRE_VGA_TO_HIRES        6
+#define VDD_POST_VGA_TO_HIRES       7
+
 /* What the display driver calls on the main VDD to reach the function
  * above: minivdd.h's VDD_REGISTER_DISPLAY_DRIVER_INFO. Repeated here so
  * the two halves cannot drift. The answer is
