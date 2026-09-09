@@ -15,7 +15,10 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   relative PS/2 grab for games, hotkey toggle (default Ctrl+Alt+G,
   rebindable), auto-grab-on-click option. Keyboard passthrough while grabbed.
   Ctrl+Alt+S shoots the guest's own frame (below).
-  Gamepads → DirectInput research post-v1.
+  Gamepads are their own track (M13, `docs/tracks/m13-gamepads.md`) and
+  sit beside this grab model rather than inside it: a pad works whether
+  or not the window has grabbed the pointer, and never changes the grab
+  state.
 - **Audio:** QEMU audio → lock-free ring → cpal on CoreAudio / WASAPI /
   PipeWire. Start ~30 ms end-to-end, instrument, tighten. CD-DA mixes
   QEMU-side (doc 05).

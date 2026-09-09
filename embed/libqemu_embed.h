@@ -108,6 +108,18 @@ QEMU_EMBED_API void qemu_embed_mouse_abs(qemu_embed_t *e, int x, int y, int w, i
 QEMU_EMBED_API void qemu_embed_mouse_btn(qemu_embed_t *e, uint32_t button, bool down);
 /* Whether the active guest pointer device wants absolute coordinates. */
 QEMU_EMBED_API bool qemu_embed_mouse_is_absolute(qemu_embed_t *e);
+/* v8: the gamepad (M13 path A, `-device usb-gamepad`). One call carries
+ * the *whole* pad, not one control: `axes` is four bytes — X, Y, Z, Rz,
+ * two sticks, 0..255 with 0x80 centred — `hat` is 0..7 clockwise from
+ * north or 8 for released, and `buttons` is a bitmap of twelve. Absolute
+ * state rather than events, so a dropped update is corrected by the next
+ * one instead of leaving the guest holding a button. Enqueued like the
+ * rest and delivered by qemu_embed_input_flush(); a no-op on a machine
+ * with no usb-gamepad. */
+QEMU_EMBED_API void qemu_embed_pad_state(qemu_embed_t *e, const uint8_t *axes,
+                                         uint32_t hat, uint32_t buttons);
+/* Whether this machine has a usb-gamepad for the above to reach. */
+QEMU_EMBED_API bool qemu_embed_pad_present(qemu_embed_t *e);
 /* Schedule delivery of everything enqueued (one sync). */
 QEMU_EMBED_API void qemu_embed_input_flush(qemu_embed_t *e);
 
@@ -135,7 +147,7 @@ QEMU_EMBED_API int qemu_embed_socket_to_fd(uint64_t sock);
 
 /* Library version of the embed API, for the bindings to sanity-check. */
 QEMU_EMBED_API uint32_t qemu_embed_api_version(void);
-#define QEMU_EMBED_API_VERSION 7
+#define QEMU_EMBED_API_VERSION 8
 
 #ifdef __cplusplus
 }

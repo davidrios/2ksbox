@@ -229,9 +229,54 @@ can capture it to a wav.
 - **M12d packaging:** the bank into `share/2ksbox/soundfonts/`.
 - **M12e the guest end-to-end:** `tools/midi-guest-test.py`.
 
+## M13 — Gamepads  (Planned; `docs/tracks/m13-gamepads.md`)
+
+Opened 2026-09-09 out of doc 08's post-v1 list. QEMU has **nothing** to
+build on — no gameport, no gamepad HID (`hw/input/hid.h` knows mouse,
+tablet and keyboard only), and no joystick class in the input core — so
+each guest-facing path is new code in the patch queue. Three of them,
+because they reach different guests:
+
+- **Step 0 the host end** ✅ 2026-09-09: `gilrs` in the player (evdev /
+  XInput / GameController), the abstract pad and its shaping in the new
+  `gamepad/` crate — shared the way `shader-chain` is, because the player
+  must not depend on the launcher — `bundle::Pad` (`none` / `keys`) and
+  its wizard row in `launcher-core`, `player --pads` and
+  `--pad-sweep`, and `PLAYER_PAD_SCRIPT`, a synthetic pad, without which
+  no headless check can drive a controller and the whole track is
+  hand-testing only. The `pad` check guards it. Embed API v8 moved to
+  path A, where it has a consumer.
+- **Path C the key mapping** ✅ 2026-09-09: pad → the key events the
+  player already sends, `--pad keys` written from `bundle::Pad`. Every
+  guest, no QEMU patch, no analog. The mapping recomputes the wanted set
+  of keys each poll and diffs it, so shared keys (d-pad *and* stick on
+  the arrows) release only when the last holder does, and a stick crossing
+  centre releases before it presses. Not yet seen arriving in a real
+  guest: `tools/pad-guest-test.sh` is still to write.
+- **Path A `usb-gamepad`** ✅ 2026-09-09 (patch 26): a whole device —
+  `gamepad/qemu/dev-gamepad.c`, two analog sticks, an 8-way hat with a
+  null state and twelve buttons in a six-byte report, built under
+  `CONFIG_USB_HID`. Driven by absolute state through embed API v8
+  (`qemu_embed_pad_state`), so a dropped update is corrected rather than
+  leaving a button held; a second one is refused at realize. The
+  joystick event class the plan wanted was dropped: QEMU's input core is
+  built around consoles and a gamepad has no console affinity, so the
+  shim calls the device directly — which is not upstreamable as it
+  stands, and the track doc says so. XP, Win98 SE and Me should see it on
+  their in-box HID stack with nothing to install; DOS cannot, and is not
+  offered it. **No guest has enumerated it yet** —
+  `tools/hid-descriptor-check.py` checks the descriptor bytes and the
+  `pad` check watches a real `qemu-system-i386` attach it to the bus,
+  but `tools/pad-guest-test.sh` is still to write.
+- **Path B the gameport** (patch 27): four RC one-shots at 0x201,
+  computed against `QEMU_CLOCK_VIRTUAL` on read. The only path that
+  reaches DOS, and the 9x analog stack (`VJOYD` / `MSANALOG`). The
+  busy-wait timing risk is bounded by the DOS family's existing
+  `-icount shift=N,align=on`.
+
 ## Post-v1 candidates
 
-Recording/streaming, gamepads / DirectInput, CRT bezel packs, VRR pacing,
+Recording/streaming, CRT bezel packs, VRR pacing,
 suspend/resume, a host MIDI port for a real module (doc 20 §8),
 upstreaming campaign (libdisc, embed API).
 

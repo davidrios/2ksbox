@@ -102,6 +102,12 @@
 #                  Windows machine gets the USB tablet and a new DOS machine
 #                  does not, the checkbox adds and removes the device and its
 #                  controller, and our QEMU accepts both machines
+#   pad            the gamepad (M13 step 0): a new machine on every family
+#                  ignores a controller, neither setting adds anything to the
+#                  QEMU command line, a bundle naming a setting from a later
+#                  launcher still loads, and the host end's deadzone and
+#                  two-threshold hysteresis behave under PLAYER_PAD_SCRIPT
+#                  (no machine running this suite has a controller)
 #   family-other   the "Other" family (doc 06): a machine for an era OS that is
 #                  neither Windows nor DOS gets standard hardware and none of
 #                  ours — the Bochs VGA rather than d3dpt-vga, no network card
@@ -747,6 +753,233 @@ dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M
                -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
         || { echo "our QEMU refused the folder $d"; echo "$o" | tail -3; rc=1; }
     done
+  else
+    echo "  (no build/qemu: the command line was checked but not run)"
+  fi
+  return $rc
+}
+
+pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind it
+  local rc=0 dir="$OUT/pad" bundle dos args o held
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  : >"$dir/disk.qcow2"
+  bundle="$(target/release/launcherx --new xp pad "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+  dos="$(target/release/launcherx --new dos pad-dos "$dir/disk.qcow2")" || { echo "--new dos failed"; return 1; }
+  # A new machine ignores a controller, on every family. Not a detail: a
+  # stick that rests a little off centre would otherwise hold an arrow
+  # key down on a desktop nobody was playing a game on.
+  for b in "$bundle" "$dos"; do
+    grep -q '^pad = "none"' "$b" || { echo "a new machine did not come out with the pad off"; grep '^pad' "$b"; rc=1; }
+  done
+  # Neither setting is a device, so neither may add anything to the
+  # *guest's* command line. This is what makes the track shippable a path
+  # at a time: the `usb` and `gameport` entries do not exist yet, and
+  # until their devices do, the launcher cannot write a line QEMU would
+  # refuse.
+  args="$(target/release/launcherx --print-args "$bundle")"
+  local before="$args"
+  # A machine with the pad off says nothing to the player either.
+  o="$(target/release/launcherx --print-player-args "$bundle")"
+  [ -z "$o" ] || { echo "a machine with the pad off still passed the player something: $o"; rc=1; }
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - - keys >/dev/null \
+    || { echo "--wizard-edit keys failed"; rc=1; }
+  grep -q '^pad = "keys"' "$bundle" || { echo "the pad setting did not stick"; grep '^pad' "$bundle"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  [ "$args" = "$before" ] || { echo "turning the gamepad on changed the QEMU command line"; diff <(echo "$before") <(echo "$args"); rc=1; }
+  # ...and the whole of what it does say is the setting (path C).
+  o="$(target/release/launcherx --print-player-args "$bundle")"
+  [ "$o" = "--pad keys" ] || { echo "expected '--pad keys' for the player, got: $o"; rc=1; }
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - - none >/dev/null \
+    || { echo "--wizard-edit none failed"; rc=1; }
+  grep -q '^pad = "none"' "$bundle" || { echo "turning it back off did not stick"; rc=1; }
+  # A bundle from a later launcher, naming a setting this build has never
+  # heard of (path B's `gameport`). It must load and fall back, not refuse
+  # the whole machine over a field about a controller.
+  sed -i 's/^pad = "none"/pad = "gameport"/' "$bundle"
+  args="$(target/release/launcherx --print-args "$bundle" 2>&1)" \
+    || { echo "a bundle naming a future pad setting would not load at all"; echo "$args"; rc=1; }
+  case "$args" in *usb-gamepad*) echo "an unknown pad setting was treated as usb"; rc=1;; esac
+
+  # --- path A: the USB HID gamepad --------------------------------
+  # DOS is not offered one: it has no USB stack, so the entry is absent
+  # the way the display picker omits an adapter a family has no driver
+  # for, rather than being offered and then warned about.
+  target/release/launcherx --wizard-edit "$dos" - - - - - - - - usb >/dev/null 2>&1
+  grep -q '^pad = "usb"' "$dos" && { echo "a DOS machine accepted the USB gamepad"; rc=1; }
+  args="$(target/release/launcherx --print-args "$dos")"
+  case "$args" in *usb-gamepad*) echo "a DOS machine got a usb-gamepad"; echo "$args"; rc=1;; esac
+  # A Windows machine gets the device, and it is passed to the player too.
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - - usb >/dev/null \
+    || { echo "--wizard-edit usb failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *"-device usb-gamepad"*) ;; *) echo "an XP machine with the pad on has no usb-gamepad"; echo "$args"; rc=1;; esac
+  o="$(target/release/launcherx --print-player-args "$bundle")"
+  [ "$o" = "--pad usb" ] || { echo "expected '--pad usb' for the player, got: $o"; rc=1; }
+  # The controller comes with it even when the pointer does not want one:
+  # a `-device usb-gamepad` with no bus to attach to is a machine that
+  # will not start, and turning the seamless mouse off used to take the
+  # whole USB bus away with the tablet.
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - noseamless - - >/dev/null \
+    || { echo "--wizard-edit noseamless failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *usb-tablet*) echo "the tablet survived turning the seamless mouse off"; echo "$args"; rc=1;; esac
+  case "$args" in *"-usb"*) ;; *) echo "the pad lost its USB controller when the pointer gave one up"; echo "$args"; rc=1;; esac
+  case "$args" in *"-device usb-gamepad"*) ;; *) echo "the pad went away with the tablet"; echo "$args"; rc=1;; esac
+  # The host end itself, against the scripted pad — no controller, no
+  # guest, no window. What it proves is the shaping: the deadzone
+  # swallows a resting stick, and the press/release pair has a gap in it
+  # so an axis held between them does not chatter.
+  if [ -x target/release/player ]; then
+    # raw 0.25 is inside the 0.30 deadzone and must produce nothing at all.
+    o="$(PLAYER_PAD_SCRIPT='5:lx=0.25' target/release/player --pad-sweep 10 2>&1)" || { echo "$o"; rc=1; }
+    case "$o" in *"0 events"*) ;; *) echo "a stick inside the deadzone produced an event"; echo "$o"; rc=1;; esac
+    # The hysteresis, as three readings: 0.450 shaped is under the press
+    # threshold, 0.600 is over it, and 0.450 *again* must stay held. One
+    # threshold instead of two would release on the third and the guest
+    # would see a key repeating at the poll rate.
+    o="$(PLAYER_PAD_SCRIPT='5:lx=0.615,10:lx=0.72,15:lx=0.615' target/release/player --pad-sweep 20 2>&1)" || { echo "$o"; rc=1; }
+    # Per line, not over the whole output: a glob across it matches the
+    # word "press" from any *other* frame's line and the check passes for
+    # the wrong reason (it did, first time out).
+    echo "$o" | grep -q '^\[pad\] frame 5 lx .* press$' \
+      && { echo "an axis under the press threshold was called pressed"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^\[pad\] frame 10 lx .* press$' \
+      || { echo "an axis over the press threshold was not pressed"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^\[pad\] frame 15 lx .* release$' \
+      && { echo "an axis inside the hysteresis band chattered"; echo "$o"; rc=1; }
+    # `lx+`, not `lx`: the state is per *half*, because the two ends of a
+    # stick are two different keys (path C) and a magnitude test cannot
+    # tell them apart.
+    held="$(echo "$o" | sed -n 's/^pad-sweep: held at end: //p')"
+    [ "$held" = "lx+" ] || { echo "expected lx+ still held at the end, got: $held"; echo "$o"; rc=1; }
+    # A malformed script is refused loudly. A typo here otherwise reads
+    # exactly like a pad that does not work.
+    for bad in '5:nope=1' '5:lx=2.0' '5:south=0.5' 'bad'; do
+      if o="$(PLAYER_PAD_SCRIPT="$bad" target/release/player --pad-sweep 10 2>&1)"; then
+        echo "PLAYER_PAD_SCRIPT=$bad was accepted"; echo "$o"; rc=1
+      fi
+    done
+    # And that the binary can say what it can read, which is the only
+    # place a sandbox with no input access reports itself.
+    o="$(target/release/player --pads 2>&1)" || { echo "--pads failed"; echo "$o"; rc=1; }
+    case "$o" in gamepads:*) ;; *) echo "--pads said something unexpected: $o"; rc=1;; esac
+
+    # --- path C: the pad presses keys -------------------------------
+    # Two controls on one key. The default map puts both the d-pad and
+    # the left stick on the arrows, so `left` has two holders: pressing
+    # the second must not press the key again, and releasing the *first*
+    # must not release it. Counting instead of unioning gets this wrong,
+    # and the guest is left with an arrow key stuck down.
+    o="$(PLAYER_PAD=keys PLAYER_PAD_SCRIPT='5:dpad_left=1,10:lx=-1.0,15:dpad_left=0,20:lx=0.0' \
+         target/release/player --pad-sweep 25 2>&1)" || { echo "$o"; rc=1; }
+    [ "$(echo "$o" | grep -c '^pad-key: ')" = 2 ] \
+      || { echo "two controls on one key did not produce exactly one down and one up"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-key: frame 5 left .* down$' \
+      || { echo "the first holder did not press the key"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-key: frame 20 left .* up$' \
+      || { echo "the key was not released when the last holder let go"; echo "$o"; rc=1; }
+    # A stick swung across centre inside one poll: the key being left has
+    # to go up *before* the key being entered goes down, or a guest that
+    # samples between them sees both arrows held.
+    o="$(PLAYER_PAD=keys PLAYER_PAD_SCRIPT='5:lx=-1.0,10:lx=1.0,15:lx=0.0' \
+         target/release/player --pad-sweep 20 2>&1)" || { echo "$o"; rc=1; }
+    [ "$(echo "$o" | grep '^pad-key: frame 10 ' | head -1 | grep -c ' left .* up$')" = 1 ] \
+      || { echo "crossing centre did not release the old direction first"; echo "$o"; rc=1; }
+    [ "$(echo "$o" | grep '^pad-key: frame 10 ' | tail -1 | grep -c ' right .* down$')" = 1 ] \
+      || { echo "crossing centre did not press the new direction"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-sweep: keys down at end: none$' \
+      || { echo "a script that let go left keys down in the guest"; echo "$o"; rc=1; }
+    # The whole default map reaches real scancodes. `up` is the one to
+    # check by number: the stick's negative Y is up on the screen and +1
+    # on the wire, so a missing flip here sends the guest `down`.
+    o="$(PLAYER_PAD=keys PLAYER_PAD_SCRIPT='2:ly=-1.0,4:south=1' \
+         target/release/player --pad-sweep 6 2>&1)" || { echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-key: frame 2 up 0xe048 down$' \
+      || { echo "stick up did not send the up arrow (0xe048)"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-key: frame 4 ctrl 0x001d down$' \
+      || { echo "the bottom face button did not send ctrl (0x1d)"; echo "$o"; rc=1; }
+    # With the pad off nothing is mapped, whatever the controller does.
+    o="$(PLAYER_PAD_SCRIPT='5:south=1' target/release/player --pad-sweep 10 2>&1)" || { echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-key: ' \
+      && { echo "a machine with the pad off still pressed a key"; echo "$o"; rc=1; }
+
+    # --- path A: the report the guest is handed -----------------------
+    # The packing, without a guest: this is the same hid_state() the
+    # player sends through qemu_embed_pad_state, so what is checked here
+    # is the bytes a driver would parse.
+    o="$(PLAYER_PAD=usb PLAYER_PAD_SCRIPT='3:lx=1.0,6:ly=-1.0,9:dpad_up=1,12:dpad_right=1,15:dpad_up=0,18:south=1,21:start=1' \
+         target/release/player --pad-sweep 24 2>&1)" || { echo "$o"; rc=1; }
+    # A pad nobody has touched reads centred with the hat released. A
+    # driver that never gets this shows the stick in a corner.
+    echo "$o" | grep -q '^pad-hid: frame 1 axes 80 80 80 80 hat 8 buttons 000000000000$' \
+      || { echo "the pad does not start centred with the hat released"; echo "$o"; rc=1; }
+    # Stick up is a *low* Y: the screen convention, which is what a guest
+    # expects. The sign is flipped once, in the gilrs source; getting it
+    # wrong here inverts every game's steering.
+    echo "$o" | grep -q '^pad-hid: frame 6 axes ff 01 80 80 hat 8 ' \
+      || { echo "stick right/up did not give X=ff, Y=01"; echo "$o"; rc=1; }
+    # The hat walks north -> north-east -> east as the d-pad is pressed.
+    echo "$o" | grep -q '^pad-hid: frame 9 .* hat 0 ' || { echo "d-pad up is not hat 0"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-hid: frame 12 .* hat 1 ' || { echo "d-pad up+right is not hat 1"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-hid: frame 15 .* hat 2 ' || { echo "d-pad right is not hat 2"; echo "$o"; rc=1; }
+    # Buttons land where gamepad::HID_BUTTONS says: south is button 1
+    # (bit 0), start is button 10 (bit 9). This order is what a person
+    # sees in joy.cpl and what every configured game is bound against.
+    echo "$o" | grep -q '^pad-hid: frame 18 .* buttons 000000000001$' \
+      || { echo "the bottom face button is not button 1"; echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-hid: frame 21 .* buttons 001000000001$' \
+      || { echo "start is not button 10"; echo "$o"; rc=1; }
+    # Opposite directions cancel. A real d-pad cannot press both, and a
+    # guest handed "north and south" has to invent an answer.
+    o="$(PLAYER_PAD=usb PLAYER_PAD_SCRIPT='3:dpad_up=1,6:dpad_down=1' \
+         target/release/player --pad-sweep 8 2>&1)" || { echo "$o"; rc=1; }
+    echo "$o" | grep -q '^pad-hid: frame 6 .* hat 8 ' \
+      || { echo "up and down together did not cancel to the null position"; echo "$o"; rc=1; }
+  else
+    echo "  (no target/release/player: the machine setting was checked, the host end was not)"
+  fi
+
+  # The HID report descriptor: the bytes a guest's driver parses, which
+  # nothing on this side reads, so a wrong one shows up only as a device
+  # that enumerates and has no axes.
+  if command -v python3 >/dev/null; then
+    python3 tools/hid-descriptor-check.py >"$OUT/pad-hid-desc.log" 2>&1 \
+      || { echo "the usb-gamepad report descriptor is wrong"; cat "$OUT/pad-hid-desc.log"; rc=1; }
+    # ...and that the checker can still fail, which is the only thing
+    # that makes the line above worth anything. Two mutations, each of
+    # which produces a device that looks fine and is not.
+    local mut="$dir/hid"; mkdir -p "$mut"
+    sed 's/0x81, 0x42,/0x81, 0x02,/' gamepad/qemu/dev-gamepad.c >"$mut/nonull.c"
+    sed 's/0x95, 0x04,/0x95, 0x03,/' gamepad/qemu/dev-gamepad.c >"$mut/short.c"
+    for m in nonull short; do
+      if python3 tools/hid-descriptor-check.py "$mut/$m.c" >/dev/null 2>&1; then
+        echo "the descriptor checker passed a deliberately broken descriptor ($m)"; rc=1
+      fi
+    done
+  fi
+
+  # And the point of all of it: our own QEMU takes the machine, and the
+  # device really attaches to the bus rather than merely being accepted
+  # on the command line. `info usb` is the guest's own view of it.
+  if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
+    build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
+    args="$(target/release/launcherx --print-args "$bundle")"
+    # shellcheck disable=SC2086
+    o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"human-monitor-command","arguments":{"command-line":"info usb"}}\n{"execute":"quit"}\n' \
+         | timeout 30 build/qemu/qemu-system-i386 $args \
+             -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
+      || { echo "our QEMU refused a machine with a usb-gamepad"; echo "$o" | tail -3; rc=1; }
+    case "$o" in *"2ksbox USB Gamepad"*) ;; *) echo "the usb-gamepad did not attach to the bus"; echo "$o" | tail -5; rc=1;; esac
+    # A second one is refused outright rather than silently ignored: the
+    # device drives a single host pad, and two would leave whichever the
+    # lookup found first as the only live one.
+    # shellcheck disable=SC2086
+    o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n' \
+         | timeout 30 build/qemu/qemu-system-i386 $args -device usb-gamepad \
+             -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)"
+    case "$o" in *"only one usb-gamepad"*) ;; *) echo "a second usb-gamepad was not refused"; echo "$o" | tail -3; rc=1;; esac
   else
     echo "  (no build/qemu: the command line was checked but not run)"
   fi
@@ -1444,6 +1677,16 @@ host_stage() {
   # controller, and our QEMU accepts both machines.
   if [ -x target/release/launcherx ]; then
     run_check pointer pointer.log pointer_check || true
+  fi
+
+  # the gamepad (M13 step 0): a new machine ignores a controller on every
+  # family, neither setting puts anything on the QEMU command line yet,
+  # a bundle from a later launcher still loads, and the host end's
+  # shaping — the deadzone and the two-threshold hysteresis — behaves,
+  # driven by the scripted pad because no machine running this suite has
+  # a controller plugged into it.
+  if [ -x target/release/launcherx ]; then
+    run_check pad pad.log pad_check || true
   fi
 
   # the "Other" family (doc 06): the machine for an era OS that is neither

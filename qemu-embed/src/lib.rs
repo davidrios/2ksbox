@@ -8,7 +8,7 @@
 use std::ffi::{c_char, c_int, c_void, CString};
 use std::ptr;
 
-pub const API_VERSION: u32 = 7;
+pub const API_VERSION: u32 = 8;
 pub const FMT_XRGB8888: u32 = 1;
 
 #[repr(C)]
@@ -62,6 +62,8 @@ extern "C" {
     fn qemu_embed_mouse_abs(e: *mut qemu_embed_t, x: c_int, y: c_int, w: c_int, h: c_int);
     fn qemu_embed_mouse_btn(e: *mut qemu_embed_t, button: u32, down: bool);
     fn qemu_embed_mouse_is_absolute(e: *mut qemu_embed_t) -> bool;
+    fn qemu_embed_pad_state(e: *mut qemu_embed_t, axes: *const u8, hat: u32, buttons: u32);
+    fn qemu_embed_pad_present(e: *mut qemu_embed_t) -> bool;
     fn qemu_embed_input_flush(e: *mut qemu_embed_t);
     fn qemu_embed_set_refresh_ms(e: *mut qemu_embed_t, ms: u32);
     fn qemu_embed_set_audio_ring(
@@ -182,6 +184,22 @@ impl Qemu {
     }
     pub fn mouse_is_absolute(&self) -> bool {
         unsafe { qemu_embed_mouse_is_absolute(self.0) }
+    }
+    /// The whole gamepad at once (v8, M13 path A): four axes — X, Y, Z,
+    /// Rz, `0x80` centred — a hat of 0..7 clockwise from north (8 =
+    /// released) and a bitmap of twelve buttons.
+    ///
+    /// Absolute state, not events, so a dropped update is corrected by
+    /// the next one rather than leaving the guest holding a button. A
+    /// no-op on a machine without `-device usb-gamepad`.
+    pub fn pad_state(&self, axes: [u8; 4], hat: u8, buttons: u16) {
+        unsafe { qemu_embed_pad_state(self.0, axes.as_ptr(), hat as u32, buttons as u32) }
+    }
+    /// Whether the machine has a `usb-gamepad` for [`Self::pad_state`] to
+    /// reach — so the player can say "this machine has no gamepad
+    /// device" rather than sending into nothing.
+    pub fn pad_present(&self) -> bool {
+        unsafe { qemu_embed_pad_present(self.0) }
     }
     pub fn input_flush(&self) {
         unsafe { qemu_embed_input_flush(self.0) }

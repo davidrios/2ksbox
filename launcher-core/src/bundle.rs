@@ -226,6 +226,127 @@ pub fn video_choices(family: Family) -> &'static [Video] {
     }
 }
 
+/// What a host gamepad does for this machine (M13,
+/// `docs/tracks/m13-gamepads.md`).
+///
+/// Only two entries today, and that is the honest state rather than a
+/// simplification: the other two guest-facing paths are devices QEMU
+/// does not have yet. A `usb-gamepad` (patch 26) will add `Usb` for XP,
+/// Win98 SE and Me, which see a HID pad on their in-box stack with
+/// nothing to install; a gameport at 0x201 (patch 27) will add
+/// `Gameport`, the only path that reaches DOS. Until each device exists
+/// its entry stays out of `pad_choices`, so the launcher can never write
+/// a command line our own `qemu-system-i386` would reject — the same
+/// rule the display-adapter picker follows for an adapter a family has
+/// no driver for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Pad {
+    /// A controller plugged into the host does nothing. The default, and
+    /// not merely the conservative choice: with `Keys` a resting stick
+    /// that drifts past the threshold holds an arrow key down, and on a
+    /// desktop that is a cursor sliding across the screen with no
+    /// visible cause. Someone who wants a pad says so.
+    #[default]
+    None,
+    /// A real USB HID gamepad on the machine (`-usb -device
+    /// usb-gamepad`, patch 26). Two sticks, an 8-way hat and twelve
+    /// buttons, which XP, Windows 98 SE and Me all bind their in-box HID
+    /// stack to with **nothing installed** — DirectInput and `joy.cpl`
+    /// see it on the first boot after it is added. This is the entry a
+    /// game of the era can actually use: it enumerates as a controller,
+    /// and the sticks are analog.
+    ///
+    /// Not offered on DOS, which has no USB stack at all — that is what
+    /// path B's gameport is for. Windows 98 *first edition* is the doubt
+    /// on the 9x side: its USB support predates the HID class being
+    /// reliable, and it may want the USB supplement.
+    Usb,
+    /// The pad presses keys: the player maps its controls onto the key
+    /// events it already sends, against `gamepad::default_key_bindings`.
+    /// Reaches **every** guest — DOS, Win98 FE, XP, `Other` — because
+    /// there is no device for the guest to support. The cost is that it
+    /// is a mapping and not a controller: no analog anything, and a game
+    /// that enumerates DirectInput or reads 0x201 still finds nothing.
+    Keys,
+}
+
+impl Pad {
+    pub const ALL: [Pad; 3] = [Pad::None, Pad::Usb, Pad::Keys];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Pad::None => "No gamepad",
+            Pad::Usb => "USB gamepad",
+            Pad::Keys => "Gamepad presses keys",
+        }
+    }
+
+    /// The name this serializes to. Must agree with the `rename_all`
+    /// above — `pad_lenient` reads through this, so a disagreement would
+    /// make every bundle's `pad` field fall back to the default in
+    /// silence. The `pad` check in `scripts/test.sh` writes a machine
+    /// and reads it back to prove they still agree.
+    pub fn name(self) -> &'static str {
+        match self {
+            Pad::None => "none",
+            Pad::Usb => "usb",
+            Pad::Keys => "keys",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Pad> {
+        Pad::ALL.into_iter().find(|p| p.name() == name)
+    }
+}
+
+/// Reads `pad` **leniently**: a value this build has never heard of
+/// becomes `None` — the family default — instead of failing the whole
+/// bundle.
+///
+/// Unlike every other enum in this file, `Pad` is *known* to be gaining
+/// variants: paths A and B of the M13 track add `usb` and `gameport`,
+/// and the track doc says so. Once they land, a machine someone made in
+/// a newer build and opened in an older one would otherwise refuse to
+/// load at all — not "the pad setting was ignored" but "this machine
+/// does not exist", losing its disk, its discs and its shader profile
+/// over a field about a controller. That trade is never worth it, so
+/// this one field is read the forgiving way.
+fn pad_lenient<'de, D>(d: D) -> Result<Option<Pad>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(d)?.and_then(|s| Pad::from_name(&s)))
+}
+
+/// What each family offers, **first one its default**.
+///
+/// The asymmetry is `Usb`: a USB HID gamepad needs a guest with a USB
+/// stack, which DOS has not got at all. DOS is left with `Keys`, and the
+/// controller it could really use is path B's gameport.
+///
+/// Every family starts on `None`, and that is a decision rather than
+/// caution. A machine nobody asked for a pad on should not grow a device
+/// in its Device Manager, and it is the same call this project already
+/// made for networking, which is off on new machines because a guest that
+/// waits on DHCP at boot is worse than one with no network. A pad is one
+/// pick away either way.
+pub fn pad_choices(family: Family) -> &'static [Pad] {
+    match family {
+        // No USB stack, so no HID gamepad. Nothing to warn about — the
+        // entry simply is not offered, the way the display-adapter picker
+        // does not offer an adapter a family has no driver for.
+        Family::Dos => &[Pad::None, Pad::Keys],
+        Family::Xp | Family::Win98 | Family::Other => &[Pad::None, Pad::Usb, Pad::Keys],
+    }
+}
+
+/// The pad setting a family starts on. Always the first of
+/// `pad_choices`, so the list and the default cannot disagree.
+pub fn default_pad(family: Family) -> Pad {
+    pad_choices(family).first().copied().unwrap_or(Pad::None)
+}
+
 /// The digital sound card, and — for the two cards that carried one —
 /// the FM chip that comes with it (doc 20 §6).
 ///
@@ -797,6 +918,17 @@ pub struct Machine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<Video>,
 
+    /// What a host gamepad does for this machine (`Pad`). Absent = that
+    /// family's default, which is `Pad::None` everywhere — so a bundle
+    /// written before this field existed keeps behaving exactly as it
+    /// did, which for a gamepad means ignoring one.
+    #[serde(
+        default,
+        deserialize_with = "pad_lenient",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pad: Option<Pad>,
+
     /// The sound card (`Sound`). Absent = the family's default, which
     /// is the card that family already had, so a bundle written before
     /// this field existed describes the same machine it always did.
@@ -1003,6 +1135,7 @@ impl Machine {
             music: Some(default_music(family)),
             soundfont: None,
             mt32_roms: None,
+            pad: Some(default_pad(family)),
             optimizations: Optimizations::default(),
         }
     }
@@ -1124,6 +1257,20 @@ impl Machine {
         })
     }
 
+    /// What this machine does with a host gamepad: its own setting, or
+    /// its family's default. A `pad` naming a setting this family does
+    /// not offer falls back the way `effective_video` does. That is also
+    /// where a bundle from a *later* launcher lands: `pad_lenient` has
+    /// already turned its unknown `usb` or `gameport` into `None`, and
+    /// this turns `None` into the family's default.
+    pub fn effective_pad(&self) -> Pad {
+        let choices = pad_choices(self.family);
+        match self.pad {
+            Some(p) if choices.contains(&p) => p,
+            _ => default_pad(self.family),
+        }
+    }
+
     /// The `-vga` / `-device` pair that puts the machine's adapter on it.
     /// `-vga none` first for every choice, so the machine never gets the
     /// default adapter *as well as* the one it asked for.
@@ -1217,8 +1364,21 @@ impl Machine {
         // grabbed. Without it the machine keeps the PS/2 mouse alone —
         // relative, grabbed on a click — and the controller goes with
         // the tablet, because the tablet is the only thing on it.
+        // ...and the gamepad (M13 path A), which needs the same
+        // controller. `-usb` goes on once for both: QEMU takes a second
+        // one, but it is the kind of line nobody reads twice, and a
+        // machine whose pointer is turned off must still get a
+        // controller for its pad rather than a `-device usb-gamepad`
+        // with no bus to attach to.
+        let pad_usb = self.effective_pad() == Pad::Usb;
+        if self.seamless_mouse || pad_usb {
+            args.push("-usb".into());
+        }
         if self.seamless_mouse {
-            args.extend(["-usb".into(), "-device".into(), "usb-tablet".into()]);
+            args.extend(["-device".into(), "usb-tablet".into()]);
+        }
+        if pad_usb {
+            args.extend(["-device".into(), "usb-gamepad".into()]);
         }
         // The CPU rate, when the machine asks for one. `align=on` is the
         // whole point and not a detail: `-icount shift=N` on its own only

@@ -16,6 +16,9 @@
 #include "qemu-main.h"
 #include "libqemu_embed.h"
 #include "embedfx.h"
+/* The USB gamepad's host-side entry point (M13 path A). Copied in beside
+ * this file by scripts/prepare-qemu.sh, from gamepad/qemu/. */
+#include "usb-gamepad.h"
 
 #ifdef _WIN32
 #include <io.h>                 /* _open_osfhandle() for qemu_embed_socket_to_fd */
@@ -35,7 +38,7 @@ int qemu_default_main(void)
 }
 int (*qemu_main)(void) = qemu_default_main;
 
-enum { EV_KEY, EV_REL, EV_ABS, EV_BTN };
+enum { EV_KEY, EV_REL, EV_ABS, EV_BTN, EV_PAD };
 
 typedef struct {
     uint8_t kind;
@@ -406,6 +409,32 @@ bool qemu_embed_mouse_is_absolute(qemu_embed_t *e)
     return qemu_input_is_absolute(e->con);
 }
 
+/*
+ * The gamepad (M13 path A). One event carries the *whole* pad, packed
+ * into the fields the queue already has: `a` the four axes, `b` the hat,
+ * `c` the buttons.
+ *
+ * Whole state rather than per-control events, for the reason
+ * usb-gamepad.h gives — a dropped update is corrected by the next one,
+ * where a dropped event would leave the guest holding a button. It also
+ * means the queue can never fill with pad traffic the way it could with
+ * one event per axis per frame.
+ */
+void qemu_embed_pad_state(qemu_embed_t *e, const uint8_t *axes,
+                          uint32_t hat, uint32_t buttons)
+{
+    int32_t packed = (int32_t)((uint32_t)axes[0] | ((uint32_t)axes[1] << 8) |
+                               ((uint32_t)axes[2] << 16) | ((uint32_t)axes[3] << 24));
+    enqueue(e, (in_event){ .kind = EV_PAD, .a = packed,
+                           .b = (int32_t)hat, .c = (int32_t)buttons });
+}
+
+bool qemu_embed_pad_present(qemu_embed_t *e)
+{
+    (void)e;
+    return usb_gamepad_present();
+}
+
 /* Runs on the main loop under BQL. */
 static void bh_input_drain(void *opaque)
 {
@@ -475,6 +504,16 @@ static void bh_input_drain(void *opaque)
             qemu_input_queue_btn(e->con, button_map[ev->a], ev->down);
             pointer = true;
             break;
+        case EV_PAD: {
+            uint8_t axes[USB_GAMEPAD_AXES] = {
+                (uint8_t)(ev->a & 0xff), (uint8_t)((ev->a >> 8) & 0xff),
+                (uint8_t)((ev->a >> 16) & 0xff), (uint8_t)((ev->a >> 24) & 0xff),
+            };
+            /* No qemu_input_event_sync(): the gamepad is not on a
+             * console and does not ride the input core at all. */
+            usb_gamepad_set_state(axes, (uint8_t)ev->b, (uint16_t)ev->c);
+            break;
+        }
         }
     }
     if (pointer) {

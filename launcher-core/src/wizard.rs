@@ -28,7 +28,10 @@
 //! directly.
 
 use crate::browse::Filter;
-use crate::bundle::{self, Accel, Boot, CpuSpeed, Family, Machine, Music, Optimization, Optimizations, Sound, Video};
+use crate::bundle::{
+    self, Accel, Boot, CpuSpeed, Family, Machine, Music, Optimization, Optimizations, Pad, Sound,
+    Video,
+};
 use crate::disc_library::DISC_FILTER;
 use crate::{host_gpu, library, player};
 use std::path::{Path, PathBuf};
@@ -59,6 +62,10 @@ struct EditTarget {
     /// The same, for the sound card: a guest that already has a driver
     /// for one card finds another on its next start (`sound_warning`).
     sound: Sound,
+    /// The gamepad setting the bundle had when it was opened, for the
+    /// same reason: gaining or losing the USB controller is a hardware
+    /// change (`pad_warning`).
+    pad: Pad,
 }
 
 /// The acceleration hint under the picker, and whether it is a warning
@@ -96,6 +103,13 @@ pub struct Form {
     /// default: `Music::Mt32` without it is a machine that refuses to
     /// start, so `submit` says so instead (doc 20 §4).
     pub mt32_roms: String,
+    /// What a host gamepad does for this machine (M13). Private for the
+    /// same reason `video` is, and since path A for a concrete one: `Usb`
+    /// is offered on the Windows families and on `Other` but never on
+    /// DOS, which has no USB stack, so a value carried across a family
+    /// switch can be one the new family does not offer and
+    /// `choose_family` has to put it back.
+    pad: Pad,
     pub existing_disk: bool,
     pub disk_path: String,
     pub disk_size_gb: u32,
@@ -173,6 +187,7 @@ impl Default for Form {
             music: bundle::default_music(Family::Win98),
             soundfont: String::new(),
             mt32_roms: String::new(),
+            pad: bundle::default_pad(Family::Win98),
             existing_disk: false,
             disk_path: String::new(),
             disk_size_gb: 2,
@@ -248,6 +263,7 @@ impl Form {
             music: machine.effective_music(),
             soundfont: machine.soundfont.as_ref().map(|f| f.display().to_string()).unwrap_or_default(),
             mt32_roms: machine.mt32_roms.as_ref().map(|d| d.display().to_string()).unwrap_or_default(),
+            pad: machine.effective_pad(),
             existing_disk: true,
             disk_path: machine.disk.display().to_string(),
             install_media: machine.boot_disc().map(|d| d.display().to_string()).unwrap_or_default(),
@@ -258,6 +274,7 @@ impl Form {
                 original_toml,
                 video: machine.effective_video().unwrap_or(Video::Std),
                 sound: machine.effective_sound(),
+                pad: machine.effective_pad(),
             }),
             ..Default::default()
         };
@@ -343,6 +360,11 @@ impl Form {
             if let Some(default) = bundle::default_video(family) {
                 self.video = default;
             }
+        }
+        // The same for the gamepad: switching a machine to DOS strands a
+        // `Usb` setting, because DOS has no USB stack to attach it to.
+        if !bundle::pad_choices(family).contains(&self.pad) {
+            self.pad = bundle::default_pad(family);
         }
         // The new family's ceiling may be below the memory already in
         // the field (Win98 stops at 512 MB), so the clamp is part of the
@@ -851,6 +873,76 @@ impl Form {
         }
     }
 
+    pub fn pad(&self) -> Pad {
+        self.pad
+    }
+
+    /// What this family offers a gamepad, first one its default — what a
+    /// picker fills itself from.
+    pub fn pad_choices(&self) -> &'static [Pad] {
+        bundle::pad_choices(self.family)
+    }
+
+    /// Whether there is anything to choose. True on every family — even
+    /// DOS has `None` against `Keys` — but written against the model so a
+    /// front end's row does not depend on that staying true.
+    pub fn pad_applies(&self) -> bool {
+        self.pad_choices().len() > 1
+    }
+
+    pub fn pad_is_default(&self) -> bool {
+        self.pad == bundle::default_pad(self.family)
+    }
+
+    /// A setting this family does not offer is refused rather than
+    /// stored, the same way `choose_video` refuses an adapter.
+    pub fn choose_pad(&mut self, pad: Pad) {
+        if self.pad_choices().contains(&pad) {
+            self.pad = pad;
+        }
+    }
+
+    pub fn reset_pad(&mut self) {
+        self.pad = bundle::default_pad(self.family);
+    }
+
+    /// What the chosen setting means. `Keys` needs its limitation said
+    /// plainly and in the picker, not discovered: someone who turns it on
+    /// for a Direct3D game will otherwise conclude the pad is broken,
+    /// when what is actually true is that the game asked DirectInput and
+    /// there is no controller for it to find yet.
+    pub fn pad_notes(&self) -> &'static [&'static str] {
+        match self.pad {
+            Pad::None => &[
+                "A controller plugged into the host does nothing. The machine's keyboard and mouse are unaffected.",
+            ],
+            Pad::Usb => &[
+                "A real USB controller on the machine: two analog sticks, an 8-way hat and twelve buttons, which DirectInput and the Game Controllers panel both see.",
+                "Windows XP, 98 SE and Me need nothing installed — they bind their own HID driver to it on the first start after it is added. Windows 98 first edition may want the USB supplement.",
+            ],
+            Pad::Keys => &[
+                "The pad presses keys: the d-pad and left stick are the arrow keys, and the four face buttons are Ctrl, Alt, Space and Enter — what a DOS or early-Windows action game reads by default.",
+                "It is a mapping, not a controller: no analog steering, and a game that asks DirectInput for a joystick still finds none. The choice for DOS, and for a game that only ever read the keyboard.",
+            ],
+        }
+    }
+
+    /// The one thing worth saying above the picker: adding or removing a
+    /// USB controller on a machine that already has an OS installed is a
+    /// hardware change, and the guest will notice on its next start. The
+    /// same sentence the adapter picker earns, for the same reason.
+    pub fn pad_warning(&self) -> Option<&'static str> {
+        let changed = match &self.editing {
+            Some(edit) => (edit.pad == Pad::Usb) != (self.pad == Pad::Usb),
+            None => false,
+        };
+        changed.then_some(
+            "This machine already exists: adding or removing the USB controller makes the guest \
+             find new hardware on its next start. Windows installs its own driver for it, but it \
+             will say so.",
+        )
+    }
+
     /// The one thing the boot picker can say that isn't obvious: a
     /// machine told to boot from a floppy it hasn't got.
     pub fn boot_note(&self) -> Option<&'static str> {
@@ -889,6 +981,7 @@ impl Form {
                 music: None,
                 soundfont: None,
                 mt32_roms: None,
+                pad: None,
                 optimizations: Optimizations::default(),
             },
             None => Machine::reference(self.family, self.name.clone(), disk),
@@ -935,6 +1028,12 @@ impl Form {
         machine.mt32_roms = (self.music == Music::Mt32)
             .then(|| Some(self.mt32_roms.trim()).filter(|d| !d.is_empty()).map(PathBuf::from))
             .flatten();
+        // Same rule as `video`: only a setting this family offers is
+        // written. Every family offers both today, so this always
+        // writes; the guard is here for when path A makes `Usb` a
+        // Windows-only entry and a machine switched to DOS must not
+        // keep it.
+        machine.pad = bundle::pad_choices(self.family).contains(&self.pad).then_some(self.pad);
         machine.floppy = Some(self.floppy.trim()).filter(|f| !f.is_empty()).map(PathBuf::from);
         machine.shader_profile = self.shader_profile.clone();
         // The single slot this form has is the machine's *boot* disc;

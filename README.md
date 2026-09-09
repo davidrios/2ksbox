@@ -104,6 +104,35 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 # Ctrl+Alt+S writes the guest's own frame — its native size, no geometry stage and
 #   no CRT chain — as PLAYER_SHOT_DIR/2ksbox-NNNN.png (the next free number; the
 #   working directory when PLAYER_SHOT_DIR is unset). Ctrl+Alt+G releases the grab.
+# Gamepad (M13, docs/tracks/m13-gamepads.md). `player --pads` says what this host
+#   can read, which is the one place a build without the `gilrs` feature or a
+#   sandbox with no /dev/input reports itself.
+# --pad usb (or PLAYER_PAD=usb) sends the pad to the machine's `usb-gamepad`
+#   (patch 26): two analog sticks, an 8-way hat and twelve buttons, which XP,
+#   Windows 98 SE and Me all see through their own HID driver with nothing
+#   installed — DirectInput and joy.cpl find it on the first start after the
+#   device is added. The launcher adds `-usb -device usb-gamepad` for a machine
+#   whose `pad = "usb"`. Not offered on DOS, which has no USB stack.
+# --pad keys (or PLAYER_PAD=keys) maps the pad onto the keys the player already
+#   sends: d-pad and left stick are the arrows, the four face buttons are Ctrl,
+#   Alt, Space and Enter, Start is Esc. The launcher writes it from the machine's
+#   own setting (`pad` in the bundle), the way it writes --shader. Works on every
+#   guest, because there is no device for the guest to support; a game that asks
+#   DirectInput for a joystick still finds none — that needs the USB gamepad.
+#   `launcherx --print-player-args <machine.toml>` shows what a bundle resolves to.
+# PLAYER_PAD_SCRIPT="30:lx=1.0,45:south=1,51:south=0" is a synthetic pad: set a
+#   control to a value at a guest frame number. Frames, not milliseconds, so a run
+#   lands in the same place in the guest's execution every time (as PLAYER_KEYS does).
+#   Controls: lx/ly/rx/ry (axes, -1.0..1.0; negative is left/up), south/east/west/
+#   north, dpad_up/down/left/right, l1/r1/l2/r2, l3/r3, select/start (0 or 1).
+#   It wins over real hardware, so a test is not perturbed by what is plugged in.
+# PLAYER_PAD_LOG=1 prints every shaped reading with its press/release transitions
+# PLAYER_PAD_SHAPING="0.30,0.55,0.40" overrides deadzone,press,release — the press
+#   and release thresholds differ on purpose, and release must be the lower of the
+#   two: with one number a stick held at it chatters at the poll rate
+# player --pad-sweep <frames> replays PLAYER_PAD_SCRIPT with no window, no QEMU and
+#   no guest, and prints what came out — with --pad keys, the key presses too.
+#   The `pad` check in scripts/test.sh
 # PLAYER_LATENCY=1 prints publish→present latency percentiles every 240 guest frames
 # PLAYER_REFRESH_LOG=1 prints a guest frame counter every 100 frames — whether the
 #   guest is drawing at all. Off by default: a machine left running printed it for

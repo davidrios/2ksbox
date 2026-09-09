@@ -1,0 +1,19 @@
+[package]
+name = "gamepad"
+version.workspace = true
+edition.workspace = true
+license = "GPL-2.0-or-later"
+repository.workspace = true
+description = "The abstract gamepad: what a pad's controls are, and how a raw axis becomes a decision (M13, docs/tracks/m13-gamepads.md)."
+
+# Shared by `player` (which reads the hardware) and, from path C on,
+# `launcher-core` (which decides what the controls mean for a machine).
+# Its own crate for the same reason `shader-chain` is: the player must
+# not depend on the launcher — the player is the runtime and the
+# launcher is the manager that spawns it, and a dependency the other way
+# round would make the player carry the whole machine library.
+#
+# No dependency but serde, and that only so a binding can be written
+# down. Nothing here reads hardware; `gilrs` belongs to the player.
+[dependencies]
+serde = { version = "1", features = ["derive"] }

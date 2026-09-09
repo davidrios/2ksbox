@@ -100,6 +100,7 @@ fn fields_ui(
     accel_ui(ui, form);
     video_ui(ui, form);
     audio_ui(ui, form);
+    pad_ui(ui, form);
     graphics_ui(ui, form);
     network_ui(ui, form);
     seamless_mouse_ui(ui, form);
@@ -227,6 +228,38 @@ fn video_ui(ui: &mut egui::Ui, form: &mut Form) {
         ui.colored_label(egui::Color32::from_rgb(0xc8, 0x82, 0x00), warning);
     }
     for note in form.video_notes() {
+        ui.small(*note);
+    }
+}
+
+/// The gamepad (M13). Same shape as the adapter above and for the same
+/// reason: which settings are on offer is the form's answer, so this
+/// never has to know that DOS is offered no USB controller.
+fn pad_ui(ui: &mut egui::Ui, form: &mut Form) {
+    if !form.pad_applies() {
+        return;
+    }
+    let mut pad = form.pad();
+    ui.horizontal(|ui| {
+        egui::ComboBox::from_label("Gamepad")
+            .selected_text(pad.label())
+            .show_ui(ui, |ui| {
+                for p in form.pad_choices() {
+                    ui.selectable_value(&mut pad, *p, p.label());
+                }
+            });
+        if ui.add_enabled(!form.pad_is_default(), egui::Button::new("Default")).clicked() {
+            form.reset_pad();
+        }
+    });
+    if pad != form.pad() {
+        form.choose_pad(pad);
+    }
+    // About the machine rather than the selected entry, so it goes first.
+    if let Some(warning) = form.pad_warning() {
+        ui.colored_label(egui::Color32::from_rgb(0xc8, 0x82, 0x00), warning);
+    }
+    for note in form.pad_notes() {
         ui.small(*note);
     }
 }

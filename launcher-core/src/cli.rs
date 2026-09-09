@@ -65,6 +65,16 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             let machine = Machine::load(Path::new(&path)).expect("load bundle");
             println!("{}", player::shader_args(&machine).join(" "));
         }
+        "--print-player-args" => {
+            // Everything the launcher puts on the player's own command
+            // line, before the `--` that hands the rest to QEMU. What
+            // `--print-args` is for the guest, this is for the player.
+            let path = args.next().expect("usage: --print-player-args <machine.toml>");
+            let machine = Machine::load(Path::new(&path)).expect("load bundle");
+            let mut argv = player::shader_args(&machine);
+            argv.extend(player::pad_args(&machine));
+            println!("{}", argv.join(" "));
+        }
         "--play" => {
             let path = PathBuf::from(args.next().expect("usage: --play <machine.toml>"));
             let machine = Machine::load(&path).expect("load bundle");
@@ -152,7 +162,7 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // a bundle, change the fields given, save it back in place.
             // `-` keeps a field as it is.
             let usage =
-                "usage: --wizard-edit <machine.toml> <new-name|-> [ram-mb|-] [auto|kvm|tcg|-] [net|nonet] [cpu-speed|-] [boot|-] [seamless|noseamless] [d3dpt|std|cirrus|-]";
+                "usage: --wizard-edit <machine.toml> <new-name|-> [ram-mb|-] [auto|kvm|tcg|-] [net|nonet] [cpu-speed|-] [boot|-] [seamless|noseamless] [d3dpt|std|cirrus|-] [none|usb|keys|-]";
             let path: PathBuf = args.next().expect(usage).into();
             let new_name = args.next().expect(usage);
             let mut form = wizard::Form::default();
@@ -224,6 +234,17 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 Some("std") => form.choose_video(bundle::Video::Std),
                 Some("cirrus") => form.choose_video(bundle::Video::Cirrus),
                 Some(other) => panic!("the adapter is d3dpt, std or cirrus, not {other:?}; {usage}"),
+            }
+            // What a host gamepad does (M13). By the same rule as the
+            // adapter: a setting this family does not offer is refused
+            // by `choose_pad` rather than written, so a script can set
+            // it on every machine it walks.
+            match args.next().as_deref() {
+                None | Some("-") => {}
+                Some(name) => form.choose_pad(
+                    bundle::Pad::from_name(name)
+                        .unwrap_or_else(|| panic!("unknown gamepad setting {name:?}; {usage}")),
+                ),
             }
             match form.submit(&library::default_dir()) {
                 Some(saved) => println!("{}", saved.display()),
