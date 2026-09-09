@@ -19,7 +19,10 @@
  * There is no MIDI *in*: nothing here produces data for the guest to
  * read except the ACKs, so the status register only ever reports one
  * waiting when an ACK is, and the IRQ follows that. A real module's
- * replies would arrive the same way (doc 20 §8.2).
+ * replies would arrive the same way (doc 20 §8.2). Which is why the
+ * port has **no interrupt line at all** unless one is asked for — see
+ * the `irq` property below, and doc 20 §5.1: on IRQ 9 that ACK is what
+ * reboots an ACPI Windows 98.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -382,10 +385,29 @@ static void mpu401_unrealizefn(DeviceState *dev)
 static Property mpu401_properties[] = {
     DEFINE_AUDIO_PROPERTIES(Mpu401State, card),
     DEFINE_PROP_UINT32("iobase", Mpu401State, port, 0x330),
-    /* The MPU-401's own line is IRQ 2/9. Anything above 15 is "no
-     * interrupt", which is enough for output-only use — every DOS game
-     * of the period polls the status register instead. */
-    DEFINE_PROP_UINT32("irq",    Mpu401State, irq,  9),
+    /* The MPU-401's own line is IRQ 2/9, and this device has none by
+     * default: anything above 15 is "no interrupt".
+     *
+     * Not caution — a measurement (2026-09-09, doc 20 §5.1). QEMU's
+     * PIIX4 puts the ACPI SCI on IRQ 9 (hw/acpi/piix4.c), and every
+     * Windows 98 this launcher installs is an ACPI install (doc 06's
+     * BIOS-date stamp), so IRQ 9 is the operating system's own line and
+     * nothing on it knows this port exists. The ACK a driver's reset
+     * queues therefore raises an interrupt no handler acknowledges: the
+     * line is held until someone reads the data port, the guest's
+     * handler is re-entered on every IRET, and its ring-0 stack runs
+     * out. Duke Nukem 3D's SETUP does that from a DOS box the moment
+     * its General MIDI test resets the port — 234 nested INT 0x59, a
+     * page fault at the end of the stack, #DF, triple fault, and the
+     * machine reboots in front of the user.
+     *
+     * Nothing is given up by leaving the line off. The interrupt is for
+     * MIDI *in*, which this device does not have, so the only thing
+     * that ever raises it is an ACK — and a driver of the period reads
+     * that by polling the status register, which is why the port works
+     * with no line at all (and why a real card's IRQ was a jumper most
+     * people left alone). `irq=<0-15>` asks for one back. */
+    DEFINE_PROP_UINT32("irq",    Mpu401State, irq,  255),
     DEFINE_PROP_UINT32("gain",   Mpu401State, gain, 100),
     DEFINE_PROP_STRING("synth",     Mpu401State, synth),
     DEFINE_PROP_STRING("soundfont", Mpu401State, soundfont),
