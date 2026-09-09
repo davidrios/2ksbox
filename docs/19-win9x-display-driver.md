@@ -1406,3 +1406,129 @@ display to the in-box driver and drops `D3DPT9V.VXD` from `[386Enh]`.
 `[boot] display.drv=pnpdrvr.drv` still looks right, and `[boot.description]`
 is where it says `Cirrus Logic 5446 PCI` instead. `win98-driver-test.sh
 <image> install` puts it all back; a `boot` would not.
+
+### 26. Step 5 — real titles, and a pointer that lived in the frame buffer (2026-09-09)
+
+The user installed six games into a Win98 machine of their own (`claude98`,
+on `-vga none -device d3dpt-vga` with this driver and DirectX 9.0c) and
+reported what each one did: Monster Truck Madness fine; NFS Porsche 2000
+fine but silent; Total Annihilation fine "but the mouse is glitchy" inside a
+skirmish; LEGO Island "graphics glitched and the mouse very glitched";
+Crimson Skies glitched; Blood glitched "no matter what screen configuration
+I have"; and "lots of glitches changing screen resolutions".
+
+That is the first time this driver has met anything other than our own test
+programs, and it found things none of them could.
+
+**The harness first.** `tools/win98-game-test.sh` is the 9x counterpart of
+`xp-game-test.sh`: a raw copy of the image, the driver re-staged into it, a
+game started from `C:\RUN.BAT` through WIN.INI's `run=` (doc 19 §17 — `run=`
+takes a program and drops its arguments, so the batch carries the command
+line), the discs attached, a screendump every few seconds, and the ACPI
+power button at the end. Two things about it are worth keeping.
+
+It builds **the machine the player builds**, taken from `launcherx
+--print-args` on the user's own bundle: `-cpu pentium3`, an SB16 on an
+audiodev, and the disc as an `ide-cd` on `ide.1` with that audiodev on it
+too. The first run of Total Annihilation had no sound card, and TA put up
+*"Error: Sound system initialization failed"* and quit before it drew a
+frame — which through the log reads exactly like the display driver failing:
+a mode set, a primary created, and then a return to the desktop. A test
+machine that is not the machine under test is not a simpler test, it is a
+different one.
+
+And it re-stages the driver every run (`NO_DRIVER=1` to leave the image's
+own build alone), because the image the user plays on carries whatever build
+was installed into it.
+
+#### The pointer must not live in the frame buffer
+
+The DIB Engine draws its cursor **into VRAM** and keeps the pixels it
+covered in a save-under; `BeginAccess` / `EndAccess` is the pair that lifts
+it out of the way before anything else writes there, and GDI calls them
+around everything it draws. **DirectDraw does not go through GDI.** A game
+that locks the primary, blits to it or flips a chain writes the frame buffer
+with the Engine's cursor still standing in it and its save-under now stale,
+and the next mouse move stamps that stale block back onto the screen.
+
+Total Annihilation's log says exactly that: `Lock32 … caps=0x1000c238`,
+which is `LOCALVIDMEM | VIDEOMEMORY | VISIBLE | PRIMARYSURFACE |
+FRONTBUFFER | FLIP | COMPLEX` — it locks the **visible primary** and paints
+it wholesale, every frame. LEGO Island does the same to a 3D back buffer and
+uses the Windows pointer for its own interface, which is why *both* of its
+symptoms were reported: the smearing is the pointer, and it is over
+everything.
+
+No amount of care inside the DirectDraw HAL fixes this. That half is a flat
+32-bit DLL and the Engine's exclusion pair is 16-bit code behind a selector
+it has no way to call.
+
+So the pointer comes out of the frame buffer altogether, exactly as on XP
+(doc 15, "The hardware cursor", register set v4): `SetCursor`, `MoveCursor`
+and `CheckCursor` are C functions in `d3dpt9x.c` rather than jumps into the
+Engine (`dibthunk.asm` no longer thunks them), a monochrome `CURSORSHAPE` is
+converted to a8r8g8b8 into the VRAM the DirectDraw heap already stops short
+of, and the device hands it to the host as a cursor sprite. Nothing
+composites it into the frame, so nothing can corrupt it — not GDI, not
+DirectDraw, and not a mode change.
+
+Three details that are not obvious:
+
+- **`C1_COLORCURSOR` has to go.** It is what asks Windows for a colour
+  pointer, and a colour shape arrives in the screen's own format. The sprite
+  carries monochrome; the cap is claimed only on an adapter with no sprite,
+  where the Engine's software pointer (which does handle colour) is still in
+  use. Anything the sprite cannot carry is handed to the Engine rather than
+  dropped — a pointer that vanishes is worse than one that can be drawn
+  over — and the sprite is taken off the screen first, so there is always
+  exactly one pointer.
+- **`SetCursor` is the name of two different functions.** win16.h declares
+  the Win16 *API* (takes an HCURSOR, returns the previous one); this driver
+  exports the display entry at ordinal 102 (takes a CURSORSHAPE, returns
+  nothing). The API's declaration is hidden while the headers go by, the
+  same trick and for the same reason as `ValidateMode` (§18).
+- **No CRT, so no 32-bit multiply.** `(DWORD)y * stride` links against an
+  undefined `__U4M`; `MulW` is the helper that exists.
+
+The A/B is in the screendumps: with the driver the image was installed with,
+the Windows arrow is composited into every dump; with this one it is in none
+of them, and the desktop, TA's menu and LEGO Island's Information Center all
+come up correct. A screendump showing no pointer is now the expected result
+on 9x as it already was on XP.
+
+#### The DirectDraw heap ran 64 MB into the command window
+
+`d3dpt9dd.c` published `fpEnd = vram_linear + vram_size - CURSOR_BYTES`.
+The top of VRAM is not free: the command window the Direct3D half encodes
+batches into sits at `D3DPT_FB_REG_CMD_OFFSET`, which the device puts at
+`vram_size - D3DPT_SHM_SIZE` — 64 MB of a 128 MB aperture — and the cursor
+sprite's image sits immediately below *that*. The published heap therefore
+ran the whole length of the command window: a DirectDraw surface allocated
+up there and the batch ring would have been the same memory. Nothing in the
+suite reached it, because the heap starts at 8 MB and no title of the era
+allocates 56 MB of surfaces, which is exactly why it survived four steps.
+
+`core/`'s `dd_heap_end()` is this calculation on NT. This layer cannot call
+it — that is flat 32-bit code and this is 16-bit — so it reads the same
+register. **This is the third time a value re-derived here instead of read
+from the one authority has cost this track**: `DDSCAPS_EXECUTEBUFFER` in
+step 1, the command window itself in step 4 (§25), and now the end of the
+heap. The log line to check is `d3dpt9dd: heap=… ..=…`, whose second number
+must be 64 MB below the top of VRAM, not 16 KB.
+
+`dwVidMemTotal` / `dwVidMemFree` were the same mistake in another form: they
+counted the command window as free video memory.
+
+#### An 8 bpp mode came up with an uninitialised palette
+
+`Enable` programmed the adapter's 256 palette registers from the colour
+table it keeps past the DIB Engine's PDEVICE — before anything had written
+it. That table is *ours*, in the bytes `dpDEVICEsize` was grown by, and the
+Engine has only just been told where it is; nothing fills it at that point.
+So an 8 bpp mode came up with 256 entries of whatever the PDEVICE
+allocation happened to contain, and only corrected itself when something
+realised a palette. Anything that set the mode and drew without one stayed
+wrong — the first Total Annihilation run caught it as a Windows message box
+whose greys came out red. It now fills the table with Windows' own default
+(the twenty static system colours at the two ends, a 6-6-6 cube between them
+and a grey ramp in the spare twenty) and programs the device from that.

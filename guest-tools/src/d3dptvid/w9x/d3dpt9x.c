@@ -20,10 +20,11 @@
  * hands the frame buffer to this driver, and it has to exist first. What
  * is here is correct and stays; what it needs is the VxD.
  *
- * Also not here yet: DirectDraw (the DCICOMMAND escapes and the ring-3
- * HAL DLL), 8 bpp palettized modes, and the hardware cursor — the DIB
- * Engine's software cursor is used instead, and the mode list comes from
- * the INF rather than from the adapter (doc 19 §6).
+ * Since 2026-09-09 the pointer is the adapter's own cursor sprite rather
+ * than the DIB Engine's software one, for the reason written up under
+ * "hardware cursor" below: an Engine pointer lives *in* the frame buffer
+ * and every full-screen DirectDraw title writes over it. The mode list
+ * still comes from the INF rather than from the adapter (doc 19 §6).
  *
  * Debug output goes to the adapter's DEBUG register and so into the QEMU
  * log, exactly as the XP driver's does — no COM port, no debugger.
@@ -32,6 +33,13 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
+/* `SetCursor` is the name of two different functions: the Win16 *API*
+ * (win16.h, takes an HCURSOR and returns the previous one) and the display
+ * driver entry this file exports at ordinal 102 (takes a CURSORSHAPE and
+ * returns nothing). The driver's is the one GDI calls, so hide the API's
+ * declaration while the headers go by — the same trick, and for the same
+ * reason, as `ValidateMode` below. */
+#define SetCursor SetCursor_the_win16_api
 #include "winhack.h"
 #include <gdidefs.h>
 #include <dibeng.h>
@@ -49,6 +57,7 @@
 #undef ValidateMode
 
 #include <ddrawi.h>
+#undef SetCursor
 
 #include "d3dpt9x.h"
 #include "d3dpt9v.h"
@@ -68,6 +77,9 @@ DWORD dwVramSize = 0;
 DWORD dwVramLin = 0, dwRegsLin = 0;     /* what the ring-3 HAL needs (d3dpt9v.h) */
 WORD  wRegsSel = 0, wVramSel = 0;
 DWORD dwPitch = 0;
+
+static WORD wCursorHW;                  /* set by AdapterFind; see below */
+void CursorHide(void);
 
 LPDIBENGINE lpDriverPDevice = 0;
 WORD wEnabled = 0;
@@ -252,6 +264,10 @@ BOOL AdapterFind(void)
         wRegsSel = wVramSel = 0;
         return FALSE;
     }
+    /* The v4 cursor sprite, if this adapter has one: with it the pointer
+     * never enters the frame buffer at all (see "hardware cursor" below). */
+    wCursorHW = (RegGet(D3DPT_FB_REG_CAPS) & D3DPT_FB_CAP_CURSOR) ? 1 : 0;
+    dbg_val("d3dpt9x: hardware cursor", wCursorHW);
     dbg_str("d3dpt9x: adapter found");
     return TRUE;
 }
@@ -378,6 +394,10 @@ void __far RestoreDesktopMode(void)
 
 void PhysicalDisable(void)
 {
+    /* The sprite is composited by the device, not by the frame buffer, so
+     * it would otherwise go on hovering over whatever comes next — a VGA
+     * text screen, a fatal-exception message, a shutdown. */
+    CursorHide();
     if (VDDEntryPoint) CallVDD_Simple(VDD_DRIVER_UNREGISTER);
     if (wRegsSel) RegPut(D3DPT_FB_REG_ENABLE, 0);
 }
@@ -423,6 +443,238 @@ void ReadDisplayConfig(void)
     if (bpp)    wBpp = bpp;
     if (wBpp != 8 && wBpp != 16 && wBpp != 32) wBpp = 32;
     wPalettized = (wBpp == 8) ? 1 : 0;
+}
+
+/* ------------------------------------------------------- the 8 bpp default
+ *
+ * Windows' own 256-colour palette: the twenty static system colours at the
+ * two ends of the table, a 6-6-6 colour cube in the middle and a grey ramp
+ * in what is left. It is what an 8 bpp mode shows between coming up and the
+ * first palette GDI realises, and `SetPalette` replaces it entry by entry
+ * from then on. The point of having one at all is that the alternative is
+ * not black — it is whatever bytes were already there. */
+static const BYTE bSysColours[20][3] = {     /* r, g, b */
+    { 0x00, 0x00, 0x00 }, { 0x80, 0x00, 0x00 }, { 0x00, 0x80, 0x00 },
+    { 0x80, 0x80, 0x00 }, { 0x00, 0x00, 0x80 }, { 0x80, 0x00, 0x80 },
+    { 0x00, 0x80, 0x80 }, { 0xc0, 0xc0, 0xc0 }, { 0xc0, 0xdc, 0xc0 },
+    { 0xa6, 0xca, 0xf0 },
+    { 0xff, 0xfb, 0xf0 }, { 0xa0, 0xa0, 0xa4 }, { 0x80, 0x80, 0x80 },
+    { 0xff, 0x00, 0x00 }, { 0x00, 0xff, 0x00 }, { 0xff, 0xff, 0x00 },
+    { 0x00, 0x00, 0xff }, { 0xff, 0x00, 0xff }, { 0x00, 0xff, 0xff },
+    { 0xff, 0xff, 0xff }
+};
+
+static void DefaultColourTable(RGBQUAD FAR *ct)
+{
+    static const BYTE bCube[6] = { 0x00, 0x33, 0x66, 0x99, 0xcc, 0xff };
+    WORD i, r, g, b, n;
+
+    for (i = 0; i < 10; i++) {
+        ct[i].rgbRed           = bSysColours[i][0];
+        ct[i].rgbGreen         = bSysColours[i][1];
+        ct[i].rgbBlue          = bSysColours[i][2];
+        ct[i].rgbReserved      = 0;
+        ct[246 + i].rgbRed     = bSysColours[10 + i][0];
+        ct[246 + i].rgbGreen   = bSysColours[10 + i][1];
+        ct[246 + i].rgbBlue    = bSysColours[10 + i][2];
+        ct[246 + i].rgbReserved = 0;
+    }
+    n = 10;
+    for (r = 0; r < 6; r++) {
+        for (g = 0; g < 6; g++) {
+            for (b = 0; b < 6; b++) {
+                ct[n].rgbRed      = bCube[r];
+                ct[n].rgbGreen    = bCube[g];
+                ct[n].rgbBlue     = bCube[b];
+                ct[n].rgbReserved = 0;
+                n++;
+            }
+        }
+    }
+    for (; n < 246; n++) {              /* the twenty spare: a grey ramp */
+        BYTE v = (BYTE)((n - 226) * 12 + 8);
+        ct[n].rgbRed = ct[n].rgbGreen = ct[n].rgbBlue = v;
+        ct[n].rgbReserved = 0;
+    }
+}
+
+/* ------------------------------------------------------ hardware cursor
+ *
+ * **The pointer must not live in the frame buffer.** The DIB Engine draws
+ * its cursor into VRAM and keeps the pixels it covered in a save-under, and
+ * the `BeginAccess` / `EndAccess` pair above is what lifts it out of the way
+ * before anything else writes there. DirectDraw does not go through GDI: a
+ * game that locks the primary, blits to it or flips a chain writes the frame
+ * buffer with the Engine's cursor still standing in it and its save-under
+ * now stale, and the next mouse move stamps that stale block back onto the
+ * screen. That is what "the mouse is glitchy in a match" is, and no care
+ * inside the DirectDraw HAL can fix it: that half is a flat 32-bit DLL and
+ * the Engine's exclusion pair is 16-bit code behind a selector it has no way
+ * to call.
+ *
+ * So take the pointer out of the frame buffer altogether, exactly as the XP
+ * driver does (doc 15, "The hardware cursor", register set v4): convert the
+ * shape to a8r8g8b8 in the VRAM the DirectDraw heap already stops short of
+ * and let the device hand it to the host as a cursor sprite. Nothing
+ * composites it into the frame, so nothing can corrupt it — not GDI, not
+ * DirectDraw, and not a mode change.
+ *
+ * Two consequences worth knowing. A screendump shows no pointer any more,
+ * because there is none in the frame buffer to dump — the same as on XP.
+ * And on an adapter with no v4 cursor (`D3DPT_FB_CAP_CURSOR` clear) every
+ * one of these three falls back to the Engine's software pointer, which is
+ * why dibeng's `…CursorExt` entries are still imported.
+ */
+
+/* What GDI hands `SetCursor` on 9x: a header, then `cy` rows of AND mask,
+ * then `cy` rows of XOR mask, each row `cbWidth` bytes. Win16 `int` is 16
+ * bits, so this is 16 bytes. Declared here rather than taken from a header
+ * because the DDK headers this driver builds against (src/d3dptvid/ddk9x)
+ * carry only what the DIB Engine needs. */
+typedef struct {
+    short xHotSpot, yHotSpot;
+    short cx, cy;
+    short cbWidth;
+    BYTE  Planes, BitsPixel;
+} D3DPT_CURSORSHAPE;
+
+static WORD wCursorSet = 0;     /* the sprite has a shape and is shown */
+static WORD wCursorSoft = 0;    /* this one shape went to the Engine instead */
+
+/* One 32-bit write into VRAM at an offset that does not fit a WORD. The
+ * sprite's image sits near the top of a 128 MB aperture and this module is
+ * 16-bit code, where a string instruction indexes with DI and a default
+ * operand is a word: the offset has to be an explicit 32-bit base register,
+ * the same hand-written access the mode registers need and for the same
+ * reason (doc 19 gotchas). */
+static void VramPut(WORD sel, DWORD off, DWORD val);
+#pragma aux VramPut =       \
+    ".386"                  \
+    "push   es"             \
+    "mov    es, si"         \
+    "shl    ecx, 16"        \
+    "mov    cx, bx"         \
+    "shl    edx, 16"        \
+    "mov    dx, ax"         \
+    "mov    es:[ecx], edx"  \
+    "pop    es"             \
+    parm [si] [cx bx] [dx ax] modify [cx dx];
+
+/* Where the sprite's image goes: immediately below the command window,
+ * which is where core/'s `cursor_offset()` puts it on NT and where the
+ * DirectDraw heap this driver publishes stops. **Read from the register,
+ * never derived** — the adapter is the one authority on its own layout, and
+ * deriving this is how the two layers drifted twice already (doc 19 §25). */
+static DWORD CursorOffset(void)
+{
+    DWORD end = wRegsSel ? RegGet(D3DPT_FB_REG_CMD_OFFSET) : 0;
+
+    if (!end || end > dwVramSize) end = dwVramSize;
+    return end - D3DPT_FB_CURSOR_BYTES;
+}
+
+void CursorHide(void)
+{
+    if (wCursorHW && wRegsSel) RegPut(D3DPT_FB_REG_CURSOR_ENABLE, 0);
+    wCursorSet = 0;
+}
+
+/* Hand this shape to the Engine after all, and take the sprite off the
+ * screen first so that only one pointer is ever drawn. */
+static void CursorToEngine(LPVOID lpCursor)
+{
+    CursorHide();
+    wCursorSoft = 1;
+    DIB_SetCursorExt(lpCursor, lpDriverPDevice);
+}
+
+VOID WINAPI __loadds SetCursor(LPVOID lpCursor)
+{
+    D3DPT_CURSORSHAPE FAR *cs = lpCursor;
+    BYTE FAR *bits;
+    DWORD off;
+    WORD x, y, w, h, stride;
+
+    if (!wCursorHW) {
+        DIB_SetCursorExt(lpCursor, lpDriverPDevice);
+        return;
+    }
+    if (!cs) {                          /* no shape: the pointer goes away */
+        if (wCursorSoft) {
+            DIB_SetCursorExt(NULL, lpDriverPDevice);
+            wCursorSoft = 0;
+        }
+        CursorHide();
+        return;
+    }
+
+    w = (WORD)cs->cx;
+    h = (WORD)cs->cy;
+    stride = (WORD)cs->cbWidth;
+    /* Monochrome only, and that is not a shortcut: `C1_COLORCURSOR` is what
+     * asks Windows for a colour pointer, this driver stops claiming it while
+     * the sprite is in use, and every pointer Windows then hands over is
+     * 1 bpp. Anything else would arrive in the screen's own format and want
+     * a converter per bpp for a pointer no title of the era uses.
+     *
+     * Anything the sprite cannot carry goes to the Engine rather than being
+     * dropped: a pointer that vanishes is worse than one that can be drawn
+     * over, and this way there is always exactly one on the screen. */
+    if (!w || !h || w > D3DPT_FB_CURSOR_MAX || h > D3DPT_FB_CURSOR_MAX ||
+        cs->Planes != 1 || cs->BitsPixel != 1 || !stride) {
+        CursorToEngine(lpCursor);
+        return;
+    }
+    if (wCursorSoft) {                  /* the Engine had the last one */
+        DIB_SetCursorExt(NULL, lpDriverPDevice);
+        wCursorSoft = 0;
+    }
+
+    bits = (BYTE FAR *)(cs + 1);
+    off = CursorOffset();
+    for (y = 0; y < h; y++) {
+        /* MulW, not `*`: there is no CRT here, so a 32-bit multiply would
+         * want __U4M and the link fails on it. */
+        BYTE FAR *arow = bits + MulW(y, stride);
+        BYTE FAR *xrow = bits + MulW((WORD)(h + y), stride);
+        for (x = 0; x < w; x++) {
+            WORD a  = (WORD)((arow[x >> 3] >> (7 - (x & 7))) & 1);
+            WORD xo = (WORD)((xrow[x >> 3] >> (7 - (x & 7))) & 1);
+            /* AND 1 / XOR 0 is the screen showing through; AND 0 is black or
+             * white by XOR; AND 1 / XOR 1 asks for the screen inverted, which
+             * a sprite cannot do — black, the same approximation as on NT. */
+            DWORD c = (a && !xo) ? 0ul : (xo && !a) ? 0xfffffffful : 0xff000000ul;
+            VramPut(wVramSel, off + ((MulW(y, w) + x) << 2), c);
+        }
+    }
+
+    RegPut(D3DPT_FB_REG_CURSOR_ADDR, off);
+    RegPut(D3DPT_FB_REG_CURSOR_W, w);
+    RegPut(D3DPT_FB_REG_CURSOR_H, h);
+    RegPut(D3DPT_FB_REG_CURSOR_HOT_X, (DWORD)(WORD)cs->xHotSpot);
+    RegPut(D3DPT_FB_REG_CURSOR_HOT_Y, (DWORD)(WORD)cs->yHotSpot);
+    RegPut(D3DPT_FB_REG_CURSOR_DEFINE, 1);
+    RegPut(D3DPT_FB_REG_CURSOR_ENABLE, 1);
+    wCursorSet = 1;
+}
+
+VOID WINAPI __loadds MoveCursor(WORD absX, WORD absY)
+{
+    if (!wCursorHW || wCursorSoft) {
+        DIB_MoveCursorExt(absX, absY, lpDriverPDevice);
+        return;
+    }
+    if (!wCursorSet || !wRegsSel) return;
+    RegPut(D3DPT_FB_REG_CURSOR_X, (DWORD)(long)(short)absX);
+    RegPut(D3DPT_FB_REG_CURSOR_Y, (DWORD)(long)(short)absY);
+    RegPut(D3DPT_FB_REG_CURSOR_ENABLE, 1);
+}
+
+VOID WINAPI __loadds CheckCursor(void)
+{
+    /* The Engine's software pointer has to be redrawn whenever something
+     * has drawn over it. A sprite the device composites never has. */
+    if (!wCursorHW || wCursorSoft) DIB_CheckCursorExt(lpDriverPDevice);
 }
 
 /* ------------------------------------------------------------ GDI: Enable */
@@ -508,6 +760,19 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
         if (wBpp == 8) {
             WORD i;
             RGBQUAD FAR *ct = (RGBQUAD FAR *)((LPBYTE)lpInfo + sizeof(BITMAPINFOHEADER));
+
+            /* **Fill the table before reading it.** This colour table is
+             * *ours* — it sits past the DIB Engine's PDEVICE, in the bytes
+             * `dpDEVICEsize` was grown by, and the Engine has only just been
+             * told where it is. Nothing has written it at this point, so
+             * programming the adapter's palette from it programmed 256
+             * entries of whatever the PDEVICE allocation happened to
+             * contain: an 8 bpp mode came up in arbitrary colours and only
+             * corrected itself when something realised a palette. Anything
+             * that set the mode and drew without one stayed wrong — which is
+             * what a Windows message box in the middle of a full-screen
+             * 8 bpp game looks like when its greys come out red. */
+            DefaultColourTable(ct);
             for (i = 0; i < 256; i++) {
                 DWORD c = ((DWORD)ct[i].rgbRed << 16) | ((DWORD)ct[i].rgbGreen << 8) | (DWORD)ct[i].rgbBlue;
                 RegPut((WORD)(D3DPT_FB_REG_PALETTE + 4 * i), c);
@@ -562,8 +827,12 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
         lpInfo->dpLogPixelsY = wDpi;
         lpInfo->dpBitsPixel  = (wBpp + 7) & 0xfff8;
         lpInfo->dpDCManage   = DC_IgnoreDFNP;
-        lpInfo->dpCaps1     |= C1_COLORCURSOR | C1_REINIT_ABLE | C1_BYTE_PACKED |
-                               C1_GLYPH_INDEX;
+        /* `C1_COLORCURSOR` is what asks Windows for a colour pointer, and
+         * the cursor sprite carries monochrome shapes only — claim it only
+         * on an adapter that has no sprite and so is still using the
+         * Engine's software pointer, which does handle colour. */
+        lpInfo->dpCaps1     |= C1_REINIT_ABLE | C1_BYTE_PACKED | C1_GLYPH_INDEX;
+        if (!wCursorHW) lpInfo->dpCaps1 |= C1_COLORCURSOR;
         lpInfo->dpText      |= TC_CP_STROKE | TC_RA_ABLE;
 
         wDIBPdevSize = lpInfo->dpDEVICEsize;

@@ -326,7 +326,7 @@ static BOOL BuildHalInfo(void)
     DDHALINFO_t __far *hi = HALFIELD(DDHALINFO_t, halinfo);
     DDHALMODEINFO_t __far *mi = HALFIELD(DDHALMODEINFO_t, modeinfo);
     VIDMEM_t __far *hp = HALFIELD(VIDMEM_t, heap);
-    DWORD start, min_start;
+    DWORD start, min_start, end;
     WORD n = 0, cur_idx = 0xffff;
     WORD i, j;
 
@@ -429,9 +429,28 @@ static BOOL BuildHalInfo(void)
     start = (MulW((WORD)dwPitch, wScrY) + 4095ul) & ~4095ul;
     min_start = 8ul * 1024ul * 1024ul;
     if (start < min_start) start = min_start;
+
+    /* **Where the heap ends is the adapter's answer, not arithmetic.** The
+     * top of VRAM is not free: the command window the Direct3D half encodes
+     * batches into sits at `D3DPT_FB_REG_CMD_OFFSET` (64 MB of a 128 MB
+     * aperture), and the cursor sprite's image sits immediately below it.
+     * Ending the heap at `vram_size - CURSOR_BYTES` published a heap 64 MB
+     * too long, running the whole length of the command window — a
+     * DirectDraw surface allocated up there and the batch ring would have
+     * been the same memory. `core/`'s `dd_heap_end()` is the same
+     * calculation on NT; this layer cannot call it (it is 16-bit and that is
+     * flat 32-bit code), so it reads the same register.
+     *
+     * This is the third time a value re-derived here instead of read from
+     * the one authority has cost this track a day: `DDSCAPS_EXECUTEBUFFER`
+     * in step 1, the command window itself in step 4 (doc 19 §25), and now
+     * the end of the heap. */
+    end = RegGet(D3DPT_FB_REG_CMD_OFFSET);
+    if (!end || end > pHal->vram_size) end = pHal->vram_size;
+    end -= D3DPT_FB_CURSOR_BYTES;
     hp->dwFlags = VIDMEM_ISLINEAR;
     hp->fpStart = pHal->vram_linear + start;
-    hp->fpEnd = pHal->vram_linear + pHal->vram_size - D3DPT_FB_CURSOR_BYTES - 1;
+    hp->fpEnd = pHal->vram_linear + end - 1;
     hi->vmiData.dwNumHeaps = 1;
     hi->vmiData.pvmList = (LPVIDMEM)HALFIELD(VIDMEM_t, heap);
 
@@ -453,8 +472,10 @@ static BOOL BuildHalInfo(void)
     hi->ddCaps.dwCaps2 = (DDF() & D9F_CERTIFIED) ? DDCAPS2_CERTIFIED : 0;
     hi->ddCaps.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_PRIMARYSURFACE |
                                 DDSCAPS_FLIP | DDSCAPS_VIDEOMEMORY;
-    hi->ddCaps.dwVidMemTotal = pHal->vram_size - start;
-    hi->ddCaps.dwVidMemFree = pHal->vram_size - start;
+    /* The size of the heap above, not of the aperture: a total that counts
+     * the command window is a promise the driver cannot keep. */
+    hi->ddCaps.dwVidMemTotal = end - start;
+    hi->ddCaps.dwVidMemFree = end - start;
 
     hi->dwMonitorFrequency = 0;
     /* DDHALINFO_ISPRIMARYDISPLAY is what the reference driver sets and

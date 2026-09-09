@@ -327,9 +327,29 @@ What the track starts from:
    HAL entries** `vmhal9x` still implements, because ours does and
    `d3d8.dll` drives it through `DrawPrimitives2` alone. The whole M7c
    matrix now reproduces on 98 with no change to `core/`.
-10. **Step 5 — the titles.** The doc 04 Win98 acceptance matrix through
-   the driver, against the same titles on the Glide/WineD3D stack: which
-   is faster, which is correct, and what the launcher should default to.
+10. **Step 5 — the titles.** *In progress since 2026-09-09* (doc 19 §26).
+   The user installed six games into a Win98 machine of their own
+   (`claude98`) and reported what each did; that is the first thing this
+   driver has met other than our own test programs, and it found three bugs
+   in one afternoon that no probe of ours could have.
+   **Done:** `tools/win98-game-test.sh` (the 9x `xp-game-test.sh`); the
+   **hardware cursor**, because the DIB Engine's software pointer lives in
+   the frame buffer and every full-screen DirectDraw title writes over it;
+   the **DirectDraw heap**, which ran 64 MB into the Direct3D command
+   window; and the **8 bpp default palette**, which was whatever bytes were
+   in the PDEVICE allocation. Total Annihilation and LEGO Island both run
+   correctly headless with those in.
+   **Open:** the DOS box — Blood is the DOS Build-engine game, and a
+   full-screen DOS VM needs the adapter handed back to its VGA, which is the
+   mini-VDD's `PRE_HIRES_TO_VGA` / `POST_VGA_TO_HIRES` pair. Those four
+   dispatch entries are hooked and log what the VDD actually calls; **not
+   yet run in a guest**. Then the doc 04 acceptance matrix proper, against
+   the same titles on the Glide/WineD3D stack: which is faster, which is
+   correct, and what the launcher should default to.
+   **Not ours:** Crimson Skies fails on its disc, not on the driver — its
+   own `GAMEZ.ERR` shows it taking our `Direct3D HAL` and every subsystem
+   initialising, and a parallel session traced it to a SafeDisc 1.50 weak-
+   sector check that our ATAPI model answers without a check condition.
 
 ## Build / test loop
 
@@ -449,6 +469,24 @@ curl -L -o build/ref/fixlink.c https://raw.githubusercontent.com/JHRobotics/fixl
 `fix_wlink_vxd` is 40 lines and was worth reading in full.
 
 ## Traps
+
+Open Watcom's own, found here and nowhere else:
+
+- **Its inline assembler does not resolve a callee's name through a macro
+  parameter.** `#define ENTRY(n, p) … _asm { call p }` assembles a call to
+  nothing; the only sign is the compiler then warning that `p` is "defined,
+  but not referenced" (W202), which is easy to read as dead code and delete.
+  The four mini-VDD screen-switch thunks are written out four times for
+  this reason (2026-09-09).
+- **It takes a function's attributes from the *first* declaration it sees**,
+  so a DDK prototype without `__loadds` strips it from the definition
+  (§18 — `ValidateMode`), and a Win16 API of the same name wins outright:
+  `SetCursor` in win16.h is the API (HCURSOR in, previous out), while the
+  display driver's ordinal 102 takes a CURSORSHAPE and returns nothing.
+  Both are hidden with a `#define` before the headers go by.
+- **There is no CRT, so there is no 32-bit multiply.** `(DWORD)a * b` in
+  the 16-bit halves links against an undefined `__U4M`; `MulW` is the
+  helper that exists.
 
 From CLAUDE.md, and they bite here:
 

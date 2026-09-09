@@ -56,9 +56,12 @@ DIBTHK  GetPalette,           _lpDriverPDevice
 DIBTHK  SetPaletteTranslate,  _lpDriverPDevice
 DIBTHK  GetPaletteTranslate,  _lpDriverPDevice
 DIBTHK  UpdateColors,         _lpDriverPDevice
-DIBTHK  SetCursor,            _lpDriverPDevice
-DIBTHK  MoveCursor,           _lpDriverPDevice
-DIBTHK  CheckCursor,          _lpDriverPDevice
+
+; SetCursor, MoveCursor and CheckCursor (ordinals 102-104) are **not** here
+; any more: this driver draws the pointer with the adapter's cursor sprite
+; instead of the Engine's software one, so those three are C functions in
+; d3dpt9x.c. They still fall back to `DIB_…CursorExt` on an adapter with no
+; sprite, which is why the Engine's entries stay imported.
 
 ; ExtTextOut is **not** one of the thunked ones, and the reason is worth
 ; keeping: `DIB_ExtTextOutExt` (ordinal 403) does not take this device as
