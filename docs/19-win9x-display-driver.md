@@ -1651,7 +1651,12 @@ one variable:
 | title screen | logo, emblem and all six menu buttons are **solid white** in the correct silhouette | renders correctly — red/silver logo, gold winged skull, gold buttons |
 | colours in the dump | 682 | 4150 |
 
-So it is ours.
+So it is ours — **with one variable that this table does not control.** The
+two runs are different display devices with different registry keys, and
+nothing established that both desktops were at the same colour depth. That
+is two variables in a two-column comparison, and it should have been closed
+before the result was called decisive. It is what `gdiprobe`'s depth sweep
+exists to settle.
 
 #### What it is not
 
@@ -1671,7 +1676,16 @@ area:
   alone.
 
 What that leaves is **GDI drawing through the DIB Engine into VRAM**, which
-is the driver's own path and the one the desktop uses successfully all day.
+is the driver's own path and the one the desktop uses successfully all day —
+and that has now been tested and is **not it either**. `gdiprobe.exe` walks
+the operations a 2D title of the era composites with, checking each one's
+pixels itself with `GetPixel` rather than trusting a screenshot, and at
+16 bpp through this driver it reports **15 cases, 0 failed**: a solid
+`FillRect`, `PatBlt` BLACKNESS and WHITENESS, `BitBlt` SRCCOPY, SRCAND and
+SRCPAINT (each raster op checked on its own so a failure names itself), the
+two-pass masked sprite — AND a monochrome mask, then OR the image, which is
+what a logo over a background *is* — `StretchBlt`, and `SetDIBitsToDevice`
+from 24, 32 and 16 bpp DIBs. All correct.
 The shapes and positions are right and only the fill is wrong, which says
 the addressing is right and something about the *operation* is not — an
 all-ones result is the signature of a raster op or a fill, not of a copy.
@@ -1684,6 +1698,17 @@ reference does the same, so the 16 bpp header is not the bug), `dpCaps1`,
 `dpRaster`, `dpNumColors`. They agree, bar `C1_GAMMA_RAMP` and an 8 bpp
 `RC_SAVEBITMAP`. So the remaining candidates are inside what the Engine is
 asked to *do* rather than how it was set up.
+
+**A lever that does not work, so nobody tries it twice.** The INF's
+`DelReg` clears `CURRENT` and `DEFAULT` and its `AddReg` writes
+`HKR,DEFAULT,Mode,,"32,640,480"`, which reads like a way to reset the
+desktop depth by reinstalling the driver. It is not:
+`win98-driver-test.sh <image> install` on a machine whose device is *already*
+bound to this driver re-copies the files and reboots without PnP
+reinstalling anything, `CURRENT` survives, and the desktop comes back up at
+800x600x16 exactly as before. Changing the depth wants
+`ChangeDisplaySettings` from inside the guest — which is what `gdiprobe`
+should do for itself.
 
 **Still open.** The repro is ten minutes and the control is one environment
 variable, which is the part worth having. The next thing to try is the

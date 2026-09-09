@@ -470,6 +470,11 @@ PYPE
   # The DX8 half. Reachable on 98 only because a 2ksbox Win98 machine runs
   # DirectX 9 (doc 19 §25): these need d3d8.dll, which the in-box 6.1 has not
   # got, and they exercise the GDI2 negotiation GetDriverInfo answers.
+  echo "==> gdiprobe.exe (which GDI operation the DIB Engine path gets wrong)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/gdiprobe.exe" "$SRC/gdiprobe.c" -lgdi32 -luser32
+
   echo "==> cktest.exe (palettized textures and colour keying through the DX7 HAL)"
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
      -march=pentium3 -mtune=generic \
