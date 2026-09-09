@@ -365,7 +365,11 @@ What the track starts from:
    `COLORARG2` / `ALPHAARG2`, then a texture per draw; the executor's
    legacy blend was ended by the ARGs and stayed at "no texture: the
    diffuse", white. Two flags now, one per op, ended only by the app's own
-   op; `d3dpt-dp2-test` covers it.
+   op; `d3dpt-dp2-test` covers it. **One cosmetic thing stays open** (doc 19
+   §28): the bottom-most menu button (QUIT) renders only its top half — a
+   full, correct 4-vertex fan quad that fills whole in the standalone test
+   but paints only its top half inside the game's own batch; texture,
+   scissor, viewport, RT, depth and cull all ruled out.
    **Not ours:** NFS Porsche's silence is guest sound configuration.
 
 ## Build / test loop

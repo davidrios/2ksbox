@@ -1808,3 +1808,36 @@ registers (`CLICKS=` uses it unless `TABLET=1`). Then the splash, and
 Space a couple of times to the menu; touch `frames/trace.on` there. Each
 run has its own QMP socket at `OUT/qmp.sock` now — a shared name under
 `/tmp` was unlinked by the other run's QEMU on exit.
+
+#### Still open: the QUIT button's bottom half (found the same day)
+
+With the white fixed, the menu is right but for one thing: the bottom-most
+button (QUIT) renders only its **top half**. The cut is at the quad's own
+vertical midpoint, not a screen row — the button spans y 527–569 and paints
+527–~549, stable across every captured frame (so not a mid-animation
+capture). What it is **not**, each checked:
+
+- **Not the texture.** Tex handle 37 is a full opaque rounded pill (alpha
+  rows 0–41), and the quad's UV covers all of it (0.0–0.164 → texels 0–42).
+- **Not a clip.** A temporary per-draw probe (GetScissorRect /
+  GetViewport / GetRenderTarget) reported scissor 0,0..800,600, scissor
+  test off, viewport 0,0 800×600, RT 800×600 for every draw including these.
+- **Not depth or culling.** ZWRITE is off for the whole button block, ZFUNC
+  GREATEREQUAL against a near-cleared Z, so nothing is depth-rejected; the
+  bottom mechanical panel (drawn earlier, same z, rows 511–599) paints
+  fully to 599. CULLMODE is NONE.
+- **Not the geometry.** All four fan vertices, logged, are a clean full
+  rectangle (429–498 × 527–569 for the right half, uv 0.5–0.77 × 0.0–0.164),
+  z 0.9, rhw 0.00361 — identical in shape to CREDITS above it, which fills.
+- **Not the executor in isolation.** A `tools/d3dpt-dp2-test.cpp` case that
+  draws the same 4-vertex TRIANGLEFAN quad (opaque texture, alpha blend,
+  ZWRITE off + GREATEREQUAL over a near-cleared Z) fills top and bottom
+  equally. So the fan decode and DXVK's rasterisation of one such quad are
+  right; the defect needs the guest's own batch to appear.
+
+So it is a guest-batch-specific interaction not yet explained. The QUIT
+quads are the last two textured fans (vertices 80–87) of a 92-vertex,
+~23-draw single DP2 call. Repro: the driver script kept in
+`build/w98game/CRIMSON-INVESTIGATION.md`, a `D3DPT_DP2_TRACE` frame at the
+menu, and the per-draw `.ppm` dumps read at rows 527–569. Distinct from the
+fixed legacy-blend bug and cosmetic (one button's bottom edge).
