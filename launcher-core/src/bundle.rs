@@ -229,16 +229,13 @@ pub fn video_choices(family: Family) -> &'static [Video] {
 /// What a host gamepad does for this machine (M13,
 /// `docs/tracks/m13-gamepads.md`).
 ///
-/// Only two entries today, and that is the honest state rather than a
-/// simplification: the other two guest-facing paths are devices QEMU
-/// does not have yet. A `usb-gamepad` (patch 26) will add `Usb` for XP,
-/// Win98 SE and Me, which see a HID pad on their in-box stack with
-/// nothing to install; a gameport at 0x201 (patch 27) will add
-/// `Gameport`, the only path that reaches DOS. Until each device exists
-/// its entry stays out of `pad_choices`, so the launcher can never write
-/// a command line our own `qemu-system-i386` would reject — the same
-/// rule the display-adapter picker follows for an adapter a family has
-/// no driver for.
+/// All three guest-facing paths exist now: a USB HID gamepad (patch 26)
+/// for the families with a USB stack, a gameport at 0x201 (patch 27) for
+/// the ones without, and the key mapping for everything else. Which of
+/// them a family is *offered* is `pad_choices`, and it is offered only
+/// where this project can say what the guest needs — the same rule the
+/// display-adapter picker follows for an adapter a family has no driver
+/// for.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Pad {
@@ -262,6 +259,24 @@ pub enum Pad {
     /// on the 9x side: its USB support predates the HID class being
     /// reliable, and it may want the USB supplement.
     Usb,
+    /// The analog joystick port at 0x200-0x207 (`-device gameport`, patch
+    /// 27): four one-shots and four buttons, which is the whole of what
+    /// the hardware ever had. The **only** path that reaches DOS, where a
+    /// game reads the port itself and there is no USB stack for path A to
+    /// use — and the period-correct one, since this is the connector the
+    /// sticks of the era plugged into.
+    ///
+    /// What the guest has to do is not nothing, and the wizard says so:
+    /// the port is not Plug and Play (it never was), so Windows 9x wants
+    /// Add New Hardware and then a calibration pass in the Game
+    /// Controllers panel. DOS needs neither.
+    ///
+    /// Not offered on XP: `gameenum.sys` is still in the box, but a
+    /// non-PnP port has nothing to enumerate it and Microsoft was already
+    /// retiring analog sticks — XP's answer is path A. Nor on `Other`,
+    /// where the guest is an OS this project cannot name a driver step
+    /// for.
+    Gameport,
     /// The pad presses keys: the player maps its controls onto the key
     /// events it already sends, against `gamepad::default_key_bindings`.
     /// Reaches **every** guest — DOS, Win98 FE, XP, `Other` — because
@@ -272,12 +287,13 @@ pub enum Pad {
 }
 
 impl Pad {
-    pub const ALL: [Pad; 3] = [Pad::None, Pad::Usb, Pad::Keys];
+    pub const ALL: [Pad; 4] = [Pad::None, Pad::Usb, Pad::Gameport, Pad::Keys];
 
     pub fn label(self) -> &'static str {
         match self {
             Pad::None => "No gamepad",
             Pad::Usb => "USB gamepad",
+            Pad::Gameport => "Gameport joystick",
             Pad::Keys => "Gamepad presses keys",
         }
     }
@@ -291,6 +307,7 @@ impl Pad {
         match self {
             Pad::None => "none",
             Pad::Usb => "usb",
+            Pad::Gameport => "gameport",
             Pad::Keys => "keys",
         }
     }
@@ -304,14 +321,14 @@ impl Pad {
 /// becomes `None` — the family default — instead of failing the whole
 /// bundle.
 ///
-/// Unlike every other enum in this file, `Pad` is *known* to be gaining
-/// variants: paths A and B of the M13 track add `usb` and `gameport`,
-/// and the track doc says so. Once they land, a machine someone made in
-/// a newer build and opened in an older one would otherwise refuse to
-/// load at all — not "the pad setting was ignored" but "this machine
-/// does not exist", losing its disk, its discs and its shader profile
-/// over a field about a controller. That trade is never worth it, so
-/// this one field is read the forgiving way.
+/// Unlike every other enum in this file, `Pad` was *known* to be gaining
+/// variants — paths A and B of the M13 track added `usb` and `gameport`
+/// after the field shipped — and the rule stays now that they have: a
+/// machine someone made in a newer build and opened in an older one would
+/// otherwise refuse to load at all, not "the pad setting was ignored" but
+/// "this machine does not exist", losing its disk, its discs and its
+/// shader profile over a field about a controller. That trade is never
+/// worth it, so this one field is read the forgiving way.
 fn pad_lenient<'de, D>(d: D) -> Result<Option<Pad>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -321,9 +338,16 @@ where
 
 /// What each family offers, **first one its default**.
 ///
-/// The asymmetry is `Usb`: a USB HID gamepad needs a guest with a USB
-/// stack, which DOS has not got at all. DOS is left with `Keys`, and the
-/// controller it could really use is path B's gameport.
+/// The two asymmetries are the two devices, and each is a driver
+/// question rather than a preference. `Usb` needs a guest with a USB
+/// stack, which DOS has not got at all. `Gameport` needs a guest that
+/// will talk to a port nothing enumerates: DOS reads it directly and 9x
+/// has "Standard Game Port" for it, while XP would need a driver
+/// installed by hand for a class of device it was already dropping, and
+/// the `Other` family is an OS this project cannot name a step for. So
+/// DOS is offered the gameport and not the HID pad, XP and `Other` the
+/// HID pad and not the gameport, and Win98 — which has both stacks —
+/// both.
 ///
 /// Every family starts on `None`, and that is a decision rather than
 /// caution. A machine nobody asked for a pad on should not grow a device
@@ -336,8 +360,9 @@ pub fn pad_choices(family: Family) -> &'static [Pad] {
         // No USB stack, so no HID gamepad. Nothing to warn about — the
         // entry simply is not offered, the way the display-adapter picker
         // does not offer an adapter a family has no driver for.
-        Family::Dos => &[Pad::None, Pad::Keys],
-        Family::Xp | Family::Win98 | Family::Other => &[Pad::None, Pad::Usb, Pad::Keys],
+        Family::Dos => &[Pad::None, Pad::Gameport, Pad::Keys],
+        Family::Win98 => &[Pad::None, Pad::Usb, Pad::Gameport, Pad::Keys],
+        Family::Xp | Family::Other => &[Pad::None, Pad::Usb, Pad::Keys],
     }
 }
 
@@ -1379,6 +1404,14 @@ impl Machine {
         }
         if pad_usb {
             args.extend(["-device".into(), "usb-gamepad".into()]);
+        }
+        // ...and path B's gameport (patch 27), which needs no controller
+        // of any kind: it is an ISA device at 0x200-0x207, and every
+        // machine this project makes has an ISA bus. It is also the only
+        // pad device DOS can use, which is why that family is offered it
+        // and not the USB one.
+        if self.effective_pad() == Pad::Gameport {
+            args.extend(["-device".into(), "gameport".into()]);
         }
         // The CPU rate, when the machine asks for one. `align=on` is the
         // whole point and not a detail: `-icount shift=N` on its own only

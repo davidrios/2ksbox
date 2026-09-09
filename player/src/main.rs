@@ -1170,17 +1170,21 @@ impl App {
         vm.input_flush();
     }
 
-    /// The pad's current state to the guest's `usb-gamepad` (M13 path A).
+    /// The pad's current state to whichever pad device the machine has —
+    /// the `usb-gamepad` (M13 path A) or the `gameport` (path B). One
+    /// call for both: `qemu_embed_pad_state` offers the state to each and
+    /// the absent one ignores it, so the player never has to know which
+    /// device the bundle chose, only that there is one.
     ///
-    /// The whole pad every time, not a change: `usb_gamepad_set_state`
-    /// compares against what it holds and does nothing when they match,
-    /// so an untouched controller costs one comparison per published
-    /// frame and never wakes the guest. Sending changes instead would
-    /// put the "did anything move" question on this side of a queue that
-    /// is allowed to drop, and a dropped button-up is a button held down
-    /// in the guest forever.
-    fn apply_pad_usb(&mut self) {
-        if self.pad_mode != pad::Mode::Usb {
+    /// The whole pad every time, not a change: each device compares
+    /// against what it holds and does nothing when they match, so an
+    /// untouched controller costs one comparison per published frame and
+    /// never wakes the guest. Sending changes instead would put the "did
+    /// anything move" question on this side of a queue that is allowed to
+    /// drop, and a dropped button-up is a button held down in the guest
+    /// forever.
+    fn apply_pad_device(&mut self) {
+        if !self.pad_mode.is_device() {
             return;
         }
         let Some(pads) = self.pads.as_ref() else { return };
@@ -1743,7 +1747,7 @@ impl ApplicationHandler for App {
         // is how someone works out whether the controller is seen at all
         // before deciding to turn it on.
         self.apply_pad_keys();
-        self.apply_pad_usb();
+        self.apply_pad_device();
         // QEMU published a frame (multiple wakes coalesce into one redraw)
         if let Some(gpu) = &self.gpu {
             gpu.window.request_redraw();

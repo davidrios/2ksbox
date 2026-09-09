@@ -920,27 +920,54 @@ impl Form {
                 "A real USB controller on the machine: two analog sticks, an 8-way hat and twelve buttons, which DirectInput and the Game Controllers panel both see.",
                 "Windows XP, 98 SE and Me need nothing installed — they bind their own HID driver to it on the first start after it is added. Windows 98 first edition may want the USB supplement.",
             ],
+            Pad::Gameport => &[
+                "The joystick port every stick of the era plugged into, at 0x201. Two axes and two buttons per connector, four of each in total — the hardware's own limit, so there is no hat and no second set of buttons. The d-pad steers the first two axes.",
+                "The only kind of controller DOS can use: a DOS game reads the port itself and needs nothing installed. Windows 98 does need two steps — the port is not Plug and Play, so it wants Add New Hardware, and then a calibration pass in the Game Controllers panel.",
+            ],
             Pad::Keys => &[
                 "The pad presses keys: the d-pad and left stick are the arrow keys, and the four face buttons are Ctrl, Alt, Space and Enter — what a DOS or early-Windows action game reads by default.",
-                "It is a mapping, not a controller: no analog steering, and a game that asks DirectInput for a joystick still finds none. The choice for DOS, and for a game that only ever read the keyboard.",
+                "It is a mapping, not a controller: no analog steering, and a game that asks DirectInput for a joystick still finds none. The choice for a game that only ever read the keyboard.",
             ],
         }
     }
 
     /// The one thing worth saying above the picker: adding or removing a
-    /// USB controller on a machine that already has an OS installed is a
-    /// hardware change, and the guest will notice on its next start. The
-    /// same sentence the adapter picker earns, for the same reason.
+    /// controller *device* on a machine that already has an OS installed
+    /// is a hardware change, and the guest will notice on its next start.
+    /// The same sentence the adapter picker earns, for the same reason.
+    ///
+    /// Which sentence depends on which device, and that is the whole
+    /// reason this is not one line: Windows finds a USB pad by itself and
+    /// says so, and does **not** find a gameport at all — the port was
+    /// never Plug and Play, so it is Add New Hardware and then a
+    /// calibration pass. Telling someone Windows would handle it is worse
+    /// than saying nothing.
     pub fn pad_warning(&self) -> Option<&'static str> {
-        let changed = match &self.editing {
-            Some(edit) => (edit.pad == Pad::Usb) != (self.pad == Pad::Usb),
-            None => false,
-        };
-        changed.then_some(
-            "This machine already exists: adding or removing the USB controller makes the guest \
-             find new hardware on its next start. Windows installs its own driver for it, but it \
-             will say so.",
-        )
+        /// `Keys` and `None` are the same thing to the guest: no device.
+        fn device(pad: Pad) -> Option<Pad> {
+            matches!(pad, Pad::Usb | Pad::Gameport).then_some(pad)
+        }
+        let edit = self.editing.as_ref()?;
+        if device(edit.pad) == device(self.pad) {
+            return None;
+        }
+        Some(match self.pad {
+            Pad::Usb => {
+                "This machine already exists: adding the USB controller makes the guest find new \
+                 hardware on its next start. Windows installs its own driver for it, but it will \
+                 say so."
+            }
+            Pad::Gameport => {
+                "This machine already exists, and the joystick port is not Plug and Play: Windows \
+                 will not find it on its own — add \"Standard Game Port\" through Add New Hardware, \
+                 then calibrate the stick in the Game Controllers panel. A DOS guest needs neither."
+            }
+            // Was a device, now is not.
+            _ => {
+                "This machine already exists: taking its controller away is a hardware change too, \
+                 and the guest will notice the device has gone on its next start."
+            }
+        })
     }
 
     /// The one thing the boot picker can say that isn't obvious: a
