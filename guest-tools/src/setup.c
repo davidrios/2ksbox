@@ -34,6 +34,11 @@
 
 #define MAX_COMPONENTS 8
 
+/* Where the test programs go, and where the log goes with them: one folder
+ * that is ours, on the hard disk, and the same one every time — not
+ * WINDOWS, where a SETUP.LOG would sit among every other installer's. */
+#define BOXDIR "C:\\2KSBOX"
+
 /* Every path here is <the SETUP.EXE folder> + <folder> + <name>, so the
  * buffers are deliberately wider than MAX_PATH: a root path close to the
  * limit plus a subfolder is longer than MAX_PATH, and silently truncating
@@ -312,7 +317,7 @@ static int step_cdshelf(void)
 static int step_tests(void)
 {
     say("Test programs:");
-    return copy_folder("TESTS", "C:\\2KSBOX");
+    return copy_folder("TESTS", BOXDIR);
 }
 
 typedef struct {
@@ -550,8 +555,7 @@ static void usage(void)
            "  SETUP /LIST           print the component and file-set lists\n"
            "  SETUP /GAME <n> <dir> copy file set <n> next to a game's EXE\n"
            "  SETUP /REBOOT         with /ALL or /I: restart if one asked for it\n"
-           "  SETUP /LOG <file>     write the log there (default: SETUP.LOG in\n"
-           "                        the current folder, else WINDOWS\\SETUP.LOG)\n");
+           "  SETUP /LOG <file>     write the log there (default C:\\2KSBOX\\SETUP.LOG)\n");
 }
 
 /* "Windows 98 SE" / "Windows XP" — what the user should see confirmed,
@@ -587,23 +591,19 @@ static int try_log(const char *path)
     return 1;
 }
 
-/* Where the log goes, in order of preference: an explicit /LOG, then next to
- * the current directory (a copy of the tools on the hard disk), then
- * WINDOWS\SETUP.LOG — always writable and always findable, which is the case
- * that matters because SETUP is usually started from the read-only CD, where
- * the current-directory write fails — then TEMP as a last resort. Whichever
- * wins, its absolute path is announced; the log is never left somewhere the
- * user has to guess. */
+/* Where the log goes: an explicit /LOG wins; otherwise C:\2KSBOX\SETUP.LOG,
+ * the same folder the test programs land in — ours, on the hard disk, and
+ * the same place every run, so it does not sit among every other installer's
+ * SETUP.LOG in WINDOWS and does not vanish into a read-only CD's directory.
+ * TEMP is the last resort if C:\2KSBOX cannot be made. Whichever wins, its
+ * absolute path is announced; the log is never left somewhere to guess at. */
 static void open_log(const char *want)
 {
     char path[PATHBUF];
 
     if (want && try_log(want)) return;
-    if (try_log("SETUP.LOG")) return;
-    if (GetWindowsDirectoryA(path, sizeof path - 16)) {
-        lstrcatA(path, "\\SETUP.LOG");
-        if (try_log(path)) return;
-    }
+    CreateDirectoryA(BOXDIR, NULL);
+    if (try_log(BOXDIR "\\SETUP.LOG")) return;
     if (GetTempPathA(sizeof path - 16, path)) {
         lstrcatA(path, "SETUP.LOG");
         try_log(path);
