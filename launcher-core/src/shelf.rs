@@ -198,6 +198,16 @@ impl Shelf {
     }
 
     /// Put a disc on the shelf.
+    ///
+    /// Both windows call this from more than one place, and one of them
+    /// is the "Browse…" dialog itself: a file chosen there is on the shelf
+    /// before the dialog has finished closing, rather than landing in
+    /// the text field for a second confirming click on "Add to shelf"
+    /// (user-reported, 2026-09-09 — a picker that appears to do nothing).
+    /// The field and its button are for a path someone *types*; "Add
+    /// folder…" was already the immediate kind. Nothing is lost by it:
+    /// a disc added by mistake is one "Remove" away, and the shelf is a
+    /// list of what you own, not a document being drafted.
     pub fn add(&mut self, path: PathBuf) {
         let label = disc_library::default_label(&path);
         if self.library.add(path) {

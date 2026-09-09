@@ -55,6 +55,14 @@ impl ShaderManager {
         self.windowed_rect
     }
 
+    /// Look for the preset collection again, after something outside
+    /// this window put one on disk — the first-run offer being the one
+    /// thing that can (`launcher_core::firstrun`). Without it the
+    /// manager keeps the "there is none" it cached at start-up.
+    pub fn rescan_presets(&mut self) {
+        self.presets.forget();
+    }
+
     pub fn open_list(&mut self) {
         self.open = true;
         self.editor = None;

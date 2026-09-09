@@ -168,7 +168,14 @@ TESTS = [
     ("read cd bad byte 9", read_cd(16, 1, 2, 0x28, 0), ("err", 5, 0x24, 0)),
     ("read cd past the end", read_cd(LEADOUT, 1, 0, 0xF8, 0), ("err", 5, 0x21, 0)),
     ("read cd nothing", read_cd(16, 1, 0, 0x00, 0), ("len", 0)),
-    ("read cd 1000 raw (flipped)", read_cd(1000, 1, 2, 0xF8, 0), ("dump", [["readcd", "1000", "2", "0xf8", "0"]], None)),
+    # Sector 1000's damage is past what the decoder can repair, so *every* read
+    # of it is a MEDIUM ERROR, the raw one included — a drive does not hand over
+    # an unreadable sector just because the CDB asked for its EDC/ECC. That was
+    # the bug Crimson Skies' SafeDisc 1.x found (doc 17 §2.6c): it reads its
+    # protection band with exactly this CDB and it is the error it is looking
+    # for. Asking for C2 error flags is the one shape that does deliver the
+    # bytes, because that is how a dumping tool gets them out of a real drive.
+    ("read cd 1000 raw (flipped)", read_cd(1000, 1, 2, 0xF8, 0), ("err", 3, 0x11, 5)),
     ("read cd 1000 raw+c2", read_cd(1000, 1, 2, 0xFA, 0), ("dump", [["readcd", "1000", "2", "0xfa", "0"]], None)),
     ("read cd 1000 cooked", read_cd(1000, 1, 2, 0x10, 0), ("err", 3, 0x11, 5)),
     ("read cd msf 16", read_cd_msf(16, 17, 0, 0xF8, 0), ("dump", [["readcd", "16", "0", "0xf8", "0"]], None)),

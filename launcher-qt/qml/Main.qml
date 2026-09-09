@@ -33,6 +33,57 @@ ApplicationWindow {
 
     Diag { id: diag }
 
+    // The first-run shader offer (`src/qt/firstrun.rs`): a question over
+    // the grid on the first start of a launcher with no preset
+    // collection, and never again once it has been answered. The model's
+    // `step` drives the dialog both ways, the way the wizard's and the
+    // shader editor's `open` flags drive their windows.
+    FirstRun {
+        id: offer
+        // Each step that has something to answer opens its own dialog;
+        // neither is ever closed from here (`FirstRunDialog.qml` says
+        // why at length — a MessageDialog closed programmatically emits
+        // `rejected()`, and would answer its own question).
+        onStepChanged: {
+            if (step === "asking") {
+                firstRunDialog.open()
+            } else if (step === "failed" || step === "done") {
+                firstRunResultDialog.open()
+            } else if (step === "") {
+                // Answered and finished with. A collection may have
+                // landed since these two were built, and with it the
+                // starter profiles: the editor cached "there is none" at
+                // construction, and the grid's Shader column lists what
+                // the profile library holds.
+                editor.rescanPresets()
+                profiles.refresh()
+                machines.refresh()
+            }
+        }
+        // The first step is set before this file's bindings exist, so it
+        // never arrives as a change.
+        Component.onCompleted: if (step === "asking") firstRunDialog.open()
+    }
+
+    FirstRunDialog {
+        id: firstRunDialog
+        offer: offer
+    }
+
+    FirstRunResultDialog {
+        id: firstRunResultDialog
+        offer: offer
+    }
+
+    // The download runs on its own thread; nothing else would move the
+    // megabytes in the header. It stops when the download does.
+    Timer {
+        interval: 300
+        running: offer.busy
+        repeat: true
+        onTriggered: offer.poll()
+    }
+
     // --- the grid ---------------------------------------------------
 
     header: ToolBar {
@@ -46,6 +97,20 @@ ApplicationWindow {
                 font.pixelSize: 18
                 font.bold: true
                 Layout.fillWidth: true
+            }
+            // The preset download, while it runs. Here and not in the
+            // dialog: it needs no answer, and a modal window with a
+            // spinner in it would lock the launcher for a minute over a
+            // job the user has already agreed to. Both strings are the
+            // model's (`firstrun::Message`).
+            RowLayout {
+                spacing: 6
+                visible: offer.busy
+                BusyIndicator { implicitWidth: 16; implicitHeight: 16; running: visible }
+                Label {
+                    text: offer.headline + " " + offer.detail
+                    opacity: 0.7
+                }
             }
             Label {
                 // A failure to start a player is a whole sentence with
@@ -347,6 +412,11 @@ ApplicationWindow {
     /// The open secondary window's own QML-declared body, or null when
     /// the grid is what should be captured.
     function openWindowItem() {
+        // The first-run offer is not in this list: it is a
+        // `MessageDialog`, a window the platform builds, and
+        // `grabToImage` only works on an item the QML engine created
+        // (see the note on `grabTimer` below). Its `firstrun` probe
+        // screen prints what it holds instead of photographing it.
         const windows = [wizardWindow, discShelfWindow, snapshotsWindow,
                          shaderWindow, shaderEditorWindow]
         for (const d of windows)
@@ -383,6 +453,12 @@ ApplicationWindow {
                 // order `familyLabels()` hands the combo box, so the two
                 // cannot get out of step.
                 const families = ["win98", "xp", "dos", "other"]
+                // Typed *before* the family moves, because the order is
+                // the bug: a text field writes the model property and
+                // nothing else, so a verb that republishes the form
+                // without catching it up first writes the form's stale,
+                // empty name back over what was typed (user, 2026-09-08).
+                wizardWindow.typeName("Typed name")
                 if (families.indexOf(diag.arg) >= 0)
                     wizard.chooseFamily(families.indexOf(diag.arg))
                 // What the memory field ended up showing, beside what the
@@ -393,6 +469,8 @@ ApplicationWindow {
                 diag.note("wizard memory: shown " + wizardWindow.shownRamMb
                           + ", model " + wizard.ramMb
                           + ", range " + wizard.ramMin + ".." + wizard.ramMax)
+                diag.note("wizard name: shown [" + wizardWindow.shownName
+                          + "] model [" + wizard.name + "]")
                 break
             case "closebox":
                 // The title bar's close button on the wizard, the way the
@@ -434,6 +512,18 @@ ApplicationWindow {
                 diag.note("shelf now " + discs.count + " discs, status: " + discs.status)
                 discShelfWindow.show()
                 break
+            case "pickdisc":
+                // `LAUNCHER_QT_ARG=<path>` through the "Add disc"
+                // field's *dialog*, not the model: a picked disc goes on
+                // the shelf on its own, and the field it came through is
+                // left empty (2026-09-09). Nothing that asks the model
+                // can see either half.
+                discs.openLibrary(machines.discLibraryPath())
+                discShelfWindow.show()
+                discShelfWindow.pickDisc(diag.arg)
+                diag.note("pickdisc: shelf " + discs.count + ", field ["
+                          + discShelfWindow.shownAdd + "], status: " + discs.status)
+                break
             case "discs":
                 if (diag.arg === "")
                     discs.openLibrary(machines.discLibraryPath())
@@ -472,6 +562,44 @@ ApplicationWindow {
                           + shaderEditorWindow.shownPreset
                           + "', model '" + editor.presetPath + "'")
                 break
+            case "firstrun":
+                // The offer, driven through the dialog itself rather
+                // than through the model behind it: that the real
+                // `MessageDialog` is up, that it is showing the model's
+                // words, and that its reject button (No) both closes it
+                // and is remembered — the marker the check looks for.
+                // `LAUNCHER_QT_ARG=decline` presses it; anything else
+                // leaves the question standing.
+                diag.note("firstrun: open=" + offer.open + ", dialog=" + firstRunDialog.visible
+                          + ", step=" + offer.step + ", modality=" + firstRunDialog.modality
+                          + ", buttons=" + firstRunDialog.buttons)
+                diag.note("firstrun text: " + firstRunDialog.text + " | "
+                          + firstRunDialog.informativeText.replace(/\n/g, " "))
+                // The answers go in through the *dialog's* own signals —
+                // what its standard buttons deliver — so the wiring from
+                // a button to a verb is checked, not bypassed. (Not
+                // `reject()` / `accept()`: those are the methods that
+                // both emit `rejected()`, which is the whole reason
+                // these dialogs are never driven programmatically.)
+                if (diag.arg === "decline") {
+                    firstRunDialog.rejected()
+                    // Not the dialog's own visibility: only a real press
+                    // of No hides it, and this emits the signal that
+                    // press delivers.
+                    diag.note("firstrun declined: open=" + offer.open + ", step=" + offer.step)
+                }
+                if (diag.arg === "accept") {
+                    // Yes, and then wait for the download to end — point
+                    // `LAUNCHER_SHADERS_DIR` somewhere unwritable and it
+                    // ends at once, which is the cheap way to reach the
+                    // step after it without fetching 50 MB.
+                    firstRunDialog.accepted()
+                    diag.note("firstrun accepted: dialog=" + firstRunDialog.visible
+                              + ", step=" + offer.step + ", busy=" + offer.busy)
+                    firstRunSettle.start()
+                    return   // `firstRunSettle` grabs when it is done
+                }
+                break
             case "editor":
                 // `<preset.slangp>;<preview image>`
                 const parts = diag.arg.split(";")
@@ -479,6 +607,33 @@ ApplicationWindow {
                 shaderEditorWindow.editPreset(parts[0], parts[1] || "")
                 break
             }
+            grabTimer.restart()
+        }
+    }
+
+    // The `firstrun accept` probe's wait: poll the download until it is
+    // no longer running, then report what came up in the question's
+    // place. What it proves is the half of the flow a still picture
+    // cannot — that the question really closes on Yes, that the header
+    // (not a modal) carries the download, and that the *result* dialog
+    // then arrives with its own words and its own buttons.
+    Timer {
+        id: firstRunSettle
+        interval: 200
+        repeat: true
+        onTriggered: {
+            offer.poll()
+            if (offer.busy)
+                return
+            stop()
+            // Not whether the question is still up: this probe emits the
+            // dialog's `accepted` rather than pressing its Yes, and only
+            // a real press hides it. What it can say is what came after.
+            diag.note("firstrun settled: result=" + firstRunResultDialog.visible
+                      + ", step=" + offer.step
+                      + ", buttons=" + firstRunResultDialog.buttons
+                      + ", text=" + firstRunResultDialog.text
+                      + " | " + firstRunResultDialog.informativeText.replace(/\n/g, " "))
             grabTimer.restart()
         }
     }

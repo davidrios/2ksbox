@@ -177,6 +177,14 @@ pub mod ffi {
         #[qinvokable]
         fn download_presets(self: Pin<&mut ShaderEditor>);
 
+        /// Look for the preset collection again. The first-run offer
+        /// (`qt/firstrun.rs`) can put one on disk while this object is
+        /// already alive holding the "there is none" it cached at
+        /// construction, and without this the profile manager goes on
+        /// offering to download what has just been downloaded.
+        #[qinvokable]
+        fn rescan_presets(self: Pin<&mut ShaderEditor>);
+
         /// Poll a running download. Driven by a QML `Timer`.
         #[qinvokable]
         fn poll_download(self: Pin<&mut ShaderEditor>);
@@ -440,6 +448,12 @@ impl ffi::ShaderEditor {
     fn download_presets(mut self: Pin<&mut Self>) {
         self.as_mut().catch_up();
         self.as_mut().rust_mut().presets.start_download();
+        self.publish();
+    }
+
+    fn rescan_presets(mut self: Pin<&mut Self>) {
+        self.as_mut().catch_up();
+        self.as_mut().rust_mut().presets.forget();
         self.publish();
     }
 

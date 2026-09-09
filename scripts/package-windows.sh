@@ -32,6 +32,7 @@
 #   qml\                        the QtQuick module trees the views import
 #   qt.conf                     where Qt looks for those two
 #   pc-bios\                    QEMU firmware
+#   soundfonts\                 the General MIDI bank (doc 20)
 #   guest-tools\                the guest-tools ISO
 #   shaders\                    presets, with --with-shaders
 #   doc\                        COPYING, notices, README
@@ -94,6 +95,11 @@ if [ -f build/win/wgl-probe.exe ]; then
   mkdir -p "$STAGE/tools"
   install -m755 build/win/wgl-probe.exe "$STAGE/tools/"
 fi
+
+# The General MIDI bank (doc 20 §4). Flat, like everything else here:
+# `paths::in_prefix` drops the `share/2ksbox/` a Unix prefix uses.
+mkdir -p "$STAGE/soundfonts"
+install -m644 soundfonts/TimGM6mb.sf2 "$STAGE/soundfonts/"
 
 iso=$(ls -t guest-tools/out/guest-tools-*.iso 2>/dev/null | head -1 || true)
 if [ -n "$iso" ]; then

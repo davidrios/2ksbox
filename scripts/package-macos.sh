@@ -108,6 +108,11 @@ install -m755 build/qemu/qemu-img "$C/libexec/2ksbox/"
 cp -a qemu/pc-bios "$C/share/2ksbox/pc-bios"
 install -m644 COPYING THIRD-PARTY-NOTICES.md README.md "$C/share/doc/2ksbox/"
 
+# The General MIDI bank (doc 20 §4): the machine form's default music
+# port plays through it, and the packaged player names it to QEMU.
+mkdir -p "$C/share/2ksbox/soundfonts"
+install -m644 soundfonts/TimGM6mb.sf2 "$C/share/2ksbox/soundfonts/"
+
 iso=$(ls -t guest-tools/out/guest-tools-*.iso 2>/dev/null | head -1 || true)
 if [ -n "$iso" ]; then
   mkdir -p "$C/share/2ksbox/guest-tools" && install -m644 "$iso" "$C/share/2ksbox/guest-tools/"

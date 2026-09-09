@@ -61,6 +61,42 @@ pub fn create(dir: &Path, name: String, preset: PathBuf) -> std::io::Result<Path
     Ok(path)
 }
 
+/// The starter profiles (`shader_source::DEFAULT_PROFILES`) against the
+/// collection at `presets_dir`, returning the names actually written.
+///
+/// Two things it will not do, both of which would turn a helpful gesture
+/// into a mess someone has to clean up. It never writes a **second**
+/// profile under a name the library already has — `create`'s slug
+/// deduplication would happily make `crt-aperture-2`, so re-running this
+/// (a second download, a `--default-profiles` by hand) has to be a
+/// no-op rather than a slow-motion duplication. And it skips a preset
+/// the collection doesn't actually contain, since a profile naming a
+/// missing `.slangp` is only a parse error deferred to whoever opens it.
+pub fn create_defaults(dir: &Path, presets_dir: &Path) -> Vec<String> {
+    let existing: Vec<String> = scan(dir).into_iter().map(|e| e.profile.name).collect();
+    let mut added = Vec::new();
+    for (name, rel) in crate::shader_source::DEFAULT_PROFILES {
+        if existing.iter().any(|have| have == name) {
+            continue;
+        }
+        let preset = presets_dir.join(rel);
+        if !preset.is_file() {
+            eprintln!("[shader-library] no {} in the collection; skipping the {name} profile", preset.display());
+            continue;
+        }
+        // Absolute, whatever `presets_dir` was: a profile is read by the
+        // *player*, which is started from wherever the launcher happens
+        // to have been, and a relative preset would resolve against that
+        // instead of against the collection.
+        let preset = std::path::absolute(&preset).unwrap_or(preset);
+        match create(dir, (*name).to_string(), preset) {
+            Ok(_) => added.push((*name).to_string()),
+            Err(e) => eprintln!("[shader-library] creating the {name} profile: {e}"),
+        }
+    }
+    added
+}
+
 /// Every `*.toml` directly under `dir`. A file that fails to parse is
 /// skipped with a stderr line, not fatal — matches `library::scan`.
 pub fn scan(dir: &Path) -> Vec<ProfileEntry> {

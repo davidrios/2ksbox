@@ -14,7 +14,7 @@
 use crate::filepicker;
 use launcher_core::bundle::{Accel, Boot, CpuSpeed, Family, Optimization};
 use launcher_core::shader_library;
-use launcher_core::wizard::{Form, DISK_FILTER, FLOPPY_FILTER, MEDIA_FILTER};
+use launcher_core::wizard::{Form, DISK_FILTER, FLOPPY_FILTER, MEDIA_FILTER, SOUNDFONT_FILTER};
 use std::path::{Path, PathBuf};
 
 /// Renders the wizard window if open. `shader_profiles` is the current
@@ -99,6 +99,7 @@ fn fields_ui(
     cpu_speed_ui(ui, form);
     accel_ui(ui, form);
     video_ui(ui, form);
+    audio_ui(ui, form);
     graphics_ui(ui, form);
     network_ui(ui, form);
     seamless_mouse_ui(ui, form);
@@ -136,6 +137,63 @@ fn fields_ui(
     if form.advanced {
         form.fill_advanced();
         ui.add(egui::TextEdit::multiline(&mut form.advanced_toml).code_editor().desired_rows(10));
+    }
+}
+
+/// The sound card and the MIDI port (doc 20 §6). Two rows, because a
+/// machine of the era had two things: a card for sound effects and
+/// something to play its *music* on. The FM chip is in neither list —
+/// it comes with the card that carried one, which the card's own note
+/// says.
+fn audio_ui(ui: &mut egui::Ui, form: &mut Form) {
+    let mut sound = form.sound();
+    ui.horizontal(|ui| {
+        egui::ComboBox::from_label("Sound card")
+            .selected_text(sound.label())
+            .show_ui(ui, |ui| {
+                for c in form.sound_choices() {
+                    ui.selectable_value(&mut sound, *c, c.label());
+                }
+            });
+        if ui.add_enabled(!form.sound_is_default(), egui::Button::new("Default")).clicked() {
+            form.reset_sound();
+        }
+    });
+    if sound != form.sound() {
+        form.choose_sound(sound);
+    }
+    if let Some(warning) = form.sound_warning() {
+        ui.colored_label(egui::Color32::from_rgb(0xc8, 0x82, 0x00), warning);
+    }
+    for note in form.sound_notes() {
+        ui.small(*note);
+    }
+    let mut music = form.music();
+    ui.horizontal(|ui| {
+        egui::ComboBox::from_label("Music (MIDI)")
+            .selected_text(music.label())
+            .show_ui(ui, |ui| {
+                for m in form.music_choices() {
+                    ui.selectable_value(&mut music, *m, m.label());
+                }
+            });
+        if ui.add_enabled(!form.music_is_default(), egui::Button::new("Default")).clicked() {
+            form.reset_music();
+        }
+    });
+    if music != form.music() {
+        form.choose_music(music);
+    }
+    for note in form.music_notes() {
+        ui.small(*note);
+    }
+    // The bank is optional (empty = the one we ship); the ROMs are not,
+    // and `submit` refuses an MT-32 machine without them.
+    if form.soundfont_applies() {
+        filepicker::path_field(ui, "SoundFont (optional)", &mut form.soundfont, Some(SOUNDFONT_FILTER));
+    }
+    if form.mt32_roms_applies() {
+        filepicker::dir_field(ui, "MT-32 ROMs", &mut form.mt32_roms);
     }
 }
 

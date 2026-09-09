@@ -14,9 +14,9 @@
 //! screenshot verbs render real frames — synthetic egui input on one
 //! side, `QT_QPA_PLATFORM=offscreen` and `grabToImage` on the other.
 
-use crate::bundle::{self, Family, Machine, Optimization};
-use crate::{browse, control, disc_library, library, machines, player, preview, shader_library, shader_profile,
-    shader_source, shelf, snaps, wizard};
+use crate::bundle::{self, Family, Machine, Music, Optimization, Sound};
+use crate::{browse, control, disc_library, firstrun, library, machines, player, preview, shader_library,
+    shader_profile, shader_source, shelf, snaps, wizard};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -278,6 +278,77 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 );
             }
         }
+        "--music" => {
+            // Headless equivalent of the machine form's two audio rows
+            // (doc 20 §6): the sound card, what is on the MIDI port, and
+            // the two files only the user can supply. With no arguments
+            // it reports, which is also how a bundle is read back after
+            // a change — the state, and whether it is the family's.
+            let usage = "usage: --music <machine.toml> [card|-] [gm|mt32|none|-] [soundfont|-] [romdir|-]";
+            let path: PathBuf = args.next().expect(usage).into();
+            let mut form = wizard::Form::default();
+            form.open_edit_path(path);
+            if let Some(e) = &form.error {
+                panic!("{e}");
+            }
+            let mut changed = false;
+            // A card this family does not offer is a no-op rather than
+            // an error, like the adapter in --wizard-edit: a script can
+            // then set the same field on every machine it walks.
+            match args.next().as_deref() {
+                None | Some("-") => {}
+                Some(key) => {
+                    changed = true;
+                    form.choose_sound(
+                        Sound::ALL
+                            .into_iter()
+                            .find(|c| c.key() == key)
+                            .unwrap_or_else(|| panic!("unknown sound card {key:?}; {usage}")),
+                    );
+                }
+            }
+            match args.next().as_deref() {
+                None | Some("-") => {}
+                Some(key) => {
+                    changed = true;
+                    form.choose_music(
+                        Music::ALL
+                            .into_iter()
+                            .find(|m| m.key() == key)
+                            .unwrap_or_else(|| panic!("unknown MIDI port {key:?}; {usage}")),
+                    );
+                }
+            }
+            for (field, value) in [(0, args.next()), (1, args.next())] {
+                let Some(value) = value else { continue };
+                if value == "-" {
+                    continue;
+                }
+                changed = true;
+                let value = if value == "none" { String::new() } else { value };
+                if field == 0 {
+                    form.soundfont = value;
+                } else {
+                    form.mt32_roms = value;
+                }
+            }
+            if changed && form.submit(&library::default_dir()).is_none() {
+                eprintln!("[music] {}", form.error.unwrap_or_default());
+                return Some(1);
+            }
+            println!(
+                "card\t{}\t{}",
+                form.sound().key(),
+                if form.sound_is_default() { "default" } else { "changed" }
+            );
+            println!(
+                "music\t{}\t{}",
+                form.music().key(),
+                if form.music_is_default() { "default" } else { "changed" }
+            );
+            println!("soundfont\t{}", if form.soundfont.is_empty() { "(the one we ship)" } else { &form.soundfont });
+            println!("romdir\t{}", if form.mt32_roms.is_empty() { "(none)" } else { &form.mt32_roms });
+        }
         "--boot-disc" => {
             // Headless equivalent of a row's "Boot" button: which disc is
             // in the machine's drive when it starts.
@@ -421,6 +492,63 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 }
             }
         }
+        "--first-run" => {
+            // The offer a brand-new launcher makes on the way up
+            // (`firstrun.rs`), without a window: `status` prints what the
+            // dialog would show, `decline` answers it the way "Not now"
+            // does, and `accept` runs the whole thing — the real download
+            // and the starter profiles after it — waiting here for the
+            // thread a front end would poll from its repaint.
+            let usage = "usage: --first-run [status|accept|decline]";
+            let mut model = firstrun::FirstRun::check(shader_library::default_dir());
+            match args.next().as_deref() {
+                None | Some("status") => {}
+                Some("decline") => model.decline(),
+                Some("accept") => {
+                    model.accept();
+                    // The poll a front end's repaint or timer does, at a
+                    // pace a terminal can read. `state` is also what
+                    // turns a finished download into the profiles, so
+                    // the loop ends on the step *after* that happened
+                    // and the line below is the outcome, printed once.
+                    while model.busy() {
+                        std::thread::sleep(Duration::from_millis(500));
+                        let message = model.state();
+                        if message.step == firstrun::Step::Downloading {
+                            println!("running: {}", message.detail);
+                        }
+                    }
+                }
+                Some(other) => panic!("unknown first-run action {other:?}; {usage}"),
+            }
+            if print_first_run(&mut model) == firstrun::Step::Failed {
+                return Some(1);
+            }
+        }
+        "--default-profiles" => {
+            // The other half of a "yes", on a collection that is already
+            // there: the starter profiles, so the flow can be checked
+            // without 50 MB of network in a test suite (the
+            // `shader-defaults` check).
+            let presets = match args.next() {
+                Some(dir) => PathBuf::from(dir),
+                None => match shader_source::presets_dir() {
+                    Some(dir) => dir,
+                    None => {
+                        eprintln!("[first-run] no preset collection; pass one, or --download-shaders first");
+                        return Some(1);
+                    }
+                },
+            };
+            let dir = shader_library::default_dir();
+            let added = shader_library::create_defaults(&dir, &presets);
+            if added.is_empty() {
+                println!("(nothing to add; {} already has them)", dir.display());
+            }
+            for name in added {
+                println!("{name}");
+            }
+        }
         "--browse-start" => {
             // Where a path field's "Browse…" would open: the value's own
             // directory, or — for an empty preset field — the preset
@@ -509,6 +637,27 @@ pub fn print_snapshots(window: &snaps::Snapshots) {
     for snap in window.snapshots() {
         println!("{}\t{}\t{}\t{}", snap.id, snap.name, snap.date_label(), snap.size_label());
     }
+}
+
+/// One line for whatever the first-run dialog would be showing: the
+/// step, then the words the dialog itself would put on screen, newlines
+/// flattened so a check can grep one line. Both come from a single
+/// `state()`, so what the suite reads is what a window draws.
+fn print_first_run(model: &mut firstrun::FirstRun) -> firstrun::Step {
+    let message = model.state();
+    let name = match message.step {
+        firstrun::Step::Idle => "idle",
+        firstrun::Step::Asking => "asking",
+        firstrun::Step::Downloading => "running",
+        firstrun::Step::Failed => "failed",
+        firstrun::Step::Done => "done",
+    };
+    if message.step == firstrun::Step::Idle {
+        println!("idle");
+    } else {
+        println!("{name}: {} {}", message.headline, message.detail.replace('\n', " "));
+    }
+    message.step
 }
 
 /// Where every companion resolved, as text — one line each, the format

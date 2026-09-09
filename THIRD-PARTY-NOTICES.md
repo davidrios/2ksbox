@@ -23,6 +23,16 @@ The **player** links `libqemu-embed-<target>` — QEMU (https://www.qemu.org),
 `qemu/LICENSE`, and the GPLv2 text this project distributes under is
 `COPYING`. The **launcher** does not link QEMU.
 
+## The music engines
+
+The **OPL3, General MIDI and MT-32 engines** are crates linked into QEMU
+through `libsynth/` (doc 20): `nuked-opl3` (**LGPL-2.1-or-later**, a Rust
+port of Nuked-OPL3), `moont` (**LGPL-2.1-or-later**, a Rust port of Munt's
+CM-32L) and `rustysynth` (**MIT**). The two LGPL crates are used unmodified
+and their sources are the published crates; a recipient may relink against
+their own copies, which is what the LGPL's §6 asks of a static link, and
+everything they are linked into is GPL-2.0 source in this repository.
+
 ## Host-side libraries built from `third_party/`
 
 Two libraries are built from vendored source and shipped beside the player.
@@ -40,6 +50,20 @@ Neither is linked into anything: QEMU `dlopen`s them at run time.
   `libdxvk_d3d9` by `scripts/configure-dxvk.sh` with the patch queue in
   `patches/dxvk/`. It is the host executor of the paravirtual Direct3D
   device (doc 14). Licence text in `third_party/dxvk/LICENSE`.
+
+## The General MIDI bank
+
+`soundfonts/TimGM6mb.sf2`, **GPL-2**, by Tim Brechbill (2004) with later
+work by David Bolton (2010) — the bank MuseScore 0.9.6–1.3 shipped, which
+Debian packages as `timgm6mb-soundfont`. This copy is byte for byte
+Debian's `timgm6mb-soundfont_1.3.orig.tar.gz` one (sha256
+`c5378b62028c920cb11e4803327983fee2f2cdff5dc89c708e39da417e51c854`). It is
+what the General MIDI synthesizer plays through unless the user names
+another bank, and it is redistributed under the same GPLv2 as the rest of
+this package (`COPYING`); `soundfonts/README.md` records why this bank.
+
+Nothing of Roland's is in this repository: the MT-32 / CM-32L option needs
+the user's own ROM images (doc 20 §4).
 
 ## Shader presets
 

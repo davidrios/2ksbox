@@ -164,7 +164,16 @@ impl DiscShelfWindow {
     }
 
     fn add_ui(&mut self, ui: &mut egui::Ui) {
-        filepicker::path_field(ui, "Add disc", &mut self.add_path, Some(DISC_FILTER));
+        // A disc chosen in the dialog goes on the shelf there and then:
+        // the dialog already asked the question "Add to shelf" is there
+        // to ask, so leaving the path sitting in the field reads as a
+        // picker that did nothing (user-reported, 2026-09-09). "Add
+        // folder…" beside it has always worked that way. The field and
+        // its button stay for a path someone *types*.
+        if let Some(picked) = filepicker::path_field(ui, "Add disc", &mut self.add_path, Some(DISC_FILTER)) {
+            self.shelf.add(picked);
+            self.add_path.clear();
+        }
         ui.horizontal(|ui| {
             let can_add = !self.add_path.trim().is_empty();
             if ui.add_enabled(can_add, egui::Button::new("Add to shelf")).clicked() {

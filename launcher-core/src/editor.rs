@@ -73,6 +73,19 @@ impl Presets {
         self.download = Some(Download::start(shader_source::install_dir()));
     }
 
+    /// Drop the cached answer, so the next `dir`/`state` looks again.
+    ///
+    /// The cache is otherwise permanent — "there is no collection" is
+    /// remembered for the life of the process — and the first-run offer
+    /// (`firstrun.rs`) is a *second* thing that can put one on disk while
+    /// this model is alive. Without this, accepting the offer left the
+    /// profile manager still showing "No shader presets on this machine"
+    /// over a collection that had just been downloaded.
+    pub fn forget(&mut self) {
+        self.dir = None;
+        self.looked = false;
+    }
+
     /// The row's current state, advancing a finished download into the
     /// cached directory on the way past. Safe to call as often as a
     /// front end likes — once per frame, or from a timer.

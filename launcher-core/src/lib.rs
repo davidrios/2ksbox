@@ -32,7 +32,8 @@
 //!   `control` (QMP to a running machine), `snapshots` (`qemu-img`'s
 //!   half of the same), `preview` (the shader chain on a still image).
 //! * **The window models.** `machines`, `wizard`, `shelf`, `snaps`,
-//!   `editor` — one per window, holding its whole state machine, and
+//!   `editor`, `firstrun` — one per window, holding its whole state
+//!   machine and the sentences it shows, and
 //!   `browse` for the one file-dialog decision that is not the dialog.
 //!   `cli` is every debug verb that needs no toolkit, so both binaries
 //!   answer the same ones identically.
@@ -47,6 +48,8 @@ pub mod editor;
 // The launcher's own last words: a start-up log and, on Windows, a
 // message box — a windowed program has no stderr to die into.
 pub mod fatal;
+// The one question a launcher with no shader presets asks on the way up.
+pub mod firstrun;
 // What this host's GPU can do for the Direct3D executor (ADR-013).
 pub mod host_gpu;
 pub mod library;

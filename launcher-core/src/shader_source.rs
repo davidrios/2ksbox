@@ -27,6 +27,34 @@ const TARBALL_URL: &str = "https://codeload.github.com/libretro/slang-shaders/ta
 /// someone commits to it on a phone tether. Approximate on purpose.
 pub const DOWNLOAD_SIZE: &str = "~50 MB";
 
+/// The profiles a fresh collection is worth having straight away
+/// (`firstrun.rs`): a display name and the preset's path *within* the
+/// collection, all three at the preset's own defaults — a profile stores
+/// only what someone overrode (`shader_profile`), so "default settings"
+/// is an empty override table and not a snapshot of today's defaults.
+///
+/// Two CRTs and a monochrome computer monitor, because that is the range
+/// the machines cover: an aperture-grille tube for the Windows era, the
+/// heavier `crt-royale` for a host that can afford it, and the Apple II
+/// monitor for the green-screen end. Anything else is a preset picker
+/// away — these exist so the first machine someone makes has something
+/// to point at.
+pub const DEFAULT_PROFILES: &[(&str, &str)] = &[
+    ("CRT Aperture", "crt/crt-aperture.slangp"),
+    ("CRT Royale", "crt/crt-royale.slangp"),
+    ("Apple II", "presets/apple-monitor-II.slangp"),
+];
+
+/// The three names in one phrase, for the sentence that offers them.
+pub fn default_profile_names() -> String {
+    let names: Vec<&str> = DEFAULT_PROFILES.iter().map(|(name, _)| *name).collect();
+    match names.split_last() {
+        Some((last, [])) => (*last).to_string(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
 /// The collection that came with this build: the checkout's
 /// `third_party/slang-shaders` submodule, or — for an installed launcher
 /// — whatever the package shipped in `share/2ksbox/shaders`.

@@ -1909,8 +1909,9 @@ list (`--new`, `--print-args`, `--play`, `--paths`,
 `--diag-editor-frame`, `--discs`, `--boot-disc`, `--diag-shelf-frame`,
 `--snapshots` (`--live` for a running machine), `--diag-snapshots-frame`,
 `--qmp-socket`, `--insert-disc`, `--kvm`, `--diag-wizard-frame`,
-`--shaders`, `--download-shaders`, `--browse-start`,
-`--optimizations`; and
+`--diag-firstrun-frame` (egui's own, like the other `--diag-*-frame`),
+`--shaders`, `--download-shaders`, `--first-run`, `--default-profiles`,
+`--browse-start`, `--optimizations`; and
 `--wizard-edit` now takes optional
 `[ram-mb] [auto|kvm|tcg] [net|nonet] [processor] [boot]`, `-` keeping a
 field — the last two added at step 7, since they are exactly what the Qt
@@ -1968,3 +1969,125 @@ this track's files, and what is left:
 - **Still owed, and now on the shipped path:** the preview's CPU readback
   (doc 07's one place where the Qt build is worse) wants a
   `QQuickRhiItem` importing the Vulkan image instead.
+
+## The shader download is offered on the way up (2026-09-09, user-asked)
+
+Everything needed to fetch libretro's collection has been here since
+2026-09-05 — `shader_source` gets the tarball, unpacks it through a
+`.part` staging directory and hands the profile manager a preset picker
+that works. What it never had was a way to be *found*: the "Download
+presets" button is on the profile manager's preset row, two windows in,
+which is precisely where somebody who has never opened the profile
+manager will not look. A fresh launcher therefore played every machine
+through no shader at all, which is most of the product missing.
+
+So a launcher that finds **no collection at all** now asks once, on the
+way up, as a modal question over the grid. The model is
+`launcher_core::firstrun` — the decision to ask, **the words at every
+step**, the download and what a "yes" earns — and the two front ends are
+views over it exactly as everywhere else: egui's `Modal` in
+`LauncherApp::first_run_ui`, and on the Qt side a real `MessageDialog`
+(`FirstRunDialog.qml`, `FirstRunResultDialog.qml`) over
+`src/qt/firstrun.rs`.
+
+The words being the model's goes further here than elsewhere, and had to:
+the first cut had each front end formatting "Downloading shader presets…
+12.3 MB" for itself, once in Rust and once in QML — the same sentence
+written twice, which is the entire thing this crate exists to prevent.
+One `state()` poll now answers with a `Message { step, headline, detail }`
+and neither front end writes a word of it. The buttons are the single
+deliberate exception: Qt takes the platform's standard ones (Yes/No,
+Retry/Cancel, OK), because a native confirmation dialog with hand-written
+button text is what looks wrong on every desktop at once, while egui —
+which has no standard buttons — takes `confirm_label()` /
+`cancel_label()` from the model. Hence the size and the destination live
+in the question rather than only on a button.
+
+Three things in it are worth keeping written down.
+
+- **Asked once means once.** Answering either way writes `first-run.txt`
+  into the *profile* directory. Not the preset directory, which is where
+  it obviously belongs: a successful download **replaces** that directory
+  by a rename (`shader_source::fetch` unpacks to `<dir>.part` and renames
+  over the old one), so a marker there would be deleted by the very
+  answer it records. The file is plain text saying what it is and that
+  deleting it asks again, which is doc 07's "a plain, documented
+  directory, no database" applied to one bit of state.
+- **A "yes" is worth something immediately.** Three starter profiles are
+  written against the collection that just landed — CRT Aperture, CRT
+  Royale, Apple II, from `shader_source::DEFAULT_PROFILES` — all at their
+  preset's own defaults, which for a profile means an **empty** override
+  table (`shader_profile` stores only what someone moved), not a
+  snapshot of today's values that would go stale the next time upstream
+  retunes a preset. `shader_library::create_defaults` skips any name the
+  library already holds, because `create` deduplicates the *slug* and
+  would otherwise answer a second run with `crt-royale-2` — a library
+  slowly filling with copies is a worse failure than adding nothing.
+- **A collection that arrives late.** `editor::Presets` caches "there is
+  no collection" for the life of the process — it is a directory walk,
+  and the answer could not previously change while the launcher ran.
+  Now it can, so accepting the offer calls the new `Presets::forget` on
+  both front ends' editors, or the profile manager sits there offering
+  to download what has just been downloaded.
+
+### The Qt dialog answered its own question (same day)
+
+The first Qt cut was a hand-built one: a `Dialog` popup with a
+`contentItem` of labels and a `RowLayout` of buttons whose text came from
+the model, its visibility following the model's step. The user's reply to
+it was the right one — *"why do you insist in doing inline custom dialogs
+in the qt frontend if qt already has the correct components?"* — and
+rebuilding it on `MessageDialog` turned up something worth the trip.
+
+**`MessageDialog.accept()` emits `rejected()`.** Measured here on the
+Quick fallback: a Yes/No dialog, `firstRunDialog.accept()`, and the only
+signal that came out was `rejected` — and `close()` behaves the same way.
+So a dialog that follows a model's step *answers its own question*: Yes
+started the download, the step changed, the code closed the dialog to get
+out of the way, and the close came back as a "No" that put the offer
+away — with the marker already written, so it never asked again. The
+symptom in the probe was the whole flow collapsing to `step=` and
+`busy=false` in one beat, with no download ever running.
+
+The fix is a better shape anyway, and it is now trap 5 in doc 07: **one
+dialog per thing there is to answer, opened when that step arrives and
+closed only by the person pressing one of its buttons.** The offer is two
+— `FirstRunDialog.qml` (the question, Yes/No) and
+`FirstRunResultDialog.qml` (the outcome, Retry/Cancel or OK) — and the
+step between them, the download, gets no dialog at all: it has nothing to
+answer, so it runs in the launcher's header with a `BusyIndicator` and
+the model's own line, instead of locking the window for a minute over a
+job the user has already agreed to. Nothing is opened or closed to follow
+the model except the initial `open()` of each, and a probe that wants to
+press a button emits the dialog's `accepted` / `rejected` *signal* —
+which is what a press delivers — never the like-named method.
+
+Checked two ways, in the shape this track has settled on. `shader-defaults`
+drives `launcherx` — a launcher with no collection asks and one with a
+collection does not, "Not now" is remembered, and a "yes" writes three
+profiles naming presets librashader really parses, by absolute path, with
+no overrides, once. `qt-firstrun` asks the real dialogs through
+`LAUNCHER_QT_SCREEN=firstrun`, because a model that is right about having
+no presets and a dialog that never appears look identical from anywhere
+else — the `cxx_qt::Initialize` trap this track has now paid for three
+times. It wants the question to be application-modal (`modality=2`) with
+the platform's Yes and No (`buttons=81920`) and the model's own text in
+it, No to answer the offer, and — pointing the download at a path that
+cannot be created, so it fails at once and the check needs no network —
+Yes to start a download that is *not* in a dialog, followed by the result
+dialog with Retry and Cancel (`buttons=4718592`) and the model's failure
+line. That last sequence is the one that was broken above. Neither check
+downloads anything: the 50 MB is `shader_source`'s long-standing code,
+and it was run end to end by hand once (`launcherx --first-run accept`:
+50 MB fetched, three profiles written pointing into it, the question
+never asked again).
+
+The egui half has the same treatment for a hand-driven run,
+`launcher --diag-firstrun-frame <out.png> [WxH] [<script>]`: the real
+`Modal` through `diag_window_frames`, where a click at the "Not now" the
+picture shows closes it and leaves the marker on disk. It is not a
+`scripts/test.sh` check for the reason none of the `--diag-*-frame`
+verbs are — `launcher` is not a default workspace member since
+2026-09-07, so the suite would skip it on most hosts — which is also why
+`first_run_ui` is a free function taking the model rather than a method
+on `LauncherApp`, the shape `wizard::show` already has.

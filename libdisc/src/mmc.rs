@@ -305,8 +305,11 @@ fn field_ranges(kind: SectorKind) -> [(usize, usize); 5] {
 /// `Err(Mode)` (a drive's ILLEGAL MODE FOR THIS TRACK). A user-data request
 /// without EDC/ECC is a cooked read: L-EC is verified, what the P/Q decoder
 /// can fix is corrected and only the rest is `Err(Medium)`. A raw request
-/// delivers the stored bytes, uncorrected — which is what dumping a disc
-/// and reading a protection band both depend on.
+/// delivers the stored bytes, uncorrected, but a sector whose L-EC does not
+/// hold is still `Err(Medium)` unless C2 error flags were asked for — a drive
+/// hands over an unreadable sector's bytes only alongside the C2 field that
+/// says which of them it could not trust, and a protection band is read raw
+/// precisely to watch the read fail (doc 17 §2.6c).
 pub fn read_cd_sector(disc: &Disc, lba: i32, expected_type: u8, byte9: u8, byte10: u8, out: &mut [u8]) -> Result<usize> {
     let total = read_cd_length(expected_type, byte9, byte10)?;
     if out.len() < total {
@@ -320,11 +323,34 @@ pub fn read_cd_sector(disc: &Disc, lba: i32, expected_type: u8, byte9: u8, byte1
     disc.read_raw(lba, &mut raw)?;
     let sel = selected(byte9);
     let main = main_length(expected_type, byte9)?;
-    // a request for user data without the EDC/ECC field is a cooked read: L-EC is
-    // verified and a mismatch is a MEDIUM ERROR, as READ(10) on a drive; a raw
-    // request (EDC/ECC selected) delivers the bytes as dumped, C2 says what failed
-    if kind.is_data() && sel[3] && !sel[4] {
-        crate::sector::verify_or_correct(&mut raw, kind)?;
+    // A request for user data without the EDC/ECC field is a cooked read: L-EC is
+    // verified and a mismatch is a MEDIUM ERROR, as READ(10) on a drive.
+    //
+    // A *raw* request — EDC/ECC selected — is the one a dumping tool makes, and
+    // it used to deliver the bytes as dumped whatever their parity said. That was
+    // wrong, and Crimson Skies (SafeDisc 1.50.020) is what showed it, 2026-09-09:
+    // its check reads single sectors of its own protection band raw (`READ CD`,
+    // byte 9 = 0xf8) and it is the *read failing* that it is looking for. A drive
+    // fails it; we answered with the 2352 bytes the dumper had stored, and the
+    // game said "Cannot locate the CD-ROM". With the error delivered, it launches.
+    // So a raw read of a sector whose L-EC does not hold is a MEDIUM ERROR too —
+    // unless the CDB asked for **C2 error flags**, which is precisely how a real
+    // dumping tool gets an unreadable sector's bytes out of a real drive: the
+    // drive hands over what it read and says in the C2 field which bytes it could
+    // not trust. That keeps the dumping case (doc 17 §2.5) working and stops us
+    // telling a protection its band is clean.
+    //
+    // The test is the same one the cooked path applies, so the two agree about
+    // which sectors exist: a sector the P/Q decoder can repair is readable and
+    // its raw read still delivers the damage as stored (a dump must round-trip),
+    // and only a sector `discx scan` calls *unreadable* fails.
+    if kind.is_data() && sel[3] {
+        if !sel[4] {
+            crate::sector::verify_or_correct(&mut raw, kind)?;
+        } else if c2_length(byte9)? == 0 {
+            let mut probe = raw;
+            crate::sector::verify_or_correct(&mut probe, kind)?;
+        }
     }
     let mut pos = 0;
     if main > 0 {

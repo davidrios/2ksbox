@@ -206,6 +206,55 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   `third_party/`. `LAUNCHER_SHADERS_DIR` overrides where they live. An
   empty preset field's "Browse…" opens there, since a `.slangp` is never
   somewhere a person would navigate to by hand.
+- **And the download is offered on the way up** (`firstrun.rs`,
+  2026-09-09): the button above lives two windows deep, on the profile
+  manager's preset row, which is exactly where someone who has never
+  opened the profile manager will not find it — so a launcher that finds
+  **no collection at all** asks once, as a modal question over the grid,
+  with a confirm and a cancel. Three rules keep that from being a nag.
+  The question is only asked when `shader_source::presets_dir` finds
+  nothing, which is already false in a source checkout and in any package
+  that ships presets. Answering it *either way* writes
+  `first-run.txt` into the profile directory, so "Not now" is not
+  re-asked on every start (the marker sits beside the profiles, not the
+  presets: a successful download replaces the preset directory by a
+  rename and would take it with it). And a "yes" is worth something the
+  moment it lands — the starter profiles in
+  `shader_source::DEFAULT_PROFILES` are written against the collection
+  that just arrived (**CRT Aperture** `crt/crt-aperture.slangp`, **CRT
+  Royale** `crt/crt-royale.slangp`, **Apple II**
+  `presets/apple-monitor-II.slangp`, all three at the preset's own
+  defaults, which is an *empty* override table and not a snapshot of
+  today's values), so the first machine someone creates has a CRT to pick
+  rather than four hundred `.slangp` files to guess from. A name the
+  profile library already holds is never written a second time:
+  `shader_library::create` deduplicates the slug, so re-running this
+  would otherwise hand back `crt-royale-2`. The model is
+  `launcher_core::firstrun`, and it holds **the words at every step** —
+  `Message { step, headline, detail }` from one `state()` poll, because
+  both front ends had been formatting "Downloading shader presets… 12.3
+  MB" separately, once in Rust and once in QML, which is the drift this
+  crate exists to prevent. Each front end lays those two strings out in
+  its own idiom: Qt's `MessageDialog` puts them in `text` and
+  `informativeText`, egui stacks them in a `Modal`. **The buttons are
+  the one thing that differs, deliberately.** Qt uses the platform's
+  standard buttons — Yes/No, Retry/Cancel, OK — because that is what a
+  native confirmation dialog is, and a native dialog with hand-written
+  button text is what looks wrong on every desktop at once; egui, which
+  has no standard buttons, takes `confirm_label()` / `cancel_label()`
+  from the model. Which is why the size and the destination are in the
+  *question* and not only on a button. The Qt side is two dialogs and not
+  one — the question and the outcome — for the reason in "Five Qt traps"
+  below, and the download between them has no dialog at all: it needs no
+  answer, so it runs in the launcher's header rather than locking the
+  window for a minute. `launcherx --first-run [status|accept|decline]`
+  and `--default-profiles [<collection>]` are the same flow without a
+  toolkit (the `shader-defaults` and `qt-firstrun` checks). One thing
+  that only shows up when a collection arrives *late*: the profile
+  manager caches "there is none" for the life of the process, so
+  accepting the offer calls `editor::Presets::forget` on the way out, or
+  the manager goes on offering to download what has just been
+  downloaded.
 - **The preview moves when the preset does** (fixed 2026-09-06): plenty of
   presets do not draw the same picture every frame — an interlaced CRT
   puts up alternate fields, a phosphor afterglow decays over several,
@@ -249,6 +298,24 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   that for free from `editingFinished`, while the egui build re-sorts
   when the field loses focus, or the row would slide out from under the
   cursor typing into it.
+- **"Browse…" adds the disc, it does not fill a box** (2026-09-09,
+  user-reported): a file chosen in the dialog is on the shelf before the
+  dialog has finished closing. The dialog already asked the question
+  "Add to shelf" was there to ask a second time, and a picker whose only
+  visible effect is a path in a text field reads as one that did nothing.
+  "Add folder…" beside it was always this way, which is half of why the
+  other button looked broken. The field and its button stay, for a path
+  someone *types* — a mount the picker cannot reach, or one already on
+  the clipboard — and nothing is lost by the immediacy: a disc added by
+  mistake is one "Remove" away, and the shelf is a list of what you own,
+  not a document being drafted. Both front ends carry it (egui's
+  `path_field` hands its caller the path the *dialog* produced, Qt's
+  `PathField` has a `picked` signal beside `edited`), because it is a
+  decision, and the check that guards it is `qt-shelf` in
+  `scripts/test.sh`: a real file dialog belongs to the window system and
+  cannot be opened offscreen, so the probe hands the field the path the
+  dialog would have and asks the *window* whether the shelf grew and the
+  field emptied.
 - **A host folder is a disc too** ("Add folder…", both front ends): the
   shelf takes a directory, and the machine's drive is given
   `isodir:<path>`, which generates an ISO 9660 + Joliet volume over the
@@ -491,7 +558,10 @@ and the line is drawn deliberately far into what usually counts as UI:
   (QMP to a running machine), `snapshots`, `preview` (the shader chain on
   a still image);
 - and **the windows' own behaviour**: `machines`, `wizard`, `shelf`,
-  `snaps`, `editor`, one model per window, plus `browse` for the one
+  `snaps`, `editor`, `firstrun`, one model per window — down to the
+  sentences they show, which is why the first-run offer's question and
+  both its button labels are the model's and not a QML string — plus
+  `browse` for the one
   file-dialog decision that is not a dialog and `cli` for every debug
   verb that needs no toolkit.
 
@@ -635,6 +705,30 @@ Save, New profile… again — and prints the list's count either side and
 what the preset field is **showing**; the `qt-profile` check in
 `scripts/test.sh` wants `0 -> 1` and an empty field, and the unfixed
 build gives `0 -> 0` with the old preset still in it.
+
+**And the wizard had the same third symptom, unnoticed, until a user hit
+it on 2026-09-08:** a machine name typed into the Name field vanished the
+moment any combo box was touched. `Wizard::pull` — the wizard's
+`catch_up`, written the same day for the same reason — existed but was
+called by two verbs only, `fill_advanced` and `submit`. Every `choose_*`
+and `reset_*` went straight to the form and then published, so the form's
+own (still empty, or still the machine's old) name went back over what
+had been typed, and the `text:` binding put the empty string in the field
+in front of the user. **Typing does not break the binding**, which is
+what makes this visible rather than merely wrong: a QML binding is
+destroyed by a write from *JavaScript*, and a keystroke is a write from
+C++ — the binding stays live and re-evaluates on the model's very next
+notify. Six fields were exposed, not one: the name, both path fields, the
+disk size, the advanced TOML and the shader profile. Every form-changing
+verb now goes through one `Wizard::edit(|form| …)` — pull, change,
+publish, in that order and never any other — because the rule only holds
+if there is one place it can be forgotten.
+
+`qt-wizard` grew the probe for it: it types a name into the real field
+(with `insert`, which is what a key press does — a JS assignment would
+unbind the field and hide the bug), moves the family combo box, and
+prints what the field is **showing** beside what the model holds. The
+unfixed build says `shown [] model []`.
 
 ### What each front end still owns
 
@@ -848,7 +942,7 @@ Two of those need saying out loud:
   `DYLD_PRINT_LIBRARIES=1`, so the images the QML engine pulls in have to
   be the app's own copies too.
 
-### Four Qt traps, each of which cost real time
+### Five Qt traps, each of which cost real time
 
 1. **cxx-qt's generated property setter skips the notify when the value
    already matches** — it compares first, to avoid binding loops. So
@@ -875,6 +969,24 @@ Two of those need saying out loud:
    good) and not by assignment (which it may simply ignore, as it did
    here for the height but not the width). A window that wants two very
    different sizes should be two windows.
+5. **A `MessageDialog` cannot be driven from outside: `accept()` and
+   `close()` both come back as `rejected()`** (measured 2026-09-09 on
+   the Quick fallback — `firstRunDialog.accept()` on a Yes/No dialog
+   emitted `rejected` and nothing else). So a dialog whose visibility
+   follows a model *answers its own question* the moment the model
+   moves: the first-run offer's Yes started the download, the model's
+   step changed, the code closed the dialog to get out of the way, and
+   the close arrived back as a "No" that put the whole offer away — with
+   the marker already written, so it never asked again. The rule that
+   falls out of it is a good one anyway: **one dialog per thing there is
+   to answer, opened when that step arrives and closed only by the
+   person pressing one of its buttons.** The offer is two — the question
+   (`FirstRunDialog.qml`) and the outcome
+   (`FirstRunResultDialog.qml`) — and the step in between, the download,
+   has no dialog at all because it has nothing to answer. A probe that
+   wants to press a button emits the dialog's own `accepted` /
+   `rejected` signal, which is what a press delivers; it must not call
+   the like-named *methods*.
 
 ## Out of scope for v1
 
