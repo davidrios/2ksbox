@@ -221,7 +221,7 @@ Integration and end-to-end only, as the policy requires.
 |---|---|
 | `libsynth` (`synthx selftest`) | the three engines through the **C API the devices use**: the AdLib detection sequence (status 0x00 → 0xC0 → 0x00 across a timer), a 440 Hz FM note measured by Goertzel against its neighbours, the same note through the **shipped bank** (so a truncated or unreadable bank in a package fails here), a running-status note-off with a real-time byte wedged inside the note-on, and the CM-32L when ROMs are given |
 | `music` (`scripts/test.sh`) | the two pickers from a checkbox to a real QEMU: each family offers what doc 06 says, the first entry is what a new machine gets, an entry a family does not offer is refused rather than written, the FM chip follows the card, and our own `qemu-system-i386` accepts every combination |
-| `tools/midi-guest-test.py` | the whole chain with a guest in it: a DOS program writes an AdLib note and an MPU-401 melody under `-audiodev wav`, and the **wav** is what is checked — the notes are there, at the pitches the program asked for. A device that accepts every write and plays nothing passes every other check and fails this one |
+| `midi-guest` (`tools/midi-guest-test.py`) | the whole chain with a guest in it: a DOS program runs the AdLib detection sequence at the ports, plays 440 Hz on the OPL3, then resets an MPU-401, puts it in UART mode and plays A4 through it — and the **wav QEMU recorded** is what is checked, not the program's own opinion. Two boots, one per device: both are asked the same question and one file with two notes in it cannot answer it twice. ~11 s in the guest stage |
 
 ## 8. Not here (and the order to add it)
 

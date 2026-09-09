@@ -158,6 +158,12 @@
 #   rep-guest      tools/rep-guest-test.py: a DOS rep movs/stos battery (widths,
 #                  address sizes, DF, page crossings, overlaps), rep-fast on/off
 #                  identical and equal to a model of the instruction (patch 17)
+#   midi-guest     tools/midi-guest-test.py: the music devices as a *guest* meets
+#                  them (doc 20) — a DOS program runs the AdLib detection sequence,
+#                  plays 440 Hz on the OPL3, then resets an MPU-401, puts it in UART
+#                  mode and plays A4 through it; the wav QEMU's own backend recorded
+#                  is what is checked, so a device that takes every write and plays
+#                  nothing fails here. Two boots, ~11 s
 #   smc-guest      tools/smc-guest-test.py: self-modifying code (patched immediates,
 #                  same-value rewrites, opcode flips, a crossing store), smc-same-value
 #                  on/off both architecturally right (patch 18)
@@ -1564,6 +1570,7 @@ guest_stage() {
       run_check smc-guest smc-guest.log python3 tools/smc-guest-test.py || true
       run_check sse-guest sse-guest.log python3 tools/sse-guest-test.py || true
       run_check atapi-guest atapi-guest.log python3 tools/atapi-guest-test.py || true
+      run_check midi-guest midi-guest.log python3 tools/midi-guest-test.py || true
     # **One skip per battery, not one skip standing for five.** Every DOS
     # battery is gated on the same floppy, and this used to report the whole
     # group as a single `SKIP x87-guest` — so a fresh worktree, which has no
@@ -1574,10 +1581,10 @@ guest_stage() {
     # including `atapi-guest`, which is the only check that reads a disc from
     # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
     # weak-sector rule, which that battery is the regression guard for).
-    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest; do
+    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest; do
       skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
     done; fi
-  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest; do
+  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest; do
     skip "$c" "needs nasm, mtools and build/qemu"
   done; fi
   if [ "$OS" != Linux ]; then skip guest "Linux only for now (mkfs.fat, sfdisk, mtools)"; return; fi

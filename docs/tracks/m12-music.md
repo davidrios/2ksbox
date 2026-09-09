@@ -58,22 +58,23 @@ the 3dfx ones.
   (`sha256sum` usage differs); a Linux session should re-run the
   generator and confirm it produces the same three entries.
 
+- **The guest end-to-end** (`tools/midi-guest-test.py`, the `midi-guest`
+  check): a DOS program under TCG runs the AdLib detection sequence
+  (`OPL status 00 c0 00`), plays 440 Hz on the OPL3, then resets an
+  MPU-401 (`fe fe` — both ACKs), puts it in UART mode and plays A4; both
+  notes are in the wav QEMU recorded. 11 s for the pair.
+
 ## Next steps
 
-1. **The guest end-to-end.** `tools/midi-guest-test.py`: a DOS program
-   that plays an AdLib note and an MPU-401 melody under `-audiodev wav`,
-   with the wav as the evidence. Everything above proves the chain from
-   the *ports* down; nothing yet proves a guest's own driver finds the
-   two devices.
-2. **The MT-32, once.** `synthx selftest --roms <dir>` on a machine that
+1. **The MT-32, once.** `synthx selftest --roms <dir>` on a machine that
    has the ROMs: it is the one engine no check here has ever run.
-3. **Win98 in front of it.** Whether "MPU-401 Compatible" from Add New
+2. **Win98 in front of it.** Whether "MPU-401 Compatible" from Add New
    Hardware really drives the port, and whether `mpu401`'s default
    IRQ 9 collides with the ACPI SCI on an ACPI Win98 install — the
    device raises it only to hand over an ACK, so if it does, the answer
    is to write `irq=` off in the bundle or move it.
-4. **A DOS game with real MIDI music**, which is the point of all of it.
-5. **The host MIDI port** (doc 20 §8.1), the first thing deliberately
+3. **A DOS game with real MIDI music**, which is the point of all of it.
+4. **The host MIDI port** (doc 20 §8.1), the first thing deliberately
    outside these stages.
 
 ## Rules
