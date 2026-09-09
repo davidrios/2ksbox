@@ -46,6 +46,7 @@ static char g_win[MAX_PATH];     /* WINDOWS */
 static int g_nt;                 /* 2000/XP rather than 98/Me */
 static int g_reboot;             /* a step said the machine must restart */
 static FILE *g_log;
+static char g_log_path[PATHBUF];  /* where the log actually went, as an absolute path */
 
 /* `rel` under the SETUP.EXE folder, in a caller-provided buffer. */
 static const char *iso(char *buf, const char *rel)
@@ -549,7 +550,8 @@ static void usage(void)
            "  SETUP /LIST           print the component and file-set lists\n"
            "  SETUP /GAME <n> <dir> copy file set <n> next to a game's EXE\n"
            "  SETUP /REBOOT         with /ALL or /I: restart if one asked for it\n"
-           "  SETUP /LOG <file>     write the log there (default SETUP.LOG)\n");
+           "  SETUP /LOG <file>     write the log there (default: SETUP.LOG in\n"
+           "                        the current folder, else WINDOWS\\SETUP.LOG)\n");
 }
 
 /* "Windows 98 SE" / "Windows XP" — what the user should see confirmed,
@@ -572,19 +574,52 @@ static void os_name(char *out, OSVERSIONINFOA *v)
             (unsigned long)v->dwMinorVersion, (unsigned long)(v->dwBuildNumber & 0xffff));
 }
 
-/* The log next to the current directory, or in TEMP when that is the CD
- * itself (the usual case: SETUP is started from D:\). */
+/* Open `path` for the log and remember where it landed, as an absolute
+ * path, so the program can tell the user at the end — a Windows 98 console
+ * has no scrollback, so "here is the whole log" is the one line that has to
+ * survive on screen. */
+static int try_log(const char *path)
+{
+    g_log = fopen(path, "w");
+    if (!g_log) return 0;
+    if (!GetFullPathNameA(path, sizeof g_log_path, g_log_path, NULL))
+        lstrcpynA(g_log_path, path, sizeof g_log_path);
+    return 1;
+}
+
+/* Where the log goes, in order of preference: an explicit /LOG, then next to
+ * the current directory (a copy of the tools on the hard disk), then
+ * WINDOWS\SETUP.LOG — always writable and always findable, which is the case
+ * that matters because SETUP is usually started from the read-only CD, where
+ * the current-directory write fails — then TEMP as a last resort. Whichever
+ * wins, its absolute path is announced; the log is never left somewhere the
+ * user has to guess. */
 static void open_log(const char *want)
 {
     char path[PATHBUF];
 
-    if (want) { g_log = fopen(want, "w"); if (g_log) return; }
-    g_log = fopen("SETUP.LOG", "w");
-    if (g_log) return;
+    if (want && try_log(want)) return;
+    if (try_log("SETUP.LOG")) return;
+    if (GetWindowsDirectoryA(path, sizeof path - 16)) {
+        lstrcatA(path, "\\SETUP.LOG");
+        if (try_log(path)) return;
+    }
     if (GetTempPathA(sizeof path - 16, path)) {
         lstrcatA(path, "SETUP.LOG");
-        g_log = fopen(path, "w");
+        try_log(path);
     }
+}
+
+/* The last line on screen: where to read the whole log. Console only (the
+ * log need not name itself), and printed at the end of every mode so it is
+ * what stays visible after the console has scrolled past everything else. */
+static void announce_log(void)
+{
+    if (g_log_path[0])
+        printf("\nFull log of what was done: %s\n", g_log_path);
+    else
+        printf("\n(a log file could not be written anywhere)\n");
+    fflush(stdout);
 }
 
 int main(int argc, char **argv)
@@ -648,11 +683,18 @@ int main(int argc, char **argv)
     }
 
     open_log(logfile);
-    say("2ksbox guest tools - %s", osname);
-    say("files from %s", g_root);
+    {
+        SYSTEMTIME lt;
+        GetLocalTime(&lt);
+        say("2ksbox guest tools - %s", osname);
+        say("%04d-%02d-%02d %02d:%02d:%02d  %s", lt.wYear, lt.wMonth, lt.wDay,
+            lt.wHour, lt.wMinute, lt.wSecond, GetCommandLineA());
+        say("files from %s", g_root);
+        say("log: %s", g_log_path[0] ? g_log_path : "(none)");
+    }
 
-    if (mode_list) { say(""); print_components(); say(""); print_sets(); return 0; }
-    if (game_dir) return copy_game_set(game, game_dir);
+    if (mode_list) { say(""); print_components(); say(""); print_sets(); announce_log(); return 0; }
+    if (game_dir) { rc = copy_game_set(game, game_dir); announce_log(); return rc; }
 
     /* /ALL means all of them, including the ones the menu leaves
      * unticked: a batch file that says /ALL is not choosing defaults. */
@@ -665,9 +707,11 @@ int main(int argc, char **argv)
         print_components();
         say("");
         rc = install_selected();
+        announce_log();
         if (g_reboot && want_reboot) reboot_now();
         return rc;
     }
     menu();
+    announce_log();
     return 0;
 }
