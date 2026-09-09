@@ -1909,8 +1909,9 @@ list (`--new`, `--print-args`, `--play`, `--paths`,
 `--diag-editor-frame`, `--discs`, `--boot-disc`, `--diag-shelf-frame`,
 `--snapshots` (`--live` for a running machine), `--diag-snapshots-frame`,
 `--qmp-socket`, `--insert-disc`, `--kvm`, `--diag-wizard-frame`,
-`--shaders`, `--download-shaders`, `--browse-start`,
-`--optimizations`; and
+`--diag-firstrun-frame` (egui's own, like the other `--diag-*-frame`),
+`--shaders`, `--download-shaders`, `--first-run`, `--default-profiles`,
+`--browse-start`, `--optimizations`; and
 `--wizard-edit` now takes optional
 `[ram-mb] [auto|kvm|tcg] [net|nonet] [processor] [boot]`, `-` keeping a
 field — the last two added at step 7, since they are exactly what the Qt
@@ -1968,3 +1969,72 @@ this track's files, and what is left:
 - **Still owed, and now on the shipped path:** the preview's CPU readback
   (doc 07's one place where the Qt build is worse) wants a
   `QQuickRhiItem` importing the Vulkan image instead.
+
+## The shader download is offered on the way up (2026-09-09, user-asked)
+
+Everything needed to fetch libretro's collection has been here since
+2026-09-05 — `shader_source` gets the tarball, unpacks it through a
+`.part` staging directory and hands the profile manager a preset picker
+that works. What it never had was a way to be *found*: the "Download
+presets" button is on the profile manager's preset row, two windows in,
+which is precisely where somebody who has never opened the profile
+manager will not look. A fresh launcher therefore played every machine
+through no shader at all, which is most of the product missing.
+
+So a launcher that finds **no collection at all** now asks once, on the
+way up, as a modal question over the grid. The model is
+`launcher_core::firstrun` — the decision to ask, the question's words,
+both button labels, the download's steps and what a "yes" earns — and the
+two front ends are views over it exactly as everywhere else: egui's
+`Modal` in `LauncherApp::first_run_ui`, QML's `FirstRunDialog.qml` bound
+to `src/qt/firstrun.rs`.
+
+Three things in it are worth keeping written down.
+
+- **Asked once means once.** Answering either way writes `first-run.txt`
+  into the *profile* directory. Not the preset directory, which is where
+  it obviously belongs: a successful download **replaces** that directory
+  by a rename (`shader_source::fetch` unpacks to `<dir>.part` and renames
+  over the old one), so a marker there would be deleted by the very
+  answer it records. The file is plain text saying what it is and that
+  deleting it asks again, which is doc 07's "a plain, documented
+  directory, no database" applied to one bit of state.
+- **A "yes" is worth something immediately.** Three starter profiles are
+  written against the collection that just landed — CRT Aperture, CRT
+  Royale, Apple II, from `shader_source::DEFAULT_PROFILES` — all at their
+  preset's own defaults, which for a profile means an **empty** override
+  table (`shader_profile` stores only what someone moved), not a
+  snapshot of today's values that would go stale the next time upstream
+  retunes a preset. `shader_library::create_defaults` skips any name the
+  library already holds, because `create` deduplicates the *slug* and
+  would otherwise answer a second run with `crt-royale-2` — a library
+  slowly filling with copies is a worse failure than adding nothing.
+- **A collection that arrives late.** `editor::Presets` caches "there is
+  no collection" for the life of the process — it is a directory walk,
+  and the answer could not previously change while the launcher ran.
+  Now it can, so accepting the offer calls the new `Presets::forget` on
+  both front ends' editors, or the profile manager sits there offering
+  to download what has just been downloaded.
+
+Checked two ways, in the shape this track has settled on. `shader-defaults`
+drives `launcherx` — a launcher with no collection asks and one with a
+collection does not, "Not now" is remembered, and a "yes" writes three
+profiles naming presets librashader really parses, by absolute path, with
+no overrides, once. `qt-firstrun` asks the real dialog through
+`LAUNCHER_QT_SCREEN=firstrun`, because a model that is right about having
+no presets and a dialog that never appears look identical from anywhere
+else — the `cxx_qt::Initialize` trap this track has now paid for three
+times. Neither downloads anything: the 50 MB is `shader_source`'s
+long-standing code, and it was run end to end by hand once
+(`launcherx --first-run accept`: 50 MB fetched, three profiles written
+pointing into it, the question never asked again).
+
+The egui half has the same treatment for a hand-driven run,
+`launcher --diag-firstrun-frame <out.png> [WxH] [<script>]`: the real
+`Modal` through `diag_window_frames`, where a click at the "Not now" the
+picture shows closes it and leaves the marker on disk. It is not a
+`scripts/test.sh` check for the reason none of the `--diag-*-frame`
+verbs are — `launcher` is not a default workspace member since
+2026-09-07, so the suite would skip it on most hosts — which is also why
+`first_run_ui` is a free function taking the model rather than a method
+on `LauncherApp`, the shape `wizard::show` already has.

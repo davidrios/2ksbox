@@ -32,6 +32,7 @@ fn main() {
         QmlModule::new("com._2ksbox.launcher").qml_files([
             "qml/Main.qml",
             "qml/Disclosure.qml",
+            "qml/FirstRunDialog.qml",
             "qml/PathField.qml",
             "qml/PresetCollection.qml",
             "qml/WizardWindow.qml",
@@ -64,6 +65,7 @@ fn main() {
     .files([
         "src/qt/diag.rs",
         "src/qt/discs.rs",
+        "src/qt/firstrun.rs",
         "src/qt/machines.rs",
         "src/qt/shaders.rs",
         "src/qt/snaps.rs",

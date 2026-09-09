@@ -50,6 +50,18 @@
 #                  both are things only a probe that asks the controls can see,
 #                  because the profile is on disk and the model is empty in the
 #                  runs that fail (only if a launcher-qt has been built)
+#   qt-firstrun    the Qt first-run shader offer, driven: the dialog is really up
+#                  on a launcher with no preset collection (it is shown on a
+#                  property that has to be published before the first frame),
+#                  its words are the shared model's, "Not now" closes it, and
+#                  the next start comes up with nothing over the grid (only if a
+#                  launcher-qt has been built)
+#   shader-defaults the first-run shader offer without a toolkit: a launcher with
+#                  no collection asks and one with a collection does not, "Not
+#                  now" is remembered so the question is asked exactly once, and
+#                  a "yes" writes the three starter profiles — each naming a
+#                  preset librashader really parses, by absolute path, with no
+#                  parameter overrides — and writes them only once
 #   shelforder     the disc shelf is one list in one order: discs added in the
 #                  wrong order come back by label (case-insensitively, and disc
 #                  10 after disc 2), a later addition lands where its name
@@ -397,6 +409,97 @@ shelforder_check() { # the disc shelf is in order by label, all the way to the g
   : >"$dir/Age of Empires.iso"
   o="$(target/release/launcherx --discs add "$dir/Age of Empires.iso" | cut -f1 | head -1)"
   [ "$o" = "Age of Empires" ] || { echo "a disc added later did not land in order (first row: $o)"; rc=1; }
+  return $rc
+}
+shaderdefaults_check() { # the first-run shader offer and its starter profiles (doc 07)
+  local rc=0 dir="$OUT/shaderdefaults" o preset n
+  rm -rf "$dir"; mkdir -p "$dir/profiles" "$dir/empty"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  # Everything here except the 50 MB itself: the download is the one part
+  # that needs the network, and `shader_source::fetch` is the same code
+  # the profile manager's button has always run. What is new — and what
+  # goes wrong quietly — is the question's *once-only* rule and the
+  # profiles written after a "yes".
+
+  # A launcher with no collection asks, and says what it will do.
+  export LAUNCHER_SHADERS_DIR="$dir/empty"
+  o="$(target/release/launcherx --first-run status)" || { echo "--first-run status failed"; return 1; }
+  case "$o" in asking:*) ;; *) echo "a launcher with no presets did not ask: $o"; rc=1;; esac
+  case "$o" in *"$dir/empty"*) ;; *) echo "the question does not name where the collection would land"; echo "$o"; rc=1;; esac
+  # It names the profiles it is offering, so the sentence and
+  # `DEFAULT_PROFILES` cannot drift apart.
+  for n in "CRT Aperture" "CRT Royale" "Apple II"; do
+    case "$o" in *"$n"*) ;; *) echo "the question does not mention the $n profile"; rc=1;; esac
+  done
+
+  # A launcher that *has* one never asks — which is why nobody working in
+  # a checkout has ever seen this dialog (the submodule is a collection).
+  o="$(LAUNCHER_SHADERS_DIR=third_party/slang-shaders target/release/launcherx --first-run status)"
+  [ "$o" = idle ] || { echo "a launcher with a collection asked anyway: $o"; rc=1; }
+
+  # "Not now" is remembered: answered once, and once only, or the offer
+  # becomes a thing that greets you on every start forever.
+  target/release/launcherx --first-run decline >/dev/null || { echo "--first-run decline failed"; rc=1; }
+  [ -f "$dir/profiles/first-run.txt" ] || { echo "declining wrote no marker"; rc=1; }
+  o="$(target/release/launcherx --first-run status)"
+  [ "$o" = idle ] || { echo "the offer came back after being declined: $o"; rc=1; }
+
+  # The other half of a "yes", against the collection this checkout has:
+  # three profiles, each naming a preset that really is one (librashader
+  # parses it — a profile pointing at a missing or unreadable `.slangp`
+  # is only a parse error deferred to whoever opens it) and each at the
+  # preset's own defaults, which is an *empty* override table.
+  o="$(target/release/launcherx --default-profiles third_party/slang-shaders)" \
+    || { echo "--default-profiles failed"; return 1; }
+  [ "$(printf '%s\n' "$o" | wc -l)" = 3 ] || { echo "not three profiles: $o"; rc=1; }
+  for n in crt-aperture crt-royale apple-ii; do
+    if [ ! -f "$dir/profiles/$n.toml" ]; then echo "no $n.toml"; rc=1; continue; fi
+    o="$(sed -n '/^\[params\]/,$p' "$dir/profiles/$n.toml" | grep -c '=' || true)"
+    [ "$o" = 0 ] || { echo "$n came out with $o parameter overrides, not the preset's defaults"; rc=1; }
+    preset="$(sed -n 's/^preset = "\(.*\)"/\1/p' "$dir/profiles/$n.toml")"
+    case "$preset" in /*) ;; *) echo "$n's preset path is relative ($preset)"; rc=1;; esac
+    target/release/launcherx --list-shader-params "$preset" >/dev/null 2>&1 \
+      || { echo "$n names something librashader will not parse: $preset"; rc=1; }
+  done
+
+  # And running it again adds nothing. `shader_library::create` would
+  # otherwise deduplicate the *slug* and hand back a second "CRT Royale"
+  # as `crt-royale-2` — a second download, or a second launcher start,
+  # slowly filling the library with copies.
+  o="$(target/release/launcherx --default-profiles third_party/slang-shaders)"
+  case "$o" in "(nothing to add"*) ;; *) echo "a second run added profiles again: $o"; rc=1;; esac
+  [ "$(ls "$dir/profiles"/*.toml | wc -l)" = 3 ] || { echo "the profile library is not still three"; rc=1; }
+  return $rc
+}
+qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
+  local rc=0 dir="$OUT/qtfirstrun" bin="launcher-qt/target/release/launcher-qt" o
+  rm -rf "$dir"; mkdir -p "$dir/library" "$dir/profiles" "$dir/empty"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" LAUNCHER_SHADERS_DIR="$dir/empty"
+  export QT_QPA_PLATFORM=offscreen
+  # Like `qt-wizard` and `qt-profile`, this asks the *window*: the model
+  # can be perfectly right about there being no presets and the dialog
+  # still never appear (it is shown on a property that has to be
+  # published before the first frame — the trap the whole port is written
+  # around), or appear and never go away again.
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=firstrun LAUNCHER_QT_ARG=decline LAUNCHER_QT_DELAY=300 \
+       "$bin" 2>&1 | sed -n 's/^\[diag\] firstrun/firstrun/p')"
+  [ -n "$o" ] || { echo "the probe printed no firstrun line"; return 1; }
+  printf '%s\n' "$o" | sed 's/^/  /'
+  printf '%s' "$o" | grep -q "firstrun: open=true, dialog=true, state=asking" \
+    || { echo "the dialog was not up on a launcher with no presets"; rc=1; }
+  # The words are the shared model's, not this front end's (ADR-014): the
+  # egui build shows the same ones, and a label typed into QML is exactly
+  # the kind of thing that used to drift between the two.
+  printf '%s' "$o" | grep -q "confirm=Download (~50 MB), cancel=Not now" \
+    || { echo "the buttons are not the model's labels"; rc=1; }
+  printf '%s' "$o" | grep -q "firstrun declined: open=false, dialog=false" \
+    || { echo "'Not now' did not close the dialog"; rc=1; }
+  [ -f "$dir/profiles/first-run.txt" ] || { echo "declining through the window wrote no marker"; rc=1; }
+  # Asked once: the next start comes up on the grid, with nothing over it.
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=firstrun LAUNCHER_QT_DELAY=300 "$bin" 2>&1 \
+       | sed -n 's/^\[diag\] firstrun: //p')"
+  case "$o" in "open=false, dialog=false"*) ;; *) echo "the offer came back on the next start: $o"; rc=1;; esac
   return $rc
 }
 qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
@@ -965,6 +1068,15 @@ host_stage() {
     run_check dirshelf dirshelf.log dirshelf_check || true
     run_check shelforder shelforder.log shelforder_check || true
   else skip dirshelf "needs target/release/launcherx"; skip shelforder "needs target/release/launcherx"; fi
+  # The first-run shader offer and the starter profiles behind it. Needs
+  # the preset collection to check what a "yes" writes, so it is skipped
+  # on a checkout without the submodule rather than downloading 50 MB
+  # inside the suite.
+  if [ -x target/release/launcherx ] && [ -f third_party/slang-shaders/crt/crt-aperture.slangp ]; then
+    run_check shader-defaults shader-defaults.log shaderdefaults_check || true
+  else
+    skip shader-defaults "needs target/release/launcherx and the slang-shaders submodule"
+  fi
   # The launcher's own window (ADR-015: the Qt build is the one every
   # package installs). Still conditional, because it is its own cargo
   # workspace and a host with no Qt 6 builds everything else.
@@ -972,10 +1084,12 @@ host_stage() {
     run_check qt-wizard qt-wizard.log qtwizard_check || true
     run_check qt-close qt-close.log qtclose_check || true
     run_check qt-profile qt-profile.log qtprofile_check || true
+    run_check qt-firstrun qt-firstrun.log qtfirstrun_check || true
   else
     skip qt-wizard "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-close "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-profile "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+    skip qt-firstrun "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
   fi
 
   # the host GPU probe (ADR-013): what the launcher tells someone about 3D

@@ -37,6 +37,9 @@ struct LauncherApp {
     disc_shelf: discshelf::DiscShelfWindow,
     snapshots: snapshots_ui::SnapshotWindow,
     shader_manager: shader_manager::ShaderManager,
+    /// The offer to fetch a preset collection, made once on the first
+    /// start of a launcher that has none (`launcher_core::firstrun`).
+    first_run: launcher_core::firstrun::FirstRun,
     /// `None` on a non-wgpu eframe backend (not expected in practice —
     /// `wgpu` is a default feature, see `docs/tracks/m6-launcher.md` —
     /// but the shader profile editor degrades to "no live preview"
@@ -173,6 +176,13 @@ impl LauncherApp {
     }
 
     fn windows(&mut self, ctx: &egui::Context) {
+        if first_run_ui(ctx, &mut self.first_run) {
+            // A collection landed after the profile manager's model had
+            // already cached "there is none", and the starter profiles
+            // are new rows behind the grid's Shader column.
+            self.shader_manager.rescan_presets();
+            self.machines.refresh_profiles();
+        }
         if wizard::show(&mut self.wizard, ctx, &self.machines.library_dir.clone(), self.machines.profiles()).is_some() {
             self.machines.refresh();
         }
@@ -201,6 +211,78 @@ impl LauncherApp {
             self.machines.refresh_profiles();
         }
     }
+}
+
+/// The first-run shader offer (`launcher_core::firstrun`): a modal over
+/// the grid on the first start of a launcher that has no preset
+/// collection, and nothing at all on every start after. `true` once a
+/// collection has arrived and been acknowledged.
+///
+/// It is drawn *before* the other windows so it is the topmost thing on
+/// screen, and it is a `Modal` rather than a `Window` because the
+/// question has to be answered — every button behind it (New machine…,
+/// Shader profiles…) leads somewhere that would otherwise ask the same
+/// thing again in a smaller voice. A free function, like
+/// `wizard::show`, so the diagnostic verb can drive the real dialog
+/// without a `LauncherApp` around it.
+fn first_run_ui(ctx: &egui::Context, first_run: &mut launcher_core::firstrun::FirstRun) -> bool {
+    use launcher_core::firstrun::{Step, TITLE};
+    if !first_run.open() {
+        return false;
+    }
+    let step = first_run.state();
+    let mut arrived = false;
+    egui::Modal::new(egui::Id::new("first-run")).show(ctx, |ui| {
+        ui.set_max_width(480.0);
+        ui.heading(TITLE);
+        ui.add_space(8.0);
+        match step {
+            // `open()` said otherwise; nothing to draw.
+            Step::Idle => {}
+            Step::Asking => {
+                ui.label(first_run.question());
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button(first_run.confirm_label()).clicked() {
+                        first_run.accept();
+                    }
+                    if ui.button(first_run.cancel_label()).clicked() {
+                        first_run.decline();
+                    }
+                });
+            }
+            Step::Downloading(mb) => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(format!("Downloading shader presets… {mb:.1} MB"));
+                });
+                // The download runs on its own thread and nothing else
+                // would wake the UI to show it moving.
+                ui.ctx().request_repaint();
+            }
+            Step::Failed(err) => {
+                ui.colored_label(egui::Color32::RED, format!("Couldn't download the shader presets: {err}"));
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Try again").clicked() {
+                        first_run.retry();
+                    }
+                    if ui.button("Close").clicked() {
+                        first_run.dismiss();
+                    }
+                });
+            }
+            Step::Done(line) => {
+                ui.label(line);
+                ui.add_space(12.0);
+                if ui.button("OK").clicked() {
+                    first_run.dismiss();
+                    arrived = true;
+                }
+            }
+        }
+    });
+    arrived
 }
 
 /// eframe's own wgpu setup, plus the one feature the shader preview
@@ -525,6 +607,27 @@ fn main() -> eframe::Result {
             cli::print_snapshots(&window.model);
             return Ok(());
         }
+        Some("--diag-firstrun-frame") => {
+            // The real first-run offer through egui headlessly: the
+            // dialog only exists on a launcher with no preset collection
+            // (point `LAUNCHER_SHADERS_DIR` at an empty directory), and
+            // a click script answers it — the buttons are laid out from
+            // the model's own labels, so where they *are* is the thing
+            // a picture can prove.
+            let usage =
+                "usage: launcher --diag-firstrun-frame <out.png> [<screen WxH>] [<script: x,y click>]";
+            let out = args.next().expect(usage);
+            let screen = screen_size(args.next(), egui::vec2(700.0, 400.0));
+            let script = parse_script(&args.next().unwrap_or_default());
+            let mut model = launcher_core::firstrun::FirstRun::check(shader_library::default_dir());
+            println!("first-run open={}", model.open());
+            let render_state = headless_render_state();
+            diag_window_frames(&render_state, screen, &script, &out, |ctx| {
+                first_run_ui(ctx, &mut model);
+            });
+            println!("first-run open={} after the script", model.open());
+            return Ok(());
+        }
         Some("--diag-wizard-frame") => {
             // The same, for the machine form: `new <win98|xp|dos|other>` opens
             // it as "New machine", `edit <machine.toml>` as "Edit
@@ -736,8 +839,14 @@ fn main() -> eframe::Result {
                     shader_manager.debug_open_editor(preset.to_string(), image.to_string(), fullscreen);
                 }
             }
+            // Asked once, here rather than in the frame loop: the
+            // question is about what is on disk before anything ran, and
+            // deciding it per frame would be a `stat` sixty times a
+            // second for an answer that cannot change (`firstrun.rs`).
+            let first_run = launcher_core::firstrun::FirstRun::check(machines.profiles_dir.clone());
             Ok(Box::new(LauncherApp {
                 machines,
+                first_run,
                 wizard: launcher_core::wizard::Form::default(),
                 disc_shelf: discshelf::DiscShelfWindow::default(),
                 snapshots: snapshots_ui::SnapshotWindow::default(),

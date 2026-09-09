@@ -49,6 +49,7 @@ mod preview;
 mod qt {
     pub mod diag;
     pub mod discs;
+    pub mod firstrun;
     pub mod machines;
     pub mod shaders;
     pub mod snaps;

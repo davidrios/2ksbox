@@ -206,6 +206,40 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   `third_party/`. `LAUNCHER_SHADERS_DIR` overrides where they live. An
   empty preset field's "Browse…" opens there, since a `.slangp` is never
   somewhere a person would navigate to by hand.
+- **And the download is offered on the way up** (`firstrun.rs`,
+  2026-09-09): the button above lives two windows deep, on the profile
+  manager's preset row, which is exactly where someone who has never
+  opened the profile manager will not find it — so a launcher that finds
+  **no collection at all** asks once, as a modal question over the grid,
+  with a confirm and a cancel. Three rules keep that from being a nag.
+  The question is only asked when `shader_source::presets_dir` finds
+  nothing, which is already false in a source checkout and in any package
+  that ships presets. Answering it *either way* writes
+  `first-run.txt` into the profile directory, so "Not now" is not
+  re-asked on every start (the marker sits beside the profiles, not the
+  presets: a successful download replaces the preset directory by a
+  rename and would take it with it). And a "yes" is worth something the
+  moment it lands — the starter profiles in
+  `shader_source::DEFAULT_PROFILES` are written against the collection
+  that just arrived (**CRT Aperture** `crt/crt-aperture.slangp`, **CRT
+  Royale** `crt/crt-royale.slangp`, **Apple II**
+  `presets/apple-monitor-II.slangp`, all three at the preset's own
+  defaults, which is an *empty* override table and not a snapshot of
+  today's values), so the first machine someone creates has a CRT to pick
+  rather than four hundred `.slangp` files to guess from. A name the
+  profile library already holds is never written a second time:
+  `shader_library::create` deduplicates the slug, so re-running this
+  would otherwise hand back `crt-royale-2`. The whole model — including
+  both button labels and the question's words — is
+  `launcher_core::firstrun`, and both front ends are views over it:
+  egui's `Modal` and QML's `FirstRunDialog.qml`. `launcherx --first-run
+  [status|accept|decline]` and `--default-profiles [<collection>]` are
+  the same flow without a toolkit (the `shader-defaults` and
+  `qt-firstrun` checks). One thing that only shows up when a collection
+  arrives *late*: the profile manager caches "there is none" for the life
+  of the process, so accepting the offer calls
+  `editor::Presets::forget` on the way out, or the manager goes on
+  offering to download what has just been downloaded.
 - **The preview moves when the preset does** (fixed 2026-09-06): plenty of
   presets do not draw the same picture every frame — an interlaced CRT
   puts up alternate fields, a phosphor afterglow decays over several,
@@ -491,7 +525,10 @@ and the line is drawn deliberately far into what usually counts as UI:
   (QMP to a running machine), `snapshots`, `preview` (the shader chain on
   a still image);
 - and **the windows' own behaviour**: `machines`, `wizard`, `shelf`,
-  `snaps`, `editor`, one model per window, plus `browse` for the one
+  `snaps`, `editor`, `firstrun`, one model per window — down to the
+  sentences they show, which is why the first-run offer's question and
+  both its button labels are the model's and not a QML string — plus
+  `browse` for the one
   file-dialog decision that is not a dialog and `cli` for every debug
   verb that needs no toolkit.
 

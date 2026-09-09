@@ -15,8 +15,8 @@
 //! side, `QT_QPA_PLATFORM=offscreen` and `grabToImage` on the other.
 
 use crate::bundle::{self, Family, Machine, Optimization};
-use crate::{browse, control, disc_library, library, machines, player, preview, shader_library, shader_profile,
-    shader_source, shelf, snaps, wizard};
+use crate::{browse, control, disc_library, firstrun, library, machines, player, preview, shader_library,
+    shader_profile, shader_source, shelf, snaps, wizard};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -421,6 +421,62 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 }
             }
         }
+        "--first-run" => {
+            // The offer a brand-new launcher makes on the way up
+            // (`firstrun.rs`), without a window: `status` prints what the
+            // dialog would show, `decline` answers it the way "Not now"
+            // does, and `accept` runs the whole thing — the real download
+            // and the starter profiles after it — waiting here for the
+            // thread a front end would poll from its repaint.
+            let usage = "usage: --first-run [status|accept|decline]";
+            let mut model = firstrun::FirstRun::check(shader_library::default_dir());
+            match args.next().as_deref() {
+                None | Some("status") => {}
+                Some("decline") => model.decline(),
+                Some("accept") => {
+                    model.accept();
+                    // The poll a front end's repaint or timer does, at a
+                    // pace a terminal can read. `state` is also what
+                    // turns a finished download into the profiles, so
+                    // the loop ends on the step *after* that happened
+                    // and the line below is the outcome, printed once.
+                    while model.busy() {
+                        std::thread::sleep(Duration::from_millis(500));
+                        if let firstrun::Step::Downloading(mb) = model.state() {
+                            println!("running: {mb:.1} MB");
+                        }
+                    }
+                }
+                Some(other) => panic!("unknown first-run action {other:?}; {usage}"),
+            }
+            if let firstrun::Step::Failed(_) = print_first_run(&mut model) {
+                return Some(1);
+            }
+        }
+        "--default-profiles" => {
+            // The other half of a "yes", on a collection that is already
+            // there: the starter profiles, so the flow can be checked
+            // without 50 MB of network in a test suite (the
+            // `shader-defaults` check).
+            let presets = match args.next() {
+                Some(dir) => PathBuf::from(dir),
+                None => match shader_source::presets_dir() {
+                    Some(dir) => dir,
+                    None => {
+                        eprintln!("[first-run] no preset collection; pass one, or --download-shaders first");
+                        return Some(1);
+                    }
+                },
+            };
+            let dir = shader_library::default_dir();
+            let added = shader_library::create_defaults(&dir, &presets);
+            if added.is_empty() {
+                println!("(nothing to add; {} already has them)", dir.display());
+            }
+            for name in added {
+                println!("{name}");
+            }
+        }
         "--browse-start" => {
             // Where a path field's "Browse…" would open: the value's own
             // directory, or — for an empty preset field — the preset
@@ -509,6 +565,21 @@ pub fn print_snapshots(window: &snaps::Snapshots) {
     for snap in window.snapshots() {
         println!("{}\t{}\t{}\t{}", snap.id, snap.name, snap.date_label(), snap.size_label());
     }
+}
+
+/// One line for whatever the first-run dialog would be showing, in the
+/// same `<state>[: <text>]` shape the Qt bridge hands QML — so what the
+/// suite reads and what a window draws come from one `state()` call.
+fn print_first_run(model: &mut firstrun::FirstRun) -> firstrun::Step {
+    let step = model.state();
+    match &step {
+        firstrun::Step::Idle => println!("idle"),
+        firstrun::Step::Asking => println!("asking: {}", model.question().replace('\n', " ")),
+        firstrun::Step::Downloading(mb) => println!("running: {mb:.1} MB"),
+        firstrun::Step::Failed(e) => println!("failed: {e}"),
+        firstrun::Step::Done(line) => println!("done: {line}"),
+    }
+    step
 }
 
 /// Where every companion resolved, as text — one line each, the format

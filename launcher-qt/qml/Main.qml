@@ -33,6 +33,35 @@ ApplicationWindow {
 
     Diag { id: diag }
 
+    // The first-run shader offer (`src/qt/firstrun.rs`): up before
+    // anything else on the first start of a launcher with no preset
+    // collection, and never again once it has been answered. Its `open`
+    // drives the dialog both ways, the way the wizard's and the shader
+    // editor's flags drive their windows.
+    FirstRun {
+        id: offer
+        onOpenChanged: {
+            if (open) {
+                firstRunDialog.open()
+                return
+            }
+            firstRunDialog.close()
+            // A collection may have landed since these two were built,
+            // and with it the starter profiles: the editor cached "there
+            // is none" at construction, and the grid's Shader column
+            // lists what the profile library holds.
+            editor.rescanPresets()
+            profiles.refresh()
+            machines.refresh()
+        }
+        Component.onCompleted: if (open) firstRunDialog.open()
+    }
+
+    FirstRunDialog {
+        id: firstRunDialog
+        offer: offer
+    }
+
     // --- the grid ---------------------------------------------------
 
     header: ToolBar {
@@ -347,6 +376,10 @@ ApplicationWindow {
     /// The open secondary window's own QML-declared body, or null when
     /// the grid is what should be captured.
     function openWindowItem() {
+        // The first-run dialog first: it is modal over everything else,
+        // so while it is up it is what a photograph should show.
+        if (firstRunDialog.visible && firstRunDialog.grabItem)
+            return firstRunDialog.grabItem
         const windows = [wizardWindow, discShelfWindow, snapshotsWindow,
                          shaderWindow, shaderEditorWindow]
         for (const d of windows)
@@ -479,6 +512,22 @@ ApplicationWindow {
                 diag.note("saveprofile: fresh preset field '"
                           + shaderEditorWindow.shownPreset
                           + "', model '" + editor.presetPath + "'")
+                break
+            case "firstrun":
+                // The offer, driven: what it says on a launcher with no
+                // presets, and that "Not now" both closes it and is
+                // remembered (the marker file the check looks for).
+                // `LAUNCHER_QT_ARG=decline` answers it; anything else
+                // leaves the question up to be photographed.
+                diag.note("firstrun: open=" + offer.open + ", dialog=" + firstRunDialog.visible
+                          + ", state=" + offer.state
+                          + ", confirm=" + offer.confirmLabel + ", cancel=" + offer.cancelLabel)
+                diag.note("firstrun question: " + offer.question.replace(/\n/g, " "))
+                if (diag.arg === "decline") {
+                    offer.decline()
+                    diag.note("firstrun declined: open=" + offer.open
+                              + ", dialog=" + firstRunDialog.visible + ", state=" + offer.state)
+                }
                 break
             case "editor":
                 // `<preset.slangp>;<preview image>`
