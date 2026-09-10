@@ -210,6 +210,52 @@ left alone. The `music` check writes the reset the way a driver does and
 requires the slave PIC to have nothing pending afterwards (§7); a DOS
 machine could never have caught this, because DOS leaves IRQ 9 masked.
 
+### 5.2 And the Sound Blaster's, which has to be acknowledgeable
+
+The same lesson from the other side of the card, and it was found the
+same way (2026-09-09): the machine's *sound* card is QEMU's `sb16`, and
+it asserted IRQ 5 in three places where nothing a driver reads could
+lower it again. Patch 25.
+
+A Sound Blaster holds its interrupt line until the DSP status port is
+read — that part is the hardware, and QEMU models it, clearing bit 0 or
+1 of mixer register 0x82 on a read of 0x2xE or 0x2xF. So an assertion
+made with **no bit set** holds the line for good, and the ISA PIC is
+edge-triggered: every block completion after it is a level 1 into an
+already-high line, which the i8259 does not see at all. The card is deaf
+from that moment until the next DSP reset, and neither the guest nor the
+log says anything.
+
+What asserted it:
+
+- **`reset()` pulsed the line whenever auto-init DMA was running** — a
+  raise and an immediate lower, an interrupt no hardware makes. The
+  guest resetting the DSP is one that has *finished*, with IRQ 5 already
+  masked, so the edge lands in the master PIC's IRR unowned and stays
+  there; Windows' VPICD will not unmask a physical IRQ in that state,
+  and the next program to want the card never sees an interrupt at all.
+- **the end of a silence block** (DSP command 0x80, both the timer and
+  the short-block path) raised without setting the status bit, so the
+  ISR's read of the status port could not lower the line. A reset now
+  also cancels a silence block that has not expired, which would
+  otherwise fire afterwards and assert the line behind the guest's back.
+
+The reproduction is Duke Nukem 3D's `SETUP.EXE` again, on a Windows 98
+guest, one menu row up from §5.1's: **Test Sound FX Card** plays once and
+every press after it fails with
+
+    Playback failed, possibly due to an invalid or conflicting IRQ.
+
+`info pic` says `pic0 irr=20 imr=b8` — IRQ 5 latched and masked — while
+the card itself holds nothing across it: mixer 0x82 reads 0x00 and so
+does the status port. That is what says the pending interrupt was never
+the card's. With the pulse gone the same guest plays the test three
+times over, and IRQ 5 keeps counting through every one of them.
+
+The `sb16-irq` check (§7) asks the card and the PIC directly, with no
+guest: `info irq` counts only *rising* edges of IRQ 5, so a DSP reset
+must add none and each silence block must add exactly one.
+
 ## 6. What a machine offers
 
 Two pickers in the machine form (doc 07), both `launcher-core`'s
@@ -269,6 +315,7 @@ Integration and end-to-end only, as the policy requires.
 |---|---|
 | `libsynth` (`synthx selftest`) | the three engines through the **C API the devices use**: the AdLib detection sequence (status 0x00 → 0xC0 → 0x00 across a timer), a 440 Hz FM note measured by Goertzel against its neighbours, the same note through the **shipped bank** (so a truncated or unreadable bank in a package fails here), a running-status note-off with a real-time byte wedged inside the note-on, and the CM-32L when ROMs are given |
 | `music` (`scripts/test.sh`) | the two pickers from a checkbox to a real QEMU: each family offers what doc 06 says, the first entry is what a new machine gets, an entry a family does not offer is refused rather than written, the FM chip follows the card, and our own `qemu-system-i386` accepts every combination. Then the devices *sounding* (the monitor writes the ports, the note has to be in the wav) — and the interrupt the MIDI port must **not** raise: the reset is written the way a driver writes it and the slave PIC must have nothing pending afterwards (§5.1) |
+| `sb16-irq` (`scripts/test.sh`) | the sound card's interrupt line, asked of the card and the PIC and nothing else (§5.2, patch 25): `info irq` counts rising edges of IRQ 5, so a DSP reset over a running auto-init DMA must add **none** — it clears the pending interrupt, it does not make one — and a silence block must add exactly one each time, which it can only do if the driver's read of the status port lowered the line after the one before. No guest, ~1 s |
 | `duke-guest` (`tools/duke-guest-test.py`) | **a real game of 1996**, which is what all of it is for: Duke Nukem 3D's own Apogee Sound System finds our MPU-401 where a period driver looks for it and plays the game's score on it — ~1000 bytes and 300-450 note-ons per 5 s across 5 to 8 MIDI channels, 70 s of audible recording. It runs from nothing: the DOS build is copied off the user's own disc (read-only), a FAT disk is made, the game's own SETUP.EXE is driven once for a config, and the disc goes back in the drive because the game checks for it. Local only, and never in `scripts/test.sh` — it needs a game |
 | `midi-guest` (`tools/midi-guest-test.py`) | the whole chain with a guest in it: a DOS program runs the AdLib detection sequence at the ports, plays 440 Hz on the OPL3, then resets an MPU-401, puts it in UART mode and plays A4 through it — and the **wav QEMU recorded** is what is checked, not the program's own opinion. Two boots, one per device: both are asked the same question and one file with two notes in it cannot answer it twice. ~11 s in the guest stage |
 

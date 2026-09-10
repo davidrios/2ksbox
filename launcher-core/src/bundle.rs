@@ -160,8 +160,9 @@ pub enum Video {
     #[serde(rename = "d3dpt")]
     D3dpt,
     /// QEMU's standard VGA: the Bochs adapter, VBE 2.0 and a linear
-    /// frame buffer. What a period VESA driver wants, and what a modern
-    /// Linux binds `bochs-drm` to. **No XP driver at all** (XP falls back
+    /// frame buffer. What a period VESA driver wants, what a modern
+    /// Linux binds `bochs-drm` to, and the later of the two VESA BIOSes
+    /// a DOS title can find. **No XP driver at all** (XP falls back
     /// to 800×600×4 vga.sys), which is why the Windows families do not
     /// offer it.
     Std,
@@ -207,8 +208,10 @@ impl Video {
 /// which has no XP driver at all. They start on opposite ends of that
 /// pair: XP on ours, Win98 on the Cirrus. `Other` chooses between the two
 /// standard adapters, since nothing of ours runs there. DOS chooses
-/// nothing: it is the one family whose adapter is a period *fact* rather
-/// than a driver question — its titles program a VGA/VESA BIOS directly.
+/// between those same two, and for the one reason that has nothing to do
+/// with drivers: its titles program the adapter themselves, so what
+/// changes is **which VESA BIOS the game finds** — the Bochs one's VBE
+/// 2.0 with its linear frame buffer, or the Cirrus's of the period.
 pub fn video_choices(family: Family) -> &'static [Video] {
     match family {
         // XP starts on ours: the driver has been the whole display path
@@ -222,7 +225,16 @@ pub fn video_choices(family: Family) -> &'static [Video] {
         // whoever installed the guest decides to.
         Family::Win98 => &[Video::Cirrus, Video::D3dpt],
         Family::Other => &[Video::Std, Video::Cirrus],
-        Family::Dos => &[],
+        // DOS starts on the standard VGA (2026-09-09, user decision):
+        // its VBE 2.0 and linear frame buffer are the fuller of the two
+        // VESA BIOSes a title can find, and the Cirrus — which is what a
+        // DOS machine got while the adapter was hardcoded, and what
+        // `Other` is offered for its *native* drivers — is the other
+        // half of an A/B nothing else here can settle: a title whose
+        // modes come out wrong on one BIOS is the only evidence there
+        // is. Our own adapter is not on offer, there being no DOS driver
+        // for it anywhere.
+        Family::Dos => &[Video::Std, Video::Cirrus],
     }
 }
 
@@ -1484,12 +1496,20 @@ impl Machine {
                 args.extend(self.audio_args());
             }
             // The 1994 PC: the same chipset and the SB16 doc 06 already
-            // puts on the Win98 machine "for DOS boxes/games", the cirrus
-            // adapter for its VGA and VESA modes, and nothing else. No
-            // 3D of any kind is reachable from DOS here — the Glide
-            // wrapper for DOS is GLIDE2X.OVL, which we do not build.
+            // puts on the Win98 machine "for DOS boxes/games", one of the
+            // two standard adapters for its VGA and VESA modes, and
+            // nothing else. No 3D of any kind is reachable from DOS here
+            // — the Glide wrapper for DOS is GLIDE2X.OVL, which we do not
+            // build.
+            //
+            // The adapter is a *choice* here too since 2026-09-09
+            // (`video_choices`), and the only family where it is not a
+            // driver question: a DOS title programs the registers itself,
+            // so what a different adapter changes is which VESA BIOS it
+            // finds. It starts on the standard VGA — the fuller of the
+            // two — where the hardcoded line it replaces said `cirrus`.
             Family::Dos => {
-                args.extend(["-vga".into(), "cirrus".into()]);
+                args.extend(self.video_args());
                 if self.network {
                     args.extend(["-netdev".into(), "user,id=n0".into()]);
                     args.extend(["-device".into(), "pcnet,netdev=n0".into()]);

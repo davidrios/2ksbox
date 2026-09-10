@@ -106,6 +106,24 @@ as a task waiting to be done here.
   uncovered that `libsynth/qemu` was missing from `scripts/build.sh`'s
   `qemu-prepare` stamp, so edits to either device were silently not
   rebuilt.
+- **And the *sound* card's interrupt, one menu row up** (2026-09-09,
+  doc 20 §5.2, patch 25). Same guest, same SETUP.EXE, same shape of bug
+  in QEMU's own `sb16`: **Test Sound FX Card** plays once and every press
+  after it fails with "Playback failed, possibly due to an invalid or
+  conflicting IRQ". A Sound Blaster holds its line until the DSP status
+  port is read, so an interrupt asserted with no bit set in mixer 0x82
+  holds it for good — and the ISA PIC is edge-triggered, so every block
+  completion after that is a level 1 into an already-high line and the
+  card is deaf. `reset()` pulsed the line whenever auto-init DMA was
+  running (an interrupt no hardware makes) and the guest doing that reset
+  is one that has finished, with IRQ 5 masked: `pic0 irr=20 imr=b8`, the
+  edge latched and unowned, and Windows' VPICD never unmasks it again.
+  The end of a silence block (DSP 0x80) raised without the status bit
+  too. Diagnosed by tracing `pic_set_irq` and `memory_region_ops_write`
+  from QMP around the two presses — every DSP byte the game wrote against
+  every transition of the line — and confirmed by reading mixer 0x82 from
+  the monitor in between, which said the card was holding nothing. New
+  `sb16-irq` check.
 
 ## Next steps
 

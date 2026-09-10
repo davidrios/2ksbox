@@ -116,10 +116,12 @@
 #                  ticked, the sound card stays put when the NIC goes, and our
 #                  QEMU accepts the line
 #   display-adapter the wizard's display-adapter picker (doc 06): each family
-#                  offers the adapters it has a driver question about and starts
-#                  on the right one, an adapter a family doesn't offer is refused
-#                  rather than written, the cards below it don't move when it
-#                  changes, and our QEMU accepts every one of them
+#                  offers the adapters it has a question about and starts on the
+#                  right one — a driver question on the three families that have
+#                  drivers, and on DOS which VESA BIOS the title finds — an
+#                  adapter a family doesn't offer is refused rather than written,
+#                  the cards below it don't move when it changes, and our QEMU
+#                  accepts every one of them
 #   libsynth       synthx selftest (doc 20 §7): the three music engines through the
 #                  C API the QEMU devices drive them through — the AdLib detection
 #                  sequence a game runs before it will play a note, a 440 Hz FM
@@ -133,6 +135,12 @@
 #                  MT-32 with no ROMs is refused at the form — and then the two
 #                  devices *sounding*: the monitor writes the ports a guest would
 #                  and the note has to be in the wav QEMU recorded
+#   sb16-irq       the Sound Blaster's interrupt line (patch 25), asked of the
+#                  card and the PIC: a DSP reset clears the pending interrupt
+#                  and makes none, and a silence block's is one the driver's
+#                  read of the status port can acknowledge — an assertion that
+#                  cannot be acknowledged holds the line and every interrupt
+#                  after it is lost to the edge-triggered i8259
 #   capi           launcher-capi/examples/smoke.c: a third front end, in C, over
 #                  the same models the egui and Qt builds use — the wizard's
 #                  DOS defaults, the disc shelf, snapshots and the profile
@@ -1139,6 +1147,69 @@ mpu_note_script() {
   port_write 0x330 0x90; port_write 0x330 0x45; port_write 0x330 0x64
 }
 
+# The Sound Blaster's interrupt, asked of the card and the PIC and
+# nothing else (patch 25). Every count below is a *rising edge* of IRQ 5
+# — `info irq` only counts 0→1 — which is the whole point: the card holds
+# its line until the DSP status port is read, so an assertion nobody can
+# acknowledge holds it for good and every block after it is a level 1
+# into an already-high line, an edge-triggered i8259 sees nothing, and
+# the card is deaf until the next reset. Duke Nukem 3D's SETUP.EXE plays
+# its "Test Sound FX Card" once and says "Playback failed, possibly due
+# to an invalid or conflicting IRQ" every time after.
+sb16_irq_check() {
+  local rc=0 o n1 n2 n3 n4
+  # A block size first: `0x1c` with none set leaves the device with
+  # block_size -1, and a DMA that then ran would spin in sb16.c's
+  # left_till_irq wrap. The channel is masked at power-up, so nothing
+  # transfers here — `0x1c` is only how a guest says "auto-init", which
+  # is the state the old reset fabricated an interrupt out of.
+  o="$( { port_write 0x22c 0x48; port_write 0x22c 0xff; port_write 0x22c 0x01
+          port_write 0x22c 0x1c;               echo "info irq"
+          port_write 0x226 0x01; port_write 0x226 0x00
+                                               echo "info irq"
+          # A one-sample silence block (DSP 0x80): its end is an ordinary
+          # 8-bit interrupt and must be acknowledgeable, so the same
+          # block a second time has to reach the PIC a second time.
+          port_write 0x22c 0x80; port_write 0x22c 0x00; port_write 0x22c 0x00
+                                               echo "info irq"
+          printf 'i /b 0x22e\n'
+          port_write 0x22c 0x80; port_write 0x22c 0x00; port_write 0x22c 0x00
+                                               echo "info irq"; echo quit
+        } | timeout 60 build/qemu/qemu-system-i386 -display none -monitor stdio \
+              -audiodev none,id=w -device sb16,audiodev=w 2>&1 \
+            | tr '\r' '\n' \
+            | awk '/^IRQ statistics for/ { isa = ($0 ~ /isa-i8259/)
+                                 if (isa) { b++; v[b] = 0 }
+                                 next }
+                   /^ 5:/ && isa { v[b] = $2 }
+                   END { for (i = 1; i <= b; i++) print v[i] }')"
+  # Four readings, one per `info irq`, the master PIC's: after the DMA
+  # command, after the DSP reset, after one silence block, after the
+  # second. An absent line is no interrupt at all, which is 0.
+  set -- $(printf '%s\n' "$o")
+  n1="${1:-0}"; n2="${2:-0}"; n3="${3:-0}"; n4="${4:-0}"
+  if [ "$n1" != 0 ]; then
+    echo "the sb16 raised IRQ 5 on an auto-init DMA command alone ($n1)"; rc=1
+  fi
+  if [ "$n2" != "$n1" ]; then
+    echo "a DSP reset raised IRQ 5 (count $n1 -> $n2):"
+    echo "  hardware clears the pending interrupt there, it does not make one,"
+    echo "  and the guest resetting the DSP has its own IRQ masked — the edge"
+    echo "  is latched in the PIC, unowned, and Windows never unmasks again"
+    rc=1
+  fi
+  if [ "$n3" != "$((n2 + 1))" ]; then
+    echo "a silence block (DSP 0x80) did not raise IRQ 5 (count $n2 -> $n3)"; rc=1
+  fi
+  if [ "$n4" != "$((n3 + 1))" ]; then
+    echo "the second silence block never reached the PIC (count $n3 -> $n4):"
+    echo "  the first one's interrupt sets no status bit, so the driver's read"
+    echo "  of the DSP status port cannot lower the line and no edge follows"
+    rc=1
+  fi
+  return $rc
+}
+
 music_check() { # the two pickers, and then the devices actually sounding
   local rc=0 dir="$OUT/music" bundle args f want o irr
   rm -rf "$dir"; mkdir -p "$dir/library"
@@ -1335,8 +1406,10 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
   # display path is built on it (doc 15); Win98 on the Cirrus and the
   # driver Windows has in the box, ours there being much the newer of the
   # two (doc 19); Other on the standard VGA, the one every guest can fall
-  # back on; DOS on the era's Cirrus, which is not a choice at all.
-  for f in win98:"-vga cirrus" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga cirrus"; do
+  # back on; DOS on the standard VGA too, since 2026-09-09 (user
+  # decision): the fuller of the two VESA BIOSes, where the hardcoded
+  # line it replaced said cirrus.
+  for f in win98:"-vga cirrus" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga std"; do
     want="${f#*:}"; f="${f%%:*}"
     bundle="$(target/release/launcherx --new "$f" "adapter-$f" "$dir/disk.qcow2")" || { echo "--new $f failed"; return 1; }
     args="$(target/release/launcherx --print-args "$bundle")"
@@ -1374,11 +1447,39 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
     args="$(target/release/launcherx --print-args "$bundle")"
     case "$args" in *"$(vga_args "$first")"*) ;; *) echo "$f: the $first adapter did not come back"; echo "$args"; rc=1;; esac
   done
+  # DOS has the picker too since 2026-09-09, and it is the one family
+  # where the question is not "which driver": its titles program the
+  # adapter themselves, so what changes is which VESA BIOS the game
+  # finds. Same three demands as above — the new one arrives, the old one
+  # is *gone* rather than sitting beside it, and it comes back — plus the
+  # one that is specific here: our own adapter is refused, because there
+  # is no DOS driver for it anywhere and a DOS machine on it would have
+  # the plain VGA and nothing else.
+  bundle="$dir/library/adapter-dos/machine.toml"
+  if target/release/launcherx --wizard-edit "$bundle" - - - - - - - cirrus >/dev/null; then
+    args="$(target/release/launcherx --print-args "$bundle")"
+    case "$args" in *"-vga cirrus"*) ;; *) echo "dos: the Cirrus did not arrive"; echo "$args"; rc=1;; esac
+    case "$args" in *"-vga std"*) echo "dos: the standard VGA is still there beside the Cirrus"; echo "$args"; rc=1;; esac
+  else
+    echo "dos: --wizard-edit cirrus failed"; rc=1
+  fi
+  if target/release/launcherx --wizard-edit "$bundle" - - - - - - - d3dpt >/dev/null; then
+    args="$(target/release/launcherx --print-args "$bundle")"
+    case "$args" in *d3dpt-vga*) echo "dos: was given our own adapter, which has no DOS driver"; echo "$args"; rc=1;; esac
+  else
+    echo "dos: --wizard-edit d3dpt failed"; rc=1
+  fi
+  if target/release/launcherx --wizard-edit "$bundle" - - - - - - - std >/dev/null; then
+    args="$(target/release/launcherx --print-args "$bundle")"
+    case "$args" in *"-vga std"*) ;; *) echo "dos: the standard VGA did not come back"; echo "$args"; rc=1;; esac
+  else
+    echo "dos: --wizard-edit std failed"; rc=1
+  fi
   # Every adapter on every family, on the real binary: started paused and
   # told to quit, so a machine QEMU will not build is an exit code.
   if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
     build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
-    for f in win98:d3dpt win98:cirrus xp:d3dpt xp:cirrus other:std other:cirrus dos:-; do
+    for f in win98:d3dpt win98:cirrus xp:d3dpt xp:cirrus other:std other:cirrus dos:std dos:cirrus; do
       want="${f#*:}"; f="${f%%:*}"
       bundle="$dir/library/adapter-$f/machine.toml"
       target/release/launcherx --wizard-edit "$bundle" - - - - - - - "$want" >/dev/null || { rc=1; continue; }
@@ -1718,6 +1819,13 @@ host_stage() {
   # devices sounding into a wav QEMU recorded itself.
   if [ -x target/release/launcherx ] && [ -x target/release/synthx ]; then
     run_check music music.log music_check || true
+  fi
+
+  # The Sound Blaster's interrupt line (patch 25): no guest, ~1 s. The
+  # card and the PIC are asked directly, because what breaks is invisible
+  # from the command line and shows up two programs later.
+  if [ -x build/qemu/qemu-system-i386 ]; then
+    run_check sb16-irq sb16-irq.log sb16_irq_check || true
   fi
 
   # the display-adapter picker (doc 06): each family offers the adapters

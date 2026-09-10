@@ -40,6 +40,25 @@ static void check_str(const char *what, char *got, const char *want) {
     lc_string_free(got);
 }
 
+/* The index of an adapter in *this machine's* list, by a fragment of its
+ * label, or -1. The list is per family, so the same adapter is at a
+ * different index on Win98 than on XP and a front end never remembers
+ * one across a family switch. */
+static long video_index(LcWizard *w, const char *want) {
+    for (size_t i = 0; i < lc_wizard_video_count(w); i++) {
+        char *label = lc_wizard_video_label(w, i);
+        int hit = label && strstr(label, want) != NULL;
+        lc_string_free(label);
+        if (hit) return (long)i;
+    }
+    return -1;
+}
+
+/* The label of the adapter currently selected. */
+static char *video_label(LcWizard *w) {
+    return lc_wizard_video_label(w, lc_wizard_video(w));
+}
+
 /* The index of a label in one of the wizard's pickers, or -1. A front
  * end fills a combo box this way rather than hard-coding the strings. */
 static long label_index(uint32_t kind, const char *want) {
@@ -82,6 +101,67 @@ int main(int argc, char **argv) {
     lc_wizard_open_new(w, (size_t)dos);
     check("the form is open", lc_wizard_is_open(w), NULL);
     check_str("as \"New machine\"", lc_wizard_title(w), "New machine");
+
+    /* Switching family on a *new* machine moves every field nobody has
+     * touched to the new family's own default. That is what picking "XP"
+     * after "Win98" means, and it was broken for the four fields whose
+     * list is per family — the adapter, the card, the MIDI port and the
+     * pad — until 2026-09-09: they only moved when the new family did
+     * not offer what was in the field at all, so a machine switched from
+     * 98 to XP sat on the Cirrus, which is XP's *non*-default.
+     *
+     * A field somebody has picked is the other half of the rule and must
+     * survive the switch, so both directions are checked here. */
+    long win98 = label_index(LC_LABEL_FAMILY, "Win98");
+    long xp = label_index(LC_LABEL_FAMILY, "XP");
+    check("the family picker offers Win98 and XP", win98 >= 0 && xp >= 0, NULL);
+    lc_wizard_open_new(w, (size_t)win98);
+    char *adapter = video_label(w);
+    check("a new Win98 machine starts on the Cirrus",
+          adapter && strstr(adapter, "Cirrus") != NULL, adapter);
+    lc_string_free(adapter);
+    lc_wizard_choose_family(w, (size_t)xp);
+    adapter = video_label(w);
+    check("switching it to XP moves the untouched adapter to XP's own",
+          adapter && strstr(adapter, "d3dpt-vga") != NULL, adapter);
+    lc_string_free(adapter);
+    check("...and it counts as the default there", lc_wizard_video_is_default(w), NULL);
+    check("the card followed too", lc_wizard_sound_is_default(w), NULL);
+    check("and the MIDI port", lc_wizard_music_is_default(w), NULL);
+    /* The pad follows the same rule in the form, but this API has no pad
+     * row yet (M13 is newer than the C ABI), so it is unchecked here. */
+    /* Now pick one by hand: it is a decision, and the next family switch
+     * must not throw it away. */
+    long cirrus = video_index(w, "Cirrus");
+    check("XP offers the Cirrus as well", cirrus >= 0, NULL);
+    lc_wizard_set_video(w, (size_t)cirrus);
+    lc_wizard_choose_family(w, (size_t)win98);
+    adapter = video_label(w);
+    check("a chosen adapter survives the switch back",
+          adapter && strstr(adapter, "Cirrus") != NULL, adapter);
+    lc_string_free(adapter);
+    /* Unless the new family has no such adapter: DOS is offered neither
+     * of ours, so a d3dpt picked on XP cannot come along. */
+    lc_wizard_choose_family(w, (size_t)xp);
+    lc_wizard_set_video(w, (size_t)video_index(w, "d3dpt-vga"));
+    lc_wizard_choose_family(w, (size_t)dos);
+    adapter = video_label(w);
+    check("but one the new family doesn't offer falls back to its default",
+          adapter && strstr(adapter, "Standard VGA") != NULL, adapter);
+    lc_string_free(adapter);
+    check("...which is what DOS starts on", lc_wizard_video_is_default(w), NULL);
+    /* And "Default" puts the field back to *following* the family, so a
+     * later switch moves it again rather than pinning what it reset to. */
+    lc_wizard_choose_family(w, (size_t)win98);
+    lc_wizard_set_video(w, (size_t)video_index(w, "d3dpt-vga"));
+    lc_wizard_reset_video(w);
+    lc_wizard_choose_family(w, (size_t)xp);
+    adapter = video_label(w);
+    check("\"Default\" makes the adapter follow the family again",
+          adapter && strstr(adapter, "d3dpt-vga") != NULL, adapter);
+    lc_string_free(adapter);
+
+    lc_wizard_open_new(w, (size_t)dos);
 
     /* The whole point of a shared form: these are the same answers the
      * two GUIs get, because it is the same code. */

@@ -84,18 +84,29 @@ pub struct Form {
     pub floppy: String,
     pub boot: Boot,
     /// The display adapter, on a family that has a choice of one
-    /// (`video_applies`). Private, unlike `boot`: it is the one field
-    /// whose *list* changes with the family — Windows chooses between our
-    /// adapter and the Cirrus, `Other` between the two standard ones — so
-    /// a value carried across a family switch can be one the new family
-    /// does not offer, and `choose_family` has to put it back.
+    /// (`video_applies`). Private, unlike `boot`: it is one of the four
+    /// fields whose *list* changes with the family — Windows chooses
+    /// between our adapter and the Cirrus, `Other` and DOS between the
+    /// two standard ones — so a value carried across a family switch can
+    /// be one the new family does not offer, and `choose_family` has to
+    /// put it back.
     video: Video,
+    /// Whether the adapter in the field is one somebody picked, the way
+    /// `ram_chosen` works for the memory. Until it is, switching family
+    /// moves it to the new family's default; once it is, it survives the
+    /// switch — unless the new family does not offer it at all, which no
+    /// flag can rescue. It was missing until 2026-09-09, so a new
+    /// machine switched from 98 to XP kept the Cirrus, which is XP's
+    /// *non*-default, and the same for the three fields below.
+    video_chosen: bool,
     /// The sound card, and what is on the MIDI port (doc 20 §6).
     /// Private for the same reason `video` is: each family offers a
     /// different list, so a value carried across a family switch can be
     /// one the new family does not have.
     sound: Sound,
+    sound_chosen: bool,
     music: Music,
+    music_chosen: bool,
     /// A SoundFont bank of the user's own, or empty for the one we
     /// ship. A plain file field, like the floppy.
     pub soundfont: String,
@@ -110,6 +121,7 @@ pub struct Form {
     /// switch can be one the new family does not offer and
     /// `choose_family` has to put it back.
     pad: Pad,
+    pad_chosen: bool,
     pub existing_disk: bool,
     pub disk_path: String,
     pub disk_size_gb: u32,
@@ -183,11 +195,15 @@ impl Default for Form {
             floppy: String::new(),
             boot: Boot::default(),
             video: bundle::default_video(Family::Win98).unwrap_or(Video::Std),
+            video_chosen: false,
             sound: bundle::default_sound(Family::Win98),
+            sound_chosen: false,
             music: bundle::default_music(Family::Win98),
+            music_chosen: false,
             soundfont: String::new(),
             mt32_roms: String::new(),
             pad: bundle::default_pad(Family::Win98),
+            pad_chosen: false,
             existing_disk: false,
             disk_path: String::new(),
             disk_size_gb: 2,
@@ -256,14 +272,19 @@ impl Form {
             optimizations: machine.optimizations.clone(),
             floppy: machine.floppy.as_ref().map(|f| f.display().to_string()).unwrap_or_default(),
             boot: machine.effective_boot(),
-            // A DOS machine has no adapter of its own; the field only
-            // matters once the family switches to one that has.
+            // An existing machine's adapter, card, MIDI port and pad are
+            // chosen values for the same reason its memory is: whatever
+            // they came from, switching family must not rewrite them.
             video: machine.effective_video().unwrap_or(Video::Std),
+            video_chosen: true,
             sound: machine.effective_sound(),
+            sound_chosen: true,
             music: machine.effective_music(),
+            music_chosen: true,
             soundfont: machine.soundfont.as_ref().map(|f| f.display().to_string()).unwrap_or_default(),
             mt32_roms: machine.mt32_roms.as_ref().map(|d| d.display().to_string()).unwrap_or_default(),
             pad: machine.effective_pad(),
+            pad_chosen: true,
             existing_disk: true,
             disk_path: machine.disk.display().to_string(),
             install_media: machine.boot_disc().map(|d| d.display().to_string()).unwrap_or_default(),
@@ -343,27 +364,28 @@ impl Form {
         if !self.seamless_mouse_chosen {
             self.seamless_mouse = bundle::default_seamless_mouse(family);
         }
-        // The adapter has no "chosen" flag of its own because the new
-        // family may simply not offer what is in the field — our own
-        // adapter is not on offer for BeOS. Keep it when it survives the
-        // switch, take the new family's default when it doesn't.
-        // The card and the MIDI port follow the same rule as the
-        // adapter, and for the same reason: a Gravis is not on offer to
-        // XP, and an ES1370 not to DOS.
-        if !bundle::sound_choices(family).contains(&self.sound) {
+        // The adapter, the card, the MIDI port and the gamepad take the
+        // new family's default on **either** of two counts, where the
+        // fields above have only the first. Nobody has picked one, so it
+        // is following the family like everything else — a new machine
+        // moved from 98 to XP has to arrive on XP's adapter, not sit on
+        // the Cirrus that was 98's. Or somebody did pick one and the new
+        // family does not offer it at all, which no flag can rescue: our
+        // own adapter is not on offer for BeOS, a Gravis is not on offer
+        // to XP, an ES1370 not to DOS, and a `Usb` pad needs a USB stack
+        // DOS has not got.
+        if !self.sound_chosen || !bundle::sound_choices(family).contains(&self.sound) {
             self.sound = bundle::default_sound(family);
         }
-        if !bundle::music_choices(family).contains(&self.music) {
+        if !self.music_chosen || !bundle::music_choices(family).contains(&self.music) {
             self.music = bundle::default_music(family);
         }
-        if !bundle::video_choices(family).contains(&self.video) {
+        if !self.video_chosen || !bundle::video_choices(family).contains(&self.video) {
             if let Some(default) = bundle::default_video(family) {
                 self.video = default;
             }
         }
-        // The same for the gamepad: switching a machine to DOS strands a
-        // `Usb` setting, because DOS has no USB stack to attach it to.
-        if !bundle::pad_choices(family).contains(&self.pad) {
+        if !self.pad_chosen || !bundle::pad_choices(family).contains(&self.pad) {
             self.pad = bundle::default_pad(family);
         }
         // The new family's ceiling may be below the memory already in
@@ -669,9 +691,11 @@ impl Form {
     }
 
     /// Whether there is an adapter to choose at all, so a front end
-    /// shows or hides the row without knowing which family that is. Only
-    /// DOS has none: its titles program a VGA/VESA BIOS directly, so its
-    /// adapter is a fact of the era rather than a driver question.
+    /// shows or hides the row without knowing which family that is.
+    /// Every family offers a pair today — DOS since 2026-09-09 — so this
+    /// is true throughout; it stays because the answer is
+    /// `video_choices`'s to give and a family that gains a fixed adapter
+    /// should not need a front end changed.
     pub fn video_applies(&self) -> bool {
         !self.video_choices().is_empty()
     }
@@ -686,12 +710,17 @@ impl Form {
     pub fn choose_video(&mut self, video: Video) {
         if self.video_choices().contains(&video) {
             self.video = video;
+            self.video_chosen = true;
         }
     }
 
+    /// Back to this family's default — and back to *following* the
+    /// family, so a later switch moves it again. "Default" means the
+    /// field was never really touched.
     pub fn reset_video(&mut self) {
         if let Some(default) = bundle::default_video(self.family) {
             self.video = default;
+            self.video_chosen = false;
         }
     }
 
@@ -712,6 +741,14 @@ impl Form {
             (Video::Cirrus, Family::Xp) => &[
                 "The Cirrus GD5446, which Windows has a driver for in the box: 2D only, and none of our display path — no mode table, no paced flips, no Direct3D through the driver.",
                 "The right answer for a machine whose driver isn't installed yet, and the A/B for a title that misbehaves on ours.",
+            ],
+            (Video::Cirrus, Family::Dos) => &[
+                "The Cirrus GD5446 and its period VGA/VESA BIOS, which is what a DOS machine here has always had and where this family starts.",
+                "Nothing is installed either way — a DOS title programs the adapter itself — so the standard VGA is one restart away and back if a game's modes come out wrong on this one.",
+            ],
+            (Video::Std, Family::Dos) => &[
+                "The Bochs adapter: VBE 2.0 and a linear frame buffer, the later and fuller of the two VESA BIOSes a DOS title can find here.",
+                "Worth trying when a game's high-resolution modes are wrong or missing on the Cirrus. It is not the safer answer, just the other one — some titles know the Cirrus and not this.",
             ],
             (Video::Cirrus, _) => &[
                 "A chip that really existed, so a guest of the era is likely to have a native driver for it: BeOS R5 and XFree86 both ship one.",
@@ -743,11 +780,13 @@ impl Form {
     pub fn choose_sound(&mut self, sound: Sound) {
         if self.sound_choices().contains(&sound) {
             self.sound = sound;
+            self.sound_chosen = true;
         }
     }
 
     pub fn reset_sound(&mut self) {
         self.sound = bundle::default_sound(self.family);
+        self.sound_chosen = false;
     }
 
     pub fn music(&self) -> Music {
@@ -765,11 +804,13 @@ impl Form {
     pub fn choose_music(&mut self, music: Music) {
         if self.music_choices().contains(&music) {
             self.music = music;
+            self.music_chosen = true;
         }
     }
 
     pub fn reset_music(&mut self) {
         self.music = bundle::default_music(self.family);
+        self.music_chosen = false;
     }
 
     /// Whether the SoundFont field is worth showing at all.
@@ -858,11 +899,27 @@ impl Form {
     /// The one thing worth saying above the picker rather than under one
     /// of its entries: changing this on a machine that already has an OS
     /// installed is a hardware change, and the guest will say so.
+    ///
+    /// Except on DOS, where it is not: nothing is installed for an
+    /// adapter there, the machine simply boots. What can still be stale
+    /// is a *game's* own setup — a title that has already been through
+    /// its SETUP wrote down a video mode, and the two adapters do not
+    /// offer the same list — so that is what DOS is told instead.
     pub fn video_warning(&self) -> Option<&'static str> {
-        (self.is_editing() && !self.video_is_default_for_machine()).then_some(
-            "This machine already exists: changing its adapter makes the guest find new hardware on its next start, \
-             and it will want a driver for it before the desktop comes back.",
-        )
+        if !self.is_editing() || self.video_is_default_for_machine() {
+            return None;
+        }
+        Some(match self.family {
+            Family::Dos => {
+                "This machine already exists: it will boot on the new adapter with nothing to install, \
+                 but a game that has already run its own setup may have recorded a video mode this one \
+                 does not offer, and want that setup run again."
+            }
+            _ => {
+                "This machine already exists: changing its adapter makes the guest find new hardware on its next start, \
+                 and it will want a driver for it before the desktop comes back."
+            }
+        })
     }
 
     /// Whether the adapter is still the one the bundle was opened with.
@@ -899,11 +956,13 @@ impl Form {
     pub fn choose_pad(&mut self, pad: Pad) {
         if self.pad_choices().contains(&pad) {
             self.pad = pad;
+            self.pad_chosen = true;
         }
     }
 
     pub fn reset_pad(&mut self) {
         self.pad = bundle::default_pad(self.family);
+        self.pad_chosen = false;
     }
 
     /// What the chosen setting means. `Keys` needs its limitation said
