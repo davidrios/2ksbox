@@ -153,6 +153,17 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **A Win98 machine showed one Unknown Device in Device Manager** (fixed
+  2026-09-10, user report). The guest's registry had two ACPI devices
+  with no driver: `ACPI\*PNP0103`, the HPET, and `ACPI\QEMU0002`, QEMU's
+  fw_cfg — neither ID is in any of 98 SE's 500 INFs. fw_cfg's `_STA` is
+  0x0B (not shown in UI) and 98 hides it; the HPET's is 0x0F, so it was
+  the yellow mark. 98 never uses an HPET (it times off the PIT), so a
+  Win98 machine is now `-machine pc,hpet=off` (`Bundle::qemu_args`); an
+  installed guest just stops finding it. XP, DOS and Other keep theirs.
+  fw_cfg cannot be taken out of QEMU's DSDT without a patch, and hidden
+  it costs nothing. The `hpet` check asks our QEMU's `info qtree`.
+
 - **Every optimization of ours can be turned off, and in one click**
   (2026-09-10, patch 29, user request). Eight of the eleven had a runtime
   property; patches 15 (`tb-invalidate-fast`), 16 (`tlb-floor`) and 19

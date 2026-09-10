@@ -108,6 +108,9 @@
 #                  launcher still loads, and the host end's deadzone and
 #                  two-threshold hysteresis behave under PLAYER_PAD_SCRIPT
 #                  (no machine running this suite has a controller)
+#   hpet           a Win98 machine has no HPET (98 has no driver for one, so
+#                  it was an Unknown Device in Device Manager) and an XP one
+#                  keeps it, asked of our QEMU's own device tree
 #   family-other   the "Other" family (doc 06): a machine for an era OS that is
 #                  neither Windows nor DOS gets standard hardware and none of
 #                  ours — the Bochs VGA rather than d3dpt-vga, no network card
@@ -1404,6 +1407,47 @@ family_other_check() { # the "Other" family's hardware, from the picker to a rea
   return $rc
 }
 
+hpet_check() { # no HPET on Win98, from the bundle to our QEMU's device tree
+  local rc=0 dir="$OUT/hpet" w98 xp args o
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  : >"$dir/disk.qcow2"
+  w98="$(target/release/launcherx --new win98 hpet-98 "$dir/disk.qcow2")" || { echo "--new win98 failed"; return 1; }
+  xp="$(target/release/launcherx --new xp hpet-xp "$dir/disk.qcow2")" || { echo "--new xp failed"; return 1; }
+  # Windows 98 has no driver for an HPET and never uses one: with it the
+  # guest's Device Manager shows an Unknown Device (ACPI\*PNP0103) with a
+  # yellow mark on every machine. XP is left alone.
+  args="$(target/release/launcherx --print-args "$w98")"
+  case "$args" in *"-machine pc,hpet=off "*) ;; *) echo "a Win98 machine still has an HPET"; echo "$args"; rc=1;; esac
+  args="$(target/release/launcherx --print-args "$xp")"
+  case "$args" in *"-machine pc "*) ;; *) echo "an XP machine's board changed"; echo "$args"; rc=1;; esac
+  # And the device itself, asked of the real binary: the property's name
+  # is QEMU's to change, and a misspelt one would be an exit code, but a
+  # property that stopped removing the device would be neither.
+  if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
+    build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
+    for b in "$w98" "$xp"; do
+      args="$(target/release/launcherx --print-args "$b")"
+      # shellcheck disable=SC2086
+      o="$(printf '%s\n' '{"execute":"qmp_capabilities"}' \
+             '{"execute":"human-monitor-command","arguments":{"command-line":"info qtree"}}' \
+             '{"execute":"quit"}' \
+           | timeout 30 build/qemu/qemu-system-i386 $args \
+               -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
+        || { echo "our QEMU refused $b"; echo "$o" | tail -3; rc=1; continue; }
+      case "$b:$o" in
+        "$w98":*'dev: hpet'*) echo "our QEMU built a Win98 machine with an HPET"; rc=1;;
+        "$xp":*'dev: hpet'*) ;;
+        "$xp":*) echo "no HPET in the XP machine, so the Win98 answer proves nothing"; rc=1;;
+      esac
+    done
+  else
+    echo "  (no build/qemu: the command line was checked but not run)"
+  fi
+  return $rc
+}
+
 # The command line an adapter name lands as (`bundle::Video::args`), so
 # the checks below can name the pick rather than repeat its arguments.
 vga_args() {
@@ -1828,6 +1872,12 @@ host_stage() {
   # installed guest will not see them move.
   if [ -x target/release/launcherx ]; then
     run_check family-other family-other.log family_other_check || true
+  fi
+
+  # no HPET on a Win98 machine: 98 has no driver for one and showed it as
+  # an Unknown Device in Device Manager; asked of our QEMU's device tree.
+  if [ -x target/release/launcherx ]; then
+    run_check hpet hpet.log hpet_check || true
   fi
 
   # the music engines (doc 20): the three of them through the same C API

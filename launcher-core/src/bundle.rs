@@ -1472,7 +1472,14 @@ impl Machine {
     }
 
     pub fn qemu_args(&self, pc_bios_dir: &Path, shelf: Option<&Path>) -> Vec<String> {
-        let mut args = vec!["-L".into(), pc_bios_dir.display().to_string(), "-machine".into(), "pc".into()];
+        // Windows 98 has no driver for an HPET (`PNP0103` is in none of
+        // 98 SE's INFs) and never uses one — it times off the PIT — so on
+        // 98 it is an "Unknown Device" with a yellow mark in Device
+        // Manager and nothing else. QEMU's fw_cfg (`QEMU0002`) is the one
+        // other device 98 has no driver for, but its `_STA` says "not
+        // shown in UI", and 98 obeys that.
+        let machine = if matches!(self.family, Family::Win98) { "pc,hpet=off" } else { "pc" };
+        let mut args = vec!["-L".into(), pc_bios_dir.display().to_string(), "-machine".into(), machine.into()];
         args.extend(self.accel_args());
         args.extend([
             "-m".into(),

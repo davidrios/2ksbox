@@ -13,7 +13,7 @@ Modeled as a ~1998–2000 consumer PC.
 
 | Component | Choice | Rationale |
 |---|---|---|
-| Machine | `pc` (i440FX + PIIX) | period-correct chipset, best-tested with 9x |
+| Machine | `pc,hpet=off` (i440FX + PIIX) | period-correct chipset, best-tested with 9x. **No HPET** (2026-09-10): 98 has no driver for `PNP0103` and never uses one, so it was an Unknown Device with a yellow mark in Device Manager (the `hpet` check). QEMU's fw_cfg (`QEMU0002`) has no driver either, but its `_STA` hides it |
 | CPU model | `pentium3` (TCG) / host-masked (KVM) | avoids CPUID features 9x mishandles; sidesteps the fast-CPU Win9x bugs (e.g. the >2.1 GHz-class IOS/NDIS crashes). **Floor is pentium3 (SSE1)**: our guest-tools wrappers are built `-march=pentium3` (upstream builds them x86-64-v2 and expects `-cpu host`/`max`) |
 | RAM | 256 MB default, **≤ 512 MB hard cap** | 9x VCache breaks above ~512 MB without patches |
 | Video | **`-vga cirrus` (the default) or `-vga none -device d3dpt-vga` + our driver (doc 19)** — a choice since 2026-09-07 (`bundle::Video`) | ours is the whole display path: the mode table, the desktop straight from VRAM, the paced page flips, Direct3D through the driver. The Cirrus is Windows' in-box 2D driver and where this family **starts** (2026-09-07): the 9x driver of ours is much newer than XP's, so a new 98 machine comes up on the driver Windows already has and is moved to ours deliberately. The standard VGA is not offered on either Windows family |
