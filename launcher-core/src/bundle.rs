@@ -291,6 +291,15 @@ pub enum Pad {
     /// Add New Hardware and then a calibration pass in the Game
     /// Controllers panel. DOS needs neither.
     ///
+    /// Nobody here has done that, and the wizard steers away from it
+    /// rather than describing it as the way: on 98 a *Windows* game gets
+    /// its joystick from [`Pad::Usb`] through both APIs one can call —
+    /// DirectInput and winmm's `joyGetPosEx` on top of VJOYD, measured by
+    /// the `pad-guest-98` check — so the driver half of this port was
+    /// dropped from M13 rather than built. What is left to this variant
+    /// is what it was built for: DOS, which has no USB stack, and a DOS
+    /// box under Windows 98, which reads 0x201 itself.
+    ///
     /// Not offered on XP: `gameenum.sys` is still in the box, but a
     /// non-PnP port has nothing to enumerate it and Microsoft was already
     /// retiring analog sticks — XP's answer is path A. Nor on `Other`,

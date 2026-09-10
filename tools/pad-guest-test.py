@@ -39,11 +39,22 @@ pad has to drive the axes to their ends or a DOS game cannot read it at
 all; a HID pad has a hat, and driving the axes from it as well would make
 a stick the guest cannot centre. The same host state has to produce both.
 
+On the Windows paths every sample is read through **two** APIs, because a
+title of the era can call either: DirectInput, and winmm's `joyGetPosEx`
+on top of 9x's VJOYD. That second column is not a curiosity — it is what
+closed M13's last item. A Windows game on 98 was going to need the
+gameport's driver half ("Standard Game Port" through Add New Hardware) to
+see a joystick at all; it does not, because the USB pad arrives through
+winmm as well, which `check_winmm` now asserts with the same force as the
+DirectInput half rather than leaving in a log for someone to read once.
+
 Outputs in build/pad-guest/. Local only — the DOS run fetches the FreeDOS
 floppy `tools/x87-guest-test.py` uses, the Windows runs want one of the
 user's own images, and all of them want a display for the player's window.
-The DOS run is wired into `scripts/test.sh`'s guest stage; the Windows
-ones are not, because they need an image the suite cannot assume.
+All three are in `scripts/test.sh`'s guest stage as `pad-guest`,
+`pad-guest-xp` and `pad-guest-98`; the last skips rather than fails where
+the launcher machine it names does not exist, since no suite can assume
+someone's library looks like this one.
 """
 import glob
 import importlib.util
@@ -155,7 +166,12 @@ def samples(text, keys):
             continue
         try:
             f = dict(p.split("=", 1) for p in line.split(" ") if "=" in p)
-            row = {k: int(v, 16 if k == "B" else 10) for k, v in f.items()}
+            # Button masks are hex in both columns — `B` from DirectInput
+            # and `WB` from winmm. Reading one of them as decimal does not
+            # fail loudly: `int("00a")` raises, the line is skipped as a
+            # half-written sample, and a run quietly loses every sample
+            # with a button above 9 held.
+            row = {k: int(v, 16 if k in ("B", "WB") else 10) for k, v in f.items()}
         except ValueError:
             continue
         if set(row) >= set(keys):
@@ -536,6 +552,92 @@ def check_win(text, quiet=False):
     if 0 not in buttons:
         say("FAIL no sample had every button released")
         ok = False
+    return check_winmm(rows, quiet) and ok
+
+
+def check_winmm(rows, quiet=False):
+    """The same pad through winmm — and the reason M13 has no step 7.
+
+    `joyGetPosEx` on top of 9x's VJOYD is what a great many mid-90s Windows
+    titles call, and whether a USB HID pad arrives through it is what
+    decides whether Windows 98 needs the gameport's *driver* half at all.
+    It does arrive — so "Standard Game Port" through Add New Hardware was
+    dropped by decision (2026-09-10, the track doc's next steps), and this
+    is the check that decision rests on. It was a printed line before, read
+    by a person once; a claim that closes a milestone item has to be a
+    check that can fail.
+
+    Deliberately the same shape as the DirectInput assertions above rather
+    than a weaker "it enumerated": an API that lists the pad and reads it
+    centred for ever would pass the enumeration test and fail every game.
+    """
+    ok = True
+    say = (lambda *a: None) if quiet else print
+    if "WX" not in rows[0]:
+        say("FAIL the samples carry no winmm columns — PADWIN.EXE predates"
+            " this check, so the guest-tools ISO is stale"
+            " (guest-tools/build-wrappers.sh)")
+        return False
+    # -1 in every field is the probe saying winmm has no joystick at all,
+    # which is a different finding from one that reads centred and is the
+    # one that would put step 7 back.
+    if all(r["WX"] < 0 for r in rows):
+        say("FAIL winmm enumerated no joystick: the pad reaches DirectInput"
+            " and not the multimedia API, so a title that calls"
+            " joyGetPosEx finds nothing")
+        return False
+
+    wxlo, wxhi = span(rows, "WX")
+    wylo, wyhi = span(rows, "WY")
+    wzlo, wzhi = span(rows, "WZ")
+    wrlo, wrhi = span(rows, "WR")
+    wpovs = {r["WPOV"] for r in rows}
+    wbuttons = {r["WB"] for r in rows}
+    if not quiet:
+        say("winmm axes (rescaled to the same 0..255): X %d..%d  Y %d..%d  Z %d..%d  R %d..%d"
+            % (wxlo, wxhi, wylo, wyhi, wzlo, wzhi, wrlo, wrhi))
+        say("winmm POV values seen: %s (65535 = centred)"
+            % " ".join(str(v) for v in sorted(wpovs)))
+        say("winmm button masks seen: %s" % " ".join("%03x" % b for b in sorted(wbuttons)))
+
+    if wxlo > 16 or wxhi < 239:
+        say("FAIL winmm X reached %d..%d, not both ends of its range" % (wxlo, wxhi))
+        ok = False
+    if not any(96 <= r["WX"] <= 160 for r in rows):
+        say("FAIL no sample had winmm X centred")
+        ok = False
+    if wzhi - wzlo < 100:
+        say("FAIL winmm Z barely moved (%d..%d)" % (wzlo, wzhi))
+        ok = False
+    for name, lo, hi in (("Y", wylo, wyhi), ("R", wrlo, wrhi)):
+        if hi - lo > 32:
+            say("FAIL winmm %s moved (%d..%d) with nothing driving it" % (name, lo, hi))
+            ok = False
+    # winmm keeps the hat in its own units — hundredths of a degree, and
+    # 65535 rather than -1 for centred. Left as the driver reports it: a
+    # value this harness did not invent is the one worth asserting.
+    for want, name in ((0, "north"), (18000, "south"), (65535, "centred")):
+        if want not in wpovs:
+            say("FAIL the winmm POV hat never read %s (%d)" % (name, want))
+            ok = False
+    for mask, name in ((0x001, "button 1 (south)"), (0x002, "button 2 (east)")):
+        if not any(b & mask for b in wbuttons):
+            say("FAIL winmm never read %s as pressed" % name)
+            ok = False
+
+    # The two columns are the same pad, and saying so is worth more than
+    # two independent passes: an axis that moved in one API and not the
+    # other would satisfy every check above. Rounding across two rescalings
+    # is worth a couple of counts, and a pose changing between the two
+    # reads a few more, so this is a majority statement rather than an
+    # every-sample one.
+    for di, wm in (("X", "WX"), ("Y", "WY"), ("Z", "WZ"), ("Rz", "WR")):
+        agree = sum(1 for r in rows if abs(r[di] - r[wm]) <= 8)
+        if agree * 10 < len(rows) * 9:
+            say("FAIL %s and %s agree on only %d of %d samples: the two APIs"
+                " are not reading the same axis"
+                % (di, wm, agree, len(rows)))
+            ok = False
     return ok
 
 

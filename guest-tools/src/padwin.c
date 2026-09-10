@@ -13,8 +13,21 @@
  *
  * What it is for: path A was confirmed by hand (a real controller in the
  * Game Controllers panel on XP and 98 SE) and nothing re-checked it after
- * a change. This is that check, and it asks the question a game asks —
- * DirectInput, not the control panel:
+ * a change. This is that check, and it asks the questions a game asks
+ * rather than what the control panel shows.
+ *
+ * Two of them, because a title of the era can call either API and the pad
+ * has to arrive through both. **DirectInput** is the one a 1998-and-later
+ * game uses; **winmm** — `joyGetDevCaps` / `joyGetPosEx`, the multimedia
+ * joystick API on top of 9x's VJOYD — is what a great many mid-90s
+ * Windows titles call, and it is the one that decides whether Windows 98
+ * needs the gameport's driver half at all (M13 step 7): if a USB HID pad
+ * reaches winmm there, a Windows game on 98 already has a joystick and
+ * nobody has to install "Standard Game Port" for one. It does, which is
+ * why that step was dropped — so this is the check that claim rests on,
+ * and both halves are read every sample rather than counted once.
+ *
+ * The DirectInput half:
  *
  *   * enumerate attached joysticks and name them, because "no gamepad"
  *     and "a gamepad with no axes" are different failures and the
@@ -25,6 +38,14 @@
  *   * read the POV hat, which is where a missing null state shows up — a
  *     released hat reads as north rather than as centred;
  *   * read the buttons, in the order gamepad::HID_BUTTONS fixes.
+ *
+ * The winmm half puts its axes on the same 0..255 range, rescaled from
+ * whatever `JOYCAPS` says the driver reports, so the two columns can be
+ * read against each other sample by sample: `WX` beside `X` is the same
+ * pad seen through the other API. Its POV stays in winmm's own units
+ * (hundredths of a degree, 65535 centred) rather than being folded into
+ * DirectInput's -1, because a value nothing here invented is the one
+ * worth having in a log.
  *
  * Output goes three ways, because the harness, a person at the machine
  * and a post-mortem all want it: COM1 (opened directly, so the Run dialog
@@ -44,6 +65,13 @@
 
 static FILE *logf;
 static HANDLE com1 = INVALID_HANDLE_VALUE;
+
+/* The first joystick winmm answers `joyGetDevCaps` for, and its ranges:
+ * the axes come back on whatever range the driver chose, so the caps are
+ * needed to put them on the report's own 0..255 beside the DirectInput
+ * column. -1 until something enumerates. */
+static int winmm_id = -1;
+static JOYCAPSA winmm_caps;
 
 static void say(const char *fmt, ...)
 {
@@ -209,6 +237,10 @@ static void report_winmm(void)
             continue;
         }
         attached++;
+        if (winmm_id < 0) {
+            winmm_id = (int)i;
+            winmm_caps = caps;
+        }
         memset(&info, 0, sizeof info);
         info.dwSize = sizeof info;
         info.dwFlags = JOY_RETURNALL;
@@ -217,6 +249,54 @@ static void report_winmm(void)
             joyGetPosEx(i, &info) == JOYERR_NOERROR ? " present" : " not attached");
     }
     say("winmm: %u supported, %u attached\n", (unsigned)n, (unsigned)attached);
+}
+
+/* One axis of winmm's reading, on 0..255. The driver's own range is what
+ * JOYCAPS says it is — 0..65535 on the HID mapper here, but nothing
+ * guarantees that — so it is rescaled rather than assumed, and an axis
+ * whose caps are degenerate reads -1 instead of dividing by zero. */
+static long wnorm(DWORD pos, DWORD lo, DWORD hi)
+{
+    if (hi <= lo) {
+        return -1;
+    }
+    if (pos < lo) {
+        pos = lo;
+    }
+    if (pos > hi) {
+        pos = hi;
+    }
+    return (long)(((pos - lo) * 255 + (hi - lo) / 2) / (hi - lo));
+}
+
+/* The same pad through the multimedia API. Every field reads -1 when
+ * winmm has no joystick at all, which is a different fact from a joystick
+ * that reads centred and the check has to be able to tell them apart. */
+static void read_winmm(long *ax, long *pov, long *btn)
+{
+    JOYINFOEX info;
+    int k;
+
+    for (k = 0; k < 4; k++) {
+        ax[k] = -1;
+    }
+    *pov = -1;
+    *btn = -1;
+    if (winmm_id < 0) {
+        return;
+    }
+    memset(&info, 0, sizeof info);
+    info.dwSize = sizeof info;
+    info.dwFlags = JOY_RETURNALL;
+    if (joyGetPosEx((UINT)winmm_id, &info) != JOYERR_NOERROR) {
+        return;
+    }
+    ax[0] = wnorm(info.dwXpos, winmm_caps.wXmin, winmm_caps.wXmax);
+    ax[1] = wnorm(info.dwYpos, winmm_caps.wYmin, winmm_caps.wYmax);
+    ax[2] = wnorm(info.dwZpos, winmm_caps.wZmin, winmm_caps.wZmax);
+    ax[3] = wnorm(info.dwRpos, winmm_caps.wRmin, winmm_caps.wRmax);
+    *pov = (long)info.dwPOV;
+    *btn = (long)info.dwButtons;
 }
 
 int main(int argc, char **argv)
@@ -296,6 +376,9 @@ int main(int argc, char **argv)
 
     for (i = 0; i < samples; i++) {
         DIJOYSTATE js;
+        long w[4];
+        long wpov, wb;
+        char wbs[16];
         unsigned b = 0;
         int k;
 
@@ -321,8 +404,21 @@ int main(int argc, char **argv)
          * from north, or -1 (0xffffffff) centred. The centred value is
          * the null state in the report descriptor; without it this reads
          * 0 — north — with nothing pressed. */
-        say("X=%ld Y=%ld Z=%ld Rz=%ld POV=%ld B=%03x\n",
-            js.lX, js.lY, js.lZ, js.lRz, (long)(int)js.rgdwPOV[0], b);
+        /* Read winmm immediately after, so the two columns are as close
+         * to the same instant as this can make them. */
+        read_winmm(w, &wpov, &wb);
+        /* A button mask is hex like the DirectInput one, but "no winmm
+         * joystick" has to stay -1 rather than becoming ffffffff — the
+         * two are different findings and the check reads this field. */
+        if (wb < 0) {
+            strcpy(wbs, "-1");
+        } else {
+            sprintf(wbs, "%03lx", wb);
+        }
+        say("X=%ld Y=%ld Z=%ld Rz=%ld POV=%ld B=%03x"
+            " WX=%ld WY=%ld WZ=%ld WR=%ld WPOV=%ld WB=%s\n",
+            js.lX, js.lY, js.lZ, js.lRz, (long)(int)js.rgdwPOV[0], b,
+            w[0], w[1], w[2], w[3], wpov, wbs);
         Sleep(250);
     }
 

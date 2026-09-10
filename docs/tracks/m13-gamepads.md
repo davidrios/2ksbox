@@ -21,7 +21,14 @@ SE's Game Controllers panel, and the gameport through `PADTEST.COM` in a
 Windows 98 DOS box, d-pad and buttons included. A FreeDOS guest drives the
 gameport under a test as well (`tools/pad-guest-test.py`). See "State" for
 what is in, "Proved by hand" for what those runs corrected, and "Not
-proved yet" for the three things still unwatched.
+proved yet" for the one thing still unwatched.
+
+**The track is done as of 2026-09-10.** Every path that reaches a guest
+has a check in the suite's guest stage, and the last open item — the 9x
+driver half of path B — was dropped rather than built: a Windows game on
+98 already has its joystick from the USB pad, through the multimedia
+joystick API as well as DirectInput. "Why 9x needs no gameport driver"
+has the measurement.
 
 Gamepads were a post-v1 candidate in doc 08 until this track opened.
 
@@ -270,13 +277,64 @@ more. What is left is narrower than it was:
   had the pad's driver bound once. An image that never has still reports
   `devices: 0`, and the check skips rather than fails where the machine is
   absent.
-- **path B on 9x** — "Standard Game Port" through Add New Hardware, then
-  calibration in `joy.cpl`, so a *Windows* game sees a joystick. The port
-  itself is confirmed on 98 (a real pad read through `PADTEST.COM` in a
-  DOS box); this is the driver half alone.
+- ~~**path B on 9x** — "Standard Game Port" through Add New Hardware,
+  then calibration in `joy.cpl`, so a *Windows* game sees a joystick.~~
+  **Dropped by decision, 2026-09-10**, because the USB pad already gets a
+  Windows game on 98 its joystick through *both* APIs one can call. See
+  below.
 - **path C in a guest** — keys arriving. Dropped by decision on
   2026-09-10 (see "Next steps"): more harness than the path is worth, and
   the host half of it is checked by `player --pad-sweep` already.
+
+### Why 9x needs no gameport driver
+
+The item above was written on a true fact with a false implication: the
+gameport really is not Plug and Play, and Windows really will not find it
+without Add New Hardware. What that leaves out is that a *Windows* game on
+98 has no reason to want the port at all, because the USB pad reaches
+every API such a game can ask.
+
+There are two, and a title of the era can call either. **DirectInput** is
+the later one, and it is what `pad-guest-98` checked from the day it
+landed. **winmm** —
+`joyGetDevCaps` / `joyGetPosEx`, the multimedia joystick API on top of
+9x's VJOYD — is what a great many mid-90s Windows titles call, and it is
+the one the gameport's driver would have been installed to feed. Measured
+on 98, with the USB pad and nothing else:
+
+```
+device 1: "2ksbox USB Gamepad" (2ksbox USB Gamepad)
+winmm: joystick 0 "Microsoft PC-joystick driver" 4 axes 12 buttons present
+winmm axes (rescaled to the same 0..255): X 1..254  Y 128..128  Z 128..254  R 128..128
+winmm POV values seen: 0 18000 65535 (65535 = centred)
+winmm button masks seen: 000 001 002
+```
+
+"Microsoft PC-joystick driver" is VJOYD's own name — the generic 9x
+joystick driver is already surfacing the HID device, which is precisely
+the seat "Standard Game Port" would have been installed into. (The string
+is localised: the same driver calls itself "Driver de joystick para PC da
+M" on this XP.) Every axis the poses drive reaches both ends, the two
+nothing drives stay centred, the hat shows its null state and the buttons
+arrive — and each value tracks the DirectInput column sample for sample,
+which is asserted rather than eyeballed. So the driver half had no
+customer left, and building it would have added an install step to a
+family that does not need one.
+
+**What does not change**: the gameport device itself, and the reasons it
+exists. DOS has no USB stack and reads 0x201 itself — that is what path B
+was built for and it is unaffected — and a DOS box *inside* Windows 98
+reads the port directly too, which a real DualSense has done
+(`PADTEST.COM`, 2026-09-10). Win98 keeps the `gameport` choice for
+exactly that. What is gone is only the claim that someone must install a
+driver so a Windows game can see a joystick.
+
+The measurement is now the `check_winmm` half of `tools/pad-guest-test.py`
+rather than a line someone read once, on both Windows checks: the same
+assertions the DirectInput column gets, plus a per-sample agreement test
+between the two columns, because an API that lists the pad and reads it
+centred for ever would satisfy a mere "it enumerated". Six mutations of a
+real log were required to fail it before it was believed.
 
 Also unfelt: **a real controller on path C**. A DualSense has now been on
 paths A and B; the key mapping has only ever been driven by
@@ -613,11 +671,22 @@ What is left, in order:
 6. ~~**Path A on Windows 98, under the test.**~~ **Done 2026-09-10** —
    `pad-guest-98`, against a launcher machine whose Windows has the driver
    (`claude98` here).
-7. **The 9x *driver* half of path B**: "Standard Game Port" through Add
+7. ~~**The 9x *driver* half of path B**: "Standard Game Port" through Add
    New Hardware, then calibrate in `joy.cpl`, so a Windows game sees a
-   joystick. The port itself is confirmed present on 98 — `PADTEST.COM` in
-   a Win98 DOS box reads it with a real pad — so this is only about the
-   driver, and that A/B is the way to keep telling the two apart.
+   joystick.~~ **Dropped by decision 2026-09-10** — a Windows game on 98
+   already has its joystick from the USB pad, through winmm as well as
+   DirectInput, so the driver half had nothing left to serve. The
+   reasoning and the measurement are in "Why 9x needs no gameport driver"
+   above; the port itself keeps its DOS job, DOS boxes under Windows
+   included.
+
+**With that, M13 is done.** Every path that was going to reach a guest
+does, each one under a check in the suite's guest stage rather than a hand
+run: `pad-guest` (the gameport, FreeDOS), `pad-guest-xp` and
+`pad-guest-98` (the USB pad, both APIs). What remains open is not work
+this track owes anyone — a real controller has never driven path C, which
+is recorded under "Not proved yet" and is a thing to *watch for*, not a
+thing to build.
 
 **Path C's guest test is dropped, by decision (2026-09-10).** Driving a
 guest's keyboard from a scripted pad and reading the keys back inside

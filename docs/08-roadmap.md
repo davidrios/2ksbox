@@ -229,7 +229,7 @@ can capture it to a wav.
 - **M12d packaging:** the bank into `share/2ksbox/soundfonts/`.
 - **M12e the guest end-to-end:** `tools/midi-guest-test.py`.
 
-## M13 — Gamepads  (Planned; `docs/tracks/m13-gamepads.md`)
+## M13 — Gamepads  (Done 2026-09-10; `docs/tracks/m13-gamepads.md`)
 
 Opened 2026-09-09 out of doc 08's post-v1 list. QEMU has **nothing** to
 build on — no gameport, no gamepad HID (`hw/input/hid.h` knows mouse,
@@ -251,8 +251,11 @@ because they reach different guests:
   guest, no QEMU patch, no analog. The mapping recomputes the wanted set
   of keys each poll and diffs it, so shared keys (d-pad *and* stick on
   the arrows) release only when the last holder does, and a stick crossing
-  centre releases before it presses. Not yet seen arriving in a real
-  guest: `tools/pad-guest-test.sh` is still to write.
+  centre releases before it presses. Its guest test was **dropped by
+  decision** 2026-09-10 — driving a guest's keyboard from a scripted pad
+  and reading the keys back inside Windows is more harness than the path
+  is worth — so it is guarded on the host side alone, by
+  `player --pad-sweep`, which is where every bug in it has been.
 - **Path A `usb-gamepad`** ✅ 2026-09-09 (patch 26): a whole device —
   `gamepad/qemu/dev-gamepad.c`, two analog sticks, an 8-way hat with a
   null state and twelve buttons in a six-byte report, built under
@@ -263,16 +266,35 @@ because they reach different guests:
   built around consoles and a gamepad has no console affinity, so the
   shim calls the device directly — which is not upstreamable as it
   stands, and the track doc says so. XP, Win98 SE and Me should see it on
-  their in-box HID stack with nothing to install; DOS cannot, and is not
-  offered it. **No guest has enumerated it yet** —
-  `tools/hid-descriptor-check.py` checks the descriptor bytes and the
-  `pad` check watches a real `qemu-system-i386` attach it to the bus,
-  but `tools/pad-guest-test.sh` is still to write.
-- **Path B the gameport** (patch 27): four RC one-shots at 0x201,
-  computed against `QEMU_CLOCK_VIRTUAL` on read. The only path that
-  reaches DOS, and the 9x analog stack (`VJOYD` / `MSANALOG`). The
-  busy-wait timing risk is bounded by the DOS family's existing
-  `-icount shift=N,align=on`.
+  their in-box HID stack with nothing to install — XP does; Windows 98 SE
+  binds its own driver but asks for the Windows 98 source files the first
+  time. DOS cannot, and is not offered it. **Guests have enumerated it**:
+  `pad-guest-xp` and `pad-guest-98` boot one each and ask what a game
+  asks, and a real DualSense has been in both families' Game Controllers
+  panel by hand (2026-09-09).
+- **Path B the gameport** ✅ 2026-09-09 (patch 27): four RC one-shots at
+  0x201, computed against `QEMU_CLOCK_VIRTUAL` on read. The only path that
+  reaches DOS, and the busy-wait timing risk is bounded by the DOS
+  family's existing `-icount shift=N,align=on` — measured in both
+  machines, paced and not, by `pad-guest`. The d-pad drives the first
+  stick's axes to their ends inside the device, because a pad with no pots
+  has no other way to be read; a real DualSense has done it in a Windows
+  98 DOS box.
+
+  **The 9x analog stack (`VJOYD` / `MSANALOG`) was dropped rather than
+  built**, 2026-09-10: the port would have wanted "Standard Game Port"
+  through Add New Hardware and a calibration pass so a *Windows* game
+  could see a joystick, and a Windows game on 98 already has one — the
+  USB pad of path A reaches DirectInput **and** winmm's `joyGetPosEx`,
+  which is what VJOYD would have been serving. Measured by the
+  `pad-guest-98` check, which asserts both columns. The port keeps its
+  DOS job, DOS boxes under Windows included.
+
+**The track is closed.** Every path that reaches a guest has a check in
+the suite's guest stage — `pad-guest`, `pad-guest-xp`, `pad-guest-98` —
+rather than a hand run. One thing is open and owed to nobody: a real
+controller has never driven path C, whose output is scancodes rather than
+a device, so a wrong binding there would look like a broken game.
 
 ## Post-v1 candidates
 

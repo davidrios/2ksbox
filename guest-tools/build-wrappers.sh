@@ -245,9 +245,12 @@ nasm -f bin -o "$T/textcal.com" "$ROOT/guest-tools/src/textcal.asm"
 # (tools/pad-guest-test.py) and something to run by hand in a DOS box.
 nasm -f bin -o "$T/padtest.com" "$ROOT/guest-tools/src/padtest.asm"
 # PADWIN.EXE: the same question of the USB HID pad (M13 path A), asked the
-# way a game asks it — DirectInput, not the Game Controllers panel: enumerate
-# attached joysticks, put every axis on the report's own 0..255 range, read
-# the POV hat (where a missing null state shows up) and the buttons. Writes
+# way a game asks it rather than the way the Game Controllers panel shows it,
+# through *both* APIs a title of the era can call: DirectInput, and winmm's
+# joyGetPosEx on top of 9x's VJOYD, which is the one that settles whether
+# Windows 98 needs the gameport's driver half. Enumerate attached joysticks,
+# put every axis on the report's own 0..255 range in both columns, read the
+# POV hat (where a missing null state shows up) and the buttons. Writes
 # to COM1 itself, so the harness can start it from the Run dialog with no
 # shell to redirect. **PADWIN and not PADTEST**: the DOS probe above is
 # PADTEST.COM in this same folder, and both DOS and cmd resolve a bare name

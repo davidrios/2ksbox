@@ -1007,7 +1007,8 @@ impl Form {
             ],
             Pad::Gameport => &[
                 "The joystick port every stick of the era plugged into, at 0x201. Two axes and two buttons per connector, four of each in total — the hardware's own limit, so there is no hat and no second set of buttons. The d-pad steers the first two axes.",
-                "The only kind of controller DOS can use: a DOS game reads the port itself and needs nothing installed. Windows 98 does need two steps — the port is not Plug and Play, so it wants Add New Hardware, and then a calibration pass in the Game Controllers panel.",
+                "The only kind of controller DOS can use: a DOS game reads the port itself and needs nothing installed — a DOS box under Windows 98 included.",
+                "For a Windows game on 98, pick the USB controller instead: Windows finds that one by itself and games see it through both joystick APIs, where this port is not Plug and Play and wants Add New Hardware and then a calibration pass in the Game Controllers panel first.",
             ],
             Pad::Keys => &[
                 "The pad presses keys: the d-pad and left stick are the arrow keys, and the four face buttons are Ctrl, Alt, Space and Enter — what a DOS or early-Windows action game reads by default.",
@@ -1027,6 +1028,14 @@ impl Form {
     /// never Plug and Play, so it is Add New Hardware and then a
     /// calibration pass. Telling someone Windows would handle it is worse
     /// than saying nothing.
+    ///
+    /// Both sentences point at the USB pad on 98 rather than leaving the
+    /// two devices as equals, because they are not: a USB pad reaches a
+    /// Windows game there through DirectInput *and* winmm's
+    /// `joyGetPosEx` (measured, `pad-guest-98`), so the port's install
+    /// steps buy a Windows game nothing. The port is still the right
+    /// answer for DOS, including a DOS box under Windows, and that is
+    /// what the picker's own note says.
     pub fn pad_warning(&self) -> Option<&'static str> {
         /// `Keys` and `None` are the same thing to the guest: no device.
         fn device(pad: Pad) -> Option<Pad> {
@@ -1045,7 +1054,9 @@ impl Form {
             Pad::Gameport => {
                 "This machine already exists, and the joystick port is not Plug and Play: Windows \
                  will not find it on its own — add \"Standard Game Port\" through Add New Hardware, \
-                 then calibrate the stick in the Game Controllers panel. A DOS guest needs neither."
+                 then calibrate the stick in the Game Controllers panel. A DOS guest needs neither, \
+                 and a Windows game on 98 is better served by the USB controller, which needs no \
+                 such step."
             }
             // Was a device, now is not.
             _ => {

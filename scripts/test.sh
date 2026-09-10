@@ -190,12 +190,17 @@
 #                  the stick, the d-pad and the buttons. Runs the **player**, so
 #                  it skips without a display
 #   pad-guest-xp   tools/pad-guest-test.py xp: the USB HID pad as a Windows game
-#                  finds it (M13 path A) — DirectInput enumerates it, every axis
-#                  on the report's own 0..255 range, the POV hat's null state and
-#                  the buttons. Its own XP boot, ~60 s
+#                  finds it (M13 path A) — through *both* APIs a title of the era
+#                  can call: DirectInput enumerates it, every axis on the report's
+#                  own 0..255 range, the POV hat's null state and the buttons; and
+#                  winmm's joyGetPosEx reads the same pad, on the same range, with
+#                  the two columns required to agree. Its own XP boot, ~60 s
 #   pad-guest-98   the same on Windows 98, against a launcher *machine* whose
 #                  Windows has had the pad's driver bound once (98 asks for its
-#                  own source files the first time); WIN98_PAD_MACHINE names it
+#                  own source files the first time); WIN98_PAD_MACHINE names it.
+#                  The winmm half is what closed M13's last item: a Windows game
+#                  on 98 gets its joystick from the USB pad through VJOYD too, so
+#                  the gameport's 9x driver half was dropped rather than built
 #   smc-guest      tools/smc-guest-test.py: self-modifying code (patched immediates,
 #                  same-value rewrites, opcode flips, a crossing store), smc-same-value
 #                  on/off both architecturally right (patch 18)
