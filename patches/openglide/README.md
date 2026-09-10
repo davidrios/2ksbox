@@ -171,5 +171,17 @@ it is the Voodoo 2. A `voodoo` PCI device wrapping that code, fed into the
 player's frame path, is a plausible track someday and would sit *beside*
 the pass-through — the wrapper for speed where it covers the game, the
 chip for fidelity where it doesn't — but it is filed as "later, if a game
-demands it": Glide 3 in OpenGLide is the smaller step for the titles in
-hand.
+demands it" — **or first, if the measurement says so (2026-09-10
+discussion)**. The two Glide 3 routes trade against each other: the
+wrapper renders on the host GPU and is the smaller port, but every game
+can find a hole in it (patch 05); the chip renders on host CPU cores at a
+software rasterizer's speed — an ARM64 code generator exists in 86Box,
+not in PCem — and is exact and complete, Glide 2 stragglers included,
+with 3dfx's released Glide source as an open guest driver. What decides
+it is one number nobody has yet: **Diablo II in 86Box's Voodoo 2 on the
+M1 Air**, an evening's experiment with nothing to build. If the
+rasterizer keeps up on those cores, the Voodoo 2 device is the Glide 3
+track and the OpenGLide extension is shelved; if it does not, the wrapper
+is the only route that uses the GPU and the sixty functions are worth
+writing. Not "TCG makes it fast": the guest's FIFO writes are cheap
+either way, the frame rate is the rasterizer's.

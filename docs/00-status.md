@@ -461,8 +461,12 @@ items nobody owns yet:
    rasterizer as a QEMU device — complete by construction, render threads
    on cores TCG leaves idle; the trapped MMIO writes on the one vCPU
    thread are the cost, and a Voodoo 2's RAM-backed command FIFO plus an
-   unlocked region removes most of it), recorded as "later, if a game
-   demands it".
+   unlocked region removes most of it). **The decision procedure between
+   the two is recorded there too**: measure Diablo II in 86Box's Voodoo 2
+   on the Air first — if the software rasterizer keeps up on those cores,
+   the Voodoo 2 device is the Glide 3 track (exact, complete, an open
+   guest driver from 3dfx's source); if not, the wrapper is the only
+   GPU route and gets written.
    What is left of M3: **the wrapper on macOS and Windows** -- the Darwin branch
    of `build-glide.sh` builds since 2026-09-06 but nothing exercises it, so
    what is left there is a macOS `glide-host` check (the CGL side of
