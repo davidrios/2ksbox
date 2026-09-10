@@ -67,12 +67,15 @@ echo "==> overlaying libdisc/ (CD-ROM image block driver: block/cdimage.c, doc 1
 rsync -c "$ROOT/libdisc/qemu/cdimage.c" "$QEMU/block/"
 rsync -c "$ROOT/libdisc/qemu/cdimage.h" "$ROOT/libdisc/libdisc.h" "$QEMU/include/block/"
 
-echo "==> overlaying gamepad/ (USB HID gamepad: hw/usb/dev-gamepad.c, M13)"
+echo "==> overlaying gamepad/ (the two pad devices: hw/usb/dev-gamepad.c, hw/input/gameport.c, M13)"
 rsync -c "$ROOT/gamepad/qemu/dev-gamepad.c" "$QEMU/hw/usb/"
-# The header goes where both its consumers can reach it: the device
-# beside it in hw/usb, and the embed shim, which is its own rsync'd tree.
+rsync -c "$ROOT/gamepad/qemu/gameport.c" "$QEMU/hw/input/"
+# The headers go where both their consumers can reach them: each device
+# beside its own, and the embed shim, which is its own rsync'd tree and
+# feeds either device from one call (qemu_embed_pad_state).
 rsync -c "$ROOT/gamepad/qemu/usb-gamepad.h" "$QEMU/hw/usb/"
-rsync -c "$ROOT/gamepad/qemu/usb-gamepad.h" "$QEMU/embed/"
+rsync -c "$ROOT/gamepad/qemu/gameport.h" "$QEMU/hw/input/"
+rsync -c "$ROOT/gamepad/qemu/usb-gamepad.h" "$ROOT/gamepad/qemu/gameport.h" "$QEMU/embed/"
 
 # Deterministic: restore every TRACKED file any patch touches to pristine
 # v9.2.4, then apply the 3dfx patch and our queue fresh. (Overlay files were

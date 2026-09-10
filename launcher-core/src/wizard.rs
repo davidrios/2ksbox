@@ -84,18 +84,29 @@ pub struct Form {
     pub floppy: String,
     pub boot: Boot,
     /// The display adapter, on a family that has a choice of one
-    /// (`video_applies`). Private, unlike `boot`: it is the one field
-    /// whose *list* changes with the family — Windows chooses between our
-    /// adapter and the Cirrus, `Other` between the two standard ones — so
-    /// a value carried across a family switch can be one the new family
-    /// does not offer, and `choose_family` has to put it back.
+    /// (`video_applies`). Private, unlike `boot`: it is one of the four
+    /// fields whose *list* changes with the family — Windows chooses
+    /// between our adapter and the Cirrus, `Other` and DOS between the
+    /// two standard ones — so a value carried across a family switch can
+    /// be one the new family does not offer, and `choose_family` has to
+    /// put it back.
     video: Video,
+    /// Whether the adapter in the field is one somebody picked, the way
+    /// `ram_chosen` works for the memory. Until it is, switching family
+    /// moves it to the new family's default; once it is, it survives the
+    /// switch — unless the new family does not offer it at all, which no
+    /// flag can rescue. It was missing until 2026-09-09, so a new
+    /// machine switched from 98 to XP kept the Cirrus, which is XP's
+    /// *non*-default, and the same for the three fields below.
+    video_chosen: bool,
     /// The sound card, and what is on the MIDI port (doc 20 §6).
     /// Private for the same reason `video` is: each family offers a
     /// different list, so a value carried across a family switch can be
     /// one the new family does not have.
     sound: Sound,
+    sound_chosen: bool,
     music: Music,
+    music_chosen: bool,
     /// A SoundFont bank of the user's own, or empty for the one we
     /// ship. A plain file field, like the floppy.
     pub soundfont: String,
@@ -110,6 +121,7 @@ pub struct Form {
     /// switch can be one the new family does not offer and
     /// `choose_family` has to put it back.
     pad: Pad,
+    pad_chosen: bool,
     pub existing_disk: bool,
     pub disk_path: String,
     pub disk_size_gb: u32,
@@ -183,11 +195,15 @@ impl Default for Form {
             floppy: String::new(),
             boot: Boot::default(),
             video: bundle::default_video(Family::Win98).unwrap_or(Video::Std),
+            video_chosen: false,
             sound: bundle::default_sound(Family::Win98),
+            sound_chosen: false,
             music: bundle::default_music(Family::Win98),
+            music_chosen: false,
             soundfont: String::new(),
             mt32_roms: String::new(),
             pad: bundle::default_pad(Family::Win98),
+            pad_chosen: false,
             existing_disk: false,
             disk_path: String::new(),
             disk_size_gb: 2,
@@ -256,14 +272,19 @@ impl Form {
             optimizations: machine.optimizations.clone(),
             floppy: machine.floppy.as_ref().map(|f| f.display().to_string()).unwrap_or_default(),
             boot: machine.effective_boot(),
-            // A DOS machine has no adapter of its own; the field only
-            // matters once the family switches to one that has.
+            // An existing machine's adapter, card, MIDI port and pad are
+            // chosen values for the same reason its memory is: whatever
+            // they came from, switching family must not rewrite them.
             video: machine.effective_video().unwrap_or(Video::Std),
+            video_chosen: true,
             sound: machine.effective_sound(),
+            sound_chosen: true,
             music: machine.effective_music(),
+            music_chosen: true,
             soundfont: machine.soundfont.as_ref().map(|f| f.display().to_string()).unwrap_or_default(),
             mt32_roms: machine.mt32_roms.as_ref().map(|d| d.display().to_string()).unwrap_or_default(),
             pad: machine.effective_pad(),
+            pad_chosen: true,
             existing_disk: true,
             disk_path: machine.disk.display().to_string(),
             install_media: machine.boot_disc().map(|d| d.display().to_string()).unwrap_or_default(),
@@ -343,27 +364,28 @@ impl Form {
         if !self.seamless_mouse_chosen {
             self.seamless_mouse = bundle::default_seamless_mouse(family);
         }
-        // The adapter has no "chosen" flag of its own because the new
-        // family may simply not offer what is in the field — our own
-        // adapter is not on offer for BeOS. Keep it when it survives the
-        // switch, take the new family's default when it doesn't.
-        // The card and the MIDI port follow the same rule as the
-        // adapter, and for the same reason: a Gravis is not on offer to
-        // XP, and an ES1370 not to DOS.
-        if !bundle::sound_choices(family).contains(&self.sound) {
+        // The adapter, the card, the MIDI port and the gamepad take the
+        // new family's default on **either** of two counts, where the
+        // fields above have only the first. Nobody has picked one, so it
+        // is following the family like everything else — a new machine
+        // moved from 98 to XP has to arrive on XP's adapter, not sit on
+        // the Cirrus that was 98's. Or somebody did pick one and the new
+        // family does not offer it at all, which no flag can rescue: our
+        // own adapter is not on offer for BeOS, a Gravis is not on offer
+        // to XP, an ES1370 not to DOS, and a `Usb` pad needs a USB stack
+        // DOS has not got.
+        if !self.sound_chosen || !bundle::sound_choices(family).contains(&self.sound) {
             self.sound = bundle::default_sound(family);
         }
-        if !bundle::music_choices(family).contains(&self.music) {
+        if !self.music_chosen || !bundle::music_choices(family).contains(&self.music) {
             self.music = bundle::default_music(family);
         }
-        if !bundle::video_choices(family).contains(&self.video) {
+        if !self.video_chosen || !bundle::video_choices(family).contains(&self.video) {
             if let Some(default) = bundle::default_video(family) {
                 self.video = default;
             }
         }
-        // The same for the gamepad: switching a machine to DOS strands a
-        // `Usb` setting, because DOS has no USB stack to attach it to.
-        if !bundle::pad_choices(family).contains(&self.pad) {
+        if !self.pad_chosen || !bundle::pad_choices(family).contains(&self.pad) {
             self.pad = bundle::default_pad(family);
         }
         // The new family's ceiling may be below the memory already in
@@ -625,6 +647,28 @@ impl Form {
         self.optimizations.all_default()
     }
 
+    /// Every switch off at once: the control run for "is one of ours
+    /// what broke this guest", which is otherwise eleven clicks and easy
+    /// to get half-right.
+    pub fn disable_all_optimizations(&mut self) {
+        self.optimizations.disable_all();
+    }
+
+    /// The other end of the same shortcut.
+    pub fn enable_all_optimizations(&mut self) {
+        self.optimizations.enable_all();
+    }
+
+    /// Whether they are all off already, so a front end can grey the
+    /// button rather than offer a no-op.
+    pub fn optimizations_all_off(&self) -> bool {
+        self.optimizations.all_off()
+    }
+
+    pub fn optimizations_all_on(&self) -> bool {
+        self.optimizations.all_on()
+    }
+
     /// What the collapsed section says about itself, so a machine with
     /// something turned off says so without being opened.
     pub fn optimizations_summary(&self) -> String {
@@ -639,9 +683,13 @@ impl Form {
         if self.will_use_kvm() {
             "This machine runs on KVM, where none of these apply: they are fast paths in the emulator. \
              Choose Emulation above (or a processor, which forces it) to use them."
+        } else if self.optimizations.all_off() {
+            "Every one of them is off: this guest is running on the emulator with none of our own work in \
+             its path, which is the control to compare a misbehaving one against. Expect it to be slow."
         } else {
             "Our own additions to QEMU, each measured (patches/qemu/README.md). Turn one off to find out \
-             whether it is what makes a guest compute the wrong number or stop drawing."
+             whether it is what makes a guest compute the wrong number or stop drawing, or turn them all \
+             off at once for the control run and put back the ones that are not to blame."
         }
     }
 
@@ -669,9 +717,11 @@ impl Form {
     }
 
     /// Whether there is an adapter to choose at all, so a front end
-    /// shows or hides the row without knowing which family that is. Only
-    /// DOS has none: its titles program a VGA/VESA BIOS directly, so its
-    /// adapter is a fact of the era rather than a driver question.
+    /// shows or hides the row without knowing which family that is.
+    /// Every family offers a pair today — DOS since 2026-09-09 — so this
+    /// is true throughout; it stays because the answer is
+    /// `video_choices`'s to give and a family that gains a fixed adapter
+    /// should not need a front end changed.
     pub fn video_applies(&self) -> bool {
         !self.video_choices().is_empty()
     }
@@ -686,12 +736,17 @@ impl Form {
     pub fn choose_video(&mut self, video: Video) {
         if self.video_choices().contains(&video) {
             self.video = video;
+            self.video_chosen = true;
         }
     }
 
+    /// Back to this family's default — and back to *following* the
+    /// family, so a later switch moves it again. "Default" means the
+    /// field was never really touched.
     pub fn reset_video(&mut self) {
         if let Some(default) = bundle::default_video(self.family) {
             self.video = default;
+            self.video_chosen = false;
         }
     }
 
@@ -712,6 +767,14 @@ impl Form {
             (Video::Cirrus, Family::Xp) => &[
                 "The Cirrus GD5446, which Windows has a driver for in the box: 2D only, and none of our display path — no mode table, no paced flips, no Direct3D through the driver.",
                 "The right answer for a machine whose driver isn't installed yet, and the A/B for a title that misbehaves on ours.",
+            ],
+            (Video::Cirrus, Family::Dos) => &[
+                "The Cirrus GD5446 and its period VGA/VESA BIOS, which is what a DOS machine here has always had and where this family starts.",
+                "Nothing is installed either way — a DOS title programs the adapter itself — so the standard VGA is one restart away and back if a game's modes come out wrong on this one.",
+            ],
+            (Video::Std, Family::Dos) => &[
+                "The Bochs adapter: VBE 2.0 and a linear frame buffer, the later and fuller of the two VESA BIOSes a DOS title can find here.",
+                "Worth trying when a game's high-resolution modes are wrong or missing on the Cirrus. It is not the safer answer, just the other one — some titles know the Cirrus and not this.",
             ],
             (Video::Cirrus, _) => &[
                 "A chip that really existed, so a guest of the era is likely to have a native driver for it: BeOS R5 and XFree86 both ship one.",
@@ -743,11 +806,13 @@ impl Form {
     pub fn choose_sound(&mut self, sound: Sound) {
         if self.sound_choices().contains(&sound) {
             self.sound = sound;
+            self.sound_chosen = true;
         }
     }
 
     pub fn reset_sound(&mut self) {
         self.sound = bundle::default_sound(self.family);
+        self.sound_chosen = false;
     }
 
     pub fn music(&self) -> Music {
@@ -765,11 +830,13 @@ impl Form {
     pub fn choose_music(&mut self, music: Music) {
         if self.music_choices().contains(&music) {
             self.music = music;
+            self.music_chosen = true;
         }
     }
 
     pub fn reset_music(&mut self) {
         self.music = bundle::default_music(self.family);
+        self.music_chosen = false;
     }
 
     /// Whether the SoundFont field is worth showing at all.
@@ -858,11 +925,27 @@ impl Form {
     /// The one thing worth saying above the picker rather than under one
     /// of its entries: changing this on a machine that already has an OS
     /// installed is a hardware change, and the guest will say so.
+    ///
+    /// Except on DOS, where it is not: nothing is installed for an
+    /// adapter there, the machine simply boots. What can still be stale
+    /// is a *game's* own setup — a title that has already been through
+    /// its SETUP wrote down a video mode, and the two adapters do not
+    /// offer the same list — so that is what DOS is told instead.
     pub fn video_warning(&self) -> Option<&'static str> {
-        (self.is_editing() && !self.video_is_default_for_machine()).then_some(
-            "This machine already exists: changing its adapter makes the guest find new hardware on its next start, \
-             and it will want a driver for it before the desktop comes back.",
-        )
+        if !self.is_editing() || self.video_is_default_for_machine() {
+            return None;
+        }
+        Some(match self.family {
+            Family::Dos => {
+                "This machine already exists: it will boot on the new adapter with nothing to install, \
+                 but a game that has already run its own setup may have recorded a video mode this one \
+                 does not offer, and want that setup run again."
+            }
+            _ => {
+                "This machine already exists: changing its adapter makes the guest find new hardware on its next start, \
+                 and it will want a driver for it before the desktop comes back."
+            }
+        })
     }
 
     /// Whether the adapter is still the one the bundle was opened with.
@@ -899,11 +982,13 @@ impl Form {
     pub fn choose_pad(&mut self, pad: Pad) {
         if self.pad_choices().contains(&pad) {
             self.pad = pad;
+            self.pad_chosen = true;
         }
     }
 
     pub fn reset_pad(&mut self) {
         self.pad = bundle::default_pad(self.family);
+        self.pad_chosen = false;
     }
 
     /// What the chosen setting means. `Keys` needs its limitation said
@@ -918,29 +1003,67 @@ impl Form {
             ],
             Pad::Usb => &[
                 "A real USB controller on the machine: two analog sticks, an 8-way hat and twelve buttons, which DirectInput and the Game Controllers panel both see.",
-                "Windows XP, 98 SE and Me need nothing installed — they bind their own HID driver to it on the first start after it is added. Windows 98 first edition may want the USB supplement.",
+                "Windows XP binds its own HID driver on the first start after the pad is added, with nothing to install. Windows 98 SE binds its own too, but asks for the Windows 98 files the first time — keep the CD in the drive, or point it at the CAB folder on the disk. Confirmed on both, 2026-09-09.",
+            ],
+            Pad::Gameport => &[
+                "The joystick port every stick of the era plugged into, at 0x201. Two axes and two buttons per connector, four of each in total — the hardware's own limit, so there is no hat and no second set of buttons. The d-pad steers the first two axes.",
+                "The only kind of controller DOS can use: a DOS game reads the port itself and needs nothing installed — a DOS box under Windows 98 included.",
+                "For a Windows game on 98, pick the USB controller instead: Windows finds that one by itself and games see it through both joystick APIs, where this port is not Plug and Play and wants Add New Hardware and then a calibration pass in the Game Controllers panel first.",
             ],
             Pad::Keys => &[
                 "The pad presses keys: the d-pad and left stick are the arrow keys, and the four face buttons are Ctrl, Alt, Space and Enter — what a DOS or early-Windows action game reads by default.",
-                "It is a mapping, not a controller: no analog steering, and a game that asks DirectInput for a joystick still finds none. The choice for DOS, and for a game that only ever read the keyboard.",
+                "It is a mapping, not a controller: no analog steering, and a game that asks DirectInput for a joystick still finds none. The choice for a game that only ever read the keyboard.",
             ],
         }
     }
 
     /// The one thing worth saying above the picker: adding or removing a
-    /// USB controller on a machine that already has an OS installed is a
-    /// hardware change, and the guest will notice on its next start. The
-    /// same sentence the adapter picker earns, for the same reason.
+    /// controller *device* on a machine that already has an OS installed
+    /// is a hardware change, and the guest will notice on its next start.
+    /// The same sentence the adapter picker earns, for the same reason.
+    ///
+    /// Which sentence depends on which device, and that is the whole
+    /// reason this is not one line: Windows finds a USB pad by itself and
+    /// says so, and does **not** find a gameport at all — the port was
+    /// never Plug and Play, so it is Add New Hardware and then a
+    /// calibration pass. Telling someone Windows would handle it is worse
+    /// than saying nothing.
+    ///
+    /// Both sentences point at the USB pad on 98 rather than leaving the
+    /// two devices as equals, because they are not: a USB pad reaches a
+    /// Windows game there through DirectInput *and* winmm's
+    /// `joyGetPosEx` (measured, `pad-guest-98`), so the port's install
+    /// steps buy a Windows game nothing. The port is still the right
+    /// answer for DOS, including a DOS box under Windows, and that is
+    /// what the picker's own note says.
     pub fn pad_warning(&self) -> Option<&'static str> {
-        let changed = match &self.editing {
-            Some(edit) => (edit.pad == Pad::Usb) != (self.pad == Pad::Usb),
-            None => false,
-        };
-        changed.then_some(
-            "This machine already exists: adding or removing the USB controller makes the guest \
-             find new hardware on its next start. Windows installs its own driver for it, but it \
-             will say so.",
-        )
+        /// `Keys` and `None` are the same thing to the guest: no device.
+        fn device(pad: Pad) -> Option<Pad> {
+            matches!(pad, Pad::Usb | Pad::Gameport).then_some(pad)
+        }
+        let edit = self.editing.as_ref()?;
+        if device(edit.pad) == device(self.pad) {
+            return None;
+        }
+        Some(match self.pad {
+            Pad::Usb => {
+                "This machine already exists: adding the USB controller makes the guest find new \
+                 hardware on its next start. Windows installs its own driver for it, but it will \
+                 say so."
+            }
+            Pad::Gameport => {
+                "This machine already exists, and the joystick port is not Plug and Play: Windows \
+                 will not find it on its own — add \"Standard Game Port\" through Add New Hardware, \
+                 then calibrate the stick in the Game Controllers panel. A DOS guest needs neither, \
+                 and a Windows game on 98 is better served by the USB controller, which needs no \
+                 such step."
+            }
+            // Was a device, now is not.
+            _ => {
+                "This machine already exists: taking its controller away is a hardware change too, \
+                 and the guest will notice the device has gone on its next start."
+            }
+        })
     }
 
     /// The one thing the boot picker can say that isn't obvious: a

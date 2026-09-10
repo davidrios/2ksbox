@@ -160,8 +160,9 @@ pub enum Video {
     #[serde(rename = "d3dpt")]
     D3dpt,
     /// QEMU's standard VGA: the Bochs adapter, VBE 2.0 and a linear
-    /// frame buffer. What a period VESA driver wants, and what a modern
-    /// Linux binds `bochs-drm` to. **No XP driver at all** (XP falls back
+    /// frame buffer. What a period VESA driver wants, what a modern
+    /// Linux binds `bochs-drm` to, and the later of the two VESA BIOSes
+    /// a DOS title can find. **No XP driver at all** (XP falls back
     /// to 800×600×4 vga.sys), which is why the Windows families do not
     /// offer it.
     Std,
@@ -207,8 +208,10 @@ impl Video {
 /// which has no XP driver at all. They start on opposite ends of that
 /// pair: XP on ours, Win98 on the Cirrus. `Other` chooses between the two
 /// standard adapters, since nothing of ours runs there. DOS chooses
-/// nothing: it is the one family whose adapter is a period *fact* rather
-/// than a driver question — its titles program a VGA/VESA BIOS directly.
+/// between those same two, and for the one reason that has nothing to do
+/// with drivers: its titles program the adapter themselves, so what
+/// changes is **which VESA BIOS the game finds** — the Bochs one's VBE
+/// 2.0 with its linear frame buffer, or the Cirrus's of the period.
 pub fn video_choices(family: Family) -> &'static [Video] {
     match family {
         // XP starts on ours: the driver has been the whole display path
@@ -222,23 +225,29 @@ pub fn video_choices(family: Family) -> &'static [Video] {
         // whoever installed the guest decides to.
         Family::Win98 => &[Video::Cirrus, Video::D3dpt],
         Family::Other => &[Video::Std, Video::Cirrus],
-        Family::Dos => &[],
+        // DOS starts on the standard VGA (2026-09-09, user decision):
+        // its VBE 2.0 and linear frame buffer are the fuller of the two
+        // VESA BIOSes a title can find, and the Cirrus — which is what a
+        // DOS machine got while the adapter was hardcoded, and what
+        // `Other` is offered for its *native* drivers — is the other
+        // half of an A/B nothing else here can settle: a title whose
+        // modes come out wrong on one BIOS is the only evidence there
+        // is. Our own adapter is not on offer, there being no DOS driver
+        // for it anywhere.
+        Family::Dos => &[Video::Std, Video::Cirrus],
     }
 }
 
 /// What a host gamepad does for this machine (M13,
 /// `docs/tracks/m13-gamepads.md`).
 ///
-/// Only two entries today, and that is the honest state rather than a
-/// simplification: the other two guest-facing paths are devices QEMU
-/// does not have yet. A `usb-gamepad` (patch 26) will add `Usb` for XP,
-/// Win98 SE and Me, which see a HID pad on their in-box stack with
-/// nothing to install; a gameport at 0x201 (patch 27) will add
-/// `Gameport`, the only path that reaches DOS. Until each device exists
-/// its entry stays out of `pad_choices`, so the launcher can never write
-/// a command line our own `qemu-system-i386` would reject — the same
-/// rule the display-adapter picker follows for an adapter a family has
-/// no driver for.
+/// All three guest-facing paths exist now: a USB HID gamepad (patch 26)
+/// for the families with a USB stack, a gameport at 0x201 (patch 27) for
+/// the ones without, and the key mapping for everything else. Which of
+/// them a family is *offered* is `pad_choices`, and it is offered only
+/// where this project can say what the guest needs — the same rule the
+/// display-adapter picker follows for an adapter a family has no driver
+/// for.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Pad {
@@ -251,17 +260,52 @@ pub enum Pad {
     None,
     /// A real USB HID gamepad on the machine (`-usb -device
     /// usb-gamepad`, patch 26). Two sticks, an 8-way hat and twelve
-    /// buttons, which XP, Windows 98 SE and Me all bind their in-box HID
-    /// stack to with **nothing installed** — DirectInput and `joy.cpl`
-    /// see it on the first boot after it is added. This is the entry a
-    /// game of the era can actually use: it enumerates as a controller,
-    /// and the sticks are analog.
+    /// buttons, bound by the guest's own in-box HID stack — DirectInput
+    /// and `joy.cpl` see it on the first boot after it is added. This is
+    /// the entry a game of the era can actually use: it enumerates as a
+    /// controller, and the sticks are analog.
+    ///
+    /// **Confirmed with a real controller on 2026-09-09**, on XP and on
+    /// Windows 98 SE, both showing it in the Game Controllers panel. The
+    /// two are not the same experience and the wizard says so: XP needs
+    /// nothing, and 98 SE binds its own driver but asks for the Windows
+    /// 98 source files the first time — the CD, or the CAB folder on the
+    /// disk. Saying "nothing to install" for both, as this doc did until
+    /// that run, leaves someone staring at a file-copy dialog wondering
+    /// what went wrong.
     ///
     /// Not offered on DOS, which has no USB stack at all — that is what
-    /// path B's gameport is for. Windows 98 *first edition* is the doubt
-    /// on the 9x side: its USB support predates the HID class being
-    /// reliable, and it may want the USB supplement.
+    /// path B's gameport is for. Windows 98 *first edition* is still the
+    /// doubt on the 9x side: its USB support predates the HID class being
+    /// reliable, and it may want the USB supplement. Untried.
     Usb,
+    /// The analog joystick port at 0x200-0x207 (`-device gameport`, patch
+    /// 27): four one-shots and four buttons, which is the whole of what
+    /// the hardware ever had. The **only** path that reaches DOS, where a
+    /// game reads the port itself and there is no USB stack for path A to
+    /// use — and the period-correct one, since this is the connector the
+    /// sticks of the era plugged into.
+    ///
+    /// What the guest has to do is not nothing, and the wizard says so:
+    /// the port is not Plug and Play (it never was), so Windows 9x wants
+    /// Add New Hardware and then a calibration pass in the Game
+    /// Controllers panel. DOS needs neither.
+    ///
+    /// Nobody here has done that, and the wizard steers away from it
+    /// rather than describing it as the way: on 98 a *Windows* game gets
+    /// its joystick from [`Pad::Usb`] through both APIs one can call —
+    /// DirectInput and winmm's `joyGetPosEx` on top of VJOYD, measured by
+    /// the `pad-guest-98` check — so the driver half of this port was
+    /// dropped from M13 rather than built. What is left to this variant
+    /// is what it was built for: DOS, which has no USB stack, and a DOS
+    /// box under Windows 98, which reads 0x201 itself.
+    ///
+    /// Not offered on XP: `gameenum.sys` is still in the box, but a
+    /// non-PnP port has nothing to enumerate it and Microsoft was already
+    /// retiring analog sticks — XP's answer is path A. Nor on `Other`,
+    /// where the guest is an OS this project cannot name a driver step
+    /// for.
+    Gameport,
     /// The pad presses keys: the player maps its controls onto the key
     /// events it already sends, against `gamepad::default_key_bindings`.
     /// Reaches **every** guest — DOS, Win98 FE, XP, `Other` — because
@@ -272,12 +316,13 @@ pub enum Pad {
 }
 
 impl Pad {
-    pub const ALL: [Pad; 3] = [Pad::None, Pad::Usb, Pad::Keys];
+    pub const ALL: [Pad; 4] = [Pad::None, Pad::Usb, Pad::Gameport, Pad::Keys];
 
     pub fn label(self) -> &'static str {
         match self {
             Pad::None => "No gamepad",
             Pad::Usb => "USB gamepad",
+            Pad::Gameport => "Gameport joystick",
             Pad::Keys => "Gamepad presses keys",
         }
     }
@@ -291,6 +336,7 @@ impl Pad {
         match self {
             Pad::None => "none",
             Pad::Usb => "usb",
+            Pad::Gameport => "gameport",
             Pad::Keys => "keys",
         }
     }
@@ -304,14 +350,14 @@ impl Pad {
 /// becomes `None` — the family default — instead of failing the whole
 /// bundle.
 ///
-/// Unlike every other enum in this file, `Pad` is *known* to be gaining
-/// variants: paths A and B of the M13 track add `usb` and `gameport`,
-/// and the track doc says so. Once they land, a machine someone made in
-/// a newer build and opened in an older one would otherwise refuse to
-/// load at all — not "the pad setting was ignored" but "this machine
-/// does not exist", losing its disk, its discs and its shader profile
-/// over a field about a controller. That trade is never worth it, so
-/// this one field is read the forgiving way.
+/// Unlike every other enum in this file, `Pad` was *known* to be gaining
+/// variants — paths A and B of the M13 track added `usb` and `gameport`
+/// after the field shipped — and the rule stays now that they have: a
+/// machine someone made in a newer build and opened in an older one would
+/// otherwise refuse to load at all, not "the pad setting was ignored" but
+/// "this machine does not exist", losing its disk, its discs and its
+/// shader profile over a field about a controller. That trade is never
+/// worth it, so this one field is read the forgiving way.
 fn pad_lenient<'de, D>(d: D) -> Result<Option<Pad>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -321,9 +367,16 @@ where
 
 /// What each family offers, **first one its default**.
 ///
-/// The asymmetry is `Usb`: a USB HID gamepad needs a guest with a USB
-/// stack, which DOS has not got at all. DOS is left with `Keys`, and the
-/// controller it could really use is path B's gameport.
+/// The two asymmetries are the two devices, and each is a driver
+/// question rather than a preference. `Usb` needs a guest with a USB
+/// stack, which DOS has not got at all. `Gameport` needs a guest that
+/// will talk to a port nothing enumerates: DOS reads it directly and 9x
+/// has "Standard Game Port" for it, while XP would need a driver
+/// installed by hand for a class of device it was already dropping, and
+/// the `Other` family is an OS this project cannot name a step for. So
+/// DOS is offered the gameport and not the HID pad, XP and `Other` the
+/// HID pad and not the gameport, and Win98 — which has both stacks —
+/// both.
 ///
 /// Every family starts on `None`, and that is a decision rather than
 /// caution. A machine nobody asked for a pad on should not grow a device
@@ -336,8 +389,9 @@ pub fn pad_choices(family: Family) -> &'static [Pad] {
         // No USB stack, so no HID gamepad. Nothing to warn about — the
         // entry simply is not offered, the way the display-adapter picker
         // does not offer an adapter a family has no driver for.
-        Family::Dos => &[Pad::None, Pad::Keys],
-        Family::Xp | Family::Win98 | Family::Other => &[Pad::None, Pad::Usb, Pad::Keys],
+        Family::Dos => &[Pad::None, Pad::Gameport, Pad::Keys],
+        Family::Win98 => &[Pad::None, Pad::Usb, Pad::Gameport, Pad::Keys],
+        Family::Xp | Family::Other => &[Pad::None, Pad::Usb, Pad::Keys],
     }
 }
 
@@ -644,6 +698,9 @@ pub enum Optimization {
     SmcSameValue,
     SoftImm,
     InlineLookup,
+    TbInvalidateFast,
+    TlbFloor,
+    TlsHotPaths,
     PinnedRegs,
 }
 
@@ -663,7 +720,7 @@ impl Optimization {
     /// In the order the form lists them: the arithmetic fast paths
     /// first, in the order they were written, then the two that are
     /// about translation, then the experimental one.
-    pub const ALL: [Optimization; 8] = [
+    pub const ALL: [Optimization; 11] = [
         Optimization::X87Fast,
         Optimization::SseFast,
         Optimization::SimdFast,
@@ -671,6 +728,9 @@ impl Optimization {
         Optimization::SmcSameValue,
         Optimization::SoftImm,
         Optimization::InlineLookup,
+        Optimization::TbInvalidateFast,
+        Optimization::TlbFloor,
+        Optimization::TlsHotPaths,
         Optimization::PinnedRegs,
     ];
 
@@ -686,6 +746,9 @@ impl Optimization {
             Optimization::SmcSameValue => "smc-same-value",
             Optimization::SoftImm => "soft-imm",
             Optimization::InlineLookup => "inline-lookup",
+            Optimization::TbInvalidateFast => "tb-invalidate-fast",
+            Optimization::TlbFloor => "tlb-floor",
+            Optimization::TlsHotPaths => "tls-hot-paths",
             Optimization::PinnedRegs => "pinned-regs",
         }
     }
@@ -699,6 +762,9 @@ impl Optimization {
             Optimization::SmcSameValue
             | Optimization::SoftImm
             | Optimization::InlineLookup
+            | Optimization::TbInvalidateFast
+            | Optimization::TlbFloor
+            | Optimization::TlsHotPaths
             | Optimization::PinnedRegs => Knob::Tcg,
         }
     }
@@ -722,6 +788,9 @@ impl Optimization {
             Optimization::SmcSameValue => "Skip retranslation when code is rewritten unchanged",
             Optimization::SoftImm => "Read patched operands from the guest's code as it runs",
             Optimization::InlineLookup => "Find the next block without leaving generated code",
+            Optimization::TbInvalidateFast => "Skip the block walk for writes that can't hit code",
+            Optimization::TlbFloor => "Keep the address-translation cache from shrinking",
+            Optimization::TlsHotPaths => "Take the memory-tracking locks once per run, not per write",
             Optimization::PinnedRegs => "Keep guest registers in host registers (experimental)",
         }
     }
@@ -759,6 +828,22 @@ impl Optimization {
             Optimization::InlineLookup => {
                 "Every return and indirect jump finds its next block in generated code rather than \
                  through a helper call: 7-Zip in the guest, +7-12%."
+            }
+            Optimization::TbInvalidateFast => {
+                "A guest write into a page that holds code used to walk every block on it. Each page \
+                 now remembers where its code actually lies, so a write outside that range returns at \
+                 once. Found on a 1997 game whose data pages carried one stale block and were written \
+                 tens of thousands of times a second."
+            }
+            Optimization::TlbFloor => {
+                "The emulator's address-translation cache is resized at every flush, and a Windows \
+                 guest flushes at every context switch - which shrank it to 64 entries, where two live \
+                 pages collide constantly. It is held at 4096 instead."
+            }
+            Optimization::TlsHotPaths => {
+                "The bookkeeping that tracks which guest memory has changed took a lock per access; \
+                 it now runs under the one the emulator already holds for the whole run. On macOS each \
+                 of those was a call into the dynamic linker: 8% of a game's emulation thread."
             }
             Optimization::PinnedRegs => {
                 "Apple Silicon only, and still being worked on - a boot crash has been seen with it \
@@ -813,6 +898,48 @@ impl Optimizations {
 
     pub fn all_default(&self) -> bool {
         Optimization::ALL.iter().all(|opt| self.is_default(*opt))
+    }
+
+    /// Every optimization this build knows about turned **off** — the
+    /// control run, in one click, for "is one of ours what broke this
+    /// guest". Written as explicit `false` entries for the ones whose
+    /// default is on, exactly as unticking each box would, so the
+    /// bundle says what it means and `--print-args` shows the whole
+    /// line. It is deliberately not the same shape as `reset`, which
+    /// *removes* entries.
+    ///
+    /// **This is not a pristine QEMU.** Three patches of the queue have
+    /// no runtime switch at all — 15 (`tb-invalidate-fast`), 16
+    /// (`tlb-floor`) and 19 (`tls-hot-paths`) — so a guest that is still
+    /// wrong with everything here off has not cleared our tree, only the
+    /// eight switches. `Form::optimizations_note` says so where someone
+    /// about to rely on it will read it.
+    pub fn disable_all(&mut self) {
+        for opt in Optimization::ALL {
+            self.set(opt, false);
+        }
+    }
+
+    /// Every optimization this build knows about turned **on**, the
+    /// other end of the same shortcut. `pinned-regs` comes on with it:
+    /// the switch means what it says, and its own note is where the
+    /// warning about it lives.
+    pub fn enable_all(&mut self) {
+        for opt in Optimization::ALL {
+            self.set(opt, true);
+        }
+    }
+
+    /// Whether every optimization this build knows about is off, for a
+    /// front end deciding whether its "Turn everything off" is worth
+    /// offering.
+    pub fn all_off(&self) -> bool {
+        Optimization::ALL.iter().all(|opt| !self.enabled(*opt))
+    }
+
+    /// The same at the other end.
+    pub fn all_on(&self) -> bool {
+        Optimization::ALL.iter().all(|opt| self.enabled(*opt))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1345,7 +1472,14 @@ impl Machine {
     }
 
     pub fn qemu_args(&self, pc_bios_dir: &Path, shelf: Option<&Path>) -> Vec<String> {
-        let mut args = vec!["-L".into(), pc_bios_dir.display().to_string(), "-machine".into(), "pc".into()];
+        // Windows 98 has no driver for an HPET (`PNP0103` is in none of
+        // 98 SE's INFs) and never uses one — it times off the PIT — so on
+        // 98 it is an "Unknown Device" with a yellow mark in Device
+        // Manager and nothing else. QEMU's fw_cfg (`QEMU0002`) is the one
+        // other device 98 has no driver for, but its `_STA` says "not
+        // shown in UI", and 98 obeys that.
+        let machine = if matches!(self.family, Family::Win98) { "pc,hpet=off" } else { "pc" };
+        let mut args = vec!["-L".into(), pc_bios_dir.display().to_string(), "-machine".into(), machine.into()];
         args.extend(self.accel_args());
         args.extend([
             "-m".into(),
@@ -1379,6 +1513,14 @@ impl Machine {
         }
         if pad_usb {
             args.extend(["-device".into(), "usb-gamepad".into()]);
+        }
+        // ...and path B's gameport (patch 27), which needs no controller
+        // of any kind: it is an ISA device at 0x200-0x207, and every
+        // machine this project makes has an ISA bus. It is also the only
+        // pad device DOS can use, which is why that family is offered it
+        // and not the USB one.
+        if self.effective_pad() == Pad::Gameport {
+            args.extend(["-device".into(), "gameport".into()]);
         }
         // The CPU rate, when the machine asks for one. `align=on` is the
         // whole point and not a detail: `-icount shift=N` on its own only
@@ -1451,12 +1593,20 @@ impl Machine {
                 args.extend(self.audio_args());
             }
             // The 1994 PC: the same chipset and the SB16 doc 06 already
-            // puts on the Win98 machine "for DOS boxes/games", the cirrus
-            // adapter for its VGA and VESA modes, and nothing else. No
-            // 3D of any kind is reachable from DOS here — the Glide
-            // wrapper for DOS is GLIDE2X.OVL, which we do not build.
+            // puts on the Win98 machine "for DOS boxes/games", one of the
+            // two standard adapters for its VGA and VESA modes, and
+            // nothing else. No 3D of any kind is reachable from DOS here
+            // — the Glide wrapper for DOS is GLIDE2X.OVL, which we do not
+            // build.
+            //
+            // The adapter is a *choice* here too since 2026-09-09
+            // (`video_choices`), and the only family where it is not a
+            // driver question: a DOS title programs the registers itself,
+            // so what a different adapter changes is which VESA BIOS it
+            // finds. It starts on the standard VGA — the fuller of the
+            // two — where the hardcoded line it replaces said `cirrus`.
             Family::Dos => {
-                args.extend(["-vga".into(), "cirrus".into()]);
+                args.extend(self.video_args());
                 if self.network {
                     args.extend(["-netdev".into(), "user,id=n0".into()]);
                     args.extend(["-device".into(), "pcnet,netdev=n0".into()]);

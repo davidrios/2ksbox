@@ -544,10 +544,28 @@ Window {
                             }
                         }
                     }
-                    Button {
-                        text: qsTr("All defaults")
-                        enabled: !root.wizard.optimizationsAreDefault
-                        onClicked: root.wizard.resetOptimizations()
+                    // The two shortcuts sit beside "All defaults" rather
+                    // than replacing it: eleven switches is too many to
+                    // walk through to build a control run, and the way
+                    // back is not "all on" (pinned-regs ships off) but
+                    // the defaults.
+                    RowLayout {
+                        spacing: 6
+                        Button {
+                            text: qsTr("Turn all off")
+                            enabled: !root.wizard.optimizationsAllOff
+                            onClicked: root.wizard.disableAllOptimizations()
+                        }
+                        Button {
+                            text: qsTr("Turn all on")
+                            enabled: !root.wizard.optimizationsAllOn
+                            onClicked: root.wizard.enableAllOptimizations()
+                        }
+                        Button {
+                            text: qsTr("All defaults")
+                            enabled: !root.wizard.optimizationsAreDefault
+                            onClicked: root.wizard.resetOptimizations()
+                        }
                     }
                 }
 

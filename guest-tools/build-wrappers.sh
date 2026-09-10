@@ -276,6 +276,27 @@ i686-w64-mingw32-gcc -O2 -o "$T/crtcal.exe" "$ROOT/guest-tools/src/crtcal.c" \
 # offers, so it is reachable from FreeDOS or a "Restart in MS-DOS mode"
 # screen and nowhere else.
 nasm -f bin -o "$T/textcal.com" "$ROOT/guest-tools/src/textcal.asm"
+# PADTEST.COM: the gameport at 0x201 as a DOS game reads it (M13 path B,
+# guest-tools/src/padtest.asm) — one write arms four one-shots and the axes
+# are how long the loop counted before each bit fell. DOS only, and DOS is
+# the point: it is the only family the USB pad cannot reach. Prints to COM1
+# and to the screen, so it is both the harness's evidence
+# (tools/pad-guest-test.py) and something to run by hand in a DOS box.
+nasm -f bin -o "$T/padtest.com" "$ROOT/guest-tools/src/padtest.asm"
+# PADWIN.EXE: the same question of the USB HID pad (M13 path A), asked the
+# way a game asks it rather than the way the Game Controllers panel shows it,
+# through *both* APIs a title of the era can call: DirectInput, and winmm's
+# joyGetPosEx on top of 9x's VJOYD, which is the one that settles whether
+# Windows 98 needs the gameport's driver half. Enumerate attached joysticks,
+# put every axis on the report's own 0..255 range in both columns, read the
+# POV hat (where a missing null state shows up) and the buttons. Writes
+# to COM1 itself, so the harness can start it from the Run dialog with no
+# shell to redirect. **PADWIN and not PADTEST**: the DOS probe above is
+# PADTEST.COM in this same folder, and both DOS and cmd resolve a bare name
+# to the .COM first.
+i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+  -march=pentium3 -mtune=generic -o "$T/padwin.exe" "$ROOT/guest-tools/src/padwin.c" \
+  -ldinput -ldxguid -lwinmm -luser32
 
 # CDSHELF: the host's disc shelf from inside the machine (doc 07, patch 52;
 # protocol cdshelf/cdshelf_proto.h). One EXE for both Windows families — SPTI

@@ -108,6 +108,9 @@
 #                  launcher still loads, and the host end's deadzone and
 #                  two-threshold hysteresis behave under PLAYER_PAD_SCRIPT
 #                  (no machine running this suite has a controller)
+#   hpet           a Win98 machine has no HPET (98 has no driver for one, so
+#                  it was an Unknown Device in Device Manager) and an XP one
+#                  keeps it, asked of our QEMU's own device tree
 #   family-other   the "Other" family (doc 06): a machine for an era OS that is
 #                  neither Windows nor DOS gets standard hardware and none of
 #                  ours — the Bochs VGA rather than d3dpt-vga, no network card
@@ -116,10 +119,12 @@
 #                  ticked, the sound card stays put when the NIC goes, and our
 #                  QEMU accepts the line
 #   display-adapter the wizard's display-adapter picker (doc 06): each family
-#                  offers the adapters it has a driver question about and starts
-#                  on the right one, an adapter a family doesn't offer is refused
-#                  rather than written, the cards below it don't move when it
-#                  changes, and our QEMU accepts every one of them
+#                  offers the adapters it has a question about and starts on the
+#                  right one — a driver question on the three families that have
+#                  drivers, and on DOS which VESA BIOS the title finds — an
+#                  adapter a family doesn't offer is refused rather than written,
+#                  the cards below it don't move when it changes, and our QEMU
+#                  accepts every one of them
 #   libsynth       synthx selftest (doc 20 §7): the three music engines through the
 #                  C API the QEMU devices drive them through — the AdLib detection
 #                  sequence a game runs before it will play a note, a 440 Hz FM
@@ -182,6 +187,23 @@
 #                  mode and plays A4 through it; the wav QEMU's own backend recorded
 #                  is what is checked, so a device that takes every write and plays
 #                  nothing fails here. Two boots, ~11 s
+#   pad-guest      tools/pad-guest-test.py: the gameport as a DOS guest reads it
+#                  (M13 path B) — one write arms four one-shots and the axes are
+#                  the counts before each bit falls, with a scripted pad moving
+#                  the stick, the d-pad and the buttons. Runs the **player**, so
+#                  it skips without a display
+#   pad-guest-xp   tools/pad-guest-test.py xp: the USB HID pad as a Windows game
+#                  finds it (M13 path A) — through *both* APIs a title of the era
+#                  can call: DirectInput enumerates it, every axis on the report's
+#                  own 0..255 range, the POV hat's null state and the buttons; and
+#                  winmm's joyGetPosEx reads the same pad, on the same range, with
+#                  the two columns required to agree. Its own XP boot, ~60 s
+#   pad-guest-98   the same on Windows 98, against a launcher *machine* whose
+#                  Windows has had the pad's driver bound once (98 asks for its
+#                  own source files the first time); WIN98_PAD_MACHINE names it.
+#                  The winmm half is what closed M13's last item: a Windows game
+#                  on 98 gets its joystick from the USB pad through VJOYD too, so
+#                  the gameport's 9x driver half was dropped rather than built
 #   smc-guest      tools/smc-guest-test.py: self-modifying code (patched immediates,
 #                  same-value rewrites, opcode flips, a crossing store), smc-same-value
 #                  on/off both architecturally right (patch 18)
@@ -795,12 +817,15 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
     || { echo "--wizard-edit none failed"; rc=1; }
   grep -q '^pad = "none"' "$bundle" || { echo "turning it back off did not stick"; rc=1; }
   # A bundle from a later launcher, naming a setting this build has never
-  # heard of (path B's `gameport`). It must load and fall back, not refuse
-  # the whole machine over a field about a controller.
-  sed -i 's/^pad = "none"/pad = "gameport"/' "$bundle"
+  # heard of. It must load and fall back, not refuse the whole machine
+  # over a field about a controller. (`gameport` was the placeholder here
+  # until path B landed and it became a real answer — the value has to be
+  # one no build knows, or this stops testing anything.)
+  sed -i 's/^pad = "none"/pad = "wheel"/' "$bundle"
   args="$(target/release/launcherx --print-args "$bundle" 2>&1)" \
     || { echo "a bundle naming a future pad setting would not load at all"; echo "$args"; rc=1; }
   case "$args" in *usb-gamepad*) echo "an unknown pad setting was treated as usb"; rc=1;; esac
+  case "$args" in *"-device gameport"*) echo "an unknown pad setting was treated as a gameport"; rc=1;; esac
 
   # --- path A: the USB HID gamepad --------------------------------
   # DOS is not offered one: it has no USB stack, so the entry is absent
@@ -827,6 +852,42 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
   case "$args" in *usb-tablet*) echo "the tablet survived turning the seamless mouse off"; echo "$args"; rc=1;; esac
   case "$args" in *"-usb"*) ;; *) echo "the pad lost its USB controller when the pointer gave one up"; echo "$args"; rc=1;; esac
   case "$args" in *"-device usb-gamepad"*) ;; *) echo "the pad went away with the tablet"; echo "$args"; rc=1;; esac
+
+  # --- path B: the gameport ----------------------------------------
+  # The mirror image of path A's asymmetry, and the point of the whole
+  # path: DOS is the family that cannot have the USB pad and *can* have
+  # this, so a DOS machine takes it...
+  target/release/launcherx --wizard-edit "$dos" - - - - - - - - gameport >/dev/null \
+    || { echo "--wizard-edit gameport failed on DOS"; rc=1; }
+  grep -q '^pad = "gameport"' "$dos" || { echo "a DOS machine would not take the gameport"; grep '^pad' "$dos"; rc=1; }
+  args="$(target/release/launcherx --print-args "$dos")"
+  case "$args" in *"-device gameport"*) ;; *) echo "a DOS machine with the gameport on has no gameport"; echo "$args"; rc=1;; esac
+  # ...and it brings no USB controller with it. The port is an ISA device
+  # and a DOS guest has no USB stack to drive one with anyway; a stray
+  # `-usb` here would be a device in the machine nothing can use.
+  case "$args" in *"-usb"*) echo "the gameport dragged a USB controller in"; echo "$args"; rc=1;; esac
+  o="$(target/release/launcherx --print-player-args "$dos")"
+  [ "$o" = "--pad gameport" ] || { echo "expected '--pad gameport' for the player, got: $o"; rc=1; }
+  # ...while XP is not offered it and must refuse it rather than write a
+  # port its guest has no way to enumerate: XP's answer is path A.
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - - gameport >/dev/null 2>&1
+  grep -q '^pad = "gameport"' "$bundle" && { echo "an XP machine accepted the gameport"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *"-device gameport"*) echo "an XP machine got a gameport"; echo "$args"; rc=1;; esac
+  # Win98 is the family with both stacks and is offered both, one at a
+  # time: choosing the gameport takes the HID pad *and* its controller
+  # away, or the machine would carry two controllers for one host pad and
+  # only one of them would ever move.
+  local w98
+  w98="$(target/release/launcherx --new win98 pad-98 "$dir/disk.qcow2")" || { echo "--new win98 failed"; return 1; }
+  for p in usb gameport; do
+    target/release/launcherx --wizard-edit "$w98" - - - - - - - - "$p" >/dev/null \
+      || { echo "--wizard-edit $p failed on win98"; rc=1; }
+    grep -q "^pad = \"$p\"" "$w98" || { echo "a Win98 machine would not take $p"; grep '^pad' "$w98"; rc=1; }
+  done
+  args="$(target/release/launcherx --print-args "$w98")"
+  case "$args" in *"-device gameport"*) ;; *) echo "a Win98 machine with the gameport on has no gameport"; echo "$args"; rc=1;; esac
+  case "$args" in *usb-gamepad*) echo "the Win98 machine kept its usb-gamepad after switching to the gameport"; echo "$args"; rc=1;; esac
   # The host end itself, against the scripted pad — no controller, no
   # guest, no window. What it proves is the shaping: the deadzone
   # swallows a resting stick, and the press/release pair has a gap in it
@@ -980,6 +1041,43 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
          | timeout 30 build/qemu/qemu-system-i386 $args -device usb-gamepad \
              -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)"
     case "$o" in *"only one usb-gamepad"*) ;; *) echo "a second usb-gamepad was not refused"; echo "$o" | tail -3; rc=1;; esac
+
+    # --- path B: the port, as a guest reads it ----------------------
+    # The DOS machine's own line, and then the port itself through the
+    # human monitor, which is the one way to read 0x201 with no guest.
+    # Three readings, and the middle one is the whole timing model:
+    #
+    #   idle          f0 — the four one-shots expired, no button held.
+    #                      Not ff: that is what an *absent* port reads
+    #                      off the open bus, and a game uses it to
+    #                      decide there is no joystick.
+    #   armed         ff — every axis still charging. Read with the VM
+    #                      stopped, where the virtual clock does not
+    #                      move at all, so this is exact rather than a
+    #                      race against a 576 us pulse.
+    #   a second on   f0 — and they end. A model that armed and never
+    #                      expired would leave every game counting to
+    #                      its own timeout, which reads as a stick
+    #                      jammed at one extreme.
+    args="$(target/release/launcherx --print-args "$dos")"
+    # shellcheck disable=SC2086
+    o="$({ echo 'i /b 0x201'; echo 'o /b 0x201 0'; echo 'i /b 0x201'; echo cont; sleep 1; \
+           echo 'i /b 0x201'; echo 'info qtree'; echo quit; } \
+         | timeout 40 build/qemu/qemu-system-i386 $args \
+             -audiodev none,id=embed0 -display none -S -monitor stdio -serial none 2>&1)" \
+      || { echo "our QEMU refused a machine with a gameport"; echo "$o" | tail -3; rc=1; }
+    case "$o" in *"dev: gameport"*) ;; *) echo "the gameport did not attach to the bus"; echo "$o" | tail -5; rc=1;; esac
+    local reads
+    reads="$(echo "$o" | grep -o 'portb\[0x0201\] = 0x[0-9a-f]*' | sed 's/.*= //' | tr '\n' ' ')"
+    [ "$reads" = "0xf0 0xff 0xf0 " ] \
+      || { echo "the gameport's one-shots read wrong (idle/armed/expired): $reads"; rc=1; }
+    # And one at a time, for the reason the USB pad is: the host drives a
+    # single controller, and two ports would answer the same addresses.
+    # shellcheck disable=SC2086
+    o="$(printf 'quit\n' \
+         | timeout 30 build/qemu/qemu-system-i386 $args -device gameport \
+             -audiodev none,id=embed0 -display none -S -monitor stdio -serial none 2>&1)"
+    case "$o" in *"only one gameport"*) ;; *) echo "a second gameport was not refused"; echo "$o" | tail -3; rc=1;; esac
   else
     echo "  (no build/qemu: the command line was checked but not run)"
   fi
@@ -1309,6 +1407,47 @@ family_other_check() { # the "Other" family's hardware, from the picker to a rea
   return $rc
 }
 
+hpet_check() { # no HPET on Win98, from the bundle to our QEMU's device tree
+  local rc=0 dir="$OUT/hpet" w98 xp args o
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  : >"$dir/disk.qcow2"
+  w98="$(target/release/launcherx --new win98 hpet-98 "$dir/disk.qcow2")" || { echo "--new win98 failed"; return 1; }
+  xp="$(target/release/launcherx --new xp hpet-xp "$dir/disk.qcow2")" || { echo "--new xp failed"; return 1; }
+  # Windows 98 has no driver for an HPET and never uses one: with it the
+  # guest's Device Manager shows an Unknown Device (ACPI\*PNP0103) with a
+  # yellow mark on every machine. XP is left alone.
+  args="$(target/release/launcherx --print-args "$w98")"
+  case "$args" in *"-machine pc,hpet=off "*) ;; *) echo "a Win98 machine still has an HPET"; echo "$args"; rc=1;; esac
+  args="$(target/release/launcherx --print-args "$xp")"
+  case "$args" in *"-machine pc "*) ;; *) echo "an XP machine's board changed"; echo "$args"; rc=1;; esac
+  # And the device itself, asked of the real binary: the property's name
+  # is QEMU's to change, and a misspelt one would be an exit code, but a
+  # property that stopped removing the device would be neither.
+  if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
+    build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
+    for b in "$w98" "$xp"; do
+      args="$(target/release/launcherx --print-args "$b")"
+      # shellcheck disable=SC2086
+      o="$(printf '%s\n' '{"execute":"qmp_capabilities"}' \
+             '{"execute":"human-monitor-command","arguments":{"command-line":"info qtree"}}' \
+             '{"execute":"quit"}' \
+           | timeout 30 build/qemu/qemu-system-i386 $args \
+               -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
+        || { echo "our QEMU refused $b"; echo "$o" | tail -3; rc=1; continue; }
+      case "$b:$o" in
+        "$w98":*'dev: hpet'*) echo "our QEMU built a Win98 machine with an HPET"; rc=1;;
+        "$xp":*'dev: hpet'*) ;;
+        "$xp":*) echo "no HPET in the XP machine, so the Win98 answer proves nothing"; rc=1;;
+      esac
+    done
+  else
+    echo "  (no build/qemu: the command line was checked but not run)"
+  fi
+  return $rc
+}
+
 # The command line an adapter name lands as (`bundle::Video::args`), so
 # the checks below can name the pick rather than repeat its arguments.
 vga_args() {
@@ -1328,8 +1467,10 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
   # display path is built on it (doc 15); Win98 on the Cirrus and the
   # driver Windows has in the box, ours there being much the newer of the
   # two (doc 19); Other on the standard VGA, the one every guest can fall
-  # back on; DOS on the era's Cirrus, which is not a choice at all.
-  for f in win98:"-vga cirrus" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga cirrus"; do
+  # back on; DOS on the standard VGA too, since 2026-09-09 (user
+  # decision): the fuller of the two VESA BIOSes, where the hardcoded
+  # line it replaced said cirrus.
+  for f in win98:"-vga cirrus" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga std"; do
     want="${f#*:}"; f="${f%%:*}"
     bundle="$(target/release/launcherx --new "$f" "adapter-$f" "$dir/disk.qcow2")" || { echo "--new $f failed"; return 1; }
     args="$(target/release/launcherx --print-args "$bundle")"
@@ -1367,11 +1508,39 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
     args="$(target/release/launcherx --print-args "$bundle")"
     case "$args" in *"$(vga_args "$first")"*) ;; *) echo "$f: the $first adapter did not come back"; echo "$args"; rc=1;; esac
   done
+  # DOS has the picker too since 2026-09-09, and it is the one family
+  # where the question is not "which driver": its titles program the
+  # adapter themselves, so what changes is which VESA BIOS the game
+  # finds. Same three demands as above — the new one arrives, the old one
+  # is *gone* rather than sitting beside it, and it comes back — plus the
+  # one that is specific here: our own adapter is refused, because there
+  # is no DOS driver for it anywhere and a DOS machine on it would have
+  # the plain VGA and nothing else.
+  bundle="$dir/library/adapter-dos/machine.toml"
+  if target/release/launcherx --wizard-edit "$bundle" - - - - - - - cirrus >/dev/null; then
+    args="$(target/release/launcherx --print-args "$bundle")"
+    case "$args" in *"-vga cirrus"*) ;; *) echo "dos: the Cirrus did not arrive"; echo "$args"; rc=1;; esac
+    case "$args" in *"-vga std"*) echo "dos: the standard VGA is still there beside the Cirrus"; echo "$args"; rc=1;; esac
+  else
+    echo "dos: --wizard-edit cirrus failed"; rc=1
+  fi
+  if target/release/launcherx --wizard-edit "$bundle" - - - - - - - d3dpt >/dev/null; then
+    args="$(target/release/launcherx --print-args "$bundle")"
+    case "$args" in *d3dpt-vga*) echo "dos: was given our own adapter, which has no DOS driver"; echo "$args"; rc=1;; esac
+  else
+    echo "dos: --wizard-edit d3dpt failed"; rc=1
+  fi
+  if target/release/launcherx --wizard-edit "$bundle" - - - - - - - std >/dev/null; then
+    args="$(target/release/launcherx --print-args "$bundle")"
+    case "$args" in *"-vga std"*) ;; *) echo "dos: the standard VGA did not come back"; echo "$args"; rc=1;; esac
+  else
+    echo "dos: --wizard-edit std failed"; rc=1
+  fi
   # Every adapter on every family, on the real binary: started paused and
   # told to quit, so a machine QEMU will not build is an exit code.
   if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
     build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
-    for f in win98:d3dpt win98:cirrus xp:d3dpt xp:cirrus other:std other:cirrus dos:-; do
+    for f in win98:d3dpt win98:cirrus xp:d3dpt xp:cirrus other:std other:cirrus dos:std dos:cirrus; do
       want="${f#*:}"; f="${f%%:*}"
       bundle="$dir/library/adapter-$f/machine.toml"
       target/release/launcherx --wizard-edit "$bundle" - - - - - - - "$want" >/dev/null || { rc=1; continue; }
@@ -1449,13 +1618,20 @@ optimizations_check() { # the wizard's fast-path switches, all the way to a real
   # property on `-cpu`, an accelerator property on `-accel tcg`.
   target/release/launcherx --optimizations "$bundle" \
     x87-fast off sse-fast off simd-fast off rep-fast off \
-    smc-same-value off soft-imm off inline-lookup off pinned-regs on >"$OUT/optimizations-set.log" 2>&1 \
+    smc-same-value off soft-imm off inline-lookup off \
+    tb-invalidate-fast off tlb-floor off tls-hot-paths off \
+    pinned-regs on >"$OUT/optimizations-set.log" 2>&1 \
     || { echo "--optimizations failed"; cat "$OUT/optimizations-set.log"; rc=1; }
   args="$(target/release/launcherx --print-args "$bundle")"
   for p in x87-fast=off sse-fast=off simd-fast=off rep-fast=off; do
     case "$args" in *"-cpu pentium3,"*"$p"*) ;; *) echo "$p is not on -cpu"; echo "$args"; rc=1;; esac
   done
-  for p in smc-same-value=off soft-imm=off inline-lookup=off pinned-regs=on; do
+  # Since 2026-09-10 the three that had no switch have one, which is what
+  # makes "turn everything off" a control run rather than eight of
+  # eleven: a guest that is still wrong with these off has cleared our
+  # tree, and before this it had not.
+  for p in smc-same-value=off soft-imm=off inline-lookup=off \
+           tb-invalidate-fast=off tlb-floor=off tls-hot-paths=off pinned-regs=on; do
     case "$args" in *"-accel tcg,"*"$p"*) ;; *) echo "$p is not on -accel tcg"; echo "$args"; rc=1;; esac
   done
   # The point of the whole thing: our QEMU accepts the line the launcher
@@ -1696,6 +1872,12 @@ host_stage() {
   # installed guest will not see them move.
   if [ -x target/release/launcherx ]; then
     run_check family-other family-other.log family_other_check || true
+  fi
+
+  # no HPET on a Win98 machine: 98 has no driver for one and showed it as
+  # an Unknown Device in Device Manager; asked of our QEMU's device tree.
+  if [ -x target/release/launcherx ]; then
+    run_check hpet hpet.log hpet_check || true
   fi
 
   # the music engines (doc 20): the three of them through the same C API
@@ -1947,6 +2129,16 @@ guest_stage() {
       run_check sse-guest sse-guest.log python3 tools/sse-guest-test.py || true
       run_check atapi-guest atapi-guest.log python3 tools/atapi-guest-test.py || true
       run_check midi-guest midi-guest.log python3 tools/midi-guest-test.py || true
+      # The gameport as a DOS guest reads it (M13 path B). Unlike its
+      # neighbours this one runs the **player**, because the pad reaches a
+      # guest through the embed library and a bare QEMU has a gameport
+      # nothing ever moves — so it wants a display for the player's window
+      # and skips rather than fails without one.
+      if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ -x target/release/player ]; then
+        run_check pad-guest pad-guest.log python3 tools/pad-guest-test.py || true
+      else
+        skip pad-guest "needs target/release/player and a display (it runs the player)"
+      fi
     # **One skip per battery, not one skip standing for five.** Every DOS
     # battery is gated on the same floppy, and this used to report the whole
     # group as a single `SKIP x87-guest` — so a fresh worktree, which has no
@@ -1957,10 +2149,10 @@ guest_stage() {
     # including `atapi-guest`, which is the only check that reads a disc from
     # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
     # weak-sector rule, which that battery is the regression guard for).
-    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest; do
+    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pad-guest; do
       skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
     done; fi
-  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest; do
+  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pad-guest; do
     skip "$c" "needs nasm, mtools and build/qemu"
   done; fi
   if [ "$OS" != Linux ]; then skip guest "Linux only for now (mkfs.fat, sfdisk, mtools)"; return; fi
@@ -1968,6 +2160,11 @@ guest_stage() {
   [ -f "$img" ] || { skip guest "no XP image at $img (WINXP_IMG)"; return; }
   [ -n "$iso" ] && [ -f "$iso" ] || { skip guest "no guest-tools ISO (guest-tools/build-wrappers.sh)"; return; }
   [ -x build/qemu/qemu-system-i386 ] || { skip guest "no build/qemu/qemu-system-i386"; return; }
+  # The USB HID pad as a Windows game finds it (M13 path A): the same
+  # scripted pad, this time through XP's own HID stack and DirectInput.
+  # Its own XP boot rather than a passenger on the one below, because that
+  # machine has no `usb-gamepad` on it and adding one would change the
+  # hardware every other guest check runs against. ~60 s.
   # the CD-ROM backend: XP copies a converted guest-tools disc through cdrom.sys (doc 17 §6.3)
   if [ -x target/release/discx ] && command -v bsdtar >/dev/null; then
     # bsdtar keeps the ISO's read-only modes: make the previous extraction deletable first
@@ -2058,6 +2255,32 @@ guest_stage() {
     grep -h "occlusion query\|getters" "$OUT/d3dfeat9.log" | sort > "$OUT/f9-native.lines"
     grep -h "occlusion query\|getters" "$OUT/guest-d3dfeat9.log" 2>/dev/null | tr -d '\r' | sort > "$OUT/f9-guest.lines"
     run_check "guest-F9-log=native" guest-F9-log.log diff "$OUT/f9-native.lines" "$OUT/f9-guest.lines" || true
+  fi
+
+  # The pad in a Windows guest (M13 path A), **last in the stage**. Two
+  # more guest boots, and they go at the back because they are the newest
+  # checks here: a new check should not be able to perturb an established
+  # one by running before it. (What prompted the move was a `guest-cdimage`
+  # timeout on 2026-09-10 — which turned out to be another checkout's TCG
+  # guest running on the same box, the thing CLAUDE.md warns about, rather
+  # than these. The ordering is right either way.)
+  local pad98="${WIN98_PAD_MACHINE:-claude98}"
+  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ -x target/release/player ]; then
+    run_check pad-guest-xp pad-guest-xp.log python3 tools/pad-guest-test.py xp "$img" || true
+    # ...and on Windows 98, which is a *machine* rather than an image: the
+    # pad's driver has to have been bound once (98 asks for its own source
+    # files the first time and there is nobody here to answer), so this
+    # names a launcher machine and reads the disk and display adapter out
+    # of its bundle. Skipped where that machine does not exist rather than
+    # assuming anyone's library looks like this one.
+    if [ -f "$HOME/.local/share/2ksbox/machines/$pad98/machine.toml" ]; then
+      run_check pad-guest-98 pad-guest-98.log python3 tools/pad-guest-test.py win98 "$pad98" || true
+    else
+      skip pad-guest-98 "no launcher machine '$pad98' with the pad installed (WIN98_PAD_MACHINE)"
+    fi
+  else
+    skip pad-guest-xp "needs target/release/player and a display (it runs the player)"
+    skip pad-guest-98 "needs target/release/player and a display (it runs the player)"
   fi
 }
 

@@ -396,9 +396,21 @@ fn optimizations_ui(ui: &mut egui::Ui, form: &mut Form) {
                 }
                 ui.small(opt.note());
             }
-            if ui.add_enabled(!form.optimizations_are_default(), egui::Button::new("All defaults")).clicked() {
-                form.reset_optimizations();
-            }
+            // The two shortcuts sit beside "All defaults" rather than
+            // replacing it: eleven switches is too many to walk through
+            // to build a control run, and the way back is not "all on"
+            // (pinned-regs ships off) but the defaults.
+            ui.horizontal(|ui| {
+                if ui.add_enabled(!form.optimizations_all_off(), egui::Button::new("Turn all off")).clicked() {
+                    form.disable_all_optimizations();
+                }
+                if ui.add_enabled(!form.optimizations_all_on(), egui::Button::new("Turn all on")).clicked() {
+                    form.enable_all_optimizations();
+                }
+                if ui.add_enabled(!form.optimizations_are_default(), egui::Button::new("All defaults")).clicked() {
+                    form.reset_optimizations();
+                }
+            });
         });
 }
 

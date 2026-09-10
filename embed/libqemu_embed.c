@@ -16,9 +16,13 @@
 #include "qemu-main.h"
 #include "libqemu_embed.h"
 #include "embedfx.h"
-/* The USB gamepad's host-side entry point (M13 path A). Copied in beside
- * this file by scripts/prepare-qemu.sh, from gamepad/qemu/. */
+/* The two pad devices' host-side entry points (M13 paths A and B).
+ * Copied in beside this file by scripts/prepare-qemu.sh, from
+ * gamepad/qemu/. A machine has one device or the other and this file
+ * does not have to know which: each call is a no-op when its device is
+ * absent. */
 #include "usb-gamepad.h"
+#include "gameport.h"
 
 #ifdef _WIN32
 #include <io.h>                 /* _open_osfhandle() for qemu_embed_socket_to_fd */
@@ -432,7 +436,7 @@ void qemu_embed_pad_state(qemu_embed_t *e, const uint8_t *axes,
 bool qemu_embed_pad_present(qemu_embed_t *e)
 {
     (void)e;
-    return usb_gamepad_present();
+    return usb_gamepad_present() || gameport_present();
 }
 
 /* Runs on the main loop under BQL. */
@@ -509,9 +513,14 @@ static void bh_input_drain(void *opaque)
                 (uint8_t)(ev->a & 0xff), (uint8_t)((ev->a >> 8) & 0xff),
                 (uint8_t)((ev->a >> 16) & 0xff), (uint8_t)((ev->a >> 24) & 0xff),
             };
-            /* No qemu_input_event_sync(): the gamepad is not on a
-             * console and does not ride the input core at all. */
+            /* No qemu_input_event_sync(): neither pad device is on a
+             * console and they do not ride the input core at all.
+             * Both are called unconditionally — a machine has one or
+             * the other and the absent one returns immediately, which
+             * is cheaper than asking twice and keeps this file out of
+             * the business of knowing which path the bundle chose. */
             usb_gamepad_set_state(axes, (uint8_t)ev->b, (uint16_t)ev->c);
+            gameport_set_state(axes, (uint8_t)ev->b, (uint16_t)ev->c);
             break;
         }
         }

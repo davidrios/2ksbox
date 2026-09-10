@@ -13,7 +13,7 @@ Modeled as a ~1998–2000 consumer PC.
 
 | Component | Choice | Rationale |
 |---|---|---|
-| Machine | `pc` (i440FX + PIIX) | period-correct chipset, best-tested with 9x |
+| Machine | `pc,hpet=off` (i440FX + PIIX) | period-correct chipset, best-tested with 9x. **No HPET** (2026-09-10): 98 has no driver for `PNP0103` and never uses one, so it was an Unknown Device with a yellow mark in Device Manager (the `hpet` check). QEMU's fw_cfg (`QEMU0002`) has no driver either, but its `_STA` hides it |
 | CPU model | `pentium3` (TCG) / host-masked (KVM) | avoids CPUID features 9x mishandles; sidesteps the fast-CPU Win9x bugs (e.g. the >2.1 GHz-class IOS/NDIS crashes). **Floor is pentium3 (SSE1)**: our guest-tools wrappers are built `-march=pentium3` (upstream builds them x86-64-v2 and expects `-cpu host`/`max`) |
 | RAM | 256 MB default, **≤ 512 MB hard cap** | 9x VCache breaks above ~512 MB without patches |
 | Video | **`-vga cirrus` (the default) or `-vga none -device d3dpt-vga` + our driver (doc 19)** — a choice since 2026-09-07 (`bundle::Video`) | ours is the whole display path: the mode table, the desktop straight from VRAM, the paced page flips, Direct3D through the driver. The Cirrus is Windows' in-box 2D driver and where this family **starts** (2026-09-07): the 9x driver of ours is much newer than XP's, so a new 98 machine comes up on the driver Windows already has and is moved to ours deliberately. The standard VGA is not offered on either Windows family |
@@ -22,6 +22,7 @@ Modeled as a ~1998–2000 consumer PC.
 | Net | PCnet (AMD), **off on a new machine** | driver in-box on 98. The card is what the wizard's networking checkbox gives the machine; since 2026-09-07 a new machine of every family starts without one (doc 07, `bundle::default_network`) — an unpatched guest is not put on a network before anyone asks |
 | Storage | IDE HDD (qcow2) + our ATAPI CD | period-correct; no VirtIO for 9x |
 | Input | PS/2 mouse + kbd; USB tablet optional | the bundle's `seamless_mouse` (doc 07), on by default here: the tablet is absolute, so nothing is grabbed; off leaves the PS/2 relative mode games want (see doc 03) |
+| Gamepad | **off on a new machine**; a USB HID pad, the gameport at 0x201, or the key mapping (`bundle::Pad`, M13) | the one family offered both devices, because it is the one with both stacks: 98 SE binds its in-box HID driver to the USB pad (user-confirmed 2026-09-09 — it asks for the Windows 98 source files the first time, not for anything of ours), and the gameport is what a DOS box under it and a 1995 title want — a real pad reads correctly through `PADTEST.COM` in a Win98 DOS box (2026-09-10). The port is **not** Plug and Play — Add New Hardware, then calibrate — and the wizard says so, but on 98 it also steers a *Windows* game to the USB pad instead: that one arrives through DirectInput **and** winmm's `joyGetPosEx` on top of VJOYD (measured 2026-09-10, the `pad-guest-98` check), so installing "Standard Game Port" buys a Windows game nothing and M13 dropped that step rather than building it |
 | Floppy | enabled | driver/utility sneakernet, boot disks |
 
 Known QEMU-side traps (tracked in `patches/qemu/README.md`): qemu-3dfx 3D
@@ -99,6 +100,7 @@ Modeled as a ~2002–2005 PC.
 | Net | RTL8139, **off on a new machine** | in-box XP driver; the checkbox gives it, and a new machine starts without one (doc 07) |
 | Storage | IDE + our ATAPI CD | AHCI needs F6 drivers; not worth it |
 | Input | PS/2 + USB tablet toggle | same grab semantics as 98 (`seamless_mouse`, on by default) |
+| Gamepad | **off on a new machine**; a USB HID pad or the key mapping (`bundle::Pad`, M13) | XP binds `hidusb.sys` to the pad on the first start after it is added and shows it to DirectInput and `joy.cpl`, with nothing to install (user-confirmed 2026-09-09). No gameport offered: nothing enumerates a non-PnP port here, and Microsoft was already retiring analog sticks |
 
 Notes: SP3 recommended; activation is the user's affair with their own
 license (volume/retail as they possess) — the project ships nothing related
@@ -116,11 +118,12 @@ already carries "for DOS boxes/games", and nothing else.
 | CPU model | `pentium3` | deliberately *not* changed: what makes a machine feel like a 486 is the rate, not the CPUID string, and one variable at a time. Revisit if a real title is found that dislikes the model |
 | **CPU rate** | **`cpu_speed`, default 486DX2-66** | the field that makes this a DOS machine at all — see below |
 | RAM | 64 MB (4–256) | DOS uses the first megabyte; the rest is XMS for a mid-90s extender. 64 MB is generous for the era and inside what MS-DOS 6.22's own HIMEM.SYS manages |
-| Video | Cirrus GD5446 (`-vga cirrus`), **not a choice** | a real VGA/VESA BIOS of the period. The one family with no adapter picker: its titles program a VGA/VESA BIOS directly, so the adapter is a fact of the era rather than a driver question. `-vga std`'s Bochs VBE 2.0 with a linear framebuffer is arguably better for late VESA titles — an open question, not a decision |
+| Video | **The standard VGA (`-vga std`, the default) or the Cirrus GD5446 (`-vga cirrus`)** — a choice since 2026-09-09 (`bundle::Video`) | the Bochs adapter's VBE 2.0 and linear frame buffer are the fuller of the two VESA BIOSes a DOS title can find, and this family's default (2026-09-09, user decision: it is what a DOS machine was meant to have, where the hardcoded line it replaced said `cirrus`). The one family where the adapter is **not** a driver question: a DOS title programs the registers itself, so what changes is *which VESA BIOS it finds*. The Cirrus is the other half of an A/B nothing else can settle — it was an open question until a game rendered wrongly on it and there was no way to change the adapter at all. Nothing is installed either way. `d3dpt-vga` is not offered: there is no DOS driver for it |
 | Audio | **SB16 + its OPL3 (the default), a Gravis Ultrasound, an AdLib alone, or none** (`bundle::Sound`, doc 20) | the SB16 is what DOS software knows how to talk to, and its `BLASTER=A220 I5 D1 H5 P330 T6` names the MIDI port as well. The Gravis is the card the games written for one sound best on; the bare AdLib is the 1990 machine |
 | Music | **an MPU-401 at 0x330 with a General MIDI synthesizer (the default), a Roland CM-32L, or nothing** (`bundle::Music`, doc 20) | what a game's setup screen means by "General MIDI", "MPU-401" or "Roland". Nothing else on a DOS machine plays a score: the FM chip is the fallback, not the point |
 | Net | none | DOS reaches a network only through a packet driver the user installs by hand; an unused card is one more device to enumerate. The one family that has never had one by default — since 2026-09-07 the others start without one too, for a different reason (doc 07) |
 | Input | PS/2 mouse + kbd, **no USB tablet** (`seamless_mouse = false`) | a DOS mouse driver talks to the PS/2 controller; a tablet would leave the guest with no pointer at all. The player takes the pointer on a click and Ctrl+Alt+G gives it back |
+| Gamepad | **off on a new machine**; the gameport at 0x201 or the key mapping (`bundle::Pad`, M13, patch 27) | the one family with no USB stack, so the port is the only controller it can have — and it is the one a DOS game knows how to read, by arming four one-shots and counting until each bit falls. That count depends on how fast the guest runs, which is the other reason this family is paced (`-icount …,align=on`): unpaced, an axis nobody is touching wanders by half |
 | Storage | IDE HDD + our ATAPI CD | the CD-ROM model (doc 17) and the disc shelf both already speak DOS: `CDSHELF.COM` is a DOS program |
 | Floppy | `floppy` + `boot` on the machine | a DOS machine usually boots from one |
 
@@ -186,6 +189,7 @@ box on a nineties system, and nothing of ours is on the machine at all.
 | Net | RTL8139, **off on a new machine** | in-box on BeOS R5 and on Linux since 2.2 (`8139too`); the checkbox gives it, and a new machine starts without one (doc 07) |
 | Storage | IDE HDD + our ATAPI CD | as everywhere; the CD-ROM model (doc 17) is a drive, not a driver |
 | Input | PS/2 mouse + kbd, **no USB tablet** (`seamless_mouse = false`) | an absolute pointer needs the guest's USB HID stack *and* its windowing system to agree it is absolute, which an era XFree86 (an explicit input section) and BeOS do not do unconfigured — and unlike the Windows families there is no guest-tools install that would fix it. The checkbox turns it on for a guest that does handle it |
+| Gamepad | **off on a new machine**; a USB HID pad or the key mapping (`bundle::Pad`, M13) | the pad is a HID device an era Linux or BeOS drives from its own USB stack. No gameport: it would work on a guest whose driver can be told an address, and this project cannot name that step for an OS it does not know |
 | Acceleration | Automatic | none of these has Win9x's fast-CPU bugs, and nothing here is tuned for them either: take the host's speed when it is there |
 
 **No 3D of any kind, and no guest tools.** The Direct3D pass-through
@@ -209,16 +213,17 @@ our own `qemu-system-i386` accept the line.
 
 ## The display adapter (added 2026-09-07)
 
-Three of the four families offer a choice of adapter, `bundle::Video`,
-written into the bundle as `video`. The list is per family, and **the
-first entry is that family's default** (`bundle::video_choices`):
+All four families offer a choice of adapter, `bundle::Video`, written
+into the bundle as `video` (DOS since 2026-09-09). The list is per
+family, and **the first entry is that family's default**
+(`bundle::video_choices`):
 
 | Family | Offers | Default |
 |---|---|---|
 | XP | `d3dpt` (our adapter + our driver) / `cirrus` (Windows' in-box driver) | `d3dpt` |
 | Win98 | `cirrus` / `d3dpt` | `cirrus` |
 | Other | `std` (Bochs VGA, VBE 2.0) / `cirrus` | `std` |
-| DOS | — | — |
+| DOS | `std` (Bochs VGA, VBE 2.0) / `cirrus` (period VESA BIOS) | `std` |
 
 The choice exists because there are two honest answers and nothing here
 can pick between them. On Windows, ours is what the whole display path is
@@ -229,6 +234,26 @@ A/B'ing a title that misbehaves on ours, and for the test tools that
 still exercise the in-box driver. On `Other` there is no driver of ours
 at all and only the person installing the guest knows which standard
 adapter it has a driver for.
+
+DOS is the exception to all of that, and it was the last family to get
+the picker (2026-09-09) because it looked like it needed nothing to
+pick between: a DOS title asks no operating system for a driver, it
+programs the adapter itself. What it *does* ask is the VESA BIOS, and
+the two are not the same BIOS — the Cirrus's is of the period, the Bochs
+adapter's is VBE 2.0 with a linear frame buffer. When a game draws
+wrongly in a mode, which of the two it found is a variable, and until
+this there was no way to change it short of editing the bundle by hand.
+So the DOS row is one pick with no consequences either side: nothing is
+installed for a DOS adapter, and the machine boots the same on both.
+
+Its default is the **standard VGA** (2026-09-09, user decision), which is
+also what a DOS machine was meant to have all along: the family shipped
+with `-vga cirrus` hardcoded into its arguments from the day it landed
+(`8a0cfce`), which was the slip this row corrects. The Cirrus belongs to
+`Other`, where a guest wants a chip a *native* driver was written for.
+Existing DOS machines carry no `video` field and so move to the standard
+VGA on their next start; nothing is installed for them to lose, though a
+game that has been through its own setup may want that run again.
 
 The two Windows families therefore **start at opposite ends of the same
 pair**. XP starts on ours: the driver has been the whole display path
@@ -250,15 +275,26 @@ Two rules make the field safe to hand-write:
   `-vga cirrus` and `d3dpt-vga` alike — so the cards pinned below it do
   not move when it changes under an installed guest.
 
-Changing it *is* a hardware change to a guest that is already installed:
-it finds an unknown adapter, comes up in plain VGA and wants a driver
-before the desktop is back. The wizard says so, in orange, but only while
-editing a machine whose adapter has actually been changed
-(`Form::video_warning`). The `display-adapter` check in `scripts/test.sh`
-holds the whole table: each family's default, the switch away from it and
-back (a different direction on each Windows family), our adapter being *gone* rather than sitting beside it, the NIC
-staying at `0x03`, the standard VGA refused on Windows, and our own
-`qemu-system-i386` accepting every combination.
+On the three families that have drivers, changing it *is* a hardware
+change to a guest that is already installed: it finds an unknown adapter,
+comes up in plain VGA and wants a driver before the desktop is back. The
+wizard says so, in orange, but only while editing a machine whose adapter
+has actually been changed (`Form::video_warning`). **DOS is told
+something else there**, because that sentence is not true of it: the
+machine simply boots, and the only thing that can be stale is a *game's*
+own setup, which may have written down a video mode the other adapter
+does not offer.
+
+The `display-adapter` check in `scripts/test.sh` holds the whole table:
+each family's default, the switch away from it and back (a different
+direction on each Windows family), our adapter being *gone* rather than
+sitting beside it, the NIC staying at `0x03`, the standard VGA refused on
+Windows, our own adapter refused on DOS, and our own
+`qemu-system-i386` accepting every combination. The **family switch**
+itself — every untouched field moving to the new family's default, a
+picked one surviving unless the new family has no such entry, and
+"Default" putting a field back to following the family — is the
+`capi` check, which holds a live form rather than a saved bundle.
 
 ## Performance expectations (set honestly in-app)
 

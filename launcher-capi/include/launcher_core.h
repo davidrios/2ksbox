@@ -152,6 +152,13 @@ char *lc_wizard_graphics_note(const LcWizard *w, bool *warning);
 bool lc_wizard_optimization_enabled(const LcWizard *w, size_t index);
 void lc_wizard_choose_optimization(LcWizard *w, size_t index, bool on);
 void lc_wizard_reset_optimizations(LcWizard *w);
+/* Every optimization off at once, and every one on: the control run for
+   "is one of ours what broke this guest", and the way back. Both act on
+   the ones this build knows about. */
+void lc_wizard_disable_all_optimizations(LcWizard *w);
+void lc_wizard_enable_all_optimizations(LcWizard *w);
+bool lc_wizard_optimizations_all_off(const LcWizard *w);
+bool lc_wizard_optimizations_all_on(const LcWizard *w);
 bool lc_wizard_optimizations_are_default(const LcWizard *w);
 /* "6 of 7 on" — what a collapsed section says about itself. */
 char *lc_wizard_optimizations_summary(const LcWizard *w);

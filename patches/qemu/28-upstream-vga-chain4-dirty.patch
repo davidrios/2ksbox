@@ -1,0 +1,52 @@
+The VGA chain-4 write marks the wrong byte dirty, so a game's screen
+stops updating below the first quarter of it.
+
+`vga_mem_writeb`'s chain-4 branch stores the byte and then marks it
+dirty, but it does the two with different addresses:
+
+    s->vram_ptr[(addr << 2) | plane] = val;
+    memory_region_set_dirty(&s->vram, addr, 1);
+
+By that point `addr` has already been right-shifted by two for
+doubleword mode (`VGA_CR14_DW`) and had its plane split off, so the byte
+actually written is `(addr << 2) | plane` -- which is the original CPU
+offset -- while the byte marked dirty is that offset divided by four.  A
+write anywhere in video memory therefore marks something in the first
+quarter of it, and `vga_draw_graphic` redraws only the scanlines whose
+own pages came out dirty.
+
+In 320x200x8 (mode 13h, 64000 bytes) the whole frame buffer marks bytes
+0..16000, which is pages 0-3, which is **scanlines 0-51**.  Everything
+below line 51 is drawn once and then never again, however many times the
+guest rewrites it: measured with `tools/vga-dirty-guest-test.py`, a DOS
+program that fills video memory a page at a time with its own page
+number, twice, and reads the answer back off a screendump.  The guest's
+own read-back shows every byte in place; only the display is behind.
+
+It takes an adapter that routes chain-4 writes through this function to
+see it.  The standard VGA does not: `vga_update_memory_access()` installs
+the `vga.chain4` RAM alias for chain-4 modes, so the guest's stores go
+straight to RAM and the softmmu's own `TLB_NOTDIRTY` path marks them.
+The Cirrus keeps its own MMIO ops (`cirrus_vga_mem_write` hands anything
+that is not a Cirrus extended mode to `vga_mem_writeb`) and so takes this
+path on every write -- which is why Duke Nukem 3D is clean at 320x200 on
+`-vga std` and wrong on `-vga cirrus` (user report, 2026-09-09).
+
+Not ours: `hw/display` carries no other patch of the queue, and this is
+9.2.4's own code.  Worth sending upstream.
+
+Test: `tools/vga-dirty-guest-test.py` (mode 13h, both adapters).
+
+diff --git a/hw/display/vga.c b/hw/display/vga.c
+index b074b58c90..a1a929229a 100644
+--- a/hw/display/vga.c
++++ b/hw/display/vga.c
+@@ -948,7 +948,7 @@ void vga_mem_writeb(VGACommonState *s, hwaddr addr, uint32_t val)
+             printf("vga: chain4: [0x" HWADDR_FMT_plx "]\n", addr);
+ #endif
+             s->plane_updated |= mask; /* only used to detect font change */
+-            memory_region_set_dirty(&s->vram, addr, 1);
++            memory_region_set_dirty(&s->vram, (addr << 2) | plane, 1);
+         }
+         return;
+     }
