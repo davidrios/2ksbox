@@ -193,6 +193,9 @@
 #                  finds it (M13 path A) — DirectInput enumerates it, every axis
 #                  on the report's own 0..255 range, the POV hat's null state and
 #                  the buttons. Its own XP boot, ~60 s
+#   pad-guest-98   the same on Windows 98, against a launcher *machine* whose
+#                  Windows has had the pad's driver bound once (98 asks for its
+#                  own source files the first time); WIN98_PAD_MACHINE names it
 #   smc-guest      tools/smc-guest-test.py: self-modifying code (patched immediates,
 #                  same-value rewrites, opcode flips, a crossing store), smc-same-value
 #                  on/off both architecturally right (patch 18)
@@ -2100,11 +2103,6 @@ guest_stage() {
   # Its own XP boot rather than a passenger on the one below, because that
   # machine has no `usb-gamepad` on it and adding one would change the
   # hardware every other guest check runs against. ~60 s.
-  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ -x target/release/player ]; then
-    run_check pad-guest-xp pad-guest-xp.log python3 tools/pad-guest-test.py xp "$img" || true
-  else
-    skip pad-guest-xp "needs target/release/player and a display (it runs the player)"
-  fi
   # the CD-ROM backend: XP copies a converted guest-tools disc through cdrom.sys (doc 17 §6.3)
   if [ -x target/release/discx ] && command -v bsdtar >/dev/null; then
     # bsdtar keeps the ISO's read-only modes: make the previous extraction deletable first
@@ -2195,6 +2193,32 @@ guest_stage() {
     grep -h "occlusion query\|getters" "$OUT/d3dfeat9.log" | sort > "$OUT/f9-native.lines"
     grep -h "occlusion query\|getters" "$OUT/guest-d3dfeat9.log" 2>/dev/null | tr -d '\r' | sort > "$OUT/f9-guest.lines"
     run_check "guest-F9-log=native" guest-F9-log.log diff "$OUT/f9-native.lines" "$OUT/f9-guest.lines" || true
+  fi
+
+  # The pad in a Windows guest (M13 path A), **last in the stage**. Two
+  # more guest boots, and they go at the back because they are the newest
+  # checks here: a new check should not be able to perturb an established
+  # one by running before it. (What prompted the move was a `guest-cdimage`
+  # timeout on 2026-09-10 — which turned out to be another checkout's TCG
+  # guest running on the same box, the thing CLAUDE.md warns about, rather
+  # than these. The ordering is right either way.)
+  local pad98="${WIN98_PAD_MACHINE:-claude98}"
+  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ -x target/release/player ]; then
+    run_check pad-guest-xp pad-guest-xp.log python3 tools/pad-guest-test.py xp "$img" || true
+    # ...and on Windows 98, which is a *machine* rather than an image: the
+    # pad's driver has to have been bound once (98 asks for its own source
+    # files the first time and there is nobody here to answer), so this
+    # names a launcher machine and reads the disk and display adapter out
+    # of its bundle. Skipped where that machine does not exist rather than
+    # assuming anyone's library looks like this one.
+    if [ -f "$HOME/.local/share/2ksbox/machines/$pad98/machine.toml" ]; then
+      run_check pad-guest-98 pad-guest-98.log python3 tools/pad-guest-test.py win98 "$pad98" || true
+    else
+      skip pad-guest-98 "no launcher machine '$pad98' with the pad installed (WIN98_PAD_MACHINE)"
+    fi
+  else
+    skip pad-guest-xp "needs target/release/player and a display (it runs the player)"
+    skip pad-guest-98 "needs target/release/player and a display (it runs the player)"
   fi
 }
 

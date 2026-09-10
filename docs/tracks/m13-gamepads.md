@@ -265,11 +265,11 @@ Both guest devices are under a test as of **2026-09-10** — `pad-guest`
 guest) in the suite's guest stage, so neither hand run is load-bearing any
 more. What is left is narrower than it was:
 
-- **path A on Windows 98, under the test.** The mode is written; the
-  *image* is what is missing. `~/vms/win98.qcow2` enumerates `devices: 0`,
-  because a fresh 98 SE asks for its own source files the first time a HID
-  pad is plugged in and nobody has answered that in that image. The hand
-  run on 98 SE says the path works; nothing re-checks it there.
+- ~~**path A on Windows 98, under the test.**~~ **Done 2026-09-10**, as
+  `pad-guest-98`, against the `claude98` machine — the one whose Windows
+  had the pad's driver bound once. An image that never has still reports
+  `devices: 0`, and the check skips rather than fails where the machine is
+  absent.
 - **path B on 9x** — "Standard Game Port" through Add New Hardware, then
   calibration in `joy.cpl`, so a *Windows* game sees a joystick. The port
   itself is confirmed on 98 (a real pad read through `PADTEST.COM` in a
@@ -579,10 +579,14 @@ rather than fail on a machine with no display.
   image, the ISO as its CD, the Run dialog knocked on until the program
   says it started, and the checks read off COM1. `xp` is the
   `pad-guest-xp` check in `scripts/test.sh`'s guest stage (~60 s);
-  `win98` is by hand, because it needs an image where the pad's driver has
-  been bound once — a fresh 98 SE asks for its own source files the first
-  time and an automated run has nobody to answer it (`~/vms/win98.qcow2`
-  reports `devices: 0` today, which is exactly that).
+  `win98` names a launcher **machine** rather than an image, and reads the
+  disk and the display adapter out of its bundle — the pad's driver is
+  installed in a machine, and guessing the adapter from outside is how a
+  run ends up typing into a New Hardware wizard. It is the `pad-guest-98`
+  check (`WIN98_PAD_MACHINE`, default `claude98`), skipped where no such
+  machine exists: 98 asks for its own source files the first time a HID
+  pad is plugged in, so the image has to have answered that once —
+  `~/vms/win98.qcow2` reports `devices: 0` because it never has.
 
 ## Next steps, in order
 
@@ -606,12 +610,9 @@ What is left, in order:
    stage (`pad-guest`, `pad-guest-xp`). XP: DirectInput names the pad,
    every axis reaches both ends of the report's own range, the POV hat
    shows its null state and the buttons arrive.
-6. **Path A on Windows 98, under the test.** The mode exists
-   (`tools/pad-guest-test.py win98`) and the image is what is missing:
-   `~/vms/win98.qcow2` enumerates `devices: 0`, because a fresh 98 SE asks
-   for its own source files the first time a HID pad is plugged in and
-   nobody has answered that in *that* image. One by-hand install and the
-   check runs there too.
+6. ~~**Path A on Windows 98, under the test.**~~ **Done 2026-09-10** —
+   `pad-guest-98`, against a launcher machine whose Windows has the driver
+   (`claude98` here).
 7. **The 9x *driver* half of path B**: "Standard Game Port" through Add
    New Hardware, then calibrate in `joy.cpl`, so a Windows game sees a
    joystick. The port itself is confirmed present on 98 — `PADTEST.COM` in
@@ -627,6 +628,17 @@ the map, the shared keys, the release-before-press ordering and the
 scancodes, which is where every bug in it has been.
 
 ## Traps
+
+- **Do not put a `usb-tablet` on the bus beside the pad in a Win98
+  harness.** Measured 2026-09-10, same image and same everything else:
+  with the tablet, DirectInput enumerated *no* joystick at all; without
+  it, the pad came up and every check passed. XP did not care either way.
+  The mechanism is not established — the obvious guess, a modal New
+  Hardware wizard for a second HID device, does not survive the machine's
+  owner saying it has had a tablet before — but the A/B is solid and a pad
+  needs a controller rather than a pointer, so there is nothing to trade
+  off. `tools/pad-guest-test.py` passes `-usb -device usb-gamepad` and
+  nothing else.
 
 - ~~**The Flatpak sees no input devices.**~~ Fixed in step 0:
   `--device=input` is in `finish-args`. It was invisible until someone

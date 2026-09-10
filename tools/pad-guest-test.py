@@ -4,7 +4,8 @@ both devices, each in the family it is for.
 
     tools/pad-guest-test.py                 # path B: the gameport, FreeDOS
     tools/pad-guest-test.py xp [image]      # path A: the USB HID pad, XP
-    tools/pad-guest-test.py win98 [image]   # path A on Windows 98
+    tools/pad-guest-test.py win98 [machine|image]     # path A on Windows 98
+    tools/pad-guest-test.py win98 claude98            # ...a launcher machine
     tools/pad-guest-test.py --verbose ...   # ...and every sample line
     UNTHROTTLED=1 tools/pad-guest-test.py   # the DOS control: no -icount
 
@@ -297,6 +298,53 @@ def check_dos(text, quiet=False):
 
 IMAGES = {"xp": "~/vms/winxp.qcow2", "win98": "~/vms/win98.qcow2"}
 
+# The display adapter to boot a Windows image on. It has to be the one the
+# image's Windows already has a driver for: booting an image that runs our
+# `d3dpt-vga` (doc 19) on a Cirrus instead is a hardware change, and the
+# New Hardware wizard it brings up at start-up is a modal dialog sitting
+# exactly where this harness wants to type. A named machine answers this
+# out of its own bundle; `VGA=` overrides either way.
+
+
+def resolve(arg):
+    """A launcher machine's name, or a path to a disk image.
+
+    Naming a machine is the useful form and it is what someone actually
+    has: the pad's driver is installed in a *machine*, and the bundle
+    already knows which disk that is and which display adapter its
+    Windows has a driver for. Guessing either of those from the outside is
+    how a run ends up typing into a New Hardware wizard.
+    """
+    if os.sep not in arg and not arg.endswith((".qcow2", ".raw", ".img")):
+        toml = os.path.expanduser(
+            "~/.local/share/2ksbox/machines/%s/machine.toml" % arg)
+        if not os.path.exists(toml):
+            raise SystemExit("no launcher machine %r (%s)" % (arg, toml))
+        import tomllib
+        with open(toml, "rb") as f:
+            m = tomllib.load(f)
+        return m["disk"], m.get("video", "cirrus")
+    return os.path.expanduser(arg), "cirrus"
+
+
+def vga_args(video):
+    video = os.environ.get("VGA", video)
+    if video in ("d3dpt", "d3dpt-vga"):
+        return ["-vga", "none", "-device", "d3dpt-vga"]
+    return ["-vga", video]
+
+
+def drive_arg(image):
+    """The image, never written to.
+
+    `snapshot=on` rather than an overlay of our own — the same thing
+    `scripts/test.sh`'s guest stage does with the same files — and an
+    explicit format, because a raw image with no header to probe is
+    otherwise a warning and a guess.
+    """
+    fmt = "raw" if image.endswith((".raw", ".img")) else "qcow2"
+    return "file=%s,if=ide,index=0,media=disk,format=%s,snapshot=on" % (image, fmt)
+
 
 def find_iso():
     isos = sorted(glob.glob(os.path.join(ROOT, "guest-tools/out/guest-tools-*.iso")),
@@ -306,7 +354,7 @@ def find_iso():
     return isos[-1]
 
 
-def run_win(mode, image, log, plog):
+def run_win(mode, image, video, log, plog):
     """The player with a `usb-gamepad`, and PADWIN.EXE off the ISO.
 
     `snapshot=on` rather than an overlay of our own: the user's images are
@@ -337,10 +385,26 @@ def run_win(mode, image, log, plog):
             PLAYER, "--",
             "-L", os.path.join(ROOT, "qemu/pc-bios"),
             "-machine", "pc", "-cpu", "pentium3", "-m", "512", *accel,
-            "-vga", "cirrus", "-net", "none",
+            *vga_args(video), "-net", "none",
             "-audiodev", "none,id=a0",
-            "-usb", "-device", "usb-tablet", "-device", "usb-gamepad",
-            "-drive", "file=%s,if=ide,index=0,media=disk,snapshot=on" % image,
+            # The controller and the pad, and **nothing else on the bus**.
+            #
+            # A `-device usb-tablet` was here at first, copied from the
+            # machines the rest of the suite boots. Measured on Windows 98
+            # (2026-09-10), same image, same everything else: with the
+            # tablet, DirectInput enumerated *no* joystick at all; without
+            # it, the pad came up and every check passed. XP did not care
+            # either way.
+            #
+            # The mechanism is not established — the obvious guess, that a
+            # second HID device the image had never seen leaves the guest
+            # in a modal New Hardware wizard, does not survive the owner
+            # saying that machine has had a tablet before. What is
+            # established is the A/B, and the pad needs a controller
+            # rather than a pointer regardless, so there is nothing to
+            # trade off here.
+            "-usb", "-device", "usb-gamepad",
+            "-drive", drive_arg(image),
             "-cdrom", iso, "-boot", "c",
             "-serial", "file:" + log,
             "-qmp", "unix:%s,server,nowait" % sock,
@@ -382,8 +446,17 @@ def run_win(mode, image, log, plog):
                 if started:
                     break
         if not started:
-            raise SystemExit("the guest never started PADWIN.EXE (see %s)" % log)
-        return watch(p, log, "DONE", lambda t: check_win(t, quiet=True), timeout=300)
+            qmp("screendump", os.path.join(OUT, "%s-screen.png" % mode))
+            raise SystemExit("the guest never started PADWIN.EXE (see %s and %s)"
+                             % (log, os.path.join(OUT, "%s-screen.png" % mode)))
+        text = watch(p, log, "DONE", lambda t: check_win(t, quiet=True), timeout=300)
+        # A failing run leaves a picture of the desktop behind. What goes
+        # wrong here is usually a *dialog* — Windows found new hardware and
+        # is asking for its source files, and no amount of log-reading says
+        # so — and the screen is the one place that shows it.
+        if not check_win(text, quiet=True):
+            qmp("screendump", os.path.join(OUT, "%s-screen.png" % mode))
+        return text
     finally:
         if p.poll() is None:
             p.terminate()
@@ -396,8 +469,17 @@ def check_win(text, quiet=False):
     say = (lambda *a: None) if quiet else print
     rows = samples(text, ("X", "Y", "Z", "Rz", "POV", "B"))
     if "FAIL no joystick enumerated" in text:
-        say("FAIL the guest enumerated no joystick at all — is the pad's driver installed in this image?")
-        say("     (Windows 98 SE asks for its own source files the first time a HID pad is plugged in.)")
+        say("FAIL the guest enumerated no joystick at all. Two things this image has to")
+        say("     have had installed once, each of which asks Windows 98 for its own")
+        say("     source files the first time and has nobody here to answer:")
+        say("       * the USB *controller* — a machine whose bundle has neither the")
+        say("         seamless mouse nor `pad = usb` has never had `-usb` on its command")
+        say("         line at all, so adding one here is new hardware before the pad is;")
+        say("       * the HID pad itself.")
+        say("     Run the machine from the launcher once with the pad set to USB, answer")
+        say("     the wizard, and this check has an image. See %s-screen.png for what the"
+            % os.path.join(OUT, "win98"))
+        say("     guest was actually showing.")
         return False
     for line in text.splitlines():
         if line.startswith("FAIL ") and not quiet:
@@ -477,11 +559,12 @@ def main():
         text = run_dos(build_dos(), log, plog)
         check = check_dos
     else:
-        image = args[1] if len(args) > 1 else os.path.expanduser(IMAGES[mode])
+        image, video = resolve(args[1] if len(args) > 1 else IMAGES[mode])
         if not os.path.exists(image):
-            raise SystemExit("no image %s — pass one as the second argument" % image)
-        print("%s: %s (snapshot), %s" % (mode, image, os.path.basename(find_iso())))
-        text = run_win(mode, image, log, plog)
+            raise SystemExit("no image %s — name a launcher machine or pass a path" % image)
+        print("%s: %s (snapshot), video %s, %s"
+              % (mode, image, os.environ.get("VGA", video), os.path.basename(find_iso())))
+        text = run_win(mode, image, video, log, plog)
         check = check_win
 
     print("%.0f s in the guest; %s" % (time.time() - t0, log))
