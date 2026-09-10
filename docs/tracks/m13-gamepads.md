@@ -11,13 +11,17 @@ a product decision and the three do not share a guest end.
 
 **All four steps landed 2026-09-09**: step 0, path C, path A, and path B
 the same day. A machine can now have a real USB HID gamepad (`-device
-usb-gamepad`, patch 26) — **user-confirmed the same day with a real
-controller on XP and on Windows 98 SE**, both showing it in the Game
-Controllers panel; a gameport at 0x200-0x207 (`-device gameport`, patch
-27), which is the only path that reaches DOS and the one a **real DOS
-guest has now driven** (`tools/pad-guest-test.py`); or the key mapping, on
-everything. See "State" below for what is in, what the plan got wrong, and
-"Proved by hand" for the one thing that hand run corrected.
+usb-gamepad`, patch 26), a gameport at 0x200-0x207 (`-device gameport`,
+patch 27) — the only path that reaches DOS — or the key mapping, on
+everything.
+
+**Both devices have been driven by a real PlayStation 5 DualSense**
+(user-confirmed 2026-09-09 / 09-10): the USB pad in XP's and Windows 98
+SE's Game Controllers panel, and the gameport through `PADTEST.COM` in a
+Windows 98 DOS box, d-pad and buttons included. A FreeDOS guest drives the
+gameport under a test as well (`tools/pad-guest-test.py`). See "State" for
+what is in, "Proved by hand" for what those runs corrected, and "Not
+proved yet" for the three things still unwatched.
 
 Gamepads were a post-v1 candidate in doc 08 until this track opened.
 
@@ -201,12 +205,37 @@ picker; the harness therefore judges every axis against the undriven
 one's own spread rather than against a number chosen in advance, so the
 same checks pass in both machines and say what changed.
 
-### Proved by hand, and what it corrected
+### Proved by hand, with a real controller
 
-**Path A works with a real controller on XP and on Windows 98 SE** —
-user-confirmed 2026-09-09, the pad showing up and moving in the Game
-Controllers panel on both. That is the claim the whole path rested on and
-it holds. It also corrected the claim standing beside it:
+A **PlayStation 5 DualSense**, user-confirmed 2026-09-09 / 09-10, on both
+guest paths. This is the first time anything in this track has been
+*felt*: everything else here is driven by `PLAYER_PAD_SCRIPT`, and the
+`gilrs` end — which button id is which control, which way an axis points,
+hot-plug — had been compiled and enumerated and never pressed.
+
+**Path A works on XP and on Windows 98 SE**, the pad showing up and moving
+in the Game Controllers panel on both.
+
+**Path B works too**, in a **Windows 98 DOS box**: `PADTEST.COM` off the
+guest-tools ISO, with the sticks moving the axis counts, the **d-pad
+moving them as well**, and the face buttons appearing in the `B=` nibble.
+Two things in that sentence were only ever guesses before:
+
+- the **d-pad fold** — the device driving the first stick's axes to their
+  ends when the hat is pressed, which is what makes a digital pad work on
+  a port that has only pots. Only the scripted pad had exercised it, and
+  a real pad's hat is the thing it was written for.
+- the **port under Windows 98**, which is why that family is offered it at
+  all. What this does *not* prove is the 9x driver half: a DOS box reads
+  the port directly, exactly as DOS does. "Standard Game Port" through Add
+  New Hardware, so a *Windows* game sees a joystick, is still untried.
+
+The DualSense also settles a design question the plan raised: face buttons
+are named by position (`South`/`East`/…) rather than by letter precisely
+so a binding does not move between an Xbox pad and a DualShock, and the
+pad that finally arrived was the DualShock-shaped one.
+
+Path A's hand run corrected the claim standing beside it:
 
 > **98 SE does not need "nothing installed".** It binds its own HID
 > driver, but the New Hardware wizard asks for the Windows 98 source
@@ -246,10 +275,11 @@ Three things are still unwatched:
 - **path C in a guest** — keys arriving. Cheap once a Windows pad harness
   exists.
 
-Also unfelt: **a real controller on paths B and C**. One has now been on
-path A; the gameport and the key mapping have only ever been driven by
-`PLAYER_PAD_SCRIPT`, so the `gilrs` end of them (button ids, axis signs,
-hot-plug) is compiled and enumerated but never actually pressed.
+Also unfelt: **a real controller on path C**. A DualSense has now been on
+paths A and B; the key mapping has only ever been driven by
+`PLAYER_PAD_SCRIPT`, and it is the one path whose output is scancodes
+rather than a device, so a wrong binding there looks like a broken game
+rather than a broken pad.
 
 ### What the plan got wrong
 
@@ -556,14 +586,13 @@ What is left, in order:
    hand on both (above); what is missing is anything that re-checks it
    after a change, which is the same distinction the testing policy draws
    everywhere else. It also gets path C its guest for free.
-6. **Path B on Win98**, by hand once: "Standard Game Port" through Add New
-   Hardware, then calibrate in `joy.cpl`. The wizard tells someone to do
-   this and nobody here has. `PADTEST.COM` in a Win98 DOS box is the A/B
-   that separates a missing port from a missing driver.
-7. **A real controller on paths B and C.** One has now been used on path
-   A; the gameport and the key mapping have only ever been driven by
-   `PLAYER_PAD_SCRIPT`, so their `gilrs` end — button ids, axis signs,
-   hot-plug — is compiled and enumerated but never pressed.
+6. **The 9x *driver* half of path B**: "Standard Game Port" through Add
+   New Hardware, then calibrate in `joy.cpl`, so a Windows game sees a
+   joystick. The port itself is confirmed present on 98 — `PADTEST.COM` in
+   a Win98 DOS box reads it with a real pad (above) — so this step is now
+   only about the driver, and that A/B is the way to keep telling the two
+   apart.
+7. **A real controller on path C**, the one path that has never had one.
 
 Path C is deliberately not a throwaway: it stays as a `keys` choice for
 DOS games that never read a joystick and for Win98 FE.
