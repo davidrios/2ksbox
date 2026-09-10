@@ -119,6 +119,8 @@ pub mod ffi {
         #[qproperty(QString, optimizations_summary)]
         #[qproperty(QString, optimizations_note)]
         #[qproperty(bool, optimizations_are_default)]
+        #[qproperty(bool, optimizations_all_off)]
+        #[qproperty(bool, optimizations_all_on)]
         #[qproperty(bool, existing_disk)]
         #[qproperty(QString, disk_path)]
         #[qproperty(i32, disk_size_gb)]
@@ -185,6 +187,10 @@ pub mod ffi {
         /// Every fast path back on its shipped setting.
         #[qinvokable]
         fn reset_optimizations(self: Pin<&mut Wizard>);
+        /// Every optimization off, and every one on: the control run and
+        /// the way back, which are eleven clicks each without them.
+        fn disable_all_optimizations(self: Pin<&mut Wizard>);
+        fn enable_all_optimizations(self: Pin<&mut Wizard>);
 
         /// The boot order. A plain field with no consequence beyond its
         /// own note, but an index like the other combos.
@@ -358,6 +364,8 @@ pub struct WizardRust {
     optimizations_summary: QString,
     optimizations_note: QString,
     optimizations_are_default: bool,
+    optimizations_all_off: bool,
+    optimizations_all_on: bool,
     existing_disk: bool,
     disk_path: QString,
     disk_size_gb: i32,
@@ -450,6 +458,14 @@ impl ffi::Wizard {
 
     fn reset_optimizations(self: Pin<&mut Self>) {
         self.edit(Form::reset_optimizations);
+    }
+
+    fn disable_all_optimizations(self: Pin<&mut Self>) {
+        self.edit(Form::disable_all_optimizations);
+    }
+
+    fn enable_all_optimizations(self: Pin<&mut Self>) {
+        self.edit(Form::enable_all_optimizations);
     }
 
     fn choose_boot(self: Pin<&mut Self>, boot: i32) {
@@ -652,7 +668,7 @@ impl ffi::Wizard {
         let (music, music_labels, music_is_default, music_note);
         let (soundfont, soundfont_applies, mt32_roms, mt32_roms_applies);
         let (pad, pad_applies, pad_labels, pad_is_default, pad_note, pad_warning);
-        let (optimizations_mask, optimizations_summary, optimizations_note, optimizations_are_default);
+        let (optimizations_mask, optimizations_summary, optimizations_note, optimizations_are_default, optimizations_all_off, optimizations_all_on);
         let (existing_disk, disk_path, disk_size_gb, install_media, floppy, boot, boot_note);
         let (shader_profile, advanced, advanced_toml, error);
         {
@@ -719,6 +735,8 @@ impl ffi::Wizard {
             optimizations_summary = qs(f.optimizations_summary());
             optimizations_note = qs(f.optimizations_note());
             optimizations_are_default = f.optimizations_are_default();
+            optimizations_all_off = f.optimizations_all_off();
+            optimizations_all_on = f.optimizations_all_on();
             existing_disk = f.existing_disk;
             disk_path = qs(&f.disk_path);
             disk_size_gb = f.disk_size_gb as i32;
@@ -788,6 +806,8 @@ impl ffi::Wizard {
         self.as_mut().set_optimizations_summary(optimizations_summary);
         self.as_mut().set_optimizations_note(optimizations_note);
         self.as_mut().set_optimizations_are_default(optimizations_are_default);
+        self.as_mut().set_optimizations_all_off(optimizations_all_off);
+        self.as_mut().set_optimizations_all_on(optimizations_all_on);
         self.as_mut().set_existing_disk(existing_disk);
         self.as_mut().set_disk_path(disk_path);
         self.as_mut().set_disk_size_gb(disk_size_gb);

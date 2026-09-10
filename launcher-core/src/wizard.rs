@@ -647,6 +647,28 @@ impl Form {
         self.optimizations.all_default()
     }
 
+    /// Every switch off at once: the control run for "is one of ours
+    /// what broke this guest", which is otherwise eleven clicks and easy
+    /// to get half-right.
+    pub fn disable_all_optimizations(&mut self) {
+        self.optimizations.disable_all();
+    }
+
+    /// The other end of the same shortcut.
+    pub fn enable_all_optimizations(&mut self) {
+        self.optimizations.enable_all();
+    }
+
+    /// Whether they are all off already, so a front end can grey the
+    /// button rather than offer a no-op.
+    pub fn optimizations_all_off(&self) -> bool {
+        self.optimizations.all_off()
+    }
+
+    pub fn optimizations_all_on(&self) -> bool {
+        self.optimizations.all_on()
+    }
+
     /// What the collapsed section says about itself, so a machine with
     /// something turned off says so without being opened.
     pub fn optimizations_summary(&self) -> String {
@@ -661,9 +683,13 @@ impl Form {
         if self.will_use_kvm() {
             "This machine runs on KVM, where none of these apply: they are fast paths in the emulator. \
              Choose Emulation above (or a processor, which forces it) to use them."
+        } else if self.optimizations.all_off() {
+            "Every one of them is off: this guest is running on the emulator with none of our own work in \
+             its path, which is the control to compare a misbehaving one against. Expect it to be slow."
         } else {
             "Our own additions to QEMU, each measured (patches/qemu/README.md). Turn one off to find out \
-             whether it is what makes a guest compute the wrong number or stop drawing."
+             whether it is what makes a guest compute the wrong number or stop drawing, or turn them all \
+             off at once for the control run and put back the ones that are not to blame."
         }
     }
 

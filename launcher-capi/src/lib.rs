@@ -615,6 +615,37 @@ pub unsafe extern "C" fn lc_wizard_reset_optimizations(w: *mut LcWizard) {
     handle_mut!(w, ()).0.reset_optimizations();
 }
 
+/// Every optimization off at once, and every one on: the control run
+/// for "is one of ours what broke this guest", and the way back.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_disable_all_optimizations(w: *mut LcWizard) {
+    handle_mut!(w, ()).0.disable_all_optimizations();
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_enable_all_optimizations(w: *mut LcWizard) {
+    handle_mut!(w, ()).0.enable_all_optimizations();
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_optimizations_all_off(w: *const LcWizard) -> bool {
+    handle!(w, false).0.optimizations_all_off()
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_optimizations_all_on(w: *const LcWizard) -> bool {
+    handle!(w, false).0.optimizations_all_on()
+}
+
 /// # Safety
 /// `w` must be a live handle.
 #[no_mangle]

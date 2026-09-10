@@ -1,0 +1,318 @@
+Every patch of the queue answerable to its own switch.
+
+`x87-fast`, `sse-fast`, `simd-fast`, `rep-fast`, `smc-same-value`,
+`soft-imm`, `inline-lookup` and `pinned-regs` could each be turned off
+and A/B'd; patches 15 (`tb-invalidate-fast`), 16 (`tlb-floor`) and 19
+(`tls-hot-paths`) could not, having no property at all. So "every
+optimization off" was not a control run -- it cleared eight of eleven,
+and the three left in are the ones that sit on TB invalidation, the
+softmmu TLB and `notdirty_write`, which is exactly where a display or a
+self-modifying guest goes wrong. That cost a wrong conclusion on
+2026-09-09: a user turned every switch off, the fault stayed, and the M9
+patches were written off as innocent when three of them had never been
+out of the picture.
+
+Three accelerator properties, all defaulting on, so nothing changes for a
+machine that says nothing:
+
+  * `tb-invalidate-fast` (patch 15) gates all four cuts -- the first
+    page's range starting at the write rather than the page boundary, the
+    per-page `code_lo`/`code_hi` early-out, the single-page path that
+    skips the page collection, and the jump cache not being flushed per
+    invalidated CF_PCREL block. Off, each goes back to what upstream
+    does.
+  * `tlb-floor` (patch 16) chooses between our 4096-entry floor and
+    upstream's 64/256 at run time (`tlb_dyn_min_bits`), read per resize
+    rather than baked in by the preprocessor, so it takes effect at the
+    next flush.
+  * `tls-hot-paths` (patch 19) chooses in `notdirty_write` between the
+    dirty-bitmap helpers that assume the vCPU's RCU read section and the
+    guarded ones that take the lock themselves. Both branches must set
+    exactly the same bits, which is the whole claim the patch makes; the
+    off branch is the oracle for it. The other half of that patch -- the
+    translator reading `tcg_ctx` once per operand instead of per access
+    -- is parameter passing with no reachable behaviour and has no
+    switch.
+
+A switch must turn off its own patch and no one else's, which took one
+reordering to be true: patch 24's `soft_imm_absorbs__locked` is now asked
+*before* the `tb-invalidate-fast` branch rather than inside the fast path,
+so turning patch 15 off no longer silently takes patch 24 with it.  The
+DOS battery is what noticed -- with the three off it was still 13/13
+cases right in all four combinations, but `tools/smc-guest-test.py`
+failed its own "the soft-imm path was reached" assertion, which is
+exactly the check that exists so the battery cannot pass by not testing
+anything.
+
+Test: the `optimizations` check in `scripts/test.sh` puts all eleven on
+the command line and has our own `qemu-system-i386` accept it (a name
+that does not exist is still refused, so acceptance means something), and
+the DOS batteries run under `QEMU_TCG_OPTS=tb-invalidate-fast=off,
+tlb-floor=off,tls-hot-paths=off` to say the off branches are
+architecturally the same machine.
+
+diff --git a/include/exec/cpu-defs.h b/include/exec/cpu-defs.h
+index d569d0f..1ca335e 100644
+--- a/include/exec/cpu-defs.h
++++ b/include/exec/cpu-defs.h
+@@ -69,6 +69,13 @@
+  */
+ #define CPU_TLB_DYN_MIN_BITS 12
+ #define CPU_TLB_DYN_DEFAULT_BITS 12
++/*
++ * Upstream's numbers, which `-accel tcg,tlb-floor=off` goes back to so the
++ * floor can be A/B'd like every other patch of the queue.  cputlb.c picks
++ * between the two pairs at run time (tlb_dyn_min_bits / _default_bits).
++ */
++#define CPU_TLB_DYN_MIN_BITS_NOFLOOR 6
++#define CPU_TLB_DYN_DEFAULT_BITS_NOFLOOR 8
+ 
+ # if HOST_LONG_BITS == 32
+ /* Make sure we do not require a double-word shift for the TLB load */
+diff --git a/accel/tcg/cputlb.c b/accel/tcg/cputlb.c
+index 4af9d45..074dddd 100644
+--- a/accel/tcg/cputlb.c
++++ b/accel/tcg/cputlb.c
+@@ -41,6 +41,23 @@
+ #include "trace.h"
+ #include "tb-hash.h"
+ #include "internal-common.h"
++
++/*
++ * Patch 16's 4096-entry floor for the dynamic TLB, or upstream's 64/256
++ * when `-accel tcg,tlb-floor=off`.  Read per resize rather than baked in,
++ * which is what makes the floor answerable to the same A/B as the rest of
++ * the queue; a change takes effect at the next flush.
++ */
++static inline int tlb_dyn_min_bits(void)
++{
++    return tcg_tlb_floor ? CPU_TLB_DYN_MIN_BITS : CPU_TLB_DYN_MIN_BITS_NOFLOOR;
++}
++
++static inline int tlb_dyn_default_bits(void)
++{
++    return tcg_tlb_floor ? CPU_TLB_DYN_DEFAULT_BITS
++                         : CPU_TLB_DYN_DEFAULT_BITS_NOFLOOR;
++}
+ #include "internal-target.h"
+ #ifdef CONFIG_PLUGIN
+ #include "qemu/plugin-memory.h"
+@@ -243,7 +260,7 @@ static void tlb_mmu_resize_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast,
+         if (expected_rate > 70) {
+             ceil *= 2;
+         }
+-        new_size = MAX(ceil, 1 << CPU_TLB_DYN_MIN_BITS);
++        new_size = MAX(ceil, (size_t)1 << tlb_dyn_min_bits());
+     }
+ 
+     if (new_size == old_size) {
+@@ -270,11 +287,11 @@ static void tlb_mmu_resize_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast,
+      * size, aborting if we cannot even allocate the smallest TLB we support.
+      */
+     while (fast->table == NULL || desc->fulltlb == NULL) {
+-        if (new_size == (1 << CPU_TLB_DYN_MIN_BITS)) {
++        if (new_size == (size_t)1 << tlb_dyn_min_bits()) {
+             error_report("%s: %s", __func__, strerror(errno));
+             abort();
+         }
+-        new_size = MAX(new_size >> 1, 1 << CPU_TLB_DYN_MIN_BITS);
++        new_size = MAX(new_size >> 1, (size_t)1 << tlb_dyn_min_bits());
+         fast->mask = (new_size - 1) << CPU_TLB_ENTRY_BITS;
+ 
+         g_free(fast->table);
+@@ -306,7 +323,7 @@ static void tlb_flush_one_mmuidx_locked(CPUState *cpu, int mmu_idx,
+ 
+ static void tlb_mmu_init(CPUTLBDesc *desc, CPUTLBDescFast *fast, int64_t now)
+ {
+-    size_t n_entries = 1 << CPU_TLB_DYN_DEFAULT_BITS;
++    size_t n_entries = (size_t)1 << tlb_dyn_default_bits();
+ 
+     tlb_window_reset(desc, now, 0);
+     desc->n_used_entries = 0;
+@@ -1351,6 +1368,26 @@ static void notdirty_write(CPUState *cpu, vaddr mem_vaddr, unsigned size,
+      * Racer 1997 makes ~2 million such stores a second after patch 18 and
+      * spent 8 % of its vCPU thread in that thunk).
+      */
++    if (!tcg_tls_hot_paths) {
++        /*
++         * Upstream: every dirty-bitmap helper takes the RCU read lock for
++         * itself.  `-accel tcg,tls-hot-paths=off` is the oracle for the
++         * hoisting above -- the two must set exactly the same bits, which
++         * is the whole claim patch 19 makes.
++         */
++        if (changed &&
++            !cpu_physical_memory_get_dirty_flag(ram_addr, DIRTY_MEMORY_CODE)) {
++            tb_invalidate_phys_range_fast(ram_addr, size, retaddr);
++        }
++        cpu_physical_memory_set_dirty_range(ram_addr, size,
++                                            DIRTY_CLIENTS_NOCODE);
++        if (!cpu_physical_memory_is_clean(ram_addr)) {
++            trace_memory_notdirty_set_dirty(mem_vaddr);
++            tlb_set_dirty(cpu, mem_vaddr);
++        }
++        return;
++    }
++
+     if (changed &&
+         !cpu_physical_memory_get_dirty_flag_rcu_locked(ram_addr,
+                                                        DIRTY_MEMORY_CODE)) {
+diff --git a/accel/tcg/internal-common.h b/accel/tcg/internal-common.h
+index e9b755f..c8a22ab 100644
+--- a/accel/tcg/internal-common.h
++++ b/accel/tcg/internal-common.h
+@@ -20,6 +20,12 @@ extern bool one_insn_per_tb;
+ extern bool tcg_smc_same_value;
+ /* the jump-cache probe of indirect branches emitted as TCG ops (patch 20) */
+ extern bool tcg_inline_lookup;
++/* the four cuts to TB invalidation on a guest write (patch 15) */
++extern bool tcg_tb_invalidate_fast;
++/* the 4096-entry floor under the dynamic softmmu TLB (patch 16) */
++extern bool tcg_tlb_floor;
++/* the dirty-bitmap helpers read under the vCPU's own RCU section (patch 19) */
++extern bool tcg_tls_hot_paths;
+ 
+ /*
+  * Return true if CS is not running in parallel with other cpus, either
+diff --git a/accel/tcg/tcg-all.c b/accel/tcg/tcg-all.c
+index ba599b1..c746555 100644
+--- a/accel/tcg/tcg-all.c
++++ b/accel/tcg/tcg-all.c
+@@ -103,6 +103,9 @@ bool one_insn_per_tb;
+ bool tcg_smc_same_value = true;
+ bool tcg_inline_lookup = true;
+ bool tcg_soft_imm = true;
++bool tcg_tb_invalidate_fast = true;
++bool tcg_tlb_floor = true;
++bool tcg_tls_hot_paths = true;
+ 
+ static int tcg_init_machine(MachineState *ms)
+ {
+@@ -209,6 +212,36 @@ static void tcg_set_smc_same_value(Object *obj, bool value, Error **errp)
+     tcg_smc_same_value = value;
+ }
+ 
++static bool tcg_get_tb_invalidate_fast(Object *obj, Error **errp)
++{
++    return tcg_tb_invalidate_fast;
++}
++
++static void tcg_set_tb_invalidate_fast(Object *obj, bool value, Error **errp)
++{
++    tcg_tb_invalidate_fast = value;
++}
++
++static bool tcg_get_tlb_floor(Object *obj, Error **errp)
++{
++    return tcg_tlb_floor;
++}
++
++static void tcg_set_tlb_floor(Object *obj, bool value, Error **errp)
++{
++    tcg_tlb_floor = value;
++}
++
++static bool tcg_get_tls_hot_paths(Object *obj, Error **errp)
++{
++    return tcg_tls_hot_paths;
++}
++
++static void tcg_set_tls_hot_paths(Object *obj, bool value, Error **errp)
++{
++    tcg_tls_hot_paths = value;
++}
++
+ static bool tcg_get_inline_lookup(Object *obj, Error **errp)
+ {
+     return tcg_inline_lookup;
+@@ -302,6 +335,21 @@ static void tcg_accel_class_init(ObjectClass *oc, void *data)
+     object_class_property_set_description(oc, "soft-imm",
+         "A block whose code keeps being patched reads those operands from the guest's code at run time");
+ 
++    object_class_property_add_bool(oc, "tb-invalidate-fast",
++        tcg_get_tb_invalidate_fast, tcg_set_tb_invalidate_fast);
++    object_class_property_set_description(oc, "tb-invalidate-fast",
++        "Skip the translated-block walk for a guest write that cannot hit translated code");
++
++    object_class_property_add_bool(oc, "tlb-floor",
++        tcg_get_tlb_floor, tcg_set_tlb_floor);
++    object_class_property_set_description(oc, "tlb-floor",
++        "Keep at least 4096 entries in the softmmu TLB instead of shrinking to 64");
++
++    object_class_property_add_bool(oc, "tls-hot-paths",
++        tcg_get_tls_hot_paths, tcg_set_tls_hot_paths);
++    object_class_property_set_description(oc, "tls-hot-paths",
++        "Read the dirty bitmaps under the vCPU's own RCU section instead of locking per access");
++
+     object_class_property_add_bool(oc, "pinned-regs",
+         tcg_get_pinned_regs, tcg_set_pinned_regs);
+     object_class_property_set_description(oc, "pinned-regs",
+diff --git a/accel/tcg/tb-maint.c b/accel/tcg/tb-maint.c
+index 662028d..368bfb6 100644
+--- a/accel/tcg/tb-maint.c
++++ b/accel/tcg/tb-maint.c
+@@ -929,6 +929,13 @@ static void tb_jmp_cache_inval_tb(TranslationBlock *tb)
+     CPUState *cpu;
+ 
+     if (tb_cflags(tb) & CF_PCREL) {
++        if (!tcg_tb_invalidate_fast) {
++            /* upstream: the slot is unknown, so flush every cache */
++            CPU_FOREACH(cpu) {
++                tcg_flush_jmp_cache(cpu);
++            }
++            return;
++        }
+         /*
+          * A TB may be at any virtual address, so its jump cache slot is
+          * unknown.  Flushing the whole cache (a 64 KiB memset per
+@@ -1265,7 +1272,9 @@ void tb_invalidate_phys_range(tb_page_addr_t start, tb_page_addr_t last)
+          * option ROM's TPR stubs (all of a Windows guest's IRQL fast paths)
+          * sit below the VAPICState the APIC writes at every interrupt.
+          */
+-        page_start = MAX(page_start, start);
++        if (tcg_tb_invalidate_fast) {
++            page_start = MAX(page_start, start);
++        }
+         page_last = MIN(page_last, last);
+         tb_invalidate_phys_page_range__locked(pages, pd,
+                                               page_start, page_last, 0);
+@@ -1351,21 +1360,33 @@ void tb_invalidate_phys_range_fast(ram_addr_t ram_addr,
+     }
+     /* under the page lock, against a TB being added on another vCPU */
+     page_lock(p);
+-    may_hit = p->first_tb &&
+-              !(off + size - 1 < p->code_lo || off > p->code_hi);
+-    if (!may_hit) {
+-        page_unlock(p);
+-        return;
+-    }
+     if (soft_imm_absorbs__locked(p, ram_addr, ram_addr + size - 1)) {
+         /*
+          * Every block the write can reach reads those bytes at run time
+          * (exec/tb-softimm.h): the store is the update, nothing is stale
+-         * and nothing has to be thrown away.
++         * and nothing has to be thrown away.  Asked before the switch
++         * below, because this is patch 24's and that switch is patch
++         * 15's: turning one of the queue off must not silently take
++         * another with it, which is the whole point of them being
++         * separate.
+          */
+         page_unlock(p);
+         return;
+     }
++    if (!tcg_tb_invalidate_fast) {
++        /* upstream: always the page collection, always the whole walk */
++        page_unlock(p);
++        pages = page_collection_lock(ram_addr, ram_addr + size - 1);
++        tb_invalidate_phys_page_fast__locked(pages, ram_addr, size, retaddr);
++        page_collection_unlock(pages);
++        return;
++    }
++    may_hit = p->first_tb &&
++              !(off + size - 1 < p->code_lo || off > p->code_hi);
++    if (!may_hit) {
++        page_unlock(p);
++        return;
++    }
+     if (off >= p->span_in_end && off + size - 1 < p->span_out_lo) {
+         /*
+          * The common case, nothing the write can hit reaches into another

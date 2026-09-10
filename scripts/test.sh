@@ -1569,13 +1569,20 @@ optimizations_check() { # the wizard's fast-path switches, all the way to a real
   # property on `-cpu`, an accelerator property on `-accel tcg`.
   target/release/launcherx --optimizations "$bundle" \
     x87-fast off sse-fast off simd-fast off rep-fast off \
-    smc-same-value off soft-imm off inline-lookup off pinned-regs on >"$OUT/optimizations-set.log" 2>&1 \
+    smc-same-value off soft-imm off inline-lookup off \
+    tb-invalidate-fast off tlb-floor off tls-hot-paths off \
+    pinned-regs on >"$OUT/optimizations-set.log" 2>&1 \
     || { echo "--optimizations failed"; cat "$OUT/optimizations-set.log"; rc=1; }
   args="$(target/release/launcherx --print-args "$bundle")"
   for p in x87-fast=off sse-fast=off simd-fast=off rep-fast=off; do
     case "$args" in *"-cpu pentium3,"*"$p"*) ;; *) echo "$p is not on -cpu"; echo "$args"; rc=1;; esac
   done
-  for p in smc-same-value=off soft-imm=off inline-lookup=off pinned-regs=on; do
+  # Since 2026-09-10 the three that had no switch have one, which is what
+  # makes "turn everything off" a control run rather than eight of
+  # eleven: a guest that is still wrong with these off has cleared our
+  # tree, and before this it had not.
+  for p in smc-same-value=off soft-imm=off inline-lookup=off \
+           tb-invalidate-fast=off tlb-floor=off tls-hot-paths=off pinned-regs=on; do
     case "$args" in *"-accel tcg,"*"$p"*) ;; *) echo "$p is not on -accel tcg"; echo "$args"; rc=1;; esac
   done
   # The point of the whole thing: our QEMU accepts the line the launcher
