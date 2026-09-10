@@ -669,9 +669,11 @@ impl Form {
     }
 
     /// Whether there is an adapter to choose at all, so a front end
-    /// shows or hides the row without knowing which family that is. Only
-    /// DOS has none: its titles program a VGA/VESA BIOS directly, so its
-    /// adapter is a fact of the era rather than a driver question.
+    /// shows or hides the row without knowing which family that is.
+    /// Every family offers a pair today — DOS since 2026-09-09 — so this
+    /// is true throughout; it stays because the answer is
+    /// `video_choices`'s to give and a family that gains a fixed adapter
+    /// should not need a front end changed.
     pub fn video_applies(&self) -> bool {
         !self.video_choices().is_empty()
     }
@@ -712,6 +714,14 @@ impl Form {
             (Video::Cirrus, Family::Xp) => &[
                 "The Cirrus GD5446, which Windows has a driver for in the box: 2D only, and none of our display path — no mode table, no paced flips, no Direct3D through the driver.",
                 "The right answer for a machine whose driver isn't installed yet, and the A/B for a title that misbehaves on ours.",
+            ],
+            (Video::Cirrus, Family::Dos) => &[
+                "The Cirrus GD5446 and its period VGA/VESA BIOS, which is what a DOS machine here has always had and where this family starts.",
+                "Nothing is installed either way — a DOS title programs the adapter itself — so the standard VGA is one restart away and back if a game's modes come out wrong on this one.",
+            ],
+            (Video::Std, Family::Dos) => &[
+                "The Bochs adapter: VBE 2.0 and a linear frame buffer, the later and fuller of the two VESA BIOSes a DOS title can find here.",
+                "Worth trying when a game's high-resolution modes are wrong or missing on the Cirrus. It is not the safer answer, just the other one — some titles know the Cirrus and not this.",
             ],
             (Video::Cirrus, _) => &[
                 "A chip that really existed, so a guest of the era is likely to have a native driver for it: BeOS R5 and XFree86 both ship one.",
@@ -858,11 +868,27 @@ impl Form {
     /// The one thing worth saying above the picker rather than under one
     /// of its entries: changing this on a machine that already has an OS
     /// installed is a hardware change, and the guest will say so.
+    ///
+    /// Except on DOS, where it is not: nothing is installed for an
+    /// adapter there, the machine simply boots. What can still be stale
+    /// is a *game's* own setup — a title that has already been through
+    /// its SETUP wrote down a video mode, and the two adapters do not
+    /// offer the same list — so that is what DOS is told instead.
     pub fn video_warning(&self) -> Option<&'static str> {
-        (self.is_editing() && !self.video_is_default_for_machine()).then_some(
-            "This machine already exists: changing its adapter makes the guest find new hardware on its next start, \
-             and it will want a driver for it before the desktop comes back.",
-        )
+        if !self.is_editing() || self.video_is_default_for_machine() {
+            return None;
+        }
+        Some(match self.family {
+            Family::Dos => {
+                "This machine already exists: it will boot on the new adapter with nothing to install, \
+                 but a game that has already run its own setup may have recorded a video mode this one \
+                 does not offer, and want that setup run again."
+            }
+            _ => {
+                "This machine already exists: changing its adapter makes the guest find new hardware on its next start, \
+                 and it will want a driver for it before the desktop comes back."
+            }
+        })
     }
 
     /// Whether the adapter is still the one the bundle was opened with.

@@ -116,7 +116,7 @@ already carries "for DOS boxes/games", and nothing else.
 | CPU model | `pentium3` | deliberately *not* changed: what makes a machine feel like a 486 is the rate, not the CPUID string, and one variable at a time. Revisit if a real title is found that dislikes the model |
 | **CPU rate** | **`cpu_speed`, default 486DX2-66** | the field that makes this a DOS machine at all — see below |
 | RAM | 64 MB (4–256) | DOS uses the first megabyte; the rest is XMS for a mid-90s extender. 64 MB is generous for the era and inside what MS-DOS 6.22's own HIMEM.SYS manages |
-| Video | Cirrus GD5446 (`-vga cirrus`), **not a choice** | a real VGA/VESA BIOS of the period. The one family with no adapter picker: its titles program a VGA/VESA BIOS directly, so the adapter is a fact of the era rather than a driver question. `-vga std`'s Bochs VBE 2.0 with a linear framebuffer is arguably better for late VESA titles — an open question, not a decision |
+| Video | **Cirrus GD5446 (`-vga cirrus`, the default) or the standard VGA (`-vga std`)** — a choice since 2026-09-09 (`bundle::Video`) | a real VGA/VESA BIOS of the period, and the adapter every DOS machine here has had. The one family where this is **not** a driver question: a DOS title programs the registers itself, so what a different adapter changes is *which VESA BIOS it finds* — the Cirrus's, or the Bochs one's VBE 2.0 with a linear frame buffer, which is the fuller of the two for a late VESA title. It was an open question until a game rendered wrongly on the Cirrus and there was no way to A/B it (2026-09-09); it is now one pick, and nothing has to be installed either way. `d3dpt-vga` is not offered: there is no DOS driver for it |
 | Audio | **SB16 + its OPL3 (the default), a Gravis Ultrasound, an AdLib alone, or none** (`bundle::Sound`, doc 20) | the SB16 is what DOS software knows how to talk to, and its `BLASTER=A220 I5 D1 H5 P330 T6` names the MIDI port as well. The Gravis is the card the games written for one sound best on; the bare AdLib is the 1990 machine |
 | Music | **an MPU-401 at 0x330 with a General MIDI synthesizer (the default), a Roland CM-32L, or nothing** (`bundle::Music`, doc 20) | what a game's setup screen means by "General MIDI", "MPU-401" or "Roland". Nothing else on a DOS machine plays a score: the FM chip is the fallback, not the point |
 | Net | none | DOS reaches a network only through a packet driver the user installs by hand; an unused card is one more device to enumerate. The one family that has never had one by default — since 2026-09-07 the others start without one too, for a different reason (doc 07) |
@@ -209,16 +209,17 @@ our own `qemu-system-i386` accept the line.
 
 ## The display adapter (added 2026-09-07)
 
-Three of the four families offer a choice of adapter, `bundle::Video`,
-written into the bundle as `video`. The list is per family, and **the
-first entry is that family's default** (`bundle::video_choices`):
+All four families offer a choice of adapter, `bundle::Video`, written
+into the bundle as `video` (DOS since 2026-09-09). The list is per
+family, and **the first entry is that family's default**
+(`bundle::video_choices`):
 
 | Family | Offers | Default |
 |---|---|---|
 | XP | `d3dpt` (our adapter + our driver) / `cirrus` (Windows' in-box driver) | `d3dpt` |
 | Win98 | `cirrus` / `d3dpt` | `cirrus` |
 | Other | `std` (Bochs VGA, VBE 2.0) / `cirrus` | `std` |
-| DOS | — | — |
+| DOS | `cirrus` (period VESA BIOS) / `std` (Bochs VGA, VBE 2.0) | `cirrus` |
 
 The choice exists because there are two honest answers and nothing here
 can pick between them. On Windows, ours is what the whole display path is
@@ -229,6 +230,17 @@ A/B'ing a title that misbehaves on ours, and for the test tools that
 still exercise the in-box driver. On `Other` there is no driver of ours
 at all and only the person installing the guest knows which standard
 adapter it has a driver for.
+
+DOS is the exception to all of that, and it was the last family to get
+the picker (2026-09-09) because it looked like it needed nothing to
+pick between: a DOS title asks no operating system for a driver, it
+programs the adapter itself. What it *does* ask is the VESA BIOS, and
+the two are not the same BIOS — the Cirrus's is of the period, the Bochs
+adapter's is VBE 2.0 with a linear frame buffer. When a game draws
+wrongly in a mode, which of the two it found is a variable, and until
+this there was no way to change it short of editing the bundle by hand.
+So the DOS row is one pick with no consequences either side: nothing is
+installed for a DOS adapter, and the machine boots the same on both.
 
 The two Windows families therefore **start at opposite ends of the same
 pair**. XP starts on ours: the driver has been the whole display path
@@ -250,14 +262,21 @@ Two rules make the field safe to hand-write:
   `-vga cirrus` and `d3dpt-vga` alike — so the cards pinned below it do
   not move when it changes under an installed guest.
 
-Changing it *is* a hardware change to a guest that is already installed:
-it finds an unknown adapter, comes up in plain VGA and wants a driver
-before the desktop is back. The wizard says so, in orange, but only while
-editing a machine whose adapter has actually been changed
-(`Form::video_warning`). The `display-adapter` check in `scripts/test.sh`
-holds the whole table: each family's default, the switch away from it and
-back (a different direction on each Windows family), our adapter being *gone* rather than sitting beside it, the NIC
-staying at `0x03`, the standard VGA refused on Windows, and our own
+On the three families that have drivers, changing it *is* a hardware
+change to a guest that is already installed: it finds an unknown adapter,
+comes up in plain VGA and wants a driver before the desktop is back. The
+wizard says so, in orange, but only while editing a machine whose adapter
+has actually been changed (`Form::video_warning`). **DOS is told
+something else there**, because that sentence is not true of it: the
+machine simply boots, and the only thing that can be stale is a *game's*
+own setup, which may have written down a video mode the other adapter
+does not offer.
+
+The `display-adapter` check in `scripts/test.sh` holds the whole table:
+each family's default, the switch away from it and back (a different
+direction on each Windows family), our adapter being *gone* rather than
+sitting beside it, the NIC staying at `0x03`, the standard VGA refused on
+Windows, our own adapter refused on DOS, and our own
 `qemu-system-i386` accepting every combination.
 
 ## Performance expectations (set honestly in-app)
