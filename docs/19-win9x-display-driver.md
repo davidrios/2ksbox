@@ -1862,3 +1862,144 @@ fine). The display `.DRV` and the statically-loaded `.VXD` — the two files
 fails the copy. That is why `copy_one` schedules a boot-time replace for a
 locked system file (`WININIT.INI [rename]` on 9x, `MoveFileEx` on NT): on
 9x it is needed for the display driver itself, not just as an NT nicety.
+
+### 29. Leaving a DOS box, the blue screen, and the pointer over both (2026-09-09)
+
+Three reports from the same afternoon on `claude98`, all on the driver as
+§26 left it: Blood "hangs with the whole screen glitched when exiting it",
+"a big mouse cursor stays over the screen" while Blood runs, and "BSODs
+don't show up". They are three ends of one fact: §26 taught the adapter to
+give its scanout back to the VGA core for a full-screen DOS box and to take
+it back afterwards, and nothing else in the chain had been taught anything.
+
+#### The exit was not a hang: nobody repainted the desktop
+
+Reproduced headless with `tools/win98-game-test.sh` (Blood quit from its own
+menu, 300 ms key presses — the game polls the keyboard once a frame and
+under TCG a 60 ms tap is lost; `QMPC_HOLD=` in `tools/qmpc.py`). The VxD's
+log on the way back is exactly the §26 sequence — `VGA -> hi-res`,
+`RestoreDesktopMode`, `VGA -> hi-res done`, `linear mode on (800x600x16` —
+and the screen after it is Blood's last 640×480×8 frame tiled two and a
+half times across an 800×600×16 desktop, with the VGA text planes as a
+green band across the top, for as long as anyone waits (130 s measured).
+`info registers` twice showed the vCPU in ring 0 at `HLT`, EIP moving,
+nothing pending in the PIC, and the ACPI button powered the machine off in
+five seconds. Windows was idle and healthy behind a screen nothing had
+asked it to redraw.
+
+The four mini-VDD calls put the *adapter* back. What puts the *desktop*
+back is an older channel the main VDD keeps with the display driver, one
+the DDK sample and `vmdisp9x` (`scrsw.c`, `sswhook.asm`) both implement and
+this driver did not: **INT 2Fh AX=4001h** (`SCREEN_SWITCH_OUT`) raised in
+the Windows VM when the screen is about to be taken away and **AX=4002h**
+(`SCREEN_SWITCH_IN`) when it is back. A display driver hooks the vector in
+`Enable`, and:
+
+- on the way out it sets `BUSY` in the DIB Engine's PDEVICE, so GDI stops
+  drawing. That matters more on this adapter than on most: the desktop's
+  frame buffer and the DOS program's VGA memory are the same bytes from
+  VRAM offset 0, so a repaint arriving during the game lands in the game's
+  screen;
+- on the way back it restores the mode if the PDEVICE is still `BUSY`
+  (clearing the flag) and calls **USER's screen-repaint entry, ordinal
+  275** — undocumented, obtained with `GetProcAddress`, and the thing every
+  window's WM_PAINT after a full-screen session comes from. `DISPLAY.500`
+  (`UserRepaintDisable`) is USER's way of saying "not now"; a repaint that
+  arrives while it says so is delivered when it stops.
+
+The handler is in `dibthunk.asm` (`_SWHook`), the callbacks and the hooking
+in `d3dpt9x.c`. Two mechanics worth having written down: the saved previous
+vector lives in the *code* segment so the chain needs no DS, and code
+segments are read-only, so it is written through a writable alias from
+KERNEL's undocumented `AllocCStoDSAlias` (KERNEL.170, imported by ordinal in
+the `.lnk`) — the DDK's own idiom; and the driver has one code segment
+(`_TEXT`, `preload fixed`), so the asm calls the C callbacks near and the
+alias is of the segment `SWHook` itself is in, which is how §13's empty
+`_TEXT` trap is avoided rather than met again. With the hook in, the VxD
+log reads `switched out` just after `hi-res -> VGA done` (the VDD switches
+the adapter first and tells the display driver second) and `switched in`
+just after `VGA -> hi-res done`, and ten seconds after Blood's Quit the shot
+is the desktop, icons and taskbar, where before it was Blood's frame for as
+long as the run lasted.
+
+#### The big pointer: a sprite over a screen that has no cursor
+
+The Windows pointer is the adapter's cursor sprite since §26, and the
+player, on a machine without `seamless_mouse` (the PS/2 mouse, the pointer
+grabbed — `claude98` is one), composites it into the guest frame itself.
+While Blood ran the guest frame *was* Blood's VGA frame, 640×480 or
+320×200, and the sprite went on being composited into it at the desktop's
+coordinates and scaled with it — the "big mouse cursor". Nothing on the
+guest side turns the sprite off across a screen switch, and nothing should
+have to: a VGA screen has no hardware cursor. `d3dpt-vga` now reports the
+sprite hidden to the console whenever `ENABLE` is off (`fb_cursor_move`
+gates on `r_enable` and is re-run by every `ENABLE` write), and a reset
+drops the shape. XP's full-screen console and both families' blue screens
+get the same treatment for free.
+
+#### The blue screen is drawn by the VDD, and it tells the mini-VDD first
+
+A 9x blue screen — a fatal exception, a "Windows protection error", the
+Ctrl+Alt+Del screen, "It is now safe to turn off your computer" — is
+*message mode*: the VMM stops the world and the main VDD programs VGA text
+mode **itself**, with no int 10h and no display driver drawing. How the
+adapter is told turned out to be two things, and only one of them was
+guessed right. **Measured** with a fatal exception in a VxD (below): the
+VDD takes the ordinary road — `switched out` (the INT 2Fh notification),
+`hi-res -> VGA`, `hi-res -> VGA done` — so §26's `PRE_HIRES_TO_VGA` hook is
+what clears `ENABLE`, and the blue screen has in fact been visible since
+that hook landed in the morning; the reports of invisible ones are from
+the days before it, plus the Blood exit above, which looked like one. The
+DDK's other door, `SAVE_MESSAGE_MODE_STATE` (function 45; `ddk9x/minivdd.h`
+has the list, and its numbering past 43 is not the one older write-ups
+give — 45 is *not* `TURN_VGA_OFF`), the VDD calls **once at boot**, before
+the desktop's mode is set, and by its description for message screens that
+cannot go through a VM switch; `d3dptvxd.c` answers it by clearing `ENABLE`
+too, which is harmless at boot and the right thing whenever it is used for
+what its name says. §15's archaeology — reading the text page out of VRAM
+after the fact — stays in the harnesses, because it is also how a
+*continued* blue screen is proved to have happened, but it is no longer how
+a person at the window finds out.
+
+`tools/win98-bsod-test.sh` is the guard: it blue-screens a copy of the
+image on purpose. `RUN.BAT` runs `BSOD.EXE` (`w9x/bsod.c`), which loads
+`BSODVXD.VXD` (`w9x/bsodvxd.c`) through the `\\.\<path>` door — a dynamic
+VxD of ours, forty lines, whose `Sys_Dynamic_Device_Init` executes `ud2` in
+ring 0, so the VMM puts up "exception 06 in VxD BSODVXD(01)". Two things
+were tried first and are kept as a note: the famous `C:\con\con` IFSMGR
+fault, which this image turns out to be patched against (the Win32
+`CreateFile` came back with an error and the program lived), and the same
+path from the DOS box itself, which only ends the DOS box with an "illegal
+operation" dialog — the VMM terminates a V86 VM that faults and reserves
+the blue screen for a fault in the Windows VM. A trigger a test depends on
+has to be something we ship. The test requires the adapter to have left the linear mode for it
+(`hi-res -> VGA` or `message mode`, then `linear mode off`, all after the
+desktop's first `linear mode on`), a screendump meanwhile that is mostly
+the screen's blue — measured 2026-09-09: *"Ocorreu um erro fatal 06 em
+0028:C14E78B9 no VXD BSODVXD(01) + 00000059 … Pressione qualquer tecla para
+continuar"*, white on blue, in a headless screendump — the VRAM text page
+naming a VxD or the `0028:` selector, and, after a key, `linear mode on`
+again, a last screendump that is not blue, and a clean power-off. The mini-VDD also logs
+the first few calls of every other notification entry (`vdd fn=…`), which
+is how the sequences above were read rather than guessed: around the four §26
+entries of a full-screen switch the VDD also calls `RESTORE_REGISTERS` (9),
+`ACCESS_VGA_MEMORY_MODE` (11), `ENABLE_TRAPS` (13) and
+`MAKE_HARDWARE_NOT_BUSY` (15), and `DISABLE_TRAPS` (14) once the desktop is
+back; `SAVE_REGISTERS` (8) and `POST_CRTC_MODE_CHANGE` (29) at the mode set.
+None of them needs an answer from us.
+
+**Total Annihilation's "crash on exit"** (the third report of the
+evening) did not reproduce: with the pointer walked blind to the main
+menu's EXIT and clicked (`CLICKS=80:458,437`; the walk reads the sprite's
+registers, and a game that hides the Windows pointer and draws its own
+stops them, so `qmpc.py relclick` now goes blind after eight unmoving
+steps), the HAL restored the desktop mode, the 800×600 desktop was back
+and clean eight seconds later, and the machine powered off on the button.
+What was not exercised is an exit from inside a skirmish, which is where
+the user plays; the harness would need to drive the skirmish setup first.
+
+`tools/win98-game-test.sh` grew two things for this: `TEXT_AT=<s>` reads
+the VGA text page during the run as well as at the end, and a machine that
+does not answer the power button is asked `info registers` twice and
+`info pic` / `info lapic` before it is killed (`OUT/hang.txt`), the
+CLAUDE.md recipe for telling a dead guest from an unrepainted one.

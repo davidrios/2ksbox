@@ -382,6 +382,8 @@ int PhysicalEnable(void)
 void __far RestoreDesktopMode(void)
 {
     dbg_str("d3dpt9x: RestoreDesktopMode");
+    /* the Engine may draw again (SwitchToBgnd set this) */
+    if (lpDriverPDevice) lpDriverPDevice->deFlags &= ~BUSY;
     if (!wRegsSel) return;
     RegPut(D3DPT_FB_REG_ENABLE, 0);
     RegPut(D3DPT_FB_REG_WIDTH,  wScrX);
@@ -390,6 +392,106 @@ void __far RestoreDesktopMode(void)
     RegPut(D3DPT_FB_REG_PITCH,  dwPitch);
     RegPut(D3DPT_FB_REG_OFFSET, 0);
     RegPut(D3DPT_FB_REG_ENABLE, 1);
+}
+
+/* ------------------------------------------------------- the screen switch
+ *
+ * **When a DOS box closes, nobody repaints the desktop unless the display
+ * driver asks.** The four mini-VDD calls and `RestoreDesktopMode` put the
+ * *adapter* back (doc 19 §26); what puts the *desktop* back is a second,
+ * older channel the VDD keeps with the display driver: it raises INT 2Fh
+ * AX=4001h in the Windows VM when the screen is about to be taken away and
+ * AX=4002h when it is back, and the driver is expected to hook that vector
+ * — every 9x display driver does, the DDK's sample and vmdisp9x included.
+ * On the way out it marks the DIB Engine's PDEVICE BUSY, so GDI stops
+ * writing into a frame buffer that is now the DOS program's VGA memory (on
+ * this adapter they are the same bytes from offset 0). On the way back it
+ * restores the mode if it was lost and calls USER's screen-repaint entry,
+ * ordinal 275, which is undocumented and is what every window's WM_PAINT
+ * after a full-screen session comes from.
+ *
+ * Without the hook the return looked like a hang (2026-09-09, Blood): the
+ * VDD's calls all arrived, the linear mode came back, and the screen showed
+ * Blood's last frame tiled across an 800x600x16 desktop, for as long as
+ * anyone cared to wait — Windows idle and healthy behind it, nothing ever
+ * asked to redraw. With it, "switched in" is followed by the desktop.
+ *
+ * The handler is in dibthunk.asm; these are what it calls, with DS already
+ * DGROUP, on whatever stack the VDD's notification arrived on. */
+extern void __far __cdecl SWHook(void);
+extern void __cdecl SetOldInt2Fh(WORD alias, void __far *vec);
+extern void __far * __cdecl GetOldInt2Fh(void);
+UINT WINAPI AllocCStoDSAlias(UINT selCode);     /* KERNEL.170; imported in the .lnk */
+
+static void __far *DOSGetIntVec(BYTE n);
+#pragma aux DOSGetIntVec =  \
+    "mov    ah, 35h"        \
+    "int    21h"            \
+    parm [al] value [es bx];
+
+static void DOSSetIntVec(BYTE n, void __far *v);
+#pragma aux DOSSetIntVec =  \
+    "mov    ah, 25h"        \
+    "push   ds"             \
+    "push   es"             \
+    "pop    ds"             \
+    "int    21h"            \
+    "pop    ds"             \
+    parm [al] [es dx];
+
+typedef void (WINAPI *REPAINTPROC)(void);
+#define USER_REPAINT_ORDINAL 275
+
+static REPAINTPROC RepaintFunc = 0;
+static WORD wInt2FHooked = 0;
+static WORD wNoRepaint = 0;         /* USER asked, through UserRepaintDisable */
+static WORD wPaintPending = 0;      /* a repaint that arrived while it had */
+
+static void RepaintScreen(void)
+{
+    if (!RepaintFunc) return;
+    if (wNoRepaint) wPaintPending = 1;
+    else            RepaintFunc();
+}
+
+void __cdecl SwitchToBgnd(void)
+{
+    dbg_str("d3dpt9x: switched out");
+    if (lpDriverPDevice) lpDriverPDevice->deFlags |= BUSY;
+}
+
+void __cdecl SwitchToFgnd(void)
+{
+    dbg_str("d3dpt9x: switched in");
+    if (lpDriverPDevice && (lpDriverPDevice->deFlags & BUSY)) RestoreDesktopMode();
+    RepaintScreen();
+}
+
+static void HookInt2Fh(void)
+{
+    WORD alias;
+
+    if (wInt2FHooked) return;
+    if (!RepaintFunc)
+        RepaintFunc = (REPAINTPROC)GetProcAddress(GetModuleHandle("USER"),
+                                                  MAKEINTRESOURCE(USER_REPAINT_ORDINAL));
+    if (!RepaintFunc) dbg_str("d3dpt9x: USER has no repaint entry");
+
+    /* the saved vector is in our code segment: write it through an alias */
+    alias = AllocCStoDSAlias((WORD)((DWORD)(void __far *)SWHook >> 16));
+    if (!alias) { dbg_str("d3dpt9x: no alias for the code segment"); return; }
+    SetOldInt2Fh(alias, DOSGetIntVec(0x2f));
+    FreeSelector(alias);
+    DOSSetIntVec(0x2f, (void __far *)SWHook);
+    wInt2FHooked = 1;
+    dbg_str("d3dpt9x: screen-switch hook in");
+}
+
+static void UnhookInt2Fh(void)
+{
+    if (!wInt2FHooked) return;
+    DOSSetIntVec(0x2f, GetOldInt2Fh());
+    wInt2FHooked = 0;
 }
 
 void PhysicalDisable(void)
@@ -699,8 +801,15 @@ DWORD WINAPI __loadds GetDriverResourceID(WORD wResID, LPSTR lpResType)
     return wResID;
 }
 
+/* DISPLAY.500: USER says whether the driver may ask for repaints now; one
+ * that arrives while it may not is delivered when it may again. */
 BOOL WINAPI __loadds UserRepaintDisable(BOOL bDisable)
 {
+    wNoRepaint = bDisable ? 1 : 0;
+    if (!bDisable && wPaintPending) {
+        wPaintPending = 0;
+        RepaintScreen();
+    }
     return TRUE;
 }
 
@@ -783,6 +892,7 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
         DDCreateDriverObject(1);
 
         wEnabled = 1;
+        HookInt2Fh();
         dbg_str("d3dpt9x: enabled");
         return 1;
     } else {
@@ -873,6 +983,7 @@ UINT WINAPI __loadds ReEnable(LPVOID lpDevice, LPGDIINFO lpInfo)
 VOID WINAPI __loadds Disable(LPPDEVICE lpDevice)
 {
     if (wEnabled) {
+        UnhookInt2Fh();
         DIB_Disable(lpDevice);
         PhysicalDisable();
         wEnabled = 0;

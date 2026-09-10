@@ -371,6 +371,26 @@ What the track starts from:
    but paints only its top half inside the game's own batch; texture,
    scissor, viewport, RT, depth and cull all ruled out.
    **Not ours:** NFS Porsche's silence is guest sound configuration.
+   **Leaving the DOS box, the pointer over it, and the blue screen — all
+   fixed 2026-09-09 evening** (doc 19 §29). Blood's exit "hung with the
+   screen glitched": measured, Windows was idle and healthy behind Blood's
+   last frame — the §26 calls put the *adapter* back and nothing repainted
+   the *desktop*, because this driver lacked the INT 2Fh AX=4001h/4002h
+   screen-switch hook every 9x display driver has (`BUSY` on the PDEVICE
+   out, mode restore + USER.275 repaint in); `dibthunk.asm` `_SWHook` +
+   `d3dpt9x.c`. The "big mouse cursor" was the sprite composited into a
+   VGA frame: the device hides it while `ENABLE` is off. And a 9x blue
+   screen is visible — a VxD fault arrives through the ordinary
+   `PRE_HIRES_TO_VGA` switch, and the DDK's `SAVE_MESSAGE_MODE_STATE` (45)
+   is answered as well — `tools/win98-bsod-test.sh` is the guard, with
+   `bsodvxd.vxd` (`ud2` in ring 0 at load) as the trigger. The VxD logs the first few of
+   every other notification entry (`vdd fn=…`), so the next sequence can be
+   read off rather than guessed. **Total Annihilation "crashes on exit"
+   (user report) did not reproduce**: `CLICKS=80:458,437` on the main
+   menu's EXIT (the PS/2 walk goes blind when a game hides the pointer —
+   `qmpc.py relclick`) had the 800x600 desktop back, clean, eight seconds
+   later, and the machine powered off; what is untested is an exit from
+   *inside* a skirmish, which is where the user plays.
 
 ## Build / test loop
 

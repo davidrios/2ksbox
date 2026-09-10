@@ -42,6 +42,9 @@
 #                       back from the adapter's cursor registers (qmpc.py
 #                       relclick) — the machine the user plays on has no
 #                       tablet either
+#   TEXT_AT=n           read the VGA text page out of VRAM at t seconds too
+#                       (always done at the end): a blue screen a key will
+#                       continue from has gone by then
 #   JIGGLE=1            move the mouse every second (relative events, like a
 #                       hand on it): the reported cursor glitches only show
 #                       up while the pointer is moving, and a screendump of a
@@ -50,6 +53,8 @@
 #                       absolute position. Off by default: it is a hardware
 #                       change the guest will find and want a driver for, and
 #                       the machine the user plays on has no tablet either.
+#   STAGE="a.exe b.dat" host files copied to C:\ before the boot (8.3 names
+#                       as given; a probe RUN.BAT then starts by name)
 #   PULL="A.LOG B.TXT"  files to fetch off C:\ afterwards (deleted first, so
 #                       what comes back is this run's or nothing). A path
 #                       with \ in it is read from that directory.
@@ -165,6 +170,13 @@ open(p, 'wb').write(b)
 PYWIN
 mcopy -i "$M" -o "$OUT/win.ini" ::/WINDOWS/WIN.INI
 
+# Programs and data a run wants on C:\ — a probe of ours, a game's config.
+for f in ${STAGE:-}; do
+  [ -f "$f" ] || { echo "STAGE: no such file $f"; exit 1; }
+  mattrib -i "$M" -r "::/$(basename "$f")" 2>/dev/null || true
+  mcopy -i "$M" -o "$f" "::/$(basename "$f")"
+done
+
 # A stale log read back after a run that never wrote one is a session spent
 # on the wrong evidence.
 for f in ${PULL:-}; do mdel -i "$M" "::/${f//\\//}" 2>/dev/null || true; done
@@ -229,6 +241,55 @@ sleep "${SETTLE:-30}"
 echo "==> ${RUN_SECS}s of run"
 shot t000
 
+# **What the screen shows is not all Windows is saying.** A fatal exception
+# is written in VGA *text* mode behind the linear frame buffer (doc 19 §15),
+# and a guest that "hangs with the screen glitched" at a game's exit is the
+# case this exists for: read the text page out of VRAM before the power
+# button, the same way tools/win98-driver-test.sh does after every run.
+hmp() { python3 "$ROOT/tools/qmpc.py" "$SOCK" json "{\"execute\":\"human-monitor-command\",\"arguments\":{\"command-line\":\"$1\"}}" 2>/dev/null; }
+text_screen() {
+  local bar0 tag="${1:-final}"
+  bar0=$(hmp "info pci" | python3 -c "
+import json,sys,re
+o = json.load(sys.stdin).get('return','').splitlines()
+for i,l in enumerate(o):
+    if '1234:3d00' in l:
+        for m in o[i+1:i+4]:
+            g = re.search(r'prefetchable memory at 0x([0-9a-f]+)', m)
+            if g: print(int(g.group(1), 16)); break
+        break" 2>/dev/null)
+  [ -n "$bar0" ] || return 0
+  python3 "$ROOT/tools/qmpc.py" "$SOCK" json \
+    "{\"execute\":\"pmemsave\",\"arguments\":{\"val\":$bar0,\"size\":32768,\"filename\":\"$OUT/vram-$tag.bin\"}}" >/dev/null 2>&1 || return 0
+  python3 - "$OUT/vram-$tag.bin" <<'PYTXT'
+import sys
+v = open(sys.argv[1], 'rb').read()
+page = v[:80 * 25 * 4]
+def plane(n):
+    return page[n::4]
+# a real text page: printable characters, few attributes, mostly spaces.
+# (Not "plane 3 untouched": a text screen written over a 16 bpp desktop
+# leaves the desktop's bytes in the planes it does not write — the blue
+# screen of tools/win98-bsod-test.sh was refused on that rule, 2026-09-09.)
+if not (sum(1 for b in plane(0) if b == 0 or 0x20 <= b < 0x7f) >= 0.9 * len(plane(0))
+        and len(set(plane(1))) <= 16
+        and sum(1 for b in plane(0) if b == 0x20) >= 0.5 * len(plane(0))):
+    sys.exit(0)
+rows = []
+for r in range(25):
+    line = ''.join(chr(v[(r * 80 + c) * 4]) if 32 <= v[(r * 80 + c) * 4] < 127 else ' '
+                   for c in range(80))
+    rows.append(line.rstrip())
+if not any(rows):
+    sys.exit(0)
+print("==> text   Windows has a VGA text screen up (behind the frame buffer, if that is on):")
+for line in rows:
+    if line: print("          | " + line)
+PYTXT
+}
+# TEXT_AT=<s> reads it during the run as well — a blue screen that a key
+# will continue from is gone by the end.
+
 # The run: one tick a second, so KEYS and CLICKS land near their times and
 # JIGGLE looks like a hand on the mouse rather than one teleport.
 r=0; prev=-1; r0=$(date +%s); last_shot=0
@@ -239,6 +300,9 @@ while [ $r -lt "$RUN_SECS" ]; do
     at=${spec%%:*}
     [ "$at" -le "$r" ] && [ "$at" -gt "$prev" ] && { echo "    t+${r}s keys ${spec#*:}"; qmp keys "${spec#*:}"; }
   done
+  if [ -n "${TEXT_AT:-}" ] && [ "$TEXT_AT" -le "$r" ] && [ "$TEXT_AT" -gt "$prev" ]; then
+    echo "    t+${r}s the VGA text page:"; text_screen "t$(printf '%03d' $r)"
+  fi
   if [ -n "${CLICKS:-}" ]; then
     for spec in $(printf '%s' "$CLICKS" | tr ' ' '\n'); do
       at=${spec%%:*}
@@ -259,12 +323,31 @@ while [ $r -lt "$RUN_SECS" ]; do
 done
 shot zfinal
 
+text_screen final
+
 # **End with the ACPI power button, never a kill.** A machine that does not
 # power off leaves the FAT dirty and the next boot comes up in safe mode with
-# no driver — which reads exactly like the driver having failed.
+# no driver — which reads exactly like the driver having failed. A machine
+# that does not answer it is asked, before it is killed, whether its vCPU is
+# moving at all: `info registers` twice (the same EIP = it is not), and the
+# PIC and APIC (an unmasked irr bit with isr=00 = an interrupt pending and
+# never taken) — the CLAUDE.md recipe for a frozen guest, in OUT/hang.txt.
 echo "==> power button"
 qmp json '{"execute":"system_powerdown"}'
-gw_wait_exit "$VM" 90 || { echo "==> did not power off in 90s (a modal dialog swallows the button); killing"; kill $VM 2>/dev/null || true; }
+gw_wait_exit "$VM" 90 || {
+  echo "==> did not power off in 90s (a modal dialog swallows the button, or the machine is dead)"
+  { echo "=== info registers"; hmp "info registers"; sleep 2; echo "=== info registers, 2 s later"; hmp "info registers"
+    echo "=== info pic"; hmp "info pic"; echo "=== info lapic"; hmp "info lapic"; } 2>/dev/null |
+    python3 -c "
+import sys, json
+for l in sys.stdin:
+    l = l.rstrip()
+    try: print(json.loads(l).get('return', l), end='')
+    except Exception: print(l)" > "$OUT/hang.txt" || true
+  grep -E "^===|EIP=|irr=|LVT0" "$OUT/hang.txt" | sed 's/^/    /'
+  echo "    killing (the rest is in $OUT/hang.txt)"
+  kill $VM 2>/dev/null || true
+}
 wait $VM 2>/dev/null || true
 trap - EXIT
 
@@ -276,10 +359,13 @@ for f in ${PULL:-}; do
   fi
 done
 
-# The summary must not be able to end the run: `grep -c` exits 1 when it
-# counts none, and under `set -e` that would throw away everything the run
-# just produced.
-set +e
+# The summary must not be able to end the run, or decide its exit status:
+# `grep -c` exits 1 when it counts none, and under `set -e` that would throw
+# away everything the run just produced; and with `pipefail` still on, the
+# last `ls | wc -l` of an empty frames/ made the whole script exit 2, which
+# a wrapper under its own `set -e` (tools/win98-bsod-test.sh) took as a
+# failed run and stopped before its verdicts.
+set +e +o pipefail
 echo
 echo "=== the driver, through the adapter's DEBUG register"
 grep -c "linear mode on" "$OUT/qemu.log" 2>/dev/null | sed 's/^/mode programmed  x/'

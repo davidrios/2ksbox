@@ -416,7 +416,10 @@ page = v[:80 * 25 * 4]
 def plane(n):
     return page[n::4]
 
-if not (sum(1 for b in plane(3) if b == 0) >= 0.99 * len(plane(3))
+# ("plane 3 untouched" was the first of the three; a text screen written
+# over a 16 bpp desktop keeps the desktop's bytes in the planes it does
+# not write, so it is "printable characters" now — 2026-09-09.)
+if not (sum(1 for b in plane(0) if b == 0 or 0x20 <= b < 0x7f) >= 0.9 * len(plane(0))
         and len(set(plane(1))) <= 16
         and sum(1 for b in plane(0) if b == 0x20) >= 0.5 * len(plane(0))):
     sys.exit(0)

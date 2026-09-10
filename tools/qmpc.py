@@ -8,7 +8,7 @@
                                   back from d3dpt-vga's cursor registers (blind from a corner on cirrus), left click
   json <json>                  -> raw request
 """
-import json, socket, struct, sys, time, zlib
+import json, os, socket, struct, sys, time, zlib
 
 def connect(path):
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -58,7 +58,12 @@ KEYMAP = {" ": "spc", "\\": "backslash", ":": ("shift", "semicolon"), ".": "dot"
 # there; a following space yields the character itself, so type '~ 1' for
 # '~1' only on a US layout -- prefer 8.3 names with ~ (dead key + digit = both).
 
-def send(f, names, hold=60):
+def send(f, names, hold=None):
+    # QMPC_HOLD=<ms> lengthens the press: a DOS game polling the keyboard
+    # once a frame under TCG misses a 60 ms tap (Blood's demo ignored Esc
+    # at 60 ms and took it at 300, 2026-09-09); Windows' queue does not care
+    if hold is None:
+        hold = int(os.environ.get("QMPC_HOLD", "60"))
     keys = [{"type": "qcode", "data": n} for n in names]
     r = cmd(f, "send-key", {"keys": keys, "hold-time": hold})
     if "error" in r:
@@ -128,7 +133,8 @@ def main():
                 return None
             r = hmp("xp /2wx 0x%x" % (regs + 0xa8)).split(":")[1].split()
             return int(r[0], 16), int(r[1], 16)
-        if regs is None:
+        def blind():
+            # into the top-left corner (Windows clamps), then out by steps
             for _ in range(30):
                 rel(-100, -100); time.sleep(0.15)
             cx, cy = 0, 0
@@ -136,11 +142,25 @@ def main():
                 dx, dy = min(3, x - cx), min(3, y - cy)
                 rel(dx, dy); cx += dx; cy += dy
                 time.sleep(0.15)
+        if regs is None:
+            blind()
         else:
+            # The registers say where the *sprite* is, and a game that hides
+            # the Windows pointer and draws its own (Total Annihilation's
+            # menu) stops them moving: after a few steps with no change the
+            # walk goes blind rather than correcting against a stale value
+            # for 400 steps (2026-09-09).
             rel(1, 1); time.sleep(0.3)         # the sprite follows the first move
-            for _ in range(400):
+            first = cur(); moved = False
+            for i in range(400):
                 cx, cy = cur()
+                if (cx, cy) != first:
+                    moved = True
                 if (cx, cy) == (x, y):
+                    break
+                if i >= 8 and not moved:
+                    print("pointer registers not following (the pointer is hidden?): walking blind")
+                    blind()
                     break
                 rel(max(-3, min(3, x - cx)), max(-3, min(3, y - cy)))
                 time.sleep(0.15)

@@ -97,6 +97,84 @@ DIBFWD  SelectBitmap
 DIBFWD  BitmapBits
 DIBFWD  Inquire
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; The screen-switch hook (doc 19 section 29). The main VDD announces a
+; screen switch to the Windows VM with INT 2Fh AX=4001h (the screen is being
+; taken away: a DOS box is going full-screen) and AX=4002h (it is back), and
+; a 9x display driver is expected to hook the vector and act on both -
+; nothing else tells GDI to stop drawing while a DOS program owns the VGA,
+; and nothing else repaints the desktop when it comes back. The C side is
+; SwitchToBgnd / SwitchToFgnd in d3dpt9x.c; this is the interrupt handler,
+; which chains everything else to the previous owner.
+;
+; The saved vector lives in the *code* segment, so that the chain needs no
+; DS; code segments are read-only, so SetOldInt2Fh takes a writable alias
+; selector of this segment from the caller (KERNEL's AllocCStoDSAlias).
+
+SCREEN_SWITCH_OUT equ 4001h
+SCREEN_SWITCH_IN  equ 4002h
+FLAG_CF           equ 0001h
+
+extrn   _SwitchToBgnd : near
+extrn   _SwitchToFgnd : near
+public  _SWHook
+public  _SetOldInt2Fh
+public  _GetOldInt2Fh
+
+OldInt2Fh       dd      0
+
+_SWHook proc    far
+        cmp     ax, SCREEN_SWITCH_OUT
+        jz      ssw_handle
+        cmp     ax, SCREEN_SWITCH_IN
+        jz      ssw_handle
+        jmp     dword ptr cs:[OldInt2Fh]        ; not ours: registers untouched
+
+ssw_handle:
+        push    ds
+        pushad
+        mov     bx, DGROUP
+        mov     ds, bx
+        assume  ds:DGROUP
+        ; the caller's flags: past pushad (32), ds (2) and the return
+        ; address (4); carry clear tells the VDD the switch may go ahead
+        mov     bp, sp
+        and     word ptr [bp + 38], not FLAG_CF
+        cmp     ax, SCREEN_SWITCH_OUT
+        jne     ssw_in
+        call    _SwitchToBgnd
+        jmp     ssw_done
+ssw_in:
+        call    _SwitchToFgnd
+ssw_done:
+        assume  ds:nothing
+        popad
+        pop     ds
+        iret
+_SWHook endp
+
+; void __cdecl SetOldInt2Fh(WORD alias, void __far *vec)
+_SetOldInt2Fh proc near
+        push    bp
+        mov     bp, sp
+        push    es
+        mov     es, [bp + 4]
+        mov     ax, [bp + 6]
+        mov     word ptr es:[OldInt2Fh], ax
+        mov     ax, [bp + 8]
+        mov     word ptr es:[OldInt2Fh + 2], ax
+        pop     es
+        pop     bp
+        ret
+_SetOldInt2Fh endp
+
+; void __far * __cdecl GetOldInt2Fh(void)
+_GetOldInt2Fh proc near
+        mov     ax, word ptr cs:[OldInt2Fh]
+        mov     dx, word ptr cs:[OldInt2Fh + 2]
+        ret
+_GetOldInt2Fh endp
+
 _TEXT   ends
 
         end

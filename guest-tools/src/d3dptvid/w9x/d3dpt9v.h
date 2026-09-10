@@ -30,6 +30,30 @@
 #define VDD_PRE_VGA_TO_HIRES        6
 #define VDD_POST_VGA_TO_HIRES       7
 
+/* The main VDD is about to draw a *message screen* — a blue screen — in
+ * VGA text mode it programs itself, without a VM switch. (A fatal exception
+ * in the Windows VM goes through the four above instead; measured
+ * 2026-09-09, doc 19 §29.) */
+#define VDD_SAVE_MESSAGE_MODE_STATE 45
+
+/* The notifications the VxD logs (the first few of each) so that the order
+ * of a screen switch, a mode change or a blue screen can be read off the
+ * log rather than guessed from the DDK. All "save everything you use,
+ * nothing returned"; a mini-VDD that answers them changes nothing. */
+#define VDD_SAVE_REGISTERS          8
+#define VDD_RESTORE_REGISTERS       9
+#define VDD_ACCESS_VGA_MEMORY_MODE  11
+#define VDD_ACCESS_LINEAR_MEMORY_MODE 12
+#define VDD_ENABLE_TRAPS            13
+#define VDD_DISABLE_TRAPS           14
+#define VDD_MAKE_HARDWARE_NOT_BUSY  15
+#define VDD_DISPLAY_DRIVER_DISABLING 26
+#define VDD_PRE_CRTC_MODE_CHANGE    28
+#define VDD_POST_CRTC_MODE_CHANGE   29
+#define VDD_PRE_HIRES_SAVE_RESTORE  39
+#define VDD_POST_HIRES_SAVE_RESTORE 40
+#define VDD_SAVE_FORCED_PLANAR_STATE 46
+
 /* What the display driver calls on the main VDD to reach the function
  * above: minivdd.h's VDD_REGISTER_DISPLAY_DRIVER_INFO. Repeated here so
  * the two halves cannot drift. The answer is

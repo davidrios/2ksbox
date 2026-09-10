@@ -139,6 +139,7 @@ export GetDriverResourceID.450
 export UserRepaintDisable.500
 export ValidateMode.700
 import GlobalSmartPageLock KERNEL.230
+import AllocCStoDSAlias KERNEL.170
 LNK
 ( cd "$BUILD" && wlink op quiet, start=DriverInit_ disable 2055 @d3dpt9x.lnk )
 
@@ -149,13 +150,28 @@ echo "==> d3dptvxd.obj (32-bit, ring 0)"
 ( cd "$BUILD" && wcc386 -q -wx -wcd=303 -s -zls -mf -6s -fp6 -ei -zp1 \
     -I"$DDK" -I"$SRC" -fo=d3dptvxd.obj "$SRC/d3dptvxd.c" )
 
-echo "==> d3dpt9v.vxd"
-cat > "$BUILD/d3dpt9v.lnk" <<'LNK'
+# wlink's LE output is not quite a VxD yet. The fix is the object table,
+# not the header (this is what vmdisp9x's `fixlink -vxd32` does): every
+# object must be marked executable, and every object's base virtual
+# address must be zero, because a VxD is flat — all its pages start at the
+# beginning. The module-type field is set to what a real Windows 98 VxD
+# carries as well (checked against the guest's own VJOYD.VXD and
+# FXMEMMAP.VXD, both 0x38000). Then: the DDB must sit at offset 0 of the
+# VxD's one object — that is where the entry table points and where the
+# VMM's loader looks. Anything the compiler emits into the same segment
+# ahead of it — a string literal, a const array, a static without an
+# initialiser — pushes it off, and the VMM then declines the module in
+# complete silence (doc 19 Section 12). The map says where it went, so the
+# build checks. Two VxDs go through this: the mini-VDD and the blue-screen
+# trigger of tools/win98-bsod-test.sh.
+link_vxd() {   # link_vxd <name> <object>: $BUILD/<name>.vxd from $BUILD/<object>.obj
+  local name="$1" obj="$2"
+  cat > "$BUILD/$name.lnk" <<LNK
 system win_vxd dynamic
-option map=d3dpt9v.map
+option map=$name.map
 option nodefaultlibs
-name d3dpt9v.vxd
-file d3dptvxd.obj
+name $name.vxd
+file $obj.obj
 segment '_LTEXT' PRELOAD NONDISCARDABLE IOPL
 segment '_TEXT'  PRELOAD NONDISCARDABLE IOPL
 segment '_DATA'  PRELOAD NONDISCARDABLE IOPL
@@ -163,16 +179,8 @@ segment 'CONST'  PRELOAD NONDISCARDABLE IOPL
 segment 'CONST2' PRELOAD NONDISCARDABLE IOPL
 export VXD_DDB.1
 LNK
-( cd "$BUILD" && wlink op quiet @d3dpt9v.lnk )
-
-# wlink's LE output is not quite a VxD yet. The fix is the object table,
-# not the header (this is what vmdisp9x's `fixlink -vxd32` does): every
-# object must be marked executable, and every object's base virtual
-# address must be zero, because a VxD is flat — all its pages start at the
-# beginning. The module-type field is set to what a real Windows 98 VxD
-# carries as well (checked against the guest's own VJOYD.VXD and
-# FXMEMMAP.VXD, both 0x38000).
-python3 - "$BUILD/d3dpt9v.vxd" <<'PYVXD'
+  ( cd "$BUILD" && wlink op quiet @$name.lnk )
+  python3 - "$BUILD/$name.vxd" <<'PYVXD'
 import struct, sys
 p = sys.argv[1]
 f = bytearray(open(p, 'rb').read())
@@ -201,21 +209,25 @@ for i in range(nobj):
           % (i, size, addr, oflags, oflags | 4))
 open(p, 'wb').write(f)
 PYVXD
-
-# The DDB must sit at offset 0 of the VxD's one object: that is where the
-# entry table points and where the VMM's loader looks. Anything the compiler
-# emits into the same segment ahead of it — a string literal, a const array —
-# pushes it off, and the VMM then declines the module in complete silence
-# (doc 19 Section 12). The map says where it went, so the build checks.
-awk '/^0001:00000000 +VXD_DDB$/ { found = 1 }
-     END { if (!found) {
-        print "d3dpt9v.vxd: VXD_DDB is not at 0001:00000000 — the VMM will"
-        print "  ignore this module without a word. Something in _LTEXT is"
-        print "  emitted ahead of it; see the map:"
-        exit 1 } }' "$BUILD/d3dpt9v.map" || {
-  grep -m5 -A4 'Module: d3dptvxd' "$BUILD/d3dpt9v.map"
-  exit 1
+  awk -v n="$name" '/^0001:00000000 +VXD_DDB$/ { found = 1 }
+       END { if (!found) {
+          print n ".vxd: VXD_DDB is not at 0001:00000000 — the VMM will"
+          print "  ignore this module without a word. Something in _LTEXT is"
+          print "  emitted ahead of it; see the map:"
+          exit 1 } }' "$BUILD/$name.map" || {
+    grep -m5 -A4 "Module: $obj" "$BUILD/$name.map"
+    exit 1
+  }
+  cp "$BUILD/$name.vxd" "$OUT/"
 }
+
+echo "==> d3dpt9v.vxd"
+link_vxd d3dpt9v d3dptvxd
+
+echo "==> bsodvxd.vxd (blue-screens on load: the trigger for tools/win98-bsod-test.sh)"
+( cd "$BUILD" && wcc386 -q -wx -wcd=303 -s -zls -mf -6s -fp6 -ei -zp1 \
+    -I"$DDK" -I"$SRC" -fo=bsodvxd.obj "$SRC/bsodvxd.c" )
+link_vxd bsodvxd bsodvxd
 
 echo "==> resources into the module"
 ( cd "$BUILD" && wrc -q d3dpt9x.res d3dpt9x.drv )
@@ -488,6 +500,11 @@ PYPE
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
      -march=pentium3 -mtune=generic \
      -o "$OUT/gdiprobe.exe" "$SRC/gdiprobe.c" -lgdi32 -luser32
+
+  echo "==> bsod.exe (blue-screens an unpatched Win98 on purpose, for win98-bsod-test.sh)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic -mwindows \
+     -o "$OUT/bsod.exe" "$SRC/bsod.c" -luser32
 
   echo "==> cktest.exe (palettized textures and colour keying through the DX7 HAL)"
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \

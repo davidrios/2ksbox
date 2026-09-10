@@ -480,12 +480,21 @@ static void fb_cursor_define(D3dptVgaState *s, bool on)
     }
 }
 
+/* A VGA screen has no hardware cursor. While ENABLE is off — a full-screen
+ * DOS box, a blue screen, the moments of a mode switch — the sprite stays
+ * hidden whatever CURSOR_ENABLE says: the guest's driver is not running the
+ * screen then and nothing of its will turn the sprite off. The player
+ * composites the sprite into the frame when the pointer is grabbed, and
+ * over Blood's 640x480 VGA frame the desktop's arrow came out at the
+ * desktop's coordinates, scaled with the frame (2026-09-09). */
 static void fb_cursor_move(D3dptVgaState *s)
 {
+    bool on = s->cur_on && s->r_enable;
+
     if (s->cur_moves++ < 4) {
-        info_report("d3dpt-vga: cursor %s at %d,%d", s->cur_on ? "shown" : "hidden", s->cur_x, s->cur_y);
+        info_report("d3dpt-vga: cursor %s at %d,%d", on ? "shown" : "hidden", s->cur_x, s->cur_y);
     }
-    dpy_mouse_set(s->vga.con, s->cur_x, s->cur_y, s->cur_on);
+    dpy_mouse_set(s->vga.con, s->cur_x, s->cur_y, on);
 }
 
 static uint64_t d3dpt_vga_regs_read(void *opaque, hwaddr addr, unsigned size)
@@ -585,6 +594,9 @@ static void d3dpt_vga_regs_write(void *opaque, hwaddr addr, uint64_t val,
         }
         s->r_enable = val != 0;
         s->vbl_ns = s->r_enable ? qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : 0;
+        if (s->cur_defined && s->cur_on) {
+            fb_cursor_move(s);      /* the sprite follows the linear mode */
+        }
         graphic_hw_invalidate(s->vga.con);
         break;
     case D3DPT_FB_REG_WIDTH:
@@ -723,6 +735,13 @@ static void d3dpt_vga_reset(DeviceState *dev)
     s->flips_ns = 0;
     s->vga_grace = 0;
     s->dbg_len = 0;
+    if (s->cur_on || s->cur_defined) {
+        /* a rebooted guest has no pointer until its driver defines one */
+        s->cur_on = false;
+        s->cur_defined = false;
+        dpy_mouse_set(s->vga.con, 0, 0, false);
+        dpy_cursor_define(s->vga.con, NULL);
+    }
     d3d_reset(s);
 }
 
