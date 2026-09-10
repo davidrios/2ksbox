@@ -66,6 +66,21 @@
 #   DDFLAGS=n           -device d3dpt-vga,ddflags=N (the bisection knob)
 #   VGA=cirrus          the control: the same game on Windows' own inbox
 #                       driver. A glitch that is there too is not ours.
+#   PLAYER=1            run the machine inside the player instead of a bare
+#                       QEMU. Only the player carries a 3D context provider
+#                       (doc 12, patches 30/33): a bare qemu-system-i386
+#                       registers none, so a Glide or OpenGL title's
+#                       grSstWinOpen fails by design and the guest falls back
+#                       to software — a Glide run under the plain harness
+#                       tests nothing (tools/glide-guest-test.sh has the same
+#                       rule). The player opens a real window on this desktop;
+#                       the wrapper's own log goes to OUT/wrapper.log and the
+#                       player shoots the guest's frame every PLAYER_SHOT_EVERY
+#                       guest frames (300) into shots/2ksbox-NNNN.png — the
+#                       only way to see a 3D frame headless, since a QMP
+#                       screendump shows the VGA surface, frozen while the 3D
+#                       device presents. The sound card stays on the `none`
+#                       audiodev, so a run makes no noise on the host.
 #   RAW=path            the raw working copy (default build/w98game/guest.raw)
 #   FRESH=1             re-convert it from the image before staging
 #   BOOT_WAIT=s         cap on waiting for the desktop (150)
@@ -206,12 +221,24 @@ USBARGS=(); [ "${TABLET:-0}" = 1 ] && USBARGS=(-usb -device usb-tablet)
 [ -n "${DUMP_EVERY:-}" ] && { export D3DPT_DUMP_DIR="$OUT/frames" D3DPT_DUMP_EVERY="$DUMP_EVERY"; }
 [ "${TRACE:-0}" = 1 ] && export D3DPT_DP2_TRACE="$OUT/frames/trace.on"
 
-echo "==> booting ${VGA:-d3dpt}, discs: ${CDS:-none}, ${RUN_SECS}s of run -> $OUT"
-"$QEMU" -L "$ROOT/qemu/pc-bios" -machine pc -m 256 -accel tcg \
-  "${DRIVES[@]}" "${VGAARGS[@]}" "${USBARGS[@]}" \
-  -net none -display none -rtc base=localtime -msg timestamp=on \
-  -debugcon file:"$OUT/dbg.log" -qmp unix:"$SOCK",server,nowait \
-  > "$OUT/qemu.log" 2>&1 &
+echo "==> booting ${VGA:-d3dpt}, discs: ${CDS:-none}, ${RUN_SECS}s of run -> $OUT${PLAYER:+ (in the player)}"
+MACHINE=(-L "$ROOT/qemu/pc-bios" -machine pc -m 256 -accel tcg
+         "${DRIVES[@]}" "${VGAARGS[@]}" "${USBARGS[@]}"
+         -net none -rtc base=localtime -msg timestamp=on
+         -debugcon file:"$OUT/dbg.log" -qmp unix:"$SOCK",server,nowait)
+if [ "${PLAYER:-0}" = 1 ]; then
+  # This checkout's player and this checkout's wrapper (CLAUDE.md: a build
+  # is never borrowed). The embed library appends -display none itself.
+  PLAYER_BIN="$ROOT/target/release/player"
+  [ -x "$PLAYER_BIN" ] || { echo "no player at $PLAYER_BIN (cargo build --release)"; exit 1; }
+  [ -f "$ROOT/build/glide/libglide2x.so" ] || echo "note: no build/glide/libglide2x.so (scripts/build-glide.sh) — Glide will be refused"
+  export QEMU_GLIDE_LIB="${QEMU_GLIDE_LIB:-$ROOT/build/glide/libglide2x.so}"
+  export GLIDE_HOST_LOG="${GLIDE_HOST_LOG:-$OUT/wrapper.log}"
+  export PLAYER_SHOT_DIR="$OUT/shots" PLAYER_SHOT_EVERY="${PLAYER_SHOT_EVERY:-300}" PLAYER_AUDIO_NULL=1
+  "$PLAYER_BIN" -- "${MACHINE[@]}" > "$OUT/qemu.log" 2>&1 &
+else
+  "$QEMU" "${MACHINE[@]}" -display none > "$OUT/qemu.log" 2>&1 &
+fi
 VM=$!
 GW_PID=$VM
 trap 'kill $VM 2>/dev/null || true' EXIT
@@ -387,6 +414,18 @@ grep -iE 'refus|reject|invalid|unsupported|unknown|assert|error|fail|out of rang
 echo
 echo "=== the 16-bit driver and the VxD (port 0xE9), last 20"
 tail -20 "$OUT/dbg.log" 2>/dev/null | sed 's/^/   /'
+if [ "${PLAYER:-0}" = 1 ]; then
+  echo
+  echo "=== Glide, through the player's 3D provider (glidept: = the dispatcher, wrapper.log = OpenGLide)"
+  grep -a -i -E "glidept|glide2x|3dfx" "$OUT/qemu.log" 2>/dev/null | grep -v -i d3dpt | head -10 | sed 's/^/   /'
+  if [ -s "$OUT/wrapper.log" ]; then
+    echo "   wrapper.log: $(wc -l < "$OUT/wrapper.log") lines; $(grep -a -c -i "grSstWinOpen" "$OUT/wrapper.log") grSstWinOpen"
+    grep -a -i -E "error|fail|unsupported|not implemented" "$OUT/wrapper.log" | sort | uniq -c | sort -rn | head -8 | sed 's/^/   /'
+  else
+    echo "   wrapper.log: empty — the wrapper was never loaded (no grGlideInit reached the host)"
+  fi
+  echo "   player shots (the guest's frame, 3D included): $(ls "$OUT/shots"/2ksbox-*.png 2>/dev/null | wc -l)"
+fi
 echo
 echo "shots: $(ls "$OUT/shots"/*.png 2>/dev/null | wc -l) in $OUT/shots"
 ls "$OUT/frames"/*.ppm 2>/dev/null | wc -l | sed 's/^/frames: /'

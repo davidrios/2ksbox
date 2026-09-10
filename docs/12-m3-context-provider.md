@@ -48,9 +48,30 @@ forwarding `<GL/gl.h>` / `<GL/glext.h>` in `glidept/host/macos/`, on the
 include path on Darwin only, because the framework's headers live under
 `OpenGL/` and the only `GL/` on a Mac is XQuartz's Mesa) — built and linked
 against `OpenGL.framework` alone, but run by nothing there: `glide-host` is
-the EGL path and stays Linux-only. Refinement still open: fence-based sync
-on both platforms instead of `glFinish`; a macOS `glide-host` check and the
-Windows build of the wrapper; a Glide *title* rather than our own program.
+the EGL path and stays Linux-only. **A Glide title plays, 2026-09-10:
+Rayman 2** (its own `GliVd1vf.dll` Voodoo renderer over the guest's
+`GLIDE2X.DLL`, on a copy of the `claude98` machine — Win98 on `d3dpt-vga`,
+DirectX 9.0c, the game hand-staged off the user's disc with the disc in the
+drive) in the player through `PLAYER=1 tools/win98-game-test.sh`: the
+game's own `GXSetup.exe` lists "0 Glide2 (1.0.0) Voodoo Graphics Glide 2
+Driver" and probes all eight resolutions of `glidewnd.c`'s table through
+`grSstWinOpen` on the host, and the game then runs at 640×480 from the
+language menu through New Game, the intro cutscene and the first level's
+opening — textured, fogged, subtitled, on the zero-copy path, 233 frames
+shot at one per 300 presented, no complaint in the wrapper's log or the
+dispatcher's. Two things the run taught: the game refuses a hand-written
+`ubi.ini` (`Graphics Dll not found, run install`, and it resets the section
+to `Choose = 1`) even with the same five `GLI_*` keys `GXSetup` writes —
+probably the `Choose=1` marker `GXSetup` leaves, not proved — so the setup
+program is driven by mouse (`CLICKS=`, the harness's PS/2 walk with the
+cursor read back from the adapter); and a QMP screendump shows only the
+game's empty desktop window while Glide presents, which is what the
+player's `PLAYER_SHOT_EVERY` shot exists for. Rayman 2 is also the first
+title on a `d3dpt-vga` machine to switch between our display driver and
+the Glide device: the desktop comes back after every close. Refinement
+still open: fence-based sync on both platforms instead of `glFinish`; a
+macOS `glide-host` check and the Windows build of the wrapper; hand play
+(the run above is headless, so nothing has *played* a level yet).
 
 Source survey of the patched tree (hw/mesa, hw/3dfx, ui/sdl2.c); file:line
 refs are to `qemu/` as prepared by `scripts/prepare-qemu.sh`. **Read the
@@ -206,5 +227,6 @@ the tree but never compiled and the embed library is the only provider.
 
 vtable patch -> embed provider on Linux with readback -> dma-buf import ->
 macOS CGL/IOSurface -> Glide. All done on Linux, guest included
-(`tools/glide-guest-test.sh`); the wrapper builds on macOS but nothing has
-run it there, it has no Windows build, and no Glide *title* has run yet.
+(`tools/glide-guest-test.sh`), and a Glide *title* plays (Rayman 2,
+2026-09-10, above); the wrapper builds on macOS but nothing has run it
+there, and it has no Windows build.

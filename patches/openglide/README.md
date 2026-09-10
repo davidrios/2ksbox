@@ -59,6 +59,16 @@ proven.
 | `03-sdk-header-in-c` | `sdk2_3dfx.h` is the public Glide SDK header, and a **C** program includes it too (`guest-tools/src/glidetest.c`, the guest-side test): `#include <cstdint>` and `#define FX_ENTRY extern "C"` are both C++-only, and the second is a syntax error on every declaration in the file. Both now branch on `__cplusplus` | upstream notices |
 | `04-lfb-origin` | `grLfbLock` fills `lfbPtr`, `writeMode` and `strideInBytes` of the caller's `GrLfbInfo_t` but never `origin`, which is an out field too: the caller reads back whatever was already in its own struct. It costs qemu-3dfx a warning per lock (`LFB origin mismatch` in the QEMU log, found by the first Glide guest run, 2026-09-06) and it is not only cosmetic — the dispatcher caches the value in `lfbDev->origin`, and a Glide **2.11** title's `grLfbBegin` is answered from that cache, so one lock would leave an old game reading its buffer upside down. The rows are already laid out for the origin that was asked for, so the fix is to say so | upstream notices |
 
+## What has run on it
+
+`tools/glide-host-test.cpp` (no guest), `GLIDETEST.EXE` (our own program in
+a Win98 guest, `tools/glide-guest-test.sh`), and since 2026-09-10 a real
+title: **Rayman 2**'s Voodoo renderer (`GliVd1vf.dll` over the guest's
+`GLIDE2X.DLL`) at 640×480, language menu through the intro into the first
+level, in the player through `PLAYER=1 tools/win98-game-test.sh` — doc 12
+§5 has the run and the recipe. No `Glide Calls` complaint in the wrapper's
+own log across the run.
+
 ## Regenerating
 
 Edit inside `third_party/openglide`, then `git -C third_party/openglide diff
