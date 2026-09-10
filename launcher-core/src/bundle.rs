@@ -210,10 +210,8 @@ impl Video {
 /// standard adapters, since nothing of ours runs there. DOS chooses
 /// between those same two, and for the one reason that has nothing to do
 /// with drivers: its titles program the adapter themselves, so what
-/// changes is **which VESA BIOS the game finds** — the Cirrus's, of the
-/// period, or the Bochs one's VBE 2.0 with its linear frame buffer. It
-/// keeps the Cirrus as its default, which is the adapter every DOS
-/// machine here has had.
+/// changes is **which VESA BIOS the game finds** — the Bochs one's VBE
+/// 2.0 with its linear frame buffer, or the Cirrus's of the period.
 pub fn video_choices(family: Family) -> &'static [Video] {
     match family {
         // XP starts on ours: the driver has been the whole display path
@@ -227,12 +225,16 @@ pub fn video_choices(family: Family) -> &'static [Video] {
         // whoever installed the guest decides to.
         Family::Win98 => &[Video::Cirrus, Video::D3dpt],
         Family::Other => &[Video::Std, Video::Cirrus],
-        // DOS starts where it always was, and the standard VGA is the
-        // other half of an A/B nothing else here can settle: a title
-        // whose VESA modes come out wrong on one BIOS is the only
-        // evidence there is. Our own adapter is not on offer — there is
-        // no DOS driver for it anywhere.
-        Family::Dos => &[Video::Cirrus, Video::Std],
+        // DOS starts on the standard VGA (2026-09-09, user decision):
+        // its VBE 2.0 and linear frame buffer are the fuller of the two
+        // VESA BIOSes a title can find, and the Cirrus — which is what a
+        // DOS machine got while the adapter was hardcoded, and what
+        // `Other` is offered for its *native* drivers — is the other
+        // half of an A/B nothing else here can settle: a title whose
+        // modes come out wrong on one BIOS is the only evidence there
+        // is. Our own adapter is not on offer, there being no DOS driver
+        // for it anywhere.
+        Family::Dos => &[Video::Std, Video::Cirrus],
     }
 }
 
@@ -1471,7 +1473,8 @@ impl Machine {
             // (`video_choices`), and the only family where it is not a
             // driver question: a DOS title programs the registers itself,
             // so what a different adapter changes is which VESA BIOS it
-            // finds. It starts on the Cirrus it has always had.
+            // finds. It starts on the standard VGA — the fuller of the
+            // two — where the hardcoded line it replaces said `cirrus`.
             Family::Dos => {
                 args.extend(self.video_args());
                 if self.network {

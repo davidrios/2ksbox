@@ -1330,9 +1330,10 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
   # display path is built on it (doc 15); Win98 on the Cirrus and the
   # driver Windows has in the box, ours there being much the newer of the
   # two (doc 19); Other on the standard VGA, the one every guest can fall
-  # back on; DOS on the era's Cirrus, which is where it has always been
-  # and stays now that it has a picker of its own (2026-09-09).
-  for f in win98:"-vga cirrus" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga cirrus"; do
+  # back on; DOS on the standard VGA too, since 2026-09-09 (user
+  # decision): the fuller of the two VESA BIOSes, where the hardcoded
+  # line it replaced said cirrus.
+  for f in win98:"-vga cirrus" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga std"; do
     want="${f#*:}"; f="${f%%:*}"
     bundle="$(target/release/launcherx --new "$f" "adapter-$f" "$dir/disk.qcow2")" || { echo "--new $f failed"; return 1; }
     args="$(target/release/launcherx --print-args "$bundle")"
@@ -1379,12 +1380,12 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
   # is no DOS driver for it anywhere and a DOS machine on it would have
   # the plain VGA and nothing else.
   bundle="$dir/library/adapter-dos/machine.toml"
-  if target/release/launcherx --wizard-edit "$bundle" - - - - - - - std >/dev/null; then
+  if target/release/launcherx --wizard-edit "$bundle" - - - - - - - cirrus >/dev/null; then
     args="$(target/release/launcherx --print-args "$bundle")"
-    case "$args" in *"-vga std"*) ;; *) echo "dos: the standard VGA did not arrive"; echo "$args"; rc=1;; esac
-    case "$args" in *cirrus*) echo "dos: the Cirrus is still there beside the standard VGA"; echo "$args"; rc=1;; esac
+    case "$args" in *"-vga cirrus"*) ;; *) echo "dos: the Cirrus did not arrive"; echo "$args"; rc=1;; esac
+    case "$args" in *"-vga std"*) echo "dos: the standard VGA is still there beside the Cirrus"; echo "$args"; rc=1;; esac
   else
-    echo "dos: --wizard-edit std failed"; rc=1
+    echo "dos: --wizard-edit cirrus failed"; rc=1
   fi
   if target/release/launcherx --wizard-edit "$bundle" - - - - - - - d3dpt >/dev/null; then
     args="$(target/release/launcherx --print-args "$bundle")"
@@ -1392,17 +1393,17 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
   else
     echo "dos: --wizard-edit d3dpt failed"; rc=1
   fi
-  if target/release/launcherx --wizard-edit "$bundle" - - - - - - - cirrus >/dev/null; then
+  if target/release/launcherx --wizard-edit "$bundle" - - - - - - - std >/dev/null; then
     args="$(target/release/launcherx --print-args "$bundle")"
-    case "$args" in *"-vga cirrus"*) ;; *) echo "dos: the Cirrus did not come back"; echo "$args"; rc=1;; esac
+    case "$args" in *"-vga std"*) ;; *) echo "dos: the standard VGA did not come back"; echo "$args"; rc=1;; esac
   else
-    echo "dos: --wizard-edit cirrus failed"; rc=1
+    echo "dos: --wizard-edit std failed"; rc=1
   fi
   # Every adapter on every family, on the real binary: started paused and
   # told to quit, so a machine QEMU will not build is an exit code.
   if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
     build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
-    for f in win98:d3dpt win98:cirrus xp:d3dpt xp:cirrus other:std other:cirrus dos:cirrus dos:std; do
+    for f in win98:d3dpt win98:cirrus xp:d3dpt xp:cirrus other:std other:cirrus dos:std dos:cirrus; do
       want="${f#*:}"; f="${f%%:*}"
       bundle="$dir/library/adapter-$f/machine.toml"
       target/release/launcherx --wizard-edit "$bundle" - - - - - - - "$want" >/dev/null || { rc=1; continue; }

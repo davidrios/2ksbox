@@ -116,7 +116,7 @@ already carries "for DOS boxes/games", and nothing else.
 | CPU model | `pentium3` | deliberately *not* changed: what makes a machine feel like a 486 is the rate, not the CPUID string, and one variable at a time. Revisit if a real title is found that dislikes the model |
 | **CPU rate** | **`cpu_speed`, default 486DX2-66** | the field that makes this a DOS machine at all — see below |
 | RAM | 64 MB (4–256) | DOS uses the first megabyte; the rest is XMS for a mid-90s extender. 64 MB is generous for the era and inside what MS-DOS 6.22's own HIMEM.SYS manages |
-| Video | **Cirrus GD5446 (`-vga cirrus`, the default) or the standard VGA (`-vga std`)** — a choice since 2026-09-09 (`bundle::Video`) | a real VGA/VESA BIOS of the period, and the adapter every DOS machine here has had. The one family where this is **not** a driver question: a DOS title programs the registers itself, so what a different adapter changes is *which VESA BIOS it finds* — the Cirrus's, or the Bochs one's VBE 2.0 with a linear frame buffer, which is the fuller of the two for a late VESA title. It was an open question until a game rendered wrongly on the Cirrus and there was no way to A/B it (2026-09-09); it is now one pick, and nothing has to be installed either way. `d3dpt-vga` is not offered: there is no DOS driver for it |
+| Video | **The standard VGA (`-vga std`, the default) or the Cirrus GD5446 (`-vga cirrus`)** — a choice since 2026-09-09 (`bundle::Video`) | the Bochs adapter's VBE 2.0 and linear frame buffer are the fuller of the two VESA BIOSes a DOS title can find, and this family's default (2026-09-09, user decision: it is what a DOS machine was meant to have, where the hardcoded line it replaced said `cirrus`). The one family where the adapter is **not** a driver question: a DOS title programs the registers itself, so what changes is *which VESA BIOS it finds*. The Cirrus is the other half of an A/B nothing else can settle — it was an open question until a game rendered wrongly on it and there was no way to change the adapter at all. Nothing is installed either way. `d3dpt-vga` is not offered: there is no DOS driver for it |
 | Audio | **SB16 + its OPL3 (the default), a Gravis Ultrasound, an AdLib alone, or none** (`bundle::Sound`, doc 20) | the SB16 is what DOS software knows how to talk to, and its `BLASTER=A220 I5 D1 H5 P330 T6` names the MIDI port as well. The Gravis is the card the games written for one sound best on; the bare AdLib is the 1990 machine |
 | Music | **an MPU-401 at 0x330 with a General MIDI synthesizer (the default), a Roland CM-32L, or nothing** (`bundle::Music`, doc 20) | what a game's setup screen means by "General MIDI", "MPU-401" or "Roland". Nothing else on a DOS machine plays a score: the FM chip is the fallback, not the point |
 | Net | none | DOS reaches a network only through a packet driver the user installs by hand; an unused card is one more device to enumerate. The one family that has never had one by default — since 2026-09-07 the others start without one too, for a different reason (doc 07) |
@@ -219,7 +219,7 @@ family, and **the first entry is that family's default**
 | XP | `d3dpt` (our adapter + our driver) / `cirrus` (Windows' in-box driver) | `d3dpt` |
 | Win98 | `cirrus` / `d3dpt` | `cirrus` |
 | Other | `std` (Bochs VGA, VBE 2.0) / `cirrus` | `std` |
-| DOS | `cirrus` (period VESA BIOS) / `std` (Bochs VGA, VBE 2.0) | `cirrus` |
+| DOS | `std` (Bochs VGA, VBE 2.0) / `cirrus` (period VESA BIOS) | `std` |
 
 The choice exists because there are two honest answers and nothing here
 can pick between them. On Windows, ours is what the whole display path is
@@ -241,6 +241,15 @@ wrongly in a mode, which of the two it found is a variable, and until
 this there was no way to change it short of editing the bundle by hand.
 So the DOS row is one pick with no consequences either side: nothing is
 installed for a DOS adapter, and the machine boots the same on both.
+
+Its default is the **standard VGA** (2026-09-09, user decision), which is
+also what a DOS machine was meant to have all along: the family shipped
+with `-vga cirrus` hardcoded into its arguments from the day it landed
+(`8a0cfce`), which was the slip this row corrects. The Cirrus belongs to
+`Other`, where a guest wants a chip a *native* driver was written for.
+Existing DOS machines carry no `video` field and so move to the standard
+VGA on their next start; nothing is installed for them to lose, though a
+game that has been through its own setup may want that run again.
 
 The two Windows families therefore **start at opposite ends of the same
 pair**. XP starts on ours: the driver has been the whole display path
@@ -277,7 +286,11 @@ each family's default, the switch away from it and back (a different
 direction on each Windows family), our adapter being *gone* rather than
 sitting beside it, the NIC staying at `0x03`, the standard VGA refused on
 Windows, our own adapter refused on DOS, and our own
-`qemu-system-i386` accepting every combination.
+`qemu-system-i386` accepting every combination. The **family switch**
+itself — every untouched field moving to the new family's default, a
+picked one surviving unless the new family has no such entry, and
+"Default" putting a field back to following the family — is the
+`capi` check, which holds a live form rather than a saved bundle.
 
 ## Performance expectations (set honestly in-app)
 
