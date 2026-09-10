@@ -368,6 +368,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                         memset(&sd, 0, sizeof(sd));
                         sd.dwSize = sizeof(sd);
                         hr = IDirectDrawSurface_Lock(back, NULL, &sd, DDLOCK_WAIT, NULL);
+                        logf_("    Lock %d -> 0x%08lx", frame, (unsigned long)hr);
                         if (SUCCEEDED(hr) && sd.lpSurface) {
                             BYTE *row = (BYTE *)sd.lpSurface;
                             unsigned y, x, bytepp = (bpp + 7) / 8;
@@ -375,7 +376,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                             for (y = 0; y < h; y++, row += sd.lPitch)
                                 for (x = 0; x < w * bytepp; x++)
                                     row[x] = (BYTE)((x / bytepp) + y + frame * 16);
-                            IDirectDrawSurface_Unlock(back, NULL);
+                            hr = IDirectDrawSurface_Unlock(back, NULL);
+                            logf_("    Unlock %d -> 0x%08lx", frame, (unsigned long)hr);
                         }
                         t0 = GetTickCount();
                         hr = IDirectDrawSurface_Flip(prim, NULL, DDFLIP_WAIT);
@@ -385,11 +387,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                     }
                     logf_("    holding %d s", hold);
                     Sleep(hold * 1000); /* leave the frame up for a screendump */
+                    logf_("    releasing back...");
                     IDirectDrawSurface_Release(back);
+                    logf_("    released back");
                 }
-                if (pal) IDirectDrawPalette_Release(pal);
+                if (pal) { logf_("    releasing pal..."); IDirectDrawPalette_Release(pal); logf_("    released pal"); }
+                logf_("    releasing prim...");
                 IDirectDrawSurface_Release(prim);
+                logf_("    released prim");
             }
+            logf_("    RestoreDisplayMode...");
             hr = IDirectDraw_RestoreDisplayMode(dd);
             logf_("  RestoreDisplayMode -> 0x%08lx", (unsigned long)hr);
             hr = IDirectDraw_SetCooperativeLevel(dd, GetDesktopWindow(), DDSCL_NORMAL);

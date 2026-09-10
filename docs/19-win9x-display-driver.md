@@ -2141,15 +2141,30 @@ interrupt-stub `iret`, which is where an *idle* Windows 98 spends its
 time; a machine that does not answer the power button because a
 full-screen DirectDraw process is stuck is not a dead machine.
 
-**Open:** a system-memory flip chain on a *driver* 8 bpp mode hangs the
-process that owns it — `DDPROBE 320 200 8 sys` on the old table came back
-from its five flips and never from their release, and `DDPROBE 640 480 8
-sys` (measured after the change) never comes back from its **first**
-`Flip`: no fault, no blue screen, the process simply stays, and the
-machine does not answer the power button while it does. No 320×200
-request reaches that path any more, and a runtime that presents such a
-chain to nothing is one no shipped game relies on, but it is a hang in
-something of ours and wants a run of its own.
+**Understood, and left as a runtime limitation (2026-09-10):** a
+system-memory *flipping* primary in exclusive full-screen on a **driver**
+mode hangs the process that owns it — `DDPROBE 640 480 8 sys` is the
+repro (320×200 no longer reaches a driver mode at all, it is Mode X now).
+It is not our flip: traced, the DirectDraw app thread blocks inside
+`Flip`'s `DDFLIP_WAIT` waiting for a completion that never comes, and 52
+of 60 external EIP samples are the System VM idling in V86 — the thread is
+*blocked*, not busy, so the machine is healthy but the app never returns
+and the ACPI power button, which the full-screen exclusive app is holding,
+goes unanswered. The 8 sysmem-flip surfaces are the runtime's own
+(`DDSCAPS_SYSTEMMEMORY`, guest RAM, never VRAM); the runtime composites
+them to the visible primary itself and blocks on its own present. Our
+`Flip32` writing the target's system address into the scanout `OFFSET`
+register was wrong and is worth noting — it drops the device out of
+linear mode — but declining the flip (`DDHAL_DRIVER_NOTHANDLED` for a
+`DDSCAPS_SYSTEMMEMORY` target) only moved the block earlier and made it
+deterministic, which is the proof the stall is the runtime's, not the
+register write's. **No shipped title reaches this:** a 320×200 game gets
+Mode X (which runs on the VGA core, driver switched out), and a game at
+640×480 uses a *video-memory* primary, which flips through the OFFSET
+register and does not block. Left as a known limitation of a
+`DDCAPS_GDI` driver under the DirectX 6 HEL rather than chased into the
+runtime; `ddprobe.exe`'s `sys`/`modex`/`vga`/`hold` mode test is the
+standing repro.
 
 The device now reports the VGA core's mode registers once per change
 (`d3dpt-vga: vga core cr1=… sr4=…`) while the linear mode is off, because
