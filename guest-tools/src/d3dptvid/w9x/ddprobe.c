@@ -41,6 +41,7 @@
 #include <ddraw.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 static FILE *log_file;
 
@@ -269,24 +270,59 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
          * keeps such a chain in its own emulation layer and the HAL never
          * hears of the surfaces, so a fault on that path is one the driver
          * log cannot show. */
-        if (sscanf(cmd, "%u %u %u %15s", &w, &h, &bpp, extra) >= 3 && w && h && bpp) {
+        if (sscanf(cmd, "%u %u %u", &w, &h, &bpp) == 3 && w && h && bpp) {
             HWND hwnd = CreateWindowA("STATIC", "ddprobe mode", WS_POPUP | WS_VISIBLE,
                                       0, 0, 100, 100, NULL, NULL, inst, NULL);
             LPDIRECTDRAWSURFACE prim = NULL;
             LPDIRECTDRAWSURFACE back = NULL;
             LPDIRECTDRAWPALETTE pal = NULL;
+            /* The words after the mode (2026-09-10, the Carmageddon black
+             * screen): `sys` (above), `modex` = the game's own cooperative
+             * level, DDSCL_ALLOWMODEX | DDSCL_ALLOWREBOOT on top of exclusive
+             * full-screen — with it DirectDraw may answer a 320x200 request
+             * with its *own* Mode X or VGA mode 13h, switching the display
+             * driver out entirely; `vga` asks for that outright
+             * (IDirectDraw2::SetDisplayMode with DDSDM_STANDARDVGAMODE);
+             * `hold<N>` keeps the last frame up N seconds for screendumps. */
+            DWORD coop = DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN;
+            int want_sys = 0, want_vga = 0, hold = 4;
+            char args[128], *tok;
 
-            logf_("mode test: %ux%ux%u", w, h, bpp);
-            hr = IDirectDraw_SetCooperativeLevel(dd, hwnd, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
+            strncpy(args, cmd, sizeof(args) - 1);
+            args[sizeof(args) - 1] = 0;
+            for (tok = strtok(args, " "); tok; tok = strtok(NULL, " ")) {
+                if (strcmp(tok, "sys") == 0) want_sys = 1;
+                else if (strcmp(tok, "modex") == 0) coop |= DDSCL_ALLOWMODEX | DDSCL_ALLOWREBOOT;
+                else if (strcmp(tok, "vga") == 0) { want_vga = 1; coop |= DDSCL_ALLOWMODEX; }
+                else if (strncmp(tok, "hold", 4) == 0) hold = atoi(tok + 4);
+            }
+            if (want_sys) strcpy(extra, "sys");
+
+            logf_("mode test: %ux%ux%u  coop 0x%lx%s%s hold %d", w, h, bpp,
+                  (unsigned long)coop, want_sys ? " sys" : "", want_vga ? " vga" : "", hold);
+            hr = IDirectDraw_SetCooperativeLevel(dd, hwnd, coop);
             logf_("  SetCooperativeLevel(exclusive) -> 0x%08lx", (unsigned long)hr);
-            hr = IDirectDraw_SetDisplayMode(dd, w, h, bpp);
-            logf_("  SetDisplayMode -> 0x%08lx", (unsigned long)hr);
+            if (want_vga) {
+                LPDIRECTDRAW2 dd2 = NULL;
+
+                hr = IDirectDraw_QueryInterface(dd, &IID_IDirectDraw2, (void **)&dd2);
+                logf_("  QueryInterface(IDirectDraw2) -> 0x%08lx", (unsigned long)hr);
+                if (SUCCEEDED(hr) && dd2) {
+                    hr = IDirectDraw2_SetDisplayMode(dd2, w, h, bpp, 0, DDSDM_STANDARDVGAMODE);
+                    logf_("  SetDisplayMode(STANDARDVGAMODE) -> 0x%08lx", (unsigned long)hr);
+                    IDirectDraw2_Release(dd2);
+                }
+            } else {
+                hr = IDirectDraw_SetDisplayMode(dd, w, h, bpp);
+                logf_("  SetDisplayMode -> 0x%08lx", (unsigned long)hr);
+            }
             memset(&sd, 0, sizeof(sd));
             sd.dwSize = sizeof(sd);
             if (SUCCEEDED(IDirectDraw_GetDisplayMode(dd, &sd)))
-                logf_("  GetDisplayMode: %lux%lux%lu pitch %ld",
+                logf_("  GetDisplayMode: %lux%lux%lu pitch %ld caps 0x%08lx (MODEX 0x200000, STDVGA 0x40000000)",
                       (unsigned long)sd.dwWidth, (unsigned long)sd.dwHeight,
-                      (unsigned long)sd.ddpfPixelFormat.dwRGBBitCount, (long)sd.lPitch);
+                      (unsigned long)sd.ddpfPixelFormat.dwRGBBitCount, (long)sd.lPitch,
+                      (unsigned long)sd.ddsCaps.dwCaps);
             if (SUCCEEDED(hr)) {
                 memset(&sd, 0, sizeof(sd));
                 sd.dwSize = sizeof(sd);
@@ -347,7 +383,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                         logf_("    Lock/draw/Flip %d -> 0x%08lx  dt %lu ms", frame,
                               (unsigned long)hr, (unsigned long)(t1 - t0));
                     }
-                    Sleep(4000);        /* leave the frame up for a screendump */
+                    logf_("    holding %d s", hold);
+                    Sleep(hold * 1000); /* leave the frame up for a screendump */
                     IDirectDrawSurface_Release(back);
                 }
                 if (pal) IDirectDrawPalette_Release(pal);

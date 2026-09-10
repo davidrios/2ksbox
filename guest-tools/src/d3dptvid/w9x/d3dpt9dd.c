@@ -316,10 +316,17 @@ static BOOL BuildHalInfo(void)
         { 800,  600 },
         { 1024, 768 },
         { 1280, 1024 },
-        { 320,  200 },
-        { 320,  240 },
         { 400,  300 },
         { 512,  384 },
+        /* No 320x200 and no 320x240 (2026-09-10, doc 19 §30). Those two
+         * are DirectDraw's own: with DDSCL_ALLOWMODEX a 320x200 request
+         * is answered by the runtime's Mode X / VGA mode 13h on the VGA
+         * core, where it programs the DAC and copies the flip chain into
+         * VGA memory itself — which is the only way a *system-memory*
+         * flipping primary (Carmageddon's, the SDK's Mode X recipe) is
+         * ever displayed. Listed as a driver mode, the same request got
+         * a real 320x200 linear mode with a system-memory primary that
+         * nothing presents: a black screen with the palette right. */
     };
     static const WORD s_bpp[] = { 16, 32, 8 };
 
@@ -483,7 +490,12 @@ static BOOL BuildHalInfo(void)
      * It was missing until 2026-09-08 and it is *not* what was wrong
      * then (a boot with it removed again behaves identically, doc 19
      * §21); it is here because it is true. */
-    hi->dwFlags = DDHALINFO_ISPRIMARYDISPLAY | DDHALINFO_MODEXILLEGAL;
+    /* Not DDHALINFO_MODEXILLEGAL: the runtime's Mode X and VGA mode 13h
+     * run on the adapter's VGA core after GDI disables this driver
+     * (VDD_DISPLAY_DRIVER_DISABLING, then the runtime programs the VGA
+     * registers itself), and they are what a 320x200 game gets (see the
+     * mode table). The reference driver leaves it clear too. */
+    hi->dwFlags = DDHALINFO_ISPRIMARYDISPLAY;
     /* the module DirectDraw loaded our 32-bit callbacks out of, and the
      * driver's own PDEVICE */
     hi->hInstance = pHal->dll_hinstance;

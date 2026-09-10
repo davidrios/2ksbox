@@ -574,6 +574,16 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   hardware cursor is register set v4 (the guest's shape becomes the
   player's window cursor; a v3 driver refuses the device: reinstall from
   the ISO) — doc 15.
+- **A Win98 game asking for 320×200 wants DirectDraw's own Mode X, not a
+  driver mode** (doc 19 §30, 2026-09-10). Its recipe is `DDSCL_ALLOWMODEX`
+  plus a `DDSCAPS_SYSTEMMEMORY` flipping primary: the runtime switches the
+  display driver out, drives the VGA core and the DAC itself and copies the
+  chain into planar VGA memory on every flip. A driver that *lists* 320×200
+  (or sets `DDHALINFO_MODEXILLEGAL`) gives that game a linear mode with a
+  system-memory primary nothing presents — black, palette correct. Ours
+  lists no 320-wide mode, like the reference driver. Headless, the switched-
+  out screen shows the VGA core; `d3dpt-vga: vga core cr1=… sr4=…` in the
+  QEMU log names the mode it is in.
 - **A game that runs far too fast is a missing frame limiter, not a clock
   bug**: titles of the era pace themselves by the DirectDraw flip chain, so
   `Flip` must block until the flip is scanned out (doc 15, "The flip chain's

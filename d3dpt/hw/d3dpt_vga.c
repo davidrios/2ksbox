@@ -76,7 +76,8 @@ struct D3dptVgaState {
     /* the linear mode currently shown (lin_on) */
     bool lin_on;
     bool full_update;
-    unsigned vga_grace;         /* refreshes to hold the last frame after ENABLE 1->0 */
+    int64_t vga_grace_until;    /* hold the last frame after ENABLE 1->0 until then (ms) */
+    uint8_t vga_sig[8];         /* the VGA core mode last reported */
     D3dptLinearMode lin;
     pixman_image_t *shadow;     /* x8r8g8b8 copy for 16 and 8 bpp modes */
     pixman_image_t *src;        /* r5g6b5 / c8 view of VRAM for the conversion */
@@ -109,9 +110,13 @@ static const uint8_t fb_hz[] = { 60, 75, 85 };
 static const uint8_t fb_bpp[] = { 8, 16, 32 };
 #define FB_MODE_COUNT (ARRAY_SIZE(fb_sizes) * ARRAY_SIZE(fb_hz) * ARRAY_SIZE(fb_bpp))
 
-/* refreshes (the player's pull interval, 16 ms by default) the last linear
- * frame stays up after ENABLE goes 0 before the VGA core is shown */
-#define D3DPT_FB_VGA_GRACE_REFRESHES 15
+/* how long (ms) the last linear frame stays up after ENABLE goes 0 before
+ * the VGA core is shown. Wall clock, not refreshes: it was 15 refreshes,
+ * which is 250 ms under the player but 45 s in a headless run, where an
+ * idle console refreshes every 3 s — and 45 s of a stale desktop over a
+ * DirectDraw Mode X game read as the game drawing nothing (2026-09-10,
+ * doc 19 §30). */
+#define D3DPT_FB_VGA_GRACE_MS 250
 
 static bool fb_mode_entry(uint32_t sel, uint32_t *w, uint32_t *h,
                           uint32_t *bpp, uint32_t *hz)
@@ -285,8 +290,7 @@ static void d3dpt_vga_gfx_update(void *opaque)
              * mode or stale VGA memory in the player. Hold the last frame
              * for a moment: a real return to VGA (BSOD, full-screen console,
              * reboot) is only delayed by that. */
-            if (s->vga_grace) {
-                s->vga_grace--;
+            if (qemu_clock_get_ms(QEMU_CLOCK_REALTIME) < s->vga_grace_until) {
                 return;
             }
             /* back to the VGA core: it recreates its own surface */
@@ -295,6 +299,21 @@ static void d3dpt_vga_gfx_update(void *opaque)
             s->vga.hw_ops->invalidate(&s->vga);
         }
         s->vga.hw_ops->gfx_update(&s->vga);
+        /* The VGA core's mode, once per change: which VGA mode a guest
+         * programmed after the driver let go (a DirectDraw Mode X, a DOS
+         * game's mode 13h, a blue screen's text mode) is otherwise
+         * invisible in a headless run (2026-09-10, doc 19 §30). */
+        {
+            VGACommonState *v = &s->vga;
+            uint8_t sig[8] = { v->cr[0x01], v->cr[0x07], v->cr[0x09], v->cr[0x12],
+                               v->sr[0x04], v->gr[0x05], v->gr[0x06], v->ar[0x10] };
+            if (memcmp(sig, s->vga_sig, sizeof(sig)) != 0) {
+                memcpy(s->vga_sig, sig, sizeof(sig));
+                info_report("d3dpt-vga: vga core cr1=%02x cr7=%02x cr9=%02x cr12=%02x "
+                            "sr4=%02x gr5=%02x gr6=%02x ar10=%02x",
+                            sig[0], sig[1], sig[2], sig[3], sig[4], sig[5], sig[6], sig[7]);
+            }
+        }
         return;
     }
 
@@ -607,7 +626,8 @@ static void d3dpt_vga_regs_write(void *opaque, hwaddr addr, uint64_t val,
                         s->r_pitch, s->r_offset, s->r_hz);
         }
         if (!val && s->r_enable) {
-            s->vga_grace = D3DPT_FB_VGA_GRACE_REFRESHES;
+            s->vga_grace_until = qemu_clock_get_ms(QEMU_CLOCK_REALTIME) +
+                                 D3DPT_FB_VGA_GRACE_MS;
         }
         s->r_enable = val != 0;
         s->vbl_ns = s->r_enable ? qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : 0;
@@ -750,7 +770,7 @@ static void d3dpt_vga_reset(DeviceState *dev)
     s->vbl_ns = 0;
     s->flips = s->flips_last = 0;
     s->flips_ns = 0;
-    s->vga_grace = 0;
+    s->vga_grace_until = 0;
     s->dbg_len = 0;
     if (s->cur_on || s->cur_defined) {
         /* a rebooted guest has no pointer until its driver defines one */

@@ -2067,40 +2067,95 @@ first was the palette of §26. The desktop's depth is not a spectator: a
 block must hold has to be sized for the deepest colour table, not the
 current one.
 
-**Still open: the game runs but the screen stays black — and it is the
-palette, not the present.** With the crash gone, Carmageddon runs at
-320×200×8 for the whole 23 s it is given, then exits to a blank desktop.
-The investigation (2026-09-10, not yet fixed) narrowed it to one thing:
+**And then the black screen was not the palette — it was that the game
+had never been meant to get a driver mode at all (2026-09-10, later the
+same day).** With the crash gone Carmageddon set 320×200×8, stayed in it
+for under a second, restored the desktop mode, and the screen went black
+for as long as it was left; the first reading (a system-memory primary
+whose frame reaches VRAM but whose palette never reaches the DAC) was
+wrong on both counts, and the way it was wrong is the lesson:
 
-- **The frame reaches VRAM.** The game is a software renderer drawing into
-  a `DDSCAPS_SYSTEMMEMORY` primary (both of its two DirectDraw paths use
-  one — caps `0xa18` flipping, or `0xa00` + a `0x840` work surface). None
-  of that touches the HAL. But reading the adapter's VRAM from the host
-  while the game runs shows it fill from all-zero to **57 775 / 64 000
-  bytes, 137 distinct palette indices** — the runtime *does* present the
-  system-memory primary to our frame buffer. Rendered with a grey ramp the
-  bytes are a real, structured frame.
-- **The hardware DAC is never programmed, so every index maps to black.**
-  At 8 bpp the device looks VRAM up through `D3DPT_FB_REG_PALETTE`
-  (`fb_apply_palette`), and that palette is all zero: the screendump is a
-  265-byte solid black. The game's `IDirectDrawPalette` never reaches it.
-- **The runtime does not route a system-memory primary's palette to any
-  driver path — measured, not assumed.** Publishing `CreatePalette` /
-  `SetEntries` HAL callbacks that write `REG_PALETTE`, *and* advertising
-  `DDCAPS_PALETTE`, produced **zero** palette calls and a still-black
-  frame; the 16-bit GDI `SetPalette` export does not fire in exclusive
-  mode either. So for a sysmem primary the DX runtime keeps the palette in
-  software and programs no DAC through the driver. Those two changes were
-  reverted as they fixed nothing here (they may still be right for a
-  *video-memory* 8 bpp primary, but that wants its own evidence).
-- **It works on the inbox Cirrus**, which reaches Carmageddon's 320×200
-  menu in colour (a 320×400 line-doubled screendump). So a palette-to-DAC
-  path exists there and not on ours. Two leads for the next session: the
-  game's `[0x53fdcc]` branch picks between its two surface setups from a
-  caller flag that may depend on caps (we advertise `DDCAPS_3D`, Cirrus
-  does not); and Cirrus may carry the palette to the DAC by a route this
-  driver does not (worth instrumenting how the inbox driver's DAC gets set
-  in the same run). The frame is in our VRAM; only its colours are missing.
+- **The "frame in VRAM" was the desktop.** Rendered, the 137-index frame
+  read out of VRAM is the Windows desktop repainted at 320×200 through the
+  8 bpp halftone palette — GDI's own paint after the mode switch, which is
+  what any 320×200×8 VRAM holds for the first second. The game's frame was
+  never there.
+- **The palette route works.** `ddprobe.exe`'s mode test grew the game's
+  own cooperative level (`modex` = `DDSCL_ALLOWMODEX | DDSCL_ALLOWREBOOT`)
+  and a `hold`, and on the driver's 320×200×8 mode its screen came up in
+  **its own palette's index 0** — solid green — so an `IDirectDrawPalette`
+  set on a system-memory primary *does* reach `REG_PALETTE`, through GDI's
+  `SetPalette` export. What never arrived was the content: a
+  `DDSCAPS_SYSTEMMEMORY` flipping primary on a driver mode is a private
+  buffer the runtime flips by pointer swap and presents to nothing — the
+  HAL hears of no surface, VRAM stays at the desktop, and the probe's five
+  flips changed no byte of it. (The probe's release of that chain then
+  never returned, on every run: an open item, below.)
+- **Where the game's frame went on Cirrus.** The inbox `cirrus.drv` has a
+  320×200 mode and no DirectDraw HAL, so its primary is DCI's — the frame
+  buffer through VFLATD, `lpSurface d3ebf000` in the probe's log against
+  `00022bd0` on ours — and a "system-memory" primary there *is* the
+  screen. That is the whole of the Cirrus difference: not a palette route.
+- **What the game was written for.** Its `SSDXStart` (the debug strings
+  are still in `CARM95.EXE`, though its log function is compiled to a
+  return) calls `SetCooperativeLevel` with `0x53` and one plain
+  `IDirectDraw::SetDisplayMode(320, 200, 8)`, then creates
+  `PRIMARYSURFACE | FLIP | COMPLEX | SYSTEMMEMORY` (`0xa18`). That is the
+  DirectX SDK's **Mode X recipe**: with `DDSCL_ALLOWMODEX`, a 320×200
+  request that the driver does not list is answered by the runtime's own
+  Mode X, which switches the display driver *out* (GDI `Disable`, the
+  mini-VDD's `VDD_DISPLAY_DRIVER_DISABLING`), programs the VGA registers
+  and the DAC itself and copies the system-memory chain into planar VGA
+  memory on every `Flip` — system memory is the *only* place a Mode X
+  surface can live. A 1997 driver with no 320×200 mode gave the game
+  exactly that; ours listed 320×200 and 320×240 as driver modes **and**
+  set `DDHALINFO_MODEXILLEGAL`, so the game got a real linear mode with a
+  primary nothing presents, and even the probe's explicit
+  `DDSDM_STANDARDVGAMODE` came back as the driver mode. The reference
+  driver lists no 320-wide mode and leaves the flag clear.
+
+**The fix is to stop offering what DirectDraw does better:** the two
+320-wide modes are gone from `BuildHalInfo`'s table and
+`DDHALINFO_MODEXILLEGAL` is not set. Measured with the game: `SetDisplayMode`
+now takes the driver to 640×480×8 for a third of a second (the runtime's
+8 bpp GDI surface for Mode X), the display driver is switched out, and the
+VGA core reports `cr1=4f cr7=1f cr9=41 cr12=8f sr4=06` — Mode X 320×200,
+unchained, double-scanned — with 739 DAC bytes programmed and all of the
+first 256 KB of VRAM written; the screendump is Carmageddon's menu and,
+after the harness's Esc, its Quit dialog in colour. The probe's
+`320 200 8 sys modex` shows its own diagonal ramps the same way (its
+`GetDisplayMode` caps carry `DDSCAPS_MODEX`, its primary refuses `Lock`
+as a Mode X primary must, and its release and `RestoreDisplayMode` come
+back clean), and the game answers the power button, which it did not
+before.
+
+**Two things the harness had hidden.** The switched-out screen stayed on
+the *previous* frame for 45 s: `d3dpt-vga` holds the last linear frame
+for a moment after `ENABLE` goes 0 (so a mode switch's RESET does not
+flash the VGA core), and it counted that moment in display refreshes —
+250 ms under the player, but a headless console refreshes every 3 s, so
+the hold was 15 × 3 s over a Mode X game that was drawing all along. It
+is `D3DPT_FB_VGA_GRACE_MS`, wall clock, now. And every `hang.txt` of the
+probe runs was misread: `CS=F000 EIP=D40F` in V86 mode is SeaBIOS's
+interrupt-stub `iret`, which is where an *idle* Windows 98 spends its
+time; a machine that does not answer the power button because a
+full-screen DirectDraw process is stuck is not a dead machine.
+
+**Open:** a system-memory flip chain on a *driver* 8 bpp mode hangs the
+process that owns it — `DDPROBE 320 200 8 sys` on the old table came back
+from its five flips and never from their release, and `DDPROBE 640 480 8
+sys` (measured after the change) never comes back from its **first**
+`Flip`: no fault, no blue screen, the process simply stays, and the
+machine does not answer the power button while it does. No 320×200
+request reaches that path any more, and a runtime that presents such a
+chain to nothing is one no shipped game relies on, but it is a hang in
+something of ours and wants a run of its own.
+
+The device now reports the VGA core's mode registers once per change
+(`d3dpt-vga: vga core cr1=… sr4=…`) while the linear mode is off, because
+which VGA mode a guest programmed after the driver let go — a Mode X, a
+DOS game's 13h, a blue screen's text mode — was otherwise invisible in a
+headless run.
 
 The probe's log now closes and reopens after every line (`fopen(…,"a")`):
 a blue screen a few DirectDraw calls later otherwise left a 0-byte

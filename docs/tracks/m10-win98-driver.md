@@ -339,6 +339,13 @@ What the track starts from:
    window; and the **8 bpp default palette**, which was whatever bytes were
    in the PDEVICE allocation. Total Annihilation and LEGO Island both run
    correctly headless with those in.
+   **Carmageddon, 2026-09-10** (doc 19 §30): first a GDI heap overrun at
+   the 16→8 bpp switch (the PDEVICE sized at boot for 16 bpp), then a
+   black screen that was the driver *listing* 320×200 — the game's
+   system-memory flip chain with `DDSCL_ALLOWMODEX` is DirectDraw's own
+   Mode X recipe, which needs the driver to have no such mode and no
+   `DDHALINFO_MODEXILLEGAL`; both gone, the game runs in colour through
+   the runtime's Mode X on the VGA core.
    **The DOS box works too, 2026-09-09.** Blood is the DOS Build-engine
    game, so what it wants is a screen switch, not a DirectDraw path: the
    mini-VDD now hooks `PRE_HIRES_TO_VGA` / `POST_HIRES_TO_VGA` /
