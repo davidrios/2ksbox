@@ -96,4 +96,71 @@ are not re-argued:
   DXVK — but both are closed-source freeware, so neither can go on the
   guest-tools ISO or into a Flatpak. Secondary: dgVoodoo2 wants D3D11 and
   nGlide's D3D path is XP-shaped, which misses Win98, where the Glide
-  titles are.
+  titles are. (As a *user's own* experiment on an XP machine it costs no
+  code: nGlide 1.05's `glide3x.dll` beside the game and our `D3DPT\D3D9.DLL`
+  beside that — Diablo II with `-3dfx` is the title it was made for. It
+  just cannot ship.)
+
+## Glide 3 — where it would come from (2026-09-10)
+
+OpenGLide stops at Glide 2.x; the 62 entry points `hw/3dfx` looks up and
+does not find are Glide 3 and the Voodoo3/Napalm `…Ext` set. No title in
+hand is *blocked* on them — every Glide 3 game also has a Direct3D or
+OpenGL path (Unreal, Unreal Tournament, Descent 3, Homeworld, Tribes, NFS
+Porsche, Diablo II) — but several are worse there, and **Diablo II is the
+one that decides it**: its Glide renderer is the one Blizzard tuned, and the
+user remembers it as "a lot better" than its Direct3D one under an emulated
+Glide (Sven's `glide3x` wrapper, in all likelihood). What an open Glide 3
+would be built from, surveyed so it is not re-surveyed:
+
+- **3dfx's own Glide 3 source** (released 1999 under the "3dfx Glide Source
+  Code General Public License", glide.sourceforge.net, and the root of
+  Mesa's old tdfx driver). The hardware driver, not a wrapper, so nothing
+  to run — but the authoritative spec: every header, structure and
+  semantic. The licence is not GPL-compatible; read it, don't paste it.
+- **dgVoodoo 1** — source released, LGPL, **Glide 2 only** (user, 2026-09-10).
+  A second reference implementation of what OpenGLide already has, not of
+  what it lacks. dgVoodoo 2 stays closed.
+- **psVoodoo** (GPL, Glide→D3D9, mid-2000s) may cover part of Glide 3;
+  unverified. **Zeckensack's**, **Sven's** and **nGlide** are closed.
+- **kjliew's donor fork of OpenGLide** implements Glide 3 — which is why the
+  dispatcher already exposes all 183 names — and is not published.
+
+So it would be **our extension of OpenGLide**, a patch series like this one,
+written from the 3dfx source. The shape is smaller than "62 functions"
+suggests: Glide 3 kept Glide 2's texture management, combine units, LFB and
+frame-buffer semantics, all of which OpenGLide has, and added an API surface
+around them — `grVertexLayout` + the `grDrawVertexArray` family (the game
+describes its own vertex structure; the wrapper walks it instead of a
+fixed `GrVertex`), `grGet`/`grReset` in place of the old query globals, a
+context handle from `grSstWinOpen`, and the 3x variants of the texture-table
+and LFB calls. Diablo II and the Unreal engine use a modest subset. A track
+of its own, test title Diablo II (the user's copy is a Battle.net download,
+`Downloader_Diablo2_enUS.exe`, so the data has to be fetched first), Unreal
+Tournament second.
+
+## Emulating the chip instead (recorded, not planned)
+
+PCem's Voodoo 1/2 emulation (GPL, inherited by 86Box) is the one route that
+is complete by construction: the game's own `glide2x.dll`, `glide3x.dll`,
+the DOS overlay or a statically linked Glide runs unmodified against the
+registers it expects, so Glide 3, every LFB trick and the odd 1996 title
+with Glide compiled in all work with no wrapper to write (patch 05 could
+not have happened). It is a software rasterizer with a dynamic recompiler
+— the per-pixel pipeline state JIT-compiled to host SIMD — split over two
+to four render threads; a Voodoo 1 was 50 Mpixel/s and a Voodoo 2 90, and
+a 640×480 game needs 20–30 for 30 fps, which a modern core does, so
+Voodoo 1/2 titles run at their original rates on a good machine and stop
+scaling around Voodoo 3 resolutions. Two costs, and the cores are the
+smaller one: our guests are one vCPU, so under TCG the guest is one host
+thread and the render threads would land on cores that are idle today
+(the Air's four efficiency cores included). The real cost is on the vCPU
+thread — a Voodoo is programmed by MMIO register writes, dozens per
+triangle, each one an exit from generated code into a device callback
+under TCG, tens of thousands a frame; PCem avoids it by handling the
+writes inline in its own CPU emulator, which QEMU cannot. A `voodoo` PCI
+device wrapping that code, fed into the player's frame path, is a
+plausible track someday and would sit *beside* the pass-through — the
+wrapper for speed where it covers the game, the chip for fidelity where it
+doesn't — but it is filed as "later, if a game demands it": Glide 3 in
+OpenGLide is the smaller step for the titles in hand.

@@ -451,7 +451,17 @@ items nobody owns yet:
    Sven's glide3x wrapper in all likelihood, which is the same job as the
    62 Glide 3 entry points OpenGLide lacks, mostly the vertex-layout API;
    no game is *blocked* on it, the Glide 3 titles all have a D3D path,
-   but several are worse there). What is left of M3: **the wrapper on macOS and Windows** -- the Darwin branch
+   but several are worse there). `patches/openglide/README.md` now carries
+   the survey: what an open Glide 3 would be built from (3dfx's released
+   Glide 3 source as the spec; dgVoodoo 1 is LGPL but Glide 2 only;
+   psVoodoo unverified; the rest closed), why it is smaller than 62
+   functions (Glide 2's core is shared, the new surface is the vertex
+   layout, `grGet`/`grReset`, the context handle and the 3x variants),
+   and the alternative of **emulating the Voodoo chip** (PCem's GPL
+   rasterizer as a QEMU device — complete by construction, render threads
+   on cores TCG leaves idle, but tens of thousands of trapped MMIO writes
+   a frame on the vCPU thread), recorded as "later, if a game demands it".
+   What is left of M3: **the wrapper on macOS and Windows** -- the Darwin branch
    of `build-glide.sh` builds since 2026-09-06 but nothing exercises it, so
    what is left there is a macOS `glide-host` check (the CGL side of
    `tools/glide-host-test.cpp`, which is EGL today) and a Glide guest on
