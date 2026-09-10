@@ -2016,3 +2016,70 @@ the VGA text page during the run as well as at the end, and a machine that
 does not answer the power button is asked `info registers` twice and
 `info pic` / `info lapic` before it is killed (`OUT/hang.txt`), the
 CLAUDE.md recipe for telling a dead guest from an unrepainted one.
+
+### 30. The blue screen was a heap overrun at the 16→8 bpp switch (2026-09-10)
+
+The user opened Carmageddon on `claude98`, the screen switched to a low
+resolution "and then it broke": a blue screen that showed but did not come
+back — the desktop returned glitched and unresponsive, only the mouse
+pointer alive (which on this driver is the adapter's own sprite, moved at
+interrupt time, so it goes on tracking over a dead Windows VM — not
+evidence of life). The message was the recoverable kind, *"Ocorreu um erro
+fatal … o aplicativo em uso será encerrado"*.
+
+**It reproduced headless on the first try.** `tools/win98-game-test.sh`
+with `GUEST_CMD` starting Carmageddon (its "Enter password for uncut
+version" dialog takes a single space) blue-screened every run, always just
+after `linear mode on (320x200x8`: *"exceção 0E … em VxD VMM(01) … chamada
+de … VTDAPI(01)"* one run, `VSB16` the next, KERNEL32 under the game
+itself a third — three different callers into one fault, the signature of
+memory scribbled somewhere shared rather than a bug in any one of them.
+Windows' own Cirrus driver (`VGA=cirrus`) reached Carmageddon's 320×200
+main menu in the same run, so the fault was ours.
+
+**The scribble was the 8 bpp colour table, written past the display's
+PDEVICE.** `ddprobe.exe` grew a `DDPROBE <w> <h> <bpp> [sys]` mode test —
+an exclusive `SetDisplayMode`, a flipping primary (with
+`DDSCAPS_SYSTEMMEMORY`, the way Carmageddon asks), a palette, five flips —
+and it blue-screened at 320×200×8 with the game's exact signature and none
+of the game's code in the way. That named the moment: setting an 8 bpp
+mode. `Enable`'s GDIINFO half sizes the display PDEVICE, and it added room
+for 256 `RGBQUAD`s of colour table *only when the current mode is 8 bpp*.
+But GDI allocates that PDEVICE **once**, at boot, from the desktop's
+depth — 16 bpp on `claude98` — and `ReEnable` reuses the same block for
+every later mode change. So a game switching the desktop from 16 bpp to
+320×200×8 made `Enable`'s hardware half write 256 `RGBQUAD`s (1 KiB) one
+kilobyte past the end of a PDEVICE allocated without them, into whatever
+VMM/VxD structure the GDI heap put next — hence a fault that surfaced in a
+different VxD each run. The fix is one line: reserve the colour table in
+`dpDEVICEsize` **for every depth**, so the block is large enough whatever
+mode a game later asks for. With it, Carmageddon sets 320×200×8 and the
+probe runs its whole flip chain, neither blue-screening (measured
+2026-09-10; the same fault, the same string, gone across the game and two
+probe variants).
+
+This is the fourth "a value the 8 bpp path needs, missing where the mode
+was really decided" on this driver (§13 the thunk, §15 the text page, §24
+the uninitialised palette, and now the PDEVICE size), and the second
+caused specifically by a boot at one depth and a game at another — the
+first was the palette of §26. The desktop's depth is not a spectator: a
+16 bpp desktop and an 8 bpp game share one PDEVICE, and everything that
+block must hold has to be sized for the deepest colour table, not the
+current one.
+
+**Still open: the game does not yet display.** With the crash gone,
+Carmageddon sets 320×200×8, then restores the desktop to 800×600×16 and
+ends on a black screen, drawing no HAL `Flip` or `Blt` in between — it
+uses a `DDSCAPS_SYSTEMMEMORY` primary, which the runtime keeps in RAM and
+presents to the screen itself, and that presentation path is not yet
+wired through this driver. The probe's system-memory flip chain completes
+every call with `DD_OK` but nothing reaches the visible frame either. That
+is a separate bug from the blue screen and the next thing to chase.
+
+The probe's log now closes and reopens after every line (`fopen(…,"a")`):
+a blue screen a few DirectDraw calls later otherwise left a 0-byte
+`DDPROBE.LOG` on the disk, the directory entry's size never written,
+because a plain `fflush` hands the bytes to the FAT driver but not the
+length to the directory. `tools/win98-game-test.sh` gained UTC timestamps
+on every event (its own and QEMU's `-msg timestamp=on`), so a screen
+switch shorter than one screendump interval can still be placed.

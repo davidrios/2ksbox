@@ -961,7 +961,19 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
             lpInfo->dpColorRes    = 0;
         }
         lpInfo->dpRaster     |= RC_DIBTODEV;
-        lpInfo->dpDEVICEsize += sizeof(BITMAPINFOHEADER) + (wBpp <= 8 ? 256 * sizeof(RGBQUAD) : 0);
+        /* **Always room for the colour table, whatever this mode's depth.**
+         * GDI allocates the display's PDEVICE once, from the size given
+         * here at boot, and `ReEnable` reuses that block for every mode
+         * change afterwards — hardware half first, GDIINFO half second. A
+         * desktop enabled at 16 bpp that a game switches to 320x200x8
+         * therefore had its 256 RGBQUADs written 1 KB past the end of a
+         * PDEVICE sized without them: a GDI-heap overrun that showed up
+         * nowhere near here — a fatal exception in KERNEL32 as
+         * Carmageddon set its mode, and once the same run was repeated
+         * with a probe, page faults in the VMM called from VTDAPI, from
+         * VSB16, and a System VM left spinning in V86 mode (2026-09-10,
+         * doc 19 §30). Sized for 8 bpp always, the block fits every mode. */
+        lpInfo->dpDEVICEsize += sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD);
 
         return sizeof(GDIINFO);
     }

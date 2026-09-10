@@ -25,6 +25,14 @@
  * the HEL cannot satisfy at all, so its HRESULT is a yes/no answer with
  * nothing in between.
  *
+ * `DDPROBE <w> <h> <bpp> [sys]` adds a mode test after all that (2026-09-10):
+ * an exclusive SetDisplayMode to the given mode, a flipping primary — with
+ * DDSCAPS_SYSTEMMEMORY on it when `sys` is given, which is how Carmageddon
+ * asks and which keeps the whole chain in the runtime's emulation layer
+ * where the HAL never sees it — a palette at 8 bpp, five frames drawn and
+ * flipped, RestoreDisplayMode; every HRESULT in the log. It is what found
+ * the PDEVICE overrun of doc 19 §30 once the game had pointed at it.
+ *
  * Build: guest-tools/build-driver9x.sh (mingw-w64, i686, msvcrt).
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
@@ -32,9 +40,15 @@
 #include <windows.h>
 #include <ddraw.h>
 #include <stdio.h>
+#include <string.h>
 
 static FILE *log_file;
 
+/* One open-append-close per line, not an fflush: a flush hands the bytes to
+ * the FAT driver, but the directory entry's size is written when the file
+ * is closed — and a blue screen a few calls later leaves a 0-byte
+ * DDPROBE.LOG on the disk (twice, 2026-09-10). Closing every time is what
+ * makes the last line before the crash the one the harness reads back. */
 static void logf_(const char *fmt, ...)
 {
     va_list ap;
@@ -46,7 +60,8 @@ static void logf_(const char *fmt, ...)
     vfprintf(log_file, fmt, ap);
     va_end(ap);
     fputc('\n', log_file);
-    fflush(log_file);           /* the guest may be powered off at any moment */
+    fclose(log_file);
+    log_file = fopen("C:\\DDPROBE.LOG", "a");
 }
 
 /* Everything a surface can say about where it lives. The pointer matters
@@ -84,7 +99,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     DDCAPS hal, hel;
     HRESULT hr;
 
-    (void)inst; (void)prev; (void)cmd; (void)show;
+    (void)prev; (void)show;
     log_file = fopen("C:\\DDPROBE.LOG", "w");
     logf_("ddprobe: start");
 
@@ -232,6 +247,120 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         }
         if (hwnd) {
             DestroyWindow(hwnd);
+        }
+    }
+
+    /* **A mode of the caller's choosing, the way a game asks for one.**
+     * `DDPROBE <w> <h> <bpp>` is Carmageddon's opening (2026-09-10): an
+     * exclusive full-screen SetDisplayMode to 320x200x8, a flipping
+     * primary, a palette on it, a frame drawn and flipped, then
+     * RestoreDisplayMode — each HRESULT logged, and the run paused with
+     * the frame up so a screendump can see what the adapter scans out.
+     * On this driver the game's request ended in a fatal exception in
+     * KERNEL32 and no surface was ever created; this asks the same
+     * questions without the game's own code in the way, and a step that
+     * fails here names the driver's half of it. */
+    if (cmd && cmd[0]) {
+        unsigned w = 0, h = 0, bpp = 0;
+        char extra[16] = "";
+
+        /* A fourth word, `sys`, asks for the flip chain the way Carmageddon
+         * does: DDSCAPS_SYSTEMMEMORY on a flipping primary. The runtime
+         * keeps such a chain in its own emulation layer and the HAL never
+         * hears of the surfaces, so a fault on that path is one the driver
+         * log cannot show. */
+        if (sscanf(cmd, "%u %u %u %15s", &w, &h, &bpp, extra) >= 3 && w && h && bpp) {
+            HWND hwnd = CreateWindowA("STATIC", "ddprobe mode", WS_POPUP | WS_VISIBLE,
+                                      0, 0, 100, 100, NULL, NULL, inst, NULL);
+            LPDIRECTDRAWSURFACE prim = NULL;
+            LPDIRECTDRAWSURFACE back = NULL;
+            LPDIRECTDRAWPALETTE pal = NULL;
+
+            logf_("mode test: %ux%ux%u", w, h, bpp);
+            hr = IDirectDraw_SetCooperativeLevel(dd, hwnd, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
+            logf_("  SetCooperativeLevel(exclusive) -> 0x%08lx", (unsigned long)hr);
+            hr = IDirectDraw_SetDisplayMode(dd, w, h, bpp);
+            logf_("  SetDisplayMode -> 0x%08lx", (unsigned long)hr);
+            memset(&sd, 0, sizeof(sd));
+            sd.dwSize = sizeof(sd);
+            if (SUCCEEDED(IDirectDraw_GetDisplayMode(dd, &sd)))
+                logf_("  GetDisplayMode: %lux%lux%lu pitch %ld",
+                      (unsigned long)sd.dwWidth, (unsigned long)sd.dwHeight,
+                      (unsigned long)sd.ddpfPixelFormat.dwRGBBitCount, (long)sd.lPitch);
+            if (SUCCEEDED(hr)) {
+                memset(&sd, 0, sizeof(sd));
+                sd.dwSize = sizeof(sd);
+                sd.dwFlags = DDSD_CAPS | DDSD_BACKBUFFERCOUNT;
+                sd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_FLIP | DDSCAPS_COMPLEX;
+                if (strcmp(extra, "sys") == 0) sd.ddsCaps.dwCaps |= DDSCAPS_SYSTEMMEMORY;
+                sd.dwBackBufferCount = 1;
+                hr = IDirectDraw_CreateSurface(dd, &sd, &prim, NULL);
+                logf_("  CreateSurface(flip chain%s) -> 0x%08lx",
+                      (sd.ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY) ? ", system memory" : "",
+                      (unsigned long)hr);
+            }
+            if (SUCCEEDED(hr) && prim) {
+                DDSCAPS caps;
+
+                describe("  flipping primary", prim);
+                if (bpp == 8) {
+                    PALETTEENTRY pe[256];
+                    int i;
+
+                    for (i = 0; i < 256; i++) {
+                        pe[i].peRed = (BYTE)i; pe[i].peGreen = (BYTE)(255 - i);
+                        pe[i].peBlue = (BYTE)(i * 2); pe[i].peFlags = 0;
+                    }
+                    hr = IDirectDraw_CreatePalette(dd, DDPCAPS_8BIT | DDPCAPS_ALLOW256, pe, &pal, NULL);
+                    logf_("  CreatePalette -> 0x%08lx", (unsigned long)hr);
+                    if (SUCCEEDED(hr) && pal) {
+                        hr = IDirectDrawSurface_SetPalette(prim, pal);
+                        logf_("  SetPalette(primary) -> 0x%08lx", (unsigned long)hr);
+                    }
+                }
+                memset(&caps, 0, sizeof(caps));
+                caps.dwCaps = DDSCAPS_BACKBUFFER;
+                hr = IDirectDrawSurface_GetAttachedSurface(prim, &caps, &back);
+                logf_("  GetAttachedSurface(back) -> 0x%08lx", (unsigned long)hr);
+                if (SUCCEEDED(hr) && back) {
+                    int frame;
+
+                    describe("  back buffer", back);
+                    for (frame = 0; frame < 5; frame++) {
+                        DWORD t0, t1;
+
+                        memset(&sd, 0, sizeof(sd));
+                        sd.dwSize = sizeof(sd);
+                        hr = IDirectDrawSurface_Lock(back, NULL, &sd, DDLOCK_WAIT, NULL);
+                        if (SUCCEEDED(hr) && sd.lpSurface) {
+                            BYTE *row = (BYTE *)sd.lpSurface;
+                            unsigned y, x, bytepp = (bpp + 7) / 8;
+
+                            for (y = 0; y < h; y++, row += sd.lPitch)
+                                for (x = 0; x < w * bytepp; x++)
+                                    row[x] = (BYTE)((x / bytepp) + y + frame * 16);
+                            IDirectDrawSurface_Unlock(back, NULL);
+                        }
+                        t0 = GetTickCount();
+                        hr = IDirectDrawSurface_Flip(prim, NULL, DDFLIP_WAIT);
+                        t1 = GetTickCount();
+                        logf_("    Lock/draw/Flip %d -> 0x%08lx  dt %lu ms", frame,
+                              (unsigned long)hr, (unsigned long)(t1 - t0));
+                    }
+                    Sleep(4000);        /* leave the frame up for a screendump */
+                    IDirectDrawSurface_Release(back);
+                }
+                if (pal) IDirectDrawPalette_Release(pal);
+                IDirectDrawSurface_Release(prim);
+            }
+            hr = IDirectDraw_RestoreDisplayMode(dd);
+            logf_("  RestoreDisplayMode -> 0x%08lx", (unsigned long)hr);
+            hr = IDirectDraw_SetCooperativeLevel(dd, GetDesktopWindow(), DDSCL_NORMAL);
+            logf_("  SetCooperativeLevel(normal) -> 0x%08lx", (unsigned long)hr);
+            if (hwnd) DestroyWindow(hwnd);
+            Sleep(2000);
+        } else {
+            logf_("mode test: arguments not understood: %s", cmd);
         }
     }
 

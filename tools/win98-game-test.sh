@@ -209,7 +209,7 @@ USBARGS=(); [ "${TABLET:-0}" = 1 ] && USBARGS=(-usb -device usb-tablet)
 echo "==> booting ${VGA:-d3dpt}, discs: ${CDS:-none}, ${RUN_SECS}s of run -> $OUT"
 "$QEMU" -L "$ROOT/qemu/pc-bios" -machine pc -m 256 -accel tcg \
   "${DRIVES[@]}" "${VGAARGS[@]}" "${USBARGS[@]}" \
-  -net none -display none -rtc base=localtime \
+  -net none -display none -rtc base=localtime -msg timestamp=on \
   -debugcon file:"$OUT/dbg.log" -qmp unix:"$SOCK",server,nowait \
   > "$OUT/qemu.log" 2>&1 &
 VM=$!
@@ -238,7 +238,12 @@ done
 # game is a SETTLE that was too short.
 echo "==> mode after ${t}s, ${SETTLE:-30}s to paint"
 sleep "${SETTLE:-30}"
-echo "==> ${RUN_SECS}s of run"
+# The run's own clock is printed in UTC beside every event because QEMU's
+# log lines carry `-msg timestamp=on` (UTC too): that is how "linear mode
+# on" is placed between two screendumps, or a screen switch that lasted less
+# than one screendump interval is placed at all.
+ts() { date -u +%T; }
+echo "==> ${RUN_SECS}s of run (t+0 = $(ts) UTC)"
 shot t000
 
 # **What the screen shows is not all Windows is saying.** A fatal exception
@@ -298,16 +303,16 @@ while [ $r -lt "$RUN_SECS" ]; do
   gw_dead && { echo "==> the guest exited ${r}s into the run"; break; }
   for spec in $(printf '%s' "${KEYS:-}" | tr ',' ' '); do
     at=${spec%%:*}
-    [ "$at" -le "$r" ] && [ "$at" -gt "$prev" ] && { echo "    t+${r}s keys ${spec#*:}"; qmp keys "${spec#*:}"; }
+    [ "$at" -le "$r" ] && [ "$at" -gt "$prev" ] && { echo "    t+${r}s $(ts) keys ${spec#*:}"; qmp keys "${spec#*:}"; }
   done
   if [ -n "${TEXT_AT:-}" ] && [ "$TEXT_AT" -le "$r" ] && [ "$TEXT_AT" -gt "$prev" ]; then
-    echo "    t+${r}s the VGA text page:"; text_screen "t$(printf '%03d' $r)"
+    echo "    t+${r}s $(ts) the VGA text page:"; text_screen "t$(printf '%03d' $r)"
   fi
   if [ -n "${CLICKS:-}" ]; then
     for spec in $(printf '%s' "$CLICKS" | tr ' ' '\n'); do
       at=${spec%%:*}
       if [ "$at" -le "$r" ] && [ "$at" -gt "$prev" ]; then
-        xy="${spec#*:}"; echo "    t+${r}s click $xy"
+        xy="${spec#*:}"; echo "    t+${r}s $(ts) click $xy"
         if [ "${TABLET:-0}" = 1 ]; then qmp click "${xy%%,*}" "${xy##*,}"
         else qmp relclick "${xy%%,*}" "${xy##*,}"; fi
       fi
@@ -332,7 +337,7 @@ text_screen final
 # moving at all: `info registers` twice (the same EIP = it is not), and the
 # PIC and APIC (an unmasked irr bit with isr=00 = an interrupt pending and
 # never taken) — the CLAUDE.md recipe for a frozen guest, in OUT/hang.txt.
-echo "==> power button"
+echo "==> power button ($(ts) UTC)"
 qmp json '{"execute":"system_powerdown"}'
 gw_wait_exit "$VM" 90 || {
   echo "==> did not power off in 90s (a modal dialog swallows the button, or the machine is dead)"
