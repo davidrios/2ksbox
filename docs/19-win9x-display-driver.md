@@ -2067,14 +2067,40 @@ first was the palette of §26. The desktop's depth is not a spectator: a
 block must hold has to be sized for the deepest colour table, not the
 current one.
 
-**Still open: the game does not yet display.** With the crash gone,
-Carmageddon sets 320×200×8, then restores the desktop to 800×600×16 and
-ends on a black screen, drawing no HAL `Flip` or `Blt` in between — it
-uses a `DDSCAPS_SYSTEMMEMORY` primary, which the runtime keeps in RAM and
-presents to the screen itself, and that presentation path is not yet
-wired through this driver. The probe's system-memory flip chain completes
-every call with `DD_OK` but nothing reaches the visible frame either. That
-is a separate bug from the blue screen and the next thing to chase.
+**Still open: the game runs but the screen stays black — and it is the
+palette, not the present.** With the crash gone, Carmageddon runs at
+320×200×8 for the whole 23 s it is given, then exits to a blank desktop.
+The investigation (2026-09-10, not yet fixed) narrowed it to one thing:
+
+- **The frame reaches VRAM.** The game is a software renderer drawing into
+  a `DDSCAPS_SYSTEMMEMORY` primary (both of its two DirectDraw paths use
+  one — caps `0xa18` flipping, or `0xa00` + a `0x840` work surface). None
+  of that touches the HAL. But reading the adapter's VRAM from the host
+  while the game runs shows it fill from all-zero to **57 775 / 64 000
+  bytes, 137 distinct palette indices** — the runtime *does* present the
+  system-memory primary to our frame buffer. Rendered with a grey ramp the
+  bytes are a real, structured frame.
+- **The hardware DAC is never programmed, so every index maps to black.**
+  At 8 bpp the device looks VRAM up through `D3DPT_FB_REG_PALETTE`
+  (`fb_apply_palette`), and that palette is all zero: the screendump is a
+  265-byte solid black. The game's `IDirectDrawPalette` never reaches it.
+- **The runtime does not route a system-memory primary's palette to any
+  driver path — measured, not assumed.** Publishing `CreatePalette` /
+  `SetEntries` HAL callbacks that write `REG_PALETTE`, *and* advertising
+  `DDCAPS_PALETTE`, produced **zero** palette calls and a still-black
+  frame; the 16-bit GDI `SetPalette` export does not fire in exclusive
+  mode either. So for a sysmem primary the DX runtime keeps the palette in
+  software and programs no DAC through the driver. Those two changes were
+  reverted as they fixed nothing here (they may still be right for a
+  *video-memory* 8 bpp primary, but that wants its own evidence).
+- **It works on the inbox Cirrus**, which reaches Carmageddon's 320×200
+  menu in colour (a 320×400 line-doubled screendump). So a palette-to-DAC
+  path exists there and not on ours. Two leads for the next session: the
+  game's `[0x53fdcc]` branch picks between its two surface setups from a
+  caller flag that may depend on caps (we advertise `DDCAPS_3D`, Cirrus
+  does not); and Cirrus may carry the palette to the DAC by a route this
+  driver does not (worth instrumenting how the inbox driver's DAC gets set
+  in the same run). The frame is in our VRAM; only its colours are missing.
 
 The probe's log now closes and reopens after every line (`fopen(…,"a")`):
 a blue screen a few DirectDraw calls later otherwise left a 0-byte
