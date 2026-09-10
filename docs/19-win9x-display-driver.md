@@ -1095,3 +1095,1087 @@ took: the display mode, a primary surface and a video-memory-only one
 each described and locked, and `GetModuleHandle` / `LoadLibrary` /
 `IsBadCodePtr` on the HAL itself — the last three being the runtime's own
 test, run where the runtime runs it.
+
+### 23. The shared arena solved: IMAGE_SCN_MEM_SHARED (2026-09-08)
+
+§22 ended on a hard blocker: `d3dpt9hl.dll` linked at `0xB00B0000` was
+relocated by Windows 98 to `0x00b50000` in `DDHELP.EXE`, making its
+callback addresses unreachable in game processes. Forcing the base by
+stripping the relocation table caused `LoadLibrary` to fail outright.
+
+**The cause is a PE section characteristic: `IMAGE_SCN_MEM_SHARED`
+(`0x10000000`).** The Windows 9x kernel splits the 4 GiB virtual address
+space into a per-process private arena (0–2 GiB) and a system/shared arena
+above 2 GiB (`0x80000000`–`0xBFFFFFFF`), where mapped pages share the same
+linear address and page tables across all Win32 and 16-bit processes. The
+loader's rule: a PE DLL based above `0x80000000` is only permitted into the
+shared arena if **every section** is marked shared (`IMAGE_SCN_MEM_SHARED`).
+If any section lacks this flag, the loader considers it a private module
+and relocates it down into the per-process private arena (`< 0x80000000`).
+If relocations were stripped to prevent that, the loader has no choice but
+to fail `LoadLibrary`.
+
+**Why mingw produces non-shared sections.** GNU `ld` provides `-shared` to
+build a shared library (DLL), but provides no switch to set
+`IMAGE_SCN_MEM_SHARED` on section headers (unlike MSVC's `/SECTION:...,S`).
+Standard mingw-w64 `.text`, `.rdata`, `.bss`, `.edata`, `.idata`, and
+`.reloc` sections are all emitted without the shared bit.
+
+**The fix:** A post-link Python step in `guest-tools/build-driver9x.sh`
+walks the section table of `d3dpt9hl.dll`, ORs `IMAGE_SCN_MEM_SHARED` into
+each section's `Characteristics`, and recalculates the PE `CheckSum` in the
+optional header.
+
+**The harness fix that came with it.** `tools/win98-driver-test.sh` stalled
+in `mcopy` on the install run: when an image already had driver files
+staged from a previous install, Windows or setup had given them the FAT
+Read-Only attribute (`R`). Even with `mcopy -o`, `mtools` stops and prompts
+`file is read only, overwrite anyway (y/n) ?` on stdin, hanging headless
+runs before QEMU is ever spawned. The harness now runs `mattrib -r` across
+the target driver and probe paths before each copy.
+
+**What the fix bought, measured in the guest** (`ddprobe.exe` on `test98`):
+
+```
+DDPROBE.LOG:
+          ddprobe: start
+          GetModuleHandle(d3dpt9hl.dll) -> 00000000
+          LoadLibrary(d3dpt9hl.dll)     -> b00b0000
+            DriverInit b00b1270  IsBadCodePtr 0
+          DirectDrawCreate -> 0x00000000
+          GetCaps -> 0x00000000
+            HAL dwCaps      0x00000480
+            HAL dwCaps2     0x00080000
+            HAL vidmem      132972544 total, 132972544 free
+            HEL dwCaps      0xf4c08241
+          GetDisplayMode -> 0x00000000  640x480x32 pitch 2560
+          WaitForVerticalBlank (no coop level) -> 0x00000000
+          SetCooperativeLevel -> 0x00000000
+          WaitForVerticalBlank -> 0x00000000
+          WaitForVerticalBlank (end) -> 0x00000000
+          CreateSurface(primary) -> 0x00000000
+            primary GetSurfaceDesc -> 0x00000000
+            primary 640x480 pitch 2560 caps 0x1000c200
+            primary Lock -> 0x00000000  lpSurface 0add4ae4  pitch 2560
+          CreateSurface(64x64 vidmem) -> 0x00000000
+            offscreen GetSurfaceDesc -> 0x00000000
+            offscreen 64x64 pitch 256 caps 0x10004040
+            offscreen Lock -> 0x00000000  lpSurface 0af00ae4  pitch 256
+          ddprobe: done
+```
+
+And in the QEMU stderr log:
+```
+d3dpthal: DriverInit, block at 0x8a7ba000 regs 0x80018000 vram 0x80019000 mode 0x028001e0 bpp 0x00000020
+d3dpthal:   in C:\WINDOWS\SYSTEM\DDHELP.EXE pid 0xfffe2541
+d3dpthal:   published vblank 0xb00b1090 cansurf 0xb00b11c0 hinstance 0xb00b0000
+d3dpt9dd:   dd callbacks=00000033
+d3dpt9dd:   hinstance=b00b0000
+d3dpt9dd: DirectDraw took the HAL
+d3dpthal: WaitForVerticalBlank, flags 0x00000001
+d3dpthal: CanCreateSurface, caps 0x00004200
+d3dpthal: CreateSurface, caps 0x00004200 count 0x00000001
+```
+
+Both in `DDHELP.EXE` and in `ddprobe.exe`, `d3dpt9hl.dll` is at `0xB00B0000`.
+`IsBadCodePtr` evaluates to 0 in the application's process. The 16-bit
+driver publishes all non-zero callbacks (`dd callbacks=0x00000033`).
+DirectDraw accepts the HAL and invokes `WaitForVerticalBlank`,
+`CanCreateSurface`, and `CreateSurface` in the 32-bit DLL. The publication
+chain and shared-memory model for the ring-3 HAL are complete.
+
+### 24. Step 3 — DirectDraw DDI: Core linking, surface callbacks, flip pacing, and 8 bpp (2026-09-08)
+
+With the ring-3 HAL DLL loading in the shared arena and reachable across all
+processes, Step 3 (Win98's M7b) is implemented in full:
+
+1. **Linking the OS-independent core (`d3dpt9hl.dll`):**
+   - The DLL now compiles and links all five core source files from
+     `guest-tools/src/d3dptvid/core/`: `core_flip.c`, `core_caps.c`,
+     `core_surf.c`, `core_ctx.c`, and `core_dp2.c`.
+   - Freestanding runtime: provides minimal `memcpy` and `memset` without CRT.
+   - The six required `d3dpt_os_*` hooks are implemented in `w9x/d3dpthal.c`:
+     `d3dpt_os_alloc` and `d3dpt_os_free` (Win32 process heap),
+     `d3dpt_os_ticks` (`QueryPerformanceCounter` / `Frequency`),
+     `d3dpt_os_surf` (`DDRAWI_DDRAWSURFACE_LCL` -> `d3dpt_surf_desc`),
+     `d3dpt_os_attached` (`lpAttachList` traversal), and
+     `d3dpt_os_next_mip` (`DDSCAPS_MIPMAP` traversal).
+   - Only `KERNEL32.dll` is imported (7 functions: `GetCurrentProcessId`,
+     `GetModuleFileNameA`, `GetProcessHeap`, `HeapAlloc`, `HeapFree`,
+     `QueryPerformanceCounter`, `QueryPerformanceFrequency`).
+   - **VRAM address translation:** On NT, `fpPrimary` is 0 and surface video
+     memory offsets are zero-based. On Win9x, `vmiData.fpPrimary` is the
+     linear address `pHal->vram_linear` (`0x80019000`), so all video memory
+     allocations have linear addresses. `d3dpt_os_surf` subtracts
+     `pHal->vram_linear` for non-sysmem surfaces, keeping `d3dpt_surf_desc.vidmem`
+     as the true offset into `core.fb`.
+
+2. **DirectDraw Surface Callbacks:**
+   - Declared typed structures in `w9x/ddhal32.h` (`d3dpt_ddhal_destroysurface`,
+     `d3dpt_ddhal_flip`, `d3dpt_ddhal_getflipstatus`, `d3dpt_ddhal_getbltstatus`,
+     `d3dpt_ddhal_lock`, `d3dpt_ddhal_unlock`, `d3dpt_ddhal_blt`,
+     `d3dpt_ddhal_setcolorkey`).
+   - Implemented callbacks in `d3dpthal.c` and wired into `h->cb32`:
+     - `Flip32`: Paced presentation. When `flip_done(&core)` is false, waits for
+       vertical blank with `wait_frame(&core)` if `DDFLIP_WAIT` is specified,
+       or returns `DDERR_WASSTILLDRAWING`. Registers moved surfaces and executes
+       `d3d_readback` on live render targets. Writes the target's VRAM offset
+       to `D3DPT_FB_REG_OFFSET` and calls `flip_issued(&core)`.
+     - `GetFlipStatus32`: Checks `flip_done(&core)` against `D3DPT_FB_REG_FRAMES`.
+     - `GetBltStatus32`: Returns `DD_OK`.
+     - `Lock32`: Performs readback on live render targets before access.
+     - `Unlock32`: Marks modified texture or target surfaces via `D3DPT_OP_VRAM_DIRTY`.
+     - `DestroySurface32`: Releases surface tracking via `surf_forget` and `D3DPT_OP_VRAM_RELEASE`.
+     - `SetColorKey32`: Sets source colorkey via `surf_colorkey_set`.
+
+3. **Flip Chain & VSync Verification in Real Guest (`ddprobe.exe`):**
+   - In exclusive fullscreen mode (`DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN`),
+     created a complex flipping primary chain (`DDSCAPS_PRIMARYSURFACE |
+     DDSCAPS_FLIP | DDSCAPS_COMPLEX`, `dwBackBufferCount = 1`) and retrieved
+     the attached back buffer (`DDSCAPS_BACKBUFFER`).
+   - Issued five consecutive `Flip(..., DDFLIP_WAIT)` calls:
+     ```
+     CreateSurface(flip chain) -> 0x00000000
+       flipping primary Lock -> 0x00000000  lpSurface 80019000  pitch 2560
+     GetAttachedSurface(back) -> 0x00000000
+       back buffer Lock -> 0x00000000  lpSurface 80145000  pitch 2560
+       Flip 0 -> 0x00000000  dt 6 ms
+       Flip 1 -> 0x00000000  dt 14 ms
+       Flip 2 -> 0x00000000  dt 16 ms
+       Flip 3 -> 0x00000000  dt 14 ms
+       Flip 4 -> 0x00000000  dt 20 ms
+     ```
+   - QEMU stderr confirmed scanout offset alternation in hardware:
+     ```
+     d3dpthal: Flip curr 0x8adbaae4 targ 0x8adbb630
+     d3dpt-vga: scanout offset 0 -> 1228800
+     d3dpt-vga: scanout offset 1228800 -> 0
+     d3dpt-vga: scanout offset 0 -> 1228800
+     d3dpt-vga: scanout offset 1228800 -> 0
+     ```
+   - Frame pacing against `D3DPT_FB_REG_FRAMES` (~60 Hz) is established.
+
+4. **8 bpp Mode & Hardware Palette:**
+   - `d3dpt9x.c`: Handled `bpp == 8` in `ModeOk` (checking `D3DPT_FB_CAP_BPP8`)
+     and `ReadDisplayConfig`.
+   - In `Enable(GDIINFO)`: Set `dpNumColors = 20`, `dpNumPalReg = 256`,
+     `dpPalReserved = 20`, `dpColorRes = 18`, `RC_PALETTE`, and sized
+     `dpDEVICEsize` to accommodate 256 `RGBQUAD` color table entries.
+   - In `Enable(hardware)`: Set `PALETTIZED` flag on DIB Engine and initialized
+     hardware palette registers `D3DPT_FB_REG_PALETTE` (0x400..0x7fc).
+   - In `d3dpt9x.c`: Implemented `SetPalette` export (ordinal 22), removing the
+     stub thunk from `dibthunk.asm`. Calls `DIB_SetPaletteExt` and converts
+     `PALETTEENTRY` (R, G, B) into `0x00RRGGBB` format for `D3DPT_FB_REG_PALETTE`.
+   - `d3dpt9x.inf`: Added `MODES\8` entries for 640x480, 800x600, 1024x768, 1280x1024.
+
+
+### 25. Step 4 — the Direct3D DDI on 9x, and the window that was 16 KiB low (2026-09-08)
+
+**Both halves pass, to the same bar XP is held to.** `EBTEST.EXE` — the
+DirectX 3 face: `IDirect3D` v1, execute buffers, `PROCESSVERTICES` COPY and
+TRANSFORM, clipped and unclipped triangles, `TEXTUREHANDLE` binding and a
+colour-keyed texture — reports **5 cases, 0 failed** in a real Win98 guest.
+`D3D7TEST.EXE`'s frame, drawn by Windows' own `d3dim700.dll` through our DX7
+HAL and executed by DXVK on the host, is **byte-identical to
+`d3dpt-dp2-test`'s golden frame**: `0 of 307200 pixels differ, max channel
+difference 0`. The runtime enumerates `Direct3D HAL` *and* `Direct3D T&L
+HAL`, takes a Z buffer at 16 / 32 / 32+stencil, switches to 640x480x32 from
+an 800x600x16 desktop, and runs 300 frames in 5072 ms — **59.1 fps**, which
+is the flip pacing of §24 holding under a real 3D load rather than a
+coincidence.
+
+**The one bug, and it is the same bug as §19's.** Everything above was
+black on the first run — all five `ebtest` cases, including the one that is
+nothing but a viewport `Clear`. Every call returned `S_OK`: seventeen
+`DrawPrimitives2` calls, a context on the back buffer, textures registered,
+`PROCESSVERTICES` bouncing to the runtime exactly as the core's DX3 bounce
+protocol intends, and `d3d_readback` returning `DD_OK` every time. The tell
+was in the host log rather than the guest's: **not one `ddi:` line**, so no
+batch had ever reached the executor.
+
+The 9x layer derived the Direct3D command window from the VRAM size:
+
+```c
+core.cmd_offset = h->vram_size - D3DPT_FB_CURSOR_BYTES - D3DPT_SHM_SIZE;   /* 0x03ffc000 */
+```
+
+The device places it at `vram_size - D3DPT_SHM_SIZE` (`d3dpt_vga.c`;
+`d3dpt-vga: Direct3D executor ready, window at 64 MiB`) — `0x04000000`. The
+cursor is not in that sum. So the driver encoded its batches 16 KiB below
+the window the executor reads, rang the doorbell, and every submission
+succeeded against a header nothing had written. The NT layer has never
+derived it — it reads the adapter's own `D3DPT_FB_REG_CMD_OFFSET` — and the
+9x layer does now.
+
+**Why this is worth a section of its own:** it is the second instance on
+this track of one failure shape — *a value the core needs, re-derived in a
+second place instead of read from the one authority, failing silently and
+looking like something else entirely*. The first was `DDSCAPS_EXECUTEBUFFER`
+transcribed as `0x800` (§19), which killed protocol v9's vertex buffers and
+showed up as a single failing `shtest` case. Neither produced a diagnostic
+anywhere. When a 9x symptom is "the calls all succeed and nothing is drawn",
+suspect an address or a constant the layer computed for itself before
+suspecting the logic, and diff the layer against `nt/` — the NT driver is
+the reference implementation of every one of these values.
+
+**Three DirectX 6 accommodations were deleted, on evidence.** The step-4
+implementation was written against an image with the in-box DirectX 6.1,
+and had grown code for that runtime's older DDI generation. Rather than
+delete it by inference, each was instrumented with a one-shot log and two
+full rendering runs were made (`ebtest`, the DirectX 3 path, which is where
+a pre-DX7 interface pointer would appear at all, and `d3d7test`):
+
+- `unwrap_surf()`, which sniffed a pointer to tell `DDRAWI_DDRAWSURFACE_INT *`
+  from `..._LCL *` because DirectX 6 passes an interface in
+  `D3DHAL_CONTEXTCREATEDATA` / `D3DHAL_SETRENDERTARGETDATA` — its branch was
+  never taken; it is a plain cast (`surf_lcl`) now, as on NT;
+- `Clear_32`, the pre-`Clear2` CALLBACKS2 entry — never entered; CALLBACKS2
+  publishes `SetRenderTarget` alone now, which is what `nt/d3dptdisp.c` has
+  always done, and the suspect `dwFillDepth / 4294967295.0f` conversion went
+  with it;
+- `d3d7test.c`'s DirectX 6 `IDirect3D3` path — unreachable once
+  `DirectDrawCreateEx` exists.
+
+This is the code half of the decision in the next paragraph: a driver that
+serves two runtime generations is a driver with two untested halves.
+
+**A 2ksbox Win98 machine runs the last DirectX (9.0c).** The in-box
+DirectX 6.1 (`DDRAW.DLL` 4.06.03.0518, no `DirectDrawCreateEx`) is an
+*older DDI generation* than the one `core/` was proven against on XP, so
+serving it meant new code with no XP precedent and no pixel oracle — the
+DX7 path of `D3D7TEST` cannot even run there. With 9.0c installed
+(`ddraw` / `d3d8` / `d3d9` 4.9.0.904, `d3dim.dll` at the DirectX 7
+generation) the guest's runtime is the one XP has, and **the DX8 DDI we
+already have serves DirectX 3 through 8 through the runtime's own
+translation** — which is the direction the superset runs. Raising our own
+DDI to 9 would be the opposite trade: strictly additive, deleting nothing,
+and buying only what doc 04's matrix already routes to M4's per-game
+`d3d9.dll`. `vmhal9x` reaches the same conclusion for the same reason: DDI
+8, "forward compatible with DirectX runtime… allows to run DirectX 9
+programs and games".
+
+Two consequences. The desktop and DirectDraw halves are unaffected — they
+are GDI and the DIB Engine, and plain DirectDraw worked on 6.1 — so the
+honest statement is that stock Win98 gets the accelerated desktop and
+DirectDraw, and **Direct3D wants DirectX 7 or later in the guest**. And
+§21's HALINFO validation rules, which were reverse-engineered from the
+6.1 `DDRAW.DLL`, still hold on the 4.9 one: it accepts our HALINFO with the
+D3D globals published, and `ddprobe` reads back `DDCAPS_3D | DDCAPS_COLORKEY`
+where 6.1 gave `BLTQUEUE | GDI` alone.
+
+**The DirectX 8 half passes too, and with it step 0's last open question**
+(2026-09-08, the same day). `SHTEST` reports **9 cases, 0 failed** — vs 1.1
+through a declaration and its constants, from user memory and from a vertex
++ index buffer, a declaration-only shader, `D3DVSD_CONST`, ps 1.1 with a
+constant and with a texture, and the FVF path again — with the runtime
+reporting `vs 1.1 (96 constants), ps 1.4` and creating the device with
+**hardware vertex processing**. `CKTEST` reports **4 cases, 0 failed**: a
+`DDPF_PALETTEINDEXED8` texture with its own `IDirectDrawPalette`,
+`SetEntries` re-colouring it live, and a source colour key with
+`COLORKEYENABLE` on and off. `DXTTEST` creates every format (X8R8G8B8,
+R5G6B5, A4R4G4B4, DXT1, DXT3, DXT5) in every pool (DEFAULT, MANAGED,
+SYSTEMMEM); the only non-zero HRESULTs in its whole log are the six
+`LockRect` calls on `D3DPOOL_DEFAULT`, which must fail, and the MANAGED
+readbacks show the red and blue block texels (`0xf800` / `0x001f` — the
+display is R5G6B5). Note that `DXTTEST` has no pass/fail line and no stored
+XP log to diff against, so it is read against its documented behaviour
+rather than against a reference run; the other three have hard verdicts.
+
+`SHTEST` passing is what settles it. Step 0 recorded, from reading
+`vmhal9x`, that "DDI 8 works on 9x" and left one question behind: *whether
+a driver claiming DDI 8 may leave out the pre-DP2 HAL entries
+(`RenderState`, `RenderPrimitive`, `DrawOnePrimitive`, `TextureCreate`)
+that NT dropped and `vmhal9x` still implements*. **It may**: ours does not
+implement them, and 9x's `d3d8.dll` drives it through `DrawPrimitives2`
+alone. Both of doc 15's negotiation traps were right in the 9x layer first
+time as well — the HAL-info flag without which the runtime never asks and
+silently stays on the DX7 path, and the rule that `dwActualSize` is checked
+against the size *inside* the GDI2 header while `dwExpectedSize` still
+holds the previous query's, so an answer clamped to the outer size makes
+the runtime drop the driver altogether.
+
+So the whole M7c feature matrix now reproduces on Win98 — DirectX 3
+through 8, hardware T&L, vs/ps 1.x, palettes, colour keys, the compressed
+formats — on a driver whose only difference from XP's is its per-OS layer,
+and every one of these passed without a change to `core/`.
+
+**A trap for whoever updates the image next.** Installing DirectX means
+booting the machine in the launcher, whose Win98 default is `-vga cirrus`
+(`bundle::video_choices`) — so Windows re-detects a Cirrus, rebinds the
+display to the in-box driver and drops `D3DPT9V.VXD` from `[386Enh]`.
+`[boot] display.drv=pnpdrvr.drv` still looks right, and `[boot.description]`
+is where it says `Cirrus Logic 5446 PCI` instead. `win98-driver-test.sh
+<image> install` puts it all back; a `boot` would not.
+
+### 26. Step 5 — real titles, and a pointer that lived in the frame buffer (2026-09-09)
+
+The user installed six games into a Win98 machine of their own (`claude98`,
+on `-vga none -device d3dpt-vga` with this driver and DirectX 9.0c) and
+reported what each one did: Monster Truck Madness fine; NFS Porsche 2000
+fine but silent; Total Annihilation fine "but the mouse is glitchy" inside a
+skirmish; LEGO Island "graphics glitched and the mouse very glitched";
+Crimson Skies glitched; Blood glitched "no matter what screen configuration
+I have"; and "lots of glitches changing screen resolutions".
+
+That is the first time this driver has met anything other than our own test
+programs, and it found things none of them could.
+
+**The harness first.** `tools/win98-game-test.sh` is the 9x counterpart of
+`xp-game-test.sh`: a raw copy of the image, the driver re-staged into it, a
+game started from `C:\RUN.BAT` through WIN.INI's `run=` (doc 19 §17 — `run=`
+takes a program and drops its arguments, so the batch carries the command
+line), the discs attached, a screendump every few seconds, and the ACPI
+power button at the end. Two things about it are worth keeping.
+
+It builds **the machine the player builds**, taken from `launcherx
+--print-args` on the user's own bundle: `-cpu pentium3`, an SB16 on an
+audiodev, and the disc as an `ide-cd` on `ide.1` with that audiodev on it
+too. The first run of Total Annihilation had no sound card, and TA put up
+*"Error: Sound system initialization failed"* and quit before it drew a
+frame — which through the log reads exactly like the display driver failing:
+a mode set, a primary created, and then a return to the desktop. A test
+machine that is not the machine under test is not a simpler test, it is a
+different one.
+
+And it re-stages the driver every run (`NO_DRIVER=1` to leave the image's
+own build alone), because the image the user plays on carries whatever build
+was installed into it.
+
+#### The pointer must not live in the frame buffer
+
+The DIB Engine draws its cursor **into VRAM** and keeps the pixels it
+covered in a save-under; `BeginAccess` / `EndAccess` is the pair that lifts
+it out of the way before anything else writes there, and GDI calls them
+around everything it draws. **DirectDraw does not go through GDI.** A game
+that locks the primary, blits to it or flips a chain writes the frame buffer
+with the Engine's cursor still standing in it and its save-under now stale,
+and the next mouse move stamps that stale block back onto the screen.
+
+Total Annihilation's log says exactly that: `Lock32 … caps=0x1000c238`,
+which is `LOCALVIDMEM | VIDEOMEMORY | VISIBLE | PRIMARYSURFACE |
+FRONTBUFFER | FLIP | COMPLEX` — it locks the **visible primary** and paints
+it wholesale, every frame. LEGO Island does the same to a 3D back buffer and
+uses the Windows pointer for its own interface, which is why *both* of its
+symptoms were reported: the smearing is the pointer, and it is over
+everything.
+
+No amount of care inside the DirectDraw HAL fixes this. That half is a flat
+32-bit DLL and the Engine's exclusion pair is 16-bit code behind a selector
+it has no way to call.
+
+So the pointer comes out of the frame buffer altogether, exactly as on XP
+(doc 15, "The hardware cursor", register set v4): `SetCursor`, `MoveCursor`
+and `CheckCursor` are C functions in `d3dpt9x.c` rather than jumps into the
+Engine (`dibthunk.asm` no longer thunks them), a monochrome `CURSORSHAPE` is
+converted to a8r8g8b8 into the VRAM the DirectDraw heap already stops short
+of, and the device hands it to the host as a cursor sprite. Nothing
+composites it into the frame, so nothing can corrupt it — not GDI, not
+DirectDraw, and not a mode change.
+
+Three details that are not obvious:
+
+- **`C1_COLORCURSOR` has to go.** It is what asks Windows for a colour
+  pointer, and a colour shape arrives in the screen's own format. The sprite
+  carries monochrome; the cap is claimed only on an adapter with no sprite,
+  where the Engine's software pointer (which does handle colour) is still in
+  use. Anything the sprite cannot carry is handed to the Engine rather than
+  dropped — a pointer that vanishes is worse than one that can be drawn
+  over — and the sprite is taken off the screen first, so there is always
+  exactly one pointer.
+- **`SetCursor` is the name of two different functions.** win16.h declares
+  the Win16 *API* (takes an HCURSOR, returns the previous one); this driver
+  exports the display entry at ordinal 102 (takes a CURSORSHAPE, returns
+  nothing). The API's declaration is hidden while the headers go by, the
+  same trick and for the same reason as `ValidateMode` (§18).
+- **No CRT, so no 32-bit multiply.** `(DWORD)y * stride` links against an
+  undefined `__U4M`; `MulW` is the helper that exists.
+
+The A/B is in the screendumps: with the driver the image was installed with,
+the Windows arrow is composited into every dump; with this one it is in none
+of them, and `d3dpt-vga: cursor 32x32 hot 0,0 defined` in the host log is
+the sprite taking its place. The desktop, TA's menu and LEGO Island's
+Information Center all come up correct. A screendump showing no pointer is
+now the expected result on 9x as it already was on XP, and the player
+composites the sprite itself when the pointer is grabbed
+(`present_guest_frame`'s `composite_cursor`), so a machine without
+`seamless_mouse` still shows one.
+
+**What is proven here and what is not.** Proven: the Engine's pointer was in
+the frame buffer, TA locks the visible primary every frame, and with the
+sprite nothing of the pointer reaches VRAM. *Not* proven: the user's own
+symptom, which is inside a Total Annihilation skirmish — this harness starts
+a game and watches it, it does not click through menus, so what was
+reproduced is the mechanism and not the match. The same caveat applies to
+LEGO Island, where the before-picture was never taken.
+
+#### One of the six was never the driver
+
+**NFS Porsche 2000's** silence is not the display driver. Worth recording
+that Total Annihilation's sound initialised in this harness with the same
+SB16, so the card and its driver are broadly working in that image; the
+Porsche silence and the `dxdiag` crash beside it want their own look.
+
+**Crimson Skies was recorded here as a second one, and that was wrong** —
+see §27. A parallel session found a real SafeDisc 1.50 weak-sector bug in
+our CD-ROM model and fixed it, and this section originally passed that on as
+the answer to the user's report. It is not: they run a patched, no-CD
+executable, and their complaint was that it renders badly. The rendering bug
+is this driver's and is open.
+
+#### The DirectDraw heap ran 64 MB into the command window
+
+`d3dpt9dd.c` published `fpEnd = vram_linear + vram_size - CURSOR_BYTES`.
+The top of VRAM is not free: the command window the Direct3D half encodes
+batches into sits at `D3DPT_FB_REG_CMD_OFFSET`, which the device puts at
+`vram_size - D3DPT_SHM_SIZE` — 64 MB of a 128 MB aperture — and the cursor
+sprite's image sits immediately below *that*. The published heap therefore
+ran the whole length of the command window: a DirectDraw surface allocated
+up there and the batch ring would have been the same memory. Nothing in the
+suite reached it, because the heap starts at 8 MB and no title of the era
+allocates 56 MB of surfaces, which is exactly why it survived four steps.
+
+`core/`'s `dd_heap_end()` is this calculation on NT. This layer cannot call
+it — that is flat 32-bit code and this is 16-bit — so it reads the same
+register. **This is the third time a value re-derived here instead of read
+from the one authority has cost this track**: `DDSCAPS_EXECUTEBUFFER` in
+step 1, the command window itself in step 4 (§25), and now the end of the
+heap. The log line to check is `d3dpt9dd: heap=… ..=…`, whose second number
+must be 64 MB below the top of VRAM, not 16 KB.
+
+`dwVidMemTotal` / `dwVidMemFree` were the same mistake in another form: they
+counted the command window as free video memory.
+
+#### An 8 bpp mode came up with an uninitialised palette
+
+`Enable` programmed the adapter's 256 palette registers from the colour
+table it keeps past the DIB Engine's PDEVICE — before anything had written
+it. That table is *ours*, in the bytes `dpDEVICEsize` was grown by, and the
+Engine has only just been told where it is; nothing fills it at that point.
+So an 8 bpp mode came up with 256 entries of whatever the PDEVICE
+allocation happened to contain, and only corrected itself when something
+realised a palette. Anything that set the mode and drew without one stayed
+wrong — the first Total Annihilation run caught it as a Windows message box
+whose greys came out red. It now fills the table with Windows' own default
+(the twenty static system colours at the two ends, a 6-6-6 cube between them
+and a grey ramp in the spare twenty) and programs the device from that.
+
+#### A full-screen DOS box, and the four calls nobody documents
+
+Blood is the 1997 Build-engine game and it is **DOS**, so what it needs from
+this driver is not a DirectDraw path at all — it is a screen switch. When a
+VM goes full-screen the main VDD takes the adapter from the display driver's
+hi-res mode to VGA and lets the DOS program drive it; while
+`D3DPT_FB_REG_ENABLE` is set our device scans out the linear frame buffer
+instead, so the program writes VGA memory and none of it reaches the screen.
+That is a whole class of title, and it is the one the user described as
+glitching "no matter what screen configuration I have".
+
+The main VDD is the only thing in the system that knows a switch is
+happening, and the mini-VDD is the only thing that knows about the register,
+so the fix is four dispatch entries: `PRE_HIRES_TO_VGA` turns the linear
+frame buffer off and `POST_VGA_TO_HIRES` turns it back on, with
+`POST_HIRES_TO_VGA` and `PRE_VGA_TO_HIRES` logging so that the order is
+readable. Which of the four the VDD calls for a given kind of switch is not
+something the DDK headers say — this is what a real switch does:
+
+```
+d3dptvxd: hi-res -> VGA
+d3dptvxd: hi-res -> VGA done
+d3dptvxd: VGA -> hi-res
+d3dpt9x: RestoreDesktopMode
+d3dptvxd: VGA -> hi-res done
+```
+
+All four, in order, with the display driver's own callback in the middle —
+`RestoreDesktopMode`, registered through `VDD_DRIVER_REGISTER`, which writes
+every mode register including `ENABLE`, so the way back was already
+half-built. **With that in, Blood renders full-screen at 640x480 through the
+device's VGA core for the whole of its attract demo, and the desktop comes
+back afterwards.**
+
+Two runs were needed before the display was reached at all, and both
+failures look like the driver:
+
+- `run=C:\RUN.BAT` starts in `C:\`, and a DOS/4GW program's stub looks for
+  `dos4gw.exe` in the **current** directory: *"Stub exec failed: dos4gw.exe
+  — No such file or directory"*. `GUEST_CMD` takes one CRLF line per line
+  now, so a `cd` can precede the EXE.
+- Then *"src\sound.cpp(508): Sound Blaster not responding on selected
+  port."* — this image's `AUTOEXEC.BAT` has no `SET BLASTER=`, which is what
+  every DOS game of the era reads to find the card. The Windows side has
+  sound (Total Annihilation initialises against the same SB16); the DOS side
+  does not. Guest configuration rather than the driver, and very likely part
+  of what the user saw.
+
+**And one way to misread the result, which cost an hour here.** Judged from
+an *interim* read of the log, half way through the run, only the first two
+lines existed and the screen was still the frozen desktop — the DOS box had
+not left its `PAUSE` prompt yet — which reads exactly like a one-way switch
+into a black screen with no way back, and the write was backed out on that
+reading. It was the run not being over. The screendumps say it plainly once
+it is: twenty at 800x600 (the desktop), then thirty at 640x480, every one of
+them different from the last. Wait for the run to end, and diff the shots
+rather than looking at one.
+
+Two harness bugs came out of the same hour and are fixed: `gw_wait_exit`
+takes `[pid] [cap]`, so `gw_wait_exit 90` made 90 the **pid** — `kill -0 90`
+on a kernel thread fails for a normal user, the wait returned success
+immediately, and the run then blocked in `wait $VM` forever on a guest that
+had swallowed the power button. And the run clock counted loop iterations
+rather than seconds, so a tick that takes 1.6 s made `RUN_SECS=240` run for
+six minutes and every `KEYS=` entry land late.
+
+### 27. Crimson Skies: not the disc, and not Direct3D either (2026-09-09)
+
+§26 recorded Crimson Skies as "not the driver" on the strength of a parallel
+session's SafeDisc finding. **That was wrong, and the way it was wrong is
+worth keeping.** The install has two binaries: `CRIMSON2.EXE`
+(2000-08-27) is the original SafeDisc loader, and `CRIMSON.EXE` is dated
+**2025-11-02** and is a no-CD patch the user applied over it. The other
+session measured the first; the user runs the second, which never touches
+the disc. Both of us had the dates and sizes in front of us. A protection
+failure and a rendering failure in the same directory are not the same bug,
+and "the game in that folder is fixed" is not a claim anyone had earned.
+
+The user's own words were "the graphics were glitched", and that is what it
+is.
+
+#### The A/B
+
+`tools/win98-game-test.sh` with `VGA=cirrus` is the control CLAUDE.md
+describes, and on this it is decisive. Same image, same disc, same machine,
+one variable:
+
+| | our `d3dpt-vga` + driver | `-vga cirrus`, Windows' in-box driver |
+|---|---|---|
+| title screen | logo, emblem and all six menu buttons are **solid white** in the correct silhouette | renders correctly — red/silver logo, gold winged skull, gold buttons |
+| colours in the dump | 682 | 4150 |
+
+So it is ours — **with one variable that this table does not control.** The
+two runs are different display devices with different registry keys, and
+nothing established that both desktops were at the same colour depth. That
+is two variables in a two-column comparison, and it should have been closed
+before the result was called decisive. It is what `gdiprobe`'s depth sweep
+exists to settle.
+
+#### What it is not
+
+Three negatives from the instrumented run, each of which removes a whole
+area:
+
+- **No Direct3D at all.** `ddi:` count 0, no executor frames, for the entire
+  title screen. The DX7/DX8 DDI that §25 proved is not running yet.
+- **No DirectDraw blit.** With `Blt32` and `SetColorKey32` logging every
+  call, neither fires — nor `Lock32`. The game creates exactly one
+  video-memory surface (`CreateSurface, caps 0x00004200` = `VIDEOMEMORY |
+  PRIMARYSURFACE`) and nothing else; every other surface is system memory.
+- **Not a colour conversion.** The bad pixels read back from VRAM as
+  literally `0xffff` — every bit set — while the background beside them is a
+  sane `0x4021`. A 5-5-5 / 5-6-5 mix-up or a wrong mask shifts colours; it
+  does not saturate every channel of one shape and leave its neighbour
+  alone.
+
+What that leaves is **GDI drawing through the DIB Engine into VRAM**, which
+is the driver's own path and the one the desktop uses successfully all day —
+and that has now been tested and is **not it either**. `gdiprobe.exe` walks
+the operations a 2D title of the era composites with, checking each one's
+pixels itself with `GetPixel` rather than trusting a screenshot, and at
+16 bpp through this driver it reports **15 cases, 0 failed**: a solid
+`FillRect`, `PatBlt` BLACKNESS and WHITENESS, `BitBlt` SRCCOPY, SRCAND and
+SRCPAINT (each raster op checked on its own so a failure names itself), the
+two-pass masked sprite — AND a monochrome mask, then OR the image, which is
+what a logo over a background *is* — `StretchBlt`, and `SetDIBitsToDevice`
+from 24, 32 and 16 bpp DIBs. All correct.
+The shapes and positions are right and only the fill is wrong, which says
+the addressing is right and something about the *operation* is not — an
+all-ones result is the signature of a raster op or a fill, not of a copy.
+
+The driver's engine setup was diffed against `vmdisp9x`'s `enable.c` field
+by field on the strength of that: `deFlags` (`MINIDRIVER | VRAM | OFFSCREEN`
+plus `FIVE6FIVE` at 16 bpp), `deBitsPixel`, `deWidthBytes`, `deDeltaScan`,
+`deBitsSelector`, the `BITMAPINFOHEADER` (`BI_RGB` with no masks — the
+reference does the same, so the 16 bpp header is not the bug), `dpCaps1`,
+`dpRaster`, `dpNumColors`. They agree, bar `C1_GAMMA_RAMP` and an 8 bpp
+`RC_SAVEBITMAP`. So the remaining candidates are inside what the Engine is
+asked to *do* rather than how it was set up.
+
+**A lever that does not work, so nobody tries it twice.** The INF's
+`DelReg` clears `CURRENT` and `DEFAULT` and its `AddReg` writes
+`HKR,DEFAULT,Mode,,"32,640,480"`, which reads like a way to reset the
+desktop depth by reinstalling the driver. It is not:
+`win98-driver-test.sh <image> install` on a machine whose device is *already*
+bound to this driver re-copies the files and reboots without PnP
+reinstalling anything, `CURRENT` survives, and the desktop comes back up at
+800x600x16 exactly as before. Changing the depth wants
+`ChangeDisplaySettings` from inside the guest — which is what `gdiprobe`
+should do for itself.
+
+#### The depth bisect, and why it did not answer
+
+`setbpp.exe` sets the desktop depth from the batch file
+(`SETBPP 32` before the game), and it works: *"before 16 bpp, asking for 32
+… ChangeDisplaySettings -> 0 (ok) … after 32 bpp"*, with
+`linear mode on (800x600x32 pitch 3200)` from the device to confirm it. The
+title screen came out white anyway.
+
+**That does not mean depth is not the axis, and reading it that way was a
+mistake made here first.** The device log from the same run has
+`linear mode on (1024x768x16 pitch 2048)` a few hundred lines later, through
+GDI's `Enable (hardware)` path — *the game sets its own mode, and it picks
+16 bpp whatever the desktop was doing*. So the run changed the depth the
+game was started from and not the depth it rendered at. What was actually
+established is narrower: the **desktop's** depth does not matter, because
+the game overrides it.
+
+#### Where it stands
+
+Eliminated, each by measurement rather than argument: Direct3D, the
+DirectDraw blit callbacks, colour-format conversion, GDI through the DIB
+Engine (57 probe cases at 16 and 32 bpp, including screen readback and a
+screen → memory → screen round trip; the only failures are at 8 bpp and are
+the probe's own palette quantisation, not the driver's), and the engine
+configuration itself.
+
+What is left is the one path none of that instrumentation covers: the game
+creates **exactly one** video-memory surface, the primary, keeps everything
+else in system memory, and DirectDraw can satisfy a lock on the primary from
+`vmiData.fpPrimary` and `lDisplayPitch` without calling the driver at all.
+So the next step is to make that path visible — and to run the game at
+1024x768x16, which is the mode it actually renders in and which no run has
+yet captured a frame of.
+
+### 28. Crimson Skies: it was Direct3D after all, and the bug was the executor's (2026-09-09)
+
+§27 eliminated Direct3D on a run whose device log had no `ddi:` line for the
+title screen. The next session found the opposite on the same image and
+the same disc: the **main menu** (the screen with the logo, the winged
+emblem and the six buttons — the one §26's table calls the title screen)
+is drawn by Direct3D, about 57 textured quads a frame through the DX7 HAL,
+FVF `0x1c4`, eight 256×256 A4R4G4B4 textures bound one at a time as
+`tss 0.0`. The opening splash before it is not, and a run that stopped
+there saw no `ddi:` at all. The §27 eliminations were made on the wrong
+screen, and everything they concluded about GDI and the primary surface
+is moot for this bug.
+
+#### The diagnosis, and what it was not
+
+Two sessions worked it as a texture problem — staleness (`D3DPT_DDI_REREAD=1`:
+no change), the VRAM → host upload (a readback of DXVK's own copy showed the
+crimson logo intact), the bind path (every `SetTexture` succeeded). None of
+those was it, and the `D3DPT_DP2_TRACE` frame had the answer in its first
+lines all along: the state snapshot at the frame start reads
+`tss 0: 1=0x3 … 4=0x4`, i.e. `COLOROP = SELECTARG2` — the diffuse, which
+every vertex carries as `ffffffff` — while `ALPHAOP` used the texture. A
+white silhouette with the texture's alpha is exactly that, not a texture
+gone wrong.
+
+Why the colour op was `SELECTARG2` is in an earlier run's full trace (the
+context's first DP2 calls): the game sets the DirectX 5
+`TEXTUREMAPBLEND` render state (`rs 21 = 2`, `MODULATE`) **with no texture
+bound**, then its own `COLORARG2` and `ALPHAARG2` (`tss 0.3` / `0.6` =
+`DIFFUSE`), and from then on only binds textures per draw. The executor's
+legacy-blend emulation (doc 15 "The white menu text") answered the first
+with "no texture: the diffuse alone" and re-evaluates on each bind only
+while its `legacy_blend` flag is set — and that flag was cleared by *any*
+stage-0 state 1–6, the two ARGs included. So the blend was decided once,
+without a texture, and never again. GTA 2 had shown the first half of this
+on XP (doc 15); Crimson Skies shows that an argument is not an op. The
+executor keeps two flags now, one per op, ended only by the app's own
+`COLOROP` / `ALPHAOP`; `tools/d3dpt-dp2-test.cpp` has the sequence and
+fails on the old executor with both cells at the diffuse.
+
+**Verified in the game the same day**: driven headless to the menu on the
+rebuilt executor, the traced frame (23 draws; the earlier 57 counted a
+transition) has the red and silver logo, the gold winged skull and the
+six gold buttons over the photograph, and its snapshot reads
+`tss 0: 1=0x4` — `MODULATE` — where the broken run's read `0x3`
+(`build/w98game/crimson-menu-fixed.png` on this box).
+
+This is host-side, in `d3dpt/exec/d3dpt_exec_ddi.cpp`, shared by XP and
+9x; nothing in the 9x driver was wrong, and the §27 A/B against Cirrus was
+right for the wrong reason (Cirrus has no 3D, so the game takes a different
+path there).
+
+#### Driving the game headless (what the two sessions learned)
+
+`tools/win98-game-test.sh` with `GUEST_CMD=$'cd C:\\ARQUIV~1\\MICROS~1\\CRIMSO~1\r\nCRIMSON.EXE'`,
+`CDS=` the `C_SKIES.cue`, a large `RUN_SECS`, `TRACE=1`, on a copy of the
+user's `claude98` machine. The game opens a *Select Video Device* dialog on
+the desktop, whose OK button is at 496,302 on the 800×600 desktop: the
+machine has no tablet, so `qmpc.py relclick x y` walks the PS/2 mouse there
+in paced steps reading the position back from the adapter's cursor
+registers (`CLICKS=` uses it unless `TABLET=1`). Then the splash, and
+Space a couple of times to the menu; touch `frames/trace.on` there. Each
+run has its own QMP socket at `OUT/qmp.sock` now — a shared name under
+`/tmp` was unlinked by the other run's QEMU on exit.
+
+#### Still open: the QUIT button's bottom half (found the same day)
+
+With the white fixed, the menu is right but for one thing: the bottom-most
+button (QUIT) renders only its **top half**. The cut is at the quad's own
+vertical midpoint, not a screen row — the button spans y 527–569 and paints
+527–~549, stable across every captured frame (so not a mid-animation
+capture). What it is **not**, each checked:
+
+- **Not the texture.** Tex handle 37 is a full opaque rounded pill (alpha
+  rows 0–41), and the quad's UV covers all of it (0.0–0.164 → texels 0–42).
+- **Not a clip.** A temporary per-draw probe (GetScissorRect /
+  GetViewport / GetRenderTarget) reported scissor 0,0..800,600, scissor
+  test off, viewport 0,0 800×600, RT 800×600 for every draw including these.
+- **Not depth or culling.** ZWRITE is off for the whole button block, ZFUNC
+  GREATEREQUAL against a near-cleared Z, so nothing is depth-rejected; the
+  bottom mechanical panel (drawn earlier, same z, rows 511–599) paints
+  fully to 599. CULLMODE is NONE.
+- **Not the geometry.** All four fan vertices, logged, are a clean full
+  rectangle (429–498 × 527–569 for the right half, uv 0.5–0.77 × 0.0–0.164),
+  z 0.9, rhw 0.00361 — identical in shape to CREDITS above it, which fills.
+- **Not the executor in isolation.** A `tools/d3dpt-dp2-test.cpp` case that
+  draws the same 4-vertex TRIANGLEFAN quad (opaque texture, alpha blend,
+  ZWRITE off + GREATEREQUAL over a near-cleared Z) fills top and bottom
+  equally. So the fan decode and DXVK's rasterisation of one such quad are
+  right; the defect needs the guest's own batch to appear.
+
+So it is a guest-batch-specific interaction not yet explained. The QUIT
+quads are the last two textured fans (vertices 80–87) of a 92-vertex,
+~23-draw single DP2 call. Repro: the driver script kept in
+`build/w98game/CRIMSON-INVESTIGATION.md`, a `D3DPT_DP2_TRACE` frame at the
+menu, and the per-draw `.ppm` dumps read at rows 527–569. Distinct from the
+fixed legacy-blend bug and cosmetic (one button's bottom edge).
+
+#### Measured: which driver files Win98 locks while running (2026-09-09)
+
+Reinstalling the driver over the running one is not a rare case, and Win98
+does lock the files that matter. Probed on `claude98` with the driver
+active (`d3dpt9x: adapter found`, `linear mode on`), by copying each file
+to a backup and then trying to copy it back over the live one:
+
+| file | overwrite the running copy |
+|---|---|
+| `D3DPT9X.DRV` (16-bit display driver, held by GDI) | **fails — locked** |
+| `D3DPT9V.VXD` (VxD, held by the VMM)               | **fails — locked** |
+| `D3DPT9HL.DLL` (ring-3 HAL, loaded per game)       | succeeds — writable |
+
+So the intuition that "9x lets you overwrite any running module" is only
+true for an ordinary on-demand DLL (the HAL, which the probe overwrote
+fine). The display `.DRV` and the statically-loaded `.VXD` — the two files
+`SETUP` copies into `WINDOWS\SYSTEM` — are held open, and a plain reinstall
+fails the copy. That is why `copy_one` schedules a boot-time replace for a
+locked system file (`WININIT.INI [rename]` on 9x, `MoveFileEx` on NT): on
+9x it is needed for the display driver itself, not just as an NT nicety.
+
+### 29. Leaving a DOS box, the blue screen, and the pointer over both (2026-09-09)
+
+Three reports from the same afternoon on `claude98`, all on the driver as
+§26 left it: Blood "hangs with the whole screen glitched when exiting it",
+"a big mouse cursor stays over the screen" while Blood runs, and "BSODs
+don't show up". They are three ends of one fact: §26 taught the adapter to
+give its scanout back to the VGA core for a full-screen DOS box and to take
+it back afterwards, and nothing else in the chain had been taught anything.
+
+#### The exit was not a hang: nobody repainted the desktop
+
+Reproduced headless with `tools/win98-game-test.sh` (Blood quit from its own
+menu, 300 ms key presses — the game polls the keyboard once a frame and
+under TCG a 60 ms tap is lost; `QMPC_HOLD=` in `tools/qmpc.py`). The VxD's
+log on the way back is exactly the §26 sequence — `VGA -> hi-res`,
+`RestoreDesktopMode`, `VGA -> hi-res done`, `linear mode on (800x600x16` —
+and the screen after it is Blood's last 640×480×8 frame tiled two and a
+half times across an 800×600×16 desktop, with the VGA text planes as a
+green band across the top, for as long as anyone waits (130 s measured).
+`info registers` twice showed the vCPU in ring 0 at `HLT`, EIP moving,
+nothing pending in the PIC, and the ACPI button powered the machine off in
+five seconds. Windows was idle and healthy behind a screen nothing had
+asked it to redraw.
+
+The four mini-VDD calls put the *adapter* back. What puts the *desktop*
+back is an older channel the main VDD keeps with the display driver, one
+the DDK sample and `vmdisp9x` (`scrsw.c`, `sswhook.asm`) both implement and
+this driver did not: **INT 2Fh AX=4001h** (`SCREEN_SWITCH_OUT`) raised in
+the Windows VM when the screen is about to be taken away and **AX=4002h**
+(`SCREEN_SWITCH_IN`) when it is back. A display driver hooks the vector in
+`Enable`, and:
+
+- on the way out it sets `BUSY` in the DIB Engine's PDEVICE, so GDI stops
+  drawing. That matters more on this adapter than on most: the desktop's
+  frame buffer and the DOS program's VGA memory are the same bytes from
+  VRAM offset 0, so a repaint arriving during the game lands in the game's
+  screen;
+- on the way back it restores the mode if the PDEVICE is still `BUSY`
+  (clearing the flag) and calls **USER's screen-repaint entry, ordinal
+  275** — undocumented, obtained with `GetProcAddress`, and the thing every
+  window's WM_PAINT after a full-screen session comes from. `DISPLAY.500`
+  (`UserRepaintDisable`) is USER's way of saying "not now"; a repaint that
+  arrives while it says so is delivered when it stops.
+
+The handler is in `dibthunk.asm` (`_SWHook`), the callbacks and the hooking
+in `d3dpt9x.c`. Two mechanics worth having written down: the saved previous
+vector lives in the *code* segment so the chain needs no DS, and code
+segments are read-only, so it is written through a writable alias from
+KERNEL's undocumented `AllocCStoDSAlias` (KERNEL.170, imported by ordinal in
+the `.lnk`) — the DDK's own idiom; and the driver has one code segment
+(`_TEXT`, `preload fixed`), so the asm calls the C callbacks near and the
+alias is of the segment `SWHook` itself is in, which is how §13's empty
+`_TEXT` trap is avoided rather than met again. With the hook in, the VxD
+log reads `switched out` just after `hi-res -> VGA done` (the VDD switches
+the adapter first and tells the display driver second) and `switched in`
+just after `VGA -> hi-res done`, and ten seconds after Blood's Quit the shot
+is the desktop, icons and taskbar, where before it was Blood's frame for as
+long as the run lasted.
+
+#### The big pointer: a sprite over a screen that has no cursor
+
+The Windows pointer is the adapter's cursor sprite since §26, and the
+player, on a machine without `seamless_mouse` (the PS/2 mouse, the pointer
+grabbed — `claude98` is one), composites it into the guest frame itself.
+While Blood ran the guest frame *was* Blood's VGA frame, 640×480 or
+320×200, and the sprite went on being composited into it at the desktop's
+coordinates and scaled with it — the "big mouse cursor". Nothing on the
+guest side turns the sprite off across a screen switch, and nothing should
+have to: a VGA screen has no hardware cursor. `d3dpt-vga` now reports the
+sprite hidden to the console whenever `ENABLE` is off (`fb_cursor_move`
+gates on `r_enable` and is re-run by every `ENABLE` write), and a reset
+drops the shape. XP's full-screen console and both families' blue screens
+get the same treatment for free.
+
+One rule learned the expensive way the same evening: **never
+`dpy_cursor_define(con, NULL)`**. QEMU's console takes a reference on the
+cursor it is handed (`cursor_ref`, an unconditional `c->refcount++`), so a
+NULL is a SIGSEGV in whatever process the device lives in — the user's
+player, on the first Win98 restart after the reset started clearing the
+shape (the core's stack: `cursor_ref` ← `dpy_cursor_define` ←
+`d3dpt_vga_reset`). The original `CURSOR_DEFINE = 0` path had the same
+call and had simply never been taken. "No cursor" to the console is a
+hidden 1×1 transparent one (`fb_cursor_clear`); `tools/win98-game-test.sh`
+with `GUEST_CMD='RUNDLL32 SHELL32.DLL,SHExitWindowsEx 2'` is a Windows
+restart on the device, and the check is that QEMU is still there for the
+second `linear mode on`.
+
+#### The blue screen is drawn by the VDD, and it tells the mini-VDD first
+
+A 9x blue screen — a fatal exception, a "Windows protection error", the
+Ctrl+Alt+Del screen, "It is now safe to turn off your computer" — is
+*message mode*: the VMM stops the world and the main VDD programs VGA text
+mode **itself**, with no int 10h and no display driver drawing. How the
+adapter is told turned out to be two things, and only one of them was
+guessed right. **Measured** with a fatal exception in a VxD (below): the
+VDD takes the ordinary road — `switched out` (the INT 2Fh notification),
+`hi-res -> VGA`, `hi-res -> VGA done` — so §26's `PRE_HIRES_TO_VGA` hook is
+what clears `ENABLE`, and the blue screen has in fact been visible since
+that hook landed in the morning; the reports of invisible ones are from
+the days before it, plus the Blood exit above, which looked like one. The
+DDK's other door, `SAVE_MESSAGE_MODE_STATE` (function 45; `ddk9x/minivdd.h`
+has the list, and its numbering past 43 is not the one older write-ups
+give — 45 is *not* `TURN_VGA_OFF`), the VDD calls **once at boot**, before
+the desktop's mode is set, and by its description for message screens that
+cannot go through a VM switch; `d3dptvxd.c` answers it by clearing `ENABLE`
+too, which is harmless at boot and the right thing whenever it is used for
+what its name says. §15's archaeology — reading the text page out of VRAM
+after the fact — stays in the harnesses, because it is also how a
+*continued* blue screen is proved to have happened, but it is no longer how
+a person at the window finds out.
+
+`tools/win98-bsod-test.sh` is the guard: it blue-screens a copy of the
+image on purpose. `RUN.BAT` runs `BSOD.EXE` (`w9x/bsod.c`), which loads
+`BSODVXD.VXD` (`w9x/bsodvxd.c`) through the `\\.\<path>` door — a dynamic
+VxD of ours, forty lines, whose `Sys_Dynamic_Device_Init` executes `ud2` in
+ring 0, so the VMM puts up "exception 06 in VxD BSODVXD(01)". Two things
+were tried first and are kept as a note: the famous `C:\con\con` IFSMGR
+fault, which this image turns out to be patched against (the Win32
+`CreateFile` came back with an error and the program lived), and the same
+path from the DOS box itself, which only ends the DOS box with an "illegal
+operation" dialog — the VMM terminates a V86 VM that faults and reserves
+the blue screen for a fault in the Windows VM. A trigger a test depends on
+has to be something we ship. The test requires the adapter to have left the linear mode for it
+(`hi-res -> VGA` or `message mode`, then `linear mode off`, all after the
+desktop's first `linear mode on`), a screendump meanwhile that is mostly
+the screen's blue — measured 2026-09-09: *"Ocorreu um erro fatal 06 em
+0028:C14E78B9 no VXD BSODVXD(01) + 00000059 … Pressione qualquer tecla para
+continuar"*, white on blue, in a headless screendump — the VRAM text page
+naming a VxD or the `0028:` selector, and, after a key, `linear mode on`
+again, a last screendump that is not blue, and a clean power-off. The mini-VDD also logs
+the first few calls of every other notification entry (`vdd fn=…`), which
+is how the sequences above were read rather than guessed: around the four §26
+entries of a full-screen switch the VDD also calls `RESTORE_REGISTERS` (9),
+`ACCESS_VGA_MEMORY_MODE` (11), `ENABLE_TRAPS` (13) and
+`MAKE_HARDWARE_NOT_BUSY` (15), and `DISABLE_TRAPS` (14) once the desktop is
+back; `SAVE_REGISTERS` (8) and `POST_CRTC_MODE_CHANGE` (29) at the mode set.
+None of them needs an answer from us.
+
+**Total Annihilation's "crash on exit"** (the third report of the
+evening) did not reproduce: with the pointer walked blind to the main
+menu's EXIT and clicked (`CLICKS=80:458,437`; the walk reads the sprite's
+registers, and a game that hides the Windows pointer and draws its own
+stops them, so `qmpc.py relclick` now goes blind after eight unmoving
+steps), the HAL restored the desktop mode, the 800×600 desktop was back
+and clean eight seconds later, and the machine powered off on the button.
+What was not exercised is an exit from inside a skirmish, which is where
+the user plays; the harness would need to drive the skirmish setup first.
+
+`tools/win98-game-test.sh` grew two things for this: `TEXT_AT=<s>` reads
+the VGA text page during the run as well as at the end, and a machine that
+does not answer the power button is asked `info registers` twice and
+`info pic` / `info lapic` before it is killed (`OUT/hang.txt`), the
+CLAUDE.md recipe for telling a dead guest from an unrepainted one.
+
+### 30. The blue screen was a heap overrun at the 16→8 bpp switch (2026-09-10)
+
+The user opened Carmageddon on `claude98`, the screen switched to a low
+resolution "and then it broke": a blue screen that showed but did not come
+back — the desktop returned glitched and unresponsive, only the mouse
+pointer alive (which on this driver is the adapter's own sprite, moved at
+interrupt time, so it goes on tracking over a dead Windows VM — not
+evidence of life). The message was the recoverable kind, *"Ocorreu um erro
+fatal … o aplicativo em uso será encerrado"*.
+
+**It reproduced headless on the first try.** `tools/win98-game-test.sh`
+with `GUEST_CMD` starting Carmageddon (its "Enter password for uncut
+version" dialog takes a single space) blue-screened every run, always just
+after `linear mode on (320x200x8`: *"exceção 0E … em VxD VMM(01) … chamada
+de … VTDAPI(01)"* one run, `VSB16` the next, KERNEL32 under the game
+itself a third — three different callers into one fault, the signature of
+memory scribbled somewhere shared rather than a bug in any one of them.
+Windows' own Cirrus driver (`VGA=cirrus`) reached Carmageddon's 320×200
+main menu in the same run, so the fault was ours.
+
+**The scribble was the 8 bpp colour table, written past the display's
+PDEVICE.** `ddprobe.exe` grew a `DDPROBE <w> <h> <bpp> [sys]` mode test —
+an exclusive `SetDisplayMode`, a flipping primary (with
+`DDSCAPS_SYSTEMMEMORY`, the way Carmageddon asks), a palette, five flips —
+and it blue-screened at 320×200×8 with the game's exact signature and none
+of the game's code in the way. That named the moment: setting an 8 bpp
+mode. `Enable`'s GDIINFO half sizes the display PDEVICE, and it added room
+for 256 `RGBQUAD`s of colour table *only when the current mode is 8 bpp*.
+But GDI allocates that PDEVICE **once**, at boot, from the desktop's
+depth — 16 bpp on `claude98` — and `ReEnable` reuses the same block for
+every later mode change. So a game switching the desktop from 16 bpp to
+320×200×8 made `Enable`'s hardware half write 256 `RGBQUAD`s (1 KiB) one
+kilobyte past the end of a PDEVICE allocated without them, into whatever
+VMM/VxD structure the GDI heap put next — hence a fault that surfaced in a
+different VxD each run. The fix is one line: reserve the colour table in
+`dpDEVICEsize` **for every depth**, so the block is large enough whatever
+mode a game later asks for. With it, Carmageddon sets 320×200×8 and the
+probe runs its whole flip chain, neither blue-screening (measured
+2026-09-10; the same fault, the same string, gone across the game and two
+probe variants).
+
+This is the fourth "a value the 8 bpp path needs, missing where the mode
+was really decided" on this driver (§13 the thunk, §15 the text page, §24
+the uninitialised palette, and now the PDEVICE size), and the second
+caused specifically by a boot at one depth and a game at another — the
+first was the palette of §26. The desktop's depth is not a spectator: a
+16 bpp desktop and an 8 bpp game share one PDEVICE, and everything that
+block must hold has to be sized for the deepest colour table, not the
+current one.
+
+**And then the black screen was not the palette — it was that the game
+had never been meant to get a driver mode at all (2026-09-10, later the
+same day).** With the crash gone Carmageddon set 320×200×8, stayed in it
+for under a second, restored the desktop mode, and the screen went black
+for as long as it was left; the first reading (a system-memory primary
+whose frame reaches VRAM but whose palette never reaches the DAC) was
+wrong on both counts, and the way it was wrong is the lesson:
+
+- **The "frame in VRAM" was the desktop.** Rendered, the 137-index frame
+  read out of VRAM is the Windows desktop repainted at 320×200 through the
+  8 bpp halftone palette — GDI's own paint after the mode switch, which is
+  what any 320×200×8 VRAM holds for the first second. The game's frame was
+  never there.
+- **The palette route works.** `ddprobe.exe`'s mode test grew the game's
+  own cooperative level (`modex` = `DDSCL_ALLOWMODEX | DDSCL_ALLOWREBOOT`)
+  and a `hold`, and on the driver's 320×200×8 mode its screen came up in
+  **its own palette's index 0** — solid green — so an `IDirectDrawPalette`
+  set on a system-memory primary *does* reach `REG_PALETTE`, through GDI's
+  `SetPalette` export. What never arrived was the content: a
+  `DDSCAPS_SYSTEMMEMORY` flipping primary on a driver mode is a private
+  buffer the runtime flips by pointer swap and presents to nothing — the
+  HAL hears of no surface, VRAM stays at the desktop, and the probe's five
+  flips changed no byte of it. (The probe's release of that chain then
+  never returned, on every run: an open item, below.)
+- **Where the game's frame went on Cirrus.** The inbox `cirrus.drv` has a
+  320×200 mode and no DirectDraw HAL, so its primary is DCI's — the frame
+  buffer through VFLATD, `lpSurface d3ebf000` in the probe's log against
+  `00022bd0` on ours — and a "system-memory" primary there *is* the
+  screen. That is the whole of the Cirrus difference: not a palette route.
+- **What the game was written for.** Its `SSDXStart` (the debug strings
+  are still in `CARM95.EXE`, though its log function is compiled to a
+  return) calls `SetCooperativeLevel` with `0x53` and one plain
+  `IDirectDraw::SetDisplayMode(320, 200, 8)`, then creates
+  `PRIMARYSURFACE | FLIP | COMPLEX | SYSTEMMEMORY` (`0xa18`). That is the
+  DirectX SDK's **Mode X recipe**: with `DDSCL_ALLOWMODEX`, a 320×200
+  request that the driver does not list is answered by the runtime's own
+  Mode X, which switches the display driver *out* (GDI `Disable`, the
+  mini-VDD's `VDD_DISPLAY_DRIVER_DISABLING`), programs the VGA registers
+  and the DAC itself and copies the system-memory chain into planar VGA
+  memory on every `Flip` — system memory is the *only* place a Mode X
+  surface can live. A 1997 driver with no 320×200 mode gave the game
+  exactly that; ours listed 320×200 and 320×240 as driver modes **and**
+  set `DDHALINFO_MODEXILLEGAL`, so the game got a real linear mode with a
+  primary nothing presents, and even the probe's explicit
+  `DDSDM_STANDARDVGAMODE` came back as the driver mode. The reference
+  driver lists no 320-wide mode and leaves the flag clear.
+
+**The fix is to stop offering what DirectDraw does better:** the two
+320-wide modes are gone from `BuildHalInfo`'s table and
+`DDHALINFO_MODEXILLEGAL` is not set. Measured with the game: `SetDisplayMode`
+now takes the driver to 640×480×8 for a third of a second (the runtime's
+8 bpp GDI surface for Mode X), the display driver is switched out, and the
+VGA core reports `cr1=4f cr7=1f cr9=41 cr12=8f sr4=06` — Mode X 320×200,
+unchained, double-scanned — with 739 DAC bytes programmed and all of the
+first 256 KB of VRAM written; the screendump is Carmageddon's menu and,
+after the harness's Esc, its Quit dialog in colour. The probe's
+`320 200 8 sys modex` shows its own diagonal ramps the same way (its
+`GetDisplayMode` caps carry `DDSCAPS_MODEX`, its primary refuses `Lock`
+as a Mode X primary must, and its release and `RestoreDisplayMode` come
+back clean), and the game answers the power button, which it did not
+before.
+
+**Two things the harness had hidden.** The switched-out screen stayed on
+the *previous* frame for 45 s: `d3dpt-vga` holds the last linear frame
+for a moment after `ENABLE` goes 0 (so a mode switch's RESET does not
+flash the VGA core), and it counted that moment in display refreshes —
+250 ms under the player, but a headless console refreshes every 3 s, so
+the hold was 15 × 3 s over a Mode X game that was drawing all along. It
+is `D3DPT_FB_VGA_GRACE_MS`, wall clock, now. And every `hang.txt` of the
+probe runs was misread: `CS=F000 EIP=D40F` in V86 mode is SeaBIOS's
+interrupt-stub `iret`, which is where an *idle* Windows 98 spends its
+time; a machine that does not answer the power button because a
+full-screen DirectDraw process is stuck is not a dead machine.
+
+**Understood, and left as a runtime limitation (2026-09-10):** a
+system-memory *flipping* primary in exclusive full-screen on a **driver**
+mode hangs the process that owns it — `DDPROBE 640 480 8 sys` is the
+repro (320×200 no longer reaches a driver mode at all, it is Mode X now).
+It is not our flip: traced, the DirectDraw app thread blocks inside
+`Flip`'s `DDFLIP_WAIT` waiting for a completion that never comes, and 52
+of 60 external EIP samples are the System VM idling in V86 — the thread is
+*blocked*, not busy, so the machine is healthy but the app never returns
+and the ACPI power button, which the full-screen exclusive app is holding,
+goes unanswered. The 8 sysmem-flip surfaces are the runtime's own
+(`DDSCAPS_SYSTEMMEMORY`, guest RAM, never VRAM); the runtime composites
+them to the visible primary itself and blocks on its own present. Our
+`Flip32` writing the target's system address into the scanout `OFFSET`
+register was wrong and is worth noting — it drops the device out of
+linear mode — but declining the flip (`DDHAL_DRIVER_NOTHANDLED` for a
+`DDSCAPS_SYSTEMMEMORY` target) only moved the block earlier and made it
+deterministic, which is the proof the stall is the runtime's, not the
+register write's. **No shipped title reaches this:** a 320×200 game gets
+Mode X (which runs on the VGA core, driver switched out), and a game at
+640×480 uses a *video-memory* primary, which flips through the OFFSET
+register and does not block. Left as a known limitation of a
+`DDCAPS_GDI` driver under the DirectX 6 HEL rather than chased into the
+runtime; `ddprobe.exe`'s `sys`/`modex`/`vga`/`hold` mode test is the
+standing repro.
+
+The device now reports the VGA core's mode registers once per change
+(`d3dpt-vga: vga core cr1=… sr4=…`) while the linear mode is off, because
+which VGA mode a guest programmed after the driver let go — a Mode X, a
+DOS game's 13h, a blue screen's text mode — was otherwise invisible in a
+headless run.
+
+The probe's log now closes and reopens after every line (`fopen(…,"a")`):
+a blue screen a few DirectDraw calls later otherwise left a 0-byte
+`DDPROBE.LOG` on the disk, the directory entry's size never written,
+because a plain `fflush` hands the bytes to the FAT driver but not the
+length to the directory. `tools/win98-game-test.sh` gained UTC timestamps
+on every event (its own and QEMU's `-msg timestamp=on`), so a screen
+switch shorter than one screendump interval can still be placed.

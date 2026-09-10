@@ -340,6 +340,327 @@ static void __stdcall register_display_driver_proc(DWORD vm, PCRS_32 state)
     dbg_str("d3dptvxd: display driver registered");
 }
 
+/* ------------------------------------------------- the screen switch
+ *
+ * **A DOS box takes the screen away, and somebody has to give it back.**
+ * When a VM goes full-screen the main VDD switches the adapter from the
+ * display driver's hi-res mode to VGA and lets the DOS program program the
+ * VGA registers itself. Our adapter is a VGA *and* a linear frame buffer,
+ * and while `D3DPT_FB_REG_ENABLE` is set the device scans out the linear
+ * one — so the DOS program writes VGA memory at A0000 and nothing of it
+ * reaches the screen, which goes on showing the frozen desktop. Every
+ * full-screen DOS game "glitches out", whatever mode it asks for.
+ *
+ * The main VDD tells the mini-VDD when this is about to happen and when it
+ * is over; nothing else in the system knows about the register. The way
+ * back is the display driver's `RestoreDesktopMode`, which the VDD calls
+ * through the callback registered with `VDD_DRIVER_REGISTER` and which
+ * writes every mode register including ENABLE — so `POST_VGA_TO_HIRES`
+ * only has to make sure, and the device keeps width/height/bpp/pitch across
+ * an ENABLE of 0 anyway.
+ *
+ * **Measured 2026-09-09**, Alt+Enter on a DOS box and back: all four are
+ * called, in order, with the display driver's callback in the middle —
+ *
+ *     d3dptvxd: hi-res -> VGA
+ *     d3dptvxd: hi-res -> VGA done
+ *     d3dptvxd: VGA -> hi-res
+ *     d3dpt9x: RestoreDesktopMode
+ *     d3dptvxd: VGA -> hi-res done
+ *
+ * — and with the ENABLE write in `PRE_HIRES_TO_VGA`, Blood renders
+ * full-screen at 640x480 through the device's VGA core for the whole of its
+ * attract demo, then the desktop comes back. Which of these the VDD calls
+ * for a given kind of switch is not something the DDK headers say, so they
+ * all log; that log is what the round trip above was read off.
+ *
+ * One thing to know if this ever looks wrong again: judging it from an
+ * *interim* read of the log is how it gets misread. Half way through that
+ * run only the first two lines existed and the screen was still the frozen
+ * desktop — the DOS box had not left its prompt yet — which reads exactly
+ * like a one-way switch into a black screen. Wait for the run to end. */
+static void __stdcall hires_to_vga_proc(void)
+{
+    dbg_str("d3dptvxd: hi-res -> VGA");
+    if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 0;
+}
+
+static void __stdcall post_hires_to_vga_proc(void)
+{
+    dbg_str("d3dptvxd: hi-res -> VGA done");
+}
+
+static void __stdcall pre_vga_to_hires_proc(void)
+{
+    dbg_str("d3dptvxd: VGA -> hi-res");
+}
+
+static void __stdcall vga_to_hires_proc(void)
+{
+    dbg_str("d3dptvxd: VGA -> hi-res done");
+    if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 1;
+}
+
+/* ------------------------------------------------- the blue screen
+ *
+ * **A blue screen is a message screen, and the VDD draws it itself.** A
+ * fatal exception, a "Windows protection error", the Ctrl+Alt+Del screen,
+ * "It is now safe to turn off your computer": the VMM enters *message
+ * mode* and the main VDD programs VGA text mode directly — no int 10h, no
+ * display driver drawing. With ENABLE left on the device went on scanning
+ * out the frozen desktop, and every blue screen this driver produced in its
+ * first three days was invisible: doc 19 §15 is the archaeology of reading
+ * them out of VRAM afterwards, and the user's report that "BSODs don't
+ * show up" (2026-09-09) is the same thing seen from the chair.
+ *
+ * Measured with tools/win98-bsod-test.sh (a VxD of ours faulting at load):
+ * a fatal exception in the Windows VM takes the ordinary road — the INT 2Fh
+ * notification to the display driver, then PRE_HIRES_TO_VGA above — so the
+ * hook above is what puts that one on the screen. SAVE_MESSAGE_MODE_STATE
+ * is the DDK's other door, for message screens the VDD puts up without a VM
+ * switch; this VMM calls it once at boot, before the mode is set, and would
+ * call it for those. ENABLE off here too: harmless at boot, right whenever
+ * it is used for what its name says. The way back after "press any key to
+ * continue" is RestoreDesktopMode, as after any switch. */
+static void __stdcall save_message_mode_proc(void)
+{
+    dbg_str("d3dptvxd: message mode: VGA text");
+    if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 0;
+}
+
+/* The notifications that are only logged, the first four of each — enough
+ * to read a sequence off, not enough to fill the log on a machine that
+ * switches VMs all day (SAVE/RESTORE_REGISTERS run at every VM switch). */
+static BYTE seen[64] = {0};
+
+static void __stdcall note_proc(DWORD fn)
+{
+    if (fn < 64 && seen[fn]++ < 4) dbg_val("d3dptvxd: vdd fn", fn);
+}
+
+/* The VDD calls a dispatch entry with EBX = VM and EBP = client registers.
+ * These want neither, so each thunk is a register-preserving call with
+ * carry clear on the way out ("handled, no objection").
+ *
+ * Written out four times rather than from a macro: Open Watcom's inline
+ * assembler does not take the callee's name through a macro parameter — it
+ * assembles a call to nothing and the compiler then warns that the function
+ * is "defined, but not referenced", which is the only sign you get. */
+static void __declspec(naked) hires_to_vga_entry(void)
+{
+    _asm {
+        pushad
+        call hires_to_vga_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) post_hires_to_vga_entry(void)
+{
+    _asm {
+        pushad
+        call post_hires_to_vga_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) pre_vga_to_hires_entry(void)
+{
+    _asm {
+        pushad
+        call pre_vga_to_hires_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) vga_to_hires_entry(void)
+{
+    _asm {
+        pushad
+        call vga_to_hires_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) save_message_mode_entry(void)
+{
+    _asm {
+        pushad
+        call save_message_mode_proc
+        popad
+        clc
+        retn
+    }
+}
+
+/* One logging thunk per entry, each pushing its own number (note_proc is
+ * __stdcall, so it pops it). Thirteen copies rather than a macro, for the
+ * reason above: the inline assembler takes no macro parameter, not even a
+ * literal — `push n` through one is "Invalid instruction operands". */
+static void __declspec(naked) note_8_entry(void)
+{
+    _asm {
+        pushad
+        push 8
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) note_9_entry(void)
+{
+    _asm {
+        pushad
+        push 9
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) note_11_entry(void)
+{
+    _asm {
+        pushad
+        push 11
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) note_12_entry(void)
+{
+    _asm {
+        pushad
+        push 12
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) note_13_entry(void)
+{
+    _asm {
+        pushad
+        push 13
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) note_14_entry(void)
+{
+    _asm {
+        pushad
+        push 14
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) note_15_entry(void)
+{
+    _asm {
+        pushad
+        push 15
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) note_26_entry(void)
+{
+    _asm {
+        pushad
+        push 26
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) note_28_entry(void)
+{
+    _asm {
+        pushad
+        push 28
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) note_29_entry(void)
+{
+    _asm {
+        pushad
+        push 29
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) note_39_entry(void)
+{
+    _asm {
+        pushad
+        push 39
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) note_40_entry(void)
+{
+    _asm {
+        pushad
+        push 40
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
+static void __declspec(naked) note_46_entry(void)
+{
+    _asm {
+        pushad
+        push 46
+        call note_proc
+        popad
+        clc
+        retn
+    }
+}
+
 /* The main VDD calls a dispatch entry with EBX = VM, EBP = client
  * registers, and expects the flags left alone; this is the thunk that
  * turns that into a C call. */
@@ -368,9 +689,27 @@ void __stdcall Device_Init_proc(DWORD VM)
 
     VDD_Get_Mini_Dispatch_Table();
     dbg_val("d3dptvxd: dispatch entries", DispatchTableLength);
-    if (DispatchTable && DispatchTableLength >= 0x31)
+    if (DispatchTable && DispatchTableLength > VDD_SAVE_FORCED_PLANAR_STATE) {
         DispatchTable[VDD_REGISTER_DISPLAY_DRIVER] = (DWORD)register_display_driver_entry;
-    else
+        DispatchTable[VDD_PRE_HIRES_TO_VGA]  = (DWORD)hires_to_vga_entry;
+        DispatchTable[VDD_POST_HIRES_TO_VGA] = (DWORD)post_hires_to_vga_entry;
+        DispatchTable[VDD_PRE_VGA_TO_HIRES]  = (DWORD)pre_vga_to_hires_entry;
+        DispatchTable[VDD_POST_VGA_TO_HIRES] = (DWORD)vga_to_hires_entry;
+        DispatchTable[VDD_SAVE_MESSAGE_MODE_STATE] = (DWORD)save_message_mode_entry;
+        DispatchTable[VDD_SAVE_REGISTERS]    = (DWORD)note_8_entry;
+        DispatchTable[VDD_RESTORE_REGISTERS] = (DWORD)note_9_entry;
+        DispatchTable[VDD_ACCESS_VGA_MEMORY_MODE]    = (DWORD)note_11_entry;
+        DispatchTable[VDD_ACCESS_LINEAR_MEMORY_MODE] = (DWORD)note_12_entry;
+        DispatchTable[VDD_ENABLE_TRAPS]      = (DWORD)note_13_entry;
+        DispatchTable[VDD_DISABLE_TRAPS]     = (DWORD)note_14_entry;
+        DispatchTable[VDD_MAKE_HARDWARE_NOT_BUSY]    = (DWORD)note_15_entry;
+        DispatchTable[VDD_DISPLAY_DRIVER_DISABLING]  = (DWORD)note_26_entry;
+        DispatchTable[VDD_PRE_CRTC_MODE_CHANGE]      = (DWORD)note_28_entry;
+        DispatchTable[VDD_POST_CRTC_MODE_CHANGE]     = (DWORD)note_29_entry;
+        DispatchTable[VDD_PRE_HIRES_SAVE_RESTORE]    = (DWORD)note_39_entry;
+        DispatchTable[VDD_POST_HIRES_SAVE_RESTORE]   = (DWORD)note_40_entry;
+        DispatchTable[VDD_SAVE_FORCED_PLANAR_STATE]  = (DWORD)note_46_entry;
+    } else
         dbg_str("d3dptvxd: the VDD's dispatch table is not the shape we expect");
 
     dbg_str("d3dptvxd: ready");

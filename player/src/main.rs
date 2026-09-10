@@ -755,6 +755,10 @@ struct App {
     source: Option<Source>,
     audio: Option<audio::Output>,
     latency: Vec<f32>, // ms, publish→present per presented guest frame
+    /// `PLAYER_SHOT_EVERY`: the guest-frame bucket the last periodic shot
+    /// was taken in, so a run shoots once per bucket however often it
+    /// redraws.
+    shot_bucket: u64,
     modifiers: ModifiersState,
     grabbed: bool,
     /// Keys currently held in the guest (QEMU qcodes). Lifted when the window
@@ -1610,6 +1614,23 @@ impl ApplicationHandler for App {
                     None => {}
                 }
                 gpu.render(frame);
+                // PLAYER_SHOT_EVERY=<n>: the Ctrl+Alt+S shot on its own, once
+                // every n guest frames. How a scripted run sees a 3D frame at
+                // all: a QMP screendump shows only the VGA surface, which is
+                // frozen while the guest presents through the 3D device
+                // (CLAUDE.md), and this shot is of whatever the window shows,
+                // the imported 3D slot included.
+                if published.is_some() {
+                    if let (Some(every), Some(Source::Qemu { last_seq, .. })) =
+                        (shot_every(), self.source.as_ref())
+                    {
+                        let bucket = *last_seq / every;
+                        if bucket != self.shot_bucket {
+                            self.shot_bucket = bucket;
+                            gpu.screenshot();
+                        }
+                    }
+                }
                 if let Some(t) = published {
                     // publish→present (measured after the present call) — doc 03 latency gate
                     self.latency.push(t.elapsed().as_secs_f32() * 1000.0);
@@ -1755,10 +1776,15 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _el: &ActiveEventLoop) {
-        // Headless verification (PLAYER_DUMP_OUT): an occluded window may never
-        // get RedrawRequested, but the shader chain renders into our own
-        // texture, so drive the frame from here in that mode.
-        if std::env::var("PLAYER_DUMP_OUT").is_ok() {
+        // Headless verification (PLAYER_DUMP_OUT, PLAYER_SHOT_EVERY): an
+        // occluded window may never get RedrawRequested — and a scripted
+        // run's window is behind a terminal, or on another workspace, as a
+        // rule — but the shader chain renders into our own texture, so
+        // drive the frame from here in those modes. (The first PLAYER=1
+        // run of tools/win98-game-test.sh took no shot at all with the
+        // periodic shot on the redraw path, 2026-09-10.)
+        let every = shot_every();
+        if std::env::var("PLAYER_DUMP_OUT").is_ok() || every.is_some() {
             if let Some(Source::Qemu {
                 display, last_seq, ..
             }) = self.source.as_mut()
@@ -1766,6 +1792,13 @@ impl ApplicationHandler for App {
                 if let Some(gpu) = self.gpu.as_mut() {
                     if present_guest_frame(gpu, display, last_seq, true).is_some() {
                         gpu.render(None);
+                        if let Some(every) = every {
+                            let bucket = *last_seq / every;
+                            if bucket != self.shot_bucket {
+                                self.shot_bucket = bucket;
+                                gpu.screenshot();
+                            }
+                        }
                     }
                 }
             }
@@ -1785,6 +1818,18 @@ impl ApplicationHandler for App {
             }
         }
     }
+}
+
+/// `PLAYER_SHOT_EVERY=<n>`: shoot the guest's own frame every n presented
+/// guest frames (see `Gpu::screenshot`). Unset or 0 = never.
+fn shot_every() -> Option<u64> {
+    static EVERY: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *EVERY.get_or_init(|| {
+        std::env::var("PLAYER_SHOT_EVERY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n| n > 0)
+    })
 }
 
 /// Debug: PLAYER_DUMP=<file.png> writes guest frame #PLAYER_DUMP_SEQ (default

@@ -139,6 +139,7 @@ export GetDriverResourceID.450
 export UserRepaintDisable.500
 export ValidateMode.700
 import GlobalSmartPageLock KERNEL.230
+import AllocCStoDSAlias KERNEL.170
 LNK
 ( cd "$BUILD" && wlink op quiet, start=DriverInit_ disable 2055 @d3dpt9x.lnk )
 
@@ -149,13 +150,28 @@ echo "==> d3dptvxd.obj (32-bit, ring 0)"
 ( cd "$BUILD" && wcc386 -q -wx -wcd=303 -s -zls -mf -6s -fp6 -ei -zp1 \
     -I"$DDK" -I"$SRC" -fo=d3dptvxd.obj "$SRC/d3dptvxd.c" )
 
-echo "==> d3dpt9v.vxd"
-cat > "$BUILD/d3dpt9v.lnk" <<'LNK'
+# wlink's LE output is not quite a VxD yet. The fix is the object table,
+# not the header (this is what vmdisp9x's `fixlink -vxd32` does): every
+# object must be marked executable, and every object's base virtual
+# address must be zero, because a VxD is flat — all its pages start at the
+# beginning. The module-type field is set to what a real Windows 98 VxD
+# carries as well (checked against the guest's own VJOYD.VXD and
+# FXMEMMAP.VXD, both 0x38000). Then: the DDB must sit at offset 0 of the
+# VxD's one object — that is where the entry table points and where the
+# VMM's loader looks. Anything the compiler emits into the same segment
+# ahead of it — a string literal, a const array, a static without an
+# initialiser — pushes it off, and the VMM then declines the module in
+# complete silence (doc 19 Section 12). The map says where it went, so the
+# build checks. Two VxDs go through this: the mini-VDD and the blue-screen
+# trigger of tools/win98-bsod-test.sh.
+link_vxd() {   # link_vxd <name> <object>: $BUILD/<name>.vxd from $BUILD/<object>.obj
+  local name="$1" obj="$2"
+  cat > "$BUILD/$name.lnk" <<LNK
 system win_vxd dynamic
-option map=d3dpt9v.map
+option map=$name.map
 option nodefaultlibs
-name d3dpt9v.vxd
-file d3dptvxd.obj
+name $name.vxd
+file $obj.obj
 segment '_LTEXT' PRELOAD NONDISCARDABLE IOPL
 segment '_TEXT'  PRELOAD NONDISCARDABLE IOPL
 segment '_DATA'  PRELOAD NONDISCARDABLE IOPL
@@ -163,16 +179,8 @@ segment 'CONST'  PRELOAD NONDISCARDABLE IOPL
 segment 'CONST2' PRELOAD NONDISCARDABLE IOPL
 export VXD_DDB.1
 LNK
-( cd "$BUILD" && wlink op quiet @d3dpt9v.lnk )
-
-# wlink's LE output is not quite a VxD yet. The fix is the object table,
-# not the header (this is what vmdisp9x's `fixlink -vxd32` does): every
-# object must be marked executable, and every object's base virtual
-# address must be zero, because a VxD is flat — all its pages start at the
-# beginning. The module-type field is set to what a real Windows 98 VxD
-# carries as well (checked against the guest's own VJOYD.VXD and
-# FXMEMMAP.VXD, both 0x38000).
-python3 - "$BUILD/d3dpt9v.vxd" <<'PYVXD'
+  ( cd "$BUILD" && wlink op quiet @$name.lnk )
+  python3 - "$BUILD/$name.vxd" <<'PYVXD'
 import struct, sys
 p = sys.argv[1]
 f = bytearray(open(p, 'rb').read())
@@ -201,21 +209,25 @@ for i in range(nobj):
           % (i, size, addr, oflags, oflags | 4))
 open(p, 'wb').write(f)
 PYVXD
-
-# The DDB must sit at offset 0 of the VxD's one object: that is where the
-# entry table points and where the VMM's loader looks. Anything the compiler
-# emits into the same segment ahead of it — a string literal, a const array —
-# pushes it off, and the VMM then declines the module in complete silence
-# (doc 19 Section 12). The map says where it went, so the build checks.
-awk '/^0001:00000000 +VXD_DDB$/ { found = 1 }
-     END { if (!found) {
-        print "d3dpt9v.vxd: VXD_DDB is not at 0001:00000000 — the VMM will"
-        print "  ignore this module without a word. Something in _LTEXT is"
-        print "  emitted ahead of it; see the map:"
-        exit 1 } }' "$BUILD/d3dpt9v.map" || {
-  grep -m5 -A4 'Module: d3dptvxd' "$BUILD/d3dpt9v.map"
-  exit 1
+  awk -v n="$name" '/^0001:00000000 +VXD_DDB$/ { found = 1 }
+       END { if (!found) {
+          print n ".vxd: VXD_DDB is not at 0001:00000000 — the VMM will"
+          print "  ignore this module without a word. Something in _LTEXT is"
+          print "  emitted ahead of it; see the map:"
+          exit 1 } }' "$BUILD/$name.map" || {
+    grep -m5 -A4 "Module: $obj" "$BUILD/$name.map"
+    exit 1
+  }
+  cp "$BUILD/$name.vxd" "$OUT/"
 }
+
+echo "==> d3dpt9v.vxd"
+link_vxd d3dpt9v d3dptvxd
+
+echo "==> bsodvxd.vxd (blue-screens on load: the trigger for tools/win98-bsod-test.sh)"
+( cd "$BUILD" && wcc386 -q -wx -wcd=303 -s -zls -mf -6s -fp6 -ei -zp1 \
+    -I"$DDK" -I"$SRC" -fo=bsodvxd.obj "$SRC/bsodvxd.c" )
+link_vxd bsodvxd bsodvxd
 
 echo "==> resources into the module"
 ( cd "$BUILD" && wrc -q d3dpt9x.res d3dpt9x.drv )
@@ -357,15 +369,18 @@ HALCC=i686-w64-mingw32-gcc
 # base it actually got and says so rather than running on a bad one.
 HAL_BASE=0xB00B0000
 if command -v "$HALCC" >/dev/null; then
-  echo "==> d3dpt9hl.dll (the ring-3 DirectDraw / Direct3D HAL)"
+  CORE="$ROOT/guest-tools/src/d3dptvid/core"
   "$HALCC" -O2 -Wall -Wno-unused-function -shared -nostdlib -ffreestanding \
      -fno-stack-protector -mno-stack-arg-probe -fno-asynchronous-unwind-tables \
      -fno-ident -march=pentium3 -mtune=generic -fno-tree-loop-distribute-patterns \
      -Wl,--enable-stdcall-fixup -Wl,--entry,_DllMain@12 \
      -Wl,--image-base,$HAL_BASE \
      -Wl,--disable-dynamicbase,--disable-nxcompat,--subsystem,windows \
-     -I"$SRC" \
-     -o "$BUILD/d3dpt9hl.dll" "$SRC/d3dpthal.c" "$SRC/d3dpthal.def" -lgcc -lkernel32
+     -I"$SRC" -I"$CORE" \
+     -o "$BUILD/d3dpt9hl.dll" "$SRC/d3dpthal.c" "$SRC/d3dpthal.def" \
+     "$CORE/core_flip.c" "$CORE/core_caps.c" "$CORE/core_surf.c" \
+     "$CORE/core_ctx.c" "$CORE/core_dp2.c" \
+     -lgcc -lkernel32
   # `-nostdlib` drops the default libraries, so kernel32 is named on
   # purpose: it is the one import this DLL is allowed (the check below
   # enforces exactly that), and the OS services the core will ask for —
@@ -378,7 +393,22 @@ if command -v "$HALCC" >/dev/null; then
   [ -z "$bad" ] || { echo "ERROR: d3dpt9hl.dll imports from $bad"; exit 1; }
   n=$(i686-w64-mingw32-objdump -d "$BUILD/d3dpt9hl.dll" | grep -cE '\b(movdq[au]|movapd|movupd|pshufd|paddq|cvtsd2|cvtsi2sd|xorpd|andpd|popcnt|pshufb)\b' || true)
   [ "$n" -eq 0 ] || { echo "ERROR: d3dpt9hl.dll contains $n SSE2+ instructions (pentium3 floor)"; exit 1; }
-  i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | grep -qE '^\s+\[.*\]  *[0-9a-f]+ DriverInit$' \
+  # `\bDriverInit$`, not a column-by-column match of objdump's export line.
+  # The strict form (`\[.*\]  *[0-9a-f]+ DriverInit$`) depends on how many
+  # hex digits objdump prints for the export RVA and how it spaces them, and
+  # it has failed twice on a DLL that was perfectly good — a rebuild with
+  # identical inputs passed both times. A build check that cries wolf is
+  # worse than no check: the name appears nowhere else in this output.
+  #
+  # And it must not pipe objdump *into* `grep -q`: grep closes the pipe on
+  # the match, objdump takes SIGPIPE (141), and under `set -o pipefail`
+  # (line 23) the pipeline then reports failure even though the export was
+  # found — a race that failed roughly one build in eight on a good DLL,
+  # only under the CPU load of a full build (2026-09-09). Every other check
+  # here reads objdump's whole output first; this one now does too, matching
+  # against a here-string so there is no upstream process to signal.
+  hlexp="$(i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll")"
+  grep -qE '\bDriverInit(@4)?$' <<<"$hlexp" \
     || { echo "ERROR: d3dpt9hl.dll does not export DriverInit"; exit 1; }
   # A freestanding DLL has no CRT startup, so the entry point has to be
   # named by hand — and ld only *warns* when it cannot find one, leaving
@@ -394,6 +424,50 @@ if command -v "$HALCC" >/dev/null; then
   ep=$(i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | awk '/AddressOfEntryPoint/ {print $2}')
   [ -n "$ep" ] && [ "$ep" != "00000000" ] \
     || { echo "ERROR: d3dpt9hl.dll has no entry point (AddressOfEntryPoint $ep)"; exit 1; }
+
+  # Windows 9x relocates any DLL in the shared arena (>= 0x80000000) down into
+  # the private per-process arena unless every section is marked shared
+  # (IMAGE_SCN_MEM_SHARED = 0x10000000). DirectDraw loads the HAL in DDHELP.EXE,
+  # but games validate callbacks in their own processes. Marking all sections
+  # shared keeps the DLL at HAL_BASE across all processes.
+  python3 - "$BUILD/d3dpt9hl.dll" <<'PYPE'
+import struct, sys
+p = sys.argv[1]
+f = bytearray(open(p, 'rb').read())
+pe = struct.unpack_from('<I', f, 0x3c)[0]
+assert f[pe:pe+4] == b'PE\x00\x00', 'not a PE module: %r' % f[pe:pe+4]
+
+coff = pe + 4
+num_sections = struct.unpack_from('<H', f, coff + 2)[0]
+opt_hdr_size = struct.unpack_from('<H', f, coff + 16)[0]
+opt_hdr = coff + 20
+sec_tab = opt_hdr + opt_hdr_size
+IMAGE_SCN_MEM_SHARED = 0x10000000
+
+for i in range(num_sections):
+    o = sec_tab + i * 40
+    name = f[o:o+8].rstrip(b'\x00').decode('latin1')
+    chars = struct.unpack_from('<I', f, o + 36)[0]
+    struct.pack_into('<I', f, o + 36, chars | IMAGE_SCN_MEM_SHARED)
+    print("   section %-8s: flags %08x -> %08x (shared)" % (name, chars, chars | IMAGE_SCN_MEM_SHARED))
+
+chk_off = opt_hdr + 64
+struct.pack_into('<I', f, chk_off, 0)
+flen = len(f)
+padded = f if flen % 2 == 0 else f + b'\x00'
+total = 0
+for i in range(0, len(padded), 2):
+    word, = struct.unpack_from('<H', padded, i)
+    total += word
+    total = (total >> 16) + (total & 0xffff)
+total = (total >> 16) + (total & 0xffff)
+total = (total + flen) & 0xffffffff
+struct.pack_into('<I', f, chk_off, total)
+print("   PE checksum: -> %08x" % total)
+
+open(p, 'wb').write(f)
+PYPE
+
   cp "$BUILD/d3dpt9hl.dll" "$OUT/"
 
   # The smallest thing that makes DirectDraw initialise, so that the
@@ -403,6 +477,54 @@ if command -v "$HALCC" >/dev/null; then
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
      -march=pentium3 -mtune=generic -mwindows \
      -o "$OUT/ddprobe.exe" "$SRC/ddprobe.c" -lddraw -ldxguid -luser32
+
+  echo "==> ebtest.exe (DirectX 3 execute buffers and texture handles)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/ebtest.exe" "$ROOT/guest-tools/src/d3dptvid/ebtest.c" -lddraw -ldxguid -lgdi32 -luser32
+
+  echo "==> d3d7test.exe (the DX7 HAL scene, the oracle against d3dpt-dp2-test)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/d3d7test.exe" "$ROOT/guest-tools/src/d3dptvid/d3d7test.c" -lddraw -ldxguid -lgdi32 -luser32
+
+  # The DX8 half. Reachable on 98 only because a 2ksbox Win98 machine runs
+  # DirectX 9 (doc 19 §25): these need d3d8.dll, which the in-box 6.1 has not
+  # got, and they exercise the GDI2 negotiation GetDriverInfo answers.
+  echo "==> setbpp.exe (change the desktop depth from a batch file)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/setbpp.exe" "$SRC/setbpp.c" -lgdi32 -luser32
+
+  echo "==> gdiprobe.exe (which GDI operation the DIB Engine path gets wrong)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/gdiprobe.exe" "$SRC/gdiprobe.c" -lgdi32 -luser32
+
+  echo "==> bsod.exe (blue-screens an unpatched Win98 on purpose, for win98-bsod-test.sh)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic -mwindows \
+     -o "$OUT/bsod.exe" "$SRC/bsod.c" -luser32
+
+  echo "==> cktest.exe (palettized textures and colour keying through the DX7 HAL)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/cktest.exe" "$ROOT/guest-tools/src/d3dptvid/cktest.c" -lddraw -ldxguid -lgdi32 -luser32
+
+  echo "==> dxttest.exe (which texture formats d3d8.dll creates, per pool)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/dxttest.exe" "$ROOT/guest-tools/src/d3dptvid/dxttest.c" -ld3d8 -lgdi32 -luser32
+
+  echo "==> d3dgame8.exe (the M4 DX8 reference scene, no wrapper DLL)"
+  "$HALCC" -O2 -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/d3dgame8.exe" "$ROOT/guest-tools/src/d3dgame8.c" -ld3d8 -lgdi32 -luser32
+
+  echo "==> shtest.exe (vertex / pixel shaders 1.x through d3d8.dll on the DX8 DDI)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/shtest.exe" "$ROOT/guest-tools/src/d3dptvid/shtest.c" -ld3d8 -lgdi32 -luser32
 else
   echo "==> no $HALCC: skipping d3dpt9hl.dll (no DirectDraw on 9x from this build)"
 fi

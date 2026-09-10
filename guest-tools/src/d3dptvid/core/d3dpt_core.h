@@ -281,6 +281,7 @@ typedef struct d3dpt_dp2_result {
                                  * so the layer adds back the command offset it passed in */
 } d3dpt_dp2_result;
 
+ULONG fvf_stride(ULONG fvf);
 void dp2_run(d3dpt_core *c, const d3dpt_dp2_call *call, d3dpt_dp2_result *out);
 
 #endif /* D3DPT_CORE_H */

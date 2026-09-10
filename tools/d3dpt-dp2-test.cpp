@@ -681,6 +681,28 @@ int main(int argc, char **argv) {
         hr |= readback(&enc, H_RT);
         CHECK(hr == 0 && near_(px(104, 84), 0x000000, 2) && near_(px(124, 84), 0xff0000, 2),
               "TEXTUREMAPBLEND before the texture, bound as a stage state: blue cell x red = 0x%06x, white cell x red = 0x%06x", px(104, 84), px(124, 84));
+        /* Crimson Skies' menu (2026-09-09): the runtime's context dump has set the ops, the
+         * title then picks MODULATE with no texture bound, sets its own COLORARG2 / ALPHAARG2
+         * (its arguments, not its ops) and binds a texture per draw: the blend must still
+         * follow the texture — an argument does not end it (the logo drew as a white silhouette) */
+        Dp2Buf e6;
+        e6.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+        e6.tss(0, 1, D3DTOP_MODULATE); e6.tss(0, 4, D3DTOP_SELECTARG1); e6.tss(0, 0, 0);
+        e6.rs(21, 2 /* MODULATE */); e6.tss(0, 3, D3DTA_DIFFUSE); e6.tss(0, 6, D3DTA_DIFFUSE); e6.tss(0, 0, H_TEX16);
+        e6.cmd(3, 2); e6.u16(0); e6.u16(1); e6.u16(2); e6.u16(0x1f); e6.u16(3); e6.u16(4); e6.u16(5); e6.u16(0x1f);
+        hr = send_dp2(&enc, e6, quad);
+        hr |= readback(&enc, H_RT);
+        CHECK(hr == 0 && near_(px(104, 84), 0x000000, 2) && near_(px(124, 84), 0xff0000, 2),
+              "TEXTUREMAPBLEND, then the app's ARGs, then the texture: blue cell x red = 0x%06x, white cell x red = 0x%06x", px(104, 84), px(124, 84));
+        /* and the app's own op does end it: SELECTARG2 set by the app stays over the next bind */
+        Dp2Buf e7;
+        e7.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+        e7.tss(0, 1, D3DTOP_SELECTARG2); e7.tss(0, 0, 0); e7.tss(0, 0, H_TEX16);
+        e7.cmd(3, 2); e7.u16(0); e7.u16(1); e7.u16(2); e7.u16(0x1f); e7.u16(3); e7.u16(4); e7.u16(5); e7.u16(0x1f);
+        hr = send_dp2(&enc, e7, quad);
+        hr |= readback(&enc, H_RT);
+        CHECK(hr == 0 && near_(px(104, 84), 0xff0000, 2) && near_(px(124, 84), 0xff0000, 2),
+              "the app's own COLOROP over a later bind: 0x%06x 0x%06x", px(104, 84), px(124, 84));
         Dp2Buf e4; e4.rs(21, 2); e4.tss(0, 1, D3DTOP_MODULATE); e4.tss(0, 4, D3DTOP_SELECTARG1);   /* back to the scene's stage states */
         hr = send_dp2(&enc, e4, quad);
         CHECK(hr == 0, "stage states restored (0x%08x)", hr);

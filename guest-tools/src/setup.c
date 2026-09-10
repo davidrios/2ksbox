@@ -34,6 +34,11 @@
 
 #define MAX_COMPONENTS 8
 
+/* Where the test programs go, and where the log goes with them: one folder
+ * that is ours, on the hard disk, and the same one every time — not
+ * WINDOWS, where a SETUP.LOG would sit among every other installer's. */
+#define BOXDIR "C:\\2KSBOX"
+
 /* Every path here is <the SETUP.EXE folder> + <folder> + <name>, so the
  * buffers are deliberately wider than MAX_PATH: a root path close to the
  * limit plus a subfolder is longer than MAX_PATH, and silently truncating
@@ -45,7 +50,9 @@ static char g_sys[MAX_PATH];     /* WINDOWS\SYSTEM or WINDOWS\system32 */
 static char g_win[MAX_PATH];     /* WINDOWS */
 static int g_nt;                 /* 2000/XP rather than 98/Me */
 static int g_reboot;             /* a step said the machine must restart */
+static int g_installing;         /* inside install_selected: a locked system file may be replaced on the next boot rather than failing */
 static FILE *g_log;
+static char g_log_path[PATHBUF];  /* where the log actually went, as an absolute path */
 
 /* `rel` under the SETUP.EXE folder, in a caller-provided buffer. */
 static const char *iso(char *buf, const char *rel)
@@ -72,12 +79,59 @@ static void say(const char *fmt, ...)
 
 /* ------------------------------------------------------------ file steps */
 
+/* A file that cannot be overwritten because it is in use — the display
+ * driver we are reinstalling is the one Windows is drawing with, the mapper
+ * .SYS is the one its service has loaded — is not a failure: stage the new
+ * copy beside the target, on the hard disk where a boot-time rename can
+ * still find it once the CD is gone, and schedule the swap for the next
+ * restart. NT has MoveFileEx for exactly this; 9x has no such call and does
+ * it through WINDOWS\WININIT.INI, whose [rename] section WININIT.EXE applies
+ * once, before the GUI, on the next boot (`Dest=Src` renames Src to Dest).
+ * The driver step reboots anyway, so the new file is live after the restart
+ * it was already going to ask for. */
+static int replace_on_reboot(const char *src, const char *dstdir, const char *name)
+{
+    char dst[PATHBUF], stage[PATHBUF], base[MAX_PATH], *dot;
+
+    snprintf(dst, sizeof dst, "%s\\%s", dstdir, name);
+    /* an 8.3-safe sibling (BASE.NEW, one dot): WININIT.INI needs short names,
+     * and BASE.EXT.NEW would be a long name with a generated alias */
+    lstrcpynA(base, name, sizeof base);
+    if ((dot = strrchr(base, '.')) != NULL) *dot = 0;
+    snprintf(stage, sizeof stage, "%s\\%s.NEW", dstdir, base);
+
+    SetFileAttributesA(stage, FILE_ATTRIBUTE_NORMAL);
+    if (!CopyFileA(src, stage, FALSE)) {
+        say("    %s: in use, and staging a replacement failed (error %lu)", name, (unsigned long)GetLastError());
+        return 1;
+    }
+    if (g_nt) {
+        if (!MoveFileExA(stage, dst, MOVEFILE_DELAY_UNTIL_REBOOT | MOVEFILE_REPLACE_EXISTING)) {
+            say("    %s: in use, and scheduling the replace failed (error %lu)", name, (unsigned long)GetLastError());
+            DeleteFileA(stage);
+            return 1;
+        }
+    } else {
+        char ini[PATHBUF];
+        snprintf(ini, sizeof ini, "%s\\WININIT.INI", g_win);
+        if (!WritePrivateProfileStringA("rename", dst, stage, ini)) {
+            say("    %s: in use, and scheduling the replace failed (error %lu)", name, (unsigned long)GetLastError());
+            DeleteFileA(stage);
+            return 1;
+        }
+    }
+    g_reboot = 1;
+    say("    %s: in use; the new copy replaces it on restart", name);
+    return 0;
+}
+
 /* Copy one file and say so. A missing source is worth naming: it means
  * this ISO was built without that piece (no mingw DDK, say), not that the
  * user did anything wrong. */
 static int copy_one(const char *src, const char *dstdir, const char *name)
 {
     char dst[PATHBUF];
+    DWORD err;
 
     snprintf(dst, sizeof dst, "%s\\%s", dstdir, name);
     if (GetFileAttributesA(src) == INVALID_FILE_ATTRIBUTES) {
@@ -86,12 +140,21 @@ static int copy_one(const char *src, const char *dstdir, const char *name)
     }
     /* a read-only copy from a previous install would refuse to be replaced */
     SetFileAttributesA(dst, FILE_ATTRIBUTE_NORMAL);
-    if (!CopyFileA(src, dst, FALSE)) {
-        say("    %s: copy failed, error %lu", name, (unsigned long)GetLastError());
-        return 1;
+    if (CopyFileA(src, dst, FALSE)) {
+        say("    %s -> %s", name, dstdir);
+        return 0;
     }
-    say("    %s -> %s", name, dstdir);
-    return 0;
+    /* Locked because it is loaded (the running display driver, a started
+     * .SYS): replace it on the next boot instead of failing — but only while
+     * installing a component, not for a per-game copy, and only when the
+     * target is really there to be replaced. */
+    err = GetLastError();
+    if (g_installing
+        && (err == ERROR_SHARING_VIOLATION || err == ERROR_ACCESS_DENIED || err == ERROR_USER_MAPPED_FILE)
+        && GetFileAttributesA(dst) != INVALID_FILE_ATTRIBUTES)
+        return replace_on_reboot(src, dstdir, name);
+    say("    %s: copy failed, error %lu", name, (unsigned long)err);
+    return 1;
 }
 
 /* Copy `names` (NULL-terminated) from an ISO folder into `dstdir`. */
@@ -197,6 +260,7 @@ static int step_glide(void)
 {
     static const char *const dlls[] = { "GLIDE.DLL", "GLIDE2X.DLL", "GLIDE3X.DLL", NULL };
     static const char *const vxd[] = { "FXMEMMAP.VXD", NULL };
+    static const char *const ovl[] = { "GLIDE2X.OVL", NULL };
     static const char *const sys[] = { "FXPTL.SYS", NULL };
     char drivers[PATHBUF], cmd[PATHBUF * 2], path[PATHBUF];
     SC_HANDLE scm, svc;
@@ -205,7 +269,16 @@ static int step_glide(void)
 
     say("Glide and the device mapper:");
     bad = copy_set("GLIDE", g_sys, dlls);
-    if (!g_nt) return bad | copy_set("GLIDE", g_sys, vxd);
+    if (!g_nt) {
+        /* 9x also gets the DOS binding of the device: a DOS/4GW game run
+         * from a DOS box loads GLIDE2X.OVL by name off the PATH, and the
+         * Windows folder is on it (qemu-3dfx's own instruction). Missing
+         * from a disc built without Open Watcom, which is worth a line in
+         * the log but not a failed Glide install. */
+        bad |= copy_set("GLIDE", g_sys, vxd);
+        copy_set("GLIDE", g_win, ovl);
+        return bad;
+    }
 
     snprintf(drivers, sizeof drivers, "%s\\drivers", g_sys);
     bad |= copy_set("GLIDE", drivers, sys);
@@ -311,7 +384,7 @@ static int step_cdshelf(void)
 static int step_tests(void)
 {
     say("Test programs:");
-    return copy_folder("TESTS", "C:\\2KSBOX");
+    return copy_folder("TESTS", BOXDIR);
 }
 
 typedef struct {
@@ -385,11 +458,13 @@ static int install_selected(void)
 {
     int i, bad = 0, any = 0;
 
+    g_installing = 1;   /* a locked system file may now be swapped on reboot rather than failing */
     for (i = 0; i < g_ncomp; i++) {
         if (!g_comp[i].on) continue;
         any = 1;
         bad |= g_comp[i].run();
     }
+    g_installing = 0;
     if (!any) { say("nothing selected"); return 0; }
     say("");
     if (bad) say("Finished with errors - see the lines above.");
@@ -549,7 +624,7 @@ static void usage(void)
            "  SETUP /LIST           print the component and file-set lists\n"
            "  SETUP /GAME <n> <dir> copy file set <n> next to a game's EXE\n"
            "  SETUP /REBOOT         with /ALL or /I: restart if one asked for it\n"
-           "  SETUP /LOG <file>     write the log there (default SETUP.LOG)\n");
+           "  SETUP /LOG <file>     write the log there (default C:\\2KSBOX\\SETUP.LOG)\n");
 }
 
 /* "Windows 98 SE" / "Windows XP" — what the user should see confirmed,
@@ -572,19 +647,48 @@ static void os_name(char *out, OSVERSIONINFOA *v)
             (unsigned long)v->dwMinorVersion, (unsigned long)(v->dwBuildNumber & 0xffff));
 }
 
-/* The log next to the current directory, or in TEMP when that is the CD
- * itself (the usual case: SETUP is started from D:\). */
+/* Open `path` for the log and remember where it landed, as an absolute
+ * path, so the program can tell the user at the end — a Windows 98 console
+ * has no scrollback, so "here is the whole log" is the one line that has to
+ * survive on screen. */
+static int try_log(const char *path)
+{
+    g_log = fopen(path, "w");
+    if (!g_log) return 0;
+    if (!GetFullPathNameA(path, sizeof g_log_path, g_log_path, NULL))
+        lstrcpynA(g_log_path, path, sizeof g_log_path);
+    return 1;
+}
+
+/* Where the log goes: an explicit /LOG wins; otherwise C:\2KSBOX\SETUP.LOG,
+ * the same folder the test programs land in — ours, on the hard disk, and
+ * the same place every run, so it does not sit among every other installer's
+ * SETUP.LOG in WINDOWS and does not vanish into a read-only CD's directory.
+ * TEMP is the last resort if C:\2KSBOX cannot be made. Whichever wins, its
+ * absolute path is announced; the log is never left somewhere to guess at. */
 static void open_log(const char *want)
 {
     char path[PATHBUF];
 
-    if (want) { g_log = fopen(want, "w"); if (g_log) return; }
-    g_log = fopen("SETUP.LOG", "w");
-    if (g_log) return;
+    if (want && try_log(want)) return;
+    CreateDirectoryA(BOXDIR, NULL);
+    if (try_log(BOXDIR "\\SETUP.LOG")) return;
     if (GetTempPathA(sizeof path - 16, path)) {
         lstrcatA(path, "SETUP.LOG");
-        g_log = fopen(path, "w");
+        try_log(path);
     }
+}
+
+/* The last line on screen: where to read the whole log. Console only (the
+ * log need not name itself), and printed at the end of every mode so it is
+ * what stays visible after the console has scrolled past everything else. */
+static void announce_log(void)
+{
+    if (g_log_path[0])
+        printf("\nFull log of what was done: %s\n", g_log_path);
+    else
+        printf("\n(a log file could not be written anywhere)\n");
+    fflush(stdout);
 }
 
 int main(int argc, char **argv)
@@ -648,11 +752,18 @@ int main(int argc, char **argv)
     }
 
     open_log(logfile);
-    say("2ksbox guest tools - %s", osname);
-    say("files from %s", g_root);
+    {
+        SYSTEMTIME lt;
+        GetLocalTime(&lt);
+        say("2ksbox guest tools - %s", osname);
+        say("%04d-%02d-%02d %02d:%02d:%02d  %s", lt.wYear, lt.wMonth, lt.wDay,
+            lt.wHour, lt.wMinute, lt.wSecond, GetCommandLineA());
+        say("files from %s", g_root);
+        say("log: %s", g_log_path[0] ? g_log_path : "(none)");
+    }
 
-    if (mode_list) { say(""); print_components(); say(""); print_sets(); return 0; }
-    if (game_dir) return copy_game_set(game, game_dir);
+    if (mode_list) { say(""); print_components(); say(""); print_sets(); announce_log(); return 0; }
+    if (game_dir) { rc = copy_game_set(game, game_dir); announce_log(); return rc; }
 
     /* /ALL means all of them, including the ones the menu leaves
      * unticked: a batch file that says /ALL is not choosing defaults. */
@@ -665,9 +776,11 @@ int main(int argc, char **argv)
         print_components();
         say("");
         rc = install_selected();
+        announce_log();
         if (g_reboot && want_reboot) reboot_now();
         return rc;
     }
     menu();
+    announce_log();
     return 0;
 }

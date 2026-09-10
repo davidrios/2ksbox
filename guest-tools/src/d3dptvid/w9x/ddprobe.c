@@ -25,6 +25,14 @@
  * the HEL cannot satisfy at all, so its HRESULT is a yes/no answer with
  * nothing in between.
  *
+ * `DDPROBE <w> <h> <bpp> [sys]` adds a mode test after all that (2026-09-10):
+ * an exclusive SetDisplayMode to the given mode, a flipping primary — with
+ * DDSCAPS_SYSTEMMEMORY on it when `sys` is given, which is how Carmageddon
+ * asks and which keeps the whole chain in the runtime's emulation layer
+ * where the HAL never sees it — a palette at 8 bpp, five frames drawn and
+ * flipped, RestoreDisplayMode; every HRESULT in the log. It is what found
+ * the PDEVICE overrun of doc 19 §30 once the game had pointed at it.
+ *
  * Build: guest-tools/build-driver9x.sh (mingw-w64, i686, msvcrt).
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
@@ -32,9 +40,16 @@
 #include <windows.h>
 #include <ddraw.h>
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 
 static FILE *log_file;
 
+/* One open-append-close per line, not an fflush: a flush hands the bytes to
+ * the FAT driver, but the directory entry's size is written when the file
+ * is closed — and a blue screen a few calls later leaves a 0-byte
+ * DDPROBE.LOG on the disk (twice, 2026-09-10). Closing every time is what
+ * makes the last line before the crash the one the harness reads back. */
 static void logf_(const char *fmt, ...)
 {
     va_list ap;
@@ -46,7 +61,8 @@ static void logf_(const char *fmt, ...)
     vfprintf(log_file, fmt, ap);
     va_end(ap);
     fputc('\n', log_file);
-    fflush(log_file);           /* the guest may be powered off at any moment */
+    fclose(log_file);
+    log_file = fopen("C:\\DDPROBE.LOG", "a");
 }
 
 /* Everything a surface can say about where it lives. The pointer matters
@@ -84,7 +100,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     DDCAPS hal, hel;
     HRESULT hr;
 
-    (void)inst; (void)prev; (void)cmd; (void)show;
+    (void)prev; (void)show;
     log_file = fopen("C:\\DDPROBE.LOG", "w");
     logf_("ddprobe: start");
 
@@ -188,6 +204,208 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         describe("offscreen", surf);
         IDirectDrawSurface_Release(surf);
         surf = NULL;
+    }
+
+    /* Flip chain test: exclusive fullscreen mode allows creating a complex
+     * flipping primary surface and exercising Flip32 and its vblank pacing. */
+    {
+        HWND hwnd = CreateWindowA("STATIC", "ddprobe", WS_POPUP, 0, 0, 100, 100, NULL, NULL, inst, NULL);
+        hr = IDirectDraw_SetCooperativeLevel(dd, hwnd, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
+        logf_("SetCooperativeLevel(exclusive) -> 0x%08lx", (unsigned long)hr);
+        if (SUCCEEDED(hr)) {
+            LPDIRECTDRAWSURFACE prim = NULL;
+            LPDIRECTDRAWSURFACE back = NULL;
+
+            memset(&sd, 0, sizeof(sd));
+            sd.dwSize = sizeof(sd);
+            sd.dwFlags = DDSD_CAPS | DDSD_BACKBUFFERCOUNT;
+            sd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_FLIP | DDSCAPS_COMPLEX;
+            sd.dwBackBufferCount = 1;
+            hr = IDirectDraw_CreateSurface(dd, &sd, &prim, NULL);
+            logf_("CreateSurface(flip chain) -> 0x%08lx", (unsigned long)hr);
+            if (SUCCEEDED(hr) && prim) {
+                DDSCAPS caps;
+                describe("flipping primary", prim);
+
+                memset(&caps, 0, sizeof(caps));
+                caps.dwCaps = DDSCAPS_BACKBUFFER;
+                hr = IDirectDrawSurface_GetAttachedSurface(prim, &caps, &back);
+                logf_("GetAttachedSurface(back) -> 0x%08lx", (unsigned long)hr);
+                if (SUCCEEDED(hr) && back) {
+                    int frame;
+                    describe("back buffer", back);
+                    for (frame = 0; frame < 5; frame++) {
+                        DWORD t0 = GetTickCount();
+                        hr = IDirectDrawSurface_Flip(prim, NULL, DDFLIP_WAIT);
+                        DWORD t1 = GetTickCount();
+                        logf_("  Flip %d -> 0x%08lx  dt %lu ms", frame, (unsigned long)hr, (unsigned long)(t1 - t0));
+                    }
+                    IDirectDrawSurface_Release(back);
+                }
+                IDirectDrawSurface_Release(prim);
+            }
+            IDirectDraw_SetCooperativeLevel(dd, GetDesktopWindow(), DDSCL_NORMAL);
+        }
+        if (hwnd) {
+            DestroyWindow(hwnd);
+        }
+    }
+
+    /* **A mode of the caller's choosing, the way a game asks for one.**
+     * `DDPROBE <w> <h> <bpp>` is Carmageddon's opening (2026-09-10): an
+     * exclusive full-screen SetDisplayMode to 320x200x8, a flipping
+     * primary, a palette on it, a frame drawn and flipped, then
+     * RestoreDisplayMode — each HRESULT logged, and the run paused with
+     * the frame up so a screendump can see what the adapter scans out.
+     * On this driver the game's request ended in a fatal exception in
+     * KERNEL32 and no surface was ever created; this asks the same
+     * questions without the game's own code in the way, and a step that
+     * fails here names the driver's half of it. */
+    if (cmd && cmd[0]) {
+        unsigned w = 0, h = 0, bpp = 0;
+        char extra[16] = "";
+
+        /* A fourth word, `sys`, asks for the flip chain the way Carmageddon
+         * does: DDSCAPS_SYSTEMMEMORY on a flipping primary. The runtime
+         * keeps such a chain in its own emulation layer and the HAL never
+         * hears of the surfaces, so a fault on that path is one the driver
+         * log cannot show. */
+        if (sscanf(cmd, "%u %u %u", &w, &h, &bpp) == 3 && w && h && bpp) {
+            HWND hwnd = CreateWindowA("STATIC", "ddprobe mode", WS_POPUP | WS_VISIBLE,
+                                      0, 0, 100, 100, NULL, NULL, inst, NULL);
+            LPDIRECTDRAWSURFACE prim = NULL;
+            LPDIRECTDRAWSURFACE back = NULL;
+            LPDIRECTDRAWPALETTE pal = NULL;
+            /* The words after the mode (2026-09-10, the Carmageddon black
+             * screen): `sys` (above), `modex` = the game's own cooperative
+             * level, DDSCL_ALLOWMODEX | DDSCL_ALLOWREBOOT on top of exclusive
+             * full-screen — with it DirectDraw may answer a 320x200 request
+             * with its *own* Mode X or VGA mode 13h, switching the display
+             * driver out entirely; `vga` asks for that outright
+             * (IDirectDraw2::SetDisplayMode with DDSDM_STANDARDVGAMODE);
+             * `hold<N>` keeps the last frame up N seconds for screendumps. */
+            DWORD coop = DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN;
+            int want_sys = 0, want_vga = 0, hold = 4;
+            char args[128], *tok;
+
+            strncpy(args, cmd, sizeof(args) - 1);
+            args[sizeof(args) - 1] = 0;
+            for (tok = strtok(args, " "); tok; tok = strtok(NULL, " ")) {
+                if (strcmp(tok, "sys") == 0) want_sys = 1;
+                else if (strcmp(tok, "modex") == 0) coop |= DDSCL_ALLOWMODEX | DDSCL_ALLOWREBOOT;
+                else if (strcmp(tok, "vga") == 0) { want_vga = 1; coop |= DDSCL_ALLOWMODEX; }
+                else if (strncmp(tok, "hold", 4) == 0) hold = atoi(tok + 4);
+            }
+            if (want_sys) strcpy(extra, "sys");
+
+            logf_("mode test: %ux%ux%u  coop 0x%lx%s%s hold %d", w, h, bpp,
+                  (unsigned long)coop, want_sys ? " sys" : "", want_vga ? " vga" : "", hold);
+            hr = IDirectDraw_SetCooperativeLevel(dd, hwnd, coop);
+            logf_("  SetCooperativeLevel(exclusive) -> 0x%08lx", (unsigned long)hr);
+            if (want_vga) {
+                LPDIRECTDRAW2 dd2 = NULL;
+
+                hr = IDirectDraw_QueryInterface(dd, &IID_IDirectDraw2, (void **)&dd2);
+                logf_("  QueryInterface(IDirectDraw2) -> 0x%08lx", (unsigned long)hr);
+                if (SUCCEEDED(hr) && dd2) {
+                    hr = IDirectDraw2_SetDisplayMode(dd2, w, h, bpp, 0, DDSDM_STANDARDVGAMODE);
+                    logf_("  SetDisplayMode(STANDARDVGAMODE) -> 0x%08lx", (unsigned long)hr);
+                    IDirectDraw2_Release(dd2);
+                }
+            } else {
+                hr = IDirectDraw_SetDisplayMode(dd, w, h, bpp);
+                logf_("  SetDisplayMode -> 0x%08lx", (unsigned long)hr);
+            }
+            memset(&sd, 0, sizeof(sd));
+            sd.dwSize = sizeof(sd);
+            if (SUCCEEDED(IDirectDraw_GetDisplayMode(dd, &sd)))
+                logf_("  GetDisplayMode: %lux%lux%lu pitch %ld caps 0x%08lx (MODEX 0x200000, STDVGA 0x40000000)",
+                      (unsigned long)sd.dwWidth, (unsigned long)sd.dwHeight,
+                      (unsigned long)sd.ddpfPixelFormat.dwRGBBitCount, (long)sd.lPitch,
+                      (unsigned long)sd.ddsCaps.dwCaps);
+            if (SUCCEEDED(hr)) {
+                memset(&sd, 0, sizeof(sd));
+                sd.dwSize = sizeof(sd);
+                sd.dwFlags = DDSD_CAPS | DDSD_BACKBUFFERCOUNT;
+                sd.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_FLIP | DDSCAPS_COMPLEX;
+                if (strcmp(extra, "sys") == 0) sd.ddsCaps.dwCaps |= DDSCAPS_SYSTEMMEMORY;
+                sd.dwBackBufferCount = 1;
+                hr = IDirectDraw_CreateSurface(dd, &sd, &prim, NULL);
+                logf_("  CreateSurface(flip chain%s) -> 0x%08lx",
+                      (sd.ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY) ? ", system memory" : "",
+                      (unsigned long)hr);
+            }
+            if (SUCCEEDED(hr) && prim) {
+                DDSCAPS caps;
+
+                describe("  flipping primary", prim);
+                if (bpp == 8) {
+                    PALETTEENTRY pe[256];
+                    int i;
+
+                    for (i = 0; i < 256; i++) {
+                        pe[i].peRed = (BYTE)i; pe[i].peGreen = (BYTE)(255 - i);
+                        pe[i].peBlue = (BYTE)(i * 2); pe[i].peFlags = 0;
+                    }
+                    hr = IDirectDraw_CreatePalette(dd, DDPCAPS_8BIT | DDPCAPS_ALLOW256, pe, &pal, NULL);
+                    logf_("  CreatePalette -> 0x%08lx", (unsigned long)hr);
+                    if (SUCCEEDED(hr) && pal) {
+                        hr = IDirectDrawSurface_SetPalette(prim, pal);
+                        logf_("  SetPalette(primary) -> 0x%08lx", (unsigned long)hr);
+                    }
+                }
+                memset(&caps, 0, sizeof(caps));
+                caps.dwCaps = DDSCAPS_BACKBUFFER;
+                hr = IDirectDrawSurface_GetAttachedSurface(prim, &caps, &back);
+                logf_("  GetAttachedSurface(back) -> 0x%08lx", (unsigned long)hr);
+                if (SUCCEEDED(hr) && back) {
+                    int frame;
+
+                    describe("  back buffer", back);
+                    for (frame = 0; frame < 5; frame++) {
+                        DWORD t0, t1;
+
+                        memset(&sd, 0, sizeof(sd));
+                        sd.dwSize = sizeof(sd);
+                        hr = IDirectDrawSurface_Lock(back, NULL, &sd, DDLOCK_WAIT, NULL);
+                        logf_("    Lock %d -> 0x%08lx", frame, (unsigned long)hr);
+                        if (SUCCEEDED(hr) && sd.lpSurface) {
+                            BYTE *row = (BYTE *)sd.lpSurface;
+                            unsigned y, x, bytepp = (bpp + 7) / 8;
+
+                            for (y = 0; y < h; y++, row += sd.lPitch)
+                                for (x = 0; x < w * bytepp; x++)
+                                    row[x] = (BYTE)((x / bytepp) + y + frame * 16);
+                            hr = IDirectDrawSurface_Unlock(back, NULL);
+                            logf_("    Unlock %d -> 0x%08lx", frame, (unsigned long)hr);
+                        }
+                        t0 = GetTickCount();
+                        hr = IDirectDrawSurface_Flip(prim, NULL, DDFLIP_WAIT);
+                        t1 = GetTickCount();
+                        logf_("    Lock/draw/Flip %d -> 0x%08lx  dt %lu ms", frame,
+                              (unsigned long)hr, (unsigned long)(t1 - t0));
+                    }
+                    logf_("    holding %d s", hold);
+                    Sleep(hold * 1000); /* leave the frame up for a screendump */
+                    logf_("    releasing back...");
+                    IDirectDrawSurface_Release(back);
+                    logf_("    released back");
+                }
+                if (pal) { logf_("    releasing pal..."); IDirectDrawPalette_Release(pal); logf_("    released pal"); }
+                logf_("    releasing prim...");
+                IDirectDrawSurface_Release(prim);
+                logf_("    released prim");
+            }
+            logf_("    RestoreDisplayMode...");
+            hr = IDirectDraw_RestoreDisplayMode(dd);
+            logf_("  RestoreDisplayMode -> 0x%08lx", (unsigned long)hr);
+            hr = IDirectDraw_SetCooperativeLevel(dd, GetDesktopWindow(), DDSCL_NORMAL);
+            logf_("  SetCooperativeLevel(normal) -> 0x%08lx", (unsigned long)hr);
+            if (hwnd) DestroyWindow(hwnd);
+            Sleep(2000);
+        } else {
+            logf_("mode test: arguments not understood: %s", cmd);
+        }
     }
 
     IDirectDraw_Release(dd);

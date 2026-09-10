@@ -68,7 +68,7 @@ static ULONG prim_verts(ULONG prim, ULONG n)
 }
 
 /* the vertex size of an FVF (the host computes the same) */
-static ULONG fvf_stride(ULONG fvf)
+ULONG fvf_stride(ULONG fvf)
 {
     ULONG n = 0, tex = (fvf >> 8) & 0xf, i;
 

@@ -167,11 +167,13 @@ What the track starts from:
 
 1. ~~**Step 0 — establish the 9x driver model**~~ **done 2026-09-06**,
    from `vmdisp9x` and `vmhal9x`; the answers are doc 19's "What 9x does
-   differently" and the State section above. One question of that section
-   is left for a guest to answer rather than a source tree: whether a
-   driver claiming DDI 8 may leave out the pre-DP2 HAL entries
-   (`RenderState`, `RenderPrimitive`, `DrawOnePrimitive`, `TextureCreate`)
-   that NT dropped and `vmhal9x` still implements.
+   differently" and the State section above. The one question of that
+   section that a source tree could not answer — whether a driver claiming
+   DDI 8 may leave out the pre-DP2 HAL entries (`RenderState`,
+   `RenderPrimitive`, `DrawOnePrimitive`, `TextureCreate`) that NT dropped
+   and `vmhal9x` still implements — **a guest answered on 2026-09-08: it
+   may.** Ours implements none of them and `SHTEST` passes 9/9 through
+   `d3d8.dll`, which drives the driver by `DrawPrimitives2` alone.
 2. ~~**Get Open Watcom building a "hello world" `.drv`**~~ **done
    2026-09-06**: `guest-tools/build-driver9x.sh` builds `d3dpt9x.drv`
    (module `DISPLAY`, the ordinal exports, `oembin` resources, imports
@@ -274,30 +276,128 @@ What the track starts from:
    entries in **its own** address space — and a DLL in the private arena
    has a different address in every process (DDHELP `0x00b50000`, the
    probe's own `LoadLibrary` `0x00ca0000`, its `GetModuleHandle` NULL).
-   **The blocker, and the next session's first job:** the ring-3 HAL has
-   to be mapped in the shared arena above 2 GiB, as the reference driver's
-   `0xB00B0000` is, and this Windows 98 relocates it out of there whatever
-   base is asked for — including the reference's own — while removing the
-   relocation table to force the issue makes `LoadLibrary` fail. Doc 19
-   §22 lists what was tried. Until it is solved the 16-bit half withholds
-   any callback below `0x80000000` and logs why, which keeps the HAL, the
-   video-memory heap and the mode list.
-   **Then the rest of M7b** — the VRAM heap in earnest, the surface
-   callbacks, the flip chain against the frame counter, `DdMapMemory`'s
-   equivalent, 8 bpp palettized modes. `DDTEST.EXE` and `CDTEST`-style
-   guest probes run on 98 as they do on XP.
-9. **Step 4 — the Direct3D DDI on 9x** (98's M7c): the core's DP2 walker
-   under the 9x HAL. Two decisions land here, both new on 9x (doc 19 §8):
-   whether the doorbell is a mapped register page or a VxD ioctl, and how
-   the single command window at the top of VRAM is serialised now that
-   every process has its own copy of the HAL. `D3D7TEST.EXE`'s frame must match
-   `d3dpt-dp2-test`'s BMP exactly, the same oracle XP is held to. Then
-   `EBTEST` (the DX3 path, which is most of the 98 matrix), `CKTEST`,
-   `DXTTEST`, and `SHTEST` — the DX8 half is in scope on 98 too, step 0
-   settled that.
-10. **Step 5 — the titles.** The doc 04 Win98 acceptance matrix through
-   the driver, against the same titles on the Glide/WineD3D stack: which
-   is faster, which is correct, and what the launcher should default to.
+   **The blocker is resolved (2026-09-08, doc 19 §23):** Windows 9x's PE
+   loader requires every section of a DLL based above 0x80000000 to carry
+   `IMAGE_SCN_MEM_SHARED` (`0x10000000`), otherwise it treats the image as
+   containing private process state and relocates it down into the
+   per-process private arena (`< 0x80000000`). Mingw's `ld` does not offer
+   a switch to mark all sections shared; `build-driver9x.sh` now
+   post-processes `d3dpt9hl.dll` to set `IMAGE_SCN_MEM_SHARED` on every
+   section and recalculates the PE checksum. In the guest, `d3dpt9hl.dll`
+   loads at `0xB00B0000` for both DDHELP and game processes, DirectDraw
+   takes the HAL with its callbacks enabled (`dd callbacks=0x00000033`),
+   and `WaitForVerticalBlank`, `CanCreateSurface`, and `CreateSurface` are
+   entered cleanly by the runtime.
+   **Step 3 is done (2026-09-08, doc 19 §24):** `d3dpt9hl.dll` links the
+   OS-independent core (`core_flip.c`, `core_caps.c`, `core_surf.c`,
+   `core_ctx.c`, `core_dp2.c`) with freestanding `memcpy`/`memset` and 6
+   `d3dpt_os_*` hooks. Surface callbacks (`Flip`, `GetFlipStatus`,
+   `GetBltStatus`, `Lock`, `Unlock`, `DestroySurface`, `SetColorKey`) are
+   implemented in `d3dpthal.c`. Fullscreen flip chains and vertical blank
+   pacing against `D3DPT_FB_REG_FRAMES` (~60 Hz) are verified in the real
+   guest via `ddprobe.exe` (`Flip 0..4` succeed with 14–20 ms deltas; QEMU
+   logs alternating scanout offsets `0 -> 1228800 -> 0`). 8 bpp modes and
+   hardware palette programming against `D3DPT_FB_REG_PALETTE` via
+   `SetPalette` (ordinal 22) are wired and verified.
+9. ~~**Step 4 — the Direct3D DDI on 9x**~~ **the DX3 and DX7 faces pass
+   2026-09-08** (doc 19 §25). `EBTEST` reports **5 cases, 0 failed** and
+   `D3D7TEST`'s frame is **byte-identical** to `d3dpt-dp2-test`'s
+   (`0 of 307200 pixels differ, max channel difference 0`) — the same oracle
+   XP is held to. HAL *and* T&L HAL enumerate, the Z buffer offers
+   16 / 32 / 32+stencil, `SetDisplayMode` to 640x480x32 from an 800x600x16
+   desktop works (so `SetMode32` is sound), and 300 frames run at 59.1 fps,
+   which is §24's flip pacing holding under a real 3D load. Both of doc 19
+   §8's open decisions are settled: the doorbell is a **direct register
+   write** from ring 3 (§20), and the command window is serialised on the
+   shared block's `cmd_lock` — the HAL DLL's data is shared across every
+   process (§23), so there is one core and one encoder, not one per process.
+   **The bug worth carrying** was the second instance of §19's failure
+   shape: the layer derived `cmd_offset` from the VRAM size and subtracted
+   the cursor too, so it encoded batches 16 KiB below the window the device
+   reads. Seventeen `DrawPrimitives2` calls, contexts, textures and every
+   `d3d_readback` returned success against a header nothing had written; the
+   only witness was the *absence* of any `ddi:` line in the host log. Read
+   `D3DPT_FB_REG_CMD_OFFSET`, as `nt/` always has. **The DX8 half passes
+   too**: `SHTEST` 9 cases 0 failed (vs 1.1 and ps 1.1 through `d3d8.dll`,
+   hardware vertex processing, `vs 1.1 (96 constants) / ps 1.4`), `CKTEST`
+   4 cases 0 failed (palettized textures with a live `SetEntries`, source
+   colour keying on and off), and `DXTTEST` creating every format in every
+   pool with no unexpected HRESULT — which answers step 0's last open
+   question by demonstration: **a DDI-8 driver may leave out the pre-DP2
+   HAL entries** `vmhal9x` still implements, because ours does and
+   `d3d8.dll` drives it through `DrawPrimitives2` alone. The whole M7c
+   matrix now reproduces on 98 with no change to `core/`.
+10. **Step 5 — the titles.** *In progress since 2026-09-09* (doc 19 §26).
+   The user installed six games into a Win98 machine of their own
+   (`claude98`) and reported what each did; that is the first thing this
+   driver has met other than our own test programs, and it found three bugs
+   in one afternoon that no probe of ours could have.
+   **Done:** `tools/win98-game-test.sh` (the 9x `xp-game-test.sh`); the
+   **hardware cursor**, because the DIB Engine's software pointer lives in
+   the frame buffer and every full-screen DirectDraw title writes over it;
+   the **DirectDraw heap**, which ran 64 MB into the Direct3D command
+   window; and the **8 bpp default palette**, which was whatever bytes were
+   in the PDEVICE allocation. Total Annihilation and LEGO Island both run
+   correctly headless with those in.
+   **Carmageddon, 2026-09-10** (doc 19 §30): first a GDI heap overrun at
+   the 16→8 bpp switch (the PDEVICE sized at boot for 16 bpp), then a
+   black screen that was the driver *listing* 320×200 — the game's
+   system-memory flip chain with `DDSCL_ALLOWMODEX` is DirectDraw's own
+   Mode X recipe, which needs the driver to have no such mode and no
+   `DDHALINFO_MODEXILLEGAL`; both gone, the game runs in colour through
+   the runtime's Mode X on the VGA core.
+   **The DOS box works too, 2026-09-09.** Blood is the DOS Build-engine
+   game, so what it wants is a screen switch, not a DirectDraw path: the
+   mini-VDD now hooks `PRE_HIRES_TO_VGA` / `POST_HIRES_TO_VGA` /
+   `PRE_VGA_TO_HIRES` / `POST_VGA_TO_HIRES` and turns
+   `D3DPT_FB_REG_ENABLE` off and on around the switch, so the device hands
+   the scanout back to its VGA core for the VM. All four are called, in
+   order, with the display driver's own `RestoreDesktopMode` in the middle,
+   and Blood renders full-screen at 640x480 for the whole of its attract
+   demo. Two guest-configuration findings came with it: `GUEST_CMD` needs a
+   `cd` before a DOS/4GW EXE or its stub cannot find `dos4gw.exe`, and this
+   image's `AUTOEXEC.BAT` has no `SET BLASTER=`, so every DOS game fails its
+   sound-card probe before it draws anything. Doc 19 §26 also records how
+   this was misread once, from an interim log read on a run that was not
+   over.
+   Then the doc 04 acceptance matrix proper, against
+   the same titles on the Glide/WineD3D stack: which is faster, which is
+   correct, and what the launcher should default to.
+   **Crimson Skies: fixed 2026-09-09, and it was the executor, not the
+   driver** (doc 19 §28, doc 15 "The white menu text"). Recorded first as a
+   SafeDisc failure (wrong binary), then as GDI (wrong screen: §27's
+   eliminations were made on the splash, and the menu with the white logo
+   and buttons is Direct3D — 57 textured quads a frame). The game sets
+   `TEXTUREMAPBLEND MODULATE` with no texture bound, then its own
+   `COLORARG2` / `ALPHAARG2`, then a texture per draw; the executor's
+   legacy blend was ended by the ARGs and stayed at "no texture: the
+   diffuse", white. Two flags now, one per op, ended only by the app's own
+   op; `d3dpt-dp2-test` covers it. **One cosmetic thing stays open** (doc 19
+   §28): the bottom-most menu button (QUIT) renders only its top half — a
+   full, correct 4-vertex fan quad that fills whole in the standalone test
+   but paints only its top half inside the game's own batch; texture,
+   scissor, viewport, RT, depth and cull all ruled out.
+   **Not ours:** NFS Porsche's silence is guest sound configuration.
+   **Leaving the DOS box, the pointer over it, and the blue screen — all
+   fixed 2026-09-09 evening** (doc 19 §29). Blood's exit "hung with the
+   screen glitched": measured, Windows was idle and healthy behind Blood's
+   last frame — the §26 calls put the *adapter* back and nothing repainted
+   the *desktop*, because this driver lacked the INT 2Fh AX=4001h/4002h
+   screen-switch hook every 9x display driver has (`BUSY` on the PDEVICE
+   out, mode restore + USER.275 repaint in); `dibthunk.asm` `_SWHook` +
+   `d3dpt9x.c`. The "big mouse cursor" was the sprite composited into a
+   VGA frame: the device hides it while `ENABLE` is off. And a 9x blue
+   screen is visible — a VxD fault arrives through the ordinary
+   `PRE_HIRES_TO_VGA` switch, and the DDK's `SAVE_MESSAGE_MODE_STATE` (45)
+   is answered as well — `tools/win98-bsod-test.sh` is the guard, with
+   `bsodvxd.vxd` (`ud2` in ring 0 at load) as the trigger. The VxD logs the first few of
+   every other notification entry (`vdd fn=…`), so the next sequence can be
+   read off rather than guessed. **Total Annihilation "crashes on exit"
+   (user report) did not reproduce**: `CLICKS=80:458,437` on the main
+   menu's EXIT (the PS/2 walk goes blind when a game hides the pointer —
+   `qmpc.py relclick`) had the 800x600 desktop back, clean, eight seconds
+   later, and the machine powered off; what is untested is an exit from
+   *inside* a skirmish, which is where the user plays.
 
 ## Build / test loop
 
@@ -331,6 +431,20 @@ at all (nothing on a Win98 desktop calls `DirectDrawCreate`):
 PROG=guest-tools/out/driver9x/ddprobe.exe \
   tools/win98-driver-test.sh ~/.local/share/2ksbox/machines/test98/disk.qcow2 install
 ```
+
+**The guest runs DirectX 9.0c, by decision (doc 19 §25).** The in-box
+DirectX 6.1 is an older DDI generation than the one `core/` was proven
+against on XP, and cannot run `D3D7TEST`'s DX7 path at all, so there is no
+pixel oracle on it. Three DirectX 6 accommodations were deleted from the 9x
+layer when the guest was updated — `unwrap_surf()`'s pointer sniffing, the
+CALLBACKS2 `Clear` entry, `d3d7test.c`'s `IDirect3D3` path — each on the
+evidence of a one-shot log that never fired across a full `ebtest` and a
+`d3d7test`, not on inference. **Installing DirectX rebinds the display to
+Cirrus**: it means booting the machine in the launcher, whose Win98 default
+is `-vga cirrus`, so Windows re-detects that adapter, `[386Enh]` loses its
+`D3DPT9V.VXD` line and `[boot.description]` reads `Cirrus Logic 5446 PCI`
+(`[boot] display.drv=pnpdrvr.drv` still looks right, which is the confusing
+part). Run `install`, not `boot`, after any hand session on the image.
 
 **`~/vms/win98.qcow2` is not the image for this track**: it is a Sep-4
 install from before the BIOS-date stamp, PnP does not match our INF on
@@ -403,6 +517,24 @@ curl -L -o build/ref/fixlink.c https://raw.githubusercontent.com/JHRobotics/fixl
 `fix_wlink_vxd` is 40 lines and was worth reading in full.
 
 ## Traps
+
+Open Watcom's own, found here and nowhere else:
+
+- **Its inline assembler does not resolve a callee's name through a macro
+  parameter.** `#define ENTRY(n, p) … _asm { call p }` assembles a call to
+  nothing; the only sign is the compiler then warning that `p` is "defined,
+  but not referenced" (W202), which is easy to read as dead code and delete.
+  The four mini-VDD screen-switch thunks are written out four times for
+  this reason (2026-09-09).
+- **It takes a function's attributes from the *first* declaration it sees**,
+  so a DDK prototype without `__loadds` strips it from the definition
+  (§18 — `ValidateMode`), and a Win16 API of the same name wins outright:
+  `SetCursor` in win16.h is the API (HCURSOR in, previous out), while the
+  display driver's ordinal 102 takes a CURSORSHAPE and returns nothing.
+  Both are hidden with a `#define` before the headers go by.
+- **There is no CRT, so there is no 32-bit multiply.** `(DWORD)a * b` in
+  the 16-bit halves links against an undefined `__U4M`; `MulW` is the
+  helper that exists.
 
 From CLAUDE.md, and they bite here:
 

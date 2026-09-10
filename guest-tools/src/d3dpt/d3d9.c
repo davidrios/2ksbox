@@ -25,8 +25,17 @@
 #include <stdarg.h>
 #include <string.h>
 #include <math.h>
-#define PSAPI_VERSION 1              /* psapi.dll exports, not Windows 7's K32* kernel32 names (XP) */
-#include <psapi.h>
+/* No psapi.h, and nothing links -lpsapi: **Windows 98 has no psapi.dll at
+ * all** (PSAPI is NT-only), and a static import makes this DLL unloadable
+ * there — "psapi.dll missing" before DllMain, which took the whole M4
+ * paravirtual path out on 98 for as long as it has existed. Its one use here
+ * is a diagnostic that lists the loaded modules, so it is resolved at run
+ * time and skipped when absent. On NT the same trap has a second half: with
+ * psapi.h and no PSAPI_VERSION 1, the names map to Windows 7's K32* kernel32
+ * exports and XP's loader blocks the process instead (doc 15). Binding by
+ * name at run time avoids both. Found on a real Win98 guest, 2026-09-09. */
+typedef BOOL  (WINAPI *d3dpt_enum_modules_fn)(HANDLE, HMODULE *, DWORD, LPDWORD);
+typedef DWORD (WINAPI *d3dpt_module_base_fn)(HANDLE, HMODULE, LPSTR, DWORD);
 #include "fxlib.h"
 #include "../../../d3dpt/d3dpt_enc.h"
 
@@ -133,6 +142,9 @@ static void fallback_init(void)
 {
     char path[MAX_PATH];
     HMODULE mods[128];
+    HMODULE psapi;
+    d3dpt_enum_modules_fn enum_modules;
+    d3dpt_module_base_fn module_base;
     DWORD n = 0, i;
     UINT len = GetSystemDirectoryA(path, MAX_PATH - 16);
     if (!len) return;
@@ -140,16 +152,20 @@ static void fallback_init(void)
     sys_dll = LoadLibraryA(path);
     if (sys_dll) sys_create = GetProcAddress(sys_dll, D3DPT_DLL_NAME[3] == '8' ? "Direct3DCreate8" : "Direct3DCreate9");
     d3dpt_log("d3dpt: forwarding to %s (%s)", path, sys_create ? "loaded" : "not found");
-    if (EnumProcessModules(GetCurrentProcess(), mods, sizeof mods, &n)) {
+    psapi = LoadLibraryA("psapi.dll");
+    enum_modules = psapi ? (d3dpt_enum_modules_fn)GetProcAddress(psapi, "EnumProcessModules") : NULL;
+    module_base = psapi ? (d3dpt_module_base_fn)GetProcAddress(psapi, "GetModuleBaseNameA") : NULL;
+    if (enum_modules && module_base && enum_modules(GetCurrentProcess(), mods, sizeof mods, &n)) {
         char line[400]; int w = 0;
         for (i = 0; i < n / sizeof mods[0]; i++) {
             char name[64]; name[0] = 0;
-            GetModuleBaseNameA(GetCurrentProcess(), mods[i], name, sizeof name);
+            module_base(GetCurrentProcess(), mods[i], name, sizeof name);
             if (w + strlen(name) + 2 > sizeof line) { d3dpt_log("d3dpt: modules: %s", line); w = 0; }
             w += sprintf(line + w, "%s%s", w ? " " : "", name);
         }
         if (w) d3dpt_log("d3dpt: modules: %s", line);
     }
+    if (psapi) FreeLibrary(psapi);
 }
 
 static void transport_fini(void)

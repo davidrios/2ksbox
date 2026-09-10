@@ -72,6 +72,66 @@ RAW="$OUT/win98-m10.raw"
 SOCK="/tmp/claude-$(id -u)/w98m10.sock"
 BOOT_WAIT="${BOOT_WAIT:-150}"
 
+# What a PROG may leave in C:\ — deleted before the run and read back after,
+# so what comes out at the end is this run's or nothing. One list, because
+# three copies of it is how a new test's log silently never gets collected.
+PROG_OUTPUTS="DDPROBE.LOG D3D7TEST.LOG D3D7TEST.BMP EBTEST.LOG EB1.BMP EB2.BMP EB3.BMP EB4.BMP EB5.BMP CKTEST.LOG DXTTEST.LOG SHTEST.LOG D3DGAME8.LOG G8.BMP 3DMARK.TXT"
+
+# Stage PROG in C:\ and name it in WIN.INI's [windows] run=, with PROG_ARGS
+# after it, so the shell starts it at logon. This guest has no serial line and
+# nothing to type at, so `run=` is the only way anything here calls DirectDraw
+# or Direct3D at all. One function because the install and boot paths both do
+# it and two copies is how they drift.
+stage_prog() {
+  # **`run=` takes a program, never arguments.** Windows 9x drops anything
+  # after the path — measured 2026-09-08: d3dgame8 logged `arg[0]` alone, so
+  # its `-frames 600 -dump 300` never arrived, it rendered without end and was
+  # still running when the shutdown came (which is why the machine would not
+  # power off). So `run=` names a batch file and the batch carries the command
+  # line. That is also what lets a run drive a program that is *installed* in
+  # the guest rather than staged, which cannot be copied to C:\ because it
+  # needs its own directory: give GUEST_CMD the lines to run, in 8.3 names
+  # (COMMAND.COM has no use for long ones).
+  : > "$OUT/run.bat"
+  printf '@echo off\r\n' >> "$OUT/run.bat"
+  if [ -n "${GUEST_CMD:-}" ]; then
+    printf '%s\r\n' "$GUEST_CMD" >> "$OUT/run.bat"
+    echo "==> RUN.BAT: $GUEST_CMD"
+  else
+    pbase="$(basename "$PROG" | tr a-z A-Z)"
+    echo "==> staging $pbase${PROG_ARGS:+ $PROG_ARGS} and running it from RUN.BAT"
+    mattrib -i "$RAW@@$OFF" -r "::/$pbase" 2>/dev/null || true
+    mcopy -i "$RAW@@$OFF" -o "$PROG" "::/$pbase"
+    printf 'C:\\%s %s\r\n' "$pbase" "${PROG_ARGS:-}" >> "$OUT/run.bat"
+  fi
+  # Close the DOS box the batch runs in. Without this COMMAND.COM sits there
+  # after the program is launched, and a run then ends with "the machine did
+  # not power off" — which leaves the FAT dirty and makes the *next* boot a
+  # ScanDisk (or safe mode), i.e. it looks exactly like the thing under test
+  # having failed. Launching a Windows program from a batch returns at once,
+  # so exiting here does not cut the program short.
+  printf 'exit\r\n' >> "$OUT/run.bat"
+  mattrib -i "$RAW@@$OFF" -r ::/RUN.BAT 2>/dev/null || true
+  mcopy -i "$RAW@@$OFF" -o "$OUT/run.bat" ::/RUN.BAT
+  mcopy -i "$RAW@@$OFF" -n ::/WINDOWS/WIN.INI "$OUT/win.ini"
+  python3 - "$OUT/win.ini" <<'PYWIN'
+import re, sys
+p = sys.argv[1]
+b = open(p, 'rb').read()
+line = b'run=C:\\RUN.BAT'
+m = re.search(br'^run=[^\r\n]*', b, re.M | re.I)
+if m:
+    b = b[:m.start()] + line + b[m.end():]
+else:
+    m = re.search(br'^\[windows\]\r?\n', b, re.M | re.I)
+    if not m:
+        sys.exit("WIN.INI has no [windows] section")
+    b = b[:m.end()] + line + b'\r\n' + b[m.end():]
+open(p, 'wb').write(b)
+PYWIN
+  mcopy -i "$RAW@@$OFF" -o "$OUT/win.ini" ::/WINDOWS/WIN.INI
+}
+
 [ -x "$QEMU" ] || { echo "no QEMU at $QEMU (QEMU_BIN= to point elsewhere)"; exit 1; }
 [ -f "$DRV/d3dpt9x.drv" ] || { echo "run guest-tools/build-driver9x.sh first"; exit 1; }
 mkdir -p "$OUT/out" "$(dirname "$SOCK")"
@@ -93,6 +153,7 @@ for i in range(4):
 if [ "$WHAT" = install ]; then
   export MTOOLS_SKIP_CHECK=1
   echo "==> staging the driver and its INF (PnP installs it on the next boot)"
+  mattrib -i "$RAW@@$OFF" -r ::/WINDOWS/SYSTEM/D3DPT9* ::/WINDOWS/INF/D3DPT9* 2>/dev/null || true
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9x.drv" ::/WINDOWS/SYSTEM/D3DPT9X.DRV
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9v.vxd" ::/WINDOWS/SYSTEM/D3DPT9V.VXD
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9x.drv" ::/WINDOWS/INF/D3DPT9X.DRV
@@ -172,28 +233,9 @@ PYINI
   # whatever it leaves on C:; the driver's is in the QEMU log.
   #
   # In binary, like SYSTEM.INI above, and for the same reason.
-  if [ -n "${PROG:-}" ]; then
-    [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
-    pbase="$(basename "$PROG" | tr a-z A-Z)"
-    echo "==> staging $pbase and naming it in WIN.INI's run="
-    mcopy -i "$RAW@@$OFF" -o "$PROG" "::/$pbase"
-    mcopy -i "$RAW@@$OFF" -n ::/WINDOWS/WIN.INI "$OUT/win.ini"
-    python3 - "$OUT/win.ini" "$pbase" <<'PYWIN'
-import re, sys
-p, prog = sys.argv[1], sys.argv[2].encode()
-b = open(p, 'rb').read()
-line = b'run=C:\\' + prog
-m = re.search(br'^run=[^\r\n]*', b, re.M | re.I)
-if m:
-    b = b[:m.start()] + line + b[m.end():]
-else:
-    m = re.search(br'^\[windows\]\r?\n', b, re.M | re.I)
-    if not m:
-        sys.exit("WIN.INI has no [windows] section")
-    b = b[:m.end()] + line + b'\r\n' + b[m.end():]
-open(p, 'wb').write(b)
-PYWIN
-    mcopy -i "$RAW@@$OFF" -o "$OUT/win.ini" ::/WINDOWS/WIN.INI
+  if [ -n "${PROG:-}${GUEST_CMD:-}" ]; then
+    [ -n "${GUEST_CMD:-}" ] || [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
+    stage_prog
   fi
 
   # **Turn the logo off and the boot log on.** A boot that stalls behind the
@@ -234,20 +276,23 @@ else
   # WIN.INI already names PROG from the install that set it up; a different
   # PROG than that one needs the install again.
   export MTOOLS_SKIP_CHECK=1
+  mattrib -i "$RAW@@$OFF" -r ::/WINDOWS/SYSTEM/D3DPT9* 2>/dev/null || true
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9x.drv" ::/WINDOWS/SYSTEM/D3DPT9X.DRV
   mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9v.vxd" ::/WINDOWS/SYSTEM/D3DPT9V.VXD
   [ -f "$DRV/d3dpt9hl.dll" ] &&
     mcopy -i "$RAW@@$OFF" -o "$DRV/d3dpt9hl.dll" ::/WINDOWS/SYSTEM/D3DPT9HL.DLL
-  if [ -n "${PROG:-}" ]; then
-    [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
-    mcopy -i "$RAW@@$OFF" -o "$PROG" "::/$(basename "$PROG" | tr a-z A-Z)"
+  if [ -n "${PROG:-}${GUEST_CMD:-}" ]; then
+    [ -n "${GUEST_CMD:-}" ] || [ -f "$PROG" ] || { echo "PROG=$PROG: no such file"; exit 1; }
+    stage_prog
   fi
 fi
 
 # A stale log read back after a run that never wrote one is a whole session
 # spent on the wrong evidence: delete what the last run left before this one
 # starts, so what comes out at the end is this run's or nothing.
-mdel -i "$RAW@@$OFF" ::/DDPROBE.LOG 2>/dev/null || true
+for f in $PROG_OUTPUTS; do
+  mdel -i "$RAW@@$OFF" "::/$f" 2>/dev/null || true
+done
 
 rm -f "$OUT/out/dbg.log" "$OUT/out/stderr.log" "$OUT/out"/t*.ppm* "$OUT/out"/t*.png
 echo "==> booting on -vga none -device d3dpt-vga"
@@ -329,8 +374,8 @@ if [ "$WHAT" = install ]; then
   bars restart
 fi
 
-python3 "$ROOT/tools/qmpc.py" "$SOCK" screendump "$OUT/out/screen.ppm" >/dev/null
-echo "colours   $(identify -format '%wx%h %k' "$OUT/out/screen.ppm.ppm" 2>/dev/null || echo '?')  ($OUT/out/screen.png)"
+python3 "$ROOT/tools/qmpc.py" "$SOCK" screendump "$OUT/out/screen.png" >/dev/null
+echo "colours   $(identify -format '%wx%h %k' "$OUT/out/screen.png" 2>/dev/null || echo '?')  ($OUT/out/screen.png)"
 
 # **What the screen shows is not all Windows is saying.** When the guest
 # faults, Windows puts its message up in VGA *text* mode — and the adapter is
@@ -371,7 +416,10 @@ page = v[:80 * 25 * 4]
 def plane(n):
     return page[n::4]
 
-if not (sum(1 for b in plane(3) if b == 0) >= 0.99 * len(plane(3))
+# ("plane 3 untouched" was the first of the three; a text screen written
+# over a 16 bpp desktop keeps the desktop's bytes in the planes it does
+# not write, so it is "printable characters" now — 2026-09-09.)
+if not (sum(1 for b in plane(0) if b == 0 or 0x20 <= b < 0x7f) >= 0.9 * len(plane(0))
         and len(set(plane(1))) <= 16
         and sum(1 for b in plane(0) if b == 0x20) >= 0.5 * len(plane(0))):
     sys.exit(0)
@@ -389,11 +437,15 @@ for line in rows:
 PYTXT
 }
 text_screen
-# whatever PROG left behind, if it left anything (the guest is down by now)
-for f in DDPROBE.LOG; do
+# whatever PROG left behind, if it left anything
+for f in $PROG_OUTPUTS; do
+  rm -f "$OUT/out/$f"
   if mcopy -i "$RAW@@$OFF" -n "::/$f" "$OUT/out/$f" 2>/dev/null; then
     echo "$f:"
-    sed 's/^/          /' "$OUT/out/$f"
+    case "$f" in
+      *.BMP) echo "          (extracted bitmap: $OUT/out/$f)" ;;
+      *)     sed 's/^/          /' "$OUT/out/$f" ;;
+    esac
   fi
 done
 echo "0xE9      $(wc -c < "$OUT/out/dbg.log") bytes"
@@ -438,9 +490,20 @@ fi
 if kill -0 $VM 2>/dev/null; then
   # What is on the screen *now* is the only evidence of what refused to go
   # away, and without it the next run is spent finding out.
-  python3 "$ROOT/tools/qmpc.py" "$SOCK" screendump "$OUT/out/stuck.ppm" >/dev/null 2>&1 || true
+  python3 "$ROOT/tools/qmpc.py" "$SOCK" screendump "$OUT/out/stuck.png" >/dev/null 2>&1 || true
   echo "shutdown   the machine did not power off — the next boot is a ScanDisk"
   echo "           or safe mode. What was on screen: $OUT/out/stuck.png"
 else
   echo "shutdown   clean"
 fi
+
+for f in $PROG_OUTPUTS; do
+  rm -f "$OUT/out/$f"
+  if mcopy -i "$RAW@@$OFF" -n "::/$f" "$OUT/out/$f" 2>/dev/null; then
+    echo "post-shutdown $f:"
+    case "$f" in
+      *.BMP) echo "          (extracted bitmap: $OUT/out/$f)" ;;
+      *)     sed 's/^/          /' "$OUT/out/$f" ;;
+    esac
+  fi
+done

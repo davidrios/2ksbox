@@ -104,6 +104,10 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 # Ctrl+Alt+S writes the guest's own frame — its native size, no geometry stage and
 #   no CRT chain — as PLAYER_SHOT_DIR/2ksbox-NNNN.png (the next free number; the
 #   working directory when PLAYER_SHOT_DIR is unset). Ctrl+Alt+G releases the grab.
+# PLAYER_SHOT_EVERY=300 takes that same shot on its own every 300 presented guest frames
+#   (a scripted run's window is behind a terminal and gets no redraws, so it is driven
+#   from the wake path): the only way a headless run sees a 3D frame, since a QMP
+#   screendump shows the VGA surface, frozen while the 3D device presents
 # Gamepad (M13, docs/tracks/m13-gamepads.md). `player --pads` says what this host
 #   can read, which is the one place a build without the `gilrs` feature or a
 #   sandbox with no /dev/input reports itself.

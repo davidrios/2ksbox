@@ -444,10 +444,22 @@ void d3d_register_moved(d3dpt_core *p, void *os)
 }
 
 /* the host's rendering into the surface, into its VRAM (S_FALSE = nothing pending) */
+static ULONG readbacks_said;
+
 HRESULT d3d_readback(d3dpt_core *p, ULONG handle)
 {
+    HRESULT hr;
     if (!p->d3d || !handle) {
         return DD_OK;
     }
-    return (HRESULT)d3dpt_enc_sync(&p->enc, D3DPT_OP_READBACK, handle);
+    hr = (HRESULT)d3dpt_enc_sync(&p->enc, D3DPT_OP_READBACK, handle);
+    /* a readback is per-frame, so say the first few and then be quiet: the
+     * thing this ever has to answer is whether readbacks happen at all */
+    if (readbacks_said < 8) {
+        readbacks_said++;
+        dbg_hex(p, "d3dptdisp: d3d_readback handle ", handle);
+        dbg_hex(p, " -> ", (ULONG)hr);
+        dbg_puts(p, "\n");
+    }
+    return hr;
 }

@@ -101,17 +101,47 @@ static D3DTLVERTEX V(float x, float y, float z, DWORD c, float u, float v)
     return t;
 }
 
-static int enum_hal;
-static HRESULT CALLBACK enum_dev(char *desc, char *name, D3DDEVICEDESC7 *dd, void *ctx)
+static void init_scene_vtx(D3DTLVERTEX *vtx)
+{
+    int i;
+    vtx[0] = V(100, 80, 0.5f, 0xffffffff, 0, 0); vtx[1] = V(420, 80, 0.5f, 0xffffffff, 2, 0); vtx[2] = V(100, 320, 0.5f, 0xffffffff, 0, 2);
+    vtx[3] = V(100, 320, 0.5f, 0xffffffff, 0, 2); vtx[4] = V(420, 80, 0.5f, 0xffffffff, 2, 0); vtx[5] = V(420, 320, 0.5f, 0xffffffff, 2, 2);
+    {
+        DWORD col[] = { 0xffffffff, 0xffff0000, 0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff0000 };
+        for (i = 0; i < 6; i++) {
+            float a = i ? (float)(i - 1) * 6.2831853f / 4.0f : 0.0f;
+            vtx[6 + i] = i == 0 ? V(480, 240, 0.3f, col[0], 0, 0)
+                                : V(480 + 100 * cosf(a), 240 + 100 * sinf(a), 0.3f, col[i], 0, 0);
+        }
+    }
+    vtx[12] = V(300, 40, 0.7f, 0xff00ffff, 0, 0); vtx[13] = V(600, 420, 0.7f, 0xff00ffff, 0, 0); vtx[14] = V(60, 460, 0.7f, 0xff00ffff, 0, 0);
+    vtx[15] = V(20, 360, 0.1f, 0x80ff0000, 0, 0); vtx[16] = V(220, 360, 0.1f, 0x80ff0000, 0, 0);
+    vtx[17] = V(20, 470, 0.1f, 0x80ff0000, 0, 0); vtx[18] = V(220, 470, 0.1f, 0x80ff0000, 0, 0);
+}
+
+static void fill_texture_pattern(void *surface, long pitch)
+{
+    unsigned y, x;
+    for (y = 0; y < TEX; y++)
+        for (x = 0; x < TEX; x++) {
+            unsigned c = ((x / 8) + (y / 8)) & 1 ? 0xffffffffu : 0xff2040ffu;
+            if (y >= 24 && y < 40) c = (c & 0x00ffffffu) | 0x80000000u;
+            ((unsigned *)((unsigned char *)surface + y * pitch))[x] = c;
+        }
+}
+
+static int enum_hal_dx7;
+static HRESULT CALLBACK enum_dev_dx7(char *desc, char *name, D3DDEVICEDESC7 *dd, void *ctx)
 {
     int hal = memcmp(&dd->deviceGUID, &IID_IDirect3DHALDevice, sizeof(GUID)) == 0;
     int tnl = memcmp(&dd->deviceGUID, &IID_IDirect3DTnLHalDevice, sizeof(GUID)) == 0;
     logp("device: %s (%s)%s%s devcaps %08lx tex %lux%lu..%lux%lu stages %u simtex %u\n", name, desc,
          hal ? " HAL" : "", tnl ? " TnLHAL" : "", dd->dwDevCaps, dd->dwMinTextureWidth, dd->dwMinTextureHeight,
          dd->dwMaxTextureWidth, dd->dwMaxTextureHeight, dd->wMaxTextureBlendStages, dd->wMaxSimultaneousTextures);
-    if (hal) enum_hal = 1;
+    if (hal) enum_hal_dx7 = 1;
     return D3DENUMRET_OK;
 }
+
 
 static DDPIXELFORMAT zfmt;
 static HRESULT CALLBACK enum_z(DDPIXELFORMAT *pf, void *ctx)
@@ -121,9 +151,10 @@ static HRESULT CALLBACK enum_z(DDPIXELFORMAT *pf, void *ctx)
     return D3DENUMRET_OK;
 }
 
-int main(int argc, char **argv)
+typedef HRESULT (WINAPI *pfnDirectDrawCreateEx)(GUID *, LPVOID *, REFIID, IUnknown *);
+
+static int run_dx7(HWND hwnd, int w, int h, int bpp, int frames, int noz, pfnDirectDrawCreateEx pDirectDrawCreateEx)
 {
-    int w = 640, h = 480, bpp = 32, frames = 300, i, argn = 0, noz = 0;
     LPDIRECTDRAW7 dd = NULL;
     LPDIRECTDRAWSURFACE7 prim = NULL, back = NULL, zbuf = NULL, tex = NULL;
     LPDIRECT3D7 d3d = NULL;
@@ -135,34 +166,10 @@ int main(int argc, char **argv)
     D3DTLVERTEX vtx[19];
     WORD tri_idx[3] = { 0, 1, 2 };
     HRESULT hr;
-    WNDCLASSA wc;
-    HWND hwnd;
     DWORD t0, t1;
+    int i;
 
-    for (i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "-noz")) noz = 1;
-        else if (argn == 0) { w = atoi(argv[i]); argn++; }
-        else if (argn == 1) { h = atoi(argv[i]); argn++; }
-        else if (argn == 2) { bpp = atoi(argv[i]); argn++; }
-        else if (argn == 3) { frames = atoi(argv[i]); argn++; }
-    }
-    logfile = fopen("d3d7test.log", "w");
-    logp("d3d7test: %dx%d %d bpp, %d frames\n", w, h, bpp, frames);
-
-    memset(&wc, 0, sizeof(wc));
-    wc.lpfnWndProc = wndproc;
-    wc.hInstance = GetModuleHandleA(NULL);
-    wc.lpszClassName = "d3d7test";
-    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
-    RegisterClassA(&wc);
-    hwnd = CreateWindowExA(0, "d3d7test", "d3d7test", WS_POPUP, 0, 0, w, h, NULL, NULL, wc.hInstance, NULL);
-    ShowWindow(hwnd, SW_SHOW);
-    /* GDI's software pointer lives in VRAM (no hardware cursor yet): keep
-     * it out of the frame the test dumps and diffs */
-    ShowCursor(FALSE);
-    pump();
-
-    hr = DirectDrawCreateEx(NULL, (void **)&dd, &IID_IDirectDraw7, NULL);
+    hr = pDirectDrawCreateEx(NULL, (void **)&dd, &IID_IDirectDraw7, NULL);
     if (FAILED(hr)) { logp("DirectDrawCreateEx failed %08lx\n", hr); return 1; }
     memset(&hal, 0, sizeof(hal)); hal.dwSize = sizeof(hal);
     memset(&hel, 0, sizeof(hel)); hel.dwSize = sizeof(hel);
@@ -173,9 +180,9 @@ int main(int argc, char **argv)
     hr = dd->lpVtbl->QueryInterface(dd, &IID_IDirect3D7, (void **)&d3d);
     logp("QueryInterface(IDirect3D7) %08lx\n", hr);
     if (FAILED(hr)) goto out;
-    d3d->lpVtbl->EnumDevices(d3d, enum_dev, NULL);
-    logp("HAL device %s\n", enum_hal ? "present" : "ABSENT");
-    if (!enum_hal) goto out;
+    d3d->lpVtbl->EnumDevices(d3d, enum_dev_dx7, NULL);
+    logp("HAL device %s\n", enum_hal_dx7 ? "present" : "ABSENT");
+    if (!enum_hal_dx7) goto out;
 
     hr = dd->lpVtbl->SetCooperativeLevel(dd, hwnd, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN | DDSCL_ALLOWREBOOT);
     logp("SetCooperativeLevel %08lx\n", hr);
@@ -235,31 +242,10 @@ nozbuf:
     hr = tex->lpVtbl->Lock(tex, NULL, &sd, DDLOCK_WAIT | DDLOCK_WRITEONLY, NULL);
     logp("Lock(texture) %08lx caps %08lx\n", hr, sd.ddsCaps.dwCaps);
     if (FAILED(hr)) goto out;
-    {
-        unsigned y, x;
-        for (y = 0; y < TEX; y++)
-            for (x = 0; x < TEX; x++) {
-                unsigned c = ((x / 8) + (y / 8)) & 1 ? 0xffffffffu : 0xff2040ffu;
-                if (y >= 24 && y < 40) c = (c & 0x00ffffffu) | 0x80000000u;
-                ((unsigned *)((unsigned char *)sd.lpSurface + y * sd.lPitch))[x] = c;
-            }
-    }
+    fill_texture_pattern(sd.lpSurface, sd.lPitch);
     tex->lpVtbl->Unlock(tex, NULL);
 
-    /* vertices: quad (0..5), fan (6..11), triangle (12..14), alpha strip (15..18) */
-    vtx[0] = V(100, 80, 0.5f, 0xffffffff, 0, 0); vtx[1] = V(420, 80, 0.5f, 0xffffffff, 2, 0); vtx[2] = V(100, 320, 0.5f, 0xffffffff, 0, 2);
-    vtx[3] = V(100, 320, 0.5f, 0xffffffff, 0, 2); vtx[4] = V(420, 80, 0.5f, 0xffffffff, 2, 0); vtx[5] = V(420, 320, 0.5f, 0xffffffff, 2, 2);
-    {
-        DWORD col[] = { 0xffffffff, 0xffff0000, 0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff0000 };
-        for (i = 0; i < 6; i++) {
-            float a = i ? (float)(i - 1) * 6.2831853f / 4.0f : 0.0f;
-            vtx[6 + i] = i == 0 ? V(480, 240, 0.3f, col[0], 0, 0)
-                                : V(480 + 100 * cosf(a), 240 + 100 * sinf(a), 0.3f, col[i], 0, 0);
-        }
-    }
-    vtx[12] = V(300, 40, 0.7f, 0xff00ffff, 0, 0); vtx[13] = V(600, 420, 0.7f, 0xff00ffff, 0, 0); vtx[14] = V(60, 460, 0.7f, 0xff00ffff, 0, 0);
-    vtx[15] = V(20, 360, 0.1f, 0x80ff0000, 0, 0); vtx[16] = V(220, 360, 0.1f, 0x80ff0000, 0, 0);
-    vtx[17] = V(20, 470, 0.1f, 0x80ff0000, 0, 0); vtx[18] = V(220, 470, 0.1f, 0x80ff0000, 0, 0);
+    init_scene_vtx(vtx);
 
     vp.dwX = 0; vp.dwY = 0; vp.dwWidth = w; vp.dwHeight = h; vp.dvMinZ = 0.0f; vp.dvMaxZ = 1.0f;
     hr = dev->lpVtbl->SetViewport(dev, &vp);
@@ -268,11 +254,11 @@ nozbuf:
     t0 = GetTickCount();
     for (i = 0; i < frames; i++) {
         pump();
-        hr = dev->lpVtbl->Clear(dev, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f, 0);
+        hr = dev->lpVtbl->Clear(dev, 0, NULL, D3DCLEAR_TARGET | (noz ? 0 : D3DCLEAR_ZBUFFER), CLEAR_COLOR, 1.0f, 0);
         if (FAILED(hr)) { logp("Clear failed %08lx at frame %d\n", hr, i); goto out; }
         hr = dev->lpVtbl->BeginScene(dev);
         if (FAILED(hr)) { logp("BeginScene failed %08lx at frame %d\n", hr, i); goto out; }
-        dev->lpVtbl->SetRenderState(dev, D3DRENDERSTATE_ZENABLE, D3DZB_TRUE);
+        dev->lpVtbl->SetRenderState(dev, D3DRENDERSTATE_ZENABLE, noz ? D3DZB_FALSE : D3DZB_TRUE);
         dev->lpVtbl->SetRenderState(dev, D3DRENDERSTATE_ZWRITEENABLE, TRUE);
         dev->lpVtbl->SetRenderState(dev, D3DRENDERSTATE_ZFUNC, D3DCMP_LESSEQUAL);
         dev->lpVtbl->SetRenderState(dev, D3DRENDERSTATE_LIGHTING, FALSE);
@@ -353,9 +339,59 @@ out:
         dd->lpVtbl->SetCooperativeLevel(dd, hwnd, DDSCL_NORMAL);
         dd->lpVtbl->Release(dd);
     }
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    int w = 640, h = 480, bpp = 32, frames = 300, i, argn = 0, noz = 0;
+    int ret;
+    WNDCLASSA wc;
+    HWND hwnd;
+    HMODULE hDDraw;
+    pfnDirectDrawCreateEx pDirectDrawCreateEx = NULL;
+
+    for (i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "-noz")) noz = 1;
+        else if (argn == 0) { w = atoi(argv[i]); argn++; }
+        else if (argn == 1) { h = atoi(argv[i]); argn++; }
+        else if (argn == 2) { bpp = atoi(argv[i]); argn++; }
+        else if (argn == 3) { frames = atoi(argv[i]); argn++; }
+    }
+    logfile = fopen("d3d7test.log", "w");
+    logp("d3d7test: %dx%d %d bpp, %d frames\n", w, h, bpp, frames);
+
+    memset(&wc, 0, sizeof(wc));
+    wc.lpfnWndProc = wndproc;
+    wc.hInstance = GetModuleHandleA(NULL);
+    wc.lpszClassName = "d3d7test";
+    wc.hCursor = LoadCursorA(NULL, IDC_ARROW);
+    RegisterClassA(&wc);
+    hwnd = CreateWindowExA(0, "d3d7test", "d3d7test", WS_POPUP, 0, 0, w, h, NULL, NULL, wc.hInstance, NULL);
+    ShowWindow(hwnd, SW_SHOW);
+    /* GDI's software pointer lives in VRAM (no hardware cursor yet): keep
+     * it out of the frame the test dumps and diffs */
+    ShowCursor(FALSE);
+    pump();
+
+    /* Both families this driver serves run DirectX 7 or later: XP by
+     * construction, and a 2ksbox Win98 machine by decision (doc 19 §25).
+     * A DirectX 6 path lived here for one image that predated that and was
+     * never exercised again once the guest was updated. */
+    hDDraw = LoadLibraryA("DDRAW.DLL");
+    if (hDDraw) {
+        pDirectDrawCreateEx = (pfnDirectDrawCreateEx)GetProcAddress(hDDraw, "DirectDrawCreateEx");
+    }
+    if (!pDirectDrawCreateEx) {
+        logp("d3d7test: no DirectDrawCreateEx - this guest is below DirectX 7\n");
+        ret = 1;
+    } else {
+        ret = run_dx7(hwnd, w, h, bpp, frames, noz, pDirectDrawCreateEx);
+    }
+
     ShowCursor(TRUE);
     DestroyWindow(hwnd);
     logp("d3d7test: done\n");
     if (logfile) fclose(logfile);
-    return 0;
+    return ret;
 }

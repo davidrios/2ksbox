@@ -99,7 +99,7 @@ typedef char d3dpt_fits[
      sizeof(DDHAL_DDCALLBACKS_t) <= sizeof(((d3dpt_hal9 *)0)->cb_dd) &&
      sizeof(DDHAL_DDSURFACECALLBACKS_t) <= sizeof(((d3dpt_hal9 *)0)->cb_surf) &&
      sizeof(DDHAL_DDPALETTECALLBACKS_t) <= sizeof(((d3dpt_hal9 *)0)->cb_pal) &&
-     sizeof(DDHALMODEINFO_t) <= sizeof(((d3dpt_hal9 *)0)->modeinfo) &&
+     sizeof(DDHALMODEINFO_t) * D3DPT_HAL9_MAX_MODES <= sizeof(((d3dpt_hal9 *)0)->modeinfo) &&
      sizeof(VIDMEM_t) <= sizeof(((d3dpt_hal9 *)0)->heap)) ? 1 : -1];
 
 /* The block is allocated once and never freed: DirectDraw hands its
@@ -219,9 +219,11 @@ static void BuildCallbacks(void)
     DDHAL_DDCALLBACKS_t __far *pcbDD = HALFIELD(DDHAL_DDCALLBACKS_t, cb_dd);
     DDHAL_DDSURFACECALLBACKS_t __far *pcbSurf = HALFIELD(DDHAL_DDSURFACECALLBACKS_t, cb_surf);
     DDHAL_DDPALETTECALLBACKS_t __far *pcbPal = HALFIELD(DDHAL_DDPALETTECALLBACKS_t, cb_pal);
+    DDHAL_DDEXEBUFCALLBACKS_t __far *pcbExeBuf = HALFIELD(DDHAL_DDEXEBUFCALLBACKS_t, cb_exebuf);
 #define cbDD (*pcbDD)
 #define cbSurf (*pcbSurf)
 #define cbPal (*pcbPal)
+#define cbExeBuf (*pcbExeBuf)
 
     ZeroFar(&cbDD, sizeof(cbDD));
     ZeroFar(&cbSurf, sizeof(cbSurf));
@@ -276,9 +278,18 @@ static void BuildCallbacks(void)
     CB(cbSurf, UpdateOverlay, UpdateOverlay, DDHAL_SURFCB32_UPDATEOVERLAY)
     CB(cbSurf, SetOverlayPosition, SetOverlayPosition, DDHAL_SURFCB32_SETOVERLAYPOSITION)
     CB(cbSurf, SetPalette, SetPalette, DDHAL_SURFCB32_SETPALETTE)
+
+    ZeroFar(&cbExeBuf, sizeof(cbExeBuf));
+    cbExeBuf.dwSize = sizeof(cbExeBuf);
+    CB(cbExeBuf, CanCreateExecuteBuffer, CanCreateExecuteBuffer, DDHAL_EXEBUFCB32_CANCREATEEXEBUF)
+    CB(cbExeBuf, CreateExecuteBuffer, CreateExecuteBuffer, DDHAL_EXEBUFCB32_CREATEEXEBUF)
+    CB(cbExeBuf, DestroyExecuteBuffer, DestroyExecuteBuffer, DDHAL_EXEBUFCB32_DESTROYEXEBUF)
+    CB(cbExeBuf, LockExecuteBuffer, LockExecuteBuffer, DDHAL_EXEBUFCB32_LOCKEXEBUF)
+    CB(cbExeBuf, UnlockExecuteBuffer, UnlockExecuteBuffer, DDHAL_EXEBUFCB32_UNLOCKEXEBUF)
 #undef CB
     dbg_val("d3dpt9dd:   dd callbacks", cbDD.dwFlags);
     dbg_val(" surface callbacks", cbSurf.dwFlags);
+    dbg_val(" exebuf callbacks", pcbExeBuf->dwFlags);
     dbg_str("");
     /* Read the table back through the far pointer rather than trusting
      * the store: the runtime `IsBadCodePtr`s every entry a flag claims
@@ -288,34 +299,100 @@ static void BuildCallbacks(void)
     dbg_val(" destroy", *(DWORD __far *)&cbDD.DestroyDriver);
     dbg_val(" cansurf", *(DWORD __far *)&cbDD.CanCreateSurface);
     dbg_val(" vblank", *(DWORD __far *)&cbDD.WaitForVerticalBlank);
+    dbg_val(" exebuf cancreate", *(DWORD __far *)&pcbExeBuf->CanCreateExecuteBuffer);
     dbg_str("");
 #undef cbDD
 #undef cbSurf
 #undef cbPal
+#undef cbExeBuf
 }
 
 static BOOL BuildHalInfo(void)
 {
+    static const struct {
+        WORD w, h;
+    } s_res[] = {
+        { 640,  480 },
+        { 800,  600 },
+        { 1024, 768 },
+        { 1280, 1024 },
+        { 400,  300 },
+        { 512,  384 },
+        /* No 320x200 and no 320x240 (2026-09-10, doc 19 §30). Those two
+         * are DirectDraw's own: with DDSCL_ALLOWMODEX a 320x200 request
+         * is answered by the runtime's Mode X / VGA mode 13h on the VGA
+         * core, where it programs the DAC and copies the flip chain into
+         * VGA memory itself — which is the only way a *system-memory*
+         * flipping primary (Carmageddon's, the SDK's Mode X recipe) is
+         * ever displayed. Listed as a driver mode, the same request got
+         * a real 320x200 linear mode with a system-memory primary that
+         * nothing presents: a black screen with the palette right. */
+    };
+    static const WORD s_bpp[] = { 16, 32, 8 };
+
     DDHALINFO_t __far *hi = HALFIELD(DDHALINFO_t, halinfo);
     DDHALMODEINFO_t __far *mi = HALFIELD(DDHALMODEINFO_t, modeinfo);
     VIDMEM_t __far *hp = HALFIELD(VIDMEM_t, heap);
-    DWORD start;
+    DWORD start, min_start, end;
+    WORD n = 0, cur_idx = 0xffff;
+    WORD i, j;
 
     ZeroFar(hi, sizeof(*hi));
-    ZeroFar(mi, sizeof(*mi));
+    ZeroFar(mi, sizeof(DDHALMODEINFO_t) * D3DPT_HAL9_MAX_MODES);
     ZeroFar(hp, sizeof(*hp));
 
-    mi->dwWidth = wScrX;
-    mi->dwHeight = wScrY;
-    mi->lPitch = dwPitch;
-    mi->dwBPP = wBpp;
-    mi->wFlags = (wBpp == 8) ? DDMODEINFO_PALETTIZED : 0;
-    mi->wRefreshRate = 0;
-    /* DDHALMODEINFO carries the masks themselves, not a DDPIXELFORMAT */
-    if (wBpp == 16) {
-        mi->dwRBitMask = 0xf800; mi->dwGBitMask = 0x07e0; mi->dwBBitMask = 0x001f;
-    } else if (wBpp > 8) {
-        mi->dwRBitMask = 0x00ff0000ul; mi->dwGBitMask = 0x0000ff00ul; mi->dwBBitMask = 0x000000fful;
+    for (i = 0; i < sizeof(s_res) / sizeof(s_res[0]); i++) {
+        for (j = 0; j < sizeof(s_bpp) / sizeof(s_bpp[0]); j++) {
+            WORD w = s_res[i].w;
+            WORD h = s_res[i].h;
+            WORD bpp = s_bpp[j];
+            DWORD need = MulW(w, (WORD)(h * ((bpp + 7) / 8)));
+            if (need <= pHal->vram_size && n < D3DPT_HAL9_MAX_MODES) {
+                DDHALMODEINFO_t __far *m = &mi[n];
+                m->dwWidth = w;
+                m->dwHeight = h;
+                m->lPitch = MulW(w, (bpp + 7) / 8);
+                m->dwBPP = bpp;
+                m->wFlags = (bpp == 8) ? DDMODEINFO_PALETTIZED : 0;
+                m->wRefreshRate = 0;
+                if (bpp == 16) {
+                    m->dwRBitMask = 0xf800;
+                    m->dwGBitMask = 0x07e0;
+                    m->dwBBitMask = 0x001f;
+                } else if (bpp > 8) {
+                    m->dwRBitMask = 0x00ff0000ul;
+                    m->dwGBitMask = 0x0000ff00ul;
+                    m->dwBBitMask = 0x000000fful;
+                }
+                m->dwAlphaBitMask = 0;
+                if (w == wScrX && h == wScrY && bpp == wBpp) {
+                    cur_idx = n;
+                }
+                n++;
+            }
+        }
+    }
+
+    if (cur_idx == 0xffff && n < D3DPT_HAL9_MAX_MODES) {
+        DDHALMODEINFO_t __far *m = &mi[n];
+        m->dwWidth = wScrX;
+        m->dwHeight = wScrY;
+        m->lPitch = dwPitch;
+        m->dwBPP = wBpp;
+        m->wFlags = (wBpp == 8) ? DDMODEINFO_PALETTIZED : 0;
+        m->wRefreshRate = 0;
+        if (wBpp == 16) {
+            m->dwRBitMask = 0xf800;
+            m->dwGBitMask = 0x07e0;
+            m->dwBBitMask = 0x001f;
+        } else if (wBpp > 8) {
+            m->dwRBitMask = 0x00ff0000ul;
+            m->dwGBitMask = 0x0000ff00ul;
+            m->dwBBitMask = 0x000000fful;
+        }
+        m->dwAlphaBitMask = 0;
+        cur_idx = n;
+        n++;
     }
 
     hi->dwSize = sizeof(*hi);
@@ -330,8 +407,10 @@ static BOOL BuildHalInfo(void)
     hi->lpDDSurfaceCallbacks = (LPDDHAL_DDSURFACECALLBACKS)HALFIELD(DDHAL_DDSURFACECALLBACKS_t, cb_surf);
     hi->lpDDPaletteCallbacks = (LPDDHAL_DDPALETTECALLBACKS)HALFIELD(DDHAL_DDPALETTECALLBACKS_t, cb_pal);
     hi->lpModeInfo = (LPDDHALMODEINFO)HALFIELD(DDHALMODEINFO_t, modeinfo);
-    hi->dwNumModes = 1;
-    hi->dwModeIndex = 0;
+    hi->dwNumModes = n;
+    hi->dwModeIndex = (cur_idx != 0xffff) ? cur_idx : 0;
+    dbg_val("d3dpt9dd: num modes", (DWORD)n);
+    dbg_val("d3dpt9dd: cur mode idx", (DWORD)hi->dwModeIndex);
 
     hi->vmiData.fpPrimary = pHal->vram_linear;
     hi->vmiData.dwFlags = 0;
@@ -355,9 +434,30 @@ static BOOL BuildHalInfo(void)
      * pitch of every mode the adapter offers fits a WORD (1600x32bpp is
      * 6400 bytes). */
     start = (MulW((WORD)dwPitch, wScrY) + 4095ul) & ~4095ul;
+    min_start = 8ul * 1024ul * 1024ul;
+    if (start < min_start) start = min_start;
+
+    /* **Where the heap ends is the adapter's answer, not arithmetic.** The
+     * top of VRAM is not free: the command window the Direct3D half encodes
+     * batches into sits at `D3DPT_FB_REG_CMD_OFFSET` (64 MB of a 128 MB
+     * aperture), and the cursor sprite's image sits immediately below it.
+     * Ending the heap at `vram_size - CURSOR_BYTES` published a heap 64 MB
+     * too long, running the whole length of the command window — a
+     * DirectDraw surface allocated up there and the batch ring would have
+     * been the same memory. `core/`'s `dd_heap_end()` is the same
+     * calculation on NT; this layer cannot call it (it is 16-bit and that is
+     * flat 32-bit code), so it reads the same register.
+     *
+     * This is the third time a value re-derived here instead of read from
+     * the one authority has cost this track a day: `DDSCAPS_EXECUTEBUFFER`
+     * in step 1, the command window itself in step 4 (doc 19 §25), and now
+     * the end of the heap. */
+    end = RegGet(D3DPT_FB_REG_CMD_OFFSET);
+    if (!end || end > pHal->vram_size) end = pHal->vram_size;
+    end -= D3DPT_FB_CURSOR_BYTES;
     hp->dwFlags = VIDMEM_ISLINEAR;
     hp->fpStart = pHal->vram_linear + start;
-    hp->fpEnd = pHal->vram_linear + pHal->vram_size - D3DPT_FB_CURSOR_BYTES - 1;
+    hp->fpEnd = pHal->vram_linear + end - 1;
     hi->vmiData.dwNumHeaps = 1;
     hi->vmiData.pvmList = (LPVIDMEM)HALFIELD(VIDMEM_t, heap);
 
@@ -379,8 +479,10 @@ static BOOL BuildHalInfo(void)
     hi->ddCaps.dwCaps2 = (DDF() & D9F_CERTIFIED) ? DDCAPS2_CERTIFIED : 0;
     hi->ddCaps.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_PRIMARYSURFACE |
                                 DDSCAPS_FLIP | DDSCAPS_VIDEOMEMORY;
-    hi->ddCaps.dwVidMemTotal = pHal->vram_size - start;
-    hi->ddCaps.dwVidMemFree = pHal->vram_size - start;
+    /* The size of the heap above, not of the aperture: a total that counts
+     * the command window is a promise the driver cannot keep. */
+    hi->ddCaps.dwVidMemTotal = end - start;
+    hi->ddCaps.dwVidMemFree = end - start;
 
     hi->dwMonitorFrequency = 0;
     /* DDHALINFO_ISPRIMARYDISPLAY is what the reference driver sets and
@@ -388,11 +490,45 @@ static BOOL BuildHalInfo(void)
      * It was missing until 2026-09-08 and it is *not* what was wrong
      * then (a boot with it removed again behaves identically, doc 19
      * §21); it is here because it is true. */
-    hi->dwFlags = DDHALINFO_ISPRIMARYDISPLAY | DDHALINFO_MODEXILLEGAL;
+    /* Not DDHALINFO_MODEXILLEGAL: the runtime's Mode X and VGA mode 13h
+     * run on the adapter's VGA core after GDI disables this driver
+     * (VDD_DISPLAY_DRIVER_DISABLING, then the runtime programs the VGA
+     * registers itself), and they are what a 320x200 game gets (see the
+     * mode table). The reference driver leaves it clear too. */
+    hi->dwFlags = DDHALINFO_ISPRIMARYDISPLAY;
     /* the module DirectDraw loaded our 32-bit callbacks out of, and the
      * driver's own PDEVICE */
     hi->hInstance = pHal->dll_hinstance;
     hi->lpPDevice = (LPVOID)lpDriverPDevice;
+
+    if (HalReachable(pHal->cb32.GetDriverInfo)) {
+        *(DWORD __far *)&hi->GetDriverInfo = pHal->cb32.GetDriverInfo;
+        hi->dwFlags |= DDHALINFO_GETDRIVERINFOSET | DDHALINFO_GETDRIVERINFO2;
+    }
+    hi->lpDDExeBufCallbacks = (LPDDHAL_DDEXEBUFCALLBACKS)HALFIELD(DDHAL_DDEXEBUFCALLBACKS_t, cb_exebuf);
+
+    pHal->fourcc[0] = 0x31545844;      /* 'DXT1' */
+    pHal->fourcc[1] = 0x33545844;      /* 'DXT3' */
+    pHal->fourcc[2] = 0x35545844;      /* 'DXT5' */
+    pHal->fourcc[3] = 0;
+    hi->lpdwFourCC = (LPDWORD)HALFIELD(DWORD, fourcc);
+    hi->ddCaps.dwNumFourCCCodes = 3;
+
+    if (HalReachable(pHal->d3dhal_global) && HalReachable(pHal->d3dhal_callbacks)) {
+        *(DWORD __far *)&hi->lpD3DGlobalDriverData = pHal->d3dhal_global;
+        *(DWORD __far *)&hi->lpD3DHALCallbacks = pHal->d3dhal_callbacks;
+        hi->ddCaps.dwCaps |= DDCAPS_3D | DDCAPS_COLORKEY;
+        hi->ddCaps.dwCKeyCaps = DDCKEYCAPS_SRCBLT;
+        hi->ddCaps.ddsCaps.dwCaps |= DDSCAPS_3DDEVICE | DDSCAPS_TEXTURE | DDSCAPS_ZBUFFER | DDSCAPS_MIPMAP;
+        hi->ddCaps.dwZBufferBitDepths = DDBD_16 | DDBD_24 | DDBD_32;
+    }
+
+    dbg_val("d3dpt9dd:   d3d global", *(DWORD __far *)&hi->lpD3DGlobalDriverData);
+    dbg_val(" cb", *(DWORD __far *)&hi->lpD3DHALCallbacks);
+    dbg_val(" exebuf", (DWORD)hi->lpDDExeBufCallbacks);
+    dbg_val(" fourcc", (DWORD)hi->lpdwFourCC);
+    dbg_str("");
+
     dbg_val("d3dpt9dd:   ddflags", DDF());
     dbg_str("");
     dbg_val("d3dpt9dd:   halinfo flags", hi->dwFlags);
@@ -452,9 +588,13 @@ void DDGetVersion(DDVERSIONDATA_t __far *lpVer)
  * DLL has been loaded and its DriverInit has filled cb32 — that is the
  * order DirectDraw uses, and the reason the callbacks are copied here
  * rather than when the name was asked for. */
-BOOL DDCreateDriverObject(void)
+BOOL DDCreateDriverObject(BOOL bReset)
 {
     if (lpSetInfo == 0) {
+        if (bReset) {
+            if (pHal != 0) HalMode();
+            return TRUE;
+        }
         dbg_str("d3dpt9dd: no lpSetInfo");
         return FALSE;
     }
@@ -481,7 +621,7 @@ BOOL DDCreateDriverObject(void)
     /* The runtime's answer matters: it is the only place it says whether
      * it took the HAL, and a HAL it did not take looks exactly like one
      * that was never offered. */
-    if (!lpSetInfo(HALFIELD(DDHALINFO_t, halinfo), FALSE)) {
+    if (!lpSetInfo(HALFIELD(DDHALINFO_t, halinfo), bReset)) {
         dbg_str("d3dpt9dd: DirectDraw refused the HALINFO");
         return FALSE;
     }

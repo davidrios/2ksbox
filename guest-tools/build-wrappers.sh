@@ -7,7 +7,8 @@
 # git, make, nasm; xorriso or genisoimage/mkisofs for the ISO.
 #   Linux (Arch):  pacman -S mingw-w64-gcc mingw-w64-tools xorriso
 #   macOS:         brew install mingw-w64 xorriso
-# DOS-only pieces (GLIDE2X.OVL via Open Watcom, DJGPP DXEs) are skipped.
+# GLIDE2X.OVL (the DOS Glide binding) needs Open Watcom and is skipped
+# with a note without it; the DJGPP DXEs are skipped outright.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -155,6 +156,37 @@ T="$OUT/iso/TESTS"
 # SETUP.EXE knows which is which.
 cp "$G"/glide.dll "$G"/glide2x.dll "$G"/glide3x.dll "$G"/fxmemmap.vxd \
    "$G"/fxptl.sys "$G"/instdrv.exe "$OUT/iso/GLIDE/"
+# GLIDE2X.OVL, the DOS binding of the same device (doc 12 §5, 2026-09-10).
+# A DOS/4GW game's Glide stub loads this overlay by name and resolves its
+# 126 upper-case entry points from it (Carmageddon's 3DFX.EXE carries
+# exactly that import table), and the overlay maps the pass-through device
+# itself through DPMI 0x800 — so it serves a pure DOS machine and a Win9x
+# DOS box alike; upstream installs it in C:\WINDOWS, SETUP.EXE does the
+# same on 9x, and a DOS machine copies it next to the game or onto its
+# PATH. It is an LE overlay only Open Watcom can build — the toolchain the
+# 98 display driver already needs, found the same way build-driver9x.sh
+# finds it — so a host without it still gets an ISO, minus this file, said
+# out loud. Built in a copy: the upstream Makefile writes into the
+# submodule's own source directory.
+build_ovl() {
+  local w="${WATCOM:-$HOME/.local/opt/open-watcom}" bin d
+  for bin in binl64 binl; do [ -x "$w/$bin/wcc386" ] && break; done
+  if [ ! -x "$w/$bin/wcc386" ]; then
+    echo "note: GLIDE2X.OVL (DOS Glide) is NOT on this ISO — no Open Watcom at $w (WATCOM=)" >&2
+    return 0
+  fi
+  d="$OUT/ovl-build"; rm -rf "$d"; mkdir -p "$d"
+  cp "$FX"/wrappers/3dfx/ovl/glideovl.c "$FX"/wrappers/3dfx/ovl/glideovl.lnk \
+     "$FX"/wrappers/3dfx/ovl/clib.h "$d/"
+  printf '#define __REV__ "%s-"\n' "$REV" > "$d/stamp.h"
+  ( cd "$d" && WATCOM="$w" PATH="$w/$bin:$PATH" INCLUDE="$w/h" \
+      wcc386 -I"$ROOT/qemu/hw/3dfx" -I"$FX/wrappers/3dfx/src" \
+             -zq -we -6s -ohtx -bd -fpi87 -fo=glideovl.obj glideovl.c \
+      && WATCOM="$w" PATH="$w/$bin:$PATH" wlink @glideovl.lnk ) > "$d/build.log" 2>&1 \
+    || { echo "GLIDE2X.OVL build failed, see $d/build.log"; tail -5 "$d/build.log"; exit 1; }
+  cp "$d/glide2x.ovl" "$OUT/iso/GLIDE/"
+}
+build_ovl
 # OPENGL\: the GL pass-through wrapper, per game.
 cp "$M"/opengl32.dll "$OUT/iso/OPENGL/"
 # WINED3D\: the wine9x set under wine9x's own names, once. A per-game
@@ -173,11 +205,11 @@ cp "$W"/README.md "$OUT/iso/WINED3D/WINE9X.TXT"
 # (gen_vtbl.py) and checked in.
 i686-w64-mingw32-gcc -O2 -Wall -shared -o "$OUT/iso/D3DPT/d3d9.dll" "$ROOT/guest-tools/src/d3dpt/d3d9.c" \
   "$FX/wrappers/fxlib/fxlibnt.c" "$FX/wrappers/fxlib/fxlib9x.c" -I"$FX/wrappers/fxlib" \
-  -static-libgcc -Wl,--kill-at -lgdi32 -luser32 -lpsapi
+  -static-libgcc -Wl,--kill-at -lgdi32 -luser32
 # Direct3D 8 over the same device (doc 14 P4): d3d8.c includes d3d9.c, one DLL.
 i686-w64-mingw32-gcc -O2 -Wall -shared -o "$OUT/iso/D3DPT/d3d8.dll" "$ROOT/guest-tools/src/d3dpt/d3d8.c" \
   "$FX/wrappers/fxlib/fxlibnt.c" "$FX/wrappers/fxlib/fxlib9x.c" -I"$FX/wrappers/fxlib" \
-  -static-libgcc -Wl,--kill-at -lgdi32 -luser32 -lpsapi
+  -static-libgcc -Wl,--kill-at -lgdi32 -luser32
 # DirectDraw 7 shim (d3dpt/ddraw.c): forwards to the system ddraw.dll and
 # reports 256 MB of video memory. RenderWare launchers (GTA Vice City) ask
 # DirectDraw, not Direct3D, and refuse the Cirrus adapter's 4 MB.
@@ -197,10 +229,17 @@ i686-w64-mingw32-gcc -O2 -Wall -shared -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcr
 # by which folder it came from — SETUP.EXE's /GAME does that.
 # Reference workloads (doc 14 P0a): the same deterministic game-like scene on
 # Direct3D 9 and Direct3D 8; -frames N -dump N x.bmp for golden images.
-i686-w64-mingw32-gcc -O2 -o "$T/d3dgame9.exe" "$ROOT/guest-tools/src/d3dgame9.c" -ld3d9 -lgdi32 -luser32
-i686-w64-mingw32-gcc -O2 -o "$T/d3dgame8.exe" "$ROOT/guest-tools/src/d3dgame8.c" -ld3d8 -lgdi32 -luser32
+# msvcrt, never the UCRT: modern mingw defaults to api-ms-win-crt-*.dll, which
+# no era Windows has — a UCRT-linked build runs only on an image that happens
+# to carry the redistributable, and dies before main() everywhere else (it did
+# on Win98, silently: the process never reached DirectDraw). M10, 2026-09-08.
+i686-w64-mingw32-gcc -O2 -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 \
+  -o "$T/d3dgame9.exe" "$ROOT/guest-tools/src/d3dgame9.c" -ld3d9 -lgdi32 -luser32
+i686-w64-mingw32-gcc -O2 -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 \
+  -o "$T/d3dgame8.exe" "$ROOT/guest-tools/src/d3dgame8.c" -ld3d8 -lgdi32 -luser32
 # Feature test (doc 14 P3): shaders, declarations, state blocks, queries, cube maps, surfaces.
-i686-w64-mingw32-gcc -O2 -o "$T/d3dfeat9.exe" "$ROOT/guest-tools/src/d3dfeat9.c" -ld3d9 -lgdi32 -luser32
+i686-w64-mingw32-gcc -O2 -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 \
+  -o "$T/d3dfeat9.exe" "$ROOT/guest-tools/src/d3dfeat9.c" -ld3d9 -lgdi32 -luser32
 # D3D9 smoke test (guest-tools/src/d3d9test.c): adapter string, HAL caps,
 # x87 control word after CreateDevice, spinning triangle with fps.
 i686-w64-mingw32-gcc -O2 -o "$T/d3d9test.exe" "$ROOT/guest-tools/src/d3d9test.c" -ld3d9 -lgdi32 -luser32
@@ -286,12 +325,18 @@ mkdir -p "$OUT/iso/DRIVER" && cp "$ROOT"/guest-tools/out/driver/* "$OUT/iso/DRIV
 # builds a usable ISO — with the 98 driver missing from it, said out loud,
 # because a silently smaller ISO is how a guest ends up being told a
 # component is "not on this disc".
-if "$ROOT/guest-tools/build-driver9x.sh" >/dev/null 2>&1; then
+if drv9x_log="$("$ROOT/guest-tools/build-driver9x.sh" 2>&1)"; then
   mkdir -p "$OUT/iso/DRIVER9X" && cp "$ROOT"/guest-tools/out/driver9x/*.drv \
     "$ROOT"/guest-tools/out/driver9x/*.vxd "$ROOT"/guest-tools/out/driver9x/*.inf \
     "$OUT/iso/DRIVER9X/"
 else
-  echo "note: no Open Watcom (WATCOM=), so the Win98 display driver is not on this ISO" >&2
+  # Say *why*, not just "no Watcom": the driver build fails for other
+  # reasons too (a HAL that will not link, a bad export), and blaming
+  # Watcom for those sends the next person looking in the wrong place.
+  # build-driver9x.sh's own first line is "need Open Watcom …" when that
+  # is the cause; otherwise its last lines are the real error.
+  echo "note: the Win98 display driver is NOT on this ISO — build-driver9x.sh failed:" >&2
+  printf '%s\n' "$drv9x_log" | tail -3 | sed 's/^/    /' >&2
 fi
 
 # SETUP.EXE at the root: the installer that reads the folders above and

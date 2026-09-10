@@ -357,6 +357,22 @@ and one in the executor, all found from that log and one traced frame:
   op) and re-evaluates the blend whenever stage 0's texture changes
   while it is set. `d3dpt-dp2-test` covers the order (blend first, the
   texture as a stage state) and fails without the fix.
+  **And an argument is not an op (Crimson Skies, 2026-09-09, doc 19
+  §28).** That flag was cleared by *any* stage-0 state 1–6, the ARGs
+  included. Crimson Skies' menu sets `TEXTUREMAPBLEND` `MODULATE` with no
+  texture bound (the executor's answer: `SELECTARG2`, the diffuse), then
+  its own `COLORARG2` / `ALPHARG2` = `DIFFUSE` — which ended the legacy
+  blend — and binds eight A4R4G4B4 textures per draw as `tss 0.0`; the
+  colour op stayed at the diffuse, `ffffffff`, and the logo, emblem and
+  buttons drew as white silhouettes with the texture's alpha. The flag is
+  two now, one per op (`legacy_cop`, `legacy_aop`): `TEXTUREMAPBLEND` /
+  `TEXTUREHANDLE` set both, the app's own `COLOROP` ends the first and its
+  own `ALPHAOP` the second, its ARGs end neither, and a bind re-evaluates
+  the halves still in effect (ops only: the ARGs the app set stay). The
+  `D3DPT_DP2_TRACE` snapshot is what gave it away — `tss 0: 1=0x3` at the
+  frame start while every draw expected `MODULATE` — after two sessions
+  had it as texture staleness, the upload, and the bind. `d3dpt-dp2-test`
+  has the sequence, and the app's own op over a later bind.
 - **The flip model, measured.** `DdFlip` logs its first eight calls
   (`d3dptdisp: flip curr H at OFF targ H at OFF`). For this DX6 chain
   they read `curr 1 at 0 targ 2 at 0x96000`, then `curr 2 at 0x96000
@@ -1270,7 +1286,11 @@ and what it taught:
   vertices (position, colours, both uv sets), clears, targets, viewports
   — and writes next to the flag file every bound texture's levels
   (`tex-<handle>-l<n>.ppm` + `-a.pgm` for alpha) and the render target
-  after every draw (`draw-<n>.ppm`), then removes the file. That last
+  after every draw (`draw-<n>.ppm`), then removes the file. A readback
+  with no draw before it does not end the frame (since 2026-09-09:
+  Crimson Skies reads its target back after every render-target switch,
+  and five arms in a row caught that empty call and nothing else; the log
+  says `readback of N with no draw, the frame goes on`). That last
   part is what found the garbage fan: a script that counts black pixels
   per snapshot names the draw, and its vertex lines in the log name the
   bug. `D3DPT_DDI_REREAD=1` re-reads every texture from VRAM at every

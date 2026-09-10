@@ -1,0 +1,94 @@
+diff --git a/GlOgl.h b/GlOgl.h
+index a21d391..96b26cd 100644
+--- a/GlOgl.h
++++ b/GlOgl.h
+@@ -95,6 +95,11 @@ struct BufferStruct
+     FxU16                   *Address;
+ };
+ 
++// 2ksbox (patch 05-lfb-locked-swap): the upload half of grLfbUnlock on its
++// own, so grBufferSwap can present a write buffer a game keeps locked across
++// swaps. `release` is what grLfbUnlock adds and a swap must not.
++void LfbFlushWriteBuffer( bool release );
++
+ struct TexSourceStruct
+ {
+     FxU32       StartAddress;
+diff --git a/grguBuffer.cpp b/grguBuffer.cpp
+index 5c5327d..8cd82b0 100644
+--- a/grguBuffer.cpp
++++ b/grguBuffer.cpp
+@@ -86,6 +86,9 @@ grBufferSwap( int swap_interval )
+ #endif
+ 
+     RenderDrawTriangles( );
++    // 2ksbox (patch 05-lfb-locked-swap): a write lock held across the swap
++    // is the game's frame buffer; draw it now, keep the lock.
++    LfbFlushWriteBuffer( false );
+     glFlush( );
+ 
+ #ifdef OGL_DEBUG
+diff --git a/grguLfb.cpp b/grguLfb.cpp
+index 791f2a0..04e7cde 100644
+--- a/grguLfb.cpp
++++ b/grguLfb.cpp
+@@ -148,18 +148,20 @@ grLfbLock( GrLock_t dwType,
+ }
+ 
+ //*************************************************
+-FX_ENTRY FxBool FX_CALL
+-grLfbUnlock( GrLock_t dwType, GrBuffer_t dwBuffer )
+-{ 
+-#ifdef OGL_CRITICAL
+-    GlideMsg("grLfbUnlock( %d, %d )\n", dwType, dwBuffer ); 
+-#endif
+-
+-    if ( dwType & 1 )
++// 2ksbox (patch 05-lfb-locked-swap): what grLfbUnlock did for a write
++// lock, callable from grBufferSwap too. A Glide 2 title may hold the write
++// lock for the life of the program and treat the LFB as its frame buffer —
++// Carmageddon's 3dfx build does, for its whole front end — and upstream
++// drew the buffer only here, on an unlock that never comes: black frames,
++// one "LFB locked on buffer swap" in the QEMU log. The pixels are consumed
++// (reset to BLUE_SCREEN) exactly as before, so a swap uploads only what
++// changed since the last one; the lock itself is kept unless `release`.
++void LfbFlushWriteBuffer( bool release )
++{
+     {
+         if ( ! Glide.DstBuffer.Lock )
+         {
+-            return FXFALSE;
++            return;
+         }
+ 
+         FxU32 ii,
+@@ -248,8 +250,28 @@ grLfbUnlock( GrLock_t dwType, GrBuffer_t dwBuffer )
+             }
+         }
+ 
+-        Glide.DstBuffer.Lock = false;
++        if ( release )
++        {
++            Glide.DstBuffer.Lock = false;
++        }
++    }
++}
++
++//*************************************************
++FX_ENTRY FxBool FX_CALL
++grLfbUnlock( GrLock_t dwType, GrBuffer_t dwBuffer )
++{ 
++#ifdef OGL_CRITICAL
++    GlideMsg("grLfbUnlock( %d, %d )\n", dwType, dwBuffer ); 
++#endif
+ 
++    if ( dwType & 1 )
++    {
++        if ( ! Glide.DstBuffer.Lock )
++        {
++            return FXFALSE;
++        }
++        LfbFlushWriteBuffer( true );
+         return FXTRUE;
+     }
+     else
