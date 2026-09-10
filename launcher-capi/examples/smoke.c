@@ -276,6 +276,31 @@ int main(int argc, char **argv) {
     lc_string_free(after_summary);
     lc_wizard_reset_optimizations(w);
     check("\"All defaults\" puts every one back", lc_wizard_optimizations_are_default(w), NULL);
+    /* The two shortcuts. "All off" is the control run -- every one of our
+     * additions out of the guest's path in one click, which is what
+     * answers "is one of ours what broke this" -- and it must really be
+     * every one, so this asks each switch rather than trusting the flag.
+     * "All on" is not the same as the defaults: pinned-regs ships off. */
+    lc_wizard_disable_all_optimizations(w);
+    check("\"Turn all off\" says so", lc_wizard_optimizations_all_off(w), NULL);
+    int still_on = 0;
+    for (size_t i = 0; i < opt_count; i++) {
+        if (lc_wizard_optimization_enabled(w, i)) still_on++;
+    }
+    check("...and every switch really is off", still_on == 0, NULL);
+    check("...which is not the shipped setting", !lc_wizard_optimizations_are_default(w), NULL);
+    lc_wizard_enable_all_optimizations(w);
+    check("\"Turn all on\" says so", lc_wizard_optimizations_all_on(w), NULL);
+    int still_off = 0;
+    for (size_t i = 0; i < opt_count; i++) {
+        if (!lc_wizard_optimization_enabled(w, i)) still_off++;
+    }
+    check("...and every switch really is on", still_off == 0, NULL);
+    check("...and that is not the defaults either (one ships off)",
+          !lc_wizard_optimizations_are_default(w), NULL);
+    lc_wizard_reset_optimizations(w);
+    check("...and the defaults come back from there",
+          lc_wizard_optimizations_are_default(w), NULL);
 
     lc_wizard_set(w, "name", "capi dos");
     lc_wizard_set_flag(w, "existing_disk", true);

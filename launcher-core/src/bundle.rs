@@ -689,6 +689,9 @@ pub enum Optimization {
     SmcSameValue,
     SoftImm,
     InlineLookup,
+    TbInvalidateFast,
+    TlbFloor,
+    TlsHotPaths,
     PinnedRegs,
 }
 
@@ -708,7 +711,7 @@ impl Optimization {
     /// In the order the form lists them: the arithmetic fast paths
     /// first, in the order they were written, then the two that are
     /// about translation, then the experimental one.
-    pub const ALL: [Optimization; 8] = [
+    pub const ALL: [Optimization; 11] = [
         Optimization::X87Fast,
         Optimization::SseFast,
         Optimization::SimdFast,
@@ -716,6 +719,9 @@ impl Optimization {
         Optimization::SmcSameValue,
         Optimization::SoftImm,
         Optimization::InlineLookup,
+        Optimization::TbInvalidateFast,
+        Optimization::TlbFloor,
+        Optimization::TlsHotPaths,
         Optimization::PinnedRegs,
     ];
 
@@ -731,6 +737,9 @@ impl Optimization {
             Optimization::SmcSameValue => "smc-same-value",
             Optimization::SoftImm => "soft-imm",
             Optimization::InlineLookup => "inline-lookup",
+            Optimization::TbInvalidateFast => "tb-invalidate-fast",
+            Optimization::TlbFloor => "tlb-floor",
+            Optimization::TlsHotPaths => "tls-hot-paths",
             Optimization::PinnedRegs => "pinned-regs",
         }
     }
@@ -744,6 +753,9 @@ impl Optimization {
             Optimization::SmcSameValue
             | Optimization::SoftImm
             | Optimization::InlineLookup
+            | Optimization::TbInvalidateFast
+            | Optimization::TlbFloor
+            | Optimization::TlsHotPaths
             | Optimization::PinnedRegs => Knob::Tcg,
         }
     }
@@ -767,6 +779,9 @@ impl Optimization {
             Optimization::SmcSameValue => "Skip retranslation when code is rewritten unchanged",
             Optimization::SoftImm => "Read patched operands from the guest's code as it runs",
             Optimization::InlineLookup => "Find the next block without leaving generated code",
+            Optimization::TbInvalidateFast => "Skip the block walk for writes that can't hit code",
+            Optimization::TlbFloor => "Keep the address-translation cache from shrinking",
+            Optimization::TlsHotPaths => "Take the memory-tracking locks once per run, not per write",
             Optimization::PinnedRegs => "Keep guest registers in host registers (experimental)",
         }
     }
@@ -804,6 +819,22 @@ impl Optimization {
             Optimization::InlineLookup => {
                 "Every return and indirect jump finds its next block in generated code rather than \
                  through a helper call: 7-Zip in the guest, +7-12%."
+            }
+            Optimization::TbInvalidateFast => {
+                "A guest write into a page that holds code used to walk every block on it. Each page \
+                 now remembers where its code actually lies, so a write outside that range returns at \
+                 once. Found on a 1997 game whose data pages carried one stale block and were written \
+                 tens of thousands of times a second."
+            }
+            Optimization::TlbFloor => {
+                "The emulator's address-translation cache is resized at every flush, and a Windows \
+                 guest flushes at every context switch - which shrank it to 64 entries, where two live \
+                 pages collide constantly. It is held at 4096 instead."
+            }
+            Optimization::TlsHotPaths => {
+                "The bookkeeping that tracks which guest memory has changed took a lock per access; \
+                 it now runs under the one the emulator already holds for the whole run. On macOS each \
+                 of those was a call into the dynamic linker: 8% of a game's emulation thread."
             }
             Optimization::PinnedRegs => {
                 "Apple Silicon only, and still being worked on - a boot crash has been seen with it \
@@ -858,6 +889,48 @@ impl Optimizations {
 
     pub fn all_default(&self) -> bool {
         Optimization::ALL.iter().all(|opt| self.is_default(*opt))
+    }
+
+    /// Every optimization this build knows about turned **off** — the
+    /// control run, in one click, for "is one of ours what broke this
+    /// guest". Written as explicit `false` entries for the ones whose
+    /// default is on, exactly as unticking each box would, so the
+    /// bundle says what it means and `--print-args` shows the whole
+    /// line. It is deliberately not the same shape as `reset`, which
+    /// *removes* entries.
+    ///
+    /// **This is not a pristine QEMU.** Three patches of the queue have
+    /// no runtime switch at all — 15 (`tb-invalidate-fast`), 16
+    /// (`tlb-floor`) and 19 (`tls-hot-paths`) — so a guest that is still
+    /// wrong with everything here off has not cleared our tree, only the
+    /// eight switches. `Form::optimizations_note` says so where someone
+    /// about to rely on it will read it.
+    pub fn disable_all(&mut self) {
+        for opt in Optimization::ALL {
+            self.set(opt, false);
+        }
+    }
+
+    /// Every optimization this build knows about turned **on**, the
+    /// other end of the same shortcut. `pinned-regs` comes on with it:
+    /// the switch means what it says, and its own note is where the
+    /// warning about it lives.
+    pub fn enable_all(&mut self) {
+        for opt in Optimization::ALL {
+            self.set(opt, true);
+        }
+    }
+
+    /// Whether every optimization this build knows about is off, for a
+    /// front end deciding whether its "Turn everything off" is worth
+    /// offering.
+    pub fn all_off(&self) -> bool {
+        Optimization::ALL.iter().all(|opt| !self.enabled(*opt))
+    }
+
+    /// The same at the other end.
+    pub fn all_on(&self) -> bool {
+        Optimization::ALL.iter().all(|opt| self.enabled(*opt))
     }
 
     pub fn is_empty(&self) -> bool {
