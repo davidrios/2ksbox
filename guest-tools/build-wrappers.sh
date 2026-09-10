@@ -237,6 +237,13 @@ i686-w64-mingw32-gcc -O2 -o "$T/crtcal.exe" "$ROOT/guest-tools/src/crtcal.c" \
 # offers, so it is reachable from FreeDOS or a "Restart in MS-DOS mode"
 # screen and nowhere else.
 nasm -f bin -o "$T/textcal.com" "$ROOT/guest-tools/src/textcal.asm"
+# PADTEST.COM: the gameport at 0x201 as a DOS game reads it (M13 path B,
+# guest-tools/src/padtest.asm) — one write arms four one-shots and the axes
+# are how long the loop counted before each bit fell. DOS only, and DOS is
+# the point: it is the only family the USB pad cannot reach. Prints to COM1
+# and to the screen, so it is both the harness's evidence
+# (tools/pad-guest-test.py) and something to run by hand in a DOS box.
+nasm -f bin -o "$T/padtest.com" "$ROOT/guest-tools/src/padtest.asm"
 
 # CDSHELF: the host's disc shelf from inside the machine (doc 07, patch 52;
 # protocol cdshelf/cdshelf_proto.h). One EXE for both Windows families — SPTI

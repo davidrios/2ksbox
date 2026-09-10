@@ -525,6 +525,12 @@ pub enum Mode {
     /// The pad is a USB HID device on the machine (path A). The player
     /// sends it state; the guest's own driver does the rest.
     Usb,
+    /// The pad is the machine's gameport at 0x201 (path B). Identical
+    /// work on this side — the same state through the same call — because
+    /// the shim feeds whichever device the machine has and the port's own
+    /// shape (two axes, four buttons, the d-pad folded onto the axes) is
+    /// the device's business, not the player's.
+    Gameport,
     Keys,
 }
 
@@ -533,9 +539,16 @@ impl Mode {
         match name {
             "none" => Some(Mode::None),
             "usb" => Some(Mode::Usb),
+            "gameport" => Some(Mode::Gameport),
             "keys" => Some(Mode::Keys),
             _ => None,
         }
+    }
+
+    /// Whether this setting means "there is a pad device in the guest to
+    /// send state to", as opposed to keys or nothing.
+    pub fn is_device(self) -> bool {
+        matches!(self, Mode::Usb | Mode::Gameport)
     }
 }
 
@@ -583,7 +596,7 @@ pub fn sweep(frames: u64) -> i32 {
     let mode = mode_from_env();
     let mut keys = match mode {
         Mode::Keys => Some(KeyMap::new(gamepad::default_key_bindings())),
-        Mode::Usb | Mode::None => None,
+        Mode::Usb | Mode::Gameport | Mode::None => None,
     };
     let mut total = 0usize;
     let mut last_hid: Option<([u8; 4], u8, u16)> = None;
@@ -592,7 +605,13 @@ pub fn sweep(frames: u64) -> i32 {
         // `--pad usb` shows the report the guest would be handed, so the
         // packing is checked without a guest: this is the same
         // `hid_state()` the player sends through qemu_embed_pad_state.
-        if mode == Mode::Usb {
+        // `--pad gameport` prints the very same line and that is not an
+        // oversight: the state the player sends is identical, and what
+        // the gameport makes of it — two of the axes, four of the
+        // buttons, the d-pad folded onto its own X/Y — happens in the
+        // device, where the port's shape belongs. There is deliberately
+        // no second copy of that rule on this side to print from.
+        if mode.is_device() {
             let hid = pads.hid_state();
             if last_hid != Some(hid) {
                 last_hid = Some(hid);

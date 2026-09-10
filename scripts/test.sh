@@ -797,12 +797,15 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
     || { echo "--wizard-edit none failed"; rc=1; }
   grep -q '^pad = "none"' "$bundle" || { echo "turning it back off did not stick"; rc=1; }
   # A bundle from a later launcher, naming a setting this build has never
-  # heard of (path B's `gameport`). It must load and fall back, not refuse
-  # the whole machine over a field about a controller.
-  sed -i 's/^pad = "none"/pad = "gameport"/' "$bundle"
+  # heard of. It must load and fall back, not refuse the whole machine
+  # over a field about a controller. (`gameport` was the placeholder here
+  # until path B landed and it became a real answer — the value has to be
+  # one no build knows, or this stops testing anything.)
+  sed -i 's/^pad = "none"/pad = "wheel"/' "$bundle"
   args="$(target/release/launcherx --print-args "$bundle" 2>&1)" \
     || { echo "a bundle naming a future pad setting would not load at all"; echo "$args"; rc=1; }
   case "$args" in *usb-gamepad*) echo "an unknown pad setting was treated as usb"; rc=1;; esac
+  case "$args" in *"-device gameport"*) echo "an unknown pad setting was treated as a gameport"; rc=1;; esac
 
   # --- path A: the USB HID gamepad --------------------------------
   # DOS is not offered one: it has no USB stack, so the entry is absent
@@ -829,6 +832,42 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
   case "$args" in *usb-tablet*) echo "the tablet survived turning the seamless mouse off"; echo "$args"; rc=1;; esac
   case "$args" in *"-usb"*) ;; *) echo "the pad lost its USB controller when the pointer gave one up"; echo "$args"; rc=1;; esac
   case "$args" in *"-device usb-gamepad"*) ;; *) echo "the pad went away with the tablet"; echo "$args"; rc=1;; esac
+
+  # --- path B: the gameport ----------------------------------------
+  # The mirror image of path A's asymmetry, and the point of the whole
+  # path: DOS is the family that cannot have the USB pad and *can* have
+  # this, so a DOS machine takes it...
+  target/release/launcherx --wizard-edit "$dos" - - - - - - - - gameport >/dev/null \
+    || { echo "--wizard-edit gameport failed on DOS"; rc=1; }
+  grep -q '^pad = "gameport"' "$dos" || { echo "a DOS machine would not take the gameport"; grep '^pad' "$dos"; rc=1; }
+  args="$(target/release/launcherx --print-args "$dos")"
+  case "$args" in *"-device gameport"*) ;; *) echo "a DOS machine with the gameport on has no gameport"; echo "$args"; rc=1;; esac
+  # ...and it brings no USB controller with it. The port is an ISA device
+  # and a DOS guest has no USB stack to drive one with anyway; a stray
+  # `-usb` here would be a device in the machine nothing can use.
+  case "$args" in *"-usb"*) echo "the gameport dragged a USB controller in"; echo "$args"; rc=1;; esac
+  o="$(target/release/launcherx --print-player-args "$dos")"
+  [ "$o" = "--pad gameport" ] || { echo "expected '--pad gameport' for the player, got: $o"; rc=1; }
+  # ...while XP is not offered it and must refuse it rather than write a
+  # port its guest has no way to enumerate: XP's answer is path A.
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - - gameport >/dev/null 2>&1
+  grep -q '^pad = "gameport"' "$bundle" && { echo "an XP machine accepted the gameport"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *"-device gameport"*) echo "an XP machine got a gameport"; echo "$args"; rc=1;; esac
+  # Win98 is the family with both stacks and is offered both, one at a
+  # time: choosing the gameport takes the HID pad *and* its controller
+  # away, or the machine would carry two controllers for one host pad and
+  # only one of them would ever move.
+  local w98
+  w98="$(target/release/launcherx --new win98 pad-98 "$dir/disk.qcow2")" || { echo "--new win98 failed"; return 1; }
+  for p in usb gameport; do
+    target/release/launcherx --wizard-edit "$w98" - - - - - - - - "$p" >/dev/null \
+      || { echo "--wizard-edit $p failed on win98"; rc=1; }
+    grep -q "^pad = \"$p\"" "$w98" || { echo "a Win98 machine would not take $p"; grep '^pad' "$w98"; rc=1; }
+  done
+  args="$(target/release/launcherx --print-args "$w98")"
+  case "$args" in *"-device gameport"*) ;; *) echo "a Win98 machine with the gameport on has no gameport"; echo "$args"; rc=1;; esac
+  case "$args" in *usb-gamepad*) echo "the Win98 machine kept its usb-gamepad after switching to the gameport"; echo "$args"; rc=1;; esac
   # The host end itself, against the scripted pad — no controller, no
   # guest, no window. What it proves is the shaping: the deadzone
   # swallows a resting stick, and the press/release pair has a gap in it
@@ -982,6 +1021,43 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
          | timeout 30 build/qemu/qemu-system-i386 $args -device usb-gamepad \
              -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)"
     case "$o" in *"only one usb-gamepad"*) ;; *) echo "a second usb-gamepad was not refused"; echo "$o" | tail -3; rc=1;; esac
+
+    # --- path B: the port, as a guest reads it ----------------------
+    # The DOS machine's own line, and then the port itself through the
+    # human monitor, which is the one way to read 0x201 with no guest.
+    # Three readings, and the middle one is the whole timing model:
+    #
+    #   idle          f0 — the four one-shots expired, no button held.
+    #                      Not ff: that is what an *absent* port reads
+    #                      off the open bus, and a game uses it to
+    #                      decide there is no joystick.
+    #   armed         ff — every axis still charging. Read with the VM
+    #                      stopped, where the virtual clock does not
+    #                      move at all, so this is exact rather than a
+    #                      race against a 576 us pulse.
+    #   a second on   f0 — and they end. A model that armed and never
+    #                      expired would leave every game counting to
+    #                      its own timeout, which reads as a stick
+    #                      jammed at one extreme.
+    args="$(target/release/launcherx --print-args "$dos")"
+    # shellcheck disable=SC2086
+    o="$({ echo 'i /b 0x201'; echo 'o /b 0x201 0'; echo 'i /b 0x201'; echo cont; sleep 1; \
+           echo 'i /b 0x201'; echo 'info qtree'; echo quit; } \
+         | timeout 40 build/qemu/qemu-system-i386 $args \
+             -audiodev none,id=embed0 -display none -S -monitor stdio -serial none 2>&1)" \
+      || { echo "our QEMU refused a machine with a gameport"; echo "$o" | tail -3; rc=1; }
+    case "$o" in *"dev: gameport"*) ;; *) echo "the gameport did not attach to the bus"; echo "$o" | tail -5; rc=1;; esac
+    local reads
+    reads="$(echo "$o" | grep -o 'portb\[0x0201\] = 0x[0-9a-f]*' | sed 's/.*= //' | tr '\n' ' ')"
+    [ "$reads" = "0xf0 0xff 0xf0 " ] \
+      || { echo "the gameport's one-shots read wrong (idle/armed/expired): $reads"; rc=1; }
+    # And one at a time, for the reason the USB pad is: the host drives a
+    # single controller, and two ports would answer the same addresses.
+    # shellcheck disable=SC2086
+    o="$(printf 'quit\n' \
+         | timeout 30 build/qemu/qemu-system-i386 $args -device gameport \
+             -audiodev none,id=embed0 -display none -S -monitor stdio -serial none 2>&1)"
+    case "$o" in *"only one gameport"*) ;; *) echo "a second gameport was not refused"; echo "$o" | tail -3; rc=1;; esac
   else
     echo "  (no build/qemu: the command line was checked but not run)"
   fi

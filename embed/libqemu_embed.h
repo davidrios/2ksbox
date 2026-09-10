@@ -115,10 +115,16 @@ QEMU_EMBED_API bool qemu_embed_mouse_is_absolute(qemu_embed_t *e);
  * state rather than events, so a dropped update is corrected by the next
  * one instead of leaving the guest holding a button. Enqueued like the
  * rest and delivered by qemu_embed_input_flush(); a no-op on a machine
- * with no usb-gamepad. */
+ * with neither pad device.
+ *
+ * The same call also feeds path B's `gameport` (0x201, `-device
+ * gameport`), which takes the first two axes, the first four buttons and
+ * the hat folded onto its own X/Y — the port has no room for the rest.
+ * No version bump for that: one more consumer of the same bytes, and a
+ * machine has one device or the other. */
 QEMU_EMBED_API void qemu_embed_pad_state(qemu_embed_t *e, const uint8_t *axes,
                                          uint32_t hat, uint32_t buttons);
-/* Whether this machine has a usb-gamepad for the above to reach. */
+/* Whether this machine has either pad device for the above to reach. */
 QEMU_EMBED_API bool qemu_embed_pad_present(qemu_embed_t *e);
 /* Schedule delivery of everything enqueued (one sync). */
 QEMU_EMBED_API void qemu_embed_input_flush(qemu_embed_t *e);

@@ -22,6 +22,7 @@ Modeled as a ~1998–2000 consumer PC.
 | Net | PCnet (AMD), **off on a new machine** | driver in-box on 98. The card is what the wizard's networking checkbox gives the machine; since 2026-09-07 a new machine of every family starts without one (doc 07, `bundle::default_network`) — an unpatched guest is not put on a network before anyone asks |
 | Storage | IDE HDD (qcow2) + our ATAPI CD | period-correct; no VirtIO for 9x |
 | Input | PS/2 mouse + kbd; USB tablet optional | the bundle's `seamless_mouse` (doc 07), on by default here: the tablet is absolute, so nothing is grabbed; off leaves the PS/2 relative mode games want (see doc 03) |
+| Gamepad | **off on a new machine**; a USB HID pad, the gameport at 0x201, or the key mapping (`bundle::Pad`, M13) | the one family offered both devices, because it is the one with both stacks: 98 SE binds its in-box HID driver to the USB pad (user-confirmed 2026-09-09 — it asks for the Windows 98 source files the first time, not for anything of ours), and the gameport is what a DOS box under it and a 1995 title want — a real pad reads correctly through `PADTEST.COM` in a Win98 DOS box (2026-09-10), though nobody has yet installed "Standard Game Port" so that *Windows* sees a joystick. The port is **not** Plug and Play — Add New Hardware, then calibrate — and the wizard says so |
 | Floppy | enabled | driver/utility sneakernet, boot disks |
 
 Known QEMU-side traps (tracked in `patches/qemu/README.md`): qemu-3dfx 3D
@@ -99,6 +100,7 @@ Modeled as a ~2002–2005 PC.
 | Net | RTL8139, **off on a new machine** | in-box XP driver; the checkbox gives it, and a new machine starts without one (doc 07) |
 | Storage | IDE + our ATAPI CD | AHCI needs F6 drivers; not worth it |
 | Input | PS/2 + USB tablet toggle | same grab semantics as 98 (`seamless_mouse`, on by default) |
+| Gamepad | **off on a new machine**; a USB HID pad or the key mapping (`bundle::Pad`, M13) | XP binds `hidusb.sys` to the pad on the first start after it is added and shows it to DirectInput and `joy.cpl`, with nothing to install (user-confirmed 2026-09-09). No gameport offered: nothing enumerates a non-PnP port here, and Microsoft was already retiring analog sticks |
 
 Notes: SP3 recommended; activation is the user's affair with their own
 license (volume/retail as they possess) — the project ships nothing related
@@ -121,6 +123,7 @@ already carries "for DOS boxes/games", and nothing else.
 | Music | **an MPU-401 at 0x330 with a General MIDI synthesizer (the default), a Roland CM-32L, or nothing** (`bundle::Music`, doc 20) | what a game's setup screen means by "General MIDI", "MPU-401" or "Roland". Nothing else on a DOS machine plays a score: the FM chip is the fallback, not the point |
 | Net | none | DOS reaches a network only through a packet driver the user installs by hand; an unused card is one more device to enumerate. The one family that has never had one by default — since 2026-09-07 the others start without one too, for a different reason (doc 07) |
 | Input | PS/2 mouse + kbd, **no USB tablet** (`seamless_mouse = false`) | a DOS mouse driver talks to the PS/2 controller; a tablet would leave the guest with no pointer at all. The player takes the pointer on a click and Ctrl+Alt+G gives it back |
+| Gamepad | **off on a new machine**; the gameport at 0x201 or the key mapping (`bundle::Pad`, M13, patch 27) | the one family with no USB stack, so the port is the only controller it can have — and it is the one a DOS game knows how to read, by arming four one-shots and counting until each bit falls. That count depends on how fast the guest runs, which is the other reason this family is paced (`-icount …,align=on`): unpaced, an axis nobody is touching wanders by half |
 | Storage | IDE HDD + our ATAPI CD | the CD-ROM model (doc 17) and the disc shelf both already speak DOS: `CDSHELF.COM` is a DOS program |
 | Floppy | `floppy` + `boot` on the machine | a DOS machine usually boots from one |
 
@@ -186,6 +189,7 @@ box on a nineties system, and nothing of ours is on the machine at all.
 | Net | RTL8139, **off on a new machine** | in-box on BeOS R5 and on Linux since 2.2 (`8139too`); the checkbox gives it, and a new machine starts without one (doc 07) |
 | Storage | IDE HDD + our ATAPI CD | as everywhere; the CD-ROM model (doc 17) is a drive, not a driver |
 | Input | PS/2 mouse + kbd, **no USB tablet** (`seamless_mouse = false`) | an absolute pointer needs the guest's USB HID stack *and* its windowing system to agree it is absolute, which an era XFree86 (an explicit input section) and BeOS do not do unconfigured — and unlike the Windows families there is no guest-tools install that would fix it. The checkbox turns it on for a guest that does handle it |
+| Gamepad | **off on a new machine**; a USB HID pad or the key mapping (`bundle::Pad`, M13) | the pad is a HID device an era Linux or BeOS drives from its own USB stack. No gameport: it would work on a guest whose driver can be told an address, and this project cannot name that step for an OS it does not know |
 | Acceleration | Automatic | none of these has Win9x's fast-CPU bugs, and nothing here is tuned for them either: take the host's speed when it is there |
 
 **No 3D of any kind, and no guest tools.** The Direct3D pass-through

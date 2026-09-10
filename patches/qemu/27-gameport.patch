@@ -1,0 +1,47 @@
+Build the analog joystick port (hw/input/gameport.c, overlaid from
+gamepad/qemu/ by scripts/prepare-qemu.sh). M13 path B,
+docs/tracks/m13-gamepads.md.
+
+QEMU has never answered 0x201: nothing in hw/ models the gameport, and
+sb16.c is the DSP and mixer only — the port that sits at 0x200-0x207 on a
+real Sound Blaster is not in it. A DOS game reads that port itself and has
+no other way to find a joystick, so DOS had no path to a controller at all
+before this; path A's USB HID gamepad needs a USB stack DOS has not got.
+
+Its own Kconfig symbol rather than riding a sound card's: the family's
+card is a separate choice (bundle::Sound, doc 20) and a joystick should
+not appear and vanish with it. `default y / depends on ISA_BUS` is
+exactly "this machine has an ISA bus", which is the only condition the
+port has — the same shape patch 26 uses with CONFIG_USB_HID.
+
+The host side drives it through gameport_set_state() (gamepad/qemu/
+gameport.h), called from the embed shim's input bottom half under the BQL
+with the same four axis bytes, hat and button bitmap the usb-gamepad
+takes, so one call feeds whichever of the two devices the machine has.
+
+--- a/hw/input/Kconfig
++++ b/hw/input/Kconfig
+@@ -1,6 +1,14 @@
+ config ADB
+     bool
+
++# win98-xp-virt: the analog joystick port at 0x200-0x207 (M13 path B,
++# docs/tracks/m13-gamepads.md). Overlaid into hw/input/ by
++# scripts/prepare-qemu.sh; the only condition is an ISA bus to sit on.
++config GAMEPORT
++    bool
++    default y
++    depends on ISA_BUS
++
+ config PCKBD
+     bool
+     select PS2
+--- a/hw/input/meson.build
++++ b/hw/input/meson.build
+@@ -1,5 +1,6 @@
+ system_ss.add(files('hid.c'))
+ system_ss.add(when: 'CONFIG_ADB', if_true: files('adb.c', 'adb-mouse.c', 'adb-kbd.c'))
++system_ss.add(when: 'CONFIG_GAMEPORT', if_true: files('gameport.c'))
+ system_ss.add(when: 'CONFIG_PCKBD', if_true: files('pckbd.c'))
+ system_ss.add(when: 'CONFIG_PL050', if_true: files('pl050.c'))
+ system_ss.add(when: 'CONFIG_PS2', if_true: files('ps2.c'))
