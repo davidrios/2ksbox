@@ -9,6 +9,13 @@
 //!   synthx wavtone <file.wav> <hz>  a wav really holds that note: what the `music` check asks
 //!                                   of a wav QEMU's own audiodev recorded, with the guest's
 //!                                   ports written by the monitor rather than by us
+//!   synthx midilog <file>           what a guest actually sent the MIDI port, captured by
+//!                                   `LIBSYNTH_MIDI_LOG=<file>`: the channels second by second,
+//!                                   what silenced each one, notes left held, bytes the parser
+//!                                   could attach to nothing
+//!   synthx play <file> <out.wav>    the same capture played again with no guest, at the timing
+//!                                   it was written with — if the music breaks here it is ours,
+//!                                   and if it does not the guest stopped sending it
 //!
 //! `--sf2 <file>` (or `LIBSYNTH_SF2`) is the SoundFont the General MIDI
 //! checks play through; without either it is the bank the packages ship,
@@ -100,6 +107,19 @@ fn main() {
             }
             _ => usage(),
         },
+        "midilog" => match positional.get(1) {
+            Some(p) => midilog(Path::new(p)),
+            None => usage(),
+        },
+        "play" => match (positional.get(1), positional.get(2)) {
+            (Some(log), Some(out)) => play(
+                Path::new(log),
+                Path::new(out),
+                &sf2.unwrap_or_else(shipped_bank),
+                roms.as_deref(),
+            ),
+            _ => usage(),
+        },
         "opl" => match positional.get(1) {
             Some(p) => {
                 let secs: f32 = positional.get(2).and_then(|s| s.parse().ok()).unwrap_or(2.0);
@@ -116,7 +136,7 @@ fn main() {
 }
 
 fn usage() -> i32 {
-    eprintln!("usage: synthx selftest <outdir> [--sf2 <file>] [--roms <dir>] | bank <in.sf2> | opl <out.wav> [seconds] | wavtone <in.wav> <hz> | wavlevel <in.wav>");
+    eprintln!("usage: synthx selftest <outdir> [--sf2 <file>] [--roms <dir>] | bank <in.sf2> | opl <out.wav> [seconds] | wavtone <in.wav> <hz> | wavlevel <in.wav> | midilog <log> | play <log> <out.wav> [--roms <dir>]");
     2
 }
 
@@ -490,4 +510,341 @@ fn bank_info(path: &Path) -> i32 {
             1
         }
     }
+}
+
+/* ------------------------------------------------- a captured guest stream */
+
+/// One line of a `LIBSYNTH_MIDI_LOG` capture.
+enum Entry {
+    Byte(u8),
+    Reset,
+}
+
+/// Read a capture: `<microseconds> <hex>` a line, `R` where the guest
+/// reset the port, `#` comments.
+fn read_log(path: &Path) -> Result<Vec<(u64, Entry)>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut out = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (us, what) = line
+            .split_once(' ')
+            .ok_or_else(|| format!("{}:{}: not `<microseconds> <byte>`", path.display(), n + 1))?;
+        let us: u64 = us
+            .parse()
+            .map_err(|_| format!("{}:{}: {us} is not a timestamp", path.display(), n + 1))?;
+        let entry = if what == "R" {
+            Entry::Reset
+        } else {
+            Entry::Byte(
+                u8::from_str_radix(what, 16)
+                    .map_err(|_| format!("{}:{}: {what} is not a byte", path.display(), n + 1))?,
+            )
+        };
+        out.push((us, entry));
+    }
+    Ok(out)
+}
+
+/// What one MIDI channel did, for the report.
+#[derive(Default, Clone)]
+struct Chan {
+    notes: u32,
+    /// Note-ons per second, so a channel that stops is a column that
+    /// stops rather than a number that has to be believed.
+    per_sec: Vec<u32>,
+    /// (bank, program) as the guest selected them, in order.
+    patches: Vec<(u32, u8)>,
+    bank_msb: u8,
+    bank_lsb: u8,
+    volume: u8,
+    expression: u8,
+    /// Keys currently down, and when each went down.
+    held: std::collections::HashMap<u8, u64>,
+    /// Times the channel was silenced from the outside, and by what.
+    silenced: Vec<(u64, String)>,
+}
+
+/// The report a capture is taken for: which channels sounded, when each
+/// stopped, and what stopped it.
+///
+/// The one question it exists to answer is where the music went. A
+/// channel whose note-ons stop is the guest's doing — Windows, the
+/// driver, the program — and nothing here can put them back. A channel
+/// still being sent notes and not heard is ours, and then the same file
+/// goes through `synthx play` to hear it with no guest in the way.
+fn midilog(path: &Path) -> i32 {
+    let entries = match read_log(path) {
+        Ok(e) => e,
+        Err(why) => {
+            println!("FAIL midilog          {why}");
+            return 1;
+        }
+    };
+    let mut parser = libsynth::midi::Parser::new();
+    let mut chans: Vec<Chan> = vec![Chan::default(); 16];
+    let last_us = entries.last().map(|(us, _)| *us).unwrap_or(0);
+    let secs = (last_us / 1_000_000) as usize + 1;
+    for c in chans.iter_mut() {
+        // What a channel is worth before anyone says otherwise: the
+        // General MIDI defaults, so a report of 100/127 means nobody
+        // touched them rather than that they were set.
+        c.volume = 100;
+        c.expression = 127;
+        c.per_sec = vec![0; secs];
+    }
+    let mut sysex: Vec<(u64, Vec<u8>)> = Vec::new();
+    let mut resets: Vec<u64> = Vec::new();
+    let mut bytes = 0u64;
+    let mut dropped = 0u64;
+    // The most notes down at once, anywhere in the capture. This is the
+    // measurement behind the commonest way for music to start right and
+    // then thin out: past the engine's voice count every new note takes
+    // one from a note that is still sounding, and what survives is
+    // whatever was started last.
+    let mut peak_held = 0usize;
+    let mut peak_us = 0u64;
+
+    for (us, entry) in &entries {
+        let us = *us;
+        let byte = match entry {
+            Entry::Reset => {
+                resets.push(us);
+                dropped += parser.dropped();
+                parser.reset();
+                for c in chans.iter_mut() {
+                    c.held.clear();
+                }
+                continue;
+            }
+            Entry::Byte(b) => *b,
+        };
+        bytes += 1;
+        let Some(event) = parser.write(byte) else {
+            continue;
+        };
+        let (status, d1, d2) = match event {
+            libsynth::midi::Event::Sysex(data) => {
+                sysex.push((us, data));
+                continue;
+            }
+            libsynth::midi::Event::Message(s, a, b) => (s, a, b),
+        };
+        if status >= 0xF0 {
+            continue;
+        }
+        let c = &mut chans[(status & 0x0F) as usize];
+        match status & 0xF0 {
+            0x90 if d2 > 0 => {
+                c.notes += 1;
+                c.per_sec[(us / 1_000_000) as usize] += 1;
+                c.held.insert(d1, us);
+                let down: usize = chans.iter().map(|c| c.held.len()).sum();
+                if down > peak_held {
+                    peak_held = down;
+                    peak_us = us;
+                }
+            }
+            0x80 | 0x90 => {
+                c.held.remove(&d1);
+            }
+            0xC0 => {
+                let bank = ((c.bank_msb as u32) << 7) | c.bank_lsb as u32;
+                if c.patches.last() != Some(&(bank, d1)) {
+                    c.patches.push((bank, d1));
+                }
+            }
+            0xB0 => match d1 {
+                0x00 => c.bank_msb = d2,
+                0x20 => c.bank_lsb = d2,
+                0x07 => {
+                    c.volume = d2;
+                    if d2 == 0 {
+                        c.silenced.push((us, "volume (CC 7) to 0".into()));
+                    }
+                }
+                0x0B => {
+                    c.expression = d2;
+                    if d2 == 0 {
+                        c.silenced.push((us, "expression (CC 11) to 0".into()));
+                    }
+                }
+                0x78 => {
+                    c.held.clear();
+                    c.silenced.push((us, "all sound off (CC 120)".into()));
+                }
+                0x7B => {
+                    c.held.clear();
+                    c.silenced.push((us, "all notes off (CC 123)".into()));
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    dropped += parser.dropped();
+
+    println!(
+        "{}: {bytes} bytes over {:.1} s, {} port reset{}",
+        path.display(),
+        last_us as f64 / 1e6,
+        resets.len(),
+        if resets.len() == 1 { "" } else { "s" }
+    );
+    for (us, data) in &sysex {
+        let hex: Vec<String> = data.iter().take(16).map(|b| format!("{b:02x}")).collect();
+        println!(
+            "  {:8.3} s  sysex, {} bytes: {}{}",
+            *us as f64 / 1e6,
+            data.len(),
+            hex.join(" "),
+            if data.len() > 16 { " …" } else { "" }
+        );
+    }
+    println!();
+    println!("  ch  note-ons  patches (bank:program)      vol  expr  held at end");
+    for (i, c) in chans.iter().enumerate() {
+        if c.notes == 0 && c.patches.is_empty() {
+            continue;
+        }
+        let mut patches: String = c
+            .patches
+            .iter()
+            .take(4)
+            .map(|(b, p)| format!("{b}:{p}"))
+            .collect::<Vec<String>>()
+            .join(" ");
+        if c.patches.len() > 4 {
+            patches.push_str(" …");
+        }
+        println!(
+            "  {:2}  {:8}  {:26}  {:3}  {:4}  {}",
+            i + 1,
+            c.notes,
+            patches,
+            c.volume,
+            c.expression,
+            c.held.len()
+        );
+    }
+
+    // The columns. A channel that goes quiet while the others play on is
+    // the whole diagnosis, and it is visible here and nowhere else.
+    println!();
+    println!("  note-ons per second, a column a second, a row a channel:");
+    for (i, c) in chans.iter().enumerate() {
+        if c.notes == 0 {
+            continue;
+        }
+        let row: String = c
+            .per_sec
+            .iter()
+            .map(|&n| match n {
+                0 => '.',
+                1..=9 => (b'0' + n as u8) as char,
+                _ => '#',
+            })
+            .collect();
+        println!("  {:2} |{row}|", i + 1);
+    }
+
+    let mut trouble = false;
+    println!();
+    for (i, c) in chans.iter().enumerate() {
+        for (us, why) in &c.silenced {
+            println!("  ch {:2} silenced at {:8.3} s by {why}", i + 1, *us as f64 / 1e6);
+        }
+        if !c.held.is_empty() {
+            let oldest = c.held.values().min().copied().unwrap_or(0);
+            println!(
+                "  ch {:2} left {} note{} held, the oldest since {:.3} s",
+                i + 1,
+                c.held.len(),
+                if c.held.len() == 1 { "" } else { "s" },
+                oldest as f64 / 1e6
+            );
+            trouble = true;
+        }
+    }
+    if dropped > 0 {
+        println!("  {dropped} byte(s) the parser could attach to nothing: the stream and the parser disagree about where a message starts");
+        trouble = true;
+    }
+    println!(
+        "  at most {peak_held} note{} down at once (at {:.3} s) against the {} voices this engine has{}",
+        if peak_held == 1 { "" } else { "s" },
+        peak_us as f64 / 1e6,
+        libsynth::gm::POLYPHONY,
+        if peak_held >= libsynth::gm::POLYPHONY {
+            " — past that every new note takes one from a note still sounding"
+        } else {
+            ""
+        }
+    );
+    if peak_held >= libsynth::gm::POLYPHONY {
+        trouble = true;
+    }
+    if !trouble {
+        println!("  nothing held, nothing dropped: every note this guest sent was released");
+    }
+    i32::from(trouble)
+}
+
+/// Play a capture back with no guest, at the timing it was written with.
+fn play(log: &Path, out: &Path, bank: &Path, roms: Option<&Path>) -> i32 {
+    let entries = match read_log(log) {
+        Ok(e) => e,
+        Err(why) => {
+            println!("FAIL play             {why}");
+            return 1;
+        }
+    };
+    let (kind, arg) = match roms {
+        Some(r) => (capi::LIBSYNTH_MIDI_MT32, r),
+        None => (capi::LIBSYNTH_MIDI_GM, bank),
+    };
+    let m = match midi_new(kind, arg) {
+        Ok(m) => m,
+        Err(why) => {
+            println!("FAIL play             {why}");
+            return 1;
+        }
+    };
+    let rate = capi::libsynth_midi_rate(m);
+    let mut pcm: Vec<i16> = Vec::new();
+    let mut done = 0usize;
+    // Rendered in blocks up to each byte's own timestamp, which is what
+    // puts the guest's timing back: the engine hears the stream spaced
+    // as the guest spaced it, not as fast as the file can be read.
+    let until = |pcm: &mut Vec<i16>, done: &mut usize, frames: usize| {
+        while *done < frames {
+            let n = (frames - *done).min(512);
+            pcm.resize((*done + n) * 2, 0);
+            capi::libsynth_midi_render(m, pcm[*done * 2..].as_mut_ptr(), n);
+            *done += n;
+        }
+    };
+    for (us, entry) in &entries {
+        until(&mut pcm, &mut done, (*us * rate as u64 / 1_000_000) as usize);
+        match entry {
+            Entry::Byte(b) => capi::libsynth_midi_write(m, *b),
+            Entry::Reset => capi::libsynth_midi_reset(m),
+        }
+    }
+    // Two seconds past the last byte: the release tail, and room for a
+    // note nothing ever turned off to be heard still ringing.
+    let tail = done + 2 * rate as usize;
+    until(&mut pcm, &mut done, tail);
+    capi::libsynth_midi_free(m);
+    write_wav(out, rate, &pcm);
+    let (rms, peak, busy) = level(&pcm, rate);
+    println!(
+        "{}: {:.1} s at {rate} Hz, {rms:.4} RMS, peak {peak:.3}, audible for {busy:.1} s",
+        out.display(),
+        done as f32 / rate as f32
+    );
+    0
 }
