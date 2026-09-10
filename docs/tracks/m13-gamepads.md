@@ -11,12 +11,13 @@ a product decision and the three do not share a guest end.
 
 **All four steps landed 2026-09-09**: step 0, path C, path A, and path B
 the same day. A machine can now have a real USB HID gamepad (`-device
-usb-gamepad`, patch 26) that XP, 98 SE and Me drive with nothing
-installed; a gameport at 0x200-0x207 (`-device gameport`, patch 27),
-which is the only path that reaches DOS and the one a **real DOS guest
-has now driven** (`tools/pad-guest-test.py`); or the key mapping, on
-everything. See "State" below for what is in, what the plan got wrong,
-and what is still not proved against a real *Windows* guest.
+usb-gamepad`, patch 26) — **user-confirmed the same day with a real
+controller on XP and on Windows 98 SE**, both showing it in the Game
+Controllers panel; a gameport at 0x200-0x207 (`-device gameport`, patch
+27), which is the only path that reaches DOS and the one a **real DOS
+guest has now driven** (`tools/pad-guest-test.py`); or the key mapping, on
+everything. See "State" below for what is in, what the plan got wrong, and
+"Proved by hand" for the one thing that hand run corrected.
 
 Gamepads were a post-v1 candidate in doc 08 until this track opened.
 
@@ -200,24 +201,44 @@ picker; the harness therefore judges every axis against the undriven
 one's own spread rather than against a number chosen in advance, so the
 same checks pass in both machines and say what changed.
 
+### Proved by hand, and what it corrected
+
+**Path A works with a real controller on XP and on Windows 98 SE** —
+user-confirmed 2026-09-09, the pad showing up and moving in the Game
+Controllers panel on both. That is the claim the whole path rested on and
+it holds. It also corrected the claim standing beside it:
+
+> **98 SE does not need "nothing installed".** It binds its own HID
+> driver, but the New Hardware wizard asks for the Windows 98 source
+> files the first time — the CD in the drive, or the CAB folder on the
+> disk. XP needs nothing. This doc, `bundle::Pad::Usb` and the wizard's
+> note all said "XP, 98 SE and Me need nothing installed", which is right
+> about XP and leaves a 98 SE user staring at a file-copy dialog
+> wondering what went wrong. The wizard says the two separately now.
+
+Windows 98 *first edition* is still untried and still the doubt: its USB
+support predates the HID class being reliable, and it may want the USB
+supplement.
+
 ### Not proved yet
 
-**No *Windows* guest has seen any of this.** A DOS guest has now driven
-path B end to end (above), which also proves the whole host chain —
-`gilrs`-shaped source, shaping, `hid_state()`, the embed queue, the input
-bottom half, the device — since path A shares every part of it but the
-last. What is still checked *without* a guest is the rest: the key
-mapping, the ordering, the shared keys, the scancodes, the HID report
-packing, the descriptor bytes, and that a real `qemu-system-i386` attaches
-the device to its bus (`info usb` says *2ksbox USB Gamepad*).
+A DOS guest has driven path B end to end (above), and that also proves
+the whole host chain — the source, the shaping, `hid_state()`, the embed
+queue, the input bottom half — since path A shares every part of it but
+the last, which the hand run above covers. What is still checked *without*
+a guest is the rest: the key mapping, the ordering, the shared keys, the
+scancodes, the HID report packing, the descriptor bytes, and that a real
+`qemu-system-i386` attaches the device to its bus (`info usb` says
+*2ksbox USB Gamepad*).
 
-Three things are therefore still unwatched, and they are the Windows ones:
+Three things are still unwatched:
 
-- **path A in a guest** — that Windows enumerates the HID pad, binds a
-  driver and shows a working controller in `joy.cpl`. It rests on how the
-  HID class is specified, not on having seen it. Wants
-  `guest-tools/src/padtest.c`: DirectInput enumeration plus axis and
-  button readout, the sibling of `DRIVER\DITEST.EXE`.
+- **path A under a test, rather than by hand** — nothing re-checks the
+  guest side after a change. Wants `guest-tools/src/padtest.c`:
+  DirectInput enumeration plus axis and button readout, the sibling of
+  `DRIVER\DITEST.EXE`, and the Windows half of
+  `tools/pad-guest-test.py` to drive it from an image overlay. The hand
+  run says it works today; only that would keep it working.
 - **path B on 9x** — "Standard Game Port" through Add New Hardware, then
   calibration in `joy.cpl`. The wizard tells someone to do this; nobody
   has done it here. `PADTEST.COM` runs in a Win98 DOS box unchanged and is
@@ -225,9 +246,10 @@ Three things are therefore still unwatched, and they are the Windows ones:
 - **path C in a guest** — keys arriving. Cheap once a Windows pad harness
   exists.
 
-Also untried: a **real controller**. `gilrs` enumerates here (a foot
-pedal is what is plugged into this box), so the button and axis mapping
-is compiled and enumerated but never felt.
+Also unfelt: **a real controller on paths B and C**. One has now been on
+path A; the gameport and the key mapping have only ever been driven by
+`PLAYER_PAD_SCRIPT`, so the `gilrs` end of them (button ids, axis signs,
+hot-plug) is compiled and enumerated but never actually pressed.
 
 ### What the plan got wrong
 
@@ -347,14 +369,16 @@ report descriptor and a report packer.
   state directly through a small exported entry point. Less invasive,
   and a dead end if we ever offer this upstream. Recommend (a).
 
-**What the guest needs: nothing.**
+**What the guest needs**, as the plan had it and as it turned out. The 98
+SE row is the correction: no driver of ours, but not "nothing" either.
 
-| Guest | Result |
-|---|---|
-| XP | inbox `hidusb.sys` / `hidclass.sys`; DirectInput 8 and `joy.cpl` see it on first plug |
-| Win98 SE, Me | HID class present; DirectInput enumerates it |
-| Win98 FE | USB stack is weak pre-SE; expect to need the USB supplement |
-| DOS | nothing — no USB stack at all |
+| Guest | Planned | Actual |
+|---|---|---|
+| XP | inbox `hidusb.sys` / `hidclass.sys`; DirectInput 8 and `joy.cpl` see it on first plug | **confirmed 2026-09-09**, nothing to install |
+| Win98 SE | HID class present; DirectInput enumerates it | **confirmed 2026-09-09** — binds its own driver, but the New Hardware wizard asks for the Windows 98 source files first (the CD, or the CAB folder on the disk) |
+| Windows Me | as 98 SE | untried |
+| Win98 FE | USB stack is weak pre-SE; expect to need the USB supplement | untried, still the doubt |
+| DOS | nothing — no USB stack at all | that is what path B is for, and a DOS guest has now used it |
 
 The controller itself is proven: `-usb` (`piix3-usb-uhci`, USB 1.1) with
 `usb-tablet` on it is what every seamless-mouse machine already boots
@@ -528,15 +552,18 @@ What is left, in order:
 
 5. **`guest-tools/src/padtest.c` and the Windows half of
    `tools/pad-guest-test.py`** — DirectInput enumeration in a real XP and
-   Win98 guest, from an image overlay. This is the whole of "Not proved
-   yet" for paths A and C, and it is now the only thing between this track
-   and done.
+   Win98 guest, from an image overlay. Path A has been *seen* to work by
+   hand on both (above); what is missing is anything that re-checks it
+   after a change, which is the same distinction the testing policy draws
+   everywhere else. It also gets path C its guest for free.
 6. **Path B on Win98**, by hand once: "Standard Game Port" through Add New
    Hardware, then calibrate in `joy.cpl`. The wizard tells someone to do
    this and nobody here has. `PADTEST.COM` in a Win98 DOS box is the A/B
    that separates a missing port from a missing driver.
-7. **A real controller**, on all three paths, once one is plugged into a
-   machine that runs this.
+7. **A real controller on paths B and C.** One has now been used on path
+   A; the gameport and the key mapping have only ever been driven by
+   `PLAYER_PAD_SCRIPT`, so their `gilrs` end — button ids, axis signs,
+   hot-plug — is compiled and enumerated but never pressed.
 
 Path C is deliberately not a throwaway: it stays as a `keys` choice for
 DOS games that never read a joystick and for Win98 FE.

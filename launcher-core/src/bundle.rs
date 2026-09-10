@@ -260,16 +260,24 @@ pub enum Pad {
     None,
     /// A real USB HID gamepad on the machine (`-usb -device
     /// usb-gamepad`, patch 26). Two sticks, an 8-way hat and twelve
-    /// buttons, which XP, Windows 98 SE and Me all bind their in-box HID
-    /// stack to with **nothing installed** — DirectInput and `joy.cpl`
-    /// see it on the first boot after it is added. This is the entry a
-    /// game of the era can actually use: it enumerates as a controller,
-    /// and the sticks are analog.
+    /// buttons, bound by the guest's own in-box HID stack — DirectInput
+    /// and `joy.cpl` see it on the first boot after it is added. This is
+    /// the entry a game of the era can actually use: it enumerates as a
+    /// controller, and the sticks are analog.
+    ///
+    /// **Confirmed with a real controller on 2026-09-09**, on XP and on
+    /// Windows 98 SE, both showing it in the Game Controllers panel. The
+    /// two are not the same experience and the wizard says so: XP needs
+    /// nothing, and 98 SE binds its own driver but asks for the Windows
+    /// 98 source files the first time — the CD, or the CAB folder on the
+    /// disk. Saying "nothing to install" for both, as this doc did until
+    /// that run, leaves someone staring at a file-copy dialog wondering
+    /// what went wrong.
     ///
     /// Not offered on DOS, which has no USB stack at all — that is what
-    /// path B's gameport is for. Windows 98 *first edition* is the doubt
-    /// on the 9x side: its USB support predates the HID class being
-    /// reliable, and it may want the USB supplement.
+    /// path B's gameport is for. Windows 98 *first edition* is still the
+    /// doubt on the 9x side: its USB support predates the HID class being
+    /// reliable, and it may want the USB supplement. Untried.
     Usb,
     /// The analog joystick port at 0x200-0x207 (`-device gameport`, patch
     /// 27): four one-shots and four buttons, which is the whole of what

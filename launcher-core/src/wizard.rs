@@ -977,7 +977,7 @@ impl Form {
             ],
             Pad::Usb => &[
                 "A real USB controller on the machine: two analog sticks, an 8-way hat and twelve buttons, which DirectInput and the Game Controllers panel both see.",
-                "Windows XP, 98 SE and Me need nothing installed — they bind their own HID driver to it on the first start after it is added. Windows 98 first edition may want the USB supplement.",
+                "Windows XP binds its own HID driver on the first start after the pad is added, with nothing to install. Windows 98 SE binds its own too, but asks for the Windows 98 files the first time — keep the CD in the drive, or point it at the CAB folder on the disk. Confirmed on both, 2026-09-09.",
             ],
             Pad::Gameport => &[
                 "The joystick port every stick of the era plugged into, at 0x201. Two axes and two buttons per connector, four of each in total — the hardware's own limit, so there is no hat and no second set of buttons. The d-pad steers the first two axes.",

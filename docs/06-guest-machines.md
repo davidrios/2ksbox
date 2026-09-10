@@ -22,7 +22,7 @@ Modeled as a ~1998–2000 consumer PC.
 | Net | PCnet (AMD), **off on a new machine** | driver in-box on 98. The card is what the wizard's networking checkbox gives the machine; since 2026-09-07 a new machine of every family starts without one (doc 07, `bundle::default_network`) — an unpatched guest is not put on a network before anyone asks |
 | Storage | IDE HDD (qcow2) + our ATAPI CD | period-correct; no VirtIO for 9x |
 | Input | PS/2 mouse + kbd; USB tablet optional | the bundle's `seamless_mouse` (doc 07), on by default here: the tablet is absolute, so nothing is grabbed; off leaves the PS/2 relative mode games want (see doc 03) |
-| Gamepad | **off on a new machine**; a USB HID pad, the gameport at 0x201, or the key mapping (`bundle::Pad`, M13) | the one family offered both devices, because it is the one with both stacks: 98 SE and Me bind their in-box HID driver to the USB pad with nothing installed, and the gameport is what a DOS box under it and a 1995 title want. The port is **not** Plug and Play — Add New Hardware, then calibrate — and the wizard says so |
+| Gamepad | **off on a new machine**; a USB HID pad, the gameport at 0x201, or the key mapping (`bundle::Pad`, M13) | the one family offered both devices, because it is the one with both stacks: 98 SE binds its in-box HID driver to the USB pad (user-confirmed 2026-09-09 — it asks for the Windows 98 source files the first time, not for anything of ours), and the gameport is what a DOS box under it and a 1995 title want. The port is **not** Plug and Play — Add New Hardware, then calibrate — and the wizard says so |
 | Floppy | enabled | driver/utility sneakernet, boot disks |
 
 Known QEMU-side traps (tracked in `patches/qemu/README.md`): qemu-3dfx 3D
@@ -100,7 +100,7 @@ Modeled as a ~2002–2005 PC.
 | Net | RTL8139, **off on a new machine** | in-box XP driver; the checkbox gives it, and a new machine starts without one (doc 07) |
 | Storage | IDE + our ATAPI CD | AHCI needs F6 drivers; not worth it |
 | Input | PS/2 + USB tablet toggle | same grab semantics as 98 (`seamless_mouse`, on by default) |
-| Gamepad | **off on a new machine**; a USB HID pad or the key mapping (`bundle::Pad`, M13) | XP binds `hidusb.sys` to the pad on the first start after it is added and shows it to DirectInput and `joy.cpl`. No gameport offered: nothing enumerates a non-PnP port here, and Microsoft was already retiring analog sticks |
+| Gamepad | **off on a new machine**; a USB HID pad or the key mapping (`bundle::Pad`, M13) | XP binds `hidusb.sys` to the pad on the first start after it is added and shows it to DirectInput and `joy.cpl`, with nothing to install (user-confirmed 2026-09-09). No gameport offered: nothing enumerates a non-PnP port here, and Microsoft was already retiring analog sticks |
 
 Notes: SP3 recommended; activation is the user's affair with their own
 license (volume/retail as they possess) — the project ships nothing related
