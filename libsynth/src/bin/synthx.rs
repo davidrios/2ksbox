@@ -9,10 +9,11 @@
 //!   synthx wavtone <file.wav> <hz>  a wav really holds that note: what the `music` check asks
 //!                                   of a wav QEMU's own audiodev recorded, with the guest's
 //!                                   ports written by the monitor rather than by us
-//!   synthx midilog <file>           what a guest actually sent the MIDI port, captured by
-//!                                   `LIBSYNTH_MIDI_LOG=<file>`: the channels second by second,
-//!                                   what silenced each one, notes left held, bytes the parser
-//!                                   could attach to nothing
+//!   synthx midilog <file>           what a guest actually sent a music device, captured by
+//!   synthx opllog <file>            `LIBSYNTH_MIDI_LOG` / `LIBSYNTH_OPL_LOG`: the channels
+//!                                   second by second, what silenced each one, notes left
+//!                                   sounding, and bytes the parser could attach to nothing.
+//!                                   Either verb reads either capture: the file says which
 //!   synthx play <file> <out.wav>    the same capture played again with no guest, at the timing
 //!                                   it was written with — if the music breaks here it is ours,
 //!                                   and if it does not the guest stopped sending it
@@ -53,6 +54,14 @@ fn main() {
         i += 1;
     }
     let verb = positional.first().map(String::as_str).unwrap_or("");
+    // The verbs that *read* a capture must never write one: a device
+    // opened in this process would truncate the very file being read,
+    // and a left-over `LIBSYNTH_*_LOG` in the shell that took the
+    // capture is exactly how that would happen.
+    if matches!(verb, "midilog" | "opllog" | "play") {
+        std::env::remove_var("LIBSYNTH_MIDI_LOG");
+        std::env::remove_var("LIBSYNTH_OPL_LOG");
+    }
     let rc = match verb {
         "selftest" => selftest(
             Path::new(positional.get(1).map(String::as_str).unwrap_or("build/test/libsynth")),
@@ -107,8 +116,8 @@ fn main() {
             }
             _ => usage(),
         },
-        "midilog" => match positional.get(1) {
-            Some(p) => midilog(Path::new(p)),
+        "midilog" | "opllog" => match positional.get(1) {
+            Some(p) => devlog(Path::new(p)),
             None => usage(),
         },
         "play" => match (positional.get(1), positional.get(2)) {
@@ -136,7 +145,7 @@ fn main() {
 }
 
 fn usage() -> i32 {
-    eprintln!("usage: synthx selftest <outdir> [--sf2 <file>] [--roms <dir>] | bank <in.sf2> | opl <out.wav> [seconds] | wavtone <in.wav> <hz> | wavlevel <in.wav> | midilog <log> | play <log> <out.wav> [--roms <dir>]");
+    eprintln!("usage: synthx selftest <outdir> [--sf2 <file>] [--roms <dir>] | bank <in.sf2> | opl <out.wav> [seconds] | wavtone <in.wav> <hz> | wavlevel <in.wav> | midilog <log> | opllog <log> | play <log> <out.wav> [--roms <dir>]");
     2
 }
 
@@ -514,14 +523,20 @@ fn bank_info(path: &Path) -> i32 {
 
 /* ------------------------------------------------- a captured guest stream */
 
-/// One line of a `LIBSYNTH_MIDI_LOG` capture.
+/// One line of a capture.
 enum Entry {
+    /// `LIBSYNTH_MIDI_LOG`: one byte of the MIDI stream.
     Byte(u8),
+    /// `LIBSYNTH_MIDI_LOG`: the guest reset the port.
     Reset,
+    /// `LIBSYNTH_OPL_LOG`: a value written to a latched FM register.
+    Reg(usize, u8, u8),
 }
 
-/// Read a capture: `<microseconds> <hex>` a line, `R` where the guest
-/// reset the port, `#` comments.
+/// Read a capture: `<microseconds> <what>` a line, `#` comments. Which
+/// device it came from is not asked for and not remembered — a line's
+/// own shape says it, so every verb below routes on the content and a
+/// file with both devices in it is read as both.
 fn read_log(path: &Path) -> Result<Vec<(u64, Entry)>, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut out = Vec::new();
@@ -536,17 +551,29 @@ fn read_log(path: &Path) -> Result<Vec<(u64, Entry)>, String> {
         let us: u64 = us
             .parse()
             .map_err(|_| format!("{}:{}: {us} is not a timestamp", path.display(), n + 1))?;
+        let bad = || format!("{}:{}: {what} is neither a byte nor a register write", path.display(), n + 1);
         let entry = if what == "R" {
             Entry::Reset
-        } else {
-            Entry::Byte(
-                u8::from_str_radix(what, 16)
-                    .map_err(|_| format!("{}:{}: {what} is not a byte", path.display(), n + 1))?,
+        } else if let Some((file, rest)) = what.split_once(':') {
+            let (addr, val) = rest.split_once(':').ok_or_else(bad)?;
+            Entry::Reg(
+                file.parse().map_err(|_| bad())?,
+                u8::from_str_radix(addr, 16).map_err(|_| bad())?,
+                u8::from_str_radix(val, 16).map_err(|_| bad())?,
             )
+        } else {
+            Entry::Byte(u8::from_str_radix(what, 16).map_err(|_| bad())?)
         };
         out.push((us, entry));
     }
     Ok(out)
+}
+
+/// The FM chip's channel for a register address, if it is one of the
+/// nine per file that hold a key-on bit. `B0`-`B8` is where a note
+/// starts and stops, and the second register file is nine more.
+fn opl_channel(file: usize, addr: u8) -> Option<usize> {
+    ((0xB0..=0xB8).contains(&addr)).then(|| file * 9 + (addr & 0x0F) as usize)
 }
 
 /// What one MIDI channel did, for the report.
@@ -576,17 +603,39 @@ struct Chan {
 /// driver, the program — and nothing here can put them back. A channel
 /// still being sent notes and not heard is ours, and then the same file
 /// goes through `synthx play` to hear it with no guest in the way.
-fn midilog(path: &Path) -> i32 {
+fn devlog(path: &Path) -> i32 {
     let entries = match read_log(path) {
         Ok(e) => e,
         Err(why) => {
-            println!("FAIL midilog          {why}");
+            println!("FAIL devlog           {why}");
             return 1;
         }
     };
+    let fm = entries.iter().any(|(_, e)| matches!(e, Entry::Reg(..)));
+    let midi = entries.iter().any(|(_, e)| !matches!(e, Entry::Reg(..)));
+    if !fm && !midi {
+        println!("FAIL devlog           {}: nothing in it — the guest wrote to neither device", path.display());
+        return 1;
+    }
+    let mut rc = 0;
+    if midi {
+        rc |= midi_report(path, &entries);
+    }
+    if fm {
+        if midi {
+            println!();
+        }
+        rc |= opl_report(path, &entries);
+    }
+    rc
+}
+
+fn midi_report(path: &Path, entries: &[(u64, Entry)]) -> i32 {
     let mut parser = libsynth::midi::Parser::new();
     let mut chans: Vec<Chan> = vec![Chan::default(); 16];
-    let last_us = entries.last().map(|(us, _)| *us).unwrap_or(0);
+    // The largest stamp, not the last line's: a capture that holds both
+    // devices is two timelines concatenated and is not sorted.
+    let last_us = entries.iter().map(|(us, _)| *us).max().unwrap_or(0);
     let secs = (last_us / 1_000_000) as usize + 1;
     for c in chans.iter_mut() {
         // What a channel is worth before anyone says otherwise: the
@@ -608,9 +657,10 @@ fn midilog(path: &Path) -> i32 {
     let mut peak_held = 0usize;
     let mut peak_us = 0u64;
 
-    for (us, entry) in &entries {
+    for (us, entry) in entries {
         let us = *us;
         let byte = match entry {
+            Entry::Reg(..) => continue,
             Entry::Reset => {
                 resets.push(us);
                 dropped += parser.dropped();
@@ -793,6 +843,173 @@ fn midilog(path: &Path) -> i32 {
     i32::from(trouble)
 }
 
+/// The same report for the FM chip, which answers the same question in
+/// the units it has: a row per FM channel, a column per second, and the
+/// key-ons in each. The chip has no instruments and no note-offs — a
+/// note stops when the guest clears the key bit of the register it
+/// started it with — so "an instrument went mute" is a row that stops
+/// keying on, and "the guest ran out of voices" is channels left keyed
+/// on against the eighteen the chip has.
+fn opl_report(path: &Path, entries: &[(u64, Entry)]) -> i32 {
+    const CHANNELS: usize = 18;
+    let last_us = entries.iter().map(|(us, _)| *us).max().unwrap_or(0);
+    let secs = (last_us / 1_000_000) as usize + 1;
+    let mut keyons = vec![0u32; CHANNELS];
+    let mut keyoffs = vec![0u32; CHANNELS];
+    let mut per_sec = vec![vec![0u32; secs]; CHANNELS];
+    let mut on = vec![false; CHANNELS];
+    let mut since = vec![0u64; CHANNELS];
+    let mut writes = 0u64;
+    let mut opl3_mode = false;
+    let mut rhythm = false;
+    let mut peak = 0usize;
+    let mut peak_us = 0u64;
+
+    for (us, entry) in entries {
+        let (file, addr, val) = match entry {
+            Entry::Reg(f, a, v) => (*f, *a, *v),
+            _ => continue,
+        };
+        writes += 1;
+        if file == 1 && addr == 0x05 {
+            opl3_mode = val & 1 != 0;
+        }
+        if addr == 0xBD && val & 0x20 != 0 {
+            rhythm = true;
+        }
+        let Some(ch) = opl_channel(file, addr) else {
+            continue;
+        };
+        let want = val & 0x20 != 0;
+        if want && !on[ch] {
+            keyons[ch] += 1;
+            per_sec[ch][(*us / 1_000_000) as usize] += 1;
+            on[ch] = true;
+            since[ch] = *us;
+            let down = on.iter().filter(|&&b| b).count();
+            if down > peak {
+                peak = down;
+                peak_us = *us;
+            }
+        } else if !want && on[ch] {
+            keyoffs[ch] += 1;
+            on[ch] = false;
+        }
+    }
+
+    println!(
+        "{}: {writes} register writes over {:.1} s, {}{}",
+        path.display(),
+        last_us as f64 / 1e6,
+        if opl3_mode { "OPL3 mode" } else { "OPL2 mode (the second register file was never enabled)" },
+        if rhythm { ", rhythm mode" } else { "" }
+    );
+    println!();
+    println!("  fm  key-ons  key-offs  still on");
+    for ch in 0..CHANNELS {
+        if keyons[ch] == 0 {
+            continue;
+        }
+        println!(
+            "  {:2}  {:7}  {:8}  {}",
+            ch,
+            keyons[ch],
+            keyoffs[ch],
+            if on[ch] { "yes" } else { "" }
+        );
+    }
+    println!();
+    println!("  key-ons per second, a column a second, a row an FM channel:");
+    for ch in 0..CHANNELS {
+        if keyons[ch] == 0 {
+            continue;
+        }
+        let row: String = per_sec[ch]
+            .iter()
+            .map(|&n| match n {
+                0 => '.',
+                1..=9 => (b'0' + n as u8) as char,
+                _ => '#',
+            })
+            .collect();
+        println!("  {ch:2} |{row}|");
+    }
+
+    let mut trouble = false;
+    println!();
+    for ch in 0..CHANNELS {
+        if on[ch] {
+            println!(
+                "  fm {ch:2} left keyed on since {:.3} s: the guest never cleared its key bit",
+                since[ch] as f64 / 1e6
+            );
+            trouble = true;
+        }
+    }
+    println!(
+        "  at most {peak} channel{} keyed on at once (at {:.3} s) against the {CHANNELS} the chip has{}",
+        if peak == 1 { "" } else { "s" },
+        peak_us as f64 / 1e6,
+        if peak >= CHANNELS {
+            " — the guest's own allocator has nothing left to give"
+        } else {
+            ""
+        }
+    );
+    if peak >= CHANNELS {
+        trouble = true;
+    }
+    if !trouble {
+        println!("  nothing left keyed on: every note this guest started, it stopped");
+    }
+    i32::from(trouble)
+}
+
+/// Play an FM capture back with no guest, at the timing it was written
+/// with — the register writes go in where they went in, and the chip's
+/// timers are advanced by the gaps between them.
+fn play_opl(entries: &[(u64, Entry)], out: &Path) -> i32 {
+    let chip = capi::libsynth_opl_new(0);
+    if chip.is_null() {
+        println!("FAIL play             the OPL3 engine failed to open");
+        return 1;
+    }
+    let rate = libsynth::opl::NATIVE_RATE;
+    let mut pcm: Vec<i16> = Vec::new();
+    let mut done = 0usize;
+    let mut at_us = 0u64;
+    let until = |pcm: &mut Vec<i16>, done: &mut usize, at: &mut u64, us: u64| {
+        let frames = (us * rate as u64 / 1_000_000) as usize;
+        while *done < frames {
+            let n = (frames - *done).min(512);
+            pcm.resize((*done + n) * 2, 0);
+            capi::libsynth_opl_render(chip, pcm[*done * 2..].as_mut_ptr(), n);
+            *done += n;
+        }
+        capi::libsynth_opl_advance(chip, us.saturating_sub(*at) as u32);
+        *at = us;
+    };
+    for (us, entry) in entries {
+        let Entry::Reg(file, addr, val) = entry else {
+            continue;
+        };
+        until(&mut pcm, &mut done, &mut at_us, *us);
+        capi::libsynth_opl_address(chip, *file as i32, *addr);
+        capi::libsynth_opl_data(chip, *file as i32, *val);
+    }
+    let tail = at_us + 2_000_000;
+    until(&mut pcm, &mut done, &mut at_us, tail);
+    capi::libsynth_opl_free(chip);
+    write_wav(out, rate, &pcm);
+    let (rms, peak, busy) = level(&pcm, rate);
+    println!(
+        "{}: {:.1} s at {rate} Hz, {rms:.4} RMS, peak {peak:.3}, audible for {busy:.1} s",
+        out.display(),
+        done as f32 / rate as f32
+    );
+    0
+}
+
 /// Play a capture back with no guest, at the timing it was written with.
 fn play(log: &Path, out: &Path, bank: &Path, roms: Option<&Path>) -> i32 {
     let entries = match read_log(log) {
@@ -802,6 +1019,17 @@ fn play(log: &Path, out: &Path, bank: &Path, roms: Option<&Path>) -> i32 {
             return 1;
         }
     };
+    let fm = entries.iter().any(|(_, e)| matches!(e, Entry::Reg(..)));
+    let midi = entries.iter().any(|(_, e)| !matches!(e, Entry::Reg(..)));
+    if fm && midi {
+        // Two engines, two rates, and the guest's own mixer decided how
+        // loud each was: mixing them here would be inventing a balance.
+        println!("FAIL play             {}: holds both devices — capture them to separate files to play either", log.display());
+        return 1;
+    }
+    if fm {
+        return play_opl(&entries, out);
+    }
     let (kind, arg) = match roms {
         Some(r) => (capi::LIBSYNTH_MIDI_MT32, r),
         None => (capi::LIBSYNTH_MIDI_GM, bank),
@@ -832,6 +1060,7 @@ fn play(log: &Path, out: &Path, bank: &Path, roms: Option<&Path>) -> i32 {
         match entry {
             Entry::Byte(b) => capi::libsynth_midi_write(m, *b),
             Entry::Reset => capi::libsynth_midi_reset(m),
+            Entry::Reg(..) => {}
         }
     }
     // Two seconds past the last byte: the release tail, and room for a

@@ -10,6 +10,8 @@
 
 use nuked_opl3::{Opl3Device, OplRegisterFile};
 
+use crate::Log;
+
 /// The chip's own sample rate. Opening the voice here means the core
 /// resamples nothing and QEMU's mixer does the one conversion there is.
 pub const NATIVE_RATE: u32 = 49716;
@@ -17,6 +19,11 @@ pub const NATIVE_RATE: u32 = 49716;
 pub struct Opl {
     dev: Opl3Device,
     rate: u32,
+    /// The register address each file has latched. The chip has its own
+    /// copy; this one is so a capture can say which register a value
+    /// landed on, which is the whole content of an FM write.
+    latched: [u8; 2],
+    log: Option<Log>,
 }
 
 impl Opl {
@@ -25,6 +32,8 @@ impl Opl {
         Opl {
             dev: Opl3Device::new(rate),
             rate,
+            latched: [0; 2],
+            log: Log::open("LIBSYNTH_OPL_LOG", "OPL3 register", "<file>:<address>:<value>"),
         }
     }
 
@@ -43,12 +52,17 @@ impl Opl {
     /// Latch a register address. An OPL2-only game writes bank 0 all its
     /// life and never learns the chip has a second file.
     pub fn address(&mut self, bank: i32, addr: u8) {
+        self.latched[(bank != 0) as usize] = addr;
         let _ = self.dev.write_address(addr, Self::file(bank));
     }
 
     /// Write the value for the latched address. Unbuffered: the guest's
     /// own writes already carry the timing the chip would have seen.
     pub fn data(&mut self, bank: i32, val: u8) {
+        let file = (bank != 0) as usize;
+        if let Some(log) = self.log.as_mut() {
+            log.put(&format!("{file}:{:02x}:{val:02x}", self.latched[file]));
+        }
         let _ = self.dev.write_data(val, Self::file(bank), false);
     }
 
