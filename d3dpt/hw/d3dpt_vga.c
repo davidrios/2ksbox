@@ -450,6 +450,24 @@ static void d3d_reset(D3dptVgaState *s)
  * to the console as a QEMUCursor; the position and visibility go through
  * dpy_mouse_set. The display clients composite it (the player: as the host
  * window's cursor); the device draws nothing into the frame. */
+/* No shape: **never `dpy_cursor_define(con, NULL)`** — QEMU's console takes
+ * a reference on the cursor it is handed and dereferences it (cursor_ref),
+ * so a NULL is a SIGSEGV in whatever process the device lives in. That was
+ * the player, on the first Win98 restart after the reset below started
+ * clearing the shape (2026-09-09). A hidden 1x1 transparent cursor is what
+ * "no cursor" is to the console. */
+static void fb_cursor_clear(D3dptVgaState *s)
+{
+    QEMUCursor *c = cursor_alloc(1, 1);
+
+    c->data[0] = 0;
+    s->cur_defined = false;
+    s->cur_on = false;
+    dpy_mouse_set(s->vga.con, s->cur_x, s->cur_y, false);
+    dpy_cursor_define(s->vga.con, c);
+    cursor_unref(c);
+}
+
 static void fb_cursor_define(D3dptVgaState *s, bool on)
 {
     QEMUCursor *c;
@@ -457,8 +475,7 @@ static void fb_cursor_define(D3dptVgaState *s, bool on)
     uint64_t bytes = (uint64_t)w * h * 4;
 
     if (!on) {
-        s->cur_defined = false;
-        dpy_cursor_define(s->vga.con, NULL);
+        fb_cursor_clear(s);
         return;
     }
     if (!w || !h || w > D3DPT_FB_CURSOR_MAX || h > D3DPT_FB_CURSOR_MAX ||
@@ -737,10 +754,7 @@ static void d3dpt_vga_reset(DeviceState *dev)
     s->dbg_len = 0;
     if (s->cur_on || s->cur_defined) {
         /* a rebooted guest has no pointer until its driver defines one */
-        s->cur_on = false;
-        s->cur_defined = false;
-        dpy_mouse_set(s->vga.con, 0, 0, false);
-        dpy_cursor_define(s->vga.con, NULL);
+        fb_cursor_clear(s);
     }
     d3d_reset(s);
 }

@@ -1937,6 +1937,19 @@ gates on `r_enable` and is re-run by every `ENABLE` write), and a reset
 drops the shape. XP's full-screen console and both families' blue screens
 get the same treatment for free.
 
+One rule learned the expensive way the same evening: **never
+`dpy_cursor_define(con, NULL)`**. QEMU's console takes a reference on the
+cursor it is handed (`cursor_ref`, an unconditional `c->refcount++`), so a
+NULL is a SIGSEGV in whatever process the device lives in — the user's
+player, on the first Win98 restart after the reset started clearing the
+shape (the core's stack: `cursor_ref` ← `dpy_cursor_define` ←
+`d3dpt_vga_reset`). The original `CURSOR_DEFINE = 0` path had the same
+call and had simply never been taken. "No cursor" to the console is a
+hidden 1×1 transparent one (`fb_cursor_clear`); `tools/win98-game-test.sh`
+with `GUEST_CMD='RUNDLL32 SHELL32.DLL,SHExitWindowsEx 2'` is a Windows
+restart on the device, and the check is that QEMU is still there for the
+second `linear mode on`.
+
 #### The blue screen is drawn by the VDD, and it tells the mini-VDD first
 
 A 9x blue screen — a fatal exception, a "Windows protection error", the
