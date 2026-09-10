@@ -20,6 +20,13 @@ use crate::{clip, Voice};
 /// nothing to do.
 pub const RATE: u32 = 48000;
 
+/// How many notes can sound at once. rustysynth's own default, and about
+/// what a period wavetable card could hold; the ceiling only matters on
+/// an arrangement that stacks more, where the alternative to a limit is
+/// a note stealing another. `synthx midilog` names it when a capture
+/// holds that many notes down at once.
+pub const POLYPHONY: usize = 64;
+
 pub struct Gm {
     synth: Synthesizer,
     /// The master volume as a multiplier, kept because `reset()` puts
@@ -39,10 +46,7 @@ impl Gm {
         let sf = SoundFont::new(&mut reader)
             .map_err(|e| format!("SoundFont {}: {e}", soundfont.display()))?;
         let mut settings = SynthesizerSettings::new(RATE as i32);
-        // 64 is rustysynth's default and about what a period wavetable
-        // card could hold; the ceiling only matters on a track that
-        // stacks more, where the alternative is a note stealing another.
-        settings.maximum_polyphony = 64;
+        settings.maximum_polyphony = POLYPHONY;
         settings.enable_reverb_and_chorus = true;
         let mut synth = Synthesizer::new(&Arc::new(sf), &settings)
             .map_err(|e| format!("SoundFont {}: {e}", soundfont.display()))?;

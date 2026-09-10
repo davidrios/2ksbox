@@ -336,6 +336,45 @@ playing. Duke Nukem 3D's *Sound Blaster* music entry is the first case —
 it refuses to initialize and writes nothing — while its *AdLib* entry,
 which probes 0x388, fills the log.
 
+## 7.2 When the music plays and then goes wrong
+
+The line in §7.1 answers "is the guest writing to the port at all". It
+does not answer the next question, which is the one a user actually
+arrives with: *the music started correctly and then some instruments
+stopped*. That has two entirely different causes and they sound the
+same — either the guest stopped sending those notes, or it kept sending
+them and we stopped playing them — so the port keeps a capture that can
+be taken away and played again with no guest in it:
+
+    LIBSYNTH_MIDI_LOG=/tmp/win98.log   # in the player's own environment;
+                                       # QEMU is in the same process
+
+Every byte the guest writes to the data port, with a microsecond stamp
+and an `R` where the port was reset. Then, with no machine running:
+
+    target/release/synthx midilog /tmp/win98.log      # what the guest sent
+    target/release/synthx play    /tmp/win98.log x.wav  # what we make of it
+
+`midilog` prints a row per channel and a column per second of note-ons,
+which is the whole diagnosis in one glance: a row that stops while the
+others keep going was stopped by the guest, and a row that keeps going
+while the sound does not is ours. Under it, the things that silence a
+channel from the outside — channel volume or expression driven to zero,
+all-notes-off, all-sound-off — with the second each happened at; notes
+left held at the end (a note-off that never came holds one of the
+engine's `gm::POLYPHONY` voices for ever); the **most notes down at
+once** anywhere in the capture, which is the measurement behind the
+commonest way for music to start right and then thin out — past the
+voice count every new note takes one from a note still sounding, and
+what survives is whatever was started last; and any byte the parser
+could attach to nothing, which is the stream and the parser disagreeing
+about where a message starts.
+
+`play` renders the same capture through the same engine at the timing it
+was written with. If the music breaks there it is ours and the capture is
+the reproduction — no guest, no boot, a second a run. If it does not
+break there, the guest is the thing to look at.
+
 ## 8. Not here (and the order to add it)
 
 1. **A host MIDI port** — the stream out to real hardware or the host's

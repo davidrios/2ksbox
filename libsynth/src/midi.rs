@@ -48,6 +48,7 @@ pub struct Parser {
     have: usize,
     want: usize,
     sysex: Option<Vec<u8>>,
+    dropped: u64,
 }
 
 /// A sysex longer than this is a guest that lost its way (an MT-32 patch
@@ -111,7 +112,7 @@ impl Parser {
                 // F4, F5, F7 without a sysex open: undefined. Ignore the
                 // byte and leave running status alone, which is what a
                 // real UART's downstream does with a byte it cannot use.
-                None => {}
+                None => self.dropped += 1,
             }
             return None;
         }
@@ -119,6 +120,7 @@ impl Parser {
         // mid-stream): nothing to attach it to.
         if self.status == 0 {
             if self.running == 0 {
+                self.dropped += 1;
                 return None;
             }
             self.status = self.running;
@@ -138,6 +140,15 @@ impl Parser {
         // this drops back to "no status" for those.
         self.status = self.running;
         Some(Event::Message(status, d1, d2))
+    }
+
+    /// Bytes this parser could attach to nothing: a data byte with no
+    /// status byte in force, or a status byte that means nothing here.
+    /// A stream that makes sense has none, so a non-zero count is the
+    /// parser and the guest disagreeing about where a message starts —
+    /// which is the first thing to look for in a captured log.
+    pub fn dropped(&self) -> u64 {
+        self.dropped
     }
 
     /// Forget everything in flight — an MPU-401 reset, or a machine
