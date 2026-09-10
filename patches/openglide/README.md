@@ -156,11 +156,20 @@ smaller one: our guests are one vCPU, so under TCG the guest is one host
 thread and the render threads would land on cores that are idle today
 (the Air's four efficiency cores included). The real cost is on the vCPU
 thread — a Voodoo is programmed by MMIO register writes, dozens per
-triangle, each one an exit from generated code into a device callback
-under TCG, tens of thousands a frame; PCem avoids it by handling the
-writes inline in its own CPU emulator, which QEMU cannot. A `voodoo` PCI
-device wrapping that code, fed into the player's frame path, is a
-plausible track someday and would sit *beside* the pass-through — the
-wrapper for speed where it covers the game, the chip for fidelity where it
-doesn't — but it is filed as "later, if a game demands it": Glide 3 in
-OpenGLide is the smaller step for the titles in hand.
+triangle, tens of thousands a frame, and under TCG each one leaves
+generated code for the softmmu slow path, an address-space walk and, by
+default, a round trip through the Big QEMU Lock, where PCem's CPU core
+calls the handler directly in the same thread. The mechanism is the same;
+QEMU's is the heavier by an order of magnitude, and two things close most
+of the gap: `memory_region_clear_global_locking` on the device's regions
+(the lock round trip is the largest piece), and the **Voodoo 2's command
+FIFO mode**, where Glide writes commands into a memory-mapped FIFO that
+the device can back with plain RAM — no trap at all, the render thread
+drains it, one doorbell register per batch, the same trick qemu-3dfx's
+own FIFO uses. Voodoo 1 has no such mode, so if the chip is ever emulated
+it is the Voodoo 2. A `voodoo` PCI device wrapping that code, fed into the
+player's frame path, is a plausible track someday and would sit *beside*
+the pass-through — the wrapper for speed where it covers the game, the
+chip for fidelity where it doesn't — but it is filed as "later, if a game
+demands it": Glide 3 in OpenGLide is the smaller step for the titles in
+hand.

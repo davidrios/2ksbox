@@ -459,8 +459,10 @@ items nobody owns yet:
    layout, `grGet`/`grReset`, the context handle and the 3x variants),
    and the alternative of **emulating the Voodoo chip** (PCem's GPL
    rasterizer as a QEMU device — complete by construction, render threads
-   on cores TCG leaves idle, but tens of thousands of trapped MMIO writes
-   a frame on the vCPU thread), recorded as "later, if a game demands it".
+   on cores TCG leaves idle; the trapped MMIO writes on the one vCPU
+   thread are the cost, and a Voodoo 2's RAM-backed command FIFO plus an
+   unlocked region removes most of it), recorded as "later, if a game
+   demands it".
    What is left of M3: **the wrapper on macOS and Windows** -- the Darwin branch
    of `build-glide.sh` builds since 2026-09-06 but nothing exercises it, so
    what is left there is a macOS `glide-host` check (the CGL side of
