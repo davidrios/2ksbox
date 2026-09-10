@@ -1,64 +1,62 @@
 #!/usr/bin/env python3
-"""The gameport as a *guest* meets it (M13 path B,
-docs/tracks/m13-gamepads.md): a DOS program arms the one-shots at 0x201
-and counts them down while the host moves a scripted pad — and the counts
-it prints over COM1 are the evidence.
+"""A gamepad as a *guest* meets it (M13, docs/tracks/m13-gamepads.md) —
+both devices, each in the family it is for.
 
-    tools/pad-guest-test.py             # needs nasm, mtools, build/qemu
-    tools/pad-guest-test.py --verbose   # ...and every sample line
-    UNTHROTTLED=1 tools/pad-guest-test.py   # the control: no -icount
+    tools/pad-guest-test.py                 # path B: the gameport, FreeDOS
+    tools/pad-guest-test.py xp [image]      # path A: the USB HID pad, XP
+    tools/pad-guest-test.py win98 [image]   # path A on Windows 98
+    tools/pad-guest-test.py --verbose ...   # ...and every sample line
+    UNTHROTTLED=1 tools/pad-guest-test.py   # the DOS control: no -icount
 
-`UNTHROTTLED=1` is the control the track doc asks for, and it is worth
-running once to see the answer rather than to pass: with the pacing off
-the same stick position counts about ten times higher (a guest running at
-whatever speed the host gives it) and wanders by half from sample to
-sample. That is the risk path B carries — a game with a fixed timeout
-count sees a stick jammed at one end — and the reason the DOS family runs
-`-icount shift=N,align=on` anyway, for its processor picker. Nothing in
-the model changes between the two runs; only the machine does.
+Both paths were confirmed by hand with a real controller (a DualSense, on
+2026-09-09/10) and neither was guarded by anything afterwards. This is
+what re-checks them: seen to work once is not the same as kept working,
+and the two guest ends are exactly the parts no host-side check can reach.
 
-**It must be the player, not `qemu-system-i386`.** The pad reaches the
-guest through the embed library (`qemu_embed_pad_state` -> the input
-bottom half -> `gameport_set_state`), and only the player drives that; a
-bare QEMU has a gameport that nothing ever moves. `PLAYER_PAD_SCRIPT`
-stands in for the controller, so this runs on a machine with nothing
-plugged in — which is the whole reason that source exists.
+**It must be the player, not `qemu-system-i386`.** The pad reaches a guest
+through the embed library (`qemu_embed_pad_state` -> the input bottom half
+-> `usb_gamepad_set_state` / `gameport_set_state`), and only the player
+drives that; a bare QEMU has pad devices that nothing ever moves.
+`PLAYER_PAD_SCRIPT` stands in for the controller, so this runs on a
+machine with nothing plugged in — which is the whole reason that source
+exists.
 
-What it proves, and why each piece is here rather than in the `pad` check
-in `scripts/test.sh` (which reads the port from the monitor and can prove
-presence, arming and expiry, but cannot move a pad and has no guest):
+The poses are the same on both paths, and each moves **one** control, so
+nothing here has to align the guest's clock with the host's frame counter
+and the order the samples arrive in does not matter. What the two guests
+are then asked is deliberately *opposite* in one place, which is the point
+of running both:
 
-  * the port is *found* — an idle read of 0xf0, not the 0xff an absent
-    port gives off the open bus;
-  * an axis is a **count**, and the count follows the stick: the left
-    extreme is a ~24 us pulse and the right a ~1124 us one, so the two
-    differ by tens of times and the centre sits about half way;
-  * the **d-pad reaches the port at all** — nothing in the script touches
-    `ly`, so every reading on the Y axis comes from the hat being folded
-    onto it in the device (`gameport_set_state`), which is what makes a
-    digital pad work on a port that has only pots;
-  * the axes are independent: the script never touches the second stick's
-    Y, and the fourth count must not move;
-  * the buttons are the four face buttons, low while held.
+    control          gameport (path B)        USB HID (path A)
+    left stick X     axis 1                   X
+    the d-pad        axis 1 and 2 (folded)    the POV hat, and nothing else
+    right stick X    axis 3                   Z
+    face buttons     the four button bits     buttons 1-4
 
-The phases are deliberately *distinguishable by value*, so nothing here
-has to align the guest's clock with the host's frame counter: the stick
-only ever moves X, the d-pad only ever moves Y, the second stick only
-ever moves Z. The order the samples arrive in does not matter.
+The d-pad row is the one to watch. A gameport has only pots, so a digital
+pad has to drive the axes to their ends or a DOS game cannot read it at
+all; a HID pad has a hat, and driving the axes from it as well would make
+a stick the guest cannot centre. The same host state has to produce both.
 
-Outputs in build/pad-guest/. Local only (it fetches the FreeDOS floppy
-`tools/x87-guest-test.py` uses and it wants a display for the player's
-window), not wired into scripts/test.sh.
+Outputs in build/pad-guest/. Local only — the DOS run fetches the FreeDOS
+floppy `tools/x87-guest-test.py` uses, the Windows runs want one of the
+user's own images, and all of them want a display for the player's window.
+The DOS run is wired into `scripts/test.sh`'s guest stage; the Windows
+ones are not, because they need an image the suite cannot assume.
 """
+import glob
 import importlib.util
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLAYER = os.path.join(ROOT, "target/release/player")
+QEMU_IMG = os.path.join(ROOT, "build/qemu/qemu-img")
+QMPC = os.path.join(ROOT, "tools/qmpc.py")
 OUT = os.path.join(ROOT, "build/pad-guest")
 
 spec = importlib.util.spec_from_file_location("x87gt", os.path.join(ROOT, "tools/x87-guest-test.py"))
@@ -67,45 +65,45 @@ spec.loader.exec_module(x87gt)
 
 ASM = os.path.join(ROOT, "guest-tools/src/padtest.asm")
 
-# The pad, as frames of the player's own publish loop — which is what the
-# scripted source counts, so these are *not* seconds. Measured here: the
-# player publishes about 60 a second while the guest is printing (which it
-# is: every sample goes to the VGA text screen as well as to COM1, so
-# there is always a changed surface to publish).
+# The pad, in frames of the player's own publish loop — which is what the
+# scripted source counts, so these are *not* seconds. The player publishes
+# on QEMU's refresh tick (`on_refresh_done`, ~60 a second) whether or not
+# the guest drew anything, so the script advances at the same rate on a
+# DOS box printing continuously and on an idle Windows desktop.
 #
-# One control per axis, by design (see the module docstring): `lx` for X,
-# the d-pad for Y, `rx` for Z, and the fourth axis is never touched.
-#
-# Two things about the shape, both learned the first time this ran:
-#
-#   * it starts LATE. FreeDOS is at the prompt in about four seconds, but
-#     the pad script starts at frame 1 — the very first poses played to a
-#     machine that was still booting, and X's short end was simply never
-#     sampled. The offset is the fix, and generous.
-#   * it REPEATS. Two cycles, so a slower boot or a host publishing at
-#     half the rate still leaves every pose inside the guest's sampling
-#     window, and the harness stops as soon as it has seen them all.
+# One control per pose, and one axis per control (see the module
+# docstring), so every check below is a statement about values and none of
+# them about time.
 PHASE = 150             # frames a pose is held: ~2.5 s, about ten samples
-OFFSET = 600            # ...after a first pass of ten seconds, for the boot
-CYCLES = 2
 
 POSES = [
-    "lx=-1.0",          # X to the short end
-    "lx=1.0",           # X to the long end
-    "lx=0.0",           # X centred
-    "dpad_up=1",        # Y short — through the fold, not through `ly`
-    "dpad_up=0,dpad_down=1",
-    "dpad_down=0,rx=1.0",   # the second stick's X
+    "lx=-1.0",              # the stick, to one end
+    "lx=1.0",               # ...and the other
+    "lx=0.0",               # centred
+    "dpad_up=1",            # the hat: north
+    "dpad_up=0,dpad_down=1",  # ...and south
+    "dpad_down=0,rx=1.0",   # the second stick
     "rx=0.0,south=1",       # button 1
     "south=0,east=1",       # button 2
     "east=0",
 ]
 
 
-def script():
+def script(offset, cycles):
+    """`PLAYER_PAD_SCRIPT` for `cycles` passes, starting at `offset`.
+
+    Two shapes, and both were learned by running this. **It starts late**
+    on DOS: FreeDOS is at the prompt in about four seconds but the script
+    starts at frame 1, so the first poses played to a machine that was
+    still booting and one end of the stick was never sampled. **It
+    repeats**, which is what makes a Windows guest possible at all — that
+    one takes a minute to boot and log in, and no offset would be a
+    reliable guess, so the poses simply keep coming round until the guest
+    has seen them all and the run stops itself.
+    """
     steps = []
-    frame = OFFSET
-    for _ in range(CYCLES):
+    frame = offset
+    for _ in range(cycles):
         for pose in POSES:
             for item in pose.split(","):
                 steps.append("%d:%s" % (frame, item))
@@ -113,14 +111,65 @@ def script():
     return ",".join(steps)
 
 
-SCRIPT = script()
-
-
 def sh(*cmd, **kw):
     subprocess.run(cmd, check=True, **kw)
 
 
-def build():
+def watch(p, log, done, satisfied, timeout=600):
+    """Wait for the guest, and stop as soon as it has shown everything.
+
+    `satisfied` is the run's own checks, asked quietly of the log so far:
+    a pass ends the run instead of sitting through the rest of the guest's
+    sampling. `done` is the guest's own last word, which is the other end
+    — a run that never satisfies the checks plays out in full and then
+    fails with the numbers in front of it.
+    """
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        time.sleep(1)
+        if p.poll() is not None:
+            break
+        if not os.path.exists(log):
+            continue
+        text = open(log, "rb").read().decode("latin-1")
+        if satisfied(text) or done in text:
+            break
+    else:
+        raise SystemExit("timeout waiting for %s (see %s)" % (done, log))
+    return open(log, "rb").read().decode("latin-1")
+
+
+def samples(text, keys):
+    """The `K=v ...` lines that carry every key in `keys`, as dicts.
+
+    A line that does not parse is skipped in silence: the log is read while
+    the guest is still writing it and the last line is routinely half a
+    sample.
+    """
+    out = []
+    first = keys[0] + "="
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith(first):
+            continue
+        try:
+            f = dict(p.split("=", 1) for p in line.split(" ") if "=" in p)
+            row = {k: int(v, 16 if k == "B" else 10) for k, v in f.items()}
+        except ValueError:
+            continue
+        if set(row) >= set(keys):
+            out.append(row)
+    return out
+
+
+def span(rows, axis):
+    vs = [r[axis] for r in rows]
+    return min(vs), max(vs)
+
+
+# ------------------------------------------------------------------ DOS
+
+def build_dos():
     """PADTEST.COM on a FreeDOS floppy that runs it from AUTOEXEC."""
     com = os.path.join(OUT, "PADTEST.COM")
     img = os.path.join(OUT, "pad.img")
@@ -139,12 +188,13 @@ def build():
     return img
 
 
-def run(img, log, plog):
+def run_dos(img, log, plog):
     """The player, with a gameport and a scripted pad, on the floppy."""
     for f in (log, plog):
         if os.path.exists(f):
             os.unlink(f)
-    env = dict(os.environ, PLAYER_PAD="gameport", PLAYER_PAD_SCRIPT=SCRIPT)
+    env = dict(os.environ, PLAYER_PAD="gameport",
+               PLAYER_PAD_SCRIPT=script(offset=600, cycles=2))
     # A period-paced machine, because that is what the port is for: with
     # `-icount shift=N,align=on` the guest's counting loop and our
     # one-shot are paced by one clock, which is the arrangement a game
@@ -162,62 +212,18 @@ def run(img, log, plog):
             "-drive", "file=%s,if=floppy,index=0,format=raw" % img,
             "-boot", "a", "-serial", "file:" + log, *icount,
         ], env=env, stdout=out, stderr=subprocess.STDOUT)
-    t0 = time.time()
     try:
-        while time.time() - t0 < 300:
-            time.sleep(1)
-            if p.poll() is not None:
-                break
-            if not os.path.exists(log):
-                continue
-            text = open(log, "rb").read().decode("latin-1")
-            # Every pose seen: stop the machine rather than sit through
-            # the rest of the guest's sampling window. The guest's own
-            # DONE is the other end — a run that never satisfies the
-            # checks plays out in full and then fails with the counts.
-            if check(text, quiet=True) or "DONE" in text:
-                break
-        else:
-            raise SystemExit("timeout waiting for DONE (see %s)" % log)
+        return watch(p, log, "DONE", lambda t: check_dos(t, quiet=True), timeout=300)
     finally:
         if p.poll() is None:
             p.terminate()
             p.wait()
-    return open(log, "rb").read().decode("latin-1")
 
 
-def samples(text):
-    """The `X=n Y=n Z=n R=n B=xx` lines, as dicts.
-
-    A line that does not parse is skipped in silence, because the log is
-    read while the guest is still writing it and the last line is
-    routinely half a sample.
-    """
-    out = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith("X=") or " B=" not in line:
-            continue
-        try:
-            f = dict(p.split("=", 1) for p in line.split(" ") if "=" in p)
-            row = {k: int(v, 16 if k == "B" else 10) for k, v in f.items()}
-        except ValueError:
-            continue
-        if set(row) >= {"X", "Y", "Z", "R", "B"}:
-            out.append(row)
-    return out
-
-
-def check(text, quiet=False):
-    """Every assertion about the port, over whatever samples have arrived.
-
-    `quiet` is what the run loop polls with while the guest is still
-    going: the same checks, so the run can stop the moment the pad has
-    been all the way round rather than waiting out the guest's window.
-    """
+def check_dos(text, quiet=False):
     ok = True
     say = (lambda *a: None) if quiet else print
-    rows = samples(text)
+    rows = samples(text, ("X", "Y", "Z", "R", "B"))
     if "NOPORT" in text:
         say("FAIL the guest found no gameport at 0x201 (an idle read had an axis bit set)")
         return False
@@ -228,16 +234,12 @@ def check(text, quiet=False):
         say("FAIL a counting loop hit its cap: an armed one-shot never expired")
         ok = False
 
-    def span(axis):
-        vs = [r[axis] for r in rows]
-        return min(vs), max(vs)
-
-    xlo, xhi = span("X")
-    ylo, yhi = span("Y")
-    zlo, zhi = span("Z")
-    rlo, rhi = span("R")
+    xlo, xhi = span(rows, "X")
+    ylo, yhi = span(rows, "Y")
+    zlo, zhi = span(rows, "Z")
+    rlo, rhi = span(rows, "R")
     say("counts over %d samples: X %d..%d  Y %d..%d  Z %d..%d  R %d..%d"
-          % (len(rows), xlo, xhi, ylo, yhi, zlo, zhi, rlo, rhi))
+        % (len(rows), xlo, xhi, ylo, yhi, zlo, zhi, rlo, rhi))
     say("button nibbles seen: %s" % " ".join(sorted({"%02x" % r["B"] for r in rows})))
 
     # The fourth axis is the one nothing in the script touches, so its own
@@ -291,19 +293,197 @@ def check(text, quiet=False):
     return ok
 
 
+# -------------------------------------------------------------- Windows
+
+IMAGES = {"xp": "~/vms/winxp.qcow2", "win98": "~/vms/win98.qcow2"}
+
+
+def find_iso():
+    isos = sorted(glob.glob(os.path.join(ROOT, "guest-tools/out/guest-tools-*.iso")),
+                  key=os.path.getmtime)
+    if not isos:
+        raise SystemExit("no guest-tools ISO — guest-tools/build-wrappers.sh")
+    return isos[-1]
+
+
+def run_win(mode, image, log, plog):
+    """The player with a `usb-gamepad`, and PADWIN.EXE off the ISO.
+
+    `snapshot=on` rather than an overlay of our own: the user's images are
+    read-only for a session, and this is the same thing `scripts/test.sh`'s
+    guest stage does with the same file.
+    """
+    for f in (log, plog):
+        if os.path.exists(f):
+            os.unlink(f)
+    iso = find_iso()
+    sockdir = tempfile.mkdtemp(prefix="padq")     # short: AF_UNIX has 108 bytes
+    sock = os.path.join(sockdir, "q")
+    # Enough cycles that the poses are still coming round long after the
+    # guest is up, and then some. Measured the first time this ran: twelve
+    # cycles is about four and a half minutes of frames, XP took about
+    # four and a half minutes to boot and start the program, and every
+    # sample came back at the device's reset state — a pad at rest,
+    # because the script had just finished. Sixty cycles is twenty-odd
+    # minutes and costs nothing (540 steps in a list), and the run stops
+    # the moment every pose has been seen.
+    env = dict(os.environ, PLAYER_PAD="usb",
+               PLAYER_PAD_SCRIPT=script(offset=0, cycles=60))
+    # Windows 98 under KVM loses Explorer at startup (CLAUDE.md), and
+    # without a shell there is no Run dialog to type into.
+    accel = ["-accel", "tcg"] if mode == "win98" else ["-accel", "kvm"]
+    with open(plog, "wb") as out:
+        p = subprocess.Popen([
+            PLAYER, "--",
+            "-L", os.path.join(ROOT, "qemu/pc-bios"),
+            "-machine", "pc", "-cpu", "pentium3", "-m", "512", *accel,
+            "-vga", "cirrus", "-net", "none",
+            "-audiodev", "none,id=a0",
+            "-usb", "-device", "usb-tablet", "-device", "usb-gamepad",
+            "-drive", "file=%s,if=ide,index=0,media=disk,snapshot=on" % image,
+            "-cdrom", iso, "-boot", "c",
+            "-serial", "file:" + log,
+            "-qmp", "unix:%s,server,nowait" % sock,
+        ], env=env, stdout=out, stderr=subprocess.STDOUT)
+
+    def qmp(*args):
+        subprocess.run([sys.executable, QMPC, sock, *args],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    try:
+        for _ in range(100):
+            if os.path.exists(sock):
+                break
+            time.sleep(0.2)
+        # Knock on the Run dialog until the guest says it started the
+        # program. Nothing else proves a shell is there — a screendump
+        # cannot tell a desktop from a dead machine — and the drive letter
+        # is a property of the image, so both likely ones are tried.
+        deadline = time.time() + 420
+        started = False
+        while time.time() < deadline and p.poll() is None and not started:
+            for drive in ("D:", "E:"):
+                # Esc first, twice: the previous attempt may have left a
+                # "Windows cannot find" dialog up — the CD's letter is a
+                # property of the image and not something this can know —
+                # and one Esc goes to whatever had focus before it.
+                qmp("keys", "esc")
+                qmp("keys", "esc")
+                qmp("keys", "meta_l+r")
+                time.sleep(1)
+                qmp("keys", "ctrl+a")
+                qmp("type", r"%s\TESTS\PADWIN.EXE" % drive)
+                qmp("keys", "ret")
+                for _ in range(12):
+                    time.sleep(1)
+                    if os.path.exists(log) and b"padwin:" in open(log, "rb").read():
+                        started = True
+                        break
+                if started:
+                    break
+        if not started:
+            raise SystemExit("the guest never started PADWIN.EXE (see %s)" % log)
+        return watch(p, log, "DONE", lambda t: check_win(t, quiet=True), timeout=300)
+    finally:
+        if p.poll() is None:
+            p.terminate()
+            p.wait()
+        shutil.rmtree(sockdir, ignore_errors=True)
+
+
+def check_win(text, quiet=False):
+    ok = True
+    say = (lambda *a: None) if quiet else print
+    rows = samples(text, ("X", "Y", "Z", "Rz", "POV", "B"))
+    if "FAIL no joystick enumerated" in text:
+        say("FAIL the guest enumerated no joystick at all — is the pad's driver installed in this image?")
+        say("     (Windows 98 SE asks for its own source files the first time a HID pad is plugged in.)")
+        return False
+    for line in text.splitlines():
+        if line.startswith("FAIL ") and not quiet:
+            say("guest: " + line.strip())
+    if len(rows) < 20:
+        say("FAIL only %d samples came back; the guest never really ran" % len(rows))
+        return False
+    if not quiet:
+        for line in text.splitlines():
+            if line.startswith("device ") or line.startswith("winmm:") or line.startswith("DirectInput "):
+                print("   " + line.strip())
+
+    xlo, xhi = span(rows, "X")
+    ylo, yhi = span(rows, "Y")
+    zlo, zhi = span(rows, "Z")
+    rzlo, rzhi = span(rows, "Rz")
+    povs = {r["POV"] for r in rows}
+    buttons = {r["B"] for r in rows}
+    say("axes over %d samples (0..255, the report's own range): X %d..%d  Y %d..%d  Z %d..%d  Rz %d..%d"
+        % (len(rows), xlo, xhi, ylo, yhi, zlo, zhi, rzlo, rzhi))
+    say("POV values seen: %s" % " ".join(str(v) for v in sorted(povs)))
+    say("button masks seen: %s" % " ".join("%03x" % b for b in sorted(buttons)))
+
+    # The axes are on 0..255 because the probe puts them there, which is
+    # the range the report itself carries — so these are the bytes
+    # gamepad::hid_axis() made, not a fraction of something unknown.
+    if xlo > 16 or xhi < 239:
+        say("FAIL X reached %d..%d, not both ends of its range" % (xlo, xhi))
+        ok = False
+    if not any(96 <= r["X"] <= 160 for r in rows):
+        say("FAIL no sample had X centred")
+        ok = False
+    if zhi - zlo < 100:
+        say("FAIL Z barely moved (%d..%d): the second stick is not reaching the guest" % (zlo, zhi))
+        ok = False
+    # The two axes nothing drives. Y is the interesting one: on this path
+    # the d-pad is the *hat*, and a device that drove the axes from it as
+    # well — which is exactly what the gameport must do — would leave a
+    # stick the guest cannot centre.
+    for name, lo, hi in (("Y", ylo, yhi), ("Rz", rzlo, rzhi)):
+        if hi - lo > 32:
+            say("FAIL %s moved (%d..%d) with nothing driving it" % (name, lo, hi))
+            ok = False
+    # The hat, including its null state: -1 is "centred", and a descriptor
+    # without the null state reads 0 (north) with nothing pressed.
+    for want, name in ((0, "north"), (18000, "south"), (-1, "centred")):
+        if want not in povs:
+            say("FAIL the POV hat never read %s (%d)" % (name, want))
+            ok = False
+    for mask, name in ((0x001, "button 1 (south)"), (0x002, "button 2 (east)")):
+        if not any(b & mask for b in buttons):
+            say("FAIL %s never read as pressed" % name)
+            ok = False
+    if 0 not in buttons:
+        say("FAIL no sample had every button released")
+        ok = False
+    return ok
+
+
+# ------------------------------------------------------------------ main
+
 def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    mode = args[0] if args and args[0] in ("dos", "xp", "win98") else "dos"
     os.makedirs(OUT, exist_ok=True)
     if not os.path.exists(PLAYER):
         raise SystemExit("no %s — cargo build --release" % PLAYER)
-    # nasm, mtools and the FreeDOS floppy, the same ones the x87 and MIDI
-    # batteries use (fetched once into build/images/).
-    x87gt.ensure_prereqs()
-    x87gt.ensure_floppy()
-    img = build()
-    log = os.path.join(OUT, "serial.log")
-    plog = os.path.join(OUT, "player.log")
+    log = os.path.join(OUT, "%s-serial.log" % mode)
+    plog = os.path.join(OUT, "%s-player.log" % mode)
     t0 = time.time()
-    text = run(img, log, plog)
+
+    if mode == "dos":
+        # nasm, mtools and the FreeDOS floppy, the same ones the x87 and
+        # MIDI batteries use (fetched once into build/images/).
+        x87gt.ensure_prereqs()
+        x87gt.ensure_floppy()
+        text = run_dos(build_dos(), log, plog)
+        check = check_dos
+    else:
+        image = args[1] if len(args) > 1 else os.path.expanduser(IMAGES[mode])
+        if not os.path.exists(image):
+            raise SystemExit("no image %s — pass one as the second argument" % image)
+        print("%s: %s (snapshot), %s" % (mode, image, os.path.basename(find_iso())))
+        text = run_win(mode, image, log, plog)
+        check = check_win
+
     print("%.0f s in the guest; %s" % (time.time() - t0, log))
     if "--verbose" in sys.argv:
         for line in text.splitlines():

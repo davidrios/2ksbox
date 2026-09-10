@@ -184,6 +184,15 @@
 #                  mode and plays A4 through it; the wav QEMU's own backend recorded
 #                  is what is checked, so a device that takes every write and plays
 #                  nothing fails here. Two boots, ~11 s
+#   pad-guest      tools/pad-guest-test.py: the gameport as a DOS guest reads it
+#                  (M13 path B) — one write arms four one-shots and the axes are
+#                  the counts before each bit falls, with a scripted pad moving
+#                  the stick, the d-pad and the buttons. Runs the **player**, so
+#                  it skips without a display
+#   pad-guest-xp   tools/pad-guest-test.py xp: the USB HID pad as a Windows game
+#                  finds it (M13 path A) — DirectInput enumerates it, every axis
+#                  on the report's own 0..255 range, the POV hat's null state and
+#                  the buttons. Its own XP boot, ~60 s
 #   smc-guest      tools/smc-guest-test.py: self-modifying code (patched immediates,
 #                  same-value rewrites, opcode flips, a crossing store), smc-same-value
 #                  on/off both architecturally right (patch 18)
@@ -2055,6 +2064,16 @@ guest_stage() {
       run_check sse-guest sse-guest.log python3 tools/sse-guest-test.py || true
       run_check atapi-guest atapi-guest.log python3 tools/atapi-guest-test.py || true
       run_check midi-guest midi-guest.log python3 tools/midi-guest-test.py || true
+      # The gameport as a DOS guest reads it (M13 path B). Unlike its
+      # neighbours this one runs the **player**, because the pad reaches a
+      # guest through the embed library and a bare QEMU has a gameport
+      # nothing ever moves — so it wants a display for the player's window
+      # and skips rather than fails without one.
+      if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ -x target/release/player ]; then
+        run_check pad-guest pad-guest.log python3 tools/pad-guest-test.py || true
+      else
+        skip pad-guest "needs target/release/player and a display (it runs the player)"
+      fi
     # **One skip per battery, not one skip standing for five.** Every DOS
     # battery is gated on the same floppy, and this used to report the whole
     # group as a single `SKIP x87-guest` — so a fresh worktree, which has no
@@ -2065,10 +2084,10 @@ guest_stage() {
     # including `atapi-guest`, which is the only check that reads a disc from
     # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
     # weak-sector rule, which that battery is the regression guard for).
-    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest; do
+    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pad-guest; do
       skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
     done; fi
-  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest; do
+  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pad-guest; do
     skip "$c" "needs nasm, mtools and build/qemu"
   done; fi
   if [ "$OS" != Linux ]; then skip guest "Linux only for now (mkfs.fat, sfdisk, mtools)"; return; fi
@@ -2076,6 +2095,16 @@ guest_stage() {
   [ -f "$img" ] || { skip guest "no XP image at $img (WINXP_IMG)"; return; }
   [ -n "$iso" ] && [ -f "$iso" ] || { skip guest "no guest-tools ISO (guest-tools/build-wrappers.sh)"; return; }
   [ -x build/qemu/qemu-system-i386 ] || { skip guest "no build/qemu/qemu-system-i386"; return; }
+  # The USB HID pad as a Windows game finds it (M13 path A): the same
+  # scripted pad, this time through XP's own HID stack and DirectInput.
+  # Its own XP boot rather than a passenger on the one below, because that
+  # machine has no `usb-gamepad` on it and adding one would change the
+  # hardware every other guest check runs against. ~60 s.
+  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ -x target/release/player ]; then
+    run_check pad-guest-xp pad-guest-xp.log python3 tools/pad-guest-test.py xp "$img" || true
+  else
+    skip pad-guest-xp "needs target/release/player and a display (it runs the player)"
+  fi
   # the CD-ROM backend: XP copies a converted guest-tools disc through cdrom.sys (doc 17 §6.3)
   if [ -x target/release/discx ] && command -v bsdtar >/dev/null; then
     # bsdtar keeps the ISO's read-only modes: make the previous extraction deletable first
