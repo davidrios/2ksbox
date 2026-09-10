@@ -244,6 +244,17 @@ nasm -f bin -o "$T/textcal.com" "$ROOT/guest-tools/src/textcal.asm"
 # and to the screen, so it is both the harness's evidence
 # (tools/pad-guest-test.py) and something to run by hand in a DOS box.
 nasm -f bin -o "$T/padtest.com" "$ROOT/guest-tools/src/padtest.asm"
+# PADWIN.EXE: the same question of the USB HID pad (M13 path A), asked the
+# way a game asks it — DirectInput, not the Game Controllers panel: enumerate
+# attached joysticks, put every axis on the report's own 0..255 range, read
+# the POV hat (where a missing null state shows up) and the buttons. Writes
+# to COM1 itself, so the harness can start it from the Run dialog with no
+# shell to redirect. **PADWIN and not PADTEST**: the DOS probe above is
+# PADTEST.COM in this same folder, and both DOS and cmd resolve a bare name
+# to the .COM first.
+i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+  -march=pentium3 -mtune=generic -o "$T/padwin.exe" "$ROOT/guest-tools/src/padwin.c" \
+  -ldinput -ldxguid -lwinmm -luser32
 
 # CDSHELF: the host's disc shelf from inside the machine (doc 07, patch 52;
 # protocol cdshelf/cdshelf_proto.h). One EXE for both Windows families — SPTI

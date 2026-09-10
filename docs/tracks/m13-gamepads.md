@@ -260,20 +260,23 @@ scancodes, the HID report packing, the descriptor bytes, and that a real
 `qemu-system-i386` attaches the device to its bus (`info usb` says
 *2ksbox USB Gamepad*).
 
-Three things are still unwatched:
+Both guest devices are under a test as of **2026-09-10** — `pad-guest`
+(the gameport, a FreeDOS guest) and `pad-guest-xp` (the USB pad, an XP
+guest) in the suite's guest stage, so neither hand run is load-bearing any
+more. What is left is narrower than it was:
 
-- **path A under a test, rather than by hand** — nothing re-checks the
-  guest side after a change. Wants `guest-tools/src/padtest.c`:
-  DirectInput enumeration plus axis and button readout, the sibling of
-  `DRIVER\DITEST.EXE`, and the Windows half of
-  `tools/pad-guest-test.py` to drive it from an image overlay. The hand
-  run says it works today; only that would keep it working.
+- **path A on Windows 98, under the test.** The mode is written; the
+  *image* is what is missing. `~/vms/win98.qcow2` enumerates `devices: 0`,
+  because a fresh 98 SE asks for its own source files the first time a HID
+  pad is plugged in and nobody has answered that in that image. The hand
+  run on 98 SE says the path works; nothing re-checks it there.
 - **path B on 9x** — "Standard Game Port" through Add New Hardware, then
-  calibration in `joy.cpl`. The wizard tells someone to do this; nobody
-  has done it here. `PADTEST.COM` runs in a Win98 DOS box unchanged and is
-  the way to tell "the port is not there" from "the driver is not there".
-- **path C in a guest** — keys arriving. Cheap once a Windows pad harness
-  exists.
+  calibration in `joy.cpl`, so a *Windows* game sees a joystick. The port
+  itself is confirmed on 98 (a real pad read through `PADTEST.COM` in a
+  DOS box); this is the driver half alone.
+- **path C in a guest** — keys arriving. Dropped by decision on
+  2026-09-10 (see "Next steps"): more harness than the path is worth, and
+  the host half of it is checked by `player --pad-sweep` already.
 
 Also unfelt: **a real controller on path C**. A DualSense has now been on
 paths A and B; the key mapping has only ever been driven by
@@ -531,7 +534,11 @@ picker already does for a changed adapter.
 
 ## Testing
 
-Integration and end-to-end only, per the policy.
+Integration and end-to-end only, per the policy. **Both guest paths are
+guarded by the suite as of 2026-09-10** — `pad-guest` (the gameport, a
+FreeDOS guest) and `pad-guest-xp` (the USB pad, an XP guest) are in
+`scripts/test.sh`'s guest stage, and both run the *player*, so they skip
+rather than fail on a machine with no display.
 
 - **`pad` check in `scripts/test.sh`** ✅ — the model to a real QEMU,
   built like `pointer_check()`: `launcherx --new` per family,
@@ -558,11 +565,24 @@ Integration and end-to-end only, per the policy.
   poses one control per axis so the checks need no clock alignment, and
   every axis is judged against the *undriven* axis's own spread.
   `UNTHROTTLED=1` is the control. Local only, not in `scripts/test.sh`.
-- **`guest-tools/src/padtest.c`** — still to write: DirectInput
-  enumeration plus axis and button readout on XP and 98, `padtest.log`.
-  The sibling of `DRIVER\DITEST.EXE`, which already does this for the
-  keyboard. With it, the Windows half of the harness (`--pad usb` and
-  `--pad keys` in a real guest, from an image overlay).
+- **`guest-tools/src/padwin.c`** ✅ → `PADWIN.EXE` on the ISO: path A as a
+  game finds it — DirectInput enumerates the joysticks and names them,
+  every axis is put on the report's **own 0..255 range** (so a printed X
+  is the byte `gamepad::hid_axis()` made, not a fraction of something
+  device-dependent), and the POV hat and buttons are read back. It opens
+  COM1 itself, so the harness can start it from the Run dialog with no
+  shell to redirect, and logs to `%TEMP%` because the ISO it runs from is
+  read-only. **PADWIN and not PADTEST**: `PADTEST.COM` is in the same
+  folder and both DOS and cmd resolve a bare name to the `.COM` first.
+- **`tools/pad-guest-test.py xp|win98 <image>`** ✅ — the same scripted
+  pad, through a real Windows guest: `snapshot=on` on the user's own
+  image, the ISO as its CD, the Run dialog knocked on until the program
+  says it started, and the checks read off COM1. `xp` is the
+  `pad-guest-xp` check in `scripts/test.sh`'s guest stage (~60 s);
+  `win98` is by hand, because it needs an image where the pad's driver has
+  been bound once — a fresh 98 SE asks for its own source files the first
+  time and an automated run has nobody to answer it (`~/vms/win98.qcow2`
+  reports `devices: 0` today, which is exactly that).
 
 ## Next steps, in order
 
@@ -580,22 +600,31 @@ Integration and end-to-end only, per the policy.
 
 What is left, in order:
 
-5. **`guest-tools/src/padtest.c` and the Windows half of
-   `tools/pad-guest-test.py`** — DirectInput enumeration in a real XP and
-   Win98 guest, from an image overlay. Path A has been *seen* to work by
-   hand on both (above); what is missing is anything that re-checks it
-   after a change, which is the same distinction the testing policy draws
-   everywhere else. It also gets path C its guest for free.
-6. **The 9x *driver* half of path B**: "Standard Game Port" through Add
+5. ~~**The guest side under a test rather than by hand.**~~ **Done
+   2026-09-10**: `guest-tools/src/padwin.c` → `PADWIN.EXE`, the Windows
+   half of `tools/pad-guest-test.py`, and both paths wired into the guest
+   stage (`pad-guest`, `pad-guest-xp`). XP: DirectInput names the pad,
+   every axis reaches both ends of the report's own range, the POV hat
+   shows its null state and the buttons arrive.
+6. **Path A on Windows 98, under the test.** The mode exists
+   (`tools/pad-guest-test.py win98`) and the image is what is missing:
+   `~/vms/win98.qcow2` enumerates `devices: 0`, because a fresh 98 SE asks
+   for its own source files the first time a HID pad is plugged in and
+   nobody has answered that in *that* image. One by-hand install and the
+   check runs there too.
+7. **The 9x *driver* half of path B**: "Standard Game Port" through Add
    New Hardware, then calibrate in `joy.cpl`, so a Windows game sees a
    joystick. The port itself is confirmed present on 98 — `PADTEST.COM` in
-   a Win98 DOS box reads it with a real pad (above) — so this step is now
-   only about the driver, and that A/B is the way to keep telling the two
-   apart.
-7. **A real controller on path C**, the one path that has never had one.
+   a Win98 DOS box reads it with a real pad — so this is only about the
+   driver, and that A/B is the way to keep telling the two apart.
 
-Path C is deliberately not a throwaway: it stays as a `keys` choice for
-DOS games that never read a joystick and for Win98 FE.
+**Path C's guest test is dropped, by decision (2026-09-10).** Driving a
+guest's keyboard from a scripted pad and reading the keys back inside
+Windows is more harness than the path is worth: it stays as a `keys`
+choice for DOS games that never read a joystick and for Win98 FE, and it
+is guarded on the host side only — `player --pad-sweep` already checks
+the map, the shared keys, the release-before-press ordering and the
+scancodes, which is where every bug in it has been.
 
 ## Traps
 
