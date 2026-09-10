@@ -7,7 +7,8 @@
 # git, make, nasm; xorriso or genisoimage/mkisofs for the ISO.
 #   Linux (Arch):  pacman -S mingw-w64-gcc mingw-w64-tools xorriso
 #   macOS:         brew install mingw-w64 xorriso
-# DOS-only pieces (GLIDE2X.OVL via Open Watcom, DJGPP DXEs) are skipped.
+# GLIDE2X.OVL (the DOS Glide binding) needs Open Watcom and is skipped
+# with a note without it; the DJGPP DXEs are skipped outright.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -155,6 +156,37 @@ T="$OUT/iso/TESTS"
 # SETUP.EXE knows which is which.
 cp "$G"/glide.dll "$G"/glide2x.dll "$G"/glide3x.dll "$G"/fxmemmap.vxd \
    "$G"/fxptl.sys "$G"/instdrv.exe "$OUT/iso/GLIDE/"
+# GLIDE2X.OVL, the DOS binding of the same device (doc 12 §5, 2026-09-10).
+# A DOS/4GW game's Glide stub loads this overlay by name and resolves its
+# 126 upper-case entry points from it (Carmageddon's 3DFX.EXE carries
+# exactly that import table), and the overlay maps the pass-through device
+# itself through DPMI 0x800 — so it serves a pure DOS machine and a Win9x
+# DOS box alike; upstream installs it in C:\WINDOWS, SETUP.EXE does the
+# same on 9x, and a DOS machine copies it next to the game or onto its
+# PATH. It is an LE overlay only Open Watcom can build — the toolchain the
+# 98 display driver already needs, found the same way build-driver9x.sh
+# finds it — so a host without it still gets an ISO, minus this file, said
+# out loud. Built in a copy: the upstream Makefile writes into the
+# submodule's own source directory.
+build_ovl() {
+  local w="${WATCOM:-$HOME/.local/opt/open-watcom}" bin d
+  for bin in binl64 binl; do [ -x "$w/$bin/wcc386" ] && break; done
+  if [ ! -x "$w/$bin/wcc386" ]; then
+    echo "note: GLIDE2X.OVL (DOS Glide) is NOT on this ISO — no Open Watcom at $w (WATCOM=)" >&2
+    return 0
+  fi
+  d="$OUT/ovl-build"; rm -rf "$d"; mkdir -p "$d"
+  cp "$FX"/wrappers/3dfx/ovl/glideovl.c "$FX"/wrappers/3dfx/ovl/glideovl.lnk \
+     "$FX"/wrappers/3dfx/ovl/clib.h "$d/"
+  printf '#define __REV__ "%s-"\n' "$REV" > "$d/stamp.h"
+  ( cd "$d" && WATCOM="$w" PATH="$w/$bin:$PATH" INCLUDE="$w/h" \
+      wcc386 -I"$ROOT/qemu/hw/3dfx" -I"$FX/wrappers/3dfx/src" \
+             -zq -we -6s -ohtx -bd -fpi87 -fo=glideovl.obj glideovl.c \
+      && WATCOM="$w" PATH="$w/$bin:$PATH" wlink @glideovl.lnk ) > "$d/build.log" 2>&1 \
+    || { echo "GLIDE2X.OVL build failed, see $d/build.log"; tail -5 "$d/build.log"; exit 1; }
+  cp "$d/glide2x.ovl" "$OUT/iso/GLIDE/"
+}
+build_ovl
 # OPENGL\: the GL pass-through wrapper, per game.
 cp "$M"/opengl32.dll "$OUT/iso/OPENGL/"
 # WINED3D\: the wine9x set under wine9x's own names, once. A per-game

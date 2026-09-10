@@ -252,6 +252,43 @@ int main(int argc, char **argv)
     ok = ok && frames == 2 && (px_tl & 0xffffff) == 0xff0000
             && (px_c & 0xffffff) == 0xff0000;
 
+    /* 3b. an LFB write lock held across the swap. Carmageddon's 3dfx build
+     *     locks the back buffer once and treats it as its frame buffer for
+     *     the whole front end; upstream OpenGLide drew a write buffer only
+     *     on the unlock, which never comes, and every frame was black
+     *     (patches/openglide/05-lfb-locked-swap, 2026-09-10). Fill the
+     *     locked buffer with 565 blue, swap without unlocking: blue. */
+    auto grLfbLock_ = (FxBool (*)(GrLock_t, GrBuffer_t, GrLfbWriteMode_t,
+                                  GrOriginLocation_t, FxBool, GrLfbInfo_t *))sym("grLfbLock");
+    auto grLfbUnlock_ = (FxBool (*)(GrLock_t, GrBuffer_t))sym("grLfbUnlock");
+    if (!grLfbLock_ || !grLfbUnlock_) {
+        return 1;
+    }
+    {
+        GrLfbInfo_t info = { };
+        FxBool got;
+        info.size = sizeof(info);
+        got = grLfbLock_(GR_LFB_WRITE_ONLY, GR_BUFFER_BACKBUFFER, GR_LFBWRITEMODE_565,
+                         GR_ORIGIN_UPPER_LEFT, FXFALSE, &info);
+        printf("grLfbLock(write, back) -> %d ptr %p stride %u\n", got,
+               info.lfbPtr, (unsigned)info.strideInBytes);
+        ok = ok && got && info.lfbPtr && info.strideInBytes >= 1280;
+        if (got && info.lfbPtr) {
+            uint16_t *p = (uint16_t *)info.lfbPtr;
+            for (int y = 0; y < 480; y++) {
+                for (int x = 0; x < 640; x++) {
+                    p[y * (info.strideInBytes / 2) + x] = 0x001f;   /* 565 blue */
+                }
+            }
+        }
+        grBufferSwap_(0);   /* still locked */
+        printf("frame %d (LFB write lock held): centre %08x top-left %08x\n",
+               frames, px_c, px_tl);
+        ok = ok && frames == 3 && (px_c & 0xffffff) == 0x0000f8
+                && (px_tl & 0xffffff) == 0x0000f8;
+        grLfbUnlock_(GR_LFB_WRITE_ONLY, GR_BUFFER_BACKBUFFER);
+    }
+
     /* 4. close, exactly as processFRet does for grSstWinClose */
     disp.FEnum = FEnum_grSstWinClose;
     fini_window(&disp);

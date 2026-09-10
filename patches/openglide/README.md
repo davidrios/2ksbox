@@ -58,6 +58,7 @@ proven.
 | `02-host-entry-points` | the wrapper must be safe to load *inside QEMU*. Three things: (a) `GlideMsg`/`Error`/`ClearAndGenerateLogFile`/`GenerateErrorFile` write through one switch, `GLIDE_HOST_LOG=<path>` (`-` = stderr) — upstream writes `OpenGLid.log` and `OpenGLid.err` into the working directory from a **static constructor** and returns a failure the caller answers with `exit(0)`, which inside a VM process is neither wanted nor survivable, and re-`fopen`s the log per message; (b) `GetOptions` no longer *writes* an `OpenGLid.ini` when none is found — the working directory is the player's, not a game folder — it just keeps its defaults, and still reads one that exists; (c) upstream's one-argument `setConfig` is removed and its declaration widened to qemu-3dfx's `_setConfig@8` shape, because the replacement (with `setConfigRes` and `setHostOps`) is in `glidept/host/hostops.cpp` | upstream grows a library-friendly logger |
 | `03-sdk-header-in-c` | `sdk2_3dfx.h` is the public Glide SDK header, and a **C** program includes it too (`guest-tools/src/glidetest.c`, the guest-side test): `#include <cstdint>` and `#define FX_ENTRY extern "C"` are both C++-only, and the second is a syntax error on every declaration in the file. Both now branch on `__cplusplus` | upstream notices |
 | `04-lfb-origin` | `grLfbLock` fills `lfbPtr`, `writeMode` and `strideInBytes` of the caller's `GrLfbInfo_t` but never `origin`, which is an out field too: the caller reads back whatever was already in its own struct. It costs qemu-3dfx a warning per lock (`LFB origin mismatch` in the QEMU log, found by the first Glide guest run, 2026-09-06) and it is not only cosmetic — the dispatcher caches the value in `lfbDev->origin`, and a Glide **2.11** title's `grLfbBegin` is answered from that cache, so one lock would leave an old game reading its buffer upside down. The rows are already laid out for the origin that was asked for, so the fix is to say so | upstream notices |
+| `05-lfb-locked-swap` | `grBufferSwap` draws a write-locked LFB before it swaps. A Glide 2 title may hold `grLfbLock(GR_LFB_WRITE_ONLY, …)` for the life of the program and treat the buffer as its frame buffer — Carmageddon's 3dfx build does, for its whole front end — and upstream uploaded a write buffer only in `grLfbUnlock`, which such a game never calls: every frame black, one `LFB locked on buffer swap` in the QEMU log (the dispatcher already copies the guest's shared LFB into the wrapper's buffer on every swap for exactly this case; the wrapper then dropped it on the floor). The unlock's upload half is now `LfbFlushWriteBuffer(release)`, called with `release = false` from the swap so the lock survives. Found by the first DOS Glide game through `GLIDE2X.OVL`, 2026-09-10; the `glide-host` check's locked-write case guards it | upstream notices |
 
 ## What has run on it
 
@@ -74,8 +75,9 @@ own log across the run.
 Edit inside `third_party/openglide`, then `git -C third_party/openglide diff
 -- <files>` for the patch's own hunks, and prove it forward-applies from
 pristine by running `scripts/prepare-openglide.sh` twice and rebuilding.
-Both patches touch `GLutil.cpp`, in disjoint hunks; that is why the GLU one
-is first.
+Patches 01 and 02 both touch `GLutil.cpp`, in disjoint hunks; that is why the GLU one
+is first. Patch 05 is a diff against the tree *after* 04 (`grguLfb.cpp`), made
+from before/after copies with `git diff --no-index --no-prefix a b`.
 
 ## The stacks we did not take
 

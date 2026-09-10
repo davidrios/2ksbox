@@ -68,10 +68,36 @@ cursor read back from the adapter); and a QMP screendump shows only the
 game's empty desktop window while Glide presents, which is what the
 player's `PLAYER_SHOT_EVERY` shot exists for. Rayman 2 is also the first
 title on a `d3dpt-vga` machine to switch between our display driver and
-the Glide device: the desktop comes back after every close. Refinement
-still open: fence-based sync on both platforms instead of `glFinish`; a
-macOS `glide-host` check and the Windows build of the wrapper; hand play
-(the run above is headless, so nothing has *played* a level yet).
+the Glide device: the desktop comes back after every close. **And a DOS Glide game, the same day: Carmageddon's `3DFX.EXE`** (the
+Max Pack's 3dfx build, a DOS/4GW program) from a Win98 DOS box on the same
+copy of `claude98`. The DOS binding is qemu-3dfx's own `GLIDE2X.OVL`
+(`wrappers/3dfx/ovl`, an LE overlay: the game's Glide stub loads it by
+name and resolves 126 upper-case entry points from it, and the overlay
+maps the pass-through device itself through DPMI 0x800, so it needs no
+VxD and serves pure DOS and a 9x DOS box alike). It was never built here
+before — `build-wrappers.sh` skipped it — and now is, with the Open Watcom
+the 98 display driver already needs; `SETUP.EXE` copies it to the Windows
+folder on 9x (upstream's own instruction, and the folder is on the PATH),
+and a DOS machine puts it next to the game. The first run drew every
+frame black and left one `LFB locked on buffer swap` in the QEMU log:
+Carmageddon locks the back buffer for writing once and treats the LFB as
+its frame buffer for its whole front end, the dispatcher copies the
+guest's shared LFB into the wrapper's write buffer on every swap for
+exactly that case — and OpenGLide drew a write buffer only in
+`grLfbUnlock`, which such a game never calls. Patch
+`05-lfb-locked-swap` makes `grBufferSwap` draw it too (the lock kept), the
+`glide-host` check gained a locked-write case that fails without it, and
+the game's main menu came up at 640×480 (`build/w98game/c3dfx2/shots`).
+Not reached headless: a race. The DOS build spends minutes in text mode
+first (a password prompt, then loading), so every scripted key landed
+before the menu existed; a run that waits for the first 640×480 frame
+before pressing anything is the next step, or a hand.
+Refinement still open: fence-based sync on both platforms instead of
+`glFinish`; a macOS `glide-host` check and the Windows build of the
+wrapper; hand play (both runs above are headless, so nothing has *played*
+a level yet); a Glide game on the **DOS family** proper (a FreeDOS machine
+with the overlay next to the game — nothing has tried it, and DOS/4GW's
+DPMI host is not Windows').
 
 Source survey of the patched tree (hw/mesa, hw/3dfx, ui/sdl2.c); file:line
 refs are to `qemu/` as prepared by `scripts/prepare-qemu.sh`. **Read the

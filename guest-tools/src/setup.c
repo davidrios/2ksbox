@@ -260,6 +260,7 @@ static int step_glide(void)
 {
     static const char *const dlls[] = { "GLIDE.DLL", "GLIDE2X.DLL", "GLIDE3X.DLL", NULL };
     static const char *const vxd[] = { "FXMEMMAP.VXD", NULL };
+    static const char *const ovl[] = { "GLIDE2X.OVL", NULL };
     static const char *const sys[] = { "FXPTL.SYS", NULL };
     char drivers[PATHBUF], cmd[PATHBUF * 2], path[PATHBUF];
     SC_HANDLE scm, svc;
@@ -268,7 +269,16 @@ static int step_glide(void)
 
     say("Glide and the device mapper:");
     bad = copy_set("GLIDE", g_sys, dlls);
-    if (!g_nt) return bad | copy_set("GLIDE", g_sys, vxd);
+    if (!g_nt) {
+        /* 9x also gets the DOS binding of the device: a DOS/4GW game run
+         * from a DOS box loads GLIDE2X.OVL by name off the PATH, and the
+         * Windows folder is on it (qemu-3dfx's own instruction). Missing
+         * from a disc built without Open Watcom, which is worth a line in
+         * the log but not a failed Glide install. */
+        bad |= copy_set("GLIDE", g_sys, vxd);
+        copy_set("GLIDE", g_win, ovl);
+        return bad;
+    }
 
     snprintf(drivers, sizeof drivers, "%s\\drivers", g_sys);
     bad |= copy_set("GLIDE", drivers, sys);

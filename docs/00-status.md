@@ -438,8 +438,20 @@ items nobody owns yet:
    `GXSetup` sees "Voodoo Graphics Glide 2 Driver", 640×480, the language
    menu through the intro into the first level, 233 frames shot, no
    wrapper complaint; the game refuses a hand-written `ubi.ini`, so its
-   setup program is clicked through). Nobody has played a level by hand
-   yet. What is left of M3: **the wrapper on macOS and Windows** -- the Darwin branch
+   setup program is clicked through). **And a DOS Glide game the same
+   day: Carmageddon's `3DFX.EXE`** from a Win98 DOS box through
+   qemu-3dfx's `GLIDE2X.OVL`, built here for the first time (Open Watcom,
+   `build-wrappers.sh`; `SETUP.EXE` installs it on 9x) — which found that
+   OpenGLide never drew an LFB a game keeps write-locked across swaps
+   (patch `05-lfb-locked-swap`; the `glide-host` check guards it). Nobody
+   has played a level by hand yet, and no Glide game has run on the DOS
+   family proper. **Glide 3 is the next wrapper question, and Diablo II
+   is the title that decides it** (user, 2026-09-10: its Glide renderer
+   was "a lot better" than its Direct3D one, under an emulated Glide —
+   Sven's glide3x wrapper in all likelihood, which is the same job as the
+   62 Glide 3 entry points OpenGLide lacks, mostly the vertex-layout API;
+   no game is *blocked* on it, the Glide 3 titles all have a D3D path,
+   but several are worse there). What is left of M3: **the wrapper on macOS and Windows** -- the Darwin branch
    of `build-glide.sh` builds since 2026-09-06 but nothing exercises it, so
    what is left there is a macOS `glide-host` check (the CGL side of
    `tools/glide-host-test.cpp`, which is EGL today) and a Glide guest on

@@ -12,7 +12,10 @@ What is on the disc, if you would rather do it by hand:
 
 GLIDE\    the device mapper and the 3dfx Glide wrappers.
           Windows 98/Me: GLIDE.DLL GLIDE2X.DLL GLIDE3X.DLL FXMEMMAP.VXD
-                         -> C:\WINDOWS\SYSTEM
+                         -> C:\WINDOWS\SYSTEM, GLIDE2X.OVL -> C:\WINDOWS
+          DOS games:     GLIDE2X.OVL next to the game's EXE (or on the
+                         PATH). A DOS/4GW Glide game loads it by name;
+                         it needs no driver, from DOS or a 98 DOS box.
           2000/XP:       GLIDE*.DLL -> system32, FXPTL.SYS ->
                          system32\drivers, then run INSTDRV.EXE as
                          Administrator.
