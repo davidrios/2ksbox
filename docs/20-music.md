@@ -343,17 +343,27 @@ does not answer the next question, which is the one a user actually
 arrives with: *the music started correctly and then some instruments
 stopped*. That has two entirely different causes and they sound the
 same — either the guest stopped sending those notes, or it kept sending
-them and we stopped playing them — so the port keeps a capture that can
-be taken away and played again with no guest in it:
+them and we stopped playing them — so both devices keep a capture that
+can be taken away and played again with no guest in it:
 
-    LIBSYNTH_MIDI_LOG=/tmp/win98.log   # in the player's own environment;
-                                       # QEMU is in the same process
+    LIBSYNTH_MIDI_LOG=/tmp/win98-midi.log   # the MIDI port's byte stream
+    LIBSYNTH_OPL_LOG=/tmp/win98-fm.log      # the FM chip's register writes
 
-Every byte the guest writes to the data port, with a microsecond stamp
-and an `R` where the port was reset. Then, with no machine running:
+Both go in the **player's** own environment — QEMU is in the same
+process — and both can be on at once, which is the point when a guest
+offers a synthesizer on each and both misbehave. Every write with a
+microsecond stamp: a byte and an `R` where the port was reset for the
+MIDI port, `<file>:<address>:<value>` for the chip. The clock is the
+host's, deliberately — the engines render on the host's audio callback,
+so that is the timeline the music was heard on rather than the one the
+guest believes in. Then, with no machine running:
 
-    target/release/synthx midilog /tmp/win98.log      # what the guest sent
-    target/release/synthx play    /tmp/win98.log x.wav  # what we make of it
+    target/release/synthx midilog /tmp/win98-midi.log     # what the guest sent
+    target/release/synthx opllog  /tmp/win98-fm.log       # ... to the chip
+    target/release/synthx play    /tmp/win98-midi.log x.wav   # what we make of it
+
+`play` and the two report verbs each read either capture — the file's
+first line says which device it came from.
 
 `midilog` prints a row per channel and a column per second of note-ons,
 which is the whole diagnosis in one glance: a row that stops while the
@@ -369,6 +379,16 @@ voice count every new note takes one from a note still sounding, and
 what survives is whatever was started last; and any byte the parser
 could attach to nothing, which is the stream and the parser disagreeing
 about where a message starts.
+
+`opllog` answers the same question in the units the FM chip has. It has
+no instruments and no note-offs — a note stops when the guest clears the
+key bit of the register it started it with — so an instrument going mute
+is a row that stops keying on, and the guest running out of voices is
+channels left keyed on against the eighteen the chip has. Which is the
+whole reason both devices are captured the same way: **when a guest's
+hardware synthesizers misbehave together and its software one does not,
+the two engines are not the suspect** — they share no synthesis code —
+and the grids are what let the two streams be held against each other.
 
 `play` renders the same capture through the same engine at the timing it
 was written with. If the music breaks there it is ours and the capture is

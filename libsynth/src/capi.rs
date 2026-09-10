@@ -6,14 +6,11 @@
 //! panics leaves the block silent and the VM running.
 
 use std::ffi::{c_char, CStr};
-use std::fs::File;
-use std::io::Write;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
-use std::time::Instant;
 
 use crate::midi::{Event, Parser};
-use crate::{gm, midi, mt32, opl, Voice};
+use crate::{gm, midi, mt32, opl, Log, Voice};
 
 pub const LIBSYNTH_API_VERSION: u32 = 1;
 
@@ -103,75 +100,6 @@ pub extern "C" fn libsynth_opl_render(o: *mut opl::Opl, out: *mut i16, frames: u
 
 /* ---------------------------------------------------------------- MIDI */
 
-/// A capture of every byte the guest wrote to the MIDI data port, turned
-/// on by `LIBSYNTH_MIDI_LOG=<file>` in QEMU's own environment (the player
-/// and QEMU are one process, so the player's environment is this one).
-///
-/// It exists because the engines cannot be argued with from the outside:
-/// music that goes wrong part-way through is either a stream that already
-/// said so — a channel volume driven to zero, a bank the file has nothing
-/// for, a byte the parser could attach to nothing — or it is ours, and
-/// the only way to tell is to take the guest's own bytes away and play
-/// them again without a guest (`synthx midilog`, `synthx play`).
-///
-/// One line per byte, `<microseconds since the port opened> <hex>`, and
-/// `R` where the port was reset. Flushed every line: a guest is very
-/// often stopped by having its power cut, and a buffered tail is exactly
-/// the part worth reading.
-struct Log {
-    out: File,
-    start: Instant,
-    written: usize,
-}
-
-/// Past this the capture stops and says so. A MIDI port carries 3 KB/s at
-/// its very fastest, so this is hours of music; a file that reaches it is
-/// a session left running, not a score.
-const LOG_MAX: usize = 32 << 20;
-
-impl Log {
-    fn open() -> Option<Log> {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        static STARTED: AtomicBool = AtomicBool::new(false);
-
-        let path = std::env::var_os("LIBSYNTH_MIDI_LOG")?;
-        // The first port of the process truncates and the rest append,
-        // so a machine with two of them writes one file rather than each
-        // erasing the other's — and a second run still starts empty.
-        let first = !STARTED.swap(true, Ordering::Relaxed);
-        let mut out = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .append(!first)
-            .truncate(first)
-            .open(&path)
-            .map_err(|e| eprintln!("libsynth: {}: {e}", PathBuf::from(&path).display()))
-            .ok()?;
-        let _ = writeln!(
-            out,
-            "# libsynth MIDI port log: <microseconds> <byte>, R = port reset"
-        );
-        Some(Log {
-            out,
-            start: Instant::now(),
-            written: 0,
-        })
-    }
-
-    fn put(&mut self, what: &str) {
-        if self.written >= LOG_MAX {
-            return;
-        }
-        let us = self.start.elapsed().as_micros();
-        let line = format!("{us} {what}\n");
-        self.written += line.len();
-        let _ = self.out.write_all(line.as_bytes());
-        if self.written >= LOG_MAX {
-            let _ = self.out.write_all(b"# truncated\n");
-        }
-    }
-}
-
 /// A port and whatever is behind it: the byte-stream parser, which is
 /// the same whichever engine plays the result, and the engine.
 pub struct Midi {
@@ -204,7 +132,7 @@ pub extern "C" fn libsynth_midi_new(
         Ok(Midi {
             parser: Parser::new(),
             voice,
-            log: Log::open(),
+            log: Log::open("LIBSYNTH_MIDI_LOG", "MIDI port", "<byte>, R = port reset"),
         })
     }));
     match built {
