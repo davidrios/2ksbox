@@ -1,0 +1,45 @@
+The translator's context is not zero-filled on every translation.
+
+QEMU builds with -ftrivial-auto-var-init=zero (meson.build), which makes
+the compiler zero every automatic variable where it is declared.
+gen_intermediate_code's DisasContext is ~13.6 KB since patch 06 gave it
+96 x87/SSE slow blocks, so every TB translation started with a memset of
+that size: a preloaded memcpy/memset tracer counted 8.7 GB of it in one
+3DMark 99 run on Win98 (673,838 calls, 13,608 bytes each).
+
+The one variable opts out (`__attribute__((uninitialized))`, where the
+compiler has it). Nothing reads it before it is set:
+i386_tr_init_disas_context initialises the fields the translator uses,
+and x87s_new_slow clears each slow block as it hands it out.
+
+Measured on 3DMark 99 (claude98): no change beyond run-to-run noise
+(6012 3DMarks, first person 18.4 fps, as before it) -- a benchmark in its
+steady state translates little. SSE / x87 / SMC / rep batteries identical,
+scripts/test.sh all 57/57. A retranslation-heavy guest (a self-modifying renderer) gains most. No
+switch: it changes no behaviour, only what the compiler's hardening flag
+adds to one stack frame.
+
+diff --git a/target/i386/tcg/translate.c b/target/i386/tcg/translate.c
+index 2c901c7..1da6401 100644
+--- a/target/i386/tcg/translate.c
++++ b/target/i386/tcg/translate.c
+@@ -4335,7 +4335,19 @@ static const TranslatorOps i386_tr_ops = {
+ void gen_intermediate_code(CPUState *cpu, TranslationBlock *tb, int *max_insns,
+                            vaddr pc, void *host_pc)
+ {
++    /*
++     * Not zero-filled (patch 41): QEMU builds with
++     * -ftrivial-auto-var-init=zero, and patch 06's 96 slow blocks make
++     * this ~13.6 KB, so every translation began with a memset of it --
++     * 8.7 GB in one 3DMark 99 run. i386_tr_init_disas_context sets what
++     * the translator reads and x87s_new_slow clears each slow block it
++     * hands out.
++     */
++#if defined(__has_attribute) && __has_attribute(uninitialized)
++    DisasContext dc __attribute__((uninitialized));
++#else
+     DisasContext dc;
++#endif
+ 
+     translator_loop(cpu, tb, max_insns, pc, host_pc, &i386_tr_ops, &dc.base);
+ }
