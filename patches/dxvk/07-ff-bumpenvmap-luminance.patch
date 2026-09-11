@@ -1,0 +1,22 @@
+diff --git a/src/d3d9/shaders/d3d9_fixed_function_frag.glsl b/src/d3d9/shaders/d3d9_fixed_function_frag.glsl
+index 182c665..522e456 100644
+--- a/src/d3d9/shaders/d3d9_fixed_function_frag.glsl
++++ b/src/d3d9/shaders/d3d9_fixed_function_frag.glsl
+@@ -290,7 +290,7 @@ vec4 sampleTexture(uint stage, vec4 texcoord, vec4 previousStageTextureVal) {
+     uint previousStageColorOp = 0;
+ 
+     if (stage > 0) {
+-        uint previousStageColorOp = getTextureStage(stage - 1u).colorOp;
++        previousStageColorOp = getTextureStage(stage - 1u).colorOp;
+ 
+         if (previousStageColorOp == D3DTOP_BUMPENVMAP || previousStageColorOp == D3DTOP_BUMPENVMAPLUMINANCE)
+             texcoord = calculateBumpmapCoords(stage, texcoord, previousStageTextureVal);
+@@ -326,7 +326,7 @@ vec4 sampleTexture(uint stage, vec4 texcoord, vec4 previousStageTextureVal) {
+     if (stage != 0 && previousStageColorOp == D3DTOP_BUMPENVMAPLUMINANCE) {
+         float lScale = sharedData.Stages[stage - 1].BumpEnvLScale;
+         float lOffset = sharedData.Stages[stage - 1].BumpEnvLOffset;
+-        float scale = texVal.z;
++        float scale = previousStageTextureVal.z;
+         scale *= lScale;
+         scale += lOffset;
+         scale = clamp(scale, 0.0, 1.0);

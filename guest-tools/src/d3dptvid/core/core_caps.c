@@ -55,6 +55,17 @@ ULONG pf_format(const DDPIXELFORMAT *f)
         f->dwBumpDuBitMask == 0x00ff && f->dwBumpDvBitMask == 0xff00) {
         return D3DFMT_V8U8_;                /* a bump map (EMBM): signed du, dv, passed to the host as is */
     }
+    if ((f->dwFlags & DDPF_BUMPDUDV) && (f->dwFlags & DDPF_BUMPLUMINANCE_)) {
+        /* a bump map with a luminance (BUMPENVMAPLUMINANCE): the luminance
+         * mask sits in the dwBBitMask slot (dwBumpLuminanceBitMask) */
+        if (f->dwBumpBitCount == 16 && f->dwBumpDuBitMask == 0x001f && f->dwBumpDvBitMask == 0x03e0 && f->dwBBitMask == 0xfc00) {
+            return D3DFMT_L6V5U5_;
+        }
+        if (f->dwBumpBitCount == 32 && f->dwBumpDuBitMask == 0xff && f->dwBumpDvBitMask == 0xff00 && f->dwBBitMask == 0xff0000) {
+            return D3DFMT_X8L8V8U8_;
+        }
+        return 0;
+    }
     /* luminance with or without its own alpha, and alpha alone: the RGB
      * names are the union slots of dwLuminanceBitCount / BitMask /
      * AlphaBitMask and dwAlphaBitDepth, spelled so because the 9x DDK's
@@ -417,6 +428,12 @@ void d3d_caps_init(d3dpt_core *p)
         /* the bump map EMBM needs (TextureOpCaps claims BUMPENVMAP): DXVK's
          * fixed function does the op, the texels go to the host as they are */
         fmt8_add(D3DFMT_V8U8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_BUMPMAP_);
+        /* the luminance bump maps BUMPENVMAPLUMINANCE reads: DXVK converts
+         * both to float itself at upload. Not Q8W8V8U8: listed, d3d8.dll
+         * took CreateTexture and never made a video-memory surface for it
+         * (no CanCreateSurface either), so the draw sampled nothing */
+        fmt8_add(D3DFMT_L6V5U5_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_BUMPMAP_);
+        fmt8_add(D3DFMT_X8L8V8U8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_BUMPMAP_);
     }
     fmt8_add(D3DFMT_D16_, D3DFORMAT_OP_ZSTENCIL_ | D3DFORMAT_OP_ZSTENCIL_WITH_ARBITRARY_COLOR_DEPTH_);
     fmt8_add(D3DFMT_D24X8_, D3DFORMAT_OP_ZSTENCIL_ | D3DFORMAT_OP_ZSTENCIL_WITH_ARBITRARY_COLOR_DEPTH_);

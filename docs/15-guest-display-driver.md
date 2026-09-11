@@ -1945,7 +1945,7 @@ OFFERED or FAIL. Where they stood on 2026-09-11 (the overlay above):
 | `STRMTEST` | more than one vertex stream (v10): three streams under a vs 1.1 from a StartVertex, indexed with a BaseVertexIndex and a MinIndex, a system-memory stream, the fixed function on three streams, streams 0 and 3 with a gap, stale streams under an FVF draw | PASS, 6 cases |
 | `VOLTEST` | volume textures (incl. `UpdateTexture`, the DDI's `VOLUMEBLT`) | PASS, 4 cases (since v12, the same day; its DXT1 case not offered) |
 | `FMTTEST` | L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2, DXT4 (colour and replicated alpha each) | PASS, 9 cases (since the formats were listed, the same day; see the section above) |
-| `BUMPTEST` | EMBM (V8U8 + `BUMPENVMAP`) and DOT3 | PASS, 4 cases (EMBM since V8U8 was listed, the same day; L6V5U5 / X8L8V8U8 / Q8W8V8U8 still refused) |
+| `BUMPTEST` | EMBM on every bump format offered (V8U8 and Q8W8V8U8 under `BUMPENVMAP`, L6V5U5 and X8L8V8U8 under `BUMPENVMAPLUMINANCE`) and DOT3 | PASS, 8 cases (EMBM since V8U8 was listed; the luminance formats since they were and DXVK's patch 07, the same day; Q8W8V8U8 not listed, so skipped) |
 | `SPRTEST` | point sprites, and a per-vertex size (`D3DFVF_PSIZE`) | PASS, 4 cases (the per-vertex case since `D3DFVFCAPS_PSIZE` was claimed, the same day) |
 | `ANISTEST` | anisotropic filtering | PASS, 1 case (since the caps claimed it, the same day: far-row contrast 0 trilinear, 252 anisotropic) |
 | `PATCHTST` | RT- and N-patches | NOT OFFERED |
@@ -1960,8 +1960,33 @@ the host needs nothing new (the texels go up as they are, DXVK's fixed
 function does the op; the bump matrix is an ordinary stage state).
 BUMPTEST's EMBM cases pass through d3d8.dll; the DX7 list's entry has no
 probe yet. `ddflags=0x800000` takes V8U8 out of both lists for an A/B.
-`BUMPENVMAPLUMINANCE` is still claimed with no luminance bump format
-(L6V5U5, X8L8V8U8: the executor sizes neither yet). And per-vertex point size was one `FVFCaps` bit away (the driver's
+`BUMPENVMAPLUMINANCE` was claimed with no luminance bump format until
+the same day, when L6V5U5 and X8L8V8U8 went into the DX8 list
+(`D3DFORMAT_OP_TEXTURE | BUMPMAP`, under `ddflags=0x800000` like V8U8).
+The driver maps a `DDPF_BUMPDUDV | DDPF_BUMPLUMINANCE` pixel format to
+them by its masks (the luminance mask is in the `dwBBitMask` slot) and
+sizes them. The host needs only their sizes, because DXVK converts both
+to float on the GPU at upload. BUMPTEST runs its EMBM case on each: a
+luminance of one half under a scale of 1 comes out as the same colours at
+half intensity. Two things came up on the way:
+
+- **DXVK never applied the luminance** (`patches/dxvk/07`). In its
+  fixed-function ubershader, `sampleTexture` read the previous stage's
+  colour op into a variable declared a second time inside an `if`. The
+  outer copy stayed 0, so the luminance branch was dead code, while the
+  bump offset (read from the inner copy) still worked. And the branch
+  took the luminance from the environment map's texel instead of the bump
+  map's. BUMPTEST read full intensity where L = 1/2 was asked for.
+  `d3dpt-dp2-test` now has the same case without a guest, and it fails
+  on unpatched DXVK.
+- **Q8W8V8U8 is not listed.** With it listed, d3d8.dll accepted
+  `CreateTexture`, kept only the system-memory copy, and never asked the
+  driver about a video-memory surface (no `CanCreateSurface`, no
+  registration). So nothing was bound at stage 0 and the draw had no
+  bump offset. Why the runtime does that is open; fixed-function EMBM
+  titles use V8U8.
+
+The DX7 list still carries V8U8 alone. And per-vertex point size was one `FVFCaps` bit away (the driver's
 `fvf_stride` and the host already carried `D3DFVF_PSIZE`) — claimed the
 same day, and SPRTEST's per-vertex case (a size of 24 in the vertex over a
 `POINTSIZE` of 4) passes through d3d8.dll.

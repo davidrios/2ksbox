@@ -245,10 +245,11 @@ static uint32_t fmt_row_bytes(uint32_t f, uint32_t w) {
     switch (f) {
     case D3DFMT_A8R8G8B8: case D3DFMT_X8R8G8B8: case D3DFMT_A8B8G8R8: case D3DFMT_X8B8G8R8:
     case D3DFMT_A2R10G10B10: case D3DFMT_D32: case D3DFMT_D24S8: case D3DFMT_D24X8: case D3DFMT_D24X4S4:
+    case D3DFMT_X8L8V8U8: case D3DFMT_Q8W8V8U8:
         return w * 4;
     case D3DFMT_R5G6B5: case D3DFMT_X1R5G5B5: case D3DFMT_A1R5G5B5: case D3DFMT_A4R4G4B4:
     case D3DFMT_X4R4G4B4: case D3DFMT_A8L8: case D3DFMT_D16: case D3DFMT_D16_LOCKABLE: case D3DFMT_D15S1:
-    case D3DFMT_L16: case D3DFMT_V8U8: case D3DFMT_A8R3G3B2:
+    case D3DFMT_L16: case D3DFMT_V8U8: case D3DFMT_A8R3G3B2: case D3DFMT_L6V5U5:
         return w * 2;
     case D3DFMT_A8: case D3DFMT_L8: case D3DFMT_A4L4: case D3DFMT_P8: case D3DFMT_R3G3B2:
         return w;

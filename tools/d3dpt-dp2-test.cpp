@@ -808,6 +808,63 @@ int main(int argc, char **argv) {
         send_dp2(&enc, r, vtx);
     }
 
+    /* --- the luminance bump maps (BUMPENVMAPLUMINANCE): a uniform bump map
+     * (du = dv = 0, L = one half) at stage 0 over a uniform green
+     * environment map at stage 1, a zero bump matrix and a luminance scale
+     * of 1: BUMPENVMAP draws the green as it is, BUMPENVMAPLUMINANCE at
+     * half, for X8L8V8U8 and L6V5U5 (both converted by DXVK at upload).
+     * DXVK's ubershader never applied the luminance until our
+     * patches/dxvk/07 (full green both times) --- */
+    {
+        enum { BUMP_OFF = 0x350000, ENV_OFF = 0x354000, BUMP16_OFF = 0x358000, H_BUMP = 320, H_ENV = 321, H_BUMP16 = 322 };
+        struct { uint32_t fmt, handle, off, bytes, texel; const char *name; } lb[] = {
+            { D3DFMT_X8L8V8U8, H_BUMP, BUMP_OFF, 4, 0x00800000u, "X8L8V8U8" },      /* L 0x80 in bits 16..23 */
+            { D3DFMT_L6V5U5, H_BUMP16, BUMP16_OFF, 2, 0x8000u, "L6V5U5" },           /* L 32/63 in bits 10..15 */
+        };
+        std::vector<tlv> quad(vtx.begin(), vtx.begin() + 6);
+        for (int y = 0; y < TEX; y++)
+            for (int x = 0; x < TEX; x++) {
+                uint32_t e = 0xff00ff00u;
+                memcpy(vram + ENV_OFF + y * TEX * 4 + x * 4, &e, 4);
+                for (auto &m : lb) memcpy(vram + m.off + y * TEX * m.bytes + x * m.bytes, &m.texel, m.bytes);
+            }
+        for (auto &m : lb) vram_surface(&enc, m.handle, m.off, TEX, TEX, TEX * m.bytes, m.fmt, D3DPT_VS_TEXTURE);
+        vram_surface(&enc, H_ENV, ENV_OFF, TEX, TEX, TEX * 4, D3DFMT_A8R8G8B8, D3DPT_VS_TEXTURE);
+        float one = 1.0f, zero = 0.0f;
+        uint32_t one_bits, zero_bits;
+        memcpy(&one_bits, &one, 4);
+        memcpy(&zero_bits, &zero, 4);
+        for (auto &m : lb) {
+        uint32_t got[2];
+        for (int l = 0; l < 2; l++) {
+            Dp2Buf b;
+            b.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+            b.tss(0, 0, m.handle);
+            b.tss(0, D3DTSS_COLOROP, l ? D3DTOP_BUMPENVMAPLUMINANCE : D3DTOP_BUMPENVMAP);
+            b.tss(0, D3DTSS_COLORARG1, D3DTA_TEXTURE); b.tss(0, D3DTSS_COLORARG2, D3DTA_CURRENT);
+            b.tss(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1); b.tss(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
+            b.tss(0, D3DTSS_BUMPENVMAT00, zero_bits); b.tss(0, D3DTSS_BUMPENVMAT01, zero_bits);
+            b.tss(0, D3DTSS_BUMPENVMAT10, zero_bits); b.tss(0, D3DTSS_BUMPENVMAT11, zero_bits);
+            b.tss(0, D3DTSS_BUMPENVLSCALE, one_bits); b.tss(0, D3DTSS_BUMPENVLOFFSET, zero_bits);
+            b.tss(1, 0, H_ENV);
+            b.tss(1, D3DTSS_COLOROP, D3DTOP_SELECTARG1); b.tss(1, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+            b.tss(1, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1); b.tss(1, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+            b.tss(1, D3DTSS_TEXCOORDINDEX, 0);
+            b.tss(2, D3DTSS_COLOROP, D3DTOP_DISABLE);
+            b.draw8(4, 2, FVF_TLVERTEX, quad);
+            hr = send_dp2(&enc, b, vtx);
+            hr |= readback(&enc, H_RT);
+            got[l] = hr ? 0xdeadbe : px(124, 84);
+        }
+        CHECK(near_(got[0], 0x00ff00, 3) && near_(got[1], 0x008000, 3),
+              "%s bump map: BUMPENVMAP 0x%06x (want 0x00ff00), BUMPENVMAPLUMINANCE at L 1/2 0x%06x (want 0x008000)", m.name, got[0], got[1]);
+        }
+        Dp2Buf r;
+        r.tss(1, 0, 0); r.tss(1, D3DTSS_COLOROP, D3DTOP_DISABLE); r.tss(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
+        r.tss(0, 0, 0); r.tss(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1); r.tss(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+        send_dp2(&enc, r, vtx);
+    }
+
     /* --- cube textures (v11): a 16-texel cube of two levels in VRAM, every
      * face and level its own colour, drawn with 3D texture coordinates at
      * each face's direction and minified onto a small quad (level 1); a

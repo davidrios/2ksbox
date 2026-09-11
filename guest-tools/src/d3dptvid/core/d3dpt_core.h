@@ -49,7 +49,8 @@
                                          * draw's vertices copied into the record, as before protocol v9) */
 #define DDF_ONE_STREAM         0x200000 /* the A/B: MaxStreams 1 and every draw carrying stream 0 alone, as before protocol v10 */
 #define DDF_NO_CUBE            0x400000 /* the A/B: no cube textures (caps, format ops), as before protocol v11 */
-#define DDF_NO_BUMP            0x800000 /* the A/B: no V8U8 bump-map format in either texture list (EMBM's ops stay claimed, as before) */
+#define DDF_NO_BUMP            0x800000 /* the A/B: no bump-map format in either texture list — V8U8, and in the DX8 one
+                                         * L6V5U5 / X8L8V8U8 too (EMBM's ops stay claimed, as before) */
 #define DDF_NO_VOLUME          0x1000000 /* the A/B: no volume textures (caps, format ops) */
 #define DDF_NO_ANISO           0x2000000 /* the A/B: MaxAnisotropy 1, no anisotropic filter caps */
 #define DDF_NO_MORE_FMTS       0x4000000 /* the A/B: none of L8 A8L8 A4L4 A8 X4R4G4B4 R3G3B2 A8R3G3B2 DXT2 DXT4 in the DX8 format list */
@@ -76,6 +77,9 @@
 #define D3DFMT_A8L8_      51u
 #define D3DFMT_A4L4_      52u
 #define D3DFMT_V8U8_      60u
+#define D3DFMT_L6V5U5_    61u
+#define D3DFMT_X8L8V8U8_  62u
+#define D3DFMT_Q8W8V8U8_  63u
 #define D3DFMT_D16_       80u
 #define D3DFMT_D24X8_     77u
 #define D3DFMT_D24S8_     75u
