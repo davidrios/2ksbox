@@ -1174,10 +1174,76 @@ patch of the fields patch 24 *could* absorb retranslates the loop too.
 patches it takes: ~4,900 retranslations per frame facing the corridor, ~265
 facing the wall.
 
-What would fix it is the item 6 leftover below: soft shift and rotate counts —
-the count read from the code byte at run time the way the `CL` form already
-takes it (masked, with the zero case handled at run time) — and `gen_IMUL3`,
-whose immediate already comes through `gen_load` and is one line. Not built yet.
+**Built the same day, as part of patch 24** (the item 6 leftover below):
+`gen_shift_count_1`'s `X86_OP_IMM` case, in a block translated soft, loads the
+count's byte from the guest's code with `gen_soft_field` and masks it at run
+time, and hands the emitter `can_be_zero` — the path the `CL` form already
+takes, so a count patched to zero leaves the flags alone exactly as the
+hardware does. Two exclusions, both stated in the code: RCL/RCR on 8 and 16-bit
+operands, whose count is reduced modulo 9 or 17 at translation, and SHLD/SHRD,
+whose count the decoder reads without recording its address. `gen_IMUL3` joins
+`insn_soft_imm_ok` (its immediate reaches it through `gen_load`). Same switch,
+`-accel tcg,soft-imm=off`. `tools/smc-guest-test.py` grew four cases — a `shr`
+and a `rol` count patched per call over every byte value (so the processor's
+mask and the zero counts are both exercised, the carry folded into the result),
+IMUL's imm32, and a 16-bit `rcr` that must keep its constant and still be right
+— and passes all 17 under the four switch combinations, the soft-imm runs
+reaching the path (28–30 soft blocks, 10,000–13,000 writes absorbed);
+`scripts/test.sh all` 54 passed, 0 failed.
+
+**And it did not help Blood — which found a second bug, in patch 24 as it
+already was.** The corridor went 9.4 → 10.7 fps with invalidations unchanged.
+A temporary trace event on the refusals (`soft_imm_miss`: address, size, the
+block that refused, whether it was soft, why — built locally, never
+committed) showed the column loop at page offset `0x623` *was* soft now — 20
+fields, ~238,000 patch writes absorbed in 3 s — and every one of the 55,705
+refused writes belonged to a second loop, at `0x170`: `mov [edi], ebx` (two
+bytes), then `rol eax, 7` at `0x172`, which is where the code jumps in from
+`0x15e`, with `sub esi, imm32`, `sbb edx, imm32` and a texture disp32 patched
+per span. Two blocks, `…170` and `…172`, both over the same fields and both
+thrown away by every patch — and the invalidation counters were indexed by
+`pc >> 2`, so the two shared a slot, each reset it to its own pc with one hit,
+neither reached `SOFT_IMM_HITS`, and neither ever went soft: ~18,500
+retranslations a second each. The counters now hash multiplicatively
+(`soft_imm_hash`). The battery grew a case R for exactly that shape (a
+4-byte-aligned routine entered at its top and two bytes in, over one patched
+imm32), and — because every case already computed the right answer while this
+was broken — the program now prints where four cases' fields are and the
+soft-imm runs require each to have been absorbed at least N/2 times. Against
+the old hash that check fails (case R: right sum, absorbed 0 times) while N, O
+and P pass it, which is the proof that the new shift-count path is really
+taken and that the battery can see the collision.
+
+With the hash fixed, the same 3 s trace in Blood's starting room:
+
+| 3 s in the starting room | shift counts soft, `pc >> 2` hash | multiplicative hash |
+|---|---|---|
+| translations | 115,827 | **1,130** |
+| TB invalidations (`info jit` across the window) | ~135,000 | **17** |
+| patch writes absorbed | 238,336 | **2,199,574** |
+| host code generated | ~200 MB | 0.7 MB |
+
+Both loops now outlive their patches — each of the `0x170` loop's four
+patched fields was absorbed 376,124 times in the window, a patch that used to
+cost two retranslations. The ~800 writes still refused are someone's data
+landing on the second page of a block that spans a page boundary (`why=1`, a
+handful each), which patch 24 refuses by design.
+
+**The result**, measured the way the report was (the regenerated patch 24
+applied from pristine by `scripts/build.sh`, the temporary trace gone,
+`scripts/test.sh all` 54 passed, 0 failed; a fresh raw copy of `claude98`,
+Blood's own VBE page flips over 10 s):
+
+| Blood's starting room | before | both fixes |
+|---|---|---|
+| facing the corridor | 9.4 fps | **131 fps** |
+| facing a bare wall | 154 fps | **556 fps** |
+| TB invalidations in 10 s | ~460,000 / ~410,000 | 18 / 0 |
+| translations in a 3 s trace | 117,254 | 34 (Windows' own code at `0xc00…`/`0xc14…`, none of Blood's) |
+
+Blood has no frame cap, so these are raw rates: the corridor is ~14× faster
+and "depending on where you look" is now 131 against 556 rather than 9
+against 154.
 
 ## Next steps, in order
 
@@ -1249,9 +1315,11 @@ above):
    operand of a shift or a jump would still retranslate. **A workload asks
    (2026-09-10): Blood**, whose column loop patches imm8 shift and rotate
    counts per column (the section above: 9.4 fps facing the corridor, 154
-   facing a wall, ~40,000 retranslations a second). Next here: soft shift /
-   rotate counts and `gen_IMUL3`, with cases in `tools/smc-guest-test.py`,
-   then Blood's corridor again. For the record, the two shapes were:
+   facing a wall, ~40,000 retranslations a second). **Built 2026-09-10**:
+   soft shift / rotate counts and `gen_IMUL3` in patch 24, four new cases in
+   `tools/smc-guest-test.py` (the section above). What is still left: jump
+   targets, the SHLD/SHRD count, RCL/RCR's 8/16-bit counts, the fields past a
+   block's first page. For the record, the two shapes were:
    - **Soft immediates** (days) — built, and simpler than costed here: the
      fields are read from the guest's own code bytes rather than from a pool
      the store side has to refresh, so there is no pool and nothing to keep in

@@ -319,7 +319,7 @@ index 7f23d373ea..f03ddd4774 100644
  
  struct X86DecodedInsn {
 diff --git a/target/i386/tcg/emit.c.inc b/target/i386/tcg/emit.c.inc
-index 1755a92060..45a36b26b0 100644
+index 1755a92..2fb7c4d 100644
 --- a/target/i386/tcg/emit.c.inc
 +++ b/target/i386/tcg/emit.c.inc
 @@ -253,6 +253,9 @@ static bool sse_needs_alignment(DisasContext *s, X86DecodedInsn *decode, MemOp o
@@ -344,7 +344,34 @@ index 1755a92060..45a36b26b0 100644
          break;
  
      case X86_OP_MMX:
-@@ -4836,3 +4842,21 @@ static void gen_XSAVEOPT(DisasContext *s, X86DecodedInsn *decode)
+@@ -3304,6 +3310,26 @@ static MemOp gen_shift_count_1(DisasContext *s, X86DecodedInsn *decode,
+         break;
+ 
+     case X86_OP_IMM:
++        /*
++         * A count the guest keeps patching into its own code
++         * (exec/tb-softimm.h) is read from its byte at run time, the way the
++         * CL form reads ECX, so the patch invalidates nothing: Build's column
++         * loops (Blood) rewrite their shift and rotate counts per wall
++         * texture.  Not where the count is reduced modulo 9 or 17 here --
++         * RCL/RCR on 8 and 16-bit operands -- and not the SHLD/SHRD count,
++         * which the decoder reads without recording where it is.
++         */
++        if (s->soft_imm && mod >= mask && decode->op[2].unit == X86_OP_IMM &&
++            decode->op[2].imm_bytes == 1) {
++            TCGv soft = tcg_temp_new();
++
++            if (gen_soft_field(s, soft, decode->op[2].imm_addr, 1, false)) {
++                tcg_gen_andi_tl(soft, soft, mask);
++                *count = soft;
++                *can_be_zero = true;
++                break;
++            }
++        }
+         decode->immediate &= mask;
+         if (mod < mask) {
+             decode->immediate %= mod;
+@@ -4836,3 +4862,23 @@ static void gen_XSAVEOPT(DisasContext *s, X86DecodedInsn *decode)
      x87s_boundary(s);
      gen_helper_xsave(tcg_env, s->A0, features);
  }
@@ -356,7 +383,9 @@ index 1755a92060..45a36b26b0 100644
 + * nowhere else -- an emitter that also reads decode->immediate directly (the
 + * shifts, the jumps, the SSE lane selectors, INT, RET) would keep the value
 + * this block was translated with, and the field must then stay a constant.
-+ * The group-1 table spells CMP as gen_SUB and TEST as gen_AND, so both are in.
++ * The group-1 table spells CMP as gen_SUB and TEST as gen_AND, so both are in;
++ * IMUL3 multiplies by what gen_load left in T1.  The shift and rotate counts
++ * have their own path, gen_shift_count_1.
 + */
 +static bool insn_soft_imm_ok(const X86DecodedInsn *decode)
 +{
@@ -364,7 +393,7 @@ index 1755a92060..45a36b26b0 100644
 +
 +    return gen == gen_ADD || gen == gen_OR  || gen == gen_ADC ||
 +           gen == gen_SBB || gen == gen_AND || gen == gen_SUB ||
-+           gen == gen_XOR || gen == gen_MOV;
++           gen == gen_XOR || gen == gen_MOV || gen == gen_IMUL3;
 +}
 diff --git a/target/i386/tcg/translate.c b/target/i386/tcg/translate.c
 index fbf9a39a2a..fdf6121d9e 100644
@@ -582,10 +611,10 @@ index fbf9a39a2a..fdf6121d9e 100644
      dc->iopl = iopl;
 diff --git a/accel/tcg/tb-softimm.c b/accel/tcg/tb-softimm.c
 new file mode 100644
-index 0000000000..1243fde082
+index 0000000..7bd8872
 --- /dev/null
 +++ b/accel/tcg/tb-softimm.c
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,258 @@
 +/*
 + * Soft immediates: the bookkeeping (see include/exec/tb-softimm.h).
 + *
@@ -646,9 +675,16 @@ index 0000000000..1243fde082
 +    SoftImmField f[SOFT_IMM_MAX_FIELDS];
 +} soft_imm_gen;
 +
++/*
++ * Multiplicative, not pc >> 2: two blocks whose starts are a couple of bytes
++ * apart -- a loop entered at its top that jumps back past its first
++ * instruction, the shape of Blood's span loop -- shared a slot that way.  One
++ * patch throws both away, each reset the slot to its own pc, and neither ever
++ * reached SOFT_IMM_HITS; the loop retranslated on every patch.
++ */
 +static unsigned soft_imm_hash(tb_page_addr_t pc)
 +{
-+    return (pc >> 2) & (SOFT_IMM_HASH_SIZE - 1);
++    return ((uint64_t)pc * 0x9e3779b97f4a7c15ull) >> (64 - SOFT_IMM_HASH_BITS);
 +}
 +
 +void soft_imm_note_invalidate(const TranslationBlock *tb)

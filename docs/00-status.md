@@ -763,9 +763,23 @@ items nobody owns yet:
    Build's column loop, which patches imm8 **shift and rotate counts**
    per column besides the pointers and steps patch 24 absorbs. The
    counts stay constants, the block fails soft four times, the address
-   gives up, and every per-column patch then retranslates. Fix: soft
-   shift / rotate counts (and `gen_IMUL3`) in patch 24 — the M9 track
-   doc's Blood section has the run and the plan. `tools/win98-game-test.sh`
+   gives up, and every per-column patch then retranslates. **Fixed the
+   same day in patch 24, in two parts**: soft shift / rotate counts (and
+   `gen_IMUL3`) — which kept the column loop but did not help, because a
+   second loop is two blocks two bytes apart over the same patched
+   fields and soft-imm's invalidation counters were hashed by `pc >> 2`,
+   so the two reset each other and never went soft (found with a
+   temporary refusal trace, never committed); the counters now hash
+   multiplicatively. **Blood's starting room, facing the corridor: 9.4 →
+   131 fps; facing a bare wall: 154 → 556** (its own VBE page flips, no
+   frame cap); TB invalidations ~460,000 → 18 in 10 s, translations in a
+   3 s trace 117,254 → 34, none of them Blood's. `tools/smc-guest-test.py`
+   is at 18 cases (a `shr` and a `rol` count patched per call, IMUL's
+   imm32, a 16-bit `rcr` that keeps its constant, one imm32 inside two
+   blocks two bytes apart) and now requires the writes to be absorbed at
+   four cases' fields, not just the right sums — against the old hash
+   case R computes right and is absorbed 0 times. The M9 track doc's
+   Blood section has the runs. `tools/win98-game-test.sh`
    now builds the launcher's Win98 machine in full (`hpet=off`, the
    OPL3 and the MPU-401 — `MUSIC=`), and `EXTRA=` passes QEMU arguments.
    **Found on the way, and not an M9 bug:** `atapi-guest` had been failing

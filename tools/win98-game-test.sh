@@ -67,7 +67,13 @@
 #   MUSIC=gm|mt32|none  the MPU-401's synth (gm, the launcher's default for
 #                       a Win98 machine), or no MPU-401 at all
 #   EXTRA="args"        more QEMU arguments, word-split (-perfmap, say, for
-#                       `perf report` to name the vCPU's generated code)
+#                       `perf report` to name the vCPU's generated code —
+#                       but the map is /tmp/perf-<pid>.map, a line per
+#                       translated guest instruction, never trimmed and never
+#                       deleted: a game that retranslates all the time wrote
+#                       7.8 GB of it in five minutes into a tmpfs, i.e. RAM,
+#                       and the next job was killed for memory. Delete it
+#                       after the `perf report`)
 #   VGA=cirrus          the control: the same game on Windows' own inbox
 #                       driver. A glitch that is there too is not ours.
 #   PLAYER=1            run the machine inside the player instead of a bare

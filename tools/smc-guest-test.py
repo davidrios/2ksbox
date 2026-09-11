@@ -9,9 +9,12 @@ patches of an imm32, a routine overwritten by `rep movsd` (the probe path)
 with new and with identical bytes, an imm32 straddling a page boundary
 written by one crossing store, a memory operand's disp32 rewritten per call
 (a texture base), a sign-extended imm8, an instruction whose modrm and whose
-immediate are both patched, and one store that covers the tail of an
-immediate *and* the opcode bytes after it — and prints a checksum of what the
-patched code computed. Boots it on the FreeDOS test floppy (fetched by
+immediate are both patched, one store that covers the tail of an
+immediate *and* the opcode bytes after it, an imm8 shift count and an imm8
+rotate count patched per call over every byte value (Build's column loops;
+a zero count must leave the carry alone), imul's imm32, and a 16-bit rcr
+whose count is reduced modulo 17 and so keeps its constant — and prints a
+checksum of what the patched code computed. Boots it on the FreeDOS test floppy (fetched by
 tools/x87-guest-test.py on first use) under all four combinations of
 `-accel tcg,smc-same-value=on|off,soft-imm=on|off`; every checksum must equal
 the architectural result. The soft-imm runs also have to *reach* the path:
@@ -22,8 +25,10 @@ them, so a battery that stopped exercising it fails instead of passing.
 
 Outputs in build/smc-guest/.
 """
+import collections
 import importlib.util
 import os
+import re
 import shutil
 import sys
 
@@ -33,6 +38,34 @@ OUT = os.path.join(ROOT, "build/smc-guest")
 spec = importlib.util.spec_from_file_location("x87gt", os.path.join(ROOT, "tools/x87-guest-test.py"))
 x87gt = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(x87gt)
+
+def _shr_cf(c):
+    """shr eax, c of 0F0F0F0F0h after stc, then adc eax, 0."""
+    c &= 31
+    v = 0xF0F0F0F0
+    if c == 0:
+        return (v + 1) & M          # a zero count leaves the carry alone
+    return ((v >> c) + ((v >> (c - 1)) & 1)) & M
+
+
+def _rol_cf(c):
+    """rol eax, c of 12345678h after clc, then adc eax, 0."""
+    c &= 31
+    v = 0x12345678
+    if c == 0:
+        return v
+    r = ((v << c) | (v >> (32 - c))) & M
+    return (r + (r & 1)) & M
+
+
+def _rcr16(c):
+    """rcr ax, c of 1234h with the carry set: 17 bits, modulo 17."""
+    c = (c & 31) % 17
+    v = (1 << 16) | 0x1234          # CF:ax
+    for _ in range(c):
+        v = (v >> 1) | ((v & 1) << 16)
+    return v & 0xffff
+
 
 N = 1000
 M = 0xffffffff
@@ -50,7 +83,15 @@ EXPECTED = {
     "K": sum(((i & 0xff) ^ 0x80) - 0x80 for i in range(N)) & M,  # a sign-extended imm8 patched per call
     "L": sum(i if i % 2 == 0 else -i for i in range(N)) & M,   # modrm and imm32 of one instruction
     "M": sum(((i << 16) + 1) for i in range(N)) & M,           # a store over an immediate's tail and the next opcode
+    "N": sum(_shr_cf(i & 0xff) for i in range(N)) & M,         # an imm8 shift count patched per call
+    "O": sum(_rol_cf(i & 0xff) for i in range(N)) & M,         # an imm8 rotate count patched per call
+    "P": sum(3 * i for i in range(N)) & M,                     # imul's imm32 patched per call
+    "Q": sum(_rcr16(i & 0xff) for i in range(N)) & M,          # a 16-bit rcr count (modulo 17: stays a constant)
+    "R": sum(2 * i for i in range(N)) & M,                     # one imm32 in two blocks two bytes apart
 }
+# the cases whose patched field has to be *absorbed* in the soft-imm runs, not
+# merely computed right: the program prints each field's address ("@N addr")
+ABSORBED = "NOPR"
 
 ASM = r"""
 org 100h
@@ -306,6 +347,100 @@ start:
     mov al, 'M'
     call report
 
+    ; N: an imm8 shift count rewritten before every call, the way Build's
+    ; column loops rewrite theirs per texture: every byte value, so the
+    ; processor's mask is exercised, and zero counts, which must leave the
+    ; carry the routine set (it is folded into the result)
+    xor si, si
+    xor edi, edi
+.ln:
+    mov ax, si
+    mov [routN_imm], al
+    call routN
+    add edi, eax
+    inc si
+    cmp si, N
+    jb .ln
+    mov al, 'N'
+    call report
+
+    ; O: the same with a rotate
+    xor si, si
+    xor edi, edi
+.lo:
+    mov ax, si
+    mov [routO_imm], al
+    call routO
+    add edi, eax
+    inc si
+    cmp si, N
+    jb .lo
+    mov al, 'O'
+    call report
+
+    ; P: imul's imm32 rewritten before every call
+    xor si, si
+    xor edi, edi
+.lp:
+    movzx eax, si
+    mov [routP_imm], eax
+    call routP
+    add edi, eax
+    inc si
+    cmp si, N
+    jb .lp
+    mov al, 'P'
+    call report
+
+    ; Q: a 16-bit rcr's count rewritten before every call: reduced modulo 17
+    ; at translation, so it keeps its constant and has to retranslate right
+    xor si, si
+    xor edi, edi
+.lq:
+    mov ax, si
+    mov [routQ_imm], al
+    call routQ
+    add edi, eax
+    inc si
+    cmp si, N
+    jb .lq
+    mov al, 'Q'
+    call report
+
+    ; R: one imm32 inside two blocks whose starts are two bytes apart -- a loop
+    ; entered at its top and looping back past its first instruction, the
+    ; shape of Blood's span loop. Both blocks must go soft for the patch to be
+    ; absorbed; with the invalidation counters hashed by pc >> 2 the two
+    ; shared a slot and reset each other on every patch
+    xor si, si
+    xor edi, edi
+.lr:
+    movzx eax, si
+    mov [routR_imm], eax
+    call routR
+    add edi, eax
+    call routR2
+    add edi, eax
+    inc si
+    cmp si, N
+    jb .lr
+    mov al, 'R'
+    call report
+
+    ; where the fields the soft-imm runs must absorb are
+    mov al, 'N'
+    mov bx, routN_imm
+    call report_addr
+    mov al, 'O'
+    mov bx, routO_imm
+    call report_addr
+    mov al, 'P'
+    mov bx, routP_imm
+    call report_addr
+    mov al, 'R'
+    mov bx, routR_imm
+    call report_addr
+
     mov si, str_done
     call puts
     int 20h
@@ -368,6 +503,62 @@ routM:                          ; mov eax, imm32; add eax, 1; ret
 routM_imm:
     dd 0
     db 66h, 83h, 0C0h, 01h
+    ret
+routN:                          ; shr 0F0F0F0F0h by imm8 after stc; + CF
+    mov eax, 0F0F0F0F0h
+    stc
+    db 66h, 0C1h, 0E8h          ; shr eax, imm8
+routN_imm:
+    db 0
+    adc eax, 0
+    ret
+routO:                          ; rol 12345678h by imm8 after clc; + CF
+    mov eax, 12345678h
+    clc
+    db 66h, 0C1h, 0C0h          ; rol eax, imm8
+routO_imm:
+    db 0
+    adc eax, 0
+    ret
+routP:                          ; 3 * imm32
+    mov ebx, 3
+    db 66h, 69h, 0C3h           ; imul eax, ebx, imm32
+routP_imm:
+    dd 0
+    ret
+routQ:                          ; rcr 1234h by imm8 through a set carry, 16-bit
+    mov ax, 1234h
+    stc
+    db 0C1h, 0D8h               ; rcr ax, imm8
+routQ_imm:
+    db 0
+    movzx eax, ax
+    ret
+align 4
+routR:                          ; xor bx, bx (2 bytes); then the second entry
+    db 31h, 0DBh
+routR2:                         ; mov eax, imm32; ret
+    db 66h, 0B8h
+routR_imm:
+    dd 0
+    ret
+
+report_addr:                    ; al = case letter, bx = a field's offset in CS
+    push ax
+    mov al, '@'
+    call putc
+    pop ax
+    call putc
+    mov al, ' '
+    call putc
+    xor eax, eax
+    mov ax, cs
+    shl eax, 4
+    movzx ebx, bx
+    add eax, ebx
+    call put_hex32
+    mov al, 10
+    call putc
     ret
 
 putc:
@@ -480,11 +671,13 @@ def main():
                     os.unlink(f)
             lines = run_qemu(["smc-same-value=" + same, "soft-imm=" + soft],
                              img, log, trace)
-            got = {}
+            got, where = {}, {}
             for l in lines:
                 parts = l.split()
                 if len(parts) == 2 and parts[0] in EXPECTED and len(parts[1]) == 8:
                     got[parts[0]] = int(parts[1], 16)
+                elif len(parts) == 2 and parts[0][:1] == "@" and len(parts[1]) == 8:
+                    where[parts[0][1:]] = int(parts[1], 16)
             for k in sorted(EXPECTED):
                 if k not in got:
                     print("FAIL: %s case %s missing" % (name, k))
@@ -505,6 +698,17 @@ def main():
                 if blocks == 0 or absorbed == 0:
                     print("FAIL: %s never reached the soft-imm path" % name)
                     bad += 1
+                # and the fields these cases patch must be among them: a case
+                # can compute the right sum while its block retranslates on
+                # every patch, which is the thing the feature exists to stop
+                at = collections.Counter(
+                    int(g, 16) for g in re.findall(r"soft_imm_absorb addr:0x([0-9a-f]+)", text))
+                for k in ABSORBED:
+                    n = at.get(where.get(k, -1), 0)
+                    if n < N // 2:
+                        print("FAIL: %s case %s: its field was absorbed %d times, "
+                              "wanted at least %d" % (name, k, n, N // 2))
+                        bad += 1
             print("%s: %d/%d cases right%s" % (name, right, len(EXPECTED), note))
     if bad:
         print("FAIL: %d mismatches" % bad)
