@@ -48,6 +48,7 @@
 #define DDF_NO_HWVB            0x100000 /* the A/B: no video-memory vertex / index buffers (every buffer in system memory, every
                                          * draw's vertices copied into the record, as before protocol v9) */
 #define DDF_ONE_STREAM         0x200000 /* the A/B: MaxStreams 1 and every draw carrying stream 0 alone, as before protocol v10 */
+#define DDF_NO_CUBE            0x400000 /* the A/B: no cube textures (caps, format ops), as before protocol v11 */
 
 /* DDI-only DX8 device caps (d3dhal.h): the runtime puts vertex / index
  * buffers in video memory through the buffer callbacks when they are set */
@@ -86,6 +87,15 @@
 #define DDRAWISURF_HASCKEYSRCBLT_   0x00000800
 #define DDRAWISURF_HASPIXELFORMAT_  0x00002000
 #define DDSCAPS_EXECUTEBUFFER_      0x00800000
+/* a cube texture's faces (ddsCapsEx.dwCaps2; public ddraw.h values, the
+ * same on both families): the root is +X's level 0, the other five faces
+ * hang off it, and each face carries its own mip chain */
+#define DDSCAPS2_CUBEMAP_           0x00000200
+#define DDSCAPS2_CUBEMAP_POSITIVEX_ 0x00000400   /* face n is this << n, in D3DCUBEMAP_FACES order */
+#define DDSCAPS2_CUBEMAP_ALLFACES_  0x0000fc00
+#define D3DPTEXTURECAPS_CUBEMAP_    0x00000800
+#define D3DPTEXTURECAPS_MIPCUBEMAP_ 0x00010000
+#define D3DFORMAT_OP_CUBETEXTURE_   0x00000004
 
 /* a DX8 stream binding: where the vertices / indices are */
 typedef struct _DP2STREAM {
@@ -102,6 +112,14 @@ typedef struct _SURF_LEVEL {
     ULONG pitch;
 } SURF_LEVEL;
 
+/* a cube texture's six faces (v11), level 0 included, and the runtime's
+ * handle of each face's level 0 (0 where it has none); allocated for a
+ * cube root only */
+typedef struct _SURF_CUBE {
+    SURF_LEVEL f[6][16];
+    ULONG handle[6];
+} SURF_CUBE;
+
 typedef struct _SURF {
     ULONG_PTR mem;              /* system memory: the user pointer; VRAM: the mapped address */
     ULONG size;                 /* bytes (the linear size of a buffer, pitch * height otherwise) */
@@ -114,6 +132,7 @@ typedef struct _SURF {
     ULONG vram_off;             /* VRAM: the offset the host knows the surface at */
     ULONG lock_off, lock_len;   /* a VRAM buffer: the range of the current Lock (the whole buffer when the
                                  * runtime gave none), reported as VRAM_DIRTY_RANGE at Unlock */
+    SURF_CUBE *cube;            /* a cube root (v11): every face's levels, for a TEXBLT between two cubes */
 } SURF;
 
 typedef struct _D3DCTX {
@@ -194,6 +213,9 @@ BOOL d3dpt_os_surf(d3dpt_core *c, void *os, d3dpt_surf_desc *out);
  * chain's other buffers, a Z buffer — written into out, at most max of
  * them; the count is the return */
 ULONG d3dpt_os_attached(void *os, void **out, ULONG max);
+/* everything attached to this surface, mip levels and cube faces included,
+ * at most max of them; the count is the return */
+ULONG d3dpt_os_attached_all(void *os, void **out, ULONG max);
 /* the next (smaller) mip level attached to this surface, or NULL */
 void *d3dpt_os_next_mip(void *os);
 

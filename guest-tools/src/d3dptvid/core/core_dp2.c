@@ -258,14 +258,61 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
     }
 }
 
-/* TEXBLT: system memory -> the VRAM texture, every level, then VRAM_DIRTY */
+/* a TEXBLT's rectangle (b: the token) from one level list to another, level
+ * 0 first, every level both have; DXT in blocks */
+static void blt_levels(ULONG fmt, ULONG src_w, ULONG src_h, const SURF_LEVEL *slv, ULONG dst_w, ULONG dst_h,
+                       const SURF_LEVEL *dlv, ULONG levels, const ULONG *b)
+{
+    LONG dx = (LONG)b[2], dy = (LONG)b[3], sl = (LONG)b[4], st = (LONG)b[5], sr = (LONG)b[6], sb = (LONG)b[7];
+    BOOL dxt = fmt_is_dxt(fmt);
+    ULONG bpp = fmt_row_bytes(fmt, 1), lv;
+
+    for (lv = 0; lv < levels; lv++) {
+        ULONG_PTR smem = slv[lv].mem, dmem = dlv[lv].mem;
+        ULONG spitch = slv[lv].pitch, dpitch = dlv[lv].pitch;
+        ULONG sw = src_w >> lv, sh = src_h >> lv, dw = dst_w >> lv, dh = dst_h >> lv;
+        ULONG x0 = (ULONG)sl >> lv, y0 = (ULONG)st >> lv, x1 = (ULONG)dx >> lv, y1 = (ULONG)dy >> lv;
+        ULONG cw = (ULONG)(sr - sl) >> lv, ch = (ULONG)(sb - st) >> lv, rows, rowbytes, y;
+
+        if (!sw) sw = 1;
+        if (!sh) sh = 1;
+        if (!dw) dw = 1;
+        if (!dh) dh = 1;
+        if (!cw) cw = 1;
+        if (!ch) ch = 1;
+        if (x0 + cw > sw) cw = sw > x0 ? sw - x0 : 0;
+        if (y0 + ch > sh) ch = sh > y0 ? sh - y0 : 0;
+        if (x1 + cw > dw) cw = dw > x1 ? dw - x1 : 0;
+        if (y1 + ch > dh) ch = dh > y1 ? dh - y1 : 0;
+        if (!cw || !ch || !smem || !dmem) {
+            continue;
+        }
+        if (dxt) {
+            rows = (ch + 3) / 4;
+            rowbytes = fmt_row_bytes(fmt, cw);
+            smem += (y0 / 4) * spitch + fmt_row_bytes(fmt, x0);
+            dmem += (y1 / 4) * dpitch + fmt_row_bytes(fmt, x1);
+        } else {
+            rows = ch;
+            rowbytes = cw * bpp;
+            smem += y0 * spitch + x0 * bpp;
+            dmem += y1 * dpitch + x1 * bpp;
+        }
+        for (y = 0; y < rows; y++) {
+            memcpy((void *)(dmem + y * dpitch), (const void *)(smem + y * spitch), rowbytes);
+        }
+    }
+}
+
+/* TEXBLT: system memory -> the VRAM texture, every level (a cube's every
+ * face, v11), then VRAM_DIRTY */
 static void walk_texblt(DP2WALK *w, const ULONG *b)
 {
     d3dpt_core *p = w->p;
     SURF *dst = surf_slot(b[0], FALSE), *src = surf_slot(b[1], FALSE);
     LONG dx = (LONG)b[2], dy = (LONG)b[3], sl = (LONG)b[4], st = (LONG)b[5], sr = (LONG)b[6], sb = (LONG)b[7];
-    ULONG lv, levels, bpp;
-    BOOL dxt;
+    SURF_LEVEL slv[16], dlv[16];
+    ULONG lv, levels, f;
 
     if (!dst || !src || !dst->fmt || dst->fmt != src->fmt || !src->sysmem || dst->buffer || src->buffer) {
         if (p->dp2_errors < 8) {
@@ -289,43 +336,35 @@ static void walk_texblt(DP2WALK *w, const ULONG *b)
     if (sl < 0 || st < 0 || sr <= sl || sb <= st || dx < 0 || dy < 0) {
         return;
     }
-    dxt = fmt_is_dxt(dst->fmt);
-    bpp = fmt_row_bytes(dst->fmt, 1);
     levels = dst->levels < src->levels ? dst->levels : src->levels;
-    for (lv = 0; lv < levels; lv++) {
-        ULONG_PTR smem = lv ? src->lv[lv - 1].mem : src->mem, dmem = lv ? dst->lv[lv - 1].mem : dst->mem;
-        ULONG spitch = lv ? src->lv[lv - 1].pitch : src->pitch, dpitch = lv ? dst->lv[lv - 1].pitch : dst->pitch;
-        ULONG sw = src->w >> lv, sh = src->h >> lv, dw = dst->w >> lv, dh = dst->h >> lv;
-        ULONG x0 = (ULONG)sl >> lv, y0 = (ULONG)st >> lv, x1 = (ULONG)dx >> lv, y1 = (ULONG)dy >> lv;
-        ULONG cw = (ULONG)(sr - sl) >> lv, ch = (ULONG)(sb - st) >> lv, rows, rowbytes, y;
-
-        if (!sw) sw = 1;
-        if (!sh) sh = 1;
-        if (!dw) dw = 1;
-        if (!dh) dh = 1;
-        if (!cw) cw = 1;
-        if (!ch) ch = 1;
-        if (x0 + cw > sw) cw = sw > x0 ? sw - x0 : 0;
-        if (y0 + ch > sh) ch = sh > y0 ? sh - y0 : 0;
-        if (x1 + cw > dw) cw = dw > x1 ? dw - x1 : 0;
-        if (y1 + ch > dh) ch = dh > y1 ? dh - y1 : 0;
-        if (!cw || !ch || !smem || !dmem) {
-            continue;
+    if (levels > 16) {
+        levels = 16;
+    }
+    if (dst->cube || src->cube) {
+        /* a cube's root names the whole cube: the rectangle on every face
+         * (a face's own handle is an ordinary entry, the path below) */
+        if (!dst->cube || !src->cube) {
+            if (p->dp2_errors < 8) {
+                p->dp2_errors++;
+                dbg_hex(p, "d3dptdisp: texblt between a cube and a texture refused, dst ", b[0]);
+                dbg_hex(p, " src ", b[1]);
+                dbg_puts(p, "\n");
+            }
+            return;
         }
-        if (dxt) {
-            rows = (ch + 3) / 4;
-            rowbytes = fmt_row_bytes(dst->fmt, cw);
-            smem += (y0 / 4) * spitch + fmt_row_bytes(dst->fmt, x0);
-            dmem += (y1 / 4) * dpitch + fmt_row_bytes(dst->fmt, x1);
-        } else {
-            rows = ch;
-            rowbytes = cw * bpp;
-            smem += y0 * spitch + x0 * bpp;
-            dmem += y1 * dpitch + x1 * bpp;
+        for (f = 0; f < 6; f++) {
+            blt_levels(dst->fmt, src->w, src->h, src->cube->f[f], dst->w, dst->h, dst->cube->f[f], levels, b);
         }
-        for (y = 0; y < rows; y++) {
-            memcpy((void *)(dmem + y * dpitch), (const void *)(smem + y * spitch), rowbytes);
+    } else {
+        slv[0].mem = src->mem;
+        slv[0].pitch = src->pitch;
+        dlv[0].mem = dst->mem;
+        dlv[0].pitch = dst->pitch;
+        for (lv = 1; lv < levels; lv++) {
+            slv[lv] = src->lv[lv - 1];
+            dlv[lv] = dst->lv[lv - 1];
         }
+        blt_levels(dst->fmt, src->w, src->h, slv, dst->w, dst->h, dlv, levels, b);
     }
     if (!dst->sysmem) {
         d3d_handle_op(p, D3DPT_OP_VRAM_DIRTY, b[0]);

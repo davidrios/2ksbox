@@ -496,7 +496,7 @@ build/d3dpt-dp2-test x.bmp                              # the same scene through
   E_OUTOFMEMORY repro), `0x80000` never call the runtime's
   `D3DParseUnknownCommand`, `0x100000` no video-memory vertex buffers,
   `0x200000` one vertex stream (`MaxStreams` 1, stream 0 alone in every
-  draw: before v10). The QEMU log's `d3dpt-vga: ddi: …` lines are the
+  draw: before v10), `0x400000` no cube textures (before v11). The QEMU log's `d3dpt-vga: ddi: …` lines are the
   executor's (unsupported states / tokens, once each), `batch N: error` a
   refused record, `d3dptdisp: dp2 0x…` a DrawPrimitives2 the host failed.
 
@@ -530,8 +530,13 @@ build/d3dpt-dp2-test x.bmp                              # the same scene through
    `ddflags=0x200000` is the A/B; SHTEST 13/13 in the guest (four
    two-stream cases through d3d8.dll) and the host test's twelve new
    cases; no title that needs it has been run yet — "Games to test, by
-   feature" below names the candidates. Then what the next title asks
-   for first among: cube / volume textures, presenting the
+   feature" below names the candidates. **Cube textures landed the same
+   day (protocol v11, doc 15 "Cube textures"):** plain, mip-mapped, DXT
+   and render-target cubes on the DX8 face, `ddflags=0x400000` the A/B;
+   3DMark2001 SE's Nature is the title check. On the way: a lead on
+   D3DGAME8's filtering difference — the executor reads `MIPFILTER` with
+   DirectX 7's numbering (doc 15, the cube section). Then what the next
+   title asks for first among: volume textures, presenting the
    host frame through the player's 3D path instead of the per-frame
    readback copy. A validator for SM2/3 bytecode on the d3d9 half (the
    M4 track's `d3dpt_exec.cpp` hands guest bytecode straight to DXVK,
@@ -569,10 +574,10 @@ line.
 | More than one vertex stream (v10) | landed, no title yet | **Unreal Tournament 2003 / 2004** (D3DDrv, the default renderer) | static meshes, terrain and characters complete; no `reads streams 0x…, the draw carried …` line; `ddflags=0x200000` (one stream) as the A/B | likely (UE2 draws through DX8.1 vertex streams) |
 | Vertex shaders 1.1 (v7) | landed, SHTEST only | **3DMark2001 SE** — the Vertex Shader feature test, then the four game tests; **Morrowind** (ships `.vso` vertex shader objects) | the scenes drawn, no `vertex shader … refused` / `not valid vs 1.x` lines | sure (3DMark), likely (Morrowind) |
 | Pixel shaders 1.1–1.4 (v7) | landed, SHTEST only | **3DMark2001 SE** Pixel Shader test and Advanced Pixel Shader (ps 1.4); **Morrowind** with pixel-shader water on | shaded water (off: it looks like milk); no `pixel shader … refused` lines | sure (3DMark PS test, Morrowind water), guess (Advanced PS = 1.4) |
-| Point sprites | claimed (`MaxPointSize` 64), never exercised | **3DMark2001 SE** Point Sprites test | particles as sized quads, not single pixels | sure |
-| DOT3 bump mapping | claimed (`D3DTEXOPCAPS_ALL`), never exercised | **3DMark2001 SE** DOT3 Bump Mapping test | lit relief on the surface, not flat | sure |
+| Point sprites | claimed (`MaxPointSize` 64), SPRTEST 3/3; per-vertex size not claimed | **3DMark2001 SE** Point Sprites test | particles as sized quads, not single pixels | sure |
+| DOT3 bump mapping | claimed (`D3DTEXOPCAPS_ALL`), BUMPTEST's DOT3 2/2 | **3DMark2001 SE** DOT3 Bump Mapping test | lit relief on the surface, not flat | sure |
 | Environment-mapped bump mapping (`BUMPENVMAP`, V8U8) | **not implemented**: the op is claimed, no bump format is listed | **3DMark2001 SE** EMBM test; **C&C Renegade** water; **Dungeon Keeper 2**; **Expendable** (its EMBM patch may insist on a Matrox card) | today: the test says "not supported" or the effect is missing — the check once the formats land | sure (all four support EMBM) |
-| Cube maps | **not implemented** (no `CUBEMAP` cap) | **3DMark2001 SE** Nature (its water reflects through a cube map) | today: Nature may refuse to run at all — the check once cube textures land | sure |
+| Cube maps (v11) | landed, CUBETEST only | **3DMark2001 SE** Nature (its water reflects through a cube map) | the water's reflection of the sky and trees; no `cube … not mirrored` line from the driver, no `ddi: cube texture … 0x…` failure from the host | sure |
 | Anisotropic filtering | **not implemented** (`MaxAnisotropy` 1) | **UT2003 / 2004** (`LevelOfAnisotropy` in the ini) | today: no effect; after: sharper floors at a glancing angle | guess |
 | DX8 path by hand | headless only | **Max Payne** (tutorial and the first levels, hardware T&L) | nothing black or missing in the alley walls and ground (the clipped fans) | — |
 | Regression after v10 | — | **GTA Vice City** (`tools/xp-vicecity.sh play`), **D3DGAME8** (`xp-driver-test.sh d3dgame8`), **Moto Racer**, **FIFA 2000** | the same frames and rates as before | — |
@@ -580,6 +585,18 @@ line.
 No candidate known for volume textures or N- / RT-patches (TruForm):
 both are rare before DirectX 9, and neither is worth building until a
 title turns up that asks.
+
+**Every row has a probe in `DRIVER\`** (doc 15 "The DX8 feature probes"):
+CUBETEST, STRMTEST, VOLTEST, FMTTEST, BUMPTEST, SPRTEST, ANISTEST,
+PATCHTST — `tools/xp-driver-test.sh <image> probes` runs all eight in one
+boot. A probe of a feature the driver lacks says `NOT OFFERED` and why,
+so a feature is built against a check that already exists: the day the
+caps claim it, its probe runs its cases. On 2026-09-11 CUBETEST,
+STRMTEST, BUMPTEST (DOT3) and SPRTEST passed; VOLTEST, FMTTEST, ANISTEST
+and PATCHTST were not offered, and EMBM and the per-vertex point size
+were skipped for want of a V8U8 format and `D3DFVFCAPS_PSIZE`. Run the
+probes before a title: a title that fails where its feature's probe
+passes is the title's business, and one whose probe fails is ours.
 
 ## Gotchas of this track (details in doc 15)
 

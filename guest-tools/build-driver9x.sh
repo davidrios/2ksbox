@@ -525,6 +525,14 @@ PYPE
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
      -march=pentium3 -mtune=generic \
      -o "$OUT/shtest.exe" "$ROOT/guest-tools/src/d3dptvid/shtest.c" -ld3d8 -lgdi32 -luser32
+
+  # the DX8 feature probes (d3d8probe.h), as build-driver.sh builds them
+  for t in cubetest strmtest voltest fmttest bumptest sprtest anistest patchtst; do
+    echo "==> $t.exe (a DX8 feature probe through d3d8.dll on the DX8 DDI)"
+    "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+       -march=pentium3 -mtune=generic \
+       -o "$OUT/$t.exe" "$ROOT/guest-tools/src/d3dptvid/$t.c" -ld3d8 -lgdi32 -luser32
+  done
 else
   echo "==> no $HALCC: skipping d3dpt9hl.dll (no DirectDraw on 9x from this build)"
 fi

@@ -102,6 +102,13 @@ echo "==> ebtest.exe (the DirectX 3 path: execute buffers and texture handles on
 echo "==> shtest.exe (vertex / pixel shaders 1.x through d3d8.dll on the DX8 DDI)"
 "$CC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 -mtune=generic \
   -o "$OUT/shtest.exe" "$SRC/shtest.c" -ld3d8 -lgdi32 -luser32
+# the DX8 feature probes (d3d8probe.h): each one says "not offered" while the
+# driver lacks its feature and is the feature's check once it has it
+for t in cubetest strmtest voltest fmttest bumptest sprtest anistest patchtst; do
+  echo "==> $t.exe (a DX8 feature probe through d3d8.dll on the DX8 DDI)"
+  "$CC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 -mtune=generic \
+    -o "$OUT/$t.exe" "$SRC/$t.c" -ld3d8 -lgdi32 -luser32
+done
 
 # sanity: the kernel modules import only from their port driver, and nothing
 # links the CRT (no import at all is the expected answer for the .sys/.dll)

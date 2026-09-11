@@ -1361,7 +1361,8 @@ working; Max Payne renders on it except its clipped fans (the
   last section), 16-bit indices, vertex / pixel shaders
   `D3DVS_VERSION(1,1)` / `D3DPS_VERSION(1,4)` since the shader section
   below (0.0 in the first cut), 4096² textures, 8
-  stages, no cube or volume maps, and **no `D3DPMISCCAPS_CLIPTLVERTS`**:
+  stages, cube maps since protocol v11 (the last section; no volume
+  maps), and **no `D3DPMISCCAPS_CLIPTLVERTS`**:
   with it the runtime stops clipping pre-transformed vertices and hands
   the driver polygons that cross the camera plane, which the host
   rasterizes as garbage (Max Payne transforms on the CPU even on a T&L
@@ -1470,13 +1471,13 @@ working; Max Payne renders on it except its clipped fans (the
   `tools/xp-driver-test.sh <image> d3dgame8` boots the guest-tools ISO,
   copies `D3DGAME8.EXE` out alone and diffs its frame against the native
   d3d9 oracle of `scripts/test.sh` (HUD masked).
-- Not there: cube and volume textures, N- and RT-patches (ZBIAS →
+- Not there: volume textures, N- and RT-patches (ZBIAS →
   DEPTHBIAS landed 2026-09-05 evening). DXT textures on this path were fixed
   on 2026-09-05 (the compressed-textures bullet above); vertex and pixel
   shaders 1.x the same night (the section below); palettized textures
   with v8; video-memory vertex / index buffers
   (`D3DDEVCAPS_HWVERTEXBUFFER`) with v9; more than one vertex stream with
-  v10 (the last two sections).
+  v10; cube textures with v11 (the last three sections).
 
 ### Vertex and pixel shaders 1.x on the DX8 DDI (2026-09-05, protocol v7)
 
@@ -1705,3 +1706,122 @@ reading stream 1 had its draws skipped on the host. `MaxStreams` is 16 now
   only. **13 cases, 0 failed** (`xp-driver-test.sh shtest`, a qcow2
   overlay of `winxp-m7` under TCG on the Air, 2026-09-11; the runtime
   reports 16 streams, no skipped draw in the QEMU log).
+
+### Cube textures (2026-09-11, protocol v11)
+
+`D3DPTEXTURECAPS_CUBEMAP | MIPCUBEMAP` in `D3DCAPS8.TextureCaps`,
+`CubeTextureFilterCaps` = the 2D filter caps, and
+`D3DFORMAT_OP_CUBETEXTURE` on every RGB and DXT texture format of the DX8
+list (not P8, whose palettes the host keeps per 2D texture); a format that
+is a render target is a render-target cube too, because the runtime
+checks the two ops independently. `ddflags=0x400000` (`DDF_NO_CUBE`)
+withdraws all of it. **The DX8 face only:** a DirectX 7 cube map is
+created by user-mode DirectDraw against the driver's own surface caps
+(`GUID_DDMoreSurfaceCaps`), which this driver does not answer, so the DX7
+`dwTextureCaps` do not claim one.
+
+- **What the runtime builds.** A cube is six DirectDraw surfaces: the root
+  is +X's level 0 (`DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_POSITIVEX` in
+  `ddsCapsEx`), the other five faces (their own face bit each) hang off
+  its attach list, and every face carries its own mip chain. Two things
+  in the old walk were wrong for that shape: `d3dpt_os_attached` leaves
+  out anything with `DDSCAPS_MIPMAP`, which a mip-mapped cube's faces
+  have, and returns a one-level cube's faces as if they were a flip
+  chain's other members, which `d3d_register_chain` would have
+  registered as five unrelated 2D textures.
+- **Driver** (`core_surf.c`). A new hook in both layers,
+  `d3dpt_os_attached_all`, lists every attachment; `cube_faces` finds the
+  six from the root (the attached surfaces of the root's size, by face
+  bit, following the faces' own lists too), `d3d_register_chain` skips
+  faces, and a face reached on its own is left to its root. The root's
+  registration (`d3d_register_cube`) puts every face into the table under
+  the face's own handle — a face-sized TEXBLT or a Lock can name one —
+  with the root carrying `SURF_CUBE` (every face's levels and handles,
+  allocated for cubes only), and sends the host one `VRAM_SURFACE` with
+  `D3DPT_VS_CUBE`: face 0's level 0 in the record, then `6 × levels − 1`
+  `{offset, pitch}` pairs face-major; then a `VRAM_CUBE_FACE` {face
+  handle, cube, face} for each face with a handle. A TEXBLT whose
+  destination is a cube root (the runtime's `UpdateTexture` of a
+  default-pool cube from a system-memory one) copies the rectangle on
+  every face, every level (`blt_levels`, factored out of the 2D path); a
+  cube and a 2D texture in one TEXBLT are refused.
+- **Executor.** A plain cube is a managed `IDirect3DCubeTexture9`
+  uploaded face by face from the level table; a render-target cube is a
+  default-pool one of one level whose face 0 is the cube entry's own
+  target, and every other face's entry takes its surface of the cube as
+  its `rt` — so `SETRENDERTARGET` by a face's handle, the clear and the
+  draws into it, the untracked-write shadow and `READBACK` into the face's
+  own VRAM are the 2D render-target path unchanged. `VRAM_DIRTY` of a face
+  means the cube: a plain cube is read again whole, a render-target cube
+  uploads the faces whose entries are dirty (`faces_dirty`) so a face the
+  host drew into and nobody wrote is never overwritten. Releasing or
+  re-registering a cube releases its faces' surfaces with it.
+- **A lead found on the way, not acted on:** the executor maps
+  `D3DTSS_MIPFILTER` with DirectX 7's numbering (`D3DTFP_POINT` 2,
+  `D3DTFP_LINEAR` 3), while DirectX 8's `D3DTEXF_POINT` / `D3DTEXF_LINEAR`
+  are 1 / 2 — if the DX8 runtime hands a DX8 driver its own values, every
+  DX8 trilinear filter is drawn point-mipped and a point-mipped one
+  unmipped, which is what D3DGAME8's open difference from the native
+  oracle along the checker's texel edges looks like (the track doc's
+  state item 7). CUBETEST sets `MIPFILTER` LINEAR, whose level-1 texels
+  are one colour, so it passes under either reading.
+- **Tests.** `tools/d3dpt-dp2-test.cpp`: a two-level A8R8G8B8 cube in VRAM
+  with a quad at each face's direction (XYZRHW + `TEXCOORDSIZE3`) and +Z
+  minified onto 4 × 4 pixels (level 1), a face rewritten and marked dirty
+  under its own handle, a render-target cube cleared through two faces'
+  handles and sampled, the face read back into its own VRAM; refused: a
+  cube that is not square, one short of its face levels, one whose faces
+  run past VRAM, face 6, a face of an unknown cube, a face of a 2D
+  texture. `DRIVER\CUBETEST.EXE` (`xp-driver-test.sh <image> cubetest`)
+  does the same through XP's own d3d8.dll: a MANAGED two-level cube, a
+  face rewritten by Lock, a DEFAULT cube filled by `UpdateTexture` from a
+  SYSTEMMEM one (the TEXBLT), a DXT1 cube, a render-target cube whose six
+  faces are cleared through `GetCubeMapSurface` + `SetRenderTarget`,
+  fixed-function `TCI_CAMERASPACENORMAL` generation and a vs 1.1 writing
+  the direction to `oT0`; the caps and `CheckDeviceFormat` answers are the
+  log's first lines. **9 cases, 0 failed** in the guest (a qcow2 overlay of
+  `winxp-m7` under TCG on the Air, 2026-09-11), the ninth an
+  `UpdateTexture` into a cube the host had already uploaded — the one case
+  that fails if a write reaches VRAM without the host hearing of it.
+- **How the runtime actually fills a cube.** The system-memory copies of
+  a managed cube and the source of an `UpdateTexture` do reach
+  `CreateSurfaceEx`, but some with no pixel format and a shape of their
+  own (32 × 4 for a 16-texel cube), and none with its faces attached where
+  the root's are; the driver logs them `not mirrored … (system memory)` and
+  leaves them out. No `TEXBLT` was seen for a cube at all: the default-pool
+  cube's faces are written through Lock / Unlock under each face's own
+  handle, which the host's face-to-cube forwarding turns into a re-read
+  (the executor's `cube face N written by the guest` line). The cube
+  `TEXBLT` path (`blt_levels` on every face) is therefore unexercised by
+  the runtime so far; it is kept for a runtime or title that sends one.
+
+### The DX8 feature probes (2026-09-11)
+
+One program per Direct3D 8 feature in `DRIVER\`, each through XP's own
+d3d8.dll with every draw read back in the guest, over one shared header
+(`guest-tools/src/d3dptvid/d3d8probe.h`: the windowed device, the log,
+row readback, the case bookkeeping). A probe first logs the caps and
+`CheckDeviceFormat` answers for its feature; **when the caps say the
+driver has no such feature it ends with `(not offered: <why>)` and runs
+nothing**, which is what the probe of a feature not built yet prints —
+the same program is the feature's check the day the caps claim it.
+`tools/xp-driver-test.sh <image> probe <NAME>` runs one, `probes` all
+eight in one boot (a staged batch file), and the verdict is PASS, NOT
+OFFERED or FAIL. Where they stood on 2026-09-11 (the overlay above):
+
+| Probe | Feature | Verdict |
+|---|---|---|
+| `CUBETEST` | cube textures (v11) | PASS, 9 cases |
+| `STRMTEST` | more than one vertex stream (v10): three streams under a vs 1.1 from a StartVertex, indexed with a BaseVertexIndex and a MinIndex, a system-memory stream, the fixed function on three streams, streams 0 and 3 with a gap, stale streams under an FVF draw | PASS, 6 cases |
+| `VOLTEST` | volume textures (incl. `UpdateTexture`, the DDI's `VOLUMEBLT`) | NOT OFFERED |
+| `FMTTEST` | L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2, DXT4 (colour and replicated alpha each) | NOT OFFERED |
+| `BUMPTEST` | EMBM (V8U8 + `BUMPENVMAP`) and DOT3 | PASS, 2 cases (DOT3); EMBM skipped — the op is claimed, no V8U8 is listed |
+| `SPRTEST` | point sprites | PASS, 3 cases; the per-vertex size case skipped — `D3DFVFCAPS_PSIZE` is not claimed |
+| `ANISTEST` | anisotropic filtering | NOT OFFERED |
+| `PATCHTST` | RT- and N-patches | NOT OFFERED |
+
+Two things the probes turned up beyond their verdicts: `TextureOpCaps`
+claims `BUMPENVMAP` / `BUMPENVMAPLUMINANCE` with no bump format to use
+them on (harmless — a title checks the format — but the two should
+agree), and per-vertex point size is one `FVFCaps` bit away (the driver's
+`fvf_stride` and the host already carry `D3DFVF_PSIZE`).

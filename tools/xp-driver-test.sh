@@ -14,6 +14,12 @@
 #                                                       # every draw read back in the guest; PASS = "0 failed" in shtest.log
 #   tools/xp-driver-test.sh <image.qcow2> cktest       # CKTEST: palettized textures + colour keying through the DX7 HAL,
 #                                                       # every draw read back in the guest; PASS = "0 failed" in cktest.log
+#   tools/xp-driver-test.sh <image.qcow2> cubetest     # CUBETEST: cube textures through d3d8.dll on the DX8 DDI (protocol v11),
+#                                                       # every draw read back in the guest; PASS = "0 failed" in cubetest.log
+#   tools/xp-driver-test.sh <image.qcow2> probe VOLTEST  # one DX8 feature probe (d3d8probe.h: CUBETEST STRMTEST VOLTEST FMTTEST
+#                                                       # BUMPTEST SPRTEST ANISTEST PATCHTST): PASS, NOT OFFERED (the caps say
+#                                                       # the driver has no such feature) or FAIL, from the probe's last line
+#   tools/xp-driver-test.sh <image.qcow2> probes       # all eight in one boot, a verdict each
 #   tools/xp-driver-test.sh <image.qcow2> ebtest       # EBTEST: the DirectX 3 path (IDirect3D v1, execute buffers, texture
 #                                                       # handles, viewport Clear) on the HAL; PASS = "0 failed" in ebtest.log
 #   tools/xp-driver-test.sh <image.qcow2> cmd 'D:\DRIVER\SETMODE.EXE'   # any guest command line
@@ -55,7 +61,7 @@ if [ "$(uname -s)" = Darwin ]; then
     done
   fi
 fi
-IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|d3d7|d3dgame8|shtest|cktest|ebtest|cmd|bat}"; shift 2
+IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|d3d7|d3dgame8|shtest|cktest|cubetest|probe|probes|ebtest|cmd|bat}"; shift 2
 OUT="${OUT:-$ROOT/build/xp-driver-test}"; mkdir -p "$OUT"
 ISO="$ROOT/guest-tools/out/d3dpt-driver.iso"
 [ -f "$ISO" ] || { echo "no $ISO: run guest-tools/build-driver.sh"; exit 1; }
@@ -102,6 +108,14 @@ if [ "$MODE" = d3dgame8 ]; then
     'D3DGAME8.EXE -frames 600 -dump 300 E:\G8.BMP' 'copy d3dgame8.log E:\g8.log > nul' 'echo done > E:\G8DONE.TXT' 'echo G8DONE > COM1' > "$OUT/g8.bat"
   stage_bat "$OUT/g8.bat"
 fi
+PROBES="CUBETEST STRMTEST VOLTEST FMTTEST BUMPTEST SPRTEST ANISTEST PATCHTST"
+if [ "$MODE" = probes ]; then
+  # the DX8 feature probes one after the other; each writes <name>.log where it runs
+  { printf '%s\n' '@echo off' 'cd /d %TEMP%'
+    for p in $PROBES; do printf '%s\n' "D:\\DRIVER\\$p.EXE" "copy $p.LOG E:\\ > nul"; done
+    printf '%s\n' 'echo PRDONE > COM1'; } > "$OUT/probes.bat"
+  stage_bat "$OUT/probes.bat"
+fi
 SOCK="$OUT/qmp.sock"; rm -f "$SOCK"
 ACCEL=(-cpu pentium3)
 [ -e /dev/kvm ] && [ -z "${NO_KVM:-}" ] && ACCEL=(-accel kvm -cpu "${CPU:-host}")   # CPU=pentium3: Max Payne's JPEG decoder mis-decodes on a modern family
@@ -137,6 +151,18 @@ run_until() {  # <marker> <cap> <command line> — run it, and wait for it to sa
   gw_wait_log "$SER" "$mark" "$cap" || true
 }
 pull() { mcopy -n -i "$SCRATCH@@1048576" "::/$1" "$OUT/$1" 2>/dev/null && echo "-- $1" && cat "$OUT/$1"; }
+probe_verdict() {  # <NAME>: a DX8 feature probe's last line as PASS, NOT OFFERED or FAIL (d3d8probe.h); no log is a FAIL
+  local l="$OUT/$(echo "$1" | tr A-Z a-z).log"
+  rm -f "$l"
+  mcopy -n -i "$SCRATCH@@1048576" "::/$(basename "$l")" "$l" 2>/dev/null || true
+  if grep -q 'failed (not offered' "$l" 2>/dev/null; then
+    echo "-- $1: NOT OFFERED ($(grep -o 'not offered: [^)]*' "$l" | tail -1 | cut -c14-))"
+  elif grep -qE ': [1-9][0-9]* cases, 0 failed' "$l" 2>/dev/null; then
+    echo "-- $1: PASS ($(grep -oE '[0-9]+ cases' "$l" | tail -1))"
+  else
+    echo "-- $1: FAIL (see $l and the device log)"
+  fi
+}
 finish() {
   Q screendump "$OUT/$MODE-end.png" || true
   Q json '{"execute":"system_powerdown"}' >/dev/null || true
@@ -215,6 +241,18 @@ case "$MODE" in
     finish
     pull shtest.log
     if grep -q 'shtest: [1-9][0-9]* cases, 0 failed' "$OUT/shtest.log" 2>/dev/null; then echo "-- shtest: PASS"; else echo "-- shtest: FAIL (see $OUT/shtest.log and the device log)"; fi ;;
+  cubetest|probe)
+    p=CUBETEST; [ "$MODE" = probe ] && p="$(echo "${1:?probe name, e.g. VOLTEST}" | tr a-z A-Z)"
+    lp="$(echo "$p" | tr A-Z a-z)"
+    run_until PRDONE "${CMD_WAIT:-300}" "cd /d %TEMP% & D:\\DRIVER\\$p.EXE & copy $lp.log E:\\"
+    finish
+    pull "$lp.log" || true
+    probe_verdict "$p" ;;
+  probes)
+    run 'E:\RUN.BAT'                                        # the eight probes (staged above)
+    gw_wait_log "$SER" PRDONE "${CMD_WAIT:-900}" || true
+    finish
+    for p in $PROBES; do probe_verdict "$p"; done ;;
   cktest)
     run 'cd /d %TEMP% & D:\DRIVER\CKTEST.EXE & copy cktest.log E:\ & copy ck*.bmp E:\ & echo CKDONE > COM1'
     sleep 8; Q screendump "$OUT/cktest-fullscreen.png" || true

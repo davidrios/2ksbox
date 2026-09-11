@@ -270,6 +270,13 @@ void d3d_caps_init(d3dpt_core *p)
     c8->TextureCaps = (t->dwTextureCaps & ~D3DPTEXTURECAPS_TRANSPARENCY) | D3DPTEXTURECAPS_MIPMAP;   /* DX8 has no colour key; bit 3 is unused there */
     c8->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MIPFPOINT |
                             D3DPTFILTERCAPS_MIPFLINEAR | D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
+    if (!(ddflags(p) & DDF_NO_CUBE)) {
+        /* cube textures (v11), mip-mapped too, any edge: the DX8 face only
+         * — a DirectX 7 cube map is created through DirectDraw's own
+         * surface caps, which this driver does not answer */
+        c8->TextureCaps |= D3DPTEXTURECAPS_CUBEMAP_ | D3DPTEXTURECAPS_MIPCUBEMAP_;
+        c8->CubeTextureFilterCaps = c8->TextureFilterCaps;
+    }
     c8->TextureAddressCaps = t->dwTextureAddressCaps | D3DPTADDRESSCAPS_MIRRORONCE;
     c8->LineCaps = D3DLINECAPS_TEXTURE | D3DLINECAPS_ZTEST | D3DLINECAPS_BLEND | D3DLINECAPS_ALPHACMP | D3DLINECAPS_FOG;
     c8->MaxTextureWidth = c8->MaxTextureHeight = 4096;
@@ -308,17 +315,24 @@ void d3d_caps_init(d3dpt_core *p)
      * the operations in the dwRBitMask slot) */
     for (i = 0; i < sizeof(d3d_fmt8) / 4; i++) ((ULONG *)d3d_fmt8)[i] = 0;
     d3d_fmt8_n = 0;
-    fmt8_add(D3DFMT_X8R8G8B8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_DISPLAYMODE_ | D3DFORMAT_OP_3DACCELERATION_ |
-                               D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_);
-    fmt8_add(D3DFMT_A8R8G8B8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_);
-    fmt8_add(D3DFMT_R5G6B5_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_DISPLAYMODE_ | D3DFORMAT_OP_3DACCELERATION_ |
-                             D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_);
-    fmt8_add(D3DFMT_X1R5G5B5_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_);
-    fmt8_add(D3DFMT_A1R5G5B5_, D3DFORMAT_OP_TEXTURE_);
-    fmt8_add(D3DFMT_A4R4G4B4_, D3DFORMAT_OP_TEXTURE_);
-    fmt8_add(FOURCC_('D', 'X', 'T', '1'), D3DFORMAT_OP_TEXTURE_);
-    fmt8_add(FOURCC_('D', 'X', 'T', '3'), D3DFORMAT_OP_TEXTURE_);
-    fmt8_add(FOURCC_('D', 'X', 'T', '5'), D3DFORMAT_OP_TEXTURE_);
+    {
+        /* v11: every RGB and DXT texture format as a cube too (a
+         * render-target cube wherever the format is a render target); not
+         * P8, whose palettes the host keeps per 2D texture */
+        ULONG cube = (ddflags(p) & DDF_NO_CUBE) ? 0 : D3DFORMAT_OP_CUBETEXTURE_;
+
+        fmt8_add(D3DFMT_X8R8G8B8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_DISPLAYMODE_ | D3DFORMAT_OP_3DACCELERATION_ |
+                                   D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ | cube);
+        fmt8_add(D3DFMT_A8R8G8B8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ | cube);
+        fmt8_add(D3DFMT_R5G6B5_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_DISPLAYMODE_ | D3DFORMAT_OP_3DACCELERATION_ |
+                                 D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ | cube);
+        fmt8_add(D3DFMT_X1R5G5B5_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | cube);
+        fmt8_add(D3DFMT_A1R5G5B5_, D3DFORMAT_OP_TEXTURE_ | cube);
+        fmt8_add(D3DFMT_A4R4G4B4_, D3DFORMAT_OP_TEXTURE_ | cube);
+        fmt8_add(FOURCC_('D', 'X', 'T', '1'), D3DFORMAT_OP_TEXTURE_ | cube);
+        fmt8_add(FOURCC_('D', 'X', 'T', '3'), D3DFORMAT_OP_TEXTURE_ | cube);
+        fmt8_add(FOURCC_('D', 'X', 'T', '5'), D3DFORMAT_OP_TEXTURE_ | cube);
+    }
     if (!(ddflags(p) & DDF_NO_CKEY)) {
         fmt8_add(D3DFMT_P8_, D3DFORMAT_OP_TEXTURE_);
     }

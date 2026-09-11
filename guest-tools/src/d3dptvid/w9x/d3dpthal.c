@@ -178,6 +178,22 @@ ULONG d3dpt_os_attached(void *os, void **out, ULONG max)
     return n;
 }
 
+ULONG d3dpt_os_attached_all(void *os, void **out, ULONG max)
+{
+    LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl(os);
+    LPATTACHLIST a;
+    ULONG n = 0;
+
+    if (!s) return 0;
+    for (a = s->lpAttachList; a && n < max; a = a->lpLink) {
+        LPDDRAWI_DDRAWSURFACE_LCL t = surf_lcl(a->lpAttached);
+        if (t && t->lpGbl) {
+            out[n++] = t;
+        }
+    }
+    return n;
+}
+
 void *d3dpt_os_next_mip(void *os)
 {
     LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl(os);

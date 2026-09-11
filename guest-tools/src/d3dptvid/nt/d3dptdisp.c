@@ -1582,6 +1582,20 @@ ULONG d3dpt_os_attached(void *os, void **out, ULONG max)
     return n;
 }
 
+ULONG d3dpt_os_attached_all(void *os, void **out, ULONG max)
+{
+    PDD_SURFACE_LOCAL s = (PDD_SURFACE_LOCAL)os;
+    PDD_ATTACHLIST a;
+    ULONG n = 0;
+
+    for (a = s->lpAttachList; a && n < max; a = a->lpLink) {
+        if (a->lpAttached && a->lpAttached->lpGbl) {
+            out[n++] = a->lpAttached;
+        }
+    }
+    return n;
+}
+
 /* the next mip level attached to s (smaller, DDSCAPS_MIPMAP), or NULL */
 void *d3dpt_os_next_mip(void *os)
 {

@@ -164,6 +164,10 @@ void surf_forget(ULONG handle)
 
     if (t) {
         t->used = 0;
+        if (t->cube) {
+            d3dpt_os_free(t->cube);
+            t->cube = NULL;
+        }
     }
 }
 
@@ -214,6 +218,197 @@ void d3d_dirty_range(d3dpt_core *p, ULONG handle, ULONG off, ULONG len)
     }
 }
 
+
+/* a cube's six faces (v11), found from its root: face[0] is the root, face
+ * n the attached surface of the root's size carrying face bit n. DirectDraw
+ * hangs all five off the root, but the search follows the faces' own lists
+ * too rather than rely on that */
+static ULONG cube_faces(d3dpt_core *p, void *root, void **face)
+{
+    void *q[8], *att[24];
+    d3dpt_surf_desc r, d;
+    ULONG nq = 0, found = 1, i, k, n, f, bits;
+
+    for (i = 0; i < 6; i++) {
+        face[i] = NULL;
+    }
+    if (!d3dpt_os_surf(p, root, &r)) {
+        return 0;
+    }
+    face[0] = root;
+    q[nq++] = root;
+    for (i = 0; i < nq && found < 6; i++) {
+        n = d3dpt_os_attached_all(q[i], att, 24);
+        for (k = 0; k < n; k++) {
+            if (!d3dpt_os_surf(p, att[k], &d) || !(d.caps2 & DDSCAPS2_CUBEMAP_) || d.w != r.w || d.h != r.h) {
+                continue;
+            }
+            bits = (d.caps2 & DDSCAPS2_CUBEMAP_ALLFACES_) / DDSCAPS2_CUBEMAP_POSITIVEX_;
+            for (f = 0; f < 6 && !(bits & (1u << f)); f++) {
+            }
+            if (f == 6 || face[f]) {
+                continue;
+            }
+            face[f] = att[k];
+            found++;
+            if (nq < 8) {
+                q[nq++] = att[k];
+            }
+        }
+    }
+    return found;
+}
+
+/* A cube texture (v11). The table gets one entry per face under the face's
+ * own handle — the root's carries SURF_CUBE, every face's levels, for a
+ * TEXBLT between two cubes; the others are ordinary entries a face-sized
+ * TEXBLT or a Lock can name — and a video-memory cube goes to the host as
+ * one VRAM_SURFACE with D3DPT_VS_CUBE and every face's levels, then a
+ * VRAM_CUBE_FACE for each face that has a handle of its own */
+static void d3d_register_cube(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG fmt, ULONG caps, BOOL sysmem)
+{
+    void *face[6];
+    SURF_CUBE *cb;
+    d3dpt_vram_surface *r;
+    d3dpt_u32x2 *tail;
+    ULONG levels = 16, f, l, n, i;
+    ULONG_PTR fb = sysmem ? 0 : (ULONG_PTR)p->fb;
+
+    /* the runtime's system-memory copies come here too, some with no pixel
+     * format and a shape of their own (32 x 4 for a 16-texel cube): they
+     * are only ever a TEXBLT's source, which a cube's UpdateTexture was not
+     * seen to use (doc 15) */
+    n = (s->w == s->h && fmt) ? cube_faces(p, s->os, face) : 0;
+    if (n != 6) {
+        if (p->reg_lines < 4096) {
+            p->reg_lines++;
+            dbg_hex(p, "d3dptdisp: cube ", s->handle);
+            dbg_hex(p, " not mirrored: w ", s->w);
+            dbg_hex(p, " h ", s->h);
+            dbg_hex(p, " faces found ", n);
+            dbg_puts(p, sysmem ? " (system memory)\n" : "\n");
+        }
+        return;
+    }
+    cb = d3dpt_os_alloc(sizeof(*cb));
+    if (!cb) {
+        return;
+    }
+    for (f = 0; f < 6; f++) {
+        d3dpt_surf_desc d;
+        void *m;
+
+        if (!d3dpt_os_surf(p, face[f], &d)) {
+            d3dpt_os_free(cb);
+            return;
+        }
+        cb->handle[f] = d.handle;
+        cb->f[f][0].mem = fb + d.vidmem;
+        cb->f[f][0].pitch = surf_pitch(fmt, d.w, d.pitch);
+        n = 1;
+        for (m = d3dpt_os_next_mip(face[f]); m && n < 16; m = d3dpt_os_next_mip(m)) {
+            d3dpt_surf_desc md;
+
+            if (!d3dpt_os_surf(p, m, &md)) {
+                break;
+            }
+            cb->f[f][n].mem = fb + md.vidmem;
+            cb->f[f][n].pitch = surf_pitch(fmt, md.w, md.pitch);
+            n++;
+        }
+        if (n < levels) {
+            levels = n;                     /* the faces agree; the fewest if they do not */
+        }
+    }
+    for (f = 0; f < 6; f++) {
+        SURF *t = cb->handle[f] ? surf_slot(cb->handle[f], TRUE) : NULL;
+
+        if (!t) {
+            continue;
+        }
+        if (t->cube && t->cube != cb) {
+            d3dpt_os_free(t->cube);
+        }
+        t->cube = f == 0 ? cb : NULL;
+        t->used = 1;
+        t->lcl = face[f];
+        t->ck_on = 0xff;
+        t->sysmem = (UCHAR)sysmem;
+        t->buffer = 0;
+        t->mem = cb->f[f][0].mem;
+        t->pitch = cb->f[f][0].pitch;
+        t->w = s->w;
+        t->h = s->h;
+        t->fmt = fmt;
+        t->size = t->pitch * surf_rows(fmt, s->h);
+        t->levels = (UCHAR)levels;
+        t->vram_off = sysmem ? 0 : (ULONG)(t->mem - fb);
+        t->lock_off = 0;
+        t->lock_len = t->size;
+        for (l = 1; l < levels; l++) {
+            t->lv[l - 1] = cb->f[f][l];
+        }
+    }
+    if (!cb->handle[0]) {                   /* the root always has one (d3d_register_at checked) */
+        d3dpt_os_free(cb);
+        return;
+    }
+    if (sysmem) {
+        return;
+    }
+    for (f = 0; f < 6; f++) {
+        for (l = 0; l < levels; l++) {
+            ULONG w = s->w >> l ? s->w >> l : 1;
+
+            if ((ULONGLONG)(cb->f[f][l].mem - fb) + (ULONGLONG)cb->f[f][l].pitch * surf_rows(fmt, w) > heap_end(p)) {
+                return;
+            }
+        }
+    }
+    r = d3dpt_enc_cmd(&p->enc, D3DPT_OP_VRAM_SURFACE, sizeof(*r), (6 * levels - 1) * sizeof(d3dpt_u32x2));
+    if (!r) {
+        return;
+    }
+    r->handle = s->handle;
+    r->offset = (ULONG)(cb->f[0][0].mem - fb);
+    r->width = s->w;
+    r->height = s->h;
+    r->pitch = cb->f[0][0].pitch;
+    r->format = fmt;
+    r->caps = caps | D3DPT_VS_CUBE;
+    r->levels = levels;
+    tail = (d3dpt_u32x2 *)(r + 1);
+    for (i = 1; i < 6 * levels; i++) {
+        tail[i - 1].a = (ULONG)(cb->f[i / levels][i % levels].mem - fb);
+        tail[i - 1].b = cb->f[i / levels][i % levels].pitch;
+    }
+    for (f = 1; f < 6; f++) {
+        d3dpt_u32x4 *c;
+
+        if (!cb->handle[f]) {
+            continue;
+        }
+        c = d3dpt_enc_cmd(&p->enc, D3DPT_OP_VRAM_CUBE_FACE, sizeof(*c), 0);
+        if (c) {
+            c->a = cb->handle[f];
+            c->b = s->handle;
+            c->c = f;
+            c->d = 0;
+        }
+    }
+    if (p->reg_lines < 4096) {
+        p->reg_lines++;
+        dbg_hex(p, "d3dptdisp: cube ", s->handle);
+        dbg_hex(p, " edge ", s->w);
+        dbg_hex(p, " levels ", levels);
+        dbg_hex(p, " faces ", cb->handle[1]);
+        dbg_hex(p, " ", cb->handle[2]);
+        dbg_hex(p, " ", cb->handle[3]);
+        dbg_hex(p, " ", cb->handle[4]);
+        dbg_hex(p, " ", cb->handle[5]);
+        dbg_puts(p, "\n");
+    }
+}
 
 /* VRAM_SURFACE for s at the given VRAM offset (its own, or the one a flip hands it) */
 void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL quiet)
@@ -269,6 +464,14 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
     if (!handle) {
         return;
     }
+    if ((s->caps2 & DDSCAPS2_CUBEMAP_) && !buffer) {
+        /* a cube texture (v11): the root (+X, level 0) brings all six
+         * faces; a face reached on its own is its root's to register */
+        if ((caps & D3DPT_VS_TEXTURE) && (s->caps2 & DDSCAPS2_CUBEMAP_POSITIVEX_)) {
+            d3d_register_cube(p, s, fmt, caps, sysmem);
+        }
+        return;
+    }
     if (caps & D3DPT_VS_TEXTURE) {
         for (m = d3dpt_os_next_mip(s->os); m && n < 16; m = d3dpt_os_next_mip(m)) {
             d3dpt_surf_desc d;
@@ -284,6 +487,10 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
     /* the table entry (system-memory surfaces live only here) */
     t = surf_slot(handle, TRUE);
     if (t) {
+        if (t->cube) {                      /* the handle was a cube's before */
+            d3dpt_os_free(t->cube);
+            t->cube = NULL;
+        }
         t->used = 1;
         t->lcl = s->os;
         t->ck_on = 0xff;
@@ -411,7 +618,10 @@ void d3d_register_chain(d3dpt_core *p, void *os)
 
             for (j = 0; j < n && seen[j] != att[k]; j++) {
             }
-            if (j < n || !d3dpt_os_surf(p, att[k], &d)) {
+            /* a cube's faces come with their root (d3d_register_cube): a
+             * one-level cube's faces carry no MIPMAP cap, so the layer's
+             * list has them */
+            if (j < n || !d3dpt_os_surf(p, att[k], &d) || (d.caps2 & DDSCAPS2_CUBEMAP_)) {
                 continue;
             }
             seen[n++] = att[k];

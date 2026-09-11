@@ -769,6 +769,122 @@ int main(int argc, char **argv) {
         CHECK(hr == 0, "SETPALETTE on an unknown surface: ignored (0x%08x)", hr);
     }
 
+    /* --- cube textures (v11): a 16-texel cube of two levels in VRAM, every
+     * face and level its own colour, drawn with 3D texture coordinates at
+     * each face's direction and minified onto a small quad (level 1); a
+     * face's VRAM rewritten and marked dirty under the face's own handle; a
+     * render-target cube drawn into face by face and then sampled; hostile
+     * records --- */
+    {
+        enum { CUBE_OFF = 0x5a0000, RTC_OFF = 0x5b0000, H_CUBE = 20, H_RTC = 30, EDGE = 16, RTE = 32, FSTRIDE = 0x800 };
+        static const uint32_t C0[6] = { 0xffff0000u, 0xff00ff00u, 0xff0000ffu, 0xffffff00u, 0xffff00ffu, 0xff00ffffu };
+        static const uint32_t C1[6] = { 0xff800000u, 0xff008000u, 0xff000080u, 0xff808000u, 0xff800080u, 0xff008080u };
+        static const float DIR[6][3] = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+        auto lvl_off = [](uint32_t edge, uint32_t l) { uint32_t o = 0; for (uint32_t k = 0; k < l; k++) o += (edge >> k) * (edge >> k) * 4; return o; };
+        auto fill = [](uint32_t off, uint32_t n, uint32_t c) { for (uint32_t i = 0; i < n; i++) memcpy(vram + off + 4 * i, &c, 4); };
+        /* a cube's record: face f at off0 + f * fstride, its levels one after the other (32-bit texels) */
+        auto cube_rec = [&](uint32_t handle, uint32_t off0, uint32_t edge, uint32_t levels, uint32_t fmt, uint32_t caps, uint32_t fstride,
+                            uint32_t height = 0, uint32_t short_by = 0) {
+            uint32_t nlv = 6 * levels - 1 - short_by;
+            d3dpt_vram_surface *s = (d3dpt_vram_surface *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_SURFACE, sizeof *s, nlv * sizeof(d3dpt_u32x2));
+            *s = { handle, off0, edge, height ? height : edge, edge * 4, fmt, caps | D3DPT_VS_CUBE, levels };
+            d3dpt_u32x2 *lv = (d3dpt_u32x2 *)(s + 1);
+            for (uint32_t i = 1; i <= nlv; i++) lv[i - 1] = { off0 + (i / levels) * fstride + lvl_off(edge, i % levels), (edge >> (i % levels)) * 4 };
+        };
+        auto face_rec = [&](uint32_t face_h, uint32_t cube_h, uint32_t f) {
+            d3dpt_u32x4 *r = (d3dpt_u32x4 *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_CUBE_FACE, sizeof *r, 0);
+            *r = { face_h, cube_h, f, 0 };
+        };
+        for (uint32_t f = 0; f < 6; f++) {
+            fill(CUBE_OFF + f * FSTRIDE, EDGE * EDGE, C0[f]);
+            fill(CUBE_OFF + f * FSTRIDE + lvl_off(EDGE, 1), (EDGE / 2) * (EDGE / 2), C1[f]);
+        }
+        cube_rec(H_CUBE, CUBE_OFF, EDGE, 2, D3DFMT_A8R8G8B8, D3DPT_VS_TEXTURE, FSTRIDE);
+        for (uint32_t f = 1; f < 6; f++) face_rec(H_CUBE + f, H_CUBE, f);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == 0, "cube texture and its five faces registered (status %u)", enc.last_status);
+        struct cv { float x, y, z, rhw; uint32_t diffuse; float u, v, w; };
+        const uint32_t FVF_CUBE = 0x4 | 0x40 | 0x100 | (1u << 16);   /* XYZRHW | DIFFUSE | TEX1 | TEXCOORDSIZE3(0) */
+        auto quad = [](float x0, float y0, float sz, const float *d) {
+            static const float xs[6] = { 0, 1, 0, 0, 1, 1 }, ys[6] = { 0, 0, 1, 1, 0, 1 };
+            std::vector<cv> q;
+            for (int i = 0; i < 6; i++) q.push_back({ x0 + xs[i] * sz, y0 + ys[i] * sz, 0.5f, 1.0f, 0xffffffffu, d[0], d[1], d[2] });
+            return q;
+        };
+        /* a quad at each face's direction, 40 pixels each along y = 400..440 */
+        auto faces = [&](Dp2Buf &e, uint32_t tex) {
+            e.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+            e.set_vs(FVF_CUBE);
+            e.tss(0, 0, tex); e.tss(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1); e.tss(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+            e.tss(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1); e.tss(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+            e.tss(0, 16, 1); e.tss(0, 17, 1); e.tss(0, 18, 2);          /* point sampling, point mips */
+            for (int f = 0; f < 6; f++) e.draw8(4, 2, FVF_CUBE, quad(40.0f + 90.0f * f, 400.0f, 40.0f, DIR[f]));
+        };
+        auto at = [](int f) { return px(60 + 90 * f, 420); };
+        auto all_faces = [&](const uint32_t *want) { bool ok = true; for (int f = 0; f < 6; f++) ok = ok && near_(at(f), want[f] & 0xffffff, 2); return ok; };
+        Dp2Buf k1;
+        faces(k1, H_CUBE);
+        /* +Z spread over 4 x 4 pixels: 4 texels a pixel, level 2 asked, level 1 the last */
+        std::vector<cv> mq = { { 300, 300, 0.5f, 1, ~0u, -1, 1, 1 }, { 304, 300, 0.5f, 1, ~0u, 1, 1, 1 }, { 300, 304, 0.5f, 1, ~0u, -1, -1, 1 },
+                               { 300, 304, 0.5f, 1, ~0u, -1, -1, 1 }, { 304, 300, 0.5f, 1, ~0u, 1, 1, 1 }, { 304, 304, 0.5f, 1, ~0u, 1, -1, 1 } };
+        k1.draw8(4, 2, FVF_CUBE, mq);
+        hr = send_dp2(&enc, k1, vtx);
+        hr |= readback(&enc, H_RT);
+        CHECK(hr == 0 && all_faces(C0), "cube texture, a quad at each face's direction: 0x%06x 0x%06x 0x%06x 0x%06x 0x%06x 0x%06x",
+              at(0), at(1), at(2), at(3), at(4), at(5));
+        CHECK(near_(px(301, 301), C1[4] & 0xffffff, 2), "cube level 1 where +Z is minified: 0x%06x", px(301, 301));
+        /* face +Y rewritten in VRAM, VRAM_DIRTY under the face's handle: the whole cube is read again */
+        fill(CUBE_OFF + 2 * FSTRIDE, EDGE * EDGE, 0xffffffffu);
+        { d3dpt_handle *hh = (d3dpt_handle *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_DIRTY, sizeof *hh, 0); *hh = { H_CUBE + 2, 0 }; }
+        Dp2Buf k2;
+        faces(k2, H_CUBE);
+        hr = send_dp2(&enc, k2, vtx);
+        hr |= readback(&enc, H_RT);
+        CHECK(hr == 0 && near_(at(2), 0xffffff, 2) && near_(at(1), C0[1] & 0xffffff, 2),
+              "a face's VRAM rewritten, VRAM_DIRTY under the face's own handle: the cube re-read (0x%06x, its neighbour 0x%06x)", at(2), at(1));
+        /* a render-target cube: faces -Y and +X cleared through SETRENDERTARGET by face handle, then sampled */
+        cube_rec(H_RTC, RTC_OFF, RTE, 1, D3DFMT_X8R8G8B8, D3DPT_VS_TEXTURE | D3DPT_VS_RENDER_TARGET, RTE * RTE * 4);
+        for (uint32_t f = 1; f < 6; f++) face_rec(H_RTC + f, H_RTC, f);
+        Dp2Buf k3;
+        k3.cmd(41, 1); k3.u32(H_RTC + 3); k3.u32(0);
+        k3.clear(D3DCLEAR_TARGET, 0xffff00ffu, 1.0f);
+        k3.cmd(41, 1); k3.u32(H_RTC); k3.u32(0);
+        k3.clear(D3DCLEAR_TARGET, 0xff00ff00u, 1.0f);
+        k3.cmd(41, 1); k3.u32(H_RT); k3.u32(H_Z);
+        faces(k3, H_RTC);
+        hr = send_dp2(&enc, k3, vtx);
+        hr |= readback(&enc, H_RT);
+        CHECK(hr == 0 && near_(at(3), 0xff00ff, 2) && near_(at(0), 0x00ff00, 2),
+              "render-target cube: faces -Y and +X drawn into by their own handles, then sampled: 0x%06x 0x%06x", at(3), at(0));
+        hr = readback(&enc, H_RTC + 3);
+        uint32_t f3;
+        memcpy(&f3, vram + RTC_OFF + 3 * RTE * RTE * 4 + 5 * RTE * 4 + 5 * 4, 4);
+        CHECK(hr == 0 && (f3 & 0xffffff) == 0xff00ff, "a render-target face read back into its own VRAM (0x%08x, 0x%06x)", hr, f3 & 0xffffff);
+        Dp2Buf k4;
+        k4.tss(0, 0, 0);
+        hr = send_dp2(&enc, k4, vtx);
+        /* hostile: not square, short of its face levels, faces past VRAM; a
+         * face 6, a face of an unknown cube, a face of a texture that is no cube */
+        cube_rec(40, CUBE_OFF, EDGE, 2, D3DFMT_A8R8G8B8, D3DPT_VS_TEXTURE, FSTRIDE, EDGE * 2);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "a cube that is not square refused (status %u)", enc.last_status);
+        cube_rec(40, CUBE_OFF, EDGE, 2, D3DFMT_A8R8G8B8, D3DPT_VS_TEXTURE, FSTRIDE, 0, 3);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "a cube record short of its face levels refused (status %u)", enc.last_status);
+        cube_rec(40, VRAM_SIZE - FSTRIDE, EDGE, 2, D3DFMT_A8R8G8B8, D3DPT_VS_TEXTURE, FSTRIDE);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "a cube whose faces run past VRAM refused (status %u)", enc.last_status);
+        face_rec(41, H_CUBE, 6);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "cube face 6 refused (status %u)", enc.last_status);
+        face_rec(41, 999, 1);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_HANDLE, "a face of an unknown cube refused (status %u)", enc.last_status);
+        face_rec(41, H_TEX16, 1);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_HANDLE, "a face of a texture that is no cube refused (status %u)", enc.last_status);
+    }
+
     /* --- the DirectX 3 execute-buffer path (doc 15 "Execute buffers"): the
      * legacy 8-byte INDEXEDTRIANGLELIST (v1, v2, v3, wFlags) and the DX5
      * texture render states a DX3 title still sends, TEXTUREHANDLE (1) and

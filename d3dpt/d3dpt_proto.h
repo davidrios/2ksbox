@@ -30,7 +30,7 @@
 
 #include <stdint.h>
 
-#define D3DPT_PROTO_VERSION   10u
+#define D3DPT_PROTO_VERSION   11u
 #define D3DPT_MAGIC           0x54503344u          /* "D3PT" read at REG_MAGIC */
 
 /* guest-physical map: below mesapt's 0xe0000000+ windows and SeaBIOS' BAR area */
@@ -169,6 +169,10 @@ enum d3dpt_op {
     D3DPT_OP_VRAM_DIRTY_RANGE = 106,    /* body: d3dpt_u32x3 (handle, byte offset, bytes): the guest wrote that range of a
                                          * VRAM buffer (D3DPT_VS_BUFFER; v9; forward). Informational for now: a DRAW8 reads
                                          * its buffers straight from VRAM, so nothing is cached that the range would refresh */
+    D3DPT_OP_VRAM_CUBE_FACE = 107,      /* body: d3dpt_u32x4 (face handle, cube handle, face 1..5, 0): the runtime's handle of
+                                         * a cube face's level 0, after the cube's own VRAM_SURFACE (D3DPT_VS_CUBE; face 0 is
+                                         * the cube's handle itself). A VRAM_DIRTY of it means the cube; on a render-target
+                                         * cube it is a target a SETRENDERTARGET / READBACK can name (v11; forward) */
     D3DPT_OP_MAX
 };
 
@@ -303,6 +307,12 @@ typedef struct d3dpt_vram_surface {
 #define D3DPT_VS_BUFFER         0x10u    /* v9: a vertex / index buffer in VRAM (D3DDEVCAPS_HWVERTEXBUFFER /
                                           * HWINDEXBUFFER): width = pitch = its bytes, height 1, format 0, no levels;
                                           * a DRAW8 names it by handle and the host reads the range from VRAM */
+#define D3DPT_VS_CUBE           0x20u    /* v11: a cube texture (with D3DPT_VS_TEXTURE, and D3DPT_VS_RENDER_TARGET for a
+                                          * render-target cube): width = height = the edge, levels per face, the
+                                          * record's offset / pitch face 0's level 0, and the tail 6 * levels - 1
+                                          * {offset, pitch} pairs, face-major — face 0's levels 1.., then face 1's
+                                          * levels 0.., … — faces in D3DCUBEMAP_FACES order (+X -X +Y -Y +Z -Z) */
+#define D3DPT_CUBE_FACES        6u
 
 typedef struct d3dpt_ctx_create {
     uint32_t handle, ret_off;       /* the context handle the guest chose; ret: d3dpt_ret */
