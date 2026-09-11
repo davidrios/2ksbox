@@ -1882,6 +1882,49 @@ through XP's own d3d8.dll: far-row contrast **0 under trilinear, 252
 under anisotropic ×16** (TCG on the Air); D3D7TEST and the other probes
 unchanged.
 
+### The rest of DX8's texture formats (2026-09-11)
+
+L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2 and DXT4 are in the
+DX8 format list as 2D textures (`D3DFORMAT_OP_TEXTURE`, no cube or volume
+op yet); `ddflags=0x4000000` (`DDF_NO_MORE_FMTS`) takes all nine out. The
+list outgrew its 16 slots (32 now). What each half does:
+
+- **The driver.** `pf_format` knows the pixel formats d3d8.dll describes
+  them with: `DDPF_LUMINANCE` (8-bit mask 0xff = L8; 16-bit with alpha
+  0xff00 = A8L8; 8-bit mask 0x0f with alpha 0xf0 = A4L4), `DDPF_ALPHA`
+  alone at 8 bits (A8), and RGB masks 0xe0/0x1c/0x03 (R3G3B2) or 0x00e0
+  with alpha 0xff00 (A8R3G3B2). The fields are read through the RGB names
+  of their union slots, because the 9x DDK's `DDPIXELFORMAT` has no
+  luminance names. DXT2 and DXT4 are in both families' FOURCC lists (NT's
+  `DrvGetDirectDrawInfo`, 9x's `fourcc[]` in the HAL block, six slots now),
+  because DirectDraw checks that list before it asks about a FOURCC
+  surface at all. `fmt_row_bytes` sizes all of them. It **also sizes
+  V8U8 now, which it never did**: a V8U8 `TEXBLT` copied rows of zero
+  bytes, so a managed bump map never reached VRAM. BUMPTEST passed
+  anyway and still does, so its bump maps must reach VRAM another way;
+  a managed one's upload is what this fixes.
+- **The host.** DXVK takes L8, A8L8, A4L4, A8, DXT2 and DXT4 as they are
+  (DXT2 / DXT4 as BC2 / BC3; the premultiplied alpha is the application's
+  business). R3G3B2 and A8R3G3B2 have no Vulkan format, and A4L4's is
+  optional. So when the device is created, the executor asks
+  `CheckDeviceFormat` about each of those formats once. Any it refuses is
+  expanded to A8R8G8B8 at upload, the way P8 is (`host_lacks`,
+  `texel_argb`), and the log says which:
+  `ddi: no host texture format 52 27 29: expanded to A8R8G8B8 at upload`
+  on the Air (KosmicKrisp has no R4G4). **X4R4G4B4 is always expanded.**
+  DXVK creates it as `VK_FORMAT_A4R4G4B4_UNORM_PACK16` with no swizzle,
+  so the X nibble samples as alpha, and a texture written with it 0
+  draws transparent. Both tests below found that on their first run.
+  It applies to the DX7 face's X4R4G4B4 surfaces too, which `pf_format`
+  already mapped.
+
+Evidence: `d3dpt-dp2-test` draws each of the seven non-DXT formats with
+its colour and with its alpha replicated, on whichever path this host
+takes (all seven right on the Air). FMTTEST through XP's own d3d8.dll
+passes **9/9**, including DXT2 and DXT4. The DX7 texture list is
+unchanged: no DX7 title is known to want these, and nothing tests them
+there.
+
 ### The DX8 feature probes (2026-09-11)
 
 One program per Direct3D 8 feature in `DRIVER\`, each through XP's own
@@ -1901,7 +1944,7 @@ OFFERED or FAIL. Where they stood on 2026-09-11 (the overlay above):
 | `CUBETEST` | cube textures (v11) | PASS, 9 cases |
 | `STRMTEST` | more than one vertex stream (v10): three streams under a vs 1.1 from a StartVertex, indexed with a BaseVertexIndex and a MinIndex, a system-memory stream, the fixed function on three streams, streams 0 and 3 with a gap, stale streams under an FVF draw | PASS, 6 cases |
 | `VOLTEST` | volume textures (incl. `UpdateTexture`, the DDI's `VOLUMEBLT`) | PASS, 4 cases (since v12, the same day; its DXT1 case not offered) |
-| `FMTTEST` | L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2, DXT4 (colour and replicated alpha each) | NOT OFFERED |
+| `FMTTEST` | L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2, DXT4 (colour and replicated alpha each) | PASS, 9 cases (since the formats were listed, the same day; see the section above) |
 | `BUMPTEST` | EMBM (V8U8 + `BUMPENVMAP`) and DOT3 | PASS, 4 cases (EMBM since V8U8 was listed, the same day; L6V5U5 / X8L8V8U8 / Q8W8V8U8 still refused) |
 | `SPRTEST` | point sprites, and a per-vertex size (`D3DFVF_PSIZE`) | PASS, 4 cases (the per-vertex case since `D3DFVFCAPS_PSIZE` was claimed, the same day) |
 | `ANISTEST` | anisotropic filtering | PASS, 1 case (since the caps claimed it, the same day: far-row contrast 0 trilinear, 252 anisotropic) |

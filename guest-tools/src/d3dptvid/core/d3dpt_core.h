@@ -52,6 +52,7 @@
 #define DDF_NO_BUMP            0x800000 /* the A/B: no V8U8 bump-map format in either texture list (EMBM's ops stay claimed, as before) */
 #define DDF_NO_VOLUME          0x1000000 /* the A/B: no volume textures (caps, format ops) */
 #define DDF_NO_ANISO           0x2000000 /* the A/B: MaxAnisotropy 1, no anisotropic filter caps */
+#define DDF_NO_MORE_FMTS       0x4000000 /* the A/B: none of L8 A8L8 A4L4 A8 X4R4G4B4 R3G3B2 A8R3G3B2 DXT2 DXT4 in the DX8 format list */
 
 /* DDI-only DX8 device caps (d3dhal.h): the runtime puts vertex / index
  * buffers in video memory through the buffer callbacks when they are set */
@@ -67,7 +68,13 @@
 #define D3DFMT_A1R5G5B5_  25u
 #define D3DFMT_A4R4G4B4_  26u
 #define D3DFMT_X4R4G4B4_  30u
+#define D3DFMT_R3G3B2_    27u
+#define D3DFMT_A8_        28u
+#define D3DFMT_A8R3G3B2_  29u
 #define D3DFMT_P8_        41u
+#define D3DFMT_L8_        50u
+#define D3DFMT_A8L8_      51u
+#define D3DFMT_A4L4_      52u
 #define D3DFMT_V8U8_      60u
 #define D3DFMT_D16_       80u
 #define D3DFMT_D24X8_     77u
@@ -257,7 +264,7 @@ BOOL d3d_init(d3dpt_core *c);
 extern D3DHAL_GLOBALDRIVERDATA_ d3d_global;
 extern D3DHAL_D3DEXTENDEDCAPS_ d3d_extcaps;
 extern D3DCAPS8_ d3d_caps8;
-extern DDPIXELFORMAT d3d_fmt8[16];
+extern DDPIXELFORMAT d3d_fmt8[32];
 extern ULONG d3d_fmt8_n;
 extern DDSURFACEDESC d3d_texformats[11];
 extern ULONG d3d_texformats_n;

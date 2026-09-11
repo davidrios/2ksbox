@@ -21,7 +21,7 @@
 D3DHAL_GLOBALDRIVERDATA_ d3d_global;
 D3DHAL_D3DEXTENDEDCAPS_ d3d_extcaps;
 D3DCAPS8_ d3d_caps8;                        /* the DX8 DDI's caps (GetDriverInfo2) */
-DDPIXELFORMAT d3d_fmt8[16];                 /* its format list */
+DDPIXELFORMAT d3d_fmt8[32];                 /* its format list */
 ULONG d3d_fmt8_n;
 struct d3dpt_zformats d3d_zformats;
 
@@ -55,6 +55,20 @@ ULONG pf_format(const DDPIXELFORMAT *f)
         f->dwBumpDuBitMask == 0x00ff && f->dwBumpDvBitMask == 0xff00) {
         return D3DFMT_V8U8_;                /* a bump map (EMBM): signed du, dv, passed to the host as is */
     }
+    /* luminance with or without its own alpha, and alpha alone: the RGB
+     * names are the union slots of dwLuminanceBitCount / BitMask /
+     * AlphaBitMask and dwAlphaBitDepth, spelled so because the 9x DDK's
+     * DDPIXELFORMAT has no luminance names */
+    if ((f->dwFlags & DDPF_LUMINANCE_) && !(f->dwFlags & DDPF_BUMPLUMINANCE_)) {
+        BOOL alpha = (f->dwFlags & DDPF_ALPHAPIXELS) != 0;
+        if (f->dwRGBBitCount == 8 && f->dwRBitMask == 0xff && !alpha) return D3DFMT_L8_;
+        if (f->dwRGBBitCount == 16 && f->dwRBitMask == 0xff && alpha && f->dwRGBAlphaBitMask == 0xff00) return D3DFMT_A8L8_;
+        if (f->dwRGBBitCount == 8 && f->dwRBitMask == 0x0f && alpha && f->dwRGBAlphaBitMask == 0xf0) return D3DFMT_A4L4_;
+        return 0;
+    }
+    if ((f->dwFlags & (DDPF_ALPHA_ | DDPF_RGB | DDPF_LUMINANCE_)) == DDPF_ALPHA_ && f->dwRGBBitCount == 8) {
+        return D3DFMT_A8_;
+    }
     if (f->dwFlags & DDPF_RGB) {
         BOOL alpha = (f->dwFlags & DDPF_ALPHAPIXELS) && f->dwRGBAlphaBitMask;
         if (f->dwRGBBitCount == 32 && f->dwRBitMask == 0x00ff0000) return alpha ? D3DFMT_A8R8G8B8_ : D3DFMT_X8R8G8B8_;
@@ -62,6 +76,10 @@ ULONG pf_format(const DDPIXELFORMAT *f)
             if (f->dwRBitMask == 0xf800) return D3DFMT_R5G6B5_;
             if (f->dwRBitMask == 0x7c00) return alpha ? D3DFMT_A1R5G5B5_ : D3DFMT_X1R5G5B5_;
             if (f->dwRBitMask == 0x0f00) return alpha ? D3DFMT_A4R4G4B4_ : D3DFMT_X4R4G4B4_;
+            if (f->dwRBitMask == 0x00e0 && alpha && f->dwRGBAlphaBitMask == 0xff00) return D3DFMT_A8R3G3B2_;
+        }
+        if (f->dwRGBBitCount == 8 && f->dwRBitMask == 0xe0 && f->dwGBitMask == 0x1c && f->dwBBitMask == 0x03) {
+            return D3DFMT_R3G3B2_;
         }
     }
     return 0;
@@ -376,6 +394,21 @@ void d3d_caps_init(d3dpt_core *p)
         fmt8_add(FOURCC_('D', 'X', 'T', '1'), D3DFORMAT_OP_TEXTURE_ | cube);
         fmt8_add(FOURCC_('D', 'X', 'T', '3'), D3DFORMAT_OP_TEXTURE_ | cube);
         fmt8_add(FOURCC_('D', 'X', 'T', '5'), D3DFORMAT_OP_TEXTURE_ | cube);
+    }
+    if (!(ddflags(p) & DDF_NO_MORE_FMTS)) {
+        /* the rest of DX8's texture formats (FMTTEST): the luminance ones,
+         * alpha alone, and the premultiplied DXTs go to the host as they are;
+         * the host expands R3G3B2 / A8R3G3B2 (and whatever else its device
+         * lacks) to A8R8G8B8. 2D textures only: no cube or volume op yet */
+        fmt8_add(D3DFMT_L8_, D3DFORMAT_OP_TEXTURE_);
+        fmt8_add(D3DFMT_A8L8_, D3DFORMAT_OP_TEXTURE_);
+        fmt8_add(D3DFMT_A4L4_, D3DFORMAT_OP_TEXTURE_);
+        fmt8_add(D3DFMT_A8_, D3DFORMAT_OP_TEXTURE_);
+        fmt8_add(D3DFMT_X4R4G4B4_, D3DFORMAT_OP_TEXTURE_);
+        fmt8_add(D3DFMT_R3G3B2_, D3DFORMAT_OP_TEXTURE_);
+        fmt8_add(D3DFMT_A8R3G3B2_, D3DFORMAT_OP_TEXTURE_);
+        fmt8_add(FOURCC_('D', 'X', 'T', '2'), D3DFORMAT_OP_TEXTURE_);
+        fmt8_add(FOURCC_('D', 'X', 'T', '4'), D3DFORMAT_OP_TEXTURE_);
     }
     if (!(ddflags(p) & DDF_NO_CKEY)) {
         fmt8_add(D3DFMT_P8_, D3DFORMAT_OP_TEXTURE_);

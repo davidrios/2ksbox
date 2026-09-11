@@ -64,9 +64,9 @@ ULONG fmt_row_bytes(ULONG f, ULONG w)
     case D3DFMT_X8R8G8B8_: case D3DFMT_A8R8G8B8_: case D3DFMT_D24X8_: case D3DFMT_D24S8_: case D3DFMT_D32_:
         return w * 4;
     case D3DFMT_R5G6B5_: case D3DFMT_X1R5G5B5_: case D3DFMT_A1R5G5B5_: case D3DFMT_A4R4G4B4_: case D3DFMT_X4R4G4B4_:
-    case D3DFMT_D16_: case D3DFMT_D15S1_:
+    case D3DFMT_D16_: case D3DFMT_D15S1_: case D3DFMT_V8U8_: case D3DFMT_A8L8_: case D3DFMT_A8R3G3B2_:
         return w * 2;
-    case D3DFMT_P8_:
+    case D3DFMT_P8_: case D3DFMT_L8_: case D3DFMT_A4L4_: case D3DFMT_A8_: case D3DFMT_R3G3B2_:
         return w;
     default:
         if (f == FOURCC_('D', 'X', 'T', '1')) return ((w + 3) / 4) * 8;

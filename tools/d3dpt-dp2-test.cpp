@@ -769,6 +769,45 @@ int main(int argc, char **argv) {
         CHECK(hr == 0, "SETPALETTE on an unknown surface: ignored (0x%08x)", hr);
     }
 
+    /* --- the rest of DX8's texture formats (FMTTEST's, without the DXTs):
+     * each a 64x64 texture of one texel, drawn with its colour and then
+     * with its alpha replicated (D3DTA_ALPHAREPLICATE); whichever of them
+     * this host's DXVK lacks (R3G3B2 / A8R3G3B2 always) goes through the
+     * A8R8G8B8 expansion, so both paths are asked on every host --- */
+    {
+        enum { FMT_OFF = 0x340000, FMT_STRIDE = 0x2000, H_FMT = 300 };
+        struct { uint32_t fmt; const char *name; uint32_t bytes, texel, rgb, alpha; bool has_rgb; } fc[] = {
+            { D3DFMT_L8, "L8", 1, 0x80, 0x808080, 0xffffff, true },
+            { D3DFMT_A8L8, "A8L8", 2, 0x40c0, 0xc0c0c0, 0x404040, true },
+            { D3DFMT_A4L4, "A4L4", 1, 0x4c, 0xcccccc, 0x444444, true },
+            { D3DFMT_A8, "A8", 1, 0x60, 0x000000, 0x606060, false },
+            { D3DFMT_X4R4G4B4, "X4R4G4B4", 2, 0x0f84, 0xff8844, 0xffffff, true },
+            { D3DFMT_R3G3B2, "R3G3B2", 1, 0xe3, 0xff00ff, 0xffffff, true },
+            { D3DFMT_A8R3G3B2, "A8R3G3B2", 2, 0x40e3, 0xff00ff, 0x404040, true },
+        };
+        std::vector<tlv> quad(vtx.begin(), vtx.begin() + 6);
+        for (uint32_t i = 0; i < sizeof fc / sizeof fc[0]; i++) {
+            uint32_t off = FMT_OFF + i * FMT_STRIDE, pitch = TEX * fc[i].bytes, got[2];
+            for (int y = 0; y < TEX; y++)
+                for (int x = 0; x < TEX; x++) memcpy(vram + off + y * pitch + x * fc[i].bytes, &fc[i].texel, fc[i].bytes);
+            vram_surface(&enc, H_FMT + i, off, TEX, TEX, pitch, fc[i].fmt, D3DPT_VS_TEXTURE);
+            for (int a = 0; a < 2; a++) {
+                Dp2Buf f;
+                f.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+                f.tss(0, 0, H_FMT + i); f.tss(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1);
+                f.tss(0, D3DTSS_COLORARG1, D3DTA_TEXTURE | (a ? D3DTA_ALPHAREPLICATE : 0));
+                f.draw8(4, 2, FVF_TLVERTEX, quad);
+                hr = send_dp2(&enc, f, vtx);
+                hr |= readback(&enc, H_RT);
+                got[a] = hr ? 0xdeadbe : px(124, 84);
+            }
+            CHECK((!fc[i].has_rgb || near_(got[0], fc[i].rgb, 2)) && near_(got[1], fc[i].alpha, 2),
+                  "%s texture: colour 0x%06x (want 0x%06x), alpha replicated 0x%06x (want 0x%06x)", fc[i].name, got[0], fc[i].rgb, got[1], fc[i].alpha);
+        }
+        Dp2Buf r; r.tss(0, D3DTSS_COLORARG1, D3DTA_TEXTURE); r.tss(0, 0, 0);
+        send_dp2(&enc, r, vtx);
+    }
+
     /* --- cube textures (v11): a 16-texel cube of two levels in VRAM, every
      * face and level its own colour, drawn with 3D texture coordinates at
      * each face's direction and minified onto a small quad (level 1); a

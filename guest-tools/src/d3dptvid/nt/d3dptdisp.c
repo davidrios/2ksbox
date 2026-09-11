@@ -1211,11 +1211,13 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *pHalInfo, DWORD *p
     /* the FOURCC surfaces DirectDraw may create at all (it checks this
      * list before the pixel-format callbacks): the compressed textures.
      * First call: the count; second call: the codes */
-    *pdwNumFourCCCodes = p->core.d3d ? 3 : 0;
+    *pdwNumFourCCCodes = p->core.d3d ? 5 : 0;
     if (pdwFourCC && p->core.d3d) {
         pdwFourCC[0] = 0x31545844;      /* 'DXT1' (FOURCC_ is defined further down) */
         pdwFourCC[1] = 0x33545844;      /* 'DXT3' */
         pdwFourCC[2] = 0x35545844;      /* 'DXT5' */
+        pdwFourCC[3] = 0x32545844;      /* 'DXT2' (DXT3 with premultiplied alpha: the host takes it as it is) */
+        pdwFourCC[4] = 0x34545844;      /* 'DXT4' (DXT5's) */
     }
 
     for (i = 0; i < sizeof(*pHalInfo) / 4; i++) ((ULONG *)pHalInfo)[i] = 0;

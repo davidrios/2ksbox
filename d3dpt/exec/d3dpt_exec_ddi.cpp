@@ -248,9 +248,9 @@ static uint32_t fmt_row_bytes(uint32_t f, uint32_t w) {
         return w * 4;
     case D3DFMT_R5G6B5: case D3DFMT_X1R5G5B5: case D3DFMT_A1R5G5B5: case D3DFMT_A4R4G4B4:
     case D3DFMT_X4R4G4B4: case D3DFMT_A8L8: case D3DFMT_D16: case D3DFMT_D16_LOCKABLE: case D3DFMT_D15S1:
-    case D3DFMT_L16: case D3DFMT_V8U8:
+    case D3DFMT_L16: case D3DFMT_V8U8: case D3DFMT_A8R3G3B2:
         return w * 2;
-    case D3DFMT_A8: case D3DFMT_L8: case D3DFMT_A4L4: case D3DFMT_P8:
+    case D3DFMT_A8: case D3DFMT_L8: case D3DFMT_A4L4: case D3DFMT_P8: case D3DFMT_R3G3B2:
         return w;
     case D3DFMT_DXT1:
         return ((w + 3) / 4) * 8;
@@ -262,10 +262,22 @@ static uint32_t fmt_row_bytes(uint32_t f, uint32_t w) {
 }
 static uint32_t fmt_rows(uint32_t f, uint32_t h) { return fmt_dxt(f) ? (h + 3) / 4 : h; }
 
+/* formats texel_argb can expand that this host's DXVK may not take as they
+ * are: R3G3B2 / A8R3G3B2 never (no Vulkan format), A4L4 only where the
+ * device has the optional Vulkan format. Asked of the adapter once, when
+ * the device is created (ensure_device); a refused one is expanded to
+ * A8R8G8B8 at upload, like P8 */
+static const D3DFORMAT expandable_fmts[] = { D3DFMT_L8, D3DFMT_A8L8, D3DFMT_A4L4, D3DFMT_A8, D3DFMT_R3G3B2, D3DFMT_A8R3G3B2 };
+static bool host_lacks[256];
+
 /* the format the host texture is created in: P8 and colour-keyed textures
- * are expanded to A8R8G8B8 at upload (DXVK has no P8; the key becomes alpha 0) */
+ * are expanded to A8R8G8B8 at upload (DXVK has no P8; the key becomes alpha
+ * 0), and so is a format the host lacks. X4R4G4B4 always is: DXVK creates it
+ * as VK_FORMAT_A4R4G4B4 with no swizzle, so the X nibble samples as alpha and
+ * a texture written with it 0 draws transparent (FMTTEST, 2026-09-11) */
 static D3DFORMAT host_format(const VramSurf &s) {
-    if (s.d.format == D3DFMT_P8) return D3DFMT_A8R8G8B8;
+    if (s.d.format == D3DFMT_P8 || s.d.format == D3DFMT_X4R4G4B4) return D3DFMT_A8R8G8B8;
+    if (s.d.format < 256 && host_lacks[s.d.format]) return D3DFMT_A8R8G8B8;
     if (s.ckey && !fmt_dxt(s.d.format) && fmt_row_bytes(s.d.format, 1) && s.d.format != D3DFMT_A8R8G8B8) return D3DFMT_A8R8G8B8;
     return (D3DFORMAT)s.d.format;
 }
@@ -300,6 +312,15 @@ static uint32_t texel_argb(uint32_t f, uint32_t raw, const Palette *pal, bool pa
         uint32_t c = pal ? pal->argb[raw & 0xff] : (0xff000000u | (raw & 0xff) * 0x010101u);
         return pal && !pal_alpha ? c | 0xff000000u : c;
     }
+    case D3DFMT_R3G3B2: case D3DFMT_A8R3G3B2: {
+        uint32_t r = (raw >> 5) & 7, g = (raw >> 2) & 7, b = raw & 3;
+        uint32_t c = (((r << 5) | (r << 2) | (r >> 1)) << 16) | (((g << 5) | (g << 2) | (g >> 1)) << 8) | (b * 0x55);
+        return c | (f == D3DFMT_A8R3G3B2 ? (raw & 0xff00) << 16 : 0xff000000u);
+    }
+    case D3DFMT_L8: return 0xff000000u | (raw & 0xff) * 0x010101u;
+    case D3DFMT_A8L8: return ((raw & 0xff00) << 16) | (raw & 0xff) * 0x010101u;
+    case D3DFMT_A4L4: return ((raw & 0xf0) * 0x11u << 20) | (raw & 0x0f) * 0x111111u;
+    case D3DFMT_A8: return (raw & 0xff) << 24;      /* no colour: D3D9 reads A8's as black */
     default: return 0xff000000u;
     }
 }
@@ -331,6 +352,13 @@ static bool ensure_device(Exec &x, uint32_t w, uint32_t h) {
     if (FAILED(hr) || !dev) return false;
     x.dev = dev;
     x.dev_handle = 0;
+    /* the texture formats this adapter lacks, expanded at upload (host_format) */
+    char lacks[128] = "";
+    for (D3DFORMAT f : expandable_fmts) {
+        host_lacks[f] = FAILED(x.d3d->CheckDeviceFormat(0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, 0, D3DRTYPE_TEXTURE, f));
+        if (host_lacks[f]) snprintf(lacks + strlen(lacks), sizeof lacks - strlen(lacks), " %u", (unsigned)f);
+    }
+    if (lacks[0]) x.log("ddi: no host texture format%s: expanded to A8R8G8B8 at upload", lacks);
     if (x.ops.active) x.ops.active(x.ops.ud, 1);
     return true;
 }
@@ -862,7 +890,7 @@ struct Dp2 {
     }
     /* every level of a traced texture, as tex-<handle>-l<n>.ppm (RGB) +
      * tex-<handle>-l<n>-a.pgm (alpha) next to the flag file, once per handle;
-     * 32-bit and the three 16-bit RGB formats */
+     * every format texel_argb knows (P8 as a grey ramp) */
     void dump_texture(const VramSurf &s, uint32_t handle) {
         char path[512]; const char *slash = strrchr(d.trace_flag, '/');
         int dirlen = slash ? (int)(slash - d.trace_flag) : 1;
@@ -885,14 +913,12 @@ struct Dp2 {
             for (uint32_t yy = 0; yy < h; yy++) {
                 const uint8_t *row = x.vram + off + (size_t)yy * pitch;
                 for (uint32_t xx = 0; xx < w; xx++) {
-                    uint8_t px[4] = { 0, 0, 0, 255 };
-                    if (bpp == 4) { uint32_t v; memcpy(&v, row + xx * 4, 4); px[0] = v >> 16; px[1] = v >> 8; px[2] = v; px[3] = s.d.format == D3DFMT_A8R8G8B8 ? v >> 24 : 255; }
-                    else {
-                        uint16_t v; memcpy(&v, row + xx * 2, 2);
-                        if (s.d.format == D3DFMT_R5G6B5) { px[0] = (v >> 8) & 0xf8; px[1] = (v >> 3) & 0xfc; px[2] = (v << 3) & 0xf8; }
-                        else if (s.d.format == D3DFMT_A4R4G4B4 || s.d.format == D3DFMT_X4R4G4B4) { px[0] = (v >> 4) & 0xf0; px[1] = v & 0xf0; px[2] = (v << 4) & 0xf0; px[3] = s.d.format == D3DFMT_A4R4G4B4 ? (v >> 8) & 0xf0 : 255; }
-                        else { px[0] = (v >> 7) & 0xf8; px[1] = (v >> 2) & 0xf8; px[2] = (v << 3) & 0xf8; px[3] = s.d.format == D3DFMT_A1R5G5B5 ? ((v & 0x8000) ? 255 : 0) : 255; }
-                    }
+                    uint32_t raw = 0;
+                    if (bpp == 4) memcpy(&raw, row + xx * 4, 4);
+                    else if (bpp == 2) { uint16_t v; memcpy(&v, row + xx * 2, 2); raw = v; }
+                    else if (bpp == 1) raw = row[xx];
+                    uint32_t c = texel_argb(s.d.format, raw, nullptr, false);
+                    uint8_t px[4] = { (uint8_t)(c >> 16), (uint8_t)(c >> 8), (uint8_t)c, (uint8_t)(c >> 24) };
                     fwrite(px, 1, 3, rgb); fwrite(px + 3, 1, 1, al);
                 }
             }

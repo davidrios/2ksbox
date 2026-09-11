@@ -300,6 +300,11 @@ typedef struct _D3DCAPS8_ {
 /* the DX8 format list: DDPIXELFORMAT with DDPF_D3DFORMAT, the D3DFORMAT in
  * dwFourCC and these in the dwRBitMask slot (dwOperations) */
 #define DDPF_D3DFORMAT_                        0x00200000
+/* the pixel-format flags d3d8.dll describes L8 / A8L8 / A4L4 and A8 with
+ * (the 9x DDK's ddrawi.h has only the first) */
+#define DDPF_ALPHA_                            0x00000002
+#define DDPF_LUMINANCE_                        0x00020000
+#define DDPF_BUMPLUMINANCE_                    0x00040000
 #define D3DFORMAT_OP_TEXTURE_                  0x00000001
 #define D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_   0x00000008
 #define D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ 0x00000010

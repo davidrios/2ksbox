@@ -129,7 +129,8 @@ BOOL d3dpt_os_surf(d3dpt_core *c, void *os, d3dpt_surf_desc *out)
         out->vidmem -= hal->vram_linear;
     }
     if ((s->dwFlags & DDRAWISURF_HASPIXELFORMAT) ||
-        (s->lpGbl->ddpfSurface.dwFlags & (DDPF_RGB | DDPF_FOURCC | DDPF_ZBUFFER | DDPF_PALETTEINDEXED8))) {
+        (s->lpGbl->ddpfSurface.dwFlags & (DDPF_RGB | DDPF_FOURCC | DDPF_ZBUFFER | DDPF_PALETTEINDEXED8 | DDPF_ALPHA_ |
+                                          DDPF_LUMINANCE_ | DDPF_BUMPDUDV | DDPF_D3DFORMAT_))) {
         fmt = pf_format(&s->lpGbl->ddpfSurface);
         out->pf_flags = s->lpGbl->ddpfSurface.dwFlags;
     }

@@ -142,7 +142,7 @@ typedef struct d3dpt_hal9 {
     unsigned long cb_surf[32];          /* DDHAL_DDSURFACECALLBACKS */
     unsigned long cb_pal[8];            /* DDHAL_DDPALETTECALLBACKS */
     unsigned long cb_exebuf[8];         /* DDHAL_DDEXEBUFCALLBACKS */
-    unsigned long fourcc[4];            /* FourCC codes */
+    unsigned long fourcc[6];            /* FourCC codes */
     unsigned long modeinfo[D3DPT_HAL9_MAX_MODES * 9]; /* DDHALMODEINFO (32 modes * 9 dwords) */
     unsigned long heap[8];              /* VIDMEM */
 
