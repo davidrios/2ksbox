@@ -35,6 +35,7 @@ Window {
     /// have; `acceptPath` is the line the dialog itself runs, so the
     /// whole wiring under test is downstream of it.
     readonly property alias shownAdd: adder.shownText
+    readonly property alias addFilters: adder.dialogFilters
     function pickDisc(path) { adder.acceptPath(path) }
 
     title: discs.title

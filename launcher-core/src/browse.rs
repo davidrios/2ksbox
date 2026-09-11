@@ -18,13 +18,33 @@ use std::path::{Path, PathBuf};
 /// a `"Disk images (*.qcow2)"` string for Qt's `nameFilters` there.
 pub type Filter<'a> = (&'a str, &'a [&'a str]);
 
-/// A Qt-style `"Disk images (*.qcow2 *.img)"` name filter. Qt's
-/// `FileDialog` takes those, so the same constants drive both dialogs
-/// instead of the QML repeating the extension lists by hand.
+/// The extensions a dialog is actually handed: every one in lower *and*
+/// upper case. The constants are written lower case, and on Linux every
+/// backend matches the glob case-sensitively — the XDG portal, GTK and
+/// Qt's own dialog alike — so a `GAME.CUE` burnt by a DOS-era tool was
+/// hidden from the disc shelf's "Browse…" (2026-09-11, user-reported).
+/// Both spellings rather than a `*.[cC][uU][eE]` class, because Windows'
+/// and macOS's dialogs take no classes, and a backend that case-folds
+/// the globs itself would mangle one; a mixed-case `.Cue` is the one
+/// spelling this misses.
+pub fn extensions(filter: Filter) -> Vec<String> {
+    let mut out = Vec::new();
+    for e in filter.1 {
+        for v in [e.to_ascii_lowercase(), e.to_ascii_uppercase()] {
+            if !out.contains(&v) {
+                out.push(v);
+            }
+        }
+    }
+    out
+}
+
+/// A Qt-style `"Disk images (*.qcow2 *.QCOW2 *.img *.IMG)"` name filter.
+/// Qt's `FileDialog` takes those, so the same constants drive both
+/// dialogs instead of the QML repeating the extension lists by hand.
 pub fn name_filter(filter: Filter) -> String {
-    let (label, extensions) = filter;
-    let globs: Vec<String> = extensions.iter().map(|e| format!("*.{e}")).collect();
-    format!("{label} ({})", globs.join(" "))
+    let globs: Vec<String> = extensions(filter).iter().map(|e| format!("*.{e}")).collect();
+    format!("{} ({})", filter.0, globs.join(" "))
 }
 
 /// The directory a path field's "Browse…" should open in: the value's own

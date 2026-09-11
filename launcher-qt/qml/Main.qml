@@ -522,7 +522,8 @@ ApplicationWindow {
                 discShelfWindow.show()
                 discShelfWindow.pickDisc(diag.arg)
                 diag.note("pickdisc: shelf " + discs.count + ", field ["
-                          + discShelfWindow.shownAdd + "], status: " + discs.status)
+                          + discShelfWindow.shownAdd + "], status: " + discs.status
+                          + ", filters [" + discShelfWindow.addFilters.join(" | ") + "]")
                 break
             case "discs":
                 if (diag.arg === "")

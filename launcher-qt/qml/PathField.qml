@@ -50,6 +50,9 @@ RowLayout {
     /// `value` is what the owner *meant* the field to show, and the two
     /// disagreeing is the bug this field is shaped to prevent.
     readonly property alias shownText: field.text
+    /// What the dialog is actually handed, for the same probes: a filter
+    /// that loses the upper-case globs on its way here hides `GAME.CUE`.
+    readonly property alias dialogFilters: dialog.nameFilters
     /// Where the dialog opens when the field is still empty — the shader
     /// preset field points it at the preset collection, which is
     /// otherwise buried in a data directory nobody would navigate to.
@@ -84,6 +87,9 @@ RowLayout {
         nameFilters: root.nameFilter === ""
             ? [qsTr("All files (*)")]
             : [root.nameFilter, qsTr("All files (*)")]
+        // Every glob comes in both cases (`browse::extensions`), which is
+        // twice as long as anyone needs to read in the filter combo.
+        options: FileDialog.HideNameFilterDetails
         // The field's own value wins over the caller's suggestion:
         // re-opening browses from where it already points.
         currentFolder: {

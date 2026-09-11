@@ -726,6 +726,11 @@ qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
   [ -z "$field" ] || { echo "the picked path was left in the field ($field)"; rc=1; }
   grep -q "game.iso" "$dir/discs.toml" 2>/dev/null \
     || { echo "the shelf file never gained the disc"; rc=1; }
+  # Every dialog backend on Linux matches its globs case-sensitively, so
+  # a lower-case-only filter hid `GAME.CUE` (user-reported, 2026-09-11):
+  # the dialog must be handed both spellings (`browse::extensions`).
+  printf '%s' "$o" | grep -q 'filters \[Disc images (.*\*\.cue \*\.CUE' \
+    || { echo "the disc dialog's filter has no upper-case globs"; rc=1; }
   return $rc
 }
 dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M5g)

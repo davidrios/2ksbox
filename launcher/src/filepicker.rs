@@ -28,8 +28,8 @@ pub use launcher_core::browse::{browse_start, start_dir, Filter};
 /// works. `start_dir`, when given, is where the dialog opens.
 pub fn pick_file_headless(filter: Option<Filter>, start_dir: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     let mut dialog = rfd::FileDialog::new();
-    if let Some((name, extensions)) = filter {
-        dialog = dialog.add_filter(name, extensions);
+    if let Some(filter) = filter {
+        dialog = dialog.add_filter(filter.0, &launcher_core::browse::extensions(filter));
     }
     if let Some(dir) = start_dir {
         dialog = dialog.set_directory(dir);

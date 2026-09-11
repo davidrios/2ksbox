@@ -1296,6 +1296,14 @@ items nobody owns yet:
   owed total cut into the SB16's audio every tick). Given a crackle report,
   ask for the `[audio] device asks for N frames` and `qemu-embed: audio:`
   lines first.
+- **A file dialog's extension filter is case-sensitive on Linux** — the XDG
+  portal, GTK and Qt's own dialog alike — so the disc shelf's "Browse…"
+  hid `GAME.CUE` behind a `*.cue` filter (user-reported 2026-09-11).
+  `launcher_core::browse::extensions` now hands every dialog, Qt and egui,
+  each extension in both cases (not a `[cC]` class: Windows and macOS
+  dialogs take none); `PathField.qml` hides the doubled list with
+  `HideNameFilterDetails`. The `qtshelf` check asks the real dialog object
+  for `*.CUE`. A mixed-case `.Cue` is still missed; "All files" finds it.
 - `build-wrappers.sh` is `set -e` and writes the ISO last: a failing stage
   leaves the previous ISO in place, so an ISO older than the sources means a
   stage died, not that the change is missing. Homebrew's mingw is a symlink
