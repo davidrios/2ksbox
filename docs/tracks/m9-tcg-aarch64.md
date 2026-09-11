@@ -1245,7 +1245,107 @@ Blood has no frame cap, so these are raw rates: the corridor is ~14× faster
 and "depending on where you look" is now 131 against 556 rather than 9
 against 154.
 
+## Win98 3D: 3DMark 99 (2026-09-11) — the handoff
+
+**Why.** The user found Win98 3D "a bit underwhelming" and then asked for
+the first-person test at 60 fps, TCG only (**KVM is not an option: the Mac
+has none**). Everything below is on `main`. The benchmark: 3DMark 99 Max on
+the `claude98` machine (Win98 SE, DirectX 9.0c, our display driver,
+800×600×16, triple buffer, "Pentium III optimizations", `-cpu pentium3`),
+driven headless by **`tools/w98-3dmark.sh`** (it clicks through 3DMark over
+a USB tablet and screendumps the score; `qemu.log`'s `ddi: N frames/s`
+lines are the per-test rates, and the first-person test is the slowest
+game window, ~40–56 s after the click).
+
+| Step | 3DMarks | CPU 3DMarks | First person |
+|---|---|---|---|
+| before (the user's own number too) | 3334 | 10969 | 4.5 fps |
+| **patch 35** — a per-page 64-chunk code map: data writes to a page with code at both ends stop walking its TB list | 5894 | 11648 | 13.6 |
+| **patch 36** — a 16-byte SSE operand stored once, not as two halves read back by a 16-byte load | 5912 | 13549 | 15.4 |
+| **patch 37** — x87 at PC=24 skips the inexact bookkeeping once PE is sticky (TB flag bit 2) | 5917 | 14690 | 16.2 |
+| **patch 38** — the inline lookup takes the TB's own x87/SSE mode bits as constants | 5932 | 15389 | 17.1 |
+| **patch 39** — `vec_allsign_i32`: the SSE lane check branches on a register | 5950 | 15940 | 17.5 |
+| **executor** (`5d07018`) — DX7 indexed draws hand DXVK only their vertex range | 6014 | 15712 | 18.4 |
+| **patch 41** — the translator's 13.6 KB context not zero-filled | 6012 | 15483 | 18.4 |
+
+CPU 3DMarks moves ±2–3 % between identical runs; the first-person fps is
+the stable number. The race tests sit at the **60 Hz flip cap** from patch
+35 on (`DDFLAGS=32768` turns the vertical blank off: +3 % before, more now).
+
+**Where the time goes now** (the first-person window, patch 39 profile): 74 %
+guest code, spread flat — MAX-FX's Pentium III DLL (`e2_PentiumIII_cpu_mfc.dll`,
+loaded at `0x1580000`) 42 %: integer memory ops 13 % (the softmmu TLB check,
+~60 host bytes each), SSE 15 %, x87 5 %, calls/returns 7 %; 3DMARK.EXE's x87
+lighting code 13 %; MAX-FX's C++ core `e2mfc.DLL` 9 % (virtual calls and
+`ret`); host ~26 %: dispatch ~5 %, softmmu ~4 %, TLB wipes of *used* tables
+~1 % (110 GB of 128 KiB `memset`s a run, ~2000/s), DXVK texture uploads.
+
+**The method, which is the reusable part:**
+- **Profile the whole run and cut it by time** (`w98-3dmark.sh <n> whole`
+  with `EXTRA=-perfmap`; `click.txt` and the `ddi:` lines place the tests).
+  One 10 s window lands on one test only and misled twice.
+- **perfmap entries are per guest instruction**, not per TB. Group the
+  samples by instruction *form* (memory vs register operand, SSE / x87 /
+  integer) and look at samples per instruction: the uneven form is the
+  bug (a memory-operand `addps` cost 10 samples, the register form 2.7 →
+  patch 36).
+- **`EXTRA="-d in_asm,out_asm -dfilter <pc>+<len> -D <file>"`** shows the
+  real host code of the hot loop (markers are page offsets under CF_PCREL).
+- **A module at an unknown base** (3DMark's DLLs all ask for 0x10000000):
+  fit the hot guest PCs to every candidate DLL at every 64 KiB base against
+  its instruction boundaries.
+- **perf cannot unwind out of glibc's AVX `memcpy`/`memset` loops**:
+  `tools/memtrace.c` (a preload counting ≥ 4 KiB calls per return address)
+  named the executor's 32 GB of vertex copies and the translator's memset.
+- **A/B before crediting**: the drivers' byte-loop `memcpy` looked like 30 %
+  of a profile window and changed nothing when fixed (the walks' cost
+  landing on its stores). `-perfmap` itself barely moves the score.
+
+**Lessons that cost a round each:**
+- **A new TB flag has two places**: `cpu_get_tb_cpu_state` *and* patch 20's
+  `gen_lookup_and_goto_ptr`, which builds the flags as TCG ops. Patch 37
+  without the second one lost 25 % (every indirect jump into a sticky TB
+  left through the epilogue; guard exits 0 — `info registers` now counts
+  `x87-fast guard exits`).
+- **Upstream already skips clean MMU indexes** in a TLB flush (`c.dirty`):
+  "don't wipe the unused tables" (patch 40) was a no-op and was dropped.
+  `n_used_entries` is the resize heuristic's and is not exact.
+- `build.sh`'s prepare wipes unqueued edits in `qemu/`: keep a patch file
+  of work in progress before any `build.sh`.
+
+**User rules for this work (2026-09-11):** only optimizations that could
+help *any* guest — nothing title-specific (no 3DMark DLL replacements, no
+per-game hooks; a guest DLL in game folders only for shared runtimes or
+middleware); exact (bit-identical) work before the opt-in **relaxed
+floating-point mode**, which the user agreed to in principle (a per-machine
+`fp-relaxed` switch, off by default: SSE without its per-op checks, x87
+without PC=24 rounding and window checks but with a correct out-of-range
+conversion, no FIP/FDP stores) and deferred.
+
 ## Next steps, in order
+
+**From the Win98 3D session (2026-09-11), in order** — the section above:
+
+1. **On the Mac, first: `scripts/build.sh`, then `tools/sse-guest-test.py`.**
+   Patch 39's aarch64 encoding (`cmlt #0` / `uminv` / `umov` / `eor` on
+   `TCG_VEC_TMP0`, `I3617_UMINV = 0x2e31a800`) has never been compiled — it
+   was written on an x86-64 host. The SSE battery (every packed op, its
+   check and its slow block, on/off identical) is its test; then the x87
+   battery for patch 37 and `scripts/test.sh all`.
+2. **The first-person test on the Air** (`tools/w98-3dmark.sh`), to know
+   what TCG on aarch64 makes of the same patches.
+3. **x87's per-block reload**: each TB converts every x87 register it first
+   touches from the 80-bit form (~50 host instructions); carrying the
+   doubles across blocks (a double per physical register plus a validity
+   mask, cleared at helper boundaries, loadvm, gdbstub writes, reset) is
+   exact and worth a few % of an x87-heavy frame.
+4. **Smaller TLB wipes of used tables**: record the slots filled since the
+   last flush and clear only those (cap → full wipe), ~1 % here, more on a
+   guest that switches address spaces faster.
+5. **x86-64 pinned registers** (doc 18's follow-up: the backend lists none
+   yet — rbx, rbp, r12, r13, r15 are free): the largest general lever left,
+   but patch 21's two open items come first.
+6. **The relaxed floating-point switch**, when the user asks for it.
 
 Done on the way: patch 13 (`-perfmap` on Darwin), patch 14 (the
 redundant macOS W^X toggles: Super PI 1M 1:36.2 → 1:25.3), and from the
