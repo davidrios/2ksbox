@@ -290,6 +290,13 @@ nasm -f bin -o "$T/textcal.com" "$ROOT/guest-tools/src/textcal.asm"
 # and to the screen, so it is both the harness's evidence
 # (tools/pad-guest-test.py) and something to run by hand in a DOS box.
 nasm -f bin -o "$T/padtest.com" "$ROOT/guest-tools/src/padtest.asm"
+# QCLOCK.COM: DOS Quake's clock (Sys_FloatTime: the BIOS tick count plus PIT
+# counter 0, backward readings clamped to zero) read in a tight loop beside
+# the TSC, one line per second of how far it ran ahead (guest-tools/src/
+# qclock.asm). For a DOS game that speeds up in bursts: in a Win9x DOS box
+# against the same machine in pure DOS, which separates Windows' queued
+# timer ticks from QEMU's own. Prints to COM1 and the screen at the end.
+nasm -f bin -o "$T/qclock.com" "$ROOT/guest-tools/src/qclock.asm"
 # PADWIN.EXE: the same question of the USB HID pad (M13 path A), asked the
 # way a game asks it rather than the way the Game Controllers panel shows it,
 # through *both* APIs a title of the era can call: DirectInput, and winmm's

@@ -154,6 +154,44 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **DOS Quake in a Win98 DOS box speeds up for a moment now and then**
+  (open, 2026-09-10, user report; unthrottled Win98, `quake.exe`). No
+  `-icount` on that machine, so not the throttle's catch-up. The
+  suspect is Quake's own clock meeting a DOS box's timer: `Sys_FloatTime`
+  (id's `sys_dos.c`) is the BIOS tick word plus PIT counter 0 in mode 2,
+  and a reading that goes backward — the counter wrapped, the tick it
+  owes not delivered yet — counts zero *and becomes the new reference*,
+  so a late tick is counted twice once it lands; a DOS box's INT 8 is
+  Windows' simulation, delivered when the VM runs and caught up in
+  bursts, and `Host_FilterTime` hands each frame up to 0.1 s of it.
+  QEMU adds to it: `i8254.c`'s `pit_irq_timer` schedules each edge from
+  the last one's due time, so a starved main loop fires the owed edges
+  back to back while `pit_get_count` is already current. The probe is
+  `TESTS\QCLOCK.COM` (`guest-tools/src/qclock.asm`): Quake's read in a
+  tight loop beside the TSC, per-second `speed%`, backward readings,
+  tick bursts and the VM's longest gap. **Measured the same night, and
+  both layers are real.** *Pure DOS* (FreeDOS floppy, our QEMU, the
+  win98-2 machine's hardware): `speed% 200` in all 30 windows, exactly
+  one backward reading of a full 55 ms period per tick (540 of 540), no
+  VM gap over 0.5 ms — the IRQ 0 edge `i8254_common.c` schedules exactly
+  at the counter's wrap reaches the guest a main-loop wakeup later, and a
+  tight read loop lands in that window every tick, so DOS Quake counts
+  every period twice whenever its frames are fast enough to read the
+  clock densely (the 72 fps cap's spin). Real hardware's window is about
+  a microsecond. *Win98 DOS box* (win98-2's raw copy, `win98-game-test.sh`
+  with `RUN.BAT` = `QCLOCK 60 > C:\QCLOCK.TXT`): the same backward reading
+  on ~17 of 18 ticks, the DOS box's ticks arriving at ~12 Hz instead of
+  18.2 (18 ticks in ~1.49 s of TSC time at the 1 GHz TCG gives it), and
+  **Windows' catch-up bursts**: the tick count jumped 86 and 153 ticks at
+  once in two windows, i.e. Quake saw 5.4 s and 9.9 s of game time go by
+  in about a second each — the "momentary speed-up", measured. Over the
+  89 s run Quake counted 128 s. The first layer is ours and fixable in
+  `hw/timer/i8254.c` (deliver an overdue edge when the guest touches the
+  PIT; every `IN`/`OUT` already ends its TB, so the interrupt is taken
+  before the next instruction, as on the real part); the bursts are
+  Windows' VTD and are to be re-measured with that fix in, since VTD
+  keeps its own time off the same tick+counter pair. Not patched yet.
+
 - **A Win98 machine showed one Unknown Device in Device Manager** (fixed
   2026-09-10, user report). The guest's registry had two ACPI devices
   with no driver: `ACPI\*PNP0103`, the HPET, and `ACPI\QEMU0002`, QEMU's
