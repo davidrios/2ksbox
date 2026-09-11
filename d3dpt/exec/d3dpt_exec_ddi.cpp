@@ -120,12 +120,19 @@ struct VShader8 {
     IDirect3DVertexShader9 *vs = nullptr;
     struct ConstRun { uint32_t reg; std::vector<float> v; };
     std::vector<ConstRun> consts;
-    uint32_t vertex_bytes = 0;          /* what the declaration reads of a stream-0 vertex */
+    uint32_t stream_bytes[D3DPT_DRAW8_MAX_STREAMS] = {};  /* what the declaration reads of each stream's vertex */
     uint32_t streams = 0;               /* bitmask of the streams it reads */
+    std::vector<D3DVERTEXELEMENT9> el;  /* the d3d9 elements, END included */
+    /* v10: the declaration with every stream it reads interleaved into
+     * stream 0, one per set of strides seen (a few at most) */
+    struct Ilv { uint32_t stride[D3DPT_DRAW8_MAX_STREAMS]; IDirect3DVertexDeclaration9 *decl; };
+    std::vector<Ilv> ilv;
     void release() {
         if (decl) decl->Release();
         if (vs) vs->Release();
+        for (Ilv &i : ilv) i.decl->Release();
         decl = nullptr; vs = nullptr;
+        ilv.clear();
     }
 };
 
@@ -153,6 +160,7 @@ struct Ddi {
     uint32_t stage_w = 0, stage_h = 0;
     D3DFORMAT stage_fmt = D3DFMT_UNKNOWN;
     std::vector<uint16_t> idx;
+    std::vector<uint8_t> ilv;               /* a multi-stream DRAW8's vertices, interleaved (v10) */
     std::vector<uint32_t> warned;           /* one log line per unsupported state / token */
     /* DX8 state sets (STATESET tokens) as d3d9 state blocks, by the runtime's handle */
     std::unordered_map<uint32_t, IDirect3DStateBlock9 *> sblocks;
@@ -590,7 +598,8 @@ static const uint8_t vsdt_size[8] = { 4, 8, 12, 16, 4, 4, 4, 8 };
  * or type, too many elements). regs: bitmask of the input registers fed */
 static bool vsd_convert(const uint32_t *d, uint32_t ntokens, std::vector<D3DVERTEXELEMENT9> &el, uint32_t &regs, VShader8 &s) {
     uint32_t i = 0, stream = 0, offset = 0;
-    regs = 0; s.vertex_bytes = 0; s.streams = 0;
+    regs = 0; s.streams = 0;
+    memset(s.stream_bytes, 0, sizeof s.stream_bytes);
     while (i < ntokens) {
         uint32_t t = d[i], type = (t >> 29) & 7;
         if (t == 0xFFFFFFFFu) {                                             /* D3DVSD_END */
@@ -611,7 +620,7 @@ static bool vsd_convert(const uint32_t *d, uint32_t ntokens, std::vector<D3DVERT
                 regs |= 1u << reg;
                 s.streams |= 1u << stream;
                 offset += vsdt_size[dt];
-                if (stream == 0 && offset > s.vertex_bytes) s.vertex_bytes = offset;
+                if (offset > s.stream_bytes[stream]) s.stream_bytes[stream] = offset;
                 i++;
             }
             break;
@@ -919,7 +928,8 @@ struct Dp2 {
             }
         }
         tr("vertex shader 0x%x created: %zu elements, %u bytes on stream 0, streams 0x%x, %s function, %zu constant runs",
-           handle, el.size() - 1, s.vertex_bytes, s.streams, codebytes ? "a" : "no", s.consts.size());
+           handle, el.size() - 1, s.stream_bytes[0], s.streams, codebytes ? "a" : "no", s.consts.size());
+        s.el = el;
         c.vshaders[handle] = s;
     }
     void create_pshader(uint32_t handle, const uint8_t *code, uint32_t codebytes) {
@@ -992,18 +1002,63 @@ struct Dp2 {
         }
         return x.vram + s->d.offset + off;
     }
+    /* v10: a shader's declaration with every stream it reads interleaved
+     * into stream 0 at these strides — each element at its stream's base,
+     * the strides of the streams before it added up — so a multi-stream
+     * draw is one vertex again and takes the same DrawPrimitiveUP path */
+    IDirect3DVertexDeclaration9 *ilv_decl(VShader8 &s, const uint32_t *ss) {
+        uint32_t key[D3DPT_DRAW8_MAX_STREAMS] = {}, base[D3DPT_DRAW8_MAX_STREAMS] = {}, total = 0;
+        for (uint32_t i = 0; i < D3DPT_DRAW8_MAX_STREAMS; i++)
+            if (s.streams & (1u << i)) { key[i] = ss[i]; base[i] = total; total += ss[i]; }
+        for (const VShader8::Ilv &e : s.ilv) if (!memcmp(e.stride, key, sizeof key)) return e.decl;
+        std::vector<D3DVERTEXELEMENT9> el = s.el;
+        for (D3DVERTEXELEMENT9 &e : el)
+            if (e.Stream != 0xFF) { e.Offset = (WORD)(e.Offset + base[e.Stream]); e.Stream = 0; }
+        IDirect3DVertexDeclaration9 *decl = nullptr;
+        if (FAILED(x.dev->CreateVertexDeclaration(el.data(), &decl)) || !decl) return nullptr;
+        if (s.ilv.size() >= 8) { s.ilv.front().decl->Release(); s.ilv.erase(s.ilv.begin()); }
+        VShader8::Ilv n;
+        memcpy(n.stride, key, sizeof key);
+        n.decl = decl;
+        s.ilv.push_back(n);
+        return decl;
+    }
     /* the driver's self-contained DX8 draw: vertices and 16-bit indices
-     * inline, or (v9) in VRAM buffers it names by handle and offset */
+     * inline, or (v9) in VRAM buffers it names by handle and offset; (v10)
+     * under a vertex shader, the other streams it had bound after them */
     bool draw8(const uint8_t *q, size_t left, size_t &need) {
         d3dpt_dp2_draw8 h;
         if (left < sizeof h) return fail("truncated DRAW8");
         memcpy(&h, q, sizeof h);
-        if (h.flags & ~(D3DPT_DRAW8_VRAM_VB | D3DPT_DRAW8_VRAM_IB)) return fail("bad DRAW8 flags");
+        if (h.flags & ~(D3DPT_DRAW8_VRAM_VB | D3DPT_DRAW8_VRAM_IB | D3DPT_DRAW8_STREAMS)) return fail("bad DRAW8 flags");
         bool ext_vb = (h.flags & D3DPT_DRAW8_VRAM_VB) != 0, ext_ib = (h.flags & D3DPT_DRAW8_VRAM_IB) != 0;
         size_t vb = ext_vb ? 8 : ((size_t)h.nverts * h.stride + 3) & ~(size_t)3;
         size_t ib = !h.nindices ? 0 : ext_ib ? 8 : ((size_t)h.nindices * 2 + 3) & ~(size_t)3;
         need = sizeof h + vb + ib;
         if (need > left) return fail("truncated DRAW8 data");
+        /* the other streams, all parsed before anything can skip the draw
+         * (the next token starts after the last of them) */
+        struct Ext { uint32_t stream, stride, flags; const uint8_t *p; } ext[D3DPT_DRAW8_MAX_STREAMS];
+        uint32_t next = 0;
+        if (h.flags & D3DPT_DRAW8_STREAMS) {
+            if (need + 8 > left) return fail("truncated DRAW8 streams");
+            uint32_t n = u32(q + need), last = 0;
+            need += 8;
+            if (!n || n >= D3DPT_DRAW8_MAX_STREAMS) return fail("bad DRAW8 stream count");
+            for (uint32_t i = 0; i < n; i++) {
+                d3dpt_dp2_draw8_stream e;
+                if (need + sizeof e > left) return fail("truncated DRAW8 stream");
+                memcpy(&e, q + need, sizeof e);
+                need += sizeof e;
+                if (e.stream <= last || e.stream >= D3DPT_DRAW8_MAX_STREAMS || !e.stride || e.stride > 1024 || (e.flags & ~D3DPT_DRAW8_VRAM_VB))
+                    return fail("bad DRAW8 stream");
+                last = e.stream;
+                size_t sz = (e.flags & D3DPT_DRAW8_VRAM_VB) ? 8 : ((size_t)h.nverts * e.stride + 3) & ~(size_t)3;
+                if (need + sz > left) return fail("truncated DRAW8 stream data");
+                ext[next++] = { e.stream, e.stride, e.flags, q + need };
+                need += sz;
+            }
+        }
         bool shader = (h.fvf & 1) != 0;
         uint32_t st = shader ? 0 : stride_of_fvf(h.fvf);
         if ((!shader && (!st || st > h.stride)) || h.stride > 1024 || h.nverts > 0x10000 || h.nindices > 0x100000 || h.prim_type < 1 || h.prim_type > 6)
@@ -1011,8 +1066,8 @@ struct Dp2 {
         const uint8_t *vd = q + sizeof h, *id = vd + vb;
         D3DPRIMITIVETYPE t = (D3DPRIMITIVETYPE)h.prim_type;
         uint32_t nv = prim_verts(t, h.prim_count);
-        tr("draw8 type %u prims %u %s 0x%x stride %u vertices %u%s indices %u%s (min %u)", h.prim_type, h.prim_count, shader ? "shader" : "fvf", h.fvf, h.stride,
-           h.nverts, ext_vb ? " (vram)" : "", h.nindices, ext_ib && h.nindices ? " (vram)" : "", h.min_index);
+        tr("draw8 type %u prims %u %s 0x%x stride %u vertices %u%s indices %u%s (min %u), %u more streams", h.prim_type, h.prim_count, shader ? "shader" : "fvf", h.fvf, h.stride,
+           h.nverts, ext_vb ? " (vram)" : "", h.nindices, ext_ib && h.nindices ? " (vram)" : "", h.min_index, next);
         if (ext_vb) {
             vd = vram_range(u32(q + sizeof h), u32(q + sizeof h + 4), (size_t)h.nverts * h.stride, "vertex");
             if (!vd) return true;
@@ -1021,21 +1076,64 @@ struct Dp2 {
             id = vram_range(u32(q + sizeof h + vb), u32(q + sizeof h + vb + 4), (size_t)h.nindices * 2, "index");
             if (!id) return true;
         }
+        /* every stream the draw carried: stream 0 above, the others where
+         * their VRAM range resolves (one that does not only matters if the
+         * declaration reads it) */
+        const uint8_t *sd[D3DPT_DRAW8_MAX_STREAMS] = { vd };
+        uint32_t ss[D3DPT_DRAW8_MAX_STREAMS] = { h.stride }, carried = 1;
+        for (uint32_t i = 0; i < next; i++) {
+            const uint8_t *p = ext[i].p;
+            if (ext[i].flags & D3DPT_DRAW8_VRAM_VB) p = vram_range(u32(p), u32(p + 4), (size_t)h.nverts * ext[i].stride, "stream");
+            if (!p) continue;
+            sd[ext[i].stream] = p;
+            ss[ext[i].stream] = ext[i].stride;
+            carried |= 1u << ext[i].stream;
+        }
+        uint32_t stride = h.stride;
+        IDirect3DVertexDeclaration9 *ilv = nullptr;
         if (shader) {
             /* the vertices are read through the shader's declaration: it
-             * must be known, read stream 0 only (the driver copies one
-             * stream) and fit the stride (the copied vertex) */
+             * must be known, every stream it reads must have come with the
+             * draw and each stream's stride must cover what it reads */
             auto it = c.vshaders.find(h.fvf);
             if (it == c.vshaders.end()) { if (d.warn_once(0xc0000)) x.log("ddi: dp2: vertex shader handle 0x%x unknown (draws with it are skipped)", h.fvf); return true; }
-            if (it->second.streams & ~1u) { if (d.warn_once(0xc0001)) x.log("ddi: dp2: vertex shader 0x%x reads streams 0x%x: one stream only, draw skipped", h.fvf, it->second.streams); return true; }
-            if (it->second.vertex_bytes > h.stride) { if (d.warn_once(0xc0002)) x.log("ddi: dp2: vertex shader 0x%x reads %u bytes of a %u-byte vertex, draw skipped", h.fvf, it->second.vertex_bytes, h.stride); return true; }
+            VShader8 &s = it->second;
+            if (s.streams & ~carried) {
+                if (d.warn_once(0xc0001)) x.log("ddi: dp2: vertex shader 0x%x reads streams 0x%x, the draw carried 0x%x: draw skipped", h.fvf, s.streams, carried);
+                return true;
+            }
+            for (uint32_t i = 0; i < D3DPT_DRAW8_MAX_STREAMS; i++)
+                if ((s.streams & (1u << i)) && s.stream_bytes[i] > ss[i]) {
+                    if (d.warn_once(0xc0002)) x.log("ddi: dp2: vertex shader 0x%x reads %u bytes of stream %u's %u-byte vertex, draw skipped", h.fvf, s.stream_bytes[i], i, ss[i]);
+                    return true;
+                }
+            if (s.streams & ~1u) {
+                /* more than one stream (v10), or not stream 0: interleaved
+                 * into one vertex, the streams in order, under a declaration
+                 * that says so */
+                uint32_t total = 0;
+                for (uint32_t i = 0; i < D3DPT_DRAW8_MAX_STREAMS; i++) if (s.streams & (1u << i)) total += ss[i];
+                ilv = total <= 1024 ? ilv_decl(s, ss) : nullptr;
+                if (!ilv) {
+                    if (d.warn_once(0xc0003)) x.log("ddi: dp2: vertex shader 0x%x: no interleaved declaration for streams 0x%x (%u bytes a vertex), draw skipped", h.fvf, s.streams, total);
+                    return true;
+                }
+                d.ilv.resize((size_t)h.nverts * total);
+                uint8_t *o = d.ilv.data();
+                for (uint32_t v = 0; v < h.nverts; v++)
+                    for (uint32_t i = 0; i < D3DPT_DRAW8_MAX_STREAMS; i++)
+                        if (s.streams & (1u << i)) { memcpy(o, sd[i] + (size_t)v * ss[i], ss[i]); o += ss[i]; }
+                vd = d.ilv.data();
+                stride = total;
+            }
         } else if (d.trace) trv(vd, h.nverts, h.stride, h.fvf);
         apply_vs(h.fvf);
+        if (ilv) x.dev->SetVertexDeclaration(ilv);  /* after apply_vs, which leaves the shader's own (and its constants) alone when it is current */
         if (!h.prim_count) return true;
         pre_draw();
         if (!h.nindices) {
             if (nv > h.nverts) { if (d.warn_once(0xa0000 | t)) x.log("ddi: dp2: draw8 primitive %u: %u vertices of %u", t, nv, h.nverts); return true; }
-            x.dev->DrawPrimitiveUP(t, h.prim_count, vd, h.stride);
+            x.dev->DrawPrimitiveUP(t, h.prim_count, vd, stride);
         } else {
             if (nv > h.nindices) { if (d.warn_once(0xa0010 | t)) x.log("ddi: dp2: draw8 indexed primitive %u: %u indices of %u", t, nv, h.nindices); return true; }
             d.idx.resize(nv);
@@ -1047,7 +1145,7 @@ struct Dp2 {
                 }
                 d.idx[i] = (uint16_t)(v - h.min_index);
             }
-            x.dev->DrawIndexedPrimitiveUP(t, 0, h.nverts, h.prim_count, d.idx.data(), D3DFMT_INDEX16, vd, h.stride);
+            x.dev->DrawIndexedPrimitiveUP(t, 0, h.nverts, h.prim_count, d.idx.data(), D3DFMT_INDEX16, vd, stride);
         }
         d.draws++;
         snap();

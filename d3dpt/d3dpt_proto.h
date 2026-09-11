@@ -30,7 +30,7 @@
 
 #include <stdint.h>
 
-#define D3DPT_PROTO_VERSION   9u
+#define D3DPT_PROTO_VERSION   10u
 #define D3DPT_MAGIC           0x54503344u          /* "D3PT" read at REG_MAGIC */
 
 /* guest-physical map: below mesapt's 0xe0000000+ windows and SeaBIOS' BAR area */
@@ -344,23 +344,43 @@ typedef struct d3dpt_dp2 {
  * DELETEPIXELSHADER / SETPIXELSHADER(CONST) tokens travel in the DP2
  * stream unchanged, the host keeps the shaders per context (a
  * declaration-only shader is the fixed function on that declaration) and
- * reads the copied vertices through the shader's declaration at the
- * stream's stride (stream 0 only).
+ * reads the copied vertices through the shader's declaration (stream 0 at
+ * the stride above, the others as below).
  *
  * v9: a buffer the driver placed in VRAM (D3DPT_VS_BUFFER) is not copied.
  * With D3DPT_DRAW8_VRAM_VB in flags the vertex bytes are replaced by one
  * d3dpt_u32x2 {buffer handle, byte offset of vertex 0}; with
  * D3DPT_DRAW8_VRAM_IB the index bytes by one {handle, byte offset of index
  * 0}. The host reads nverts * stride (nindices * 2) bytes from the buffer's
- * VRAM at that offset, checked against the buffer's size. */
+ * VRAM at that offset, checked against the buffer's size.
+ *
+ * v10: more than one vertex stream. Everything above is stream 0. With
+ * D3DPT_DRAW8_STREAMS in flags, after the indices come a d3dpt_u32x2
+ * {count, 0} and count streams, each a d3dpt_dp2_draw8_stream followed by
+ * its vertices: nverts * stride bytes (padded to 4), or with
+ * D3DPT_DRAW8_VRAM_VB in its own flags one d3dpt_u32x2 {buffer handle,
+ * byte offset of vertex 0} as for stream 0. Stream numbers are 1..15, in
+ * increasing order. Every stream covers the same vertex range — vertex i
+ * of the draw is element i of each — because a DX8 draw indexes all its
+ * streams with one vertex number. Only a draw under a vertex shader handle
+ * carries more than stream 0 (an FVF reads stream 0 alone), and the driver
+ * sends every stream bound at the time it can resolve: the host takes the
+ * ones the shader's declaration reads and skips the draw when one of those
+ * is missing. */
 #define D3DPT_DP2_DRAW8 200u
 #define D3DPT_DRAW8_VRAM_VB 0x1u
 #define D3DPT_DRAW8_VRAM_IB 0x2u
+#define D3DPT_DRAW8_STREAMS 0x4u
+#define D3DPT_DRAW8_MAX_STREAMS 16u
 typedef struct d3dpt_dp2_draw8 {
     uint32_t prim_type, prim_count;     /* D3DPRIMITIVETYPE, primitives */
-    uint32_t fvf, stride;               /* the vertices' format (an FVF or a vertex shader handle), stride */
+    uint32_t fvf, stride;               /* the vertices' format (an FVF or a vertex shader handle), stream 0's stride */
     uint32_t nverts, nindices;          /* vertices; indices (0 = not indexed) */
     uint32_t min_index, flags;          /* D3DPT_DRAW8_* (v9; 0 before: everything inline) */
 } d3dpt_dp2_draw8;
+typedef struct d3dpt_dp2_draw8_stream { /* v10: one more stream of a DRAW8 */
+    uint32_t stream, stride;            /* 1..15; its stride */
+    uint32_t flags, pad;                /* D3DPT_DRAW8_VRAM_VB: its vertices in a VRAM buffer */
+} d3dpt_dp2_draw8_stream;
 
 #endif /* D3DPT_PROTO_H */

@@ -127,7 +127,10 @@ backend later.
   on garbage bytecode; palettized textures and colour keying since v8,
   both expanded to A8R8G8B8 on the host; vertex / index buffers in VRAM
   since v9 — a `DRAW8` names the buffer and offset, the host reads it
-  from VRAM, `ddflags=0x100000` is the A/B). **Win98 can run the same
+  from VRAM, `ddflags=0x100000` is the A/B; sixteen vertex streams since
+  v10 — a `DRAW8` under a shader carries every bound stream, the host
+  interleaves the ones the declaration reads into one vertex,
+  `ddflags=0x200000` is the A/B). **Win98 can run the same
   adapter since 2026-09-07** — a launcher Win98 machine takes
   `-vga none -device d3dpt-vga` with the M10 driver (doc 19) when it is
   picked, but its *default* is Windows' own `-vga cirrus`

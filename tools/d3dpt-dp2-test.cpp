@@ -109,6 +109,32 @@ struct Dp2Buf {
         if (ib) { u32(ib); u32(ioff); }
         else { for (uint16_t i : idx) u16(i); while (b.size() % 4) b.push_back(0xcc); }
     }
+    /* v10: a DRAW8 with more streams than stream 0 (the vertices above, inline):
+     * each either inline (its bytes, nverts * stride) or in a VRAM buffer
+     * (vb != 0: handle + byte offset); the lies make hostile records */
+    struct Strm { uint32_t stream, stride, vb, voff; std::vector<uint8_t> data; uint32_t flags_lie; };
+    template <class T> static Strm strm(uint32_t n, const std::vector<T> &v) {
+        Strm s = { n, (uint32_t)sizeof(T), 0, 0, {}, 0 };
+        s.data.assign((const uint8_t *)v.data(), (const uint8_t *)(v.data() + v.size()));
+        return s;
+    }
+    static Strm strm_vram(uint32_t n, uint32_t stride, uint32_t vb, uint32_t voff) { return { n, stride, vb, voff, {}, 0 }; }
+    template <class T> void draw8m(uint32_t prim, uint32_t prims, uint32_t fvf, const std::vector<T> &v, const std::vector<uint16_t> &idx,
+                                   uint32_t min_index, const std::vector<Strm> &st, uint32_t count_lie = 0) {
+        cmd(D3DPT_DP2_DRAW8, 0);
+        u32(prim); u32(prims); u32(fvf); u32((uint32_t)sizeof(T));
+        u32((uint32_t)v.size()); u32((uint32_t)idx.size()); u32(min_index); u32(D3DPT_DRAW8_STREAMS);
+        for (const T &e : v) { const uint8_t *q = (const uint8_t *)&e; b.insert(b.end(), q, q + sizeof(T)); }
+        while (b.size() % 4) b.push_back(0xcc);
+        for (uint16_t i : idx) u16(i);
+        while (b.size() % 4) b.push_back(0xcc);
+        u32(count_lie ? count_lie : (uint32_t)st.size()); u32(0);
+        for (const Strm &s : st) {
+            u32(s.stream); u32(s.stride); u32(s.flags_lie ? s.flags_lie : s.vb ? D3DPT_DRAW8_VRAM_VB : 0); u32(0);
+            if (s.vb) { u32(s.vb); u32(s.voff); }
+            else { b.insert(b.end(), s.data.begin(), s.data.end()); while (b.size() % 4) b.push_back(0xcc); }
+        }
+    }
     void stateset(uint32_t op, uint32_t handle, uint32_t type = 0) { cmd(39, 1); u32(op); u32(handle); u32(type); }
     /* the DX8 shader tokens as the runtime lays them out (protocol v7: the
      * driver forwards them; the host keeps the shaders per context) */
@@ -546,6 +572,110 @@ int main(int argc, char **argv) {
         s9.create_vs(0x10d, decl_pc, vs_code, 4096);                          /* the declaration size lies */
         hr = send_dp2(&enc, s9, vtx, 0, &err_off);
         CHECK(hr == 0x88760BB8u && err_off == 0, "CREATEVERTEXSHADER lying about its declaration size -> D3DERR_COMMAND_UNPARSED at %u (0x%08x)", err_off, hr);
+
+        /* --- more than one vertex stream (v10): the position in stream 0,
+         * the colour in another stream at its own stride; the host
+         * interleaves them under the declaration --- */
+        {
+            typedef Dp2Buf::Strm Strm;
+            struct pos4 { float x, y, z, w; };
+            struct col8 { uint32_t color, pad; };                       /* a stride of 8 where the colour is 4 */
+            std::vector<pos4> p4;
+            for (const svtx &v : sq) p4.push_back({ v.x, v.y, v.z, v.w });
+            auto cols = [](uint32_t c, size_t n) { return std::vector<col8>(n, col8{ c, 0xdeadbeefu }); };
+            const uint32_t H_VS2 = 0x115, H_VS02 = 0x117, H_FF2 = 0x119;
+            Dp2Buf m1;
+            m1.create_vs(H_VS2, { STREAM(0), REG(0, T_FLOAT4), STREAM(1), REG(5, T_D3DCOLOR), 0xFFFFFFFFu }, vs_code);
+            m1.vs_const(0, 1, 1, 1, 1);                                 /* c0 white: the colour stream alone decides */
+            m1.set_vs(H_VS2);
+            m1.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+            m1.draw8m(4, 2, H_VS2, p4, {}, 0, { Dp2Buf::strm(1, cols(0xff00ff00u, 6)) });
+            hr = send_dp2(&enc, m1, vtx);
+            hr |= readback(&enc, H_RT);
+            CHECK(hr == 0 && near_(px(100, 100), 0x00ff00, 2) && px(500, 400) == (CLEAR_COLOR & 0xffffff),
+                  "two streams, position + colour at stride 8, inline: quad 0x%06x, outside 0x%06x", px(100, 100), px(500, 400));
+            /* the colour stream in a VRAM buffer, the draw indexed with a MinIndex of 2 */
+            std::vector<col8> mag = cols(0xffff00ffu, 6);
+            memcpy(vram + VB_OFF + 0x1000, mag.data(), mag.size() * sizeof(col8));
+            Dp2Buf m2;
+            m2.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+            m2.draw8m(4, 2, H_VS2, p4, { 2, 3, 4, 5, 6, 7 }, 2, { Dp2Buf::strm_vram(1, sizeof(col8), H_VB, 0x1000) });
+            hr = send_dp2(&enc, m2, vtx);
+            hr |= readback(&enc, H_RT);
+            CHECK(hr == 0 && near_(px(100, 100), 0xff00ff, 2), "two streams, the colour in a VRAM buffer, indexed (MinIndex 2): 0x%06x", px(100, 100));
+            /* a gap: streams 0 and 2 read, stream 1 not bound at all */
+            Dp2Buf m3;
+            m3.create_vs(H_VS02, { STREAM(0), REG(0, T_FLOAT4), STREAM(2), REG(5, T_D3DCOLOR), 0xFFFFFFFFu }, vs_code);
+            m3.set_vs(H_VS02);
+            m3.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+            m3.draw8m(4, 2, H_VS02, p4, {}, 0, { Dp2Buf::strm(2, cols(0xff0000ffu, 6)) });
+            hr = send_dp2(&enc, m3, vtx);
+            hr |= readback(&enc, H_RT);
+            CHECK(hr == 0 && near_(px(100, 100), 0x0000ff, 2), "streams 0 and 2 (none bound at 1): 0x%06x", px(100, 100));
+            /* the fixed function on a two-stream declaration (no function), FLOAT3 positions */
+            struct pos3 { float x, y, z; };
+            std::vector<pos3> p3;
+            for (const svtx &v : sq) p3.push_back({ v.x, v.y, v.z });
+            Dp2Buf m4;
+            m4.create_vs(H_FF2, { STREAM(0), REG(0, T_FLOAT3), STREAM(1), REG(5, T_D3DCOLOR), 0xFFFFFFFFu }, {});
+            m4.set_vs(H_FF2);
+            m4.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+            m4.draw8m(4, 2, H_FF2, p3, {}, 0, { Dp2Buf::strm(1, cols(0xffffff00u, 6)) });
+            hr = send_dp2(&enc, m4, vtx);
+            hr |= readback(&enc, H_RT);
+            CHECK(hr == 0 && near_(px(100, 100), 0xffff00, 2), "fixed function on a two-stream declaration: 0x%06x", px(100, 100));
+            /* a stale stream the shader does not read goes along and is ignored:
+             * a stream-0 shader with a stream 3 bound */
+            Dp2Buf m5;
+            m5.set_vs(H_VS);
+            m5.vs_const(0, 0, 1, 1, 1);                                 /* cyan */
+            m5.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+            m5.draw8m(4, 2, H_VS, sq, {}, 0, { Dp2Buf::strm(3, cols(0xffff0000u, 6)) });
+            hr = send_dp2(&enc, m5, vtx);
+            hr |= readback(&enc, H_RT);
+            CHECK(hr == 0 && near_(px(100, 100), 0x00ffff, 2), "a stream the declaration does not read: carried, ignored 0x%06x", px(100, 100));
+            /* hostile, skipped: the declaration reads stream 1, the draw carries
+             * only stream 2; stream 1's stride shorter than what it reads (a
+             * FLOAT4 colour in 4 bytes); stream 1's VRAM range beyond its
+             * buffer. Then the good draw, so the frame proves the skips were
+             * skips and the stream stayed in sync */
+            Dp2Buf m6;
+            m6.set_vs(H_VS2);
+            m6.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+            m6.draw8m(4, 2, H_VS2, p4, {}, 0, { Dp2Buf::strm(2, cols(0xffff0000u, 6)) });
+            Strm shortc = Dp2Buf::strm(1, std::vector<uint32_t>(6, 0xffff0000u));
+            m6.create_vs(0x11b, { STREAM(0), REG(0, T_FLOAT4), STREAM(1), REG(5, T_FLOAT4), 0xFFFFFFFFu }, vs_code);
+            m6.set_vs(0x11b);
+            m6.draw8m(4, 2, 0x11b, p4, {}, 0, { shortc });
+            m6.set_vs(H_VS2);
+            m6.draw8m(4, 2, H_VS2, p4, {}, 0, { Dp2Buf::strm_vram(1, sizeof(col8), H_VB, VB_SIZE - 16) });
+            m6.draw8m(4, 2, H_VS2, p4, {}, 0, { Dp2Buf::strm(1, cols(0xff00ff00u, 6)) });
+            hr = send_dp2(&enc, m6, vtx);
+            hr |= readback(&enc, H_RT);
+            CHECK(hr == 0 && near_(px(100, 100), 0x00ff00, 2),
+                  "stream missing / too short / beyond its buffer: skipped, not fatal; the good draw after them lands 0x%06x", px(100, 100));
+            /* hostile, refused (COMMAND_UNPARSED): stream 0 in the list, streams
+             * out of order, a count of 16, an unknown stream flag, stream data
+             * running past the record */
+            struct { const char *what; std::vector<Strm> st; uint32_t count_lie; } bad[] = {
+                { "stream 0 in the list", { Dp2Buf::strm(0, cols(0, 6)) }, 0 },
+                { "streams out of order", { Dp2Buf::strm(2, cols(0, 6)), Dp2Buf::strm(1, cols(0, 6)) }, 0 },
+                { "a count of 16", { Dp2Buf::strm(1, cols(0, 6)) }, 16 },
+                { "an unknown stream flag", { Dp2Buf::strm(1, cols(0, 6)) }, 0 },
+                { "a count past the record", { Dp2Buf::strm(1, cols(0, 6)) }, 3 },
+            };
+            bad[3].st[0].flags_lie = 0x8;
+            for (auto &c : bad) {
+                Dp2Buf mb;
+                mb.draw8m(4, 2, H_VS2, p4, {}, 0, c.st, c.count_lie);
+                hr = send_dp2(&enc, mb, vtx, 0, &err_off);
+                CHECK(hr == 0x88760BB8u && err_off == 0, "DRAW8 with %s -> D3DERR_COMMAND_UNPARSED at %u (0x%08x)", c.what, err_off, hr);
+            }
+            Dp2Buf m7;
+            m7.delete_vs(H_VS2); m7.delete_vs(H_VS02); m7.delete_vs(H_FF2); m7.delete_vs(0x11b);
+            hr = send_dp2(&enc, m7, vtx);
+            CHECK(hr == 0, "multi-stream shaders deleted (0x%08x)", hr);
+        }
         Dp2Buf s10;
         s10.delete_vs(H_VS); s10.delete_vs(H_VS_FF); s10.delete_vs(H_VS_CONST); s10.delete_vs(0x109); s10.delete_vs(0x10b);
         s10.delete_ps(H_PS); s10.delete_ps(H_PS_TEX); s10.delete_ps(0x2ff);

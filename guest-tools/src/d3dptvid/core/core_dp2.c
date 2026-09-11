@@ -39,10 +39,10 @@ typedef struct _DP2WALK {
     ULONG vlen, vsize, vcount;  /* its bytes (dwVertexLength * dwVertexSize), stride, vertex count */
     ULONG vall;                 /* the whole buffer from vtx on (a dxg buffer's linear size) */
     ULONG fvf;                  /* the current vertex format (SETVERTEXSHADER): an FVF, or a vertex shader handle (bit 0) */
-    DP2STREAM vb, ib;           /* stream 0 and the index buffer */
-    ULONG vb_handle, ib_handle;
-    BOOL vb_um;                 /* stream 0 is the DP2 vertex buffer */
+    DP2STREAM st[D3D_MAX_STREAMS], ib;  /* the streams and the index buffer */
+    ULONG st_um;                /* bit n: stream n is the DP2 vertex buffer */
     BOOL shader;                /* fvf is a vertex shader handle: the host reads the vertices through its declaration */
+    BOOL one_stream;            /* DDF_ONE_STREAM: a draw carries stream 0 alone (the A/B) */
     BOOL needs_vb;              /* a DX7 draw token references the DP2 vertex buffer */
     UCHAR *out;                 /* pass 2: the record's command area (NULL in pass 1) */
     ULONG outlen;
@@ -113,7 +113,7 @@ static void walk_pad(DP2WALK *w)
     walk_put(w, zero, pad);
 }
 
-/* stream 0 / the index buffer bound to a buffer of the table by handle
+/* a stream / the index buffer bound to a buffer of the table by handle
  * (SETSTREAMSOURCE / SETINDICES, or the context's bindings at the start of
  * a call): its memory and size; in VRAM (v9) the draws name it */
 static void stream_bind(DP2STREAM *s, ULONG handle, ULONG stride)
@@ -127,15 +127,50 @@ static void stream_bind(DP2STREAM *s, ULONG handle, ULONG stride)
     s->vram = t && t->buffer && !t->sysmem;
 }
 
+/* a stream bound to the DP2 call's own vertex buffer (SETSTREAMSOURCEUM) */
+static void stream_bind_um(DP2WALK *w, ULONG n, ULONG stride)
+{
+    DP2STREAM *s = &w->st[n];
+
+    s->mem = (ULONG_PTR)w->vtx;
+    s->bytes = w->vall;
+    s->stride = stride;
+    s->handle = 0;
+    s->vram = FALSE;
+    w->st_um |= 1u << n;
+}
+
+/* one stream's vertices in the record: a VRAM buffer's handle and the
+ * offset of the draw's first vertex, or the bytes themselves */
+static void walk_stream_data(DP2WALK *w, const DP2STREAM *s, ULONG off, ULONG bytes)
+{
+    d3dpt_u32x2 ref;
+
+    if (s->vram) {
+        ref.a = s->handle;
+        ref.b = off;
+        walk_put(w, &ref, sizeof(ref));
+    } else {
+        walk_put(w, (const void *)(s->mem + off), bytes);
+        walk_pad(w);
+    }
+}
+
 /* one self-contained draw for the host: the vertex range and the indices
- * copied into the record, or (v9) a VRAM buffer's handle and offset each */
+ * copied into the record, or (v9) a VRAM buffer's handle and offset each.
+ * Under a vertex shader (v10) every other stream bound whose range is
+ * there goes along too: the driver does not know which streams the
+ * declaration reads (the host does), and a DX8 draw indexes all its
+ * streams with one vertex number, so stream n's range starts at the same
+ * vertex as stream 0's — voff / stride — at its own stride */
 static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, ULONG voff, ULONG nverts,
                       ULONG ioff, ULONG nindices, ULONG min_index)
 {
     D3DHAL_DP2COMMAND_ h;
     d3dpt_dp2_draw8 t;
+    d3dpt_dp2_draw8_stream sh;
     d3dpt_u32x2 ref;
-    ULONG stride = vs->stride, vbytes;
+    ULONG stride = vs->stride, vbytes, first = 0, ext[D3D_MAX_STREAMS], next = 0, i;
 
     /* a stride wider than the FVF is legal (the runtime passes the
      * application's stride for user-memory draws); under a vertex shader
@@ -167,6 +202,21 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
         w->skip_why |= (nverts > 0x10000 || voff > vs->bytes || vbytes > vs->bytes - voff) ? 16 : 32;
         return;
     }
+    /* the other streams: a shader's draw only, and only where stream 0's
+     * offset is a whole vertex (it always is for the runtime's own draws; a
+     * stream that is bound but short — a stale binding a stream-0 shader
+     * does not read — is left out, and the host skips the draw if its
+     * declaration wanted it) */
+    if (w->shader && !w->one_stream && vs == &w->st[0] && voff % stride == 0) {
+        first = voff / stride;
+        for (i = 1; i < D3D_MAX_STREAMS; i++) {
+            const DP2STREAM *s = &w->st[i];
+            if (s->mem && s->stride && s->stride <= 1024 && first <= s->bytes / s->stride &&
+                nverts <= (s->bytes - first * s->stride) / s->stride) {
+                ext[next++] = i;
+            }
+        }
+    }
     h.bCommand = (BYTE)D3DPT_DP2_DRAW8;
     h.bReserved = 0;
     h.wPrimitiveCount = 0;
@@ -177,17 +227,11 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
     t.nverts = nverts;
     t.nindices = nindices;
     t.min_index = min_index;
-    t.flags = (vs->vram ? D3DPT_DRAW8_VRAM_VB : 0) | (nindices && w->ib.vram ? D3DPT_DRAW8_VRAM_IB : 0);
+    t.flags = (vs->vram ? D3DPT_DRAW8_VRAM_VB : 0) | (nindices && w->ib.vram ? D3DPT_DRAW8_VRAM_IB : 0) |
+              (next ? D3DPT_DRAW8_STREAMS : 0);
     walk_put(w, &h, sizeof(h));
     walk_put(w, &t, sizeof(t));
-    if (vs->vram) {
-        ref.a = vs->handle;
-        ref.b = voff;
-        walk_put(w, &ref, sizeof(ref));
-    } else {
-        walk_put(w, (const void *)(vs->mem + voff), vbytes);
-        walk_pad(w);
-    }
+    walk_stream_data(w, vs, voff, vbytes);
     if (nindices) {
         if (w->ib.vram) {
             ref.a = w->ib.handle;
@@ -196,6 +240,20 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
         } else {
             walk_put(w, (const void *)(w->ib.mem + ioff), nindices * 2);
             walk_pad(w);
+        }
+    }
+    if (next) {
+        ref.a = next;
+        ref.b = 0;
+        walk_put(w, &ref, sizeof(ref));
+        for (i = 0; i < next; i++) {
+            const DP2STREAM *s = &w->st[ext[i]];
+            sh.stream = ext[i];
+            sh.stride = s->stride;
+            sh.flags = s->vram ? D3DPT_DRAW8_VRAM_VB : 0;
+            sh.pad = 0;
+            walk_put(w, &sh, sizeof(sh));
+            walk_stream_data(w, s, first * s->stride, nverts * s->stride);
         }
     }
 }
@@ -545,23 +603,17 @@ static BOOL walk(DP2WALK *w)
         case 49:                                                /* SETSTREAMSOURCE: stream, handle, stride */
             for (i = 0; i < count; i++) {
                 const ULONG *e = (const ULONG *)(q + i * 12);
-                if (e[0] == 0) {
-                    stream_bind(&w->vb, e[1], e[2]);
-                    w->vb_handle = e[1];
-                    w->vb_um = FALSE;
+                if (e[0] < D3D_MAX_STREAMS) {
+                    stream_bind(&w->st[e[0]], e[1], e[2]);
+                    w->st_um &= ~(1u << e[0]);
                 }
             }
             break;
         case 50:                                                /* SETSTREAMSOURCEUM: stream, stride (the DP2 vertex buffer) */
             for (i = 0; i < count; i++) {
                 const ULONG *e = (const ULONG *)(q + i * 8);
-                if (e[0] == 0) {
-                    w->vb.mem = (ULONG_PTR)w->vtx;
-                    w->vb.bytes = w->vall;
-                    w->vb.stride = e[1];
-                    w->vb.handle = 0;
-                    w->vb.vram = FALSE;
-                    w->vb_um = TRUE;
+                if (e[0] < D3D_MAX_STREAMS) {
+                    stream_bind_um(w, e[0], e[1]);
                 }
             }
             break;
@@ -569,31 +621,30 @@ static BOOL walk(DP2WALK *w)
             for (i = 0; i < count; i++) {
                 const ULONG *e = (const ULONG *)(q + i * 8);
                 stream_bind(&w->ib, e[0], e[1]);
-                w->ib_handle = e[0];
             }
             break;
         case 52:                                                /* DRAWPRIMITIVE: type, VStart, count */
             for (i = 0; i < count; i++) {
                 const ULONG *e = (const ULONG *)(q + i * 12);
-                walk_draw(w, e[0], e[2], &w->vb, e[1] * w->vb.stride, 0, 0, 0, 0);
+                walk_draw(w, e[0], e[2], &w->st[0], e[1] * w->st[0].stride, 0, 0, 0, 0);
             }
             break;
-        case 59:                                                /* DRAWPRIMITIVE2: type, first vertex offset (bytes), count */
+        case 59:                                                /* DRAWPRIMITIVE2: type, first vertex offset (bytes into stream 0), count */
             for (i = 0; i < count; i++) {
                 const ULONG *e = (const ULONG *)(q + i * 12);
-                walk_draw(w, e[0], e[2], &w->vb, e[1], 0, 0, 0, 0);
+                walk_draw(w, e[0], e[2], &w->st[0], e[1], 0, 0, 0, 0);
             }
             break;
         case 53:                                                /* DRAWINDEXEDPRIMITIVE: type, base, min, nverts, start index, count */
             for (i = 0; i < count; i++) {
                 const ULONG *e = (const ULONG *)(q + i * 24);
-                walk_draw(w, e[0], e[5], &w->vb, (e[1] + e[2]) * w->vb.stride, e[3], e[4] * 2, prim_verts(e[0], e[5]), e[2]);
+                walk_draw(w, e[0], e[5], &w->st[0], (e[1] + e[2]) * w->st[0].stride, e[3], e[4] * 2, prim_verts(e[0], e[5]), e[2]);
             }
             break;
         case 60:                                                /* DRAWINDEXEDPRIMITIVE2: type, base offset, min, nverts, start offset, count */
             for (i = 0; i < count; i++) {
                 const ULONG *e = (const ULONG *)(q + i * 24);
-                walk_draw(w, e[0], e[5], &w->vb, (ULONG)((LONG)e[1] + (LONG)(e[2] * w->vb.stride)), e[3], e[4], prim_verts(e[0], e[5]), e[2]);
+                walk_draw(w, e[0], e[5], &w->st[0], (ULONG)((LONG)e[1] + (LONG)(e[2] * w->st[0].stride)), e[3], e[4], prim_verts(e[0], e[5]), e[2]);
             }
             break;
         case 58:                                                /* CLIPPEDTRIANGLEFAN: first vertex offset, edge flags, count */
@@ -604,7 +655,7 @@ static BOOL walk(DP2WALK *w)
              * buffer (which is a dummy under d3d8.dll; doc 15) */
             for (i = 0; i < count; i++) {
                 const ULONG *e = (const ULONG *)(q + i * 12);
-                walk_draw(w, 6, e[2], &w->vb, e[0], 0, 0, 0, 0);
+                walk_draw(w, 6, e[2], &w->st[0], e[0], 0, 0, 0, 0);
             }
             break;
         case 64:                                                /* BUFFERBLT: done here, in pass 1 (v9) */
@@ -636,7 +687,7 @@ static BOOL walk(DP2WALK *w)
 void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
 {
     D3DCTX *c = p ? ctx_of(p, call->ctx) : NULL;
-    ULONG vcopy, off;
+    ULONG vcopy, off, i;
     d3dpt_dp2 *r;
     d3dpt_ret *res;
     DP2WALK w, w0;
@@ -676,17 +727,15 @@ void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
     w0.bounce = ~0u;
     w0.fvf = c->fvf ? c->fvf : (call->vertex_type & 1 ? 0 : call->vertex_type);
     w0.shader = c->shader;
-    w0.vb_um = c->vb_um;
-    w0.vb_handle = c->vb_handle;
-    w0.ib_handle = c->ib_handle;
-    if (w0.vb_um) {
-        w0.vb.mem = (ULONG_PTR)call->vtx;
-        w0.vb.bytes = call->vall;
-        w0.vb.stride = c->vb_stride;
-    } else {
-        stream_bind(&w0.vb, w0.vb_handle, c->vb_stride);
+    w0.one_stream = (ddflags(p) & DDF_ONE_STREAM) != 0;
+    for (i = 0; i < D3D_MAX_STREAMS; i++) {
+        if (c->st_um & (1u << i)) {
+            stream_bind_um(&w0, i, c->st_stride[i]);
+        } else {
+            stream_bind(&w0.st[i], c->st_handle[i], c->st_stride[i]);
+        }
     }
-    stream_bind(&w0.ib, w0.ib_handle, c->ib_stride);
+    stream_bind(&w0.ib, c->ib_handle, c->ib_stride);
     w = w0;
     w.rstates = call->rstates;
     walk(&w);
@@ -725,18 +774,20 @@ void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
         }
         c->fvf = w.fvf;
         c->shader = w.shader;
-        c->vb_um = w.vb_um;
-        c->vb_handle = w.vb_handle;
-        c->ib_handle = w.ib_handle;
-        c->vb_stride = w.vb.stride;
+        c->st_um = w.st_um;
+        for (i = 0; i < D3D_MAX_STREAMS; i++) {
+            c->st_handle[i] = w.st[i].handle;
+            c->st_stride[i] = w.st[i].stride;
+        }
+        c->ib_handle = w.ib.handle;
         c->ib_stride = w.ib.stride;
         if (skipped && p->dp2_errors < 8) {
             p->dp2_errors++;
             dbg_hex(p, "d3dptdisp: dx8 draws skipped ", skipped);
             dbg_hex(p, " why ", w.skip_why);
             dbg_hex(p, " fvf ", w0.fvf);
-            dbg_hex(p, " stride ", w0.vb.stride);
-            dbg_hex(p, " bytes ", w0.vb.bytes);
+            dbg_hex(p, " stride ", w0.st[0].stride);
+            dbg_hex(p, " bytes ", w0.st[0].bytes);
             dbg_hex(p, " ib ", w0.ib.bytes);
             dbg_hex(p, "; first: prim ", w.skip_info[0]);
             dbg_hex(p, " count ", w.skip_info[1]);

@@ -1357,7 +1357,8 @@ working; Max Payne renders on it except its clipped fans (the
   SETTRANSFORM / MULTIPLYTRANSFORM / SETLIGHT / SETMATERIAL and the
   lighting states onto DXVK's fixed-function pipeline, so the runtime
   hands us untransformed vertices; `ddflags=0x1000` withdraws the claim),
-  `PUREDEVICE`, one stream, 16-bit indices, vertex / pixel shaders
+  `PUREDEVICE`, sixteen streams since protocol v10 (one before: the
+  last section), 16-bit indices, vertex / pixel shaders
   `D3DVS_VERSION(1,1)` / `D3DPS_VERSION(1,4)` since the shader section
   below (0.0 in the first cut), 4096² textures, 8
   stages, no cube or volume maps, and **no `D3DPMISCCAPS_CLIPTLVERTS`**:
@@ -1469,12 +1470,13 @@ working; Max Payne renders on it except its clipped fans (the
   `tools/xp-driver-test.sh <image> d3dgame8` boots the guest-tools ISO,
   copies `D3DGAME8.EXE` out alone and diffs its frame against the native
   d3d9 oracle of `scripts/test.sh` (HUD masked).
-- Not there: more than one stream, cube and volume textures, N-
-  and RT-patches (ZBIAS → DEPTHBIAS landed 2026-09-05 evening). DXT textures on this path were fixed
+- Not there: cube and volume textures, N- and RT-patches (ZBIAS →
+  DEPTHBIAS landed 2026-09-05 evening). DXT textures on this path were fixed
   on 2026-09-05 (the compressed-textures bullet above); vertex and pixel
   shaders 1.x the same night (the section below); palettized textures
   with v8; video-memory vertex / index buffers
-  (`D3DDEVCAPS_HWVERTEXBUFFER`) with v9 (the last section).
+  (`D3DDEVCAPS_HWVERTEXBUFFER`) with v9; more than one vertex stream with
+  v10 (the last two sections).
 
 ### Vertex and pixel shaders 1.x on the DX8 DDI (2026-09-05, protocol v7)
 
@@ -1516,9 +1518,10 @@ out of it:
   go to `Set*ShaderConstantF` with the register range checked (DXVK
   indexes arrays with them). A DRAW8 under a shader is skipped, with one
   log line, when the handle is unknown, the declaration reads a stream
-  other than 0 (one stream is claimed), or it reads more than the stride
-  carries; otherwise it is the same `DrawPrimitiveUP` /
-  `DrawIndexedPrimitiveUP` with the declaration bound.
+  the draw did not carry, or it reads more of a stream than that stream's
+  stride carries; otherwise it is the same `DrawPrimitiveUP` /
+  `DrawIndexedPrimitiveUP` with the declaration bound (a declaration
+  reading more than stream 0 since v10: the multi-stream section).
 - **The bytecode is validated before DXVK sees it.** The d3d9 half hands
   guest bytecode straight to DXVK, and the hostile case of the host test
   showed why that is not enough here: on a stream with an unknown opcode
@@ -1633,3 +1636,72 @@ tokens, and a draw can *name* the buffer:
   `tools/xp-vicecity.sh play` gets there on its own under both
   accelerators, reading the log's rate lines (draws per frame: the menu
   is 10, the game hundreds) rather than the clock for every wait.
+
+### More than one vertex stream (2026-09-11, protocol v10)
+
+Until v10 the caps said `MaxStreams` 1 and the driver tracked stream 0
+alone: a DX8 declaration splitting a vertex across buffers — the position
+and normal in one, texture coordinates or skinning weights in another, the
+common shape for a title that shares geometry between passes — was
+refused by the runtime before any draw, and a declaration that got through
+reading stream 1 had its draws skipped on the host. `MaxStreams` is 16 now
+(what the era's T&L parts claim; `ddflags=0x200000`, `DDF_ONE_STREAM`, is
+1 again and the A/B).
+
+- **Driver** (`core_dp2.c`). The context keeps all sixteen bindings
+  (`st_handle` / `st_stride`, a user-memory bit each) instead of stream
+  0's, resolved from the surface table at every call as before; every
+  `SETSTREAMSOURCE` / `SETSTREAMSOURCEUM` lands in its slot. A draw under
+  a vertex shader handle carries, after stream 0 and the indices, **every
+  other stream bound whose range is there** — the driver does not parse
+  declarations, the host has them, and a stale binding a stream-0 shader
+  never reads costs an 8-byte reference when it is a VRAM buffer (with
+  `HWVERTEXBUFFER` they nearly all are) and a copy when it is not. A DX8
+  draw indexes all its streams with one vertex number, so stream *n*'s
+  range starts at stream 0's first vertex — the token's byte offset over
+  stream 0's stride (`DRAWPRIMITIVE2` / `DRAWINDEXEDPRIMITIVE2` carry
+  offsets in stream 0's bytes; the two plain draws a vertex index) — at
+  stream *n*'s own stride, `nverts` vertices long. A stream whose range
+  runs past its buffer is left out rather than skipping the draw, and an
+  FVF draw (the fixed function without a declaration, the runtime's
+  clipped fans) carries stream 0 alone, as an FVF reads nothing else.
+- **Record.** `D3DPT_DRAW8_STREAMS` in the DRAW8's flags; after the
+  indices a `{count, 0}` pair and `count` streams, each a
+  `d3dpt_dp2_draw8_stream` (number 1..15 in increasing order, stride, its
+  own `D3DPT_DRAW8_VRAM_VB`) followed by its bytes or its `{handle,
+  offset}` exactly as stream 0's (`d3dpt_proto.h`).
+- **Executor.** Every stream's list entry is parsed before anything can
+  skip the draw (the next token starts after the last one). The
+  declaration's conversion now records the bytes it reads of *each*
+  stream; a draw is skipped with one log line when a stream the
+  declaration reads did not come with it, or a stream's stride is shorter
+  than what is read of it. A declaration reading anything but stream 0
+  alone is drawn **interleaved**: the streams it reads are copied into one
+  vertex, in stream order, and a copy of the d3d9 declaration with each
+  element moved into stream 0 at its stream's base (the strides before it
+  added up) is bound after the shader — kept per shader per set of strides,
+  eight at most. So the multi-stream draw takes the same
+  `DrawPrimitiveUP` / `DrawIndexedPrimitiveUP` path as every other DRAW8,
+  and the host holds no vertex buffers of its own. `apply_vs` is left
+  alone: its early return is what keeps a `D3DVSD_CONST` run from
+  clobbering constants the application set after the shader, and the
+  interleaved declaration is simply set again at every such draw.
+- **Tests.** `tools/d3dpt-dp2-test.cpp`: position and colour in two
+  streams at different strides inline, the colour stream in a VRAM buffer
+  under an indexed draw with a MinIndex, streams 0 and 2 with nothing at
+  1, the fixed function on a two-stream declaration, a stream the
+  declaration does not read carried and ignored; skipped (and the stream
+  still in sync, a good draw after them landing): a stream the
+  declaration reads missing, a stride shorter than the element, a VRAM
+  range past the buffer; refused with `COMMAND_UNPARSED`: stream 0 in the
+  list, streams out of order, a count of 16, an unknown stream flag, a
+  count running past the record. In the guest, SHTEST's two-stream cases
+  go through XP's own d3d8.dll: `DrawPrimitive` from a StartVertex,
+  `DrawIndexedPrimitive` with a BaseVertexIndex, the colour stream in a
+  `D3DPOOL_SYSTEMMEM` buffer (the copy path) and the fixed function on a
+  two-stream declaration, every buffer's first vertices a decoy so a
+  stream read from the wrong vertex shows as the wrong colour; stream 1
+  then stays bound through the rest of the run, which reads stream 0
+  only. **13 cases, 0 failed** (`xp-driver-test.sh shtest`, a qcow2
+  overlay of `winxp-m7` under TCG on the Air, 2026-09-11; the runtime
+  reports 16 streams, no skipped draw in the QEMU log).

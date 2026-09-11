@@ -47,6 +47,7 @@
 #define DDF_NO_PARSEUNKNOWN_CALL 0x80000 /* bisection: never call the runtime's D3DParseUnknownCommand (legacy tokens reach the host) */
 #define DDF_NO_HWVB            0x100000 /* the A/B: no video-memory vertex / index buffers (every buffer in system memory, every
                                          * draw's vertices copied into the record, as before protocol v9) */
+#define DDF_ONE_STREAM         0x200000 /* the A/B: MaxStreams 1 and every draw carrying stream 0 alone, as before protocol v10 */
 
 /* DDI-only DX8 device caps (d3dhal.h): the runtime puts vertex / index
  * buffers in video memory through the buffer callbacks when they are set */
@@ -71,6 +72,7 @@
 #define FOURCC_(a, b, c, d) ((ULONG)(UCHAR)(a) | ((ULONG)(UCHAR)(b) << 8) | ((ULONG)(UCHAR)(c) << 16) | ((ULONG)(UCHAR)(d) << 24))
 
 #define D3D_MAX_CTX 16
+#define D3D_MAX_STREAMS 16          /* D3DCAPS8.MaxStreams (D3DPT_DRAW8_MAX_STREAMS) */
 
 /* Three DirectDraw-internal bits the core acts on, spelled out because
  * they are in a DDK header on both families and the core includes
@@ -89,7 +91,7 @@
 typedef struct _DP2STREAM {
     ULONG_PTR mem;
     ULONG bytes, stride;
-    ULONG handle;               /* the buffer's surface handle (0: the DP2 call's own vertex buffer) */
+    ULONG handle;               /* the buffer's surface handle (0: the DP2 call's own vertex buffer, or nothing bound) */
     BOOL vram;                  /* the buffer lives in VRAM (v9): a draw names it instead of copying it */
 } DP2STREAM;
 
@@ -120,13 +122,13 @@ typedef struct _D3DCTX {
     BOOL used;
     /* the DX8 device state that persists between DrawPrimitives2 calls (the
      * runtime sends SETVERTEXSHADER / SETSTREAMSOURCE / SETINDICES only on
-     * change): the vertex format, stream 0, the index buffer */
+     * change): the vertex format, the streams, the index buffer */
     ULONG fvf;                  /* the SETVERTEXSHADER value: an FVF, or a vertex shader handle (bit 0) */
     BOOL shader;                /* fvf is a vertex shader handle */
-    BOOL vb_um;                 /* stream 0 is the call's own vertex buffer (user memory) */
-    ULONG vb_handle, ib_handle; /* the bound buffers (their memory can move between calls: a
+    ULONG st_um;                /* bit n: stream n is the call's own vertex buffer (user memory) */
+    ULONG st_handle[D3D_MAX_STREAMS], ib_handle;    /* the bound buffers (their memory can move between calls: a
                                  * Lock with DISCARD gives a buffer new memory, CreateSurfaceEx again) */
-    ULONG vb_stride, ib_stride;
+    ULONG st_stride[D3D_MAX_STREAMS], ib_stride;
 } D3DCTX;
 
 /* The device, as the core sees it. The per-OS layer's own device object

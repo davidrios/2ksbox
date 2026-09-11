@@ -31,22 +31,55 @@
 # cmd-01.png … every s seconds — for watching a game start; SHOT_KEYS="26:esc"
 # presses a key right before screendump n). Needs
 # guest-tools/build-driver.sh run first (guest-tools/out/d3dpt-driver.iso),
-# mkfs.fat + sfdisk + mtools + python3. Ends every run with a clean
+# mtools + python3, and mkfs.fat + sfdisk where they exist (the Mac has
+# neither: mformat then builds the scratch disk). Ends every run with a clean
 # power-down. Keys typed while a full-screen DirectDraw window is up are
 # lost, so each test is ONE chained "cmd /k a & b & c" command line.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/tools/guestwait.sh"
+if [ "$(uname -s)" = Darwin ]; then
+  # scripts/test.sh's macOS run environment: DXVK dlopens the Vulkan loader
+  # by leaf name, and a DYLD_* variable handed to this script is stripped by
+  # SIP at the #!/usr/bin/env exec. Without it the first Direct3D context
+  # takes QEMU down (DXVK calls the loader it never found: SIGSEGV in
+  # LibraryFn, "vkGetInstanceProcAddr not found" just before). The loader's
+  # own keg only, never all of /opt/homebrew/lib (doc 00's ImageIO gotcha).
+  VKLIB=/opt/homebrew/opt/vulkan-loader/lib
+  [ -d "$VKLIB" ] || VKLIB=/opt/homebrew/lib
+  export DYLD_LIBRARY_PATH="$VKLIB${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+  if [ -z "${VK_ICD_FILENAMES:-}" ]; then
+    for f in "$HOME"/VulkanSDK/*/macOS/share/vulkan/icd.d/libkosmickrisp_icd.json; do
+      [ -f "$f" ] && export VK_ICD_FILENAMES="$f"
+    done
+  fi
+fi
 IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|d3d7|d3dgame8|shtest|cktest|ebtest|cmd|bat}"; shift 2
 OUT="${OUT:-$ROOT/build/xp-driver-test}"; mkdir -p "$OUT"
 ISO="$ROOT/guest-tools/out/d3dpt-driver.iso"
 [ -f "$ISO" ] || { echo "no $ISO: run guest-tools/build-driver.sh"; exit 1; }
 SCRATCH="$OUT/scratch.img"
 if [ ! -f "$SCRATCH" ]; then
-  truncate -s 64M "$SCRATCH"
-  printf 'label: dos\nstart=2048, type=0c\n' | sfdisk -q "$SCRATCH"
-  mkfs.fat -F 32 --offset 2048 "$SCRATCH" >/dev/null
+  dd if=/dev/null of="$SCRATCH" bs=1 seek=$((64 * 1048576)) 2>/dev/null
+  if command -v sfdisk >/dev/null && command -v mkfs.fat >/dev/null; then
+    printf 'label: dos\nstart=2048, type=0c\n' | sfdisk -q "$SCRATCH"
+    mkfs.fat -F 32 --offset 2048 "$SCRATCH" >/dev/null
+  else
+    # the Mac has neither: the partition table by hand and mtools inside it,
+    # tools/xp-cdimage-test.sh's recipe (-H 2048, the hidden-sectors field =
+    # the partition's start, or XP does not mount the volume at all)
+    python3 - "$SCRATCH" <<'MBR'
+import struct, sys
+start, total = 2048, 64 * 2048
+mbr = bytearray(512)
+mbr[0x1be:0x1be + 16] = struct.pack('<B3sB3sII', 0x00, b'\xfe\xff\xff', 0x0c, b'\xfe\xff\xff', start, total - start)
+mbr[510:512] = b'\x55\xaa'
+with open(sys.argv[1], 'r+b') as f:
+    f.write(bytes(mbr))
+MBR
+    mformat -i "$SCRATCH@@1048576" -F -H 2048 -T $((64 * 2048 - 2048)) ::
+  fi
 fi
 stage_bat() {  # the Run dialog truncates long lines: stage a batch file on the scratch disk (before the guest mounts it)
   sed 's/\r$//; s/$/\r/' "$1" > "$OUT/RUN.BAT"

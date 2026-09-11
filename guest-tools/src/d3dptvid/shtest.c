@@ -14,6 +14,12 @@
  * it must have:
  *   vs 1.1 through a declaration, oD0 = v5 * c0 (c0 red, then green),
  *   the same through a vertex + index buffer (DrawIndexedPrimitive),
+ *   two streams (protocol v10): the position in one vertex buffer, the
+ *   colour in another at a different stride, through DrawPrimitive with a
+ *   StartVertex, DrawIndexedPrimitive with a BaseVertexIndex, the colour
+ *   stream in system memory, and the fixed function on a two-stream
+ *   declaration — every buffer's first vertices a decoy colour, so a stream
+ *   read from the wrong vertex shows,
  *   a declaration-only shader (the fixed function on a FLOAT3 + colour layout),
  *   D3DVSD_CONST in the declaration (loaded when the shader is set),
  *   ps 1.1 r0 = c0 (yellow), then off again,
@@ -113,9 +119,23 @@ static const DWORD decl_const[] = {
     D3DVSD_CONST(0, 1), 0x00000000, 0x00000000, 0x3f800000, 0x3f800000,     /* (0, 0, 1, 1) */
     D3DVSD_END()
 };
+/* two streams: the position in stream 0, the colour in stream 1 (a vs 1.1
+ * and the fixed function) */
+static const DWORD decl_2s[] = {
+    D3DVSD_STREAM(0), D3DVSD_REG(D3DVSDE_POSITION, D3DVSDT_FLOAT4),
+    D3DVSD_STREAM(1), D3DVSD_REG(D3DVSDE_DIFFUSE, D3DVSDT_D3DCOLOR), D3DVSD_END()
+};
+static const DWORD decl_2s_ff[] = {
+    D3DVSD_STREAM(0), D3DVSD_REG(D3DVSDE_POSITION, D3DVSDT_FLOAT3),
+    D3DVSD_STREAM(1), D3DVSD_REG(D3DVSDE_DIFFUSE, D3DVSDT_D3DCOLOR), D3DVSD_END()
+};
 
 struct pcvtx { float x, y, z, w; DWORD color; };
 struct ffvtx { float x, y, z; DWORD color; };
+struct p4vtx { float x, y, z, w; };             /* stream 0 of decl_2s: 16 bytes */
+struct p3vtx { float x, y, z; };                /* stream 0 of decl_2s_ff: 12 bytes */
+struct c8vtx { DWORD color, pad; };             /* stream 1: 8 bytes, where the colour is 4 */
+#define DECOY 3                                 /* vertices before the quad in every two-stream buffer */
 struct tlvtx { float x, y, z, rhw; DWORD color; float u, v; };
 #define FVF_TL (D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1)
 
@@ -177,6 +197,28 @@ static DWORD readback(IDirect3DDevice8 *dev, int x, int y)
     return px;
 }
 
+/* a vertex buffer of DECOY decoy vertices then n real ones, element size
+ * sz: decoy() fills element i < DECOY, real() the others */
+static IDirect3DVertexBuffer8 *make_vb(IDirect3DDevice8 *dev, D3DPOOL pool, UINT sz, UINT n, const void *decoy, const void *real, UINT real_step)
+{
+    IDirect3DVertexBuffer8 *vb = NULL;
+    BYTE *p = NULL;
+    UINT i;
+    HRESULT hr = IDirect3DDevice8_CreateVertexBuffer(dev, (DECOY + n) * sz, D3DUSAGE_WRITEONLY, 0, pool, &vb);
+
+    logp("CreateVertexBuffer (%u x %u bytes, pool %d) 0x%08lx\n", DECOY + n, sz, (int)pool, (unsigned long)hr);
+    if (FAILED(hr) || !vb) {
+        return NULL;
+    }
+    if (SUCCEEDED(IDirect3DVertexBuffer8_Lock(vb, 0, 0, &p, 0))) {
+        for (i = 0; i < DECOY + n; i++) {
+            memcpy(p + i * sz, i < DECOY ? decoy : (const BYTE *)real + (i - DECOY) * real_step, sz);
+        }
+        IDirect3DVertexBuffer8_Unlock(vb);
+    }
+    return vb;
+}
+
 static int near_(DWORD a, DWORD b, int tol)
 {
     int i;
@@ -223,14 +265,14 @@ int main(int argc, char **argv)
     HWND hwnd;
     IDirect3D8 *d3d;
     IDirect3DDevice8 *dev = NULL;
-    IDirect3DVertexBuffer8 *vb = NULL;
+    IDirect3DVertexBuffer8 *vb = NULL, *vbp4 = NULL, *vbp3 = NULL, *vbc = NULL, *vbcs = NULL;
     IDirect3DIndexBuffer8 *ib = NULL;
     IDirect3DTexture8 *tex = NULL;
     D3DPRESENT_PARAMETERS pp;
     D3DDISPLAYMODE mode;
     D3DCAPS8 caps;
     D3DMATRIX ident;
-    DWORD h_vs = 0, h_ff = 0, h_const = 0, h_ps = 0, h_pstex = 0;
+    DWORD h_vs = 0, h_ff = 0, h_const = 0, h_ps = 0, h_pstex = 0, h_2s = 0, h_2sff = 0;
     HRESULT hr;
     int hwvp;
     static const float red[4] = { 1, 0, 0, 1 }, green[4] = { 0, 1, 0, 1 }, magenta[4] = { 1, 0, 1, 1 }, yellow[4] = { 1, 1, 0, 1 };
@@ -252,12 +294,12 @@ int main(int argc, char **argv)
     IDirect3D8_GetAdapterDisplayMode(d3d, D3DADAPTER_DEFAULT, &mode);
     dispfmt = mode.Format;
     hwvp = (caps.DevCaps & D3DDEVCAPS_HWTRANSFORMANDLIGHT) != 0;
-    logp("shtest: display format %lu, devcaps 0x%08lx, vs %lu.%lu (%lu constants), ps %lu.%lu (max value %g)\n",
+    logp("shtest: display format %lu, devcaps 0x%08lx, vs %lu.%lu (%lu constants), ps %lu.%lu (max value %g), %lu streams\n",
          (unsigned long)mode.Format, (unsigned long)caps.DevCaps,
          (unsigned long)D3DSHADER_VERSION_MAJOR(caps.VertexShaderVersion), (unsigned long)D3DSHADER_VERSION_MINOR(caps.VertexShaderVersion),
          (unsigned long)caps.MaxVertexShaderConst,
          (unsigned long)D3DSHADER_VERSION_MAJOR(caps.PixelShaderVersion), (unsigned long)D3DSHADER_VERSION_MINOR(caps.PixelShaderVersion),
-         (double)caps.MaxPixelShaderValue);
+         (double)caps.MaxPixelShaderValue, (unsigned long)caps.MaxStreams);
     memset(&pp, 0, sizeof pp);
     pp.BackBufferWidth = 320;
     pp.BackBufferHeight = 240;
@@ -330,6 +372,81 @@ int main(int argc, char **argv)
         IDirect3DDevice8_SetStreamSource(dev, 0, NULL, 0);
     }
 
+    /* --- two streams: the position (16 bytes) in one buffer, the colour (8
+     * bytes) in another, both after DECOY decoy vertices — red and off to
+     * the right — so a stream read from the wrong vertex draws the wrong
+     * colour or in the wrong place. The quad's own colour is white, c0
+     * decides --- */
+    if (caps.MaxStreams >= 2) {
+        static const struct p4vtx p4_decoy = { 0.5f, -0.5f, 0.5f, 1.0f };
+        static const struct p3vtx p3_decoy = { 0.5f, -0.5f, 0.5f };
+        static const struct c8vtx c_decoy = { 0xffff0000, 0 }, c_white = { 0xffffffff, 0 };
+        static const WORD idx6[6] = { 0, 1, 2, 3, 4, 5 };
+        IDirect3DIndexBuffer8 *ib6 = NULL;
+        BYTE *p = NULL;
+
+        vbp4 = make_vb(dev, D3DPOOL_MANAGED, sizeof(struct p4vtx), 6, &p4_decoy, sq, sizeof sq[0]);        /* pcvtx starts with the float4 */
+        vbp3 = make_vb(dev, D3DPOOL_MANAGED, sizeof(struct p3vtx), 6, &p3_decoy, cq, sizeof cq[0]);        /* ffvtx starts with the float3 */
+        vbc = make_vb(dev, D3DPOOL_MANAGED, sizeof(struct c8vtx), 6, &c_decoy, &c_white, 0);
+        vbcs = make_vb(dev, D3DPOOL_SYSTEMMEM, sizeof(struct c8vtx), 6, &c_decoy, &c_white, 0);
+        hr = IDirect3DDevice8_CreateIndexBuffer(dev, sizeof idx6, D3DUSAGE_WRITEONLY, D3DFMT_INDEX16, D3DPOOL_MANAGED, &ib6);
+        if (SUCCEEDED(hr) && ib6 && SUCCEEDED(IDirect3DIndexBuffer8_Lock(ib6, 0, 0, &p, 0))) {
+            memcpy(p, idx6, sizeof idx6);
+            IDirect3DIndexBuffer8_Unlock(ib6);
+        }
+        hr = IDirect3DDevice8_CreateVertexShader(dev, decl_2s, vs_code, &h_2s, 0);
+        logp("CreateVertexShader (two streams: position, colour; vs 1.1) 0x%08lx handle 0x%08lx\n", (unsigned long)hr, (unsigned long)h_2s);
+        hr = IDirect3DDevice8_CreateVertexShader(dev, decl_2s_ff, NULL, &h_2sff, 0);
+        logp("CreateVertexShader (two streams, no function) 0x%08lx handle 0x%08lx\n", (unsigned long)hr, (unsigned long)h_2sff);
+        if (vbp4 && vbp3 && vbc && vbcs && ib6) {
+            IDirect3DDevice8_SetVertexShader(dev, h_2s);
+            IDirect3DDevice8_SetStreamSource(dev, 0, vbp4, sizeof(struct p4vtx));
+            IDirect3DDevice8_SetStreamSource(dev, 1, vbc, sizeof(struct c8vtx));
+            IDirect3DDevice8_SetVertexShaderConstant(dev, 0, green, 1);
+            begin(dev);
+            hr = IDirect3DDevice8_DrawPrimitive(dev, D3DPT_TRIANGLELIST, DECOY, 2);
+            IDirect3DDevice8_EndScene(dev);
+            logp("DrawPrimitive (two streams, StartVertex %d) 0x%08lx\n", DECOY, (unsigned long)hr);
+            check(dev, "two streams, DrawPrimitive from vertex 3", 80, 60, 0x00ff00, 240, 180, CLEAR_COLOR & 0xffffff);
+
+            IDirect3DDevice8_SetIndices(dev, ib6, DECOY);
+            IDirect3DDevice8_SetVertexShaderConstant(dev, 0, magenta, 1);
+            begin(dev);
+            hr = IDirect3DDevice8_DrawIndexedPrimitive(dev, D3DPT_TRIANGLELIST, 0, 6, 0, 2);
+            IDirect3DDevice8_EndScene(dev);
+            logp("DrawIndexedPrimitive (two streams, BaseVertexIndex %d) 0x%08lx\n", DECOY, (unsigned long)hr);
+            check(dev, "two streams, indexed, BaseVertexIndex 3", 80, 60, 0xff00ff, 240, 180, CLEAR_COLOR & 0xffffff);
+            IDirect3DDevice8_SetIndices(dev, NULL, 0);
+
+            IDirect3DDevice8_SetStreamSource(dev, 1, vbcs, sizeof(struct c8vtx));
+            IDirect3DDevice8_SetVertexShaderConstant(dev, 0, yellow, 1);
+            begin(dev);
+            hr = IDirect3DDevice8_DrawPrimitive(dev, D3DPT_TRIANGLELIST, DECOY, 2);
+            IDirect3DDevice8_EndScene(dev);
+            logp("DrawPrimitive (the colour stream in system memory) 0x%08lx\n", (unsigned long)hr);
+            check(dev, "two streams, the colour in system memory", 80, 60, 0xffff00, 240, 180, CLEAR_COLOR & 0xffffff);
+
+            IDirect3DDevice8_SetVertexShader(dev, h_2sff);
+            IDirect3DDevice8_SetStreamSource(dev, 0, vbp3, sizeof(struct p3vtx));
+            IDirect3DDevice8_SetStreamSource(dev, 1, vbc, sizeof(struct c8vtx));
+            begin(dev);
+            hr = IDirect3DDevice8_DrawPrimitive(dev, D3DPT_TRIANGLELIST, DECOY, 2);
+            IDirect3DDevice8_EndScene(dev);
+            logp("DrawPrimitive (fixed function, two streams) 0x%08lx\n", (unsigned long)hr);
+            check(dev, "fixed function on a two-stream declaration", 80, 60, 0xffffff, 240, 180, CLEAR_COLOR & 0xffffff);
+        } else {
+            cases++;
+            failed++;
+            logp("two streams: a buffer or the index buffer could not be created  FAIL\n");
+        }
+        /* stream 1 stays bound from here on: every later draw reads stream 0
+         * only, and must not mind it */
+        IDirect3DDevice8_SetStreamSource(dev, 0, NULL, 0);
+        if (ib6) IDirect3DIndexBuffer8_Release(ib6);
+    } else {
+        logp("two streams: MaxStreams %lu, skipped\n", (unsigned long)caps.MaxStreams);
+    }
+
     /* --- a declaration-only shader: the fixed function on a FLOAT3 position + colour --- */
     hr = IDirect3DDevice8_CreateVertexShader(dev, decl_ff, NULL, &h_ff, 0);
     logp("CreateVertexShader (FLOAT3 position + colour, no function) 0x%08lx handle 0x%08lx\n", (unsigned long)hr, (unsigned long)h_ff);
@@ -394,6 +511,8 @@ int main(int argc, char **argv)
     logp("DeleteVertexShader 0x%08lx\n", (unsigned long)hr);
     IDirect3DDevice8_DeleteVertexShader(dev, h_ff);
     IDirect3DDevice8_DeleteVertexShader(dev, h_const);
+    if (h_2s) IDirect3DDevice8_DeleteVertexShader(dev, h_2s);
+    if (h_2sff) IDirect3DDevice8_DeleteVertexShader(dev, h_2sff);
     hr = IDirect3DDevice8_DeletePixelShader(dev, h_ps);
     logp("DeletePixelShader 0x%08lx\n", (unsigned long)hr);
     IDirect3DDevice8_DeletePixelShader(dev, h_pstex);
@@ -407,6 +526,11 @@ int main(int argc, char **argv)
     if (tex) IDirect3DTexture8_Release(tex);
     if (vb) IDirect3DVertexBuffer8_Release(vb);
     if (ib) IDirect3DIndexBuffer8_Release(ib);
+    IDirect3DDevice8_SetStreamSource(dev, 1, NULL, 0);
+    if (vbp4) IDirect3DVertexBuffer8_Release(vbp4);
+    if (vbp3) IDirect3DVertexBuffer8_Release(vbp3);
+    if (vbc) IDirect3DVertexBuffer8_Release(vbc);
+    if (vbcs) IDirect3DVertexBuffer8_Release(vbcs);
     IDirect3DDevice8_Release(dev);
     IDirect3D8_Release(d3d);
     if (logf) fclose(logf);

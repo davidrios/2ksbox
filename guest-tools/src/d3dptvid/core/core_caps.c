@@ -242,8 +242,8 @@ void d3d_caps_init(d3dpt_core *p)
     }
 
     /* the DX8 DDI's caps: the same device, in D3DCAPS8 form (vertex and
-     * pixel shaders 1.x run on the host; one stream: the driver copies each
-     * draw's vertex range into the record, see D3dDrawPrimitives2) */
+     * pixel shaders 1.x run on the host; sixteen streams since v10: a draw
+     * under a shader carries every bound stream's range, see walk_draw) */
     for (i = 0; i < sizeof(*c8) / 4; i++) ((ULONG *)c8)[i] = 0;
     c8->DeviceType = D3DDEVTYPE_HAL_;
     c8->Caps2 = D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_DYNAMICTEXTURES;
@@ -288,7 +288,7 @@ void d3d_caps_init(d3dpt_core *p)
     c8->MaxPointSize = 64.0f;
     c8->MaxPrimitiveCount = 0xffff;
     c8->MaxVertexIndex = 0xffff;
-    c8->MaxStreams = 1;
+    c8->MaxStreams = (ddflags(p) & DDF_ONE_STREAM) ? 1 : D3D_MAX_STREAMS;
     c8->MaxStreamStride = 256;
     if (ddflags(p) & DDF_NO_SHADERS) {
         c8->VertexShaderVersion = D3DVS_VERSION_0;
