@@ -1,0 +1,378 @@
+x87 inline mode with the precision flag already sticky drops the inexact
+bookkeeping: no residuals, no read-modify-write of fpus per instruction.
+
+Patch 06's shadow doubles are exact, PE included, and at PC=24 -- what
+Direct3D sets, and what every 3D title of the era runs its x87 code in --
+that exactness costs most of each instruction. A `fmuls m32` computed its
+product, a fused residual (fmsub) to know whether the double product was
+exact, rounded to 24 bits and back, xor'ed the two to know whether the
+rounding was, and then loaded env->fpus, or'ed PE in and stored it back;
+an add or subtract ran a five-operation TwoSum for the same bit. PE is
+sticky and, in inline mode, masked: once it is set, none of that can
+change anything a guest can see. In 3DMark 99's first-person test the
+x87 memory forms were ~400 host bytes each (`fsubs (%edx)` 412,
+`fmuls -0x30(%ebp)` 407) and a quarter of the frame, between MAX-FX's
+lighting code in 3DMARK.EXE and its Pentium III DLL.
+
+TB_FLAG_X87_PE (bit 2 of the TB flags, no hflags bit) is set when the x87
+mode is inline and fpus has PE; a TB translated with it emits no
+residuals (x87s_binop, fsqrt) and no x87s_set_pe at all. A chained TB is
+not looked up again, so the guard checks fpus.PE at run time as well as
+the mode byte, and loadvm, a debugger write or a reset are caught there.
+Within one TB, fclex, fninit, fldenv, frstor and fnsave -- the five that
+can clear PE -- turn the sticky mode off for the rest of the TB, which is
+then exact again (fxrstor and xrstor already end theirs); ending the TB
+there would have cost a main-loop exit for nothing.
+
+Patch 20's inline lookup builds the TB flags as TCG ops, the way
+cpu_get_tb_cpu_state does, and it gains the same term. A first version
+did not: every indirect jump into a sticky TB missed the jump cache and
+left through the epilogue -- in 3DMark's first-person test dispatch went
+from 5.6 % to 14.7 % of the frame and the test lost a quarter of its frame
+rate while every x87 instruction had got cheaper (343 -> 266 host bytes),
+with the guard exit count at 0. Whatever next adds a TB flag has two
+places to add it.
+
+`info registers` counts the guard's exits (`x87-fast guard exits`): a
+count that climbs during a title means its PE is being cleared and set in
+turn, and the sticky TBs are paying for it. A TB
+translated before PE was set stays exact, and slower, until the next
+lookup of its pc (the next timer interrupt, at the latest).
+
+Also: a float32 memory operand, once the existing check has said it is
+zero or normal, is converted by the host's own cvtss2sd (exact for both,
+signed zero included) instead of being assembled from its fields.
+
+`-d out_asm` of `fmuls -0x30(%ebp)` in 3DMARK.EXE before this patch,
+about 95 host instructions: the TLB check and load (14) and two spills,
+the float32 check (13) and its assembly into a binary64 (11), the
+multiply (3), the result's window check (14), vfmsub for the residual
+(3), the PC=24 round trip (4), the xor/or/setne and the fpus
+read-modify-write (12), and the FPU instruction/data pointer stores (8).
+With PE sticky the residual and the fpus update are gone and the
+assembly is a zero-extend and a vcvtss2sd: about 62.
+
+Not addressed: the FIP/FDP stores every x87 instruction makes (only
+fnstenv / fnsave / fxsave read them), the window checks and the PC=24
+rounding -- exact semantics need them; a relaxed mode could drop them.
+
+Measured on 3DMark 99 Max, claude98, 800x600x16, after patch 36: CPU
+3DMarks 13549 -> 14690 (+8 %), the first-person test 15.4 -> 16.2 fps
+(3DMarks 5912 -> 5917: the race tests sit at the 60 Hz flip cap). x87
+battery 382,251 lines identical on/off, its PC=24 bench 0.49 -> 0.38 s;
+SSE, SMC and rep batteries unchanged; scripts/test.sh all 57/57.
+
+Behind x87-fast, like the rest of patch 06: off, none of this exists.
+
+diff --git a/target/i386/cpu-dump.c b/target/i386/cpu-dump.c
+index fbeb2e2..4b0e5fd 100644
+--- a/target/i386/cpu-dump.c
++++ b/target/i386/cpu-dump.c
+@@ -499,6 +499,7 @@ void x86_cpu_dump_state(CPUState *cs, FILE *f, int flags)
+         qemu_fprintf(f, "SSE-fast slow paths: guard=%" PRIu64 " handover=%" PRIu64
+                      " helper=%" PRIu64 " cvt/comis=%" PRIu64 "\n",
+                      env->sses_stat[0], env->sses_stat[1], env->sses_stat[2], env->sses_stat[3]);
++        qemu_fprintf(f, "x87-fast guard exits: %" PRIu64 "\n", env->x87s_stat[0]);
+         for(i=0;i<8;i++) {
+             CPU_LDoubleU u;
+             u.d = env->fpregs[i].d;
+diff --git a/target/i386/cpu.h b/target/i386/cpu.h
+index a69018c..20d7cf3 100644
+--- a/target/i386/cpu.h
++++ b/target/i386/cpu.h
+@@ -1812,6 +1812,7 @@ typedef struct CPUArchState {
+     uint64_t sses_scratch[4] QEMU_ALIGNED(16);
+     /* slow-path counters (info registers): guard, hand-over, helper, cvt/comis */
+     uint64_t sses_stat[4];
++    uint64_t x87s_stat[1];      /* x87 inline guard exits (mode byte or sticky PE) */
+     /* shadow doubles of the x87 stack, relative slots (tcg/x87-shadow.c.inc) */
+     uint64_t x87_sd[8];
+ 
+@@ -2578,6 +2579,14 @@ int cpu_mmu_index_kernel(CPUX86State *env);
+ /* SSE inline mode: sse_fast_mode and the precision flag already sticky */
+ #define TB_FLAG_SSE_FAST_SHIFT  31
+ #define TB_FLAG_SSE_FAST_MASK   (1u << TB_FLAG_SSE_FAST_SHIFT)
++/*
++ * x87 inline mode with the precision flag already sticky in fpus: the
++ * translator drops the inexact bookkeeping (tcg/x87-shadow.c.inc). Bit 2
++ * is no hflags bit (HF_CPL is 0-1, HF_INHIBIT_IRQ 3) and no eflags bit
++ * the TB flags carry.
++ */
++#define TB_FLAG_X87_PE_SHIFT    2
++#define TB_FLAG_X87_PE_MASK     (1u << TB_FLAG_X87_PE_SHIFT)
+ 
+ static inline void cpu_get_tb_cpu_state(CPUX86State *env, vaddr *pc,
+                                         uint64_t *cs_base, uint32_t *flags)
+@@ -2585,6 +2594,9 @@ static inline void cpu_get_tb_cpu_state(CPUX86State *env, vaddr *pc,
+     *flags = env->hflags |
+         (env->eflags & (IOPL_MASK | TF_MASK | RF_MASK | VM_MASK | AC_MASK)) |
+         ((uint32_t)env->x87_fast_mode << TB_FLAG_X87_MODE_SHIFT);
++    if (env->x87_fast_mode && (env->fpus & 0x20)) {     /* FPUS_PE */
++        *flags |= TB_FLAG_X87_PE_MASK;
++    }
+     if (env->sse_fast_mode
+         && (env->sse_status.float_exception_flags & float_flag_inexact)) {
+         *flags |= TB_FLAG_SSE_FAST_MASK;
+diff --git a/target/i386/tcg/translate.c b/target/i386/tcg/translate.c
+index 7af3dc8..19598b9 100644
+--- a/target/i386/tcg/translate.c
++++ b/target/i386/tcg/translate.c
+@@ -165,6 +165,7 @@ typedef struct DisasContext {
+     /* x87 shadow-double state (x87-shadow.c.inc) */
+     bool x87s_on;               /* TB translated in inline mode */
+     int x87s_mode;              /* env->x87_fast_mode this TB is for */
++    bool x87s_pe_sticky;        /* TB_FLAG_X87_PE: no inexact bookkeeping */
+     bool x87s_prec24;           /* mode 2: PC=24, shadows hold 24-bit values */
+     bool x87s_guarded;          /* runtime mode guard emitted */
+     TCGv_i32 x87s_top;          /* entry top of stack, NULL: no frame */
+@@ -2529,6 +2530,21 @@ static void gen_lookup_and_goto_ptr(DisasContext *s)
+     tcg_gen_and_i32(t, t, u);
+     tcg_gen_shli_i32(t, t, TB_FLAG_SSE_FAST_SHIFT);
+     tcg_gen_or_i32(flags, flags, t);
++    /*
++     * TB_FLAG_X87_PE, as cpu_get_tb_cpu_state: inline x87 mode and PE
++     * sticky in fpus. Without it every sticky TB missed here and each
++     * indirect jump into one left through the epilogue (3DMark 99's first
++     * person: dispatch 5.6 -> 14.7 % of the frame, no guard exit at all).
++     */
++    QEMU_BUILD_BUG_ON(sizeof_field(CPUX86State, fpus) != 2);
++    tcg_gen_ld16u_i32(t, tcg_env, offsetof(CPUX86State, fpus));
++    tcg_gen_andi_i32(t, t, 0x20);                       /* FPUS_PE */
++    tcg_gen_setcondi_i32(TCG_COND_NE, t, t, 0);
++    tcg_gen_ld8u_i32(u, tcg_env, offsetof(CPUX86State, x87_fast_mode));
++    tcg_gen_setcondi_i32(TCG_COND_NE, u, u, 0);
++    tcg_gen_and_i32(t, t, u);
++    tcg_gen_shli_i32(t, t, TB_FLAG_X87_PE_SHIFT);
++    tcg_gen_or_i32(flags, flags, t);
+ 
+     tcg_gen_ld_i32(t, tcg_env, offsetof(CPUX86State, segs[R_CS].base));
+     tcg_gen_extu_i32_i64(cs_base, t);
+@@ -2948,6 +2964,7 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
+             gen_helper_fldenv(tcg_env, s->A0,
+                               tcg_constant_i32(s->dflag - 1));
+             update_fip = update_fdp = false;
++            s->x87s_pe_sticky = false;          /* PE may be clear now: exact for the rest of the TB */
+             break;
+         case 0x0d: /* fldcw mem */
+             tcg_gen_qemu_ld_i32(s->tmp2_i32, s->A0,
+@@ -2977,11 +2994,13 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
+             gen_helper_frstor(tcg_env, s->A0,
+                               tcg_constant_i32(s->dflag - 1));
+             update_fip = update_fdp = false;
++            s->x87s_pe_sticky = false;          /* PE may be clear now: exact for the rest of the TB */
+             break;
+         case 0x2e: /* fnsave mem */
+             gen_helper_fsave(tcg_env, s->A0,
+                              tcg_constant_i32(s->dflag - 1));
+             update_fip = update_fdp = false;
++            s->x87s_pe_sticky = false;          /* PE may be clear now: exact for the rest of the TB */
+             break;
+         case 0x2f: /* fnstsw mem */
+             gen_helper_fnstsw(s->tmp2_i32, tcg_env);
+@@ -3209,10 +3228,12 @@ static void gen_x87(DisasContext *s, X86DecodedInsn *decode)
+             case 2: /* fclex */
+                 gen_helper_fclex(tcg_env);
+                 update_fip = false;
++                s->x87s_pe_sticky = false;          /* PE may be clear now: exact for the rest of the TB */
+                 break;
+             case 3: /* fninit */
+                 gen_helper_fninit(tcg_env);
+                 update_fip = false;
++                s->x87s_pe_sticky = false;          /* PE may be clear now: exact for the rest of the TB */
+                 break;
+             case 4: /* fsetpm (287 only, just do nop here) */
+                 break;
+@@ -4154,6 +4175,7 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
+     dc->x87s_on = dc->x87s_mode != 0 && tcg_f64_supported()
+         && !(flags & (HF_TF_MASK | HF_INHIBIT_IRQ_MASK));
+     dc->x87s_prec24 = dc->x87s_mode == 2;
++    dc->x87s_pe_sticky = dc->x87s_on && (flags & TB_FLAG_X87_PE_MASK);
+     dc->x87s_guarded = false;
+     dc->x87s_nslow = 0;
+     dc->x87s_ntmps = 0;
+diff --git a/target/i386/tcg/x87-shadow.c.inc b/target/i386/tcg/x87-shadow.c.inc
+index db77b56..aea7a2f 100644
+--- a/target/i386/tcg/x87-shadow.c.inc
++++ b/target/i386/tcg/x87-shadow.c.inc
+@@ -424,12 +424,10 @@ static void x87s_round24(DisasContext *s, TCGv_i64 out, TCGv_i64 in,
+ static void x87s_f32_to_f64(DisasContext *s, TCGv_i64 out, TCGv_i64 m,
+                             TCGLabel *slow)
+ {
+-    TCGv_i64 zero = tcg_constant_i64(0);
+     TCGv_i64 e = x87s_tmp_i64(s);
+     TCGv_i64 t = x87s_tmp_i64(s);
+     TCGv_i64 bad = x87s_tmp_i64(s);
+     TCGv_i64 iszero = x87s_tmp_i64(s);
+-    TCGv_i64 sign = x87s_tmp_i64(s);
+ 
+     tcg_gen_andi_i64(t, m, 0x7fffffff);
+     tcg_gen_setcondi_i64(TCG_COND_EQ, iszero, t, 0);
+@@ -439,15 +437,13 @@ static void x87s_f32_to_f64(DisasContext *s, TCGv_i64 out, TCGv_i64 m,
+     tcg_gen_andc_i64(bad, bad, iszero);
+     tcg_gen_brcondi_i64(TCG_COND_NE, bad, 0, slow);
+ 
+-    tcg_gen_andi_i64(sign, m, 0x80000000);
+-    tcg_gen_shli_i64(sign, sign, 32);
+-    tcg_gen_andi_i64(t, m, 0x7fffff);
+-    tcg_gen_shli_i64(t, t, 29);
+-    tcg_gen_addi_i64(e, e, X87S_BIAS_F64 - 127);
+-    tcg_gen_shli_i64(e, e, 52);
+-    tcg_gen_or_i64(t, t, e);
+-    tcg_gen_or_i64(t, t, sign);
+-    tcg_gen_movcond_i64(TCG_COND_NE, out, iszero, zero, sign, t);
++    /*
++     * Zero or normal from here: the host's own conversion is exact for
++     * both, signed zero included, and is two instructions where building
++     * the binary64 from the fields was eight.
++     */
++    tcg_gen_ext32u_i64(t, m);
++    tcg_gen_cvt_f32_f64(out, t);
+ }
+ 
+ /* t = (d == +-0) */
+@@ -457,12 +453,24 @@ static void x87s_iszero(TCGv_i64 t, TCGv_i64 d)
+     tcg_gen_setcondi_i64(TCG_COND_EQ, t, t, 0);
+ }
+ 
+-/* fpus |= PE if the residual err is nonzero */
++/*
++ * fpus |= PE if the residual err is nonzero. Nothing at all when the TB
++ * was translated with PE already sticky (TB_FLAG_X87_PE, rechecked by the
++ * guard): the bit cannot be set twice, and PE is masked in inline mode, so
++ * the residual has nothing left to decide.
++ */
+ static void x87s_set_pe(DisasContext *s, TCGv_i64 err)
+ {
+-    TCGv_i64 t = x87s_tmp_i64(s);
+-    TCGv_i32 pe = x87s_tmp_i32(s);
+-    TCGv_i32 fpus = x87s_tmp_i32(s);
++    TCGv_i64 t;
++    TCGv_i32 pe;
++    TCGv_i32 fpus;
++
++    if (s->x87s_pe_sticky) {
++        return;
++    }
++    t = x87s_tmp_i64(s);
++    pe = x87s_tmp_i32(s);
++    fpus = x87s_tmp_i32(s);
+ 
+     tcg_gen_shli_i64(t, err, 1);
+     tcg_gen_setcondi_i64(TCG_COND_NE, t, t, 0);
+@@ -674,6 +682,16 @@ static void x87s_guard(DisasContext *s)
+     m = x87s_tmp_i32(s);
+     tcg_gen_ld8u_i32(m, tcg_env, offsetof(CPUX86State, x87_fast_mode));
+     tcg_gen_brcondi_i32(TCG_COND_NE, m, s->x87s_mode, b->label);
++    if (s->x87s_pe_sticky) {
++        /*
++         * Translated with PE already sticky (TB_FLAG_X87_PE): a chained TB
++         * reaches here without a lookup, so the flag is checked again --
++         * fclex, fninit, a restore, loadvm or a debugger may have cleared it.
++         */
++        tcg_gen_ld16u_i32(m, tcg_env, offsetof(CPUX86State, fpus));
++        tcg_gen_andi_i32(m, m, 0x20);           /* FPUS_PE */
++        tcg_gen_brcondi_i32(TCG_COND_EQ, m, 0, b->label);
++    }
+ }
+ 
+ static void x87s_begin(DisasContext *s)
+@@ -706,6 +724,12 @@ static void x87s_emit_slow_blocks(DisasContext *s)
+         s->x87_fdp_seg = b->fdp_seg;
+ 
+         if (b->kind == X87S_SLOW_GUARD) {
++            /* counted: `info registers`, x87-fast guard exits */
++            TCGv_i64 c = x87s_tmp_i64(s);
++
++            tcg_gen_ld_i64(c, tcg_env, offsetof(CPUX86State, x87s_stat[0]));
++            tcg_gen_addi_i64(c, c, 1);
++            tcg_gen_st_i64(c, tcg_env, offsetof(CPUX86State, x87s_stat[0]));
+             x87s_exit_to(s, b->pc_insn);
+             x87s_free_tmps(s);
+             continue;
+@@ -867,6 +891,9 @@ static void x87s_binop(DisasContext *s, TCGv_i64 r, int op, TCGv_i64 a,
+         op--;
+     }
+ 
++    /* the residuals only feed PE: none of them when it is already sticky */
++    bool pe = !s->x87s_pe_sticky;
++
+     switch (op) {
+     case 0:
+     case 4:
+@@ -877,12 +904,14 @@ static void x87s_binop(DisasContext *s, TCGv_i64 r, int op, TCGv_i64 a,
+         }
+         tcg_gen_add_f64(r, a, b);
+         x87s_f64_check_win(s, r, slow);
+-        /* TwoSum: bb = r - a; err = (a - (r - bb)) + (b - bb) */
+-        tcg_gen_sub_f64(t1, r, a);
+-        tcg_gen_sub_f64(t2, r, t1);
+-        tcg_gen_sub_f64(t2, a, t2);
+-        tcg_gen_sub_f64(t1, b, t1);
+-        tcg_gen_add_f64(err, t2, t1);
++        if (pe) {
++            /* TwoSum: bb = r - a; err = (a - (r - bb)) + (b - bb) */
++            tcg_gen_sub_f64(t1, r, a);
++            tcg_gen_sub_f64(t2, r, t1);
++            tcg_gen_sub_f64(t2, a, t2);
++            tcg_gen_sub_f64(t1, b, t1);
++            tcg_gen_add_f64(err, t2, t1);
++        }
+         break;
+     case 1:
+         tcg_gen_mul_f64(r, a, b);
+@@ -890,7 +919,9 @@ static void x87s_binop(DisasContext *s, TCGv_i64 r, int op, TCGv_i64 a,
+         tcg_gen_shli_i64(t2, b, 1);
+         tcg_gen_umin_i64(t1, t1, t2);             /* 0 iff a or b is zero */
+         x87s_f64_check_result(s, r, t1, slow);
+-        tcg_gen_fmsub_f64(err, a, b, r);
++        if (pe) {
++            tcg_gen_fmsub_f64(err, a, b, r);
++        }
+         break;
+     case 6:
+         tcg_gen_shli_i64(t2, b, 1);
+@@ -898,7 +929,9 @@ static void x87s_binop(DisasContext *s, TCGv_i64 r, int op, TCGv_i64 a,
+         tcg_gen_div_f64(r, a, b);
+         tcg_gen_shli_i64(t1, a, 1);
+         x87s_f64_check_result(s, r, t1, slow);
+-        tcg_gen_fmsub_f64(err, r, b, a);
++        if (pe) {
++            tcg_gen_fmsub_f64(err, r, b, a);
++        }
+         break;
+     default:
+         g_assert_not_reached();
+@@ -906,9 +939,13 @@ static void x87s_binop(DisasContext *s, TCGv_i64 r, int op, TCGv_i64 a,
+     if (s->x87s_prec24) {
+         TCGv_i64 diff = x87s_tmp_i64(s);
+         x87s_round24(s, r, r, diff);
+-        tcg_gen_or_i64(err, err, diff);
++        if (pe) {
++            tcg_gen_or_i64(err, err, diff);
++        }
++    }
++    if (pe) {
++        x87s_set_pe(s, err);
+     }
+-    x87s_set_pe(s, err);
+ }
+ 
+ /* total-order key of a finite double: -0 -> +0, negatives flipped */
+@@ -1349,11 +1386,15 @@ static void gen_x87s_fsqrt(DisasContext *s)
+     tcg_gen_brcondi_i64(TCG_COND_LT, v, 0, b->label);
+     tcg_gen_sqrt_f64(r, v);
+     x87s_f64_check_win(s, r, b->label);
+-    tcg_gen_fmsub_f64(err, r, r, v);
++    if (!s->x87s_pe_sticky) {
++        tcg_gen_fmsub_f64(err, r, r, v);
++    }
+     if (s->x87s_prec24) {
+         TCGv_i64 diff = x87s_tmp_i64(s);
+         x87s_round24(s, r, r, diff);
+-        tcg_gen_or_i64(err, err, diff);
++        if (!s->x87s_pe_sticky) {
++            tcg_gen_or_i64(err, err, diff);
++        }
+     }
+     x87s_set_pe(s, err);
+     x87s_set(s, 0, r);

@@ -2247,3 +2247,18 @@ left is being taken apart the same way (the M9 track owns the TCG side):
 the lane-mask round trip after every inlined SSE op, the 80→64-bit
 conversion every block pays on its first x87 use, and the softmmu TLB
 check on every integer access.
+
+**Then patch 37, x87 at PC=24.** The first-person test's other quarter was
+x87: 3DMARK.EXE's own lighting code (vector normalise with the `0xbe7fffff`
+inverse-square-root trick, `fcomps` / `fnstsw` every few instructions)
+and the DLL's float loads. At PC=24 each x87 memory op was ~95 host
+instructions, and ~15 of them only maintained the inexact flag, which is
+sticky and was already set. Patch 37 drops that work in TBs translated with
+PE set: **CPU 3DMarks 13549 → 14690, first person 15.4 → 16.2 fps**. The
+lesson it cost: a TB flag is also built by patch 20's inline lookup, and a
+version without the new bit there was a quarter *slower* — every indirect
+jump into the new TBs left through the epilogue. Still far from 60: what
+is left is spread across the softmmu TLB check on every access, the
+integer code around the geometry, the SSE lane-mask round trip and the
+x87 window checks; the user has asked for an opt-in relaxed floating-point
+mode for games, which is next.
