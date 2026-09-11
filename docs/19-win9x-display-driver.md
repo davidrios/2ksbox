@@ -2225,3 +2225,25 @@ session clicked New Benchmark → Benchmark over a USB tablet
 (`tools/win98-game-test.sh` with `TABLET=1`, `GUEST_CMD` = `cd
 \ARQUIV~1\3DMARK~1` + `3DMARK.EXE`), waited for the welcome dialog by its
 pixels rather than a sleep, and read the score off a screendump.
+
+**The first-person test, and why it is not at 60 yet** (the same day, user:
+"I would expect it to also run at 60 fps"). With patch 35 in, the
+first-person test (13.6 fps) was **78 % guest code**: dispatch 4.6 %,
+softmmu 3 %, helpers 0.9 %, translation 0.6 %, DXVK and the executor 1 %.
+Half of the window was one module, `e2_PentiumIII_cpu_mfc.dll` (MAX-FX's
+Pentium III geometry, loaded at `0x1580000` — found by matching the hot
+guest addresses against every 3DMark DLL at every 64 KiB base; they all
+ask for `0x10000000`), an SSE transform loop. Patch 11's inline path was
+engaged (`info registers`: guard 0, hand-over 1, helper exits negligible),
+so the cost was the quality of the generated code, and it was uneven: a
+register-only `addps` 2.7 samples per instruction, the same op with a
+memory operand 10.1, a bare `movaps` load 6.1. `-d out_asm -dfilter` of
+the loop showed why — every 16-byte operand was two 8-byte loads into a
+register pair, two 8-byte stores into `env`, and a 16-byte `vmovdqa` of
+the same bytes that cannot be store-forwarded. Patch 36 builds the vector
+in registers and stores it once: **CPU 3DMarks 11642 → 13549, the
+first-person test 13.6 → 15.4 fps**, every battery identical. What is
+left is being taken apart the same way (the M9 track owns the TCG side):
+the lane-mask round trip after every inlined SSE op, the 80→64-bit
+conversion every block pays on its first x87 use, and the softmmu TLB
+check on every integer access.

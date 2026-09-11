@@ -1,0 +1,90 @@
+An SSE memory operand reaches its register in one 16-byte store, so the
+instruction that reads it next does not wait on two 8-byte ones.
+
+gen_ldo_env_A0 loads a 16-byte SSE operand (movaps / movups loads, and
+every `op mem, xmm` of patches 11 and 12) with tcg_gen_qemu_ld_i128 and
+writes it into env with tcg_gen_st_i128. On a guest without AVX -- every
+era CPU model -- the load is MO_ATOM_IFALIGN_PAIR, which the x86-64
+backend emits as two 8-byte loads into a general-register pair, and
+st_i128 is then two 8-byte stores. What reads the register next is a
+16-byte vector load: the inline op the operand is for, at once, or the
+instruction after a movaps. A load that spans two narrower stores cannot
+be store-forwarded; it waits for both to complete. From 3DMark 99's SSE
+transform code (`subps (%eax),%xmm0`, host code from -d out_asm):
+
+    movq  (%r14),%r13 ; movq 8(%r14),%r14      the guest load, a pair
+    movq  %r13,0x500(%rbp) ; movq %r14,0x508(%rbp)   xmm_t0, two stores
+    ...
+    vmovdqa 0x500(%rbp),%xmm0                  16 bytes back: stalls
+
+Now the pair is assembled in the vector unit -- each half dup'ed, the
+two merged with patch 12's lane-0 mask (SIMD_TBL_MASK64LO, filled at CPU
+init whatever simd-fast says) -- and stored with one st_vec, which the
+next 16-byte load forwards from. The guest access is the same
+qemu_ld_i128: same bytes, same alignment check, same fault. Behind
+sse-fast (the property, not the per-TB MXCSR state), with
+TCG_TARGET_HAS_v128, and only for a 16-byte-aligned destination.
+
+Measured on 3DMark 99 Max, claude98, 800x600x16, after patch 35: CPU
+3DMarks 11642 -> 13549 (+16 %), the first-person test 13.6 -> 15.4 fps;
+3DMarks 5898 -> 5912 (the race tests already sit at the 60 Hz flip cap).
+The SSE battery stays 546,425 lines identical on/off, x87, SMC and rep
+unchanged.
+
+Test: tools/sse-guest-test.py (memory-operand forms, sse-fast on/off
+identical), the x87, SMC and rep batteries, and 3DMark 99 on claude98.
+
+diff --git a/target/i386/tcg/translate.c b/target/i386/tcg/translate.c
+index fdf6121..7af3dc8 100644
+--- a/target/i386/tcg/translate.c
++++ b/target/i386/tcg/translate.c
+@@ -182,6 +182,7 @@ typedef struct DisasContext {
+     bool sses_guarded;          /* runtime guard emitted */
+     bool sses_pending;          /* hand-over check due at the end of the insn */
+     bool simd_on;               /* simd-fast.c.inc: integer/permute ops inline */
++    bool ldo_vec;               /* gen_ldo_env_A0: one 16-byte store into env (sse-fast) */
+     bool rep_fast;              /* REP MOVS/STOS page runs through mem_helper.c */
+ 
+     /* TCG local temps */
+@@ -2661,6 +2662,33 @@ static inline void gen_ldo_env_A0(DisasContext *s, int offset, bool align)
+     TCGv_i128 t = tcg_temp_new_i128();
+ 
+     tcg_gen_qemu_ld_i128(t, s->A0, mem_index, mop);
++    if (s->ldo_vec && !(offset & 15)) {
++        /*
++         * Assemble the two halves in the vector unit and write the register
++         * with one 16-byte store.  st_i128 is two 8-byte stores, and what
++         * reads the register next -- the inline SSE op this operand is for,
++         * or the instruction after a movaps load -- is a 16-byte vector
++         * load, which cannot be forwarded from two narrower stores and waits
++         * for both to complete (on a guest without AVX the i128 load itself
++         * is two 8-byte loads into a register pair, so there is no vector
++         * to keep).  Same load, same fault, same bytes; 3DMark 99's SSE
++         * transform code spent most of its time in these.  The mask is
++         * patch 12's lane-0 select, filled at CPU init whatever simd-fast
++         * says.
++         */
++        TCGv_i64 lo = tcg_temp_new_i64(), hi = tcg_temp_new_i64();
++        TCGv_vec vl = tcg_temp_new_vec(TCG_TYPE_V128);
++        TCGv_vec vh = tcg_temp_new_vec(TCG_TYPE_V128);
++        TCGv_vec m = tcg_temp_new_vec(TCG_TYPE_V128);
++
++        tcg_gen_extr_i128_i64(lo, hi, t);
++        tcg_gen_dup_i64_vec(MO_64, vl, lo);
++        tcg_gen_dup_i64_vec(MO_64, vh, hi);
++        tcg_gen_ld_vec(m, tcg_env, offsetof(CPUX86State, simd_tbl) + SIMD_TBL_MASK64LO);
++        tcg_gen_bitsel_vec(MO_64, vl, m, vl, vh);
++        tcg_gen_st_vec(vl, tcg_env, offset);
++        return;
++    }
+     tcg_gen_st_i128(t, tcg_env, offset);
+ }
+ 
+@@ -4136,6 +4164,7 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
+     dc->sses_guarded = false;
+     dc->sses_pending = false;
+     dc->simd_on = env_archcpu(env)->simd_fast;
++    dc->ldo_vec = env_archcpu(env)->sse_fast && TCG_TARGET_HAS_v128;
+     dc->rep_fast = env_archcpu(env)->rep_fast;
+     /* select memory access functions */
+     dc->mem_index = cpu_mmu_index(cpu, false);

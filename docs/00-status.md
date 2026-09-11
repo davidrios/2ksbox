@@ -164,7 +164,13 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   movs` — measured, no score change. **Open:** the race test now sits at
   the 60 Hz flip cap (`ddflags=32768` is the A/B); what is left is
   generated code 40 %, softmmu lookups ~13 %, and one hot ring-0 block at
-  `0xC02402F6` nobody has named.
+  `0xC02402F6` nobody has named. **Then patch 36** (the same day): the
+  first-person test was 78 % guest code, half of it 3DMark's SSE transform
+  DLL, and every 16-byte SSE memory operand stalled its reader (two 8-byte
+  stores, one 16-byte load); assembled in the vector unit now — CPU
+  3DMarks 11642 → 13549, first person 13.6 → 15.4 fps. Still far from the
+  60 the user expects; next are the SSE lane-mask round trip, x87's
+  per-block 80→64-bit reload and the softmmu TLB check (doc 19 §31).
 
 - **DOS Quake in a Win98 DOS box speeds up for a moment now and then**
   (2026-09-10, user report; unthrottled Win98, `quake.exe`; QEMU's half
