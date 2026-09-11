@@ -2278,3 +2278,17 @@ changes that could help any guest.
 the lane check after every inlined SSE instruction stops storing its mask
 to `env` and loading it back: CPU 3DMarks 15389 → 15940, first person
 17.1 → 17.5 fps.
+
+**Host-side copies.** perf could not unwind out of glibc's AVX copy loops,
+so a preloaded `memcpy`/`memset` tracer (counting calls of 4 KiB and more
+per return address) named them. The executor's DX7-level indexed draw
+passed the batch base with `MinVertexIndex = lo` to
+`DrawIndexedPrimitiveUP`, and DXVK copies vertices from index 0 up to
+`MinVertexIndex + NumVertices`: every draw copied the unused prefix of
+its batch, 32 GB in one run on the vCPU thread. Rebased to the touched
+range as the DX8 path already was: 0.5 GB, **first person 17.5 → 18.4
+fps**, 3DMarks 6014. The tracer's largest item, 110 GB of 128 KiB
+`memset`s, is the softmmu TLB wipe on full flushes; a flag to skip unused
+MMU indexes (tried as patch 40) changed nothing, because upstream's
+`tlb_flush_by_mmuidx_async_work` already flushes only indexes marked dirty
+— those wipes are of tables in use, ~2000 a second.

@@ -1304,7 +1304,16 @@ struct Dp2 {
         }
         if (d.trace) trv(vtx + (size_t)d.idx[0] * stride, 1), trv(vtx + (size_t)d.idx[1] * stride, 1), trv(vtx + (size_t)d.idx[2 < d.idx.size() ? 2 : 0] * stride, 1);
         pre_draw();
-        x.dev->DrawIndexedPrimitiveUP(t, lo, hi - lo + 1, count, d.idx.data(), D3DFMT_INDEX16, vtx, stride);
+        /*
+         * Rebased to the touched range, as the DX8 path does: DXVK copies a
+         * user-pointer draw's vertices from index 0 up to MinVertexIndex +
+         * NumVertices, so passing the batch's base with MinVertexIndex = lo
+         * copied the whole unused prefix on every draw (3DMark 99: 32 GB of
+         * vertex copies in one run, 47 KB a draw, on the vCPU thread).
+         */
+        for (uint16_t &i : d.idx) i = (uint16_t)(i - lo);
+        x.dev->DrawIndexedPrimitiveUP(t, 0, hi - lo + 1, count, d.idx.data(), D3DFMT_INDEX16,
+                                      vtx + (size_t)lo * stride, stride);
         d.draws++;
         snap();
     }
