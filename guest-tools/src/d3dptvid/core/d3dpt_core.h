@@ -50,6 +50,7 @@
 #define DDF_ONE_STREAM         0x200000 /* the A/B: MaxStreams 1 and every draw carrying stream 0 alone, as before protocol v10 */
 #define DDF_NO_CUBE            0x400000 /* the A/B: no cube textures (caps, format ops), as before protocol v11 */
 #define DDF_NO_BUMP            0x800000 /* the A/B: no V8U8 bump-map format in either texture list (EMBM's ops stay claimed, as before) */
+#define DDF_NO_VOLUME          0x1000000 /* the A/B: no volume textures (caps, format ops) */
 
 /* DDI-only DX8 device caps (d3dhal.h): the runtime puts vertex / index
  * buffers in video memory through the buffer callbacks when they are set */
@@ -95,8 +96,12 @@
 #define DDSCAPS2_CUBEMAP_           0x00000200
 #define DDSCAPS2_CUBEMAP_POSITIVEX_ 0x00000400   /* face n is this << n, in D3DCUBEMAP_FACES order */
 #define DDSCAPS2_CUBEMAP_ALLFACES_  0x0000fc00
+#define DDSCAPS2_VOLUME_            0x00200000   /* a volume texture (public ddraw.h); its depth in dwCaps4's low word */
 #define D3DPTEXTURECAPS_CUBEMAP_    0x00000800
 #define D3DPTEXTURECAPS_MIPCUBEMAP_ 0x00010000
+#define D3DPTEXTURECAPS_VOLUMEMAP_  0x00002000
+#define D3DPTEXTURECAPS_MIPVOLUMEMAP_ 0x00008000
+#define D3DFORMAT_OP_VOLUMETEXTURE_ 0x00000002
 #define D3DFORMAT_OP_CUBETEXTURE_   0x00000004
 #define D3DFORMAT_OP_BUMPMAP_       0x00010000   /* the format is a bump map for BUMPENVMAP (d3dhal.h) */
 
@@ -136,6 +141,7 @@ typedef struct _SURF {
     ULONG lock_off, lock_len;   /* a VRAM buffer: the range of the current Lock (the whole buffer when the
                                  * runtime gave none), reported as VRAM_DIRTY_RANGE at Unlock */
     SURF_CUBE *cube;            /* a cube root (v11): every face's levels, for a TEXBLT between two cubes */
+    ULONG depth;                /* a volume texture (v12): level 0's slices, each pitch * h apart (0: not a volume) */
 } SURF;
 
 typedef struct _D3DCTX {
@@ -197,6 +203,7 @@ typedef struct d3dpt_surf_desc {
     ULONG handle;
     ULONG caps;                 /* the DDSCAPS_* the OS gave it (DDSCAPS_SYSTEMMEMORY etc.) */
     ULONG caps2;                /* ddsCapsEx.dwCaps2 (0 when the surface has no "more" block) */
+    ULONG depth;                /* a volume texture's depth (ddsCapsEx.dwCaps4's low word, DDSCAPS2_VOLUME); 0 otherwise */
     ULONG flags;                /* the surface's own flags: DDRAWISURF_HASPIXELFORMAT / HASCKEYSRCBLT */
     ULONG w, h;
     ULONG pitch;                /* lPitch as the OS gave it (the linear size for a compressed surface) */

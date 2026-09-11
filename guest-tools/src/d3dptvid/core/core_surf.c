@@ -419,7 +419,7 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
     void *m;
     BOOL sysmem, buffer;
     SURF *t;
-    ULONG pitch0, rows0, bsize;
+    ULONG pitch0, rows0, bsize, depth;
 
     if (!p->d3d || !s) {
         return;
@@ -437,6 +437,13 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
     buffer = (s->caps & DDSCAPS_EXECUTEBUFFER_) != 0 ||
              (s->caps2 & (DDSCAPS2_VERTEXBUFFER_ | DDSCAPS2_INDEXBUFFER_)) != 0;
     bsize = buffer ? s->linear : 0;
+    /* a volume texture (v12): its slices follow level 0's first one, each
+     * pitch * rows apart (DdCreateSurface sized it so); every level is a
+     * surface of its own with its own depth */
+    depth = ((s->caps2 & DDSCAPS2_VOLUME_) && !buffer) ? (s->depth ? s->depth : 1) : 0;
+    if (depth && (caps & D3DPT_VS_TEXTURE)) {
+        caps |= D3DPT_VS_VOLUME;
+    }
     if (buffer) {
         /* a vertex / index buffer: no pixel format; in VRAM it is the host's
          * D3DPT_VS_BUFFER (v9), a byte range a DRAW8 names */
@@ -455,6 +462,11 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
         dbg_hex(p, " fmt ", fmt);
         dbg_hex(p, " pitch ", s->pitch);
         dbg_hex(p, " pf ", s->pf_flags);
+        if (s->caps2 & DDSCAPS2_VOLUME_) {
+            dbg_hex(p, " volume caps2 ", s->caps2);
+            dbg_hex(p, " depth ", s->depth);
+            dbg_hex(p, " linear ", s->linear);
+        }
         dbg_hex(p, " at ", offset);
         if (buffer) dbg_hex(p, " buffer of ", s->linear);
         if (sysmem) dbg_puts(p, " sysmem");
@@ -501,7 +513,8 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
         t->w = s->w;
         t->h = s->h;
         t->fmt = fmt;
-        t->size = buffer ? bsize : pitch0 * rows0;
+        t->size = buffer ? bsize : pitch0 * rows0 * (depth ? depth : 1);
+        t->depth = depth;
         t->levels = (UCHAR)n;
         t->vram_off = offset;
         t->lock_off = 0;
@@ -515,10 +528,10 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
         return;
     }
     if (buffer ? (!bsize || (ULONGLONG)offset + bsize > heap_end(p))
-               : (!fmt || (ULONGLONG)offset + (ULONGLONG)pitch0 * rows0 > heap_end(p))) {
+               : (!fmt || (ULONGLONG)offset + (ULONGLONG)pitch0 * rows0 * (depth ? depth : 1) > heap_end(p))) {
         return;
     }
-    r = d3dpt_enc_cmd(&p->enc, D3DPT_OP_VRAM_SURFACE, sizeof(*r), (n - 1) * sizeof(d3dpt_u32x2));
+    r = d3dpt_enc_cmd(&p->enc, D3DPT_OP_VRAM_SURFACE, sizeof(*r), (n - 1 + (depth ? 1 : 0)) * sizeof(d3dpt_u32x2));
     if (!r) {
         return;
     }
@@ -531,6 +544,10 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
     r->caps = caps;
     r->levels = n;
     for (i = 0; i + 1 < n; i++) ((d3dpt_u32x2 *)(r + 1))[i] = lv[i];
+    if (depth) {
+        ((d3dpt_u32x2 *)(r + 1))[n - 1].a = depth;          /* v12: {depth, level 0's slice pitch} */
+        ((d3dpt_u32x2 *)(r + 1))[n - 1].b = pitch0 * rows0;
+    }
 }
 
 void d3d_register(d3dpt_core *p, const d3dpt_surf_desc *s)

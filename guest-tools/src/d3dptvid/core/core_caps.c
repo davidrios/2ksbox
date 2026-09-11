@@ -297,6 +297,14 @@ void d3d_caps_init(d3dpt_core *p)
         c8->TextureCaps |= D3DPTEXTURECAPS_CUBEMAP_ | D3DPTEXTURECAPS_MIPCUBEMAP_;
         c8->CubeTextureFilterCaps = c8->TextureFilterCaps;
     }
+    if (!(ddflags(p) & DDF_NO_VOLUME)) {
+        /* volume textures, mip-mapped too, any extent up to 256: the DX8
+         * face only, like the cubes */
+        c8->TextureCaps |= D3DPTEXTURECAPS_VOLUMEMAP_ | D3DPTEXTURECAPS_MIPVOLUMEMAP_;
+        c8->VolumeTextureFilterCaps = c8->TextureFilterCaps;
+        c8->VolumeTextureAddressCaps = t->dwTextureAddressCaps | D3DPTADDRESSCAPS_MIRRORONCE;
+        c8->MaxVolumeExtent = 256;
+    }
     c8->TextureAddressCaps = t->dwTextureAddressCaps | D3DPTADDRESSCAPS_MIRRORONCE;
     c8->LineCaps = D3DLINECAPS_TEXTURE | D3DLINECAPS_ZTEST | D3DLINECAPS_BLEND | D3DLINECAPS_ALPHACMP | D3DLINECAPS_FOG;
     c8->MaxTextureWidth = c8->MaxTextureHeight = 4096;
@@ -340,15 +348,18 @@ void d3d_caps_init(d3dpt_core *p)
          * render-target cube wherever the format is a render target); not
          * P8, whose palettes the host keeps per 2D texture */
         ULONG cube = (ddflags(p) & DDF_NO_CUBE) ? 0 : D3DFORMAT_OP_CUBETEXTURE_;
+        /* volume textures on the RGB formats (not DXT yet: DdCreateSurface
+         * sizes a compressed surface as one slice) */
+        ULONG vol = (ddflags(p) & DDF_NO_VOLUME) ? 0 : D3DFORMAT_OP_VOLUMETEXTURE_;
 
         fmt8_add(D3DFMT_X8R8G8B8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_DISPLAYMODE_ | D3DFORMAT_OP_3DACCELERATION_ |
-                                   D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ | cube);
-        fmt8_add(D3DFMT_A8R8G8B8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ | cube);
+                                   D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ | cube | vol);
+        fmt8_add(D3DFMT_A8R8G8B8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ | cube | vol);
         fmt8_add(D3DFMT_R5G6B5_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_DISPLAYMODE_ | D3DFORMAT_OP_3DACCELERATION_ |
-                                 D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ | cube);
-        fmt8_add(D3DFMT_X1R5G5B5_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | cube);
-        fmt8_add(D3DFMT_A1R5G5B5_, D3DFORMAT_OP_TEXTURE_ | cube);
-        fmt8_add(D3DFMT_A4R4G4B4_, D3DFORMAT_OP_TEXTURE_ | cube);
+                                 D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | D3DFORMAT_OP_SAME_FORMAT_RENDERTARGET_ | cube | vol);
+        fmt8_add(D3DFMT_X1R5G5B5_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | cube | vol);
+        fmt8_add(D3DFMT_A1R5G5B5_, D3DFORMAT_OP_TEXTURE_ | cube | vol);
+        fmt8_add(D3DFMT_A4R4G4B4_, D3DFORMAT_OP_TEXTURE_ | cube | vol);
         fmt8_add(FOURCC_('D', 'X', 'T', '1'), D3DFORMAT_OP_TEXTURE_ | cube);
         fmt8_add(FOURCC_('D', 'X', 'T', '3'), D3DFORMAT_OP_TEXTURE_ | cube);
         fmt8_add(FOURCC_('D', 'X', 'T', '5'), D3DFORMAT_OP_TEXTURE_ | cube);

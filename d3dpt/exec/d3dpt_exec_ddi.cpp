@@ -108,11 +108,15 @@ struct VramSurf {
     uint32_t cube_root = 0, face = 0;
     uint32_t face_h[D3DPT_CUBE_FACES] = {};    /* a cube: its faces' handles (0: none) */
     bool faces_dirty = false;                   /* a render-target cube: a face entry is dirty */
+    /* v12: a volume texture (D3DPT_VS_VOLUME): level 0's depth and slice pitch */
+    IDirect3DVolumeTexture9 *vol = nullptr;
+    uint32_t depth = 0, slice = 0;
     void release() {
         if (tex) tex->Release();
         if (rt) rt->Release();
         if (cube) cube->Release();
-        tex = nullptr; rt = nullptr; cube = nullptr;
+        if (vol) vol->Release();
+        tex = nullptr; rt = nullptr; cube = nullptr; vol = nullptr;
         host_fmt = D3DFMT_UNKNOWN;
     }
 };
@@ -333,7 +337,7 @@ static bool ensure_device(Exec &x, uint32_t w, uint32_t h) {
 
 /* the host object behind a surface, created on first use */
 static bool ensure_object(Exec &x, VramSurf &s) {
-    if (s.tex || s.rt || s.cube) return true;
+    if (s.tex || s.rt || s.cube || s.vol) return true;
     if (s.d.caps & D3DPT_VS_BUFFER) return false;       /* a vertex / index buffer: read from VRAM at each draw, no host object */
     if (s.cube_root) {
         /* a cube face (v11): its surface of a render-target cube's host
@@ -344,6 +348,13 @@ static bool ensure_object(Exec &x, VramSurf &s) {
     }
     if (!ensure_device(x, s.d.width, s.d.height)) return false;
     HRESULT hr;
+    if (s.d.caps & D3DPT_VS_VOLUME) {
+        /* v12: a managed volume texture, uploaded slice by slice */
+        s.host_fmt = host_format(s);
+        hr = x.dev->CreateVolumeTexture(s.d.width, s.d.height, s.depth, s.d.levels, 0, s.host_fmt, D3DPOOL_MANAGED, &s.vol, nullptr);
+        if (FAILED(hr)) x.log("ddi: volume texture %ux%ux%u fmt %u levels %u: 0x%08x", s.d.width, s.d.height, s.depth, s.d.format, s.d.levels, (unsigned)hr);
+        return SUCCEEDED(hr);
+    }
     if (s.d.caps & D3DPT_VS_CUBE) {
         /* v11: a render-target cube is a default-pool one of one level,
          * face 0's surface its own target; a plain one is managed */
@@ -383,7 +394,7 @@ static bool ensure_object(Exec &x, VramSurf &s) {
 /* the host texture of a surface whose expansion changed (a colour key set or
  * cleared): recreated in the new format on the next use */
 static void refresh_object(VramSurf &s) {
-    if ((s.tex || s.cube) && !s.rt && s.host_fmt != host_format(s)) s.release();
+    if ((s.tex || s.cube || s.vol) && !s.rt && s.host_fmt != host_format(s)) s.release();
     s.dirty = true;
 }
 
@@ -414,6 +425,27 @@ static void upload_texture(Exec &x, Ddi &d, VramSurf &s) {
     if (s.d.format == D3DFMT_P8) {
         auto it = d.palettes.find(s.palette);
         if (it != d.palettes.end()) pal = &it->second;
+    }
+    if (s.vol) {
+        /* v12: every level's slices (level 0's at the record's slice pitch,
+         * the others one after the other at their own pitch * rows) */
+        for (uint32_t l = 0; l < s.d.levels; l++) {
+            uint32_t w = s.d.width >> l, h = s.d.height >> l, dep = s.depth >> l;
+            if (!w) w = 1;
+            if (!h) h = 1;
+            if (!dep) dep = 1;
+            uint32_t off = l ? s.levels[l - 1].a : s.d.offset, pitch = l ? s.levels[l - 1].b : s.d.pitch;
+            uint32_t row = fmt_row_bytes(s.d.format, w), rows = fmt_rows(s.d.format, h);
+            size_t slice = l ? (size_t)pitch * rows : s.slice;
+            D3DLOCKED_BOX lb;
+            if (FAILED(s.vol->LockBox(l, &lb, nullptr, 0))) continue;
+            for (uint32_t z = 0; z < dep; z++)
+                copy_rows((uint8_t *)lb.pBits + (size_t)z * lb.SlicePitch, lb.RowPitch, x.vram + off + z * slice, pitch,
+                          row < (uint32_t)lb.RowPitch ? row : (uint32_t)lb.RowPitch, rows);
+            s.vol->UnlockBox(l);
+        }
+        s.dirty = false;
+        return;
     }
     uint32_t bpp = fmt_row_bytes(s.d.format, 1), faces = s.cube ? D3DPT_CUBE_FACES : 1;
     for (uint32_t i = 0; i < faces * s.d.levels; i++) {
@@ -1265,7 +1297,7 @@ struct Dp2 {
     void bind_texture(uint32_t stage, uint32_t handle) {
         IDirect3DBaseTexture9 *t = nullptr;
         VramSurf *s = handle ? surf(x, handle) : nullptr;
-        if (s && ensure_object(x, *s) && (s->tex || s->cube)) {
+        if (s && ensure_object(x, *s) && (s->tex || s->cube || s->vol)) {
             if (s->dirty || s->faces_dirty) {
                 if (d.pal_lines < 48 && needs_expand(*s)) { d.pal_lines++; x.log("ddi: dp2: expanding texture %u (fmt %u, palette %u%s, key %s 0x%x..0x%x) for stage %u", handle, s->d.format, s->palette, d.palettes.count(s->palette) ? "" : " unknown", s->ckey ? "on" : "off", s->ckey_lo, s->ckey_hi, stage); }
                 if (s->rt) {
@@ -1280,7 +1312,7 @@ struct Dp2 {
                     s->faces_dirty = false;
                 } else upload_texture(x, d, *s);
             }
-            t = s->cube ? (IDirect3DBaseTexture9 *)s->cube : (IDirect3DBaseTexture9 *)s->tex;
+            t = s->cube ? (IDirect3DBaseTexture9 *)s->cube : s->vol ? (IDirect3DBaseTexture9 *)s->vol : (IDirect3DBaseTexture9 *)s->tex;
         }
         x.dev->SetTexture(stage, t);
         if (stage < 8) d.stage_tex[stage] = t ? handle : 0;
@@ -1292,7 +1324,7 @@ struct Dp2 {
     void pre_draw() {
         for (uint32_t st = 0; st < 8; st++) {
             VramSurf *s = d.stage_tex[st] ? surf(x, d.stage_tex[st]) : nullptr;
-            if (s && (s->dirty || s->faces_dirty || !(s->tex || s->cube))) bind_texture(st, d.stage_tex[st]);
+            if (s && (s->dirty || s->faces_dirty || !(s->tex || s->cube || s->vol))) bind_texture(st, d.stage_tex[st]);
         }
     }
 
@@ -1948,24 +1980,27 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
                 c->size < sizeof(d3dpt_cmd) + sizeof *a) { b.err = D3DPT_ERR_BAD_ARG; return true; }
             Ddi &d = ddi(x);
             VramSurf &s = d.surfs[a->handle];
-            if (s.tex || s.rt || s.cube) s.release();       /* the handle was a texture / target before */
+            if (s.tex || s.rt || s.cube || s.vol) s.release();       /* the handle was a texture / target before */
             s.shadow.clear();
             s.levels.clear();
             s.d = *a;
             s.d.levels = 1;
             s.cube_root = s.face = 0;
+            s.depth = s.slice = 0;
             memset(s.face_h, 0, sizeof s.face_h);
             s.dirty = true;
             s.rendered = false;
             break;
         }
         uint32_t levels = a->levels ? a->levels : 1;
-        bool cube = (a->caps & D3DPT_VS_CUBE) != 0;
+        bool cube = (a->caps & D3DPT_VS_CUBE) != 0, vol = (a->caps & D3DPT_VS_VOLUME) != 0;
         uint32_t nlv = cube ? D3DPT_CUBE_FACES * levels - 1 : levels - 1;     /* the tail's level entries (v11: face-major) */
         uint32_t row = fmt_row_bytes(a->format, a->width), rows = fmt_rows(a->format, a->height);
         if (!a->handle || !a->width || !a->height || a->width > 8192 || a->height > 8192 || levels > 16 ||
             (cube && (a->width != a->height || !(a->caps & D3DPT_VS_TEXTURE) || (a->caps & (D3DPT_VS_PRIMARY | D3DPT_VS_ZBUFFER)))) ||
-            c->size < sizeof(d3dpt_cmd) + sizeof *a + nlv * sizeof(d3dpt_u32x2)) { b.err = D3DPT_ERR_BAD_ARG; return true; }
+            (vol && (cube || !(a->caps & D3DPT_VS_TEXTURE) || (a->caps & (D3DPT_VS_PRIMARY | D3DPT_VS_ZBUFFER | D3DPT_VS_RENDER_TARGET)) ||
+                     a->width > D3DPT_VOLUME_MAX_DEPTH || a->height > D3DPT_VOLUME_MAX_DEPTH)) ||
+            c->size < sizeof(d3dpt_cmd) + sizeof *a + (nlv + (vol ? 1 : 0)) * sizeof(d3dpt_u32x2)) { b.err = D3DPT_ERR_BAD_ARG; return true; }
         if (!row) {
             if (ddi(x).warn_once(0x70000 | a->format)) x.log("ddi: surface format %u (0x%08x) not mirrored", a->format, a->format);
             return true;
@@ -1979,13 +2014,27 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
             if (lv[i - 1].b < fmt_row_bytes(a->format, w) ||
                 (uint64_t)lv[i - 1].a + (uint64_t)lv[i - 1].b * fmt_rows(a->format, h) > x.vram_size) { b.err = D3DPT_ERR_BAD_ARG; return true; }
         }
+        /* v12: a volume's {depth, slice pitch} after its levels; every slice of every level inside VRAM */
+        uint32_t depth = 0, slice = 0;
+        if (vol) {
+            depth = lv[nlv].a;
+            slice = lv[nlv].b;
+            if (!depth || depth > D3DPT_VOLUME_MAX_DEPTH || (uint64_t)slice < (uint64_t)a->pitch * rows ||
+                (uint64_t)a->offset + (uint64_t)slice * depth > x.vram_size) { b.err = D3DPT_ERR_BAD_ARG; return true; }
+            for (uint32_t l = 1; l < levels; l++) {
+                uint32_t h = a->height >> l, dep = depth >> l;
+                if (!h) h = 1;
+                if (!dep) dep = 1;
+                if ((uint64_t)lv[l - 1].a + (uint64_t)lv[l - 1].b * fmt_rows(a->format, h) * dep > x.vram_size) { b.err = D3DPT_ERR_BAD_ARG; return true; }
+            }
+        }
         Ddi &d = ddi(x);
         VramSurf &s = d.surfs[a->handle];
         d3dpt_vram_surface nd = *a;
         nd.levels = levels;
         /* the same surface again (a flip moved it): keep the host object if it still fits */
-        if ((s.tex || s.rt || s.cube) && (s.d.width != nd.width || s.d.height != nd.height || s.d.format != nd.format ||
-                                          s.d.caps != nd.caps || s.d.levels != nd.levels)) {
+        if ((s.tex || s.rt || s.cube || s.vol) && (s.d.width != nd.width || s.d.height != nd.height || s.d.format != nd.format ||
+                                          s.d.caps != nd.caps || s.d.levels != nd.levels || s.depth != depth)) {
             /* a cube's face entries hold surfaces of the object going away */
             for (uint32_t f = 0; f < D3DPT_CUBE_FACES; f++) {
                 VramSurf *fs = s.face_h[f] ? surf(x, s.face_h[f]) : nullptr;
@@ -1997,9 +2046,11 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
          * remembers of the old memory says nothing about the new, or the next readback
          * would keep every differing pixel as the guest's */
         if (s.d.offset != nd.offset || s.d.pitch != nd.pitch) { s.dirty = true; s.shadow.clear(); }
-        if (!s.tex && !s.rt && !s.cube) s.dirty = true;
+        if (!s.tex && !s.rt && !s.cube && !s.vol) s.dirty = true;
         s.d = nd;
         s.levels.assign(lv, lv + nlv);
+        s.depth = depth;
+        s.slice = slice;
         s.cube_root = s.face = 0;
         if (!cube) memset(s.face_h, 0, sizeof s.face_h);
         break;
@@ -2015,7 +2066,7 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
         uint32_t i = a->c * r->d.levels;                 /* face c's level 0 in the level table (entry i - 1) */
         if (i > r->levels.size()) { b.err = D3DPT_ERR_BAD_ARG; return true; }
         VramSurf &s = ddi(x).surfs[a->a];               /* node-based map: r stays valid */
-        if (s.tex || s.rt || s.cube) s.release();
+        if (s.tex || s.rt || s.cube || s.vol) s.release();
         s.shadow.clear();
         s.levels.clear();
         s.d = r->d;

@@ -132,7 +132,10 @@ backend later.
   interleaves the ones the declaration reads into one vertex,
   `ddflags=0x200000` is the A/B; cube textures since v11 — the root's six
   faces go to the host as one cube and each face's handle is mapped onto
-  it, `ddflags=0x400000` is the A/B). **Win98 can run the same
+  it, `ddflags=0x400000` is the A/B; volume textures since v12 — one
+  record with the depth and slice pitch, the box sized by the driver
+  because dxg's allocation block height *is* the slice pitch,
+  `ddflags=0x1000000` is the A/B). **Win98 can run the same
   adapter since 2026-09-07** — a launcher Win98 machine takes
   `-vga none -device d3dpt-vga` with the M10 driver (doc 19) when it is
   picked, but its *default* is Windows' own `-vga cirrus`

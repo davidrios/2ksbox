@@ -1547,6 +1547,7 @@ BOOL d3dpt_os_surf(d3dpt_core *c, void *os, d3dpt_surf_desc *out)
     out->handle = s->lpSurfMore ? s->lpSurfMore->dwSurfaceHandle : 0;
     out->caps = s->ddsCaps.dwCaps;
     out->caps2 = s->lpSurfMore ? s->lpSurfMore->ddsCapsEx.dwCaps2 : 0;
+    out->depth = (out->caps2 & DDSCAPS2_VOLUME_) ? (s->lpSurfMore->ddsCapsEx.dwCaps4 & 0xffff) : 0;
     out->flags = s->dwFlags;
     out->w = s->lpGbl->wWidth;
     out->h = s->lpGbl->wHeight;
@@ -1657,6 +1658,52 @@ static DWORD APIENTRY DdCreateSurface(PDD_CREATESURFACEDATA d)
             dbg_hex(&p->core, " vidmem ", (ULONG)d->lplpSList[0]->lpGbl->fpVidMem);
         }
         dbg_puts(&p->core, "\n");
+    }
+    if (sd && d->dwSCnt && d->lplpSList[0] && d->lplpSList[0]->lpSurfMore &&
+        (d->lplpSList[0]->lpSurfMore->ddsCapsEx.dwCaps2 & DDSCAPS2_VOLUME_)) {
+        /* a volume texture: dxg would size it as one slice, so the whole
+         * box is asked for as a block of depth x (row pitch x height) bytes
+         * (the depth in dwCaps4's low word; every level is a surface of its
+         * own). The block's height is the slice pitch on purpose:
+         * dwBlockSizeY is lSlicePitch's union, and user mode takes its copy
+         * of the surface when this call returns — a slice pitch set any later
+         * (CreateSurfaceEx) reaches the kernel's copy only, and the runtime
+         * locks slice n n bytes in (VOLTEST, 2026-09-11) */
+        ULONG bpp = (sd->ddpfPixelFormat.dwFlags & DDPF_RGB) ? sd->ddpfPixelFormat.dwRGBBitCount / 8 : 0;
+        for (i = 0; i < d->dwSCnt; i++) {
+            PDD_SURFACE_LOCAL s = d->lplpSList[i];
+            PDD_SURFACE_GLOBAL g = s ? s->lpGbl : NULL;
+            ULONG depth = (s && s->lpSurfMore) ? (s->lpSurfMore->ddsCapsEx.dwCaps4 & 0xffff) : 0, pitch, size;
+
+            if (!g) {
+                continue;
+            }
+            pitch = (g->wWidth * bpp + 3) & ~3u;
+            size = pitch * g->wHeight * depth;
+            if (p && p->core.reg_lines < 4096) {
+                p->core.reg_lines++;
+                dbg_hex(&p->core, "d3dptdisp: create volume ", i);
+                dbg_hex(&p->core, " of ", d->dwSCnt);
+                dbg_hex(&p->core, " caps ", s->ddsCaps.dwCaps);
+                dbg_hex(&p->core, " caps2 ", s->lpSurfMore ? s->lpSurfMore->ddsCapsEx.dwCaps2 : 0);
+                dbg_hex(&p->core, " caps4 ", s->lpSurfMore ? s->lpSurfMore->ddsCapsEx.dwCaps4 : 0);
+                dbg_hex(&p->core, " w ", g->wWidth);
+                dbg_hex(&p->core, " h ", g->wHeight);
+                dbg_hex(&p->core, " pitch ", (ULONG)g->lPitch);
+                dbg_hex(&p->core, " pf ", sd->ddpfPixelFormat.dwFlags);
+                dbg_hex(&p->core, " bits ", sd->ddpfPixelFormat.dwRGBBitCount);
+                dbg_hex(&p->core, " -> ", size);
+                dbg_puts(&p->core, "\n");
+            }
+            if (!size || (s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+                continue;
+            }
+            g->lPitch = pitch;
+            g->dwBlockSizeX = depth;
+            g->lSlicePitch = pitch * g->wHeight;
+            g->fpVidMem = DDHAL_PLEASEALLOC_BLOCKSIZE;
+        }
+        return DDHAL_DRIVER_NOTHANDLED;
     }
     if (!sd || !(sd->ddpfPixelFormat.dwFlags & DDPF_FOURCC) || !fmt_is_dxt(sd->ddpfPixelFormat.dwFourCC)) {
         return DDHAL_DRIVER_NOTHANDLED;

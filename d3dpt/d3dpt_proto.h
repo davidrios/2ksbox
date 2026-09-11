@@ -30,7 +30,7 @@
 
 #include <stdint.h>
 
-#define D3DPT_PROTO_VERSION   11u
+#define D3DPT_PROTO_VERSION   12u
 #define D3DPT_MAGIC           0x54503344u          /* "D3PT" read at REG_MAGIC */
 
 /* guest-physical map: below mesapt's 0xe0000000+ windows and SeaBIOS' BAR area */
@@ -313,6 +313,12 @@ typedef struct d3dpt_vram_surface {
                                           * {offset, pitch} pairs, face-major — face 0's levels 1.., then face 1's
                                           * levels 0.., … — faces in D3DCUBEMAP_FACES order (+X -X +Y -Y +Z -Z) */
 #define D3DPT_CUBE_FACES        6u
+#define D3DPT_VS_VOLUME         0x40u    /* v12: a volume texture (with D3DPT_VS_TEXTURE, never a render target): width,
+                                          * height, pitch and offset are level 0's first slice, the tail the levels - 1
+                                          * {offset, pitch} pairs of a 2D texture and then one {depth, slice pitch} pair:
+                                          * level 0's slices follow each other at that slice pitch, level l has
+                                          * max(1, depth >> l) slices one after the other at its own pitch * rows */
+#define D3DPT_VOLUME_MAX_DEPTH  256u
 
 typedef struct d3dpt_ctx_create {
     uint32_t handle, ret_off;       /* the context handle the guest chose; ret: d3dpt_ret */

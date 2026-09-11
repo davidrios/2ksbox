@@ -885,6 +885,94 @@ int main(int argc, char **argv) {
         CHECK(enc.last_status == D3DPT_ERR_BAD_HANDLE, "a face of a texture that is no cube refused (status %u)", enc.last_status);
     }
 
+    /* --- volume textures (v12): a 16 x 16 x 4 volume of two levels in VRAM,
+     * every slice its own colour, drawn at each slice's w and minified onto a
+     * small quad (level 1); a slice's VRAM rewritten and marked dirty;
+     * hostile records --- */
+    {
+        enum { VOL_OFF = 0x5c0000, H_VOL = 50, VE = 16, VD = 4, VSLICE = VE * VE * 4 };
+        static const uint32_t V0[VD] = { 0xffff0000u, 0xff00ff00u, 0xff0000ffu, 0xffffff00u };
+        static const uint32_t V1[VD / 2] = { 0xff800080u, 0xff008080u };
+        auto fill = [](uint32_t off, uint32_t n, uint32_t c) { for (uint32_t i = 0; i < n; i++) memcpy(vram + off + 4 * i, &c, 4); };
+        /* a volume's record: level 0's slices VSLICE apart, level 1 (8 x 8 x 2) at lv1 (right after level 0 unless
+         * given); `pair` = false leaves the {depth, slice pitch} out */
+        auto vol_rec = [&](uint32_t handle, uint32_t off0, uint32_t depth, uint32_t slice, uint32_t caps = D3DPT_VS_TEXTURE,
+                           bool pair = true, uint32_t lv1 = 0) {
+            d3dpt_vram_surface *s = (d3dpt_vram_surface *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_SURFACE, sizeof *s, (pair ? 2 : 1) * sizeof(d3dpt_u32x2));
+            *s = { handle, off0, VE, VE, VE * 4, D3DFMT_A8R8G8B8, caps | D3DPT_VS_VOLUME, 2 };
+            d3dpt_u32x2 *lv = (d3dpt_u32x2 *)(s + 1);
+            lv[0] = { lv1 ? lv1 : off0 + VSLICE * VD, (VE / 2) * 4 };
+            if (pair) lv[1] = { depth, slice };
+        };
+        for (uint32_t z = 0; z < VD; z++) fill(VOL_OFF + z * VSLICE, VE * VE, V0[z]);
+        for (uint32_t z = 0; z < VD / 2; z++) fill(VOL_OFF + VSLICE * VD + z * (VE / 2) * (VE / 2) * 4, (VE / 2) * (VE / 2), V1[z]);
+        vol_rec(H_VOL, VOL_OFF, VD, VSLICE);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == 0, "volume texture registered (status %u)", enc.last_status);
+        struct vv { float x, y, z, rhw; uint32_t diffuse; float u, v, w; };
+        const uint32_t FVF_VOL = 0x4 | 0x40 | 0x100 | (1u << 16);    /* XYZRHW | DIFFUSE | TEX1 | TEXCOORDSIZE3(0) */
+        auto quad = [](float x0, float y0, float sz, float w) {
+            static const float xs[6] = { 0, 1, 0, 0, 1, 1 }, ys[6] = { 0, 0, 1, 1, 0, 1 };
+            std::vector<vv> q;
+            for (int i = 0; i < 6; i++) q.push_back({ x0 + xs[i] * sz, y0 + ys[i] * sz, 0.5f, 1.0f, 0xffffffffu, xs[i], ys[i], w });
+            return q;
+        };
+        /* a quad at each slice's w, 40 pixels each along y = 400..440 */
+        auto slices = [&](Dp2Buf &e) {
+            e.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
+            e.set_vs(FVF_VOL);
+            e.tss(0, 0, H_VOL); e.tss(0, D3DTSS_COLOROP, D3DTOP_SELECTARG1); e.tss(0, D3DTSS_COLORARG1, D3DTA_TEXTURE);
+            e.tss(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1); e.tss(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+            e.tss(0, 16, 1); e.tss(0, 17, 1); e.tss(0, 18, 2);          /* point sampling, point mips */
+            for (int z = 0; z < VD; z++) e.draw8(4, 2, FVF_VOL, quad(40.0f + 90.0f * z, 400.0f, 40.0f, (z + 0.5f) / VD));
+        };
+        auto at = [](int z) { return px(60 + 90 * z, 420); };
+        Dp2Buf v1;
+        slices(v1);
+        /* 16 texels on 4 pixels: level 2 asked, level 1 the last; a w of 0.125 is its first slice */
+        v1.draw8(4, 2, FVF_VOL, quad(300.0f, 300.0f, 4.0f, 0.125f));
+        hr = send_dp2(&enc, v1, vtx);
+        hr |= readback(&enc, H_RT);
+        CHECK(hr == 0 && near_(at(0), V0[0] & 0xffffff, 2) && near_(at(1), V0[1] & 0xffffff, 2) && near_(at(2), V0[2] & 0xffffff, 2) &&
+              near_(at(3), V0[3] & 0xffffff, 2), "volume texture, a quad at each slice: 0x%06x 0x%06x 0x%06x 0x%06x", at(0), at(1), at(2), at(3));
+        CHECK(near_(px(301, 301), V1[0] & 0xffffff, 2), "volume level 1 where it is minified: 0x%06x", px(301, 301));
+        /* slice 2 rewritten in VRAM, VRAM_DIRTY: the volume is read again */
+        fill(VOL_OFF + 2 * VSLICE, VE * VE, 0xffffffffu);
+        { d3dpt_handle *hh = (d3dpt_handle *)d3dpt_enc_cmd(&enc, D3DPT_OP_VRAM_DIRTY, sizeof *hh, 0); *hh = { H_VOL, 0 }; }
+        Dp2Buf v2;
+        slices(v2);
+        hr = send_dp2(&enc, v2, vtx);
+        hr |= readback(&enc, H_RT);
+        CHECK(hr == 0 && near_(at(2), 0xffffff, 2) && near_(at(1), V0[1] & 0xffffff, 2),
+              "a slice's VRAM rewritten, VRAM_DIRTY: the volume re-read (0x%06x, its neighbour 0x%06x)", at(2), at(1));
+        Dp2Buf v3;
+        v3.tss(0, 0, 0);
+        hr = send_dp2(&enc, v3, vtx);
+        /* hostile: depth 0, deeper than the limit, a slice pitch shorter than a slice, slices past VRAM, a volume
+         * that is a cube too, a render-target volume, a record without its {depth, slice pitch} */
+        vol_rec(51, VOL_OFF, 0, VSLICE);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "a volume of depth 0 refused (status %u)", enc.last_status);
+        vol_rec(51, VOL_OFF, D3DPT_VOLUME_MAX_DEPTH + 1, VSLICE);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "a volume deeper than %u refused (status %u)", D3DPT_VOLUME_MAX_DEPTH, enc.last_status);
+        vol_rec(51, VOL_OFF, VD, VE * 4);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "a slice pitch shorter than a slice refused (status %u)", enc.last_status);
+        vol_rec(51, VRAM_SIZE - 2 * VSLICE, 16, VSLICE, D3DPT_VS_TEXTURE, true, VOL_OFF + VSLICE * VD);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "a volume whose slices run past VRAM refused (status %u)", enc.last_status);
+        vol_rec(51, VOL_OFF, VD, VSLICE, D3DPT_VS_TEXTURE | D3DPT_VS_CUBE);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "a volume that is a cube too refused (status %u)", enc.last_status);
+        vol_rec(51, VOL_OFF, VD, VSLICE, D3DPT_VS_TEXTURE | D3DPT_VS_RENDER_TARGET);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "a render-target volume refused (status %u)", enc.last_status);
+        vol_rec(51, VOL_OFF, VD, VSLICE, D3DPT_VS_TEXTURE, false);
+        d3dpt_enc_flush(&enc);
+        CHECK(enc.last_status == D3DPT_ERR_BAD_ARG, "a volume record without its {depth, slice pitch} refused (status %u)", enc.last_status);
+    }
+
     /* --- the DirectX 3 execute-buffer path (doc 15 "Execute buffers"): the
      * legacy 8-byte INDEXEDTRIANGLELIST (v1, v2, v3, wFlags) and the DX5
      * texture render states a DX3 title still sends, TEXTUREHANDLE (1) and

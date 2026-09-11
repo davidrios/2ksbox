@@ -501,7 +501,8 @@ build/d3dpt-dp2-test x.bmp                              # the same scene through
   `D3DParseUnknownCommand`, `0x100000` no video-memory vertex buffers,
   `0x200000` one vertex stream (`MaxStreams` 1, stream 0 alone in every
   draw: before v10), `0x400000` no cube textures (before v11), `0x800000` no V8U8 bump
-  map (EMBM's format, 2026-09-11). The QEMU log's `d3dpt-vga: ddi: …` lines are the
+  map (EMBM's format, 2026-09-11), `0x1000000` no volume textures
+  (before v12). The QEMU log's `d3dpt-vga: ddi: …` lines are the
   executor's (unsupported states / tokens, once each), `batch N: error` a
   refused record, `d3dptdisp: dp2 0x…` a DrawPrimitives2 the host failed.
 
@@ -542,9 +543,10 @@ build/d3dpt-dp2-test x.bmp                              # the same scene through
    the same day: D3DGAME8's filtering difference — d3d8.dll's filter
    values read with DirectX 7's numbering, now rewritten by the driver
    for an interface-4 context (doc 15, the cube section; D3DGAME8 inside
-   its budget against the native oracle). Then what the next
-   title asks for first among: volume textures, presenting the
-   host frame through the player's 3D path instead of the per-frame
+   its budget against the native oracle). **Volume textures landed the
+   same day (protocol v12, doc 15 "Volume textures"):** VOLTEST 4/4,
+   `ddflags=0x1000000` the A/B. Then what the next title asks for first
+   among: presenting the host frame through the player's 3D path instead of the per-frame
    readback copy. A validator for SM2/3 bytecode on the d3d9 half (the
    M4 track's `d3dpt_exec.cpp` hands guest bytecode straight to DXVK,
    which asserts on garbage — see doc 15's shader section) is worth the
@@ -589,9 +591,10 @@ line.
 | DX8 path by hand | headless only | **Max Payne** (tutorial and the first levels, hardware T&L) | nothing black or missing in the alley walls and ground (the clipped fans) | — |
 | Regression after v10 | — | **GTA Vice City** (`tools/xp-vicecity.sh play`), **D3DGAME8** (`xp-driver-test.sh d3dgame8`), **Moto Racer**, **FIFA 2000** | the same frames and rates as before | — |
 
-No candidate known for volume textures or N- / RT-patches (TruForm):
-both are rare before DirectX 9, and neither is worth building until a
-title turns up that asks.
+No candidate known for N- / RT-patches (TruForm): rare before DirectX 9,
+and not worth building until a title turns up that asks. None is known
+for volume textures either; they landed anyway on 2026-09-11 (protocol
+v12, VOLTEST 4/4), their probe already written.
 
 **Every row has a probe in `DRIVER\`** (doc 15 "The DX8 feature probes"):
 CUBETEST, STRMTEST, VOLTEST, FMTTEST, BUMPTEST, SPRTEST, ANISTEST,
@@ -600,7 +603,8 @@ boot. A probe of a feature the driver lacks says `NOT OFFERED` and why,
 so a feature is built against a check that already exists: the day the
 caps claim it, its probe runs its cases. On 2026-09-11 CUBETEST,
 STRMTEST, BUMPTEST (DOT3) and SPRTEST passed; VOLTEST, FMTTEST, ANISTEST
-and PATCHTST were not offered, and EMBM and the per-vertex point size
+and PATCHTST were not offered (VOLTEST passes 4/4 since v12, the same
+day), and EMBM and the per-vertex point size
 were skipped for want of a V8U8 format and `D3DFVFCAPS_PSIZE` — both
 added the same day, BUMPTEST and SPRTEST 4/4 with them. Run the
 probes before a title: a title that fails where its feature's probe

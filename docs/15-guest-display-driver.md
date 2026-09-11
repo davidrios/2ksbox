@@ -1361,8 +1361,8 @@ working; Max Payne renders on it except its clipped fans (the
   last section), 16-bit indices, vertex / pixel shaders
   `D3DVS_VERSION(1,1)` / `D3DPS_VERSION(1,4)` since the shader section
   below (0.0 in the first cut), 4096² textures, 8
-  stages, cube maps since protocol v11 (the last section; no volume
-  maps), and **no `D3DPMISCCAPS_CLIPTLVERTS`**:
+  stages, cube maps since protocol v11 and volume maps since v12 (the
+  last sections), and **no `D3DPMISCCAPS_CLIPTLVERTS`**:
   with it the runtime stops clipping pre-transformed vertices and hands
   the driver polygons that cross the camera plane, which the host
   rasterizes as garbage (Max Payne transforms on the CPU even on a T&L
@@ -1477,7 +1477,8 @@ working; Max Payne renders on it except its clipped fans (the
   shaders 1.x the same night (the section below); palettized textures
   with v8; video-memory vertex / index buffers
   (`D3DDEVCAPS_HWVERTEXBUFFER`) with v9; more than one vertex stream with
-  v10; cube textures with v11 (the last three sections).
+  v10; cube textures with v11; volume textures with v12 (the last
+  sections).
 
 ### Vertex and pixel shaders 1.x on the DX8 DDI (2026-09-05, protocol v7)
 
@@ -1811,6 +1812,62 @@ created by user-mode DirectDraw against the driver's own surface caps
   `TEXBLT` path (`blt_levels` on every face) is therefore unexercised by
   the runtime so far; it is kept for a runtime or title that sends one.
 
+### Volume textures (2026-09-11, protocol v12)
+
+`D3DPTEXTURECAPS_VOLUMEMAP | MIPVOLUMEMAP` in `D3DCAPS8.TextureCaps`,
+`VolumeTextureFilterCaps` and `VolumeTextureAddressCaps` = the 2D ones,
+`MaxVolumeExtent` 256, and `D3DFORMAT_OP_VOLUMETEXTURE` on the six RGB
+formats of the DX8 list — not DXT (`DdCreateSurface` sizes a compressed
+surface as one slice) and not P8. `ddflags=0x1000000` (`DDF_NO_VOLUME`)
+withdraws all of it. The DX8 face only, like the cubes.
+
+- **What the runtime builds** (measured with VOLTEST and a log in
+  `DdCreateSurface` / `DdLock`). A volume is one DirectDraw surface per
+  level, `DDSCAPS2_VOLUME` in `ddsCapsEx.dwCaps2` and its depth in
+  `dwCaps4`'s low word (4 for level 0 of a 16 × 16 × 4, 2 for level 1,
+  whose `caps2` carries the mip-sublevel bit too), each level through its
+  own `DdCreateSurface` call. The runtime fills a video-memory volume by
+  locking **the whole level** — no `DDLOCK_HASVOLUMETEXTUREBOXRECT`, the
+  level's full rectangle — and writing slice n at n × its slice pitch:
+  the managed volume's upload, a `LockBox` rewrite and `UpdateTexture`
+  into a default-pool volume all went that way. **No `VOLUMEBLT` was
+  seen**, as no cube `TEXBLT` was.
+- **The slice pitch trap.** dxg sizes a video-memory surface from its bit
+  count — one slice — so the driver asks for the box itself
+  (`DDHAL_PLEASEALLOC_BLOCKSIZE`), and `DD_SURFACE_GLOBAL.dwBlockSizeY` is
+  a union with `lSlicePitch`. Asked for as one block of `size × 1` (the
+  DXT recipe), the slice pitch came out 1: the runtime wrote the four
+  slices a byte apart over slice 0 and left the rest of the box black.
+  Setting `lSlicePitch` afterwards in `CreateSurfaceEx` reached the
+  kernel's copy (the lock log said 0x400) and not user mode's, which is
+  taken when `DdCreateSurface` returns. What works is the block asked for
+  as **`depth` × `pitch × height`**: the same bytes, and its height is the
+  slice pitch the runtime then uses (0x400 and 0x100 in the lock log; the
+  managed volume's two levels 0x1000 apart in the heap). 9x's header
+  names only `dwBlockSizeY` in that union; the same assignment there.
+- **Driver** (`core_surf.c`, `core_dp2.c`). A volume's registration sends
+  `VRAM_SURFACE` with `D3DPT_VS_VOLUME`: level 0's first slice in the
+  record, the levels' `{offset, pitch}` pairs as a 2D texture's, then one
+  `{depth, slice pitch}` pair; the table entry keeps the depth. A
+  `VOLUMEBLT` (DP2 token 63) is done in the guest like a `TEXBLT` — the box
+  level by level into the VRAM volume, then `VRAM_DIRTY` — for the runtime
+  or title that sends one; unexercised so far.
+- **Executor.** A managed `IDirect3DVolumeTexture9`, uploaded level by
+  level and slice by slice through `LockBox` (level 0's slices at the
+  record's slice pitch, another level's one after the other at its pitch ×
+  rows); `VRAM_DIRTY` re-reads it whole. Refused: depth 0 or over 256
+  (`D3DPT_VOLUME_MAX_DEPTH`), a slice pitch shorter than a slice, slices or
+  a level past VRAM, a volume that is also a cube, a render target, a
+  primary or a Z buffer, and a record without its `{depth, slice pitch}`.
+- **Tests.** `tools/d3dpt-dp2-test.cpp`: a two-level 16 × 16 × 4 A8R8G8B8
+  volume in VRAM, a quad at each slice's `w`, a minified quad on level 1,
+  a slice rewritten and marked dirty, and the seven hostile records.
+  `DRIVER\VOLTEST.EXE` (`xp-driver-test.sh <image> probe VOLTEST`): **4
+  cases, 0 failed** through XP's own d3d8.dll — a managed two-level volume
+  slice by slice and minified, a slice rewritten by `LockBox`, a default
+  volume filled by `UpdateTexture` (TCG on the Air, 2026-09-11); its DXT1
+  case is skipped, not offered.
+
 ### The DX8 feature probes (2026-09-11)
 
 One program per Direct3D 8 feature in `DRIVER\`, each through XP's own
@@ -1829,7 +1886,7 @@ OFFERED or FAIL. Where they stood on 2026-09-11 (the overlay above):
 |---|---|---|
 | `CUBETEST` | cube textures (v11) | PASS, 9 cases |
 | `STRMTEST` | more than one vertex stream (v10): three streams under a vs 1.1 from a StartVertex, indexed with a BaseVertexIndex and a MinIndex, a system-memory stream, the fixed function on three streams, streams 0 and 3 with a gap, stale streams under an FVF draw | PASS, 6 cases |
-| `VOLTEST` | volume textures (incl. `UpdateTexture`, the DDI's `VOLUMEBLT`) | NOT OFFERED |
+| `VOLTEST` | volume textures (incl. `UpdateTexture`, the DDI's `VOLUMEBLT`) | PASS, 4 cases (since v12, the same day; its DXT1 case not offered) |
 | `FMTTEST` | L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2, DXT4 (colour and replicated alpha each) | NOT OFFERED |
 | `BUMPTEST` | EMBM (V8U8 + `BUMPENVMAP`) and DOT3 | PASS, 4 cases (EMBM since V8U8 was listed, the same day; L6V5U5 / X8L8V8U8 / Q8W8V8U8 still refused) |
 | `SPRTEST` | point sprites, and a per-vertex size (`D3DFVF_PSIZE`) | PASS, 4 cases (the per-vertex case since `D3DFVFCAPS_PSIZE` was claimed, the same day) |

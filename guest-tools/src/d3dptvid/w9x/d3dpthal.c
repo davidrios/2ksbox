@@ -118,6 +118,7 @@ BOOL d3dpt_os_surf(d3dpt_core *c, void *os, d3dpt_surf_desc *out)
     out->handle = surf_handle(s);
     out->caps = s->ddsCaps.dwCaps;
     out->caps2 = (s->lpSurfMore) ? s->lpSurfMore->ddsCapsEx.dwCaps2 : 0;
+    out->depth = (out->caps2 & DDSCAPS2_VOLUME_) ? (s->lpSurfMore->ddsCapsEx.dwCaps4 & 0xffff) : 0;
     out->flags = s->dwFlags;
     out->w = s->lpGbl->wWidth;
     out->h = s->lpGbl->wHeight;
@@ -274,6 +275,32 @@ static DWORD __stdcall CreateSurface32(d3dpt_ddhal_createsurface *d)
         dbg_puts(&core, "\n");
     }
     d->ddRVal = DD_OK;
+    if (sd && d->dwSCnt && surf_lcl(d->lplpSList[0]) && surf_lcl(d->lplpSList[0])->lpSurfMore &&
+        (surf_lcl(d->lplpSList[0])->lpSurfMore->ddsCapsEx.dwCaps2 & DDSCAPS2_VOLUME_)) {
+        /* a volume texture (v12): the whole box as one block, as on NT
+         * (DdCreateSurface in d3dptdisp.c) */
+        ULONG bpp = (sd->ddpfPixelFormat.dwFlags & DDPF_RGB) ? sd->ddpfPixelFormat.dwRGBBitCount / 8 : 0;
+        for (i = 0; i < d->dwSCnt; i++) {
+            LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl(d->lplpSList[i]);
+            LPDDRAWI_DDRAWSURFACE_GBL g = s ? s->lpGbl : NULL;
+            ULONG depth = (s && s->lpSurfMore) ? (s->lpSurfMore->ddsCapsEx.dwCaps4 & 0xffff) : 0, pitch, size;
+
+            if (!g) {
+                continue;
+            }
+            pitch = (g->wWidth * bpp + 3) & ~3u;
+            size = pitch * g->wHeight * depth;
+            if (!size || (s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+                continue;
+            }
+            g->lPitch = pitch;
+            g->dwBlockSizeX = depth;                /* depth x (pitch x height): the block's height is the slice
+                                                     * pitch, DX8's lSlicePitch in the same union (see NT's) */
+            g->dwBlockSizeY = pitch * g->wHeight;
+            g->fpVidMem = DDHAL_PLEASEALLOC_BLOCKSIZE;
+        }
+        return DDHAL_DRIVER_NOTHANDLED;
+    }
     if (!sd || !(sd->ddpfPixelFormat.dwFlags & DDPF_FOURCC) || !fmt_is_dxt(sd->ddpfPixelFormat.dwFourCC)) {
         return DDHAL_DRIVER_NOTHANDLED;
     }

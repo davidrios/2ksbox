@@ -325,6 +325,81 @@ static void blt_levels(ULONG fmt, ULONG src_w, ULONG src_h, const SURF_LEVEL *sl
     }
 }
 
+/* VOLUMEBLT (v12): a box of a system-memory volume -> the VRAM volume, every
+ * level, then VRAM_DIRTY. The record: destination, source, the destination
+ * x / y / z, the source D3DBOX (left, top, right, bottom, front, back),
+ * flags; a level's slices are pitch * rows apart on both sides */
+static void walk_volumeblt(DP2WALK *w, const ULONG *b)
+{
+    d3dpt_core *p = w->p;
+    SURF *dst = surf_slot(b[0], FALSE), *src = surf_slot(b[1], FALSE);
+    ULONG bpp, levels, lv, z, y;
+
+    if (p->reg_lines < 4096 && p->bufblt_lines < 8) {
+        p->reg_lines++;
+        p->bufblt_lines++;
+        dbg_hex(p, "d3dptdisp: volumeblt dst ", b[0]);
+        dbg_hex(p, " src ", b[1]);
+        dbg_hex(p, " at ", b[2]);
+        dbg_hex(p, ",", b[3]);
+        dbg_hex(p, ",", b[4]);
+        dbg_hex(p, " box ", b[5]);
+        dbg_hex(p, ",", b[6]);
+        dbg_hex(p, "..", b[7]);
+        dbg_hex(p, ",", b[8]);
+        dbg_hex(p, " z ", b[9]);
+        dbg_hex(p, "..", b[10]);
+        dbg_hex(p, " flags ", b[11]);
+        dbg_hex(p, " depths ", dst ? dst->depth : 0);
+        dbg_hex(p, "/", src ? src->depth : 0);
+        dbg_puts(p, "\n");
+    }
+    if (!dst || !src || !dst->depth || !src->depth || !dst->fmt || dst->fmt != src->fmt || fmt_is_dxt(dst->fmt) ||
+        dst->buffer || src->buffer || b[7] <= b[5] || b[8] <= b[6] || b[10] <= b[9]) {
+        return;
+    }
+    bpp = fmt_row_bytes(dst->fmt, 1);
+    levels = dst->levels < src->levels ? dst->levels : src->levels;
+    if (levels > 16) {
+        levels = 16;
+    }
+    for (lv = 0; lv < levels; lv++) {
+        ULONG_PTR smem = lv ? src->lv[lv - 1].mem : src->mem, dmem = lv ? dst->lv[lv - 1].mem : dst->mem;
+        ULONG spitch = lv ? src->lv[lv - 1].pitch : src->pitch, dpitch = lv ? dst->lv[lv - 1].pitch : dst->pitch;
+        ULONG sw = src->w >> lv, sh = src->h >> lv, sd = src->depth >> lv, dw = dst->w >> lv, dh = dst->h >> lv, dd = dst->depth >> lv;
+        ULONG x0 = b[5] >> lv, y0 = b[6] >> lv, z0 = b[9] >> lv, x1 = b[2] >> lv, y1 = b[3] >> lv, z1 = b[4] >> lv;
+        ULONG cw = (b[7] - b[5]) >> lv, ch = (b[8] - b[6]) >> lv, cd = (b[10] - b[9]) >> lv;
+
+        if (!sw) sw = 1;
+        if (!sh) sh = 1;
+        if (!sd) sd = 1;
+        if (!dw) dw = 1;
+        if (!dh) dh = 1;
+        if (!dd) dd = 1;
+        if (!cw) cw = 1;
+        if (!ch) ch = 1;
+        if (!cd) cd = 1;
+        if (x0 + cw > sw) cw = sw > x0 ? sw - x0 : 0;
+        if (y0 + ch > sh) ch = sh > y0 ? sh - y0 : 0;
+        if (z0 + cd > sd) cd = sd > z0 ? sd - z0 : 0;
+        if (x1 + cw > dw) cw = dw > x1 ? dw - x1 : 0;
+        if (y1 + ch > dh) ch = dh > y1 ? dh - y1 : 0;
+        if (z1 + cd > dd) cd = dd > z1 ? dd - z1 : 0;
+        if (!cw || !ch || !cd || !smem || !dmem) {
+            continue;
+        }
+        for (z = 0; z < cd; z++) {
+            for (y = 0; y < ch; y++) {
+                memcpy((void *)(dmem + (z1 + z) * dpitch * dh + (y1 + y) * dpitch + x1 * bpp),
+                       (const void *)(smem + (z0 + z) * spitch * sh + (y0 + y) * spitch + x0 * bpp), cw * bpp);
+            }
+        }
+    }
+    if (!dst->sysmem) {
+        d3d_handle_op(p, D3DPT_OP_VRAM_DIRTY, b[0]);
+    }
+}
+
 /* TEXBLT: system memory -> the VRAM texture, every level (a cube's every
  * face, v11), then VRAM_DIRTY */
 static void walk_texblt(DP2WALK *w, const ULONG *b)
@@ -731,7 +806,12 @@ static BOOL walk(DP2WALK *w)
                 for (i = 0; i < count; i++) walk_bufferblt(w, (const ULONG *)(q + i * 24));
             }
             break;
-        case 61: case 62: case 63: case 66: case 67:            /* patches, volume blits, dirty rects */
+        case 63:                                                /* VOLUMEBLT: done here, in pass 1 (v12) */
+            if (!w->out) {
+                for (i = 0; i < count; i++) walk_volumeblt(w, (const ULONG *)(q + i * 48));
+            }
+            break;
+        case 61: case 62: case 66: case 67:                    /* patches, dirty rects */
             break;
         default:                                                /* the DX7 state tokens and the shader tokens (45, 46, 48, 54..57) */
             walk_put(w, c, 4 + size);
