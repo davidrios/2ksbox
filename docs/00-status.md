@@ -140,7 +140,8 @@ mcopy -i ~/vms/scratch.img@@1048576 ::/OUT/G9.BMP g9.bmp && tools/bmpdiff.py ref
 guest-tools/build-driver.sh && tools/xp-driver-test.sh ~/vms/winxp-m7c.qcow2 ddtest   # or d3d7
 ```
 Player env knobs: `PLAYER_DUMP`, `PLAYER_DUMP_OUT`, `PLAYER_DUMP_SEQ`,
-`PLAYER_KEYS`, `PLAYER_AUDIO_NULL`, `PLAYER_LATENCY`, `PLAYER_REFRESH_MS`,
+`PLAYER_KEYS`, `PLAYER_AUDIO_NULL`, `PLAYER_AUDIO_TAP`, `PLAYER_AUDIO_MS`,
+`PLAYER_LATENCY`, `PLAYER_REFRESH_MS`,
 `PLAYER_REFRESH_LOG` (the `[display] refresh #N` counter, off since
 2026-09-07 — it printed for as long as a machine was up and buried
 `PLAYER_SHADER`, `PLAYER_QMP`, `PLAYER_QMP_EXEC` (README). Machine bundles
@@ -1163,6 +1164,24 @@ items nobody owns yet:
   wrote at most one 10 ms tick per tick and never caught up after a stall, so
   every late main-loop tick under TCG stayed queued in the guest's DMA
   buffers. The cushion + wall-clock drop design replaced it.
+- **Sound that crackles, worse the bigger the host device's period**, was the
+  same pacing's next form (2026-09-10): topping the ring up to its target
+  every tick pulled a DMA card's guest ahead of wall time by up to a whole
+  device period at once — QEMU's sb16 and AC97 move the guest's play cursor
+  exactly as far as the mixer drains them, so the card played what the
+  driver had not written yet — and the surplus that followed was trimmed by
+  dropping whole ticks. The guest is now drained at its own clock's pace
+  with a small rate correction on the ring's *minimum*, and the player waits
+  for a device period plus the cushion before it plays (`embed/embedaudio.c`
+  header). `tools/audio-glitch-test.py` counts the clicks in a pure tone
+  through the player's simulated DAC, and the guest counts its own stale
+  reads: 12 and 922 clicks in 20 s at 2048 and 4096 frames before, none
+  after, 1024 through 4096. Note that `tick()` runs on every `AUD_write`,
+  not once per mixer tick, and a DMA card writes from i8257's idle bottom
+  half between ticks — a cap on the total owed cut into its audio every
+  tick; only time with no call at all is forgotten. Given a crackle report,
+  ask for the `[audio] device asks for N frames` and `qemu-embed: audio:`
+  lines first.
 - `build-wrappers.sh` is `set -e` and writes the ISO last: a failing stage
   leaves the previous ISO in place, so an ISO older than the sources means a
   stage died, not that the change is missing. Homebrew's mingw is a symlink

@@ -667,15 +667,12 @@ pub fn start(
     };
     let ring_ptrs = audio.map(|(ring, rate)| {
         args.push("-audiodev".into());
-        // the cushion QEMU keeps ahead of the host audio thread (ms): the
-        // latency, and how late the main loop may be before a gap is heard
-        let cushion = std::env::var("PLAYER_AUDIO_MS")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            .map(|ms| format!(",out.buffer-length={}", ms * 1000))
-            .unwrap_or_default();
+        // the cushion QEMU keeps in the ring under the host device's own
+        // pull; the consumer waits for the same amount before it plays
+        let cushion = crate::audio::cushion_ms() * 1000;
         args.push(format!(
-            "embed,id=embed0,out.frequency={rate},out.channels=2,out.format=s16{cushion}"
+            "embed,id=embed0,out.frequency={rate},out.channels=2,out.format=s16,\
+             out.buffer-length={cushion}"
         ));
         // ring lives for the process; leak a strong ref for the C side
         let r = Arc::into_raw(ring);

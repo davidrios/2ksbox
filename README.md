@@ -90,11 +90,17 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 #   (doc 20). The player sets it itself — the packaged bank, or `soundfonts/` in a checkout —
 #   so this is only for trying another bank; a machine that names its own wins over both.
 # LIBSYNTH_MT32_ROMS=<dir> the same for the Roland CM-32L's ROMs, which are the user's own
-# PLAYER_AUDIO_NULL=1 keeps the audio ring without a device and logs QEMU's writes
-# PLAYER_AUDIO_MS=60 (default) is the audio cushion QEMU keeps ahead of the host audio
-#   thread: the output latency, and how late QEMU's main loop may run (TCG, the D3D
-#   executor) before a gap is heard. `qemu-embed: audio:` lines on stderr count gaps
-#   and dropped audio when they happen; raise it if they do, lower it under KVM.
+# PLAYER_AUDIO_NULL=<frames> drains the audio ring with no device: a thread taking that
+#   many frames a period at 48 kHz, like a DAC (`1` = 1024, PipeWire's default)
+# PLAYER_AUDIO_TAP=out.wav records exactly what the player handed the audio device,
+#   padded silence included (tools/audio-glitch-test.py counts clicks in it)
+# PLAYER_AUDIO_MS=40 (default) is the audio cushion QEMU keeps in the ring under the
+#   host device's own pull: the latency on top of the device's period, and how late
+#   QEMU's main loop may run (TCG, the D3D executor) before a gap is heard.
+#   `qemu-embed: audio:` and `[audio] … underruns` lines on stderr count gaps when they
+#   happen and `[audio] device asks for N frames` says how chunky the device is; raise
+#   it if gaps are counted, lower it under KVM. QEMU_EMBED_AUDIO_TRACE=1 prints the
+#   embed audiodev's pacing, a line per call
 # --calib <bmp|dir> shades doc 09's CRT calibration patterns (tools/crtcal-render
 #   writes them; TESTS\CRTCAL.EXE puts the same ones on a real tube) and exits
 # --mode-sweep <dir> runs doc 03's mode sweep instead of a guest: every mode in the

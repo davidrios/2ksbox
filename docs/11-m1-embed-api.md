@@ -79,13 +79,22 @@ overlaid into `qemu/embed/` by `prepare-qemu.sh`, like the 3dfx devices;
 2. `20-embed-audio.patch` (done) — driver lives in `embed/embedaudio.c`
    (compiled into the shared lib, so no `audio/meson.build` change): the
    mixer clips straight into the caller's ring via
-   `get_buffer_out`/`put_buffer_out`. Pacing (2026-09-04): a cushion of
-   `out.buffer-length` (default 60 ms, player `PLAYER_AUDIO_MS`) is kept
-   ahead of the consumer and topped up every mixer tick; the guest's audio
-   clock is wall time, so a main-loop stall longer than the cushion drops
-   the backlog (one gap) instead of queuing it in the guest's DMA buffers
-   for the rest of the session (the first version kept 10 ms and never
-   caught up: XP audio grew laggier the longer and harder it ran). QEMU-side
+   `get_buffer_out`/`put_buffer_out`. Pacing (2026-09-10, the file's
+   header has the whole argument): the guest is drained at its own clock's
+   pace and never in a burst, because QEMU's sb16 and AC97 move the
+   guest's DMA exactly as far as the mixer drains it — a burst moves the
+   guest's play cursor past what its driver has written, and that was the
+   crackle (`tools/audio-glitch-test.py`). A main loop late by more than
+   1.5 ticks loses the excess rather than catching up (never more than 3
+   ticks owed), and a ±25/10 % rate correction holds the ring's *minimum*
+   over a quarter second at `out.buffer-length` (default 40 ms, player
+   `PLAYER_AUDIO_MS`), the cushion under whatever period the host device
+   drains it in; the player starts a stream once the ring holds a period
+   plus the cushion. It replaced (2026-09-04) a design that topped the
+   ring up to its target every tick and dropped whole ticks over it — 12
+   clicks in 20 s against a 2048-frame device, 922 against 4096 — which
+   in turn replaced a 10 ms version that never caught up after a stall
+   (XP audio grew laggier the longer and harder it ran). QEMU-side
    touches: `qapi/audio.json` enum+union entry, `audio_template.h`
    per-direction case, **and `audio/audio.c: audio_create_pdos()` CASE**
    (missing it → NULL pdo → segfault in `audio_validate_per_direction_opts`).
