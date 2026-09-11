@@ -390,8 +390,8 @@ void d3d_caps_init(d3dpt_core *p)
          * render-target cube wherever the format is a render target); not
          * P8, whose palettes the host keeps per 2D texture */
         ULONG cube = (ddflags(p) & DDF_NO_CUBE) ? 0 : D3DFORMAT_OP_CUBETEXTURE_;
-        /* volume textures on the RGB formats (not DXT yet: DdCreateSurface
-         * sizes a compressed surface as one slice) */
+        /* volume textures on the RGB and DXT formats (DdCreateSurface sizes
+         * the box in the format's own rows: block rows for DXT) */
         ULONG vol = (ddflags(p) & DDF_NO_VOLUME) ? 0 : D3DFORMAT_OP_VOLUMETEXTURE_;
 
         fmt8_add(D3DFMT_X8R8G8B8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_DISPLAYMODE_ | D3DFORMAT_OP_3DACCELERATION_ |
@@ -402,9 +402,9 @@ void d3d_caps_init(d3dpt_core *p)
         fmt8_add(D3DFMT_X1R5G5B5_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_OFFSCREEN_RENDERTARGET_ | cube | vol);
         fmt8_add(D3DFMT_A1R5G5B5_, D3DFORMAT_OP_TEXTURE_ | cube | vol);
         fmt8_add(D3DFMT_A4R4G4B4_, D3DFORMAT_OP_TEXTURE_ | cube | vol);
-        fmt8_add(FOURCC_('D', 'X', 'T', '1'), D3DFORMAT_OP_TEXTURE_ | cube);
-        fmt8_add(FOURCC_('D', 'X', 'T', '3'), D3DFORMAT_OP_TEXTURE_ | cube);
-        fmt8_add(FOURCC_('D', 'X', 'T', '5'), D3DFORMAT_OP_TEXTURE_ | cube);
+        fmt8_add(FOURCC_('D', 'X', 'T', '1'), D3DFORMAT_OP_TEXTURE_ | cube | vol);
+        fmt8_add(FOURCC_('D', 'X', 'T', '3'), D3DFORMAT_OP_TEXTURE_ | cube | vol);
+        fmt8_add(FOURCC_('D', 'X', 'T', '5'), D3DFORMAT_OP_TEXTURE_ | cube | vol);
     }
     if (!(ddflags(p) & DDF_NO_MORE_FMTS)) {
         /* the rest of DX8's texture formats (FMTTEST): the luminance ones,

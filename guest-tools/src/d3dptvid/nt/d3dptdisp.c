@@ -1671,17 +1671,20 @@ static DWORD APIENTRY DdCreateSurface(PDD_CREATESURFACEDATA d)
          * of the surface when this call returns — a slice pitch set any later
          * (CreateSurfaceEx) reaches the kernel's copy only, and the runtime
          * locks slice n n bytes in (VOLTEST, 2026-09-11) */
-        ULONG bpp = (sd->ddpfPixelFormat.dwFlags & DDPF_RGB) ? sd->ddpfPixelFormat.dwRGBBitCount / 8 : 0;
+        /* a row and the rows in the surface's own format: block rows for
+         * DXT, dword-aligned texel rows otherwise */
+        ULONG fmt = pf_format(&sd->ddpfPixelFormat);
         for (i = 0; i < d->dwSCnt; i++) {
             PDD_SURFACE_LOCAL s = d->lplpSList[i];
             PDD_SURFACE_GLOBAL g = s ? s->lpGbl : NULL;
-            ULONG depth = (s && s->lpSurfMore) ? (s->lpSurfMore->ddsCapsEx.dwCaps4 & 0xffff) : 0, pitch, size;
+            ULONG depth = (s && s->lpSurfMore) ? (s->lpSurfMore->ddsCapsEx.dwCaps4 & 0xffff) : 0, pitch, rows, size;
 
             if (!g) {
                 continue;
             }
-            pitch = (g->wWidth * bpp + 3) & ~3u;
-            size = pitch * g->wHeight * depth;
+            pitch = fmt_is_dxt(fmt) ? fmt_row_bytes(fmt, g->wWidth) : (fmt_row_bytes(fmt, g->wWidth) + 3) & ~3u;
+            rows = surf_rows(fmt, g->wHeight);
+            size = pitch * rows * depth;
             if (p && p->core.reg_lines < 4096) {
                 p->core.reg_lines++;
                 dbg_hex(&p->core, "d3dptdisp: create volume ", i);
@@ -1702,7 +1705,7 @@ static DWORD APIENTRY DdCreateSurface(PDD_CREATESURFACEDATA d)
             }
             g->lPitch = pitch;
             g->dwBlockSizeX = depth;
-            g->lSlicePitch = pitch * g->wHeight;
+            g->lSlicePitch = pitch * rows;
             g->fpVidMem = DDHAL_PLEASEALLOC_BLOCKSIZE;
         }
         return DDHAL_DRIVER_NOTHANDLED;

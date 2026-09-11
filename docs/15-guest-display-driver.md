@@ -1817,8 +1817,13 @@ created by user-mode DirectDraw against the driver's own surface caps
 `D3DPTEXTURECAPS_VOLUMEMAP | MIPVOLUMEMAP` in `D3DCAPS8.TextureCaps`,
 `VolumeTextureFilterCaps` and `VolumeTextureAddressCaps` = the 2D ones,
 `MaxVolumeExtent` 256, and `D3DFORMAT_OP_VOLUMETEXTURE` on the six RGB
-formats of the DX8 list — not DXT (`DdCreateSurface` sizes a compressed
-surface as one slice) and not P8. `ddflags=0x1000000` (`DDF_NO_VOLUME`)
+formats of the DX8 list and, since the same evening, on DXT1 / DXT3 / DXT5 — not
+P8. The DXTs waited on the sizing below: `DdCreateSurface` took a row from
+`dwRGBBitCount`, which a FOURCC surface does not carry, so a compressed
+volume asked dxg for zero bytes. It now sizes the box in the surface's own
+rows (`pf_format`, then `fmt_row_bytes` and `surf_rows`: block rows for
+DXT), on 9x as on NT, and the slice pitch is a block row times the block
+rows; the host already read DXT volumes in blocks. `ddflags=0x1000000` (`DDF_NO_VOLUME`)
 withdraws all of it. The DX8 face only, like the cubes.
 
 - **What the runtime builds** (measured with VOLTEST and a log in
@@ -1865,8 +1870,11 @@ withdraws all of it. The DX8 face only, like the cubes.
   `DRIVER\VOLTEST.EXE` (`xp-driver-test.sh <image> probe VOLTEST`): **4
   cases, 0 failed** through XP's own d3d8.dll — a managed two-level volume
   slice by slice and minified, a slice rewritten by `LockBox`, a default
-  volume filled by `UpdateTexture` (TCG on the Air, 2026-09-11); its DXT1
-  case is skipped, not offered.
+  volume filled by `UpdateTexture` (TCG on the Air, 2026-09-11); **5 / 5**
+  since the DXTs were offered: a 16 × 16 × 4 DXT1 volume, every slice its
+  own colour, `create volume … -> 0x200` in the QEMU log (4 block rows ×
+  32 bytes × 4 slices). DXT3 and DXT5 share the arithmetic and are not
+  exercised.
 
 ### Anisotropic filtering (2026-09-11)
 
@@ -1943,7 +1951,7 @@ OFFERED or FAIL. Where they stood on 2026-09-11 (the overlay above):
 |---|---|---|
 | `CUBETEST` | cube textures (v11) | PASS, 9 cases |
 | `STRMTEST` | more than one vertex stream (v10): three streams under a vs 1.1 from a StartVertex, indexed with a BaseVertexIndex and a MinIndex, a system-memory stream, the fixed function on three streams, streams 0 and 3 with a gap, stale streams under an FVF draw | PASS, 6 cases |
-| `VOLTEST` | volume textures (incl. `UpdateTexture`, the DDI's `VOLUMEBLT`) | PASS, 4 cases (since v12, the same day; its DXT1 case not offered) |
+| `VOLTEST` | volume textures (incl. `UpdateTexture`, the DDI's `VOLUMEBLT`) | PASS, 5 cases (since v12, the same day; its DXT1 case since the DXTs were offered as volumes, the same evening) |
 | `FMTTEST` | L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2, DXT4 (colour and replicated alpha each) | PASS, 9 cases (since the formats were listed, the same day; see the section above) |
 | `BUMPTEST` | EMBM on every bump format offered (V8U8 and Q8W8V8U8 under `BUMPENVMAP`, L6V5U5 and X8L8V8U8 under `BUMPENVMAPLUMINANCE`) and DOT3 | PASS, 8 cases (EMBM since V8U8 was listed; the luminance formats since they were and DXVK's patch 07, the same day; Q8W8V8U8 not listed, so skipped) |
 | `SPRTEST` | point sprites, and a per-vertex size (`D3DFVF_PSIZE`) | PASS, 4 cases (the per-vertex case since `D3DFVFCAPS_PSIZE` was claimed, the same day) |

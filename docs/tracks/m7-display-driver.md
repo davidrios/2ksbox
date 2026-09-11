@@ -605,7 +605,7 @@ boot. A probe of a feature the driver lacks says `NOT OFFERED` and why,
 so a feature is built against a check that already exists: the day the
 caps claim it, its probe runs its cases. On 2026-09-11 CUBETEST,
 STRMTEST, BUMPTEST (DOT3) and SPRTEST passed; VOLTEST, FMTTEST, ANISTEST
-and PATCHTST were not offered (VOLTEST passes 4/4 since v12 and
+and PATCHTST were not offered (VOLTEST passes 5/5 since v12 and the DXT volumes and
 ANISTEST 1/1 since its caps were claimed, FMTTEST 9/9 since its nine
 formats were listed, all the same day), and EMBM and the per-vertex point size
 were skipped for want of a V8U8 format and `D3DFVFCAPS_PSIZE` — both
