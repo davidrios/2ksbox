@@ -1868,6 +1868,20 @@ withdraws all of it. The DX8 face only, like the cubes.
   volume filled by `UpdateTexture` (TCG on the Air, 2026-09-11); its DXT1
   case is skipped, not offered.
 
+### Anisotropic filtering (2026-09-11)
+
+Caps only: the executor already mapped the anisotropic filters
+(`MINFILTER` 3, the DX7 numbering's `MAGFILTER` 5 — which a d3d8.dll
+context's 3 is rewritten to, "Found on the way" in the cube section) and
+passed `MAXANISOTROPY` to DXVK. Both faces now claim
+`D3DPTFILTERCAPS_MINFANISOTROPIC | MAGFANISOTROPIC` (the cube and volume
+filter caps copy them), `D3DPRASTERCAPS_ANISOTROPY` and a
+`MaxAnisotropy` / `dwMaxAnisotropy` of 16; `ddflags=0x2000000`
+(`DDF_NO_ANISO`) withdraws it. ANISTEST's receding floor of stripes
+through XP's own d3d8.dll: far-row contrast **0 under trilinear, 252
+under anisotropic ×16** (TCG on the Air); D3D7TEST and the other probes
+unchanged.
+
 ### The DX8 feature probes (2026-09-11)
 
 One program per Direct3D 8 feature in `DRIVER\`, each through XP's own
@@ -1890,7 +1904,7 @@ OFFERED or FAIL. Where they stood on 2026-09-11 (the overlay above):
 | `FMTTEST` | L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2, DXT4 (colour and replicated alpha each) | NOT OFFERED |
 | `BUMPTEST` | EMBM (V8U8 + `BUMPENVMAP`) and DOT3 | PASS, 4 cases (EMBM since V8U8 was listed, the same day; L6V5U5 / X8L8V8U8 / Q8W8V8U8 still refused) |
 | `SPRTEST` | point sprites, and a per-vertex size (`D3DFVF_PSIZE`) | PASS, 4 cases (the per-vertex case since `D3DFVFCAPS_PSIZE` was claimed, the same day) |
-| `ANISTEST` | anisotropic filtering | NOT OFFERED |
+| `ANISTEST` | anisotropic filtering | PASS, 1 case (since the caps claimed it, the same day: far-row contrast 0 trilinear, 252 anisotropic) |
 | `PATCHTST` | RT- and N-patches | NOT OFFERED |
 
 Two things the probes turned up beyond their verdicts: `TextureOpCaps`

@@ -502,7 +502,7 @@ build/d3dpt-dp2-test x.bmp                              # the same scene through
   `0x200000` one vertex stream (`MaxStreams` 1, stream 0 alone in every
   draw: before v10), `0x400000` no cube textures (before v11), `0x800000` no V8U8 bump
   map (EMBM's format, 2026-09-11), `0x1000000` no volume textures
-  (before v12). The QEMU log's `d3dpt-vga: ddi: …` lines are the
+  (before v12), `0x2000000` no anisotropic filtering (`MaxAnisotropy` 1). The QEMU log's `d3dpt-vga: ddi: …` lines are the
   executor's (unsupported states / tokens, once each), `batch N: error` a
   refused record, `d3dptdisp: dp2 0x…` a DrawPrimitives2 the host failed.
 
@@ -587,7 +587,7 @@ line.
 | DOT3 bump mapping | claimed (`D3DTEXOPCAPS_ALL`), BUMPTEST's DOT3 2/2 | **3DMark2001 SE** DOT3 Bump Mapping test | lit relief on the surface, not flat | sure |
 | Environment-mapped bump mapping (`BUMPENVMAP`, V8U8) | landed 2026-09-11 (V8U8 in both texture lists, `ddflags=0x800000` the A/B), BUMPTEST 4/4; the luminance variant has no format yet | **3DMark2001 SE** EMBM test; **C&C Renegade** water; **Dungeon Keeper 2**; **Expendable** (its EMBM patch may insist on a Matrox card) | today: the test says "not supported" or the effect is missing — the check once the formats land | sure (all four support EMBM) |
 | Cube maps (v11) | landed, CUBETEST only | **3DMark2001 SE** Nature (its water reflects through a cube map) | the water's reflection of the sky and trees; no `cube … not mirrored` line from the driver, no `ddi: cube texture … 0x…` failure from the host | sure |
-| Anisotropic filtering | **not implemented** (`MaxAnisotropy` 1) | **UT2003 / 2004** (`LevelOfAnisotropy` in the ini) | today: no effect; after: sharper floors at a glancing angle | guess |
+| Anisotropic filtering | claimed since 2026-09-11 (`MaxAnisotropy` 16 on both faces, `ddflags=0x2000000` the A/B), ANISTEST 1/1 | **UT2003 / 2004** (`LevelOfAnisotropy` in the ini) | today: no effect; after: sharper floors at a glancing angle | guess |
 | DX8 path by hand | headless only | **Max Payne** (tutorial and the first levels, hardware T&L) | nothing black or missing in the alley walls and ground (the clipped fans) | — |
 | Regression after v10 | — | **GTA Vice City** (`tools/xp-vicecity.sh play`), **D3DGAME8** (`xp-driver-test.sh d3dgame8`), **Moto Racer**, **FIFA 2000** | the same frames and rates as before | — |
 
@@ -603,8 +603,8 @@ boot. A probe of a feature the driver lacks says `NOT OFFERED` and why,
 so a feature is built against a check that already exists: the day the
 caps claim it, its probe runs its cases. On 2026-09-11 CUBETEST,
 STRMTEST, BUMPTEST (DOT3) and SPRTEST passed; VOLTEST, FMTTEST, ANISTEST
-and PATCHTST were not offered (VOLTEST passes 4/4 since v12, the same
-day), and EMBM and the per-vertex point size
+and PATCHTST were not offered (VOLTEST passes 4/4 since v12 and
+ANISTEST 1/1 since its caps were claimed, the same day), and EMBM and the per-vertex point size
 were skipped for want of a V8U8 format and `D3DFVFCAPS_PSIZE` — both
 added the same day, BUMPTEST and SPRTEST 4/4 with them. Run the
 probes before a title: a title that fails where its feature's probe

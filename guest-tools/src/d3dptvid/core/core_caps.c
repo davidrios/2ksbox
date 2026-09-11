@@ -187,6 +187,13 @@ void d3d_caps_init(d3dpt_core *p)
                              D3DPTFILTERCAPS_MIPLINEAR | D3DPTFILTERCAPS_LINEARMIPNEAREST | D3DPTFILTERCAPS_LINEARMIPLINEAR |
                              D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MIPFPOINT |
                              D3DPTFILTERCAPS_MIPFLINEAR | D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
+    if (!(ddflags(p) & DDF_NO_ANISO)) {
+        /* anisotropic filtering on the DX7 face too: its runtime sends
+         * D3DTFN_ANISOTROPIC (3) / D3DTFG_ANISOTROPIC (5), which the executor
+         * maps; the DX8 raster caps below start from these */
+        t->dwTextureFilterCaps |= D3DPTFILTERCAPS_MINFANISOTROPIC_ | D3DPTFILTERCAPS_MAGFANISOTROPIC_;
+        t->dwRasterCaps |= D3DPRASTERCAPS_ANISOTROPY_;
+    }
     t->dwTextureBlendCaps = D3DPTBLENDCAPS_DECAL | D3DPTBLENDCAPS_MODULATE | D3DPTBLENDCAPS_DECALALPHA |
                             D3DPTBLENDCAPS_MODULATEALPHA | D3DPTBLENDCAPS_COPY | D3DPTBLENDCAPS_ADD;
     t->dwTextureAddressCaps = D3DPTADDRESSCAPS_WRAP | D3DPTADDRESSCAPS_MIRROR | D3DPTADDRESSCAPS_CLAMP |
@@ -246,7 +253,7 @@ void d3d_caps_init(d3dpt_core *p)
     e->dwMinTextureWidth = e->dwMinTextureHeight = 1;
     e->dwMaxTextureWidth = e->dwMaxTextureHeight = 4096;
     e->dwMaxTextureRepeat = 8192;
-    e->dwMaxAnisotropy = 1;
+    e->dwMaxAnisotropy = (ddflags(p) & DDF_NO_ANISO) ? 1 : 16;
     e->dwStencilCaps = D3DSTENCILCAPS_ALL;
     e->dwFVFCaps = 8;
     e->dwTextureOpCaps = D3DTEXOPCAPS_ALL;
@@ -281,7 +288,7 @@ void d3d_caps_init(d3dpt_core *p)
      * host rasterizes as garbage (Max Payne's alley walls, 2026-09-05);
      * without it the runtime clips them itself, as the DX7 runtime did */
     c8->PrimitiveMiscCaps = t->dwMiscCaps | D3DPMISCCAPS_COLORWRITEENABLE | D3DPMISCCAPS_TSSARGTEMP | D3DPMISCCAPS_BLENDOP;
-    c8->RasterCaps = t->dwRasterCaps | D3DPRASTERCAPS_COLORPERSPECTIVE;
+    c8->RasterCaps = t->dwRasterCaps | D3DPRASTERCAPS_COLORPERSPECTIVE | ((ddflags(p) & DDF_NO_ANISO) ? 0 : D3DPRASTERCAPS_ANISOTROPY_);
     c8->ZCmpCaps = t->dwZCmpCaps;
     c8->SrcBlendCaps = t->dwSrcBlendCaps;
     c8->DestBlendCaps = t->dwDestBlendCaps;
@@ -290,6 +297,12 @@ void d3d_caps_init(d3dpt_core *p)
     c8->TextureCaps = (t->dwTextureCaps & ~D3DPTEXTURECAPS_TRANSPARENCY) | D3DPTEXTURECAPS_MIPMAP;   /* DX8 has no colour key; bit 3 is unused there */
     c8->TextureFilterCaps = D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MIPFPOINT |
                             D3DPTFILTERCAPS_MIPFLINEAR | D3DPTFILTERCAPS_MAGFPOINT | D3DPTFILTERCAPS_MAGFLINEAR;
+    if (!(ddflags(p) & DDF_NO_ANISO)) {
+        /* anisotropic filtering, DXVK's own (the cube and volume caps below
+         * copy these): the executor maps the anisotropic filters and
+         * MAXANISOTROPY already */
+        c8->TextureFilterCaps |= D3DPTFILTERCAPS_MINFANISOTROPIC_ | D3DPTFILTERCAPS_MAGFANISOTROPIC_;
+    }
     if (!(ddflags(p) & DDF_NO_CUBE)) {
         /* cube textures (v11), mip-mapped too, any edge: the DX8 face only
          * — a DirectX 7 cube map is created through DirectDraw's own
@@ -309,7 +322,7 @@ void d3d_caps_init(d3dpt_core *p)
     c8->LineCaps = D3DLINECAPS_TEXTURE | D3DLINECAPS_ZTEST | D3DLINECAPS_BLEND | D3DLINECAPS_ALPHACMP | D3DLINECAPS_FOG;
     c8->MaxTextureWidth = c8->MaxTextureHeight = 4096;
     c8->MaxTextureRepeat = 8192;
-    c8->MaxAnisotropy = 1;
+    c8->MaxAnisotropy = (ddflags(p) & DDF_NO_ANISO) ? 1 : 16;
     c8->MaxVertexW = 1.0e10f;
     c8->StencilCaps = D3DSTENCILCAPS_ALL;
     c8->FVFCaps = 8 | D3DFVFCAPS_PSIZE;         /* a per-vertex point size: the driver and the host carry D3DFVF_PSIZE */

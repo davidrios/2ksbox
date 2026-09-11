@@ -51,6 +51,7 @@
 #define DDF_NO_CUBE            0x400000 /* the A/B: no cube textures (caps, format ops), as before protocol v11 */
 #define DDF_NO_BUMP            0x800000 /* the A/B: no V8U8 bump-map format in either texture list (EMBM's ops stay claimed, as before) */
 #define DDF_NO_VOLUME          0x1000000 /* the A/B: no volume textures (caps, format ops) */
+#define DDF_NO_ANISO           0x2000000 /* the A/B: MaxAnisotropy 1, no anisotropic filter caps */
 
 /* DDI-only DX8 device caps (d3dhal.h): the runtime puts vertex / index
  * buffers in video memory through the buffer callbacks when they are set */
@@ -101,6 +102,9 @@
 #define D3DPTEXTURECAPS_MIPCUBEMAP_ 0x00010000
 #define D3DPTEXTURECAPS_VOLUMEMAP_  0x00002000
 #define D3DPTEXTURECAPS_MIPVOLUMEMAP_ 0x00008000
+#define D3DPTFILTERCAPS_MINFANISOTROPIC_ 0x00000400
+#define D3DPTFILTERCAPS_MAGFANISOTROPIC_ 0x04000000
+#define D3DPRASTERCAPS_ANISOTROPY_  0x00020000
 #define D3DFORMAT_OP_VOLUMETEXTURE_ 0x00000002
 #define D3DFORMAT_OP_CUBETEXTURE_   0x00000004
 #define D3DFORMAT_OP_BUMPMAP_       0x00010000   /* the format is a bump map for BUMPENVMAP (d3dhal.h) */
