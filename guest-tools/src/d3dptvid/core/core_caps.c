@@ -51,6 +51,10 @@ ULONG pf_format(const DDPIXELFORMAT *f)
     if ((f->dwFlags & DDPF_PALETTEINDEXED8) && f->dwRGBBitCount == 8) {
         return D3DFMT_P8_;                  /* the palette reaches the host in the DP2 stream (SETPALETTE / UPDATEPALETTE) */
     }
+    if ((f->dwFlags & DDPF_BUMPDUDV) && !(f->dwFlags & DDPF_BUMPLUMINANCE) && f->dwBumpBitCount == 16 &&
+        f->dwBumpDuBitMask == 0x00ff && f->dwBumpDvBitMask == 0xff00) {
+        return D3DFMT_V8U8_;                /* a bump map (EMBM): signed du, dv, passed to the host as is */
+    }
     if (f->dwFlags & DDPF_RGB) {
         BOOL alpha = (f->dwFlags & DDPF_ALPHAPIXELS) && f->dwRGBAlphaBitMask;
         if (f->dwRGBBitCount == 32 && f->dwRBitMask == 0x00ff0000) return alpha ? D3DFMT_A8R8G8B8_ : D3DFMT_X8R8G8B8_;
@@ -82,6 +86,17 @@ static void pf_p8(DDPIXELFORMAT *f)
     f->dwRGBBitCount = 8;
 }
 
+static void pf_bump(DDPIXELFORMAT *f)
+{
+    ULONG i;
+    for (i = 0; i < sizeof(*f) / 4; i++) ((ULONG *)f)[i] = 0;
+    f->dwSize = sizeof(*f);
+    f->dwFlags = DDPF_BUMPDUDV;             /* V8U8: signed du in the low byte, dv in the high */
+    f->dwBumpBitCount = 16;
+    f->dwBumpDuBitMask = 0x00ff;
+    f->dwBumpDvBitMask = 0xff00;
+}
+
 static void pf_fourcc(DDPIXELFORMAT *f, ULONG cc)
 {
     ULONG i;
@@ -103,7 +118,7 @@ static void pf_z(DDPIXELFORMAT *f, ULONG bits, ULONG stencil)
     f->dwStencilBitMask = stencil ? 0xff : 0;
 }
 
-DDSURFACEDESC d3d_texformats[10];
+DDSURFACEDESC d3d_texformats[11];
 ULONG d3d_texformats_n;
 
 static void fmt8_add(ULONG fmt, ULONG ops)
@@ -209,6 +224,11 @@ void d3d_caps_init(d3dpt_core *p)
         pf_p8(&d3d_texformats[9].ddpfPixelFormat);
         d3d_texformats_n = 10;
         t->dwTextureCaps |= D3DPTEXTURECAPS_TRANSPARENCY | D3DPTEXTURECAPS_ALPHAPALETTE;
+    }
+    if (!(ddflags(p) & DDF_NO_BUMP)) {
+        /* the V8U8 bump map, for the DirectX 6 / 7 EMBM titles (they
+         * enumerate a DDPF_BUMPDUDV texture format before offering it) */
+        pf_bump(&d3d_texformats[d3d_texformats_n++].ddpfPixelFormat);
     }
     for (i = 0; i < d3d_texformats_n; i++) {
         d3d_texformats[i].dwSize = sizeof(DDSURFACEDESC);
@@ -335,6 +355,11 @@ void d3d_caps_init(d3dpt_core *p)
     }
     if (!(ddflags(p) & DDF_NO_CKEY)) {
         fmt8_add(D3DFMT_P8_, D3DFORMAT_OP_TEXTURE_);
+    }
+    if (!(ddflags(p) & DDF_NO_BUMP)) {
+        /* the bump map EMBM needs (TextureOpCaps claims BUMPENVMAP): DXVK's
+         * fixed function does the op, the texels go to the host as they are */
+        fmt8_add(D3DFMT_V8U8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_BUMPMAP_);
     }
     fmt8_add(D3DFMT_D16_, D3DFORMAT_OP_ZSTENCIL_ | D3DFORMAT_OP_ZSTENCIL_WITH_ARBITRARY_COLOR_DEPTH_);
     fmt8_add(D3DFMT_D24X8_, D3DFORMAT_OP_ZSTENCIL_ | D3DFORMAT_OP_ZSTENCIL_WITH_ARBITRARY_COLOR_DEPTH_);

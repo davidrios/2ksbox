@@ -49,6 +49,7 @@
                                          * draw's vertices copied into the record, as before protocol v9) */
 #define DDF_ONE_STREAM         0x200000 /* the A/B: MaxStreams 1 and every draw carrying stream 0 alone, as before protocol v10 */
 #define DDF_NO_CUBE            0x400000 /* the A/B: no cube textures (caps, format ops), as before protocol v11 */
+#define DDF_NO_BUMP            0x800000 /* the A/B: no V8U8 bump-map format in either texture list (EMBM's ops stay claimed, as before) */
 
 /* DDI-only DX8 device caps (d3dhal.h): the runtime puts vertex / index
  * buffers in video memory through the buffer callbacks when they are set */
@@ -65,6 +66,7 @@
 #define D3DFMT_A4R4G4B4_  26u
 #define D3DFMT_X4R4G4B4_  30u
 #define D3DFMT_P8_        41u
+#define D3DFMT_V8U8_      60u
 #define D3DFMT_D16_       80u
 #define D3DFMT_D24X8_     77u
 #define D3DFMT_D24S8_     75u
@@ -96,6 +98,7 @@
 #define D3DPTEXTURECAPS_CUBEMAP_    0x00000800
 #define D3DPTEXTURECAPS_MIPCUBEMAP_ 0x00010000
 #define D3DFORMAT_OP_CUBETEXTURE_   0x00000004
+#define D3DFORMAT_OP_BUMPMAP_       0x00010000   /* the format is a bump map for BUMPENVMAP (d3dhal.h) */
 
 /* a DX8 stream binding: where the vertices / indices are */
 typedef struct _DP2STREAM {
@@ -245,7 +248,7 @@ extern D3DHAL_D3DEXTENDEDCAPS_ d3d_extcaps;
 extern D3DCAPS8_ d3d_caps8;
 extern DDPIXELFORMAT d3d_fmt8[16];
 extern ULONG d3d_fmt8_n;
-extern DDSURFACEDESC d3d_texformats[10];
+extern DDSURFACEDESC d3d_texformats[11];
 extern ULONG d3d_texformats_n;
 extern struct d3dpt_zformats { DWORD count; DDPIXELFORMAT pf[3]; } d3d_zformats;
 void d3d_caps_init(d3dpt_core *c);

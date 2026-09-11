@@ -1831,15 +1831,23 @@ OFFERED or FAIL. Where they stood on 2026-09-11 (the overlay above):
 | `STRMTEST` | more than one vertex stream (v10): three streams under a vs 1.1 from a StartVertex, indexed with a BaseVertexIndex and a MinIndex, a system-memory stream, the fixed function on three streams, streams 0 and 3 with a gap, stale streams under an FVF draw | PASS, 6 cases |
 | `VOLTEST` | volume textures (incl. `UpdateTexture`, the DDI's `VOLUMEBLT`) | NOT OFFERED |
 | `FMTTEST` | L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2, DXT4 (colour and replicated alpha each) | NOT OFFERED |
-| `BUMPTEST` | EMBM (V8U8 + `BUMPENVMAP`) and DOT3 | PASS, 2 cases (DOT3); EMBM skipped — the op is claimed, no V8U8 is listed |
+| `BUMPTEST` | EMBM (V8U8 + `BUMPENVMAP`) and DOT3 | PASS, 4 cases (EMBM since V8U8 was listed, the same day; L6V5U5 / X8L8V8U8 / Q8W8V8U8 still refused) |
 | `SPRTEST` | point sprites, and a per-vertex size (`D3DFVF_PSIZE`) | PASS, 4 cases (the per-vertex case since `D3DFVFCAPS_PSIZE` was claimed, the same day) |
 | `ANISTEST` | anisotropic filtering | NOT OFFERED |
 | `PATCHTST` | RT- and N-patches | NOT OFFERED |
 
 Two things the probes turned up beyond their verdicts: `TextureOpCaps`
-claims `BUMPENVMAP` / `BUMPENVMAPLUMINANCE` with no bump format to use
-them on (harmless — a title checks the format — but the two should
-agree), and per-vertex point size was one `FVFCaps` bit away (the driver's
+claimed `BUMPENVMAP` / `BUMPENVMAPLUMINANCE` with no bump format to use
+them on — **closed the same day for `BUMPENVMAP`**: V8U8 is in both
+texture lists (the DX8 one as `D3DFORMAT_OP_TEXTURE | D3DFORMAT_OP_BUMPMAP`,
+the DX7 one as a `DDPF_BUMPDUDV` pixel format for the DirectX 6 / 7 EMBM
+titles), the driver maps a `DDPF_BUMPDUDV` surface to `D3DFMT_V8U8`, and
+the host needs nothing new (the texels go up as they are, DXVK's fixed
+function does the op; the bump matrix is an ordinary stage state).
+BUMPTEST's EMBM cases pass through d3d8.dll; the DX7 list's entry has no
+probe yet. `ddflags=0x800000` takes V8U8 out of both lists for an A/B.
+`BUMPENVMAPLUMINANCE` is still claimed with no luminance bump format
+(L6V5U5, X8L8V8U8: the executor sizes neither yet). And per-vertex point size was one `FVFCaps` bit away (the driver's
 `fvf_stride` and the host already carried `D3DFVF_PSIZE`) — claimed the
 same day, and SPRTEST's per-vertex case (a size of 24 in the vertex over a
 `POINTSIZE` of 4) passes through d3d8.dll.
