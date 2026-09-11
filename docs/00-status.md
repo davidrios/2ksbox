@@ -154,6 +154,18 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **Win98 3D was slow because of TB-list walks, not the driver — fixed
+  2026-09-11 by patch 35** (user report: 3DMark 99 "a bit
+  underwhelming"). 3DMark 99 Max at 800×600×16 on `claude98`: **3334 →
+  5894 3DMarks**; the executor was under 0.3 % of QEMU before and after,
+  and 57 % had gone to walking the TB lists of pages mixing code and data
+  (doc 19 §31, `patches/qemu/README.md`). The same session rewrote the
+  drivers' `memcpy` (`kcrt.c`, now linked by the 9x HAL too) as `rep
+  movs` — measured, no score change. **Open:** the race test now sits at
+  the 60 Hz flip cap (`ddflags=32768` is the A/B); what is left is
+  generated code 40 %, softmmu lookups ~13 %, and one hot ring-0 block at
+  `0xC02402F6` nobody has named.
+
 - **DOS Quake in a Win98 DOS box speeds up for a moment now and then**
   (2026-09-10, user report; unthrottled Win98, `quake.exe`; QEMU's half
   fixed by patch 34 on 2026-09-11, Windows' half **not pursued, by user

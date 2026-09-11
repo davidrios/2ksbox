@@ -2179,3 +2179,49 @@ because a plain `fflush` hands the bytes to the FAT driver but not the
 length to the directory. `tools/win98-game-test.sh` gained UTC timestamps
 on every event (its own and QEMU's `-msg timestamp=on`), so a screen
 switch shorter than one screendump interval can still be placed.
+
+### 31. 3DMark 99: the emulator walked TB lists, not the driver (2026-09-11)
+
+The user found 3D on Win98 "a bit underwhelming". Reproduced headless on a
+raw copy of `claude98` with the user's settings (3DMark 99 Max, 800×600×16,
+triple buffer, "Pentium III optimizations", TCG, `-cpu pentium3`): **3334
+3DMarks, 10969 CPU 3DMarks** — the user's own run was about the same.
+
+**The host side was idle.** DXVK, RADV and `libd3dpt_exec` together were
+under 0.3 % of QEMU: the executor is not where a Win98 3D title's time
+goes. **57 % went to TB invalidation** — `soft_imm_absorbs__locked` 29 %,
+`tb_invalidate_phys_page_range__locked` 28 % — during the CPU-speed and
+fill-rate tests, invalidating nothing: data writes to pages that also hold
+translated code, each walking the page's whole TB list twice because patch
+15's per-page byte range covered the whole page. Patch 35 replaces the
+range with a 64-chunk code map (`patches/qemu/README.md`): **5894 3DMarks,
+11648 CPU 3DMarks, +77 %**, the race test from 25 fps to the 60 Hz flip cap
+and the first-person test from 4.5 to 13.6 fps.
+
+**The vertical blank is now a real limit.** With it off (`ddflags=32768`)
+the unfixed build scored 3435 against 3334: +3 %, because the fill-rate
+and texture tests sat at 60 flips/s while the game tests were CPU-bound.
+After patch 35 the race test is the one at the cap. The flip pacing is
+right for games (doc 15) and stays; a benchmark wanting it off is the
+same `ddflags` A/B.
+
+**A finding that did not move the score.** A 10 s profile of the race put
+~30 % of the vCPU in the 9x HAL's `memcpy` at `0xB00B32D0` — a C byte loop
+GCC compiled to `movsb; cmp; jne`, one trip through a three-instruction
+block per byte, on the path that copies every batch into the command
+window. XP's `d3dptdisp.dll` had the same loop (`kcrt.c`); the 9x HAL its
+own copy of it. Both now link `kcrt.c`, written as `rep movsd`/`rep movsb`
+(patch 17's fast path). Measured with patch 35 in: **5898 with it, 5894
+without** — the samples in the loop were the walks' cost landing on its
+stores, not the loop. Kept because it is the cheaper instruction on every
+path and one copy instead of two; recorded so nobody expects a score from
+it.
+
+What is left in the fixed run's profile: generated code 40 %, the softmmu
+lookups ~13 % (`mmu_lookup1`, `mmu_lookup`, `do_ld4_mmu`), segment loads
+2 %, and the single hottest guest block is ring-0 code at `0xC02402F6`
+(a VxD; not yet named). Driving it: the scratch `3dm-run.sh` of that
+session clicked New Benchmark → Benchmark over a USB tablet
+(`tools/win98-game-test.sh` with `TABLET=1`, `GUEST_CMD` = `cd
+\ARQUIV~1\3DMARK~1` + `3DMARK.EXE`), waited for the welcome dialog by its
+pixels rather than a sleep, and read the score off a screendump.

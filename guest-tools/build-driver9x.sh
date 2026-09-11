@@ -379,7 +379,7 @@ if command -v "$HALCC" >/dev/null; then
      -I"$SRC" -I"$CORE" \
      -o "$BUILD/d3dpt9hl.dll" "$SRC/d3dpthal.c" "$SRC/d3dpthal.def" \
      "$CORE/core_flip.c" "$CORE/core_caps.c" "$CORE/core_surf.c" \
-     "$CORE/core_ctx.c" "$CORE/core_dp2.c" \
+     "$CORE/core_ctx.c" "$CORE/core_dp2.c" "$SRC/../kcrt.c" \
      -lgcc -lkernel32
   # `-nostdlib` drops the default libraries, so kernel32 is named on
   # purpose: it is the one import this DLL is allowed (the check below

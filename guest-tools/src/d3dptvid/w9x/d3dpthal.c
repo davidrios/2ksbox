@@ -47,26 +47,8 @@ static HINSTANCE dll_instance;          /* ours, from DllMain */
 static volatile ULONG *regs;            /* the adapter's register page */
 static d3dpt_core core;
 
-/* ------------------------------------------------------------ freestanding helpers */
-
-void *memcpy(void *dst, const void *src, size_t n)
-{
-    char *d = (char *)dst;
-    const char *s = (const char *)src;
-    while (n--) {
-        *d++ = *s++;
-    }
-    return dst;
-}
-
-void *memset(void *dst, int c, size_t n)
-{
-    char *d = (char *)dst;
-    while (n--) {
-        *d++ = (char)c;
-    }
-    return dst;
-}
+/* memcpy / memset: ../kcrt.c, the same string-instruction pair the NT
+ * drivers link — every batch is copied through it (build-driver9x.sh) */
 
 /* ------------------------------------------------------------ OS hooks for core */
 
