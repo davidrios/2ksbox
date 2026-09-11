@@ -193,6 +193,13 @@
 #                  no backward reading and every window at 100 %, where upstream's
 #                  late IRQ 0 edge made it 200 %. The overdue-irq=off control is
 #                  reported, not required. Two boots, ~35 s
+#   vbe-palette    VBEPAL=1 tools/vga-dirty-guest-test.py vesa: a VESA game's palette
+#                  through the VGA BIOS (patches/seabios, firmware/) — 4F09h sets 65
+#                  entries in banked 640x480x8 on std and cirrus, the pages must read
+#                  back in those greys, and one entry with three different channels
+#                  must reach the DAC as red/green/blue and come back from a 4F09h
+#                  get. QEMU's own ROMs answer 0100 (DOS Quake quits, Duke's colours
+#                  are wrong). Two boots, ~12 s
 #   pad-guest      tools/pad-guest-test.py: the gameport as a DOS guest reads it
 #                  (M13 path B) — one write arms four one-shots and the axes are
 #                  the counts before each bit falls, with a scripted pad moving
@@ -2136,6 +2143,7 @@ guest_stage() {
       run_check atapi-guest atapi-guest.log python3 tools/atapi-guest-test.py || true
       run_check midi-guest midi-guest.log python3 tools/midi-guest-test.py || true
       run_check pit-guest pit-guest.log python3 tools/pit-guest-test.py || true
+      run_check vbe-palette vbe-palette.log env VBEPAL=1 python3 tools/vga-dirty-guest-test.py vesa || true
       # The gameport as a DOS guest reads it (M13 path B). Unlike its
       # neighbours this one runs the **player**, because the pad reaches a
       # guest through the embed library and a bare QEMU has a gameport
@@ -2156,10 +2164,10 @@ guest_stage() {
     # including `atapi-guest`, which is the only check that reads a disc from
     # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
     # weak-sector rule, which that battery is the regression guard for).
-    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest pad-guest; do
+    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest vbe-palette pad-guest; do
       skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
     done; fi
-  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest pad-guest; do
+  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest vbe-palette pad-guest; do
     skip "$c" "needs nasm, mtools and build/qemu"
   done; fi
   if [ "$OS" != Linux ]; then skip guest "Linux only for now (mkfs.fat, sfdisk, mtools)"; return; fi

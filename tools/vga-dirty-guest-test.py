@@ -49,9 +49,14 @@ looks for.
     tools/vga-dirty-guest-test.py cirrus          # one adapter
     QEMU_EXTRA='-accel tcg,...' tools/vga-dirty-guest-test.py
 
+`VBEPAL=1` sets the palette through the VGA BIOS (VBE 4F09h) instead of
+the DAC ports, as DOS Quake and Build do in a VESA mode, and also checks
+one entry's channel order through the ports and a 4F09h get.
+`VBEPAL=1 ... vesa` is the `vbe-palette` check in scripts/test.sh (the
+VGA BIOS of patches/seabios); the rest is local only.
+
 Needs nasm, mtools and build/qemu (it reuses the FreeDOS floppy
-`tools/x87-guest-test.py` fetches).  Outputs in build/vga-dirty/.  Local
-only, not wired into scripts/test.sh -- it wants a guest.
+`tools/x87-guest-test.py` fetches).  Outputs in build/vga-dirty/.
 """
 import importlib.util
 import json
@@ -382,7 +387,9 @@ set_dac:
     ; The palette through the VBE BIOS (4F09h) rather than the DAC ports:
     ; what a VESA game of the era actually calls, and a different path
     ; through the adapter. The ramp is grey, so the byte order inside an
-    ; entry (blue/green/red vs red/green/blue) cannot change the answer.
+    ; entry (blue/green/red vs red/green/blue) cannot change the answer --
+    ; so one more entry, 64, which no page shows, has three different
+    ; channels, and is read back twice below.
     push es
     mov ax, cs
     mov es, ax
@@ -398,9 +405,13 @@ set_dac:
     inc cx
     cmp cx, 64
     jb .build
+    mov byte [es:di], 11h       ; entry 64: blue 11h, green 22h, red 33h
+    mov byte [es:di + 1], 22h
+    mov byte [es:di + 2], 33h
+    mov byte [es:di + 3], 0
     mov ax, 4F09h
     xor bl, bl                  ; set palette data
-    mov cx, 64
+    mov cx, 65
     xor dx, dx                  ; from entry 0
     mov di, palbuf
     int 10h
@@ -409,6 +420,42 @@ set_dac:
     call puts
     pop ax
     call put_hex16
+    ; Entry 64 as the DAC holds it, through the ports (red, green, blue):
+    ; "33 22 11" is the BIOS having read the table in DOS Quake's order.
+    mov si, msg_dac64
+    call puts
+    mov dx, 3C7h
+    mov al, 64
+    out dx, al
+    mov dx, 3C9h
+    in al, dx
+    call put_hex8
+    in al, dx
+    call put_hex8
+    in al, dx
+    call put_hex8
+    ; And through the BIOS again (4F09h BL=01h), back in table order.
+    mov ax, 4F09h
+    mov bl, 1                   ; get palette data
+    mov cx, 1
+    mov dx, 64
+    mov di, palget
+    int 10h
+    push ax
+    mov si, msg_get
+    call puts
+    pop ax
+    call put_hex16
+    mov al, ' '
+    call putc
+    mov al, [palget]
+    call put_hex8
+    mov al, [palget + 1]
+    call put_hex8
+    mov al, [palget + 2]
+    call put_hex8
+    mov al, [palget + 3]
+    call put_hex8
     mov si, msg_crlf
     call puts
     pop es
@@ -496,6 +543,8 @@ msg_sig:     db " SIG=", 0
 msg_ver:     db " VER=", 0
 msg_dacw:    db " DACWIDTH(4F08)=", 0
 msg_pal:     db "VBE_SETPAL=", 0
+msg_dac64:   db " DAC64=", 0
+msg_get:     db " VBE_GETPAL=", 0
 msg_verify:  db "VERIFY_BAD=", 0
 msg_gran:    db "GRAN=", 0
 msg_winsize: db " WINSIZE=", 0
@@ -509,7 +558,8 @@ modeinfo:  times 256 db 0
 pages_per_gran: db 16
 ctrlinfo:  times 512 db 0
 %ifdef VBEPAL
-palbuf:    times 256 db 0
+palbuf:    times 65 * 4 db 0
+palget:    times 4 db 0
 %endif
 %endif
 """
@@ -728,6 +778,24 @@ def report(adapter, mode, geom, first, second):
     return ok
 
 
+def report_vbepal(adapter, tag):
+    """VBEPAL=1: did the VBE BIOS take the palette, in the right order?
+
+    The pages' greys already say the 64 grey entries arrived; this reads
+    the guest's own line for entry 64 (blue 11h, green 22h, red 33h): the
+    set's AX, the DAC as the ports give it back (red, green, blue), and a
+    VBE get of the same entry (blue, green, red, alignment).
+    """
+    with open(os.path.join(OUT, tag, "serial.log"), "rb") as f:
+        text = f.read().decode("ascii", "replace")
+    line = next((l for l in text.splitlines() if l.startswith("VBE_SETPAL=")), "")
+    want = "VBE_SETPAL=004f DAC64=332211 VBE_GETPAL=004f 11223300"
+    ok = line.strip() == want
+    print("  %s 4F09h: %s%s" % (adapter, line.strip() or "(no VBE_SETPAL line)",
+                                "" if ok else "  -- wanted " + want))
+    return ok
+
+
 def build_floppy(geom):
     asm = os.path.join(OUT, "vgafill.asm")
     com = os.path.join(OUT, "VGAFILL.COM")
@@ -787,6 +855,9 @@ def main():
             print("  (%.0f s)" % (time.time() - t0))
             if not report(adapter, mode, geom, first, second):
                 failures.append("%s/%s" % (adapter, mode))
+            if os.environ.get("VBEPAL") and geom["mode"] is not None:
+                if not report_vbepal(adapter, "%s-%s" % (adapter, mode)):
+                    failures.append("%s/%s 4F09h" % (adapter, mode))
     print()
     if failures:
         print("FAIL: the display did not see what the guest wrote on: %s"

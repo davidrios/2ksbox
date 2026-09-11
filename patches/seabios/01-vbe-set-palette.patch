@@ -1,0 +1,72 @@
+diff --git a/vgasrc/vbe.c b/vgasrc/vbe.c
+index 66afb01..9bc961c 100644
+--- a/vgasrc/vbe.c
++++ b/vgasrc/vbe.c
+@@ -436,6 +436,59 @@ vbe_104fXX(struct bregs *regs)
+     regs->ax = 0x0100;
+ }
+ 
++// Set/Get Palette Data. A table of CX four-byte entries (blue, green, red,
++// alignment) at ES:DI for the DAC registers from DX on, each channel in
++// the DAC's current width (6 bits, or 8 after 4F08h). Required since VBE
++// 2.0, and every mode this BIOS reports is "not VGA compatible", which is
++// exactly what tells a program to use this rather than the DAC ports:
++// DOS Quake refuses a VESA mode when it fails, Build carries on with the
++// palette it never loaded.
++static void
++vbe_104f09(struct bregs *regs)
++{
++    struct vgamode_s *vmode_g = get_current_mode();
++    if (vmode_g) {
++        u8 memmodel = GET_GLOBAL(vmode_g->memmodel);
++        if (memmodel == MM_DIRECT || memmodel == MM_YUV) {
++            regs->ax = 0x034f;
++            return;
++        }
++    }
++    // 0x80 is a set "during the vertical retrace"; the DAC here does not
++    // snow, so it is the same set. 0x02/0x03 name a secondary palette,
++    // which a VGA DAC does not have.
++    int set;
++    switch (regs->bl) {
++    case 0x00:
++    case 0x80: set = 1; break;
++    case 0x01: set = 0; break;
++    default:   goto fail;
++    }
++    if (regs->dx > 0xff || regs->cx > 0x100 - regs->dx)
++        goto fail;
++    u8 *table_far = (void*)(regs->di+0);
++    int i;
++    for (i = 0; i < regs->cx; i++) {
++        u8 rgb[3];
++        if (set) {
++            rgb[0] = GET_FARVAR(regs->es, table_far[i * 4 + 2]);
++            rgb[1] = GET_FARVAR(regs->es, table_far[i * 4 + 1]);
++            rgb[2] = GET_FARVAR(regs->es, table_far[i * 4 + 0]);
++            stdvga_dac_write(GET_SEG(SS), rgb, regs->dx + i, 1);
++        } else {
++            stdvga_dac_read(GET_SEG(SS), rgb, regs->dx + i, 1);
++            SET_FARVAR(regs->es, table_far[i * 4 + 0], rgb[2]);
++            SET_FARVAR(regs->es, table_far[i * 4 + 1], rgb[1]);
++            SET_FARVAR(regs->es, table_far[i * 4 + 2], rgb[0]);
++            SET_FARVAR(regs->es, table_far[i * 4 + 3], 0);
++        }
++    }
++    regs->ax = 0x004f;
++    return;
++fail:
++    regs->ax = 0x014f;
++}
++
+ void noinline
+ handle_104f(struct bregs *regs)
+ {
+@@ -454,6 +507,7 @@ handle_104f(struct bregs *regs)
+     case 0x06: vbe_104f06(regs); break;
+     case 0x07: vbe_104f07(regs); break;
+     case 0x08: vbe_104f08(regs); break;
++    case 0x09: vbe_104f09(regs); break;
+     case 0x0a: vbe_104f0a(regs); break;
+     case 0x10: vbe_104f10(regs); break;
+     case 0x15: vbe_104f15(regs); break;

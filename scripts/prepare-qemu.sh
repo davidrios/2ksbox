@@ -146,6 +146,20 @@ for b in bios.bin bios-256k.bin bios-microvm.bin; do
   echo "    $b: $cur -> $BIOS_DATE"
 done
 
+# SeaBIOS's VGA BIOS has no VBE 4F09h (Set/Get Palette Data) and reports
+# every VESA mode as "not VGA compatible", which is what sends a program to
+# 4F09h in the first place: DOS Quake quits with "Unable to load VESA
+# palette" and Duke Nukem 3D draws its 640x480 in the default colours.
+# firmware/ holds the same VGA BIOS built with patches/seabios/
+# (scripts/build-vgabios.sh), checked in because it needs an x86 gcc. A
+# whole blob replaced, so nothing to restore first.
+echo "==> installing our VGA BIOSes (VBE 4F09h, patches/seabios)"
+for f in "$ROOT"/firmware/vgabios-*.bin; do
+  [ -e "$f" ] || continue
+  cp "$f" "$QEMU/pc-bios/"
+  echo "    $(basename "$f")"
+done
+
 echo "==> signing with qemu-3dfx commit"
 (cd "$QEMU" && bash "$FX/scripts/sign_commit" -git="$FX")
 

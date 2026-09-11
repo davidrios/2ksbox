@@ -284,10 +284,35 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
     byte was in video memory (`VERIFY_BAD=0000`), so the writes were
     never the question -- only the redraw was.
 
-- **A VESA game's palette never arrives: the VGABIOS does not implement
-  VBE 4F09h** (open, 2026-09-10, and the likely answer to the user's
-  "on `-vga std` the VESA mode looked like the image but with the colours
-  all wrong"). `tools/vga-dirty-guest-test.py vesa` with `VBEPAL=1` asks
+- **A VESA game's palette never arrived: SeaBIOS's VGA BIOS has no VBE
+  4F09h** (fixed 2026-09-11 by `patches/seabios/01-vbe-set-palette`,
+  user-confirmed the same day on both games;
+  user reports: DOS Quake at 640x480 or above quits with "Unable to load
+  VESA palette", Duke Nukem 3D's 640x480 has its colours all wrong).
+  SeaBIOS 1.16.3's `handle_104f` has no case for 09h at all, so it falls
+  into the `debug_stub` that answers `0100`. And every mode its 4F01h
+  describes carries `VBE_MODE_ATTRIBUTE_NOT_VGA_COMPATIBLE`, which is
+  exactly what tells a program to use 4F09h rather than the DAC ports:
+  Quake uses 4F09h for every VESA mode and quits when it fails, Build
+  checks that attribute bit and carries on with a palette it never
+  loaded. The patch adds the function (BL 00h/80h set, 01h get, entries
+  blue/green/red/alignment in the DAC's current width, a secondary
+  palette and direct-colour modes refused), built by
+  `scripts/build-vgabios.sh` into `firmware/vgabios-{stdvga,cirrus}.bin`
+  -- checked in, because SeaBIOS needs an x86 gcc and GNU ld that the Mac
+  and the Flatpak SDK are not asked for -- and `prepare-qemu.sh` copies
+  them over `qemu/pc-bios/`, which every package ships. `d3dpt-vga` loads
+  `vgabios-stdvga.bin` too. The `vbe-palette` check in `scripts/test.sh`
+  is `VBEPAL=1 tools/vga-dirty-guest-test.py vesa`, now also asking for an
+  entry with three different channels: the set's `004f`, the DAC read
+  back through the ports as red 33 green 22 blue 11 (the table's order
+  is DOS Quake's), and a 4F09h get returning the table again. On QEMU's
+  own ROMs the same run reads `VBE_SETPAL=0100 DAC64=3f1f1f` on both
+  adapters. 4F08h (DAC width) still fails on the Cirrus and before a
+  VBE mode on the standard VGA; a program then stays at 6 bits, which is
+  consistent. What follows is the 2026-09-10 diagnosis.
+
+  `tools/vga-dirty-guest-test.py vesa` with `VBEPAL=1` asks
   the VBE BIOS to set the palette -- function 4F09h, *Set/Get Palette
   Data*, which is how a VESA title of the era sets its colours -- and the
   BIOS answers **`AX=0x0100`: AH=01 failed, AL=00 not supported**, on

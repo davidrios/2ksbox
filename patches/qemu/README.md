@@ -30,6 +30,12 @@ blob from git first, so it is deterministic like the rest of the queue, and
 the `bios-date` check in `scripts/test.sh` asks a running QEMU what a guest
 reads at F000:FFF5.
 
+The other blob change: prepare copies `firmware/vgabios-stdvga.bin` and
+`firmware/vgabios-cirrus.bin` over QEMU's prebuilt ones. They are the same
+SeaBIOS VGA BIOS built with `patches/seabios/` (VBE 4F09h, the palette
+function a VESA game calls) by `scripts/build-vgabios.sh`; that directory's
+README has why they are checked in.
+
 **Never `git checkout` files inside `qemu/` by hand between prepare runs** and
 never rely on "already applied" heuristics — a partial tree once silently
 lost the 3dfx meson hunk (symptom: `unknown type 'glidept'`).

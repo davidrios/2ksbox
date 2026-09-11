@@ -23,6 +23,13 @@ The **player** links `libqemu-embed-<target>` — QEMU (https://www.qemu.org),
 `qemu/LICENSE`, and the GPLv2 text this project distributes under is
 `COPYING`. The **launcher** does not link QEMU.
 
+The firmware in the packages' `pc-bios/` is QEMU's own, except the two
+VGA BIOSes `vgabios-stdvga.bin` and `vgabios-cirrus.bin`: **SeaBIOS**
+(https://www.seabios.org, **LGPL-3.0-only**) at the commit QEMU pins
+(`qemu/roms/seabios`), modified by `patches/seabios/` and built by
+`scripts/build-vgabios.sh`. That tree plus those patches is the
+corresponding source.
+
 ## The music engines
 
 The **OPL3, General MIDI and MT-32 engines** are crates linked into QEMU
