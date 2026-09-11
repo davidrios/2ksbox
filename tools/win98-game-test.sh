@@ -64,6 +64,10 @@
 #   TRACE=1             D3DPT_DP2_TRACE: one whole frame of DP2 tokens per
 #                       touch of frames/trace.on
 #   DDFLAGS=n           -device d3dpt-vga,ddflags=N (the bisection knob)
+#   MUSIC=gm|mt32|none  the MPU-401's synth (gm, the launcher's default for
+#                       a Win98 machine), or no MPU-401 at all
+#   EXTRA="args"        more QEMU arguments, word-split (-perfmap, say, for
+#                       `perf report` to name the vCPU's generated code)
 #   VGA=cirrus          the control: the same game on Windows' own inbox
 #                       driver. A glitch that is there too is not ours.
 #   PLAYER=1            run the machine inside the player instead of a bare
@@ -204,8 +208,15 @@ for f in ${PULL:-}; do mdel -i "$M" "::/${f//\\//}" 2>/dev/null || true; done
 # initialization failed" and quit before it drew a frame, which read exactly
 # like the display driver failing. The audiodev is `none` here (there is no
 # player to play into) but the *device* has to be there.
+# The music devices come with it (doc 20): the OPL3 at the Sound Blaster's
+# base and the MPU-401, which is where a DOS game's General MIDI goes (Blood's
+# BLOOD.CFG says MidiPort = 0x330). A game configured for a device the machine
+# does not have waits on it or plays to nobody. MUSIC=none drops the MPU-401,
+# MUSIC=mt32 asks for the other synth.
 DRIVES=(-cpu "${CPU:-pentium3}" -audiodev "none,id=snd0" -device "sb16,audiodev=snd0"
+        -device "opl3,audiodev=snd0,sbbase=0x220"
         -drive "file=$RAW,format=raw,if=ide,index=0,media=disk")
+[ "${MUSIC:-gm}" = none ] || DRIVES+=(-device "mpu401,audiodev=snd0,synth=${MUSIC:-gm}")
 n=0
 IFS=: read -ra CDLIST <<< "${CDS:-}"
 for cd in "${CDLIST[@]}"; do
@@ -222,10 +233,15 @@ USBARGS=(); [ "${TABLET:-0}" = 1 ] && USBARGS=(-usb -device usb-tablet)
 [ "${TRACE:-0}" = 1 ] && export D3DPT_DP2_TRACE="$OUT/frames/trace.on"
 
 echo "==> booting ${VGA:-d3dpt}, discs: ${CDS:-none}, ${RUN_SECS}s of run -> $OUT${PLAYER:+ (in the player)}"
-MACHINE=(-L "$ROOT/qemu/pc-bios" -machine pc -m 256 -accel tcg
+# hpet=off is the launcher's Win98 machine too: 98 has no HPET driver.
+# The MPU-401 finds the bank relative to the cwd unless told, so tell it.
+export LIBSYNTH_SF2="${LIBSYNTH_SF2:-$ROOT/soundfonts/TimGM6mb.sf2}"
+read -ra EXTRA_ARGS <<< "${EXTRA:-}"
+MACHINE=(-L "$ROOT/qemu/pc-bios" -machine pc,hpet=off -m 256 -accel tcg
          "${DRIVES[@]}" "${VGAARGS[@]}" "${USBARGS[@]}"
          -net none -rtc base=localtime -msg timestamp=on
-         -debugcon file:"$OUT/dbg.log" -qmp unix:"$SOCK",server,nowait)
+         -debugcon file:"$OUT/dbg.log" -qmp unix:"$SOCK",server,nowait
+         "${EXTRA_ARGS[@]}")
 if [ "${PLAYER:-0}" = 1 ]; then
   # This checkout's player and this checkout's wrapper (CLAUDE.md: a build
   # is never borrowed). The embed library appends -display none itself.

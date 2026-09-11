@@ -752,6 +752,19 @@ items nobody owns yet:
    44.8, TB invalidations 36,500/s → 1/s** — the game now sits at the
    60 Hz flip cap for most of the race. Then the HVF VM port the probe
    found feasible.
+   **Blood is the next workload for it (2026-09-10)**: the user's report
+   that Blood is "sluggish depending on where you look" measures as
+   **9.4 fps facing the starting corridor, 154 facing a bare wall**
+   (Blood's own page flips, VBE index-9 writes), with ~40,000
+   retranslations a second either way and 95 % of them one block —
+   Build's column loop, which patches imm8 **shift and rotate counts**
+   per column besides the pointers and steps patch 24 absorbs. The
+   counts stay constants, the block fails soft four times, the address
+   gives up, and every per-column patch then retranslates. Fix: soft
+   shift / rotate counts (and `gen_IMUL3`) in patch 24 — the M9 track
+   doc's Blood section has the run and the plan. `tools/win98-game-test.sh`
+   now builds the launcher's Win98 machine in full (`hpet=off`, the
+   OPL3 and the MPU-401 — `MUSIC=`), and `EXTRA=` passes QEMU arguments.
    **Found on the way, and not an M9 bug:** `atapi-guest` had been failing
    since patch 54 landed (2026-09-07 22:18, `1f0aa6f`). That patch changed
    on purpose where the drive reports its head after a stop — it stays

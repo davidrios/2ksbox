@@ -1135,6 +1135,50 @@ indicative, not as the number**: the `on` run shared the machine with a
 on different track sections each time (the patch-19 section's warning). The
 clean pair is the capped one in the table.
 
+## Blood: the shift counts patch 24 leaves alone (2026-09-10)
+
+The user's report: Blood (the 1997 DOS Build-engine game, in a Windows 98 DOS
+box on `claude98`, 640×480 VESA 2.0) is "sluggish in the starting room,
+depending on where you look". Measured on a raw copy of `claude98` with
+`tools/win98-game-test.sh` (`GUEST_CMD=$'cd \\BLOOD\nBLOOD.EXE -quick -map
+e1m1'` — `-quick` skips the intro, `-map` loads the level, so the crypt is up
+~25 s after the DOS box takes the screen with no menu to drive), `EXTRA="-perfmap
+-name debug-threads=on"` and `perf record -e cycles:u` on the `CPU 0/TCG` thread:
+
+| facing | frames/s | TB invalidations/s |
+|---|---|---|
+| the corridor (walls, floor, ceiling, cobwebs) | **9.4** | ~46,000 |
+| a bare dark wall, close | **154** | ~41,000 |
+
+The frame count is Blood's own page flipping: it cycles the display start
+through eight 480-line pages, so every VBE index-9 write (HMP `trace-event
+vga_vbe_write on`, logged with `-D`) is a frame. `tools/tcg-fps.py` cannot be
+used for this: with the camera still, Build draws the same frame again and the
+probe counts none. The vCPU is ~70 % in QEMU (`tcg_gen_code`, the liveness
+passes, `tcg_optimize`, the decoder), 6–11 % in generated code, and the 1 GiB
+code buffer is flushed every ~20 s.
+
+**One block is 95 % of it**: `translate_block` over 3 s gave 117,254
+translations, 111,890 of them at guest `0x8ae56623` — Build's two-pixel column
+loop (`shr ecx, 0x19` … `add edi, 0x280` … `jae 0x8ae56623`). Two `memsave`s of
+its page 200 ms apart (`smc-diff.py`) show 36 patched instructions: 17 disp32
+(the texture pointers) and 5 imm32 (the steps), which patch 24 can read from the
+code bytes, and **14 imm8 shift and rotate counts** (`shr ecx, 0x18 ↔ 0x19`,
+`rol eax, 0xe8 ↔ 0xe7`, `shl esi`, `shl ebp`), which it keeps as constants —
+`gen_shift_count_1`'s `X86_OP_IMM` case bakes the count in, and a count of zero
+even changes the shape of the code. Patch 18 cannot skip them either: the value
+alternates. So the block is thrown away while soft, four times, and the address
+is marked `giveup` (`soft_imm_note_invalidate`) — after which every per-column
+patch of the fields patch 24 *could* absorb retranslates the loop too.
+`soft_imm_block` fired zero times in the window. A frame's cost is how many
+patches it takes: ~4,900 retranslations per frame facing the corridor, ~265
+facing the wall.
+
+What would fix it is the item 6 leftover below: soft shift and rotate counts —
+the count read from the code byte at run time the way the `CL` form already
+takes it (masked, with the zero case handled at run time) — and `gen_IMUL3`,
+whose immediate already comes through `gen_load` and is one line. Not built yet.
+
 ## Next steps, in order
 
 Done on the way: patch 13 (`-perfmap` on Darwin), patch 14 (the
@@ -1202,8 +1246,12 @@ above):
    36,500/s → 1/s. What is left of the idea, if a workload ever asks: the
    fields are per block and only on its first page, `CF_PARALLEL` is left
    alone, and the whitelist is eight emitters — a guest that patched the
-   operand of a shift or a jump would still retranslate. For the record, the
-   two shapes were:
+   operand of a shift or a jump would still retranslate. **A workload asks
+   (2026-09-10): Blood**, whose column loop patches imm8 shift and rotate
+   counts per column (the section above: 9.4 fps facing the corridor, 154
+   facing a wall, ~40,000 retranslations a second). Next here: soft shift /
+   rotate counts and `gen_IMUL3`, with cases in `tools/smc-guest-test.py`,
+   then Blood's corridor again. For the record, the two shapes were:
    - **Soft immediates** (days) — built, and simpler than costed here: the
      fields are read from the guest's own code bytes rather than from a pool
      the store side has to refresh, so there is no pool and nothing to keep in
