@@ -1,0 +1,105 @@
+The PIT raises the IRQ 0 edge the guest is owed before it reads the
+counter.
+
+pit_get_count() computes the count from QEMU_CLOCK_VIRTUAL at every
+access, but the edge at the wrap is raised by irq_timer, which the main
+loop runs a wakeup late -- and a guest reading the PIT in a tight loop
+holds the BQL for most of that. A read in the gap sees the counter wrapped
+and no interrupt behind it, which a real 8254 shows for about one clock.
+Anything that keeps time from the BIOS tick count plus the counter reads
+that as time going backward: DOS Quake's Sys_FloatTime counts a backward
+step as zero *and* takes it as the new reference, so the period is counted
+again once the tick lands. Measured with guest-tools' QCLOCK.COM in pure
+DOS: one full 55 ms backward step on every tick, 540 of 540, and Quake's
+clock at exactly twice real time.
+
+Every port access now first delivers what is overdue (the transitions
+whose time has passed and irq_timer has not run yet), in order, so the
+PIC sees the edge it would have seen. An IN or OUT ends its TB
+(translator_io_start), so the interrupt is taken before the guest's next
+instruction -- Quake's own "the tick moved during the read" check then
+does exactly what it does on the real part.
+
+-global isa-pit.overdue-irq=off restores upstream's behaviour (the A/B).
+
+diff --git a/hw/timer/i8254.c b/hw/timer/i8254.c
+index 058fc61..6cc327c 100644
+--- a/hw/timer/i8254.c
++++ b/hw/timer/i8254.c
+@@ -123,6 +123,36 @@ static void pit_latch_count(PITChannelState *s)
+     }
+ }
+ 
++/*
++ * 2ksbox: raise the IRQ 0 edge the guest is owed before it touches the
++ * PIT. pit_get_count() computes the count from the clock at every access,
++ * but the edge at the wrap is raised by irq_timer, which the main loop runs
++ * a wakeup late -- and a guest reading the PIT in a tight loop holds the
++ * BQL most of that time. A read in between sees the counter wrapped with
++ * no interrupt behind it, which a real 8254 shows for about a clock. A
++ * guest that keeps time from the BIOS tick count plus the counter (DOS
++ * Quake's Sys_FloatTime, Win9x's VTD) reads that as time going backward,
++ * and then counts the whole period again once the tick lands: DOS Quake
++ * ran at twice its speed in pure DOS. So an access delivers what is
++ * overdue first; an IN or OUT ends its TB, so the interrupt is taken
++ * before the guest's next instruction, as on the real part.
++ * -global isa-pit.overdue-irq=off is the A/B.
++ */
++static void pit_deliver_overdue(PITCommonState *pit)
++{
++    PITChannelState *s = &pit->channels[0];
++    int64_t now;
++
++    if (!pit->overdue_irq || !s->irq_timer || s->irq_disabled) {
++        return;
++    }
++    now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    /* each update moves next_transition_time past the one it was given */
++    while (s->next_transition_time != -1 && s->next_transition_time <= now) {
++        pit_irq_timer_update(s, s->next_transition_time);
++    }
++}
++
+ static void pit_ioport_write(void *opaque, hwaddr addr,
+                              uint64_t val, unsigned size)
+ {
+@@ -131,6 +161,7 @@ static void pit_ioport_write(void *opaque, hwaddr addr,
+     PITChannelState *s;
+ 
+     addr &= 3;
++    pit_deliver_overdue(pit);
+     if (addr == 3) {
+         channel = val >> 6;
+         if (channel == 3) {
+@@ -204,6 +235,7 @@ static uint64_t pit_ioport_read(void *opaque, hwaddr addr,
+         /* Mode/Command register is write only, read is ignored */
+         return 0;
+     }
++    pit_deliver_overdue(pit);
+ 
+     s = &pit->channels[addr];
+     if (s->status_latched) {
+diff --git a/hw/timer/i8254_common.c b/hw/timer/i8254_common.c
+index 28fdabc..a96e715 100644
+--- a/hw/timer/i8254_common.c
++++ b/hw/timer/i8254_common.c
+@@ -240,6 +240,7 @@ static const VMStateDescription vmstate_pit_common = {
+ 
+ static Property pit_common_properties[] = {
+     DEFINE_PROP_UINT32("iobase", PITCommonState, iobase,  -1),
++    DEFINE_PROP_BOOL("overdue-irq", PITCommonState, overdue_irq, true),
+     DEFINE_PROP_END_OF_LIST(),
+ };
+ 
+diff --git a/include/hw/timer/i8254_internal.h b/include/hw/timer/i8254_internal.h
+index 1761deb..f320e61 100644
+--- a/include/hw/timer/i8254_internal.h
++++ b/include/hw/timer/i8254_internal.h
+@@ -54,6 +54,7 @@ struct PITCommonState {
+     ISADevice dev;
+     MemoryRegion ioports;
+     uint32_t iobase;
++    bool overdue_irq;
+     PITChannelState channels[3];
+ };
+ 

@@ -155,7 +155,8 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 ## Known issues / open threads
 
 - **DOS Quake in a Win98 DOS box speeds up for a moment now and then**
-  (open, 2026-09-10, user report; unthrottled Win98, `quake.exe`). No
+  (2026-09-10, user report; unthrottled Win98, `quake.exe`; QEMU's half
+  fixed by patch 34 on 2026-09-11, Windows' half open — below). No
   `-icount` on that machine, so not the throttle's catch-up. The
   suspect is Quake's own clock meeting a DOS box's timer: `Sys_FloatTime`
   (id's `sys_dos.c`) is the BIOS tick word plus PIT counter 0 in mode 2,
@@ -185,12 +186,29 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   **Windows' catch-up bursts**: the tick count jumped 86 and 153 ticks at
   once in two windows, i.e. Quake saw 5.4 s and 9.9 s of game time go by
   in about a second each — the "momentary speed-up", measured. Over the
-  89 s run Quake counted 128 s. The first layer is ours and fixable in
-  `hw/timer/i8254.c` (deliver an overdue edge when the guest touches the
-  PIT; every `IN`/`OUT` already ends its TB, so the interrupt is taken
-  before the next instruction, as on the real part); the bursts are
-  Windows' VTD and are to be re-measured with that fix in, since VTD
-  keeps its own time off the same tick+counter pair. Not patched yet.
+  89 s run Quake counted 128 s. **Patch 34 (`34-pit-overdue-irq`,
+  2026-09-11) fixes the first layer**: every PIT port access delivers the
+  overdue edge first, and since an `IN`/`OUT` ends its TB the interrupt
+  is taken before the next instruction, as on the real part. Pure DOS
+  after it: 0 backward readings and 100 % in all 30 windows (the new
+  `pit-guest` check; `-global isa-pit.overdue-irq=off` is the control and
+  still reads 540 / 200 %). **And the bursts went with it**: the same
+  DOS box run on the patched QEMU shows no catch-up at all (the largest
+  tick jump 4, where it was 153) and Windows' tick clock keeping real
+  time (`tsc_khz` 1005230, against 1218938 before) — the DOS box had been
+  getting 12 ticks a second because the late edges were being *lost*: a
+  tight loop of trapped PIT reads holds the BQL, the main loop cannot run
+  `irq_timer`, and the owed edges it then fires back to back merge in the
+  PIC; Windows noticed the time it was short and paid it back in bursts.
+  **What is left is Windows' own**: inside the DOS box ~17 of 18 ticks
+  still read backward by one period (195 % in the tight loop). The IRQ
+  now reaches the machine on time, so the lag is between VTD/VPICD taking
+  it and the VM's reflected INT 8 updating 0040:006C while VTD's trapped
+  counter reads are already current. How often a real frame of Quake
+  lands in that lag, and whether the momentary speed-up the user saw is
+  gone with the bursts, wants Quake itself in the patched build. An
+  experiment not yet run: `[386Enh] TrapTimerPorts=Off` in SYSTEM.INI,
+  which hands the VM the physical counter.
 
 - **A Win98 machine showed one Unknown Device in Device Manager** (fixed
   2026-09-10, user report). The guest's registry had two ACPI devices
