@@ -1,0 +1,107 @@
+The inline lookup takes the x87 and SSE mode bits of the TB flags from the
+TB it is leaving, as constants, instead of rebuilding them from env at
+every indirect jump.
+
+Patch 20's gen_lookup_and_goto_ptr computes pc / cs_base / flags as TCG
+ops, the way cpu_get_tb_cpu_state does, so a ret, a call through a
+pointer and a jmp through a register find the next TB without leaving
+generated code. The flags half was ~22 host instructions of a ~70
+instruction lookup: hflags and eflags, then the x87 mode byte, the SSE
+mode and its sticky inexact flag, and (patch 37) the x87 inexact flag.
+A C++ engine's virtual calls and small methods are mostly that: in
+3DMark 99's first-person test MAX-FX's core DLL spent its time on `ret`
+and `call *0x84(%eax)`, ~100 host instructions each.
+
+Three of those terms cannot differ from the leaving TB's own flags:
+
+  - the x87 mode (bits 29-30): every instruction that can change the
+    control word ends its TB (gen_x87s_ends_tb);
+  - the SSE mode bit (31): ldmxcsr, fxrstor and xrstor end their TB, so a
+    set bit stays set; one that became set during the TB (PE turning
+    sticky) is emitted as 0, which picks the exact variant of the target
+    until the next full lookup -- slower, never wrong;
+  - the x87 PE bit (2): the TB's own while no fclex ran in it
+    (x87s_pe_sticky), else 0, by the same argument.
+
+They are one constant OR now. hflags and the eflags bits are still
+loaded: RF, TF and the interrupt shadow are what gen_eob has just left
+them, and a far call or jump reaches the same lookup through a helper
+that may change CS and CPL.
+
+Measured on 3DMark 99 Max, claude98, 800x600x16, after patch 37: CPU
+3DMarks 14690 -> 15389 (+5 %), the first-person test 16.2 -> 17.1 fps,
+3DMarks 5917 -> 5932. x87 and SSE batteries identical on/off, SMC and rep
+unchanged, scripts/test.sh all 57/57.
+
+Behind inline-lookup, like the function it changes.
+
+diff --git a/target/i386/tcg/translate.c b/target/i386/tcg/translate.c
+index 19598b9..2c901c7 100644
+--- a/target/i386/tcg/translate.c
++++ b/target/i386/tcg/translate.c
+@@ -2508,7 +2508,6 @@ static void gen_lookup_and_goto_ptr(DisasContext *s)
+ #else
+     TCGv_i32 flags = tcg_temp_new_i32();
+     TCGv_i32 t = tcg_temp_new_i32();
+-    TCGv_i32 u = tcg_temp_new_i32();
+     TCGv_i64 pc = tcg_temp_new_i64();
+     TCGv_i64 cs_base = tcg_temp_new_i64();
+ 
+@@ -2516,35 +2515,30 @@ static void gen_lookup_and_goto_ptr(DisasContext *s)
+     tcg_gen_ld_i32(t, tcg_env, offsetof(CPUX86State, eflags));
+     tcg_gen_andi_i32(t, t, IOPL_MASK | TF_MASK | RF_MASK | VM_MASK | AC_MASK);
+     tcg_gen_or_i32(flags, flags, t);
+-    tcg_gen_ld8u_i32(t, tcg_env, offsetof(CPUX86State, x87_fast_mode));
+-    tcg_gen_shli_i32(t, t, TB_FLAG_X87_MODE_SHIFT);
+-    tcg_gen_or_i32(flags, flags, t);
+-    QEMU_BUILD_BUG_ON(sizeof_field(CPUX86State,
+-                                   sse_status.float_exception_flags) != 2);
+-    tcg_gen_ld16u_i32(t, tcg_env,
+-                      offsetof(CPUX86State, sse_status.float_exception_flags));
+-    tcg_gen_andi_i32(t, t, float_flag_inexact);
+-    tcg_gen_setcondi_i32(TCG_COND_NE, t, t, 0);
+-    tcg_gen_ld8u_i32(u, tcg_env, offsetof(CPUX86State, sse_fast_mode));
+-    tcg_gen_setcondi_i32(TCG_COND_NE, u, u, 0);
+-    tcg_gen_and_i32(t, t, u);
+-    tcg_gen_shli_i32(t, t, TB_FLAG_SSE_FAST_SHIFT);
+-    tcg_gen_or_i32(flags, flags, t);
+     /*
+-     * TB_FLAG_X87_PE, as cpu_get_tb_cpu_state: inline x87 mode and PE
+-     * sticky in fpus. Without it every sticky TB missed here and each
+-     * indirect jump into one left through the epilogue (3DMark 99's first
+-     * person: dispatch 5.6 -> 14.7 % of the frame, no guard exit at all).
++     * The x87 and SSE mode bits are this TB's own, as constants (patch 38):
++     * rebuilding them from env was ~17 host instructions on every ret,
++     * call * and jmp reg, and a C++ engine's virtual calls are most of
++     * those. The x87 mode cannot change inside a TB (gen_x87s_ends_tb:
++     * fldcw, fldenv, frstor, fnsave, fninit end it), and neither can the
++     * SSE mode or its sticky precision flag be cleared (ldmxcsr, fxrstor
++     * and xrstor end it). A bit that became set during the TB -- PE turning
++     * sticky -- is left at 0, which picks the exact variant of the target
++     * until the next full lookup: slower, never wrong. The x87 PE bit is
++     * kept only while no fclex ran in this TB (x87s_pe_sticky). hflags and
++     * the eflags bits stay loaded: RF, TF and the interrupt shadow are
++     * what gen_eob left them, and a far jump's helper may change CS.
+      */
+-    QEMU_BUILD_BUG_ON(sizeof_field(CPUX86State, fpus) != 2);
+-    tcg_gen_ld16u_i32(t, tcg_env, offsetof(CPUX86State, fpus));
+-    tcg_gen_andi_i32(t, t, 0x20);                       /* FPUS_PE */
+-    tcg_gen_setcondi_i32(TCG_COND_NE, t, t, 0);
+-    tcg_gen_ld8u_i32(u, tcg_env, offsetof(CPUX86State, x87_fast_mode));
+-    tcg_gen_setcondi_i32(TCG_COND_NE, u, u, 0);
+-    tcg_gen_and_i32(t, t, u);
+-    tcg_gen_shli_i32(t, t, TB_FLAG_X87_PE_SHIFT);
+-    tcg_gen_or_i32(flags, flags, t);
++    {
++        uint32_t known = s->flags & (TB_FLAG_X87_MODE_MASK | TB_FLAG_SSE_FAST_MASK);
++
++        if ((s->flags & TB_FLAG_X87_PE_MASK) && s->x87s_pe_sticky) {
++            known |= TB_FLAG_X87_PE_MASK;
++        }
++        if (known) {
++            tcg_gen_ori_i32(flags, flags, known);
++        }
++    }
+ 
+     tcg_gen_ld_i32(t, tcg_env, offsetof(CPUX86State, segs[R_CS].base));
+     tcg_gen_extu_i32_i64(cs_base, t);

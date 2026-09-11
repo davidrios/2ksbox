@@ -2262,3 +2262,15 @@ is left is spread across the softmmu TLB check on every access, the
 integer code around the geometry, the SSE lane-mask round trip and the
 x87 window checks; the user has asked for an opt-in relaxed floating-point
 mode for games, which is next.
+
+**Then patch 38, indirect jumps.** With the arithmetic cheaper, MAX-FX's
+C++ core (`e2mfc.DLL`, 9 % of the first-person test) showed its shape:
+its hottest instructions were `ret` and `call *0x84(%eax)` — virtual
+calls — at ~100 host instructions each, a fifth of them rebuilding the TB
+flags' mode bits for patch 20's inline lookup. Those bits cannot change
+inside a TB, so they are constants now: **CPU 3DMarks 14690 → 15389,
+first person 16.2 → 17.1 fps**. Every guest with virtual calls gets it.
+Where the frame goes now is flat — the softmmu check on every integer
+access, SSE, x87, calls, the rest of the engine, ~4 % of large host
+memcpy/memset — and the user has ruled out title-specific work: only
+changes that could help any guest.

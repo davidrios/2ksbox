@@ -174,7 +174,12 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   **Patch 37** (x87 PE sticky): CPU 3DMarks 13549 → 14690, first person
   15.4 → 16.2 fps. A new TB flag must also go into patch 20's inline lookup
   (`gen_lookup_and_goto_ptr`) — without it the patch lost 25 %. Next: an
-  opt-in relaxed floating-point mode for games (user request).
+  opt-in relaxed floating-point mode for games (user request; deferred by
+  the user in favour of exact work). **Patch 38**: the inline lookup takes the
+  x87/SSE mode bits of the TB flags as constants — every `ret` / `call *` /
+  `jmp reg` ~22 instructions cheaper; CPU 3DMarks 14690 → 15389, first
+  person 16.2 → 17.1 fps. Only general optimizations, no title-specific
+  ones (user decision, 2026-09-11).
 
 - **DOS Quake in a Win98 DOS box speeds up for a moment now and then**
   (2026-09-10, user report; unthrottled Win98, `quake.exe`; QEMU's half
