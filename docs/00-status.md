@@ -1254,10 +1254,21 @@ items nobody owns yet:
   header). `tools/audio-glitch-test.py` counts the clicks in a pure tone
   through the player's simulated DAC, and the guest counts its own stale
   reads: 12 and 922 clicks in 20 s at 2048 and 4096 frames before, none
-  after, 1024 through 4096. Note that `tick()` runs on every `AUD_write`,
-  not once per mixer tick, and a DMA card writes from i8257's idle bottom
-  half between ticks — a cap on the total owed cut into its audio every
-  tick; only time with no call at all is forgotten. Given a crackle report,
+  after, 1024 through 4096. **Then Carmageddon crackled in races only**
+  (2026-09-11; menus fine): a 3D frame holds QEMU's main loop — Glide runs
+  under the big lock and OpenGLide's swap ends in `glFinish` — and the
+  audio tick with it. `STALL=` in the tool reproduces that with a QMP
+  `pmemsave` every 33 ms. Handing a stall's backlog out in one tick moved
+  the SB16's cursor ~25 ms past what the guest (held up as well) had
+  written (47 clicks at 10-14 ms stalls), and forgetting long stalls
+  drained the ring (223 at 18-22 ms). Now a backlog of up to 100 ms is
+  paid back over the ticks that follow, a device delivering at most three
+  ticks between two, and the player runs the audiodev at
+  `timer-period=5000` so more ticks fit between stalls: 0 and 1 clicks.
+  Note that `tick()` runs on every `AUD_write`, not once per mixer tick —
+  a DMA card writes from i8257's idle bottom half between ticks — so the
+  bound is on what a device may deliver, not on what is owed (a cap on the
+  owed total cut into the SB16's audio every tick). Given a crackle report,
   ask for the `[audio] device asks for N frames` and `qemu-embed: audio:`
   lines first.
 - `build-wrappers.sh` is `set -e` and writes the ISO last: a failing stage

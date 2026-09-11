@@ -668,11 +668,14 @@ pub fn start(
     let ring_ptrs = audio.map(|(ring, rate)| {
         args.push("-audiodev".into());
         // the cushion QEMU keeps in the ring under the host device's own
-        // pull; the consumer waits for the same amount before it plays
+        // pull; the consumer waits for the same amount before it plays. A
+        // 5 ms mixer tick: a main loop held up by a 3D swap is paid back a
+        // tick at a time, and finer ticks fit between the stalls
+        // (embed/embedaudio.c)
         let cushion = crate::audio::cushion_ms() * 1000;
         args.push(format!(
-            "embed,id=embed0,out.frequency={rate},out.channels=2,out.format=s16,\
-             out.buffer-length={cushion}"
+            "embed,id=embed0,timer-period=5000,out.frequency={rate},out.channels=2,\
+             out.format=s16,out.buffer-length={cushion}"
         ));
         // ring lives for the process; leak a strong ref for the C side
         let r = Arc::into_raw(ring);

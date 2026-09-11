@@ -165,6 +165,20 @@ opl_write_at:
 ; ----------------------------------------------------------------- SB16
 
 sb_play:
+%if LOAD
+    mov ax, 13h                 ; Mode X: 13h unchained, all four planes
+    int 10h
+    mov dx, 3C4h
+    mov ax, 0604h               ; memory mode: chain-4 and odd/even off
+    out dx, ax
+    mov ax, 0F02h               ; map mask: every plane
+    out dx, ax
+    mov dx, 3D4h
+    mov ax, 0014h               ; underline: dword mode off
+    out dx, ax
+    mov ax, 0E317h              ; mode control: byte mode
+    out dx, ax
+%endif
     in al, 21h
     or al, 20h                  ; IRQ5 masked: this program polls
     out 21h, al
@@ -247,6 +261,25 @@ sb_play:
     call fill_to
     mov dx, 22Eh                ; acknowledge the block interrupt
     in al, dx
+%if LOAD
+    ; A game's frame going out through unchained VGA memory, a slice per
+    ; poll: every store is a device access QEMU takes its big lock for.
+    push es
+    push edi
+    mov ax, 0A000h
+    mov es, ax
+    mov di, [vga_off]
+    mov cx, LOAD/4
+    mov eax, esi
+    rep stosd
+    add word [vga_off], LOAD
+    cmp word [vga_off], 16000
+    jb .nov
+    mov word [vga_off], 0
+.nov:
+    pop edi
+    pop es
+%endif
     mov ax, [fs:6Ch]
     sub ax, [t0]
     cmp ax, TICKS
@@ -438,6 +471,7 @@ maxjump:    dd 0
 polls:      dd 0
 last:       dw 0
 t0:         dw 0
+vga_off:    dw 0
 table:      db TABLE
 """
 
@@ -452,7 +486,8 @@ def build(mode, secs, margin):
     img = os.path.join(OUT, "glitch-%s.img" % mode)
     with open(asm, "w") as f:
         f.write(ASM.replace("db TABLE", "db " + TABLE))
-    defs = ["-DTICKS=%d" % round(secs * 18.2), "-DMARGIN=%d" % margin]
+    defs = ["-DTICKS=%d" % round(secs * 18.2), "-DMARGIN=%d" % margin,
+            "-DLOAD=%d" % int(os.environ.get("LOAD", "0"))]
     if mode == "opl":
         defs.append("-DOPL")
     sh("nasm", "-O0", "-f", "bin", *defs, "-o", com, asm)
@@ -470,24 +505,53 @@ def build(mode, secs, margin):
     return img
 
 
+def staller(sock, log, mb, stalls):
+    """`STALL=<MB>`: a main loop that is busy for a while every frame, the
+    way one is while a 3D title's swap finishes under the big lock. A QMP
+    `pmemsave` runs synchronously in QEMU's main loop, so each one holds
+    off the audio tick for as long as it takes; the guest keeps running."""
+    qspec = importlib.util.spec_from_file_location("qmpc", os.path.join(ROOT, "tools/qmpc.py"))
+    qmpc = importlib.util.module_from_spec(qspec)
+    qspec.loader.exec_module(qmpc)
+    while not (os.path.exists(log) and b"START" in open(log, "rb").read()):
+        time.sleep(0.2)
+    f = qmpc.connect(sock)
+    qmpc.cmd(f, "qmp_capabilities")
+    while b"DONE" not in open(log, "rb").read():
+        t = time.time()
+        qmpc.cmd(f, "pmemsave", {"val": 0, "size": mb << 20, "filename": "/dev/null"})
+        stalls.append(time.time() - t)
+        time.sleep(max(0.0, 1 / 30 - stalls[-1]))
+
+
 def run(mode, img, tap, log, plog, period):
     for f in (tap, log, plog):
         if os.path.exists(f):
             os.unlink(f)
+    sock = os.path.join(OUT, "q.sock")
+    stall_mb = int(os.environ.get("STALL", "0"))
     env = dict(os.environ, PLAYER_AUDIO_NULL=str(period), PLAYER_AUDIO_TAP=tap)
     device = ["-device", "opl3,audiodev=embed0"] if mode == "opl" else \
              ["-device", "sb16,audiodev=embed0"]
     icount = ["-icount", "shift=7,align=on"] if os.environ.get("ICOUNT") else []
     extra = os.environ.get("QEMU_EXTRA", "").split()
+    vga = ["-vga", "none", "-device", "d3dpt-vga"] if os.environ.get("VGA") == "d3dpt" \
+        else ["-vga", os.environ.get("VGA", "std")]
     with open(plog, "wb") as out:
         p = subprocess.Popen([
             PLAYER, "--",
             "-L", os.path.join(ROOT, "qemu/pc-bios"),
-            "-machine", "pc", "-cpu", "pentium3", "-m", "16",
-            "-vga", "std", "-net", "none", *device,
+            "-machine", "pc", "-cpu", "pentium3", "-m", str(max(16, stall_mb)),
+            "-qmp", "unix:%s,server,nowait" % sock,
+            *vga, "-net", "none", *device,
             "-drive", "file=%s,if=floppy,index=0,format=raw" % img,
             "-boot", "a", "-serial", "file:" + log, *icount, *extra,
         ], env=env, stdout=out, stderr=subprocess.STDOUT)
+    stalls = []
+    if stall_mb:
+        import threading
+        threading.Thread(target=staller, args=(sock, log, stall_mb, stalls),
+                         daemon=True).start()
     t0 = time.time()
     try:
         while time.time() - t0 < 300:
@@ -503,6 +567,10 @@ def run(mode, img, tap, log, plog, period):
         if p.poll() is None:
             p.terminate()
             p.wait()
+    if stalls:
+        s = sorted(stalls)
+        print("    main loop held %d times at 30 Hz: median %.0f ms, max %.0f ms"
+              % (len(s), 1000 * s[len(s) // 2], 1000 * s[-1]))
     return open(log, "rb").read().decode("latin-1"), open(plog, "rb").read().decode("latin-1")
 
 

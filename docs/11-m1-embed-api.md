@@ -84,9 +84,11 @@ overlaid into `qemu/embed/` by `prepare-qemu.sh`, like the 3dfx devices;
    pace and never in a burst, because QEMU's sb16 and AC97 move the
    guest's DMA exactly as far as the mixer drains it — a burst moves the
    guest's play cursor past what its driver has written, and that was the
-   crackle (`tools/audio-glitch-test.py`). A main loop late by more than
-   1.5 ticks loses the excess rather than catching up (never more than 3
-   ticks owed), and a ±25/10 % rate correction holds the ring's *minimum*
+   crackle (`tools/audio-glitch-test.py`). A main loop held up (a 3D
+   swap under the big lock, 2026-09-11) is paid back over the ticks that
+   follow, a device delivering at most three ticks' worth between two
+   (the player sets `timer-period=5000`, so 15 ms) with up to 100 ms
+   owed, and a ±25/10 % rate correction holds the ring's *minimum*
    over a quarter second at `out.buffer-length` (default 40 ms, player
    `PLAYER_AUDIO_MS`), the cushion under whatever period the host device
    drains it in; the player starts a stream once the ring holds a period

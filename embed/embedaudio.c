@@ -26,11 +26,15 @@
  * trimmed by dropping whole ticks, each drop a click of its own.
  *
  * So each tick takes what the guest's clock says has played since the last
- * one, times a small correction. A main loop that ran late — no call at all
- * for longer than a tick and a half — loses the excess instead of jerking
- * the guest forward (the guest's cursor simply stood still meanwhile), and
- * no more than three ticks are ever owed, so a card that paused its DMA
- * does not come back to a burst. The correction holds
+ * one, times a small correction — and a main loop that was held up (a 3D
+ * title's swap finishing under the big lock, tools/audio-glitch-test.py's
+ * STALL=) is paid back over the ticks that follow, never in one: a device
+ * may deliver at most three ticks' worth between two ticks (the player runs
+ * this audiodev at timer-period=5000, so 15 ms), and up to 100 ms stays
+ * owed meanwhile. Both halves were measured wrong first: handing a 10-14 ms
+ * stall's backlog out at once moved the card's cursor ~25 ms past what the
+ * guest (held up too) had written, and forgetting a stall instead drained
+ * the ring under a loop that is held up every frame. The correction holds
  * the ring's *minimum* over a quarter second at out.buffer-length — the
  * cushion under the consumer's own pull, whatever its period — by draining
  * the guest up to 25 % fast or 10 % slow. The host DAC's drift against the
@@ -84,8 +88,8 @@ typedef struct EmbedVoiceOut {
     size_t floor;         /* bytes: the least the ring should hold */
     int64_t last_ns;      /* QEMU_CLOCK_VIRTUAL at the last tick */
     double owed;          /* frames the guest's clock has played, not yet taken */
-    int64_t stall_ns;     /* longer than this between two calls: a late main loop */
-    double cap;           /* frames: the most that may be owed */
+    double burst;         /* frames: the most a device may deliver ahead of a tick */
+    double cap;           /* frames: the most that may be owed; beyond, forgotten */
     double adj;           /* the rate correction */
     int64_t win_start;
     size_t win_min;       /* bytes: the ring's least fill in this window */
@@ -151,11 +155,6 @@ static void tick(EmbedVoiceOut *vo, HWVoiceOut *hw)
 
     vo->last_ns = now;
     if (dt > 0) {
-        /* Not once per mixer tick: every AUD_write asks for the free space
-         * too, and a DMA card writes from its own bottom half between ticks,
-         * so its audio reaches the mixer a few milliseconds after the time
-         * it is owed for. What is forgotten is time nobody called at all. */
-        dt = MIN(dt, vo->stall_ns);
         vo->owed += dt * 1e-9 * hw->info.freq * (1.0 + vo->adj);
         if (vo->owed > vo->cap) {
             vo->owed = vo->cap;
@@ -196,7 +195,12 @@ static size_t embed_buffer_get_free(HWVoiceOut *hw)
         return max;
     }
     tick(vo, hw);
-    return MIN((size_t)vo->owed * hw->info.bytes_per_frame, max);
+    /* What a device may deliver now: what is owed, but never more than the
+     * burst. This is asked by every AUD_write, not only by the mixer tick —
+     * a DMA card writes from i8257's bottom half between ticks — so it
+     * bounds how far a device, and so the guest's play cursor, runs ahead
+     * of the ring between two ticks. */
+    return MIN((size_t)MIN(vo->owed, vo->burst) * hw->info.bytes_per_frame, max);
 }
 
 static void *embed_get_buffer_out(HWVoiceOut *hw, size_t *size)
@@ -307,11 +311,11 @@ static int embed_init_out(HWVoiceOut *hw, struct audsettings *as, void *drv_opaq
         vo->floor = ring_size / 4;
         vo->floor -= vo->floor % bpf;
     }
-    vo->stall_ns = period_ns * 3 / 2;
-    vo->cap = 3 * period_ns * 1e-9 * hw->info.freq;
+    vo->burst = 3 * period_ns * 1e-9 * hw->info.freq;
+    vo->cap = 0.1 * hw->info.freq;
     trace = getenv("QEMU_EMBED_AUDIO_TRACE") != NULL;
     /* the mixer must be able to hold one tick's take */
-    hw->samples = MAX(vo->floor / bpf, (size_t)vo->cap + 1);
+    hw->samples = MAX(vo->floor / bpf, (size_t)vo->burst + 1);
     vo->adj = 0;
     vo->min_fill = SIZE_MAX;
     vo->last_report = g_get_monotonic_time();
