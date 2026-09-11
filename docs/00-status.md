@@ -607,7 +607,9 @@ items nobody owns yet:
    setup program is clicked through). **And a DOS Glide game the same
    day: Carmageddon's `3DFX.EXE`** from a Win98 DOS box through
    qemu-3dfx's `GLIDE2X.OVL`, built here for the first time (Open Watcom,
-   `build-wrappers.sh`; `SETUP.EXE` installs it on 9x) — which found that
+   `build-wrappers.sh`, which picks the snapshot's host directory the way
+   `build-driver9x.sh` does — `binl64` on a Mac is a Linux ELF that exists
+   and fails to exec; `SETUP.EXE` installs it on 9x) — which found that
    OpenGLide never drew an LFB a game keeps write-locked across swaps
    (patch `05-lfb-locked-swap`; the `glide-host` check guards it). Nobody
    has played a level by hand yet, and no Glide game has run on the DOS

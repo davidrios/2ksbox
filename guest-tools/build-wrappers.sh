@@ -169,8 +169,15 @@ cp "$G"/glide.dll "$G"/glide2x.dll "$G"/glide3x.dll "$G"/fxmemmap.vxd \
 # out loud. Built in a copy: the upstream Makefile writes into the
 # submodule's own source directory.
 build_ovl() {
-  local w="${WATCOM:-$HOME/.local/opt/open-watcom}" bin d
-  for bin in binl64 binl; do [ -x "$w/$bin/wcc386" ] && break; done
+  local w="${WATCOM:-$HOME/.local/opt/open-watcom}" bin bins d
+  # The snapshot holds every host's binaries side by side, so the directory
+  # is picked by host, never by what exists: binl64 is -x on a Mac too.
+  case "$(uname -s)/$(uname -m)" in
+    Darwin/arm64)   bins=armo64 ;;
+    Darwin/x86_64)  bins=bino64 ;;
+    *)              bins="binl64 binl" ;;
+  esac
+  for bin in $bins; do [ -x "$w/$bin/wcc386" ] && break; done
   if [ ! -x "$w/$bin/wcc386" ]; then
     echo "note: GLIDE2X.OVL (DOS Glide) is NOT on this ISO — no Open Watcom at $w (WATCOM=)" >&2
     return 0
