@@ -1832,12 +1832,14 @@ OFFERED or FAIL. Where they stood on 2026-09-11 (the overlay above):
 | `VOLTEST` | volume textures (incl. `UpdateTexture`, the DDI's `VOLUMEBLT`) | NOT OFFERED |
 | `FMTTEST` | L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2, DXT4 (colour and replicated alpha each) | NOT OFFERED |
 | `BUMPTEST` | EMBM (V8U8 + `BUMPENVMAP`) and DOT3 | PASS, 2 cases (DOT3); EMBM skipped — the op is claimed, no V8U8 is listed |
-| `SPRTEST` | point sprites | PASS, 3 cases; the per-vertex size case skipped — `D3DFVFCAPS_PSIZE` is not claimed |
+| `SPRTEST` | point sprites, and a per-vertex size (`D3DFVF_PSIZE`) | PASS, 4 cases (the per-vertex case since `D3DFVFCAPS_PSIZE` was claimed, the same day) |
 | `ANISTEST` | anisotropic filtering | NOT OFFERED |
 | `PATCHTST` | RT- and N-patches | NOT OFFERED |
 
 Two things the probes turned up beyond their verdicts: `TextureOpCaps`
 claims `BUMPENVMAP` / `BUMPENVMAPLUMINANCE` with no bump format to use
 them on (harmless — a title checks the format — but the two should
-agree), and per-vertex point size is one `FVFCaps` bit away (the driver's
-`fvf_stride` and the host already carry `D3DFVF_PSIZE`).
+agree), and per-vertex point size was one `FVFCaps` bit away (the driver's
+`fvf_stride` and the host already carried `D3DFVF_PSIZE`) — claimed the
+same day, and SPRTEST's per-vertex case (a size of 24 in the vertex over a
+`POINTSIZE` of 4) passes through d3d8.dll.

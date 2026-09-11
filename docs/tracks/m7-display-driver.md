@@ -580,7 +580,7 @@ line.
 | More than one vertex stream (v10) | landed, no title yet | **Unreal Tournament 2003 / 2004** (D3DDrv, the default renderer) | static meshes, terrain and characters complete; no `reads streams 0x…, the draw carried …` line; `ddflags=0x200000` (one stream) as the A/B | likely (UE2 draws through DX8.1 vertex streams) |
 | Vertex shaders 1.1 (v7) | landed, SHTEST only | **3DMark2001 SE** — the Vertex Shader feature test, then the four game tests; **Morrowind** (ships `.vso` vertex shader objects) | the scenes drawn, no `vertex shader … refused` / `not valid vs 1.x` lines | sure (3DMark), likely (Morrowind) |
 | Pixel shaders 1.1–1.4 (v7) | landed, SHTEST only | **3DMark2001 SE** Pixel Shader test and Advanced Pixel Shader (ps 1.4); **Morrowind** with pixel-shader water on | shaded water (off: it looks like milk); no `pixel shader … refused` lines | sure (3DMark PS test, Morrowind water), guess (Advanced PS = 1.4) |
-| Point sprites | claimed (`MaxPointSize` 64), SPRTEST 3/3; per-vertex size not claimed | **3DMark2001 SE** Point Sprites test | particles as sized quads, not single pixels | sure |
+| Point sprites | claimed (`MaxPointSize` 64, a per-vertex size too since 2026-09-11), SPRTEST 4/4 | **3DMark2001 SE** Point Sprites test | particles as sized quads, not single pixels | sure |
 | DOT3 bump mapping | claimed (`D3DTEXOPCAPS_ALL`), BUMPTEST's DOT3 2/2 | **3DMark2001 SE** DOT3 Bump Mapping test | lit relief on the surface, not flat | sure |
 | Environment-mapped bump mapping (`BUMPENVMAP`, V8U8) | **not implemented**: the op is claimed, no bump format is listed | **3DMark2001 SE** EMBM test; **C&C Renegade** water; **Dungeon Keeper 2**; **Expendable** (its EMBM patch may insist on a Matrox card) | today: the test says "not supported" or the effect is missing — the check once the formats land | sure (all four support EMBM) |
 | Cube maps (v11) | landed, CUBETEST only | **3DMark2001 SE** Nature (its water reflects through a cube map) | the water's reflection of the sky and trees; no `cube … not mirrored` line from the driver, no `ddi: cube texture … 0x…` failure from the host | sure |
@@ -600,7 +600,8 @@ so a feature is built against a check that already exists: the day the
 caps claim it, its probe runs its cases. On 2026-09-11 CUBETEST,
 STRMTEST, BUMPTEST (DOT3) and SPRTEST passed; VOLTEST, FMTTEST, ANISTEST
 and PATCHTST were not offered, and EMBM and the per-vertex point size
-were skipped for want of a V8U8 format and `D3DFVFCAPS_PSIZE`. Run the
+were skipped for want of a V8U8 format and `D3DFVFCAPS_PSIZE` — the
+latter claimed the same day, SPRTEST 4/4 with it. Run the
 probes before a title: a title that fails where its feature's probe
 passes is the title's business, and one whose probe fails is ours.
 

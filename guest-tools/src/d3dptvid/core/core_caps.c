@@ -284,7 +284,7 @@ void d3d_caps_init(d3dpt_core *p)
     c8->MaxAnisotropy = 1;
     c8->MaxVertexW = 1.0e10f;
     c8->StencilCaps = D3DSTENCILCAPS_ALL;
-    c8->FVFCaps = 8;
+    c8->FVFCaps = 8 | D3DFVFCAPS_PSIZE;         /* a per-vertex point size: the driver and the host carry D3DFVF_PSIZE */
     c8->TextureOpCaps = D3DTEXOPCAPS_ALL;
     c8->MaxTextureBlendStages = 8;
     c8->MaxSimultaneousTextures = 8;

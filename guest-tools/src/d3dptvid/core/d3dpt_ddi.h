@@ -132,6 +132,7 @@ typedef struct _D3DPRIMCAPS_ {
 #define D3DSTENCILCAPS_ALL            0x000000ff
 #define D3DTEXOPCAPS_ALL              0x00ffffff
 #define D3DFVFCAPS_TEXCOORDCOUNTMASK  0x0000ffff
+#define D3DFVFCAPS_PSIZE              0x00100000
 #define D3DLIGHTINGMODEL_RGB          0x00000001
 #define D3DLIGHTCAPS_POINT            0x00000001
 #define D3DLIGHTCAPS_SPOT             0x00000002
