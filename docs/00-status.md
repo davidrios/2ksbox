@@ -156,7 +156,8 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 - **DOS Quake in a Win98 DOS box speeds up for a moment now and then**
   (2026-09-10, user report; unthrottled Win98, `quake.exe`; QEMU's half
-  fixed by patch 34 on 2026-09-11, Windows' half open — below). No
+  fixed by patch 34 on 2026-09-11, Windows' half **not pursued, by user
+  decision** — below). No
   `-icount` on that machine, so not the throttle's catch-up. The
   suspect is Quake's own clock meeting a DOS box's timer: `Sys_FloatTime`
   (id's `sys_dos.c`) is the BIOS tick word plus PIT counter 0 in mode 2,
@@ -204,11 +205,16 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   still read backward by one period (195 % in the tight loop). The IRQ
   now reaches the machine on time, so the lag is between VTD/VPICD taking
   it and the VM's reflected INT 8 updating 0040:006C while VTD's trapped
-  counter reads are already current. How often a real frame of Quake
-  lands in that lag, and whether the momentary speed-up the user saw is
-  gone with the bursts, wants Quake itself in the patched build. An
-  experiment not yet run: `[386Enh] TrapTimerPorts=Off` in SYSTEM.INI,
-  which hands the VM the physical counter.
+  counter reads are already current. Quake itself on the patched build
+  confirmed it (user, 2026-09-11): the bursts are gone and the game is
+  now *steadily* fast in a DOS box — the doubling was there before too,
+  hidden by the ticks Windows was losing. **Decision (user, 2026-09-11):
+  DOS games run on pure DOS** — the DOS family, or Win98's "Restart in
+  MS-DOS mode" — where the probe reads 100 %; a Win9x DOS box's timer
+  virtualization is Windows' business and is not chased further. Left
+  untried for that reason: measuring the VM's tick lag, `[386Enh]
+  TrapTimerPorts=Off`, and the rate VTD programs the physical PIT to.
+  Don't reopen it for a DOS game that misbehaves only in a DOS box.
 
 - **A Win98 machine showed one Unknown Device in Device Manager** (fixed
   2026-09-10, user report). The guest's registry had two ACPI devices
