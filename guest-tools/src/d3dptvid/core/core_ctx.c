@@ -38,7 +38,7 @@ D3DCTX *ctx_of(d3dpt_core *p, ULONG_PTR h)
 HRESULT ctx_create(d3dpt_core *p, ULONG_PTR *handle, ULONG pid, ULONG rt, ULONG z)
 {
     d3dpt_ctx_create *c;
-    ULONG i, off, hr;
+    ULONG i, off, hr, iface = (ULONG)*handle;   /* on input: the runtime's interface version */
 
     if (!p || !p->d3d) {
         return DDERR_GENERIC;
@@ -64,6 +64,7 @@ HRESULT ctx_create(d3dpt_core *p, ULONG_PTR *handle, ULONG pid, ULONG rt, ULONG 
     dbg_hex(p, " rt ", c->rt);
     dbg_hex(p, " z ", c->z);
     dbg_hex(p, " pid ", pid);
+    dbg_hex(p, " iface ", iface);
     dbg_hex(p, " -> ", hr);
     dbg_puts(p, "\n");
     if (hr & 0x80000000u) {
@@ -74,6 +75,7 @@ HRESULT ctx_create(d3dpt_core *p, ULONG_PTR *handle, ULONG pid, ULONG rt, ULONG 
     d3d_ctx[i].pid = pid;
     d3d_ctx[i].rt = c->rt;
     d3d_ctx[i].z = c->z;
+    d3d_ctx[i].iface = iface;
     d3d_ctx_live++;
     *handle = i + 1;
     return DD_OK;

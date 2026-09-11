@@ -1455,6 +1455,8 @@ struct Dp2 {
         case 13: x.dev->SetSamplerState(stage, D3DSAMP_ADDRESSU, v); break;
         case 14: x.dev->SetSamplerState(stage, D3DSAMP_ADDRESSV, v); break;
         case 15: x.dev->SetSamplerState(stage, D3DSAMP_BORDERCOLOR, v); break;
+        /* the filters in the DDI's DX7 numbering (D3DTFG_* / D3DTFN_* / D3DTFP_*): the
+         * driver rewrites a d3d8.dll context's D3DTEXF_* values before they get here */
         case 16: x.dev->SetSamplerState(stage, D3DSAMP_MAGFILTER, v == 1 ? D3DTEXF_POINT : v == 5 ? D3DTEXF_ANISOTROPIC : D3DTEXF_LINEAR); break;
         case 17: x.dev->SetSamplerState(stage, D3DSAMP_MINFILTER, v == 1 ? D3DTEXF_POINT : v == 3 ? D3DTEXF_ANISOTROPIC : D3DTEXF_LINEAR); break;
         case 18: x.dev->SetSamplerState(stage, D3DSAMP_MIPFILTER, v == 2 ? D3DTEXF_POINT : v == 3 ? D3DTEXF_LINEAR : D3DTEXF_NONE); break;

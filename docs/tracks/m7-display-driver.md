@@ -320,8 +320,8 @@ picture and the track rules, then this file, then doc 15.
      pixel-identical with and without it (only its fps bars differ);
      both differ from the freshly regenerated native oracle at the
      checker texels' edges (8692 pixels beyond the tolerance of 8, max
-     43 — a mip-filtering difference in the DX8 path that predates v9,
-     open). Two findings on the way: the runtime's vertex buffers arrive
+     43 — a mip-filtering difference in the DX8 path that predates v9;
+     fixed 2026-09-11, state item 7). Two findings on the way: the runtime's vertex buffers arrive
      *without* `DDSCAPS2_VERTEXBUFFER` in `ddsCapsEx` (the index buffers
      do carry `INDEXBUFFER`), so the request's own caps decide; and
      `lpDDVertex` is a dangling pointer under `USERMEMVERTICES` — the
@@ -419,11 +419,15 @@ picture and the track rules, then this file, then doc 15.
      letters are there, drawn in a darker red as the hotkeys — the
      game's own style, not a rendering fault.)
   7. Then the small things the
-     runs showed: D3DGAME8's frame still differs from the native oracle
+     runs showed: D3DGAME8's frame differed from the native oracle
      along the checker texture's texel edges only (2026-09-05 night:
      8.7 k pixels beyond tolerance 8, channel difference ≤ 43, the
-     particles now identical — a mip / filter selection nuance on the DX8
-     DDI, `build/xp-driver-test/g8-dxt/g8-diff.bmp`); `render target handle 3 unknown` once at start
+     particles now identical) — **fixed 2026-09-11**: d3d8.dll sends a
+     DX8 driver `D3DTEXF_*` filter values and the executor read them as
+     DX7's `D3DTFP_*`, so the trilinear filter was point-mipped; the
+     driver now rewrites an interface-4 context's `MAGFILTER` /
+     `MIPFILTER` (doc 15, the cube section), and D3DGAME8 is 618 pixels
+     beyond tolerance (max 11), inside the budget; `render target handle 3 unknown` once at start
      (harmless), the two textures D3DGAME8 re-registers every frame
      (kept by the executor, cheap), the `dp2 vertices at` debug lines
      (first four calls only).
@@ -533,9 +537,11 @@ build/d3dpt-dp2-test x.bmp                              # the same scene through
    feature" below names the candidates. **Cube textures landed the same
    day (protocol v11, doc 15 "Cube textures"):** plain, mip-mapped, DXT
    and render-target cubes on the DX8 face, `ddflags=0x400000` the A/B;
-   3DMark2001 SE's Nature is the title check. On the way: a lead on
-   D3DGAME8's filtering difference — the executor reads `MIPFILTER` with
-   DirectX 7's numbering (doc 15, the cube section). Then what the next
+   3DMark2001 SE's Nature is the title check. On the way, and fixed
+   the same day: D3DGAME8's filtering difference — d3d8.dll's filter
+   values read with DirectX 7's numbering, now rewritten by the driver
+   for an interface-4 context (doc 15, the cube section; D3DGAME8 inside
+   its budget against the native oracle). Then what the next
    title asks for first among: volume textures, presenting the
    host frame through the player's 3D path instead of the per-frame
    readback copy. A validator for SM2/3 bytecode on the d3d9 half (the

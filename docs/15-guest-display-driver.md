@@ -1756,15 +1756,31 @@ created by user-mode DirectDraw against the driver's own surface caps
   uploads the faces whose entries are dirty (`faces_dirty`) so a face the
   host drew into and nobody wrote is never overwritten. Releasing or
   re-registering a cube releases its faces' surfaces with it.
-- **A lead found on the way, not acted on:** the executor maps
-  `D3DTSS_MIPFILTER` with DirectX 7's numbering (`D3DTFP_POINT` 2,
-  `D3DTFP_LINEAR` 3), while DirectX 8's `D3DTEXF_POINT` / `D3DTEXF_LINEAR`
-  are 1 / 2 — if the DX8 runtime hands a DX8 driver its own values, every
-  DX8 trilinear filter is drawn point-mipped and a point-mipped one
-  unmipped, which is what D3DGAME8's open difference from the native
-  oracle along the checker's texel edges looks like (the track doc's
-  state item 7). CUBETEST sets `MIPFILTER` LINEAR, whose level-1 texels
-  are one colour, so it passes under either reading.
+- **Found on the way, fixed the same day: the filter stage states'
+  numbering.** d3d8.dll hands a DirectX 8 driver its *own* `D3DTEXF_*`
+  values (NONE 0, POINT 1, LINEAR 2, ANISOTROPIC 3, FLATCUBIC 4,
+  GAUSSIANCUBIC 5) — measured with `D3DPT_DP2_TRACE`: D3DGAME8's
+  `MIPFILTER` LINEAR arrives as 2, and stages it never touched read 0 —
+  where the DX7 runtime sent `D3DTFG_*` for `MAGFILTER` (ANISOTROPIC 5,
+  the cubics 3 and 4) and `D3DTFP_*` for `MIPFILTER` (NONE 1, POINT 2,
+  LINEAR 3); `MINFILTER`'s `D3DTFN_*` agree with DX8's. The executor
+  reads the DX7 numbering, so every DX8 trilinear filter had been drawn
+  point-mipped and every point-mipped one unmipped. The driver tells the
+  runtimes apart by `ContextCreate`'s `dwhContext` *on input*, the
+  runtime's interface version — **4** for d3d8.dll (D3DGAME8), **3** for
+  DirectX 7 (D3D7TEST), **0** for the DirectX 3 execute-buffer path
+  (EBTEST), printed as `iface` on the driver's `d3d context` line — and
+  rewrites a version-4 context's `MAGFILTER` / `MIPFILTER` into the DX7
+  numbering as it copies the tokens (`tss_dx8_filter`, `core_dp2.c`), so
+  the host keeps one numbering and the protocol did not move. D3DGAME8
+  against the native oracle: **11163 pixels beyond the tolerance of 8
+  (max 44) before, 618 (max 11) after** — within the harness's budget of
+  1200 for the first time (the rest inside x 166..463, y 150..292);
+  D3D7TEST's frame still equals the host test's, EBTEST 5/5 (XP under
+  TCG on the Air). The core is shared with the 9x layer, whose d3d8.dll
+  interface number has not been read yet. CUBETEST sets `MIPFILTER`
+  LINEAR, whose level-1 texels are one colour, so it passed under either
+  reading.
 - **Tests.** `tools/d3dpt-dp2-test.cpp`: a two-level A8R8G8B8 cube in VRAM
   with a quad at each face's direction (XYZRHW + `TEXCOORDSIZE3`) and +Z
   minified onto 4 × 4 pixels (level 1), a face rewritten and marked dirty

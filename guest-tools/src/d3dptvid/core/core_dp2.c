@@ -44,6 +44,7 @@ typedef struct _DP2WALK {
     BOOL shader;                /* fvf is a vertex shader handle: the host reads the vertices through its declaration */
     BOOL one_stream;            /* DDF_ONE_STREAM: a draw carries stream 0 alone (the A/B) */
     BOOL needs_vb;              /* a DX7 draw token references the DP2 vertex buffer */
+    BOOL dx8_filters;           /* the context is d3d8.dll's: its filter stage states are D3DTEXF_* (see tss_dx8_filter) */
     UCHAR *out;                 /* pass 2: the record's command area (NULL in pass 1) */
     ULONG outlen;
     ULONG skipped;              /* draws skipped (bad ranges, unknown buffers) */
@@ -95,6 +96,26 @@ ULONG fvf_stride(ULONG fvf)
         }
     }
     return n;
+}
+
+/* A d3d8.dll context's filter stage state in the DDI's DX7 numbering, which
+ * is what the host reads: the DX8 runtime hands a DX8 driver its own
+ * D3DTEXF_* values (NONE 0, POINT 1, LINEAR 2, ANISOTROPIC 3, FLATCUBIC 4,
+ * GAUSSIANCUBIC 5 — measured: D3DGAME8's LINEAR mip filter arrives as 2)
+ * where the DX7 runtime sent D3DTFG_* for MAGFILTER (POINT 1, LINEAR 2,
+ * FLATCUBIC 3, GAUSSIANCUBIC 4, ANISOTROPIC 5) and D3DTFP_* for MIPFILTER
+ * (NONE 1, POINT 2, LINEAR 3). MINFILTER's D3DTFN_* (POINT 1, LINEAR 2,
+ * ANISOTROPIC 3) already agree. Read as DX7, every DX8 trilinear filter was
+ * point-mipped and every point-mipped one unmipped. */
+static ULONG tss_dx8_filter(ULONG state, ULONG v)
+{
+    if (state == 16) {                                  /* MAGFILTER */
+        return v == 3 ? 5 : v == 4 ? 3 : v == 5 ? 4 : v;
+    }
+    if (state == 18) {                                  /* MIPFILTER */
+        return v <= 2 ? v + 1 : v;
+    }
+    return v;
 }
 
 static void walk_put(DP2WALK *w, const void *src, ULONG bytes)
@@ -615,7 +636,8 @@ static BOOL walk(DP2WALK *w)
             w->needs_vb = TRUE;
             walk_put(w, c, 4 + size);
             break;
-        case 25:                                                /* TEXTURESTAGESTATE: a bound texture's colour key, in pass 1 */
+        case 25: {                                              /* TEXTURESTAGESTATE: a bound texture's colour key, in pass 1 */
+            ULONG o = w->outlen;
             if (!w->out) {
                 for (i = 0; i < count; i++) {
                     const USHORT *e = (const USHORT *)(q + i * 8);
@@ -625,7 +647,14 @@ static BOOL walk(DP2WALK *w)
                 }
             }
             walk_put(w, c, 4 + size);
+            if (w->out && w->dx8_filters) {
+                for (i = 0; i < count; i++) {
+                    UCHAR *e = w->out + o + 4 + i * 8;
+                    ((ULONG *)e)[1] = tss_dx8_filter(((USHORT *)e)[1], ((ULONG *)e)[1]);
+                }
+            }
             break;
+        }
         case 38:                                                /* TEXBLT: done here, in pass 1 */
             if (!w->out) {
                 for (i = 0; i < count; i++) walk_texblt(w, (const ULONG *)(q + i * 36));
@@ -767,6 +796,7 @@ void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
     w0.fvf = c->fvf ? c->fvf : (call->vertex_type & 1 ? 0 : call->vertex_type);
     w0.shader = c->shader;
     w0.one_stream = (ddflags(p) & DDF_ONE_STREAM) != 0;
+    w0.dx8_filters = c->iface >= 4;
     for (i = 0; i < D3D_MAX_STREAMS; i++) {
         if (c->st_um & (1u << i)) {
             stream_bind_um(&w0, i, c->st_stride[i]);

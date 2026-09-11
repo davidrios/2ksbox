@@ -139,6 +139,11 @@ typedef struct _D3DCTX {
     ULONG pid;
     ULONG rt, z;                /* VRAM surface handles */
     BOOL used;
+    /* the runtime's interface version (ContextCreate's dwhContext on input):
+     * 4 is DirectX 8's d3d8.dll, which hands its own D3DTEXF_* filter values
+     * to the driver where the DX7 runtime used D3DTFG_* / D3DTFP_* (dp2_run
+     * rewrites them: the host speaks the DDI's DX7 numbering) */
+    ULONG iface;
     /* the DX8 device state that persists between DrawPrimitives2 calls (the
      * runtime sends SETVERTEXSHADER / SETSTREAMSOURCE / SETINDICES only on
      * change): the vertex format, the streams, the index buffer */
