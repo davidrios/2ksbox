@@ -438,4 +438,24 @@ void d3d_caps_init(d3dpt_core *p)
     fmt8_add(D3DFMT_D16_, D3DFORMAT_OP_ZSTENCIL_ | D3DFORMAT_OP_ZSTENCIL_WITH_ARBITRARY_COLOR_DEPTH_);
     fmt8_add(D3DFMT_D24X8_, D3DFORMAT_OP_ZSTENCIL_ | D3DFORMAT_OP_ZSTENCIL_WITH_ARBITRARY_COLOR_DEPTH_);
     fmt8_add(D3DFMT_D24S8_, D3DFORMAT_OP_ZSTENCIL_ | D3DFORMAT_OP_ZSTENCIL_WITH_ARBITRARY_COLOR_DEPTH_);
+    if (!(ddflags(p) & DDF_NO_MSAA)) {
+        /* multisampling (v13): 2 and 4 samples on the render-target and depth
+         * formats, full screen only. MultiSampleCaps shares the green-mask
+         * slot: wFlipMSTypes the low word, wBltMSTypes the high, bit n - 1 for
+         * D3DMULTISAMPLE_n_SAMPLES (MSAATEST: d3d8.dll reports 2 and 4). No blt
+         * types: a windowed Present of a multisampled back buffer is a driver
+         * blt, and this driver has no blitter — with them claimed d3d8.dll
+         * made the device and Present drew nothing (no DdBlt, no readback).
+         * A flip needs nothing new: its readback goes through the host's
+         * resolve */
+        const ULONG ms = (1u << (2 - 1)) | (1u << (4 - 1));
+
+        for (i = 0; i < d3d_fmt8_n; i++) {
+            ULONG f = d3d_fmt8[i].dwFourCC;
+            if (f == D3DFMT_X8R8G8B8_ || f == D3DFMT_A8R8G8B8_ || f == D3DFMT_R5G6B5_ || f == D3DFMT_X1R5G5B5_ ||
+                f == D3DFMT_D16_ || f == D3DFMT_D24X8_ || f == D3DFMT_D24S8_) {
+                d3d_fmt8[i].dwGBitMask = ms;
+            }
+        }
+    }
 }

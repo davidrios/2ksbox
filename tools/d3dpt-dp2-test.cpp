@@ -865,6 +865,58 @@ int main(int argc, char **argv) {
         send_dp2(&enc, r, vtx);
     }
 
+    /* --- a multisampled render target (v13): a 64x64 target and a D16 depth
+     * buffer with 4 samples (D3DPT_VS_SAMPLES), a white triangle with a
+     * slanted edge on black, read back into the target's own VRAM through
+     * the host's resolve. MULTISAMPLEANTIALIAS on, pixels along the edge are
+     * between black and white; off, none are --- */
+    {
+        enum { MS_OFF = 0x360000, MSZ_OFF = 0x364000, MS_E = 64, H_MS = 330, H_MSZ = 331 };
+        const uint32_t ms4 = 4u << D3DPT_VS_SAMPLES_SHIFT;
+        vram_surface(&enc, H_MS, MS_OFF, MS_E, MS_E, MS_E * 4, D3DFMT_X8R8G8B8, D3DPT_VS_RENDER_TARGET | ms4);
+        vram_surface(&enc, H_MSZ, MSZ_OFF, MS_E, MS_E, MS_E * 2, D3DFMT_D16, D3DPT_VS_ZBUFFER | ms4);
+        std::vector<tlv> tri = { V(4, 4, 0.5f, 0xffffffff, 0, 0), V(60, 4, 0.5f, 0xffffffff, 0, 0), V(4, 56, 0.5f, 0xffffffff, 0, 0) };
+        auto blended = [&](int *rows) {
+            int n = 0;
+            *rows = 0;
+            for (int y = 8; y < 52; y += 4) {
+                int k = 0;
+                for (int x = 0; x < MS_E; x++) {
+                    uint32_t r = vram[MS_OFF + y * MS_E * 4 + x * 4 + 2];
+                    if (r > 0x20 && r < 0xe0) k++;
+                }
+                if (k) (*rows)++;
+                n += k;
+            }
+            return n;
+        };
+        int got[2], rows[2];
+        for (int aa = 1; aa >= 0; aa--) {
+            Dp2Buf m;
+            m.cmd(41, 1); m.u32(H_MS); m.u32(H_MSZ);
+            m.viewport(0, 0, MS_E, MS_E);
+            m.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff000000u, 1.0f);
+            m.rs(D3DRS_ZENABLE, 0); m.rs(D3DRS_MULTISAMPLEANTIALIAS, aa);
+            m.tss(0, 0, 0); m.tss(0, D3DTSS_COLOROP, D3DTOP_SELECTARG2); m.tss(0, D3DTSS_COLORARG2, D3DTA_DIFFUSE);
+            m.tss(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG2); m.tss(0, D3DTSS_ALPHAARG2, D3DTA_DIFFUSE);
+            m.draw8(4, 1, FVF_TLVERTEX, tri);
+            hr = send_dp2(&enc, m, vtx);
+            hr |= readback(&enc, H_MS);
+            got[aa] = hr ? -1 : blended(&rows[aa]);
+        }
+        uint32_t inside, outside;
+        memcpy(&inside, vram + MS_OFF + 10 * MS_E * 4 + 10 * 4, 4);
+        memcpy(&outside, vram + MS_OFF + 56 * MS_E * 4 + 56 * 4, 4);
+        CHECK(got[1] > 0 && rows[1] >= 10 && got[0] == 0 && (inside & 0xffffff) == 0xffffff && (outside & 0xffffff) == 0,
+              "4 samples: %d blended edge pixels on %d of 11 rows with MULTISAMPLEANTIALIAS, %d without (inside 0x%06x, outside 0x%06x)",
+              got[1], rows[1], got[0], inside & 0xffffff, outside & 0xffffff);
+        Dp2Buf r;
+        r.cmd(41, 1); r.u32(H_RT); r.u32(H_Z);
+        r.viewport(0, 0, W, H);
+        r.rs(D3DRS_MULTISAMPLEANTIALIAS, 1); r.rs(D3DRS_ZENABLE, 1);
+        send_dp2(&enc, r, vtx);
+    }
+
     /* --- cube textures (v11): a 16-texel cube of two levels in VRAM, every
      * face and level its own colour, drawn with 3D texture coordinates at
      * each face's direction and minified onto a small quad (level 1); a

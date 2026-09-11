@@ -17,7 +17,7 @@
 #   tools/xp-driver-test.sh <image.qcow2> cubetest     # CUBETEST: cube textures through d3d8.dll on the DX8 DDI (protocol v11),
 #                                                       # every draw read back in the guest; PASS = "0 failed" in cubetest.log
 #   tools/xp-driver-test.sh <image.qcow2> probe VOLTEST  # one DX8 feature probe (d3d8probe.h: CUBETEST STRMTEST VOLTEST FMTTEST
-#                                                       # BUMPTEST SPRTEST ANISTEST PATCHTST): PASS, NOT OFFERED (the caps say
+#                                                       # BUMPTEST SPRTEST ANISTEST PATCHTST MSAATEST): PASS, NOT OFFERED (the caps say
 #                                                       # the driver has no such feature) or FAIL, from the probe's last line
 #   tools/xp-driver-test.sh <image.qcow2> probes       # all eight in one boot, a verdict each
 #   tools/xp-driver-test.sh <image.qcow2> ebtest       # EBTEST: the DirectX 3 path (IDirect3D v1, execute buffers, texture
@@ -108,7 +108,7 @@ if [ "$MODE" = d3dgame8 ]; then
     'D3DGAME8.EXE -frames 600 -dump 300 E:\G8.BMP' 'copy d3dgame8.log E:\g8.log > nul' 'echo done > E:\G8DONE.TXT' 'echo G8DONE > COM1' > "$OUT/g8.bat"
   stage_bat "$OUT/g8.bat"
 fi
-PROBES="CUBETEST STRMTEST VOLTEST FMTTEST BUMPTEST SPRTEST ANISTEST PATCHTST"
+PROBES="CUBETEST STRMTEST VOLTEST FMTTEST BUMPTEST SPRTEST ANISTEST PATCHTST MSAATEST"
 if [ "$MODE" = probes ]; then
   # the DX8 feature probes one after the other; each writes <name>.log where it runs
   { printf '%s\n' '@echo off' 'cd /d %TEMP%'

@@ -1550,6 +1550,7 @@ BOOL d3dpt_os_surf(d3dpt_core *c, void *os, d3dpt_surf_desc *out)
     out->caps = s->ddsCaps.dwCaps;
     out->caps2 = s->lpSurfMore ? s->lpSurfMore->ddsCapsEx.dwCaps2 : 0;
     out->depth = (out->caps2 & DDSCAPS2_VOLUME_) ? (s->lpSurfMore->ddsCapsEx.dwCaps4 & 0xffff) : 0;
+    out->samples = s->lpSurfMore ? (s->lpSurfMore->ddsCapsEx.dwCaps3 & DDSCAPS3_MULTISAMPLE_MASK_) : 0;
     out->flags = s->dwFlags;
     out->w = s->lpGbl->wWidth;
     out->h = s->lpGbl->wHeight;

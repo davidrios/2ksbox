@@ -432,6 +432,11 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
     if (s->caps & DDSCAPS_ZBUFFER) caps |= D3DPT_VS_ZBUFFER;
     if (s->caps & DDSCAPS_3DDEVICE) caps |= D3DPT_VS_RENDER_TARGET;
     if (s->caps & (DDSCAPS_PRIMARYSURFACE | DDSCAPS_FLIP | DDSCAPS_FRONTBUFFER | DDSCAPS_BACKBUFFER)) caps |= D3DPT_VS_PRIMARY;
+    /* v13: a multisampled render target / depth buffer carries its sample
+     * count; the host renders it multisampled and resolves it into VRAM */
+    if (s->samples > 1 && !(caps & D3DPT_VS_TEXTURE) && (caps & (D3DPT_VS_RENDER_TARGET | D3DPT_VS_ZBUFFER | D3DPT_VS_PRIMARY))) {
+        caps |= (s->samples << D3DPT_VS_SAMPLES_SHIFT) & D3DPT_VS_SAMPLES_MASK;
+    }
     pitch0 = surf_pitch(fmt, s->w, s->pitch);
     rows0 = surf_rows(fmt, s->h);
     sysmem = (s->caps & DDSCAPS_SYSTEMMEMORY) != 0;
@@ -463,6 +468,7 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
         dbg_hex(p, " fmt ", fmt);
         dbg_hex(p, " pitch ", s->pitch);
         dbg_hex(p, " pf ", s->pf_flags);
+        if (s->samples > 1) dbg_hex(p, " samples ", s->samples);
         if (s->caps2 & DDSCAPS2_VOLUME_) {
             dbg_hex(p, " volume caps2 ", s->caps2);
             dbg_hex(p, " depth ", s->depth);

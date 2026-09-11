@@ -54,12 +54,14 @@
 #define DDF_NO_VOLUME          0x1000000 /* the A/B: no volume textures (caps, format ops) */
 #define DDF_NO_ANISO           0x2000000 /* the A/B: MaxAnisotropy 1, no anisotropic filter caps */
 #define DDF_NO_MORE_FMTS       0x4000000 /* the A/B: none of L8 A8L8 A4L4 A8 X4R4G4B4 R3G3B2 A8R3G3B2 DXT2 DXT4 in the DX8 format list */
+#define DDF_NO_MSAA            0x8000000 /* the A/B: no multisample types in the DX8 format list, as before protocol v13 */
 
 /* DDI-only DX8 device caps (d3dhal.h): the runtime puts vertex / index
  * buffers in video memory through the buffer callbacks when they are set */
 #define D3DDEVCAPS_HWVERTEXBUFFER_ 0x02000000
 #define D3DDEVCAPS_HWINDEXBUFFER_  0x04000000
 #define DDSCAPS2_VERTEXBUFFER_ 0x02000000
+#define DDSCAPS3_MULTISAMPLE_MASK_ 0x1f   /* ddsCapsEx.dwCaps3: a multisampled surface's sample count */
 #define DDSCAPS2_INDEXBUFFER_  0x04000000
 
 #define D3DFMT_X8R8G8B8_  22u
@@ -219,6 +221,7 @@ typedef struct d3dpt_surf_desc {
     ULONG caps;                 /* the DDSCAPS_* the OS gave it (DDSCAPS_SYSTEMMEMORY etc.) */
     ULONG caps2;                /* ddsCapsEx.dwCaps2 (0 when the surface has no "more" block) */
     ULONG depth;                /* a volume texture's depth (ddsCapsEx.dwCaps4's low word, DDSCAPS2_VOLUME); 0 otherwise */
+    ULONG samples;              /* a multisampled surface's sample count (ddsCapsEx.dwCaps3's low 5 bits); 0 otherwise */
     ULONG flags;                /* the surface's own flags: DDRAWISURF_HASPIXELFORMAT / HASCKEYSRCBLT */
     ULONG w, h;
     ULONG pitch;                /* lPitch as the OS gave it (the linear size for a compressed surface) */

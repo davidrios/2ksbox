@@ -30,7 +30,7 @@
 
 #include <stdint.h>
 
-#define D3DPT_PROTO_VERSION   12u
+#define D3DPT_PROTO_VERSION   13u
 #define D3DPT_MAGIC           0x54503344u          /* "D3PT" read at REG_MAGIC */
 
 /* guest-physical map: below mesapt's 0xe0000000+ windows and SeaBIOS' BAR area */
@@ -319,6 +319,10 @@ typedef struct d3dpt_vram_surface {
                                           * level 0's slices follow each other at that slice pitch, level l has
                                           * max(1, depth >> l) slices one after the other at its own pitch * rows */
 #define D3DPT_VOLUME_MAX_DEPTH  256u
+#define D3DPT_VS_SAMPLES_SHIFT  8u       /* v13: a multisampled render target / depth buffer (never a texture): its
+                                          * sample count, 2..16, in these bits (0 = not multisampled). The host renders
+                                          * it with that many samples and resolves it into VRAM at every readback */
+#define D3DPT_VS_SAMPLES_MASK   0x1f00u
 
 typedef struct d3dpt_ctx_create {
     uint32_t handle, ret_off;       /* the context handle the guest chose; ret: d3dpt_ret */

@@ -1933,6 +1933,47 @@ passes **9/9**, including DXT2 and DXT4. The DX7 texture list is
 unchanged: no DX7 title is known to want these, and nothing tests them
 there.
 
+### Multisampling (2026-09-11, protocol v13)
+
+Full-screen antialiasing on the DX8 face. The format list gives the
+render-target formats (X8R8G8B8, A8R8G8B8, R5G6B5, X1R5G5B5) and the depth
+formats (D16, D24X8, D24S8) 2 and 4 samples in `MultiSampleCaps`, which
+shares `DDPIXELFORMAT`'s green-mask slot: `wFlipMSTypes` in the low word,
+`wBltMSTypes` in the high, bit n − 1 for n samples. MSAATEST reads that
+back as exactly 2 and 4. `ddflags=0x8000000` (`DDF_NO_MSAA`) takes them
+out. The pieces:
+
+- **The driver** reads a surface's sample count off `ddsCapsEx.dwCaps3`
+  (`DDSCAPS3_MULTISAMPLE_MASK`, both layers) and puts it in the
+  `VRAM_SURFACE` caps (`D3DPT_VS_SAMPLES`, bits 8..12: the protocol v13
+  bump) for a render target, a depth buffer or a flip-chain member. VRAM
+  stays the size of the resolved image: it only ever holds that.
+- **The host** creates such a target and its depth buffer with that many
+  samples when this host's DXVK has the count for the format
+  (`CheckDeviceMultiSampleType`, else plainly, logged once). Every
+  readback, a flip's included, first resolves it into a plain target
+  (`StretchRect`, `resolved()`), since d3d9 reads no multisampled surface
+  back. Nothing is uploaded into one, because Direct3D 8 locks no
+  multisampled surface, so the guest cannot have written it.
+  `D3DRS_MULTISAMPLEANTIALIAS` (161) and `MULTISAMPLEMASK` (162) were
+  already forwarded.
+- **Full screen only.** With the blt types claimed too, d3d8.dll created a
+  windowed multisampled device, and its `Present` drew nothing: no
+  `DdBlt`, no lock, no readback of the back buffer. A windowed `Present`
+  of a multisampled back buffer is a driver blt, and this driver has no
+  blitter ("Blit caps and the HEL": a declined blt on XP is an error, not
+  a fallback). A flip needs nothing new. Windowed antialiasing would take
+  a blitter for exactly that case (resolve, copy or stretch, clip list).
+
+Evidence: `d3dpt-dp2-test` draws a slanted edge into a 64 × 64 4-sample
+target and D16 depth buffer: 22 blended pixels on 11 of 11 rows with the
+state on, none with it off. MSAATEST through XP's own d3d8.dll: a
+full-screen 640 × 480 × 16 device with 4 samples, the frame read back from
+the front buffer after the flip. It gets **34 blended edge pixels on 17 of
+17 rows** with `MULTISAMPLEANTIALIAS` on (row 110 reads `ff … ff 84 00` across
+the edge), and none with it off. Both flip-chain buffers log
+`ddi: render target N: 640x480 fmt 23, 4 samples`.
+
 ### The DX8 feature probes (2026-09-11)
 
 One program per Direct3D 8 feature in `DRIVER\`, each through XP's own
@@ -1957,6 +1998,7 @@ OFFERED or FAIL. Where they stood on 2026-09-11 (the overlay above):
 | `SPRTEST` | point sprites, and a per-vertex size (`D3DFVF_PSIZE`) | PASS, 4 cases (the per-vertex case since `D3DFVFCAPS_PSIZE` was claimed, the same day) |
 | `ANISTEST` | anisotropic filtering | PASS, 1 case (since the caps claimed it, the same day: far-row contrast 0 trilinear, 252 anisotropic) |
 | `PATCHTST` | RT- and N-patches | NOT OFFERED |
+| `MSAATEST` | multisampling: the types d3d8.dll reports, then a full-screen 4-sample device's slanted edge from the front buffer, with `MULTISAMPLEANTIALIAS` on and off | PASS, 2 cases (since v13, the same day; windowed not offered) |
 
 Two things the probes turned up beyond their verdicts: `TextureOpCaps`
 claimed `BUMPENVMAP` / `BUMPENVMAPLUMINANCE` with no bump format to use

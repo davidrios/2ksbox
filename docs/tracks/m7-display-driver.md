@@ -504,7 +504,7 @@ build/d3dpt-dp2-test x.bmp                              # the same scene through
   (V8U8, and L6V5U5 / X8L8V8U8 in the DX8 list; 2026-09-11), `0x1000000` no volume textures
   (before v12), `0x2000000` no anisotropic filtering (`MaxAnisotropy` 1),
   `0x4000000` none of FMTTEST's nine formats (L8 … DXT4) in the DX8
-  format list. The QEMU log's `d3dpt-vga: ddi: …` lines are the
+  format list, `0x8000000` no multisampling (before v13). The QEMU log's `d3dpt-vga: ddi: …` lines are the
   executor's (unsupported states / tokens, once each), `batch N: error` a
   refused record, `d3dptdisp: dp2 0x…` a DrawPrimitives2 the host failed.
 
@@ -547,7 +547,9 @@ build/d3dpt-dp2-test x.bmp                              # the same scene through
    for an interface-4 context (doc 15, the cube section; D3DGAME8 inside
    its budget against the native oracle). **Volume textures landed the
    same day (protocol v12, doc 15 "Volume textures"):** VOLTEST 4/4,
-   `ddflags=0x1000000` the A/B. Then what the next title asks for first
+   `ddflags=0x1000000` the A/B. **Full-screen multisampling landed the
+   same day (protocol v13, doc 15 "Multisampling"):** MSAATEST 2/2,
+   `ddflags=0x8000000` the A/B; windowed needs a driver blitter. Then what the next title asks for first
    among: presenting the host frame through the player's 3D path instead of the per-frame
    readback copy. A validator for SM2/3 bytecode on the d3d9 half (the
    M4 track's `d3dpt_exec.cpp` hands guest bytecode straight to DXVK,
@@ -600,7 +602,7 @@ v12, VOLTEST 4/4), their probe already written.
 
 **Every row has a probe in `DRIVER\`** (doc 15 "The DX8 feature probes"):
 CUBETEST, STRMTEST, VOLTEST, FMTTEST, BUMPTEST, SPRTEST, ANISTEST,
-PATCHTST — `tools/xp-driver-test.sh <image> probes` runs all eight in one
+PATCHTST — `tools/xp-driver-test.sh <image> probes` runs all nine in one
 boot. A probe of a feature the driver lacks says `NOT OFFERED` and why,
 so a feature is built against a check that already exists: the day the
 caps claim it, its probe runs its cases. On 2026-09-11 CUBETEST,

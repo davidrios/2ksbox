@@ -111,13 +111,21 @@ struct VramSurf {
     /* v12: a volume texture (D3DPT_VS_VOLUME): level 0's depth and slice pitch */
     IDirect3DVolumeTexture9 *vol = nullptr;
     uint32_t depth = 0, slice = 0;
+    /* v13: a multisampled render target / depth buffer (D3DPT_VS_SAMPLES):
+     * the sample count its host object was created with (0 when this host
+     * has none such, which draws it without), and the plain target a
+     * readback resolves it into */
+    uint32_t ms = 0;
+    IDirect3DSurface9 *resolve = nullptr;
     void release() {
         if (tex) tex->Release();
         if (rt) rt->Release();
         if (cube) cube->Release();
         if (vol) vol->Release();
-        tex = nullptr; rt = nullptr; cube = nullptr; vol = nullptr;
+        if (resolve) resolve->Release();
+        tex = nullptr; rt = nullptr; cube = nullptr; vol = nullptr; resolve = nullptr;
         host_fmt = D3DFMT_UNKNOWN;
+        ms = 0;
     }
 };
 
@@ -364,6 +372,19 @@ static bool ensure_device(Exec &x, uint32_t w, uint32_t h) {
     return true;
 }
 
+/* v13: the sample count a render target / depth buffer asks for
+ * (D3DPT_VS_SAMPLES), when this host has it for the surface's format; 0 =
+ * none, and then the target is drawn without (said once per count) */
+static uint32_t target_samples(Exec &x, const VramSurf &s) {
+    uint32_t n = (s.d.caps & D3DPT_VS_SAMPLES_MASK) >> D3DPT_VS_SAMPLES_SHIFT;
+    if (n < 2 || (s.d.caps & D3DPT_VS_TEXTURE)) return 0;
+    if (FAILED(x.d3d->CheckDeviceMultiSampleType(0, D3DDEVTYPE_HAL, (D3DFORMAT)s.d.format, TRUE, (D3DMULTISAMPLE_TYPE)n, nullptr))) {
+        if (x.ddi && x.ddi->warn_once(0x80000 | n)) x.log("ddi: no %ux multisampling for format %u on this host: drawn without", n, s.d.format);
+        return 0;
+    }
+    return n;
+}
+
 /* the host object behind a surface, created on first use */
 static bool ensure_object(Exec &x, VramSurf &s) {
     if (s.tex || s.rt || s.cube || s.vol) return true;
@@ -398,11 +419,12 @@ static bool ensure_object(Exec &x, VramSurf &s) {
                               (s.d.caps & D3DPT_VS_RENDER_TARGET) ? " (render target)" : "", (unsigned)hr);
         return SUCCEEDED(hr);
     }
+    s.ms = target_samples(x, s);
     if (s.d.caps & D3DPT_VS_ZBUFFER) {
         static const uint32_t fallback[] = { D3DFMT_D24S8, D3DFMT_D24X8, D3DFMT_D16 };
-        hr = x.dev->CreateDepthStencilSurface(s.d.width, s.d.height, (D3DFORMAT)s.d.format, D3DMULTISAMPLE_NONE, 0, FALSE, &s.rt, nullptr);
+        hr = x.dev->CreateDepthStencilSurface(s.d.width, s.d.height, (D3DFORMAT)s.d.format, (D3DMULTISAMPLE_TYPE)s.ms, 0, FALSE, &s.rt, nullptr);
         for (uint32_t i = 0; FAILED(hr) && i < 3; i++)
-            hr = x.dev->CreateDepthStencilSurface(s.d.width, s.d.height, (D3DFORMAT)fallback[i], D3DMULTISAMPLE_NONE, 0, FALSE, &s.rt, nullptr);
+            hr = x.dev->CreateDepthStencilSurface(s.d.width, s.d.height, (D3DFORMAT)fallback[i], (D3DMULTISAMPLE_TYPE)s.ms, 0, FALSE, &s.rt, nullptr);
         if (FAILED(hr)) x.log("ddi: depth surface %ux%u fmt %u: 0x%08x", s.d.width, s.d.height, s.d.format, (unsigned)hr);
     } else if ((s.d.caps & D3DPT_VS_TEXTURE) && (s.d.caps & D3DPT_VS_RENDER_TARGET)) {
         /* render-to-texture: a default-pool render-target texture, level 0 is the target */
@@ -410,8 +432,9 @@ static bool ensure_object(Exec &x, VramSurf &s) {
         if (SUCCEEDED(hr)) hr = s.tex->GetSurfaceLevel(0, &s.rt);
         if (FAILED(hr)) x.log("ddi: render-target texture %ux%u fmt %u: 0x%08x", s.d.width, s.d.height, s.d.format, (unsigned)hr);
     } else if (s.d.caps & (D3DPT_VS_RENDER_TARGET | D3DPT_VS_PRIMARY)) {
-        hr = x.dev->CreateRenderTarget(s.d.width, s.d.height, (D3DFORMAT)s.d.format, D3DMULTISAMPLE_NONE, 0, FALSE, &s.rt, nullptr);
-        if (FAILED(hr)) x.log("ddi: render target %ux%u fmt %u: 0x%08x", s.d.width, s.d.height, s.d.format, (unsigned)hr);
+        hr = x.dev->CreateRenderTarget(s.d.width, s.d.height, (D3DFORMAT)s.d.format, (D3DMULTISAMPLE_TYPE)s.ms, 0, FALSE, &s.rt, nullptr);
+        if (FAILED(hr)) x.log("ddi: render target %ux%u fmt %u (%u samples): 0x%08x", s.d.width, s.d.height, s.d.format, s.ms, (unsigned)hr);
+        else if (s.ms) x.log("ddi: render target %u: %ux%u fmt %u, %u samples", s.d.handle, s.d.width, s.d.height, s.d.format, s.ms);
     } else {
         s.host_fmt = host_format(s);
         hr = x.dev->CreateTexture(s.d.width, s.d.height, s.d.levels, 0, s.host_fmt, D3DPOOL_MANAGED, &s.tex, nullptr);
@@ -531,6 +554,13 @@ static uint32_t shadow_diff(Exec &x, VramSurf &s) {
 /* VRAM -> host render target (the guest drew into the target with GDI / the HEL) */
 static void upload_target(Exec &x, Ddi &d, VramSurf &s) {
     D3DLOCKED_RECT lr;
+    if (s.ms) {
+        /* v13: nothing to upload — Direct3D 8 locks no multisampled surface,
+         * so the guest cannot have written one (and d3d9 cannot stretch into it) */
+        s.dirty = false;
+        shadow_take(x, s);
+        return;
+    }
     if (!ensure_stage(x, d, s.d.width, s.d.height, (D3DFORMAT)s.d.format, true)) return;
     if (FAILED(d.stage->LockRect(&lr, nullptr, 0))) return;
     uint32_t row = fmt_row_bytes(s.d.format, s.d.width);
@@ -542,13 +572,27 @@ static void upload_target(Exec &x, Ddi &d, VramSurf &s) {
     shadow_take(x, s);
 }
 
+/* the surface a readback reads: the target itself, or (v13) the plain
+ * target a multisampled one is resolved into first — d3d9 reads no
+ * multisampled surface back */
+static IDirect3DSurface9 *resolved(Exec &x, VramSurf &s) {
+    if (!s.ms) return s.rt;
+    if (!s.resolve && FAILED(x.dev->CreateRenderTarget(s.d.width, s.d.height, (D3DFORMAT)s.d.format, D3DMULTISAMPLE_NONE, 0, FALSE,
+                                                       &s.resolve, nullptr))) return nullptr;
+    HRESULT hr = x.dev->StretchRect(s.rt, nullptr, s.resolve, nullptr, D3DTEXF_NONE);
+    if (FAILED(hr)) { x.log("ddi: resolve of target %u: StretchRect 0x%08x", s.d.handle, (unsigned)hr); return nullptr; }
+    return s.resolve;
+}
+
 /* host render target -> VRAM. Pixels the guest changed since the shadow
  * was taken (untracked writes: GDI through GetDC, drawn after the scene
  * as a rule — a title's text and panels) stay over the host's. */
 static HRESULT readback(Exec &x, Ddi &d, VramSurf &s) {
     if (!s.rt || (s.d.caps & D3DPT_VS_ZBUFFER)) return D3DERR_INVALIDCALL;
     if (!ensure_stage(x, d, s.d.width, s.d.height, (D3DFORMAT)s.d.format, false)) return E_FAIL;
-    HRESULT hr = x.dev->GetRenderTargetData(s.rt, d.stage);
+    IDirect3DSurface9 *src = resolved(x, s);
+    if (!src) return E_FAIL;
+    HRESULT hr = x.dev->GetRenderTargetData(src, d.stage);
     if (FAILED(hr)) { x.log("ddi: readback: GetRenderTargetData 0x%08x", (unsigned)hr); return hr; }
     D3DLOCKED_RECT lr;
     if (FAILED(d.stage->LockRect(&lr, nullptr, D3DLOCK_READONLY))) return E_FAIL;
@@ -1249,7 +1293,8 @@ struct Dp2 {
         VramSurf *rt = surf(x, c.rt);
         if (!rt || !rt->rt) return;
         if (!ensure_stage(x, d, rt->d.width, rt->d.height, (D3DFORMAT)rt->d.format, false)) return;
-        if (FAILED(x.dev->GetRenderTargetData(rt->rt, d.stage))) return;
+        IDirect3DSurface9 *src = resolved(x, *rt);
+        if (!src || FAILED(x.dev->GetRenderTargetData(src, d.stage))) return;
         D3DLOCKED_RECT lr;
         if (FAILED(d.stage->LockRect(&lr, nullptr, D3DLOCK_READONLY))) return;
         char path[512]; const char *slash = strrchr(d.trace_flag, '/');
