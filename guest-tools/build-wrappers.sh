@@ -340,9 +340,12 @@ mkdir -p "$OUT/iso/DRIVER" && cp "$ROOT"/guest-tools/out/driver/* "$OUT/iso/DRIV
 # because a silently smaller ISO is how a guest ends up being told a
 # component is "not on this disc".
 if drv9x_log="$("$ROOT/guest-tools/build-driver9x.sh" 2>&1)"; then
+  # The HAL DLL too: the INF's CopyFiles names it, so a disc without it
+  # is a Update Driver wizard asking for d3dpt9hl.dll (2026-09-11). The
+  # headless tools copy it into the image themselves and never noticed.
   mkdir -p "$OUT/iso/DRIVER9X" && cp "$ROOT"/guest-tools/out/driver9x/*.drv \
     "$ROOT"/guest-tools/out/driver9x/*.vxd "$ROOT"/guest-tools/out/driver9x/*.inf \
-    "$OUT/iso/DRIVER9X/"
+    "$ROOT"/guest-tools/out/driver9x/d3dpt9hl.dll "$OUT/iso/DRIVER9X/"
 else
   # Say *why*, not just "no Watcom": the driver build fails for other
   # reasons too (a HAL that will not link, a bad export), and blaming

@@ -15,9 +15,9 @@
 #
 # The XP machine boots on the paravirtual adapter (-vga none -device
 # d3dpt-vga) because its display-driver component binds to the device as it
-# installs; Win98's stages three files for PnP to pick up on the next boot
+# installs; Win98's stages four files for PnP to pick up on the next boot
 # and so needs nothing (doc 19 §16), and stays on doc 06's cirrus machine
-# — where SETUP must now offer that component, and land its three files.
+# — where SETUP must now offer that component, and land its four files.
 #
 # Needs a guest image, so it is run by hand and never from scripts/test.sh.
 # The image is never written: everything goes to a qcow2 overlay under
@@ -239,7 +239,7 @@ want "OPENGL32.DLL" "the per-game set landed in C:\\2KSBOX (Windows' own dir)"
 if [ "$FAMILY" = win98 ]; then
   want "Windows 98" "the family was detected"
   want "FXMEMMAP.VXD ->" "the 9x device mapper was installed"
-  # The 9x display driver is three files dropped where PnP will find them —
+  # The 9x display driver is four files dropped where PnP will find them —
   # there is no installer to run and nothing to bind to until the next boot,
   # which is why this checks the copies and not the adapter. That the driver
   # then comes up is tools/win98-driver-test.sh's job, on a machine that has
@@ -248,6 +248,9 @@ if [ "$FAMILY" = win98 ]; then
   want "D3DPT9X.INF ->" "the 9x display driver's INF is in WINDOWS\\INF"
   want "D3DPT9X.DRV ->" "the 9x display driver was staged"
   want "D3DPT9V.VXD ->" "the 9x mini-VDD was staged"
+  # Named by the INF's CopyFiles: without it PnP stops and asks for the
+  # disc (2026-09-11, the ISO had never carried it).
+  want "D3DPT9HL.DLL ->" "the 9x DirectDraw HAL was staged"
 else
   want "Windows XP" "the family was detected"
   want "drvinst: installed" "the display driver was installed"

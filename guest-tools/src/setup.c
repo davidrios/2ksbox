@@ -325,12 +325,14 @@ static int step_driver_nt(void)
 /* The 9x half installs itself, which is the whole point of an INF: dropped
  * into WINDOWS\INF it matches PCI\VEN_1234&DEV_3D00, and the next boot
  * installs the driver with no clicks and no installer of ours (doc 19 §16).
- * There is nothing to run here, so this step is three file copies.
+ * There is nothing to run here, so this step is four file copies: the INF,
+ * the display driver, the mini-VDD and the DirectDraw HAL DLL (every file
+ * the INF's CopyFiles names — a missing one is a PnP prompt for it).
  *
  * The binaries go beside the INF because that is where Windows looks for a
  * CopyFiles source, and into SYSTEM as well because that is the arrangement
  * the driver has actually been proven in — the INF's own CopyFiles should
- * make the second pair redundant, and it is three kilobytes to not find out
+ * make the second set redundant, and it is a few kilobytes to not find out
  * the hard way on somebody's machine.
  *
  * A restart is not optional here and not merely recommended: nothing of this
@@ -338,8 +340,9 @@ static int step_driver_nt(void)
  * against the new INF. */
 static int step_driver_9x(void)
 {
-    static const char *const all[] = { "D3DPT9X.INF", "D3DPT9X.DRV", "D3DPT9V.VXD", NULL };
-    static const char *const bin[] = { "D3DPT9X.DRV", "D3DPT9V.VXD", NULL };
+    static const char *const all[] = { "D3DPT9X.INF", "D3DPT9X.DRV", "D3DPT9V.VXD",
+                                       "D3DPT9HL.DLL", NULL };
+    static const char *const bin[] = { "D3DPT9X.DRV", "D3DPT9V.VXD", "D3DPT9HL.DLL", NULL };
     char infdir[PATHBUF], probe[PATHBUF];
     int bad;
 

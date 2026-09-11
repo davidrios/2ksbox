@@ -154,6 +154,15 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **The guest-tools ISO never carried the Win98 HAL DLL — fixed
+  2026-09-11** (user report: installing the 98 driver by hand, the Update
+  Driver wizard asked for `d3dpt9hl.dll`). The INF's `CopyFiles` has named
+  it since the HAL landed (2026-09-08), but `build-wrappers.sh` staged only
+  `DRIVER9X\*.drv *.vxd *.inf` and `SETUP.EXE`'s 9x lists only those three
+  too. Every headless tool copies the DLL straight into the image with
+  mtools, so none of them could see it. Both now carry it, and
+  `tools/setup-guest-test.sh win98` requires `D3DPT9HL.DLL` among SETUP's
+  copies.
 - **Win98 3D was slow because of TB-list walks, not the driver — fixed
   2026-09-11 by patch 35** (user report: 3DMark 99 "a bit
   underwhelming"). 3DMark 99 Max at 800×600×16 on `claude98`: **3334 →
