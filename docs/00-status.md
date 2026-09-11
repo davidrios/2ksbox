@@ -180,6 +180,9 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   `jmp reg` ~22 instructions cheaper; CPU 3DMarks 14690 → 15389, first
   person 16.2 → 17.1 fps. Only general optimizations, no title-specific
   ones (user decision, 2026-09-11).
+  **Patch 39**: a TCG op tests a vector from a branch, so each inlined SSE op's
+  lane check skips its env round trip — CPU 3DMarks 15389 → 15940, first
+  person 17.5 fps (the aarch64 encoding is compiled first on the Mac).
 
 - **DOS Quake in a Win98 DOS box speeds up for a moment now and then**
   (2026-09-10, user report; unthrottled Win98, `quake.exe`; QEMU's half

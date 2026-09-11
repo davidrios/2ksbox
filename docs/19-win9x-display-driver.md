@@ -2274,3 +2274,7 @@ Where the frame goes now is flat — the softmmu check on every integer
 access, SSE, x87, calls, the rest of the engine, ~4 % of large host
 memcpy/memset — and the user has ruled out title-specific work: only
 changes that could help any guest.
+**Patch 39** gives TCG a way to branch on a vector (`vec_allsign_i32`), so
+the lane check after every inlined SSE instruction stops storing its mask
+to `env` and loading it back: CPU 3DMarks 15389 → 15940, first person
+17.1 → 17.5 fps.
