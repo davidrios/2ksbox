@@ -16,6 +16,8 @@
 #                                                       # every draw read back in the guest; PASS = "0 failed" in cktest.log
 #   tools/xp-driver-test.sh <image.qcow2> cubetest     # CUBETEST: cube textures through d3d8.dll on the DX8 DDI (protocol v11),
 #                                                       # every draw read back in the guest; PASS = "0 failed" in cubetest.log
+#   tools/xp-driver-test.sh <image.qcow2> gamma        # GAMMATEST: a gamma ramp through d3d8.dll (register set v5),
+#                                                       # checked in two screendumps (ramp held, ramp back); PASS/FAIL
 #   tools/xp-driver-test.sh <image.qcow2> probe VOLTEST  # one DX8 feature probe (d3d8probe.h: CUBETEST STRMTEST VOLTEST FMTTEST
 #                                                       # BUMPTEST SPRTEST ANISTEST PATCHTST MSAATEST): PASS, NOT OFFERED (the caps say
 #                                                       # the driver has no such feature) or FAIL, from the probe's last line
@@ -61,7 +63,7 @@ if [ "$(uname -s)" = Darwin ]; then
     done
   fi
 fi
-IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|d3d7|d3dgame8|shtest|cktest|cubetest|probe|probes|ebtest|cmd|bat}"; shift 2
+IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|d3d7|d3dgame8|shtest|cktest|cubetest|probe|probes|ebtest|gamma|cmd|bat}"; shift 2
 OUT="${OUT:-$ROOT/build/xp-driver-test}"; mkdir -p "$OUT"
 ISO="$ROOT/guest-tools/out/d3dpt-driver.iso"
 [ -f "$ISO" ] || { echo "no $ISO: run guest-tools/build-driver.sh"; exit 1; }
@@ -253,6 +255,43 @@ case "$MODE" in
     gw_wait_log "$SER" PRDONE "${CMD_WAIT:-900}" || true
     finish
     for p in $PROBES; do probe_verdict "$p"; done ;;
+  gamma)
+    # GAMMATEST: a gamma ramp through d3d8.dll's SetGammaRamp, which the
+    # adapter applies where it makes the picture (register set v5) — so the
+    # evidence is the screen, not the probe: a screendump while each ramp is
+    # held (the adapter says `gamma ramp on` / `off` when it takes one), and
+    # the centre pixel of each, mid grey with blue at 3/4 and then unchanged
+    run "cd /d %TEMP% & D:\\DRIVER\\GAMMATEST.EXE & copy gammatest.log E:\\ & echo GMDONE > COM1"
+    if gw_wait_log "$LOG" "gamma ramp on" "${CMD_WAIT:-300}"; then Q screendump "$OUT/gamma-on.png" || true; fi
+    if gw_wait_log "$LOG" "gamma ramp off" "${CMD_WAIT:-300}"; then Q screendump "$OUT/gamma-off.png" || true; fi
+    gw_wait_log "$SER" GMDONE "${CMD_WAIT:-300}" || true
+    finish
+    pull gammatest.log || true
+    grep "gamma" "$LOG" | sed 's/^/   /' | head -8
+    python3 - "$OUT/gamma-on.png.ppm" "$OUT/gamma-off.png.ppm" "$OUT/gammatest.log" <<'PY'
+import sys
+def centre(path):
+    try:
+        d = open(path, 'rb').read()
+    except OSError:
+        return None
+    parts = d.split(b"\n", 3)
+    w, h = map(int, parts[1].split())
+    o = ((h // 2) * w + w // 2) * 3
+    return tuple(parts[3][o:o + 3])
+on, off = centre(sys.argv[1]), centre(sys.argv[2])
+grey = lambda v: 0x78 <= v <= 0x8c
+ok_on = on is not None and grey(on[0]) and grey(on[1]) and 0x56 <= on[2] <= 0x6c
+ok_off = off is not None and grey(off[0]) and grey(off[1]) and grey(off[2])
+try:
+    ok_log = any(l.startswith("gammatest:") and "cases, 0 failed" in l for l in open(sys.argv[3]))
+except OSError:
+    ok_log = False
+print("   ramp held: centre %s (want ~80 80 60), ramp back: %s (want ~80 80 80), gammatest.log %s" %
+      (on and "%02x %02x %02x" % on, off and "%02x %02x %02x" % off, "0 failed" if ok_log else "missing or failed"))
+print("-- gamma: " + ("PASS" if ok_on and ok_off and ok_log else "FAIL (see gamma-on.png / gamma-off.png and the device log)"))
+PY
+    ;;
   cktest)
     run 'cd /d %TEMP% & D:\DRIVER\CKTEST.EXE & copy cktest.log E:\ & copy ck*.bmp E:\ & echo CKDONE > COM1'
     sleep 8; Q screendump "$OUT/cktest-fullscreen.png" || true

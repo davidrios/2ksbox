@@ -303,6 +303,9 @@ void d3d_caps_init(d3dpt_core *p)
     for (i = 0; i < sizeof(*c8) / 4; i++) ((ULONG *)c8)[i] = 0;
     c8->DeviceType = D3DDEVTYPE_HAL_;
     c8->Caps2 = D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_DYNAMICTEXTURES;
+    if (p->gamma) {
+        c8->Caps2 |= D3DCAPS2_FULLSCREENGAMMA_;     /* SetGammaRamp reaches the adapter's GAMMA block (register set v5) */
+    }
     c8->PresentationIntervals = D3DPRESENT_INTERVAL_ONE | D3DPRESENT_INTERVAL_IMMEDIATE;
     c8->DevCaps = c->dwDevCaps | D3DDEVCAPS_PUREDEVICE;
     /* vertex / index buffers in video memory (v9): the runtime creates

@@ -12,8 +12,10 @@
  * and 8 bpp (palettized, the PALETTE register block) modes are converted
  * into an x8r8g8b8 shadow per dirty span because the embed listener takes
  * one format; a palette write repaints the whole frame at the next
- * refresh. ENABLE = 0 returns the console to the VGA core (BSOD, reboot,
- * the BIOS).
+ * refresh. A gamma ramp (register set v5, GAMMA_ENABLE) is applied to
+ * that shadow per span, as a RAMDAC would, and moves a 32 bpp mode onto a
+ * shadow too while it changes anything. ENABLE = 0 returns the console to
+ * the VGA core (BSOD, reboot, the BIOS).
  *
  * M7c (doc 15): the top 64 MiB of BAR 0 is a command window in the
  * d3dpt_proto.h layout. The display driver's Direct3D DDI appends records
@@ -84,6 +86,14 @@ struct D3dptVgaState {
     uint32_t pal[D3DPT_FB_PALETTE_SIZE]; /* the PALETTE registers */
     bool pal_dirty;             /* written since the last refresh */
     pixman_indexed_t *indexed;  /* pal as pixman's palette for the c8 view */
+    /* the gamma ramp (version 5): the GAMMA registers, GAMMA_ENABLE, the
+     * tables made of them at that write, whether they change anything (an
+     * identity ramp keeps a 32 bpp mode straight on VRAM), and a repaint
+     * pending since */
+    uint32_t gamma[D3DPT_FB_GAMMA_SIZE];
+    bool gamma_on, gamma_active, gamma_dirty;
+    uint8_t lut_r[256], lut_g[256], lut_b[256];
+    unsigned gamma_lines;
 
     char dbg[256];
     unsigned dbg_len;
@@ -185,17 +195,47 @@ static void fb_apply_palette(D3dptVgaState *s)
     s->pal_dirty = false;
 }
 
+/* the GAMMA block as three tables, at the GAMMA_ENABLE write: the guest
+ * writes the entries first. Said in the log whenever it starts or stops
+ * changing the picture (bounded: a game's fade is a ramp per frame) */
+static void fb_gamma_apply(D3dptVgaState *s)
+{
+    bool ident = true, was = s->gamma_active;
+    int i;
+
+    for (i = 0; i < D3DPT_FB_GAMMA_SIZE; i++) {
+        s->lut_r[i] = (uint8_t)(s->gamma[i] >> 16);
+        s->lut_g[i] = (uint8_t)(s->gamma[i] >> 8);
+        s->lut_b[i] = (uint8_t)s->gamma[i];
+        if (s->lut_r[i] != i || s->lut_g[i] != i || s->lut_b[i] != i) {
+            ident = false;
+        }
+    }
+    s->gamma_active = s->gamma_on && !ident;
+    s->gamma_dirty = true;
+    if (s->gamma_active != was && s->gamma_lines < 64) {
+        s->gamma_lines++;
+        info_report("d3dpt-vga: gamma ramp %s (0 -> %06x, 128 -> %06x, 255 -> %06x)",
+                    s->gamma_active ? "on" : "off", s->gamma[0] & 0xffffffu,
+                    s->gamma[128] & 0xffffffu, s->gamma[255] & 0xffffffu);
+    }
+}
+
 static void fb_switch(D3dptVgaState *s, const D3dptLinearMode *m)
 {
     uint8_t *ptr = memory_region_get_ram_ptr(&s->vga.vram) + m->offset;
     DisplaySurface *ds;
 
     fb_drop_shadow(s);
-    if (m->bpp == 32) {
+    if (m->bpp == 32 && !s->gamma_active) {
         ds = qemu_create_displaysurface_from(m->w, m->h, PIXMAN_x8r8g8b8,
                                              m->pitch, ptr);
     } else {
-        if (m->bpp == 16) {
+        if (m->bpp == 32) {
+            /* a gamma ramp on (version 5): a copy it can be applied to */
+            s->src = pixman_image_create_bits(PIXMAN_x8r8g8b8, m->w, m->h,
+                                              (uint32_t *)ptr, m->pitch);
+        } else if (m->bpp == 16) {
             s->src = pixman_image_create_bits(PIXMAN_r5g6b5, m->w, m->h,
                                               (uint32_t *)ptr, m->pitch);
         } else {
@@ -221,6 +261,20 @@ static void fb_update_span(D3dptVgaState *s, int y0, int y1)
     if (s->shadow) {
         pixman_image_composite(PIXMAN_OP_SRC, s->src, NULL, s->shadow,
                                0, y0, 0, 0, 0, y0, s->lin.w, y1 - y0);
+        if (s->gamma_active) {
+            /* the ramp, per channel, over the converted span */
+            uint32_t *d = pixman_image_get_data(s->shadow);
+            int stride = pixman_image_get_stride(s->shadow) / 4, x, y;
+
+            for (y = y0; y < y1; y++) {
+                uint32_t *row = d + (size_t)y * stride;
+                for (x = 0; x < (int)s->lin.w; x++) {
+                    uint32_t v = row[x];
+                    row[x] = (v & 0xff000000u) | ((uint32_t)s->lut_r[(v >> 16) & 0xff] << 16) |
+                             ((uint32_t)s->lut_g[(v >> 8) & 0xff] << 8) | s->lut_b[v & 0xff];
+                }
+            }
+        }
     }
     dpy_gfx_update(s->vga.con, 0, y0, s->lin.w, y1 - y0);
 }
@@ -317,6 +371,15 @@ static void d3dpt_vga_gfx_update(void *opaque)
         return;
     }
 
+    if (s->gamma_dirty) {
+        /* a new ramp recolours every pixel; a 32 bpp mode moves between
+         * VRAM itself and the shadow the ramp is applied in */
+        s->gamma_dirty = false;
+        if (s->lin_on && m.bpp == 32 && (s->shadow != NULL) != s->gamma_active) {
+            s->lin_on = false;
+        }
+        s->full_update = true;
+    }
     if (!s->lin_on || memcmp(&s->lin, &m, sizeof(m)) != 0) {
         fb_switch(s, &m);
     }
@@ -547,7 +610,7 @@ static uint64_t d3dpt_vga_regs_read(void *opaque, hwaddr addr, unsigned size)
         return s->vga.vram_size;
     case D3DPT_FB_REG_CAPS:
         return D3DPT_FB_CAP_BPP8 | D3DPT_FB_CAP_BPP16 | D3DPT_FB_CAP_BPP32 |
-               D3DPT_FB_CAP_CURSOR | (s->cmd_offset ? D3DPT_FB_CAP_D3D : 0);
+               D3DPT_FB_CAP_CURSOR | D3DPT_FB_CAP_GAMMA | (s->cmd_offset ? D3DPT_FB_CAP_D3D : 0);
     case D3DPT_FB_REG_CURSOR_ADDR:
         return s->cur_addr;
     case D3DPT_FB_REG_CURSOR_W:
@@ -564,6 +627,8 @@ static uint64_t d3dpt_vga_regs_read(void *opaque, hwaddr addr, unsigned size)
         return (uint32_t)s->cur_y;
     case D3DPT_FB_REG_CURSOR_ENABLE:
         return s->cur_on;
+    case D3DPT_FB_REG_GAMMA_ENABLE:
+        return s->gamma_on;
     case D3DPT_FB_REG_MODE_COUNT:
         return FB_MODE_COUNT;
     case D3DPT_FB_REG_MODE_SEL:
@@ -605,6 +670,10 @@ static uint64_t d3dpt_vga_regs_read(void *opaque, hwaddr addr, unsigned size)
         if (addr >= D3DPT_FB_REG_PALETTE &&
             addr < D3DPT_FB_REG_PALETTE + 4 * D3DPT_FB_PALETTE_SIZE) {
             return s->pal[(addr - D3DPT_FB_REG_PALETTE) / 4];
+        }
+        if (addr >= D3DPT_FB_REG_GAMMA &&
+            addr < D3DPT_FB_REG_GAMMA + 4 * D3DPT_FB_GAMMA_SIZE) {
+            return s->gamma[(addr - D3DPT_FB_REG_GAMMA) / 4];
         }
         return 0;
     }
@@ -709,11 +778,19 @@ static void d3dpt_vga_regs_write(void *opaque, hwaddr addr, uint64_t val,
         s->cur_on = val != 0;
         fb_cursor_move(s);
         break;
+    case D3DPT_FB_REG_GAMMA_ENABLE:
+        s->gamma_on = val != 0;
+        fb_gamma_apply(s);
+        break;
     default:
         if (addr >= D3DPT_FB_REG_PALETTE &&
             addr < D3DPT_FB_REG_PALETTE + 4 * D3DPT_FB_PALETTE_SIZE) {
             s->pal[(addr - D3DPT_FB_REG_PALETTE) / 4] = val & 0xffffffu;
             s->pal_dirty = true;
+        }
+        if (addr >= D3DPT_FB_REG_GAMMA &&
+            addr < D3DPT_FB_REG_GAMMA + 4 * D3DPT_FB_GAMMA_SIZE) {
+            s->gamma[(addr - D3DPT_FB_REG_GAMMA) / 4] = val & 0xffffffu;   /* applied at GAMMA_ENABLE */
         }
         break;
     }
@@ -776,6 +853,8 @@ static void d3dpt_vga_reset(DeviceState *dev)
         /* a rebooted guest has no pointer until its driver defines one */
         fb_cursor_clear(s);
     }
+    s->gamma_on = false;
+    fb_gamma_apply(s);     /* no ramp after a reset: a RAMDAC comes up linear */
     d3d_reset(s);
 }
 

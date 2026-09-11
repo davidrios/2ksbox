@@ -1974,6 +1974,50 @@ the front buffer after the flip. It gets **34 blended edge pixels on 17 of
 the edge), and none with it off. Both flip-chain buffers log
 `ddi: render target N: 640x480 fmt 23, 4 samples`.
 
+### Gamma ramps (2026-09-11, register set v5)
+
+Before this, nothing applied a gamma ramp. The DX8 face didn't claim
+`D3DCAPS2_FULLSCREENGAMMA` and the display driver had no ramp at all, so
+every in-game brightness slider did nothing.
+
+- **The adapter** has a ramp where a RAMDAC would: a 256-entry x8r8g8b8
+  `GAMMA` block (0x800), `GAMMA_ENABLE` (0xb4), and
+  `D3DPT_FB_CAP_GAMMA`. The tables are made at the `GAMMA_ENABLE` write,
+  not at the next refresh, which a headless run never makes. The adapter
+  logs `gamma ramp on` / `off` when the ramp starts or stops changing the
+  picture.
+  - It is applied per dirty span to the x8r8g8b8 shadow the 16 and 8 bpp
+    modes already convert into.
+  - A 32 bpp mode moves onto a shadow only while the ramp changes
+    anything, so the identity ramp GDI loads at every mode set keeps it on
+    VRAM with no copy. A reset turns the ramp off.
+  - VRAM never holds the ramped pixels, as on hardware. `GetFrontBuffer`
+    and every readback see the pixels as drawn; a screendump, and the
+    player, see the ramp.
+- **The XP driver** implements `DrvIcmSetDeviceGammaRamp` with
+  `GCAPS2_CHANGEGAMMARAMP`. That entry takes GDI's `SetDeviceGammaRamp`,
+  and on NT DirectDraw's gamma control and Direct3D 8's `SetGammaRamp`
+  arrive there too. It writes the high byte of each of the three 256-word
+  ramps into the block, then `GAMMA_ENABLE`.
+  - It claims `DDCAPS2_PRIMARYGAMMA`.
+  - The core claims `D3DCAPS2_FULLSCREENGAMMA` only when its layer loads
+    ramps (`d3dpt_core.gamma`). Windows 98's layer has no ramp path yet,
+    so it claims nothing.
+  - `ddflags=0x10000000` (`DDF_NO_GAMMA`) takes it all out. The GDI cap
+    stays, and its entry then refuses.
+- **Register set v5**: the miniport and the 9x drivers want the version
+  exactly, so an image with a v4 driver has to be reinstalled from the ISO.
+
+Evidence: GAMMATEST (new) draws a full-screen 640 × 480 × 32 mid-grey
+frame under blue at 3/4, then under the identity ramp. It uses a mild ramp
+rather than an inversion, since GDI range-checks ramps (how far it allows
+was not tried). The probe checks `GetGammaRamp`, and
+`tools/xp-driver-test.sh <image> gamma` checks the screen. The harness
+waits for the adapter's `gamma ramp on`, takes a screendump, then waits
+for `gamma ramp off` and takes another. The centre pixel is **80 80 60**
+with the ramp held and **80 80 80** after (2026-09-11). The other probes,
+D3D7TEST and `scripts/test.sh host` are unchanged.
+
 ### The DX8 feature probes (2026-09-11)
 
 One program per Direct3D 8 feature in `DRIVER\`, each through XP's own

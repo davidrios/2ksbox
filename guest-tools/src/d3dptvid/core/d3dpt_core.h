@@ -55,11 +55,13 @@
 #define DDF_NO_ANISO           0x2000000 /* the A/B: MaxAnisotropy 1, no anisotropic filter caps */
 #define DDF_NO_MORE_FMTS       0x4000000 /* the A/B: none of L8 A8L8 A4L4 A8 X4R4G4B4 R3G3B2 A8R3G3B2 DXT2 DXT4 in the DX8 format list */
 #define DDF_NO_MSAA            0x8000000 /* the A/B: no multisample types in the DX8 format list, as before protocol v13 */
+#define DDF_NO_GAMMA           0x10000000 /* the A/B: no gamma ramp (DrvIcmSetDeviceGammaRamp refuses, no DirectDraw / D3D8 gamma caps) */
 
 /* DDI-only DX8 device caps (d3dhal.h): the runtime puts vertex / index
  * buffers in video memory through the buffer callbacks when they are set */
 #define D3DDEVCAPS_HWVERTEXBUFFER_ 0x02000000
 #define D3DDEVCAPS_HWINDEXBUFFER_  0x04000000
+#define D3DCAPS2_FULLSCREENGAMMA_  0x00020000
 #define DDSCAPS2_VERTEXBUFFER_ 0x02000000
 #define DDSCAPS3_MULTISAMPLE_MASK_ 0x1f   /* ddsCapsEx.dwCaps3: a multisampled surface's sample count */
 #define DDSCAPS2_INDEXBUFFER_  0x04000000
@@ -206,6 +208,7 @@ typedef struct d3dpt_core {
      * that are not the driver's: the DX3 execute-buffer opcodes
      * (D3DOP_PROCESSVERTICES and friends) on the legacy path (doc 15) */
     HRESULT (APIENTRY *parse_unknown)(PVOID cmd, PVOID *next);
+    BOOL gamma;                 /* the layer loads gamma ramps into the adapter (NT: DrvIcmSetDeviceGammaRamp) */
 } d3dpt_core;
 
 /* the core whose Direct3D is on (the primary display) */

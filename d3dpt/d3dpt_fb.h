@@ -58,7 +58,7 @@
 
 #include <stdint.h>
 
-#define D3DPT_FB_VERSION      4u
+#define D3DPT_FB_VERSION      5u
 #define D3DPT_FB_MAGIC        0x42463344u          /* "D3FB" at REG_MAGIC */
 
 /* PCI identity: QEMU/Bochs pseudo vendor, our device id ("3D00"). The INF
@@ -111,16 +111,24 @@
 #define D3DPT_FB_REG_CURSOR_X    0xa8u   /* RW: hot spot position on the screen (signed) */
 #define D3DPT_FB_REG_CURSOR_Y    0xacu
 #define D3DPT_FB_REG_CURSOR_ENABLE 0xb0u /* RW: 1 = shown at X / Y, 0 = hidden */
+#define D3DPT_FB_REG_GAMMA_ENABLE 0xb4u  /* RW (version 5): 1 = the GAMMA block below is applied to every pixel
+                                          * shown, as a RAMDAC would; the tables take effect at this write, so
+                                          * write the 256 entries first. An identity ramp costs nothing */
 #define D3DPT_FB_CURSOR_MAX      64u     /* pixels per side; larger pointers stay with GDI's software one */
 #define D3DPT_FB_CURSOR_BYTES    (D3DPT_FB_CURSOR_MAX * D3DPT_FB_CURSOR_MAX * 4u)
 
 #define D3DPT_FB_REG_PALETTE     0x400u  /* RW: 256 x8r8g8b8 entries (version 3), 0x400..0x7fc */
 #define D3DPT_FB_PALETTE_SIZE    256u
+#define D3DPT_FB_REG_GAMMA       0x800u  /* RW: 256 x8r8g8b8 entries (version 5), 0x800..0xbfc: entry i is what
+                                          * a channel value i becomes on screen, per channel — the high bytes of
+                                          * GDI's 3 x 256-word ramp (DrvIcmSetDeviceGammaRamp) */
+#define D3DPT_FB_GAMMA_SIZE      256u
 
 #define D3DPT_FB_CAP_BPP16       0x1u
 #define D3DPT_FB_CAP_BPP32       0x2u
 #define D3DPT_FB_CAP_D3D         0x4u    /* a command window exists (CMD_OFFSET != 0) */
 #define D3DPT_FB_CAP_BPP8        0x8u    /* version 3: BPP = 8 and the PALETTE block */
 #define D3DPT_FB_CAP_CURSOR      0x10u   /* version 4: the CURSOR registers */
+#define D3DPT_FB_CAP_GAMMA       0x20u   /* version 5: GAMMA_ENABLE and the GAMMA block */
 
 #endif

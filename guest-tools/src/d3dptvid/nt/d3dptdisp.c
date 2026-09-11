@@ -67,6 +67,7 @@ typedef struct _PDEV {
     ULONG pal[256];             /* 8 bpp: GDI's default palette (PALETTEENTRY form) */
 
     ULONG refusals;             /* pixel formats logged by DdCanCreateSurface */
+    ULONG gamma_lines;          /* gamma ramps logged by DrvIcmSetDeviceGammaRamp */
     ULONG blt_lines;            /* the first DdBlt calls logged */
     ULONG flip_lines;           /* the first flips logged: the two buffers' handles and offsets */
 
@@ -312,6 +313,32 @@ BOOL APIENTRY DrvSetPalette(DHPDEV dhpdev, PALOBJ *ppalo, FLONG fl, ULONG iStart
     return TRUE;
 }
 
+/* GDI's gamma ramp — and with it DirectDraw's gamma control and Direct3D
+ * 8's SetGammaRamp, which reach the driver through here on NT — into the
+ * adapter's GAMMA block (register set v5): the high byte of each of the
+ * three 256-word ramps, then GAMMA_ENABLE, where the adapter takes them */
+BOOL APIENTRY DrvIcmSetDeviceGammaRamp(DHPDEV dhpdev, ULONG iFormat, LPVOID lpRamp)
+{
+    PPDEV p = (PPDEV)dhpdev;
+    const USHORT *r = (const USHORT *)lpRamp;
+    ULONG i;
+
+    if (iFormat != IGRF_RGB_256WORDS || !r || !p->core.regs || (ddflags(&p->core) & DDF_NO_GAMMA)) {
+        return FALSE;
+    }
+    for (i = 0; i < D3DPT_FB_GAMMA_SIZE; i++) {
+        p->core.regs[D3DPT_FB_REG_GAMMA / 4 + i] = ((ULONG)(r[i] >> 8) << 16) | ((ULONG)(r[256 + i] >> 8) << 8) |
+                                                   (ULONG)(r[512 + i] >> 8);
+    }
+    p->core.regs[D3DPT_FB_REG_GAMMA_ENABLE / 4] = 1;
+    if (p->gamma_lines < 8) {
+        p->gamma_lines++;
+        dbg_hex(&p->core, "d3dptdisp: gamma ramp, 128 -> ", p->core.regs[D3DPT_FB_REG_GAMMA / 4 + 128]);
+        dbg_puts(&p->core, "\n");
+    }
+    return TRUE;
+}
+
 DHPDEV APIENTRY DrvEnablePDEV(DEVMODEW *pdm, LPWSTR pwszLogAddress, ULONG cPat,
                               HSURF *phsurfPatterns, ULONG cjCaps, ULONG *pdevcaps,
                               ULONG cjDevInfo, DEVINFO *pdi, HDEV hdev,
@@ -403,7 +430,7 @@ DHPDEV APIENTRY DrvEnablePDEV(DEVMODEW *pdm, LPWSTR pwszLogAddress, ULONG cPat,
         return NULL;
     }
     p->hpal = d.hpalDefault;
-    d.flGraphicsCaps2 = 0;
+    d.flGraphicsCaps2 = GCAPS2_CHANGEGAMMARAMP;    /* DrvIcmSetDeviceGammaRamp: the adapter's GAMMA block (v5) */
     *pdi = d;
 
     return (DHPDEV)p;
@@ -1206,6 +1233,7 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *pHalInfo, DWORD *p
         p->core.cmd_offset = 0;
     }
     d3d_callbacks_init();       /* the layer's half of the caps: whose functions dxg calls */
+    p->core.gamma = !(ddflags(&p->core) & DDF_NO_GAMMA);   /* DrvIcmSetDeviceGammaRamp (v5): D3D8's FULLSCREENGAMMA */
     d3d_init(&p->core);
     *pdwNumHeaps = 1;
     /* the FOURCC surfaces DirectDraw may create at all (it checks this
@@ -1245,7 +1273,7 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *pHalInfo, DWORD *p
      * offscreen and flip chains. DDCAPS_GDI in dwCaps makes dxg drop the
      * HAL altogether (NOHARDWARE, system-memory surfaces). */
     pHalInfo->ddCaps.dwCaps = 0;
-    pHalInfo->ddCaps.dwCaps2 = DDCAPS2_WIDESURFACES;
+    pHalInfo->ddCaps.dwCaps2 = DDCAPS2_WIDESURFACES | (p->core.gamma ? DDCAPS2_PRIMARYGAMMA : 0);   /* gamma control: GDI's ramp */
     pHalInfo->ddCaps.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_OFFSCREENPLAIN |
                                        DDSCAPS_FLIP | DDSCAPS_FRONTBUFFER | DDSCAPS_BACKBUFFER;
     if (ddflags(&p->core) & DDF_GDI_CAP) {
@@ -2025,6 +2053,7 @@ static DRVFN drv_fn[] = {
     { INDEX_DrvDisableSurface, (PFN)DrvDisableSurface },
     { INDEX_DrvAssertMode,     (PFN)DrvAssertMode },
     { INDEX_DrvSetPalette,     (PFN)DrvSetPalette },
+    { INDEX_DrvIcmSetDeviceGammaRamp, (PFN)DrvIcmSetDeviceGammaRamp },
     { INDEX_DrvGetModes,       (PFN)DrvGetModes },
     { INDEX_DrvSetPointerShape, (PFN)DrvSetPointerShape },
     { INDEX_DrvMovePointer,    (PFN)DrvMovePointer },
