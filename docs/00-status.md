@@ -1293,9 +1293,33 @@ items nobody owns yet:
   Note that `tick()` runs on every `AUD_write`, not once per mixer tick —
   a DMA card writes from i8257's idle bottom half between ticks — so the
   bound is on what a device may deliver, not on what is owed (a cap on the
-  owed total cut into the SB16's audio every tick). Given a crackle report,
-  ask for the `[audio] device asks for N frames` and `qemu-embed: audio:`
-  lines first.
+  owed total cut into the SB16's audio every tick). **And it still crackled,
+  because it was clipping** (2026-09-11, the same races, with the game's
+  CD audio playing): QEMU's mixer adds every voice at full scale — its
+  `sb16` stores the mixer's volume registers and applies none (Windows'
+  Volume Control sliders reach nothing), the CD drive plays at mode page
+  0x0E's full 0xff — and its s16 conversion saturates the sum. Effects over
+  CD music went past full scale on every peak. The embed audiodev now runs
+  `out.format=f32` (QEMU's float conversion does not saturate) and the
+  player's consumer has a look-ahead limiter (2 ms, player/src/audio.rs):
+  a loud `cd+sb16` (`CDAMP=16000`) was 200 000 clipped samples per 5 s,
+  and is now held at −2.4 dB with a clean tone; nothing under full scale
+  is touched. **And the SB16 applies its mixer volumes now** (patch 61,
+  same day): master × voice on its own voice, master × FM on the OPL3,
+  master × CD (and the 0x3C output switches) on the CD drive's audio, the
+  SB Pro registers mirrored onto the SB16 ones — so Windows' Volume
+  Control sliders work and the mix has the headroom the real card left;
+  the limiter stays for a guest whose sliders are all at the top. The
+  FM chip and the CD drive reach the card through a small registry in the
+  audio core (`audio_mixin_*`). The reset values are 0 dB with the CD on,
+  deliberately not a cold CT1745's −14 dB and muted CD, which would
+  silence CD music in every DOS game that never programs the mixer;
+  Windows' driver writes its own at boot. Guarded by the `sb-mixer`
+  check (FM, master and SB Pro FM at −12 dB, in QEMU's own wav) and
+  `CDVOL=` in `tools/audio-glitch-test.py cd`. Given a crackle report,
+  ask for the `[audio] device asks for N frames`, `qemu-embed: audio:` and
+  `[audio] the guest's mix went past full scale` lines first — a timing
+  fault and a level fault sound alike and read differently.
 - **A file dialog's extension filter is case-sensitive on Linux** — the XDG
   portal, GTK and Qt's own dialog alike — so the disc shelf's "Browse…"
   hid `GAME.CUE` behind a `*.cue` filter (user-reported 2026-09-11).

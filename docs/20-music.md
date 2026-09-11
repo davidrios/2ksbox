@@ -162,6 +162,15 @@ back*, and a chip whose timers do not tick is a chip no game finds. The
 voice is opened at the chip's own 49716 Hz and QEMU's mixer does the one
 conversion there is.
 
+Since patch 61 (2026-09-11) the chip's voice is also **scaled by the
+SB16's mixer**, the way its output ran into the card's on a real
+board: the card's master × FM volume (0x30/0x31 × 0x34/0x35, or the SB
+Pro's 0x22 × 0x26) reaches it through the audio core's mixer-input
+registry, which the chip attaches to at realize. So Windows' Volume
+Control "MIDI" slider works on FM music, and a bare AdLib — no card,
+no mixer — plays at unity. The CD drive's audio is the other input,
+under the card's CD volume and output switch.
+
 ### `-device mpu401`
 
 An ISA device at **0x330–0x331**: data port, and a status/command port

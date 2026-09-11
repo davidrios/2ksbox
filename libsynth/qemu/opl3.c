@@ -241,6 +241,10 @@ static void opl3_realizefn(DeviceState *dev, Error **errp)
         error_setg(errp, "opl3: opening the audio voice failed");
         return;
     }
+    /* The chip's output ran into the sound card's mixer, whose FM volume
+     * scaled it: an SB16 sets that input (patch 61); a bare AdLib has no
+     * mixer and plays at unity. */
+    audio_mixin_attach(AUDIO_MIXIN_FM, s->voice);
 
     s->last_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     portio_list_init(&s->port_list, OBJECT(s), opl3_portio_list, s, TYPE_OPL3);
@@ -260,6 +264,9 @@ static void opl3_unrealizefn(DeviceState *dev)
     if (s->chip) {
         libsynth_opl_free(s->chip);
         s->chip = NULL;
+    }
+    if (s->voice) {
+        audio_mixin_detach(AUDIO_MIXIN_FM, s->voice);
     }
     AUD_remove_card(&s->card);
 }

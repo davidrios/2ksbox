@@ -138,6 +138,12 @@
 #                  MT-32 with no ROMs is refused at the form — and then the two
 #                  devices *sounding*: the monitor writes the ports a guest would
 #                  and the note has to be in the wav QEMU recorded
+#   sb-mixer       the SB16's mixer volumes, applied (patch 61): the FM note at
+#                  unity and again with the card's FM volume, its master volume
+#                  and the SB Pro's FM register each at -12 dB — QEMU's own wav
+#                  has to come out 12 dB down all three ways. QEMU stored these
+#                  registers and applied none, so Windows' sliders reached
+#                  nothing and a game's effects over CD music clipped
 #   sb16-irq       the Sound Blaster's interrupt line (patch 25), asked of the
 #                  card and the PIC: a DSP reset clears the pending interrupt
 #                  and makes none, and a silence block's is one the driver's
@@ -1176,6 +1182,49 @@ opl_note_script() {
   port_write 0x388 0xb0; port_write 0x389 0x32
 }
 
+sb_mixer_check() { # the SB16's mixer volumes reach the FM chip (patch 61)
+  local dir="$OUT/sb-mixer" v rc=0
+  rm -rf "$dir"; mkdir -p "$dir"
+  # One card with its FM chip, as a machine has them; the mixer is written
+  # the way a driver writes it (index at base+4, data at base+5) before
+  # the note. 0xc8 is 5-bit level 25 = -12 dB; the SB Pro's 0xcc is 4-bit
+  # 12 a side, which a CT1745 reads as the same 25.
+  for v in unity fm master sbpro; do
+    { case $v in
+        fm)     port_write 0x224 0x34; port_write 0x225 0xc8
+                port_write 0x224 0x35; port_write 0x225 0xc8 ;;
+        master) port_write 0x224 0x30; port_write 0x225 0xc8
+                port_write 0x224 0x31; port_write 0x225 0xc8 ;;
+        sbpro)  port_write 0x224 0x26; port_write 0x225 0xcc ;;
+      esac
+      opl_note_script; sleep 2; echo quit; } \
+      | timeout 60 build/qemu/qemu-system-i386 -display none -monitor stdio \
+          -audiodev "wav,id=w,path=$dir/$v.wav" \
+          -device sb16,audiodev=w -device opl3,audiodev=w,sbbase=0x220 >/dev/null 2>&1
+  done
+  python3 - "$dir" <<'PY' || rc=1
+import math, struct, sys, wave
+d = sys.argv[1]
+def peak(name):
+    w = wave.open("%s/%s.wav" % (d, name))
+    raw = w.readframes(w.getnframes())
+    v = struct.unpack("<%dh" % (len(raw) // 2), raw)
+    return max(abs(x) for x in v) if v else 0
+ref = peak("unity")
+if ref < 1000:
+    sys.exit("no FM note at unity (peak %d): nothing to measure against" % ref)
+bad = 0
+for name in ("fm", "master", "sbpro"):
+    p = peak(name)
+    db = 20 * math.log10(p / ref) if p else -99
+    ok = abs(db + 12) <= 1
+    print("  %-6s %+5.1f dB against unity (want -12)%s" % (name, db, "" if ok else "  <- wrong"))
+    bad += not ok
+sys.exit(1 if bad else 0)
+PY
+  return $rc
+}
+
 # What a driver writes to an MPU-401: reset, UART mode, then a program
 # change and a note-on for A4 — the note the checks measure.
 mpu_note_script() {
@@ -1911,6 +1960,9 @@ host_stage() {
   # devices sounding into a wav QEMU recorded itself.
   if [ -x target/release/launcherx ] && [ -x target/release/synthx ]; then
     run_check music music.log music_check || true
+  fi
+  if [ -x build/qemu/qemu-system-i386 ]; then
+    run_check sb-mixer sb-mixer.log sb_mixer_check || true
   fi
 
   # The Sound Blaster's interrupt line (patch 25): no guest, ~1 s. The

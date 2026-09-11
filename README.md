@@ -100,7 +100,9 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 #   `qemu-embed: audio:` and `[audio] … underruns` lines on stderr count gaps when they
 #   happen and `[audio] device asks for N frames` says how chunky the device is; raise
 #   it if gaps are counted, lower it under KVM. QEMU_EMBED_AUDIO_TRACE=1 prints the
-#   embed audiodev's pacing, a line per call
+#   embed audiodev's pacing, a line per call. `[audio] the guest's mix went past full
+#   scale` says the machine's voices (card, FM, MIDI, CD audio) summed past what fits —
+#   QEMU applies no mixer volumes — and how far the player's limiter turned it down
 # --calib <bmp|dir> shades doc 09's CRT calibration patterns (tools/crtcal-render
 #   writes them; TESTS\CRTCAL.EXE puts the same ones on a real tube) and exits
 # --mode-sweep <dir> runs doc 03's mode sweep instead of a guest: every mode in the

@@ -92,7 +92,10 @@ overlaid into `qemu/embed/` by `prepare-qemu.sh`, like the 3dfx devices;
    over a quarter second at `out.buffer-length` (default 40 ms, player
    `PLAYER_AUDIO_MS`), the cushion under whatever period the host device
    drains it in; the player starts a stream once the ring holds a period
-   plus the cushion. It replaced (2026-09-04) a design that topped the
+   plus the cushion. The ring is **f32** since 2026-09-11: QEMU's mixer sums
+   every voice at full scale and its s16 conversion saturates the sum, its
+   float conversion does not, and the player limits it instead. It
+   replaced (2026-09-04) a design that topped the
    ring up to its target every tick and dropped whole ticks over it — 12
    clicks in 20 s against a 2048-frame device, 922 against 4096 — which
    in turn replaced a 10 ms version that never caught up after a stall
@@ -101,7 +104,7 @@ overlaid into `qemu/embed/` by `prepare-qemu.sh`, like the 3dfx devices;
    per-direction case, **and `audio/audio.c: audio_create_pdos()` CASE**
    (missing it → NULL pdo → segfault in `audio_validate_per_direction_opts`).
    The player appends `-audiodev embed,id=embed0,out.frequency=<host rate>,
-   out.channels=2,out.format=s16`; attach devices with `audiodev=embed0`.
+   out.channels=2,out.format=f32`; attach devices with `audiodev=embed0`.
 
 ## Hazards recorded
 

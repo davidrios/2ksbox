@@ -88,7 +88,8 @@ pub fn socket_to_fd(sock: u64) -> Option<i32> {
 }
 
 /// Install the audio ring. Must be called BEFORE [`Qemu::new`] on any
-/// thread; then configure `-audiodev embed,id=...,out.format=s16,...`.
+/// thread; then configure `-audiodev embed,id=...,out.format=f32,...` (any
+/// format works; the player uses f32 because s16 saturates an over-range mix).
 ///
 /// # Safety
 /// `base`/`wr`/`rd` must stay valid for the process lifetime; `bytes` is a

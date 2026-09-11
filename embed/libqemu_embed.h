@@ -130,7 +130,7 @@ QEMU_EMBED_API bool qemu_embed_pad_present(qemu_embed_t *e);
 QEMU_EMBED_API void qemu_embed_input_flush(qemu_embed_t *e);
 
 /* --- Audio: call BEFORE qemu_embed_new(); then pass
- *   -audiodev embed,id=snd0,out.frequency=48000,out.channels=2,out.format=s16
+ *   -audiodev embed,id=snd0,out.frequency=48000,out.channels=2,out.format=f32
  * QEMU's mixer writes interleaved PCM in that format into the ring; the host
  * audio thread consumes it. `bytes` must be a power of two. wr_idx is
  * written by QEMU (release), rd_idx by the consumer (release); both are byte

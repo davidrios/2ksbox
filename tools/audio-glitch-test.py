@@ -13,6 +13,8 @@ Two sources, because they fail differently:
 
     tools/audio-glitch-test.py sb16    # the default
     tools/audio-glitch-test.py opl
+    tools/audio-glitch-test.py cd      # CD-DA off the drive
+    tools/audio-glitch-test.py cd+sb16 # both at once: a race with CD music
 
 **sb16** is what a Windows or DOS game does with a Sound Blaster: 8-bit
 auto-init DMA at 22050 Hz out of an 8 KiB ring, the guest keeping the ring
@@ -75,6 +77,9 @@ start:
     cld
     mov si, str_start
     call puts
+%ifdef CD
+    call cd_play
+%endif
 %ifdef OPL
     call opl_note
     mov cx, TICKS
@@ -82,8 +87,17 @@ start:
     mov al, 0B0h
     mov ah, 12h                 ; key off
     call opl_write
-%else
+%elifdef SB
     call sb_play
+%ifdef CD
+    ; end the two tones together: a CD playing on alone after the card
+    ; stops is an amplitude step, which the detector would count
+    mov si, pkt_stop
+    call send_packet
+%endif
+%else
+    mov cx, TICKS
+    call delay_ticks
 %endif
     mov si, str_done
     call puts
@@ -389,6 +403,185 @@ dsp_write:                      ; al -> the DSP, once it will take it
     ret
 %endif
 
+%ifdef CD
+; ---------------------------------------------------------------- CD-DA
+
+BASE    equ 170h                ; ide.1, the master: the machine's CD-ROM
+CTRL    equ 376h
+
+; PLAY AUDIO MSF over the whole disc. The drive's first command after power
+; on fails with UNIT ATTENTION, which only a REQUEST SENSE clears: so TEST
+; UNIT READY, and REQUEST SENSE after each failure, until it says ready.
+cd_play:
+%ifdef CDVOL
+    ; the SB16's CD input volume, both sides: the drive's audio is scaled
+    ; by the card's mixer the way the analog cable was (patch 61)
+    mov dx, 224h
+    mov al, 36h
+    out dx, al
+    inc dx
+    mov al, CDVOL
+    out dx, al
+    dec dx
+    mov al, 37h
+    out dx, al
+    inc dx
+    mov al, CDVOL
+    out dx, al
+%endif
+    mov word [bcl], 0FFFEh
+    mov word [bufseg], 9000h
+    mov bx, 20
+.tur:
+    mov si, pkt_tur
+    call send_packet
+    jnc .ready
+    mov si, pkt_sense
+    call send_packet
+    mov cx, 2
+    call delay_ticks
+    dec bx
+    jnz .tur
+    mov si, str_noready
+    jmp puts
+.ready:
+    mov si, pkt_play
+    call send_packet
+    jc .fail
+    mov si, str_cdplay
+    jmp puts
+.fail:
+    mov si, str_noplay
+    call puts
+    mov al, [last_status]
+    call put_hex8
+    mov al, 10
+    jmp putc
+
+send_packet:            ; ds:si = packet -> carry on error
+    mov dx, BASE+6
+    mov al, 0A0h
+    out dx, al
+    call wait_bsy_clear
+    jc .timeout
+    mov dx, CTRL
+    mov al, 02h         ; nIEN: we poll
+    out dx, al
+    mov dx, BASE+1
+    xor al, al
+    out dx, al
+    mov dx, BASE+4
+    mov al, [bcl]
+    out dx, al
+    inc dx
+    mov al, [bcl+1]
+    out dx, al
+    mov dx, BASE+7
+    mov al, 0A0h        ; PACKET
+    out dx, al
+    call wait_drq
+    jc .fail
+    mov dx, BASE
+    mov cx, 6
+    rep outsw
+    push es
+    mov ax, [bufseg]
+    mov es, ax
+    xor di, di
+.loop:
+    call wait_bsy_clear
+    jc .timeout_es
+    mov dx, BASE+7
+    in al, dx
+    mov [last_status], al
+    test al, 01h
+    jnz .fail_es
+    test al, 08h
+    jz .done
+    mov dx, BASE+4      ; data in: take it and throw it away
+    in al, dx
+    mov cl, al
+    inc dx
+    in al, dx
+    mov ch, al
+    inc cx
+    shr cx, 1
+    mov dx, BASE
+    xor di, di
+    rep insw
+    jmp .loop
+.done:
+    pop es
+    clc
+    ret
+.fail_es:
+    pop es
+.fail:
+    stc
+    ret
+.timeout_es:
+    pop es
+.timeout:
+    mov byte [last_status], 0FFh
+    stc
+    ret
+
+wait_bsy_clear:
+    push ecx
+    mov ecx, 8000000
+.l: mov dx, BASE+7
+    in al, dx
+    test al, 80h
+    jz .ok
+    dec ecx
+    jnz .l
+    pop ecx
+    stc
+    ret
+.ok:
+    pop ecx
+    clc
+    ret
+
+wait_drq:
+    push ecx
+    mov ecx, 8000000
+.l: mov dx, BASE+7
+    in al, dx
+    test al, 80h
+    jnz .again
+    test al, 09h
+    jnz .got
+.again:
+    dec ecx
+    jnz .l
+    pop ecx
+    mov byte [last_status], 0FFh
+    stc
+    ret
+.got:
+    pop ecx
+    mov [last_status], al
+    test al, 01h
+    jnz .err
+    clc
+    ret
+.err:
+    stc
+    ret
+
+pkt_tur:     db 00h, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+pkt_sense:   db 03h, 0, 0, 0, 18, 0, 0, 0, 0, 0, 0, 0
+pkt_play:    db 47h, 0, 0, 0, 2, 0, CD_END_M, CD_END_S, CD_END_F, 0, 0, 0
+pkt_stop:    db 4Eh, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+str_cdplay:  db "CDPLAY", 10, 0
+str_noplay:  db "NOPLAY ", 0
+str_noready: db "NOREADY", 10, 0
+bcl:         dw 0
+bufseg:      dw 0
+last_status: db 0
+%endif
+
 ; --------------------------------------------------------------- plumbing
 
 delay_ticks:                    ; cx = BIOS ticks (18.2 Hz)
@@ -488,8 +681,18 @@ def build(mode, secs, margin):
         f.write(ASM.replace("db TABLE", "db " + TABLE))
     defs = ["-DTICKS=%d" % round(secs * 18.2), "-DMARGIN=%d" % margin,
             "-DLOAD=%d" % int(os.environ.get("LOAD", "0"))]
-    if mode == "opl":
+    parts = mode.split("+")
+    if "opl" in parts:
         defs.append("-DOPL")
+    if "sb16" in parts:
+        defs.append("-DSB")
+    if "cd" in parts:
+        # the play range's end: the whole tone, as an MSF address
+        m, r = divmod(CD_SECONDS * 75 + 150, 75 * 60)
+        if os.environ.get("CDVOL"):
+            defs.append("-DCDVOL=%d" % int(os.environ["CDVOL"], 0))
+        defs += ["-DCD", "-DCD_END_M=%d" % m, "-DCD_END_S=%d" % (r // 75),
+                 "-DCD_END_F=%d" % (r % 75)]
     sh("nasm", "-O0", "-f", "bin", *defs, "-o", com, asm)
     shutil.copy(x87gt.FLOPPY, img)
     cfg = os.path.join(OUT, "FDCONFIG.SYS")
@@ -503,6 +706,27 @@ def build(mode, secs, margin):
     sh("mcopy", "-o", "-i", img, bat, "::FDAUTO.BAT")
     sh("mcopy", "-o", "-i", img, com, "::GLITCH.COM")
     return img
+
+
+CD_SECONDS = 60
+
+
+def make_disc(mode):
+    """An audio-only disc: one track of a 441 Hz tone at 44100 Hz, 100
+    samples a period, so it sums with the SB16's 441 Hz into one pure sine
+    and one click detector serves both. Quieter beside the SB16, so the sum
+    cannot clip."""
+    amp = int(os.environ.get("CDAMP", "4500" if "sb16" in mode else "16000"))
+    period = b"".join(struct.pack("<hh", v, v) for v in
+                      (round(amp * math.sin(2 * math.pi * k / 100)) for k in range(100)))
+    frames = CD_SECONDS * 44100
+    tone = os.path.join(OUT, "tone.bin")
+    with open(tone, "wb") as f:
+        f.write(period * (frames // 100))
+    cue = os.path.join(OUT, "tone.cue")
+    with open(cue, "w") as f:
+        f.write('FILE "tone.bin" BINARY\n  TRACK 01 AUDIO\n    INDEX 01 00:00:00\n')
+    return cue
 
 
 def staller(sock, log, mb, stalls):
@@ -531,8 +755,15 @@ def run(mode, img, tap, log, plog, period):
     sock = os.path.join(OUT, "q.sock")
     stall_mb = int(os.environ.get("STALL", "0"))
     env = dict(os.environ, PLAYER_AUDIO_NULL=str(period), PLAYER_AUDIO_TAP=tap)
-    device = ["-device", "opl3,audiodev=embed0"] if mode == "opl" else \
-             ["-device", "sb16,audiodev=embed0"]
+    parts = mode.split("+")
+    device = []
+    if "opl" in parts:
+        device += ["-device", "opl3,audiodev=embed0"]
+    if "sb16" in parts or os.environ.get("CDVOL"):
+        device += ["-device", "sb16,audiodev=embed0"]
+    if "cd" in parts:
+        device += ["-drive", "if=none,id=cd0,media=cdrom,file=" + make_disc(mode),
+                   "-device", "ide-cd,bus=ide.1,drive=cd0,audiodev=embed0"]
     icount = ["-icount", "shift=7,align=on"] if os.environ.get("ICOUNT") else []
     extra = os.environ.get("QEMU_EXTRA", "").split()
     vga = ["-vga", "none", "-device", "d3dpt-vga"] if os.environ.get("VGA") == "d3dpt" \
@@ -617,6 +848,10 @@ def analyse(y):
                 gaps.append((n - run, run))
             run = 0
     return {
+        # Samples at full scale: a sum that did not fit, saturated. The
+        # sine recurrence does not see it (a clipped sine is smooth), so it
+        # is counted on its own.
+        "clipped": sum(1 for v in seg if v >= 32767 or v <= -32768),
         "start": a / RATE, "secs": len(seg) / RATE, "hz": hz, "amp": amp,
         "noise": peak / amp, "events": [(a + n) / RATE for n in events],
         "gaps": [((a + n) / RATE, k * 1000 / RATE) for n, k in gaps],
@@ -626,8 +861,8 @@ def analyse(y):
 def main():
     modes = [a for a in sys.argv[1:] if not a.startswith("-")] or ["sb16"]
     for m in modes:
-        if m not in ("sb16", "opl"):
-            raise SystemExit("usage: tools/audio-glitch-test.py [sb16] [opl]")
+        if m not in ("sb16", "opl", "cd", "cd+sb16"):
+            raise SystemExit("usage: tools/audio-glitch-test.py [sb16] [opl] [cd] [cd+sb16]")
     period = int(os.environ.get("PERIOD", "1024"))
     secs = float(os.environ.get("SECS", "20"))
     margin = int(os.environ.get("MARGIN", "441"))
@@ -652,7 +887,10 @@ def main():
         if "NODSP" in text:
             print("FAIL %s: no DSP answered the reset" % mode)
             ok = False
-        if mode == "sb16":
+        if "cd" in mode and "CDPLAY" not in text:
+            print("FAIL %s: the drive did not start playing" % mode)
+            ok = False
+        if "sb16" in mode:
             late = int(text.split("late ")[1].split()[0], 16) if "late " in text else None
             if late is None:
                 print("FAIL sb16: the guest never reported")
@@ -670,6 +908,18 @@ def main():
         if r["gaps"]:
             print("    %d silent gaps: %s" % (len(r["gaps"]), ", ".join(
                 "%.2f s (%.0f ms)" % g for g in r["gaps"][:12])))
+        if mode == "cd" and os.environ.get("CDVOL"):
+            reg = int(os.environ["CDVOL"], 0)
+            want = ((reg >> 3) - 31) * 2
+            got = 20 * math.log10(r["amp"] / int(os.environ.get("CDAMP", "16000")))
+            print("    CD volume 0x%02x: %.1f dB, the register says %d dB" % (reg, got, want))
+            if abs(got - want) > 1.0:
+                print("FAIL cd: the card's CD volume did not reach the drive's audio")
+                ok = False
+        if r["clipped"]:
+            print("FAIL %s: %d samples clipped at full scale (the mix summed past it)"
+                  % (mode, r["clipped"]))
+            ok = False
         if r["events"]:
             print("FAIL %s: %d clicks in the tone, at %s%s" % (mode, len(r["events"]),
                   ", ".join("%.2f" % t for t in r["events"][:16]),

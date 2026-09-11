@@ -671,11 +671,14 @@ pub fn start(
         // pull; the consumer waits for the same amount before it plays. A
         // 5 ms mixer tick: a main loop held up by a 3D swap is paid back a
         // tick at a time, and finer ticks fit between the stalls
-        // (embed/embedaudio.c)
+        // (embed/embedaudio.c). f32, because QEMU's s16 output saturates
+        // a mix of voices that sums past full scale and its float output
+        // does not: the player's limiter turns it down instead
+        // (player/src/audio.rs)
         let cushion = crate::audio::cushion_ms() * 1000;
         args.push(format!(
             "embed,id=embed0,timer-period=5000,out.frequency={rate},out.channels=2,\
-             out.format=s16,out.buffer-length={cushion}"
+             out.format=f32,out.buffer-length={cushion}"
         ));
         // ring lives for the process; leak a strong ref for the C side
         let r = Arc::into_raw(ring);

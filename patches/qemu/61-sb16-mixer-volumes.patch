@@ -1,0 +1,309 @@
+diff --git a/audio/audio.c b/audio/audio.c
+index ff8b2f2..ab5f0f0 100644
+--- a/audio/audio.c
++++ b/audio/audio.c
+@@ -1965,6 +1965,58 @@ void audio_set_volume_out(SWVoiceOut *sw, Volume *vol)
+     }
+ }
+ 
++/* 2ksbox, patch 61: the sound card's analog inputs (audio.h) */
++#define AUDIO_MIXIN_VOICES 4
++
++static struct {
++    SWVoiceOut *sw[AUDIO_MIXIN_VOICES];
++    bool set;
++    int mute;
++    uint8_t lvol, rvol;
++} audio_mixin[AUDIO_MIXIN_COUNT];
++
++void audio_mixin_attach(AudioMixIn in, SWVoiceOut *sw)
++{
++    int i;
++
++    for (i = 0; i < AUDIO_MIXIN_VOICES; i++) {
++        if (!audio_mixin[in].sw[i]) {
++            audio_mixin[in].sw[i] = sw;
++            break;
++        }
++    }
++    if (audio_mixin[in].set) {
++        AUD_set_volume_out(sw, audio_mixin[in].mute, audio_mixin[in].lvol,
++                           audio_mixin[in].rvol);
++    }
++}
++
++void audio_mixin_detach(AudioMixIn in, SWVoiceOut *sw)
++{
++    int i;
++
++    for (i = 0; i < AUDIO_MIXIN_VOICES; i++) {
++        if (audio_mixin[in].sw[i] == sw) {
++            audio_mixin[in].sw[i] = NULL;
++        }
++    }
++}
++
++void audio_mixin_set_volume(AudioMixIn in, int mute, uint8_t lvol, uint8_t rvol)
++{
++    int i;
++
++    audio_mixin[in].set = true;
++    audio_mixin[in].mute = mute;
++    audio_mixin[in].lvol = lvol;
++    audio_mixin[in].rvol = rvol;
++    for (i = 0; i < AUDIO_MIXIN_VOICES; i++) {
++        if (audio_mixin[in].sw[i]) {
++            AUD_set_volume_out(audio_mixin[in].sw[i], mute, lvol, rvol);
++        }
++    }
++}
++
+ void AUD_set_volume_in (SWVoiceIn *sw, int mute, uint8_t lvol, uint8_t rvol)
+ {
+     Volume vol = { .mute = mute, .channels = 2, .vol = { lvol, rvol } };
+diff --git a/audio/audio.h b/audio/audio.h
+index fcc2230..4448361 100644
+--- a/audio/audio.h
++++ b/audio/audio.h
+@@ -135,6 +135,24 @@ typedef struct Volume {
+ void audio_set_volume_out(SWVoiceOut *sw, Volume *vol);
+ void audio_set_volume_in(SWVoiceIn *sw, Volume *vol);
+ 
++/*
++ * 2ksbox, patch 61: the analog inputs of the machine's sound card. On a
++ * real PC the FM chip and the CD drive's audio cable ran into the sound
++ * card's mixer, whose volume registers scaled them; here each is a voice
++ * of its own device. A source attaches its voice to its input, the card
++ * sets the input's volume, and whichever comes first, the other finds
++ * it. A machine with no card that sets one plays every input at unity.
++ */
++typedef enum AudioMixIn {
++    AUDIO_MIXIN_FM,
++    AUDIO_MIXIN_CD,
++    AUDIO_MIXIN_COUNT
++} AudioMixIn;
++
++void audio_mixin_attach(AudioMixIn in, SWVoiceOut *sw);
++void audio_mixin_detach(AudioMixIn in, SWVoiceOut *sw);
++void audio_mixin_set_volume(AudioMixIn in, int mute, uint8_t lvol, uint8_t rvol);
++
+ SWVoiceIn *AUD_open_in (
+     QEMUSoundCard *card,
+     SWVoiceIn *sw,
+diff --git a/hw/audio/sb16.c b/hw/audio/sb16.c
+index b575d99..f67c32e 100644
+--- a/hw/audio/sb16.c
++++ b/hw/audio/sb16.c
+@@ -23,6 +23,7 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include <math.h>
+ #include "hw/audio/soundhw.h"
+ #include "audio/audio.h"
+ #include "hw/irq.h"
+@@ -119,6 +120,7 @@ struct SB16State {
+ #define SAMPLE_RATE_MAX 45000
+ 
+ static void SB_audio_callback (void *opaque, int free);
++static void sb16_apply_volumes (SB16State *s);
+ 
+ static int magic_of_irq (int irq)
+ {
+@@ -229,6 +231,7 @@ static void continue_dma8 (SB16State *s)
+             SB_audio_callback,
+             &as
+             );
++        sb16_apply_volumes (s);
+     }
+ 
+     control (s, 1);
+@@ -392,6 +395,7 @@ static void dma_cmd (SB16State *s, uint8_t cmd, uint8_t d0, int dma_len)
+             SB_audio_callback,
+             &as
+             );
++        sb16_apply_volumes (s);
+     }
+ 
+     control (s, 1);
+@@ -894,6 +898,7 @@ static void legacy_reset (SB16State *s)
+         SB_audio_callback,
+         &as
+         );
++    sb16_apply_volumes (s);
+ 
+     /* Not sure about that... */
+     /* AUD_set_active_out (s->voice, 1); */
+@@ -1092,15 +1097,111 @@ static void reset_mixer (SB16State *s)
+     /* d5=output filt, d1=stereo switch */
+     s->mixer_regs[0x0e] = 0;
+ 
+-    /* voice volume L d5,d7, R d1,d3 */
+-    s->mixer_regs[0x04] = (4 << 5) | (4 << 1);
+-    /* master ... */
+-    s->mixer_regs[0x22] = (4 << 5) | (4 << 1);
+-    /* MIDI ... */
+-    s->mixer_regs[0x26] = (4 << 5) | (4 << 1);
++    /*
++     * 2ksbox, patch 61: the volumes are applied now (sb16_apply_volumes),
++     * so their reset values are what a guest that never programs the
++     * mixer hears -- which is most DOS games. A real CT1745 comes up at
++     * -14 dB master and voice with the CD input at its minimum, and a DOS
++     * user's AUTOEXEC ran a mixer program to fix that; nothing here would,
++     * and CD music would be silent. So every volume starts at 0 dB and the
++     * CD input switched on: exactly what the machine sounded like before
++     * the registers meant anything. Windows' SB16 driver writes its own
++     * Volume Control settings at boot, so a Windows guest never hears
++     * these.
++     */
++    for (i = 0x30; i < 0x38; i++) {
++        s->mixer_regs[i] = 0xf8;    /* master, voice, FM, CD: 31 = 0 dB */
++    }
++    for (i = 0x38; i < 0x3c; i++) {
++        s->mixer_regs[i] = 0;       /* line, mic, PC speaker */
++    }
++    s->mixer_regs[0x3c] = 0x1f;     /* output switches: line, CD, mic */
++    s->mixer_regs[0x3d] = 0x15;     /* input switches, left */
++    s->mixer_regs[0x3e] = 0x0b;     /* input switches, right */
++    for (i = 0x3f; i < 0x44; i++) {
++        s->mixer_regs[i] = 0;       /* input and output gain, AGC */
++    }
++    for (i = 0x44; i < 0x48; i++) {
++        s->mixer_regs[i] = 0x80;    /* treble and bass: flat */
++    }
++    /* the SB Pro view of the same volumes (sb16_mixer_compat) */
++    s->mixer_regs[0x04] = 0xff;     /* voice */
++    s->mixer_regs[0x22] = 0xff;     /* master */
++    s->mixer_regs[0x26] = 0xff;     /* FM */
++    s->mixer_regs[0x28] = 0xff;     /* CD */
++    s->mixer_regs[0x2e] = 0;        /* line */
++}
++
++/*
++ * 2ksbox, patch 61: the CT1745's output mixer, applied. QEMU stored these
++ * registers and applied none, so every source played at full scale and a
++ * game's effects over its CD music summed past what 16 bits hold -- the
++ * crackle in Carmageddon's races (docs/00-status.md). Windows' Volume
++ * Control writes exactly these, so its sliders work again and the mix has
++ * the headroom the real card left.
++ *
++ * A level register holds 5 bits in 7:3, 2 dB a step: 31 = 0 dB, 0 = -62
++ * dB. The output gain (0x41/0x42, bits 7:6) adds 0/6/12/18 dB. The card's
++ * own voice is master x voice; the FM chip and the CD drive are voices of
++ * other devices, reached through their mixer inputs (audio_mixin_*), and
++ * the CD's also passes the output switches in 0x3C (bit 2 left, bit 1
++ * right). A voice cannot be made louder than unity, so a total above 0 dB
++ * is 0 dB.
++ */
++static int sb16_level (uint8_t reg)
++{
++    return ((reg >> 3) - 31) * 2;
++}
+ 
+-    for (i = 0x30; i < 0x48; i++) {
+-        s->mixer_regs[i] = 0x20;
++static uint8_t sb16_vol (int db)
++{
++    if (db >= 0) {
++        return 255;
++    }
++    return (uint8_t) lrint (255.0 * pow (10.0, db / 20.0));
++}
++
++static void sb16_apply_volumes (SB16State *s)
++{
++    const uint8_t *m = s->mixer_regs;
++    int master_l = sb16_level (m[0x30]) + (m[0x41] >> 6) * 6;
++    int master_r = sb16_level (m[0x31]) + (m[0x42] >> 6) * 6;
++
++    AUD_set_volume_out (s->voice, 0,
++                        sb16_vol (master_l + sb16_level (m[0x32])),
++                        sb16_vol (master_r + sb16_level (m[0x33])));
++    audio_mixin_set_volume (AUDIO_MIXIN_FM, 0,
++                            sb16_vol (master_l + sb16_level (m[0x34])),
++                            sb16_vol (master_r + sb16_level (m[0x35])));
++    audio_mixin_set_volume (AUDIO_MIXIN_CD, 0,
++                            m[0x3c] & 4 ? sb16_vol (master_l + sb16_level (m[0x36])) : 0,
++                            m[0x3c] & 2 ? sb16_vol (master_r + sb16_level (m[0x37])) : 0);
++}
++
++/*
++ * The SB Pro's volume registers are a view of the SB16's on a CT1745: a
++ * write to one lands on the other. SB Pro holds 4 bits a side (left in
++ * 7:4, right in 3:0); SB16 level n4 is 5-bit (n4 << 1) | 1.
++ */
++static void sb16_mixer_compat (SB16State *s, int nreg, uint8_t val)
++{
++    static const struct { uint8_t pro, sb16; } map[] = {
++        { 0x04, 0x32 },     /* voice */
++        { 0x22, 0x30 },     /* master */
++        { 0x26, 0x34 },     /* FM */
++        { 0x28, 0x36 },     /* CD */
++        { 0x2e, 0x38 },     /* line */
++    };
++    uint8_t *m = s->mixer_regs;
++    size_t i;
++
++    for (i = 0; i < ARRAY_SIZE (map); i++) {
++        if (nreg == map[i].pro) {
++            m[map[i].sb16] = (val & 0xf0) | 0x08;
++            m[map[i].sb16 + 1] = ((val & 0x0f) << 4) | 0x08;
++        } else if (nreg == map[i].sb16 || nreg == map[i].sb16 + 1) {
++            m[map[i].pro] = (m[map[i].sb16] & 0xf0) | (m[map[i].sb16 + 1] >> 4);
++        }
+     }
+ }
+ 
+@@ -1164,6 +1265,8 @@ static void mixer_write_datab(void *opaque, uint32_t nport, uint32_t val)
+     }
+ 
+     s->mixer_regs[s->mixer_nreg] = val;
++    sb16_mixer_compat (s, s->mixer_nreg, val);
++    sb16_apply_volumes (s);
+ }
+ 
+ static uint32_t mixer_read(void *opaque, uint32_t nport)
+@@ -1319,6 +1422,7 @@ static int sb16_post_load (void *opaque, int version_id)
+                 SB_audio_callback,
+                 &as
+                 );
++            sb16_apply_volumes (s);
+         }
+ 
+         control (s, 1);
+@@ -1431,6 +1535,7 @@ static void sb16_realizefn (DeviceState *dev, Error **errp)
+     s->csp_regs[9] = 0xf8;
+ 
+     reset_mixer (s);
++    sb16_apply_volumes (s);
+     s->aux_ts = timer_new_ns(QEMU_CLOCK_VIRTUAL, aux_timer, s);
+     if (!s->aux_ts) {
+         error_setg(errp, "warning: Could not create auxiliary timer");
+diff --git a/hw/ide/atapi.c b/hw/ide/atapi.c
+index 33a1cb9..1c7c438 100644
+--- a/hw/ide/atapi.c
++++ b/hw/ide/atapi.c
+@@ -405,6 +405,11 @@ void ide_atapi_audio_init(IDEState *s, QEMUSoundCard *card)
+     s->atapi_card = card;
+ #ifdef CONFIG_CDIMAGE
+     s->atapi_voice = AUD_open_out(card, NULL, "cd-audio", s, atapi_audio_cb, &as);
++    if (s->atapi_voice) {
++        /* the drive's analog out, cabled to the sound card's CD input:
++         * that card's CD volume scales it (patch 61) */
++        audio_mixin_attach(AUDIO_MIXIN_CD, s->atapi_voice);
++    }
+ #else
+     (void)as;
+ #endif
+diff --git a/hw/ide/core.c b/hw/ide/core.c
+index bb376e6..7000499 100644
+--- a/hw/ide/core.c
++++ b/hw/ide/core.c
+@@ -2833,6 +2833,7 @@ void ide_exit(IDEState *s)
+         s->atapi_play_timer = NULL;
+     }
+     if (s->atapi_voice) {
++        audio_mixin_detach(AUDIO_MIXIN_CD, s->atapi_voice);
+         AUD_close_out(s->atapi_card, s->atapi_voice);
+         s->atapi_voice = NULL;
+     }

@@ -2,9 +2,12 @@
  * embedaudio.c — QEMU audio backend that clips the mixed guest output
  * straight into a caller-owned SPSC ring buffer (libqemu_embed.h:
  * qemu_embed_set_audio_ring). Launch with:
- *   -audiodev embed,id=snd0,out.frequency=48000,out.channels=2,out.format=s16
+ *   -audiodev embed,id=snd0,out.frequency=48000,out.channels=2,out.format=f32
  *                   [,out.buffer-length=40000]
- * fixed_settings (default) yields exactly one HWVoiceOut in that format.
+ * fixed_settings (default) yields exactly one HWVoiceOut in that format. The
+ * backend moves bytes and does not care which; the player asks for f32
+ * because QEMU's s16 conversion saturates a mix that sums past full scale
+ * and its float conversion does not (player/src/audio.rs has the limiter).
  *
  * Producer (QEMU main loop, BQL held, one mixer tick every timer-period =
  * 10 ms) advances wr; consumer (host audio thread, the DAC's clock) advances
