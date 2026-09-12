@@ -309,6 +309,24 @@ and the numbers, on this box and the Air; the command-FIFO window as RAM
 and the region without the BQL if the profile asks; a hardened
 `fatal()`; Windows.
 
+## M14 — Glide 3  (Active; `docs/tracks/m14-glide3.md`)
+
+Opened 2026-09-12. qemu-3dfx's guest `GLIDE3X.DLL` and its dispatcher
+were already here; the host library they call into was not, because
+OpenGLide stops at Glide 2.x. Diablo II is the title that asked for it
+(its Glide renderer beats its Direct3D one). Built as **our own Glide 3
+layer over OpenGLide** — the user's pick over emulating a Voodoo 2, which
+stays "later, if a game demands it" and would sit beside it.
+
+- **Step 1** ✅ 2026-09-12: `glidept/host/glide3.cpp` — one library for
+  both APIs, the dispatcher's `wrap3x_` lookup doing the choosing; the
+  vertex-layout API, the vertex arrays, clip coordinates, `grGet`, the
+  log2 texture encoding, the context and the saved state. `glide3-host`
+  in the suite; `GLIDE3TEST.EXE` for a guest.
+- **Step 2** a real title: Diablo II, then Unreal Tournament, then NFS
+  Porsche — and whatever they find missing (a second TMU, the Voodoo 2
+  extension set, gamma tables).
+
 ## Post-v1 candidates
 
 Recording/streaming, CRT bezel packs, VRR pacing,

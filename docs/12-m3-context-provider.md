@@ -200,7 +200,10 @@ the tree but never compiled and the embed library is the only provider.
    (LGPL, `third_party/openglide` at `ad9a3dd`), pinned as a submodule with
    a two-patch queue (`patches/openglide/README.md`) and built by
    `scripts/build-glide.sh` -- 121 of the 183 entry points `hw/3dfx` looks
-   up, which is all of Glide 2.x; Glide 3 and the Voodoo3 `Ext` set are not
+   up, which is all of Glide 2.x. Glide 3 is our own layer over it since
+   2026-09-12 (`glidept/host/glide3.cpp`, M14, `docs/tracks/m14-glide3.md`):
+   the same library, reached through the `wrap3x_` names hw/3dfx prefers
+   for a `glide3x.dll` guest; the Voodoo3 `Ext` set is still not
    there. It is the implementation upstream's own wrapper is derived from,
    so `glidewnd.c`'s `WRAPPER_FLAG_*` word already means something to it.
 

@@ -19,10 +19,12 @@ OpenGLide is the open implementation, and the one upstream's is derived from
 already here; kjliew's fork widened it to `_setConfig@8`). Of the 183 entry
 points it defines **121**, which is every one Glide 2.x needs —
 `grSstWinOpen`, `grBufferSwap`, `grDrawTriangle`, `grTexDownloadMipMap`,
-`grLfbLock`/`Unlock`, `guTexAllocateMemory`. The 62 it lacks are Glide 3
+`grLfbLock`/`Unlock`, `guTexAllocateMemory`. The 62 it lacked were Glide 3
 (`grDrawVertexArray`, `grVertexLayout`, `grGet`…), the Voodoo3/Napalm `…Ext`
-extensions, and the Glide 2.11 LFB API — so `glide3x.dll` guests and a
-handful of late titles are out of scope until someone adds them.
+extensions, and the Glide 2.11 LFB API. **Glide 3 is ours since
+2026-09-12** — `glidept/host/glide3.cpp`, not a patch, because nothing
+inside OpenGLide had to change for it (M14, `docs/tracks/m14-glide3.md`,
+and the section at the end of this file); the `…Ext` set is still missing.
 
 The build is `scripts/build-glide.sh`, which compiles the sources directly
 rather than carrying OpenGLide's autotools: its `configure` looks for SDL
@@ -125,6 +127,14 @@ would be built from, surveyed so it is not re-surveyed:
   unverified. **Zeckensack's**, **Sven's** and **nGlide** are closed.
 - **kjliew's donor fork of OpenGLide** implements Glide 3 — which is why the
   dispatcher already exposes all 183 names — and is not published.
+
+**Built 2026-09-12 (M14):** the user took the wrapper route without the
+86Box measurement below. It came out as a layer beside OpenGLide rather
+than a patch series inside it — hw/3dfx already looks up `wrap3x_<name>`
+before `<name>` for a Glide 3 guest, so `glidept/host/glide3.cpp` exports
+the translated calls under those names and OpenGLide's Glide 2 exports
+serve the rest, one library for both APIs. `docs/tracks/m14-glide3.md` has
+the design and what is left. The survey as written before it:
 
 So it would be **our extension of OpenGLide**, a patch series like this one,
 written from the 3dfx source. The shape is smaller than "62 functions"
