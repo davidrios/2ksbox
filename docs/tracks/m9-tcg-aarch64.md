@@ -1253,11 +1253,32 @@ has none**). Everything below is on `main`. The benchmark: 3DMark 99 Max on
 the `claude98` machine (Win98 SE, DirectX 9.0c, our display driver,
 800×600×16, triple buffer, "Pentium III optimizations", `-cpu pentium3`),
 driven headless by **`tools/w98-3dmark.sh`** (it clicks through 3DMark over
-a USB tablet and screendumps the score; `qemu.log`'s `ddi: N frames/s`
-lines are the per-test rates, and the first-person test is the slowest
-game window, ~40–56 s after the click).
+a USB tablet and screendumps the score; since 2026-09-12 it screendumps
+every 5 s and **`tests.txt`** places every `ddi: N frames/s` and page-flip
+line by the test that was on screen — read a test's rate there, never off
+a bare rate line: the correction below).
 
-| Step | 3DMarks | CPU 3DMarks | First person |
+**Correction, 2026-09-12 — read before the table.** The "First person"
+column is *not* the first-person test. It is the executor's `ddi:` line
+for the 40–56 s window after the click, and screendumps every 5 s against
+the timeline show that window to be ~5 s of the first-person test's tail
+followed by ~9 s of **"Synthetic CPU 3D Speed"**, which presents about two
+frames a second; the line prints on the first readback 5 s after the
+previous one, so its "frames/s" is a frame count over a window that is
+two-thirds empty. The first-person test itself is the 25–45 s stretch,
+and **3DMark's own on-screen counter reads 60.0 in it in every run since
+`3dmA` (2026-09-11, 19:52)** — the 60 Hz flip cap, like the race test;
+with the vertical blank off it does 90–99 fps on the patch 44 build and
+95–105 on patch 45. Every "first person" number below therefore tracked
+the CPU test (which the CPU 3DMarks score measures honestly), the
+profiles cut at 40–56 s were mostly of that test, and the levers picked
+from them were picked for it. **The user closed the optimization work on
+2026-09-12** ("we don't need any more optimisations"): both game tests
+are at the cap on the Ryzen. What is still open is the Mac (items 1 and 2
+below): the aarch64 build of patches 39 and 45 has never been compiled,
+and the Air is the machine the track is named for.
+
+| Step | 3DMarks | CPU 3DMarks | "First person" (see the correction above) |
 |---|---|---|---|
 | before (the user's own number too) | 3334 | 10969 | 4.5 fps |
 | **patch 35** — a per-page 64-chunk code map: data writes to a page with code at both ends stop walking its TB list | 5894 | 11648 | 13.6 |
@@ -1329,7 +1350,10 @@ lighting code 13 %; MAX-FX's C++ core `e2mfc.DLL` 9 % (virtual calls and
 **The method, which is the reusable part:**
 - **Profile the whole run and cut it by time** (`w98-3dmark.sh <n> whole`
   with `EXTRA=-perfmap`; `click.txt` and the `ddi:` lines place the tests).
-  One 10 s window lands on one test only and misled twice.
+  One 10 s window lands on one test only and misled twice — and a
+  window taken from the rate lines' own timing misled for a whole day
+  (the correction at the head of this section): take a test's seconds
+  from `tests.txt`, which names the test on screen every 5 s.
 - **perfmap entries are per guest instruction**, not per TB. Group the
   samples by instruction *form* (memory vs register operand, SSE / x87 /
   integer) and look at samples per instruction: the uneven form is the
@@ -1418,11 +1442,12 @@ exact binary64 integer, a reload from `fpregs[]` accepts exponents
 −126..127, and the unwinder (`tcg-cpu.c`) converts from binary32 for a
 block whose TB flags say mode 2.
 
-**Measured**: first person 26.2 → 27.8 fps (vertical blank off), 19.0 →
-19.5 (on), CPU 3DMarks 16295 → 16899, 3DMarks 6005 at the 60 Hz cap. The
-race windows +4 %. Less than "x87 is 24 % of the frame" promised, because
-a `fmul m32` is mostly its softmmu TLB chain and load, not the multiply —
-item 4.
+**Measured**: the 40–56 s window 26.2 → 27.8 fps (vertical blank off),
+19.0 → 19.5 (on) — which is the CPU 3D Speed test's window, not the
+first-person test's (the correction at the head of the "Win98 3D"
+section, found the same day); the first-person test itself 90–99 → 95–105
+fps uncapped, 60.0 capped before and after; CPU 3DMarks 16295 → 16899,
+3DMarks 6005 at the cap. The race windows +4 %.
 
 **The battery had a hole**: `tools/x87-guest-test.py` runs `fninit`
 before every case, so no block of it was ever translated with PE sticky —
@@ -1443,6 +1468,11 @@ the time and the 3DMark run above is the evidence so far.
 
 ## Next steps, in order
 
+**Closed by user decision, 2026-09-12** (the correction at the head of
+the "Win98 3D" section): the game tests run at the 60 Hz cap on the
+Ryzen, so items 3–6 below are not pursued; items 1 and 2 (the Mac) are
+what remains, and they are verification, not optimization.
+
 **From the Win98 3D session (2026-09-11), in order** — the section above:
 
 0. ~~**Measure the first-person test with `DDFLAGS=32768`**~~ — done:
@@ -1457,13 +1487,17 @@ the time and the 3DMark run above is the evidence so far.
    was written on an x86-64 host. The SSE battery (every packed op, its
    check and its slow block, on/off identical) is its test; then the x87
    battery for patch 37 and `scripts/test.sh all`.
-2. **The first-person test on the Air** (`tools/w98-3dmark.sh`), to know
-   what TCG on aarch64 makes of the same patches.
+2. **The two game tests on the Air** (`tools/w98-3dmark.sh <name>`, then
+   read `build/w98game/<name>/tests.txt` and the scores off `score.png`),
+   to know what TCG on aarch64 makes of the same patches: whether the
+   race and the first-person test reach the 60 Hz cap there, and with
+   `DDFLAGS=32768` what they do uncapped (95–105 fps on the Ryzen).
 3. ~~**x87 at PC=24 as binary32**~~ — **patch 45, 2026-09-12** (the
    section below): first person 26.2 → 27.8 fps with the vertical blank
-   off, 19.0 → 19.5 with it on, CPU 3DMarks 16295 → 16899. Less than the
-   form weights promised (x87 24 % of the frame): the memory forms' cost is
-   mostly the softmmu chain in front of the operation, which is item 4.
+   off, 19.0 → 19.5 with it on, CPU 3DMarks 16295 → 16899 — numbers of the
+   CPU 3D Speed window, see the correction at the head of the "Win98 3D"
+   section; the first-person test itself went 90–99 → 95–105 fps uncapped
+   and was at the 60 Hz cap before and after.
 4. **The TLB chain's two env loads as immediates**: the mask and table of
    an mmu index are constants once the table's size is fixed (patch 16
    floors it, patch 44 clears it by filled entries so a bigger fixed size

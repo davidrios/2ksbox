@@ -23,9 +23,13 @@
 #            + 5 s into pages/<page>.bin, for tools/tcg-form-weights.py
 #     QEMU_TCG_OPTS=tlb-retire=off: an accelerator switch for the A/B,
 #            through win98-game-test.sh
-# Output: build/w98game/<name>/ -- score-*.png (read the score off the last),
-# qemu.log (its `ddi: N frames/s` lines are the per-test frame rates),
-# click.txt (the click's epoch, to place profile windows), perf.data.
+# Output: build/w98game/<name>/ -- score.png (the score dialog; read the
+# two scores off it), **tests.txt** (every `ddi:` and page-flip rate line
+# placed by test, from a screendump every 5 s in tests/: that is where a
+# game test's frame rate is read, never off a bare rate line, whose window
+# can be a loading screen or the CPU 3D Speed test -- the 2026-09-12
+# correction in the track doc), qemu.log, click.txt (the click's epoch, to
+# place profile windows: take a test's seconds from tests.txt), perf.data.
 # Settings are the image's own (the user's: 800x600x16, triple buffer,
 # Pentium III optimizations). Local only: needs the image.
 set -u
@@ -94,14 +98,28 @@ elif [ "$MODE" = whole ]; then
   perf record -F 199 -p $P -o "$O/perf.data" -- sleep "${PERF_SECS:-200}" \
     >"$O/perf.log" 2>&1 &
 fi
-# the score dialog: the benchmark took ~170 s with vsync on; shoot every 15 s
-# from 150 s and keep the last few, the score is the one that stops changing
+# a screendump every 5 s after the click into tests/t<secs>.png: the game
+# tests are told from 3DMark's "Now testing" splash by pixels and every
+# rate line is placed by test (tools/w98-3dmark-tests.py -> tests.txt),
+# because a `ddi:` line's window can span a test's loading screen or the
+# CPU 3D Speed test and read as a frame rate that is not one. The score
+# dialog is the last shot (score.png); the loop ends 10 s after it shows,
+# or at 420 s (the benchmark takes ~170 s here with vsync on, the Air is
+# slower).
+mkdir -p "$O/tests"
+seen=0
 while [ $(( $(date +%s) - T0 )) -lt 420 ]; do
-  sleep 15
-  [ $(( $(date +%s) - T0 )) -ge 150 ] && q screendump "$O/score-$(( $(date +%s) - T0 )).png" >/dev/null
+  sleep 5
+  s=$(( $(date +%s) - T0 ))
+  f="$O/tests/t$(printf '%03d' $s).png"
+  q screendump "$f" >/dev/null 2>&1 || continue
+  if [ "$(python3 tools/w98-3dmark-tests.py classify "$f.ppm" 2>/dev/null)" = score ]; then
+    cp "$f" "$O/score.png"; seen=$((seen + 1)); [ $seen -ge 2 ] && break
+  fi
 done
 q json '{"execute":"system_powerdown"}' >/dev/null
 [ "$MODE" = whole ] && cp /tmp/perf-*.map "$O/" 2>/dev/null
 wait $H
 grep -E "ddi: [0-9.]+ frames" "$O/qemu.log" | sed 's/.*d3dpt-vga: //' > "$O/rates.txt"
+python3 tools/w98-3dmark-tests.py report "$O" || echo "tests.txt: the game tests or the score were not seen on screen -- look at $O/tests/"
 echo "done: $O ($(wc -l < "$O/rates.txt") rate lines)"
