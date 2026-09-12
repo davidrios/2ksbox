@@ -265,7 +265,17 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   title bar in its dialog check, and no longer uses GNU `date +%N`. With
   those, 3DMark ran end to end on `win98-2` (800×600×32, before patch
   45): **5968 3DMarks, 14613 CPU 3DMarks** against the Ryzen's 6003 /
-  16295.
+  16295. **With patch 45** (the Mac verification, the track doc's items 1
+  and 2): every DOS battery exact on aarch64 — patch 39's never-compiled
+  encoding and patch 45's binary32 path included — and 3DMark at **6001 /
+  16085** with **both game tests at the 60 Hz cap** (race 59.8, first
+  person 59.8 fps by `tests.txt`), against the Ryzen's 6005 / 16899.
+  Uncapped (`DDFLAGS=32768`): 9235 / 16494, race 95.6 fps, first person
+  ≈ 85 fps against the Ryzen's 95–105. The one gap: single-precision x87
+  at PC=24 runs 29 % behind PC=53 here, where the Ryzen has them equal
+  (track doc, item 1). **Open:** `tools/w98-3dmark-tests.py` split that
+  uncapped run's first-person test at one missing screendump and reported
+  no rate for it (it joins shots only up to 7 s apart; track doc, item 2).
 
 - **DOS Quake in a Win98 DOS box speeds up for a moment now and then**
   (2026-09-10, user report; unthrottled Win98, `quake.exe`; QEMU's half

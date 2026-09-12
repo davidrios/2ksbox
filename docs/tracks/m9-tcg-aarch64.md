@@ -1481,17 +1481,45 @@ what remains, and they are verification, not optimization.
    it on will move in steps as frames cross refresh periods; judge the
    remaining work by the vertical-blank-off number (the 60 the user asked
    for means the CPU-bound frame under 16.7 ms, i.e. 2.3× from here).
-1. **On the Mac, first: `scripts/build.sh`, then `tools/sse-guest-test.py`.**
-   Patch 39's aarch64 encoding (`cmlt #0` / `uminv` / `umov` / `eor` on
-   `TCG_VEC_TMP0`, `I3617_UMINV = 0x2e31a800`) has never been compiled — it
-   was written on an x86-64 host. The SSE battery (every packed op, its
-   check and its slow block, on/off identical) is its test; then the x87
-   battery for patch 37 and `scripts/test.sh all`.
+1. ~~**On the Mac, first: `scripts/build.sh`, then `tools/sse-guest-test.py`.**~~
+   — **done on the Air, 2026-09-12**, patches 35–45 built clean. Patch 39's
+   aarch64 encoding compiles and is exact: the SSE battery's 546,425
+   result lines are identical on/off (packed 12.0×, scalar 3.6×, MMX 3.6×,
+   clamp+cmp 7.3× — the last two on the aarch64 fallbacks the docs called
+   unvalidated). The x87 battery with patch 45 is identical over its full
+   709,893 lines (the PE-set sweep included); SMC 18/18 in every
+   `smc-same-value` × `soft-imm` combination, rep, PIT, ATAPI, MIDI and
+   pad all pass, and `scripts/test.sh host` is 33/33. Its XP guest check
+   is Linux-only (`mkfs.fat`, `sfdisk`) and did not run. **One gap
+   against the Ryzen**: the single-precision x87 loop at PC=24
+   (`X87BEN2S`, the shape patch 45 targets) takes 0.49 s here against
+   PC=53's 0.38 s — the Ryzen has the two equal at 0.33 s — and the m64
+   loop at PC=24 0.71 s (Ryzen 0.44 s). Binary32 on aarch64 does not yet
+   reach PC=53's speed; not profiled.
 2. **The two game tests on the Air** (`tools/w98-3dmark.sh <name>`, then
    read `build/w98game/<name>/tests.txt` and the scores off `score.png`),
    to know what TCG on aarch64 makes of the same patches: whether the
    race and the first-person test reach the 60 Hz cap there, and with
    `DDFLAGS=32768` what they do uncapped (95–105 fps on the Ryzen).
+   **Capped half done, 2026-09-12**, on the user's `win98-2` (English 98
+   SE, DirectX 9.0c, our driver, 800×600×32, `TDM_DIR=\PROGRA~1\3DMARK~1`),
+   patches through 45: **both game tests at the 60 Hz cap** — race 59.8,
+   first person 59.8 fps, the latter placed at 36–47 s by `tests.txt`'s
+   classifier and checked by eye (3DMark's own counter reads 60.17) —
+   **6001 3DMarks, 16085 CPU 3DMarks** against the Ryzen's 6005 / 16899.
+   The same image before patch 45 scored 5968 / 14613, so 45 is worth
+   +10 % CPU 3DMarks here too. **Uncapped (`DDFLAGS=32768`), same image
+   and build: 9235 3DMarks, 16494 CPU 3DMarks; race 95.6 fps (windows
+   89.7 and 101.5); first person ≈ 85 fps** (the three windows wholly
+   inside it, 31–46 s after the click, read 87.9 / 82.7 / 84.2; 3DMark's
+   own counter in the 43 s shot says 92.38) — some 10–15 % under the
+   Ryzen's 95–105, and far clear of the cap either way. **A flaw in
+   `tools/w98-3dmark-tests.py`, open:** that run's `tests.txt` gave the
+   first-person test no rate, because the shot at ~32 s is missing and the
+   report only joins shots up to 7 s apart, so the test split into a
+   27–27 s run and a 37–48 s one and the report took the first; the
+   numbers above are from the raw `ddi:` lines and the screendump. Joining
+   across one missing shot, or taking the longest `f` run, would fix it.
 3. ~~**x87 at PC=24 as binary32**~~ — **patch 45, 2026-09-12** (the
    section below): first person 26.2 → 27.8 fps with the vertical blank
    off, 19.0 → 19.5 with it on, CPU 3DMarks 16295 → 16899 — numbers of the
