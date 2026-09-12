@@ -7,6 +7,12 @@
 # own from OpenGLide (LGPL, third_party/openglide) with the window-less
 # platform layer in glidept/host/ — doc 12 §5, patches/openglide/README.md.
 #
+# The same library serves a guest's glide3x.dll: for that one hw/3dfx looks
+# up wrap3x_<name> before <name>, and glidept/host/glide3.cpp is the Glide
+# 3 layer that answers (docs/tracks/m14-glide3.md). libglide3x is only a
+# second name for it, the one hw/3dfx's own search tries for a Glide 3
+# guest when QEMU_GLIDE_LIB is unset.
+#
 #   scripts/build-glide.sh            this host
 #
 # The result is loaded by QEMU, not linked into it: point it at the build
@@ -66,4 +72,5 @@ echo "==> ${#srcs[@]} sources -> $LIB"
   "${srcs[@]}" \
   -I"$OUT" -I"$OG" -I"$PLATDIR" -I"$ROOT/glidept" -I"$ROOT/glidept/host" "${INC[@]}" \
   "${GL[@]}" -ldl
-echo "==> $LIB"
+ln -sf "$(basename "$LIB")" "$OUT/$(basename "$LIB" | sed 's/glide2x/glide3x/')"
+echo "==> $LIB (and libglide3x, the same library)"

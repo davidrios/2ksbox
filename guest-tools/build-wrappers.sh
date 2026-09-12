@@ -279,6 +279,13 @@ i686-w64-mingw32-gcc -O2 -o "$T/modetest.exe" "$ROOT/guest-tools/src/modetest.c"
 # implement. Run it next to (or with) the installed GLIDE2X.DLL.
 i686-w64-mingw32-gcc -O2 -o "$T/glidetest.exe" "$ROOT/guest-tools/src/glidetest.c" \
   -I"$ROOT/third_party/openglide" -L"$G" -lglide2x -luser32
+# GLIDE3TEST.EXE: the same through GLIDE3X.DLL (docs/tracks/m14-glide3.md) —
+# the guest half of `tools/glide-host-test 3`: a game's own vertex layout, a
+# continued strip, clip coordinates, a log2-encoded texture, a reopen, each
+# read back through grLfbLock. glidept/glide3.h is what Glide 3 added to
+# the 2.4 header, and its prototypes for the calls whose signature changed.
+i686-w64-mingw32-gcc -O2 -o "$T/glide3test.exe" "$ROOT/guest-tools/src/glide3test.c" \
+  -I"$ROOT/third_party/openglide" -I"$ROOT/glidept" -L"$G" -lglide3x -luser32
 # GL smoke test: Mesa's wglgears, ships in qemu-3dfx's demos. Run it next to
 # OPENGL32.DLL inside the guest; the title/console shows the renderer.
 i686-w64-mingw32-gcc -O2 -o "$T/wglgears.exe" "$FX/wrappers/mesa/demos/wglgears.c" \

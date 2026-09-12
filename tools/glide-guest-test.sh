@@ -36,6 +36,12 @@
 # DUMP_SEQ=n (the player writes its own shaded frame #n to frame.png and
 # **ends the run there** — the dump exits the player; the guest's own
 # readback is the evidence, this is only for eyes).
+#
+# TEST=glide3 runs GLIDE3TEST.EXE instead (docs/tracks/m14-glide3.md): the
+# same chain through the guest's GLIDE3X.DLL, which hw/3dfx serves from the
+# same host library through its wrap3x_ entry points — a game's own vertex
+# layout, a continued strip, clip coordinates, a log2-encoded texture and a
+# reopen, the verdict `glide3test: N cases, 0 failed`.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -50,7 +56,14 @@ QLOG="$OUT/player.log"
 # checkout is already close: keep the socket short and outside the tree
 SOCK="${SOCK:-/tmp/2ks-glide.sock}"
 QEMU="$ROOT/build/qemu/qemu-system-i386"
-EXE="$OUT/GLIDETEST.EXE"
+# TEST=glide3: GLIDE3TEST.EXE against GLIDE3X.DLL; default GLIDETEST, GLIDE2X
+case "${TEST:-glide}" in
+  glide) PROG=glidetest; GLIB=glide2x ;;
+  glide3) PROG=glide3test; GLIB=glide3x ;;
+  *) echo "TEST=glide or TEST=glide3"; exit 1 ;;
+esac
+PROGU="$(echo "$PROG" | tr a-z A-Z)"
+EXE="$OUT/$PROGU.EXE"
 # PACKAGE=<staged tree or install prefix> runs the whole thing out of a
 # package rather than the checkout: its player, its firmware, its
 # guest-tools ISO — and, the point of it, **no `QEMU_GLIDE_LIB`**, so the
@@ -86,11 +99,11 @@ fi
 # UCRT, which Win9x has none of, and the failure is a "A required .DLL file,
 # API-MS-WIN-CRT-CONVERT-L1-1-0.DLL, was not found" box in the guest with an
 # empty serial log to look at. -march=pentium3 is the guest CPU floor.
-echo "==> building GLIDETEST.EXE"
+echo "==> building $PROGU.EXE"
 i686-w64-mingw32-gcc -O2 -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
-  -o "$EXE" "$ROOT/guest-tools/src/glidetest.c" \
-  -I"$ROOT/third_party/openglide" \
-  -L"$ROOT/third_party/qemu-3dfx/wrappers/3dfx/build" -lglide2x -luser32 \
+  -o "$EXE" "$ROOT/guest-tools/src/$PROG.c" \
+  -I"$ROOT/third_party/openglide" -I"$ROOT/glidept" \
+  -L"$ROOT/third_party/qemu-3dfx/wrappers/3dfx/build" -l"$GLIB" -luser32 \
   -march=pentium3 -mtune=generic
 if objdump -p "$EXE" | grep -q 'api-ms-win-crt'; then
   echo "ERROR: $EXE links against the UCRT (not loadable on Win9x)"; exit 1
@@ -107,15 +120,15 @@ fi
       printf 'if exist %s:\\SETUP.EXE %s:\\SETUP.EXE /ALL > COM1\n' "$d" "$d"
     done
   fi
-  echo 'echo ==== glidetest > COM1'
-  printf 'A:\\GLIDETEST.EXE -res %s > COM1\n' "${RES:-7}"
+  echo "echo ==== $PROG > COM1"
+  printf 'A:\\%s.EXE -res %s > COM1\n' "$PROGU" "${RES:-7}"
   echo 'echo GLIDEDONE > COM1'
 } > "$OUT/RUN.BAT"
 sed -i 's/\r$//; s/$/\r/' "$OUT/RUN.BAT"
 rm -f "$FLOPPY"
 mkfs.fat -C -F 12 "$FLOPPY" 1440 >/dev/null
 mcopy -o -i "$FLOPPY" "$OUT/RUN.BAT" ::/RUN.BAT
-mcopy -o -i "$FLOPPY" "$EXE" ::/GLIDETEST.EXE
+mcopy -o -i "$FLOPPY" "$EXE" ::/"$PROGU".EXE
 
 # REUSE=1 keeps the overlay from the last run — the Glide wrapper is already
 # installed in it and Win98 has already settled, which halves the run
@@ -200,9 +213,9 @@ echo "wrapper log: $OUT/wrapper.log"
 echo "screendumps: $OUT/*.png${DUMP_SEQ:+, frame $OUT/frame.png}"
 grep -a "glidept:" "$QLOG" 2>/dev/null | head -5 || true
 
-if grep -qa "glidetest: .* 0 failed" "$LOG" 2>/dev/null; then
-  echo "PASS $(grep -a 'glidetest: .* cases' "$LOG" | tail -1 | tr -d '\r')"
+if grep -qa "$PROG: .* 0 failed" "$LOG" 2>/dev/null; then
+  echo "PASS $(grep -a "$PROG: .* cases" "$LOG" | tail -1 | tr -d '\r')"
   exit 0
 fi
-echo "FAIL — no clean 'glidetest: N cases, 0 failed' on the serial line"
+echo "FAIL — no clean '$PROG: N cases, 0 failed' on the serial line"
 exit 1

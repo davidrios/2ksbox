@@ -165,6 +165,10 @@
 #                  (Linux) — the real host wrapper loaded by hw/3dfx, opened
 #                  through glidewnd.c's handshake, a triangle checked in the
 #                  frame the frontend receives, orientation included
+#   glide3-host    the same tool as a glide3x.dll guest (docs/tracks/m14-glide3.md):
+#                  every export of the guest DLL resolves in the wrapper, and a
+#                  game's own vertex layout, a continued strip, clip coordinates,
+#                  a log2-encoded texture and the saved state come out right
 #   d3dpt-exec     tools/d3dpt-exec-test.cpp: guest encoder → decoder → DXVK,
 #                  frames delivered, hostile batch refused
 #   d3dpt-dp2      tools/d3dpt-dp2-test.cpp: the display driver's records (doc 15
@@ -2110,15 +2114,20 @@ host_stage() {
   # Linux (EGL) only, one VM per process, like embed-3d above.
   if [ "$OS" = Linux ] && [ -f build/qemu/libqemu-embed-i386.so ] \
      && [ -f build/glide/libglide2x.so ]; then
-    if c++ -O1 -std=c++17 -w -Iembed -Ithird_party/openglide -Iqemu/hw/3dfx \
+    if c++ -O1 -std=c++17 -w -Iembed -Ithird_party/openglide -Iglidept -Iqemu/hw/3dfx \
          -o build/glide-host-test tools/glide-host-test.cpp \
          -Lbuild/qemu -lqemu-embed-i386 -Wl,-rpath,"$ROOT/build/qemu" -ldl; then
       QEMU_GLIDE_LIB="$ROOT/build/glide/libglide2x.so" \
         GLIDE_TEST_BMP="$OUT/glide-frame.bmp" \
         run_check glide-host glide-host.log build/glide-host-test || true
-    else FAIL+=(glide-host); echo "  FAIL glide-host (build)"; fi
+      # the same library, loaded the way hw/3dfx loads it for glide3x.dll
+      QEMU_GLIDE_LIB="$ROOT/build/glide/libglide2x.so" \
+        GLIDE_TEST_BMP="$OUT/glide3-frame.bmp" \
+        run_check glide3-host glide3-host.log build/glide-host-test 3 || true
+    else FAIL+=(glide-host glide3-host); echo "  FAIL glide-host, glide3-host (build)"; fi
   else
     skip glide-host "Linux with build/glide/libglide2x.so only (scripts/build-glide.sh)"
+    skip glide3-host "Linux with build/glide/libglide2x.so only (scripts/build-glide.sh)"
   fi
 
   # decoder + executor without a guest
