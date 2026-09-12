@@ -65,22 +65,32 @@ the device or the shim, none in 86Box:
 The last two are reached at **Glide's window teardown**: after
 GLIDETEST's first `grSstWinOpen` draws its three cases (the 5 s line
 shows `640x480 on: 2 frames, 583 triangles` — the clear, the triangle,
-the reclear all render), `grSstWinClose` streams a burst of high-entropy
-dwords into the command-FIFO window (`0x2003xx`–`0x200404`) while the
-FIFO is off; with the FIFO off that window is the legacy register map
-(bit 21 = the alternate mapping Glide has enabled in `fbiInit3`), so the
-stream lands in the register file — `intrCtrl` (the refusal), the video
-registers (a garbage `videoDimensions` gives the 3741×1789 the log then
-shows), `fbiInit1`. After it the card never reports idle again and the
-guest spins in Glide's `sst1InitIdle` reading `status` at ~25 M/s. The
-same happens whether or not the fourth (reopen) case runs — it is the
-close, not the reopen — so `GLIDETEST -noreopen` does not avoid it and
-the program never exits (its `C:\GLIDE.LOG` redirect never flushes).
-Read against 3dfx's own source (`glide2x/cvg`, `github.com/SuperIlu/glide`)
-and the Voodoo2 spec §11, that stream would reach a real chip's registers
-too — the open question is why 86Box's `status` then stays busy for ever.
-**This is the track's next bug; the install and the first open+draw
-work.** 86Box upstream would abort at the same `intrCtrl` write.
+the reclear all render), Glide re-inits for another window: it calls
+`sst1InitRegisters`, which resets `fbiInit7` to its default (`0x08080000`,
+**FIFO off**) and zeroes `videoDimensions`, then **keeps streaming
+command-FIFO packets to the `0x200000` window without re-enabling the
+FIFO**. With the FIFO off that window is the legacy register map, so
+86Box (and a real chip) decode every packet dword as the register at bits
+9:2 — traced 2026-09-12 (`VOODOO2_TRACE=1`), the first is
+`0x2002c8=0001fa34` → register `0x2c8`. The corruption cascades: a dword
+whose bit 8 happens to be set lands on `fbiInit7` and spuriously turns the
+FIFO back **on** (seen: `0x20064c=c71dcf5f`), `videoDimensions` is never
+restored (written once at first open, zeroed here, never again — so
+`v_disp` stays 0 and the display timer's retrace generation breaks),
+garbage `triangleCMD`s queue geometry that keeps the render pipeline
+"busy", and `intrCtrl` gets hit (the refusal). Glide then spins in
+`sst1InitIdle` reading `status` at ~25 M/s waiting for an idle/vsync the
+garbage state never produces. It is the **close/re-init that streams to a
+reset FIFO**, not the reopen draw, so `GLIDETEST -noreopen` does not avoid
+it and the program never exits (its `C:\GLIDE.LOG` redirect never flushes).
+The device names this exactly now: `warning: voodoo2: command-FIFO packet
+… to the window … with the FIFO off -> decoded as register …`.
+**This is the track's next bug; the install and the first open+draw work.**
+The fix is a judgement call not yet made: drop `0x200000`-window writes
+while the FIFO is off (offset ≥ `0x100`, to keep the alternate-mapped
+`< 0x100` register writes), or work out why Glide's re-init leaves the
+hardware FIFO disabled while it keeps streaming and match the chip.
+86Box upstream would abort at the same `intrCtrl` write.
 
 Diagnostics that came out of the day, all in `voodoo2.c`: the 5 s line's
 three histograms (registers read, written, config dwords read — a

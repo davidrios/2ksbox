@@ -84,6 +84,9 @@ struct Voodoo2State {
     int        last_rd;
     int        last_tex;
     unsigned   last_fatals;
+    uint32_t   fifo_off_writes;   /* FIFO-window packets decoded as registers */
+    uint32_t   last_fifo_off;
+    bool       fifo_off_warned;
     /* register-window accesses by register (addr & 0x3fc) since the last
      * line: a guest that spins on one register names it here */
     uint32_t   rd_hist[256];
@@ -201,6 +204,29 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         s->wr_hist[(addr >> 2) & 0xff]++;
     }
     voodoo2_note(s, addr, val, size, true);
+    if ((addr & 0x200000) && addr < 0x400000 && !v->cmdfifo_enabled &&
+        (addr & 0x1fffff) >= 0x100) {
+        /* THE teardown bug (2026-09-12): a command-FIFO packet written to
+         * the 0x200000 window while the FIFO is off. With the FIFO off that
+         * window is the legacy register map, so 86Box decodes each packet
+         * dword as the register at bits 9:2 -- garbage into videoDimensions
+         * (v_disp -> 0, the display timer breaks and Glide's vsync wait
+         * hangs), triangleCMD (garbage geometry keeps the card busy), and
+         * fbiInit7 itself (a dword with bit 8 set spuriously turns the FIFO
+         * back on). It happens because 3dfx's Glide, on a window reopen,
+         * keeps streaming to the FIFO ring while sst1InitRegisters has just
+         * reset fbiInit7 to its default (FIFO off) and nothing re-enabled
+         * it. Not dropped yet -- the fix (match the chip, or drop) is the
+         * open question; this names it. */
+        s->fifo_off_writes++;
+        if (!s->fifo_off_warned) {
+            s->fifo_off_warned = true;
+            warn_report("voodoo2: command-FIFO packet %08x to the window at "
+                        "%06x with the FIFO off -> decoded as register %03x "
+                        "(Glide streaming to a reset FIFO: the teardown hang)",
+                        (unsigned) val, (unsigned) addr, (unsigned) (addr & 0x3fc));
+        }
+    }
     if (addr < 0x400000 && (addr & 0x3fc) == 0x214 &&
         !((addr & 0x200000) && v->cmdfifo_enabled)) {
         /* fbiInit1 bit 23, scanline interleaving: this device is one card
@@ -427,23 +453,46 @@ voodoo2_stats(void *opaque)
     int           rd     = v->rd_count - s->last_rd;
     int           tex    = v->tex_count - s->last_tex;
 
-    if (frames || tris || wr || rd || voodoo_shim_fatals != s->last_fatals) {
-        char rds[64], wrs[64], cfg[64], ref[48] = "";
+    if (frames || tris || wr || rd || voodoo_shim_fatals != s->last_fatals ||
+        s->fifo_off_writes != s->last_fifo_off) {
+        char rds[64], wrs[64], cfg[64], ref[48] = "", busy[96] = "";
+        int  written = v->cmd_written + v->cmd_written_fifo + v->cmd_written_fifo_2;
+        int  outstanding = written - v->cmd_read;
+        int  is_busy = outstanding ||
+            (v->cmdfifo_depth_rd != v->cmdfifo_depth_wr) || v->cmdfifo_in_sub ||
+            v->voodoo_busy ||
+            RENDER_VOODOO_BUSY(v, 0) ||
+            (v->render_threads >= 2 && RENDER_VOODOO_BUSY(v, 1)) ||
+            (v->render_threads == 4 && (RENDER_VOODOO_BUSY(v, 2) || RENDER_VOODOO_BUSY(v, 3)));
+
+        /* the guest is polling status and the card is busy: name what the
+         * status register's busy bit is reading, so a spin says why */
+        if (is_busy && rd > 100000 && s->rd_hist[0] * 4 > (uint32_t) rd) {
+            snprintf(busy, sizeof(busy),
+                     "; busy: %d cmds outstanding (wr %d rd %d), fifo depth %u/%u%s%s%s",
+                     outstanding, written, v->cmd_read,
+                     (unsigned) v->cmdfifo_depth_rd, (unsigned) v->cmdfifo_depth_wr,
+                     v->voodoo_busy ? ", voodoo_busy" : "",
+                     RENDER_VOODOO_BUSY(v, 0) ? ", render0" : "",
+                     (v->render_threads >= 2 && RENDER_VOODOO_BUSY(v, 1)) ? ", render1" : "");
+        }
 
         voodoo2_top_regs(s->rd_hist, 256, rds, sizeof(rds));
         voodoo2_top_regs(s->wr_hist, 256, wrs, sizeof(wrs));
         voodoo2_top_regs(s->cfg_hist, 64, cfg, sizeof(cfg));
-        if (voodoo_shim_fatals != s->last_fatals) {
-            snprintf(ref, sizeof(ref), "; %u writes refused",
-                     voodoo_shim_fatals - s->last_fatals);
+        if (voodoo_shim_fatals != s->last_fatals || s->fifo_off_writes != s->last_fifo_off) {
+            snprintf(ref, sizeof(ref), "; %u refused, %u fifo-off",
+                     voodoo_shim_fatals - s->last_fatals,
+                     s->fifo_off_writes - s->last_fifo_off);
         }
+        s->last_fifo_off = s->fifo_off_writes;
         info_report("voodoo2: %dx%d %s: %u frames, %d triangles, %d writes "
                     "(%d texture), %d reads in %.1f s; regs read%s; written%s; "
-                    "config read%s%s",
+                    "config read%s%s%s",
                     v->h_disp, v->v_disp, s->override ? "on" : "off",
                     frames, tris, wr, tex, rd, VOODOO2_STATS_MS / 1000.0,
                     rds[0] ? rds : " none", wrs[0] ? wrs : " none",
-                    cfg[0] ? cfg : " none", ref);
+                    cfg[0] ? cfg : " none", ref, busy);
     }
     s->last_fatals = voodoo_shim_fatals;
     s->last_frames = s->frames;
