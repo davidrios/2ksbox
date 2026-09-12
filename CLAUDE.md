@@ -236,9 +236,15 @@ says which artefacts are behind. What the stages are for:
 `qemu/embed/` is an rsync copy of `embed/` made by `prepare-qemu.sh`, and a
 stale copy links the player against an old library (`undefined symbol
 _qemu_embed_…`; `qemu-embed/build.rs` warns). `configure-qemu.sh` must run
-again whenever meson files changed (keeps `werror` off). On macOS
-`MACOSX_DEPLOYMENT_TARGET` must be the same for configure and cargo
-(`build.sh` exports it). `QEMU_PYTHON=<interpreter>` makes `configure-qemu.sh` use that one
+again whenever meson files changed (keeps `werror` off). On macOS every
+stage targets **Homebrew's floor**, the oldest macOS Homebrew supports
+(`scripts/macos-floor.sh`, 14.0; user decision 2026-09-12, Apple Silicon
+only): `build.sh` exports `MACOSX_DEPLOYMENT_TARGET` and cleans a cargo
+workspace linked for another one, QEMU and DXVK take it as a flag (QEMU
+with `-Werror=unguarded-availability-new`), and `package-macos.sh` swaps
+the app's Homebrew libraries for that release's bottles
+(`scripts/macos-bottles.py`) and fails on any file above it —
+`docs/build-macos.md` "The floor". `QEMU_PYTHON=<interpreter>` makes `configure-qemu.sh` use that one
 and never consult uv (3.8–3.13 enforced) — for a sandboxed build that has
 a Python already and cannot fetch one, i.e. the Flatpak. Player env knobs
 (`PLAYER_*`) are listed in `README.md`.

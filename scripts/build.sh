@@ -135,14 +135,30 @@ stamp_stale() {
 }
 stamp_save() { printf '%s\n' "$STAMP_VALUE" > "$STAMP_FILE"; }
 
-# macOS: the deployment target must be identical for configure-qemu.sh and
-# for cargo, or ld warns "built for newer macOS version" on every C++ dep
-# and on libqemu. Set it once so both stages inherit the same value
-# (CLAUDE.md's macOS note).
-if [ "$(uname -s)" = Darwin ] && [ -z "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
-  MACOSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion | cut -d. -f1,2)"
+# macOS: everything is built for the oldest macOS Homebrew still supports
+# (scripts/macos-floor.sh), because the app carries Homebrew's libraries
+# and runs nowhere older than they do (docs/build-macos.md, "The floor").
+# One value for every stage — configure-qemu.sh, cargo, DXVK, the executor,
+# the wrapper — or ld warns "built for newer macOS version" on every link
+# (CLAUDE.md's macOS note). A preset MACOSX_DEPLOYMENT_TARGET wins.
+if [ "$(uname -s)" = Darwin ]; then
+  MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$(scripts/macos-floor.sh)}"
+  case "$MACOSX_DEPLOYMENT_TARGET" in *.*) ;; *) MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET.0" ;; esac
   export MACOSX_DEPLOYMENT_TARGET
-  echo "==> MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET (configure and cargo alike)"
+  echo "==> MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET (every stage alike)"
+  # cargo does not rebuild when the target changes — it is not part of its
+  # fingerprint — so a tree built for another macOS keeps its objects and
+  # relinks only what something else dirtied. A binary says what it was
+  # linked for; when it disagrees, that workspace starts over.
+  for bin in target/release/player launcher-qt/target/release/launcher-qt; do
+    [ -f "$bin" ] || continue
+    built=$(otool -l "$bin" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
+    if [ "$built" != "$MACOSX_DEPLOYMENT_TARGET" ]; then
+      ws=${bin%%target/*}; ws=${ws:-.}
+      echo "==> $bin was built for macOS $built: cargo clean --release in $ws"
+      (cd "$ws" && cargo clean --release)
+    fi
+  done
 fi
 
 # --- submodules -------------------------------------------------------
@@ -191,6 +207,12 @@ if want qemu; then
         needs_configure=1
       fi
     done
+    # Configured for another macOS: configure-qemu.sh passes the target as
+    # a compiler flag, so configuring again is what recompiles for it.
+    if [ "$(uname -s)" = Darwin ] && [ -f build/qemu/config-meson.cross ] \
+       && ! grep -q -- "'-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET'" build/qemu/config-meson.cross; then
+      needs_configure=1
+    fi
     if [ -n "$needs_configure" ]; then
       if [ -z "${QEMU_PYTHON:-}" ] && ! have uv; then
         skip qemu "configure needs uv (or QEMU_PYTHON=<python 3.8-3.13>)" || true
@@ -217,9 +239,11 @@ if want qemu; then
       # the previous staticlib until the *next* build.sh, and it fails at
       # run time rather than at the link ("isodir: I/O error: Is a
       # directory" is what an old libdisc says about a folder disc).
+      # libsynth's (patch 60) for the same reason, and because a
+      # `cargo clean` above for a new macOS target removed both.
       if have cargo; then
-        say "qemu: cargo build --release -p libdisc (linked into qemu)"
-        cargo build --release -p libdisc ${JOBS[@]+"${JOBS[@]}"}
+        say "qemu: cargo build --release -p libdisc -p libsynth (linked into qemu)"
+        cargo build --release -p libdisc -p libsynth ${JOBS[@]+"${JOBS[@]}"}
       fi
       say "qemu: ninja"
       ninja -C build/qemu ${JOBS[@]+"${JOBS[@]}"} \
@@ -284,7 +308,14 @@ if want dxvk; then
     else
       echo "    patch queue and submodule unchanged - skipping prepare"
     fi
-    if [ -n "$FORCE" ] || [ ! -f build/dxvk/build.ninja ]; then
+    # Configured for another macOS: configure-dxvk.sh passes the target as
+    # a compiler flag, which build.ninja therefore names.
+    dxvk_retarget=""
+    if [ "$(uname -s)" = Darwin ] && [ -f build/dxvk/build.ninja ] \
+       && ! grep -q -- "-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" build/dxvk/build.ninja; then
+      dxvk_retarget=1
+    fi
+    if [ -n "$FORCE" ] || [ ! -f build/dxvk/build.ninja ] || [ -n "$dxvk_retarget" ]; then
       say "dxvk: configure"
       scripts/configure-dxvk.sh
     fi

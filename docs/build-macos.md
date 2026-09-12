@@ -108,12 +108,16 @@ scripts/configure-qemu.sh      # uv-managed Python 3.12, --disable-werror
 ninja -C build/qemu qemu-system-i386 qemu-system-x86_64
 ```
 
-`configure-qemu.sh` sets `MACOSX_DEPLOYMENT_TARGET` to the running macOS
-version (unless you preset it). Without that, the 15.4+ SDK's availability
-annotations (`strchrnul is only available on macOS 15.4 or newer`) produce a
-wall of `-Wunguarded-availability-new` warnings, because QEMU's configure
-detects the function and uses it unguarded. Local builds therefore target the
-machine they're built on; release packaging will choose its own floor.
+`configure-qemu.sh` sets `MACOSX_DEPLOYMENT_TARGET` to **Homebrew's floor**,
+the oldest macOS Homebrew supports (`scripts/macos-floor.sh`; 14.0 as of
+2026-09-12, and a preset value wins), and passes it as
+`-mmacosx-version-min` together with `-Werror=unguarded-availability-new`.
+Every build targets the floor, local ones too, so the tree you test is the
+tree the app ships ("The floor", below, has why). The error flag is what
+keeps that honest: an API newer than the target, used without an
+`@available` check, makes a binary that dies on the floor's macOS. QEMU
+had one: `strchrnul`, which the SDK declares available from 15.4 and which
+meson found anyway through a stub prototype of its own (patch 46).
 
 Order matters: if you re-run `prepare-qemu.sh` later (e.g. after pulling a
 patch-queue change), run `configure-qemu.sh` again before `ninja` — a
@@ -345,7 +349,7 @@ renderer string + fps under "Result" in `docs/spikes/spike-a-macos.md`.
 ## The player on the Mac (M1)
 
 ```sh
-export MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion | cut -d. -f1,2)  # same as configure-qemu.sh
+export MACOSX_DEPLOYMENT_TARGET=$(scripts/macos-floor.sh)  # what build.sh and configure-qemu.sh use
 ninja -C build/qemu libqemu-embed-i386.dylib && cargo build --release
 PLAYER_LATENCY=1 target/release/player --shader third_party/slang-shaders/crt/crt-lottes.slangp -- \
   -L $PWD/qemu/pc-bios -machine pc -cpu pentium3 -m 256 -hda ~/vms/win98.qcow2 \
@@ -359,12 +363,18 @@ old dylib in place and the player link fails with
 `Undefined symbols for architecture arm64: _qemu_embed_set_refresh_ms`.
 `qemu-embed/build.rs` prints a warning when the copy is stale.
 
-The deployment-target export silences ld's
-`object file … was built for newer macOS version than being linked` /
-`building for macOS 11 but linking with dylib built for 15.0` warnings:
-rustc links for 11.0 by default, while libqemu (configure-qemu.sh) and the
-cmake-built C++ deps (glslang, spirv-cross) target the running OS. They are
-warnings only; the link is fine either way.
+The deployment-target export keeps rustc, which links for 11.0 by default,
+on the same target as libqemu, so ld does not warn `object file … was built
+for newer macOS version than being linked` about every object of the one
+it links into the other. What ld still says — `building for macOS-14.0, but
+linking with dylib '/opt/homebrew/opt/glib/lib/libglib-2.0.0.dylib' which
+was built for newer version 15.0`, 34 of them in a QEMU build — is about
+this Mac's own Homebrew bottles, which the app never carries: the
+packager puts the floor's builds of them in their place ("The floor").
+Warnings only. And cargo does not rebuild when the value changes
+(it is no part of its fingerprint): `scripts/build.sh` notices a binary
+linked for another macOS and runs `cargo clean --release` itself, but a
+hand-run cargo after changing it has to be told.
 
 ## 3D inside the player (M3, macOS backend — verified 2026-09-02 on the Air)
 
@@ -568,15 +578,62 @@ platform plugin and its QML modules by name at run time, out of
 directories that appear in no load command — so without this check a
 bundle with no QtQuick in it passes everything and opens nothing.
 
-`LSMinimumSystemVersion` is **measured, not chosen**: the highest
-`LC_BUILD_VERSION` `minos` of everything the bundle carries. A bundled
-Homebrew or Vulkan SDK dylib built on a newer system sets the real floor
-whatever we would prefer to claim, and as of 2026-09-06 that was macOS 26.6
-(libslirp and sdl2-compat were the 26.0 ones; sdl2-compat is gone since
-2026-09-07, so re-measure. QEMU's own build targets the running OS unless
-`MACOSX_DEPLOYMENT_TARGET` says otherwise). To lower it,
-build QEMU and those dependencies against the floor first — the script
-will then report it.
+### The floor
+
+The app runs down to **the oldest macOS Homebrew supports**: 14.0 (Sonoma)
+as of 2026-09-12, the `HOMEBREW_MACOS_OLDEST_SUPPORTED` in Homebrew's own
+`brew.sh` that `scripts/macos-floor.sh` reads (user decision, 2026-09-12:
+follow Homebrew's floor). It cannot sensibly go lower, because the app
+carries Homebrew's libraries — glib, pixman, libslirp, zstd, libpng,
+jpeg-turbo, Qt — and Homebrew publishes each version built on every macOS
+it supports and on none older. Following it also means moving with it:
+when Homebrew drops a release, `brew update` changes the value and the next
+`scripts/build.sh` retargets everything. Intel Macs are not a target at all
+(user decision, 2026-09-12).
+
+Three pieces make the claim true, and until 2026-09-12 there were none —
+the app measured macOS 26.6, because every build targeted the Mac it ran on:
+
+- **Everything of ours is built for the floor.** `scripts/build.sh`
+  exports it as `MACOSX_DEPLOYMENT_TARGET` for every stage. QEMU and DXVK
+  get it as a compiler flag too, so a new floor recompiles them rather than
+  only relinking, and a Rust binary linked for another macOS makes
+  `build.sh` clean its cargo workspace. QEMU also builds with
+  `-Werror=unguarded-availability-new` (above, and patch 46).
+- **The Homebrew libraries are the floor's builds.** Homebrew pours the
+  bottle built for the macOS it runs on, so on a macOS 26 Mac libslirp,
+  libpng, jpeg-turbo and QtQml/QtQuick are macOS 26.0 builds (glib, pixman
+  and zstd come out 15.0 and qtbase 14.0: each bottle's own build system
+  picks its target). After the staging, `scripts/macos-bottles.py` swaps
+  every file above the floor for the same version's build from the floor's
+  bottle (`arm64_sonoma`), fetched from Homebrew's registry on ghcr.io and
+  cached in `build/macos-bottles`. A staged file is matched to the Cellar
+  file it was copied from by its LC_UUID, which the install-name rewrites do
+  not touch — following the keg's symlinks, because a library is staged
+  under the name it was linked by (`libzstd.1.dylib`) and that name is a
+  link to the real file (`libzstd.1.5.7.dylib`) — and the older build is
+  given the staged file's install name, dependencies and rpaths. The
+  packager's own ad-hoc pass then signs it, which is why that pass must see
+  the Qt framework binaries: they are mode 644 with no extension, and a
+  swapped one left unsigned kills the launcher at its first framework
+  (`SIGKILL (Code Signature Invalid)`, `CODESIGNING Invalid Page`). With
+  them in its list the "still links" check sees them too, and it skips a
+  file's own install name, the first line `otool -L` prints: a framework
+  keeps Homebrew's absolute one, which names it and loads nothing. It asks `brew info` which version Homebrew has
+  bottles of and wants that one installed (`brew upgrade` otherwise).
+  `brew fetch --bottle-tag=arm64_sonoma` is no help here: on a macOS 26 Mac
+  it answers "Bottle for tag :arm64_sonoma is unavailable", because the
+  formula data brew loads names only this Mac's own bottle, while the
+  registry has them all.
+- **The package fails above it.** `LSMinimumSystemVersion` is still
+  measured, the highest `LC_BUILD_VERSION` `minos` of everything the bundle
+  carries, and any Mach-O above the floor fails `package-macos.sh` by name.
+  The LunarG loader and KosmicKrisp are 11.0 builds and XQuartz's libraries
+  11.0, so they never set it.
+
+Below macOS 26 there is no KosmicKrisp (it needs Metal on 26), so the
+Direct3D executor finds no Vulkan device there and XP's Direct3D takes
+ADR-013's path, WineD3D in the guest; everything else is the same app.
 
 Signing is inside-out, every nested Mach-O before the bundle that seals
 it, `--options runtime` with `packaging/macos/2ksbox.entitlements`

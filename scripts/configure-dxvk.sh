@@ -10,11 +10,18 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="${1:-$ROOT/build/dxvk}"
+darwin=()
 if [ "$(uname -s)" = Darwin ]; then
   export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  # The macOS every Mac build targets (scripts/macos-floor.sh), as flags
+  # and not only the environment: a changed flag is a changed command
+  # line, so ninja recompiles what a changed environment would have kept.
+  T="${MACOSX_DEPLOYMENT_TARGET:-$("$ROOT/scripts/macos-floor.sh")}"
+  darwin=(-Dc_args="-mmacosx-version-min=$T" -Dcpp_args="-mmacosx-version-min=$T"
+          -Dc_link_args="-mmacosx-version-min=$T" -Dcpp_link_args="-mmacosx-version-min=$T")
 fi
 opts=(--buildtype release -Denable_dxgi=false -Denable_d3d8=false -Denable_d3d10=false -Denable_d3d11=false
-      -Dnative_sdl2=disabled -Dnative_glfw=disabled -Dnative_sdl3=disabled)
+      -Dnative_sdl2=disabled -Dnative_glfw=disabled -Dnative_sdl3=disabled ${darwin[@]+"${darwin[@]}"})
 # A meson build directory holds absolute paths and cannot be relocated, so
 # a renamed or moved checkout (2ksbox, 2026-09-06) leaves one whose
 # --reconfigure walks into directories that no longer exist: "[Errno 2] No

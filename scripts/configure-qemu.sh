@@ -87,13 +87,21 @@ elif [ "$(uname -s)" = Darwin ]; then
   # /opt/X11 into every emulator's link line, so the headers must be there
   # even though only libqemu-embed's own backend ever creates a context).
   [ -d /opt/X11/include ] || { echo "XQuartz missing: brew install --cask xquartz"; exit 1; }
-  # SDK 15.4+ declares strchrnul (and friends) with an availability of 15.4;
-  # QEMU detects and uses them unguarded, so a lower deployment target spams
-  # -Wunguarded-availability-new. Target the running OS for local builds
-  # (release packaging picks its own floor). Honour a preset value.
+  # Every Mac build targets Homebrew's floor, the oldest macOS the app's
+  # Homebrew libraries exist for (scripts/macos-floor.sh; build.sh exports
+  # the same value, and a preset one wins). It goes in as a flag as well as
+  # the environment: a changed flag changes every command line, so a
+  # reconfigure recompiles the tree, where a changed environment alone
+  # would keep the objects built for the old target. And
+  # -Werror=unguarded-availability-new with it, because an API newer than
+  # the target used without an @available check makes a binary that dies
+  # on the floor's macOS — and, since the flag reaches meson's own checks,
+  # a function detected through its real declaration is only found when
+  # the target has it (patch 46: strchrnul, 15.4).
   if [ -z "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
-    export MACOSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion | cut -d. -f1,2)"
+    export MACOSX_DEPLOYMENT_TARGET="$("$ROOT/scripts/macos-floor.sh")"
   fi
+  EXTRA_CFLAGS="$EXTRA_CFLAGS -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET -Werror=unguarded-availability-new"
   echo "==> MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
 fi
 # No QEMU user interface at all (2026-09-07). The player is the front end:

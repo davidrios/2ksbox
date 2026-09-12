@@ -89,9 +89,10 @@ cargo check --release --workspace           # the two non-default members, `laun
 # qemu/embed/
 # is a COPY of embed/ (prepare-qemu.sh rsyncs it); a stale copy links the
 # player against an old dylib ("undefined symbol _qemu_embed_..."). build.rs
-# warns when the copy differs. macOS: export MACOSX_DEPLOYMENT_TARGET (same
-# value configure-qemu.sh printed) before cargo too, or ld warns about
-# "built for newer macOS version" on every C++ dep and libqemu.
+# warns when the copy differs. macOS: every stage targets Homebrew's floor
+# (scripts/macos-floor.sh, 14.0): export MACOSX_DEPLOYMENT_TARGET=$(scripts/macos-floor.sh)
+# before a hand-run cargo too, and cargo clean after changing it — cargo does
+# not rebuild for a new target on its own (build.sh does both).
 # Win98 in the player (macOS shown; Linux identical, drop coreaudio bits)
 target/release/player --shader third_party/slang-shaders/crt/crt-lottes.slangp -- \
   -L $PWD/qemu/pc-bios -machine pc -cpu pentium3 -m 256 -hda ~/vms/win98.qcow2 \
@@ -153,6 +154,32 @@ macOS specifics: `docs/build-macos.md`. x87 tests need `brew install nasm
 mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
+
+- **The Mac app targets Homebrew's floor, macOS 14, since 2026-09-12 —
+  and has not yet been run on a macOS 14 system.** Until then it measured
+  macOS 26.6, only because every build targeted the Mac it was built on.
+  User decision: follow Homebrew's floor (`HOMEBREW_MACOS_OLDEST_SUPPORTED`,
+  read by `scripts/macos-floor.sh`), Apple Silicon only. Everything of ours
+  is built for it, QEMU with `-Werror=unguarded-availability-new` (patch 46
+  was the one API newer than the target, `strchrnul`), and
+  `package-macos.sh` swaps the app's Homebrew libraries for their
+  `arm64_sonoma` bottles and fails on anything still above it
+  (`scripts/macos-bottles.py`, `docs/build-macos.md` "The floor").
+  Measured on the Air (26.6) the same day: every artefact of ours is a
+  14.0 build, the packager swaps 129 files from 20 bottles (Qt's
+  declarative, SVG, image-format and multimedia modules, glib, ICU,
+  openssl, zstd, webp, brotli, …), `LSMinimumSystemVersion` comes out
+  14.0, and the loader, offscreen-window and firmware checks pass on the
+  swapped libraries. Two packager holes turned up on the way and are
+  closed: the Qt framework binaries (mode 644, no extension) were never in
+  its Mach-O list, so a swapped one went unsigned and killed the launcher
+  (`CODESIGNING Invalid Page`), and the "still links" check then read
+  their own install names as dependencies. What all this proves is the
+  load commands; what it cannot prove is behaviour on 14. Next: a macOS 14 (and 15) VM on the Air through Virtualization.framework —
+  the app starting, a guest booting, and the Direct3D probe saying
+  *unavailable* rather than crashing when the bundled KosmicKrisp ICD (an
+  11.0 build that needs 26 at run time) is loaded there, so that XP takes
+  ADR-013's WineD3D path.
 
 - **The guest-tools ISO never carried the Win98 HAL DLL — fixed
   2026-09-11** (user report: installing the 98 driver by hand, the Update

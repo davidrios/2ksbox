@@ -46,11 +46,14 @@
 #   finds it by the same `share/2ksbox` marker — with `MacOS/` in the part
 #   `bin/` plays elsewhere, because that is the one directory macOS will
 #   launch an executable from.
-# * **Signing is inside-out and the floor is measured, not chosen.** Every
-#   Mach-O is signed before the thing containing it, and
-#   LSMinimumSystemVersion is the highest minos of everything carried,
-#   since a bundled Homebrew dylib built on a newer system sets the real
-#   floor whatever we would prefer to claim.
+# * **Signing is inside-out and the floor is Homebrew's.** Every Mach-O is
+#   signed before the thing containing it. The oldest macOS the app runs
+#   on is the oldest Homebrew supports (scripts/macos-floor.sh), which
+#   scripts/build.sh builds everything of ours for; the Homebrew libraries
+#   copied in are this Mac's bottles, so the ones above the floor are
+#   swapped for the floor's builds (scripts/macos-bottles.py), and then
+#   LSMinimumSystemVersion is measured from what the bundle carries and
+#   any file still above the floor fails the package.
 #
 # It does not build QEMU, DXVK or the Glide wrapper. Per CLAUDE.md's build
 # order those come from `scripts/build.sh`; what is missing is reported by
@@ -87,6 +90,14 @@ warn() { echo "package-macos.sh: $*" >&2; }
 need build/qemu/libqemu-embed-i386.dylib "scripts/configure-qemu.sh && ninja -C build/qemu libqemu-embed-i386.dylib"
 need build/qemu/qemu-img "ninja -C build/qemu qemu-img"
 need qemu/pc-bios "scripts/prepare-qemu.sh"
+
+# The macOS the app is for: Homebrew's floor, which scripts/build.sh built
+# everything of ours for. Exported so that a cargo build below links for
+# it too.
+MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$(scripts/macos-floor.sh)}"
+case "$MACOSX_DEPLOYMENT_TARGET" in *.*) ;; *) MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET.0" ;; esac
+export MACOSX_DEPLOYMENT_TARGET
+FLOOR=$MACOSX_DEPLOYMENT_TARGET
 
 if [ "$BUILD" = 1 ]; then
   cargo build --release -p player
@@ -175,7 +186,7 @@ fi
 # the floor can be measured from what the bundle actually carries.
 write_plist() { sed -e "s/@VERSION@/$VERSION/" -e "s/@MINOS@/$1/" \
   packaging/macos/Info.plist.in > "$C/Info.plist"; }
-write_plist 13.0
+write_plist "$FLOOR"
 
 # --- Qt ---------------------------------------------------------------
 # The frameworks, the cocoa platform plugin and the QtQuick QML modules
@@ -312,14 +323,25 @@ done < <(find "$C/PlugIns" -type f -name '*.dylib' 2>/dev/null)
 # backend only ever dlsyms OpenGL.framework: CLAUDE.md's macOS gotcha) —
 # copied into lib/2ksbox and rewritten to @rpath, transitively.
 LIBDIR="$C/lib/2ksbox"
-external() { otool -L "$1" | tail -n +2 | awk '{print $1}' | grep -E '^(/opt/|/usr/local/)' || true; }
+# A library's own install name is the first line `otool -L` prints and no
+# dependency: Qt's framework binaries keep Homebrew's, which loads nothing.
+external() {
+  local id
+  id=$(otool -D "$1" | tail -n +2)
+  otool -L "$1" | tail -n +2 | awk -v id="$id" '$1 != id {print $1}' | grep -E '^(/opt/|/usr/local/)' || true
+}
 
 # Every Mach-O in the bundle, which since Qt arrived is no longer the same
 # thing as every executable file in it: a QML module's plugin can be mode
 # 644 and it still carries a signature that a rewritten load command
 # invalidates — and on arm64 a broken signature is SIGKILL, not a warning.
+# So are the framework binaries (Frameworks/QtQuick.framework/Versions/A/
+# QtQuick, no extension, mode 644): macdeployqt signs what it rewrites, so
+# leaving them out went unnoticed until macos-bottles.py replaced them, and
+# then the ad-hoc pass below skipped every one and the launcher died of
+# "Code Signature Invalid" mapping its first framework (2026-09-12).
 machos() {
-  find "$C" -type f \( -perm +111 -o -name '*.dylib' \) \
+  find "$C" -type f \( -perm +111 -o -name '*.dylib' -o -path '*.framework/Versions/*' \) \
     -exec sh -c 'file -b "$1" | grep -q Mach-O && echo "$1"' _ {} \;
 }
 
@@ -371,6 +393,19 @@ while read -r f; do
   done < <(otool -l "$f" | awk '/LC_RPATH/{r=1} r&&/path /{print $2; r=0}')
 done < <(machos)
 
+# --- the floor's bottles ----------------------------------------------
+# Everything copied out of Homebrew above is the bottle built for *this*
+# Mac's macOS — on a macOS 26 Mac, libslirp, libpng, jpeg-turbo and
+# QtQml/QtQuick are macOS 26 builds — and one of them is enough to keep the
+# whole app off every older Mac. Homebrew publishes the same versions built
+# on each macOS it supports, so every file above the floor is swapped for
+# the floor's build of itself, keeping the install name, dependencies and
+# rpaths the staging gave it (scripts/macos-bottles.py). The downloads are
+# cached in build/macos-bottles, so only the first package after a
+# `brew upgrade` needs the network.
+TAG=$(scripts/macos-floor.sh --tag "$FLOOR")
+python3 scripts/macos-bottles.py "$C" "$FLOOR" "$TAG" "$ROOT/build/macos-bottles"
+
 # Rewriting a load command breaks the signature every arm64 binary must
 # have, and the kernel answers a broken one with SIGKILL and nothing else
 # — which is what the checks below would run into. So re-sign ad hoc now.
@@ -394,20 +429,33 @@ rm -f "$set/icon_64x64.png"
 iconutil -c icns "$set" -o "$C/Resources/2ksbox.icns"
 
 # --- Info.plist -------------------------------------------------------
-# The floor is whatever the bundle's own Mach-O files require, which is
-# usually set by a dependency and not by us.
-minos=$(machos | while read -r f; do
-  otool -l "$f" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}'
-done | sort -V | tail -1)
-minos=${minos:-13.0}
+# What the bundle's own Mach-O files require, measured rather than
+# claimed; the check below fails when that is above the floor.
+minos_of() { otool -l "$1" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}'; }
+minos=$(machos | while read -r f; do minos_of "$f"; done | sort -V | tail -1)
+minos=${minos:-$FLOOR}
 write_plist "$minos"
-echo "minimum macOS $minos"
+echo "minimum macOS $minos (Homebrew's floor: $FLOOR)"
 
 # --- the check --------------------------------------------------------
 # The same question package-linux.sh asks, in the form a Mac can answer:
 # does anything in here still reach outside the bundle? `env -i` from /,
 # so no LAUNCHER_*/PLAYER_*/DYLD_* of this shell is what makes it work.
 fail=0
+
+# The promise the plist makes: nothing in here needs a newer macOS than the
+# floor. A file that does is ours built for another target (scripts/build.sh
+# again) or a library macos-bottles.py found no older build of.
+above=$(machos | while read -r f; do
+  m=$(minos_of "$f"); [ -n "$m" ] || continue
+  [ "$(printf '%s\n' "$m" "$FLOOR" | sort -V | tail -1)" = "$FLOOR" ] || echo "  macOS $m  ${f#"$C/"}"
+done)
+if [ -n "$above" ]; then
+  printf '%s\n' "$above" >&2
+  echo "package-macos.sh: the above need a newer macOS than the floor, $FLOOR" >&2
+  fail=1
+fi
+
 while read -r f; do
   out=$(external "$f")
   [ -z "$out" ] || { echo "package-macos.sh: $f still links $(echo "$out" | tr '\n' ' ')" >&2; fail=1; }
