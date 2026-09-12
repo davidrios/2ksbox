@@ -261,6 +261,10 @@ case "$OS" in Darwin) SO=dylib;; *) SO=so;; esac
 export D3DPT_EXEC_LIB="${D3DPT_EXEC_LIB:-$ROOT/build/d3dpt/libd3dpt_exec.$SO}"
 export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)}"
 if [ "$OS" = Darwin ]; then
+  # The cargo builds below link for the same macOS as everything else
+  # (Homebrew's floor, scripts/macos-floor.sh), not for rustc's default.
+  MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$(scripts/macos-floor.sh)}"
+  export MACOSX_DEPLOYMENT_TARGET
   # DXVK dlopens the Vulkan loader by leaf name; a DYLD_* variable handed
   # to this script is stripped by SIP at the `#!/usr/bin/env` exec, so set
   # the documented macOS run environment here (docs/build-macos.md,

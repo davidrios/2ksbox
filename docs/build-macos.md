@@ -373,8 +373,13 @@ this Mac's own Homebrew bottles, which the app never carries: the
 packager puts the floor's builds of them in their place ("The floor").
 Warnings only. And cargo does not rebuild when the value changes
 (it is no part of its fingerprint): `scripts/build.sh` notices a binary
-linked for another macOS and runs `cargo clean --release` itself, but a
-hand-run cargo after changing it has to be told.
+linked for a *newer* macOS than the target and runs `cargo clean --release`
+in that workspace itself — only when that workspace's stage is being built,
+and never for an older one, which is below the floor and fine (a cargo run
+without the variable links for rustc's default, 11.0; `scripts/test.sh`
+exports the floor too now, because its player build did exactly that and
+the next `build.sh guest` cleaned the player away). A hand-run cargo after
+raising the value has to be told.
 
 ## 3D inside the player (M3, macOS backend — verified 2026-09-02 on the Air)
 

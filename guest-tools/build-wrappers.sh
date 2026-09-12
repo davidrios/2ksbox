@@ -138,15 +138,15 @@ build_wrapper 3dfx
 build_wrapper mesa
 build_wined3d
 
-# The ISO: one folder per role, one copy of every file. What used to be
-# GAMEDIR\ was three different stacks in one folder — the WineD3D DLLs
-# under the same names ours use, next to the test EXEs — so a "copy this
-# next to the game" instruction could silently give you the wrong D3D.
-# Now each stack owns a folder, every test program lives in TESTS\, and
-# SETUP.EXE does the copying (including WineD3D's renames, which is why
-# the disc no longer carries a second copy of those DLLs).
+# The ISO: one folder per role. What used to be GAMEDIR\ was three
+# different stacks in one folder — the WineD3D DLLs under the same names
+# ours use, next to the test EXEs — so a "copy this next to the game"
+# instruction could silently give you the wrong D3D. Now each stack owns a
+# folder and every test program lives in TESTS\. One copy of every file,
+# except WineD3D's: its folders are meant to be copied whole from Explorer,
+# so each carries what it needs (see WINED3D\ below).
 rm -rf "$OUT/iso"
-mkdir -p "$OUT/iso"/{GLIDE,OPENGL,D3DPT,WINED3D,TESTS,CDSHELF}
+mkdir -p "$OUT/iso"/{GLIDE,OPENGL,D3DPT,TESTS,CDSHELF} "$OUT/iso/WINED3D"/{D3D8-9,DDRAW,SYSTEM}
 G="$FX/wrappers/3dfx/build"; M="$FX/wrappers/mesa/build"
 T="$OUT/iso/TESTS"
 
@@ -196,14 +196,29 @@ build_ovl() {
 build_ovl
 # OPENGL\: the GL pass-through wrapper, per game.
 cp "$M"/opengl32.dll "$OUT/iso/OPENGL/"
-# WINED3D\: the wine9x set under wine9x's own names, once. A per-game
-# install is WINED3D.DLL + one interface renamed (WINED9 -> D3D9); the
-# switchers are the system-wide variant, see WINE9X.TXT.
-W="$OUT/wine9x"
+# WINED3D\: one folder per kind of game, each copied whole next to the
+# game's EXE (2026-09-12, user request: the renames were what a user
+# would get wrong, and copying a folder in Explorer needs no terminal).
+# The DLLs carry the names a game loads — wine9x's wined8/wined9/winedd
+# *are* the D3D8/D3D9/DDRAW interfaces, and the same files serve 98 and
+# XP (only the system-wide switchers differ per family) — plus
+# OPENGL32.DLL, because wined3d draws through the first opengl32.dll the
+# loader finds and without ours that is Windows' own software GL 1.1.
+# SETUP /GAME 4 and 5 copy the same two folders. SYSTEM\ is wine9x's
+# system-wide install under its own names (the switchers and the four
+# DLLs they load), which WINE9X.TXT walks through.
+W="$OUT/wine9x"; WD="$OUT/iso/WINED3D"
+cp "$W"/wined8.dll "$WD/D3D8-9/D3D8.DLL"
+cp "$W"/wined9.dll "$WD/D3D8-9/D3D9.DLL"
+cp "$W"/winedd.dll "$WD/DDRAW/DDRAW.DLL"
+for d in D3D8-9 DDRAW; do
+  cp "$W"/wined3d.dll "$WD/$d/WINED3D.DLL"
+  cp "$M"/opengl32.dll "$WD/$d/OPENGL32.DLL"
+done
 cp "$W"/wined3d.dll "$W"/winedd.dll "$W"/wined8.dll "$W"/wined9.dll \
    "$W"/ddraw_xp.dll "$W"/d3d8_xp.dll "$W"/d3d9_xp.dll \
-   "$W"/ddraw_98.dll "$W"/d3d8_98.dll "$W"/d3d9_98.dll "$OUT/iso/WINED3D/"
-cp "$W"/README.md "$OUT/iso/WINED3D/WINE9X.TXT"
+   "$W"/ddraw_98.dll "$W"/d3d8_98.dll "$W"/d3d9_98.dll "$WD/SYSTEM/"
+cp "$W"/README.md "$WD/SYSTEM/WINE9X.TXT"
 
 # D3DPT\: Direct3D 8/9 over our paravirtual device (doc 14), with
 # qemu-3dfx's fxlib device mapper (FXPTL.SYS / FXMEMMAP.VXD). Per game:
@@ -361,13 +376,16 @@ fi
 i686-w64-mingw32-gcc -O2 -Wall -o "$OUT/iso/setup.exe" "$ROOT/guest-tools/src/setup.c" \
   -ladvapi32 -luser32
 
-for f in "$OUT"/iso/*/*.dll "$OUT"/iso/*/*.exe "$OUT"/iso/*.exe; do check_crt "$f"; check_isa "$f"; done
+# Every binary on the disc, however deep (WINED3D\ has folders of its own)
+# and whatever case it was staged in (those carry the names a game loads).
+while IFS= read -r f; do check_crt "$f"; check_isa "$f"; done \
+  < <(find "$OUT/iso" -type f \( -iname '*.dll' -o -iname '*.exe' \))
 # CRLF: Win9x Notepad shows LF-only text as one line
 crlf() { awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }'; }
 sed -e "s/@REV@/$REV/" -e "s/@WINE9X@/${WINE9X_REF:0:7}/" "$ROOT/guest-tools/README-ISO.txt" \
   | crlf > "$OUT/iso/README.TXT"
 # 8.3-safe upper-case names for Win9x
-( cd "$OUT/iso" && for f in */* *.exe; do
+( cd "$OUT/iso" && find . -type f | while IFS= read -r f; do
     u="$(dirname "$f")/$(basename "$f" | tr a-z A-Z)"; [ "$f" = "$u" ] || mv "$f" "$u"; done )
 
 ISO="$OUT/guest-tools-3dfx-$REV.iso"

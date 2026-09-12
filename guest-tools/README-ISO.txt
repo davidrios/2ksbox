@@ -53,12 +53,20 @@ OPENGL\   OPENGL32.DLL, the OpenGL pass-through wrapper: next to an
           OpenGL game's EXE (Quake 2 and friends). TESTS\WGLGEARS.EXE in
           the same folder is the two-second check that it works.
 
-WINED3D\  Direct3D 8/9 -> OpenGL in the guest (wine9x @WINE9X@), the
-          fallback for what the two stacks above do not cover. Per game:
-          WINED3D.DLL plus WINED9.DLL renamed to D3D9.DLL (or WINED8 ->
-          D3D8, WINEDD -> DDRAW). SETUP.EXE's /GAME does the renaming.
-          The *_98 / *_XP switcher DLLs are for a system-wide install -
-          read WINE9X.TXT first, it replaces files in system32.
+WINED3D\  Direct3D -> OpenGL in the guest (wine9x @WINE9X@): the fallback
+          for what the two stacks above do not cover, and the only
+          Direct3D a host without Vulkan 1.3 has (a Mac before macOS 26).
+          Per game, copy every file in ONE of these folders next to the
+          game's EXE - from Explorer is fine, nothing needs renaming, and
+          the same files work on Windows 98 and XP:
+            D3D8-9\  DirectX 8 and 9 games
+            DDRAW\   DirectDraw and Direct3D 7 and older
+          Both hold OPENGL32.DLL on purpose: WineD3D draws through it, and
+          without it Windows' own software OpenGL is used instead.
+          SETUP /GAME 4 and /GAME 5 copy the same two folders.
+          SYSTEM\ is wine9x's system-wide install (the *_98 / *_XP
+          switcher DLLs): read WINE9X.TXT first, it replaces files in
+          the Windows system folder.
 
 TESTS\    every test, benchmark and calibration program on the disc, one
           copy each; SETUP puts them in C:\2KSBOX. A test that has to run

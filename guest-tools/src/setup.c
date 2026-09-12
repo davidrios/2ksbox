@@ -411,13 +411,16 @@ static int g_ncomp;
 /* Copied next to one game's EXE, never into the system directory. Each
  * set is self-contained — what a game needs to run on that stack and
  * nothing else — so two stacks can never end up in one folder. The files
- * are pairs, <name on the ISO> then <name it must have next to the EXE>,
- * which is how WineD3D's DLLs get their Microsoft names without the disc
- * carrying a second copy of them under those names. */
+ * are pairs, <name on the ISO> then <name it must have next to the EXE>.
+ * Since 2026-09-12 no set renames anything: WineD3D's folders carry the
+ * DLLs under the names a game loads, so copying a folder from Explorer
+ * and running SETUP /GAME give the same result. They also carry
+ * OPENGL32.DLL, because WineD3D draws through the first opengl32.dll the
+ * loader finds and without ours that is Windows' software GL 1.1. */
 typedef struct {
     const char *label;
     const char *dir;
-    const char *files[8];
+    const char *files[10];
 } GameSet;
 
 static const GameSet g_sets[] = {
@@ -427,10 +430,12 @@ static const GameSet g_sets[] = {
       "D3DPT",   { "DINPUT.DLL", "DINPUT.DLL", NULL } },
     { "OpenGL pass-through (OPENGL32.DLL)",
       "OPENGL",  { "OPENGL32.DLL", "OPENGL32.DLL", NULL } },
-    { "WineD3D, Direct3D 8/9 (D3D8.DLL D3D9.DLL WINED3D.DLL)",
-      "WINED3D", { "WINED8.DLL", "D3D8.DLL", "WINED9.DLL", "D3D9.DLL", "WINED3D.DLL", "WINED3D.DLL", NULL } },
-    { "WineD3D, DirectDraw and Direct3D up to 7 (DDRAW.DLL WINED3D.DLL)",
-      "WINED3D", { "WINEDD.DLL", "DDRAW.DLL", "WINED3D.DLL", "WINED3D.DLL", NULL } },
+    { "WineD3D, Direct3D 8/9 (D3D8.DLL D3D9.DLL WINED3D.DLL OPENGL32.DLL)",
+      "WINED3D\\D3D8-9", { "D3D8.DLL", "D3D8.DLL", "D3D9.DLL", "D3D9.DLL", "WINED3D.DLL", "WINED3D.DLL",
+                           "OPENGL32.DLL", "OPENGL32.DLL", NULL } },
+    { "WineD3D, DirectDraw and Direct3D up to 7 (DDRAW.DLL WINED3D.DLL OPENGL32.DLL)",
+      "WINED3D\\DDRAW",  { "DDRAW.DLL", "DDRAW.DLL", "WINED3D.DLL", "WINED3D.DLL",
+                           "OPENGL32.DLL", "OPENGL32.DLL", NULL } },
 };
 #define NSETS ((int)(sizeof g_sets / sizeof g_sets[0]))
 

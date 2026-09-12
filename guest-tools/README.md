@@ -36,12 +36,16 @@ the WineD3D interfaces sat there under *our* DLLs' names (`D3D9.DLL` was
 Wine's in one folder and ours in another, and "copy D3D9.DLL next to the
 game" could mean either), the test EXEs were duplicated into `D3DPT\`
 because a DLL has to sit next to them, and the Glide DLLs existed twice
-for the two OS folders. Now nothing on the disc appears twice — 20.1 MB
-became 15.4 MB — and which stack you get is decided by which folder you
-copy from. What a test needs beside it is copied there by `SETUP /GAME`,
-which is also where WineD3D's renames happen (`WINED9.DLL` → `D3D9.DLL`),
-so the disc need not carry a second copy of those DLLs under Microsoft
-names.
+for the two OS folders. Now which stack you get is decided by which folder
+you copy from, and nothing on the disc appears twice except WineD3D's
+(20.1 MB became 15.4 MB, then ~18 MB with those). What a test needs beside
+it is copied there by `SETUP /GAME`. WineD3D used to be the one set SETUP
+had to rename (`WINED9.DLL` → `D3D9.DLL`), which is exactly what a user
+copying by hand gets wrong; since 2026-09-12 (user request) `WINED3D\D3D8-9\`
+and `WINED3D\DDRAW\` hold the DLLs under the names a game loads, each with
+`WINED3D.DLL` and our `OPENGL32.DLL`, ready to copy whole from Explorer. The
+files are the same for 98 and XP; `WINED3D\SYSTEM\` keeps wine9x's
+system-wide set (the per-family switchers) under its own names.
 
 
 **WineD3D (Direct3D 8/9 → OpenGL → pass-through):** built from
@@ -50,9 +54,11 @@ with 9x/XP fixes, LGPL; the same author as SoftGPU), pinned by commit in
 the script. `wined3d.dll` renders through whatever `opengl32.dll` the
 loader finds first, i.e. the qemu-3dfx wrapper in the game folder; XP
 needs OpenGL 2.1 with BGRA from the host, which the Air's Metal GL 2.1
-provides. A per-game install (`SETUP /GAME`, or by hand) is the Wine DX
-interfaces under the names a game loads — `wined9.dll` → `D3D9.DLL` —
-which is the low-risk way to use them: nothing in system32 changes. The
+provides. A per-game install (`SETUP /GAME 4`/`5`, or one of
+`WINED3D\D3D8-9\` / `WINED3D\DDRAW\` copied by hand) is the Wine DX
+interfaces under the names a game loads — `wined9.dll` is `D3D9.DLL` on the
+disc — plus `WINED3D.DLL` and `OPENGL32.DLL`, which is the low-risk way to
+use them: nothing in system32 changes. The
 switcher DLLs are the system-wide variant (they route each EXE to
 Wine or to Microsoft's DLLs by registry, `HKLM\Software\DDSwitcher`)
 for games that load D3D from elsewhere; that install replaces system32

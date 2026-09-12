@@ -53,7 +53,10 @@ Known qemu-3dfx / 3D constraints we design around:
 
 A single unified ISO (`2ksbox-guest-tools.iso`), built by `/guest-tools/` scripts,
 organized strictly by role (`GLIDE\`, `DRIVER\`, `D3DPT\`, `OPENGL\`, `WINED3D\`,
-`TESTS\`, `CDSHELF\`) with zero duplicate files:
+`TESTS\`, `CDSHELF\`) with no duplicate files but WineD3D's: its per-game folders
+(`WINED3D\D3D8-9\`, `WINED3D\DDRAW\`) are copied whole from Explorer, so each
+carries `WINED3D.DLL` and `OPENGL32.DLL` and every DLL is under the name a game
+loads (2026-09-12, user request; the same files serve 98 and XP):
 
 - **Win98:** `d3dpt-vga` display driver (PnP INF install), SoftGPU release,
   qemu-3dfx wrappers, AC97 audio, network, CDSHELF.

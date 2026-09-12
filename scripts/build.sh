@@ -147,13 +147,18 @@ if [ "$(uname -s)" = Darwin ]; then
   export MACOSX_DEPLOYMENT_TARGET
   echo "==> MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET (every stage alike)"
   # cargo does not rebuild when the target changes — it is not part of its
-  # fingerprint — so a tree built for another macOS keeps its objects and
-  # relinks only what something else dirtied. A binary says what it was
-  # linked for; when it disagrees, that workspace starts over.
-  for bin in target/release/player launcher-qt/target/release/launcher-qt; do
-    [ -f "$bin" ] || continue
+  # fingerprint — so a tree built for a newer macOS keeps objects that may
+  # call what the floor lacks. A binary says what it was linked for; when
+  # that is *newer* than the target, its workspace starts over. Older is
+  # fine (a cargo run without this variable links for rustc's default,
+  # 11.0), and a workspace this run will not rebuild is left alone: cleaning
+  # it would leave no binary at all (2026-09-12, `build.sh guest` took the
+  # player with it).
+  for spec in rust:target/release/player qt:launcher-qt/target/release/launcher-qt; do
+    bin=${spec#*:}
+    want "${spec%%:*}" && [ -f "$bin" ] || continue
     built=$(otool -l "$bin" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
-    if [ "$built" != "$MACOSX_DEPLOYMENT_TARGET" ]; then
+    if [ -n "$built" ] && [ "$(printf '%s\n' "$built" "$MACOSX_DEPLOYMENT_TARGET" | sort -V | tail -1)" != "$MACOSX_DEPLOYMENT_TARGET" ]; then
       ws=${bin%%target/*}; ws=${ws:-.}
       echo "==> $bin was built for macOS $built: cargo clean --release in $ws"
       (cd "$ws" && cargo clean --release)
