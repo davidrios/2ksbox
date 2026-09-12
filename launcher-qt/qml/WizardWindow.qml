@@ -310,6 +310,22 @@ Window {
                     opacity: 0.75
                 }
 
+                // --- the Voodoo 2 -------------------------------------------
+                // One checkbox: a 3dfx Voodoo 2 beside the display adapter
+                // (doc 21) or not. The sentences are the shared form's.
+                CheckBox {
+                    text: qsTr("Emulated 3dfx Voodoo 2")
+                    checked: root.wizard.voodoo2
+                    onToggled: root.wizard.chooseVoodoo2(checked)
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: root.wizard.voodoo2Note
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    opacity: 0.75
+                }
+
                 // --- the sound card and the MIDI port (doc 20 §6) -----------
                 // Two pickers rather than one: the card is what the guest
                 // plays sound *effects* on and what it needs a driver for,
@@ -495,22 +511,6 @@ Window {
                 Label {
                     Layout.fillWidth: true
                     text: root.wizard.seamlessMouseNote
-                    wrapMode: Text.Wrap
-                    font.pixelSize: 11
-                    opacity: 0.75
-                }
-
-                // --- the Voodoo 2 -------------------------------------------
-                // One checkbox: a 3dfx Voodoo 2 beside the display adapter
-                // (doc 21) or not. The sentences are the shared form's.
-                CheckBox {
-                    text: qsTr("Emulated 3dfx Voodoo 2")
-                    checked: root.wizard.voodoo2
-                    onToggled: root.wizard.chooseVoodoo2(checked)
-                }
-                Label {
-                    Layout.fillWidth: true
-                    text: root.wizard.voodoo2Note
                     wrapMode: Text.Wrap
                     font.pixelSize: 11
                     opacity: 0.75

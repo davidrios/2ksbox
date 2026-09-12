@@ -99,12 +99,12 @@ fn fields_ui(
     cpu_speed_ui(ui, form);
     accel_ui(ui, form);
     video_ui(ui, form);
+    voodoo2_ui(ui, form);
     audio_ui(ui, form);
     pad_ui(ui, form);
     graphics_ui(ui, form);
     network_ui(ui, form);
     seamless_mouse_ui(ui, form);
-    voodoo2_ui(ui, form);
     optimizations_ui(ui, form);
     ui.separator();
     if editing {

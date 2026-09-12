@@ -183,8 +183,8 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   absent `network` field means on, as every bundle written before it ran;
   a new machine means off, and the two are separate answers for that
   reason (`network_enabled_default` and `default_network`).
-- **The Voodoo 2** is a checkbox after the pointer ("Emulated 3dfx
-  Voodoo 2", `voodoo2` in the bundle; doc 21, M14): a 3dfx Voodoo 2 on
+- **The Voodoo 2** is a checkbox right under the display adapter
+  ("Emulated 3dfx Voodoo 2", `voodoo2` in the bundle; doc 21, M14): a 3dfx Voodoo 2 on
   the PCI bus beside whatever display adapter the machine has, as the
   card sat beside a 2D card. On, the machine gets `-device
   voodoo2,addr=0x05` and nothing else changes; the guest needs 3dfx's
