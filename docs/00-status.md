@@ -1266,6 +1266,33 @@ items nobody owns yet:
   Guard: `REBOOT=1 tools/setup-guest-test.sh <image> win98` — the proof is
   a second SeaBIOS banner on the debugcon, never a screendump.
 
+- **`SETUP /ALL` over an installed 9x display driver must not overwrite a
+  file of it in place** — fixed 2026-09-12 (`guest-tools/src/setup.c`,
+  `stage_set`). User report: a reinstall from the ISO on a machine running
+  our driver died at the "Restart Windows now (y/N)?" prompt, with the band
+  of coloured noise across the top of the screen that is a VGA text page
+  under a linear frame buffer — a blue screen the image's older VxD could
+  not show. The reason an overwrite is dangerous on 9x is that one that
+  *succeeds* is worse than one that fails: a 16-bit `.DRV`'s code segments
+  are discardable and KERNEL reloads a discarded one from the file on disk,
+  and a ring-3 DLL's pages are demand-paged from its file the same way, so a
+  module whose file was replaced underneath it runs the new build's bytes at
+  the old build's addresses the next time a segment comes back in. The
+  `.DRV` and the VxD happen to be held open and refused the copy (doc 19
+  §28's measurement), which sent them through the boot-time rename already;
+  the DirectDraw HAL DLL is not held, and a DirectDraw application keeps it
+  loaded. Now the 9x driver step never copies over a file that is already
+  there: every one of the seven (four in `WINDOWS\INF`, three in `SYSTEM`)
+  is staged beside its target as `NAME.EX_` and put in `WININIT.INI`'s
+  `[rename]` section, which WININIT applies before the GUI on the restart
+  the step asks for anyway — the stage name carries the extension because
+  the INF and the `.DRV` share a base name in the INF folder. A first
+  install, with nothing there to be running, still copies outright.
+  Guard: `tools/setup-guest-test.sh <image> win98` runs `/ALL` twice and
+  requires the second to stage all seven and write the renames, and
+  `REBOOT=1` runs a second batch after the restart that requires every
+  staged copy gone and `WININIT.BAK` naming them.
+
 - **A busy-wait that starves the thread it is waiting for**: `d3dfeat9`'s
   occlusion query, fixed 2026-09-07 (`guest-tools/src/d3dfeat9.c`). The
   native oracle started answering `S_FALSE, 0 pixels` where the guest, on

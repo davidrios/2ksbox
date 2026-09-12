@@ -1863,6 +1863,18 @@ fails the copy. That is why `copy_one` schedules a boot-time replace for a
 locked system file (`WININIT.INI [rename]` on 9x, `MoveFileEx` on NT): on
 9x it is needed for the display driver itself, not just as an NT nicety.
 
+**And the one that succeeds is the dangerous one** (2026-09-12, user report:
+`SETUP /ALL` over the installed driver blue-screened at the restart prompt).
+The HAL's overwrite going through is not 9x being permissive, it is 9x not
+holding the file — while the module's pages are still demand-paged from it,
+the way a `.DRV`'s discardable segments are reloaded from theirs. A module
+whose file has been replaced underneath it runs the new build's bytes at the
+old build's addresses the next time a page or segment comes back in. So
+`SETUP`'s 9x driver step (`stage_set`) no longer overwrites any driver file
+that is already there, locked or not: all seven are staged beside their
+targets as `NAME.EX_` and swapped by WININIT on the restart. The doubled
+`/ALL` in `tools/setup-guest-test.sh` guards it.
+
 ### 29. Leaving a DOS box, the blue screen, and the pointer over both (2026-09-09)
 
 Three reports from the same afternoon on `claude98`, all on the driver as

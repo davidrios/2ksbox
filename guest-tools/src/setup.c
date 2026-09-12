@@ -79,26 +79,38 @@ static void say(const char *fmt, ...)
 
 /* ------------------------------------------------------------ file steps */
 
-/* A file that cannot be overwritten because it is in use — the display
- * driver we are reinstalling is the one Windows is drawing with, the mapper
- * .SYS is the one its service has loaded — is not a failure: stage the new
+/* A file that must not be overwritten where it is — because it is in use
+ * (the mapper .SYS its service has loaded), or because it is a module of a
+ * driver Windows may be running right now — is not a failure: stage the new
  * copy beside the target, on the hard disk where a boot-time rename can
  * still find it once the CD is gone, and schedule the swap for the next
  * restart. NT has MoveFileEx for exactly this; 9x has no such call and does
  * it through WINDOWS\WININIT.INI, whose [rename] section WININIT.EXE applies
  * once, before the GUI, on the next boot (`Dest=Src` renames Src to Dest).
  * The driver step reboots anyway, so the new file is live after the restart
- * it was already going to ask for. */
-static int replace_on_reboot(const char *src, const char *dstdir, const char *name)
+ * it was already going to ask for. `why` is the word for the log. */
+static int replace_on_reboot(const char *src, const char *dstdir, const char *name,
+                             const char *why)
 {
-    char dst[PATHBUF], stage[PATHBUF], base[MAX_PATH], *dot;
+    char dst[PATHBUF], stage[PATHBUF], base[MAX_PATH], ext[8], *dot;
+    size_t n;
 
     snprintf(dst, sizeof dst, "%s\\%s", dstdir, name);
-    /* an 8.3-safe sibling (BASE.NEW, one dot): WININIT.INI needs short names,
-     * and BASE.EXT.NEW would be a long name with a generated alias */
+    /* an 8.3-safe sibling with the extension's last character made `_`
+     * (D3DPT9X.DR_, D3DPT9X.IN_): WININIT.INI needs short names, and a
+     * BASE.EXT.NEW would be a long name with a generated alias. The stage
+     * name must also differ per extension, because the 9x driver's INF and
+     * .DRV share a base name in the same folder. */
     lstrcpynA(base, name, sizeof base);
-    if ((dot = strrchr(base, '.')) != NULL) *dot = 0;
-    snprintf(stage, sizeof stage, "%s\\%s.NEW", dstdir, base);
+    ext[0] = 0;
+    if ((dot = strrchr(base, '.')) != NULL) {
+        lstrcpynA(ext, dot + 1, sizeof ext);
+        *dot = 0;
+    }
+    n = strlen(ext);
+    if (n >= 3) ext[2] = '_', ext[3] = 0;
+    else ext[n] = '_', ext[n + 1] = 0;
+    snprintf(stage, sizeof stage, "%s\\%s.%s", dstdir, base, ext);
 
     SetFileAttributesA(stage, FILE_ATTRIBUTE_NORMAL);
     if (!CopyFileA(src, stage, FALSE)) {
@@ -121,7 +133,7 @@ static int replace_on_reboot(const char *src, const char *dstdir, const char *na
         }
     }
     g_reboot = 1;
-    say("    %s: in use; the new copy replaces it on restart", name);
+    say("    %s: %s; the new copy replaces it on restart", name, why);
     return 0;
 }
 
@@ -152,7 +164,7 @@ static int copy_one(const char *src, const char *dstdir, const char *name)
     if (g_installing
         && (err == ERROR_SHARING_VIOLATION || err == ERROR_ACCESS_DENIED || err == ERROR_USER_MAPPED_FILE)
         && GetFileAttributesA(dst) != INVALID_FILE_ATTRIBUTES)
-        return replace_on_reboot(src, dstdir, name);
+        return replace_on_reboot(src, dstdir, name, "in use");
     say("    %s: copy failed, error %lu", name, (unsigned long)err);
     return 1;
 }
@@ -166,6 +178,42 @@ static int copy_set(const char *isodir, const char *dstdir, const char *const *n
     for (i = 0; names[i]; i++) {
         snprintf(src, sizeof src, "%s%s\\%s", g_root, isodir, names[i]);
         bad |= copy_one(src, dstdir, names[i]);
+    }
+    return bad;
+}
+
+/* The same, for the files of a driver that may be the one Windows is running:
+ * a name that already exists at the destination is never overwritten in
+ * place, whether or not the copy would go through, but staged and swapped on
+ * the restart the step asks for anyway. On 9x an overwrite that *succeeds*
+ * is the dangerous one. A 16-bit .DRV's code segments are discardable and
+ * KERNEL reloads a discarded one from the file on disk, and a ring-3 DLL's
+ * pages are demand-paged from its file the same way, so a module whose file
+ * has been replaced underneath it executes the new build's bytes at the old
+ * build's addresses the next time a segment or page comes back in — a
+ * fault inside the display driver, which on 9x is a blue screen (2026-09-12:
+ * `SETUP /ALL` over an installed driver died at the restart prompt). The
+ * .DRV and the VxD happen to be held open and refuse the copy (doc 19 §28),
+ * the DirectDraw HAL DLL does not while a DirectDraw application has it
+ * loaded; treating all of them alike is what makes a reinstall safe rather
+ * than lucky. A name not there yet is a first install with nothing loaded,
+ * and is copied outright. */
+static int stage_set(const char *isodir, const char *dstdir, const char *const *names)
+{
+    char src[PATHBUF], dst[PATHBUF];
+    int bad = 0, i;
+
+    for (i = 0; names[i]; i++) {
+        snprintf(src, sizeof src, "%s%s\\%s", g_root, isodir, names[i]);
+        snprintf(dst, sizeof dst, "%s\\%s", dstdir, names[i]);
+        if (GetFileAttributesA(src) == INVALID_FILE_ATTRIBUTES) {
+            say("    %s: not on this disc", names[i]);
+            bad = 1;
+        } else if (GetFileAttributesA(dst) != INVALID_FILE_ATTRIBUTES) {
+            bad |= replace_on_reboot(src, dstdir, names[i], "installed");
+        } else {
+            bad |= copy_one(src, dstdir, names[i]);
+        }
     }
     return bad;
 }
@@ -337,7 +385,9 @@ static int step_driver_nt(void)
  *
  * A restart is not optional here and not merely recommended: nothing of this
  * driver exists to Windows until the boot that enumerates the adapter
- * against the new INF. */
+ * against the new INF — and on a reinstall, every file that is already
+ * there is swapped by that boot rather than overwritten under the driver
+ * that is drawing the desktop (stage_set). */
 static int step_driver_9x(void)
 {
     static const char *const all[] = { "D3DPT9X.INF", "D3DPT9X.DRV", "D3DPT9V.VXD",
@@ -354,8 +404,8 @@ static int step_driver_9x(void)
     snprintf(infdir, sizeof infdir, "%s\\INF", g_win);
     CreateDirectoryA(infdir, NULL);
 
-    bad  = copy_set("DRIVER9X", infdir, all);
-    bad |= copy_set("DRIVER9X", g_sys, bin);
+    bad  = stage_set("DRIVER9X", infdir, all);
+    bad |= stage_set("DRIVER9X", g_sys, bin);
     if (bad) {
         say("    failed. The machine must run with -vga none -device d3dpt-vga.");
         return 1;

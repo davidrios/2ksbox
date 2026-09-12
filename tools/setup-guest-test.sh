@@ -27,11 +27,23 @@
 # there (tools/guestwait.sh) and BOOT_WAIT / WARMUP_WAIT are only the caps
 # on that wait.
 #
-# REBOOT=1 runs the other half of the installer instead: `SETUP /ALL
-# /REBOOT`, and the proof is a second SeaBIOS banner on the debugcon —
-# the machine really reset. It is its own mode because the restart lands
-# in the middle of the `dir`s the normal run ends with, and because the
-# 9x restart is a thing that has silently not worked (see below).
+# On Win98 `SETUP /ALL` runs twice. The second time every display-driver
+# file is already there, and SETUP must not overwrite a file of a driver
+# Windows may be drawing with (2026-09-12: a reinstall over the running
+# driver blue-screened at the restart prompt): it stages each one beside
+# its target and schedules the swap in WININIT.INI's [rename] section, so
+# the run `type`s that file and `dir`s the staged copies. On cirrus the
+# driver is not running, but the mechanism is the same.
+#
+# REBOOT=1 runs the other half of the installer instead: `SETUP /ALL`, then
+# `SETUP /ALL /REBOOT`, and the proof is a second SeaBIOS banner on the
+# debugcon — the machine really reset. It is its own mode because the
+# restart lands in the middle of the `dir`s the normal run ends with, and
+# because the 9x restart is a thing that has silently not worked (see
+# below). On Win98 a second batch runs after the restart and asks Windows
+# whether WININIT applied the swap: the staged copies must be gone and
+# WININIT.BAK (what WININIT renames the INI to once it has run it) must
+# name the driver files.
 #
 # Env: OUT=dir (default build/setup-test), BOOT_WAIT=s (cap, 300),
 # WARMUP_WAIT=s (cap, 300), NO_WARMUP=1, NO_KVM=1, FORCE_KVM=1 (Win98 under
@@ -68,10 +80,35 @@ if [ -n "${REBOOT:-}" ]; then
   # later. Anything after this line would run into the restart.
   {
     echo '@echo off'
-    echo 'echo ==== install and restart > COM1'
+    echo 'echo ==== install > COM1'
+    setup_line '/ALL'
+    echo 'echo ==== install again and restart > COM1'
     setup_line '/ALL /REBOOT'
     echo 'echo SETUPDONE > COM1'
   } > "$OUT/RUN.BAT"
+  # after the restart (Win98): what WININIT did with the staged files
+  {
+    echo '@echo off'
+    echo 'echo ==== after the restart > COM1'
+    echo 'type %windir%\WININIT.BAK > COM1'
+    # `if exist` rather than `dir`: a listing's format is not worth parsing,
+    # and WININIT.BAK names the staged files too
+    echo 'if exist %windir%\SYSTEM\D3DPT9X.DR_ echo STAGELEFT SYSTEM\D3DPT9X.DR_ > COM1'
+    echo 'if not exist %windir%\SYSTEM\D3DPT9X.DR_ echo SWAPPED SYSTEM\D3DPT9X.DR_ > COM1'
+    echo 'if exist %windir%\SYSTEM\D3DPT9V.VX_ echo STAGELEFT SYSTEM\D3DPT9V.VX_ > COM1'
+    echo 'if not exist %windir%\SYSTEM\D3DPT9V.VX_ echo SWAPPED SYSTEM\D3DPT9V.VX_ > COM1'
+    echo 'if exist %windir%\SYSTEM\D3DPT9HL.DL_ echo STAGELEFT SYSTEM\D3DPT9HL.DL_ > COM1'
+    echo 'if not exist %windir%\SYSTEM\D3DPT9HL.DL_ echo SWAPPED SYSTEM\D3DPT9HL.DL_ > COM1'
+    echo 'if exist %windir%\INF\D3DPT9X.IN_ echo STAGELEFT INF\D3DPT9X.IN_ > COM1'
+    echo 'if not exist %windir%\INF\D3DPT9X.IN_ echo SWAPPED INF\D3DPT9X.IN_ > COM1'
+    echo 'if exist %windir%\INF\D3DPT9X.DR_ echo STAGELEFT INF\D3DPT9X.DR_ > COM1'
+    echo 'if not exist %windir%\INF\D3DPT9X.DR_ echo SWAPPED INF\D3DPT9X.DR_ > COM1'
+    echo 'if exist %windir%\INF\D3DPT9V.VX_ echo STAGELEFT INF\D3DPT9V.VX_ > COM1'
+    echo 'if not exist %windir%\INF\D3DPT9V.VX_ echo SWAPPED INF\D3DPT9V.VX_ > COM1'
+    echo 'if exist %windir%\INF\D3DPT9HL.DL_ echo STAGELEFT INF\D3DPT9HL.DL_ > COM1'
+    echo 'if not exist %windir%\INF\D3DPT9HL.DL_ echo SWAPPED INF\D3DPT9HL.DL_ > COM1'
+    echo 'echo AFTERREBOOT > COM1'
+  } > "$OUT/RUN2.BAT"
 else
 {
   echo '@echo off'
@@ -79,6 +116,19 @@ else
   setup_line '/LIST'
   echo 'echo ==== install > COM1'
   setup_line '/ALL'
+  if [ "$FAMILY" = win98 ]; then
+    echo 'echo ==== install again, over the installed driver > COM1'
+    setup_line '/ALL'
+    echo 'echo ==== what SETUP scheduled for the restart > COM1'
+    echo 'type %windir%\WININIT.INI > COM1'
+    echo 'if exist %windir%\SYSTEM\D3DPT9X.DR_ echo STAGED SYSTEM\D3DPT9X.DR_ > COM1'
+    echo 'if exist %windir%\SYSTEM\D3DPT9V.VX_ echo STAGED SYSTEM\D3DPT9V.VX_ > COM1'
+    echo 'if exist %windir%\SYSTEM\D3DPT9HL.DL_ echo STAGED SYSTEM\D3DPT9HL.DL_ > COM1'
+    echo 'if exist %windir%\INF\D3DPT9X.IN_ echo STAGED INF\D3DPT9X.IN_ > COM1'
+    echo 'if exist %windir%\INF\D3DPT9X.DR_ echo STAGED INF\D3DPT9X.DR_ > COM1'
+    echo 'if exist %windir%\INF\D3DPT9V.VX_ echo STAGED INF\D3DPT9V.VX_ > COM1'
+    echo 'if exist %windir%\INF\D3DPT9HL.DL_ echo STAGED INF\D3DPT9HL.DL_ > COM1'
+  fi
   echo 'echo ==== per-game set 3 (OpenGL) > COM1'
   setup_line '/GAME 3 C:\2KSBOX'
   echo 'echo ==== what is on the disk now > COM1'
@@ -98,6 +148,7 @@ else
 fi
 # perl, not `sed -i`: BSD sed takes the script as a backup suffix (macOS).
 perl -pi -e 's/\r?\n\z/\r\n/' "$OUT/RUN.BAT"
+[ -f "$OUT/RUN2.BAT" ] && perl -pi -e 's/\r?\n\z/\r\n/' "$OUT/RUN2.BAT"
 rm -f "$FLOPPY"
 rm -f "$FLOPPY"
 if command -v mkfs.fat >/dev/null; then
@@ -106,6 +157,7 @@ else
   mformat -C -f 1440 -i "$FLOPPY" :: || { echo "need mkfs.fat or mformat"; exit 1; }
 fi
 mcopy -o -i "$FLOPPY" "$OUT/RUN.BAT" ::/RUN.BAT
+[ -n "${REBOOT:-}" ] && mcopy -o -i "$FLOPPY" "$OUT/RUN2.BAT" ::/RUN2.BAT
 
 rm -f "$OVL"
 "$ROOT/build/qemu/qemu-img" create -q -f qcow2 -b "$IMG" -F qcow2 "$OVL"
@@ -201,6 +253,11 @@ if [ -n "${REBOOT:-}" ]; then
   done
   # and it must come back up, not sit in ScanDisk or safe mode
   [ "$reset_seen" = 1 ] && gw_wait_quiet "$SOCK" "${WARMUP_WAIT:-300}" 10 || true
+  # and then say what the boot did with the files SETUP staged
+  if [ "$reset_seen" = 1 ] && [ "$FAMILY" = win98 ]; then
+    gw_poke_until "$SOCK" "$FAMILY" 'command /c A:\RUN2.BAT' "${BOOT_WAIT:-300}" \
+      grep -q AFTERREBOOT "$LOG" || true
+  fi
 fi
 Q screendump "$OUT/$FAMILY-end.png" || true
 if [ "$FAMILY" = win98 ]; then
@@ -235,6 +292,19 @@ if [ -n "${REBOOT:-}" ]; then
     echo "FAIL  the machine never restarted (still $base POSTs, see $QLOG)"
     fails=$((fails + 1))
   fi
+  if [ "$FAMILY" = win98 ]; then
+    want "D3DPT9X.DRV: installed; the new copy replaces it on restart" "the second install staged the display driver instead of overwriting it"
+    want "AFTERREBOOT" "the guest came back up and ran the second batch"
+    want "SYSTEM\\D3DPT9X.DRV=" "WININIT ran the [rename] section (it is WININIT.BAK now)"
+    never "STAGELEFT" "no staged copy is left beside its target"
+    want "SWAPPED SYSTEM\D3DPT9X.DR_" "the restart swapped SYSTEM\D3DPT9X.DR_ into place"
+    want "SWAPPED SYSTEM\D3DPT9V.VX_" "the restart swapped SYSTEM\D3DPT9V.VX_ into place"
+    want "SWAPPED SYSTEM\D3DPT9HL.DL_" "the restart swapped SYSTEM\D3DPT9HL.DL_ into place"
+    want "SWAPPED INF\D3DPT9X.IN_" "the restart swapped INF\D3DPT9X.IN_ into place"
+    want "SWAPPED INF\D3DPT9X.DR_" "the restart swapped INF\D3DPT9X.DR_ into place"
+    want "SWAPPED INF\D3DPT9V.VX_" "the restart swapped INF\D3DPT9V.VX_ into place"
+    want "SWAPPED INF\D3DPT9HL.DL_" "the restart swapped INF\D3DPT9HL.DL_ into place"
+  fi
   if [ "$fails" = 0 ]; then echo "setup guest test ($FAMILY, reboot): PASS"; exit 0; fi
   echo "setup guest test ($FAMILY, reboot): FAIL ($fails checks)"; exit 1
 fi
@@ -257,6 +327,23 @@ if [ "$FAMILY" = win98 ]; then
   # Named by the INF's CopyFiles: without it PnP stops and asks for the
   # disc (2026-09-11, the ISO had never carried it).
   want "D3DPT9HL.DLL ->" "the 9x DirectDraw HAL was staged"
+  # The second install: nothing overwritten in place, every file scheduled
+  # for the restart in WININIT.INI, the staged copies beside the targets.
+  want "D3DPT9X.DRV: installed; the new copy replaces it on restart" "a reinstall stages the display driver rather than overwriting it"
+  want "D3DPT9V.VXD: installed; the new copy replaces it on restart" "a reinstall stages the mini-VDD rather than overwriting it"
+  want "D3DPT9HL.DLL: installed; the new copy replaces it on restart" "a reinstall stages the DirectDraw HAL rather than overwriting it"
+  want "D3DPT9X.INF: installed; the new copy replaces it on restart" "a reinstall stages the INF rather than overwriting it"
+  want "[rename]" "WININIT.INI has a [rename] section"
+  want "SYSTEM\\D3DPT9X.DRV=" "WININIT.INI renames the staged display driver into place"
+  want "SYSTEM\\D3DPT9HL.DLL=" "WININIT.INI renames the staged HAL into place"
+  want "STAGED SYSTEM\D3DPT9X.DR_" "the staged copy SYSTEM\D3DPT9X.DR_ is on the disk beside its target"
+  want "STAGED SYSTEM\D3DPT9V.VX_" "the staged copy SYSTEM\D3DPT9V.VX_ is on the disk beside its target"
+  want "STAGED SYSTEM\D3DPT9HL.DL_" "the staged copy SYSTEM\D3DPT9HL.DL_ is on the disk beside its target"
+  want "STAGED INF\D3DPT9X.IN_" "the staged copy INF\D3DPT9X.IN_ is on the disk beside its target"
+  want "STAGED INF\D3DPT9X.DR_" "the staged copy INF\D3DPT9X.DR_ is on the disk beside its target"
+  want "STAGED INF\D3DPT9V.VX_" "the staged copy INF\D3DPT9V.VX_ is on the disk beside its target"
+  want "STAGED INF\D3DPT9HL.DL_" "the staged copy INF\D3DPT9HL.DL_ is on the disk beside its target"
+  never "copy failed" "no copy failed"
 else
   want "Windows XP" "the family was detected"
   want "drvinst: installed" "the display driver was installed"
