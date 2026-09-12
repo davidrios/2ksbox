@@ -2,9 +2,12 @@
 """In-guest regression test for the x87 fast path (patch 05).
 
 Builds a DOS program (NASM, .COM) that runs a battery of x87 instructions
-over a pool of edge-case operands under several control words and streams
-every result (80-bit value + status word) to the serial port. Boots it on
-the FreeDOS test floppy under our qemu-system-i386 twice, with
+over a pool of edge-case operands under several control words -- each of
+them twice, the second time with the inexact flag set before every case,
+which is the state the inline path translates differently (patches 37 and
+45) and which fninit before each case would otherwise never let it see --
+and streams every result (80-bit value + status word) to the serial port.
+Boots it on the FreeDOS test floppy under our qemu-system-i386 twice, with
 `-cpu pentium3,x87-fast=on` and `=off`, and requires the two serial logs to
 be identical: the fast path must be indistinguishable from softfloat.
 
@@ -165,10 +168,24 @@ start:
     int 20h
 
 ; bx = a offset, bp = b offset, cl = op. Result in res (10 bytes) + res_sw.
+; Bit 15 of the control word entry (not a control word bit) asks for the
+; inexact flag to be set before the case: the inline path translates a
+; block whose PE is already sticky differently (patch 37 drops the
+; bookkeeping, patch 45 computes in binary32 at PC=24), and fninit before
+; every case would otherwise never let that variant run here.
 do_op:
     push cx
     fninit
-    fldcw [cur_cw]
+    mov ax, [cur_cw]
+    and ax, 7FFFh
+    mov [cw_load], ax
+    fldcw [cw_load]
+    test byte [cur_cw + 1], 80h
+    jz .pe_done
+    fld1
+    fdiv dword [c_three]        ; 1/3: inexact, PE set
+    fstp st0
+.pe_done:
     xor ax, ax
     mov [res], ax
     mov [res+2], ax
@@ -573,9 +590,18 @@ cw_table:
     dw 063Fh        ; PC=53 down
     dw 083Fh        ; PC=24 up
     dw 021Fh        ; PC=53 RNE, PE unmasked (inline path must stay off)
+    ; the same with PE already set before each case (bit 15, see do_op)
+    dw 823Fh        ; PC=53 RNE, PE sticky
+    dw 803Fh        ; PC=24 RNE, PE sticky
+    dw 833Fh        ; PC=64 RNE, PE sticky
+    dw 8E3Fh        ; PC=53 trunc, PE sticky
+    dw 863Fh        ; PC=53 down, PE sticky
+    dw 883Fh        ; PC=24 up, PE sticky
     dw 0FFFFh
 
-cur_cw: dw 0
+cur_cw:  dw 0
+cw_load: dw 0
+c_three: dd 3.0
 res:    times 10 db 0
 res_sw: dw 0
 
@@ -685,12 +711,18 @@ org 100h
 bits 16
 ; x87 throughput: ITER iterations of a typical double-precision inner loop
 ; (fld/fmul/fadd/fstp on memory doubles) at PC=53 (X87BENCH) or PC=24
-; (X87BEN24), timed with the BIOS tick counter (18.2 Hz). Prints
-; "BENCH <iterations> <ticks>" (or "BENCH24 ...") on COM1.
+; (X87BEN24), and the same on memory floats at PC=24 (X87BEN2S: the shape
+; of Direct3D-era game code), timed with the BIOS tick counter (18.2 Hz).
+; Prints "BENCH <iterations> <ticks>" (BENCH24 / BENCH24S) on COM1. The loop is one
+; block chained to itself, so it runs for ever in the variant it was
+; translated for: PE is set before it (below) so that is the sticky one.
 %define ITER 20000000
 start:
     fninit
     fldcw [cw]
+    fld1                        ; 1 / 0.9999999 is inexact: PE set before the
+    fdiv qword [y]              ; loop, so its block is translated with PE
+    fstp st0                    ; sticky (patch 37), the state a game's loop runs in
     xor ax, ax
     mov es, ax
     mov si, [es:046Ch]
@@ -780,6 +812,10 @@ x:  dq 1.0000001
 y:  dq 0.9999999
 z:  dq 0.5
 w:  dq 0.0
+xs: dd 1.0000001
+ys: dd 0.9999999
+zs: dd 0.5
+ws: dd 0.0
 iv: dd 0
 """
 
@@ -857,6 +893,18 @@ def main():
         f.write(BENCH_ASM.replace("cw: dw 023Fh", "cw: dw 003Fh")
                 .replace('db "BENCH ", 0', 'db "BENCH24 ", 0'))
     sh("nasm", "-O0", "-f", "bin", "-o", b24com, b24asm)
+    b24sasm = os.path.join(OUT, "x87ben2s.asm")
+    b24scom = os.path.join(OUT, "X87BEN2S.COM")
+    with open(b24sasm, "w") as f:
+        f.write(open(b24asm).read()
+                .replace('db "BENCH24 ", 0', 'db "BENCH24S ", 0')
+                .replace("fld qword [x]", "fld dword [xs]")
+                .replace("fmul qword [y]", "fmul dword [ys]")
+                .replace("fadd qword [z]", "fadd dword [zs]")
+                .replace("fstp qword [w]", "fstp dword [ws]")
+                .replace("fld qword [w]", "fld dword [ws]")
+                .replace("fdiv qword [y]\n    fistp", "fdiv dword [ys]\n    fistp"))
+    sh("nasm", "-O0", "-f", "bin", "-o", b24scom, b24sasm)
     lasm = os.path.join(OUT, "longblk.asm")
     lcom = os.path.join(OUT, "LONGBLK.COM")
     with open(lasm, "w") as f:
@@ -871,13 +919,15 @@ def main():
                 "SHELL=\\FREEDOS\\BIN\\COMMAND.COM \\FREEDOS\\BIN /E:2048 /P=\\FDAUTO.BAT\r\n")
     bat = os.path.join(OUT, "FDAUTO.BAT")
     with open(bat, "w") as f:
-        f.write("@echo off\r\nX87BENCH.COM\r\nX87BEN24.COM\r\nLONGBLK.COM\r\n"
+        f.write("@echo off\r\nX87BENCH.COM\r\nX87BEN24.COM\r\nX87BEN2S.COM\r\n"
+                "LONGBLK.COM\r\n"
                 "X87TEST.COM\r\n")
     sh("mcopy", "-o", "-i", img, cfg, "::FDCONFIG.SYS")
     sh("mcopy", "-o", "-i", img, bat, "::FDAUTO.BAT")
     sh("mcopy", "-o", "-i", img, com, "::X87TEST.COM")
     sh("mcopy", "-o", "-i", img, bcom, "::X87BENCH.COM")
     sh("mcopy", "-o", "-i", img, b24com, "::X87BEN24.COM")
+    sh("mcopy", "-o", "-i", img, b24scom, "::X87BEN2S.COM")
     sh("mcopy", "-o", "-i", img, lcom, "::LONGBLK.COM")
 
     logs = {}
@@ -893,7 +943,8 @@ def main():
             if line.startswith(b"BENCH"):
                 tag, it, tk = line.split()
                 ticks[(tag.decode(), fast)] = (int(it, 16), int(tk, 16))
-    for tag, what in (("BENCH", "PC=53"), ("BENCH24", "PC=24")):
+    for tag, what in (("BENCH", "PC=53"), ("BENCH24", "PC=24"),
+                      ("BENCH24S", "PC=24, m32")):
         if (tag, "off") in ticks and (tag, "on") in ticks:
             off, on = ticks[(tag, "off")], ticks[(tag, "on")]
             ratio = off[1] / max(1, on[1])

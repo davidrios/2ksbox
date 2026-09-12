@@ -1,0 +1,1046 @@
+x87 at PC=24 kept as binary32: an operation is one host instruction.
+
+Patch 06 keeps the x87 stack as host doubles across a translation block,
+and at PC=24 (what Direct3D sets, so every 3D game's whole frame) it
+rounded every result to 24 bits through two conversions -- binary64 to
+binary32 and back, then an xor for the inexact flag -- on the dependent
+chain, after the operation and its window check. In 3DMark 99's
+first-person test the x87 forms were 24 % of the frame at 2.9 profile
+samples per instruction against 1.2 for an integer register form (the
+form weights of tools/tcg-form-weights.py, 2026-09-11).
+
+At PC=24 the shadows are now binary32, in i32 globals of their own
+(cpu_x87_ss[], env->x87_ss[]), and with the inexact flag already sticky
+(TB_FLAG_X87_PE, patch 37 -- the state a game's loop runs in) an
+operation is the host's own binary32 instruction plus one range check:
++, -, *, / and sqrt correctly rounded to 24 bits is exactly what the x87
+computes at PC=24 while the result has a binary32 exponent. A result
+that would not have one takes the slow path -- overflow, underflow, and
+the lowest binade, which is excluded on purpose: a value just below
+2^-126 rounds up to 2^-126 in binary32 (fewer bits there) but not at 24
+significant bits with the x87's 15-bit exponent, and only that binade
+can tell the two roundings apart. Operands may sit in it (exact); results
+may not. While PE is still to be decided the operands are widened and the
+binary64 path runs as before, its residuals feeding PE and its rounding
+to 24 bits being the result (exact for the same reason as before:
+53 >= 2 * 24 + 2). fld m32 is the operand's own bits after the zero-or-
+normal check, fst m32 the shadow's own bits with no check and no flag,
+m64 loads round through one conversion, fist/frndint/fst m64 widen (one
+conversion) and keep their binary64 code, fild narrows its exact binary64
+integer. A reload from fpregs[] accepts exponents -126..127 (the top
+binade was outside the old window), the unwinder (tcg-cpu.c) converts
+from binary32 for a block translated in mode 2.
+
+Exact: tools/x87-guest-test.py identical with x87-fast on and off,
+709,893 result lines, now including a second sweep of every control word
+with PE set before each case -- without it (fninit before every case) the
+battery never ran the sticky variant at all, patch 37's included.
+
+diff --git a/target/i386/cpu.h b/target/i386/cpu.h
+index 20d7cf3..cef14a9 100644
+--- a/target/i386/cpu.h
++++ b/target/i386/cpu.h
+@@ -1815,6 +1815,8 @@ typedef struct CPUArchState {
+     uint64_t x87s_stat[1];      /* x87 inline guard exits (mode byte or sticky PE) */
+     /* shadow doubles of the x87 stack, relative slots (tcg/x87-shadow.c.inc) */
+     uint64_t x87_sd[8];
++    /* the same as binary32 at PC=24 (x87_fast_mode 2) */
++    uint32_t x87_ss[8];
+ 
+     float_status mmx_status; /* for 3DNow! float ops */
+     float_status sse_status;
+diff --git a/target/i386/tcg/tcg-cpu.c b/target/i386/tcg/tcg-cpu.c
+index b1fd8c6..ffd846c 100644
+--- a/target/i386/tcg/tcg-cpu.c
++++ b/target/i386/tcg/tcg-cpu.c
+@@ -95,20 +95,30 @@ static void x86_restore_state_to_opc(CPUState *cs,
+     }
+ 
+     /*
+-     * x87 shadow doubles (tcg/x87-shadow.c.inc): data[2] holds the mask of
++     * x87 shadows (tcg/x87-shadow.c.inc): data[2] holds the mask of
+      * relative stack slots whose shadow is newer than fpregs[] and the
+-     * push/pop delta since the frame's entry top. Materialize them.
++     * push/pop delta since the frame's entry top. Materialize them: a TB
++     * translated for PC=24 (mode 2) keeps them as binary32 in x87_ss[],
++     * every other inline TB as binary64 in x87_sd[].
+      */
+     if (data[2] & 0xff) {
+         int delta = (data[2] >> 8) & 7;
+         int entry = (env->fpstt - delta) & 7;
++        bool prec24 = (tb->flags & TB_FLAG_X87_MODE_MASK)
++                      == (2u << TB_FLAG_X87_MODE_SHIFT);
+         int r;
+ 
+         for (r = 0; r < 8; r++) {
+             if (data[2] & (1u << r)) {
+-                double d;
+-                memcpy(&d, &env->x87_sd[r], sizeof(d));
+-                env->fpregs[(entry + r) & 7].d = x87f_d_to_x80(d);
++                if (prec24) {
++                    float f;
++                    memcpy(&f, &env->x87_ss[r], sizeof(f));
++                    env->fpregs[(entry + r) & 7].d = x87f_f_to_x80(f);
++                } else {
++                    double d;
++                    memcpy(&d, &env->x87_sd[r], sizeof(d));
++                    env->fpregs[(entry + r) & 7].d = x87f_d_to_x80(d);
++                }
+             }
+         }
+     }
+diff --git a/target/i386/tcg/translate.c b/target/i386/tcg/translate.c
+index 3615b53..80cf9dd 100644
+--- a/target/i386/tcg/translate.c
++++ b/target/i386/tcg/translate.c
+@@ -82,6 +82,7 @@ static TCGv_i64 cpu_bndl[4];
+ static TCGv_i64 cpu_bndu[4];
+ /* x87 shadow doubles (x87-shadow.c.inc), relative stack slots */
+ static TCGv_i64 cpu_x87_sd[8];
++static TCGv_i32 cpu_x87_ss[8];      /* the same as binary32 at PC=24 */
+ 
+ /* x87 shadow-double translation: one out-of-line slow block (x87-shadow.c.inc) */
+ typedef struct X87SlowBlock {
+@@ -4188,6 +4189,15 @@ void tcg_x86_init(void)
+                                                sd_names[i]);
+     }
+ 
++    for (i = 0; i < 8; ++i) {
++        static const char ss_names[8][4] = {
++            "ss0", "ss1", "ss2", "ss3", "ss4", "ss5", "ss6", "ss7"
++        };
++        cpu_x87_ss[i] = tcg_global_mem_new_i32(tcg_env,
++                                               offsetof(CPUX86State, x87_ss[i]),
++                                               ss_names[i]);
++    }
++
+     for (i = 0; i < 4; ++i) {
+         cpu_bndl[i]
+             = tcg_global_mem_new_i64(tcg_env,
+diff --git a/target/i386/tcg/x87-shadow.c.inc b/target/i386/tcg/x87-shadow.c.inc
+index aea7a2f..0c67926 100644
+--- a/target/i386/tcg/x87-shadow.c.inc
++++ b/target/i386/tcg/x87-shadow.c.inc
+@@ -45,17 +45,27 @@
+  * register is the only way to tell; real hardware returns an indefinite
+  * NaN there anyway).
+  *
+- * PC=24 (mode 2, what Direct3D sets). The shadows are still binary64
+- * but hold only values with a 24-bit significand, inside the float
+- * exponent window: a reload from fpregs[] requires it, loads of m32 and
+- * the constants have it, and every arithmetic result is rounded to it
+- * (x87s_round24: the host's binary64 result converted to binary32 and
+- * back; for 24-bit operands that double rounding is the correctly
+- * rounded 24-bit result of +, -, *, / and sqrt since 53 >= 2 * 24 + 2).
+- * Softfloat rounds m64 operands to 24 bits as well (fld/fadd m64 are
+- * inexact there, real hardware never rounds loads) and integer loads
+- * stay exact: so do we, and an fild m32 that does not fit 24 bits takes
+- * the helper. Results are identical to the PC=24 helper path.
++ * PC=24 (mode 2, what Direct3D sets). The shadows are binary32 (the
++ * i32 globals cpu_x87_ss[], env->x87_ss[]): zero or a normal, which is
++ * what a reload from fpregs[] requires (a 24-bit mantissa, exponent
++ * within the binary32 normal range), what loads of m32 and the constants
++ * have, and what every result is checked to be. With the inexact flag
++ * already sticky (TB_FLAG_X87_PE, the common case) an operation is the
++ * host's own binary32 instruction: +, -, *, / and sqrt correctly rounded
++ * to 24 bits is exactly what the x87 computes at PC=24 while the result
++ * has a binary32 exponent, and a result that would not (overflow,
++ * underflow, and the lowest binade, where a value just below 2^-126
++ * rounds up to it in binary32 but not at 24 significant bits with the
++ * x87's wider exponent) takes the slow path. While PE is still to be
++ * decided the operands are widened and the binary64 path of PC=53 runs,
++ * its residuals feeding PE and its rounding to 24 bits (x87s_round24:
++ * the binary64 result converted to binary32; for 24-bit operands that
++ * double rounding is the correctly rounded 24-bit result since
++ * 53 >= 2 * 24 + 2) being the result. Softfloat rounds m64 operands to
++ * 24 bits as well (fld/fadd m64 are inexact there, real hardware never
++ * rounds loads) and integer loads stay exact: so do we, and an fild m32
++ * that does not fit 24 bits takes the helper. A store of m32 is the
++ * shadow's own bits. Results are identical to the PC=24 helper path.
+  *
+  * SPDX-License-Identifier: GPL-2.0-or-later
+  */
+@@ -65,7 +75,7 @@
+ #define X87S_BIAS_X80   16383
+ #define X87S_BIAS_F64   1023
+ #define X87S_WIN        900     /* X87F_WIN_D: 2^-900 .. 2^900 */
+-#define X87S_WIN24      126     /* PC=24: binary32 normal range, minus the top binade */
++#define X87S_WIN24      126     /* PC=24, binary64 path: binary32 normal range, minus the top binade */
+ 
+ enum {
+     X87S_MEM = 0,
+@@ -100,18 +110,12 @@ QEMU_BUILD_BUG_ON(sizeof(FPReg) != 16);
+ 
+ #define X87S_SLOT(s, i)  (((s)->x87s_delta + (i)) & 7)
+ 
+-/* exponent window of shadows and results, relative to 2^0 */
++/* exponent window of binary64 values and results, relative to 2^0 */
+ static int x87s_win(DisasContext *s)
+ {
+     return s->x87s_prec24 ? X87S_WIN24 : X87S_WIN;
+ }
+ 
+-/* mantissa bits of an x80 that must be zero for the value to be a shadow */
+-static uint64_t x87s_mant_mask(DisasContext *s)
+-{
+-    return s->x87s_prec24 ? 0xffffffffffULL : 0x7ff;
+-}
+-
+ /*
+  * Temporaries. TCG allows 512 temps per TB and an inlined instruction
+  * uses a few dozen; EBB temps can be returned to the allocator, so every
+@@ -160,6 +164,66 @@ static void x87s_free_tmps(DisasContext *s)
+     s->x87s_ntmps = 0;
+ }
+ 
++/*
++ * A shadow value: a binary64 in .d at PC=53, a binary32 in .f at PC=24.
++ * The mode is the TB's (s->x87s_prec24), so only one member is ever set.
++ */
++typedef struct {
++    TCGv_i64 d;
++    TCGv_i32 f;
++} X87SV;
++
++static X87SV x87s_v64(TCGv_i64 d)
++{
++    X87SV v = { .d = d };
++
++    return v;
++}
++
++static X87SV x87s_v32(TCGv_i32 f)
++{
++    X87SV v = { .f = f };
++
++    return v;
++}
++
++/* the global holding relative slot r's shadow */
++static X87SV x87s_reg(DisasContext *s, int r)
++{
++    return s->x87s_prec24 ? x87s_v32(cpu_x87_ss[r]) : x87s_v64(cpu_x87_sd[r]);
++}
++
++static X87SV x87s_tmp_val(DisasContext *s)
++{
++    return s->x87s_prec24 ? x87s_v32(x87s_tmp_i32(s))
++                          : x87s_v64(x87s_tmp_i64(s));
++}
++
++static void x87s_mov(DisasContext *s, X87SV dst, X87SV src)
++{
++    if (s->x87s_prec24) {
++        tcg_gen_mov_i32(dst.f, src.f);
++    } else {
++        tcg_gen_mov_i64(dst.d, src.d);
++    }
++}
++
++/* the bits of a binary64 constant (fld1, fldz) in the mode's format */
++static X87SV x87s_const(DisasContext *s, uint64_t bits)
++{
++    if (s->x87s_prec24) {
++        double d;
++        float f;
++        uint32_t b;
++
++        memcpy(&d, &bits, sizeof(d));
++        f = (float)d;                           /* exact for 0 and 1 */
++        memcpy(&b, &f, sizeof(b));
++        return x87s_v32(tcg_constant_i32(b));
++    }
++    return x87s_v64(tcg_constant_i64(bits));
++}
++
+ /* ------------------------------------------------------------------ */
+ /* frame and static state                                              */
+ 
+@@ -281,10 +345,9 @@ static void x87s_st_x80(TCGv_ptr p, TCGv_i64 low, TCGv_i32 high)
+ 
+ /*
+  * x80 (low, high) -> binary64, exact. Branches to slow unless the value
+- * is zero or a normal whose mantissa bits in `mmask` are clear (53-bit,
+- * or 24-bit at PC=24) with exponent within [-win, win] (x87f_x80_to_d,
+- * x87f_x80_to_f). Branchless apart from the exit; `out` is only written
+- * after the branch.
++ * is zero or a normal whose mantissa bits in `mmask` are clear (53-bit)
++ * with exponent within [-win, win] (x87f_x80_to_d). Branchless apart
++ * from the exit; `out` is only written after the branch.
+  */
+ static void x87s_x80_to_f64(DisasContext *s, TCGv_i64 out, TCGv_i64 low,
+                             TCGv_i32 high, int win, uint64_t mmask,
+@@ -348,6 +411,76 @@ static void x87s_f64_to_x80(DisasContext *s, TCGv_i64 low, TCGv_i32 high,
+     tcg_gen_extrl_i64_i32(high, h);
+ }
+ 
++/*
++ * x80 (low, high) -> binary32, exact (x87f_x80_to_f): zero, or a normal
++ * with a 24-bit mantissa and exponent within [-126, 127], the binary32
++ * normal range; else slow. `out` is only written after the branch.
++ */
++static void x87s_x80_to_f32(DisasContext *s, TCGv_i32 out, TCGv_i64 low,
++                            TCGv_i32 high, TCGLabel *slow)
++{
++    TCGv_i64 zero = tcg_constant_i64(0);
++    TCGv_i64 e = x87s_tmp_i64(s);
++    TCGv_i64 t = x87s_tmp_i64(s);
++    TCGv_i64 bad = x87s_tmp_i64(s);
++    TCGv_i64 iszero = x87s_tmp_i64(s);
++    TCGv_i64 sign = x87s_tmp_i64(s);
++
++    tcg_gen_extu_i32_i64(e, high);
++    tcg_gen_andi_i64(sign, e, 0x8000);
++    tcg_gen_shli_i64(sign, sign, 16);
++    tcg_gen_andi_i64(e, e, 0x7fff);
++
++    tcg_gen_or_i64(t, e, low);
++    tcg_gen_setcondi_i64(TCG_COND_EQ, iszero, t, 0);
++
++    tcg_gen_subi_i64(e, e, X87S_BIAS_X80 - 126);
++    tcg_gen_setcondi_i64(TCG_COND_GTU, bad, e, 253);        /* [-126, 127] */
++    tcg_gen_andi_i64(t, low, 0xffffffffffULL);
++    tcg_gen_setcondi_i64(TCG_COND_NE, t, t, 0);
++    tcg_gen_or_i64(bad, bad, t);
++    tcg_gen_setcondi_i64(TCG_COND_GE, t, low, 0);
++    tcg_gen_or_i64(bad, bad, t);
++    tcg_gen_andc_i64(bad, bad, iszero);
++    tcg_gen_brcondi_i64(TCG_COND_NE, bad, 0, slow);
++
++    tcg_gen_addi_i64(e, e, 127 - 126);                      /* biased */
++    tcg_gen_shli_i64(e, e, 23);
++    tcg_gen_shli_i64(t, low, 1);
++    tcg_gen_shri_i64(t, t, 41);
++    tcg_gen_or_i64(t, t, e);
++    tcg_gen_or_i64(t, t, sign);
++    tcg_gen_movcond_i64(TCG_COND_NE, t, iszero, zero, sign, t);
++    tcg_gen_extrl_i64_i32(out, t);
++}
++
++/* binary32 (zero or normal) -> x80, exact (x87f_f_to_x80). */
++static void x87s_f32_to_x80(DisasContext *s, TCGv_i64 low, TCGv_i32 high,
++                            TCGv_i32 f)
++{
++    TCGv_i64 zero = tcg_constant_i64(0);
++    TCGv_i64 d = x87s_tmp_i64(s);
++    TCGv_i64 e = x87s_tmp_i64(s);
++    TCGv_i64 t = x87s_tmp_i64(s);
++    TCGv_i64 h = x87s_tmp_i64(s);
++
++    tcg_gen_extu_i32_i64(d, f);
++    tcg_gen_shri_i64(e, d, 23);
++    tcg_gen_andi_i64(e, e, 0xff);
++
++    tcg_gen_andi_i64(t, d, 0x7fffff);
++    tcg_gen_shli_i64(t, t, 40);
++    tcg_gen_ori_i64(t, t, 1ULL << 63);
++    tcg_gen_movcond_i64(TCG_COND_NE, low, e, zero, t, zero);
++
++    tcg_gen_addi_i64(t, e, X87S_BIAS_X80 - 127);
++    tcg_gen_movcond_i64(TCG_COND_NE, t, e, zero, t, zero);
++    tcg_gen_shri_i64(h, d, 16);
++    tcg_gen_andi_i64(h, h, 0x8000);
++    tcg_gen_or_i64(h, h, t);
++    tcg_gen_extrl_i64_i32(high, h);
++}
++
+ /*
+  * Branch to slow unless d is zero or a normal whose biased exponent is
+  * in [lo, lo + range].
+@@ -397,29 +530,100 @@ static void x87s_f64_check_win(DisasContext *s, TCGv_i64 d, TCGLabel *slow)
+ }
+ 
+ /*
+- * PC=24: out = `in` rounded to nearest even at 24 significant bits, and
+- * diff = in ^ out, nonzero iff that was inexact. `in` is zero or a normal
+- * inside the PC=24 window, so the binary32 conversion neither overflows
+- * nor denormalizes and the result is a normal binary32 (its exponent
+- * may reach 127 by rounding up), exact as a binary64 again.
++ * The same on a binary32: branch to slow unless f is zero or a normal
++ * whose biased exponent is in [lo, lo + range].
++ */
++static void x87s_f32_check(DisasContext *s, TCGv_i32 f, int lo, int range,
++                           TCGLabel *slow)
++{
++    TCGv_i32 t = x87s_tmp_i32(s);
++    TCGv_i32 u = x87s_tmp_i32(s);
++    TCGv_i32 zero = tcg_constant_i32(0);
++
++    tcg_gen_shli_i32(t, f, 1);
++    tcg_gen_subi_i32(u, t, (uint32_t)lo << 24);
++    tcg_gen_movcond_i32(TCG_COND_EQ, u, t, zero, zero, u);
++    tcg_gen_brcondi_i32(TCG_COND_GTU, u,
++                        ((uint32_t)range << 24) | ((1u << 24) - 1), slow);
++}
++
++/*
++ * A binary32 result: zero, or a normal in [2^-125, 2^128) -- the lowest
++ * binade is left out because a value just below 2^-126 rounds up to it in
++ * binary32 (fewer bits there) while the x87 keeps 24 bits at that
++ * exponent, so the two roundings can differ exactly there.
++ */
++#define X87S_F32_RES_LO     2
++#define X87S_F32_RES_RANGE  252
++
++static void x87s_f32_check_res(DisasContext *s, TCGv_i32 r, TCGLabel *slow)
++{
++    x87s_f32_check(s, r, X87S_F32_RES_LO, X87S_F32_RES_RANGE, slow);
++}
++
++/* as x87s_f64_check_result: zero only right when z1 (an operand << 1) is */
++static void x87s_f32_check_result(DisasContext *s, TCGv_i32 r, TCGv_i32 z1,
++                                  TCGLabel *slow)
++{
++    TCGv_i32 t = x87s_tmp_i32(s);
++    TCGv_i32 u = x87s_tmp_i32(s);
++    TCGv_i32 zero = tcg_constant_i32(0);
++
++    tcg_gen_shli_i32(t, r, 1);
++    tcg_gen_subi_i32(u, t, (uint32_t)X87S_F32_RES_LO << 24);
++    tcg_gen_movcond_i32(TCG_COND_EQ, u, z1, zero, zero, u);
++    tcg_gen_brcondi_i32(TCG_COND_GTU, u,
++                        ((uint32_t)X87S_F32_RES_RANGE << 24) | ((1u << 24) - 1),
++                        slow);
++}
++
++/*
++ * PC=24: f = `in` rounded to nearest even at 24 significant bits, as a
++ * binary32, and diff = in ^ (f widened), nonzero iff that was inexact.
++ * `in` is zero or a normal inside the PC=24 window, so the binary32
++ * conversion neither overflows nor denormalizes and the result is a
++ * normal binary32 (its exponent may reach 127 by rounding up).
+  */
+-static void x87s_round24(DisasContext *s, TCGv_i64 out, TCGv_i64 in,
++static void x87s_round24(DisasContext *s, TCGv_i32 f, TCGv_i64 in,
+                          TCGv_i64 diff)
+ {
+-    TCGv_i64 f = x87s_tmp_i64(s);
++    TCGv_i64 t = x87s_tmp_i64(s);
+     TCGv_i64 r = x87s_tmp_i64(s);
+ 
+-    tcg_gen_cvt_f64_f32(f, in);
+-    tcg_gen_cvt_f32_f64(r, f);
++    tcg_gen_cvt_f64_f32(t, in);
++    tcg_gen_cvt_f32_f64(r, t);
+     tcg_gen_xor_i64(diff, in, r);
+-    tcg_gen_mov_i64(out, r);
++    tcg_gen_extrl_i64_i32(f, t);
++}
++
++/* binary32 shadow (zero or normal) -> binary64, exact */
++static TCGv_i64 x87s_widen(DisasContext *s, TCGv_i32 f)
++{
++    TCGv_i64 t = x87s_tmp_i64(s);
++    TCGv_i64 d = x87s_tmp_i64(s);
++
++    tcg_gen_extu_i32_i64(t, f);
++    tcg_gen_cvt_f32_f64(d, t);
++    return d;
++}
++
++/*
++ * binary64 -> binary32: exact for a value with a 24-bit significand inside
++ * the binary32 normal range (or zero), and the rounding to nearest even at
++ * 24 bits itself for an m64 operand inside the PC=24 window.
++ */
++static void x87s_narrow(DisasContext *s, TCGv_i32 f, TCGv_i64 d)
++{
++    TCGv_i64 t = x87s_tmp_i64(s);
++
++    tcg_gen_cvt_f64_f32(t, d);
++    tcg_gen_extrl_i64_i32(f, t);
+ }
+ 
+ /*
+  * binary32 bits (in the low half of m) -> binary64, exact; zero or
+  * normal only (x87f_from_f32), which is always inside the PC=53 window.
+- * At PC=24 the exponent may be 127, one above the window: harmless, every
+- * consumer that needs a bound checks its result (or, fist, its operand).
++ * PC=53 only: at PC=24 the shadow is the binary32 itself (x87s_m32_operand).
+  */
+ static void x87s_f32_to_f64(DisasContext *s, TCGv_i64 out, TCGv_i64 m,
+                             TCGLabel *slow)
+@@ -526,26 +730,52 @@ static void x87s_f64_to_f32(DisasContext *s, TCGv_i32 out, TCGv_i64 d,
+  * the window; at PC=24 rounded to 24 bits with PE when inexact, as
+  * softfloat's float64_to_floatx80 does at that precision.
+  */
+-static TCGv_i64 x87s_m64_operand(DisasContext *s, TCGv_i64 m, TCGLabel *slow)
++static X87SV x87s_m64_operand(DisasContext *s, TCGv_i64 m, TCGLabel *slow)
+ {
+-    TCGv_i64 v, diff;
++    TCGv_i32 f;
++    TCGv_i64 diff;
+ 
+     x87s_f64_check_win(s, m, slow);
+     if (!s->x87s_prec24) {
+-        return m;
++        return x87s_v64(m);
++    }
++    f = x87s_tmp_i32(s);
++    if (s->x87s_pe_sticky) {
++        x87s_narrow(s, f, m);
++        return x87s_v32(f);
+     }
+-    v = x87s_tmp_i64(s);
+     diff = x87s_tmp_i64(s);
+-    x87s_round24(s, v, m, diff);
++    x87s_round24(s, f, m, diff);
+     x87s_set_pe(s, diff);
+-    return v;
++    return x87s_v32(f);
++}
++
++/*
++ * m32 operand (fld/fxxx/fcom m32, raw bits in the low half of m) as a
++ * shadow: zero or a normal, else slow (denormal, infinity, NaN: the
++ * helper). At PC=24 the shadow is the operand's own bits.
++ */
++static X87SV x87s_m32_operand(DisasContext *s, TCGv_i64 m, TCGLabel *slow)
++{
++    if (s->x87s_prec24) {
++        TCGv_i32 f = x87s_tmp_i32(s);
++
++        tcg_gen_extrl_i64_i32(f, m);
++        x87s_f32_check(s, f, 1, 253, slow);
++        return x87s_v32(f);
++    } else {
++        TCGv_i64 v = x87s_tmp_i64(s);
++
++        x87s_f32_to_f64(s, v, m, slow);
++        return x87s_v64(v);
++    }
+ }
+ 
+ /* ------------------------------------------------------------------ */
+ /* shadow access, materialization, slow blocks                         */
+ 
+-/* ST(i) as a binary64 shadow; reloads (with checks) a MEM slot. */
+-static TCGv_i64 x87s_get(DisasContext *s, int i, TCGLabel *slow)
++/* ST(i) as a shadow; reloads (with checks) a MEM slot. */
++static X87SV x87s_get(DisasContext *s, int i, TCGLabel *slow)
+ {
+     int r = X87S_SLOT(s, i);
+ 
+@@ -554,19 +784,35 @@ static TCGv_i64 x87s_get(DisasContext *s, int i, TCGLabel *slow)
+         TCGv_i32 high = x87s_tmp_i32(s);
+ 
+         x87s_ld_x80(low, high, x87s_slot_ptr(s, r));
+-        x87s_x80_to_f64(s, cpu_x87_sd[r], low, high, x87s_win(s),
+-                        x87s_mant_mask(s), slow);
++        if (s->x87s_prec24) {
++            x87s_x80_to_f32(s, cpu_x87_ss[r], low, high, slow);
++        } else {
++            x87s_x80_to_f64(s, cpu_x87_sd[r], low, high, X87S_WIN, 0x7ff,
++                            slow);
++        }
+         s->x87s_state[r] = X87S_CLEAN;
+     }
+-    return cpu_x87_sd[r];
++    return x87s_reg(s, r);
+ }
+ 
+-static void x87s_set(DisasContext *s, int i, TCGv_i64 v)
++/* ST(i) as a binary64 (widened at PC=24), for the paths that stay binary64 */
++static TCGv_i64 x87s_get64(DisasContext *s, int i, TCGLabel *slow)
++{
++    X87SV v = x87s_get(s, i, slow);
++
++    return s->x87s_prec24 ? x87s_widen(s, v.f) : v.d;
++}
++
++static void x87s_set(DisasContext *s, int i, X87SV v)
+ {
+     int r = X87S_SLOT(s, i);
+ 
+-    if (v != cpu_x87_sd[r]) {
+-        tcg_gen_mov_i64(cpu_x87_sd[r], v);
++    if (s->x87s_prec24) {
++        if (v.f != cpu_x87_ss[r]) {
++            tcg_gen_mov_i32(cpu_x87_ss[r], v.f);
++        }
++    } else if (v.d != cpu_x87_sd[r]) {
++        tcg_gen_mov_i64(cpu_x87_sd[r], v.d);
+     }
+     s->x87s_state[r] = X87S_DIRTY;
+ }
+@@ -576,7 +822,11 @@ static void x87s_materialize_slot(DisasContext *s, int r)
+     TCGv_i64 low = x87s_tmp_i64(s);
+     TCGv_i32 high = x87s_tmp_i32(s);
+ 
+-    x87s_f64_to_x80(s, low, high, cpu_x87_sd[r]);
++    if (s->x87s_prec24) {
++        x87s_f32_to_x80(s, low, high, cpu_x87_ss[r]);
++    } else {
++        x87s_f64_to_x80(s, low, high, cpu_x87_sd[r]);
++    }
+     x87s_st_x80(x87s_slot_ptr(s, r), low, high);
+ }
+ 
+@@ -873,12 +1123,14 @@ static void x87s_emit_slow_blocks(DisasContext *s)
+ /* arithmetic                                                          */
+ 
+ /*
+- * r = a OP b on shadows a, b (zero or normal inside the window), inexact
+- * recovered from the residual (x87f_binop_d). op: 0 add, 1 mul,
+- * 4 sub (a - b), 5 subr (b - a), 6 div (a / b), 7 divr (b / a).
++ * r = a OP b on binary64 shadows a, b (zero or normal inside the window),
++ * inexact recovered from the residual (x87f_binop_d). op: 0 add, 1 mul,
++ * 4 sub (a - b), 5 subr (b - a), 6 div (a / b), 7 divr (b / a). At PC=24
++ * the result rounded to 24 bits goes to f24 as a binary32 and r is left
++ * unrounded.
+  */
+-static void x87s_binop(DisasContext *s, TCGv_i64 r, int op, TCGv_i64 a,
+-                       TCGv_i64 b, TCGLabel *slow)
++static void x87s_binop_f64(DisasContext *s, TCGv_i64 r, int op, TCGv_i64 a,
++                           TCGv_i64 b, TCGLabel *slow, TCGv_i32 f24)
+ {
+     TCGv_i64 err = x87s_tmp_i64(s);
+     TCGv_i64 t1 = x87s_tmp_i64(s);
+@@ -938,7 +1190,7 @@ static void x87s_binop(DisasContext *s, TCGv_i64 r, int op, TCGv_i64 a,
+     }
+     if (s->x87s_prec24) {
+         TCGv_i64 diff = x87s_tmp_i64(s);
+-        x87s_round24(s, r, r, diff);
++        x87s_round24(s, f24, r, diff);
+         if (pe) {
+             tcg_gen_or_i64(err, err, diff);
+         }
+@@ -948,6 +1200,69 @@ static void x87s_binop(DisasContext *s, TCGv_i64 r, int op, TCGv_i64 a,
+     }
+ }
+ 
++/*
++ * r = a OP b on binary32 shadows, PC=24 with PE already sticky: the host's
++ * binary32 instruction is the correctly rounded 24-bit result (the head of
++ * the file has the result window it is then held to).
++ */
++static void x87s_binop_f32(DisasContext *s, TCGv_i32 r, int op, TCGv_i32 a,
++                           TCGv_i32 b, TCGLabel *slow)
++{
++    TCGv_i32 t1 = x87s_tmp_i32(s);
++    TCGv_i32 t2 = x87s_tmp_i32(s);
++
++    if (op == 5 || op == 7) {
++        TCGv_i32 x = a;
++        a = b;
++        b = x;
++        op--;
++    }
++    switch (op) {
++    case 0:
++        tcg_gen_add_f32(r, a, b);
++        x87s_f32_check_res(s, r, slow);
++        break;
++    case 4:
++        tcg_gen_sub_f32(r, a, b);
++        x87s_f32_check_res(s, r, slow);
++        break;
++    case 1:
++        tcg_gen_mul_f32(r, a, b);
++        tcg_gen_shli_i32(t1, a, 1);
++        tcg_gen_shli_i32(t2, b, 1);
++        tcg_gen_umin_i32(t1, t1, t2);             /* 0 iff a or b is zero */
++        x87s_f32_check_result(s, r, t1, slow);
++        break;
++    case 6:
++        tcg_gen_shli_i32(t2, b, 1);
++        tcg_gen_brcondi_i32(TCG_COND_EQ, t2, 0, slow);   /* ZE / IE */
++        tcg_gen_div_f32(r, a, b);
++        tcg_gen_shli_i32(t1, a, 1);
++        x87s_f32_check_result(s, r, t1, slow);
++        break;
++    default:
++        g_assert_not_reached();
++    }
++}
++
++/* r = a OP b in the mode's format */
++static void x87s_binop(DisasContext *s, X87SV r, int op, X87SV a, X87SV b,
++                       TCGLabel *slow)
++{
++    if (!s->x87s_prec24) {
++        x87s_binop_f64(s, r.d, op, a.d, b.d, slow, NULL);
++    } else if (s->x87s_pe_sticky) {
++        x87s_binop_f32(s, r.f, op, a.f, b.f, slow);
++    } else {
++        /*
++         * PE still to be decided: the binary64 path on the widened operands
++         * computes the residual, and its rounding to 24 bits is the result.
++         */
++        x87s_binop_f64(s, x87s_tmp_i64(s), op, x87s_widen(s, a.f),
++                       x87s_widen(s, b.f), slow, r.f);
++    }
++}
++
+ /* total-order key of a finite double: -0 -> +0, negatives flipped */
+ static void x87s_cmp_key(DisasContext *s, TCGv_i64 k, TCGv_i64 d)
+ {
+@@ -966,8 +1281,8 @@ static void x87s_cmp_key(DisasContext *s, TCGv_i64 k, TCGv_i64 d)
+  * Ordered compare of two shadows: cc = C0 (less), C3 (equal) or 0 in the
+  * x87 status-word form, or CC_C / CC_Z when eflags.
+  */
+-static void x87s_compare(DisasContext *s, TCGv_i32 cc, TCGv_i64 a,
+-                         TCGv_i64 b, bool eflags)
++static void x87s_compare_f64(DisasContext *s, TCGv_i32 cc, TCGv_i64 a,
++                             TCGv_i64 b, bool eflags)
+ {
+     TCGv_i64 ka = x87s_tmp_i64(s);
+     TCGv_i64 kb = x87s_tmp_i64(s);
+@@ -987,6 +1302,51 @@ static void x87s_compare(DisasContext *s, TCGv_i32 cc, TCGv_i64 a,
+     tcg_gen_extrl_i64_i32(cc, t);
+ }
+ 
++/* the same on binary32 shadows */
++static void x87s_cmp_key32(DisasContext *s, TCGv_i32 k, TCGv_i32 f)
++{
++    TCGv_i32 zero = tcg_constant_i32(0);
++    TCGv_i32 t = x87s_tmp_i32(s);
++    TCGv_i32 n = x87s_tmp_i32(s);
++
++    tcg_gen_shli_i32(t, f, 1);
++    tcg_gen_movcond_i32(TCG_COND_EQ, n, t, zero, zero, f);
++    tcg_gen_sari_i32(t, n, 31);
++    tcg_gen_andi_i32(t, t, 0x7fffffff);
++    tcg_gen_xor_i32(k, n, t);
++}
++
++static void x87s_compare_f32(DisasContext *s, TCGv_i32 cc, TCGv_i32 a,
++                             TCGv_i32 b, bool eflags)
++{
++    TCGv_i32 ka = x87s_tmp_i32(s);
++    TCGv_i32 kb = x87s_tmp_i32(s);
++    TCGv_i32 lt = x87s_tmp_i32(s);
++    TCGv_i32 eq = x87s_tmp_i32(s);
++    TCGv_i32 zero = tcg_constant_i32(0);
++    int c_lt = eflags ? CC_C : 0x0100;
++    int c_eq = eflags ? CC_Z : 0x4000;
++
++    x87s_cmp_key32(s, ka, a);
++    x87s_cmp_key32(s, kb, b);
++    tcg_gen_setcond_i32(TCG_COND_LT, lt, ka, kb);
++    tcg_gen_setcond_i32(TCG_COND_EQ, eq, ka, kb);
++    tcg_gen_movcond_i32(TCG_COND_NE, cc, eq, zero, tcg_constant_i32(c_eq),
++                        zero);
++    tcg_gen_movcond_i32(TCG_COND_NE, cc, lt, zero, tcg_constant_i32(c_lt),
++                        cc);
++}
++
++static void x87s_compare(DisasContext *s, TCGv_i32 cc, X87SV a, X87SV b,
++                         bool eflags)
++{
++    if (s->x87s_prec24) {
++        x87s_compare_f32(s, cc, a.f, b.f, eflags);
++    } else {
++        x87s_compare_f64(s, cc, a.d, b.d, eflags);
++    }
++}
++
+ static void x87s_fpus_cc(DisasContext *s, TCGv_i32 cc)
+ {
+     TCGv_i32 fpus = x87s_tmp_i32(s);
+@@ -1008,8 +1368,7 @@ static void gen_x87s_arith_mem(DisasContext *s, int op1, bool m64)
+ {
+     X87SlowBlock *b;
+     TCGv_i64 m = tcg_temp_new_i64();
+-    TCGv_i64 v = x87s_tmp_i64(s);
+-    TCGv_i64 a, r;
++    X87SV a, v, r;
+ 
+     tcg_gen_mov_i64(m, s->tmp1_i64);
+     x87s_begin(s);
+@@ -1017,11 +1376,8 @@ static void gen_x87s_arith_mem(DisasContext *s, int op1, bool m64)
+     b->m = m;
+     b->m64 = m64;
+     b->op1 = op1;
+-    if (m64) {
+-        v = x87s_m64_operand(s, m, b->label);
+-    } else {
+-        x87s_f32_to_f64(s, v, m, b->label);
+-    }
++    v = m64 ? x87s_m64_operand(s, m, b->label)
++            : x87s_m32_operand(s, m, b->label);
+     a = x87s_get(s, 0, b->label);
+     if (op1 == 2 || op1 == 3) {
+         TCGv_i32 cc = x87s_tmp_i32(s);
+@@ -1031,7 +1387,7 @@ static void gen_x87s_arith_mem(DisasContext *s, int op1, bool m64)
+             x87s_pop(s);
+         }
+     } else {
+-        r = x87s_tmp_i64(s);
++        r = x87s_tmp_val(s);
+         x87s_binop(s, r, op1, a, v, b->label);
+         x87s_set(s, 0, r);
+     }
+@@ -1046,7 +1402,7 @@ static void gen_x87s_arith_st(DisasContext *s, int op1, int opreg,
+                               bool stn_form, bool pop)
+ {
+     X87SlowBlock *b;
+-    TCGv_i64 a, v, r;
++    X87SV a, v, r;
+     int op = op1;
+ 
+     x87s_begin(s);
+@@ -1055,7 +1411,7 @@ static void gen_x87s_arith_st(DisasContext *s, int op1, int opreg,
+     b->opreg = opreg;
+     b->stn = stn_form;
+     b->pop = pop;
+-    r = x87s_tmp_i64(s);
++    r = x87s_tmp_val(s);
+     if (stn_form) {
+         a = x87s_get(s, opreg, b->label);
+         v = x87s_get(s, 0, b->label);
+@@ -1080,18 +1436,15 @@ static void gen_x87s_fld_mem(DisasContext *s, bool m64)
+ {
+     X87SlowBlock *b;
+     TCGv_i64 m = tcg_temp_new_i64();
+-    TCGv_i64 v = x87s_tmp_i64(s);
++    X87SV v;
+ 
+     tcg_gen_mov_i64(m, s->tmp1_i64);
+     x87s_begin(s);
+     b = x87s_new_slow(s, X87S_SLOW_FLD_MEM);
+     b->m = m;
+     b->m64 = m64;
+-    if (m64) {
+-        v = x87s_m64_operand(s, m, b->label);
+-    } else {
+-        x87s_f32_to_f64(s, v, m, b->label);
+-    }
++    v = m64 ? x87s_m64_operand(s, m, b->label)
++            : x87s_m32_operand(s, m, b->label);
+     x87s_push(s);
+     x87s_set(s, 0, v);
+ }
+@@ -1123,7 +1476,14 @@ static void gen_x87s_fild(DisasContext *s, bool m16)
+         tcg_gen_brcondi_i64(TCG_COND_NE, t, 0, b->label);
+     }
+     x87s_push(s);
+-    x87s_set(s, 0, v);
++    if (s->x87s_prec24) {
++        TCGv_i32 f = x87s_tmp_i32(s);
++
++        x87s_narrow(s, f, v);                     /* exact: 24 bits at most */
++        x87s_set(s, 0, x87s_v32(f));
++    } else {
++        x87s_set(s, 0, x87s_v64(v));
++    }
+ }
+ 
+ /*
+@@ -1143,7 +1503,7 @@ static void gen_x87s_fist(DisasContext *s, bool m16, bool pop)
+     b->m16 = m16;
+     b->pop = pop;
+     b->a0 = x87s_a0_copy(s);
+-    v = x87s_get(s, 0, b->label);
++    v = x87s_get64(s, 0, b->label);
+     c = x87s_tmp_i64(s);
+     r = x87s_tmp_i64(s);
+     t = x87s_tmp_i64(s);
+@@ -1185,10 +1545,16 @@ static void gen_x87s_fst_mem(DisasContext *s, bool m64, bool pop)
+     b->m64 = m64;
+     b->pop = pop;
+     b->a0 = x87s_a0_copy(s);
+-    v = x87s_get(s, 0, b->label);
+     if (m64) {
++        v = x87s_get64(s, 0, b->label);
+         tcg_gen_qemu_st_i64(v, s->A0, s->mem_index, MO_LEUQ);
++    } else if (s->x87s_prec24) {
++        /* a binary32 shadow is the stored value itself: exact, no flag */
++        X87SV f = x87s_get(s, 0, b->label);
++
++        tcg_gen_qemu_st_i32(f.f, s->A0, s->mem_index, MO_LEUL);
+     } else {
++        v = x87s_get(s, 0, b->label).d;
+         x87s_f64_to_f32(s, s->tmp2_i32, v, b->label);
+         tcg_gen_qemu_st_i32(s->tmp2_i32, s->A0, s->mem_index, MO_LEUL);
+     }
+@@ -1201,7 +1567,7 @@ static void gen_x87s_fst_mem(DisasContext *s, bool m64, bool pop)
+ static void gen_x87s_fld_st(DisasContext *s, int opreg)
+ {
+     X87SlowBlock *b;
+-    TCGv_i64 v;
++    X87SV v;
+ 
+     x87s_begin(s);
+     b = x87s_new_slow(s, X87S_SLOW_FLD_ST);
+@@ -1225,10 +1591,10 @@ static void gen_x87s_fxch(DisasContext *s, int opreg)
+     sa = s->x87s_state[ra];
+     sb = s->x87s_state[rb];
+     if (sa != X87S_MEM && sb != X87S_MEM) {
+-        TCGv_i64 t = x87s_tmp_i64(s);
+-        tcg_gen_mov_i64(t, cpu_x87_sd[ra]);
+-        tcg_gen_mov_i64(cpu_x87_sd[ra], cpu_x87_sd[rb]);
+-        tcg_gen_mov_i64(cpu_x87_sd[rb], t);
++        X87SV t = x87s_tmp_val(s);
++        x87s_mov(s, t, x87s_reg(s, ra));
++        x87s_mov(s, x87s_reg(s, ra), x87s_reg(s, rb));
++        x87s_mov(s, x87s_reg(s, rb), t);
+         s->x87s_state[ra] = s->x87s_state[rb] = X87S_DIRTY;
+         return;
+     }
+@@ -1253,10 +1619,10 @@ static void gen_x87s_fxch(DisasContext *s, int opreg)
+         x87s_st_x80(pb, lowa, higha);
+     }
+     if (sa != X87S_MEM) {
+-        tcg_gen_mov_i64(cpu_x87_sd[rb], cpu_x87_sd[ra]);
++        x87s_mov(s, x87s_reg(s, rb), x87s_reg(s, ra));
+     }
+     if (sb != X87S_MEM) {
+-        tcg_gen_mov_i64(cpu_x87_sd[ra], cpu_x87_sd[rb]);
++        x87s_mov(s, x87s_reg(s, ra), x87s_reg(s, rb));
+     }
+     s->x87s_state[ra] = sb == X87S_MEM ? X87S_MEM : X87S_CLEAN;
+     s->x87s_state[rb] = sa == X87S_MEM ? X87S_MEM : X87S_CLEAN;
+@@ -1266,7 +1632,7 @@ static void gen_x87s_fxch(DisasContext *s, int opreg)
+ static void gen_x87s_fst_st(DisasContext *s, int opreg, bool pop)
+ {
+     X87SlowBlock *b;
+-    TCGv_i64 v;
++    X87SV v;
+ 
+     x87s_begin(s);
+     b = x87s_new_slow(s, X87S_SLOW_FST_ST);
+@@ -1283,7 +1649,7 @@ static void gen_x87s_fst_st(DisasContext *s, int opreg, bool pop)
+ static void gen_x87s_fcmov(DisasContext *s, int op1, int opreg)
+ {
+     X87SlowBlock *b;
+-    TCGv_i64 a, v, c64;
++    X87SV a, v;
+     TCGv cond = tcg_temp_new();
+ 
+     gen_setcc(s, op1 ^ 1, cond);           /* op1 is the skip condition */
+@@ -1293,9 +1659,19 @@ static void gen_x87s_fcmov(DisasContext *s, int op1, int opreg)
+     b->cond = cond;
+     a = x87s_get(s, 0, b->label);
+     v = x87s_get(s, opreg, b->label);
+-    c64 = x87s_tmp_i64(s);
+-    tcg_gen_extu_tl_i64(c64, cond);
+-    tcg_gen_movcond_i64(TCG_COND_NE, a, c64, tcg_constant_i64(0), v, a);
++    if (s->x87s_prec24) {
++        TCGv_i32 c32 = x87s_tmp_i32(s);
++
++        tcg_gen_trunc_tl_i32(c32, cond);
++        tcg_gen_movcond_i32(TCG_COND_NE, a.f, c32, tcg_constant_i32(0),
++                            v.f, a.f);
++    } else {
++        TCGv_i64 c64 = x87s_tmp_i64(s);
++
++        tcg_gen_extu_tl_i64(c64, cond);
++        tcg_gen_movcond_i64(TCG_COND_NE, a.d, c64, tcg_constant_i64(0),
++                            v.d, a.d);
++    }
+     s->x87s_state[X87S_SLOT(s, 0)] = X87S_DIRTY;
+ }
+ 
+@@ -1304,7 +1680,7 @@ static void gen_x87s_fld_const(DisasContext *s, uint64_t bits)
+ {
+     x87s_begin(s);
+     x87s_push(s);
+-    x87s_set(s, 0, tcg_constant_i64(bits));
++    x87s_set(s, 0, x87s_const(s, bits));
+ }
+ 
+ /* fchs / fabs */
+@@ -1315,7 +1691,13 @@ static void gen_x87s_sign(DisasContext *s, bool chs)
+     x87s_begin(s);
+     r = X87S_SLOT(s, 0);
+     if (s->x87s_state[r] != X87S_MEM) {
+-        if (chs) {
++        if (s->x87s_prec24) {
++            if (chs) {
++                tcg_gen_xori_i32(cpu_x87_ss[r], cpu_x87_ss[r], 1u << 31);
++            } else {
++                tcg_gen_andi_i32(cpu_x87_ss[r], cpu_x87_ss[r], ~(1u << 31));
++            }
++        } else if (chs) {
+             tcg_gen_xori_i64(cpu_x87_sd[r], cpu_x87_sd[r], 1ULL << 63);
+         } else {
+             tcg_gen_andi_i64(cpu_x87_sd[r], cpu_x87_sd[r], ~(1ULL << 63));
+@@ -1343,7 +1725,7 @@ static void gen_x87s_fcom(DisasContext *s, int opreg, bool zero_operand,
+                           bool eflags, bool quiet, int pops)
+ {
+     X87SlowBlock *b;
+-    TCGv_i64 a, v;
++    X87SV a, v;
+     TCGv_i32 cc = x87s_tmp_i32(s);
+ 
+     if (eflags) {
+@@ -1357,7 +1739,7 @@ static void gen_x87s_fcom(DisasContext *s, int opreg, bool zero_operand,
+     b->quiet = quiet;
+     b->pops = pops;
+     a = x87s_get(s, 0, b->label);
+-    v = zero_operand ? tcg_constant_i64(0) : x87s_get(s, opreg, b->label);
++    v = zero_operand ? x87s_const(s, 0) : x87s_get(s, opreg, b->label);
+     x87s_compare(s, cc, a, v, eflags);
+     if (eflags) {
+         /* OF, SF and AF are cleared unconditionally (upstream 0924d9d3db36) */
+@@ -1379,7 +1761,18 @@ static void gen_x87s_fsqrt(DisasContext *s)
+ 
+     x87s_begin(s);
+     b = x87s_new_slow(s, X87S_SLOW_FSQRT);
+-    v = x87s_get(s, 0, b->label);
++    if (s->x87s_prec24 && s->x87s_pe_sticky) {
++        X87SV f = x87s_get(s, 0, b->label);
++        TCGv_i32 q = x87s_tmp_i32(s);
++
++        /* negative, -0 included (the helper sets C2 for it): helper */
++        tcg_gen_brcondi_i32(TCG_COND_LT, f.f, 0, b->label);
++        tcg_gen_sqrt_f32(q, f.f);
++        x87s_f32_check_res(s, q, b->label);
++        x87s_set(s, 0, x87s_v32(q));
++        return;
++    }
++    v = x87s_get64(s, 0, b->label);
+     r = x87s_tmp_i64(s);
+     err = x87s_tmp_i64(s);
+     /* negative, -0 included (the helper sets C2 for it): helper */
+@@ -1390,14 +1783,18 @@ static void gen_x87s_fsqrt(DisasContext *s)
+         tcg_gen_fmsub_f64(err, r, r, v);
+     }
+     if (s->x87s_prec24) {
++        /* PE still to be decided (the sticky case returned above) */
++        TCGv_i32 f = x87s_tmp_i32(s);
+         TCGv_i64 diff = x87s_tmp_i64(s);
+-        x87s_round24(s, r, r, diff);
+-        if (!s->x87s_pe_sticky) {
+-            tcg_gen_or_i64(err, err, diff);
+-        }
++
++        x87s_round24(s, f, r, diff);
++        tcg_gen_or_i64(err, err, diff);
++        x87s_set_pe(s, err);
++        x87s_set(s, 0, x87s_v32(f));
++        return;
+     }
+     x87s_set_pe(s, err);
+-    x87s_set(s, 0, r);
++    x87s_set(s, 0, x87s_v64(r));
+ }
+ 
+ /* frndint: round to nearest even (mode 1) */
+@@ -1408,7 +1805,7 @@ static void gen_x87s_frndint(DisasContext *s)
+ 
+     x87s_begin(s);
+     b = x87s_new_slow(s, X87S_SLOW_FRNDINT);
+-    v = x87s_get(s, 0, b->label);
++    v = x87s_get64(s, 0, b->label);
+     c = x87s_tmp_i64(s);
+     r = x87s_tmp_i64(s);
+     t = x87s_tmp_i64(s);
+@@ -1427,7 +1824,15 @@ static void gen_x87s_frndint(DisasContext *s)
+     tcg_gen_setcondi_i64(TCG_COND_GEU, big, t, X87S_BIAS_F64 + 52);
+     tcg_gen_movcond_i64(TCG_COND_NE, r, big, tcg_constant_i64(0), v, r);
+     x87s_set_pe_ne(s, r, v);
+-    x87s_set(s, 0, r);
++    if (s->x87s_prec24) {
++        TCGv_i32 f = x87s_tmp_i32(s);
++
++        /* exact: v itself, or an integer of at most 24 bits */
++        x87s_narrow(s, f, r);
++        x87s_set(s, 0, x87s_v32(f));
++    } else {
++        x87s_set(s, 0, x87s_v64(r));
++    }
+ }
+ 
+ /* fnstsw: (fpus & ~0x3800) | top << 11 */

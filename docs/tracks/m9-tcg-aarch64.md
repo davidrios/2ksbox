@@ -1273,6 +1273,8 @@ game window, ~40–56 s after the click).
 | **patch 44** — a CR3 write retires the TLB; a miss reuses the retired entry once its page-table entries check unchanged | 6003 | 16295 | 19.0 |
 | the same with `tlb-retire=off` (the A/B) | 6012 | 16080 | 18.9 |
 | **all three, `DDFLAGS=32768`** (vertical blank off: the CPU-bound number) | — | — | **26.2** |
+| **patch 45** (2026-09-12) — the x87 shadows at PC=24 are binary32: an op with PE sticky is one `mulss`-class instruction plus a range check, no rounding pass | 6005 | 16899 | 19.5 |
+| the same, `DDFLAGS=32768` | — | — | **27.8** |
 
 CPU 3DMarks moves ±2–3 % between identical runs; the first-person fps is
 the stable number (±0.2 between identical runs). The race tests sit at the
@@ -1389,6 +1391,56 @@ floating-point mode**, which the user agreed to in principle (a per-machine
 without PC=24 rounding and window checks but with a correct out-of-range
 conversion, no FIP/FDP stores) and deferred.
 
+## Patch 45: the x87 shadows at PC=24 are binary32 (2026-09-12)
+
+Item 3 of the list below. Patch 06 keeps the x87 stack as host doubles
+across a block and, at PC=24, rounded every result to 24 bits through
+`cvtsd2ss` + `cvtss2sd` + an xor on the dependent chain after the op and
+its window check. Now (`x87-shadow.c.inc`, "PC=24" at the head of the file)
+the mode-2 shadows are binary32 in eight i32 globals of their own
+(`cpu_x87_ss[]`, `env->x87_ss[]`; a small `X87SV` value type carries either
+representation through the emitters), and with PE already sticky (patch
+37's TB flag, the state a game's loop runs in) an op is `addss` /
+`subss` / `mulss` / `divss` / `sqrtss` plus one range check. Exactness:
+correctly rounded to 24 bits *is* the x87's PC=24 result while the result
+has a binary32 exponent; a result that would not — overflow, underflow,
+and **the lowest binade, excluded on purpose**: a value just below 2^-126
+rounds up to 2^-126 in binary32 (fewer bits there) but not at 24
+significant bits with the x87's 15-bit exponent, and only that binade can
+tell the two apart (operands may sit in it, results may not) — takes the
+slow path. While PE is still to be decided the operands are widened and
+the old binary64 path runs, its residuals feeding PE and its rounding to
+24 bits being the result. `fld m32` is the operand's own bits after the
+zero-or-normal check, `fst m32` the shadow's bits with no check and no
+flag, m64 loads round through one conversion, `fist` / `frndint` /
+`fst m64` widen once and keep their binary64 code, `fild` narrows its
+exact binary64 integer, a reload from `fpregs[]` accepts exponents
+−126..127, and the unwinder (`tcg-cpu.c`) converts from binary32 for a
+block whose TB flags say mode 2.
+
+**Measured**: first person 26.2 → 27.8 fps (vertical blank off), 19.0 →
+19.5 (on), CPU 3DMarks 16295 → 16899, 3DMarks 6005 at the 60 Hz cap. The
+race windows +4 %. Less than "x87 is 24 % of the frame" promised, because
+a `fmul m32` is mostly its softmmu TLB chain and load, not the multiply —
+item 4.
+
+**The battery had a hole**: `tools/x87-guest-test.py` runs `fninit`
+before every case, so no block of it was ever translated with PE sticky —
+patch 37's whole variant, and now this one's arithmetic, ran only under
+3DMark. Every control word is now swept twice, the second time with 1/3
+computed before each case (bit 15 of the table entry, `do_op`), and the
+two bench loops set PE first for the same reason (a loop is one block
+chained to itself and runs for ever in the variant it was translated
+for), and a third loop, `X87BEN2S`, is the single-precision shape of
+Direct3D code: 0.33 s for 20 M iterations of seven ops, PC=53's own
+number, where the m64 loop at PC=24 takes 0.44 (0.38 before the sticky
+variant was the one measured; it widens every store and narrows every
+load, and the BIOS tick is 55 ms). 709,893 result lines identical on/off.
+Unwinding with binary32
+shadows outstanding has no DOS test (a real-mode program cannot fault
+mid-block under QEMU); the Windows guests page-fault inside x87 blocks all
+the time and the 3DMark run above is the evidence so far.
+
 ## Next steps, in order
 
 **From the Win98 3D session (2026-09-11), in order** — the section above:
@@ -1407,14 +1459,11 @@ conversion, no FIP/FDP stores) and deferred.
    battery for patch 37 and `scripts/test.sh all`.
 2. **The first-person test on the Air** (`tools/w98-3dmark.sh`), to know
    what TCG on aarch64 makes of the same patches.
-3. **x87 at PC=24 as binary32** — the largest general lever the form
-   weights show: x87 is 24 % of the frame at 2.9 samples per instruction,
-   and at PC=24 every result is rounded to 24 bits through two conversions
-   (`x87s_round24`) on a dependent chain. Kept as float32 in that mode the
-   chain is `movss` + `mulss` + the checks; exact by the same argument as
-   today's (a binary32 op is the correctly rounded 24-bit result; anything
-   outside the normal range is the slow path). Every emitter in
-   `x87-shadow.c.inc` sees the representation, so a day.
+3. ~~**x87 at PC=24 as binary32**~~ — **patch 45, 2026-09-12** (the
+   section below): first person 26.2 → 27.8 fps with the vertical blank
+   off, 19.0 → 19.5 with it on, CPU 3DMarks 16295 → 16899. Less than the
+   form weights promised (x87 24 % of the frame): the memory forms' cost is
+   mostly the softmmu chain in front of the operation, which is item 4.
 4. **The TLB chain's two env loads as immediates**: the mask and table of
    an mmu index are constants once the table's size is fixed (patch 16
    floors it, patch 44 clears it by filled entries so a bigger fixed size

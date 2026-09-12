@@ -638,7 +638,9 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   then blocks the process in a hard-error dialog before `DllMain` runs.
 - x87 under TCG is helper calls into 80-bit softfloat; patch 05 does the
   53/24-bit common case on the host FPU and patch 06 (doc 13) keeps the
-  stack as host doubles inside TCG at PC=53 and PC=24. Test any change
+  stack as host doubles inside TCG at PC=53 — and, since patch 45
+  (2026-09-12), as host **floats** at PC=24, where an op with the inexact
+  flag already sticky is one binary32 instruction. Test any change
   with both x87 tools above. SSE is patch 11 (doc 16): inline only when
   PE is already sticky in MXCSR; MMX/integer/permutes are patch 12
   (`simd-fast`); test both with `tools/sse-guest-test.py`.
