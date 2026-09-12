@@ -10,11 +10,17 @@
 
 #include "shim/86box/video.h"
 
+/* writes 86Box called fatal() on and the shim refused (voodoo_shim.c) */
+extern unsigned voodoo_shim_fatals;
+
 typedef struct VoodooShimHooks {
     void *opaque;
     /* fbiInit0's VGA_PASS bit: the Voodoo takes the monitor (1) or gives it
      * back to the 2D adapter (0). vCPU thread, BQL held. */
     void (*set_override)(void *opaque, int on);
+    /* 86Box called fatal(): print what the device knows before the abort
+     * (the last accesses, the FIFO state). Any thread. */
+    void (*on_fatal)(void *opaque);
     /* a frame is complete in the monitor bitmap: rows 0..h-1, w pixels of
      * 0xXXRRGGBB each. Main loop (the display timer), BQL held. */
     void (*present)(void *opaque, const bitmap_t *frame, int w, int h);

@@ -129,7 +129,17 @@ backend later.
   them with no 3D-frame plumbing. Timers are 86Box's 32.32 delays in ns
   over QEMUTimer with the expiry kept as `ns << 16` (48 bits — 32 wrapped
   4.3 s in and spun the main loop); the per-scanline display timer is
-  coalesced to ~1 ms of lines per wakeup.
+  coalesced to ~1 ms of lines per wakeup. **3dfx's own driver runs on it
+  since 2026-09-12**; what it taught: QEMU keeps configuration-space
+  writes past the 64-byte header (Glide polls `siProcess` at 0x54 for a
+  countdown the device now models), the shim's `fatal()` must return and
+  not be `noreturn`, and Glide's window teardown
+  streams a burst into the command-FIFO window with the FIFO off, which
+  lands in the register file (the device survives it, as the chip would).
+  The card is found and the first window draws; GLIDETEST then hangs at
+  `grSstWinClose` (the card never reports idle) — M14's next bug. A
+  spinning guest is read off the 5 s `voodoo2:` line's register histograms
+  and `VOODOO2_TRACE=1`.
 - **XP's display adapter is our `d3dpt-vga` + real display driver** (doc
   15, ADR-008): `-vga none -device d3dpt-vga`, `guest-tools/src/d3dptvid/`
   (miniport + display DLL + INF, mingw-w64 DDK headers, no Microsoft DDK),

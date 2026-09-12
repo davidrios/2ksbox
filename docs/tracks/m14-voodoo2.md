@@ -34,8 +34,58 @@ machine form, when both are pickable (next steps, 1).
 
 ## State
 
-**Built, instantiated, and driven by a guest with no 3dfx code
-(2026-09-12).** Nothing has run a 3dfx driver or a game on it yet.
+**Built, instantiated, driven by a guest with no 3dfx code, and — since
+the evening of 2026-09-12 — by 3dfx's own Win98 driver and Glide 2.x**
+(the user's `win98-2` machine: `d3dpt-vga` + the card, the reference
+driver installed, the guest tools' `GLIDE2X.DLL` removed). The first run
+of the real driver found three things, all fixed the same day and all in
+the device or the shim, none in 86Box:
+
+- **PCI configuration 0x54, `siProcess`.** Glide's
+  `sst1InitMeasureSiProcess` loads a PCI-clock countdown into bits 27:16,
+  sets RUN (bit 28) and polls until the field reads zero. QEMU's
+  `pci_init_wmask` makes every byte past the 64-byte header writable, so
+  the loaded count read back for ever: **every Glide program froze in
+  `grSstWinOpen`** (GLIDETEST, Diablo II's video test) at 30 M config
+  reads a second — the 5 s line's new histograms named it. 86Box answers
+  0 to the whole register. `voodoo2_config_read` now ends the countdown
+  as soon as RUN is set and reports a count of 8000; the `voodoo-guest`
+  check runs the same sequence, bounded (doc 21 §7).
+- **The shim's `fatal()` returns** and is not `noreturn`: 86Box's
+  `fatal()` on an `intrCtrl` write or a bad command-FIFO packet ended the
+  emulator; here the write is refused, counted in the 5 s line, and the
+  first one is printed with the FIFO state and the last 64 accesses.
+  Declared `noreturn` it produced a SIGSEGV in the caller's next `case`.
+- **`fbiInit1` bit 23 (SLI) is not writable** on the single card: 86Box's
+  display timer dereferences `set->voodoos[1]` when it is set.
+- **The frame buffer and texture memories carry 64 MB of zero pages
+  after them** (the shim's `calloc`/`free`): the display timer read 6.8 MB
+  into a 4 MB frame buffer off garbage `videoDimensions`/`fbiInit1`.
+
+The last two are reached at **Glide's window teardown**: after
+GLIDETEST's first `grSstWinOpen` draws its three cases (the 5 s line
+shows `640x480 on: 2 frames, 583 triangles` — the clear, the triangle,
+the reclear all render), `grSstWinClose` streams a burst of high-entropy
+dwords into the command-FIFO window (`0x2003xx`–`0x200404`) while the
+FIFO is off; with the FIFO off that window is the legacy register map
+(bit 21 = the alternate mapping Glide has enabled in `fbiInit3`), so the
+stream lands in the register file — `intrCtrl` (the refusal), the video
+registers (a garbage `videoDimensions` gives the 3741×1789 the log then
+shows), `fbiInit1`. After it the card never reports idle again and the
+guest spins in Glide's `sst1InitIdle` reading `status` at ~25 M/s. The
+same happens whether or not the fourth (reopen) case runs — it is the
+close, not the reopen — so `GLIDETEST -noreopen` does not avoid it and
+the program never exits (its `C:\GLIDE.LOG` redirect never flushes).
+Read against 3dfx's own source (`glide2x/cvg`, `github.com/SuperIlu/glide`)
+and the Voodoo2 spec §11, that stream would reach a real chip's registers
+too — the open question is why 86Box's `status` then stays busy for ever.
+**This is the track's next bug; the install and the first open+draw
+work.** 86Box upstream would abort at the same `intrCtrl` write.
+
+Diagnostics that came out of the day, all in `voodoo2.c`: the 5 s line's
+three histograms (registers read, written, config dwords read — a
+spinning guest names its register), `VOODOO2_TRACE=1` (every register-
+and FIFO-window access, status polls collapsed), and the refusal dump.
 
 - **The port.** 86Box's nine Voodoo files (`vid_voodoo.c`, `_blitter`,
   `_display`, `_fb`, `_fifo`, `_reg`, `_render`, `_setup`, `_texture`) and
@@ -120,21 +170,18 @@ voodoo2,addr=0x05`; both front ends, the C API, `launcherx --wizard-edit
 
 ## Next steps, in order
 
-1. **A guest driver.** (The launcher pick landed 2026-09-12: one
-   checkbox, doc 07.) The 3dfx Voodoo2 reference driver in a Win98 image (the user's own
-   download; never in the repo or the ISO) — Device Manager must find
-   `121a:0002` and load it, and the driver's `glide2x.dll` must find the
-   card (`initEnable`'s strap, the DAC, `fbiInit` reads). Then
-   `GLIDETEST.EXE` from the guest-tools ISO against *3dfx's* `glide2x.dll`
-   rather than qemu-3dfx's: the four cases through a real Glide, the
-   frames on the console. A Win98 machine on `d3dpt-vga` and a Voodoo 2
-   is the interesting pairing (D3D on ours, Glide on the chip). One
-   thing to settle with the driver in hand: `SETUP.EXE` puts the guest
-   tools' `GLIDE2X.DLL` in the Windows folder on 9x while 3dfx's driver
-   puts its own in `SYSTEM`, which the loader searches first — so with
-   both installed the chip is the machine-wide Glide and the wrapper is
-   a per-game drop (`SETUP /GAME`); the installer or the form should say
-   which is the default rather than leave it to search order.
+1. **A guest driver — done 2026-09-12** (the user installed 3dfx's
+   reference driver in `win98-2`; Device Manager binds `121a:0002`, and
+   Glide finds the card once siProcess counts down, above). Still to
+   settle with the driver in hand: `SETUP.EXE` puts the guest tools'
+   `GLIDE2X.DLL` in `SYSTEM` on 9x and so does 3dfx's driver — the user
+   removed ours by hand; the installer or the form should say which
+   Glide a machine with the card gets rather than leave it to whichever
+   was copied last. **The open bug is Glide's window teardown wedging the
+   card** (above): trace it with `VOODOO2_TRACE=1`, find why `status`
+   stays busy after the garbage burst, and either recover or absorb it.
+   GLIDETEST hangs at `grSstWinClose` and so, most likely, does anything
+   that closes a Glide window — Diablo II's video test included.
 2. **A game and the numbers** (doc 21 §9): Carmageddon's 3dfx build or
    Rayman 2 on the chip through `tools/win98-game-test.sh
    EXTRA='-device voodoo2'`, the 5 s log line's frames against the game's

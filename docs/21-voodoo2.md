@@ -100,7 +100,8 @@ guessed), and what answers it:
 | `device_get_config_int(name)` etc. | a table the device fills from its properties before `voodoo_init` |
 | `cycles -= …` (charging the guest CPU for a PCI access) | a dummy int; TCG charges nothing beyond the trap |
 | `svga_get_pri`, `svga_set_override`, `svga_doblit`, `monitors[].target_buffer` | the display path, §7 |
-| `fatal()` | prints and aborts, as upstream (its callers fall off the end of a switch) — §8 |
+| `calloc` / `free` (macros in the shim's `86box.h`) | allocations of 1 MB and more — the frame buffer, the texture memories, the `voodoo_t` — are mapped with **64 MB of zero pages after them**: 86Box's display timer indexes `fb_mem` by `front_offset + line * row_width` with no bound, off registers a guest sets to anything (3dfx's Glide put 6.8 MB into 4 MB on a reopen, 2026-09-12); an overrun reads zeros instead of faulting |
+| `fatal()` | **returns**, against upstream: the write is refused, counted, the first one dumped with the device's state and last 64 accesses — §8 |
 
 The shim's `86box.h` keeps upstream's atomics verbatim (`volatile` on
 x86, C11 atomics elsewhere): the FIFO/render thread protocol is written
@@ -169,6 +170,17 @@ configuration space are `initEnable`, 86Box's handler answers them (byte 1
 carries `0x50 |`, the strap 3dfx's driver reads to know it has a Voodoo 2);
 the command register and the BAR's top byte are echoed to the handler so
 the card's own `pci_enable` / `memBaseAddr` track what the PCI core did.
+**0x54 is `siProcess`**, the silicon-process monitor, and it is the
+device's own (2026-09-12, the first run of 3dfx's driver): Glide's
+`sst1InitMeasureSiProcess` loads a PCI-clock countdown into bits 27:16,
+sets RUN (bit 28) and polls until that field reads zero, then takes the
+ring-oscillator count from bits 15:0. QEMU keeps whatever a guest writes
+past the 64-byte header, so the loaded count read back for ever and every
+Glide program froze in `grSstWinOpen` at ~30 M reads/s; 86Box answers 0
+to the whole register (the loop ends at once with a count of 0, "a very
+slow process"). Here the countdown is over as soon as RUN is read back
+and the count is a production board's (8000, past Glide's 5000
+threshold). The guest test runs the same sequence, bounded.
 
 **MMIO.** The BAR is a `MemoryRegion` whose read/write call the handlers
 `mem_mapping_add` recorded (`voodoo_readw/readl/writew/writel`, which mask
@@ -176,7 +188,22 @@ the address to 24 bits themselves: registers, LFB, texture space and the
 command-FIFO window). Byte accesses are answered the way the hardware
 answers them — 86Box registers no byte handler — with `0xff` / nothing;
 accesses wider than 4 bytes (an SSE store into the LFB) are split into
-dwords by the memory core.
+dwords by the memory core. One bit is not passed on: **`fbiInit1` bit 23,
+scanline interleaving**. This device is one card with no partner, and
+86Box's display timer takes SLI at its word and draws the odd lines from
+`set->voodoos[1]`, a NULL here. The guest that set it was 3dfx's Glide 2.x
+at **window teardown** (`grSstWinClose`, 2026-09-12): it streams a burst
+of dwords into the command-FIFO window with the FIFO off, and with the
+FIFO off that window is the legacy register map (bit 21 = the alternate
+register mapping Glide has enabled in `fbiInit3`), so the burst walks the
+register file — `intrCtrl` (86Box's `fatal()`, §8), the video registers
+(a garbage `videoDimensions` is where the log's 3741×1789 comes from),
+`fbiInit1` — exactly as it would reach the chip. A real single board with
+the SLI bit set shows half its lines; this one ignores the bit. **The
+teardown burst is M14's open bug**: after it the card never reports idle
+and Glide spins in `sst1InitIdle` (GLIDETEST hangs at the close, whether
+or not the reopen case runs); the install and the first open+draw work.
+
 
 **Display.** A Voodoo 1/2 is a pass-through card: the 2D adapter's signal
 goes through it, and with `fbiInit0`'s VGA_PASS bit the Voodoo drives the
@@ -200,22 +227,37 @@ it), but a guest reboot must give the monitor back: `fbiInit0`,
 override dropped.
 
 **Log.** Every 5 s of activity: `voodoo2: 640x480 on: 61 frames, 12034
-triangles, 480211 writes (23011 texture), 3122 reads in 5.0 s` —
+triangles, 480211 writes (23011 texture), 3122 reads in 5.0 s; regs read
+0x000:2981 0x218:19; written 0x120:279 0x114:263; config read 0x040:12` —
 `frames` counts presented frames (swaps with dirty lines, so also the
-guest's real frame rate), the rest are 86Box's own counters. And
-`display on (VGA pass-through)` / `off (VGA back)` at the switch.
+guest's real frame rate), the rest are 86Box's own counters, and the three
+histograms are the four most-hit registers of the window (by `addr &
+0x3fc`), the four most-written, and the four most-read configuration-space
+dwords: **a guest that spins names what it is spinning on** (`0x000` is
+`status`, `0x054` in the config column was the siProcess loop). `; N
+writes refused` follows when 86Box's `fatal()` fired in the window. `display on (VGA pass-through)` / `off (VGA
+back)` at the switch. And `VOODOO2_TRACE=1` in the environment prints
+every register- and FIFO-window access (the status polls collapsed to a
+count) — thousands of lines a second, for reading one open sequence
+against 3dfx's own `sst1init` source.
 
 ## 8. Not modelled, and the hostile-guest question
 
 - **SLI** (two cards) and the **Voodoo Graphics** type: not offered.
 - **Interrupts**: 86Box `fatal()`s on a write to `intrCtrl` /
-  `userIntrCMD`, so no 86Box guest writes them; a driver that does brings
-  the process down. `fatal()` here is upstream's contract (print, abort),
-  which means a **malformed command-FIFO packet from the guest aborts
-  QEMU** (`CMDFIFO packet 5 bad space`, and a handful more). 86Box lives
-  with that; a hardened `fatal` that marks the card dead and has the FIFO
-  thread drop the packet is on the track's list, after the device is seen
-  to work.
+  `userIntrCMD`, and on a malformed command-FIFO packet (`CMDFIFO packet
+  5 bad space`, and a handful more), which in 86Box ends the emulator.
+  **Here `fatal()` returns** (2026-09-12): every call site `break`s or
+  falls through after it, so the write is refused and the stream goes on;
+  the first is printed with the device's state (`initEnable`, `fbiInit0/7`,
+  the FIFO's base, end, read pointer and depth) and the last 64 MMIO
+  accesses, the rest are counted into the 5 s line. Not `noreturn` in the
+  shim's header — declared so, the compiler dropped the code after the
+  call and the return landed in the next case (a SIGSEGV that looked like
+  86Box's). The first guest to hit it was 3dfx's Glide at window
+  teardown (§7), whose garbage burst reached `intrCtrl`; after the burst
+  the card never reports idle and Glide spins in `sst1InitIdle` — M14's
+  next bug (the install and the first open+draw work).
 - **Migration**: no vmstate; a snapshot of a machine with the card does
   not carry it (the Voodoo's state is what the driver re-creates).
 - **Byte accesses** to the LFB: none on the hardware, none here.

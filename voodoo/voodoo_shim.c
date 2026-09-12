@@ -129,13 +129,29 @@ pclog_ex(const char *fmt, va_list ap)
     vfprintf(stderr, fmt, ap);
 }
 
+static VoodooShimHooks shim_hooks;
+unsigned               voodoo_shim_fatals;
+
+/* 86Box's fatal() ends 86Box; here it must not end QEMU, because every
+ * caller is a guest write the chip would have swallowed -- an intrCtrl the
+ * emulation has no interrupts for, a command-FIFO packet the decoder does
+ * not know, an LFB format it cannot convert. Each site `break`s or falls
+ * through after the call, so returning is safe: the write is refused, the
+ * stream goes on. The first is reported with the device's dump (the last
+ * accesses and the FIFO state), the rest are counted for the 5 s line. */
 void
 fatal_ex(const char *fmt, va_list ap)
 {
-    fprintf(stderr, "voodoo2: fatal: ");
+    voodoo_shim_fatals++;
+    if (voodoo_shim_fatals > 1) {
+        return;
+    }
+    fprintf(stderr, "voodoo2: refused (86Box fatal): ");
     vfprintf(stderr, fmt, ap);
+    if (shim_hooks.on_fatal) {
+        shim_hooks.on_fatal(shim_hooks.opaque);
+    }
     fflush(stderr);
-    abort();
 }
 
 void
@@ -146,6 +162,59 @@ fatal(const char *fmt, ...)
     va_start(ap, fmt);
     fatal_ex(fmt, ap);
     va_end(ap);
+}
+
+/* --------------------------------------------------- guarded allocations
+ * (shim/86box/86box.h: calloc/free of the vendored files come here) */
+
+#define SHIM_GUARD_MIN   (1024 * 1024)      /* allocations this big are mapped */
+#define SHIM_GUARD_BYTES (64 * 1024 * 1024) /* zero pages after them */
+
+static struct {
+    void  *p;
+    size_t len;
+} shim_guarded[8];
+
+#undef calloc
+#undef free
+
+void *
+voodoo_shim_calloc(size_t n, size_t size)
+{
+    size_t bytes = n * size;
+
+    if (bytes >= SHIM_GUARD_MIN) {
+        for (int i = 0; i < (int) ARRAY_SIZE(shim_guarded); i++) {
+            if (!shim_guarded[i].p) {
+                void *p = plat_mmap(bytes + SHIM_GUARD_BYTES, 0, NULL);
+
+                if (!p) {
+                    return NULL;
+                }
+                shim_guarded[i].p   = p;
+                shim_guarded[i].len = bytes + SHIM_GUARD_BYTES;
+                return p;   /* anonymous pages: zero, like calloc */
+            }
+        }
+        /* the table is full: an ordinary allocation, no guard */
+    }
+    return calloc(n, size);
+}
+
+void
+voodoo_shim_free(void *p)
+{
+    if (!p) {
+        return;
+    }
+    for (int i = 0; i < (int) ARRAY_SIZE(shim_guarded); i++) {
+        if (shim_guarded[i].p == p) {
+            plat_munmap(p, shim_guarded[i].len);
+            shim_guarded[i].p = NULL;
+            return;
+        }
+    }
+    free(p);
 }
 
 /* ---------------------------------------------------------------- plat.h */
@@ -506,7 +575,6 @@ double    cpuclock = 1e9;   /* "TSC" ticks per second: the timers count ns */
 
 static bitmap_t        shim_bitmap;
 static svga_t          shim_svga;
-static VoodooShimHooks shim_hooks;
 
 void
 voodoo_shim_init(const VoodooShimHooks *hooks)

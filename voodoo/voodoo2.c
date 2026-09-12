@@ -83,6 +83,20 @@ struct Voodoo2State {
     int        last_wr;
     int        last_rd;
     int        last_tex;
+    unsigned   last_fatals;
+    /* register-window accesses by register (addr & 0x3fc) since the last
+     * line: a guest that spins on one register names it here */
+    uint32_t   rd_hist[256];
+    uint32_t   wr_hist[256];
+    uint32_t   cfg_hist[64];    /* configuration-space reads, by dword */
+    /* the last accesses, for a fatal(): what the guest was doing */
+    struct {
+        uint32_t addr;
+        uint32_t val;
+        uint8_t  size;
+        uint8_t  write;
+    } ring[64];
+    uint32_t   ring_n;
 
     /* properties */
     uint32_t fbmem_mb;
@@ -96,21 +110,85 @@ struct Voodoo2State {
 
 /* ------------------------------------------------------------------ MMIO */
 
+static bool     voodoo2_trace;          /* VOODOO2_TRACE=1 in the environment */
+static uint32_t voodoo2_trace_status;   /* status reads since the last other line */
+
+static inline void
+voodoo2_note(Voodoo2State *s, hwaddr addr, uint64_t val, unsigned size, bool write)
+{
+    unsigned i = s->ring_n++ % ARRAY_SIZE(s->ring);
+
+    s->ring[i].addr  = (uint32_t) addr;
+    s->ring[i].val   = (uint32_t) val;
+    s->ring[i].size  = size;
+    s->ring[i].write = write;
+    if (voodoo2_trace && addr < 0x400000) {
+        /* every register- and command-FIFO-window access, the status polls
+         * (thousands between two real accesses) as one count */
+        if (!write && (addr & 0x3fc) == 0 && !(addr & 0x200000)) {
+            voodoo2_trace_status++;
+            return;
+        }
+        if (voodoo2_trace_status) {
+            fprintf(stderr, "voodoo2:   (%u status reads)\n", voodoo2_trace_status);
+            voodoo2_trace_status = 0;
+        }
+        fprintf(stderr, "voodoo2: %s %06x %08x (initEnable %08x%s)\n", write ? "wr" : "rd",
+                (unsigned) addr, (unsigned) val, s->v->initEnable,
+                s->v->cmdfifo_enabled ? ", fifo on" : "");
+    }
+}
+
+/* 86Box's fatal(): the state a bug report needs, before the abort */
+static void
+voodoo2_on_fatal(void *opaque)
+{
+    Voodoo2State *s = opaque;
+    voodoo_t     *v = s->v;
+    unsigned      n = MIN(s->ring_n, ARRAY_SIZE(s->ring));
+
+    fprintf(stderr, "voodoo2: initEnable %08x fbiInit0 %08x fbiInit7 %08x "
+            "cmdfifo %s base %08x end %08x rp %08x depth wr %u rd %u; "
+            "%dx%d, %s\n",
+            v->initEnable, v->fbiInit0, v->fbiInit7,
+            v->cmdfifo_enabled ? "on" : "off", v->cmdfifo_base, v->cmdfifo_end,
+            v->cmdfifo_rp, v->cmdfifo_depth_wr, v->cmdfifo_depth_rd,
+            v->h_disp, v->v_disp, s->override ? "monitor" : "no monitor");
+    fprintf(stderr, "voodoo2: the last %u accesses, oldest first:\n", n);
+    for (unsigned k = 0; k < n; k++) {
+        unsigned i = (s->ring_n - n + k) % ARRAY_SIZE(s->ring);
+
+        fprintf(stderr, "voodoo2:   %s %u %06x %08x\n",
+                s->ring[i].write ? "wr" : "rd", s->ring[i].size,
+                s->ring[i].addr, s->ring[i].val);
+    }
+}
+
 static uint64_t
 voodoo2_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
     Voodoo2State *s = opaque;
     voodoo_t     *v = s->v;
 
+    uint64_t      val;
+
+    if (addr < 0x400000) {
+        s->rd_hist[(addr >> 2) & 0xff]++;
+    }
     switch (size) {
     case 4:
-        return v->mapping.read_l((uint32_t) addr, v->mapping.priv);
+        val = v->mapping.read_l((uint32_t) addr, v->mapping.priv);
+        break;
     case 2:
-        return v->mapping.read_w((uint32_t) addr, v->mapping.priv);
+        val = v->mapping.read_w((uint32_t) addr, v->mapping.priv);
+        break;
     default:
         /* the card has no byte lane: 86Box registers no byte handler */
-        return 0xff;
+        val = 0xff;
+        break;
     }
+    voodoo2_note(s, addr, val, size, false);
+    return val;
 }
 
 static void
@@ -119,6 +197,22 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     Voodoo2State *s = opaque;
     voodoo_t     *v = s->v;
 
+    if (addr < 0x400000) {
+        s->wr_hist[(addr >> 2) & 0xff]++;
+    }
+    voodoo2_note(s, addr, val, size, true);
+    if (addr < 0x400000 && (addr & 0x3fc) == 0x214 &&
+        !((addr & 0x200000) && v->cmdfifo_enabled)) {
+        /* fbiInit1 bit 23, scanline interleaving: this device is one card
+         * with no partner, so the bit is not writable -- 86Box's display
+         * timer takes SLI at its word and draws the odd lines from a second
+         * card that does not exist (a NULL, 2026-09-12: 3dfx's Glide on a
+         * grSstWinClose/grSstWinOpen pushes its reopen's register writes
+         * through the command-FIFO transport with the FIFO off, and the
+         * stream walks the register file, fbiInit1 included). A real single
+         * board with the bit set shows half its lines; this one ignores it. */
+        val &= ~(1u << 23);
+    }
     switch (size) {
     case 4:
         v->mapping.write_l((uint32_t) addr, (uint32_t) val, v->mapping.priv);
@@ -149,18 +243,54 @@ static const MemoryRegionOps voodoo2_mmio_ops = {
  * register and the BAR's top byte are echoed so the card's own notion of
  * being enabled and mapped stays in step.
  */
+/* 0x54, siProcess: the Voodoo 2's silicon-process monitor. Glide's
+ * sst1InitMeasureSiProcess (cvg/init/util.c) loads a PCI-clock countdown
+ * into bits 27:16, sets RUN (bit 28), polls the register until that field
+ * reads zero and then takes the ring-oscillator count out of bits 15:0.
+ * QEMU's configuration space keeps whatever a guest writes past the 64-byte
+ * header, so the loaded count read back for ever and 3dfx's glide2x.dll spun
+ * there on every grSstWinOpen (2026-09-12: GLIDETEST and Diablo II's video
+ * test "froze"). 86Box answers 0 to the whole register, which ends the loop
+ * with a count of 0 ("a very slow process": the shorter clock delay); here
+ * the countdown is over the moment RUN is read back, and the count is a
+ * production board's, well past Glide's 5000 threshold. 0x40-0x43 is
+ * initEnable, 86Box's. */
+#define VOODOO2_CFG_SIPROCESS  0x54
+#define SIPROCESS_OSC_CNTR     0x0000ffffu
+#define SIPROCESS_PCI_CNTR     0x0fff0000u
+#define SIPROCESS_RUN          (1u << 28)
+#define SIPROCESS_OSC_COUNT    8000u
+
+static uint32_t
+voodoo2_siprocess(PCIDevice *dev)
+{
+    uint32_t si = pci_get_long(dev->config + VOODOO2_CFG_SIPROCESS);
+
+    if (si & SIPROCESS_RUN) {
+        return (si & ~(SIPROCESS_PCI_CNTR | SIPROCESS_OSC_CNTR)) | SIPROCESS_OSC_COUNT;
+    }
+    return si & ~SIPROCESS_OSC_CNTR;   /* held in reset: nothing counted */
+}
+
 static uint32_t
 voodoo2_config_read(PCIDevice *dev, uint32_t addr, int len)
 {
     Voodoo2State *s   = VOODOO2(dev);
     uint32_t      val = pci_default_read_config(dev, addr, len);
 
+    s->cfg_hist[(addr >> 2) & 63]++;
     for (int i = 0; i < len; i++) {
         uint32_t a = addr + i;
+        int      b = -1;
 
         if (a >= 0x40 && a <= 0x43) {
+            b = voodoo_pci_read(0, (int) a, 1, s->v);
+        } else if (a >= VOODOO2_CFG_SIPROCESS && a < VOODOO2_CFG_SIPROCESS + 4) {
+            b = (voodoo2_siprocess(dev) >> (8 * (a - VOODOO2_CFG_SIPROCESS))) & 0xff;
+        }
+        if (b >= 0) {
             val &= ~(0xffu << (8 * i));
-            val |= (uint32_t) voodoo_pci_read(0, (int) a, 1, s->v) << (8 * i);
+            val |= (uint32_t) b << (8 * i);
         }
     }
     return val;
@@ -178,6 +308,9 @@ voodoo2_config_write(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
         if (a == PCI_COMMAND || a == 0x13 || (a >= 0x40 && a <= 0x43)) {
             voodoo_pci_write(0, (int) a, 1, (val >> (8 * i)) & 0xff, s->v);
         }
+    }
+    if (addr <= 0x43 && addr + len > 0x40) {
+        info_report("voodoo2: initEnable <= %08x", s->v->initEnable);
     }
 }
 
@@ -256,6 +389,33 @@ voodoo2_present(void *opaque, const bitmap_t *frame, int w, int h)
 
 /* ----------------------------------------------------------------- stats */
 
+/* the four most-hit registers of a histogram, as " 0x000:N ..." */
+static void
+voodoo2_top_regs(uint32_t *hist, int count, char *buf, size_t len)
+{
+    size_t n = 0;
+
+    buf[0] = 0;
+    for (int k = 0; k < 4; k++) {
+        int best = -1;
+
+        for (int i = 0; i < count; i++) {
+            if (hist[i] && (best < 0 || hist[i] > hist[best])) {
+                best = i;
+            }
+        }
+        if (best < 0) {
+            break;
+        }
+        n += snprintf(buf + n, len - n, " 0x%03x:%u", best << 2, hist[best]);
+        hist[best] = 0;
+        if (n >= len) {
+            break;
+        }
+    }
+    memset(hist, 0, count * sizeof(*hist));
+}
+
 static void
 voodoo2_stats(void *opaque)
 {
@@ -267,12 +427,25 @@ voodoo2_stats(void *opaque)
     int           rd     = v->rd_count - s->last_rd;
     int           tex    = v->tex_count - s->last_tex;
 
-    if (frames || tris || wr || rd) {
+    if (frames || tris || wr || rd || voodoo_shim_fatals != s->last_fatals) {
+        char rds[64], wrs[64], cfg[64], ref[48] = "";
+
+        voodoo2_top_regs(s->rd_hist, 256, rds, sizeof(rds));
+        voodoo2_top_regs(s->wr_hist, 256, wrs, sizeof(wrs));
+        voodoo2_top_regs(s->cfg_hist, 64, cfg, sizeof(cfg));
+        if (voodoo_shim_fatals != s->last_fatals) {
+            snprintf(ref, sizeof(ref), "; %u writes refused",
+                     voodoo_shim_fatals - s->last_fatals);
+        }
         info_report("voodoo2: %dx%d %s: %u frames, %d triangles, %d writes "
-                    "(%d texture), %d reads in %.1f s",
+                    "(%d texture), %d reads in %.1f s; regs read%s; written%s; "
+                    "config read%s%s",
                     v->h_disp, v->v_disp, s->override ? "on" : "off",
-                    frames, tris, wr, tex, rd, VOODOO2_STATS_MS / 1000.0);
+                    frames, tris, wr, tex, rd, VOODOO2_STATS_MS / 1000.0,
+                    rds[0] ? rds : " none", wrs[0] ? wrs : " none",
+                    cfg[0] ? cfg : " none", ref);
     }
+    s->last_fatals = voodoo_shim_fatals;
     s->last_frames = s->frames;
     s->last_tris   = v->tri_count;
     s->last_wr     = v->wr_count;
@@ -292,6 +465,7 @@ voodoo2_realize(PCIDevice *dev, Error **errp)
     VoodooShimHooks hooks = {
         .opaque       = s,
         .set_override = voodoo2_set_override,
+        .on_fatal     = voodoo2_on_fatal,
         .present      = voodoo2_present,
     };
 
@@ -315,6 +489,7 @@ voodoo2_realize(PCIDevice *dev, Error **errp)
     }
     voodoo2_instantiated = true;
 
+    voodoo2_trace = getenv("VOODOO2_TRACE") && *getenv("VOODOO2_TRACE") == '1';
     voodoo_shim_init(&hooks);
     voodoo_shim_set_config("bilinear", s->bilinear);
     voodoo_shim_set_config("dithersub", s->dithersub);

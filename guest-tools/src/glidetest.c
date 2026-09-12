@@ -26,6 +26,11 @@
  *   GLIDETEST            640x480, the four cases
  *   GLIDETEST -res 8     another resolution (0-15, glidewnd.c's table)
  *   GLIDETEST -hold 5    keep the last frame up for 5 s, to look at it
+ *   GLIDETEST -noreopen  skip the close/reopen case: 3dfx's own Glide 2.x
+ *                        pushes a reopen's init through a command FIFO it
+ *                        has just reset and never comes back from the idle
+ *                        wait after it (the emulated Voodoo 2, 2026-09-12),
+ *                        so on that Glide the first three cases are the test
  *
  * Built by guest-tools/build-wrappers.sh into TESTS\ on the guest ISO;
  * needs GLIDE2X.DLL installed (SETUP.EXE's Glide component — on 2000/XP
@@ -48,6 +53,7 @@ static void say(const char *fmt, ...)
     va_start(ap, fmt);
     vprintf(fmt, ap);
     va_end(ap);
+    fflush(stdout);   /* a Glide that never returns keeps what was said */
     if (logfp) {
         va_start(ap, fmt);
         vfprintf(logfp, fmt, ap);
@@ -148,13 +154,15 @@ static const struct tbl { int w, h; } tblRes[] = {
 
 int main(int argc, char **argv)
 {
-    int res = GR_RESOLUTION_640x480, hold = 0, i, w, h;
+    int res = GR_RESOLUTION_640x480, hold = 0, noreopen = 0, i, w, h;
     GrHwConfiguration hw;
     char version[80] = "";
 
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-res") && i + 1 < argc) {
             res = atoi(argv[++i]) & 0xf;
+        } else if (!strcmp(argv[i], "-noreopen")) {
+            noreopen = 1;
         } else if (!strcmp(argv[i], "-hold") && i + 1 < argc) {
             hold = atoi(argv[++i]);
         }
@@ -226,9 +234,10 @@ int main(int argc, char **argv)
     /* a game's mode switch: close and open again. A host that leaked its
      * context or its drawable fails the second open, not the first. */
     grSstWinClose();
-    cases++;
-    if (!grSstWinOpen(0, res, GR_REFRESH_60Hz, GR_COLORFORMAT_ABGR,
-                      GR_ORIGIN_UPPER_LEFT, 2, 1)) {
+    if (noreopen) {
+        say("  %-12s SKIP (-noreopen)\n", "reopen");
+    } else if (cases++, !grSstWinOpen(0, res, GR_REFRESH_60Hz, GR_COLORFORMAT_ABGR,
+                                      GR_ORIGIN_UPPER_LEFT, 2, 1)) {
         failed++;
         say("  %-12s FAIL the second grSstWinOpen was refused\n", "reopen");
     } else {

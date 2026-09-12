@@ -2,6 +2,8 @@
 """The Voodoo 2 device as a *guest* meets it (doc 21, M14), with no 3dfx
 driver in the picture: a DOS program finds the card in PCI configuration
 space, maps its 16 MiB BAR, checks the Voodoo 2 strap in initEnable, runs
+the siProcess measurement 3dfx's Glide starts with (a PCI-clock countdown
+that has to read zero, or glide2x.dll polls it for ever -- 2026-09-12), runs
 the init sequence 3dfx's own sst1init runs (frame-buffer geometry, video
 timing, the DAC's PLL, the colour lookup table, VGA pass-through), fills
 the back buffer with red through the linear frame buffer, reads a pixel
@@ -132,6 +134,40 @@ start:
     call puthex32
     call putnl
     mov [init_enable], eax
+
+    ; --- siProcess (0x54), the way Glide's sst1InitMeasureSiProcess reads
+    ;     it: load a PCI-clock countdown into bits 27:16 with the ring
+    ;     oscillator in reset, read once, set RUN, and poll until the
+    ;     countdown reads zero; the oscillator count is then bits 15:0. A
+    ;     configuration space that merely stores the load never reads zero
+    ;     there, and 3dfx's glide2x.dll sat in that loop on every
+    ;     grSstWinOpen (2026-09-12). Bounded here, so a wrong device is a
+    ;     line rather than a hang ----------------------------------------
+    mov cl, 54h
+    mov eax, 0FFF0000h          ; load 0xfff, NAND tree, counter held in reset
+    call pci_write
+    mov cl, 54h
+    call pci_read
+    mov cl, 54h
+    mov eax, 1FFF0000h          ; RUN
+    call pci_write
+    mov dword [si_polls], 100000
+.si_poll:
+    mov cl, 54h
+    call pci_read
+    test eax, 0FFF0000h
+    jz .si_done
+    dec dword [si_polls]
+    jnz .si_poll
+    mov si, str_si_timeout
+    call puts
+    jmp .si_out
+.si_done:
+    mov si, str_si
+    call puts
+    call puthex32
+    call putnl
+.si_out:
 
     ; --- the chip's own init: what sst1init does before a game draws ----
     mov edi, BAR
@@ -404,12 +440,15 @@ gdtr:
 
 pci_dev:     dw 0
 init_enable: dd 0
+si_polls:    dd 0
 
 str_hello:    db "VOODOO2 guest test", 10, 0
 str_nocard:   db "NOCARD: no 121a:0002 on bus 0", 10, 0
 str_found:    db "FOUND dev ", 0
 str_bar:      db "BAR0 ", 0
 str_init:     db "INITENABLE ", 0
+str_si:       db "SIPROCESS ", 0
+str_si_timeout: db "SIPROCESS TIMEOUT: the countdown never read zero", 10, 0
 str_fbiinit0: db "FBIINIT0 ", 0
 str_status:   db "STATUS ", 0
 str_fill:     db "FILL 640x480 red", 10, 0
@@ -531,6 +570,13 @@ def main():
     # the guest's own findings
     if "INITENABLE 00005001" not in text:
         print("FAIL initEnable did not read back the Voodoo 2 strap (0x50) and bit 0")
+        ok = False
+    # siProcess: the countdown read zero (the loop ended) and the
+    # oscillator count is a real one (RUN still set, bits 15:0 nonzero)
+    si = [l.split()[1] for l in text.splitlines() if l.startswith("SIPROCESS ") and len(l.split()) == 2]
+    if not si or (int(si[0], 16) & 0x1fffffff) <= 0x10000000 or (int(si[0], 16) & 0x0fff0000):
+        print("FAIL siProcess: %s (Glide polls it until bits 27:16 read zero, then takes bits 15:0)"
+              % (si[0] if si else "no reading: the countdown never ended"))
         ok = False
     if "FBIINIT0 00000001" not in text:
         print("FAIL fbiInit0 did not read back VGA pass-through")

@@ -66,12 +66,31 @@
 #    define ATOMIC_DOUBLE_ADD(var, val) atomic_double_add(&(var), val)
 #endif
 
-/* voodoo_shim.c: pclog goes to stderr with a "voodoo2:" prefix, fatal is
- * upstream's contract -- it does not return (the callers fall off the end
- * of a switch after it). */
+/* The frame buffer and the texture memories: 86Box callocs them and its
+ * display timer and texture fetch index them by guest-programmed geometry
+ * with no bound (front_offset + line * row_width, off videoDimensions and
+ * fbiInit1 a guest can set to anything: 3dfx's Glide put 6.8 MB into a 4 MB
+ * frame buffer on a reopen, 2026-09-12). The vendored files stay verbatim,
+ * so the shim takes over their large allocations and maps 64 MB of lazily
+ * committed zero pages after each: an overrun reads zeros. Small ones
+ * (texture caches, the device itself) stay libc's. */
+#include <stdlib.h>
+extern void *voodoo_shim_calloc(size_t n, size_t size);
+extern void  voodoo_shim_free(void *p);
+#define calloc(n, size) voodoo_shim_calloc((n), (size))
+#define free(p)         voodoo_shim_free((p))
+
+/* voodoo_shim.c: pclog goes to stderr with a "voodoo2:" prefix. fatal
+ * *returns* here, against upstream's contract: 86Box ends the emulator on
+ * a write it does not model, a QEMU guest must not be able to. Every
+ * caller falls off the end of a switch after it, so the write is refused
+ * and the stream goes on; it is counted and the first is dumped. Not
+ * noreturn -- declaring it so made the compiler drop the code after the
+ * call and the return landed in the middle of the next case (SIGSEGV,
+ * 2026-09-12). */
 extern void pclog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 extern void pclog_ex(const char *fmt, va_list ap) __attribute__((format(printf, 1, 0)));
-extern void fatal(const char *fmt, ...) __attribute__((format(printf, 1, 2), noreturn));
-extern void fatal_ex(const char *fmt, va_list ap) __attribute__((format(printf, 1, 0), noreturn));
+extern void fatal(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+extern void fatal_ex(const char *fmt, va_list ap) __attribute__((format(printf, 1, 0)));
 
 #endif /* VOODOO_SHIM_86BOX_H */
