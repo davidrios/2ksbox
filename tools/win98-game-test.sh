@@ -66,6 +66,8 @@
 #   DDFLAGS=n           -device d3dpt-vga,ddflags=N (the bisection knob)
 #   MUSIC=gm|mt32|none  the MPU-401's synth (gm, the launcher's default for
 #                       a Win98 machine), or no MPU-401 at all
+#   QEMU_TCG_OPTS=a=off,b=on  accelerator switches for an A/B (the convention of
+#                       the Python guest tools): -accel tcg,<them>
 #   EXTRA="args"        more QEMU arguments, word-split (-perfmap, say, for
 #                       `perf report` to name the vCPU's generated code —
 #                       but the map is /tmp/perf-<pid>.map, a line per
@@ -243,7 +245,7 @@ echo "==> booting ${VGA:-d3dpt}, discs: ${CDS:-none}, ${RUN_SECS}s of run -> $OU
 # The MPU-401 finds the bank relative to the cwd unless told, so tell it.
 export LIBSYNTH_SF2="${LIBSYNTH_SF2:-$ROOT/soundfonts/TimGM6mb.sf2}"
 read -ra EXTRA_ARGS <<< "${EXTRA:-}"
-MACHINE=(-L "$ROOT/qemu/pc-bios" -machine pc,hpet=off -m 256 -accel tcg
+MACHINE=(-L "$ROOT/qemu/pc-bios" -machine pc,hpet=off -m 256 -accel "tcg${QEMU_TCG_OPTS:+,$QEMU_TCG_OPTS}"
          "${DRIVES[@]}" "${VGAARGS[@]}" "${USBARGS[@]}"
          -net none -rtc base=localtime -msg timestamp=on
          -debugcon file:"$OUT/dbg.log" -qmp unix:"$SOCK",server,nowait

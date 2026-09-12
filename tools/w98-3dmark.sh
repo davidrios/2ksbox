@@ -13,7 +13,16 @@
 #     memtrace preload) -- all passed through to win98-game-test.sh
 #     perf:  a --call-graph dwarf profile for PERF_SECS from PERF_AT s after
 #            the Benchmark click (the first-person test is ~40-56 s)
-#     whole: a -F 199 profile of the whole run (PERF_SECS, default 200)
+#     whole: a -F 199 profile of the whole run (PERF_SECS, default 200);
+#            the run's perf-<pid>.map is copied beside perf.data so that
+#            tools/tcg-perf-cut.py can name the generated code later
+#     JIT_SNAPS="43 53": `info jit` at those seconds after the click into
+#            jit-<s>.txt (two inside one test and the difference is that
+#            test's TLB flushes, refills, jump-cache hits and the rest)
+#     PAGES="0158e000 ...": memsave those guest pages at the first snapshot
+#            + 5 s into pages/<page>.bin, for tools/tcg-form-weights.py
+#     QEMU_TCG_OPTS=tlb-retire=off: an accelerator switch for the A/B,
+#            through win98-game-test.sh
 # Output: build/w98game/<name>/ -- score-*.png (read the score off the last),
 # qemu.log (its `ddi: N frames/s` lines are the per-test frame rates),
 # click.txt (the click's epoch, to place profile windows), perf.data.
@@ -59,6 +68,20 @@ q screendump "$O/project.png" >/dev/null
 q click 448 457 800 600
 T0=$(date +%s)
 date -u +%s.%N > "$O/click.txt"
+if [ -n "${JIT_SNAPS:-}" ]; then
+  ( for at in $JIT_SNAPS; do
+      while [ $(( $(date +%s) - T0 )) -lt "$at" ]; do sleep 1; done
+      q json '{"execute":"human-monitor-command","arguments":{"command-line":"info jit"}}' > "$O/jit-$at.txt"
+      if [ -n "${PAGES:-}" ]; then
+        sleep 5; mkdir -p "$O/pages"
+        for pg in $PAGES; do   # a relative name: HMP's memsave takes no path with a slash
+          q json "{\"execute\":\"human-monitor-command\",\"arguments\":{\"command-line\":\"memsave 0x$pg 4096 pages_$pg.bin\"}}" >/dev/null 2>&1
+          [ -e "pages_$pg.bin" ] && mv "pages_$pg.bin" "$O/pages/$pg.bin"
+        done
+        PAGES=
+      fi
+    done ) &
+fi
 if [ "$MODE" = perf ]; then
   sleep "${PERF_AT:-8}"
   P=$(ps -C qemu-system-i386 -o pid= | head -1)
@@ -78,6 +101,7 @@ while [ $(( $(date +%s) - T0 )) -lt 420 ]; do
   [ $(( $(date +%s) - T0 )) -ge 150 ] && q screendump "$O/score-$(( $(date +%s) - T0 )).png" >/dev/null
 done
 q json '{"execute":"system_powerdown"}' >/dev/null
+[ "$MODE" = whole ] && cp /tmp/perf-*.map "$O/" 2>/dev/null
 wait $H
 grep -E "ddi: [0-9.]+ frames" "$O/qemu.log" | sed 's/.*d3dpt-vga: //' > "$O/rates.txt"
 echo "done: $O ($(wc -l < "$O/rates.txt") rate lines)"

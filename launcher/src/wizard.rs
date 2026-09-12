@@ -397,7 +397,7 @@ fn optimizations_ui(ui: &mut egui::Ui, form: &mut Form) {
                 ui.small(opt.note());
             }
             // The two shortcuts sit beside "All defaults" rather than
-            // replacing it: eleven switches is too many to walk through
+            // replacing it: fourteen switches is too many to walk through
             // to build a control run, and the way back is not "all on"
             // (pinned-regs ships off) but the defaults.
             ui.horizontal(|ui| {

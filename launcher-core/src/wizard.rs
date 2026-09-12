@@ -648,7 +648,7 @@ impl Form {
     }
 
     /// Every switch off at once: the control run for "is one of ours
-    /// what broke this guest", which is otherwise eleven clicks and easy
+    /// what broke this guest", which is otherwise fourteen clicks and easy
     /// to get half-right.
     pub fn disable_all_optimizations(&mut self) {
         self.optimizations.disable_all();

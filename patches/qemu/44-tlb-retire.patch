@@ -1,0 +1,843 @@
+A CR3 write retires the TLB instead of clearing it; a miss reuses the
+retired entry when the page tables still give that translation.
+
+Windows 98 reloads CR3 with its own value to flush its TLB after every
+page its VMM maps or unmaps -- one map/unmap pair per page fault, and
+3DMark 99 commits and frees buffers every frame: 2,400 flushes a second
+in the first-person test, each throwing away every softmmu TLB entry and
+followed by ~185 page walks for pages whose mapping nothing had changed
+(4.2 million refills per ten seconds).
+
+cpu_x86_update_cr3 now calls tlb_flush_retiring(): the entries filled
+since the last flush are copied into a persistent retired table (per mmu
+index, the live table's size, accumulating across flushes, since the
+guest touches a different few hundred pages in each 0.4 ms interval), and
+the flush clears only those filled entries instead of a 64 KiB memset.
+On a miss, tlb_fill_align() probes the retired table first and asks the
+target -- TCGCPUOps.tlb_retired_reusable, i386: the paging key (CR3, the
+paging mode, A20, SMM, the protection keys) recorded at fill time must
+equal today's, and every page-table entry the walk read, kept by host
+address and value in CPUTLBEntryFull.extra.x86, must still hold that
+value -- and puts the entry back with the dirty-tracking flag recomputed.
+A flush for any other reason (memory topology, a watchpoint, reset, CR0 /
+CR4 / EFER) drops the retired tables, and an invlpg drops its page.
+`info jit` prints the refills and how many came back this way, and the
+queue's accelerator switches.
+
+Measured: 95 % of the refills reused (3.95 of 4.18 million per ten
+seconds); first person 19.0 fps against 18.9 with `tlb-retire=off`, CPU
+3DMarks 16295 against 16080 -- inside run-to-run noise on the Ryzen,
+where a page walk was cheap; kept for hosts and guests where it is not,
+exact by construction.  Switch: `-accel tcg,tlb-retire=off`.
+Batteries identical, scripts/test.sh all green.
+
+diff --git a/include/hw/core/cpu.h b/include/hw/core/cpu.h
+index 0e4d6f1..11d8ee8 100644
+--- a/include/hw/core/cpu.h
++++ b/include/hw/core/cpu.h
+@@ -262,6 +262,24 @@ struct CPUTLBEntryFull {
+             uint8_t shareability;
+             bool guarded;
+         } arm;
++        /*
++         * i386 (patch 44): what this translation was computed from, so
++         * that a retired entry can be put back after a TLB flush if none
++         * of it has changed -- the paging state (CR3, the paging mode,
++         * A20, SMM; the protection keys in @key2) and the host address
++         * and value of every page-table entry the walk went through.
++         * @pt_n is 0 with @identity clear when the walk read a table
++         * through MMIO or nested paging was on: never reused.
++         */
++        struct {
++            uint64_t key;
++            uint64_t key2;
++            uint64_t pt_val[3];
++            void *pt_haddr[3];
++            uint8_t pt_n;
++            bool pt_wide;
++            bool identity;
++        } x86;
+     } extra;
+ };
+ 
+@@ -283,6 +301,25 @@ typedef struct CPUTLBDesc {
+     /* maximum number of entries observed in the window */
+     size_t window_max_entries;
+     size_t n_used_entries;
++    /*
++     * The tables the last keyed flush retired (patch 44): a CR3 write
++     * swaps the live table out here instead of losing it, and a miss
++     * asks the target whether the retired entry for the page is still
++     * the translation the page tables give before walking them again.
++     * Sized like the live table was when it was retired.
++     */
++    CPUTLBEntry *rt_table;
++    CPUTLBEntryFull *rt_fulltlb;
++    size_t rt_n_entries;
++    bool rt_valid;
++    /*
++     * The indexes filled since the last flush (patch 44), so a flush can
++     * clear those entries instead of the whole table and a keyed flush
++     * can copy them into the retired table; -1 once too many to track,
++     * which means the whole table is cleared and scanned, as before.
++     */
++    uint16_t *filled;
++    int n_filled;
+     /* The next index to use in the tlb victim table.  */
+     size_t vindex;
+     /* The tlb victim table, in two parts.  */
+@@ -311,6 +348,10 @@ typedef struct CPUTLBCommon {
+     size_t full_flush_count;
+     size_t part_flush_count;
+     size_t elide_flush_count;
++    /* patch 44: a flush that keeps the tables retired, and its statistics */
++    bool retire_pending;
++    size_t refill_count;
++    size_t reuse_count;
+ } CPUTLBCommon;
+ 
+ /*
+diff --git a/include/hw/core/tcg-cpu-ops.h b/include/hw/core/tcg-cpu-ops.h
+index 663efb9..d8ba73f 100644
+--- a/include/hw/core/tcg-cpu-ops.h
++++ b/include/hw/core/tcg-cpu-ops.h
+@@ -167,6 +167,15 @@ struct TCGCPUOps {
+     bool (*tlb_fill)(CPUState *cpu, vaddr address, int size,
+                      MMUAccessType access_type, int mmu_idx,
+                      bool probe, uintptr_t retaddr);
++    /**
++     * @tlb_retired_reusable: patch 44.  A TLB flush the target asked for
++     * with tlb_flush_retiring() kept the flushed tables; on a miss whose
++     * page the retired table holds, say whether that entry is still the
++     * translation the guest's page tables give now.  A true answer puts
++     * the entry back without a walk.
++     */
++    bool (*tlb_retired_reusable)(CPUState *cpu, int mmu_idx, vaddr addr,
++                                 const CPUTLBEntryFull *full);
+     /**
+      * @do_transaction_failed: Callback for handling failed memory transactions
+      * (ie bus faults or external aborts; not MMU faults)
+diff --git a/include/exec/exec-all.h b/include/exec/exec-all.h
+index 2e4c4cc..241eea9 100644
+--- a/include/exec/exec-all.h
++++ b/include/exec/exec-all.h
+@@ -89,6 +89,16 @@ void tlb_flush_page_all_cpus_synced(CPUState *src, vaddr addr);
+  * use one of the other functions for efficiency.
+  */
+ void tlb_flush(CPUState *cpu);
++/**
++ * tlb_flush_retiring:
++ * @cpu: CPU whose TLB should be flushed
++ *
++ * Patch 44: tlb_flush() for a change of paging structures only (a CR3
++ * write): the flushed tables are retired rather than cleared, and a miss
++ * may reuse a retired entry once the target has checked the page-table
++ * entries it was computed from (TCGCPUOps.tlb_retired_reusable).
++ */
++void tlb_flush_retiring(CPUState *cpu);
+ /**
+  * tlb_flush_all_cpus_synced:
+  * @cpu: src CPU of the flush
+diff --git a/accel/tcg/cputlb.c b/accel/tcg/cputlb.c
+index a8b64f1..52f96f7 100644
+--- a/accel/tcg/cputlb.c
++++ b/accel/tcg/cputlb.c
+@@ -278,6 +278,7 @@ static void tlb_mmu_resize_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast,
+     fast->mask = (new_size - 1) << CPU_TLB_ENTRY_BITS;
+     fast->table = g_try_new(CPUTLBEntry, new_size);
+     desc->fulltlb = g_try_new(CPUTLBEntryFull, new_size);
++    desc->n_filled = -1;        /* patch 44: fresh storage, clear it whole */
+ 
+     /*
+      * If the allocations fail, try smaller sizes. We just freed some
+@@ -307,16 +308,93 @@ static void tlb_mmu_flush_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast)
+     desc->large_page_addr = -1;
+     desc->large_page_mask = -1;
+     desc->vindex = 0;
+-    memset(fast->table, -1, sizeof_tlb(fast));
++    if (tcg_tlb_retire && desc->filled && desc->n_filled >= 0) {
++        /*
++         * Patch 44: clear what was filled, not the whole table.  A
++         * Windows 98 guest flushes 2,400 times a second with a few
++         * hundred entries live each time, against 64 KiB of memset.
++         */
++        int i;
++
++        for (i = 0; i < desc->n_filled; i++) {
++            memset(&fast->table[desc->filled[i]], -1, sizeof(CPUTLBEntry));
++        }
++    } else {
++        memset(fast->table, -1, sizeof_tlb(fast));
++    }
++    desc->n_filled = 0;
+     memset(desc->vtable, -1, sizeof(desc->vtable));
+ }
+ 
++#define TLB_FILLED_MAX 1024
++
++static inline bool tlb_entry_is_empty(const CPUTLBEntry *te);
++
++/* patch 44: remember that @index was filled, for the next flush */
++static inline void tlb_note_filled(CPUTLBDesc *desc, size_t index)
++{
++    if (desc->n_filled >= 0) {
++        if (desc->n_filled < TLB_FILLED_MAX) {
++            desc->filled[desc->n_filled++] = index;
++        } else {
++            desc->n_filled = -1;
++        }
++    }
++}
++
++/*
++ * Patch 44: retire what the live table holds instead of forgetting it.
++ * The entries filled since the last flush are copied into the retired
++ * table -- which accumulates across flushes, since a guest that flushes
++ * every 0.4 ms touches a different few hundred pages each time and the
++ * one before last is as likely to be wanted as the last -- where
++ * tlb_reuse_retired() finds them.  A retired table of another size than
++ * the live one (a resize since) starts over.
++ */
++static void tlb_retire_locked(CPUTLBDesc *desc, CPUTLBDescFast *fast)
++{
++    size_t n_entries = tlb_n_entries(fast);
++    size_t i;
++
++    if (desc->rt_n_entries != n_entries) {
++        g_free(desc->rt_table);
++        g_free(desc->rt_fulltlb);
++        desc->rt_table = g_new(CPUTLBEntry, n_entries);
++        desc->rt_fulltlb = g_new(CPUTLBEntryFull, n_entries);
++        desc->rt_n_entries = n_entries;
++        memset(desc->rt_table, -1, sizeof_tlb(fast));
++    }
++    if (desc->n_filled >= 0) {
++        for (i = 0; i < desc->n_filled; i++) {
++            size_t index = desc->filled[i];
++
++            if (!tlb_entry_is_empty(&fast->table[index])) {
++                desc->rt_table[index] = fast->table[index];
++                desc->rt_fulltlb[index] = desc->fulltlb[index];
++            }
++        }
++    } else {
++        for (i = 0; i < n_entries; i++) {
++            if (!tlb_entry_is_empty(&fast->table[i])) {
++                desc->rt_table[i] = fast->table[i];
++                desc->rt_fulltlb[i] = desc->fulltlb[i];
++            }
++        }
++    }
++    desc->rt_valid = true;
++}
++
+ static void tlb_flush_one_mmuidx_locked(CPUState *cpu, int mmu_idx,
+-                                        int64_t now)
++                                        int64_t now, bool retire)
+ {
+     CPUTLBDesc *desc = &cpu->neg.tlb.d[mmu_idx];
+     CPUTLBDescFast *fast = &cpu->neg.tlb.f[mmu_idx];
+ 
++    if (retire) {
++        tlb_retire_locked(desc, fast);
++    } else {
++        desc->rt_valid = false;
++    }
+     tlb_mmu_resize_locked(desc, fast, now);
+     tlb_mmu_flush_locked(desc, fast);
+ }
+@@ -330,6 +408,12 @@ static void tlb_mmu_init(CPUTLBDesc *desc, CPUTLBDescFast *fast, int64_t now)
+     fast->mask = (n_entries - 1) << CPU_TLB_ENTRY_BITS;
+     fast->table = g_new(CPUTLBEntry, n_entries);
+     desc->fulltlb = g_new(CPUTLBEntryFull, n_entries);
++    desc->rt_table = NULL;
++    desc->rt_fulltlb = NULL;
++    desc->rt_n_entries = 0;
++    desc->rt_valid = false;
++    desc->filled = g_new(uint16_t, TLB_FILLED_MAX);
++    desc->n_filled = -1;
+     tlb_mmu_flush_locked(desc, fast);
+ }
+ 
+@@ -369,6 +453,9 @@ void tlb_destroy(CPUState *cpu)
+ 
+         g_free(fast->table);
+         g_free(desc->fulltlb);
++        g_free(desc->rt_table);
++        g_free(desc->rt_fulltlb);
++        g_free(desc->filled);
+     }
+ }
+ 
+@@ -396,6 +483,7 @@ static void tlb_flush_by_mmuidx_async_work(CPUState *cpu, run_on_cpu_data data)
+     uint16_t asked = data.host_int;
+     uint16_t all_dirty, work, to_clean;
+     int64_t now = get_clock_realtime();
++    bool retire;
+ 
+     assert_cpu_is_self(cpu);
+ 
+@@ -403,6 +491,16 @@ static void tlb_flush_by_mmuidx_async_work(CPUState *cpu, run_on_cpu_data data)
+ 
+     qemu_spin_lock(&cpu->neg.tlb.c.lock);
+ 
++    /*
++     * Patch 44: only a flush the target asked for with
++     * tlb_flush_retiring() keeps its tables; any other reason for a
++     * flush (memory topology, a watchpoint, reset, a mode change the
++     * target's key does not cover) drops what was retired before, since
++     * the check a reuse makes is about page tables and nothing else.
++     */
++    retire = tcg_tlb_retire && cpu->neg.tlb.c.retire_pending;
++    cpu->neg.tlb.c.retire_pending = false;
++
+     all_dirty = cpu->neg.tlb.c.dirty;
+     to_clean = asked & all_dirty;
+     all_dirty &= ~to_clean;
+@@ -410,7 +508,13 @@ static void tlb_flush_by_mmuidx_async_work(CPUState *cpu, run_on_cpu_data data)
+ 
+     for (work = to_clean; work != 0; work &= work - 1) {
+         int mmu_idx = ctz32(work);
+-        tlb_flush_one_mmuidx_locked(cpu, mmu_idx, now);
++        tlb_flush_one_mmuidx_locked(cpu, mmu_idx, now, retire);
++    }
++    if (!retire) {
++        /* an index that was clean keeps nothing either */
++        for (work = asked & ~to_clean; work != 0; work &= work - 1) {
++            cpu->neg.tlb.d[ctz32(work)].rt_valid = false;
++        }
+     }
+ 
+     qemu_spin_unlock(&cpu->neg.tlb.c.lock);
+@@ -445,6 +549,12 @@ void tlb_flush(CPUState *cpu)
+     tlb_flush_by_mmuidx(cpu, ALL_MMUIDX_BITS);
+ }
+ 
++void tlb_flush_retiring(CPUState *cpu)
++{
++    cpu->neg.tlb.c.retire_pending = true;
++    tlb_flush(cpu);
++}
++
+ void tlb_flush_by_mmuidx_all_cpus_synced(CPUState *src_cpu, uint16_t idxmap)
+ {
+     const run_on_cpu_func fn = tlb_flush_by_mmuidx_async_work;
+@@ -534,12 +644,20 @@ static void tlb_flush_page_locked(CPUState *cpu, int midx, vaddr page)
+         tlb_debug("forcing full flush midx %d (%016"
+                   VADDR_PRIx "/%016" VADDR_PRIx ")\n",
+                   midx, lp_addr, lp_mask);
+-        tlb_flush_one_mmuidx_locked(cpu, midx, get_clock_realtime());
++        tlb_flush_one_mmuidx_locked(cpu, midx, get_clock_realtime(), false);
+     } else {
++        CPUTLBDesc *desc = &cpu->neg.tlb.d[midx];
++
+         if (tlb_flush_entry_locked(tlb_entry(cpu, midx, page), page)) {
+             tlb_n_used_entries_dec(cpu, midx);
+         }
+         tlb_flush_vtlb_page_locked(cpu, midx, page);
++        /* patch 44: what was retired for the page is not to come back */
++        if (desc->rt_valid) {
++            size_t i = (page >> TARGET_PAGE_BITS) & (desc->rt_n_entries - 1);
++
++            tlb_flush_entry_locked(&desc->rt_table[i], page);
++        }
+     }
+ }
+ 
+@@ -707,7 +825,7 @@ static void tlb_flush_range_locked(CPUState *cpu, int midx,
+         tlb_debug("forcing full flush midx %d ("
+                   "%016" VADDR_PRIx "/%016" VADDR_PRIx "+%016" VADDR_PRIx ")\n",
+                   midx, addr, mask, len);
+-        tlb_flush_one_mmuidx_locked(cpu, midx, get_clock_realtime());
++        tlb_flush_one_mmuidx_locked(cpu, midx, get_clock_realtime(), false);
+         return;
+     }
+ 
+@@ -720,7 +838,7 @@ static void tlb_flush_range_locked(CPUState *cpu, int midx,
+         tlb_debug("forcing full flush midx %d ("
+                   "%016" VADDR_PRIx "/%016" VADDR_PRIx ")\n",
+                   midx, d->large_page_addr, d->large_page_mask);
+-        tlb_flush_one_mmuidx_locked(cpu, midx, get_clock_realtime());
++        tlb_flush_one_mmuidx_locked(cpu, midx, get_clock_realtime(), false);
+         return;
+     }
+ 
+@@ -1184,6 +1302,7 @@ void tlb_set_page_full(CPUState *cpu, int mmu_idx,
+      * vaddr we add back in io_prepare()/get_page_addr_code().
+      */
+     desc->fulltlb[index] = *full;
++    tlb_note_filled(desc, index);
+     full = &desc->fulltlb[index];
+     full->xlat_section = iotlb - addr_page;
+     full->phys_addr = paddr_page;
+@@ -1243,6 +1362,85 @@ void tlb_set_page(CPUState *cpu, vaddr addr,
+  * (e.g. CPUTLBEntry pointers) must be discarded and looked up again
+  * (e.g. via tlb_entry()).
+  */
++/*
++ * Patch 44: a miss on a page whose entry a keyed flush retired.  The
++ * target says whether the page tables still give that translation (for
++ * i386: same CR3 and paging mode, every page-table entry the walk read
++ * still holds the value it read); if so the entry goes back into the
++ * live table with what tlb_set_page_full() would have recomputed from
++ * the memory map -- which cannot have changed, a change flushes without
++ * retiring -- except the dirty-tracking flag, taken fresh.
++ */
++static bool tlb_reuse_retired(CPUState *cpu, vaddr addr, MMUAccessType type,
++                              int mmu_idx)
++{
++    CPUTLB *tlb = &cpu->neg.tlb;
++    CPUTLBDesc *desc = &tlb->d[mmu_idx];
++    const TCGCPUOps *ops = cpu->cc->tcg_ops;
++    vaddr page = addr & TARGET_PAGE_MASK;
++    CPUTLBEntry *rte, *te, tn;
++    CPUTLBEntryFull *rtf;
++    size_t index;
++
++    if (!tcg_tlb_retire || !desc->rt_valid || !ops->tlb_retired_reusable) {
++        return false;
++    }
++    index = (page >> TARGET_PAGE_BITS) & (desc->rt_n_entries - 1);
++    rte = &desc->rt_table[index];
++    rtf = &desc->rt_fulltlb[index];
++    if (!tlb_hit_page_anyprot(rte, page)) {
++        return false;
++    }
++    /*
++     * The retired translation must be able to serve this access itself:
++     * a store to a page whose entry lacked write permission (the walk
++     * sets the dirty bit on the first store) is a walk, as before.  A
++     * sub-page entry is repeated at every access and is not kept.
++     */
++    if (!(rtf->prot & (1 << type)) || rtf->lg_page_size < TARGET_PAGE_BITS) {
++        return false;
++    }
++    if (!ops->tlb_retired_reusable(cpu, mmu_idx, addr, rtf)) {
++        return false;
++    }
++
++    if (rtf->lg_page_size > TARGET_PAGE_BITS) {
++        tlb_add_large_page(cpu, mmu_idx, page, (hwaddr)1 << rtf->lg_page_size);
++    }
++    index = tlb_index(cpu, mmu_idx, page);
++    te = tlb_entry(cpu, mmu_idx, page);
++
++    qemu_spin_lock(&tlb->c.lock);
++    tlb->c.dirty |= 1 << mmu_idx;
++    tlb_flush_vtlb_page_locked(cpu, mmu_idx, page);
++    if (!tlb_hit_page_anyprot(te, page) && !tlb_entry_is_empty(te)) {
++        unsigned vidx = desc->vindex++ % CPU_VTLB_SIZE;
++        CPUTLBEntry *tv = &desc->vtable[vidx];
++
++        copy_tlb_helper_locked(tv, te);
++        desc->vfulltlb[vidx] = desc->fulltlb[index];
++        tlb_n_used_entries_dec(cpu, mmu_idx);
++    }
++    desc->fulltlb[index] = *rtf;
++    tn = *rte;
++    /* the page may have gained or lost translated code since */
++    if (tlb_hit_page(tn.addr_write, page) &&
++        !(tn.addr_write & (TLB_MMIO | TLB_DISCARD_WRITE))) {
++        ram_addr_t ram_addr = rtf->xlat_section + page;
++
++        tn.addr_write &= ~(uint64_t)TLB_NOTDIRTY;
++        if (cpu_physical_memory_is_clean(ram_addr)) {
++            tn.addr_write |= TLB_NOTDIRTY;
++        }
++    }
++    copy_tlb_helper_locked(te, &tn);
++    tlb_note_filled(desc, index);
++    tlb_n_used_entries_inc(cpu, mmu_idx);
++    tlb->c.reuse_count++;
++    qemu_spin_unlock(&tlb->c.lock);
++    return true;
++}
++
+ static bool tlb_fill_align(CPUState *cpu, vaddr addr, MMUAccessType type,
+                            int mmu_idx, MemOp memop, int size,
+                            bool probe, uintptr_t ra)
+@@ -1250,6 +1448,10 @@ static bool tlb_fill_align(CPUState *cpu, vaddr addr, MMUAccessType type,
+     const TCGCPUOps *ops = cpu->cc->tcg_ops;
+     CPUTLBEntryFull full;
+ 
++    cpu->neg.tlb.c.refill_count++;
++    if (tlb_reuse_retired(cpu, addr, type, mmu_idx)) {
++        return true;
++    }
+     if (ops->tlb_fill_align) {
+         if (ops->tlb_fill_align(cpu, &full, addr, type, mmu_idx,
+                                 memop, size, probe, ra)) {
+diff --git a/accel/tcg/monitor.c b/accel/tcg/monitor.c
+index 093efe9..05e05a8 100644
+--- a/accel/tcg/monitor.c
++++ b/accel/tcg/monitor.c
+@@ -18,6 +18,7 @@
+ #include "sysemu/tcg.h"
+ #include "tcg/tcg.h"
+ #include "internal-common.h"
++#include "exec/tb-softimm.h"
+ #include "tb-context.h"
+ 
+ 
+@@ -48,8 +49,21 @@ static void dump_accel_info(GString *buf)
+                                                     &error_fatal);
+ 
+     g_string_append_printf(buf, "Accelerator settings:\n");
+-    g_string_append_printf(buf, "one-insn-per-tb: %s\n\n",
++    g_string_append_printf(buf, "one-insn-per-tb: %s\n",
+                            one_insn_per_tb ? "on" : "off");
++    /* the queue's own accelerator switches (patches/qemu/README.md) */
++    g_string_append_printf(buf, "smc-same-value: %s, inline-lookup: %s, soft-imm: %s, "
++                           "tb-invalidate-fast: %s, tlb-floor: %s, tls-hot-paths: %s, "
++                           "jump-cache-keep: %s, eob-chain: %s, tlb-retire: %s\n\n",
++                           tcg_smc_same_value ? "on" : "off",
++                           tcg_inline_lookup ? "on" : "off",
++                           tcg_soft_imm ? "on" : "off",
++                           tcg_tb_invalidate_fast ? "on" : "off",
++                           tcg_tlb_floor ? "on" : "off",
++                           tcg_tls_hot_paths ? "on" : "off",
++                           tcg_jump_cache_keep ? "on" : "off",
++                           tcg_eob_chain ? "on" : "off",
++                           tcg_tlb_retire ? "on" : "off");
+ }
+ 
+ static void print_qht_statistics(struct qht_stats hst, GString *buf)
+@@ -126,6 +140,20 @@ static gboolean tb_tree_stats_iter(gpointer key, gpointer value, gpointer data)
+     return false;
+ }
+ 
++/* patch 44: TLB refills, and how many of them came from a retired table */
++static void tlb_refill_counts(size_t *prefill, size_t *preuse)
++{
++    CPUState *cpu;
++    size_t refill = 0, reuse = 0;
++
++    CPU_FOREACH(cpu) {
++        refill += qatomic_read(&cpu->neg.tlb.c.refill_count);
++        reuse += qatomic_read(&cpu->neg.tlb.c.reuse_count);
++    }
++    *prefill = refill;
++    *preuse = reuse;
++}
++
+ static void tlb_flush_counts(size_t *pfull, size_t *ppart, size_t *pelide)
+ {
+     CPUState *cpu;
+@@ -149,6 +177,7 @@ static void tcg_dump_info(GString *buf)
+ static void dump_exec_info(GString *buf)
+ {
+     struct tb_tree_stats tst = {};
++    size_t refill, reuse;
+     struct qht_stats hst;
+     size_t nb_tbs, flush_full, flush_part, flush_elide;
+ 
+@@ -196,6 +225,9 @@ static void dump_exec_info(GString *buf)
+     g_string_append_printf(buf, "TLB full flushes    %zu\n", flush_full);
+     g_string_append_printf(buf, "TLB partial flushes %zu\n", flush_part);
+     g_string_append_printf(buf, "TLB elided flushes  %zu\n", flush_elide);
++    tlb_refill_counts(&refill, &reuse);
++    g_string_append_printf(buf, "TLB refills         %zu (%zu from retired tables)\n",
++                           refill, reuse);
+     tcg_dump_info(buf);
+ }
+ 
+diff --git a/accel/tcg/tcg-all.c b/accel/tcg/tcg-all.c
+index 582c2f1..87282eb 100644
+--- a/accel/tcg/tcg-all.c
++++ b/accel/tcg/tcg-all.c
+@@ -108,6 +108,7 @@ bool tcg_tlb_floor = true;
+ bool tcg_tls_hot_paths = true;
+ bool tcg_jump_cache_keep = true;
+ bool tcg_eob_chain = true;
++bool tcg_tlb_retire = true;
+ 
+ static int tcg_init_machine(MachineState *ms)
+ {
+@@ -249,6 +250,16 @@ static bool tcg_get_inline_lookup(Object *obj, Error **errp)
+     return tcg_inline_lookup;
+ }
+ 
++static bool tcg_get_tlb_retire(Object *obj, Error **errp)
++{
++    return tcg_tlb_retire;
++}
++
++static void tcg_set_tlb_retire(Object *obj, bool value, Error **errp)
++{
++    tcg_tlb_retire = value;
++}
++
+ static bool tcg_get_eob_chain(Object *obj, Error **errp)
+ {
+     return tcg_eob_chain;
+@@ -382,6 +393,11 @@ static void tcg_accel_class_init(ObjectClass *oc, void *data)
+     object_class_property_set_description(oc, "eob-chain",
+         "Chain a block that ends after a segment load, sti, popf or iret to the next one when no interrupt is pending");
+ 
++    object_class_property_add_bool(oc, "tlb-retire",
++        tcg_get_tlb_retire, tcg_set_tlb_retire);
++    object_class_property_set_description(oc, "tlb-retire",
++        "A CR3 write keeps the flushed TLB; a miss reuses its entry when the page tables still agree");
++
+     object_class_property_add_bool(oc, "pinned-regs",
+         tcg_get_pinned_regs, tcg_set_pinned_regs);
+     object_class_property_set_description(oc, "pinned-regs",
+diff --git a/accel/tcg/internal-common.h b/accel/tcg/internal-common.h
+index e71fb3b..438080e 100644
+--- a/accel/tcg/internal-common.h
++++ b/accel/tcg/internal-common.h
+@@ -30,6 +30,8 @@ extern bool tcg_tls_hot_paths;
+ extern bool tcg_jump_cache_keep;
+ /* a non-jump end of block chains to the next block when no interrupt is pending (patch 43) */
+ extern bool tcg_eob_chain;
++/* a CR3 write retires the TLB instead of clearing it; misses re-check the page tables (patch 44) */
++extern bool tcg_tlb_retire;
+ 
+ /*
+  * Return true if CS is not running in parallel with other cpus, either
+diff --git a/target/i386/tcg/sysemu/excp_helper.c b/target/i386/tcg/sysemu/excp_helper.c
+index b1f4004..81c03b8 100644
+--- a/target/i386/tcg/sysemu/excp_helper.c
++++ b/target/i386/tcg/sysemu/excp_helper.c
+@@ -37,6 +37,15 @@ typedef struct TranslateResult {
+     hwaddr paddr;
+     int prot;
+     int page_size;
++    /*
++     * Patch 44: the page-table entries the walk read, by host address,
++     * for TCGCPUOps.tlb_retired_reusable.  pt_n is 0 for an identity
++     * translation (no paging, MMU_PHYS_IDX) and -1 when one of the tables
++     * was not in RAM or nested paging was on: never reused.
++     */
++    void *pt_haddr[3];
++    int pt_n;
++    bool pt_wide;
+ } TranslateResult;
+ 
+ typedef enum TranslateFaultStage2 {
+@@ -156,7 +165,20 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
+     int error_code;
+     int prot;
+ 
++#define PTW_NOTE()                                                       \
++    do {                                                                 \
++        if (out->pt_n >= 0) {                                            \
++            if (pte_trans.haddr && out->pt_n < 3) {                      \
++                out->pt_haddr[out->pt_n++] = pte_trans.haddr;            \
++            } else {                                                     \
++                out->pt_n = -1;                                          \
++            }                                                            \
++        }                                                                \
++    } while (0)
++
+  restart_all:
++    out->pt_n = 0;
++    out->pt_wide = (pg_mode & PG_MODE_PAE) != 0;
+     rsvd_mask = ~MAKE_64BIT_MASK(0, env_archcpu(env)->phys_bits);
+     rsvd_mask &= PG_ADDRESS_MASK;
+     if (!(pg_mode & PG_MODE_NXE)) {
+@@ -198,6 +220,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
+             if (!ptw_translate(&pte_trans, pte_addr)) {
+                 return false;
+             }
++            PTW_NOTE();
+         restart_4:
+             pte = ptw_ldq(&pte_trans, ra);
+             if (!(pte & PG_PRESENT_MASK)) {
+@@ -218,6 +241,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
+             if (!ptw_translate(&pte_trans, pte_addr)) {
+                 return false;
+             }
++            PTW_NOTE();
+         restart_3_lma:
+             pte = ptw_ldq(&pte_trans, ra);
+             if (!(pte & PG_PRESENT_MASK)) {
+@@ -245,6 +269,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
+             if (!ptw_translate(&pte_trans, pte_addr)) {
+                 return false;
+             }
++            PTW_NOTE();
+             rsvd_mask |= PG_HI_USER_MASK;
+         restart_3_nolma:
+             pte = ptw_ldq(&pte_trans, ra);
+@@ -267,6 +292,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
+         if (!ptw_translate(&pte_trans, pte_addr)) {
+             return false;
+         }
++        PTW_NOTE();
+     restart_2_pae:
+         pte = ptw_ldq(&pte_trans, ra);
+         if (!(pte & PG_PRESENT_MASK)) {
+@@ -293,6 +319,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
+         if (!ptw_translate(&pte_trans, pte_addr)) {
+             return false;
+         }
++        PTW_NOTE();
+         pte = ptw_ldq(&pte_trans, ra);
+         if (!(pte & PG_PRESENT_MASK)) {
+             goto do_fault;
+@@ -311,6 +338,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
+         if (!ptw_translate(&pte_trans, pte_addr)) {
+             return false;
+         }
++        PTW_NOTE();
+     restart_2_nopae:
+         pte = ptw_ldl(&pte_trans, ra);
+         if (!(pte & PG_PRESENT_MASK)) {
+@@ -340,6 +368,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
+         if (!ptw_translate(&pte_trans, pte_addr)) {
+             return false;
+         }
++        PTW_NOTE();
+         pte = ptw_ldl(&pte_trans, ra);
+         if (!(pte & PG_PRESENT_MASK)) {
+             goto do_fault;
+@@ -356,6 +385,7 @@ static bool mmu_translate(CPUX86State *env, const TranslateParams *in,
+         page_size = 0x40000000;
+         paddr = in->addr;
+         prot = PAGE_READ | PAGE_WRITE | PAGE_EXEC;
++        out->pt_n = 0;
+         goto stage2;
+     }
+ 
+@@ -444,6 +474,8 @@ do_check_protect_pse36:
+         CPUTLBEntryFull *full;
+         int flags, nested_page_size;
+ 
++        out->pt_n = -1;
++
+         flags = probe_access_full_mmu(env, paddr, 0, access_type,
+                                       MMU_NESTED_IDX, &pte_trans.haddr, &full);
+         if (unlikely(flags & TLB_INVALID_MASK)) {
+@@ -606,6 +638,48 @@ static bool get_physical_address(CPUX86State *env, vaddr addr,
+     return true;
+ }
+ 
++/*
++ * Patch 44: everything besides the page tables that a translation
++ * depends on, packed without loss -- CR3 (32 bits on this target), the
++ * paging mode, the A20 gate and SMM in one word, the protection keys in
++ * the other.  A retired TLB entry is only reused under the key it was
++ * filled under.
++ */
++static void x86_tlb_retire_key(CPUX86State *env, uint64_t *key, uint64_t *key2)
++{
++    *key = (uint32_t)env->cr[3]
++         | ((uint64_t)(get_pg_mode(env) & 0xffff) << 32)
++         | ((uint64_t)(env->a20_mask != -1) << 48)
++         | ((uint64_t)((env->hflags & HF_SMM_MASK) != 0) << 49);
++    *key2 = env->pkru | ((uint64_t)env->pkrs << 32);
++}
++
++bool x86_tlb_retired_reusable(CPUState *cs, int mmu_idx, vaddr addr,
++                              const CPUTLBEntryFull *full)
++{
++    CPUX86State *env = cpu_env(cs);
++    uint64_t key, key2;
++    int i;
++
++    x86_tlb_retire_key(env, &key, &key2);
++    if (full->extra.x86.key != key || full->extra.x86.key2 != key2) {
++        return false;
++    }
++    if (full->extra.x86.pt_n == 0) {
++        return full->extra.x86.identity;
++    }
++    for (i = 0; i < full->extra.x86.pt_n; i++) {
++        uint64_t now = full->extra.x86.pt_wide
++                     ? ldq_p(full->extra.x86.pt_haddr[i])
++                     : ldl_p(full->extra.x86.pt_haddr[i]);
++
++        if (now != full->extra.x86.pt_val[i]) {
++            return false;
++        }
++    }
++    return true;
++}
++
+ bool x86_cpu_tlb_fill(CPUState *cs, vaddr addr, int size,
+                       MMUAccessType access_type, int mmu_idx,
+                       bool probe, uintptr_t retaddr)
+@@ -620,11 +694,32 @@ bool x86_cpu_tlb_fill(CPUState *cs, vaddr addr, int size,
+          * Even if 4MB pages, we map only one 4KB page in the cache to
+          * avoid filling it too fast.
+          */
++        CPUTLBEntryFull full = {
++            .phys_addr = out.paddr & TARGET_PAGE_MASK,
++            .attrs = cpu_get_mem_attrs(env),
++            .prot = out.prot,
++            .lg_page_size = ctz64(out.page_size),
++        };
++        int i;
++
+         assert(out.prot & (1 << access_type));
+-        tlb_set_page_with_attrs(cs, addr & TARGET_PAGE_MASK,
+-                                out.paddr & TARGET_PAGE_MASK,
+-                                cpu_get_mem_attrs(env),
+-                                out.prot, mmu_idx, out.page_size);
++        assert(is_power_of_2(out.page_size));
++        /* patch 44: what tlb_retired_reusable will check */
++        x86_tlb_retire_key(env, &full.extra.x86.key, &full.extra.x86.key2);
++        if (out.pt_n > 0) {
++            full.extra.x86.pt_n = out.pt_n;
++            full.extra.x86.pt_wide = out.pt_wide;
++            for (i = 0; i < out.pt_n; i++) {
++                full.extra.x86.pt_haddr[i] = out.pt_haddr[i];
++                full.extra.x86.pt_val[i] = out.pt_wide
++                                         ? ldq_p(out.pt_haddr[i])
++                                         : ldl_p(out.pt_haddr[i]);
++            }
++        } else {
++            full.extra.x86.pt_n = 0;
++            full.extra.x86.identity = out.pt_n == 0;
++        }
++        tlb_set_page_full(cs, mmu_idx, addr & TARGET_PAGE_MASK, &full);
+         return true;
+     }
+ 
+diff --git a/target/i386/tcg/helper-tcg.h b/target/i386/tcg/helper-tcg.h
+index 696d6ef..4c93cc1 100644
+--- a/target/i386/tcg/helper-tcg.h
++++ b/target/i386/tcg/helper-tcg.h
+@@ -79,6 +79,8 @@ void x86_cpu_record_sigsegv(CPUState *cs, vaddr addr,
+ void x86_cpu_record_sigbus(CPUState *cs, vaddr addr,
+                            MMUAccessType access_type, uintptr_t ra);
+ #else
++bool x86_tlb_retired_reusable(CPUState *cs, int mmu_idx, vaddr addr,
++                              const CPUTLBEntryFull *full);
+ bool x86_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
+                       MMUAccessType access_type, int mmu_idx,
+                       bool probe, uintptr_t retaddr);
+diff --git a/target/i386/tcg/tcg-cpu.c b/target/i386/tcg/tcg-cpu.c
+index fd5e772..b1fd8c6 100644
+--- a/target/i386/tcg/tcg-cpu.c
++++ b/target/i386/tcg/tcg-cpu.c
+@@ -139,6 +139,7 @@ static const TCGCPUOps x86_tcg_ops = {
+     .record_sigbus = x86_cpu_record_sigbus,
+ #else
+     .tlb_fill = x86_cpu_tlb_fill,
++    .tlb_retired_reusable = x86_tlb_retired_reusable,
+     .do_interrupt = x86_cpu_do_interrupt,
+     .cpu_exec_halt = x86_cpu_exec_halt,
+     .cpu_exec_interrupt = x86_cpu_exec_interrupt,
+diff --git a/target/i386/helper.c b/target/i386/helper.c
+index 01a268a..ac1d27c 100644
+--- a/target/i386/helper.c
++++ b/target/i386/helper.c
+@@ -175,7 +175,15 @@ void cpu_x86_update_cr3(CPUX86State *env, target_ulong new_cr3)
+     if (env->cr[0] & CR0_PG_MASK) {
+         qemu_log_mask(CPU_LOG_MMU,
+                         "CR3 update: CR3=" TARGET_FMT_lx "\n", new_cr3);
+-        tlb_flush(env_cpu(env));
++        /*
++         * Patch 44: the flush a CR3 write means keeps its tables retired;
++         * a miss afterwards reuses the retired entry for its page when the
++         * page tables still give the same translation (excp_helper.c).
++         * Windows 98 reloads CR3 with its own value to flush the TLB after
++         * every page it maps or unmaps -- 2,400 times a second in 3DMark
++         * 99, each followed by ~185 page walks for pages nothing changed.
++         */
++        tlb_flush_retiring(env_cpu(env));
+     }
+ }
+ 

@@ -188,7 +188,7 @@ pub mod ffi {
         #[qinvokable]
         fn reset_optimizations(self: Pin<&mut Wizard>);
         /// Every optimization off, and every one on: the control run and
-        /// the way back, which are eleven clicks each without them.
+        /// the way back, which are fourteen clicks each without them.
         fn disable_all_optimizations(self: Pin<&mut Wizard>);
         fn enable_all_optimizations(self: Pin<&mut Wizard>);
 

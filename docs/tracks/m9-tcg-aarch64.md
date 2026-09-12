@@ -1267,10 +1267,54 @@ game window, ~40–56 s after the click).
 | **patch 39** — `vec_allsign_i32`: the SSE lane check branches on a register | 5950 | 15940 | 17.5 |
 | **executor** (`5d07018`) — DX7 indexed draws hand DXVK only their vertex range | 6014 | 15712 | 18.4 |
 | **patch 41** — the translator's 13.6 KB context not zero-filled | 6012 | 15483 | 18.4 |
+| *(evening, same box, clean re-run of the above)* | 6013 | 15589 | 18.2 |
+| **patch 42** — the jump cache survives a TLB flush (generation-stamped, revalidated by physical page) and holds 65,536 entries | — | — | 19.0 |
+| **patch 43** — a non-jump end of block chains when no interrupt is pending; a control-word change rebuilds the lookup's mode bits | — | — | 19.1 |
+| **patch 44** — a CR3 write retires the TLB; a miss reuses the retired entry once its page-table entries check unchanged | 6003 | 16295 | 19.0 |
+| the same with `tlb-retire=off` (the A/B) | 6012 | 16080 | 18.9 |
+| **all three, `DDFLAGS=32768`** (vertical blank off: the CPU-bound number) | — | — | **26.2** |
 
 CPU 3DMarks moves ±2–3 % between identical runs; the first-person fps is
-the stable number. The race tests sit at the **60 Hz flip cap** from patch
-35 on (`DDFLAGS=32768` turns the vertical blank off: +3 % before, more now).
+the stable number (±0.2 between identical runs). The race tests sit at the
+**60 Hz flip cap** from patch 35 on (`DDFLAGS=32768` turns the vertical
+blank off: +3 % before, more now). The two rows with no score are runs a
+rebuild overlapped after their first-person window; the last two are clean.
+
+**The evening session (2026-09-11, patches 42–44): what the counters said.**
+A fresh whole-run profile of the first-person window (`tools/tcg-perf-cut.py`)
+put the vCPU thread at 98 % of wall time and the executor + DXVK under 1 %
+of it — the 3D path is not the bottleneck at all, so an asynchronous
+executor or a lazier readback would buy nothing, and every lever is TCG.
+The generated code was 76 %, and by instruction form
+(`tools/tcg-form-weights.py` over a memsave of the hot pages): integer
+memory ops 32 % (a `mov` with a memory operand alone 27 %, 1.8 samples per
+instruction against 1.2 for a register form), x87 memory forms 20 % and
+register forms 4 % (2.9 and 2.6 per instruction), SSE memory 13 % and
+register 9 % (3.1 / 2.8), branches 16 %. The host side, by `info jit`
+counters taken twice inside the window (`w98-3dmark.sh JIT_SNAPS="43 53"`):
+**2,400 CR3 writes a second, every one with the same value**, from one VMM
+routine (`Begin/End_Critical_Section`, then `mov cr3, [current]`) whose
+callers map or unmap *one page* and flush the whole TLB — Windows 98's page
+fault handler (3DMark commits and frees buffers every frame; the ring-3
+faults were 3DMark's first touch of fresh buffers and KERNEL32's heap);
+after each: every jump-cache entry gone (11.7 M hash-table lookups per 10 s,
+mostly conflicts in 4,096 entries), every TLB entry gone (4.2 M page walks
+per 10 s, ~185 per flush), and the main loop entered 1.85 M times a second
+from generated code — the VMM's ring-0 entry (`mov ds`, `mov es`, `sti`,
+the shadow's end: five per VxD call), `popf` in its timer read, and MSVC's
+`_ftol` (two `fldcw` per call, 220,000 calls a second in the engine) whose
+blocks missed the inline probe because patch 38's mode constants were the
+leaving block's. Patches 42 (jump cache kept and grown: 18.2 → 19.0), 43
+(the round trips chained: 5.7 M entries per 10 s from 12.3 M, 19.0 → 19.1)
+and 44 (95 % of the walks replaced by a check of the page-table entries:
+within noise) followed. **The walks were cheap on this host** — the 13 %
+their symbols suggested was mostly the slow path's own entry, which a
+reuse pays too. Also measured on the way: the driver's vertical-blank wait
+polls FRAMES 34,000 times a second in this test (each poll a
+`QueryPerformanceCounter`, a ring transition on 9x), which is wall-clock
+time the benchmark spends waiting for the 60 Hz edge, not a lever, but it
+means part of the ring-0 traffic above is inside the wait; and the DP2
+window's doorbell is ~1,000 MMIO writes a second, nothing.
 
 **Where the time goes now** (the first-person window, patch 39 profile): 74 %
 guest code, spread flat — MAX-FX's Pentium III DLL (`e2_PentiumIII_cpu_mfc.dll`,
@@ -1300,6 +1344,17 @@ lighting code 13 %; MAX-FX's C++ core `e2mfc.DLL` 9 % (virtual calls and
 - **A/B before crediting**: the drivers' byte-loop `memcpy` looked like 30 %
   of a profile window and changed nothing when fixed (the walks' cost
   landing on its stores). `-perfmap` itself barely moves the score.
+- **Count before profiling** (2026-09-11 evening): `info jit` twice inside
+  the window (`w98-3dmark.sh JIT_SNAPS="43 53"`) gave the TLB flush rate,
+  the refills, the jump-cache hit split and the main-loop entries as
+  numbers a profile only hints at; two temporary histograms (the pcs
+  entered from the main loop, the CR3 writers and their callers through
+  the guest stack) named the VMM routines, and `memsave` of the hot pages
+  + capstone (`tools/tcg-form-weights.py`) named the instructions. A
+  user-mode page is there only in its own process: dump inside the test.
+  Every such counter was removed before the patches were cut.
+- **`QEMU_TCG_OPTS=<switch>=off` on `win98-game-test.sh`** is the A/B for
+  an accelerator switch; a second `-accel` on the command line is ignored.
 
 **Lessons that cost a round each:**
 - **A new TB flag has two places**: `cpu_get_tb_cpu_state` *and* patch 20's
@@ -1312,6 +1367,18 @@ lighting code 13 %; MAX-FX's C++ core `e2mfc.DLL` 9 % (virtual calls and
   `n_used_entries` is the resize heuristic's and is not exact.
 - `build.sh`'s prepare wipes unqueued edits in `qemu/`: keep a patch file
   of work in progress before any `build.sh`.
+- **A patch's diff is cut against the *prepared* tree**, not the tree you
+  worked in: patch 40's leftover lines were still in `cpu.h` after it was
+  dropped, became context in patch 44's hunk, and the forward-apply
+  refused it (2026-09-11 evening).
+- **A flush event is `partial flushes / dirty indexes`**, not `/ 8`:
+  `info jit` counts mmu indexes cleaned, and Win98 dirties three.
+- **Patch 38's constants are wrong for the block that changed the control
+  word** — a `fldcw` block must rebuild the mode bits from env, or every
+  `_ftol` takes the main loop twice (patch 43's second half).
+- **Page walks were not 13 %** — the symbols that added up to it are the
+  slow path's entry (`mmu_lookup`, `probe_access_internal`), paid by a
+  refill of any kind; replacing 95 % of the walks moved 0.1 fps.
 
 **User rules for this work (2026-09-11):** only optimizations that could
 help *any* guest — nothing title-specific (no 3DMark DLL replacements, no
@@ -1326,6 +1393,12 @@ conversion, no FIP/FDP stores) and deferred.
 
 **From the Win98 3D session (2026-09-11), in order** — the section above:
 
+0. ~~**Measure the first-person test with `DDFLAGS=32768`**~~ — done:
+   **26.2 fps** against 19.0 with the vertical blank on. The wait for the
+   60 Hz edge is a quarter of every frame at this speed, so the fps with
+   it on will move in steps as frames cross refresh periods; judge the
+   remaining work by the vertical-blank-off number (the 60 the user asked
+   for means the CPU-bound frame under 16.7 ms, i.e. 2.3× from here).
 1. **On the Mac, first: `scripts/build.sh`, then `tools/sse-guest-test.py`.**
    Patch 39's aarch64 encoding (`cmlt #0` / `uminv` / `umov` / `eor` on
    `TCG_VEC_TMP0`, `I3617_UMINV = 0x2e31a800`) has never been compiled — it
@@ -1334,14 +1407,28 @@ conversion, no FIP/FDP stores) and deferred.
    battery for patch 37 and `scripts/test.sh all`.
 2. **The first-person test on the Air** (`tools/w98-3dmark.sh`), to know
    what TCG on aarch64 makes of the same patches.
-3. **x87's per-block reload**: each TB converts every x87 register it first
-   touches from the 80-bit form (~50 host instructions); carrying the
-   doubles across blocks (a double per physical register plus a validity
-   mask, cleared at helper boundaries, loadvm, gdbstub writes, reset) is
-   exact and worth a few % of an x87-heavy frame.
-4. **Smaller TLB wipes of used tables**: record the slots filled since the
-   last flush and clear only those (cap → full wipe), ~1 % here, more on a
-   guest that switches address spaces faster.
+3. **x87 at PC=24 as binary32** — the largest general lever the form
+   weights show: x87 is 24 % of the frame at 2.9 samples per instruction,
+   and at PC=24 every result is rounded to 24 bits through two conversions
+   (`x87s_round24`) on a dependent chain. Kept as float32 in that mode the
+   chain is `movss` + `mulss` + the checks; exact by the same argument as
+   today's (a binary32 op is the correctly rounded 24-bit result; anything
+   outside the normal range is the slow path). Every emitter in
+   `x87-shadow.c.inc` sees the representation, so a day.
+4. **The TLB chain's two env loads as immediates**: the mask and table of
+   an mmu index are constants once the table's size is fixed (patch 16
+   floors it, patch 44 clears it by filled entries so a bigger fixed size
+   costs nothing per flush) and there is one vCPU; two loads and an
+   instruction fewer on 65 % of the generated code.
+4b. **Two-page blocks linkable**: 127,000 unlinked `goto_tb` exits a
+   second are direct jumps to a block spanning two pages, which the main
+   loop refuses to chain; an inline check of the second page's mapping at
+   the block's entry would let them link. And the x87 / SSE slow blocks
+   exit to the next instruction (`rsqrtps` in the engine's loop, ~100,000
+   a second): they could chain too.
+4c. ~~**Smaller TLB wipes of used tables**~~ — patch 44 clears only the
+   filled entries; the x87 per-block reload (a double per register plus a
+   validity mask across blocks) stays open behind item 3.
 5. **x86-64 pinned registers** (doc 18's follow-up: the backend lists none
    yet — rbx, rbp, r12, r13, r15 are free): the largest general lever left,
    but patch 21's two open items come first.

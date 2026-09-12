@@ -132,7 +132,8 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   the QEMU patches this project maintains (`patches/qemu/README.md`) with
   the off switch that patch already carried: `x87-fast`, `sse-fast`,
   `simd-fast` and `rep-fast` are guest-CPU properties, `smc-same-value`,
-  `inline-lookup` and `pinned-regs` are properties of the TCG accelerator
+  `inline-lookup`, `jump-cache-keep`, `eob-chain`, `tlb-retire` and `pinned-regs` are
+  properties of the TCG accelerator
   itself. **They are exposed because the switch is the oracle.** Every
   one of them replaces simulated arithmetic with the host's own, so when
   a guest computes the wrong number or a game stops drawing, one run with

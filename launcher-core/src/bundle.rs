@@ -701,6 +701,9 @@ pub enum Optimization {
     TbInvalidateFast,
     TlbFloor,
     TlsHotPaths,
+    JumpCacheKeep,
+    EobChain,
+    TlbRetire,
     PinnedRegs,
 }
 
@@ -720,7 +723,7 @@ impl Optimization {
     /// In the order the form lists them: the arithmetic fast paths
     /// first, in the order they were written, then the two that are
     /// about translation, then the experimental one.
-    pub const ALL: [Optimization; 11] = [
+    pub const ALL: [Optimization; 14] = [
         Optimization::X87Fast,
         Optimization::SseFast,
         Optimization::SimdFast,
@@ -731,6 +734,9 @@ impl Optimization {
         Optimization::TbInvalidateFast,
         Optimization::TlbFloor,
         Optimization::TlsHotPaths,
+        Optimization::JumpCacheKeep,
+        Optimization::EobChain,
+        Optimization::TlbRetire,
         Optimization::PinnedRegs,
     ];
 
@@ -749,6 +755,9 @@ impl Optimization {
             Optimization::TbInvalidateFast => "tb-invalidate-fast",
             Optimization::TlbFloor => "tlb-floor",
             Optimization::TlsHotPaths => "tls-hot-paths",
+            Optimization::JumpCacheKeep => "jump-cache-keep",
+            Optimization::EobChain => "eob-chain",
+            Optimization::TlbRetire => "tlb-retire",
             Optimization::PinnedRegs => "pinned-regs",
         }
     }
@@ -765,6 +774,9 @@ impl Optimization {
             | Optimization::TbInvalidateFast
             | Optimization::TlbFloor
             | Optimization::TlsHotPaths
+            | Optimization::JumpCacheKeep
+            | Optimization::EobChain
+            | Optimization::TlbRetire
             | Optimization::PinnedRegs => Knob::Tcg,
         }
     }
@@ -791,6 +803,9 @@ impl Optimization {
             Optimization::TbInvalidateFast => "Skip the block walk for writes that can't hit code",
             Optimization::TlbFloor => "Keep the address-translation cache from shrinking",
             Optimization::TlsHotPaths => "Take the memory-tracking locks once per run, not per write",
+            Optimization::JumpCacheKeep => "Keep the block cache across the guest's context switches",
+            Optimization::EobChain => "Chain past segment loads, sti and popf when no interrupt waits",
+            Optimization::TlbRetire => "Keep the address cache across the guest's own TLB flushes",
             Optimization::PinnedRegs => "Keep guest registers in host registers (experimental)",
         }
     }
@@ -844,6 +859,24 @@ impl Optimization {
                 "The bookkeeping that tracks which guest memory has changed took a lock per access; \
                  it now runs under the one the emulator already holds for the whole run. On macOS each \
                  of those was a call into the dynamic linker: 8% of a game's emulation thread."
+            }
+            Optimization::JumpCacheKeep => {
+                "The cache that finds the next block after a return or an indirect jump was emptied \
+                 at every context switch, and Windows 98 makes thousands a second: every entry is \
+                 kept and checked against the page it came from instead. 3DMark 99's first-person \
+                 test on the Ryzen: 18.2 to 19.0 fps."
+            }
+            Optimization::EobChain => {
+                "A block that ended after a segment-register load, an sti, a popf or a control-word \
+                 change used to return to the emulator's main loop every time; it now finds the next \
+                 block directly unless an interrupt is actually pending. Windows 98's ring-0 entry \
+                 alone was five such round trips per system call."
+            }
+            Optimization::TlbRetire => {
+                "Windows 98 reloads CR3 to flush its TLB after every page it maps or unmaps, thousands \
+                 of times a second; the emulator used to throw its whole address cache away and walk \
+                 the page tables again for every page. The flushed cache is kept, and an entry comes \
+                 back once the page-table entries it was computed from are checked unchanged."
             }
             Optimization::PinnedRegs => {
                 "Apple Silicon only, and still being worked on - a boot crash has been seen with it \
