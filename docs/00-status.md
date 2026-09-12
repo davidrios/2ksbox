@@ -171,13 +171,18 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   (153,633 pixels both runs). Whether they are wine9x's own or the Mac GL
   pass-through's is not known — no other WineD3D capture of D3DGAME9
   exists — and by the wine9x rule they are recorded, not chased. **On the
-  launcher's own XP machine** (`VGA=d3dpt`, `winxp-m7.qcow2`) the mapper
-  did not start: `MAPMEM service: NOT running`, with no INSTDRV output at
-  all, so OPENGL32.DLL could not load and D3DGAME9 never drew. Not an
-  address clash — `info mtree` on that machine puts the adapter's VRAM at
-  0xF0000000–0xF7FFFFFF, clear of the pass-through's 0xEA000000,
-  0xEFFFE000 and 0xFB000000–0xFBDFFFFF — so it is that image or INSTDRV
-  there; the harness now prints `sc query`/`sc qc MAPMEM` to say which.
+  launcher's own XP machine** (`VGA=d3dpt`, no Vulkan, so our executor has
+  no device) it works the same — the identical frame, 153,633 pixels, on
+  `winxp.qcow2` and on `winxp-m7.qcow2` — so the adapter plays no part in
+  the defects. **One flake, open:** on `winxp-m7.qcow2` the mapper failed
+  to install in 2 of 3 runs — INSTDRV printed nothing and left no MAPMEM
+  service (`sc`: 1060, not installed) — so OPENGL32.DLL could not load,
+  D3DGAME9 sat behind its error box and XP ignored the power button; the
+  third run installed it normally. Not an address clash (`info mtree`: the
+  adapter's VRAM at 0xF0000000–0xF7FFFFFF, clear of the pass-through's
+  0xEA000000, 0xEFFFE000 and 0xFB000000–0xFBDFFFFF). When the service is
+  missing the harness now runs INSTDRV again straight to COM1 with its exit
+  code, which is what the next failure will say.
   **The ISO changed with it** (user request): `WINED3D\D3D8-9\` and
   `WINED3D\DDRAW\` hold the DLLs under the names a game loads, each with
   `WINED3D.DLL` and `OPENGL32.DLL`, to copy from Explorer — the files are

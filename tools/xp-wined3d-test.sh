@@ -5,7 +5,7 @@
 # pre-Broadwell Intel, Kepler, TeraScale). The whole chain:
 #
 #   D3DGAME9.EXE -> WineD3D's D3D9.DLL + WINED3D.DLL next to it (SETUP /GAME 4)
-#   -> qemu-3dfx's OPENGL32.DLL next to it (SETUP /GAME 3) -> FXPTL.SYS, the
+#   -> qemu-3dfx's OPENGL32.DLL next to it (the same set) -> FXPTL.SYS, the
 #   MAPMEM service (SETUP /I 2) -> hw/mesa -> the embed backend's context
 #   -> the player
 #
@@ -88,6 +88,9 @@ printf '%s\r\n' '@echo off' \
   'mkdir E:\OUT' 'mkdir E:\WD3D' \
   'D:\SETUP.EXE /I 2 /LOG E:\OUT\SETUP-MAPPER.LOG > COM1' \
   'sc query MAPMEM > COM1' 'sc qc MAPMEM > COM1' \
+  'sc query MAPMEM > nul' \
+  'if errorlevel 1 D:\GLIDE\INSTDRV.EXE > COM1' \
+  'if errorlevel 1 echo INSTDRV exit %ERRORLEVEL% > COM1' \
   'D:\SETUP.EXE /GAME 4 E:\WD3D /LOG E:\OUT\SETUP-WD3D.LOG > COM1' \
   'copy D:\TESTS\D3DGAME9.EXE E:\WD3D\ > COM1' \
   'cd /d E:\WD3D' \
