@@ -930,36 +930,6 @@ pub unsafe extern "C" fn lc_wizard_sound_note(w: *const LcWizard) -> *mut c_char
 /// # Safety
 /// `w` must be a live handle.
 #[no_mangle]
-pub unsafe extern "C" fn lc_wizard_audiopci_applies(w: *const LcWizard) -> bool {
-    handle!(w, false).0.audiopci_applies()
-}
-
-/// # Safety
-/// `w` must be a live handle.
-#[no_mangle]
-pub unsafe extern "C" fn lc_wizard_audiopci(w: *const LcWizard) -> bool {
-    handle!(w, false).0.audiopci()
-}
-
-/// # Safety
-/// `w` must be a live handle.
-#[no_mangle]
-pub unsafe extern "C" fn lc_wizard_choose_audiopci(w: *mut LcWizard, audiopci: bool) {
-    handle_mut!(w, ()).0.choose_audiopci(audiopci);
-}
-
-/// The lines under the AudioPCI checkbox, newline-separated (doc 20 §6).
-///
-/// # Safety
-/// `w` must be a live handle.
-#[no_mangle]
-pub unsafe extern "C" fn lc_wizard_audiopci_note(w: *const LcWizard) -> *mut c_char {
-    out(handle!(w, std::ptr::null_mut()).0.audiopci_notes().join("\n"))
-}
-
-/// # Safety
-/// `w` must be a live handle.
-#[no_mangle]
 pub unsafe extern "C" fn lc_wizard_sound_warning(w: *const LcWizard) -> *mut c_char {
     out_opt(handle!(w, std::ptr::null_mut()).0.sound_warning())
 }

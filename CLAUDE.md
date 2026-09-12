@@ -178,10 +178,7 @@ backend later.
   check does, by writing the ports from the monitor. The machine form
   has a **sound-card** picker and a **music** picker (`bundle::Sound` /
   `bundle::Music`); the FM chip is in neither, it comes with the card
-  that carried one. A Win98 machine can also have an **Ensoniq AudioPCI
-  beside its card** (`audiopci`, a checkbox under the picker,
-  2026-09-12): the SB16 stays for the DOS box and FM, the PCI card is for
-  Windows, which has its driver in the box. The bank ships (`soundfonts/TimGM6mb.sf2`, GPL-2) and
+  that carried one. The bank ships (`soundfonts/TimGM6mb.sf2`, GPL-2) and
   is found by the player's own rule, `LIBSYNTH_SF2`; **the MT-32's ROMs
   are the user's own and nothing of Roland's is ever added here**.
 

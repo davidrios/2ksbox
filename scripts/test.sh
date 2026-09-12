@@ -142,12 +142,9 @@
 #                  box to a real QEMU — each family's default is the card it
 #                  always had, the FM chip follows the card that carried one, a
 #                  card a family doesn't offer is refused rather than written, an
-#                  MT-32 with no ROMs is refused at the form, the Win98 machine's
-#                  "Ensoniq AudioPCI beside it" checkbox puts a second card in
-#                  its own slot beside the SB16 and its OPL3 (refused on the
-#                  other families, on the bus of the machine it booted) — and
-#                  then the two devices *sounding*: the monitor writes the ports
-#                  a guest would and the note has to be in the wav QEMU recorded
+#                  MT-32 with no ROMs is refused at the form — and then the two
+#                  devices *sounding*: the monitor writes the ports a guest would
+#                  and the note has to be in the wav QEMU recorded
 #   sb-mixer       the SB16's mixer volumes, applied (patch 61): the FM note at
 #                  unity and again with the card's FM volume, its master volume
 #                  and the SB Pro's FM register each at -12 dB — QEMU's own wav
@@ -1435,26 +1432,6 @@ music_check() { # the two pickers, and then the devices actually sounding
   target/release/launcherx --music "$bundle" sb16 gm >/dev/null || { echo "--music sb16 gm failed"; rc=1; }
   args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *"sb16,audiodev=embed0"*) ;; *) echo "98: the SB16 did not come back"; echo "$args"; rc=1;; esac
-  # The Ensoniq *beside* the SB16 (doc 20 §6), 98 only: off unless picked,
-  # the checkbox adds `-device ES1370` in its own pinned slot and takes
-  # nothing away — the SB16 and its OPL3 stay for the DOS box — the bundle
-  # records it, and off removes it again. Another family ignores the pick
-  # the way it ignores a card it does not offer.
-  case "$args" in *ES1370*) echo "98: an AudioPCI nobody picked"; echo "$args"; rc=1;; esac
-  target/release/launcherx --music "$bundle" - - - - audiopci >/dev/null || { echo "--music audiopci failed"; rc=1; }
-  args="$(target/release/launcherx --print-args "$bundle")"
-  case "$args" in *"ES1370,audiodev=embed0,addr=0x06"*) ;; *) echo "98: picking the AudioPCI added no device"; echo "$args"; rc=1;; esac
-  case "$args" in *"sb16,audiodev=embed0"*"opl3,audiodev=embed0,sbbase=0x220"*) ;; *) echo "98: the AudioPCI took the SB16 or its OPL3 away"; echo "$args"; rc=1;; esac
-  grep -q '^audiopci = true' "$bundle" || { echo "98: the bundle does not record the AudioPCI"; rc=1; }
-  target/release/launcherx --music "$bundle" - - - - noaudiopci >/dev/null || { echo "--music noaudiopci failed"; rc=1; }
-  args="$(target/release/launcherx --print-args "$bundle")"
-  case "$args" in *ES1370*) echo "98: turning the AudioPCI off left it on the bus"; echo "$args"; rc=1;; esac
-  for f in dos xp; do
-    target/release/launcherx --music "$dir/library/music-$f/machine.toml" - - - - audiopci >/dev/null || { echo "$f: --music audiopci failed"; rc=1; }
-    args="$(target/release/launcherx --print-args "$dir/library/music-$f/machine.toml")"
-    case "$args" in *ES1370*) echo "$f: was given an AudioPCI beside its card, which is not on offer there"; echo "$args"; rc=1;; esac
-    grep -q '^audiopci = true' "$dir/library/music-$f/machine.toml" && { echo "$f: the bundle recorded an AudioPCI the family cannot have"; rc=1; }
-  done
   # The MT-32 has no default and no fallback: nothing of Roland's ships,
   # so a machine asked for one without ROMs must be refused at the form
   # rather than at the guest's first note.
@@ -1489,18 +1466,6 @@ music_check() { # the two pickers, and then the devices actually sounding
              -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
       || { echo "our QEMU refused the $f machine with the $want card"; echo "$o" | tail -3; rc=1; }
   done
-  # ...and the 98 machine with both cards, the Ensoniq on its bus
-  # (`query-pci`: vendor 0x1274 is Ensoniq), then back to one card.
-  bundle="$dir/library/music-win98/machine.toml"
-  target/release/launcherx --music "$bundle" sb16 - - - audiopci >/dev/null || { echo "--music sb16 audiopci failed"; rc=1; }
-  args="$(target/release/launcherx --print-args "$bundle")"
-  # shellcheck disable=SC2086
-  o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"query-pci"}\n{"execute":"quit"}\n' \
-       | timeout 30 build/qemu/qemu-system-i386 $args \
-           -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
-    || { echo "our QEMU refused the 98 machine with the SB16 and the AudioPCI"; echo "$o" | tail -3; rc=1; }
-  case "$o" in *'"vendor": 4724'*) ;; *) echo "no Ensoniq (1274) function on the bus beside the SB16"; echo "$o" | tail -3; rc=1;; esac
-  target/release/launcherx --music "$bundle" - - - - noaudiopci >/dev/null || { echo "--music noaudiopci failed"; rc=1; }
   # And the half no command line can show: the devices *sounding*. The
   # monitor writes the same ports a guest would, QEMU's own wav backend
   # records what its mixer produced, and the note has to be in the file —

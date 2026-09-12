@@ -224,14 +224,6 @@ bool lc_wizard_sound_is_default(const LcWizard *w);
 void lc_wizard_reset_sound(LcWizard *w);
 char *lc_wizard_sound_note(const LcWizard *w);
 char *lc_wizard_sound_warning(const LcWizard *w);
-/* An Ensoniq AudioPCI beside the card (`-device ES1370`, doc 20 §6), on
-   the one family that can have one (Windows 98; _applies says). Off
-   unless picked; choosing it elsewhere is ignored. */
-bool lc_wizard_audiopci_applies(const LcWizard *w);
-bool lc_wizard_audiopci(const LcWizard *w);
-void lc_wizard_choose_audiopci(LcWizard *w, bool audiopci);
-/* Newline-separated. */
-char *lc_wizard_audiopci_note(const LcWizard *w);
 
 size_t lc_wizard_music_count(const LcWizard *w);
 char *lc_wizard_music_label(const LcWizard *w, size_t index);

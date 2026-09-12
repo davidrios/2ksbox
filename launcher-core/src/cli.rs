@@ -313,7 +313,7 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // the two files only the user can supply. With no arguments
             // it reports, which is also how a bundle is read back after
             // a change — the state, and whether it is the family's.
-            let usage = "usage: --music <machine.toml> [card|-] [gm|mt32|none|-] [soundfont|-] [romdir|-] [audiopci|noaudiopci|-]";
+            let usage = "usage: --music <machine.toml> [card|-] [gm|mt32|none|-] [soundfont|-] [romdir|-]";
             let path: PathBuf = args.next().expect(usage).into();
             let mut form = wizard::Form::default();
             form.open_edit_path(path);
@@ -361,20 +361,6 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                     form.mt32_roms = value;
                 }
             }
-            // The Ensoniq beside the card (doc 20 §6): a no-op on a
-            // family that cannot have one, like a card it does not offer.
-            match args.next().as_deref() {
-                None | Some("-") => {}
-                Some("audiopci") => {
-                    changed = true;
-                    form.choose_audiopci(true);
-                }
-                Some("noaudiopci") => {
-                    changed = true;
-                    form.choose_audiopci(false);
-                }
-                Some(other) => panic!("the AudioPCI is audiopci or noaudiopci, not {other:?}; {usage}"),
-            }
             if changed && form.submit(&library::default_dir()).is_none() {
                 eprintln!("[music] {}", form.error.unwrap_or_default());
                 return Some(1);
@@ -388,16 +374,6 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 "music\t{}\t{}",
                 form.music().key(),
                 if form.music_is_default() { "default" } else { "changed" }
-            );
-            println!(
-                "audiopci\t{}",
-                if !form.audiopci_applies() {
-                    "(not on this family)"
-                } else if form.audiopci() {
-                    "on"
-                } else {
-                    "off"
-                }
             );
             println!("soundfont\t{}", if form.soundfont.is_empty() { "(the one we ship)" } else { &form.soundfont });
             println!("romdir\t{}", if form.mt32_roms.is_empty() { "(none)" } else { &form.mt32_roms });

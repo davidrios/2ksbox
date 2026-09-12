@@ -577,17 +577,6 @@ pub fn music_choices(family: Family) -> &'static [Music] {
     }
 }
 
-/// Whether a family can have an Ensoniq AudioPCI **beside** the card
-/// above (`Machine::audiopci`, doc 20 §6). Windows 98 only: it is the
-/// family whose default card is an ISA Sound Blaster for the sake of a
-/// DOS box and an FM title, and whose Windows half would rather have a
-/// PCI card with a bus-master DMA — and 98 has the AudioPCI driver in
-/// its box. XP starts on the AC'97 already, DOS has no driver for a
-/// PCI card, and `Other` offers the ES1370 as *the* card.
-pub fn audiopci_applies(family: Family) -> bool {
-    family == Family::Win98
-}
-
 /// The card a family starts on. Always the first of `sound_choices`.
 pub fn default_sound(family: Family) -> Sound {
     sound_choices(family).first().copied().unwrap_or(Sound::None)
@@ -1117,16 +1106,6 @@ pub struct Machine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sound: Option<Sound>,
 
-    /// A second sound card: an Ensoniq AudioPCI (ES1370) on the PCI bus
-    /// beside the one above, Windows 98 only (`audiopci_applies`, doc
-    /// 20 §6). The Sound Blaster stays for what a DOS box and an FM
-    /// title need; Windows gets a PCI card it has a driver for in the
-    /// box, whose bus-master DMA is not the ISA card's. Off unless
-    /// picked, and an absent field means off: no bundle had it before
-    /// it existed. On a family it does not apply to it is ignored.
-    #[serde(default)]
-    pub audiopci: bool,
-
     /// What is on the MIDI port (`Music`). Absent = the family's
     /// default: a General MIDI synthesizer on the two families with no
     /// synthesizer of their own, no port at all on the other two.
@@ -1325,7 +1304,6 @@ impl Machine {
             cpu_speed: Some(default_cpu_speed(family)),
             video: default_video(family),
             sound: Some(default_sound(family)),
-            audiopci: false,
             music: Some(default_music(family)),
             soundfont: None,
             mt32_roms: None,
@@ -1495,12 +1473,6 @@ impl Machine {
         }
     }
 
-    /// Whether this machine has the Ensoniq beside its card: the field,
-    /// on a family that offers it.
-    pub fn effective_audiopci(&self) -> bool {
-        self.audiopci && audiopci_applies(self.family)
-    }
-
     /// What is on this machine's MIDI port.
     pub fn effective_music(&self) -> Music {
         let choices = music_choices(self.family);
@@ -1519,12 +1491,6 @@ impl Machine {
     /// in the library.
     fn audio_args(&self) -> Vec<String> {
         let mut args = self.effective_sound().args();
-        // The AudioPCI beside it, in the slot after the Voodoo 2's, and
-        // pinned there for the reason every PCI card here is: nothing
-        // above it going away may slide it into another slot.
-        if self.effective_audiopci() {
-            args.extend(["-device".to_string(), "ES1370,audiodev=embed0,addr=0x06".to_string()]);
-        }
         let music = self.effective_music();
         if music != Music::None {
             let mut spec = format!("mpu401,audiodev=embed0,synth={}", music.key());

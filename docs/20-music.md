@@ -298,25 +298,16 @@ to, so a port neither would use by default is hardware for nothing; both
 offer it one pick away, which is how an old game gets a real MT-32 under
 XP.
 
-**A second card, Windows 98 only** (`audiopci` in the bundle,
-`bundle::audiopci_applies`, 2026-09-12, user request): a checkbox under
-the card, "Ensoniq AudioPCI beside it (for Windows)", puts an ES1370 on
-the PCI bus at `addr=0x06` beside whatever the picker chose and takes
-nothing away. The reason it is a *second* card rather than an entry in
-the list: 98's default is the ISA Sound Blaster because a DOS box inside
-the machine and an FM title need exactly that, and the same Windows
-would rather drive a PCI card — it has the AudioPCI driver in its box,
-and the card's bus-master DMA is not the ISA card's byte-paced one. With
-both, the guest picks the AudioPCI as its preferred playback device in
-Multimedia, Windows games use it, and the SB16 (with its OPL3) is still
-where a DOS box looks. XP starts on the AC'97 already, DOS has no driver
-for a PCI card and `Other` offers the ES1370 as *the* card, so on those
-the checkbox is not shown and a stray field is ignored. Off unless
-picked; an absent field means off. The `music` check walks it from the
-form to `query-pci` on our QEMU with both cards on the bus. Whether the
-Ensoniq path is in fact cleaner under our QEMU than the SB16's is
-**not measured** — `tools/audio-glitch-test.py` drives an SB16 and an
-OPL3 and has no ES1370 mode yet.
+**Tried and dropped, 2026-09-12: an Ensoniq AudioPCI *beside* the SB16
+on 98.** The idea was a second card for Windows (a PCI bus-master
+device, with the ISA card left for the DOS box and FM), on the belief
+that Windows 98 has the ES1370 driver in its box. It does not: the user
+booted a 98 machine with `-device ES1370` beside the SB16 and Windows
+found no driver, and the AudioPCI driver packages tried by hand all
+failed to make the card work. The checkbox, the bundle field and the
+check were removed the same day (commit f46b049 and its revert). Don't
+re-add it; if a second card for Windows is ever wanted again, it has to
+start from a driver known to bind under our QEMU, not from a list.
 
 The FM chip is **not** in that picker: it comes with the card that had
 one, exactly as the hardware did. Picking SB16 or AdLib puts an OPL3 on

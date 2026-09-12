@@ -196,17 +196,6 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   it before it existed. The sentences under it are
   `voodoo2_notes()`'s; the `voodoo2` check in `scripts/test.sh` walks
   it from the checkbox to `query-pci` on our own QEMU.
-- **The AudioPCI** is a checkbox under the sound card, on Win98 only
-  ("Ensoniq AudioPCI beside it (for Windows)", `audiopci` in the
-  bundle; doc 20 §6): a second sound card, an ES1370 at `addr=0x06`
-  beside whatever the picker chose, because that family's default card
-  is the ISA Sound Blaster for the sake of a DOS box and FM music while
-  its Windows half would rather have a PCI card with a driver in the
-  box. Off unless picked, absent means off, not drawn at all on a family
-  that cannot have it (`audiopci_applies`), and picking it there is
-  ignored the way a card the family does not offer is. The sentences
-  under it are `audiopci_notes()`'s; changing it on an existing machine
-  is the same orange hardware-change warning the card has.
 - **The pointer** is the next checkbox ("Seamless mouse",
   `seamless_mouse` in the bundle), and it follows the family the same
   way: on for Win98 and XP, **off for DOS**, whose mouse drivers read the

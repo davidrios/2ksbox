@@ -170,18 +170,6 @@ fn audio_ui(ui: &mut egui::Ui, form: &mut Form) {
     for note in form.sound_notes() {
         ui.small(*note);
     }
-    // A second card beside the first, where the form offers one (doc 20
-    // §6): the checkbox is not drawn at all on a family it does not
-    // apply to.
-    if form.audiopci_applies() {
-        let mut audiopci = form.audiopci();
-        if ui.checkbox(&mut audiopci, "Ensoniq AudioPCI beside it (for Windows)").changed() {
-            form.choose_audiopci(audiopci);
-        }
-        for note in form.audiopci_notes() {
-            ui.small(*note);
-        }
-    }
     let mut music = form.music();
     ui.horizontal(|ui| {
         egui::ComboBox::from_label("Music (MIDI)")
