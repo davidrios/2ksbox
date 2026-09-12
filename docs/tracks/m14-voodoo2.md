@@ -65,6 +65,10 @@ machine form, when both are pickable (next steps, 1).
   and QEMU's own screendump is **640×480, 100 % (248,0,0)** — the
   CLUT-ramped red; after `fbiInit0 = 0` the next screendump is the VGA's
   720×400 text screen. 5 s in the guest. The `voodoo-guest` check.
+  **The same passes beside our own adapter** (`VGA=d3dpt`: `-vga none
+  -device d3dpt-vga`, the pairing a launcher machine on our display
+  driver would run): the Voodoo borrows console 0 whichever VGA device
+  owns it, and gives it back.
 - **Two bugs found and fixed by that run**, both in the shim, neither in
   86Box: the timer expiry kept only 32 bits of nanoseconds (it wrapped
   4.3 s in; a wrapped timer re-arms in the past and `timerlist_run_timers`

@@ -17,6 +17,12 @@ and one after it lets go must be the VGA's text screen again. Every
 `voodoo2:` line QEMU printed is shown.
 
     tools/voodoo-guest-test.py          # needs nasm, mtools, build/qemu
+    VGA=d3dpt tools/voodoo-guest-test.py   # beside our own adapter (std, cirrus, d3dpt)
+
+The 2D adapter is whatever the machine has -- a Voodoo 2 is a 3D-only
+card that borrows the monitor -- and `VGA=` picks it: `std` (default),
+`cirrus`, or `d3dpt` for `-vga none -device d3dpt-vga`, the pairing a
+launcher machine on our own display driver would run.
 
 Outputs in build/voodoo-guest/. The `voodoo-guest` check in the guest
 stage of scripts/test.sh.
@@ -457,6 +463,15 @@ def wait_for(log, marker, p, timeout, what):
     raise SystemExit("timeout waiting for %s" % what)
 
 
+def vga_args():
+    vga = os.environ.get("VGA", "std")
+    if vga == "d3dpt":
+        return ["-vga", "none", "-device", "d3dpt-vga"]
+    if vga in ("std", "cirrus"):
+        return ["-vga", vga]
+    raise SystemExit("VGA must be std, cirrus or d3dpt")
+
+
 def red_fraction(path):
     """(width, height, fraction of pixels that are the CLUT-ramped red)."""
     w, h, px = vgadirty.read_ppm(path)
@@ -487,7 +502,7 @@ def main():
         p = subprocess.Popen([
             QEMU, "-machine", "pc", "-cpu", "pentium3", "-m", "64",
             "-L", os.path.join(ROOT, "qemu/pc-bios"), "-display", "none", "-net", "none",
-            "-vga", "std", "-device", "voodoo2",
+            *vga_args(), "-device", "voodoo2",
             "-drive", "file=%s,if=floppy,index=0,format=raw" % img,
             "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
             "-qmp", "unix:%s,server,nowait" % sock, "-audiodev", "none,id=a0",
@@ -505,7 +520,7 @@ def main():
                 p.wait()
             if os.path.exists(sock):
                 os.unlink(sock)
-    print("voodoo-guest: %.0f s in the guest" % (time.time() - t0))
+    print("voodoo-guest: %.0f s in the guest, beside VGA=%s" % (time.time() - t0, os.environ.get("VGA", "std")))
     for line in text.splitlines():
         if line.strip():
             print("   ", line.strip())
