@@ -43,9 +43,11 @@ Window {
     // Esc is Cancel, the way every other dialog on the desktop behaves.
     // It goes through `close()` rather than hiding the window, because
     // that is what runs `onVisibleChanged` above — the one place a
-    // model's own `open` flag is put back.
+    // model's own `open` flag is put back. Not while a file dialog is up:
+    // that Esc is the dialog's (`PathField.browsing`).
     Shortcut {
         sequences: [StandardKey.Cancel]
+        enabled: !presetField.browsing && !previewField.browsing
         onActivated: root.close()
     }
 
@@ -277,6 +279,7 @@ Window {
                     spacing: 6
 
                     PathField {
+                        id: previewField
                         Layout.fillWidth: true
                         label: qsTr("Preview image")
                         nameFilter: root.editor.imageFilter

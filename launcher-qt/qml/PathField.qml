@@ -57,6 +57,13 @@ RowLayout {
     /// preset field points it at the preset collection, which is
     /// otherwise buried in a data directory nobody would navigate to.
     property string emptyDir: ""
+    /// The dialog is up. A window's Esc-closes-me `Shortcut` must stand
+    /// down meanwhile: on macOS the dialog is a sheet on that window, and
+    /// AppKit offers a key to the window under a sheet as a key
+    /// equivalent *before* the sheet itself sees it — so Esc meant for the
+    /// dialog closed the window, the sheet going with it (user-reported,
+    /// 2026-09-12, the disc shelf).
+    readonly property bool browsing: dialog.visible
 
     spacing: 8
 

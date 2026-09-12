@@ -1389,6 +1389,19 @@ items nobody owns yet:
   sentence. `launcher-qt --paths` is the one-line check — it prints the
   player path both front ends will use.
 
+- **Esc in a Qt window's "Browse…" dialog closed the window too**
+  (user-reported on the disc shelf, fixed 2026-09-12). Every secondary
+  window binds Esc to `close()` with a `Shortcut` parented by the
+  `Window` itself, and that shortcut fires while the window's own file
+  dialog is up: on macOS the dialog is a sheet on that window and AppKit
+  offers a key to the window under a sheet as a key equivalent *before*
+  the sheet sees it, and Qt Quick blocks a shortcut behind a modal popup
+  only when it sits under an *item* (the non-native dialog's case). So
+  `PathField` publishes `browsing` (its dialog is visible) and the disc
+  shelf, the wizard and the shader editor disable their Esc shortcut
+  while any of their `PathField`s — or their `FolderDialog` — is open. A
+  new dialog in one of those windows has to join that `enabled:` line.
+
 - **A curved preset that smears its edge pixels outwards is a device
   feature we forgot to ask for, not the preset.** A slang preset's
   default wrap mode is `clamp_to_border` with a transparent-black border

@@ -101,9 +101,13 @@ Window {
     // Esc is Cancel, the way every other dialog on the desktop behaves.
     // It goes through `close()` rather than hiding the window, because
     // that is what runs `onVisibleChanged` above — the one place a
-    // model's own `open` flag is put back.
+    // model's own `open` flag is put back. Not while a file dialog is up:
+    // that Esc is the dialog's (`PathField.browsing`).
     Shortcut {
         sequences: [StandardKey.Cancel]
+        enabled: !soundfontField.browsing && !diskField.browsing
+            && !mediaField.browsing && !floppyField.browsing
+            && !mt32RomsDialog.visible
         onActivated: root.close()
     }
 
@@ -394,6 +398,7 @@ Window {
                 // when the form is saved, because nothing of Roland's can be
                 // shipped with this program.
                 PathField {
+                    id: soundfontField
                     Layout.fillWidth: true
                     visible: root.wizard.soundfontApplies
                     label: qsTr("SoundFont (optional)")
@@ -619,6 +624,7 @@ Window {
                     onToggled: root.wizard.existingDisk = checked
                 }
                 PathField {
+                    id: diskField
                     Layout.fillWidth: true
                     visible: root.wizard.editing || root.wizard.existingDisk
                     label: qsTr("Disk path")
@@ -641,6 +647,7 @@ Window {
                     Item { Layout.fillWidth: true }
                 }
                 PathField {
+                    id: mediaField
                     Layout.fillWidth: true
                     label: qsTr("Install media (optional)")
                     nameFilter: root.wizard.mediaFilter()
@@ -652,6 +659,7 @@ Window {
                 // images among the media the launcher handles. Two more
                 // fields this port did not have.
                 PathField {
+                    id: floppyField
                     Layout.fillWidth: true
                     label: qsTr("Floppy (optional)")
                     nameFilter: root.wizard.floppyFilter()
