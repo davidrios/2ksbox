@@ -8,8 +8,10 @@ pass-through, the shim, threads, timers, the display path, what to
 measure), then `patches/openglide/README.md` §"Emulating the chip
 instead" for the argument the track was opened on.
 
-Opened 2026-09-12 on the user's decision. Branch `track/m14-voodoo2`,
-worktree `.claude/worktrees/m14-voodoo2`. **A second session is working
+Opened 2026-09-12 on the user's decision and **merged to `main` the same
+day** (branch `track/m14-voodoo2`, worktree `.claude/worktrees/m14-voodoo2`,
+both deleted after the merge); the track continues on `main`, as M12
+did. **A second session is working
 on the OpenGLide side (Glide 3 in the high-level wrapper) at the same
 time**: this track does not touch `third_party/openglide`,
 `patches/openglide/`, `glidept/` or `hw/3dfx`; the two meet only in the
