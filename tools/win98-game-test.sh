@@ -127,7 +127,23 @@ BOOT_WAIT="${BOOT_WAIT:-150}"
 RUN_SECS="${RUN_SECS:-180}"
 SHOTS="${SHOTS:-10}"
 export MTOOLS_SKIP_CHECK=1
-export D3DPT_EXEC_LIB="${D3DPT_EXEC_LIB:-$ROOT/build/d3dpt/libd3dpt_exec.so}"
+# The executor and its DXVK, and on macOS the run environment DXVK needs --
+# the same block as scripts/test.sh (see the reasons there: a DYLD_* variable
+# given to this script is stripped by SIP at the #!/usr/bin/env exec, and
+# never all of /opt/homebrew/lib).
+case "$(uname -s)" in Darwin) SO=dylib;; *) SO=so;; esac
+export D3DPT_EXEC_LIB="${D3DPT_EXEC_LIB:-$ROOT/build/d3dpt/libd3dpt_exec.$SO}"
+export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)}"
+if [ "$SO" = dylib ]; then
+  VKLIB=/opt/homebrew/opt/vulkan-loader/lib
+  [ -d "$VKLIB" ] || VKLIB=/opt/homebrew/lib
+  export DYLD_LIBRARY_PATH="$VKLIB${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+  if [ -z "${VK_ICD_FILENAMES:-}" ]; then
+    for f in "$HOME"/VulkanSDK/*/macOS/share/vulkan/icd.d/libkosmickrisp_icd.json; do
+      [ -f "$f" ] && export VK_ICD_FILENAMES="$f"
+    done
+  fi
+fi
 
 [ -x "$QEMU" ] || { echo "no QEMU at $QEMU (QEMU_BIN= to point elsewhere)"; exit 1; }
 [ -n "${GUEST_CMD:-}" ] || { echo "GUEST_CMD= is required (the RUN.BAT body)"; exit 1; }

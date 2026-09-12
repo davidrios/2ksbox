@@ -37,8 +37,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NAME=$1; MODE=${2:-}
 O=$ROOT/build/w98game/$NAME
 LOG=$ROOT/build/w98game/$NAME.run.log
+mkdir -p "$ROOT/build/w98game"   # the log's directory, on a checkout's first run
 cd "$ROOT"
-GUEST_CMD=$'cd \\ARQUIV~1\\3DMARK~1\n3DMARK.EXE' TABLET=1 RUN_SECS=900 SHOTS=${SHOTS:-0} \
+# TDM_DIR=: 3DMark's 8.3 folder -- claude98 is a Portuguese Windows
+# ("Arquivos de programas"); an English one is \PROGRA~1\3DMARK~1.
+TDM_DIR=${TDM_DIR:-'\ARQUIV~1\3DMARK~1'}
+GUEST_CMD="cd $TDM_DIR"$'\n3DMARK.EXE' TABLET=1 RUN_SECS=900 SHOTS=${SHOTS:-0} \
   OUT=$O tools/win98-game-test.sh "${IMG:-$HOME/.local/share/2ksbox/machines/claude98/disk.qcow2}" "$NAME" >"$LOG" 2>&1 &
 H=$!
 q() { python3 tools/qmpc.py "$O/qmp.sock" "$@"; }
@@ -61,8 +65,9 @@ def at(x, y): o = (y * w + x) * 3; return tuple(px[o:o + 3])
 # dialog title bar's dark blue, right of the title text
 g = at(300, 199); t = at(450, 91)
 grey = all(185 <= c <= 200 for c in g) and max(g) - min(g) <= 4
-# (the title's blue reads (8, 85, 181) on this desktop: blue, no red)
-sys.exit(0 if grey and t[2] > 150 and t[0] < 40 else 1)
+# (the title's blue reads (8, 85, 181) on claude98's desktop and Windows'
+# standard navy (0, 0, 128) on an English 98's: dark, blue, no red)
+sys.exit(0 if grey and t[2] >= 100 and t[0] < 40 and t[1] < 100 else 1)
 PY
 done
 [ $up = 1 ] || { echo "3DMark's welcome dialog never came up"; q json '{"execute":"system_powerdown"}'; wait $H; exit 1; }
@@ -71,7 +76,7 @@ q click 368 199 800 600; sleep 8
 q screendump "$O/project.png" >/dev/null
 q click 448 457 800 600
 T0=$(date +%s)
-date -u +%s.%N > "$O/click.txt"
+python3 -c 'import time; print("%.9f" % time.time())' > "$O/click.txt"   # BSD date has no %N
 if [ -n "${JIT_SNAPS:-}" ]; then
   ( for at in $JIT_SNAPS; do
       while [ $(( $(date +%s) - T0 )) -lt "$at" ]; do sleep 1; done

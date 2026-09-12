@@ -255,7 +255,17 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   and what remains is the Mac (build + batteries + the same run on the
   Air), which is verification. `tools/w98-3dmark.sh` now writes
   `tests.txt`, the rate lines placed by test from screendumps, so a run
-  reads right without knowing any of this.
+  reads right without knowing any of this. **On the Air (2026-09-12)** the
+  harness needed four things before it ran at all: `win98-game-test.sh`
+  now sets the Mac's executor environment itself (`.dylib`s, DXVK, the
+  Vulkan loader's keg on `DYLD_LIBRARY_PATH`, KosmicKrisp) as
+  `scripts/test.sh` does, and `w98-3dmark.sh` creates `build/w98game/`
+  on a checkout's first run, takes `TDM_DIR=\PROGRA~1\3DMARK~1` for an
+  English Windows (the user's `win98-2`), accepts Windows' standard navy
+  title bar in its dialog check, and no longer uses GNU `date +%N`. With
+  those, 3DMark ran end to end on `win98-2` (800×600×32, before patch
+  45): **5968 3DMarks, 14613 CPU 3DMarks** against the Ryzen's 6003 /
+  16295.
 
 - **DOS Quake in a Win98 DOS box speeds up for a moment now and then**
   (2026-09-10, user report; unthrottled Win98, `quake.exe`; QEMU's half
