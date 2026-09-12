@@ -91,8 +91,13 @@
 #                       guest frames (300) into shots/2ksbox-NNNN.png — the
 #                       only way to see a 3D frame headless, since a QMP
 #                       screendump shows the VGA surface, frozen while the 3D
-#                       device presents. The sound card stays on the `none`
-#                       audiodev, so a run makes no noise on the host.
+#                       device presents. The sound devices go on the
+#                       player's own `embed` audiodev, as the launcher wires
+#                       them, drained by a simulated DAC (PLAYER_AUDIO_NULL),
+#                       so a run makes no noise on the host.
+#   AUDIO=none          with PLAYER=1: the sound devices on the `none`
+#                       audiodev instead of the player's — the A/B that
+#                       separates the host audio path from the device
 #   RAW=path            the raw working copy (default build/w98game/guest.raw)
 #   FRESH=1             re-convert it from the image before staging
 #   BOOT_WAIT=s         cap on waiting for the desktop (150)
@@ -237,10 +242,17 @@ for f in ${PULL:-}; do mdel -i "$M" "::/${f//\\//}" 2>/dev/null || true; done
 # BLOOD.CFG says MidiPort = 0x330). A game configured for a device the machine
 # does not have waits on it or plays to nobody. MUSIC=none drops the MPU-401,
 # MUSIC=mt32 asks for the other synth.
-DRIVES=(-cpu "${CPU:-pentium3}" -audiodev "none,id=snd0" -device "sb16,audiodev=snd0"
-        -device "opl3,audiodev=snd0,sbbase=0x220"
+# In the player the devices go on the player's own `embed` audiodev
+# (AUDIO=embed, the default there), exactly as the launcher wires them:
+# DirectSound on Linux crashed in the guest while the same machine on `none`
+# did not (docs/00-status.md, 2026-09-12). The player drains it with its
+# simulated DAC (PLAYER_AUDIO_NULL), so a run still makes no noise.
+AD=snd0
+[ "${PLAYER:-0}" = 1 ] && [ "${AUDIO:-embed}" = embed ] && AD=embed0
+DRIVES=(-cpu "${CPU:-pentium3}" -audiodev "none,id=snd0" -device "sb16,audiodev=$AD"
+        -device "opl3,audiodev=$AD,sbbase=0x220"
         -drive "file=$RAW,format=raw,if=ide,index=0,media=disk")
-[ "${MUSIC:-gm}" = none ] || DRIVES+=(-device "mpu401,audiodev=snd0,synth=${MUSIC:-gm}")
+[ "${MUSIC:-gm}" = none ] || DRIVES+=(-device "mpu401,audiodev=$AD,synth=${MUSIC:-gm}")
 n=0
 IFS=: read -ra CDLIST <<< "${CDS:-}"
 for cd in "${CDLIST[@]}"; do

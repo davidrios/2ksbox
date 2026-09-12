@@ -157,6 +157,29 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **DirectSound on the SB16 "crashing on Linux" was the guest's language
+  — 2026-09-12** (doc 20 §5.3). On `claude98` `dxdiag` died in
+  DSOUND.DLL (`c0000409`, DirectX 9.0c's `/GS` cookie) and DirectSound
+  games did not run; the same fault on the player's `embed` audiodev, on
+  `none` and on a bare `qemu-system-i386`, so no host, audio path or
+  device was involved. The Portuguese Windows 98's `SB16.VXD` names the
+  wave-in device "Entrada de som wave da SB16 [220]", 33 characters in a
+  32-byte caps field with no NUL (`TESTS\WAVECAPS.EXE` shows it), and
+  DSOUND.DLL's copy of it overruns into the cookie; an English image says
+  `SB16 Wave In [220]`, hence "works on the Mac". Fixed in the guest
+  tools: the VxD reads name overrides from
+  `HKLM\SOFTWARE\Creative Tech\DeviceInfo\ROOT\PNPB003` (found in its
+  code, confirmed by a marker name), and SETUP's new 9x component
+  "Sound Blaster 16 device names" (`/I 5` on 98) writes a shorter name
+  there only when one does not fit, then asks for a restart; with it,
+  dxdiag opens — verified with the ISO's own SETUP on a copy of
+  `claude98`, the second boot in the player on `embed0` ("nothing to do",
+  `nul_at=28`, dxdiag up). **The user's own `claude98` still needs
+  `SETUP /I 5` from a new ISO and a restart.** Not run: a DirectSound
+  *game* after the fix, and `tools/setup-guest-test.sh` itself (its new
+  check is written, not yet run). `tools/win98-game-test.sh` now puts the sound devices on
+  the player's `embed0` under `PLAYER=1` (`AUDIO=none` for the A/B).
+
 - **WineD3D-in-guest, ADR-013's path, tested on the Air with no Vulkan on
   the host — 2026-09-12** (`tools/xp-wined3d-test.sh`, what a Mac before
   26 runs Direct3D 8/9 on). On `~/vms/winxp.qcow2` with cirrus the chain

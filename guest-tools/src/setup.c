@@ -26,6 +26,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 #include <windows.h>
+#include <mmsystem.h>
 #include <winsvc.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -440,6 +441,190 @@ static int step_tests(void)
     return copy_folder("TESTS", BOXDIR);
 }
 
+/* The Sound Blaster 16's wave device names, where a translation made one
+ * too long for DirectX 9 (doc 20 §5.3).
+ *
+ * A driver's caps name is a fixed 32 bytes and nothing makes it end in a
+ * NUL. Windows 98's SB16.VXD builds it as "%s [%x]", its own string and
+ * the card's port, and the Portuguese one's wave-in string is 27
+ * characters, so "Entrada de som wave da SB16 [220]" is 33 and arrives
+ * cut to 32 with no terminator. DirectX 9.0c's DSOUND.DLL copies the wave
+ * names into a 32-byte stack buffer under a /GS cookie, so whatever
+ * enumerates DirectSound — dxdiag, every game — dies with c0000409 inside
+ * DSOUND.DLL. Nothing on the host can change that string; the fault is
+ * the same on every host, and on a real Portuguese Win98 with a real SB16.
+ *
+ * The VxD has a door for it: at start it reads WaveInDevName /
+ * WaveOutDevName from HKLM\SOFTWARE\Creative Tech\DeviceInfo\<enumerator>
+ * \<hardware ID> and uses them instead of its own strings. The key is
+ * named the way SB16.VXD names it — the device ID's first component, then
+ * the devnode's HardwareID without its '*' and cut at the first ',' — so
+ * for the card QEMU's sb16 is detected as it is DeviceInfo\ROOT\PNPB003.
+ * A name is written only for a device whose name did not end within its
+ * 32 bytes, and only on the Creative driver that reads it; the VxD reads
+ * it at boot, hence the restart. */
+#define SB16_NAME_MAX 25   /* 31 characters less " [220]", the VxD's suffix */
+#ifndef MM_CREATIVE
+#define MM_CREATIVE 2      /* the caps' wMid for Creative Labs (mmreg.h) */
+#endif
+
+/* `name` (32 bytes, maybe unterminated) as a name that fits: the text
+ * before the VxD's " [port]" suffix, less a word "wave" (which is what the
+ * translations spend their length on: "Entrada de som wave da SB16" is
+ * "Entrada de som da SB16"), else cut at the last space that fits. */
+static void sb16_short_name(const char *name, char *out)
+{
+    char buf[40], *p;
+    size_t n;
+
+    memcpy(buf, name, 32);
+    buf[32] = 0;
+    if ((p = strstr(buf, " [")) != NULL)
+        *p = 0;
+    if (strlen(buf) > SB16_NAME_MAX) {
+        for (p = buf; (p = strchr(p, ' ')) != NULL; p++) {
+            if (!strnicmp(p + 1, "wave", 4) && (p[5] == ' ' || !p[5])) {
+                memmove(p, p + 5, strlen(p + 5) + 1);
+                break;
+            }
+        }
+    }
+    if (strlen(buf) > SB16_NAME_MAX) {
+        buf[SB16_NAME_MAX] = 0;
+        if ((p = strrchr(buf, ' ')) != NULL && p > buf)
+            *p = 0;
+    }
+    for (n = strlen(buf); n && buf[n - 1] == ' '; n--)
+        buf[n - 1] = 0;
+    lstrcpynA(out, buf, SB16_NAME_MAX + 1);
+}
+
+/* The DeviceInfo key of every devnode whose driver is SB16.VXD, into
+ * keys[] (at most `max`); the count. */
+static int sb16_keys(char keys[][MAX_PATH], int max)
+{
+    HKEY en, dev, inst, cls;
+    char e[64], d[128], i[64], path[PATHBUF], drv[MAX_PATH], hw[256], *id, *c;
+    DWORD ie, id_, ii, len, type;
+    int n = 0;
+
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "Enum", 0, KEY_READ, &en) != ERROR_SUCCESS)
+        return 0;
+    for (ie = 0; n < max && RegEnumKeyA(en, ie, e, sizeof e) == ERROR_SUCCESS; ie++) {
+        for (id_ = 0; n < max; id_++) {
+            snprintf(path, sizeof path, "Enum\\%s", e);
+            if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, path, 0, KEY_READ, &dev) != ERROR_SUCCESS)
+                break;
+            len = RegEnumKeyA(dev, id_, d, sizeof d);
+            RegCloseKey(dev);
+            if (len != ERROR_SUCCESS)
+                break;
+            for (ii = 0; n < max; ii++) {
+                snprintf(path, sizeof path, "Enum\\%s\\%s", e, d);
+                if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, path, 0, KEY_READ, &dev) != ERROR_SUCCESS)
+                    break;
+                len = RegEnumKeyA(dev, ii, i, sizeof i);
+                RegCloseKey(dev);
+                if (len != ERROR_SUCCESS)
+                    break;
+                snprintf(path, sizeof path, "Enum\\%s\\%s\\%s", e, d, i);
+                if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, path, 0, KEY_READ, &inst) != ERROR_SUCCESS)
+                    continue;
+                len = sizeof drv;
+                drv[0] = hw[0] = 0;
+                if (RegQueryValueExA(inst, "Driver", NULL, &type, (BYTE *)drv, &len) == ERROR_SUCCESS) {
+                    len = sizeof hw;
+                    RegQueryValueExA(inst, "HardwareID", NULL, &type, (BYTE *)hw, &len);
+                }
+                RegCloseKey(inst);
+                if (!drv[0] || !hw[0])
+                    continue;
+                snprintf(path, sizeof path,
+                         "System\\CurrentControlSet\\Services\\Class\\%s", drv);
+                if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, path, 0, KEY_READ, &cls) != ERROR_SUCCESS)
+                    continue;
+                len = sizeof drv;
+                drv[0] = 0;
+                RegQueryValueExA(cls, "Driver", NULL, &type, (BYTE *)drv, &len);
+                RegCloseKey(cls);
+                if (stricmp(drv, "sb16.vxd"))
+                    continue;
+                id = (c = strchr(hw, '*')) != NULL ? c + 1 : hw;
+                if ((c = strchr(id, ',')) != NULL)
+                    *c = 0;
+                snprintf(keys[n++], MAX_PATH,
+                         "SOFTWARE\\Creative Tech\\DeviceInfo\\%s\\%s", e, id);
+            }
+        }
+    }
+    RegCloseKey(en);
+    return n;
+}
+
+static int step_sb16_names(void)
+{
+    char in_name[33] = "", out_name[33] = "", keys[4][MAX_PATH], v[SB16_NAME_MAX + 1];
+    int k, nkeys, bad = 0;
+    UINT i;
+
+    say("Sound Blaster 16 device names:");
+    for (i = 0; i < waveInGetNumDevs(); i++) {
+        WAVEINCAPSA c;
+        memset(&c, 0xcc, sizeof c);
+        if (waveInGetDevCapsA(i, &c, sizeof c) == MMSYSERR_NOERROR && c.wMid == MM_CREATIVE
+            && !memchr(c.szPname, 0, sizeof c.szPname))
+            memcpy(in_name, c.szPname, 32);
+    }
+    for (i = 0; i < waveOutGetNumDevs(); i++) {
+        WAVEOUTCAPSA c;
+        memset(&c, 0xcc, sizeof c);
+        if (waveOutGetDevCapsA(i, &c, sizeof c) == MMSYSERR_NOERROR && c.wMid == MM_CREATIVE
+            && !memchr(c.szPname, 0, sizeof c.szPname))
+            memcpy(out_name, c.szPname, 32);
+    }
+    if (!in_name[0] && !out_name[0]) {
+        say("    every name fits; nothing to do");
+        return 0;
+    }
+    nkeys = sb16_keys(keys, 4);
+    if (!nkeys) {
+        say("    a name does not fit (\"%s%s%s\"), but no device here uses SB16.VXD,",
+            in_name, in_name[0] && out_name[0] ? "\", \"" : "", out_name);
+        say("    which is the driver this knows how to rename");
+        return 1;
+    }
+    for (k = 0; k < nkeys; k++) {
+        HKEY h;
+        if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, keys[k], 0, NULL, 0, KEY_WRITE, NULL,
+                            &h, NULL) != ERROR_SUCCESS) {
+            say("    HKLM\\%s: cannot create it (error %lu)", keys[k], (unsigned long)GetLastError());
+            bad = 1;
+            continue;
+        }
+        if (in_name[0]) {
+            sb16_short_name(in_name, v);
+            bad |= RegSetValueExA(h, "WaveInDevName", 0, REG_SZ, (BYTE *)v, strlen(v) + 1)
+                   != ERROR_SUCCESS;
+            say("    wave in: \"%s\" does not fit; HKLM\\%s WaveInDevName = \"%s\"",
+                in_name, keys[k], v);
+        }
+        if (out_name[0]) {
+            sb16_short_name(out_name, v);
+            bad |= RegSetValueExA(h, "WaveOutDevName", 0, REG_SZ, (BYTE *)v, strlen(v) + 1)
+                   != ERROR_SUCCESS;
+            say("    wave out: \"%s\" does not fit; HKLM\\%s WaveOutDevName = \"%s\"",
+                out_name, keys[k], v);
+        }
+        RegCloseKey(h);
+    }
+    if (bad) {
+        say("    failed writing the registry");
+        return 1;
+    }
+    g_reboot = 1;
+    return 0;
+}
+
 typedef struct {
     const char *label;
     const char *note;
@@ -453,6 +638,8 @@ static Component g_comp[MAX_COMPONENTS] = {
     { "Glide and the device mapper",        "also needed by OPENGL32.DLL",  1, 1, 1, step_glide,   0 },
     { "Disc shelf tool",                    "CDSHELF.EXE in the Windows folder", 1, 1, 1, step_cdshelf, 0 },
     { "Test programs",                      "in C:\\2KSBOX",                1, 1, 0, step_tests,   0 },
+    /* last, so no earlier component's /I number moves */
+    { "Sound Blaster 16 device names",      "DirectX 9 fix, only if needed", 1, 0, 1, step_sb16_names, 0 },
 };
 static int g_ncomp;
 

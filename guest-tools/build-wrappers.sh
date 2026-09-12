@@ -326,6 +326,13 @@ nasm -f bin -o "$T/qclock.com" "$ROOT/guest-tools/src/qclock.asm"
 i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
   -march=pentium3 -mtune=generic -o "$T/padwin.exe" "$ROOT/guest-tools/src/padwin.c" \
   -ldinput -ldxguid -lwinmm -luser32
+# WAVECAPS.EXE: every wave / MIDI / mixer device's 32-byte name as
+# GetDevCaps returns it, with where its NUL is, into C:\WAVECAPS.LOG. A name
+# that fills all 32 bytes is what kills DirectX 9's DSOUND.DLL (its /GS
+# cookie, c0000409): the Portuguese Win98's SB16 wave-in name (doc 20 §5.3).
+i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+  -march=pentium3 -mtune=generic -mwindows -o "$T/wavecaps.exe" \
+  "$ROOT/guest-tools/src/wavecaps.c" -lwinmm
 
 # CDSHELF: the host's disc shelf from inside the machine (doc 07, patch 52;
 # protocol cdshelf/cdshelf_proto.h). One EXE for both Windows families — SPTI
@@ -374,7 +381,7 @@ fi
 # SETUP.EXE at the root: the installer that reads the folders above and
 # knows which of them this guest's Windows wants (guest-tools/src/setup.c).
 i686-w64-mingw32-gcc -O2 -Wall -o "$OUT/iso/setup.exe" "$ROOT/guest-tools/src/setup.c" \
-  -ladvapi32 -luser32
+  -ladvapi32 -luser32 -lwinmm
 
 # Every binary on the disc, however deep (WINED3D\ has folders of its own)
 # and whatever case it was staged in (those carry the names a game loads).

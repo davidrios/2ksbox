@@ -343,6 +343,11 @@ if [ "$FAMILY" = win98 ]; then
   want "STAGED INF\D3DPT9X.DR_" "the staged copy INF\D3DPT9X.DR_ is on the disk beside its target"
   want "STAGED INF\D3DPT9V.VX_" "the staged copy INF\D3DPT9V.VX_ is on the disk beside its target"
   want "STAGED INF\D3DPT9HL.DL_" "the staged copy INF\D3DPT9HL.DL_ is on the disk beside its target"
+  # The SB16's wave names (doc 20 §5.3): on an image whose names fit (every
+  # English one) the component says so and writes nothing; a name that does
+  # not fit on a machine with no SB16.VXD devnode is the one way it fails.
+  want "Sound Blaster 16 device names:" "SETUP ran the SB16 device-names component"
+  never "no device here uses SB16.VXD" "the SB16 device-names component found the driver it renames"
   never "copy failed" "no copy failed"
 else
   want "Windows XP" "the family was detected"

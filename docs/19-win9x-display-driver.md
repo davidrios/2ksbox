@@ -1514,6 +1514,10 @@ LEGO Island, where the before-picture was never taken.
 that Total Annihilation's sound initialised in this harness with the same
 SB16, so the card and its driver are broadly working in that image; the
 Porsche silence and the `dxdiag` crash beside it want their own look.
+The `dxdiag` crash had it (2026-09-12, doc 20 §5.3): the Portuguese
+SB16 driver's wave-in name is 33 characters, DirectX 9's DSOUND.DLL
+overruns its 32-byte copy of it, and SETUP's "Sound Blaster 16 device
+names" component shortens it through the driver's own registry key.
 
 **Crimson Skies was recorded here as a second one, and that was wrong** —
 see §27. A parallel session found a real SafeDisc 1.50 weak-sector bug in

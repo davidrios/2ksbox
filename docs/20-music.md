@@ -265,6 +265,73 @@ The `sb16-irq` check (§7) asks the card and the PIC directly, with no
 guest: `info irq` counts only *rising* edges of IRQ 5, so a DSP reset
 must add none and each silence block must add exactly one.
 
+### 5.3 And its name, which DirectX 9 cannot take in Portuguese
+
+Reported as "SB16 DirectSound crashes on Linux and works on the Mac"
+(2026-09-12): on the user's `claude98` machine `dxdiag` dies with an
+illegal operation, the next start of it asks whether to skip
+DirectSound, and a game that uses DirectSound does not run. **Not the
+host, not the card, and not QEMU**: the same fault, byte for byte, on
+the player's `embed` audiodev, on `none`, and on a bare
+`qemu-system-i386`. It is the guest's language.
+
+The details box says `DXDIAG causou uma exceção c0000409H no módulo
+DSOUND.DLL em 0167:beb14fef`. `c0000409` is `STATUS_STACK_BUFFER_OVERRUN`
+— not a CPU exception but the `/GS` cookie check of DirectX 9.0c's
+DSOUND.DLL (4.09.0000.0904, based at `beaf0000`); `beb14fef` is the
+return address of the `call __security_check_cookie` at `beb14fea`. The
+function copies a device's `szPname` with a byte loop into a 32-byte
+buffer at `-0x24(%ebp)`, the cookie right behind it, once for
+`waveOutGetDevCapsA` and once for `waveInGetDevCapsA`. A caps name is a
+fixed 32 bytes and nothing makes a driver end it in a NUL.
+
+`TESTS\WAVECAPS.EXE` (guest-tools ISO) prints every device's name with
+where its NUL is:
+
+    waveOut 0: "Saída de som wave da SB16 [220]"  nul_at=31
+    waveIn  0: "Entrada de som wave da SB16 [220"  nul_at=-1
+
+Windows 98's `SB16.VXD` builds each name as `"%s [%x]"`, its own string
+and the card's port, and the Portuguese wave-in string is 27 characters:
+33 with the port, cut to 32 with no terminator. The copy runs through the
+name into the caps' `dwFormats` and stops at its first zero byte, three
+bytes past the buffer — on the cookie. An English Windows says
+`SB16 Wave In [220]`, which is why the same machine works elsewhere; a
+real Portuguese Win98 with a real SB16 and DirectX 9 fails the same way.
+
+Nothing on the host can change the string, and editing Microsoft's
+driver is not ours to do (it works: the same 28 bytes of `SB16.VXD`
+rewritten as "Entrada de som da SB16" and dxdiag opens). **The VxD has
+a door for it**: at start it reads `WaveInDevName`, `WaveOutDevName`
+(and the MIDI, mixer, aux and DirectSound names) from
+`HKLM\SOFTWARE\Creative Tech\DeviceInfo\<enumerator>\<hardware ID>` and
+uses what it finds instead of its own strings, the port still appended.
+The key is named from the devnode: the device ID's first component, then
+`HardwareID` without its `*` and cut at the first `,`. The card QEMU's
+`sb16` is detected as is `ROOT\*PNPB003\0000`, so its key is
+`DeviceInfo\ROOT\PNPB003` — found in the VxD's code (its literals, a
+`CONFIGMG` device-ID call, `_RegOpenKey` / `_RegQueryValueEx` and a
+0x30-byte copy into each name) and confirmed by writing a marker name
+there: after a restart the driver reports `K1 wave in [220]`.
+
+So the fix is the guest tools': **SETUP's "Sound Blaster 16 device
+names"** component (9x only, last in the list so no `/I` number moved)
+asks winmm for each Creative wave device, and only for a name that does
+not end within its 32 bytes writes a shorter one to the key of every
+devnode whose driver is `sb16.vxd` — the word "wave" dropped
+("Entrada de som da SB16", 28 with the port), else cut at a word to 25
+characters — and asks for the restart the VxD needs to read it. A
+machine whose names fit is told "nothing to do".
+
+Verified on a copy of `claude98` with the ISO's own `SETUP.EXE` and
+`WAVECAPS.EXE`: `SETUP /I 5` logged `wave in: "Entrada de som wave da
+SB16 [220" does not fit; …\DeviceInfo\Root\PNPB003 WaveInDevName =
+"Entrada de som da SB16"`; after the restart, in the player on its
+`embed` audiodev as the launcher runs it, `SETUP /I 5` said "every name
+fits; nothing to do", WAVECAPS read `"Entrada de som da SB16 [220]"
+nul_at=28`, and dxdiag opened and stayed up. `tools/setup-guest-test.sh`
+requires the component's line on Win98 and refuses its one failure.
+
 ## 6. What a machine offers
 
 Two pickers in the machine form (doc 07), both `launcher-core`'s
