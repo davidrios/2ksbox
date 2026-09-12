@@ -28,7 +28,7 @@
 #   tools/xp-driver-test.sh <image.qcow2> bat run.bat                   # a batch file, staged as E:\RUN.BAT (long command lines)
 #
 # Env: QEMU_EXTRA='-audiodev none,id=snd0 -device AC97,audiodev=snd0' (more QEMU arguments: a
-# sound card), VGA=cirrus (XP's inbox driver instead of ours: the control for a crash), DDFLAGS=N (-device d3dpt-vga,ddflags=N), OUT=dir for screendumps
+# sound card), VGA=cirrus (XP's inbox driver instead of ours: the control for a crash), DDFLAGS=N (-device d3dpt-vga,ddflags=N), FBVER=N (-device d3dpt-vga,fb-version=N: the adapter reports another register set version, so a newer one checks the installed driver accepts a QEMU update), OUT=dir for screendumps
 # and logs (default build/xp-driver-test), NO_KVM=1, CPU=pentium3 (the KVM CPU model), GAME_ISO=game.iso (the
 # game disc takes the CD-ROM drive the game was installed from, D:; the
 # driver ISO moves to the next drive, F: after the E: scratch), and for `cmd` / `bat`:
@@ -129,7 +129,7 @@ LOG="$OUT/qemu-$MODE.log"
 # waits for the marker instead of sleeping for as long as the command has
 # ever taken.
 SER="$OUT/serial-$MODE.log"; rm -f "$SER"
-VGA_ARGS=(-vga none -device "d3dpt-vga,ddflags=${DDFLAGS:-0}")
+VGA_ARGS=(-vga none -device "d3dpt-vga,ddflags=${DDFLAGS:-0}${FBVER:+,fb-version=$FBVER}")
 [ -n "${VGA:-}" ] && VGA_ARGS=(-vga "$VGA")     # VGA=cirrus: the control run on XP's inbox driver (no Direct3D)
 CD2=()
 CD1="$ISO"

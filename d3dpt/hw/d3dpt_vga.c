@@ -67,6 +67,8 @@ struct D3dptVgaState {
     uint32_t flips_last;        /* flips at the last rate report */
     int64_t flips_ns;           /* and when it was made */
     uint32_t ddflags;           /* property: test knob read by the guest driver */
+    uint32_t fb_version;        /* property: the VERSION register (D3DPT_FB_VERSION) —
+                                   a newer one checks that installed drivers accept it */
 
     /* the hardware cursor (version 4): the guest's registers, and what was
      * defined / shown so far for the log */
@@ -605,7 +607,7 @@ static uint64_t d3dpt_vga_regs_read(void *opaque, hwaddr addr, unsigned size)
     case D3DPT_FB_REG_MAGIC:
         return D3DPT_FB_MAGIC;
     case D3DPT_FB_REG_VERSION:
-        return D3DPT_FB_VERSION;
+        return s->fb_version;
     case D3DPT_FB_REG_VRAM_SIZE:
         return s->vga.vram_size;
     case D3DPT_FB_REG_CAPS:
@@ -862,6 +864,10 @@ static Property d3dpt_vga_properties[] = {
     DEFINE_PROP_UINT32("vgamem_mb", D3dptVgaState, vga.vram_size_mb, D3DPT_FB_VRAM_MB),
     DEFINE_PROP_BOOL("global-vmstate", D3dptVgaState, vga.global_vmstate, false),
     DEFINE_PROP_UINT32("ddflags", D3dptVgaState, ddflags, 0),
+    /* the register set version the adapter reports: a newer one than the
+     * device implements is the check that an installed driver accepts a
+     * QEMU update (d3dpt_fb.h, "Versions only add"). Nothing else reads it. */
+    DEFINE_PROP_UINT32("fb-version", D3dptVgaState, fb_version, D3DPT_FB_VERSION),
     DEFINE_PROP_END_OF_LIST(),
 };
 

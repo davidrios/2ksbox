@@ -826,7 +826,8 @@ The fix is the sprite every card of the era had, in three parts:
 
 `D3DPT_FB_VERSION` is 4: an installed v3 driver refuses the device, so
 every image needs a reinstall from the ISO, and the QEMU rebuild goes
-with it (prepare → ninja). Verified headless by the device log lines at
+with it (prepare → ninja). (Drivers since 2026-09-12 accept any newer
+version — "Newer register sets are accepted" below.) Verified headless by the device log lines at
 the desktop after the install; the flicker itself is a player-window
 observation for the user.
 
@@ -2005,8 +2006,30 @@ every in-game brightness slider did nothing.
     so it claims nothing.
   - `ddflags=0x10000000` (`DDF_NO_GAMMA`) takes it all out. The GDI cap
     stays, and its entry then refuses.
-- **Register set v5**: the miniport and the 9x drivers want the version
-  exactly, so an image with a v4 driver has to be reinstalled from the ISO.
+- **Register set v5**: the miniport and the 9x drivers wanted the version
+  exactly, so an image with a v4 driver had to be reinstalled from the ISO
+  — and a Windows 98 one did not even boot (next section).
+
+### Newer register sets are accepted (2026-09-12)
+
+claude98, a Windows 98 machine whose driver was built on 2026-09-08
+(register set v4), stopped booting on the v5 adapter with "Erro de
+proteção do Windows" — Windows' protection error, reproduced headless on a
+copy: the mini-VDD logged the mismatch and stayed out of the way, the
+display driver found no adapter and failed `Enable`, and the image's
+`SYSTEM.INI` has `*DisplayFallback=0`, so there was no VGA to fall back to.
+On XP the same exact-match check costs the desktop resolution, not the
+boot. Since this date the miniport, the 9x display driver and the mini-VDD
+accept **any version at or above their own**: the register set has only
+ever grown (command window, palette, cursor, gamma — each new registers
+and a CAP bit, nothing reinterpreted), so a newer adapter is the old one
+plus registers the driver never touches. That is now the rule in
+`d3dpt_fb.h`: a bump adds, and a change that must reinterpret a register
+is a new MAGIC, which is still compared exactly. `-device
+d3dpt-vga,fb-version=N` makes the adapter report another version, which is
+how the acceptance is checked. Drivers built before it keep wanting the
+exact version — such an image is booted on the Cirrus once and gets the
+ISO's `SETUP /ALL`.
 
 Evidence: GAMMATEST (new) draws a full-screen 640 × 480 × 32 mid-grey
 frame under blue at 3/4, then under the identity ramp. It uses a mild ramp

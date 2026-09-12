@@ -8,7 +8,9 @@ picture and the track rules, then this file, then doc 15.
 ## Scope and files (this track owns them)
 
 - QEMU device: `d3dpt/hw/d3dpt_vga.c`, register set `d3dpt/d3dpt_fb.h`
-  (bump `D3DPT_FB_VERSION` on any change; device and miniport check it),
+  (bump `D3DPT_FB_VERSION` on any change, and only ever by adding
+  registers: since 2026-09-12 the drivers accept any version at or above
+  their own, doc 15 "Newer register sets are accepted"),
   the shared executor loader `d3dpt/hw/d3dpt_exec_load.[ch]`.
 - Guest driver: `guest-tools/src/d3dptvid/` — since the M10 split
   (2026-09-07, doc 19 §19) the NT half is `nt/` (miniport `nt/d3dptvid.c`,
