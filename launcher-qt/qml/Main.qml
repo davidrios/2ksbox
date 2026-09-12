@@ -472,6 +472,27 @@ ApplicationWindow {
                 diag.note("wizard name: shown [" + wizardWindow.shownName
                           + "] model [" + wizard.name + "]")
                 break
+            case "optall":
+                // The optimization shortcuts beside boxes somebody already
+                // clicked (user, 2026-09-12: "Turn all on / off does
+                // nothing" on a machine with three boxes unticked by hand).
+                // The model moves every time; the question is whether the
+                // *boxes* still follow it once a click has been through
+                // them, so every step prints what they show beside the
+                // model's mask.
+                wizard.openFresh(); profiles.refresh(); wizardWindow.show()
+                const optReport = step => diag.note("optall " + step + ": shown "
+                    + wizardWindow.shownOptimizationsMask() + " model " + wizard.optimizationsMask)
+                diag.note("optall boxes " + wizardWindow.optimizationBoxes)
+                // tb-invalidate-fast, tlb-floor, tls-hot-paths — the user's
+                // three, by their place in `Optimization::ALL`
+                for (const i of [7, 8, 9])
+                    wizardWindow.clickOptimization(i)
+                optReport("clicked")
+                wizardWindow.clickOptimizationShortcut("on"); optReport("on")
+                wizardWindow.clickOptimizationShortcut("off"); optReport("off")
+                wizardWindow.clickOptimizationShortcut("defaults"); optReport("defaults")
+                break
             case "closebox":
                 // The title bar's close button on the wizard, the way the
                 // window system delivers it — a close *event*, not

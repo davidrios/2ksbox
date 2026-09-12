@@ -189,7 +189,12 @@ pub mod ffi {
         fn reset_optimizations(self: Pin<&mut Wizard>);
         /// Every optimization off, and every one on: the control run and
         /// the way back, which are fourteen clicks each without them.
+        /// `#[qinvokable]` on each: without it the method exists in Rust
+        /// and QML's call to it is a TypeError, so both buttons did nothing
+        /// (user, 2026-09-12; the `qt-wizard` check's `optall` probe).
+        #[qinvokable]
         fn disable_all_optimizations(self: Pin<&mut Wizard>);
+        #[qinvokable]
         fn enable_all_optimizations(self: Pin<&mut Wizard>);
 
         /// The boot order. A plain field with no consequence beyond its

@@ -65,6 +65,25 @@ Window {
     readonly property alias shownName: nameField.text
     function typeName(text) { nameField.insert(nameField.length, text) }
 
+    /// What the emulation-optimization boxes are *showing*, as a mask in
+    /// the model's own bit order (`optimizationsMask`), and a way to click
+    /// one box and each of the three shortcuts beside them. `click()` is
+    /// what a mouse click does — the toggle, `toggled` and its handler —
+    /// so the `qt-wizard` check sees what the user sees, as `typeName`
+    /// does for the name field.
+    readonly property int optimizationBoxes: optimizations.count
+    function shownOptimizationsMask() {
+        let mask = 0
+        for (let i = 0; i < optimizations.count; i++)
+            if (optimizations.itemAt(i).box.checked)
+                mask |= 1 << i
+        return mask
+    }
+    function clickOptimization(i) { optimizations.itemAt(i).box.click() }
+    function clickOptimizationShortcut(which) {
+        ({ off: optAllOff, on: optAllOn, defaults: optDefaults })[which].click()
+    }
+
     title: wizard.title
     width: 660
     height: 720
@@ -528,8 +547,10 @@ Window {
                             required property string modelData
                             Layout.fillWidth: true
                             spacing: 0
+                            readonly property alias box: optBox
 
                             CheckBox {
+                                id: optBox
                                 text: row.modelData
                                 checked: (root.wizard.optimizationsMask & (1 << row.index)) !== 0
                                 onToggled: root.wizard.chooseOptimization(row.index, checked)
@@ -552,16 +573,19 @@ Window {
                     RowLayout {
                         spacing: 6
                         Button {
+                            id: optAllOff
                             text: qsTr("Turn all off")
                             enabled: !root.wizard.optimizationsAllOff
                             onClicked: root.wizard.disableAllOptimizations()
                         }
                         Button {
+                            id: optAllOn
                             text: qsTr("Turn all on")
                             enabled: !root.wizard.optimizationsAllOn
                             onClicked: root.wizard.enableAllOptimizations()
                         }
                         Button {
+                            id: optDefaults
                             text: qsTr("All defaults")
                             enabled: !root.wizard.optimizationsAreDefault
                             onClicked: root.wizard.resetOptimizations()

@@ -163,6 +163,16 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   mtools, so none of them could see it. Both now carry it, and
   `tools/setup-guest-test.sh win98` requires `D3DPT9HL.DLL` among SETUP's
   copies.
+- **The Qt wizard's "Turn all on" / "Turn all off" did nothing — fixed
+  2026-09-12** (user report). The shared model was right and so was the
+  bridge's Rust, but `disable_all_optimizations` / `enable_all_optimizations`
+  were declared in `launcher-qt/src/qt/wizard.rs` without `#[qinvokable]`,
+  so QML's call was a `TypeError` ("… is not a function") and the click
+  changed nothing; "All defaults" beside them had the attribute and worked.
+  The `qt-wizard` check now drives it through the window (`LAUNCHER_QT_SCREEN=optall`):
+  three boxes clicked by hand, then each shortcut, and every step's boxes
+  must show the form's mask — which also settles that a click does *not*
+  cut a Qt 6 CheckBox's `checked:` binding here (6.11).
 - **Win98 3D was slow because of TB-list walks, not the driver — fixed
   2026-09-11 by patch 35** (user report: 3DMark 99 "a bit
   underwhelming"). 3DMark 99 Max at 800×600×16 on `claude98`: **3334 →

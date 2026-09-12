@@ -34,9 +34,11 @@
 #                  the shared form says: a spin box bounds the value it is
 #                  handed against the range it has at that moment, and a model
 #                  that republishes a form nobody caught up puts a stale name
-#                  back over a typed one — both are disagreements between the
-#                  control and the model that nothing which asks the model would
-#                  ever notice (only if a launcher-qt has been built)
+#                  back over a typed one, and an optimization box clicked by
+#                  hand stopped following Turn all on / off — all
+#                  disagreements between the control and the model that
+#                  nothing which asks the model would ever notice (only if a
+#                  launcher-qt has been built)
 #   qt-close       the title bar's close button on a Qt dialog: the close event
 #                  delivered the way the window system delivers it must reach
 #                  the wizard window exactly once and leave no modal window
@@ -618,7 +620,7 @@ qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
   return $rc
 }
 qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
-  local rc=0 dir="$OUT/qtwizard" bin="launcher-qt/target/release/launcher-qt" f o out shown model lo hi
+  local rc=0 dir="$OUT/qtwizard" bin="launcher-qt/target/release/launcher-qt" f o out shown model lo hi n all step line
   rm -rf "$dir"; mkdir -p "$dir/library"
   # A scratch library, never the user's own — the window lists it on the
   # way up. Offscreen, so a check never throws a window on the desktop.
@@ -655,6 +657,26 @@ qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
     model="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] model \[\(.*\)\]$/\1/p')"
     [ "$shown" = "Typed name" ] || { echo "$f: the name field lost what was typed (shows: $shown)"; rc=1; }
     [ "$model" = "Typed name" ] || { echo "$f: the model lost the typed name (holds: $model)"; rc=1; }
+  done
+  # The optimization shortcuts beside boxes that were clicked by hand
+  # (user, 2026-09-12: "Turn all on / off does nothing" after three boxes
+  # had been unticked). The model moved every time, so again only the
+  # window can say whether the boxes did: every step must show what the
+  # form says, and the form must be where the button said.
+  out="$(timeout 120 env LAUNCHER_QT_SCREEN=optall LAUNCHER_QT_DELAY=250 "$bin" 2>&1)"
+  o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] optall //p')"
+  n="$(printf '%s\n' "$o" | sed -n 's/^boxes \([0-9]*\)$/\1/p')"
+  [ -n "$n" ] && [ "$n" -gt 0 ] || { echo "optall: the probe printed no box count"; return 1; }
+  all=$(( (1 << n) - 1 ))
+  for step in clicked on off defaults; do
+    line="$(printf '%s\n' "$o" | sed -n "s/^$step: //p")"
+    [ -n "$line" ] || { echo "optall: no '$step' line"; rc=1; continue; }
+    shown="$(printf '%s' "$line" | sed -n 's/^shown \([0-9]*\) model.*/\1/p')"
+    model="$(printf '%s' "$line" | sed -n 's/.* model \([0-9]*\)$/\1/p')"
+    echo "  optall $step: $line"
+    [ "$shown" = "$model" ] || { echo "optall $step: the boxes show $shown, the form says $model"; rc=1; }
+    [ "$step" != on ] || [ "$model" = "$all" ] || { echo "optall: Turn all on left the form at $model"; rc=1; }
+    [ "$step" != off ] || [ "$model" = 0 ] || { echo "optall: Turn all off left the form at $model"; rc=1; }
   done
   return $rc
 }
