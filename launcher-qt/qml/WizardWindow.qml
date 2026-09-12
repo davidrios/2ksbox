@@ -369,6 +369,24 @@ Window {
                     font.pixelSize: 11
                     opacity: 0.75
                 }
+                // A second card beside the first, on the one family that
+                // can use one (doc 20 §6): the checkbox and its sentences
+                // are the shared form's, and the row is not there at all
+                // where the form says the question does not apply.
+                CheckBox {
+                    visible: root.wizard.audiopciApplies
+                    text: qsTr("Ensoniq AudioPCI beside it (for Windows)")
+                    checked: root.wizard.audiopci
+                    onToggled: root.wizard.chooseAudiopci(checked)
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.wizard.audiopciApplies
+                    text: root.wizard.audiopciNote
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    opacity: 0.75
+                }
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 8

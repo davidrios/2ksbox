@@ -62,6 +62,8 @@ struct EditTarget {
     /// The same, for the sound card: a guest that already has a driver
     /// for one card finds another on its next start (`sound_warning`).
     sound: Sound,
+    /// And for the Ensoniq beside it, which is a card too.
+    audiopci: bool,
     /// The gamepad setting the bundle had when it was opened, for the
     /// same reason: gaining or losing the USB controller is a hardware
     /// change (`pad_warning`).
@@ -105,6 +107,11 @@ pub struct Form {
     /// one the new family does not have.
     sound: Sound,
     sound_chosen: bool,
+    /// An Ensoniq AudioPCI beside the card, on the one family that can
+    /// have one (doc 20 §6). Off unless picked, so nothing follows the
+    /// family and there is no `_chosen` flag; a family that cannot have
+    /// it turns it off.
+    audiopci: bool,
     music: Music,
     music_chosen: bool,
     /// A SoundFont bank of the user's own, or empty for the one we
@@ -202,6 +209,7 @@ impl Default for Form {
             video_chosen: false,
             sound: bundle::default_sound(Family::Win98),
             sound_chosen: false,
+            audiopci: false,
             music: bundle::default_music(Family::Win98),
             music_chosen: false,
             soundfont: String::new(),
@@ -285,6 +293,7 @@ impl Form {
             video_chosen: true,
             sound: machine.effective_sound(),
             sound_chosen: true,
+            audiopci: machine.effective_audiopci(),
             music: machine.effective_music(),
             music_chosen: true,
             soundfont: machine.soundfont.as_ref().map(|f| f.display().to_string()).unwrap_or_default(),
@@ -301,6 +310,7 @@ impl Form {
                 original_toml,
                 video: machine.effective_video().unwrap_or(Video::Std),
                 sound: machine.effective_sound(),
+                audiopci: machine.effective_audiopci(),
                 pad: machine.effective_pad(),
             }),
             ..Default::default()
@@ -382,6 +392,9 @@ impl Form {
         // DOS has not got.
         if !self.sound_chosen || !bundle::sound_choices(family).contains(&self.sound) {
             self.sound = bundle::default_sound(family);
+        }
+        if !bundle::audiopci_applies(family) {
+            self.audiopci = false;
         }
         if !self.music_chosen || !bundle::music_choices(family).contains(&self.music) {
             self.music = bundle::default_music(family);
@@ -846,6 +859,39 @@ impl Form {
         self.sound_chosen = false;
     }
 
+    /// Whether the Ensoniq checkbox is worth showing: Windows 98 only
+    /// (`bundle::audiopci_applies`).
+    pub fn audiopci_applies(&self) -> bool {
+        bundle::audiopci_applies(self.family)
+    }
+
+    pub fn audiopci(&self) -> bool {
+        self.audiopci
+    }
+
+    /// Ignored on a family that cannot have the card, like a sound card
+    /// the family does not offer.
+    pub fn choose_audiopci(&mut self, audiopci: bool) {
+        if self.audiopci_applies() {
+            self.audiopci = audiopci;
+        }
+    }
+
+    /// One checkbox under the card: an Ensoniq AudioPCI beside it, or
+    /// not. What the sentences carry is why anyone would want two
+    /// cards — the Sound Blaster is for the DOS box and the FM chip, the
+    /// PCI card is for Windows — and what Windows does about it.
+    pub fn audiopci_notes(&self) -> &'static [&'static str] {
+        if self.audiopci {
+            &[
+                "A second card: an Ensoniq AudioPCI (ES1370) on the PCI bus beside the one above. Windows 98 has its driver in the box and finds it on the next start.",
+                "Pick it as the preferred playback device in Multimedia and Windows games use it; the card above stays for a DOS box and for FM music.",
+            ]
+        } else {
+            &["One card only. An Ensoniq AudioPCI beside it gives Windows a PCI card with a driver in the box, and leaves the card above to DOS games."]
+        }
+    }
+
     pub fn music(&self) -> Music {
         self.music
     }
@@ -944,7 +990,7 @@ impl Form {
     /// guest that is already installed re-detects a card that changed.
     pub fn sound_warning(&self) -> Option<&'static str> {
         let changed = match &self.editing {
-            Some(edit) => edit.sound != self.sound,
+            Some(edit) => edit.sound != self.sound || edit.audiopci != self.audiopci,
             None => false,
         };
         changed.then_some(
@@ -1123,6 +1169,7 @@ impl Form {
                 network: self.network,
                 seamless_mouse: self.seamless_mouse,
                 voodoo2: self.voodoo2,
+                audiopci: self.audiopci,
                 disk,
                 disc: None,
                 discs: Vec::new(),
@@ -1159,6 +1206,7 @@ impl Form {
             bundle::default_seamless_mouse(self.family)
         };
         machine.voodoo2 = self.voodoo2;
+        machine.audiopci = self.audiopci;
         machine.cpu_speed =
             Some(if self.cpu_speed_chosen { self.cpu_speed } else { bundle::default_cpu_speed(self.family) });
         // Only what someone turned off is in here, so this is a clone

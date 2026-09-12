@@ -120,6 +120,21 @@ int main(int argc, char **argv) {
     check("a new Win98 machine starts on the Cirrus",
           adapter && strstr(adapter, "Cirrus") != NULL, adapter);
     lc_string_free(adapter);
+    /* The Ensoniq beside the card (doc 20 §6) is a Win98 question: off
+     * unless picked there, and the sentence under it says what the two
+     * cards are for. */
+    check("a Win98 machine offers the AudioPCI beside its card", lc_wizard_audiopci_applies(w), NULL);
+    check("...off unless picked", !lc_wizard_audiopci(w), NULL);
+    char *apci = lc_wizard_audiopci_note(w);
+    check("...and off says what a second card would be for",
+          apci && strstr(apci, "DOS games") != NULL, apci);
+    lc_string_free(apci);
+    lc_wizard_choose_audiopci(w, true);
+    check("picking the AudioPCI takes", lc_wizard_audiopci(w), NULL);
+    apci = lc_wizard_audiopci_note(w);
+    check("...and on says Windows has the driver in the box",
+          apci && strstr(apci, "driver in the box") != NULL, apci);
+    lc_string_free(apci);
     lc_wizard_choose_family(w, (size_t)xp);
     adapter = video_label(w);
     check("switching it to XP moves the untouched adapter to XP's own",
@@ -128,6 +143,12 @@ int main(int argc, char **argv) {
     check("...and it counts as the default there", lc_wizard_video_is_default(w), NULL);
     check("the card followed too", lc_wizard_sound_is_default(w), NULL);
     check("and the MIDI port", lc_wizard_music_is_default(w), NULL);
+    /* ...and XP cannot have the Ensoniq beside its card, so the pick
+     * went with the family and cannot be made again here. */
+    check("XP has no AudioPCI checkbox", !lc_wizard_audiopci_applies(w), NULL);
+    check("...and the family switch turned it off", !lc_wizard_audiopci(w), NULL);
+    lc_wizard_choose_audiopci(w, true);
+    check("...and picking it on XP is ignored", !lc_wizard_audiopci(w), NULL);
     /* The pad follows the same rule in the form, but this API has no pad
      * row yet (M13 is newer than the C ABI), so it is unchecked here. */
     /* Now pick one by hand: it is a decision, and the next family switch

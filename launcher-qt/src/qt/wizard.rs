@@ -86,6 +86,11 @@ pub mod ffi {
         #[qproperty(bool, sound_is_default)]
         #[qproperty(QString, sound_note)]
         #[qproperty(QString, sound_warning)]
+        /// The Ensoniq beside the card (doc 20 §6): Win98 only, off
+        /// unless picked, and the sentences under it.
+        #[qproperty(bool, audiopci_applies)]
+        #[qproperty(bool, audiopci)]
+        #[qproperty(QString, audiopci_note)]
         #[qproperty(i32, music)]
         #[qproperty(QStringList, music_labels)]
         #[qproperty(bool, music_is_default)]
@@ -224,6 +229,10 @@ pub mod ffi {
         fn choose_sound(self: Pin<&mut Wizard>, sound: i32);
         #[qinvokable]
         fn reset_sound(self: Pin<&mut Wizard>);
+
+        /// An Ensoniq AudioPCI beside the card, or not (doc 20 §6).
+        #[qinvokable]
+        fn choose_audiopci(self: Pin<&mut Wizard>, audiopci: bool);
         #[qinvokable]
         fn choose_music(self: Pin<&mut Wizard>, music: i32);
         #[qinvokable]
@@ -353,6 +362,9 @@ pub struct WizardRust {
     sound_is_default: bool,
     sound_note: QString,
     sound_warning: QString,
+    audiopci_applies: bool,
+    audiopci: bool,
+    audiopci_note: QString,
     music: i32,
     music_labels: QStringList,
     music_is_default: bool,
@@ -526,6 +538,10 @@ impl ffi::Wizard {
         self.edit(Form::reset_sound);
     }
 
+    fn choose_audiopci(self: Pin<&mut Self>, audiopci: bool) {
+        self.edit(|form| form.choose_audiopci(audiopci));
+    }
+
     fn choose_music(self: Pin<&mut Self>, music: i32) {
         self.edit(|form| {
             let m = at(form.music_choices(), music);
@@ -684,6 +700,7 @@ impl ffi::Wizard {
         let (graphics_note, graphics_warning);
         let (video, video_applies, video_labels, video_is_default, video_note, video_warning);
         let (sound, sound_labels, sound_is_default, sound_note, sound_warning);
+        let (audiopci_applies, audiopci, audiopci_note);
         let (music, music_labels, music_is_default, music_note);
         let (soundfont, soundfont_applies, mt32_roms, mt32_roms_applies);
         let (pad, pad_applies, pad_labels, pad_is_default, pad_note, pad_warning);
@@ -728,6 +745,9 @@ impl ffi::Wizard {
             sound_is_default = f.sound_is_default();
             sound_note = qs(f.sound_notes().join("\n"));
             sound_warning = qs_opt(f.sound_warning());
+            audiopci_applies = f.audiopci_applies();
+            audiopci = f.audiopci();
+            audiopci_note = qs(f.audiopci_notes().join("\n"));
             music = index_of(f.music_choices(), f.music());
             music_labels = labels(f.music_choices().iter().map(|m| m.label()));
             music_is_default = f.music_is_default();
@@ -803,6 +823,9 @@ impl ffi::Wizard {
         self.as_mut().set_sound_is_default(sound_is_default);
         self.as_mut().set_sound_note(sound_note);
         self.as_mut().set_sound_warning(sound_warning);
+        self.as_mut().set_audiopci_applies(audiopci_applies);
+        self.as_mut().set_audiopci(audiopci);
+        self.as_mut().set_audiopci_note(audiopci_note);
         self.as_mut().set_music_labels(music_labels);
         self.as_mut().set_music(music);
         self.as_mut().set_music_is_default(music_is_default);
