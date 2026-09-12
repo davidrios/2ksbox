@@ -1,0 +1,21 @@
+The files beside this one are 86Box's Voodoo Graphics / Voodoo 2 emulation,
+copied verbatim (no edits: the port lives in ../shim and ../qemu) from
+
+  https://github.com/86Box/86Box
+  commit b0e0b7f04537b14d4149e546bd17772007831baf  (2026-09-11)
+  src/video/vid_voodoo*.c  ->  vid_voodoo*.c
+  src/include/86box/vid_voodoo*.h  ->  vid_voodoo*.h
+
+Not copied: vid_voodoo_banshee.c, vid_voodoo_banshee_blitter.c (the Banshee /
+Voodoo 3 are 2D+3D cards with their own VGA core; the four entry points the
+Voodoo 1/2 files still call on them are stubbed in ../qemu/voodoo_shim.c and
+are unreachable for type < VOODOO_BANSHEE) and vid_voodoo_codegen_x86.h (the
+32-bit x86 recompiler; every 2ksbox host is 64-bit).
+
+Licence: GPL-2.0-or-later (86Box's; the files carry the authors' headers --
+Sarah Walker's PCem is the origin). Same licence as QEMU, so the same as
+everything else this device links into.
+
+To refresh against a newer upstream commit, run scripts/sync-86box-voodoo.sh
+<commit>: it fetches those files at that commit into this directory and
+prints the diff, then update the commit and date above.

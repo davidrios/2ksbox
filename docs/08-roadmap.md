@@ -296,6 +296,19 @@ rather than a hand run. One thing is open and owed to nobody: a real
 controller has never driven path C, whose output is scancodes rather than
 a device, so a wrong binding there would look like a broken game.
 
+## M14 — The Voodoo 2 device  (Active; doc 21, `docs/tracks/m14-voodoo2.md`)
+
+Opened 2026-09-12 on the user's decision: 86Box's Voodoo 2 emulation as
+a QEMU PCI device, `-device voodoo2`, beside the Glide pass-through (M3)
+rather than instead of it (ADR-016). Vendored verbatim under `voodoo/`
+with a shim of 86Box's platform headers, one meson patch (62). Step 0 —
+the port builds and a FreeDOS guest with no 3dfx code drives it through
+the whole path to a frame on the console — landed the day it opened.
+Steps: 3dfx's own driver in a Win98 image and the launcher pick; a game
+and the numbers, on this box and the Air; the command-FIFO window as RAM
+and the region without the BQL if the profile asks; a hardened
+`fatal()`; Windows.
+
 ## Post-v1 candidates
 
 Recording/streaming, CRT bezel packs, VRR pacing,

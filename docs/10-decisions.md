@@ -838,3 +838,42 @@ fontconfig. The Flatpak is the build for a host that has no Qt.
 - The Flatpak's offline `cargo-sources.json` now covers **both** lock
   files (the workspace's and `launcher-qt`'s), merged into one vendor
   directory by `scripts/gen-flatpak-cargo-sources.sh`.
+
+## ADR-016: the Voodoo 2 is emulated, beside the Glide pass-through, not instead of it (2026-09-12)
+
+**Decision.** 2ksbox carries a real 3dfx Voodoo 2 on the PCI bus:
+86Box's emulation of the chip (PCem's rasterizer, 86Box's x86-64 and
+ARM64 recompilers; GPL-2.0-or-later), vendored verbatim under `voodoo/`
+and wrapped as the QEMU device `voodoo2` through a shim of 86Box's
+platform headers — no fork, no edits to the vendored files (doc 21).
+The user decided this on 2026-09-12; the decision procedure of
+2026-09-10 (measure Diablo II in 86Box first) was overtaken by doing the
+port and measuring on our own device.
+
+**What it is for.** Completeness: the guest runs 3dfx's own drivers
+and the game's own `glide2x.dll` / `glide3x.dll` / `GLIDE2X.OVL`, so
+Glide 3, every LFB trick, statically linked Glide 2 and 3dfx's released
+Glide source as a driver all come for free, and a game cannot find a
+hole in a translation because there is none.
+
+**What it does not replace.** qemu-3dfx has two halves. Its Glide half
+(`hw/3dfx`, OpenGLide on the host) is what the chip stands beside: a
+Glide title then has the wrapper for speed (the host GPU draws) and the
+chip for fidelity (a software rasterizer on host cores, at Voodoo 2
+resolutions and formats), and the machine form picks. Its OpenGL half
+(`hw/mesa`, the guest `opengl32` wrapper) is what GLQuake, Quake 2,
+Half-Life in GL mode and wglgears use, and a Voodoo 2 reaches those only
+through 3dfx's period MiniGL/ICD at rasterizer speed — so the
+pass-through stays for OpenGL titles and for hosts where the rasterizer
+does not keep up. Never propose retiring `hw/3dfx`, `hw/mesa` or
+OpenGLide on the strength of this device; the Direct3D path (docs 14/15)
+is a third thing and untouched.
+
+**Costs accepted.** Every register write is an MMIO trap on the one vCPU
+thread with a BQL round trip (86Box's CPU core calls the handler
+directly); the two known mitigations — the command-FIFO window as RAM,
+the region without the BQL under a lock of our own — are steps on the
+track, taken if the profile asks. 86Box's `fatal()` contract (a
+malformed command-FIFO packet aborts the process) is kept until the
+device is seen to work with a real driver, then hardened. SLI and the
+Voodoo Graphics type are not offered.

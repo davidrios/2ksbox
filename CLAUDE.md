@@ -113,6 +113,23 @@ backend later.
   builds it with Open Watcom, `SETUP.EXE` puts it in the Windows folder on
   9x, a DOS machine puts it next to the game; a Glide 2 game linked
   statically (a few 1996 titles) is the only kind it cannot serve.
+- **A real Voodoo 2 is emulated too, beside the pass-through** (doc 21,
+  ADR-016, M14, 2026-09-12): `-device voodoo2` is 86Box's Voodoo 2
+  emulation, vendored **verbatim** under `voodoo/86box/` (never edit those
+  files; `scripts/sync-86box-voodoo.sh` refreshes them) and built against
+  a shim of 86Box's platform headers (`voodoo/shim/`) behind a QEMU PCI
+  device (`voodoo/voodoo2.c`, patch 62 for the meson subdir). The guest
+  runs 3dfx's own driver and the game's own Glide, so Glide 3 and the
+  static-link stragglers come for free, at a software rasterizer's speed
+  on host cores. It **does not replace qemu-3dfx**: the Glide wrapper is
+  the fast path for the titles it covers and the OpenGL pass-through has
+  no chip equivalent — never propose retiring either. The card takes the
+  monitor through `graphic_hw_passthrough` on console 0 and its frames go
+  through the ordinary VGA surface path, so screendumps and the player see
+  them with no 3D-frame plumbing. Timers are 86Box's 32.32 delays in ns
+  over QEMUTimer with the expiry kept as `ns << 16` (48 bits — 32 wrapped
+  4.3 s in and spun the main loop); the per-scanline display timer is
+  coalesced to ~1 ms of lines per wakeup.
 - **XP's display adapter is our `d3dpt-vga` + real display driver** (doc
   15, ADR-008): `-vga none -device d3dpt-vga`, `guest-tools/src/d3dptvid/`
   (miniport + display DLL + INF, mingw-w64 DDK headers, no Microsoft DDK),
@@ -338,6 +355,7 @@ GPU); don't propose wiring it in.
 | `tools/embed-3d-test.c` | drives the window-less Mesa backend without a guest: context, frame, orientation, dma-buf ring (Linux) |
 | `TESTS\GLIDETEST.EXE` (guest-tools ISO; `guest-tools/src/glidetest.c`) | Glide 2.x through the pass-through device from inside the guest (doc 12 §5): the same scene `glide-host-test` draws, but the whole chain — the guest's `GLIDE2X.DLL`, the MMIO FIFO, `hw/3dfx`, our `libglide2x`, the frontend's context. It checks its **own** pixels through `grLfbLock` rather than trusting the host to look at them, and ends with `glidetest: N cases, M failed`. Four cases: a clear, the triangle (whose corners are the upper-left-origin check), a re-clear, and a close/reopen — a game's mode switch, which is where a host that leaked its context fails. `-res N` picks another resolution, `-hold N` keeps the frame up |
 | `tools/glide-guest-test.sh <image>` | `GLIDETEST.EXE` in a real Win98 guest **in the player**, headless: overlay boot with the guest-tools ISO (`SETUP /ALL` installs the Glide wrapper) and the program on a floppy, driven through the Run dialog over QMP, verdict read off COM1. It must be the player and not `qemu-system-i386`: a bare QEMU registers no 3D provider, so `glide_host_ops` returns NULL and `grSstWinOpen` fails by design. `PACKAGE=<staged tree|prefix>` runs it out of a package instead — its player, its firmware, its ISO, and **no `QEMU_GLIDE_LIB`**, so the packaged player's own rule has to find the wrapper. Local only (needs a guest image), never in `scripts/test.sh` |
+| `tools/voodoo-guest-test.py` | the Voodoo 2 device (doc 21) as a guest meets it, with **no 3dfx code**: a FreeDOS program in unreal mode finds `121a:0002` in configuration space, maps the 16 MiB BAR, reads the Voodoo 2 strap out of `initEnable`, runs the chip's init sequence (fbiInit1/2, videoDimensions, hSync/vSync, the DAC PLL, the 33-entry CLUT, lfbMode), fills the back buffer red through the LFB, reads a dword back (the FIFO flushed by a read), swaps, and gives the monitor back. The verdict is the host's: a QMP screendump while the Voodoo has the monitor must be the 640×480 frame in the CLUT-ramped red, and one after must be the VGA's 720×400 text screen; QEMU's `voodoo2:` lines are printed. ~10 s; the `voodoo-guest` check in the guest stage. A hung run is diagnosed under gdb with SIGINT to the QEMU process (the track doc), ptrace being closed on this box |
 | `tools/glide-host-test.cpp` | Glide pass-through without a guest (doc 12 §5): the real host wrapper (`build/glide/libglide2x.so`) loaded by `hw/3dfx`'s own dispatcher, opened through `glidewnd.c`'s handshake on a context nobody has a window for, then a clear and a triangle through the wrapper and `grBufferSwap` -- the frame is checked at the frontend callback, corners included so Glide's upper-left origin is proved too. Then an LFB **write lock held across a swap** (the buffer filled with 565 blue, `grBufferSwap` with no unlock, the frame must be blue): Carmageddon's front end lives in a locked LFB and upstream OpenGLide drew it only on the unlock that never comes — black frames until patch `05-lfb-locked-swap`. `GLIDE_TEST_BMP=<path>` writes the frame out; `GLIDE_HOST_LOG=<path\|->` turns on the wrapper's own log. The `glide-host` check in `scripts/test.sh` |
 | `tools/qmpc.py` | drives a guest over an extra `-qmp unix:…,server,nowait` socket: keys, typing, screendumps |
 | `guest-tools/src/d3dgame9.c`, `d3dgame8.c` | the Direct3D reference scene (doc 14): golden BMPs from the rig, diffed against every emulated path |

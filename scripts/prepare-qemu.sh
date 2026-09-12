@@ -60,6 +60,12 @@ mkdir -p "$QEMU/hw/d3dpt"
 rsync -rc --delete --exclude d3dpt_proto.h --exclude d3dpt_fb.h --exclude d3dpt_exec.h "$ROOT/d3dpt/hw/" "$QEMU/hw/d3dpt/"
 rsync -c "$ROOT/d3dpt/d3dpt_proto.h" "$ROOT/d3dpt/d3dpt_fb.h" "$ROOT/d3dpt/exec/d3dpt_exec.h" "$QEMU/hw/d3dpt/"
 
+echo "==> overlaying voodoo/ (the 3dfx Voodoo 2: hw/voodoo, doc 21)"
+# 86Box's rasterizer (voodoo/86box, verbatim), the shim of 86Box's headers
+# (voodoo/shim), the QEMU device and the directory's own meson.build.
+mkdir -p "$QEMU/hw/voodoo"
+rsync -rc --delete --exclude UPSTREAM "$ROOT/voodoo/" "$QEMU/hw/voodoo/"
+
 echo "==> overlaying libsynth/ (the music devices: hw/audio/opl3.c + mpu401.c, doc 20)"
 rsync -c "$ROOT/libsynth/qemu/opl3.c" "$ROOT/libsynth/qemu/mpu401.c" "$ROOT/libsynth/libsynth.h" "$QEMU/hw/audio/"
 

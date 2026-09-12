@@ -195,6 +195,13 @@
 #                  mode and plays A4 through it; the wav QEMU's own backend recorded
 #                  is what is checked, so a device that takes every write and plays
 #                  nothing fails here. Two boots, ~11 s
+#   voodoo-guest   tools/voodoo-guest-test.py: the Voodoo 2 device (doc 21, M14) as
+#                  a guest meets it with no 3dfx driver — a DOS program finds
+#                  121a:0002 in configuration space, maps the BAR, reads the
+#                  Voodoo 2 strap, runs the chip's init sequence, fills the back
+#                  buffer red through the LFB, reads a pixel back, swaps; a
+#                  screendump must be the 640x480 red frame while the Voodoo has
+#                  the monitor and the VGA's text screen after it lets go. ~10 s
 #   pit-guest      tools/pit-guest-test.py: the PIT as a DOS game's clock meets it
 #                  (patch 34) — QCLOCK.COM, DOS Quake's Sys_FloatTime (the BIOS
 #                  tick word plus counter 0) read in a tight loop beside the TSC:
@@ -2227,6 +2234,7 @@ guest_stage() {
       run_check atapi-guest atapi-guest.log python3 tools/atapi-guest-test.py || true
       run_check midi-guest midi-guest.log python3 tools/midi-guest-test.py || true
       run_check pit-guest pit-guest.log python3 tools/pit-guest-test.py || true
+      run_check voodoo-guest voodoo-guest.log python3 tools/voodoo-guest-test.py || true
       run_check vbe-palette vbe-palette.log env VBEPAL=1 python3 tools/vga-dirty-guest-test.py vesa || true
       # The gameport as a DOS guest reads it (M13 path B). Unlike its
       # neighbours this one runs the **player**, because the pad reaches a
@@ -2248,10 +2256,10 @@ guest_stage() {
     # including `atapi-guest`, which is the only check that reads a disc from
     # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
     # weak-sector rule, which that battery is the regression guard for).
-    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest vbe-palette pad-guest; do
+    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest voodoo-guest vbe-palette pad-guest; do
       skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
     done; fi
-  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest vbe-palette pad-guest; do
+  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest voodoo-guest vbe-palette pad-guest; do
     skip "$c" "needs nasm, mtools and build/qemu"
   done; fi
   if [ "$OS" != Linux ]; then skip guest "Linux only for now (mkfs.fat, sfdisk, mtools)"; return; fi
