@@ -51,6 +51,21 @@
  * sprite. Without it GDI paints a software pointer into the primary,
  * which flickers under a flip chain (it is in one buffer of the two).
  *
+ * Version 5: gamma ramps (GAMMA_ENABLE and the GAMMA block).
+ *
+ * **Versions only add.** Every driver — the XP miniport, the 9x display
+ * driver and mini-VDD — accepts any VERSION at or above the one it was
+ * built with and refuses only an older one, because a newer register set is
+ * its own plus registers it never touches (a feature is found by its CAP bit
+ * or its version, never by a register changing meaning). That is what lets
+ * an installed guest survive a QEMU update: until 2026-09-12 the drivers
+ * wanted the version exactly, and a Windows 98 machine with a v4 driver
+ * died at boot with "Windows protection error" on the v5 adapter. So a
+ * bump must never move, resize or reinterpret an existing register; a
+ * change that has to is a new MAGIC, which every driver does compare
+ * exactly. -device d3dpt-vga,fb-version=N reports another version, to
+ * check exactly this.
+ *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 #ifndef D3DPT_FB_H

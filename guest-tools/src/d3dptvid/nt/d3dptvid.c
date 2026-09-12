@@ -286,8 +286,12 @@ static VP_STATUS NTAPI HwFindAdapter(PVOID ext, PVOID ctx, PWSTR args,
         return ERROR_DEV_NOT_EXIST;
     }
     magic = reg_read(d, D3DPT_FB_REG_MAGIC);
-    if (magic != D3DPT_FB_MAGIC || reg_read(d, D3DPT_FB_REG_VERSION) != D3DPT_FB_VERSION) {
-        VideoPortDebugPrint(Error, "d3dptvid: bad magic %x\n", magic);
+    /* at least our version: a newer register set is ours plus registers we
+     * never touch (d3dpt_fb.h: versions only add), so an installed driver
+     * keeps working when QEMU moves on. Only an older one is refused. */
+    if (magic != D3DPT_FB_MAGIC || reg_read(d, D3DPT_FB_REG_VERSION) < D3DPT_FB_VERSION) {
+        VideoPortDebugPrint(Error, "d3dptvid: bad magic %x or register set %u older than %u\n",
+                            magic, reg_read(d, D3DPT_FB_REG_VERSION), D3DPT_FB_VERSION);
         VideoPortFreeDeviceBase(d, (PVOID)d->regs);
         d->regs = NULL;
         return ERROR_DEV_NOT_EXIST;
