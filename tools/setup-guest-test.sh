@@ -96,9 +96,15 @@ else
   echo 'echo SETUPDONE > COM1'
 } > "$OUT/RUN.BAT"
 fi
-sed -i 's/\r$//; s/$/\r/' "$OUT/RUN.BAT"
+# perl, not `sed -i`: BSD sed takes the script as a backup suffix (macOS).
+perl -pi -e 's/\r?\n\z/\r\n/' "$OUT/RUN.BAT"
 rm -f "$FLOPPY"
-mkfs.fat -C -F 12 "$FLOPPY" 1440 >/dev/null
+rm -f "$FLOPPY"
+if command -v mkfs.fat >/dev/null; then
+  mkfs.fat -C -F 12 "$FLOPPY" 1440 >/dev/null
+else
+  mformat -C -f 1440 -i "$FLOPPY" :: || { echo "need mkfs.fat or mformat"; exit 1; }
+fi
 mcopy -o -i "$FLOPPY" "$OUT/RUN.BAT" ::/RUN.BAT
 
 rm -f "$OVL"
