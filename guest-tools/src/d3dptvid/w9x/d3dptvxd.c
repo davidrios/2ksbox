@@ -272,8 +272,9 @@ static BOOL AdapterMap(void)
         dwRegsLin = 0;
         return FALSE;
     }
-    if (*(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_VERSION) != D3DPT_FB_VERSION) {
-        dbg_str("d3dptvxd: register set mismatch, refusing the device");
+    /* at least our version: a newer register set only adds (d3dpt_fb.h) */
+    if (*(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_VERSION) < D3DPT_FB_VERSION) {
+        dbg_str("d3dptvxd: register set older than this driver, refusing the device");
         dwRegsLin = 0;
         return FALSE;
     }

@@ -64,6 +64,9 @@
 #   TRACE=1             D3DPT_DP2_TRACE: one whole frame of DP2 tokens per
 #                       touch of frames/trace.on
 #   DDFLAGS=n           -device d3dpt-vga,ddflags=N (the bisection knob)
+#   FBVER=n             -device d3dpt-vga,fb-version=N: the adapter reports
+#                       another register set version — a newer one is how a
+#                       QEMU update is checked against an installed driver
 #   MUSIC=gm|mt32|none  the MPU-401's synth (gm, the launcher's default for
 #                       a Win98 machine), or no MPU-401 at all
 #   QEMU_TCG_OPTS=a=off,b=on  accelerator switches for an A/B (the convention of
@@ -250,7 +253,7 @@ for cd in "${CDLIST[@]}"; do
            -device "ide-cd,bus=ide.1,unit=$n,id=ide-cd$n,drive=cd$n,audiodev=snd0")
   n=$((n + 1))
 done
-VGAARGS=(-vga none -device "d3dpt-vga,addr=0x02${DDFLAGS:+,ddflags=$DDFLAGS}")
+VGAARGS=(-vga none -device "d3dpt-vga,addr=0x02${DDFLAGS:+,ddflags=$DDFLAGS}${FBVER:+,fb-version=$FBVER}")
 [ "${VGA:-d3dpt}" = d3dpt ] || VGAARGS=(-vga "${VGA}")
 USBARGS=(); [ "${TABLET:-0}" = 1 ] && USBARGS=(-usb -device usb-tablet)
 [ -n "${DUMP_EVERY:-}" ] && { export D3DPT_DUMP_DIR="$OUT/frames" D3DPT_DUMP_EVERY="$DUMP_EVERY"; }

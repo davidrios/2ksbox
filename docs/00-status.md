@@ -1145,6 +1145,19 @@ items nobody owns yet:
 
 ## Gotchas learned (don't relearn)
 
+- **A Windows 98 machine that dies at boot with "Windows protection error"
+  on `d3dpt-vga` but boots on the Cirrus has a driver older than the
+  register set** (claude98, 2026-09-12: a 2026-09-08 driver, register set
+  v4, on the v5 adapter). The mini-VDD refuses the device and stays out of
+  the way, the display driver fails `Enable`, and a `SYSTEM.INI` with
+  `*DisplayFallback=0` leaves Windows no VGA to fall back to. Fix the
+  image: boot it on the Cirrus, run the ISO's `SETUP /ALL`, switch back.
+  Drivers built since then accept any register set at or above their own
+  (doc 15 "Newer register sets are accepted"; `FBVER=` in the harnesses
+  checks it), so this happens once per image, not per QEMU update. A
+  failed boot sends the next one to safe mode — a headless repro has to
+  let that safe-mode boot finish before the next one means anything.
+
 - **An ISA device of ours on IRQ 9 reboots an ACPI Windows 98.** QEMU's
   PIIX4 puts the ACPI SCI on IRQ 9 (`hw/acpi/piix4.c`), and every Win98
   the launcher installs is an ACPI install (doc 06's BIOS-date stamp), so

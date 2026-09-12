@@ -256,11 +256,16 @@ BOOL AdapterFind(void)
     dbg_val("d3dpt9x: regs lin", dwRegsLin);
     dbg_val("d3dpt9x: vram lin", dwVramLin);
 
+    /* A newer register set is ours plus registers we never touch (d3dpt_fb.h:
+     * versions only add), so it is accepted; only an older one, missing
+     * registers this build uses, is refused. Exact matching made every QEMU
+     * update a machine that died at boot with "Windows protection error"
+     * (2026-09-12: a v4 driver against the v5 adapter). */
     if (RegGet(D3DPT_FB_REG_MAGIC) != D3DPT_FB_MAGIC ||
-        RegGet(D3DPT_FB_REG_VERSION) != D3DPT_FB_VERSION) {
+        RegGet(D3DPT_FB_REG_VERSION) < D3DPT_FB_VERSION) {
         dbg_val("d3dpt9x: magic", RegGet(D3DPT_FB_REG_MAGIC));
         dbg_val("d3dpt9x: version", RegGet(D3DPT_FB_REG_VERSION));
-        dbg_str("d3dpt9x: register set mismatch, refusing the device");
+        dbg_str("d3dpt9x: not our adapter, or a register set older than this driver: refusing it");
         wRegsSel = wVramSel = 0;
         return FALSE;
     }

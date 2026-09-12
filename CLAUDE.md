@@ -125,7 +125,11 @@ backend later.
   15, ADR-008): `-vga none -device d3dpt-vga`, `guest-tools/src/d3dptvid/`
   (miniport + display DLL + INF, mingw-w64 DDK headers, no Microsoft DDK),
   `guest-tools/build-driver.sh`. Register set `d3dpt/d3dpt_fb.h` is shared
-  by the QEMU device and the miniport; bump `D3DPT_FB_VERSION` on change.
+  by the QEMU device and the miniport; bump `D3DPT_FB_VERSION` on change —
+  and **a bump only ever adds registers**: since 2026-09-12 every driver
+  accepts any version at or above its own (an installed guest survives a
+  QEMU update), so a change that must reinterpret a register is a new
+  `D3DPT_FB_MAGIC`, not a version.
   The driver's Direct3D DDI (M7c) reuses the doc 14 protocol and executor
   through a command window at the top of the adapter's VRAM; since
   2026-09-05 it is a DirectX 8 DDI (`D3DCAPS8`, hardware T&L, the DX8
@@ -621,10 +625,15 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   re-register the chain in `DdFlip`); GDI through `GetDC` writes VRAM with
   no driver callback (the executor's target shadow catches it); the
   hardware cursor is register set v4 (the guest's shape becomes the
-  player's window cursor; a v3 driver refuses the device: reinstall from
-  the ISO), and gamma ramps are register set v5 (the adapter applies the
-  ramp where it makes the picture, like a RAMDAC, so a screendump shows it
-  and VRAM never holds it; a v4 driver refuses the device) — doc 15.
+  player's window cursor), and gamma ramps are register set v5 (the adapter
+  applies the ramp where it makes the picture, like a RAMDAC, so a
+  screendump shows it and VRAM never holds it) — doc 15. **A driver built
+  before 2026-09-12 wants the version exactly** and refuses any newer
+  adapter: on XP that is plain VGA, on Windows 98 (whose `SYSTEM.INI` can
+  say `*DisplayFallback=0`) a boot that dies with "Windows protection
+  error" (claude98, a 2026-09-08 driver on the v5 adapter). Boot such a
+  machine on the Cirrus and run the ISO's `SETUP /ALL`; drivers from then
+  on accept any newer version.
 - **A Win98 game asking for 320×200 wants DirectDraw's own Mode X, not a
   driver mode** (doc 19 §30, 2026-09-10). Its recipe is `DDSCL_ALLOWMODEX`
   plus a `DDSCAPS_SYSTEMMEMORY` flipping primary: the runtime switches the
