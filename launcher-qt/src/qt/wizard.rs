@@ -110,6 +110,9 @@ pub mod ffi {
         #[qproperty(QString, network_note)]
         #[qproperty(bool, seamless_mouse)]
         #[qproperty(QString, seamless_mouse_note)]
+        /// The 3dfx Voodoo 2 (doc 21) and the sentences under it.
+        #[qproperty(bool, voodoo2)]
+        #[qproperty(QString, voodoo2_note)]
         /// Our own emulator fast paths, as a bit per `Optimization::ALL`
         /// entry — set means on. A bitmask rather than a list because a
         /// QML `CheckBox` needs a *property* to bind `checked` to (a
@@ -178,6 +181,10 @@ pub mod ffi {
         /// the PS/2 mouse alone (the window grabs it).
         #[qinvokable]
         fn choose_seamless_mouse(self: Pin<&mut Wizard>, seamless_mouse: bool);
+
+        /// A 3dfx Voodoo 2 in the machine, or not (doc 21).
+        #[qinvokable]
+        fn choose_voodoo2(self: Pin<&mut Wizard>, voodoo2: bool);
 
         /// Turn one fast path on or off, by its index in
         /// `optimization_labels()`.
@@ -365,6 +372,8 @@ pub struct WizardRust {
     network_note: QString,
     seamless_mouse: bool,
     seamless_mouse_note: QString,
+    voodoo2: bool,
+    voodoo2_note: QString,
     optimizations_mask: i32,
     optimizations_summary: QString,
     optimizations_note: QString,
@@ -454,6 +463,10 @@ impl ffi::Wizard {
 
     fn choose_seamless_mouse(self: Pin<&mut Self>, seamless_mouse: bool) {
         self.edit(|form| form.choose_seamless_mouse(seamless_mouse));
+    }
+
+    fn choose_voodoo2(self: Pin<&mut Self>, voodoo2: bool) {
+        self.edit(|form| form.choose_voodoo2(voodoo2));
     }
 
     fn choose_optimization(self: Pin<&mut Self>, index: i32, on: bool) {
@@ -667,6 +680,7 @@ impl ffi::Wizard {
         );
         let (accel, accel_note, accel_warning, accel_is_default, network, network_note);
         let (seamless_mouse, seamless_mouse_note);
+        let (voodoo2, voodoo2_note);
         let (graphics_note, graphics_warning);
         let (video, video_applies, video_labels, video_is_default, video_note, video_warning);
         let (sound, sound_labels, sound_is_default, sound_note, sound_warning);
@@ -732,6 +746,8 @@ impl ffi::Wizard {
             network_note = qs(f.network_notes().join("\n"));
             seamless_mouse = f.seamless_mouse();
             seamless_mouse_note = qs(f.seamless_mouse_notes().join("\n"));
+            voodoo2 = f.voodoo2();
+            voodoo2_note = qs(f.voodoo2_notes().join("\n"));
             optimizations_mask = Optimization::ALL
                 .iter()
                 .enumerate()
@@ -807,6 +823,8 @@ impl ffi::Wizard {
         self.as_mut().set_network_note(network_note);
         self.as_mut().set_seamless_mouse(seamless_mouse);
         self.as_mut().set_seamless_mouse_note(seamless_mouse_note);
+        self.as_mut().set_voodoo2(voodoo2);
+        self.as_mut().set_voodoo2_note(voodoo2_note);
         self.as_mut().set_optimizations_mask(optimizations_mask);
         self.as_mut().set_optimizations_summary(optimizations_summary);
         self.as_mut().set_optimizations_note(optimizations_note);

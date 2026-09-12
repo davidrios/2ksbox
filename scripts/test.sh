@@ -104,6 +104,11 @@
 #                  Windows machine gets the USB tablet and a new DOS machine
 #                  does not, the checkbox adds and removes the device and its
 #                  controller, and our QEMU accepts both machines
+#   voodoo2        the wizard's Voodoo 2 switch (doc 21): a new machine on
+#                  any family has no card, the checkbox adds `-device
+#                  voodoo2` in the slot after the sound card's and removes
+#                  it again, our QEMU accepts the machine with it, and the
+#                  device is on the bus of the machine it booted
 #   pad            the gamepad (M13 step 0): a new machine on every family
 #                  ignores a controller, neither setting adds anything to the
 #                  QEMU command line, a bundle naming a setting from a later
@@ -1141,6 +1146,52 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
   return $rc
 }
 
+voodoo2_check() { # the wizard's Voodoo 2 switch (doc 21), from a checkbox to a real QEMU
+  local rc=0 dir="$OUT/voodoo2" bundle dos args o
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  : >"$dir/disk.qcow2"
+  bundle="$(target/release/launcherx --new win98 voodoo2 "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+  dos="$(target/release/launcherx --new dos voodoo2-dos "$dir/disk.qcow2")" || { echo "--new dos failed"; return 1; }
+  # Off unless picked, on every family: a card the guest has no driver
+  # for is a New Hardware wizard on every boot.
+  for b in "$bundle" "$dos"; do
+    args="$(target/release/launcherx --print-args "$b")"
+    # (`-device voodoo2`, not the bare name: the scratch disk's path has it)
+    case "$args" in *"-device voodoo2"*) echo "a new machine has a Voodoo 2 nobody picked"; echo "$args"; rc=1;; esac
+  done
+  # The switch through the real form, on the Win98 machine (ours
+  # adapter + the chip is the pairing) and on DOS (3dfx's own overlay).
+  for b in "$bundle" "$dos"; do
+    target/release/launcherx --wizard-edit "$b" - - - - - - - - - voodoo >/dev/null \
+      || { echo "--wizard-edit voodoo failed on $b"; rc=1; }
+    args="$(target/release/launcherx --print-args "$b")"
+    case "$args" in *"-device voodoo2,addr=0x05"*) ;; *) echo "picking the Voodoo 2 added no device"; echo "$args"; rc=1;; esac
+    # ...and the bundle says so in the field a newer launcher reads back
+    grep -q '^voodoo2 = true' "$b" || { echo "the bundle does not record the card"; rc=1; }
+  done
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - - - novoodoo >/dev/null \
+    || { echo "--wizard-edit novoodoo failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *"-device voodoo2"*) echo "turning the Voodoo 2 off left it on the bus"; echo "$args"; rc=1;; esac
+  # Our QEMU accepts the DOS machine with the card, and the card is on
+  # its bus: started paused, asked over QMP, told to quit.
+  if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
+    build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
+    args="$(target/release/launcherx --print-args "$dos")"
+    # shellcheck disable=SC2086
+    o="$(printf '{"execute":"qmp_capabilities"}\n{"execute":"query-pci"}\n{"execute":"quit"}\n' \
+         | timeout 30 build/qemu/qemu-system-i386 $args \
+             -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
+      || { echo "our QEMU refused the machine with a Voodoo 2"; echo "$o" | tail -3; rc=1; }
+    case "$o" in *'"vendor": 4634'*) ;; *) echo "no 3dfx (121a) function on the bus"; echo "$o" | tail -3; rc=1;; esac
+  else
+    echo "  (no build/qemu: the QEMU half skipped)"
+  fi
+  return $rc
+}
+
 pointer_check() { # the wizard's pointer switch, from a checkbox to a real QEMU
   local rc=0 dir="$OUT/pointer" bundle dos args o
   rm -rf "$dir"; mkdir -p "$dir/library"
@@ -1954,6 +2005,7 @@ host_stage() {
   # controller, and our QEMU accepts both machines.
   if [ -x target/release/launcherx ]; then
     run_check pointer pointer.log pointer_check || true
+    run_check voodoo2 voodoo2.log voodoo2_check || true
   fi
 
   # the gamepad (M13 step 0): a new machine ignores a controller on every

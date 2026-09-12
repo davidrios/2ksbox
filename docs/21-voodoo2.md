@@ -134,14 +134,20 @@ leaves the BQL between reads.
 
 ## 6. Timers and their units
 
-86Box timers hold a 32.32 timestamp in TSC ticks. Here the integer part is
-nanoseconds of `QEMU_CLOCK_VIRTUAL` (so they follow `-icount` and stop
-with the VM), the fraction is kept so a line time that is not a whole
-number of ns does not drift, `TIMER_USEC = 1000 << 32`, `cpuclock = 1e9`
-(then `voodoo_pixelclock_update`'s `clock_const = cpuclock / pixel_clock`
-is ns per pixel and `line_time` comes out in ns << 32), and `tsc` is the
-virtual clock in ns, so `hvRetrace`'s "time until the end of this line"
-is consistent.
+86Box timers hold a 32.32 timestamp in TSC ticks. Here a *delay* is
+nanoseconds of `QEMU_CLOCK_VIRTUAL` in that same 32.32 form (so the
+timers follow `-icount` and stop with the VM): `TIMER_USEC = 1000 << 32`,
+`cpuclock = 1e9` (then `voodoo_pixelclock_update`'s `clock_const =
+cpuclock / pixel_clock` is ns per pixel and its own `* (1ULL << 32)`
+makes `line_time` a delay in these units), and `tsc` is the virtual
+clock in ns, so `hvRetrace`'s "time until the end of this line" is
+consistent. The *expiry* a timer holds is `ns << 16` — 48 bits of
+nanoseconds, 78 hours, with a fraction fine enough that a line time
+that is not a whole number of ns does not drift. The first version kept
+the 32.32 form for the expiry too and wrapped 4.3 s after boot: a
+wrapped expiry re-arms in the past, `timerlist_run_timers` never leaves
+it, the PIT starves and QEMU stops answering SIGTERM. The guest test
+found it in its first run.
 
 The **display timer fires per scanline** — `line_time`, ~32 µs at 640×480
 — which on 86Box's CPU thread is cheap and on QEMU's main loop is 31 000
@@ -267,6 +273,14 @@ the chip).
 Detection: 3dfx's driver scans PCI for `121a:0002` and reads
 `initEnable`; a Voodoo 2 with no monitor pass-through cable is still a
 Voodoo 2 (the card never sees the cable).
+
+**In the launcher** the card is one checkbox on the machine form
+("Emulated 3dfx Voodoo 2", `voodoo2` in the bundle, doc 07): off unless
+picked, on every family, `-device voodoo2,addr=0x05` when on — the slot
+after the sound card's, on whichever 2D adapter the machine has. Our own
+adapter plus the chip is the pairing to want on a Win98 machine: Direct3D
+on the doc 19 driver, Glide on the chip. The `voodoo2` check in
+`scripts/test.sh` walks it from the form to `query-pci` on our QEMU.
 
 The device's own check, with no driver, is `tools/voodoo-guest-test.py`:
 a DOS program finds the card in configuration space, maps it, runs the

@@ -110,25 +110,29 @@ device's configuration at start, `display on/off`, and every 5 s of
 activity a line with frames, triangles, register/texture writes and
 reads.
 
-To put the card on a machine from a tool: `tools/win98-game-test.sh`'s
-`EXTRA='-device voodoo2'`. The launcher has no way to add it yet (no
-free-form arguments in a bundle; next steps, 1).
+To put the card on a machine: the machine form's "Emulated 3dfx
+Voodoo 2" checkbox (`voodoo2 = true` in the bundle, `-device
+voodoo2,addr=0x05`; both front ends, the C API, `launcherx --wizard-edit
+… voodoo`; the `voodoo2` check), or `tools/win98-game-test.sh`'s
+`EXTRA='-device voodoo2'`.
 
 ## Next steps, in order
 
-1. **A guest driver, and the launcher pick that lets a user try it.**
-   The 3dfx Voodoo2 reference driver in a Win98 image (the user's own
+1. **A guest driver.** (The launcher pick landed 2026-09-12: one
+   checkbox, doc 07.) The 3dfx Voodoo2 reference driver in a Win98 image (the user's own
    download; never in the repo or the ISO) — Device Manager must find
    `121a:0002` and load it, and the driver's `glide2x.dll` must find the
    card (`initEnable`'s strap, the DAC, `fbiInit` reads). Then
    `GLIDETEST.EXE` from the guest-tools ISO against *3dfx's* `glide2x.dll`
    rather than qemu-3dfx's: the four cases through a real Glide, the
-   frames on the console. In the machine form: a 3D-accelerator picker
-   (none / pass-through, the default / Voodoo 2) in `launcher-core`,
-   drawn by both front ends, its check in `scripts/test.sh`; the bundle
-   writes `-device voodoo2` and nothing else changes. A Win98 machine on
-   `d3dpt-vga` and a Voodoo 2 is the interesting pairing (D3D on ours,
-   Glide on the chip).
+   frames on the console. A Win98 machine on `d3dpt-vga` and a Voodoo 2
+   is the interesting pairing (D3D on ours, Glide on the chip). One
+   thing to settle with the driver in hand: `SETUP.EXE` puts the guest
+   tools' `GLIDE2X.DLL` in the Windows folder on 9x while 3dfx's driver
+   puts its own in `SYSTEM`, which the loader searches first — so with
+   both installed the chip is the machine-wide Glide and the wrapper is
+   a per-game drop (`SETUP /GAME`); the installer or the form should say
+   which is the default rather than leave it to search order.
 2. **A game and the numbers** (doc 21 §9): Carmageddon's 3dfx build or
    Rayman 2 on the chip through `tools/win98-game-test.sh
    EXTRA='-device voodoo2'`, the 5 s log line's frames against the game's

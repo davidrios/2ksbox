@@ -203,6 +203,21 @@ int main(int argc, char **argv) {
     lc_string_free(pointer);
     lc_wizard_choose_seamless_mouse(w, false);
 
+    /* The Voodoo 2 (doc 21): off unless picked, and the sentence under
+     * the checkbox says what a Glide game does either way. */
+    check("no Voodoo 2 unless picked", !lc_wizard_voodoo2(w), NULL);
+    char *voodoo = lc_wizard_voodoo2_note(w);
+    check("...and off says Glide still has the pass-through",
+          voodoo && strstr(voodoo, "pass-through") != NULL, voodoo);
+    lc_string_free(voodoo);
+    lc_wizard_choose_voodoo2(w, true);
+    check("picking the Voodoo 2 takes", lc_wizard_voodoo2(w), NULL);
+    voodoo = lc_wizard_voodoo2_note(w);
+    check("...and on names the driver the guest needs",
+          voodoo && strstr(voodoo, "3dfx's own Voodoo2 driver") != NULL, voodoo);
+    lc_string_free(voodoo);
+    lc_wizard_choose_voodoo2(w, false);
+
     /* The sound card and the MIDI port (doc 20 §6). A DOS machine starts
      * on the Sound Blaster — the card its games know how to find — and
      * on a General MIDI port, because a DOS machine has no synthesizer

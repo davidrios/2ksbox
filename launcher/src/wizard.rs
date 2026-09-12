@@ -104,6 +104,7 @@ fn fields_ui(
     graphics_ui(ui, form);
     network_ui(ui, form);
     seamless_mouse_ui(ui, form);
+    voodoo2_ui(ui, form);
     optimizations_ui(ui, form);
     ui.separator();
     if editing {
@@ -376,6 +377,18 @@ fn seamless_mouse_ui(ui: &mut egui::Ui, form: &mut Form) {
         form.choose_seamless_mouse(seamless);
     }
     for note in form.seamless_mouse_notes() {
+        ui.small(*note);
+    }
+}
+
+/// One checkbox: a 3dfx Voodoo 2 beside the display adapter (doc 21),
+/// or not. What it means for a Glide game is the form's to say.
+fn voodoo2_ui(ui: &mut egui::Ui, form: &mut Form) {
+    let mut voodoo2 = form.voodoo2();
+    if ui.checkbox(&mut voodoo2, "Emulated 3dfx Voodoo 2").changed() {
+        form.choose_voodoo2(voodoo2);
+    }
+    for note in form.voodoo2_notes() {
         ui.small(*note);
     }
 }

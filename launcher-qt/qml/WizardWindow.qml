@@ -500,6 +500,22 @@ Window {
                     opacity: 0.75
                 }
 
+                // --- the Voodoo 2 -------------------------------------------
+                // One checkbox: a 3dfx Voodoo 2 beside the display adapter
+                // (doc 21) or not. The sentences are the shared form's.
+                CheckBox {
+                    text: qsTr("Emulated 3dfx Voodoo 2")
+                    checked: root.wizard.voodoo2
+                    onToggled: root.wizard.chooseVoodoo2(checked)
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: root.wizard.voodoo2Note
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    opacity: 0.75
+                }
+
                 // --- emulation optimizations ---------------------------------
                 // Our own QEMU fast paths (patches/qemu/README.md), one
                 // checkbox each, behind a disclosure: seven switches nobody

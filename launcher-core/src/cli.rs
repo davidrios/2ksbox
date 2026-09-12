@@ -162,7 +162,7 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // a bundle, change the fields given, save it back in place.
             // `-` keeps a field as it is.
             let usage =
-                "usage: --wizard-edit <machine.toml> <new-name|-> [ram-mb|-] [auto|kvm|tcg|-] [net|nonet] [cpu-speed|-] [boot|-] [seamless|noseamless] [d3dpt|std|cirrus|-] [none|usb|keys|-]";
+                "usage: --wizard-edit <machine.toml> <new-name|-> [ram-mb|-] [auto|kvm|tcg|-] [net|nonet] [cpu-speed|-] [boot|-] [seamless|noseamless] [d3dpt|std|cirrus|-] [none|usb|keys|-] [voodoo|novoodoo|-]";
             let path: PathBuf = args.next().expect(usage).into();
             let new_name = args.next().expect(usage);
             let mut form = wizard::Form::default();
@@ -245,6 +245,14 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                     bundle::Pad::from_name(name)
                         .unwrap_or_else(|| panic!("unknown gamepad setting {name:?}; {usage}")),
                 ),
+            }
+            // The Voodoo 2 (doc 21), the other field whose effect is a
+            // device on the command line.
+            match args.next().as_deref() {
+                None | Some("-") => {}
+                Some("voodoo") => form.choose_voodoo2(true),
+                Some("novoodoo") => form.choose_voodoo2(false),
+                Some(other) => panic!("the Voodoo 2 is voodoo or novoodoo, not {other:?}; {usage}"),
             }
             match form.submit(&library::default_dir()) {
                 Some(saved) => println!("{}", saved.display()),

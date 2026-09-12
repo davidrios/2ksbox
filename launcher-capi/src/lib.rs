@@ -719,6 +719,29 @@ pub unsafe extern "C" fn lc_wizard_seamless_mouse_note(w: *const LcWizard) -> *m
 /// # Safety
 /// `w` must be a live handle.
 #[no_mangle]
+pub unsafe extern "C" fn lc_wizard_voodoo2(w: *const LcWizard) -> bool {
+    handle!(w, false).0.voodoo2()
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_choose_voodoo2(w: *mut LcWizard, voodoo2: bool) {
+    handle_mut!(w, ()).0.choose_voodoo2(voodoo2);
+}
+
+/// The lines under the Voodoo 2 checkbox, newline-separated (doc 21).
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_voodoo2_note(w: *const LcWizard) -> *mut c_char {
+    out(handle!(w, std::ptr::null_mut()).0.voodoo2_notes().join("\n"))
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
 pub unsafe extern "C" fn lc_wizard_boot(w: *const LcWizard) -> usize {
     index_of(&Boot::ALL, handle!(w, 0).0.boot)
 }

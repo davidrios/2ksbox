@@ -161,6 +161,10 @@ pub struct Form {
     /// like the fields above: DOS cannot read a tablet at all.
     seamless_mouse: bool,
     seamless_mouse_chosen: bool,
+    /// A 3dfx Voodoo 2 beside the adapter (doc 21). Off for every
+    /// family unless picked, so there is nothing to follow the family
+    /// with and no `_chosen` flag.
+    voodoo2: bool,
     /// The CPU the guest should feel like, with the same rule — it is
     /// the field that makes a DOS machine a DOS machine, so switching
     /// family to DOS must bring it along.
@@ -222,6 +226,7 @@ impl Default for Form {
             network_chosen: false,
             seamless_mouse: bundle::default_seamless_mouse(Family::Win98),
             seamless_mouse_chosen: false,
+            voodoo2: false,
             cpu_speed: bundle::default_cpu_speed(Family::Win98),
             cpu_speed_chosen: false,
             optimizations: Optimizations::default(),
@@ -267,6 +272,7 @@ impl Form {
             network_chosen: true,
             seamless_mouse: machine.seamless_mouse,
             seamless_mouse_chosen: true,
+            voodoo2: machine.voodoo2,
             cpu_speed: machine.effective_cpu_speed(),
             cpu_speed_chosen: true,
             optimizations: machine.optimizations.clone(),
@@ -588,6 +594,31 @@ impl Form {
     pub fn choose_seamless_mouse(&mut self, seamless_mouse: bool) {
         self.seamless_mouse = seamless_mouse;
         self.seamless_mouse_chosen = true;
+    }
+
+    pub fn voodoo2(&self) -> bool {
+        self.voodoo2
+    }
+
+    pub fn choose_voodoo2(&mut self, voodoo2: bool) {
+        self.voodoo2 = voodoo2;
+    }
+
+    /// One checkbox: is there a 3dfx Voodoo 2 in the machine (doc 21).
+    /// What the sentences have to carry is the one thing that is not
+    /// obvious from the name — that the card is a second display device
+    /// the guest needs 3dfx's own driver for, and that a Glide game
+    /// picks the chip or the pass-through by which `glide2x.dll` it
+    /// loads — and, off, that Glide is not gone with it.
+    pub fn voodoo2_notes(&self) -> &'static [&'static str] {
+        if self.voodoo2 {
+            &[
+                "A 3dfx Voodoo 2 on the PCI bus, beside the display adapter: the guest needs 3dfx's own Voodoo2 driver, and a Glide game then draws on the emulated chip — software rendering on the host's cores, at the chip's own 640×480 to 800×600.",
+                "The Glide pass-through stays: a game uses the chip or the wrapper by which glide2x.dll it loads (3dfx's in the system folder, the guest tools' next to the game).",
+            ]
+        } else {
+            &["No Voodoo 2. Glide games use the pass-through wrapper from the guest tools, which draws on the host GPU."]
+        }
     }
 
     /// One checkbox again, because there is one question: does the host
@@ -1091,6 +1122,7 @@ impl Form {
                 accel: Some(self.accel),
                 network: self.network,
                 seamless_mouse: self.seamless_mouse,
+                voodoo2: self.voodoo2,
                 disk,
                 disc: None,
                 discs: Vec::new(),
@@ -1126,6 +1158,7 @@ impl Form {
         } else {
             bundle::default_seamless_mouse(self.family)
         };
+        machine.voodoo2 = self.voodoo2;
         machine.cpu_speed =
             Some(if self.cpu_speed_chosen { self.cpu_speed } else { bundle::default_cpu_speed(self.family) });
         // Only what someone turned off is in here, so this is a clone

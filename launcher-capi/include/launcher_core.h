@@ -180,6 +180,13 @@ void lc_wizard_choose_seamless_mouse(LcWizard *w, bool seamless_mouse);
 /* Newline-separated. */
 char *lc_wizard_seamless_mouse_note(const LcWizard *w);
 
+/* A 3dfx Voodoo 2 beside the display adapter (`-device voodoo2`, doc 21):
+ * off unless picked, on every family; the guest needs 3dfx's own driver. */
+bool lc_wizard_voodoo2(const LcWizard *w);
+void lc_wizard_choose_voodoo2(LcWizard *w, bool voodoo2);
+/* Newline-separated. */
+char *lc_wizard_voodoo2_note(const LcWizard *w);
+
 size_t lc_wizard_boot(const LcWizard *w);
 void lc_wizard_set_boot(LcWizard *w, size_t boot);
 char *lc_wizard_boot_note(const LcWizard *w);

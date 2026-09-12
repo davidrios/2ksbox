@@ -1027,6 +1027,17 @@ pub struct Machine {
     /// under it by being read by a newer launcher.
     #[serde(default = "seamless_mouse_default")]
     pub seamless_mouse: bool,
+    /// A 3dfx Voodoo 2 on the PCI bus (`-device voodoo2`: 86Box's
+    /// emulation of the chip, doc 21, M14) beside whatever 2D adapter
+    /// the machine has — it borrows the monitor from that adapter's
+    /// console, as the card borrowed it through a cable. Beside the
+    /// Glide pass-through, not instead of it (ADR-016): a game draws on
+    /// whichever `glide2x.dll` it loads, 3dfx's or the guest tools'.
+    /// The guest needs 3dfx's own Voodoo2 driver. Off unless picked, on
+    /// every family: no bundle had the field before it existed and no
+    /// machine grows a card by being read by a newer launcher.
+    #[serde(default)]
+    pub voodoo2: bool,
     /// Primary IDE hard disk (qcow2).
     pub disk: PathBuf,
     /// The disc in the CD-ROM drive when the machine boots, if any. Just
@@ -1282,6 +1293,7 @@ impl Machine {
             accel: Some(default_accel(family)),
             network: default_network(family),
             seamless_mouse: default_seamless_mouse(family),
+            voodoo2: false,
             disk,
             disc: None,
             discs: Vec::new(),
@@ -1554,6 +1566,11 @@ impl Machine {
         // and not the USB one.
         if self.effective_pad() == Pad::Gameport {
             args.extend(["-device".into(), "gameport".into()]);
+        }
+        // The Voodoo 2 (doc 21): a PCI card of its own in the slot after
+        // the sound card's, on whichever 2D adapter the machine has.
+        if self.voodoo2 {
+            args.extend(["-device".into(), "voodoo2,addr=0x05".into()]);
         }
         // The CPU rate, when the machine asks for one. `align=on` is the
         // whole point and not a detail: `-icount shift=N` on its own only

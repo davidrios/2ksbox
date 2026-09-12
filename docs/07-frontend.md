@@ -183,6 +183,19 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   absent `network` field means on, as every bundle written before it ran;
   a new machine means off, and the two are separate answers for that
   reason (`network_enabled_default` and `default_network`).
+- **The Voodoo 2** is a checkbox after the pointer ("Emulated 3dfx
+  Voodoo 2", `voodoo2` in the bundle; doc 21, M14): a 3dfx Voodoo 2 on
+  the PCI bus beside whatever display adapter the machine has, as the
+  card sat beside a 2D card. On, the machine gets `-device
+  voodoo2,addr=0x05` and nothing else changes; the guest needs 3dfx's
+  own Voodoo2 driver, and a Glide game then draws on the emulated chip
+  (software rendering on the host's cores) or on the pass-through
+  wrapper by which `glide2x.dll` it loads. Off unless picked, on every
+  family — a card the guest has no driver for is a New Hardware wizard
+  on every boot — and an absent field means off, because no bundle had
+  it before it existed. The sentences under it are
+  `voodoo2_notes()`'s; the `voodoo2` check in `scripts/test.sh` walks
+  it from the checkbox to `query-pci` on our own QEMU.
 - **The pointer** is the next checkbox ("Seamless mouse",
   `seamless_mouse` in the bundle), and it follows the family the same
   way: on for Win98 and XP, **off for DOS**, whose mouse drivers read the
