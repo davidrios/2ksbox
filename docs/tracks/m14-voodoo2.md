@@ -103,10 +103,39 @@ it kept updating the surface the Voodoo had left on console 0 (the
 Voodoo's last frame). The invalidate now re-surfaces (`resurface` in
 `d3dpt/hw/d3dpt_vga.c`), and `VGA=d3dpt tools/voodoo-guest-test.py` (the
 `voodoo-guest-d3dpt` check) first puts the adapter in an 800×600×32
-linear mode, so the hand-back must land on that mode. Which program
-switched the card on there is the next question; the same log's last 5 s
-line (`2 frames, 583 triangles`, `status` read 1.7 M times) looks like
-the teardown hang below.
+linear mode, so the hand-back must land on that mode.
+
+**DxDiag on the card, 2026-09-13** (DirectX 9.0c's, on a raw copy of
+`test98` with the fix: `RAW=… NO_DRIVER=1 EXTRA='-device voodoo2,addr=0x05'
+GUEST_CMD='C:\WINDOWS\SYSTEM\DXDIAG.EXE' CLICKS='80:298,68 100:550,307'
+KEYS=… tools/win98-game-test.sh`, outputs in `build/w98game/ddtest` and
+`d3dtest`). The two programs the user had seen strand the screen were
+DxDiag and a title called Tirtanium. What the runs showed:
+
+- **3dfx's driver switches the card on and off at every boot**, before
+  any program runs: `display on` / `display off` about 4 s after the
+  desktop's mode is set, with a 5 s line of `2 frames, ~1100 triangles`
+  and `status` polled ~2 M times. That boot-time hand-back is what left
+  the unfixed build on the Voodoo's frame from the first second of the
+  desktop, which is why "everything" full-screen looked broken.
+- **DxDiag lists the card as display 2**, "Voodoo2 DirectX 7 Driver",
+  `3dfxV2.drv` 4.11.0001.1151, DDI 7, 12 MB, DirectDraw and Direct3D
+  acceleration on.
+- **Its DirectDraw test passes on the chip**: full screen at 640×480,
+  the Voodoo takes the monitor (`640x480 on: 300 frames … in 5.0 s`,
+  60 fps, the white bouncing box by screendump), gives it back, and DxDiag
+  reports "Todos os testes tiveram êxito". The desktop is back every time.
+- **Its Direct3D 7 test fails at step 46, `GetDC`, `0x88760249`
+  (DDERR_CANTCREATEDC)**: two short on/off pairs and 4 frames, then the
+  error. Open: whether a real Voodoo 2 with this driver fails the same
+  step (the card has no GDI, so a refused DC may be the driver's normal
+  answer) or something the device does not model. The Direct3D 8 test
+  runs on `d3dpt-vga` instead (DirectX 8 has no device for a DDI 7
+  driver) and the Direct3D 9 one is skipped for the same reason.
+- No hang in either test; the machine powers off on the ACPI button.
+
+Tirtanium was not on the image, the shelf or the host; it is still to
+run.
 
 Diagnostics that came out of the day, all in `voodoo2.c`: the 5 s line's
 three histograms (registers read, written, config dwords read — a
