@@ -312,7 +312,18 @@ Target: **≤ 1 host frame added** between guest frame completion and photons at
   Ctrl+Alt+G gives it back. The player follows the guest either way
   (`mouse_is_absolute`), so a machine can be switched without touching it.
 - Keyboard: full scancode set (Pause/PrtSc correctness); host shortcuts
-  suppressed while grabbed.
+  go to the guest **while the window has focus**, grabbed or not
+  (2026-09-13, `player/src/kbcapture.rs`) — a Windows machine is on the
+  tablet and never grabs, and its Start menu is the Windows key. winit has
+  no keyboard grab, so it is one piece per windowing system: Wayland's
+  `zwp_keyboard_shortcuts_inhibit_manager_v1` (one inhibitor for the
+  window's life; the compositor applies it only while the surface has
+  focus, and its own `--inhibited` bindings are the user's way out), an
+  active `XGrabKeyboard` on X11, a `WH_KEYBOARD_LL` hook on Windows that
+  takes the two Windows keys and injects them itself, nothing on macOS
+  (Cmd reaches the app already). `PLAYER_KEYBOARD_CAPTURE=0` turns it off.
+  Ctrl+Alt+Del is the host's everywhere, so **Ctrl+Alt+Shift+D** is the
+  guest's: Shift let go, Delete pressed, and Delete released with D.
 
 ### Sampling outside the picture
 

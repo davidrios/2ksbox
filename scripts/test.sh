@@ -293,6 +293,9 @@ BUDGET="${D3D_GOLDEN_BUDGET:-1200}"
 case "$OS" in Darwin) SO=dylib;; *) SO=so;; esac
 export D3DPT_EXEC_LIB="${D3DPT_EXEC_LIB:-$ROOT/build/d3dpt/libd3dpt_exec.$SO}"
 export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)}"
+# A player window the compositor focuses would otherwise take the desktop's
+# own shortcuts for the length of the run (player/src/kbcapture.rs).
+export PLAYER_KEYBOARD_CAPTURE="${PLAYER_KEYBOARD_CAPTURE:-0}"
 if [ "$OS" = Darwin ]; then
   # The cargo builds below link for the same macOS as everything else
   # (Homebrew's floor, scripts/macos-floor.sh), not for rustc's default.

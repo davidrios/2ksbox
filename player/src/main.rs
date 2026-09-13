@@ -10,6 +10,7 @@ mod companions;
 mod dmabuf;
 #[cfg(target_os = "macos")]
 mod iosurface;
+mod kbcapture;
 mod keymap;
 mod mode;
 // The host end of a gamepad (M13). Polled from `user_event`, on the UI
@@ -766,6 +767,13 @@ struct App {
     /// press to us and its release to the app that took over, and the guest
     /// would otherwise keep the Windows key down forever.
     keys_down: Vec<u32>,
+    /// The host's shortcuts to the guest while the window has focus
+    /// (`kbcapture`): the Windows key is the guest's.
+    kbd: Option<kbcapture::Capture>,
+    /// Ctrl+Alt+Shift+D is down and the guest holds Delete for it; the
+    /// modifiers it pressed because the guest had none are in `cad_extra`.
+    cad_held: bool,
+    cad_extra: Vec<u32>,
     /// The host gamepad, when this run has one to read (M13). `None` is
     /// the ordinary case: no controller plugged in, no script, or a host
     /// with no input access at all.
@@ -1132,6 +1140,9 @@ impl App {
         // agree it is no longer down, or the next poll sees no change and
         // never presses it again.
         self.release_pad_keys();
+        // Delete and any modifier the chord pressed are in `keys_down`
+        self.cad_held = false;
+        self.cad_extra.clear();
         let keys = std::mem::take(&mut self.keys_down);
         if keys.is_empty() {
             return;
@@ -1142,6 +1153,48 @@ impl App {
             }
             vm.input_flush();
         }
+    }
+
+    /// Ctrl+Alt+Shift+D: Ctrl+Alt+Del in the guest. The real chord is the
+    /// host's (on Windows no program can have it, on Linux the desktop
+    /// takes it), so the guest gets it from one nobody else uses. The hand
+    /// is holding Ctrl and Alt, so the guest has them already: this lets
+    /// Shift go and presses Delete, and D's release lets Delete go — a press
+    /// as long as the hand's, never a zero-length one.
+    fn ctrl_alt_del(&mut self, down: bool) {
+        let Some(vm) = self.vm() else { return };
+        let q = qemu_embed::atset1_to_qcode;
+        let del = q(0xE053);
+        if down {
+            if self.cad_held {
+                return; // key repeat
+            }
+            for shift in [q(0x2A), q(0x36)] {
+                if self.keys_down.contains(&shift) {
+                    vm.key(shift, false);
+                    self.keys_down.retain(|&k| k != shift);
+                }
+            }
+            // a modifier pressed before the window had focus never reached
+            // the guest: press one for it
+            for pair in [[q(0x1D), q(0xE01D)], [q(0x38), q(0xE038)]] {
+                if !pair.iter().any(|k| self.keys_down.contains(k)) {
+                    vm.key(pair[0], true);
+                    self.keys_down.push(pair[0]);
+                    self.cad_extra.push(pair[0]);
+                }
+            }
+            vm.key(del, true);
+            self.keys_down.push(del);
+        } else {
+            let extra = std::mem::take(&mut self.cad_extra);
+            for k in std::iter::once(del).chain(extra.into_iter().rev()) {
+                vm.key(k, false);
+                self.keys_down.retain(|&d| d != k);
+            }
+        }
+        self.cad_held = down;
+        vm.input_flush();
     }
 
     /// The pad's current controls as key presses in the guest. Does
@@ -1450,11 +1503,20 @@ impl ApplicationHandler for App {
                 qmp_exec_done: false,
             }
         });
+        let vm = self.vm();
+        if let (Some(vm), Some(gpu)) = (vm, self.gpu.as_ref()) {
+            self.kbd = kbcapture::Capture::new(&gpu.window, vm);
+            if let Some(k) = self.kbd.as_mut() {
+                k.set_focused(gpu.window.has_focus());
+            }
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
+                // before the VM handle goes: the Windows hook holds a copy
+                self.kbd = None;
                 if let Some(vm) = self.vm() {
                     vm.vm_shutdown();
                 }
@@ -1490,6 +1552,17 @@ impl ApplicationHandler for App {
                     if let Some(gpu) = self.gpu.as_ref() {
                         gpu.screenshot();
                     }
+                    return;
+                }
+                // Ctrl+Alt+Shift+D: Ctrl+Alt+Del in the guest, released with D
+                if code == KeyCode::KeyD
+                    && (self.cad_held
+                        || (down
+                            && self.modifiers.control_key()
+                            && self.modifiers.alt_key()
+                            && self.modifiers.shift_key()))
+                {
+                    self.ctrl_alt_del(down);
                     return;
                 }
                 if let (Some(vm), Some(sc)) = (self.vm(), keymap::atset1(code)) {
@@ -1568,9 +1641,14 @@ impl ApplicationHandler for App {
                     vm.input_flush();
                 }
             }
-            WindowEvent::Focused(false) => {
-                self.set_grab(false);
-                self.lift_all_keys();
+            WindowEvent::Focused(focused) => {
+                if let Some(k) = self.kbd.as_mut() {
+                    k.set_focused(focused);
+                }
+                if !focused {
+                    self.set_grab(false);
+                    self.lift_all_keys();
+                }
             }
             WindowEvent::RedrawRequested => {
                 let sprite = !self.host_cursor_possible();

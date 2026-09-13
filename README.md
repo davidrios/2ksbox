@@ -112,6 +112,12 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 # Ctrl+Alt+S writes the guest's own frame — its native size, no geometry stage and
 #   no CRT chain — as PLAYER_SHOT_DIR/2ksbox-NNNN.png (the next free number; the
 #   working directory when PLAYER_SHOT_DIR is unset). Ctrl+Alt+G releases the grab.
+# Ctrl+Alt+Shift+D is Ctrl+Alt+Del in the guest (the real one stays the host's).
+# While the window has focus the host's own shortcuts go to the guest — the Windows
+#   key opens the guest's Start menu (Wayland's shortcut inhibitor, an X11 keyboard
+#   grab, a low-level hook on Windows; nothing on macOS). PLAYER_KEYBOARD_CAPTURE=0
+#   leaves them the host's; scripts/test.sh sets it, so a test window sway focuses
+#   does not take the desktop's keys away.
 # PLAYER_SHOT_EVERY=300 takes that same shot on its own every 300 presented guest frames
 #   (a scripted run's window is behind a terminal and gets no redraws, so it is driven
 #   from the wake path): the only way a headless run sees a 3D frame, since a QMP
