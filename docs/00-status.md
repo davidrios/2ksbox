@@ -1559,6 +1559,20 @@ items nobody owns yet:
   while any of their `PathField`s — or their `FolderDialog` — is open. A
   new dialog in one of those windows has to join that `enabled:` line.
 
+- **Never replace a Quick Controls control's `background` (or
+  `contentItem`) in `launcher-qt`** (fixed 2026-09-13). `appearance.cpp`
+  keeps whatever style the platform names, and on macOS and Windows that is
+  the *native* style, which refuses the customization and prints "The
+  current style does not support customization of this control" for every
+  instance on every start. The four list boxes (machines, snapshots, disc
+  shelf, shader profiles) were `Frame`s with a `Rectangle` background and
+  are now the `Rectangle` itself, content inset a pixel. A control drawn
+  by hand from `AbstractButton` (`Disclosure.qml`) is fine: it has no
+  native look to refuse with. Fonts the same way: name a family the
+  platform has (`WizardWindow.qml`'s TOML box picks Menlo / Consolas /
+  `monospace`), because a missing one costs a font-alias scan and a
+  `qt.qpa.fonts` warning.
+
 - **A curved preset that smears its edge pixels outwards is a device
   feature we forgot to ask for, not the preset.** A slang preset's
   default wrap mode is `clamp_to_border` with a transparent-black border

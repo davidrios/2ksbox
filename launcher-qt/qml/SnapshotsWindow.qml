@@ -69,18 +69,16 @@ Window {
                 text: qsTr("Live: this machine is running, so a snapshot also stores its RAM and CPU state.")
             }
 
-            Frame {
+            // See `Main.qml`: a list's box, not a restyled `Frame`.
+            Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                padding: 0
-                // See `Main.qml`: the style's Frame paints a border only.
-                background: Rectangle {
-                    color: palette.base
-                    border.color: palette.mid
-                }
+                color: palette.base
+                border.color: palette.mid
 
                 ColumnLayout {
                     anchors.fill: parent
+                    anchors.margins: 1
                     spacing: 0
 
                     Rectangle {

@@ -118,19 +118,17 @@ Window {
 
             MenuSeparator { Layout.fillWidth: true }
 
-            Frame {
+            // See `Main.qml`: a list's box, not a restyled `Frame`.
+            Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                padding: 0
-                // See `Main.qml`: the style's Frame paints a border only.
-                background: Rectangle {
-                    color: palette.base
-                    border.color: palette.mid
-                }
+                color: palette.base
+                border.color: palette.mid
 
                 ListView {
                     id: shelf
                     anchors.fill: parent
+                    anchors.margins: 1
                     clip: true
                     model: root.discs
                     ScrollBar.vertical: ScrollBar {}

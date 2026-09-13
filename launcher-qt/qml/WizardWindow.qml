@@ -744,7 +744,13 @@ Window {
                     visible: root.wizard.advanced
                     TextArea {
                         text: root.wizard.advancedToml
-                        font.family: "monospace"
+                        // A family each platform really has: "monospace"
+                        // is a fontconfig alias, and asking macOS or
+                        // Windows for it costs a font-alias scan and a
+                        // warning on every start.
+                        font.family: Qt.platform.os === "osx" || Qt.platform.os === "macos" ? "Menlo"
+                            : Qt.platform.os === "windows" ? "Consolas"
+                            : "monospace"
                         selectByMouse: true
                         onTextChanged: root.wizard.advancedToml = text
                     }

@@ -147,20 +147,21 @@ ApplicationWindow {
             readonly property int shader: 170
         }
 
-        Frame {
+        // A list's box, drawn by hand rather than a `Frame` with its
+        // `background` replaced: the native styles (macOS, Windows) refuse
+        // that customization and say so on every start, and Basic's Frame
+        // paints only a border, which let the area below the last row show
+        // whatever was behind the window — black in a grab. The content is
+        // inset a pixel so the border stays visible.
+        Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            padding: 0
-            // The Basic style's Frame paints only a border, so the area
-            // below the last row would otherwise show whatever is behind
-            // the window — black in a grab, the window colour on screen.
-            background: Rectangle {
-                color: palette.base
-                border.color: palette.mid
-            }
+            color: palette.base
+            border.color: palette.mid
 
             ColumnLayout {
                 anchors.fill: parent
+                anchors.margins: 1
                 spacing: 0
 
                 // Header row

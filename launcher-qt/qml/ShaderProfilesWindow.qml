@@ -62,19 +62,17 @@ Window {
             anchors.margins: 14
             spacing: 8
 
-            Frame {
+            // See `Main.qml`: a list's box, not a restyled `Frame`.
+            Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                padding: 0
-                // See `Main.qml`: the style's Frame paints a border only.
-                background: Rectangle {
-                    color: palette.base
-                    border.color: palette.mid
-                }
+                color: palette.base
+                border.color: palette.mid
 
                 ListView {
                     id: profileList
                     anchors.fill: parent
+                    anchors.margins: 1
                     clip: true
                     model: root.profiles
                     ScrollBar.vertical: ScrollBar {}
