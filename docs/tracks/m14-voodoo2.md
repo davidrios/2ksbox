@@ -92,6 +92,22 @@ while the FIFO is off (offset ≥ `0x100`, to keep the alternate-mapped
 hardware FIFO disabled while it keeps streaming and match the chip.
 86Box upstream would abort at the same `intrCtrl` write.
 
+**The monitor handed back to a desktop on our driver — fixed the same
+evening.** On the user's `test98` (d3dpt-vga + the card, 3dfx's driver,
+still on the desktop) every full-screen switch left a silver, glitched
+screen that never came back. The log said why: `voodoo2: display on` then
+`display off (VGA back)`, and no `[display] switch 800x600` from the
+player after it — `d3dpt-vga`'s invalidate only asked for a full repaint,
+and its linear path re-installs its own surface only on a mode change, so
+it kept updating the surface the Voodoo had left on console 0 (the
+Voodoo's last frame). The invalidate now re-surfaces (`resurface` in
+`d3dpt/hw/d3dpt_vga.c`), and `VGA=d3dpt tools/voodoo-guest-test.py` (the
+`voodoo-guest-d3dpt` check) first puts the adapter in an 800×600×32
+linear mode, so the hand-back must land on that mode. Which program
+switched the card on there is the next question; the same log's last 5 s
+line (`2 frames, 583 triangles`, `status` read 1.7 M times) looks like
+the teardown hang below.
+
 Diagnostics that came out of the day, all in `voodoo2.c`: the 5 s line's
 three histograms (registers read, written, config dwords read — a
 spinning guest names its register), `VOODOO2_TRACE=1` (every register-
@@ -159,6 +175,7 @@ and FIFO-window access, status polls collapsed), and the refusal dump.
 scripts/build.sh                      # or, after a voodoo/ edit:
 scripts/prepare-qemu.sh && ninja -C build/qemu qemu-system-i386 libqemu-embed-i386.so
 python3 tools/voodoo-guest-test.py    # ~10 s; outputs in build/voodoo-guest/
+VGA=d3dpt python3 tools/voodoo-guest-test.py   # beside our adapter in a linear mode
 scripts/test.sh all                   # voodoo-guest is in the guest stage
 ```
 
