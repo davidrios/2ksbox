@@ -346,12 +346,13 @@ static BOOL BuildHalInfo(void)
             WORD w = s_res[i].w;
             WORD h = s_res[i].h;
             WORD bpp = s_bpp[j];
-            DWORD need = MulW(w, (WORD)(h * ((bpp + 7) / 8)));
+            DWORD pitch = D3DPT9X_PITCH(w, bpp);
+            DWORD need = MulW((WORD)pitch, h);
             if (need <= pHal->vram_size && n < D3DPT_HAL9_MAX_MODES) {
                 DDHALMODEINFO_t __far *m = &mi[n];
                 m->dwWidth = w;
                 m->dwHeight = h;
-                m->lPitch = MulW(w, (bpp + 7) / 8);
+                m->lPitch = pitch;
                 m->dwBPP = bpp;
                 m->wFlags = (bpp == 8) ? DDMODEINFO_PALETTIZED : 0;
                 m->wRefreshRate = 0;
@@ -418,7 +419,7 @@ static BOOL BuildHalInfo(void)
     hi->vmiData.dwDisplayHeight = wScrY;
     hi->vmiData.lDisplayPitch = dwPitch;
     BuildPixelFormat(&hi->vmiData.ddpfDisplay);
-    hi->vmiData.dwOffscreenAlign = 64;
+    hi->vmiData.dwOffscreenAlign = D3DPT9X_PITCH_ALIGN;  /* = every mode's pitch rounding */
     hi->vmiData.dwZBufferAlign = 64;
     hi->vmiData.dwOverlayAlign = 64;
     hi->vmiData.dwAlphaAlign = 64;

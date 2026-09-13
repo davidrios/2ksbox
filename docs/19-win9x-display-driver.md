@@ -2456,3 +2456,58 @@ or skipped draw in any run's log, and `scripts/test.sh all` 45 passed
 `MGDTEST` passes its three cases on both cores (above); no probe has a
 90 000-vertex draw, so the long-draw cut is proved not to break the
 streams that exist, not yet to fix one that needed it.
+
+### 33. Diablo II's sheared menu: a flip chain at a pitch the screen was not scanned at (2026-09-13)
+
+The user's report was "the Diablo II demo only shows garbled graphics"
+(the shareware v1.04, on the launcher's `base98-br`: `d3dpt-vga` with the
+Voodoo 2 beside it; the same demo ran on 86Box). The game's own log
+(`D2YYMMDD.TXT` in its folder) said the runs had been **DirectDraw** on
+our adapter, not Glide — "Initializing for DirectDraw on Fallback
+DirectDraw Device", a triple-buffered window at 800x600 — and the
+Voodoo's 5 s line said `off: 0 frames`. Headless
+(`tools/win98-game-test.sh`, a raw copy, `EXTRA='-device voodoo2,addr=0x05'`)
+every screendump was the menu's colours smeared into horizontal streaks.
+
+**The cause.** The mode was 800x600x8, scanned out at pitch 800
+(`linear mode on (800x600x8 pitch 800`), and every `Lock` the game made
+on its back buffer said **pitch 0x340 = 832**. DirectDraw sizes a flip
+chain's back buffers out of the HAL's heap with the pitch rounded up to
+the alignment the HAL advertises — every `vmiData.*Align` here was 64 —
+while the primary's pitch is the mode's own; the HAL's `Flip` then put a
+832-pitch buffer on a screen scanned at 800, and each line of the frame
+landed 32 bytes further along than the one before. 800 is the one 8 bpp
+width in the mode table that 64 does not divide (400x300 at 8 and 16 bpp
+are the others at any depth); 640, 1024 and 1280 hid it. NT never had it:
+its miniport's `bpp_pitch` rounds every mode to 32 bytes and `DdGetDriverInfo`
+advertises the same 32.
+
+**The fix: one pitch rule for a mode.** `D3DPT9X_PITCH(w, bpp)` in
+`w9x/d3dpt9x.h` is the mode's bytes per line rounded up to
+`D3DPT9X_PITCH_ALIGN` (64), and it is used by everything that has a pitch:
+GDI's `dwPitch` in `PhysicalEnable` (and so the PDEVICE's `deWidthBytes`,
+the VDD's registration and the primary's `lDisplayPitch`), the HAL mode
+table `SetMode32` programs the adapter from, both "does it fit in VRAM"
+checks, and `dwOffscreenAlign` itself, so the rounding DirectDraw applies
+and the rounding the screen has are one number. The adapter already took
+any pitch of at least width x bytes that is a multiple of 4. 800x600x8 is
+scanned at 832 now; 400x300x8 and x16 at 448 and 832.
+
+**Measured**, the same raw copy of `base98-br` before and after: the
+unfixed driver shows the streaks from 10 s to the end of a 90 s run; with
+the fix the adapter reports `linear mode on (800x600x8 pitch 832`, the
+back buffer's locks still say 832, and the menu draws (the fire moves
+from one screendump to the next; 125 page flips per 5 s both times). The
+same demo with `-3dfx` — Glide on the Voodoo 2 and 3dfx's own
+`glide3x.dll` — draws the menu correctly too (`voodoo2: 800x600 on: 125
+frames, ~32 000 triangles` per 5 s), so the Glide path never had the
+bug.
+
+**The guard** is `ddprobe`'s new `pitch check:` line, which compares the
+flipping primary's pitch with its back buffer's. `DDPROBE 800 600 8`
+(`STAGE=` + `GUEST_CMD=` + `PULL=DDPROBE.LOG` through
+`tools/win98-game-test.sh`) on a fresh copy of `base98-br` with the
+image's own, unfixed driver (`NO_DRIVER=1`): `primary 800, back buffer
+832 -> DIFFERENT`; the same copy with this build staged: `primary 832,
+back buffer 832 -> same`, five flips, and `GetDisplayMode` reporting pitch
+832.
