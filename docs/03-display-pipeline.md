@@ -334,7 +334,14 @@ Target: **≤ 1 host frame added** between guest frame completion and photons at
   **Ctrl+Alt+Shift+F** is windowed full screen (borderless, on the
   window's own monitor) and back — on a host whose own full-screen
   binding the capture now hands to the guest, the player's is the one
-  left.
+  left. **A close with Alt held asks first** (Alt+F4 reaches the player
+  whenever the host has its shortcuts, and the window close stops the
+  machine outright): the player draws the question itself
+  (`player/src/prompt.rs`, the VGA 8x16 font, blended over the finished
+  picture after the CRT chain), since Linux has no message box to borrow
+  that works in the Flatpak and over a full-screen window. Enter, Close
+  or a second Alt+F4 closes, Esc or Back returns, and no key or click
+  reaches the guest while it is up. The title bar's button does not ask.
   A key goes to the guest by **where it sits** (winit's physical key) —
   the guest has a layout of its own — except the ones a host keymap
   option moves (xkb's `ctrl:swapcaps`, `ctrl:nocaps`, `caps:escape`,

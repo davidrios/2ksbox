@@ -11,6 +11,7 @@ mod dmabuf;
 #[cfg(target_os = "macos")]
 mod iosurface;
 mod kbcapture;
+mod prompt;
 mod keymap;
 mod mode;
 // The host end of a gamepad (M13). Polled from `user_event`, on the UI
@@ -41,6 +42,10 @@ struct Gpu {
     bgl: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     pipeline: wgpu::RenderPipeline,
+    /// `pipeline` with alpha blending, for the close prompt over the picture
+    overlay_pipeline: wgpu::RenderPipeline,
+    /// the close prompt's image (`prompt.rs`) while one is up
+    overlay: Option<(wgpu::Texture, wgpu::BindGroup, u32, u32)>,
     fb_tex: Option<(wgpu::Texture, wgpu::BindGroup, u32, u32)>,
     /// zero-copy 3D frames: imported dma-buf ring slots and the one on show
     ext: Vec<Option<(wgpu::Texture, wgpu::BindGroup, u32, u32)>>,
@@ -169,31 +174,37 @@ impl Gpu {
             bind_group_layouts: &[Some(&bgl)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("blit"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: Default::default(),
-            },
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        // one shader, two pipelines: the picture, and the close prompt
+        // blended over it (`prompt.rs`)
+        let make_pipeline = |label: &str, blend: Option<wgpu::BlendState>| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let pipeline = make_pipeline("blit", None);
+        let overlay_pipeline = make_pipeline("overlay", Some(wgpu::BlendState::ALPHA_BLENDING));
 
         let adapter_info = adapter.get_info();
         Self {
@@ -205,6 +216,8 @@ impl Gpu {
             bgl,
             sampler,
             pipeline,
+            overlay_pipeline,
+            overlay: None,
             fb_tex: None,
             ext: Vec::new(),
             ext_current: None,
@@ -434,6 +447,69 @@ impl Gpu {
                 depth_or_array_layers: 1,
             },
         );
+    }
+
+    /// Put a BGRA image over the finished picture, centred; `None` takes it
+    /// off. The close prompt's (`prompt.rs`).
+    fn set_overlay(&mut self, img: Option<(&[u8], u32, u32)>) {
+        let Some((px, w, h)) = img else {
+            self.overlay = None;
+            return;
+        };
+        if !matches!(&self.overlay, Some((_, _, ow, oh)) if *ow == w && *oh == h) {
+            // the guest framebuffer's rule, for the same reason
+            let format = if self.config.format.is_srgb() {
+                wgpu::TextureFormat::Bgra8UnormSrgb
+            } else {
+                wgpu::TextureFormat::Bgra8Unorm
+            };
+            let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("overlay"),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let bg = self.make_bind_group(&tex);
+            self.overlay = Some((tex, bg, w, h));
+        }
+        let (tex, _, _, _) = self.overlay.as_ref().unwrap();
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            px,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 4),
+                rows_per_image: Some(h),
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    /// Where the overlay goes, in physical pixels: centred, and never past
+    /// the surface (a viewport outside the target is a validation error).
+    fn overlay_rect(&self) -> Option<(f32, f32, f32, f32)> {
+        let (_, _, w, h) = self.overlay.as_ref()?;
+        let (w, h) = ((*w).min(self.config.width), (*h).min(self.config.height));
+        let x = (self.config.width - w) / 2;
+        let y = (self.config.height - h) / 2;
+        Some((x as f32, y as f32, w as f32, h as f32))
     }
 
     /// Largest rect of the mode's own display aspect that fits the surface,
@@ -726,6 +802,12 @@ impl Gpu {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, bg, &[]);
             pass.draw(0..3, 0..1);
+            if let (Some((_, obg, _, _)), Some((ox, oy, ow, oh))) = (&self.overlay, self.overlay_rect()) {
+                pass.set_viewport(ox, oy, ow, oh, 0.0, 1.0);
+                pass.set_pipeline(&self.overlay_pipeline);
+                pass.set_bind_group(0, obg, &[]);
+                pass.draw(0..3, 0..1);
+            }
         }
         self.queue.submit(Some(encoder.finish()));
         self.window.pre_present_notify();
@@ -776,6 +858,9 @@ struct App {
     /// Ctrl+Alt+K turned that off (or `PLAYER_KEYBOARD_CAPTURE=0` started
     /// the run with it off): the host keeps its shortcuts.
     kbd_off: bool,
+    /// The close prompt (`prompt.rs`) while a keyboard close waits for an
+    /// answer; nothing reaches the guest meanwhile.
+    confirm_close: Option<prompt::Prompt>,
     /// Ctrl+Alt+Shift+D is down and the guest holds Delete for it; the
     /// modifiers it pressed because the guest had none are in `cad_extra`.
     cad_held: bool,
@@ -1275,6 +1360,53 @@ impl App {
         vm.input_flush();
     }
 
+    /// Alt+F4 and the like: ask before pulling the plug. Nothing reaches
+    /// the guest while the question is up -- the grab let go, the keys the
+    /// guest holds (the Alt of Alt+F4) lifted -- and the pointer is the
+    /// host's, to click with.
+    fn ask_to_close(&mut self) {
+        self.set_grab(false);
+        self.lift_all_keys();
+        self.confirm_close = Some(prompt::Prompt::new());
+        self.show_prompt();
+        self.apply_cursor();
+    }
+
+    /// (Re)draw the prompt, at the size the window has now.
+    fn show_prompt(&mut self) {
+        let (Some(p), Some(gpu)) = (self.confirm_close.as_mut(), self.gpu.as_mut()) else { return };
+        p.fit((gpu.config.width, gpu.config.height), gpu.window.scale_factor());
+        let (w, h) = p.size();
+        gpu.set_overlay(Some((&p.render(), w, h)));
+        gpu.window.request_redraw();
+    }
+
+    fn dismiss_prompt(&mut self) {
+        self.confirm_close = None;
+        if let Some(gpu) = self.gpu.as_mut() {
+            gpu.set_overlay(None);
+            gpu.window.request_redraw();
+        }
+        self.apply_cursor();
+    }
+
+    /// The prompt's button under a window position.
+    fn prompt_button(&self, px: f64, py: f64) -> Option<prompt::Button> {
+        let (p, gpu) = (self.confirm_close.as_ref()?, self.gpu.as_ref()?);
+        let (x, y, _, _) = gpu.overlay_rect()?;
+        p.hit(px - x as f64, py - y as f64)
+    }
+
+    fn close_player(&mut self, event_loop: &ActiveEventLoop) {
+        // before the VM handle goes: the Windows hook holds a copy
+        self.kbd = None;
+        if let Some(vm) = self.vm() {
+            vm.vm_shutdown();
+        }
+        self.closing = true;
+        event_loop.exit();
+    }
+
     fn capture_keyboard(&mut self) {
         if let (Some(vm), Some(gpu)) = (self.vm(), self.gpu.as_ref()) {
             self.kbd = kbcapture::Capture::new(&gpu.window, vm);
@@ -1385,7 +1517,7 @@ impl App {
             Some(Source::Qemu { display, .. }) => display.cursor_visible(),
             _ => None,
         };
-        let want = if !self.pointer_inside {
+        let want = if !self.pointer_inside || self.confirm_close.is_some() {
             HostCursor::Default
         } else if let (true, Some(_), Some(true)) = (self.host_cursor_possible(), &self.guest_cursor, visible) {
             HostCursor::Guest(self.guest_cursor_seq)
@@ -1564,18 +1696,24 @@ impl ApplicationHandler for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
-                // before the VM handle goes: the Windows hook holds a copy
-                self.kbd = None;
-                if let Some(vm) = self.vm() {
-                    vm.vm_shutdown();
+                // A close with Alt held came from the keyboard (Alt+F4, a
+                // window manager's Alt binding) and may be a hand that meant
+                // the guest: ask, and take a second one while asking as the
+                // answer. The title bar's button is never an accident. A
+                // guest that has drawn nothing yet has nothing to lose.
+                let asked = self.confirm_close.is_some();
+                let drawn = self.gpu.as_ref().is_some_and(|g| g.current().is_some());
+                if self.modifiers.alt_key() && !asked && drawn && self.vm().is_some() {
+                    self.ask_to_close();
+                    return;
                 }
-                self.closing = true;
-                event_loop.exit();
+                self.close_player(event_loop);
             }
             WindowEvent::Resized(size) => {
                 if let Some(gpu) = self.gpu.as_mut() {
                     gpu.resize(size.width, size.height);
                 }
+                self.show_prompt();
             }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::KeyboardInput { event, .. } => {
@@ -1583,6 +1721,18 @@ impl ApplicationHandler for App {
                     return;
                 };
                 let down = event.state == ElementState::Pressed;
+                // the close prompt takes every key: Enter closes, Esc goes
+                // back (as the host keymap reads them: caps:escape's Esc)
+                if self.confirm_close.is_some() {
+                    if down && !event.repeat {
+                        match keymap::as_host_reads(&event.logical_key, event.location).unwrap_or(code) {
+                            KeyCode::Enter | KeyCode::NumpadEnter => self.close_player(event_loop),
+                            KeyCode::Escape => self.dismiss_prompt(),
+                            _ => {}
+                        }
+                    }
+                    return;
+                }
                 // Ctrl+Alt+G: release the mouse grab (host-side hotkey)
                 if down
                     && code == KeyCode::KeyG
@@ -1670,6 +1820,16 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
+                if self.confirm_close.is_some() {
+                    let hover = self.prompt_button(position.x, position.y);
+                    if let Some(p) = self.confirm_close.as_mut() {
+                        if p.hover != hover {
+                            p.hover = hover;
+                            self.show_prompt();
+                        }
+                    }
+                    return;
+                }
                 if let Some(vm) = self.vm() {
                     if vm.mouse_is_absolute() {
                         if self.grabbed {
@@ -1696,6 +1856,16 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let down = state == ElementState::Pressed;
+                if let Some(hover) = self.confirm_close.as_ref().map(|p| p.hover) {
+                    if down && button == MouseButton::Left {
+                        match hover {
+                            Some(prompt::Button::Close) => self.close_player(event_loop),
+                            Some(prompt::Button::Back) => self.dismiss_prompt(),
+                            None => {}
+                        }
+                    }
+                    return;
+                }
                 if let Some(vm) = self.vm() {
                     if down && !self.grabbed && !vm.mouse_is_absolute() {
                         self.set_grab(true);
@@ -1713,6 +1883,9 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                if self.confirm_close.is_some() {
+                    return;
+                }
                 if let Some(vm) = self.vm() {
                     let y = match delta {
                         MouseScrollDelta::LineDelta(_, y) => y,
