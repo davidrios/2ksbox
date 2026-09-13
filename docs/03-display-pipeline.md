@@ -324,6 +324,15 @@ Target: **≤ 1 host frame added** between guest frame completion and photons at
   (Cmd reaches the app already). `PLAYER_KEYBOARD_CAPTURE=0` turns it off.
   Ctrl+Alt+Del is the host's everywhere, so **Ctrl+Alt+Shift+D** is the
   guest's: Shift let go, Delete pressed, and Delete released with D.
+  A key goes to the guest by **where it sits** (winit's physical key) —
+  the guest has a layout of its own — except the ones a host keymap
+  option moves (xkb's `ctrl:swapcaps`, `ctrl:nocaps`, `caps:escape`,
+  `altwin:swap_alt_win`): Control, Shift, Alt, AltGr, Super, Caps Lock
+  and Escape go as what the host reads them as (the logical key), so a
+  Caps Lock the host made Control is Control in the guest, and the real
+  Control no longer toggles the host's Caps Lock to reach it
+  (2026-09-13, `keymap::as_host_reads`). The press's answer is kept for
+  the release.
 
 ### Sampling outside the picture
 

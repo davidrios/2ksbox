@@ -767,6 +767,9 @@ struct App {
     /// press to us and its release to the app that took over, and the guest
     /// would otherwise keep the Windows key down forever.
     keys_down: Vec<u32>,
+    /// Keys held whose host keymap moved them (`keymap::as_host_reads`):
+    /// the physical key and the one the guest was sent for it.
+    moved: Vec<(KeyCode, KeyCode)>,
     /// The host's shortcuts to the guest while the window has focus
     /// (`kbcapture`): the Windows key is the guest's.
     kbd: Option<kbcapture::Capture>,
@@ -1143,6 +1146,7 @@ impl App {
         // Delete and any modifier the chord pressed are in `keys_down`
         self.cad_held = false;
         self.cad_extra.clear();
+        self.moved.clear();
         let keys = std::mem::take(&mut self.keys_down);
         if keys.is_empty() {
             return;
@@ -1574,7 +1578,21 @@ impl ApplicationHandler for App {
                     self.ctrl_alt_del(down);
                     return;
                 }
-                if let (Some(vm), Some(sc)) = (self.vm(), keymap::atset1(code)) {
+                // A key the host keymap moved goes as what the host reads
+                // it as; the press's answer is kept for the release, which
+                // has to let go of the same key in the guest.
+                let key = match self.moved.iter().position(|m| m.0 == code) {
+                    Some(i) if !down => self.moved.swap_remove(i).1,
+                    Some(i) => self.moved[i].1, // key repeat
+                    None => {
+                        let k = keymap::as_host_reads(&event.logical_key, event.location).unwrap_or(code);
+                        if down && k != code {
+                            self.moved.push((code, k));
+                        }
+                        k
+                    }
+                };
+                if let (Some(vm), Some(sc)) = (self.vm(), keymap::atset1(key)) {
                     let qcode = qemu_embed::atset1_to_qcode(sc);
                     if qcode != 0 {
                         vm.key(qcode, down);
