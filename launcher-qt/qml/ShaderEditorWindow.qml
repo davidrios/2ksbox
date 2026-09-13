@@ -45,10 +45,15 @@ Window {
     // model's own `open` flag is put back. Not while a file dialog is up:
     // that Esc is the dialog's (`PathField.browsing`).
     Shortcut {
+        id: escShortcut
         sequences: [StandardKey.Cancel]
         enabled: !presetField.browsing && !previewField.browsing
         onActivated: root.close()
     }
+
+    /// Whether Esc would close this window right now — for the `escfocus`
+    /// probe in `Main.qml`, beside the window's own `active`.
+    readonly property bool escArmed: escShortcut.enabled
 
     /// What the preset field is *showing* — not what the model holds.
     /// The two can disagree (a field that has lost its binding keeps the

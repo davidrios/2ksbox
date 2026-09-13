@@ -59,6 +59,9 @@ fn main() {
     // (`src/close_event.cpp`): a close *event*, which nothing in
     // cxx-qt-lib can send.
     .cpp_file("src/close_event.cpp")
+    // ...and its question "which window has the keyboard"
+    // (`src/focus_window.cpp`), which QML's `Window.active` cannot answer.
+    .cpp_file("src/focus_window.cpp")
     // Which Quick Controls style, and which colour scheme
     // (`src/appearance.cpp`) — it calls `QQuickStyle`, so the module has
     // to be linked as well as the ones the QML imports pull in.

@@ -1559,6 +1559,25 @@ items nobody owns yet:
   while any of their `PathField`s — or their `FolderDialog` — is open. A
   new dialog in one of those windows has to join that `enabled:` line.
 
+- **Esc did nothing in the shader editor opened by New profile…**
+  (user-reported, fixed 2026-09-13). Not focus: the editor had the
+  keyboard and its Esc was armed. Quick Controls installs its own
+  shortcut matcher, and it matches a `Qt.WindowShortcut` when the
+  shortcut's window `isActive()` — which a *transient* window reports
+  whenever its parent is, and every secondary window here is transient
+  for the launcher window. So with the editor open over the profile list,
+  both windows' Esc shortcuts matched; Qt calls two matches for one key
+  ambiguous and fires neither (`activatedAmbiguously`). Every other window
+  opens from the grid, which has no Esc of its own, so it was the only one
+  broken. The list's Esc now stands down while the editor is open, which
+  also stops an Esc meant for an editor file dialog (the editor's own Esc
+  disarmed) from closing the list behind it. **The rule: at most one
+  visible window may have an armed Esc** — a window opened over another
+  must disarm the one under it. The `escfocus` probe counts the matches
+  the way the matcher does and the `qt-esc` check wants exactly one;
+  `src/focus_window.cpp` is how the probe names the focus window, which
+  QML's `Window.active` cannot.
+
 - **Never replace a Quick Controls control's `background` (or
   `contentItem`) in `launcher-qt`** (fixed 2026-09-13). `appearance.cpp`
   keeps whatever style the platform names, and on macOS and Windows that is

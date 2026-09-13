@@ -40,10 +40,25 @@ Window {
     // It goes through `close()` rather than hiding the window, because
     // that is what runs `onVisibleChanged` above — the one place a
     // model's own `open` flag is put back.
+    //
+    // Not while the editor is open over this window. Quick Controls
+    // matches a window's shortcut when the window `isActive()`, which a
+    // transient window reports whenever its parent is — so with both open,
+    // this Esc and the editor's matched the same key, Qt called it
+    // ambiguous and fired neither: Esc did nothing in the editor
+    // (user-reported, 2026-09-13). Standing down also keeps an Esc meant
+    // for one of the editor's file dialogs, which disarms the editor's own
+    // Esc, from closing this window behind it.
     Shortcut {
+        id: escShortcut
         sequences: [StandardKey.Cancel]
+        enabled: !root.editor.open
         onActivated: root.close()
     }
+
+    /// Whether Esc would close this window right now — for the `escfocus`
+    /// probe in `Main.qml`.
+    readonly property bool escArmed: escShortcut.enabled
 
 
     // The grab target for the headless screenshot path: a QML-declared

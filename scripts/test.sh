@@ -46,6 +46,11 @@
 #                  window's own hide, which on macOS left the main window locked
 #                  behind a dialog that was gone (only if a launcher-qt has
 #                  been built)
+#   qt-esc         Esc reaches the shader editor that New profile… opens over the
+#                  profile list: the editor must have the keyboard and be the
+#                  only window whose Esc matches — Quick Controls matches every
+#                  open window's at once, and two is an ambiguous shortcut Qt
+#                  fires in neither (only if a launcher-qt has been built)
 #   qt-profile     the Qt shader-profile windows, driven: a new profile saved from
 #                  the editor has to appear in the list behind it, and the next
 #                  New profile… has to come up with an *empty* preset field —
@@ -839,6 +844,27 @@ qtclose_check() { # the title bar's close button on a Qt dialog (doc 07)
   [ "$modal" = 0 ] || { echo "a modal window is still registered after the close (modal left=$modal)"; return 1; }
   printf '%s' "$o" | grep -q "open=false, visible=false" \
     || { echo "the wizard's flag or window did not follow the close: $o"; return 1; }
+  return 0
+}
+qtesc_check() { # Esc reaches the shader editor opened from the profile list (doc 07)
+  local dir="$OUT/qtesc" bin="launcher-qt/target/release/launcher-qt" o
+  rm -rf "$dir"; mkdir -p "$dir/library" "$dir/profiles"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
+  # Every secondary window closes on Esc through a `Shortcut`, and Quick
+  # Controls matches a window's shortcut when the window `isActive()` —
+  # which a transient window is whenever its parent is, so every visible
+  # secondary window matches at once. The editor is the one window opened
+  # over *another* (the profile list), and two matches for one key is an
+  # ambiguous shortcut, which Qt fires in neither: Esc did nothing in the
+  # editor (user-reported, 2026-09-13). The list stands down while the
+  # editor is open, so exactly one may match.
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=escfocus LAUNCHER_QT_DELAY=400 "$bin" 2>&1 \
+       | sed -n 's/^\[diag\] escfocus editor: //p')"
+  [ -n "$o" ] || { echo "the probe printed no escfocus line"; return 1; }
+  echo "  $o"
+  printf '%s' "$o" | grep -q "visible=true, focus=\[Shader profile\], esc armed=true, esc matches=1$" \
+    || { echo "Esc in the editor is not one armed shortcut in the focused window: $o"; return 1; }
   return 0
 }
 qtprofile_check() { # the Qt shader-profile windows, driven (doc 07)
@@ -2105,6 +2131,7 @@ host_stage() {
   if [ -x launcher-qt/target/release/launcher-qt ]; then
     run_check qt-wizard qt-wizard.log qtwizard_check || true
     run_check qt-close qt-close.log qtclose_check || true
+    run_check qt-esc qt-esc.log qtesc_check || true
     run_check qt-profile qt-profile.log qtprofile_check || true
     run_check qt-shelf qt-shelf.log qtshelf_check || true
     run_check qt-firstrun qt-firstrun.log qtfirstrun_check || true
@@ -2112,6 +2139,7 @@ host_stage() {
   else
     skip qt-wizard "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-close "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+    skip qt-esc "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-profile "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-shelf "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-firstrun "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"

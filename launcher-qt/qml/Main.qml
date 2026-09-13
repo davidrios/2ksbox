@@ -676,6 +676,18 @@ ApplicationWindow {
                     return   // `firstRunSettle` grabs when it is done
                 }
                 break
+            case "escfocus":
+                // New profile… from the profile list, and whether Esc can
+                // close the editor it opens: the editor has to have the
+                // keyboard, its Esc armed, and be the *only* armed Esc that
+                // matches — two is an ambiguous shortcut, which Qt fires in
+                // neither window. The steps are `escFocusSettle`, because
+                // activation is asynchronous.
+                profiles.refresh()
+                shaderWindow.show()
+                escFocusSettle.step = 0
+                escFocusSettle.start()
+                return   // `escFocusSettle` grabs when it is done
             case "editor":
                 // `<preset.slangp>;<preview image>`
                 const parts = diag.arg.split(";")
@@ -728,6 +740,37 @@ ApplicationWindow {
             diag.note("clone settled: open=" + cloner.open + ", window " + cloneWindow.visible
                       + ", error [" + cloner.error + "], status [" + machines.status
                       + "], saved " + cloner.savedPath() + ", grid " + machines.count)
+            grabTimer.restart()
+        }
+    }
+
+    // The `escfocus` probe's steps: the profile list has had a beat to
+    // come up, then New profile… the way its button does it, then the
+    // editor has had a beat. Each reports which window has the focus.
+    Timer {
+        id: escFocusSettle
+        property int step: 0
+        interval: diag.delayMs
+        repeat: true
+        onTriggered: {
+            if (step === 0) {
+                diag.note("escfocus list: focus=[" + diag.focusWindow() + "]")
+                editor.newProfile()
+                step = 1
+                return
+            }
+            stop()
+            // How many Esc shortcuts would claim the key, counted the way
+            // Quick Controls' matcher decides it: armed, in a window that
+            // is `active` — which a transient window reports whenever its
+            // parent is, so both windows here count. Two is ambiguous, and
+            // Qt fires *neither*.
+            const matches = [shaderWindow, shaderEditorWindow]
+                .filter(w => w.visible && w.active && w.escArmed).length
+            diag.note("escfocus editor: visible=" + shaderEditorWindow.visible
+                      + ", focus=[" + diag.focusWindow() + "]"
+                      + ", esc armed=" + shaderEditorWindow.escArmed
+                      + ", esc matches=" + matches)
             grabTimer.restart()
         }
     }

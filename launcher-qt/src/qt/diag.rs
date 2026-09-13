@@ -46,6 +46,12 @@ pub mod ffi {
         #[qinvokable]
         fn close_modal_from_window_system(self: &Diag) -> i32;
 
+        /// The title of the window that has the keyboard, "(none)" if
+        /// none does — `src/focus_window.cpp` says why QML's own
+        /// `Window.active` is no use for this.
+        #[qinvokable]
+        fn focus_window(self: &Diag) -> QString;
+
         /// A trace line from QML. Not `console.log`: that goes through
         /// Qt's categorised logging, which drops the `qml` category's
         /// debug output unless `QT_LOGGING_RULES` says otherwise — a
@@ -85,11 +91,17 @@ impl Default for DiagRust {
 
 unsafe extern "C" {
     fn launcher_qt_close_modal_from_window_system() -> i32;
+    fn launcher_qt_focus_window() -> *const std::ffi::c_char;
 }
 
 impl ffi::Diag {
     fn close_modal_from_window_system(&self) -> i32 {
         unsafe { launcher_qt_close_modal_from_window_system() }
+    }
+
+    fn focus_window(&self) -> QString {
+        let title = unsafe { std::ffi::CStr::from_ptr(launcher_qt_focus_window()) };
+        qs(title.to_string_lossy())
     }
 
     fn note(&self, message: &QString) {
