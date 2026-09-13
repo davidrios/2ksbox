@@ -114,6 +114,9 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 #   working directory when PLAYER_SHOT_DIR is unset). Ctrl+Alt+G releases the grab.
 # Ctrl+Alt+Shift+D is Ctrl+Alt+Del in the guest (the real one stays the host's).
 # Ctrl+Alt+Shift+F toggles windowed full screen (borderless, the window's monitor).
+# A close with Alt held (Alt+F4 while the host has its shortcuts) asks first, in the
+#   window: Enter, Close or a second Alt+F4 stops the machine, Esc or Back returns to
+#   it. The title bar's close button does not ask.
 # While the window has focus the host's own shortcuts go to the guest — the Windows
 #   key opens the guest's Start menu (Wayland's shortcut inhibitor, an X11 keyboard
 #   grab, a low-level hook on Windows; nothing on macOS). Ctrl+Alt+K hands them back
