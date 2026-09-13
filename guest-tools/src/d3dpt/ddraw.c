@@ -83,11 +83,15 @@ static int load_real(void)
 typedef struct { IDirectDraw7Vtbl *lpVtbl; IDirectDraw7 *inner; LONG ref; } Wrap7;
 #define INNER(This) (((Wrap7 *)(This))->inner)
 
+static ULONG WINAPI w7_AddRef(IDirectDraw7 *This);
 static HRESULT WINAPI w7_QueryInterface(IDirectDraw7 *This, REFIID riid, void **pp)
 {
     if (!pp) return E_POINTER;
     if (IsEqualGUID(riid, &IID_IDirectDraw7) || IsEqualGUID(riid, &IID_IUnknown)) {
-        *pp = This; InterlockedIncrement(&((Wrap7 *)This)->ref); return S_OK;
+        /* both counts, as AddRef does: every Release drops one of each, and a
+         * QI that took only the wrapper's let the matching Release free the
+         * real object under an application still holding it */
+        *pp = This; w7_AddRef(This); return S_OK;
     }
     dlog("d3dpt-ddraw: QueryInterface(%08lx…) forwarded unwrapped", riid ? (unsigned long)riid->Data1 : 0ul);
     return IDirectDraw7_QueryInterface(INNER(This), riid, pp);

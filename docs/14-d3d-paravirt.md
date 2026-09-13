@@ -197,6 +197,136 @@ packagers check, rather than restating the layout in a script. Pointing
 `D3DPT_DXVK_LIB`) is the cheap proof that the files themselves work: real
 batches, real frames, the hostile batch still refused.
 
+## A review of the guest DLLs (2026-09-13)
+
+A read of `d3d9.c`, `d3d9_res.h`, `d3d9_p3.h`, `d3d8.c` and the
+`ddraw.dll` shim, each record checked against what the executor does with
+it and, where the executor hands a call on, against DXVK. What was wrong:
+
+- **UpdateTexture into a DEFAULT texture refused the batch.** For a level
+  with no guest shadow (the usual SYSTEMMEM → DEFAULT case) it appended a
+  `SURFACE_UPDATE` naming handle 0 ahead of the real `TEXTURE_UPDATE`. The
+  host refuses a batch from an unknown handle on, so every draw queued
+  behind it was dropped and the next sync call failed. It was a leftover
+  of an earlier shape of the function; only the real record goes now.
+- **DrawIndexedPrimitiveUP with MinVertexIndex above 0** copied the
+  array's first NumVertices vertices instead of those from MinVertexIndex
+  on, and the executor handed DXVK the copy as vertex 0. DXVK reads
+  (MinVertexIndex + NumVertices) × stride bytes from that pointer, so the
+  result was wrong vertices plus a read past the record (a hostile record:
+  gigabytes past the window). The guest now copies vertices
+  MinVertexIndex.. and the executor rebases the indices onto them;
+  `d3dpt_proto.h` says so. The bytes of every draw that worked
+  (MinVertexIndex 0) are unchanged, hence no protocol bump.
+- **Buffer locks.** `Lock(offset, 0)` returned the buffer's start, not
+  `offset` (0 is "to the end"; DXVK returns `data + offset`). A second
+  Lock while one was held replaced the first one's range, which then never
+  reached the host. Locks nest now; the last Unlock sends the union.
+- **Recording a state block applied it.** Every setter between
+  BeginStateBlock and EndStateBlock went to the host and stayed in force;
+  native records the call and leaves the device alone. A game that records
+  its blocks at load time kept the last recorded values until something
+  set them again. While a block records, setters now only update the
+  shadow and the block's marks, and EndStateBlock puts the shadow back from
+  a snapshot taken at BeginStateBlock (object references held).
+- **The `ddraw.dll` shim's QueryInterface** counted a reference on the
+  wrapper and not on the real `IDirectDraw7`, while Release drops both: a
+  QI'd reference released again freed the real object under the
+  application.
+- **GetRenderTargetData** sized the executor's rows at 4 bytes a pixel for
+  every format but the three 16-bit ones, so A4R4G4B4 and the 64/128-bit
+  float targets came back refused or at the wrong stride. The executor has
+  a table now (the guest's agrees) and refuses a format it cannot size.
+- **A DEFAULT-pool offscreen plain surface could not be locked**
+  (INVALIDCALL): the surface a 2D game fills and StretchRects to the back
+  buffer. It keeps a guest shadow now; the locked rectangle goes to the
+  host at UnlockRect, and ColorFill (32-bit formats) and UpdateSurface keep
+  the shadow current. Nothing the host renders comes back into it.
+- **Clear with more than 64 rects** was refused whole; it goes as several
+  records of at most 64 now.
+- **D3D8 declaration constants** (`D3DVSD_CONST`) of a second block landed
+  right after the first block's instead of at their own register.
+- Both log helpers wrote a newline past their buffer when a line overran
+  (a C99 `vsnprintf` returns the untruncated length).
+- **No thread safety.** One encoder and one batch per process, and no
+  lock: a `D3DCREATE_MULTITHREADED` game creating resources on a loader
+  thread while drawing on another interleaved the two threads' records.
+  Native D3D9 serialises every call of such a device (and of no other).
+  Ours does the same from the moment one exists, process-wide because
+  the encoder is: `gen_vtbl.py` / `gen_vtbl8.py` now make a wrapper for
+  every method, not only the traced ones, and each takes `D3DPT_LOCK` (a
+  recursive critical section, so the implementation calling back through
+  a vtable is fine); the log's host copy takes it too. A device without
+  the flag pays one load and a branch per call. At `DLL_PROCESS_DETACH` the
+  lock is dropped, since a thread killed at process exit may hold it.
+
+The regression cases: `D3DFEAT9` has a row E (one quad each for
+UpdateTexture, MinVertexIndex, Lock(offset, 0) and nested Locks), an
+80-rect Clear, a state block recorded and never applied, a lock of its
+DEFAULT offscreen surface and a GetRenderTargetData from an
+A16B16G16R16F target — frame and "getters" lines against the native DXVK
+run, as before. Its device is `D3DCREATE_MULTITHREADED` now, and a loader
+thread creates, fills and releases a texture and a vertex buffer in a loop
+for as long as the frames run (tens of thousands of rounds natively),
+counting its failed calls into a "getters 3" line; nothing it makes is
+drawn, so the frame stays the oracle's. `tools/d3dgame-native/
+win32_headless.h` gained `CreateThread` / `WaitForSingleObject` over
+pthreads for it. `DDVMTEST` releases a QueryInterface'd reference and uses
+the object after it, and `tools/d3dpt-exec-test` sends a
+DrawIndexedPrimitiveUP at MinVertexIndex 0xfff000 with a 1 KiB stride.
+
+**Measured** (2026-09-13, `scripts/test.sh all`, 45 passed): the XP
+guest's `D3DFEAT9` frame is byte-identical to native DXVK's with row E in
+it, and all three "getters" lines equal — after a recording fill mode 3
+(`D3DFILL_SOLID`) and stage 2 empty, the offscreen lock reading back its
+fill (`204080`), the A16B16G16R16F readback's bytes, and the loader thread
+at 0 failed calls and 0 failed Presents after 24 906 rounds beside the 600
+frames (the QEMU log says `calls are serialised from now on`, and has no
+`batch error` in it). `D3DGAME9`, `D3DGAME8` and
+`DDVMTEST` pass as before. `tools/d3dpt-exec-test` passes on the new
+executor and **dumps core on the old one**, at the far-MinVertexIndex draw.
+
+**The control**: the same guest stage on an ISO whose `D3D9.DLL` /
+`D3D8.DLL` are the pre-review ones (everything else, the test programs
+included, as shipped) fails exactly one check, `guest-F9`: `D3DFEAT9`
+stops at the first sync call after its UpdateTexture — CreateVertexBuffer
+returns E_FAIL — and draws no frame, and the QEMU log has the refused
+batch (`batch error 3`, a bad handle, in a batch of three records).
+`DDVMTEST`, `D3DGAME9` and `D3DGAME8` pass on those DLLs. (The DLLs of a
+control must be built with the ISO's own flags: built with this toolchain's
+default UCRT they import `api-ms-win-crt-*.dll`, which XP does not have, and
+no D3D program starts at all.) That log line named the record *after* the
+one that failed — the executor counted a record before checking whether it
+had failed, and the guest's `ret_index` came out one too high the same way;
+both name the failing record now (`tools/d3dpt-exec-test`'s hostile
+DrawPrimitiveUP, alone in its batch, logged `at record 1 (op 0)` and logs
+`at record 0 (op 50)`). The `DDVMTEST` case has not been run
+against the pre-fix shim: a use-after-free need not crash, so it is a
+smoke, not a proof.
+
+**The lock's control** (the shipped DLLs with `D3DPT_LOCK` compiled to
+nothing) first **passed** every check: the loader thread's 36 396 rounds
+beside the 600 frames all succeeded and frame 300 was right. The race
+happened all the same — the QEMU log had two batches refused (`batch
+error 3`, a RELEASE naming a handle the host did not have, in batches of
+1 409 and 625 records) and the guest's `Present: batch error` twice, two
+frames' draws thrown away — but the loader counted only its own calls and
+the main thread ignored what Present returned. `D3DFEAT9` counts failed
+Presents into "getters 3" now (native: 0), and on the same lock-less DLLs
+that fails exactly one check, `guest-F9-log=native`: `3 presents failed`
+after 36 384 loader rounds, with three refused batches in the QEMU log
+(`batch error 3 at record 0 (op 71)`, a TEXTURE_UPDATE of the loader's
+landing in the main thread's batch). With the lock: 0 failed Presents and
+no `batch error` (above). A race is a matter of chance, so this is a check
+that fails when the race is hit — twice in two lock-less runs so far — not a
+proof that it is absent.
+
+Found and not changed: `GetSwapChain` a stub while
+`GetNumberOfSwapChains` says 1, and D3D8's `GetVertexShader` /
+`GetPixelShader` returning the handle last set rather than one an applied
+state block set. The D3D8 constant fix has no case: the D3D8 path's only
+oracle is D3DGAME8 against the D3D9 frame, and D3DGAME8 has no shader.
+
 ## Risks
 
 - **Host Vulkan capabilities:** MoltenVK lacked required Vulkan features and

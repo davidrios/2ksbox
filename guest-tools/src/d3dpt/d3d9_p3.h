@@ -78,10 +78,10 @@ HRESULT WINAPI dev_SetVertexDeclaration(IDirect3DDevice9 *This, IDirect3DVertexD
 {
     struct device *dev = DEV(This);
     struct vdecl *d = (struct vdecl *)pD;
-    d3dpt_enc_u32x2(&enc, D3DPT_OP_SET_VERTEX_DECL, d ? d->h.handle : 0, 0);
     BIND(dev->st.decl, d, IDirect3DVertexDeclaration9);
     if (d) dev->st.fvf = 0;
     SB_MARK(dev, m_->misc |= SB_DECL);
+    if (!SB_RECORDING(dev)) d3dpt_enc_u32x2(&enc, D3DPT_OP_SET_VERTEX_DECL, d ? d->h.handle : 0, 0);
     return D3D_OK;
 }
 HRESULT WINAPI dev_GetVertexDeclaration(IDirect3DDevice9 *This, IDirect3DVertexDeclaration9 **pp)
@@ -211,6 +211,14 @@ static HRESULT surface_upload(uint32_t handle, D3DFORMAT fmt, const uint8_t *src
     for (i = 0; i < rows; i++) memcpy(dst + i * pitch, src + (sy / bh + i) * src_pitch + (sx / bw) * bytes, pitch);
     return D3D_OK;
 }
+/* copy a w x h box between two guest-side images of one format */
+static void box_copy(D3DFORMAT fmt, uint8_t *dst, UINT dst_pitch, UINT dx, UINT dy, const uint8_t *src, UINT src_pitch, UINT sx, UINT sy, UINT w, UINT h)
+{
+    UINT bw, bh, bytes, i, rows, row;
+    fmt_block(fmt, &bw, &bh, &bytes);
+    rows = (h + bh - 1) / bh; row = ((w + bw - 1) / bw) * bytes;
+    for (i = 0; i < rows; i++) memcpy(dst + (dy / bh + i) * dst_pitch + (dx / bw) * bytes, src + (sy / bh + i) * src_pitch + (sx / bw) * bytes, row);
+}
 static int surface_shadow(struct surface *s, const uint8_t **mem, UINT *pitch)
 {
     if (s->kind == SURF_SYSMEM) { *mem = s->mem; *pitch = s->pitch; return s->mem != NULL; }
@@ -232,16 +240,14 @@ HRESULT WINAPI dev_UpdateSurface(IDirect3DDevice9 *This, IDirect3DSurface9 *pSrc
         /* keep the destination's own shadow current too, then upload through the texture path */
         struct level *l = &dst->tex->lv[dst->face][dst->level];
         if (l->mem) {
-            UINT bw, bh, bytes, i, rows, row;
             RECT rc = { (LONG)dx, (LONG)dy, (LONG)(dx + w), (LONG)(dy + h) };
-            fmt_block(dst->desc.Format, &bw, &bh, &bytes);
-            rows = (h + bh - 1) / bh; row = ((w + bw - 1) / bw) * bytes;
-            for (i = 0; i < rows; i++) memcpy(l->mem + (dy / bh + i) * l->pitch + (dx / bw) * bytes, mem + (sy / bh + i) * pitch + (sx / bw) * bytes, row);
+            box_copy(dst->desc.Format, l->mem, l->pitch, dx, dy, mem, pitch, sx, sy, w, h);
             return tex_update_level(dst->tex, dst->face, dst->level, &rc);
         }
         return surface_upload(dst->h.handle, dst->desc.Format, mem, pitch, sx, sy, w, h, dx, dy);
     }
     if (!dst->h.handle) return D3DERR_INVALIDCALL;
+    if (dst->kind == SURF_OFFSCREEN && dst->mem) box_copy(dst->desc.Format, dst->mem, dst->pitch, dx, dy, mem, pitch, sx, sy, w, h);
     return surface_upload(dst->h.handle, dst->desc.Format, mem, pitch, sx, sy, w, h, dx, dy);
 }
 HRESULT WINAPI dev_UpdateTexture(IDirect3DDevice9 *This, IDirect3DBaseTexture9 *pSrc, IDirect3DBaseTexture9 *pDst)
@@ -255,22 +261,19 @@ HRESULT WINAPI dev_UpdateTexture(IDirect3DDevice9 *This, IDirect3DBaseTexture9 *
     for (f = 0; f < (UINT)src->faces; f++) for (i = 0; i < dst->levels; i++) {
         struct level *sl = &src->lv[f][i + skip], *dl = &dst->lv[f][i];
         if (!sl->mem || sl->w != dl->w || sl->h != dl->h) return D3DERR_INVALIDCALL;
-        if (dl->mem) memcpy(dl->mem, sl->mem, dl->size);
-        {
-            HRESULT hr = dl->mem ? tex_update_level(dst, f, i, NULL)
-                                 : surface_upload(0, dst->format, sl->mem, sl->pitch, 0, 0, sl->w, sl->h, 0, 0);
-            if (!dl->mem) {
-                /* host-only destination level: upload straight into it */
-                d3dpt_tex_update *u;
-                UINT bw, bh, bytes;
-                fmt_block(dst->format, &bw, &bh, &bytes);
-                u = d3dpt_enc_cmd(&enc, D3DPT_OP_TEXTURE_UPDATE, sizeof *u, sl->size);
-                if (!u) return E_FAIL;
-                u->handle = dst->h.handle; u->level = i | (f << 8); u->x = 0; u->y = 0; u->w = sl->w; u->h = sl->h; u->pitch = sl->pitch; u->bytes = sl->size;
-                memcpy(u + 1, sl->mem, sl->size);
-                hr = D3D_OK;
-            }
+        if (dl->mem) {
+            HRESULT hr;
+            memcpy(dl->mem, sl->mem, dl->size);
+            hr = tex_update_level(dst, f, i, NULL);
             if (FAILED(hr)) return hr;
+        } else {
+            /* a host-only destination level (the usual SYSTEMMEM -> DEFAULT case):
+             * upload straight into it. Only this record: one naming no host
+             * object (handle 0) refuses the whole batch, every draw after it */
+            d3dpt_tex_update *u = d3dpt_enc_cmd(&enc, D3DPT_OP_TEXTURE_UPDATE, sizeof *u, sl->size);
+            if (!u) return E_FAIL;
+            u->handle = dst->h.handle; u->level = i | (f << 8); u->x = 0; u->y = 0; u->w = sl->w; u->h = sl->h; u->pitch = sl->pitch; u->bytes = sl->size;
+            memcpy(u + 1, sl->mem, sl->size);
         }
     }
     return D3D_OK;
@@ -280,15 +283,19 @@ HRESULT WINAPI dev_ColorFill(IDirect3DDevice9 *This, IDirect3DSurface9 *pS, cons
     struct surface *s = (struct surface *)pS;
     d3dpt_color_fill *f;
     if (!s) return D3DERR_INVALIDCALL;
-    if (!s->h.handle) {
-        /* system-memory surface: fill the shadow (32-bit formats only for now) */
+    if (s->mem && (s->kind == SURF_SYSMEM || s->kind == SURF_OFFSCREEN)) {
+        /* the guest's copy: all a system-memory surface has, an offscreen
+         * surface's shadow (so a later lock reads the fill). 32-bit formats
+         * only for now; the host fills an offscreen surface of any format */
         UINT bw, bh, bytes, x, y, x0 = 0, y0 = 0, x1 = s->desc.Width, y1 = s->desc.Height;
         fmt_block(s->desc.Format, &bw, &bh, &bytes);
-        if (bytes != 4 || bw != 1) return D3DERR_INVALIDCALL;
-        if (rc) { x0 = rc->left; y0 = rc->top; x1 = rc->right; y1 = rc->bottom; }
-        for (y = y0; y < y1 && y < s->desc.Height; y++) for (x = x0; x < x1 && x < s->desc.Width; x++) ((uint32_t *)(s->mem + y * s->pitch))[x] = color;
-        return D3D_OK;
+        if (bytes == 4 && bw == 1) {
+            if (rc) { x0 = rc->left; y0 = rc->top; x1 = rc->right; y1 = rc->bottom; }
+            for (y = y0; y < y1 && y < s->desc.Height; y++) for (x = x0; x < x1 && x < s->desc.Width; x++) ((uint32_t *)(s->mem + y * s->pitch))[x] = color;
+        } else if (!s->h.handle) return D3DERR_INVALIDCALL;
+        if (!s->h.handle) return D3D_OK;
     }
+    if (!s->h.handle) return D3DERR_INVALIDCALL;
     f = d3dpt_enc_cmd(&enc, D3DPT_OP_COLOR_FILL, sizeof *f, 0);
     if (!f) return E_FAIL;
     memset(f, 0, sizeof *f);
@@ -304,6 +311,7 @@ HRESULT WINAPI dev_SetClipPlane(IDirect3DDevice9 *This, DWORD i, const float *p)
     if (i > 5 || !p) return D3DERR_INVALIDCALL;
     memcpy(DEV(This)->st.clip[i], p, 16);
     SB_MARK(DEV(This), m_->clip |= 1u << i);
+    if (SB_RECORDING(DEV(This))) return D3D_OK;
     c = d3dpt_enc_cmd(&enc, D3DPT_OP_SET_CLIP_PLANE, sizeof *c, 0);
     if (!c) return E_FAIL;
     c->index = i; c->pad = 0; memcpy(c->plane, p, 16);
@@ -339,6 +347,7 @@ static HRESULT set_const_ib(struct device *dev, uint32_t op, UINT start, const v
     case D3DPT_OP_SET_VS_CONST_B: memcpy(&dev->st.vs_b[start], data, n * 4); SB_MARK(dev, for (i = start; i < start + n; i++) m_->vs_b |= 1u << i); break;
     default:                      memcpy(&dev->st.ps_b[start], data, n * 4); SB_MARK(dev, for (i = start; i < start + n; i++) m_->ps_b |= 1u << i); break;
     }
+    if (SB_RECORDING(dev)) return D3D_OK;
     p = d3dpt_enc_cmd(&enc, op, sizeof *p, n * elem);
     if (!p) return E_FAIL;
     p->a = start; p->b = n;
@@ -542,19 +551,32 @@ HRESULT WINAPI dev_CreateStateBlock(IDirect3DDevice9 *This, D3DSTATEBLOCKTYPE Ty
 HRESULT WINAPI dev_BeginStateBlock(IDirect3DDevice9 *This)
 {
     struct device *dev = DEV(This);
+    struct sb_marks all;
     if (dev->recording) return D3DERR_INVALIDCALL;
+    dev->rec_saved = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof *dev->rec_saved);
+    if (!dev->rec_saved) return E_OUTOFMEMORY;
     dev->recording = sb_new(dev);
-    return dev->recording ? D3D_OK : E_OUTOFMEMORY;
+    if (!dev->recording) { HeapFree(GetProcessHeap(), 0, dev->rec_saved); dev->rec_saved = NULL; return E_OUTOFMEMORY; }
+    sb_mark_all(&all, D3DSBT_ALL);
+    sb_copy(&all, &dev->st, dev->rec_saved);
+    return D3D_OK;
 }
 HRESULT WINAPI dev_EndStateBlock(IDirect3DDevice9 *This, IDirect3DStateBlock9 **pp)
 {
     struct device *dev = DEV(This);
     struct stateblock *b = dev->recording;
+    struct sb_marks all;
     if (!pp) return D3DERR_INVALIDCALL;
     *pp = NULL;
     if (!b) return D3DERR_INVALIDCALL;
     dev->recording = NULL;
     sb_copy(&b->marks, &dev->st, &b->st);   /* the values set while recording are the block's contents */
+    /* and the device is as it was: none of them reached the host (SB_RECORDING) */
+    sb_mark_all(&all, D3DSBT_ALL);
+    sb_copy(&all, dev->rec_saved, &dev->st);
+    sb_release_objects(dev->rec_saved);
+    HeapFree(GetProcessHeap(), 0, dev->rec_saved);
+    dev->rec_saved = NULL;
     *pp = (IDirect3DStateBlock9 *)b;
     return D3D_OK;
 }

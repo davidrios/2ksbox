@@ -2,7 +2,7 @@
 """Generate d3d9_vtbl.h for the paravirtual d3d9.dll from mingw's d3d9.h:
 prototypes for every IDirect3D9 / IDirect3DDevice9 method (so the
 implementations are signature-checked), E_NOTIMPL stubs (log once) for
-the ones not implemented, a call-trace wrapper per method (the vtable
+the ones not implemented, a wrapper per method (the API lock, D3DPT_LOCK in d3d9.c, and the call trace; the vtable
 entry; logs entry/exit to d3dpt_trace.log when tracing is on, see
 d3dpt_trace in d3d9.c) and the vtables in header order.
 Usage: gen_vtbl.py /usr/i686-w64-mingw32/include/d3d9.h > d3d9_vtbl.h
@@ -78,12 +78,18 @@ def wrapper(iface, prefix, ret, name, args):
         label, ''.join(' %s=%%08lx' % n for n in shown),
         ', (void *)This' + ''.join(', (unsigned long)(uintptr_t)%s' % n for n in shown))
     if ret == 'void':
-        body = '%s %s; if (d3dpt_trace_on) d3dpt_trace("< %s");' % (enter, call, label)
+        leave = 'if (d3dpt_trace_on) d3dpt_trace("< %s");' % label
     elif ret == 'float':
-        body = '%s r_; %s r_ = %s; if (d3dpt_trace_on) d3dpt_trace("< %s = %%g", (double)r_); return r_;' % (ret, enter, call, label)
+        leave = 'if (d3dpt_trace_on) d3dpt_trace("< %s = %%g", (double)r_);' % label
     else:
-        body = '%s r_; %s r_ = %s; if (d3dpt_trace_on) d3dpt_trace("< %s = 0x%%08lx", (unsigned long)r_); return r_;' % (ret, enter, call, label)
-    return '%s { %s }' % (proto, body)
+        leave = 'if (d3dpt_trace_on) d3dpt_trace("< %s = 0x%%08lx", (unsigned long)r_);' % label
+    if not traced(name):
+        enter = leave = ''
+    if ret == 'void':
+        parts = ['D3DPT_LOCK();', enter, '%s;' % call, leave, 'D3DPT_UNLOCK();']
+    else:
+        parts = ['D3DPT_LOCK();', '%s r_;' % ret, enter, 'r_ = %s;' % call, leave, 'D3DPT_UNLOCK();', 'return r_;']
+    return '%s { %s }' % (proto, ' '.join(p for p in parts if p))
 
 src = open(sys.argv[1]).read()
 rx = re.compile(r'STDMETHOD(?:_\(\s*([^,]+?)\s*,\s*(\w+)\s*\)|\((\w+)\))\s*\(\s*THIS(?:_\s*(.*?))?\s*\)\s*PURE;', re.S)
@@ -115,10 +121,10 @@ def emit(iface, prefix, impl):
             else: rv = '0'
             print('static %s { D3DPT_STUB("%s::%s"); %s }' % (proto, iface, name, ('return %s;' % rv) if rv else ''))
     for ret, name, args in ms:
-        if traced(name): print(wrapper(iface, prefix, ret, name, args))
+        print(wrapper(iface, prefix, ret, name, args))
     print('static const %sVtbl %s_vtbl = {' % (iface, prefix))
     for ret, name, args in ms:
-        print('    %s%s_%s,' % ('t_' if traced(name) else '', prefix, name))
+        print('    t_%s_%s,' % (prefix, name))
     print('};')
     print()
 

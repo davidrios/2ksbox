@@ -9,6 +9,16 @@
  * into a render-target texture, UpdateSurface from system memory into a
  * DEFAULT texture, a clip plane, DrawIndexedPrimitiveUP, scissor.
  *
+ * Row E (bottom middle, 2026-09-13) is one small quad per case the guest
+ * DLL once got wrong: UpdateTexture into a DEFAULT texture, a
+ * DrawIndexedPrimitiveUP whose vertices start at MinVertexIndex, a vertex
+ * buffer Lock(offset, 0) and two nested Locks. Around it: a Clear of more
+ * than 64 rects (the strip at the top), a state block recorded and never
+ * applied (native leaves the device alone while recording, so nothing may
+ * turn wireframe), a lock of the DEFAULT offscreen surface (the square in
+ * quad C) and a GetRenderTargetData from a 64-bit render target, the last
+ * three read back in the "getters 2" line.
+ *
  * Deterministic: -frames N -dump N file.bmp like D3DGAME9. The same source
  * builds natively over DXVK (tools/d3dfeat9-native.cpp); the guest frame
  * through the device must be byte-identical to the native frame, and the
@@ -77,11 +87,58 @@ struct gfx {
     IDirect3DSurface9 *offscreen, *sysmem;
     IDirect3DVertexShader9 *vs;
     IDirect3DPixelShader9 *ps_tex, *ps_cube;
-    IDirect3DStateBlock9 *sb_quad_a, *sb_all;
+    IDirect3DStateBlock9 *sb_quad_a, *sb_all, *sb_wire;
     IDirect3DQuery9 *occ;
+    /* row E and the "getters 2" line */
+    IDirect3DVertexBuffer9 *vb2;
+    IDirect3DTexture9 *upd_src, *upd_dst;
+    HRESULT off_hr, rt16_hr;
+    DWORD off_px, fill_after_rec;
+    int stage2_after_rec;
+    BYTE rt16[8];
+    /* the loader thread */
+    HANDLE loader;
+    volatile LONG loader_stop;
+    LONG loader_failed, loader_rounds;
+    LONG present_failed;    /* the main thread's side: a batch the loader's records corrupted fails the Present that sends it */
 };
 static struct game G;
 static struct gfx X;
+
+/* a 0.4 x 0.8 quad of row E centred on cx, as a triangle fan */
+static void quad_at(struct vtx_pct *q, float cx, DWORD color)
+{
+    int i;
+    for (i = 0; i < 4; i++) {
+        q[i].x = cx + (i == 1 || i == 2 ? 0.2f : -0.2f); q[i].y = -1.8f + (i >= 2 ? 0.4f : -0.4f); q[i].z = 0.0f;
+        q[i].color = color; q[i].u = (i == 1 || i == 2) ? 1.0f : 0.0f; q[i].v = i >= 2 ? 0.0f : 1.0f;
+    }
+}
+
+/* The loader thread: resources made, filled and dropped on a second thread
+ * while the first one draws, as a game streaming its level does, on a device
+ * created D3DCREATE_MULTITHREADED. Nothing it makes is drawn, so the frame
+ * stays the oracle's; a call that failed is counted ("getters 3"). */
+static DWORD WINAPI loader_main(LPVOID unused)
+{
+    (void)unused;
+    while (!X.loader_stop) {
+        IDirect3DTexture9 *t = NULL;
+        IDirect3DVertexBuffer9 *b = NULL;
+        D3DLOCKED_RECT lr;
+        void *p;
+        if (FAILED(IDirect3DDevice9_CreateTexture(X.dev, 16, 16, 1, 0, D3DFMT_X8R8G8B8, D3DPOOL_MANAGED, &t, NULL))
+            || FAILED(IDirect3DTexture9_LockRect(t, 0, &lr, NULL, 0))) X.loader_failed++;
+        else { memset(lr.pBits, 0x5a, 16 * lr.Pitch); if (FAILED(IDirect3DTexture9_UnlockRect(t, 0))) X.loader_failed++; }
+        if (t) IDirect3DTexture9_Release(t);
+        if (FAILED(IDirect3DDevice9_CreateVertexBuffer(X.dev, 1024, 0, 0, D3DPOOL_MANAGED, &b, NULL))
+            || FAILED(IDirect3DVertexBuffer9_Lock(b, 0, 0, &p, 0))) X.loader_failed++;
+        else { memset(p, 0xa5, 1024); if (FAILED(IDirect3DVertexBuffer9_Unlock(b))) X.loader_failed++; }
+        if (b) IDirect3DVertexBuffer9_Release(b);
+        X.loader_rounds++;
+    }
+    return 0;
+}
 
 static int make_resources(void)
 {
@@ -138,6 +195,17 @@ static int make_resources(void)
     CHK(IDirect3DDevice9_ColorFill(X.dev, X.offscreen, NULL, 0xff204080));
     half.left = 0; half.top = 32; half.right = 64; half.bottom = 64;
     CHK(IDirect3DDevice9_ColorFill(X.dev, X.offscreen, &half, 0xffe0a020));
+    {   /* a DEFAULT offscreen plain surface locks: read the fill back, write a square the StretchRect carries */
+        RECT lk = { 8, 8, 24, 24 };
+        int x, y;
+        X.off_hr = IDirect3DSurface9_LockRect(X.offscreen, &lr, &lk, 0);
+        if (SUCCEEDED(X.off_hr)) {
+            X.off_px = *(DWORD *)lr.pBits & 0xffffff;
+            for (y = 0; y < 16; y++) for (x = 0; x < 16; x++)
+                ((DWORD *)((char *)lr.pBits + y * lr.Pitch))[x] = ((x ^ y) & 4) ? 0xff40c040 : 0xffc04040;
+            IDirect3DSurface9_UnlockRect(X.offscreen);
+        }
+    }
     CHK(IDirect3DDevice9_CreateTexture(X.dev, 64, 64, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &X.rtt, NULL));
     CHK(IDirect3DTexture9_GetSurfaceLevel(X.rtt, 0, &rts));
     CHK(IDirect3DDevice9_StretchRect(X.dev, X.offscreen, NULL, rts, NULL, D3DTEXF_NONE));
@@ -159,6 +227,52 @@ static int make_resources(void)
         CHK(IDirect3DDevice9_UpdateSurface(X.dev, X.sysmem, NULL, rts, &pt));
     }
     IDirect3DSurface9_Release(rts);
+
+    /* E1: UpdateTexture from a SYSTEMMEM texture into a DEFAULT one */
+    CHK(IDirect3DDevice9_CreateTexture(X.dev, 32, 32, 1, 0, D3DFMT_X8R8G8B8, D3DPOOL_SYSTEMMEM, &X.upd_src, NULL));
+    CHK(IDirect3DTexture9_LockRect(X.upd_src, 0, &lr, NULL, 0));
+    {
+        int x, y;
+        for (y = 0; y < 32; y++) for (x = 0; x < 32; x++)
+            ((DWORD *)((char *)lr.pBits + y * lr.Pitch))[x] = ((x + y) & 8) ? 0xff2060e0 : 0xfff0f0f0;
+    }
+    CHK(IDirect3DTexture9_UnlockRect(X.upd_src, 0));
+    CHK(IDirect3DDevice9_CreateTexture(X.dev, 32, 32, 1, 0, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &X.upd_dst, NULL));
+    CHK(IDirect3DDevice9_UpdateTexture(X.dev, (IDirect3DBaseTexture9 *)X.upd_src, (IDirect3DBaseTexture9 *)X.upd_dst));
+    /* E3: Lock(offset, 0) runs from offset to the end, and the pointer is at offset.
+     * E4: two Locks held at once, each range written, then both unlocked */
+    CHK(IDirect3DDevice9_CreateVertexBuffer(X.dev, 12 * sizeof(struct vtx_pct), 0, D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1, D3DPOOL_MANAGED, &X.vb2, NULL));
+    CHK(IDirect3DVertexBuffer9_Lock(X.vb2, 4 * sizeof(struct vtx_pct), 0, &p, 0));
+    quad_at((struct vtx_pct *)p, 0.0f, 0xffff8000);
+    CHK(IDirect3DVertexBuffer9_Unlock(X.vb2));
+    {
+        void *p2;
+        CHK(IDirect3DVertexBuffer9_Lock(X.vb2, 0, 4 * sizeof(struct vtx_pct), &p, 0));
+        CHK(IDirect3DVertexBuffer9_Lock(X.vb2, 8 * sizeof(struct vtx_pct), 4 * sizeof(struct vtx_pct), &p2, 0));
+        quad_at((struct vtx_pct *)p, 0.5f, 0xff00c0ff);
+        quad_at((struct vtx_pct *)p2, 1.0f, 0xffc000ff);
+        CHK(IDirect3DVertexBuffer9_Unlock(X.vb2));
+        CHK(IDirect3DVertexBuffer9_Unlock(X.vb2));
+    }
+    {   /* GetRenderTargetData from a 64-bit render target; its last pixel is what a short copy loses */
+        IDirect3DSurface9 *rt16 = NULL, *sys16 = NULL, *bb = NULL;
+        X.rt16_hr = IDirect3DDevice9_CreateRenderTarget(X.dev, 4, 4, D3DFMT_A16B16G16R16F, D3DMULTISAMPLE_NONE, 0, FALSE, &rt16, NULL);
+        if (SUCCEEDED(X.rt16_hr)) X.rt16_hr = IDirect3DDevice9_CreateOffscreenPlainSurface(X.dev, 4, 4, D3DFMT_A16B16G16R16F, D3DPOOL_SYSTEMMEM, &sys16, NULL);
+        if (SUCCEEDED(X.rt16_hr)) X.rt16_hr = IDirect3DDevice9_GetRenderTarget(X.dev, 0, &bb);
+        if (SUCCEEDED(X.rt16_hr)) {
+            IDirect3DDevice9_SetRenderTarget(X.dev, 0, rt16);
+            IDirect3DDevice9_Clear(X.dev, 0, NULL, D3DCLEAR_TARGET, 0xff804020, 1.0f, 0);
+            X.rt16_hr = IDirect3DDevice9_GetRenderTargetData(X.dev, rt16, sys16);
+            IDirect3DDevice9_SetRenderTarget(X.dev, 0, bb);
+        }
+        if (SUCCEEDED(X.rt16_hr) && SUCCEEDED(X.rt16_hr = IDirect3DSurface9_LockRect(sys16, &lr, NULL, D3DLOCK_READONLY))) {
+            memcpy(X.rt16, (char *)lr.pBits + 3 * lr.Pitch + 3 * 8, 8);
+            IDirect3DSurface9_UnlockRect(sys16);
+        }
+        if (bb) IDirect3DSurface9_Release(bb);
+        if (sys16) IDirect3DSurface9_Release(sys16);
+        if (rt16) IDirect3DSurface9_Release(rt16);
+    }
 
     CHK(IDirect3DDevice9_CreateVertexShader(X.dev, vs_code, &X.vs));
     CHK(IDirect3DDevice9_CreatePixelShader(X.dev, ps_tex_code, &X.ps_tex));
@@ -195,7 +309,20 @@ static int set_states(void)
     IDirect3DDevice9_SetTexture(X.dev, 0, (IDirect3DBaseTexture9 *)X.checker);
     IDirect3DDevice9_SetPixelShaderConstantF(X.dev, 0, tint, 1);
     CHK(IDirect3DDevice9_EndStateBlock(X.dev, &X.sb_quad_a));
-    /* undo what the recording applied, then capture "everything" as the frame's baseline */
+    /* a block recorded and never applied: recording changes nothing on the
+     * device, so the frame's baseline below must not come out wireframe */
+    {
+        IDirect3DBaseTexture9 *t = NULL;
+        CHK(IDirect3DDevice9_BeginStateBlock(X.dev));
+        IDirect3DDevice9_SetRenderState(X.dev, D3DRS_FILLMODE, D3DFILL_WIREFRAME);
+        IDirect3DDevice9_SetTexture(X.dev, 2, (IDirect3DBaseTexture9 *)X.checker);
+        CHK(IDirect3DDevice9_EndStateBlock(X.dev, &X.sb_wire));
+        IDirect3DDevice9_GetRenderState(X.dev, D3DRS_FILLMODE, &X.fill_after_rec);
+        IDirect3DDevice9_GetTexture(X.dev, 2, &t);
+        X.stage2_after_rec = t != NULL;
+        if (t) IDirect3DBaseTexture9_Release(t);
+    }
+    /* undo what the recording applied (nothing, natively: kept as it was written), then capture "everything" as the frame's baseline */
     IDirect3DDevice9_SetVertexShader(X.dev, NULL);
     IDirect3DDevice9_SetPixelShader(X.dev, NULL);
     IDirect3DDevice9_SetTexture(X.dev, 0, NULL);
@@ -238,6 +365,11 @@ static int render(void)
     m_mul(&world, &rot, &world);
 
     IDirect3DDevice9_Clear(X.dev, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xff101828, 1.0f, 0);
+    {   /* 80 rects in one Clear: more than one record carries (64) */
+        D3DRECT r[80];
+        for (i = 0; i < 80; i++) { r[i].x1 = 40 + (i % 20) * 28; r[i].y1 = 12 + (i / 20) * 14; r[i].x2 = r[i].x1 + 20; r[i].y2 = r[i].y1 + 8; }
+        IDirect3DDevice9_Clear(X.dev, 80, r, D3DCLEAR_TARGET, 0xff607080, 1.0f, 0);
+    }
     IDirect3DDevice9_BeginScene(X.dev);
     IDirect3DStateBlock9_Apply(X.sb_all);
     IDirect3DDevice9_SetScissorRect(X.dev, &sc);
@@ -274,7 +406,24 @@ static int render(void)
     IDirect3DDevice9_SetRenderState(X.dev, D3DRS_CLIPPLANEENABLE, 1);
     IDirect3DDevice9_DrawIndexedPrimitiveUP(X.dev, D3DPT_TRIANGLELIST, 0, 4, 2, qi, D3DFMT_INDEX16, q, sizeof(q[0]));
     IDirect3DDevice9_SetRenderState(X.dev, D3DRS_CLIPPLANEENABLE, 0);
+    /* row E: E1 the texture UpdateTexture filled */
+    IDirect3DDevice9_SetTexture(X.dev, 0, (IDirect3DBaseTexture9 *)X.upd_dst);
+    quad_at(q, -1.0f, 0xffffffff);
+    IDirect3DDevice9_DrawPrimitiveUP(X.dev, D3DPT_TRIANGLEFAN, 2, q, sizeof(q[0]));
     IDirect3DDevice9_SetTexture(X.dev, 0, NULL);
+    {   /* E2: DrawIndexedPrimitiveUP at MinVertexIndex 4; vertices 0..3 are never named */
+        struct vtx_pct e2[8];
+        WORD ei[6] = { 4, 6, 5, 4, 7, 6 };
+        quad_at(e2, 3.0f, 0xff0000ff);
+        quad_at(e2 + 4, -0.5f, 0xffffff00);
+        IDirect3DDevice9_DrawIndexedPrimitiveUP(X.dev, D3DPT_TRIANGLELIST, 4, 4, 2, ei, D3DFMT_INDEX16, e2, sizeof(e2[0]));
+    }
+    /* E3 at vertex 4, E4 at 0 and 8 of the buffer the locks filled */
+    IDirect3DDevice9_SetStreamSource(X.dev, 0, X.vb2, 0, sizeof(struct vtx_pct));
+    IDirect3DDevice9_DrawPrimitive(X.dev, D3DPT_TRIANGLEFAN, 4, 2);
+    IDirect3DDevice9_DrawPrimitive(X.dev, D3DPT_TRIANGLEFAN, 0, 2);
+    IDirect3DDevice9_DrawPrimitive(X.dev, D3DPT_TRIANGLEFAN, 8, 2);
+    IDirect3DDevice9_SetStreamSource(X.dev, 0, NULL, 0, 0);
     IDirect3DDevice9_EndScene(X.dev);
 
     if (G.o.dump_frame >= 0 && (int)G.frame == G.o.dump_frame) {
@@ -340,7 +489,7 @@ int main(int argc, char **argv)
     X.pp.BackBufferCount = 1; X.pp.SwapEffect = D3DSWAPEFFECT_DISCARD; X.pp.hDeviceWindow = hwnd; X.pp.Windowed = !G.o.fullscreen;
     X.pp.EnableAutoDepthStencil = TRUE; X.pp.AutoDepthStencilFormat = D3DFMT_D16;
     X.pp.PresentationInterval = G.o.novsync ? D3DPRESENT_INTERVAL_IMMEDIATE : D3DPRESENT_INTERVAL_ONE;
-    hr = IDirect3D9_CreateDevice(X.d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_HARDWARE_VERTEXPROCESSING, &X.pp, &X.dev);
+    hr = IDirect3D9_CreateDevice(X.d3d, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED, &X.pp, &X.dev);
     if (FAILED(hr)) { game_log("d3dfeat9: CreateDevice failed %s", hr_str(hr)); return 1; }
     game_log("d3dfeat9: device %dx%d %s", G.o.w, G.o.h, G.o.fullscreen ? "fullscreen" : "windowed");
     if (!make_resources() || !set_states()) return 1;
@@ -350,16 +499,26 @@ int main(int argc, char **argv)
     IDirect3DStateBlock9_Apply(X.sb_quad_a);
     IDirect3DDevice9_GetPixelShaderConstantF(X.dev, 0, readback, 1);
     game_log("d3dfeat9: getters: vs int c0 = %d, vs bool b0 = %d, ps float c0 = %.2f %.2f %.2f %.2f", ic[0], bc[0], readback[0], readback[1], readback[2], readback[3]);
+    game_log("d3dfeat9: getters 2: after a recording fill mode %lu stage 2 %s; offscreen lock 0x%08lx reads %06lx; "
+             "A16B16G16R16F readback 0x%08lx %02x%02x%02x%02x%02x%02x%02x%02x",
+             (unsigned long)X.fill_after_rec, X.stage2_after_rec ? "bound" : "empty", (unsigned long)X.off_hr, (unsigned long)X.off_px,
+             (unsigned long)X.rt16_hr, X.rt16[0], X.rt16[1], X.rt16[2], X.rt16[3], X.rt16[4], X.rt16[5], X.rt16[6], X.rt16[7]);
+    X.loader = CreateThread(NULL, 0, loader_main, NULL, 0, NULL);
 
     while (!G.quit && game_pump()) {
         float dt = game_step(&G);
         if (!render()) break;
         if (G.o.dump_frame >= 0 && (int)G.frame == G.o.dump_frame) dump_frame();
-        IDirect3DDevice9_Present(X.dev, NULL, NULL, NULL, NULL);
+        if (FAILED(IDirect3DDevice9_Present(X.dev, NULL, NULL, NULL, NULL))) X.present_failed++;
         if (dt < 0) { game_log("d3dfeat9: %.1f fps, frame %u", G.fps, G.frame); }
         if (G.o.frames && (int)G.frame >= G.o.frames) break;
     }
     game_log("d3dfeat9: %u frames, %lu ms", G.frame, (unsigned long)(GetTickCount() - G.start_ms));
+    X.loader_stop = 1;
+    if (X.loader) { WaitForSingleObject(X.loader, INFINITE); CloseHandle(X.loader); }
+    game_log("d3dfeat9: loader thread: %ld rounds beside the frames", (long)X.loader_rounds);
+    game_log("d3dfeat9: getters 3: loader thread %s, %ld calls failed; %ld presents failed", X.loader ? "ran" : "did not start",
+             (long)X.loader_failed, (long)X.present_failed);
     IDirect3DDevice9_Release(X.dev);
     IDirect3D9_Release(X.d3d);
     game_log("d3dfeat9: exit");

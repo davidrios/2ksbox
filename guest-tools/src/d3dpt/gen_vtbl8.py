@@ -5,8 +5,9 @@ friends), so this emits the D3D8 interface/vtable structs itself, using the
 D3D9 types where the layouts are identical and renamed D3D8-only types
 (D3DPRESENT_PARAMETERS8, D3DSURFACE_DESC8, D3DVOLUME_DESC8, defined in
 d3d8.c) elsewhere. Also: prototypes for implemented methods, E_NOTIMPL
-stubs (log once) for the rest, a call-trace wrapper per method (the
-vtable entry, see d3dpt_trace in d3d9.c) and the vtable instances.
+stubs (log once) for the rest, a wrapper per method (the vtable entry:
+the API lock, D3DPT_LOCK in d3d9.c, and the call trace for the traced
+methods, see d3dpt_trace) and the vtable instances.
 Usage: gen_vtbl8.py /usr/i686-w64-mingw32/include/d3d8.h > d3d8_vtbl.h"""
 import re, sys
 
@@ -72,12 +73,18 @@ def wrapper(iface, prefix, ret, name, args):
         label, ''.join(' %s=%%08lx' % n for n in shown),
         ', (void *)This' + ''.join(', (unsigned long)(uintptr_t)%s' % n for n in shown))
     if ret == 'void':
-        body = '%s %s; if (d3dpt_trace_on) d3dpt_trace("< %s");' % (enter, call, label)
+        leave = 'if (d3dpt_trace_on) d3dpt_trace("< %s");' % label
     elif ret == 'float':
-        body = '%s r_; %s r_ = %s; if (d3dpt_trace_on) d3dpt_trace("< %s = %%g", (double)r_); return r_;' % (ret, enter, call, label)
+        leave = 'if (d3dpt_trace_on) d3dpt_trace("< %s = %%g", (double)r_);' % label
     else:
-        body = '%s r_; %s r_ = %s; if (d3dpt_trace_on) d3dpt_trace("< %s = 0x%%08lx", (unsigned long)r_); return r_;' % (ret, enter, call, label)
-    return '%s { %s }' % (proto, body)
+        leave = 'if (d3dpt_trace_on) d3dpt_trace("< %s = 0x%%08lx", (unsigned long)r_);' % label
+    if not traced(name):
+        enter = leave = ''
+    if ret == 'void':
+        parts = ['D3DPT_LOCK();', enter, '%s;' % call, leave, 'D3DPT_UNLOCK();']
+    else:
+        parts = ['D3DPT_LOCK();', '%s r_;' % ret, enter, 'r_ = %s;' % call, leave, 'D3DPT_UNLOCK();', 'return r_;']
+    return '%s { %s }' % (proto, ' '.join(p for p in parts if p))
 
 src = open(sys.argv[1]).read()
 rx = re.compile(r'STDMETHOD(?:_\(\s*([^,]+?)\s*,\s*(\w+)\s*\)|\((\w+)\))\s*\(\s*THIS(?:_\s*(.*?))?\s*\)\s*PURE;', re.S)
@@ -115,9 +122,9 @@ for name, prefix, impl in IFACES:
             rv = 'E_NOTIMPL' if ret == 'HRESULT' else None if ret == 'void' else '0'
             print('static %s { D3DPT_STUB("%s::%s"); %s }' % (proto, name, mname, ('return %s;' % rv) if rv else ''))
     for ret, mname, args in ms:
-        if traced(mname): print(wrapper(name, prefix, ret, mname, args))
+        print(wrapper(name, prefix, ret, mname, args))
     print('static const %sVtbl %s_vtbl = {' % (name, prefix))
     for ret, mname, args in ms:
-        print('    %s%s_%s,' % ('t_' if traced(mname) else '', prefix, mname))
+        print('    t_%s_%s,' % (prefix, mname))
     print('};\n')
 print('#endif')

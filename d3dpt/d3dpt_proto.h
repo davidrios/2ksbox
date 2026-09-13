@@ -245,6 +245,9 @@ typedef struct d3dpt_draw_indexed {
 typedef struct d3dpt_draw_up {
     uint32_t type, prim_count, stride, bytes;   /* vertex data follows */
 } d3dpt_draw_up;
+/* the indices are the application's; the vertices are its min_index ..
+ * min_index + num_vertices - 1 (vertex 0 of the data is index min_index), so
+ * every index lies in that range */
 typedef struct d3dpt_draw_indexed_up {
     uint32_t type, min_index, num_vertices, prim_count;
     uint32_t index_format, index_bytes, stride, vertex_bytes;  /* indices then (8-aligned) vertices follow */

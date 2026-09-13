@@ -158,6 +158,29 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **A review of the guest D3D8/D3D9 DLLs — 2026-09-13** (doc 14, "A
+  review of the guest DLLs"). Fixed: UpdateTexture into a DEFAULT texture
+  put a record naming handle 0 in the batch, and the host refused the batch
+  from it on (every draw behind it dropped); DrawIndexedPrimitiveUP above
+  MinVertexIndex 0 sent the wrong vertices and let DXVK read past the
+  record (the executor rebases the indices now); `Lock(offset, 0)` returned
+  the buffer's start and nested Locks lost the first range; recording a
+  state block applied it to the device; the `ddraw.dll` shim's
+  QueryInterface took no reference on the real object, so its Release freed
+  it; GetRenderTargetData was sized at 2 or 4 bytes a pixel; DEFAULT
+  offscreen surfaces could not be locked; Clear refused more than 64 rects;
+  D3D8 declaration constants of a second block went to the wrong
+  registers; and nothing was thread-safe — a `D3DCREATE_MULTITHREADED`
+  device now serialises every call through the generated vtable wrappers
+  (`D3DPT_LOCK`), as native does. Guarded by `D3DFEAT9`'s new row E,
+  "getters 2" line and loader thread ("getters 3", on a multithreaded
+  device), `DDVMTEST` and `tools/d3dpt-exec-test`; on the pre-review DLLs
+  `D3DFEAT9` fails and nothing else does, and with the lock compiled out
+  its "getters 3" line does (3 failed Presents, 3 refused batches). The executor's `batch error … at
+  record N` line (and the guest's `ret_index`) named the record *after* the
+  one that failed; it names the failing one now. **Open**: `GetSwapChain`
+  is a stub.
+
 - **A review of the display drivers (9x and the shared core) — 2026-09-12**
   (doc 19 §32). Fixed: the 9x HAL kept the core's surface table in the
   calling process's heap behind shared pointers (now a `HEAP_SHARED`

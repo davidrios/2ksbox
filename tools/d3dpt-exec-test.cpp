@@ -153,6 +153,22 @@ int main(int argc, char **argv) {
     printf("oversized DrawPrimitiveUP -> status %u (expect %u)\n", enc.last_status, D3DPT_ERR_BAD_ARG);
     if (enc.last_status != D3DPT_ERR_BAD_ARG) return 4;
   }
+  /* a DrawIndexedPrimitiveUP far along its application's array: the record
+   * carries vertices min_index.. only, and DXVK reads (MinVertexIndex +
+   * NumVertices) * stride bytes from what it is handed as vertex 0 -- here 16
+   * GiB past a 64 MiB window, unless the executor rebases the indices */
+  {
+    const uint32_t min = 0xfff000, stride = 1024, idx[3] = { min, min + 1, min + 2 };
+    d3dpt_draw_indexed_up *d = (d3dpt_draw_indexed_up *)d3dpt_enc_cmd(&enc, D3DPT_OP_DRAW_INDEXED_PRIMITIVE_UP, sizeof *d,
+                                                                      D3DPT_ALIGN8(sizeof idx) + 3 * stride);
+    d->type = D3DPT_TRIANGLELIST; d->min_index = min; d->num_vertices = 3; d->prim_count = 1;
+    d->index_format = D3DFMT_INDEX32; d->index_bytes = sizeof idx; d->stride = stride; d->vertex_bytes = 3 * stride;
+    memcpy(d + 1, idx, sizeof idx);
+    memset((uint8_t *)(d + 1) + D3DPT_ALIGN8(sizeof idx), 0, 3 * stride);
+    d3dpt_enc_flush(&enc);
+    printf("DrawIndexedPrimitiveUP at MinVertexIndex %u -> status %u (expect 0)\n", min, enc.last_status);
+    if (enc.last_status) return 6;
+  }
   d3dpt_handle *rel = (d3dpt_handle *)d3dpt_enc_cmd(&enc, D3DPT_OP_RELEASE, sizeof *rel, 0);
   rel->handle = dev; rel->pad = 0;
   d3dpt_enc_flush(&enc);

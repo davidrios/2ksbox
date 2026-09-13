@@ -145,6 +145,30 @@ static D3DFORMAT depth_norm(uint32_t f) {
     }
 }
 
+/* GET_RENDER_TARGET_DATA's row size: the guest sizes its return slot and its
+ * copy with its own table (d3d9_res.h fmt_block), which agrees with this one;
+ * 0 = not a render-target format */
+static uint32_t rt_bytes_per_pixel(D3DFORMAT f) {
+    switch (f) {
+    case D3DFMT_A8: case D3DFMT_L8: case D3DFMT_R3G3B2: case D3DFMT_P8:
+        return 1;
+    case D3DFMT_R5G6B5: case D3DFMT_X1R5G5B5: case D3DFMT_A1R5G5B5: case D3DFMT_A4R4G4B4: case D3DFMT_X4R4G4B4:
+    case D3DFMT_A8R3G3B2: case D3DFMT_A8L8: case D3DFMT_L16: case D3DFMT_V8U8: case D3DFMT_R16F:
+        return 2;
+    case D3DFMT_R8G8B8:
+        return 3;
+    case D3DFMT_A8R8G8B8: case D3DFMT_X8R8G8B8: case D3DFMT_A8B8G8R8: case D3DFMT_X8B8G8R8: case D3DFMT_A2R10G10B10:
+    case D3DFMT_A2B10G10R10: case D3DFMT_G16R16: case D3DFMT_G16R16F: case D3DFMT_R32F:
+        return 4;
+    case D3DFMT_A16B16G16R16: case D3DFMT_A16B16G16R16F: case D3DFMT_G32R32F:
+        return 8;
+    case D3DFMT_A32B32G32R32F:
+        return 16;
+    default:
+        return 0;
+    }
+}
+
 static void fill_pp(D3DPRESENT_PARAMETERS &pp, const d3dpt_present_params &g) {
     memset(&pp, 0, sizeof pp);
     pp.BackBufferWidth = g.width; pp.BackBufferHeight = g.height;
@@ -466,8 +490,18 @@ static void exec_one(Batch &b, const d3dpt_cmd *c) {
             if (v < a->min_index || v >= a->min_index + a->num_vertices) { b.err = D3DPT_ERR_BAD_ARG; return; }
         }
         if (!need_device(b)) return;
-        x.dev->DrawIndexedPrimitiveUP((D3DPRIMITIVETYPE)a->type, a->min_index, a->num_vertices, a->prim_count,
-                                      idx, (D3DFORMAT)a->index_format, idx + idx_aligned, a->stride);
+        /* the vertices we have are min_index.. on, and DXVK reads (MinVertexIndex +
+         * NumVertices) * stride bytes from the pointer it is given as vertex 0: so
+         * rebase the indices onto what we have rather than read past the record */
+        const void *indices = idx;
+        std::vector<uint16_t> i16;
+        std::vector<uint32_t> i32;
+        if (a->min_index) {
+            if (isz == 2) { i16.resize(ni); for (uint32_t i = 0; i < ni; i++) i16[i] = (uint16_t)(((const uint16_t *)idx)[i] - a->min_index); indices = i16.data(); }
+            else { i32.resize(ni); for (uint32_t i = 0; i < ni; i++) i32[i] = ((const uint32_t *)idx)[i] - a->min_index; indices = i32.data(); }
+        }
+        x.dev->DrawIndexedPrimitiveUP((D3DPRIMITIVETYPE)a->type, 0, a->num_vertices, a->prim_count,
+                                      indices, (D3DFORMAT)a->index_format, idx + idx_aligned, a->stride);
         break;
     }
 
@@ -694,7 +728,12 @@ static void exec_one(Batch &b, const d3dpt_cmd *c) {
         IDirect3DSurface9 *s = x.get<IDirect3DSurface9>(a->handle, K_SURF);
         if (!s) { b.err = D3DPT_ERR_BAD_HANDLE; return; }
         D3DSURFACE_DESC d; s->GetDesc(&d);
-        uint32_t bpp = (d.Format == D3DFMT_R5G6B5 || d.Format == D3DFMT_X1R5G5B5 || d.Format == D3DFMT_A1R5G5B5) ? 2 : 4;
+        uint32_t bpp = rt_bytes_per_pixel(d.Format);
+        if (!bpp) {         /* not a format a render target comes in: say so, don't guess a size */
+            d3dpt_ret *r = b.slot(a->ret_off, 0); if (!r) return;
+            r->hr = (uint32_t)D3DERR_INVALIDCALL;
+            break;
+        }
         uint64_t bytes = (uint64_t)d.Width * d.Height * bpp;
         if (bytes > D3DPT_RET_SIZE) { b.err = D3DPT_ERR_BAD_ARG; return; }
         d3dpt_ret *r = b.slot(a->ret_off, (uint32_t)bytes); if (!r) return;
@@ -822,6 +861,7 @@ uint32_t d3dpt_exec_submit(d3dpt_exec_t *xp, void *shm, uint32_t shm_size)
         try { exec_one(b, c); }
         catch (const std::exception &e) { x->log("record %u (op %u) threw: %s", b.index, c->op, e.what()); if (!b.err) b.err = D3DPT_ERR_HOST; }
         catch (...) { x->log("record %u (op %u) threw", b.index, c->op); if (!b.err) b.err = D3DPT_ERR_HOST; }
+        if (b.err) break;       /* index and p stay on the record that failed: the log and ret_index name it */
         p += c->size;
         b.index++;
     }
