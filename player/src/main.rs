@@ -30,7 +30,7 @@ use winit::event::{
 };
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
-use winit::window::{Cursor, CursorGrabMode, CustomCursor, Window, WindowId};
+use winit::window::{Cursor, CursorGrabMode, CustomCursor, Fullscreen, Window, WindowId};
 
 struct Gpu {
     window: Arc<Window>,
@@ -1612,6 +1612,20 @@ impl ApplicationHandler for App {
                 {
                     if !event.repeat {
                         self.toggle_keyboard_capture();
+                    }
+                    return;
+                }
+                // Ctrl+Alt+Shift+F: windowed full screen (borderless, on the
+                // window's own monitor), and back
+                if down
+                    && code == KeyCode::KeyF
+                    && self.modifiers.control_key()
+                    && self.modifiers.alt_key()
+                    && self.modifiers.shift_key()
+                {
+                    if let (false, Some(gpu)) = (event.repeat, self.gpu.as_ref()) {
+                        let full = gpu.window.fullscreen().is_none().then_some(Fullscreen::Borderless(None));
+                        gpu.window.set_fullscreen(full);
                     }
                     return;
                 }

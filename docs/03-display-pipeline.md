@@ -320,7 +320,10 @@ Target: **≤ 1 host frame added** between guest frame completion and photons at
   window's life; the compositor applies it only while the surface has
   focus, and its own `--inhibited` bindings are the user's way out), an
   active `XGrabKeyboard` on X11, a `WH_KEYBOARD_LL` hook on Windows that
-  takes the two Windows keys and injects them itself, nothing on macOS
+  takes the keys of every shortcut Windows acts on itself — the two
+  Windows keys, Tab/Esc/F4/Space under Alt (Alt+F4 and Alt+Space are
+  `DefWindowProc`'s: they closed the player and opened its system menu),
+  Esc under Ctrl — and injects them itself, nothing on macOS
   (Cmd reaches the app already). **Ctrl+Alt+K** toggles it for the rest
   of the run — off drops the capture outright (inhibitor destroyed, grab
   or hook let go) and on builds a new one, and the window title says
@@ -328,6 +331,10 @@ Target: **≤ 1 host frame added** between guest frame completion and photons at
   run off.
   Ctrl+Alt+Del is the host's everywhere, so **Ctrl+Alt+Shift+D** is the
   guest's: Shift let go, Delete pressed, and Delete released with D.
+  **Ctrl+Alt+Shift+F** is windowed full screen (borderless, on the
+  window's own monitor) and back — on a host whose own full-screen
+  binding the capture now hands to the guest, the player's is the one
+  left.
   A key goes to the guest by **where it sits** (winit's physical key) —
   the guest has a layout of its own — except the ones a host keymap
   option moves (xkb's `ctrl:swapcaps`, `ctrl:nocaps`, `caps:escape`,

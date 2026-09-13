@@ -12,11 +12,16 @@
 //!   once), which is the user's way out and not ours to take.
 //! - **X11**: an active `XGrabKeyboard` while focused. An active grab beats
 //!   the window manager's passive ones on Super.
-//! - **Windows**: a `WH_KEYBOARD_LL` hook while focused that takes the two
-//!   Windows keys before the shell sees them. winit then never sees them
-//!   either, so the hook hands them to the guest itself. Ctrl+Alt+Del and
-//!   Win+L are the kernel's and no program gets them — hence the player's
-//!   Ctrl+Alt+Shift+D.
+//! - **Windows**: a `WH_KEYBOARD_LL` hook while focused that takes the keys
+//!   of every shortcut Windows itself acts on before the shell sees them:
+//!   the two Windows keys (and so every Win+ shortcut), Tab, Esc, F4 and
+//!   Space under Alt (the switcher, Alt+Esc, and the two `DefWindowProc`
+//!   would turn into closing the player and opening its system menu), and
+//!   Esc under Ctrl (the Start menu, Task Manager). winit then never sees
+//!   them either, so the hook hands them to the guest itself; the modifier
+//!   under them was never taken and reached the guest the ordinary way.
+//!   Ctrl+Alt+Del and Win+L are the kernel's and no program gets them —
+//!   hence the player's Ctrl+Alt+Shift+D.
 //! - **macOS**: nothing. Cmd reaches the app already; Cmd+Tab would need an
 //!   event tap and the Accessibility permission.
 //!
@@ -239,14 +244,16 @@ mod x11 {
 #[cfg(windows)]
 mod win {
     use qemu_embed::Qemu;
-    use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+    use std::sync::atomic::{AtomicIsize, Ordering};
     use std::sync::Mutex;
     use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{VK_LWIN, VK_RWIN};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_F4, VK_LWIN, VK_RWIN, VK_SPACE, VK_TAB,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, GetForegroundWindow, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, HHOOK,
-        KBDLLHOOKSTRUCT, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+        KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, LLKHF_EXTENDED, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
     };
 
     // The hook procedure is a bare `extern "system" fn`, so what it needs
@@ -254,9 +261,10 @@ mod win {
     // loop's, whose message pump is what calls it.
     static VM: Mutex<Option<Qemu>> = Mutex::new(None);
     static WINDOW: AtomicIsize = AtomicIsize::new(0);
-    /// The left and right Windows key as the guest last saw them.
-    static HELD: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
-    const SCANCODES: [u32; 2] = [0xE05B, 0xE05C];
+    /// The keys the hook took that the guest holds, as set 1 scancodes: their
+    /// release is taken too, whatever the modifiers are by then (Alt let go
+    /// before Tab).
+    static HELD: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
     pub struct Hook {
         hook: HHOOK,
@@ -279,10 +287,9 @@ mod win {
                 unsafe { UnhookWindowsHookEx(self.hook) };
                 self.hook = 0;
                 // the release went to whoever took focus: let go in the guest
-                for i in 0..2 {
-                    if HELD[i].load(Ordering::Relaxed) {
-                        send(i, false);
-                    }
+                let held = std::mem::take(&mut *HELD.lock().unwrap_or_else(|e| e.into_inner()));
+                for sc in held {
+                    send(sc, false);
                 }
             }
         }
@@ -295,12 +302,28 @@ mod win {
         }
     }
 
-    fn send(i: usize, down: bool) {
+    fn send(sc: u32, down: bool) {
         if let Some(vm) = *VM.lock().unwrap_or_else(|e| e.into_inner()) {
-            vm.key(qemu_embed::atset1_to_qcode(SCANCODES[i]), down);
+            vm.key(qemu_embed::atset1_to_qcode(sc), down);
             vm.input_flush();
         }
-        HELD[i].store(down, Ordering::Relaxed);
+        let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+        held.retain(|&h| h != sc);
+        if down {
+            held.push(sc);
+        }
+    }
+
+    /// A key Windows would act on rather than pass to the window.
+    fn shortcut(vk: u16, flags: u32) -> bool {
+        let alt = flags & LLKHF_ALTDOWN != 0;
+        let ctrl = unsafe { GetAsyncKeyState(VK_CONTROL as i32) } < 0;
+        match vk {
+            VK_LWIN | VK_RWIN => true,
+            VK_TAB | VK_F4 | VK_SPACE => alt,
+            VK_ESCAPE => alt || ctrl,
+            _ => false,
+        }
     }
 
     unsafe extern "system" fn hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -308,13 +331,11 @@ mod win {
         // before the event that says so reaches us
         if code == HC_ACTION as i32 && GetForegroundWindow() == WINDOW.load(Ordering::Relaxed) {
             let k = &*(lparam as *const KBDLLHOOKSTRUCT);
-            let which = match k.vkCode as u16 {
-                VK_LWIN => Some(0),
-                VK_RWIN => Some(1),
-                _ => None,
-            };
-            if let Some(i) = which {
-                send(i, matches!(wparam as u32, WM_KEYDOWN | WM_SYSKEYDOWN));
+            let sc = k.scanCode | if k.flags & LLKHF_EXTENDED != 0 { 0xE000 } else { 0 };
+            let down = matches!(wparam as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
+            let held = HELD.lock().unwrap_or_else(|e| e.into_inner()).contains(&sc);
+            if held || (down && shortcut(k.vkCode as u16, k.flags)) {
+                send(sc, down);
                 return 1;
             }
         }
