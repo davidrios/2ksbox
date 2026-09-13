@@ -176,6 +176,25 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     hr = IDirectDraw_WaitForVerticalBlank(dd, DDWAITVB_BLOCKEND, NULL);
     logf_("WaitForVerticalBlank (end) -> 0x%08lx", (unsigned long)hr);
 
+    /* GetVerticalBlankStatus, in the loop a title of the era writes around
+     * it: how many "in blank" answers in 500 ms. The adapter has no beam
+     * position, so the HAL says yes once a frame (about 30 here at 60 Hz);
+     * it used to say no always, and `while (!in_vb)` never ended. */
+    {
+        DWORD t0 = GetTickCount(), polls = 0, yes = 0;
+        BOOL in_vb;
+
+        while (GetTickCount() - t0 < 500) {
+            in_vb = FALSE;
+            hr = IDirectDraw_GetVerticalBlankStatus(dd, &in_vb);
+            polls++;
+            if (hr == DD_OK && in_vb) yes++;
+        }
+        logf_("GetVerticalBlankStatus: %lu of %lu polls in blank in 500 ms (last hr 0x%08lx)%s",
+              (unsigned long)yes, (unsigned long)polls, (unsigned long)hr,
+              yes ? "" : "  FAIL: never in blank");
+    }
+
     memset(&sd, 0, sizeof(sd));
     sd.dwSize = sizeof(sd);
     sd.dwFlags = DDSD_CAPS;

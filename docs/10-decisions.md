@@ -740,7 +740,8 @@ when a model's defaults change, exactly as the two GUIs would.
   **Superseded by ADR-015 (2026-09-07): that decision was taken, and the
   Qt build is the one every package installs.** The rest of this ADR
   stands: both front ends are still maintained, and the core still owns
-  every rule.
+  every rule. **Amended by ADR-017 (2026-09-13): the egui front end is
+  deleted; the core still owns every rule.**
 
 ## ADR-015: the Qt front end is the one the packages ship (2026-09-07)
 
@@ -809,7 +810,8 @@ you running?" the first line of every bug report.
 
 **Rejected: retire `launcher/`.** It costs ~1,700 lines of view code that
 the compiler checks on every build, and it is the only thing that makes
-the core's boundary a fact rather than an intention.
+the core's boundary a fact rather than an intention. **Reversed by
+ADR-017 (2026-09-13): `launcher/` is deleted.**
 
 **Rejected: bundle Qt in the Linux tarball.** ~38 MB of libraries, QML
 modules and plugins that every distribution already ships — and a copy of
@@ -877,3 +879,39 @@ track, taken if the profile asks. 86Box's `fatal()` contract (a
 malformed command-FIFO packet aborts the process) is kept until the
 device is seen to work with a real driver, then hardened. SLI and the
 Voodoo Graphics type are not offered.
+
+## ADR-017: the egui front end is retired (2026-09-13)
+
+**Decision** (user decision). `launcher/`, the egui/eframe front end, is
+deleted. `launcher-qt` is the launcher's only front end;
+`launcher-core` keeps every rule it held; `launcher-capi` (and its
+`smoke.c`) and `launcherx` stay as the core's other callers. This
+reverses ADR-015's "Rejected: retire `launcher/`" and ends ADR-014's
+"two maintained front ends". ADR-014's line between core and front end
+is unchanged.
+
+**Why.** ADR-015 kept the egui build as the second view that makes the
+core's boundary testable. Since then it was installed by nothing,
+opened by no scripted check, and kept alive only by `cargo check`, so a
+rule that it expressed differently would never have been noticed. What
+it still cost was real: ~2,300 lines of view code, ~70 crates in the
+root lock file that only it used (eframe, accesskit, harfrust, icu),
+and a Flatpak that vendored all of them without compiling any. The
+boundary stays checked by the callers that remain: `launcherx` drives
+the models through every verb in `scripts/test.sh`, and `smoke.c` is a
+second front end in C that fails when a model's default changes.
+
+**What went with it.** The `--diag-*-frame` verbs and `--pick-file` /
+`--pick-folder`, all of which lived in the egui binary; the Qt build's
+offscreen screens (`LAUNCHER_QT_SCREEN`, doc 07) are the headless frame
+grabs now. `launcher-core` lost the API only egui called: `Preview::new`
+on a borrowed device, `output_view`, `device`/`queue`, the first-run
+dialog's button words, and the shelf's immediate-mode `discs_mut` /
+`mark_dirty` / `resort`.
+
+**Consequences.** `launcher-capi` is the root workspace's one
+non-default member, and `scripts/build.sh`'s `cargo check --workspace`
+is there for it alone. `Cargo.lock`, `packaging/flatpak/cargo-sources.json`
+and `THIRD-PARTY-NOTICES.md` were regenerated without the egui crates.
+If a second native front end is ever wanted it goes over
+`launcher-capi` or `launcher-core`, not a revived `launcher/`.

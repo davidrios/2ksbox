@@ -161,7 +161,11 @@ static WORD MakeSelector(DWORD linear, DWORD bytes)
 {
     DWORD hi = 0, lo = 0, sel = 0;
 
-    BuildDesc_(linear, (bytes + 0xfff) >> 12, D3DPT_SEL_TYPE, 0x80, 0);
+    /* The limit is the last page, not the page count: with the granularity
+     * bit set a limit of N reaches N + 1 pages, and a selector a page longer
+     * than its mapping lets a stray access land on whatever the shared arena
+     * put next instead of faulting. */
+    BuildDesc_(linear, ((bytes + 0xfff) >> 12) - 1, D3DPT_SEL_TYPE, 0x80, 0);
     _asm {
         mov [hi], edx
         mov [lo], eax
@@ -380,10 +384,25 @@ static void __stdcall register_display_driver_proc(DWORD vm, PCRS_32 state)
  * run only the first two lines existed and the screen was still the frozen
  * desktop — the DOS box had not left its prompt yet — which reads exactly
  * like a one-way switch into a black screen. Wait for the run to end. */
+/* The linear mode was on when a switch to VGA turned it off. The way back
+ * turns it on again only then: this mini-VDD also runs under the 16-colour
+ * drivers the INF hands low-colour modes to, and after our driver's
+ * PhysicalDisable, and there an unconditional ENABLE put a stale linear
+ * frame (or none) over the VGA the display actually uses. Cleared only by
+ * the way back, so a second switch on top of the first cannot lose it. */
+static BOOL bLinearWasOn = FALSE;
+
+static void LinearOff(void)
+{
+    if (!dwRegsLin) return;
+    if (*(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE)) bLinearWasOn = TRUE;
+    *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 0;
+}
+
 static void __stdcall hires_to_vga_proc(void)
 {
     dbg_str("d3dptvxd: hi-res -> VGA");
-    if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 0;
+    LinearOff();
 }
 
 static void __stdcall post_hires_to_vga_proc(void)
@@ -399,7 +418,8 @@ static void __stdcall pre_vga_to_hires_proc(void)
 static void __stdcall vga_to_hires_proc(void)
 {
     dbg_str("d3dptvxd: VGA -> hi-res done");
-    if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 1;
+    if (dwRegsLin && bLinearWasOn) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 1;
+    bLinearWasOn = FALSE;
 }
 
 /* ------------------------------------------------- the blue screen
@@ -426,7 +446,39 @@ static void __stdcall vga_to_hires_proc(void)
 static void __stdcall save_message_mode_proc(void)
 {
     dbg_str("d3dptvxd: message mode: VGA text");
-    if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 0;
+    LinearOff();
+}
+
+/* **Not every blue screen takes the screen switch.** A fault in a VxD's own
+ * init comes through PRE_HIRES_TO_VGA above, but one in an event or a timer
+ * callback does not: 2026-09-12, the patch-44 corruption put up exception
+ * 0E/05 screens from VTDAPI's timer event, the VDD drew them in VGA text
+ * mode, and this VxD was told nothing at all — no mini-VDD call, no INT 2Fh
+ * — so the adapter kept scanning out the frozen desktop with the message in
+ * the first 32 KB of VRAM behind it. What every message screen *does* send,
+ * to every VxD, is the VMM's own control message: Begin_Message_Mode before
+ * the VDD programs text mode and End_Message_Mode after "press any key".
+ * So ENABLE goes off on the first and comes back on the second, and only if
+ * this was what turned it off: after the screen switch the linear mode is
+ * already off here and the way back is the VDD's VGA_TO_HIRES, as before;
+ * at boot, and for "it is now safe to turn off your computer", there is
+ * nothing to put back. */
+static DWORD dwMsgEnable = 0;           /* ENABLE as message mode found it */
+
+static void __stdcall begin_message_mode_proc(void)
+{
+    if (!dwRegsLin) return;
+    dwMsgEnable = *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE);
+    dbg_val("d3dptvxd: message mode begins, linear mode was", dwMsgEnable);
+    *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 0;
+}
+
+static void __stdcall end_message_mode_proc(void)
+{
+    if (!dwRegsLin) return;
+    dbg_val("d3dptvxd: message mode ends, linear mode back", dwMsgEnable);
+    if (dwMsgEnable) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 1;
+    dwMsgEnable = 0;
 }
 
 /* The notifications that are only logged, the first four of each — enough
@@ -436,7 +488,12 @@ static BYTE seen[64] = {0};
 
 static void __stdcall note_proc(DWORD fn)
 {
-    if (fn < 64 && seen[fn]++ < 4) dbg_val("d3dptvxd: vdd fn", fn);
+    /* counted only up to the limit: a byte counted on wraps at 256 and
+     * logged four more every 256 calls, for ever */
+    if (fn < 64 && seen[fn] < 4) {
+        seen[fn]++;
+        dbg_val("d3dptvxd: vdd fn", fn);
+    }
 }
 
 /* The VDD calls a dispatch entry with EBX = VM and EBP = client registers.
@@ -726,11 +783,27 @@ void __declspec(naked) VXD_control(void)
         jz  ctl_init
         cmp eax, Sys_Dynamic_Device_Init
         jz  ctl_init
+        cmp eax, Begin_Message_Mode
+        jz  ctl_msg_begin
+        cmp eax, End_Message_Mode
+        jz  ctl_msg_end
         jmp ctl_ok
 
       ctl_init:
         push ebx            /* the VM handle */
         call Device_Init_proc
+        jmp ctl_ok
+
+      ctl_msg_begin:
+        pushad
+        call begin_message_mode_proc
+        popad
+        jmp ctl_ok
+
+      ctl_msg_end:
+        pushad
+        call end_message_mode_proc
+        popad
 
       ctl_ok:
         clc

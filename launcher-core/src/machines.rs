@@ -5,8 +5,7 @@
 //! `bundle directory -> Child` map, where absence means "not running" —
 //! never tracked as ended-but-kept, because `reap` removes an entry the
 //! moment its child exits. A player process has no way to push that
-//! news, so both front ends ask: the egui build at the top of every
-//! frame (it has a frame anyway), the Qt build from a `Timer` that says
+//! news, so the front end asks: the Qt build from a `Timer` that says
 //! its interval out loud.
 //!
 //! `play` publishes the shared shelf to the machine's drive before

@@ -52,15 +52,47 @@ static d3dpt_core core;
 
 /* ------------------------------------------------------------ OS hooks for core */
 
+/* **The core's memory has to be as shared as the core.** Every section of
+ * this DLL is shared (build-driver9x.sh marks them, doc 19 §23), so the
+ * core's globals — the surface table above all — are one copy for the whole
+ * machine, reached from DDHELP and from every game. A process heap lives in
+ * the private arena: the table one game grew stayed named by the shared
+ * pointer after that game exited, and the next Direct3D process read, wrote
+ * and finally freed a block in its own address space that its own heap
+ * never gave out. HEAP_SHARED (9x kernel32 only, not in the SDK headers)
+ * puts the heap in the shared arena, at one address in every process. */
+#define HEAP_SHARED_ 0x04000000ul
+
+static HANDLE core_heap;
+
 void *d3dpt_os_alloc(ULONG bytes)
 {
-    return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, bytes);
+    void *p;
+
+    if (!core_heap) {
+        core_heap = HeapCreate(HEAP_SHARED_, 0x10000, 0);
+        dbg_hex(&core, "d3dpthal: shared heap ", (ULONG)(ULONG_PTR)core_heap);
+        dbg_puts(&core, core_heap ? "\n" : " — none, falling back to the process heap\n");
+        if (!core_heap) {
+            core_heap = GetProcessHeap();
+        }
+    }
+    p = HeapAlloc(core_heap, HEAP_ZERO_MEMORY, bytes);
+    if (p && (ULONG)(ULONG_PTR)p < 0x80000000ul) {
+        static int said;
+        if (!said) {
+            said = 1;
+            dbg_hex(&core, "d3dpthal: core block in the private arena at ", (ULONG)(ULONG_PTR)p);
+            dbg_puts(&core, " — another process cannot see it\n");
+        }
+    }
+    return p;
 }
 
 void d3dpt_os_free(void *p)
 {
-    if (p) {
-        HeapFree(GetProcessHeap(), 0, p);
+    if (p && core_heap) {
+        HeapFree(core_heap, 0, p);
     }
 }
 
@@ -97,6 +129,18 @@ static inline ULONG surf_handle(void *p)
         s->lpSurfMore->dwSurfaceHandle = ++next_handle;
     }
     return s->lpSurfMore->dwSurfaceHandle;
+}
+
+/* The handle a surface already has, or 0 — for the two destroy callbacks,
+ * which must not make one up. surf_handle's invented handles count up from
+ * 101 in the range the runtime numbers its own surfaces in, so one invented
+ * for a surface nobody had registered — only to be released on the host
+ * straight away — could name a live texture of the game's, and the host
+ * dropped it. */
+static inline ULONG surf_handle_known(void *p)
+{
+    LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl(p);
+    return (s && s->lpSurfMore) ? s->lpSurfMore->dwSurfaceHandle : 0;
 }
 
 BOOL d3dpt_os_surf(d3dpt_core *c, void *os, d3dpt_surf_desc *out)
@@ -217,7 +261,7 @@ static DWORD __stdcall WaitForVerticalBlank32(d3dpt_ddhal_waitvb *d)
         wait_frame(&core);
         break;
     case DDWAITVB_I_TESTVB:
-        d->bIsInVB = FALSE;
+        d->bIsInVB = vb_test(&core);
         break;
     default:
         d->ddRVal = DDERR_INVALIDPARAMS;
@@ -333,9 +377,15 @@ static DWORD __stdcall CreateSurface32(d3dpt_ddhal_createsurface *d)
 
 /* ----------------------------------------------- command window serialisation */
 
+/* Re-entrant per **thread**: keyed on the process, two threads of one game
+ * both passed as the owner and raced the depth count. The owning process is
+ * kept too (in the DLL's data, which is shared like the block), for
+ * cmd_lock_break below. */
+static DWORD cmd_lock_pid;
+
 static void cmd_lock_acquire(void)
 {
-    DWORD self = GetCurrentProcessId();
+    DWORD self = GetCurrentThreadId();
 
     if (hal) {
         if (hal->cmd_lock_owner == self) {
@@ -347,6 +397,7 @@ static void cmd_lock_acquire(void)
         }
         hal->cmd_lock_owner = self;
         hal->cmd_lock_depth = 1;
+        cmd_lock_pid = GetCurrentProcessId();
     }
 }
 
@@ -355,8 +406,26 @@ static void cmd_lock_release(void)
     if (hal) {
         if (--hal->cmd_lock_depth == 0) {
             hal->cmd_lock_owner = 0;
+            cmd_lock_pid = 0;
             InterlockedExchange((LONG *)&hal->cmd_lock, 0);
         }
+    }
+}
+
+/* A game that died inside a callback died holding the lock — dp2_run reads
+ * the application's own command and vertex pointers, so a bad one faults in
+ * the game's process with the lock taken — and the runtime then calls
+ * ContextDestroyAll for that process. Waiting for the lock there would hang
+ * the caller, and every Direct3D process of the session after it. */
+static void cmd_lock_break(DWORD pid)
+{
+    if (hal && hal->cmd_lock && pid && cmd_lock_pid == pid && hal->cmd_lock_owner != GetCurrentThreadId()) {
+        dbg_hex(&core, "d3dpthal: command window lock left held by process ", pid);
+        dbg_puts(&core, ", released\n");
+        hal->cmd_lock_owner = 0;
+        hal->cmd_lock_depth = 0;
+        cmd_lock_pid = 0;
+        InterlockedExchange((LONG *)&hal->cmd_lock, 0);
     }
 }
 
@@ -421,12 +490,14 @@ static DWORD __stdcall SetMode32(d3dpt_ddhal_setmode *d)
 static DWORD __stdcall DestroySurface32(d3dpt_ddhal_destroysurface *d)
 {
     LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl((void *)d->lpDDSurface);
-    ULONG h = surf_handle(s);
+    ULONG h = surf_handle_known(s);
 
-    surf_forget(h);
-    if (s && !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+    if (h) {
         cmd_lock_acquire();
-        d3d_handle_op(&core, D3DPT_OP_VRAM_RELEASE, h);
+        surf_forget(h);
+        if (!(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+            d3d_handle_op(&core, D3DPT_OP_VRAM_RELEASE, h);
+        }
         cmd_lock_release();
     }
     d->ddRVal = DD_OK;
@@ -461,9 +532,9 @@ static DWORD __stdcall Flip32(d3dpt_ddhal_flip *d)
     curr = surf_lcl((void *)d->lpSurfCurr);
     targ = surf_lcl((void *)d->lpSurfTarg);
     if (d3d_ctx_live) {
+        cmd_lock_acquire();
         d3d_register_moved(&core, curr);
         d3d_register_moved(&core, targ);
-        cmd_lock_acquire();
         d3d_readback(&core, surf_handle(targ));
         cmd_lock_release();
     }
@@ -512,8 +583,8 @@ static DWORD __stdcall Lock32(d3dpt_ddhal_lock *d)
         dbg_puts(&core, "\n");
     }
     if (d3d_ctx_live && s && surf_is_target(s->ddsCaps.dwCaps)) {
-        d3d_register_moved(&core, s);
         cmd_lock_acquire();
+        d3d_register_moved(&core, s);
         d3d_readback(&core, surf_handle(s));
         cmd_lock_release();
     }
@@ -669,6 +740,7 @@ static DWORD __stdcall ContextDestroy32(D3DHAL_CONTEXTDESTROYDATA *d)
 
 static DWORD __stdcall ContextDestroyAll32(D3DHAL_CONTEXTDESTROYALLDATA *d)
 {
+    cmd_lock_break(d->dwPID);
     if (core.d3d) {
         cmd_lock_acquire();
         ctx_destroy_all(&core, d->dwPID);
@@ -829,7 +901,9 @@ static DWORD __stdcall CreateSurfaceEx32(DDHAL_CREATESURFACEEXDATA *d)
     LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl(d->lpDDSLcl);
 
     if (core.d3d && s && s->lpGbl) {
+        cmd_lock_acquire();
         d3d_register_chain(&core, s);
+        cmd_lock_release();
     }
     d->ddRVal = DD_OK;
     return DDHAL_DRIVER_HANDLED;
@@ -892,12 +966,14 @@ static DWORD __stdcall CreateExecuteBuffer32(d3dpt_ddhal_createsurface *d)
 static DWORD __stdcall DestroyExecuteBuffer32(d3dpt_ddhal_destroysurface *d)
 {
     LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl((void *)d->lpDDSurface);
-    ULONG h = surf_handle(s);
+    ULONG h = surf_handle_known(s);
 
-    surf_forget(h);
-    if (core.d3d && s && !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+    if (h) {
         cmd_lock_acquire();
-        d3d_handle_op(&core, D3DPT_OP_VRAM_RELEASE, h);
+        surf_forget(h);
+        if (core.d3d && !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+            d3d_handle_op(&core, D3DPT_OP_VRAM_RELEASE, h);
+        }
         cmd_lock_release();
     }
     d->ddRVal = DD_OK;
@@ -909,7 +985,9 @@ static DWORD __stdcall LockExecuteBuffer32(d3dpt_ddhal_lock *d)
     LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl((void *)d->lpDDSurface);
 
     if (core.d3d && s && s->lpGbl && !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+        cmd_lock_acquire();
         surf_lock_range(surf_handle(s), d->bHasRect, d->rArea.left, d->rArea.right);
+        cmd_lock_release();
     }
     d->ddRVal = DD_OK;
     return DDHAL_DRIVER_NOTHANDLED;

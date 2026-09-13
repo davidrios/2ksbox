@@ -9,12 +9,13 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   in-process; renders through the doc 03 pipeline.
 - **Window:** the shaded display fills it; aspect-correct with black bars;
   borderless fullscreen; optional CRT bezel later (cute, not core).
-- **Overlay UI (egui)** on hotkey/hover: pause, snapshot, disc swap, shader
+- **Overlay UI** on hotkey/hover: pause, snapshot, disc swap, shader
   preset picker, grab indicator, latency HUD (debug builds).
 - **Input:** grab model per doc 03 — absolute tablet for desktop mousing,
   relative PS/2 grab for games, hotkey toggle (default Ctrl+Alt+G,
-  rebindable), auto-grab-on-click option. Keyboard passthrough while grabbed.
-  Ctrl+Alt+S shoots the guest's own frame (below).
+  rebindable), auto-grab-on-click option. The host's keyboard shortcuts go
+  to the guest while the window has focus (doc 03); Ctrl+Alt+Shift+D sends
+  Ctrl+Alt+Del. Ctrl+Alt+S shoots the guest's own frame (below).
   Gamepads are their own track (M13, `docs/tracks/m13-gamepads.md`) and
   sit beside this grab model rather than inside it: a pad works whether
   or not the window has grabbed the pointer, and never changes the grab
@@ -31,6 +32,24 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
 
 - Machine library grid with last-frame thumbnails, family badge, running
   state; spawns a player per machine.
+- **Clone…** on a row (2026-09-13, `launcher-core/src/clone_machine.rs`):
+  a new machine under a name the user picks — offered as "<name> (copy)",
+  numbered when that is taken — with the same settings and its **own
+  copy of the disk**, internal snapshots included since they live in the
+  qcow2. The disk is copied wherever it is: a wizard-made bundle keeps it
+  in its own folder, but "Use an existing disk" can point anywhere, and
+  two machines on one image corrupt it the day both run. Anything else
+  the bundle names inside its own folder is copied and renamed into the
+  clone; what it names outside (shelf discs, a shader, a SoundFont) is
+  shared media and stays shared. A relative qcow2 backing file is made
+  absolute in the copy (`qemu-img rebase -u`), since the copy sits
+  elsewhere. **A running machine is refused** — its disk is being
+  written — and "running" is the grid's player map *or* a listening
+  monitor socket, so a player started by `--play` counts too. The copy
+  runs on a thread with a progress bar; the new `machine.toml` is written
+  last, so a clone still copying (or failed, whose folder is removed) is
+  never in the grid. `launcherx --clone <machine.toml> [name]` is the same
+  model headless; `lc_machines_clone` the same in C.
 - **Guided creation:** family (Win98/XP/DOS/Other) → name → memory → processor →
   acceleration →
   networking → the pointer → disk size → install media → bundle from the
@@ -94,8 +113,7 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   nothing is wrong and every machine still runs. DOS and Other machines
   get no line: neither has any Direct3D to place, since the guest half of
   the pass-through is a set of Windows DLLs. The sentence is the shared form's (`graphics_note()`), like every
-  other note under a row, so the egui build, the Qt build and the C ABI
-  cannot drift; `launcher --host-check` is the same answer in full, for a
+  other note under a row, so the Qt build and the C ABI cannot drift; `launcher --host-check` is the same answer in full, for a
   support question or a script (`launcher-core/src/host_gpu.rs`; the
   `host-check` check in `scripts/test.sh`).
 - **The processor** is a combo of named machines, not a number
@@ -121,9 +139,9 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   the CD because the new disk is blank" case relies on.
 - **Our own emulator fast paths are eight checkboxes**, behind a
   disclosure headed "Emulation optimizations — 7 of 8 on" so a machine
-  with one turned off says so while the section is closed. A *disclosure*,
-  and in both front ends: egui's `CollapsingHeader` and, since 2026-09-06,
-  Qt's `Disclosure.qml` — a triangle that turns to point down, a label,
+  with one turned off says so while the section is closed. A *disclosure*
+  (egui's `CollapsingHeader` while that front end existed) and, since
+  2026-09-06, Qt's `Disclosure.qml` — a triangle that turns to point down, a label,
   and no tick anywhere. The Qt side had opened the section with a
   `CheckBox` for want of anything in Quick Controls that folds, and a tick
   in front of "Emulation optimizations" says the one thing that is not
@@ -251,14 +269,15 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   `Message { step, headline, detail }` from one `state()` poll, because
   both front ends had been formatting "Downloading shader presets… 12.3
   MB" separately, once in Rust and once in QML, which is the drift this
-  crate exists to prevent. Each front end lays those two strings out in
-  its own idiom: Qt's `MessageDialog` puts them in `text` and
-  `informativeText`, egui stacks them in a `Modal`. **The buttons are
-  the one thing that differs, deliberately.** Qt uses the platform's
-  standard buttons — Yes/No, Retry/Cancel, OK — because that is what a
-  native confirmation dialog is, and a native dialog with hand-written
-  button text is what looks wrong on every desktop at once; egui, which
-  has no standard buttons, takes `confirm_label()` / `cancel_label()`
+  crate exists to prevent. A front end lays those two strings out in its
+  own idiom: Qt's `MessageDialog` puts them in `text` and
+  `informativeText` (the egui build stacked them in a `Modal`). **The
+  buttons are the one thing a front end may choose, deliberately.** Qt
+  uses the platform's standard buttons — Yes/No, Retry/Cancel, OK —
+  because that is what a native confirmation dialog is, and a native
+  dialog with hand-written button text is what looks wrong on every
+  desktop at once; a toolkit with no standard buttons (egui was one, a C
+  front end may be another) takes `confirm_label()` / `cancel_label()`
   from the model. Which is why the size and the destination are in the
   *question* and not only on a button. The Qt side is two dialogs and not
   one — the question and the outcome — for the reason in "Five Qt traps"
@@ -280,8 +299,8 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   otherwise, showed one frozen frame of all of it. So the core says which
   presets those are and how often it wants drawing
   (`preview::Preview::frame_interval`, `None` for a preset that stands
-  still), and each front end obeys in its own idiom: egui asks for a
-  repaint after the interval, QML runs a `Timer` at it. The frame number
+  still), and the front end obeys in its own idiom: QML runs a `Timer`
+  at it (the egui build asked for a repaint after the interval). The frame number
   the shader is given comes from a **clock at `FRAME_RATE` (60/s)**, not
   from a count of renders, so the effect runs at the speed it would in
   the player even on the Qt path, which reads every frame back to the CPU
@@ -305,16 +324,16 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   search. Case-insensitively, and **digit runs compare as numbers**,
   because disc sets are numbered and a plain string sort files `disc 10`
   between `disc 1` and `disc 2`. It is an invariant of `DiscLibrary`
-  rather than a sort each view does for itself — the two GUIs, the C ABI,
+  rather than a sort each view does for itself — the Qt GUI, the C ABI,
   `--discs` and the flat file the in-guest CDSHELF program lists all show
   one order, and they *must*: that file is addressed by slot number, so a
   view that sorted for itself would offer a disc under one number and
   load another. Two consequences for a front end: a row index is only
   good until the next edit (an add lands where the name belongs, a rename
-  moves the row), and a *rename in progress* must not re-sort — Qt gets
-  that for free from `editingFinished`, while the egui build re-sorts
-  when the field loses focus, or the row would slide out from under the
-  cursor typing into it.
+  moves the row), and a *rename in progress* must not re-sort, or the
+  row would slide out from under the cursor typing into it — Qt gets
+  that for free from `editingFinished` (the egui build re-sorted when
+  the field lost focus).
 - **"Browse…" adds the disc, it does not fill a box** (2026-09-09,
   user-reported): a file chosen in the dialog is on the shelf before the
   dialog has finished closing. The dialog already asked the question
@@ -325,15 +344,14 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   someone *types* — a mount the picker cannot reach, or one already on
   the clipboard — and nothing is lost by the immediacy: a disc added by
   mistake is one "Remove" away, and the shelf is a list of what you own,
-  not a document being drafted. Both front ends carry it (egui's
-  `path_field` hands its caller the path the *dialog* produced, Qt's
-  `PathField` has a `picked` signal beside `edited`), because it is a
-  decision, and the check that guards it is `qt-shelf` in
+  not a document being drafted. Qt's `PathField` carries it with a
+  `picked` signal beside `edited` (egui's `path_field` handed its caller
+  the path the *dialog* produced), because it is a decision, and the check that guards it is `qt-shelf` in
   `scripts/test.sh`: a real file dialog belongs to the window system and
   cannot be opened offscreen, so the probe hands the field the path the
   dialog would have and asks the *window* whether the shelf grew and the
   field emptied.
-- **A host folder is a disc too** ("Add folder…", both front ends): the
+- **A host folder is a disc too** ("Add folder…" on the shelf): the
   shelf takes a directory, and the machine's drive is given
   `isodir:<path>`, which generates an ISO 9660 + Joliet volume over the
   tree as the guest reads it (M5g, `docs/tracks/m5-dirdisc.md`). It is
@@ -369,13 +387,14 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   appears in its next listing.
 - Snapshots UI, bundle import/export.
 - UI toolkit: **Qt 6 / QML** (`launcher-qt/`) is what the product ships
-  since ADR-015, 2026-09-07 — every package installs it as `2ksbox`.
-  `launcher/` on **egui/eframe** (decided at M6, 2026-09-04 — see
-  `docs/tracks/m6-launcher.md`; MIT/Apache-2.0 fits the project's
-  GPL-2.0-only + open-source stance better than Slint's non-GPLv3 tiers,
-  and its wgpu backend unifies with the player's `wgpu`/`winit` pins) is
-  still maintained and is installed by nothing. Everything either of them
-  decides lives in `launcher-core/` — "Two front ends, one core" below.
+  since ADR-015, 2026-09-07 — every package installs it as `2ksbox` —
+  and since 2026-09-13 it is the only front end (ADR-017). The first one
+  was `launcher/` on **egui/eframe** (decided at M6, 2026-09-04 — see
+  `docs/tracks/m6-launcher.md`; MIT/Apache-2.0 fit the project's
+  GPL-2.0-only + open-source stance better than Slint's non-GPLv3 tiers),
+  kept as a second view from the Qt port until its deletion. Everything
+  the launcher decides lives in `launcher-core/` — "One front end over a
+  core" below.
 
 The launcher is optional by design: hand-written bundles + the player binary
 is a fully supported path.
@@ -446,7 +465,7 @@ name may start with one (`flatpak build-init` rejects `com.2ksbox.…`).
 Since 2026-09-06 nothing is called `win98-xp-virt` any more: the
 repository is `davidrios/2ksbox`, the docs say 2ksbox, and the user's data
 directory is `~/.local/share/2ksbox` — moved once, on the first run that
-looks for it (`launcher/src/paths.rs::data_dir`).
+looks for it (`launcher-core/src/paths.rs::data_dir`).
 
 ### The install layout (decided at M6 step 6, 2026-09-05)
 
@@ -456,7 +475,7 @@ was *built* from — the player next to it in `target/`, `qemu-img` in
 `guest-tools/out`, the presets in `third_party/`. An installed copy has
 none of those, so there is now a second layout, and the launcher decides
 which one it is in by looking at its own executable
-(`launcher/src/paths.rs`): `<exe dir>/..` containing
+(`launcher-core/src/paths.rs`): `<exe dir>/..` containing
 `share/2ksbox` means installed.
 
 ```
@@ -553,16 +572,22 @@ the Windows installer, and with the latter Windows live control (a named
 pipe or a loopback port in place of the Unix monitor socket above). The
 macOS .app landed 2026-09-06.
 
-## Two front ends, one core
+## One front end over a core
 
-The launcher is **two maintained front ends over one library** (decided
-2026-09-06): `launcher/` on egui/eframe and `launcher-qt/` on Qt 6 / QML
-through cxx-qt, both views over `launcher-core/`. The Qt build began as a
-costed spike — "how would this go in Qt", answered with something that
-runs rather than an argument — and is now kept as a peer. **Since
-ADR-015 (2026-09-07) it is also the one every package installs**, and
-`launcher/` is the second view that no package installs: what that costs
-each packager is "What shipping Qt costs" below.
+The launcher is **one front end over one library**: `launcher-qt/` on
+Qt 6 / QML through cxx-qt, a view over `launcher-core/`, which also has
+two callers with no window — `launcher-capi/` (the same models as a C
+ABI, "A third front end" below) and `launcherx` (the toolkit-free debug
+verbs). It was **two** front ends from 2026-09-06 (ADR-014) until
+2026-09-13 (ADR-017): `launcher/` on egui/eframe, the first launcher, and
+the Qt build, which began as a costed spike — "how would this go in Qt",
+answered with something that runs rather than an argument — and became
+a peer, then **the one every package installs (ADR-015, 2026-09-07)**;
+what that costs each packager is "What shipping Qt costs" below. The
+egui build was then a second view that nothing installed, and was
+deleted. The core it forced into existence stays exactly where it is:
+the line below is drawn at behaviour, and that argument never depended
+on how many front ends there were.
 
 ### What is in the core, and why all of it
 
@@ -609,9 +634,9 @@ accelerator, the processor and the NIC follow the family until someone
 picks one.
 
 **What the shared core does not protect against, and what to do about
-it:** the immediate-mode build reads the model *while drawing*, so a
-value is never stale; the retained-mode one copies the model onto
-properties in a `publish()` that some verb has to call, so a property
+it:** an immediate-mode build (egui was one) reads the model *while
+drawing*, so a value is never stale; the retained-mode Qt one copies the
+model onto properties in a `publish()` that some verb has to call, so a property
 nobody publishes stays at its default — which looks like a real answer.
 It cost a user-visible bug on 2026-09-06: the Qt profile list always said
 "No shader presets on this machine" and offered to download them, on a
@@ -638,8 +663,8 @@ now true: ranges are published before the values inside them, `Wizard`
 publishes in `cxx_qt::Initialize` so a window built at start-up binds to
 a form that means something rather than to zeroes, and `open` is
 published **last**, since that is what shows the window. It is a bug the
-immediate-mode build cannot have — egui's `DragValue` is handed a range
-and a value in the same call, every frame — and it is invisible to
+immediate-mode build could not have — egui's `DragValue` was handed a
+range and a value in the same call, every frame — and it is invisible to
 everything that asks the *model*, which is what every other check does:
 hence `qt-wizard` in `scripts/test.sh`, which opens the real window
 headlessly on each family and compares what the memory field **shows**
@@ -747,39 +772,41 @@ unbind the field and hide the bug), moves the family combo box, and
 prints what the field is **showing** beside what the model holds. The
 unfixed build says `shown [] model []`.
 
-### What each front end still owns
+### What the front end still owns
 
-Everything that is genuinely the toolkit's, and nothing else:
+Everything that is genuinely the toolkit's, and nothing else — what a
+third front end would owe too (the egui build's answers, while it
+existed, in brackets):
 
-| | egui (`launcher/`) | Qt (`launcher-qt/`) |
-|---|---|---|
-| the file dialog | `rfd` — egui has none | `QtQuick.Dialogs`, declarative |
-| when to redraw | every frame; the model is read inline | a `Timer` per thing being watched, off when idle |
-| "the list changed" | no such concept; redraw | `beginResetModel` / `dataChanged` |
-| a destructive restore | the row's button becomes "Discard current state?" | a dialog |
-| the preview frame | a texture id, zero copy | CPU readback → temp BMP → `Image` |
-| secondary screens | floating panels inside the one window | real top-level windows |
-| a headless frame | ~150 lines of synthetic-input plumbing | `QT_QPA_PLATFORM=offscreen` + `grabToImage` |
+| | Qt (`launcher-qt/`) |
+|---|---|
+| the file dialog | `QtQuick.Dialogs`, declarative (egui had none and used `rfd`) |
+| when to redraw | a `Timer` per thing being watched, off when idle (egui: every frame, the model read inline) |
+| "the list changed" | `beginResetModel` / `dataChanged` |
+| a destructive restore | a dialog (egui: the row's button became "Discard current state?") |
+| the preview frame | CPU readback → temp BMP → `Image` (egui: a texture id, zero copy) |
+| secondary screens | real top-level windows (egui: floating panels inside the one window) |
+| a headless frame | `QT_QPA_PLATFORM=offscreen` + `grabToImage` (egui: ~150 lines of synthetic-input plumbing) |
 
 Two of those are real differences in kind rather than in spelling. The
-**shader preview** is where Qt is meaningfully worse: eframe hands egui a
-live `wgpu::Device` and the preview borrows it, so the rendered texture
-reaches the widget by id; Qt Quick renders through QRhi and cxx-qt
-exposes no handle to it, so `launcher-qt` opens a *second*, windowless
-wgpu device (~40 MB of VRAM and another driver context) and the frame
-reaches QML through a CPU readback written to a temp BMP — ~3 ms
-readback plus ~4 ms write per 1280x960 frame, on every slider drag. (BMP,
-not PNG: ~4 ms against ~90 ms.) Doing it properly means a `QQuickRhiItem`
-subclass in C++ importing the Vulkan image. **This is the one place the
-Qt build is worse, and it is fixable, in C++.** The other, in Qt's
-favour, is that a **`Timer` says its interval out loud and stops when
-there is nothing to watch**, where the egui build polls the snapshot job
-and reaps exited players at the top of every frame because it has a
-frame anyway.
+**shader preview** is where the Qt build is worse than the egui one was:
+eframe handed egui a live `wgpu::Device` and the preview borrowed it, so
+the rendered texture reached the widget by id; Qt Quick renders through
+QRhi and cxx-qt exposes no handle to it, so `launcher-qt` opens a
+*second*, windowless wgpu device (~40 MB of VRAM and another driver
+context) and the frame reaches QML through a CPU readback written to a
+temp BMP — ~3 ms readback plus ~4 ms write per 1280x960 frame, on every
+slider drag. (BMP, not PNG: ~4 ms against ~90 ms.) Doing it properly
+means a `QQuickRhiItem` subclass in C++ importing the Vulkan image.
+**This is the one place the Qt build is worse, and it is fixable, in
+C++.** The other, in Qt's favour, is that a **`Timer` says its interval
+out loud and stops when there is nothing to watch**, where the egui
+build polled the snapshot job and reaped exited players at the top of
+every frame because it had a frame anyway.
 
 The **windows-not-panels** difference forced one honest simplification.
-The egui shader manager is one window with two modes (list / editor) that
-resizes itself between them; the Qt version is **two windows**, because a
+The egui shader manager was one window with two modes (list / editor)
+that resized itself between them; the Qt version is **two windows**, because a
 real window's size cannot be reliably changed once the window manager has
 mapped it — bound or assigned, the request is the WM's to ignore, and
 here it was ignored on the height, leaving the editor's preview squashed
@@ -788,18 +815,19 @@ the better shape.
 
 ### The numbers
 
-Measured 2026-09-06, after the split; the figures in brackets are what
-they were when the Qt build was a spike with ten `#[path]`-included
-files.
+Measured 2026-09-06, after the split, while there were still two front
+ends; the figures in brackets are what they were when the Qt build was a
+spike with ten `#[path]`-included files. The egui row went with
+`launcher/` on 2026-09-13 (1,735 lines of views then, eframe, egui, `rfd`
+and `image` beyond the shared set, a 39.8 MB self-contained binary).
 
 | | lines |
 |---|---|
-| `launcher-core/`, shared by both | **4,435** (1,943) |
-| `launcher/` — egui views only | **1,735** (3,208) |
+| `launcher-core/`, the core | **4,435** (1,943) |
 | `launcher-qt/src/` — Qt bridges only | **2,132** (2,924) |
 | `launcher-qt/qml/` | **1,772** (1,678) |
-| dependencies beyond the shared set | `eframe`, `egui`, `rfd`, `image` (the icon) / `cxx-qt`, `cxx-qt-lib`, system Qt 6 |
-| release binary | 39.8 MB, self-contained / 24.4 MB **plus ~38 MB of Qt runtime** |
+| dependencies beyond the core's | `cxx-qt`, `cxx-qt-lib`, system Qt 6 |
+| release binary | 24.4 MB **plus ~38 MB of Qt runtime** |
 
 The two front ends together lost 2,171 lines; the core gained 2,469 of
 new shared modules on top of the 1,966 that merely moved. It is
@@ -808,9 +836,9 @@ duplicated is now written once, documented once, and given an API
 (`ram_note()`, `choose_family()`) where it used to be a field poked
 inline. The saving is that there is one place to change any of it.
 
-The Qt binary being *smaller* is not a size win: egui, wgpu and winit are
-statically linked into the egui build, while Qt is a shared library, so
-the Qt build then needs ~25 MB of `libQt6{Core,Gui,Qml,Network,DBus}`
+The Qt binary being *smaller* than the egui one was is not a size win:
+egui, wgpu and winit were statically linked into the egui build, while
+Qt is a shared library, so the Qt build then needs ~25 MB of `libQt6{Core,Gui,Qml,Network,DBus}`
 plus the ~13 MB QtQuick QML plugin tree present on the machine. That is
 the packaging question ADR-015 answered — "What shipping Qt costs" below.
 `launcher-qt` is not in the root workspace (`Cargo.toml` declares its
@@ -820,14 +848,14 @@ development files on the Mac, in CI or in the Flatpak; the
 back the other way. Build it from its own directory, or with
 `scripts/build.sh qt` — that is the whole build command, no CMake.
 
-### Proving they agree
+### Proving the core is the one implementation
 
-Four checks, all of which run without a GUI click:
+Checks that run without a GUI click:
 
-- **`--preview-shader` on both binaries renders byte-identical PNGs.**
-  It is the same code now (`launcher_core::preview` on a headless
-  device), so this is a check that the two builds really are linking the
-  one implementation.
+- **`--preview-shader` is `launcher_core::preview` on a headless
+  device**, the same code the Qt window's preview runs; while the egui
+  build existed, the two binaries rendered byte-identical PNGs through
+  it, which is how the split was shown to be one implementation.
 - **The preview's animation is one decision, checked once.** The
   `preview-anim` check in `scripts/test.sh` renders a still preset at two
   frame numbers (one picture, and reported still) and an interlaced one
@@ -837,23 +865,24 @@ Four checks, all of which run without a GUI click:
 - **The same debug verbs, from the same code.** `launcher_core::cli`
   answers `--paths`, `--discs`, `--snapshots`, `--wizard-new`,
   `--wizard-edit`, `--boot-disc`, `--insert-disc`, `--print-args` and the
-  rest for both binaries, where the Qt build used to reimplement two of
-  them and lack the other twenty. (`--pick-file` is the one exception: it
-  pops `rfd`'s dialog, and Qt's is declarative. The `--diag-*` screenshot
-  verbs are each toolkit's own, for the same reason.) Since 2026-09-07
-  there is a **third** caller with no toolkit behind it at all —
+  rest for `launcher-qt`, where the Qt build used to reimplement two of
+  them and lack the other twenty. The verbs that *were* a toolkit —
+  `--pick-file` / `--pick-folder` (`rfd`'s dialog) and the `--diag-*`
+  frame grabs — went with the egui build; the Qt build's headless frames
+  are its offscreen screens (`LAUNCHER_QT_SCREEN`, `LAUNCHER_QT_SHOT`).
+  Since 2026-09-07 there is a caller with no toolkit behind it at all —
   `target/release/launcherx`, `launcher-core`'s own binary — and that is
   the one `scripts/test.sh` and `tools/dos-guest-test.py` drive, so a
-  suite that runs before every commit builds neither eframe nor Qt to ask
-  `--print-args` a question. It is also why `launcher` is no longer a
-  default member of the root workspace (ADR-014, README).
-- **A machine created through each front end's real window is the same
-  machine.** `--diag-wizard-frame` drives the egui form headlessly;
-  `LAUNCHER_QT_SCREEN=create LAUNCHER_QT_ARG=dos:<name>` drives the QML
-  one under `QT_QPA_PLATFORM=offscreen`. The two `machine.toml`s differ
-  only in the name and the disk path — `family`, `ram_mb = 64`,
-  `accel = "tcg"`, `network = false`, `seamless_mouse = false`, `boot`,
-  `cpu_speed = "486dx2-66"` all match. Before the split, four of those six were wrong on the Qt
+  suite that runs before every commit builds no GUI toolkit to ask
+  `--print-args` a question.
+- **A machine created through the real window is the machine the model
+  says.** `LAUNCHER_QT_SCREEN=create LAUNCHER_QT_ARG=dos:<name>` drives
+  the QML wizard under `QT_QPA_PLATFORM=offscreen`, and its
+  `machine.toml` has `family`, `ram_mb = 64`, `accel = "tcg"`,
+  `network = false`, `seamless_mouse = false`, `boot` and
+  `cpu_speed = "486dx2-66"` — the same file the egui form's
+  `--diag-wizard-frame` produced, bar the name and the disk path, while
+  both existed. Before the split, four of those six were wrong on the Qt
   side or absent.
 
 **The `#[path]` arrangement it replaced survived its own first test** —
@@ -899,9 +928,9 @@ builds it and runs it against a scratch library, creating a DOS machine
 through the shared wizard and checking the answers (64 MB, a period
 processor, emulated, no network card and no USB tablet), then the disc
 shelf, the library and the profile editor. A rename or a changed default in a model fails
-there as well as in the two GUIs.
+there as well as in the Qt GUI.
 
-What a third front end still owes is what the other two own: a file
+What another front end still owes is what the Qt one owns: a file
 dialog, when to redraw, how to confirm a destructive restore, and how to
 show a preview frame (`lc_editor_read_frame` hands over RGB8).
 
@@ -923,12 +952,20 @@ the platform's own file dialog, the desktop integrations nobody wants to
 write (decorations, HiDPI, colour scheme, accessibility, input methods),
 and a main loop that idles instead of drawing 60 frames a second beside a
 running machine. It was already the Windows package's launcher. The egui
-build stays exactly as it is and is installed by nothing: it is the
-second view that keeps the core's boundary a fact, the home of the
-`--diag-*-frame` verbs, and the fallback for a host where Qt is a
-problem. The one thing the Qt build does worse — the preview's CPU
-readback — is now on the shipped path, which is the argument for fixing
-it with a `QQuickRhiItem` rather than for keeping the door open.
+build stayed as it was and was installed by nothing: the second view
+that kept the core's boundary a fact, the home of the `--diag-*-frame`
+verbs, and the fallback for a host where Qt is a problem. The one thing
+the Qt build does worse — the preview's CPU readback — is now on the
+shipped path, which is the argument for fixing it with a `QQuickRhiItem`
+rather than for keeping the door open.
+
+**2026-09-13 (ADR-017): the egui build is deleted.** `launcher/` and its
+~70 exclusive crates are gone from the workspace, and with them the
+`--diag-*-frame` verbs and `--pick-file` / `--pick-folder`. The core
+stays what it was — every rule, every sentence, every window's state
+machine — and its boundary is still exercised by more than one caller:
+the Qt front end, `launcher-capi`'s `smoke.c` in the `capi` check, and
+`launcherx` in the rest of the suite.
 
 ### What shipping Qt costs
 

@@ -110,7 +110,7 @@ if [ "$MODE" = d3dgame8 ]; then
     'D3DGAME8.EXE -frames 600 -dump 300 E:\G8.BMP' 'copy d3dgame8.log E:\g8.log > nul' 'echo done > E:\G8DONE.TXT' 'echo G8DONE > COM1' > "$OUT/g8.bat"
   stage_bat "$OUT/g8.bat"
 fi
-PROBES="CUBETEST STRMTEST VOLTEST FMTTEST BUMPTEST SPRTEST ANISTEST PATCHTST MSAATEST"
+PROBES="CUBETEST STRMTEST VOLTEST FMTTEST BUMPTEST SPRTEST ANISTEST PATCHTST MSAATEST MGDTEST"
 if [ "$MODE" = probes ]; then
   # the DX8 feature probes one after the other; each writes <name>.log where it runs
   { printf '%s\n' '@echo off' 'cd /d %TEMP%'

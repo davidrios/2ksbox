@@ -3,22 +3,13 @@
 //! player uses, re-rendered whenever the preset, its parameter values or
 //! the image change.
 //!
-//! **Whose GPU is the caller's business.** eframe already has a
-//! `wgpu::Device`/`Queue` open to draw egui with, and the egui build
-//! hands them here so the rendered texture reaches the widget by id —
-//! zero copy. Qt Quick renders through QRhi and cxx-qt exposes no handle
-//! to it, so the Qt build calls `headless()` and gets a second,
-//! windowless device of its own (~40 MB of VRAM and one more driver
-//! context) and reads the frame back to the CPU. Everything between
-//! those two ends — decoding the image, the source-size cap, loading the
-//! chain, the integer-scale viewport math — is this file, once.
-//!
-//! `output_texture()` is where the two paths diverge again: the egui
-//! build registers it with `egui_wgpu`, the Qt build runs
-//! `shader_chain::read_texture` over it and writes a BMP, and the
-//! `--preview-shader` verb dumps it as a PNG. That the two front ends'
-//! verbs produce byte-identical PNGs is the check that this really is
-//! one render path (doc 07).
+//! **It opens its own GPU.** Qt Quick renders through QRhi and cxx-qt
+//! exposes no handle to it, so `headless()` opens a windowless device
+//! (~40 MB of VRAM and one more driver context) and the front end reads
+//! the frame back to the CPU (`read_frame`). Everything between those two
+//! ends — decoding the image, the source-size cap, loading the chain, the
+//! integer-scale viewport math — is this file, once, and the
+//! `--preview-shader` verb dumps the same frame as a PNG (doc 07).
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -67,9 +58,7 @@ pub struct Preview {
 }
 
 impl Preview {
-    /// Render on a device the caller already has — eframe's, for the
-    /// egui build, so the preview costs no second GPU context.
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue, adapter_info: wgpu::AdapterInfo) -> Preview {
+    fn new(device: wgpu::Device, queue: wgpu::Queue, adapter_info: wgpu::AdapterInfo) -> Preview {
         Preview {
             device,
             queue,
@@ -85,9 +74,9 @@ impl Preview {
         }
     }
 
-    /// Open a windowless adapter and device of this preview's own — for
-    /// a front end whose toolkit will not lend one, and for the headless
-    /// verbs. Fails only when there is no usable GPU at all, which is
+    /// Open a windowless adapter and device of this preview's own — the
+    /// toolkit will not lend one, and the headless verbs have none.
+    /// Fails only when there is no usable GPU at all, which is
     /// the same condition that would stop the player from running.
     pub fn headless() -> Result<Preview, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
@@ -110,14 +99,6 @@ impl Preview {
         Ok(Preview::new(device, queue, adapter_info))
     }
 
-    pub fn device(&self) -> &wgpu::Device {
-        &self.device
-    }
-
-    pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
-    }
-
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
@@ -132,9 +113,7 @@ impl Preview {
     /// when something is clicked shows one frozen frame of that and
     /// nothing of the effect. Whether a preset is one of them is
     /// `shader_chain::preset_is_animated`'s answer, not a front end's,
-    /// and so is the interval: a window that draws itself on demand
-    /// (egui) schedules a repaint this far out, a window driven by
-    /// signals (QML) runs a timer at it.
+    /// and so is the interval: the front end runs a timer at it.
     pub fn frame_interval(&self) -> Option<Duration> {
         self.chain.as_ref()?.animated().then_some(FRAME_INTERVAL)
     }
@@ -167,16 +146,9 @@ impl Preview {
         self.viewport
     }
 
-    /// The last rendered frame, for whatever the caller does with it:
-    /// register it as an egui texture, read it back to a file, dump it.
-    pub fn output_texture(&self) -> Option<&wgpu::Texture> {
+    /// The last rendered frame, for `read_frame` and `dump_png`.
+    fn output_texture(&self) -> Option<&wgpu::Texture> {
         self.chain.as_ref().and_then(shader_chain::Chain::output_texture)
-    }
-
-    /// The view onto it — what a toolkit that takes a texture by handle
-    /// wants (`egui_wgpu::Renderer::register_native_texture`).
-    pub fn output_view(&self) -> Option<&wgpu::TextureView> {
-        self.chain.as_ref().and_then(shader_chain::Chain::output_view)
     }
 
     /// Reflect the editor's current preset path, effective parameter
@@ -202,14 +174,13 @@ impl Preview {
     }
 
     /// Read the last frame back as `(width, height, RGB8)` — the CPU
-    /// path, for a front end that cannot take a texture.
+    /// path, since the front end cannot take a texture.
     pub fn read_frame(&self) -> Option<(u32, u32, Vec<u8>)> {
         let tex = self.output_texture()?;
         Some(shader_chain::read_texture(&self.device, &self.queue, tex))
     }
 
-    /// Dump the last frame as a PNG — what both `--preview-shader` verbs
-    /// write, so the two front ends' output can be diffed byte for byte.
+    /// Dump the last frame as a PNG — what `--preview-shader` writes.
     pub fn dump_png(&self, out: &str) -> Result<(), String> {
         let tex = self.output_texture().ok_or("no frame rendered")?;
         shader_chain::dump_texture(&self.device, &self.queue, tex, out);
@@ -276,9 +247,8 @@ impl Preview {
         // A preset that animates starts at its own frame 0, not at
         // however long this window happened to be open.
         self.clock = Instant::now();
-        // `egui_wgpu::Renderer::register_native_texture` requires exactly
-        // this format for a texture it is handed, and the readback path
-        // is indifferent, so both ends agree on it.
+        // The readback path is indifferent to the format; RGBA8 is what
+        // `shader_chain::read_texture` and `dump_texture` expect.
         match shader_chain::Chain::load(
             path,
             &self.device,

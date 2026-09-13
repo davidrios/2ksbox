@@ -2,6 +2,31 @@
 //! form `qemu_embed_atset1_to_qcode` expects.
 
 use winit::keyboard::KeyCode as K;
+use winit::keyboard::{Key, KeyLocation, NamedKey};
+
+/// The key the host's own keymap reads this one as, for the keys a keymap
+/// option moves (xkb's `ctrl:swapcaps`, `ctrl:nocaps`, `caps:escape`,
+/// `altwin:swap_alt_win`, …): a Caps Lock the host reads as Control is
+/// Control to the guest too. `None` for every other key, which goes by
+/// where it sits — the guest has a layout of its own, and a letter
+/// translated by both would be a different letter.
+pub fn as_host_reads(logical: &Key, location: KeyLocation) -> Option<K> {
+    let Key::Named(named) = logical else {
+        return None;
+    };
+    let right = location == KeyLocation::Right;
+    let side = |l, r| if right { r } else { l };
+    Some(match named {
+        NamedKey::Control => side(K::ControlLeft, K::ControlRight),
+        NamedKey::Shift => side(K::ShiftLeft, K::ShiftRight),
+        NamedKey::Alt => side(K::AltLeft, K::AltRight),
+        NamedKey::AltGraph => K::AltRight,
+        NamedKey::Super => side(K::SuperLeft, K::SuperRight),
+        NamedKey::CapsLock => K::CapsLock,
+        NamedKey::Escape => K::Escape,
+        _ => return None,
+    })
+}
 
 pub fn atset1(code: K) -> Option<u32> {
     Some(match code {

@@ -1,15 +1,14 @@
-// A labelled path field with a "Browse…" button — the Qt equivalent of
-// `launcher/src/filepicker.rs`'s `path_field`.
+// A labelled path field with a "Browse…" button.
 //
 // Typing directly is still allowed (a path the user already knows, or one
 // on a mount the picker can't reach); the button is a convenience, not
 // the only way in. `FileDialog` is Qt's own, which on Linux is the XDG
-// desktop portal — the same backend the egui build reaches through
-// `rfd`, with no extra dependency.
+// desktop portal, with no extra dependency.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import com._2ksbox.launcher
 
 RowLayout {
     id: root
@@ -40,8 +39,17 @@ RowLayout {
     /// What the dialog does with the file it was given, as a function so
     /// a probe can take the same path: a real `FileDialog` belongs to the
     /// window system and cannot be opened offscreen, and everything worth
-    /// checking is downstream of this line (`Main.qml`'s `pickdisc`).
-    function acceptPath(path) { root.edited(path); root.picked(path) }
+    /// checking is downstream of this line (`Main.qml`'s `pickdisc`) —
+    /// the directory the next empty field's dialog opens in included.
+    function acceptPath(path) { browse.remember(path); root.edited(path); root.picked(path) }
+    /// The step before that: the dialog hands back a URL, not a path.
+    /// QML used to strip `file://` off `url.toString()`, which leaves
+    /// `[` and `]` as `%5B`/`%5D` — a disc called "Game [1996]" went on
+    /// the shelf under a path that does not exist and the machine booting
+    /// it would not start (user-reported, 2026-09-12). `fileUrl` is what
+    /// a probe hands this in place of a dialog.
+    function acceptUrl(url) { root.acceptPath(browse.localPath(url)) }
+    function fileUrl(path) { return browse.fileUrl(path) }
     /// e.g. "Disc images (*.iso *.cue *.ccd *.mds)". "All files (*)" is
     /// always offered alongside: a filter that hides the file someone is
     /// looking for is worse than no filter.
@@ -86,8 +94,17 @@ RowLayout {
 
     Button {
         text: qsTr("Browse…")
-        onClicked: dialog.open()
+        // Where it opens is decided when it opens (`browse::browse_start`):
+        // the field's own value, else `emptyDir`, else wherever the last
+        // dialog — any field's — was browsing, which moves between one
+        // click and the next and so cannot be a binding.
+        onClicked: {
+            dialog.currentFolder = browse.startUrl(root.value, root.emptyDir)
+            dialog.open()
+        }
     }
+
+    Browse { id: browse }
 
     FileDialog {
         id: dialog
@@ -97,15 +114,6 @@ RowLayout {
         // Every glob comes in both cases (`browse::extensions`), which is
         // twice as long as anyone needs to read in the filter combo.
         options: FileDialog.HideNameFilterDetails
-        // The field's own value wins over the caller's suggestion:
-        // re-opening browses from where it already points.
-        currentFolder: {
-            if (root.value !== "")
-                return "file://" + root.value.replace(/\/[^\/]*$/, "")
-            if (root.emptyDir !== "")
-                return "file://" + root.emptyDir
-            return ""
-        }
-        onAccepted: root.acceptPath(selectedFile.toString().replace(/^file:\/\//, ""))
+        onAccepted: root.acceptUrl(selectedFile)
     }
 }

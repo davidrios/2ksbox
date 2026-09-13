@@ -2,7 +2,7 @@
 //! finds Qt through `qmake6`, runs `moc` and `qmltyperegistrar` over the
 //! QObjects the bridges declare, compiles the generated C++ and links it
 //! into this binary — so `cargo build` is still the whole build command,
-//! which is what keeps this comparable to the egui launcher.
+//! like everything else in the tree.
 //!
 //! The QML files are compiled into the binary as a Qt resource, hence
 //! the `qrc:/qt/qml/<uri as a path>/…` URL `main.rs` loads: an installed
@@ -37,6 +37,7 @@ fn main() {
             "qml/PathField.qml",
             "qml/PresetCollection.qml",
             "qml/WizardWindow.qml",
+            "qml/CloneWindow.qml",
             "qml/DiscShelfWindow.qml",
             "qml/SnapshotsWindow.qml",
             "qml/ShaderProfilesWindow.qml",
@@ -58,6 +59,9 @@ fn main() {
     // (`src/close_event.cpp`): a close *event*, which nothing in
     // cxx-qt-lib can send.
     .cpp_file("src/close_event.cpp")
+    // ...and its question "which window has the keyboard"
+    // (`src/focus_window.cpp`), which QML's `Window.active` cannot answer.
+    .cpp_file("src/focus_window.cpp")
     // Which Quick Controls style, and which colour scheme
     // (`src/appearance.cpp`) — it calls `QQuickStyle`, so the module has
     // to be linked as well as the ones the QML imports pull in.
@@ -65,6 +69,8 @@ fn main() {
     .qt_module("QuickControls2")
     .files([
         "src/qt/diag.rs",
+        "src/qt/browse.rs",
+        "src/qt/clone_machine.rs",
         "src/qt/discs.rs",
         "src/qt/firstrun.rs",
         "src/qt/machines.rs",

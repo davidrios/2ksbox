@@ -1,13 +1,12 @@
 // The shader profile editor (doc 07): a slider per preset parameter and
-// the live preview beside them — `launcher/src/shader_manager.rs`'s
-// editor half.
+// the live preview beside them.
 //
 // Its own top-level window, and a big one: the preview is the whole
 // point, and a window the user can drag out to their screen's width
-// beats the in-window "Fullscreen" toggle the egui build had to grow.
+// beats an in-window "Fullscreen" toggle.
 // The preview itself is rendered by `shader-chain` on this process's own
 // windowless wgpu device and arrives through a file; `src/preview.rs`
-// explains why, and what the egui build gets for free instead.
+// explains why.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -46,10 +45,15 @@ Window {
     // model's own `open` flag is put back. Not while a file dialog is up:
     // that Esc is the dialog's (`PathField.browsing`).
     Shortcut {
+        id: escShortcut
         sequences: [StandardKey.Cancel]
         enabled: !presetField.browsing && !previewField.browsing
         onActivated: root.close()
     }
+
+    /// Whether Esc would close this window right now — for the `escfocus`
+    /// probe in `Main.qml`, beside the window's own `active`.
+    readonly property bool escArmed: escShortcut.enabled
 
     /// What the preset field is *showing* — not what the model holds.
     /// The two can disagree (a field that has lost its binding keeps the
@@ -98,8 +102,7 @@ Window {
         // decaying, an NTSC signal shimmering — is only itself in
         // motion, so it has to be re-rendered on a clock and not only
         // when something is clicked. How often, and whether at all, is
-        // the core's answer (`previewInterval`, 0 for a still preset),
-        // the same one the egui build turns into a repaint request.
+        // the core's answer (`previewInterval`, 0 for a still preset).
         id: animate
         interval: Math.max(root.editor.previewInterval, 1)
         repeat: true

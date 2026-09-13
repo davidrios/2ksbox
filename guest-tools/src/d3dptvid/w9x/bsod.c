@@ -28,7 +28,28 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 {
     HANDLE f;
 
-    (void)inst; (void)prev; (void)cmd; (void)show;
+    (void)inst; (void)prev; (void)show;
+
+    /* `BSOD.EXE C:\BSODTMR.VXD`: load the VxD named instead and keep it
+     * loaded -- bsodtmr.vxd faults from a timer callback a second after its
+     * init, and closing the handle (FILE_FLAG_DELETE_ON_CLOSE) would unload
+     * it, pending time-out and all, before that. */
+    while (cmd && *cmd == ' ') cmd++;
+    if (cmd && *cmd) {
+        char path[MAX_PATH + 8];
+
+        wsprintfA(path, "\\\\.\\%s", cmd);
+        f = CreateFileA(path, 0, 0, NULL, 0, FILE_FLAG_DELETE_ON_CLOSE, NULL);
+        if (f != INVALID_HANDLE_VALUE) {
+            Sleep(30000);
+            CloseHandle(f);
+        }
+        MessageBoxA(NULL, "Loading the VxD named on the command line did not "
+                    "blue-screen this Windows: is it staged, and does it load?",
+                    "bsod", MB_OK | MB_ICONEXCLAMATION);
+        return 1;
+    }
+
     /* the famous one first — patched on the test image, kept because an
      * unpatched one reproduces it and it costs nothing */
     f = CreateFileA("C:\\con\\con", GENERIC_READ, FILE_SHARE_READ, NULL,

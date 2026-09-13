@@ -42,9 +42,19 @@
 #      not blue — "press any key to attempt to continue" continued, the
 #      desktop came back, and the machine powers off on the button.
 #
+# WHEN=event is the other kind of blue screen: BSOD.EXE loads BSODTMR.VXD
+# (the same source with -DBSOD_TIMER), whose init only arms a timer and
+# whose callback faults a second later. A fault outside any VM's own
+# execution gets its blue screen with no screen switch and no mini-VDD call
+# at all — only the VMM's Begin_Message_Mode / End_Message_Mode control
+# messages, which the mini-VDD answers since 2026-09-13 (`message mode
+# begins` / `ends` in the log). Before that, every blue screen of this kind
+# was invisible: the patch-44 corruption's, 2026-09-12. `NO_DRIVER=1` runs
+# the image's own driver instead of the fresh build, the control.
+#
 # Env: RAW=, OUT=, BOOT_WAIT=, everything win98-game-test.sh takes;
-# TRIGGER= replaces the RUN.BAT body and STAGE= the file staged for it (a
-# different way to blue-screen). The user's own player often holds the
+# WHEN=init|event; TRIGGER= replaces the RUN.BAT body and STAGE= the file
+# staged for it (a different way to blue-screen). The user's own player often holds the
 # image's lock: RAW=build/w98game/guest.raw FRESH=0 reuses the copy the
 # game harness made.
 #
@@ -63,8 +73,18 @@ export RAW="${RAW:-$ROOT/build/w98bsod/guest.raw}"
 # starts with the shell), so the run clock's first shots are already of it;
 # the key at 70 s is "press any key to attempt to continue", the text page
 # is read at 40 s, and the last shot is the desktop that came back.
-export STAGE="${STAGE:-$ROOT/guest-tools/out/driver9x/bsod.exe $ROOT/guest-tools/out/driver9x/bsodvxd.vxd}"
-export GUEST_CMD="${TRIGGER:-C:\\BSOD.EXE}"
+# WHEN=init (the default) faults in the VxD's init, which the VDD answers
+# with its screen switch; WHEN=event faults from a timer callback a second
+# later, which gets its blue screen with no switch and no mini-VDD call —
+# only the VMM's Begin_Message_Mode (2026-09-12: the patch-44 corruption's
+# screens were this kind, and all of them were invisible).
+case "${WHEN:-init}" in
+  init)  BSOD_VXD=bsodvxd.vxd; BSOD_CMD='C:\BSOD.EXE' ;;
+  event) BSOD_VXD=bsodtmr.vxd; BSOD_CMD='C:\BSOD.EXE C:\BSODTMR.VXD' ;;
+  *) echo "WHEN= is init or event"; exit 1 ;;
+esac
+export STAGE="${STAGE:-$ROOT/guest-tools/out/driver9x/bsod.exe $ROOT/guest-tools/out/driver9x/$BSOD_VXD}"
+export GUEST_CMD="${TRIGGER:-$BSOD_CMD}"
 export SETTLE="${SETTLE:-20}" RUN_SECS="${RUN_SECS:-130}" SHOTS="${SHOTS:-10}"
 export KEYS="${KEYS:-70:ret}" TEXT_AT="${TEXT_AT:-40}" FRESH="${FRESH:-1}"
 export QMPC_HOLD="${QMPC_HOLD:-300}"
@@ -86,7 +106,7 @@ bad()  { echo "FAIL  $*"; fail=1; }
 # called once at boot — so either, *after* the desktop's first `linear mode
 # on`, counts, and the linear mode must then have gone off.
 if awk '/linear mode on/{on=1} on && (/hi-res -> VGA/ || /d3dptvxd: message mode/){m=1} END{exit !m}' "$OUT/qemu.log"; then
-  ok "the VDD told the mini-VDD it was taking the screen ($(awk '/linear mode on/{on=1} on && /hi-res -> VGA/{print "PRE_HIRES_TO_VGA"; exit} on && /message mode/{print "SAVE_MESSAGE_MODE_STATE"; exit}' "$OUT/qemu.log"))"
+  ok "the VDD told the mini-VDD it was taking the screen ($(awk '/linear mode on/{on=1} on && /hi-res -> VGA/{print "PRE_HIRES_TO_VGA"; exit} on && /message mode begins/{print "Begin_Message_Mode"; exit} on && /message mode/{print "SAVE_MESSAGE_MODE_STATE"; exit}' "$OUT/qemu.log"))"
 else
   bad "no screen switch and no message mode after the desktop came up: nothing blue-screened, or the VDD used a door the mini-VDD does not hook"
 fi

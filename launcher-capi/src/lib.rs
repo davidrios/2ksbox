@@ -1,5 +1,5 @@
 //! A C ABI over `launcher-core`, so a front end that is not Rust can
-//! drive the same models the egui and Qt builds do — a native macOS app
+//! drive the same models the Qt launcher does — a native macOS app
 //! in Swift is the case this was shaped for (Swift imports a C header
 //! directly, with no bridge crate), but anything that speaks C works.
 //!
@@ -266,6 +266,64 @@ pub unsafe extern "C" fn lc_machines_reap(m: *mut LcMachines, rows: *mut usize, 
 #[no_mangle]
 pub unsafe extern "C" fn lc_machines_republish_shelf(m: *const LcMachines) {
     handle!(m, ()).0.republish_shelf();
+}
+
+/// The name "Clone…" offers for a row — "<name> (copy)", numbered when
+/// that is taken. NULL for no such row. Free with `lc_string_free`.
+///
+/// # Safety
+/// `m` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_machines_clone_name(m: *const LcMachines, row: usize) -> *mut c_char {
+    let m = handle!(m, std::ptr::null_mut());
+    let Some(path) = m.0.bundle_path(row) else { return std::ptr::null_mut() };
+    let mut window = launcher_core::clone_machine::CloneMachine::default();
+    window.set_library_dir(m.0.library_dir.clone());
+    window.open_for_path(&path, m.0.is_running(row));
+    out(window.name)
+}
+
+/// Clone a row: a new machine with the same settings and its own copy of
+/// the disk, under `name` (NULL for the offered one). Blocks until the
+/// copy is done — a front end that wants progress runs this on a thread
+/// of its own. Returns true on success; `*status` (when non-NULL) is the
+/// new `machine.toml` then and the reason otherwise, owned by the
+/// caller. `lc_machines_refresh` shows the new row.
+///
+/// # Safety
+/// `m` must be a live handle; `name` NULL or a NUL-terminated string;
+/// `status` NULL or a writable pointer.
+#[no_mangle]
+pub unsafe extern "C" fn lc_machines_clone(
+    m: *mut LcMachines,
+    row: usize,
+    name: *const c_char,
+    status: *mut *mut c_char,
+) -> bool {
+    let m = handle_mut!(m, false);
+    let (ok, message) = match m.0.bundle_path(row) {
+        None => (false, "no such machine".to_string()),
+        Some(path) => {
+            let mut window = launcher_core::clone_machine::CloneMachine::default();
+            window.set_library_dir(m.0.library_dir.clone());
+            window.open_for_path(&path, m.0.is_running(row));
+            if !name.is_null() {
+                window.name = unsafe { borrow(name) }.to_string();
+            }
+            if window.error().is_none() {
+                window.submit();
+                window.wait();
+            }
+            match (window.error(), window.saved_path()) {
+                (None, Some(saved)) => (true, saved.display().to_string()),
+                (error, _) => (false, error.unwrap_or("nothing was cloned").to_string()),
+            }
+        }
+    };
+    if !status.is_null() {
+        unsafe { *status = out(message) };
+    }
+    ok
 }
 
 /// # Safety

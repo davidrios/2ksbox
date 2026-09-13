@@ -10,8 +10,7 @@
 #
 # `2ksbox.exe` is `launcher-qt`, the Qt 6 / QML launcher (ADR-015), and
 # the Qt runtime it needs travels with it: the DLLs, the platform plugin
-# and the QML module trees, none of which Windows has. `launcher/` (egui)
-# is still a maintained front end and is no longer packaged anywhere.
+# and the QML module trees, none of which Windows has.
 #
 # Run it from the host (not inside scripts/win-cross.sh): the checks want
 # wine, which the cross image has no reason to carry. It builds nothing —
@@ -20,7 +19,7 @@
 # A Windows package is **one folder**, not a Unix prefix: the executables
 # at the top, every DLL beside them (which is exactly where the loader
 # looks, so no rpath and no PATH), the data directories under it. The
-# launcher knows both shapes (launcher/src/paths.rs).
+# launcher knows both shapes (launcher-core/src/paths.rs).
 #
 #   2ksbox.exe                  the launcher
 #   2ksbox-player.exe           the player

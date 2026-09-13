@@ -217,7 +217,17 @@ frame reaches the player through the ordinary VGA surface path (the
 embed's `on_switch`/`on_update`), a QMP `screendump` shows it, and the VNC
 fallback shows it: no 3D-frame path, no player change. When VGA_PASS
 clears, the console is invalidated and the VGA draws again into a surface
-of its own. The monitor bitmap is 4096×4224, lazily mapped, because
+of its own — which is a promise the VGA device has to keep: **an
+invalidate must put the device's own surface back on the console**, not
+only repaint. QEMU's VGA core does (it forgets its last geometry), but
+`d3dpt-vga`'s linear mode re-installed its surface only when the mode
+changed, so after a hand-back it went on updating the Voodoo's surface
+and the player kept the Voodoo's last frame for good — on a Win98 machine
+with the card and our driver, every full-screen switch (a game or the 3dfx
+driver probing Glide) left a silver screen that never came back
+(2026-09-12). The device now re-surfaces on every invalidate, and
+`voodoo-guest-d3dpt` holds it (the adapter in an 800×600×32 linear mode
+first; the screendump after the hand-back must be that mode). The monitor bitmap is 4096×4224, lazily mapped, because
 `h_disp`/`v_disp` are 12-bit fields a guest can set to anything and the
 display code indexes by them unchecked.
 

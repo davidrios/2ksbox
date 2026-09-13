@@ -10,10 +10,18 @@ section (scope, exit criterion). Branch: `track/m6-launcher` (opened
 **Merged to `main` 2026-09-06** through step 6b; the branch stays open
 for 6b′ onwards, so rebase on `main` before the next push.
 
+**2026-09-13: the egui front end (`launcher/`) was deleted (ADR-017).**
+The launcher is now `launcher-core` plus one front end, `launcher-qt`,
+with `launcher-capi` (C ABI) and `launcherx` (the toolkit-free verbs) as
+the core's other callers. Everything below that describes `launcher/`,
+eframe or the `--diag-*-frame` verbs is the history of how the track got
+here; the rules it discovered are the core's and still hold.
+
 ## Decided this session
 
 - **UI toolkit: egui/eframe**, not Slint (doc 07 left this open;
-  resolved 2026-09-04). Reasons: MIT/Apache-2.0 (no friction with the
+  resolved 2026-09-04; superseded by ADR-015's Qt build on 2026-09-07,
+  and the egui build deleted on 2026-09-13, ADR-017). Reasons: MIT/Apache-2.0 (no friction with the
   project's GPL-2.0-only + "everything open source" stance — Slint's
   non-GPLv3 tiers are royalty-free/commercial, not verified compatible),
   pure Rust, same toolkit doc 07 already names for the player's overlay.
@@ -31,33 +39,30 @@ for 6b′ onwards, so rebase on `main` before the next push.
 
 ## Scope and files (this track owns them)
 
-- `launcher/` entirely: `Cargo.toml`, `src/` (currently one `main.rs`
-  skeleton; expect it to grow into `app.rs`, `library.rs` (machine
-  bundle scanning + grid state), `wizard.rs` (guided creation),
-  `bundle.rs` (the `machine.toml` format, shared conceptually with the
-  player but not necessarily a shared crate yet — decide when the
-  player needs to read the same format), `snapshots.rs`, `discshelf.rs`.
-- `launcher-core/`, `launcher-qt/` and `launcher-capi/` as well, since the
-  step-7 split (2026-09-06): the core decides, the two front ends draw,
-  the C ABI exposes the same models. `launcher-qt` is the one the
-  packages install (ADR-015).
+- `launcher-core/`, `launcher-qt/` and `launcher-capi/`, since the
+  step-7 split (2026-09-06): the core decides, the front end draws, the
+  C ABI exposes the same models. `launcher-qt` is the one the packages
+  install (ADR-015) and, since `launcher/` (egui) was deleted on
+  2026-09-13 (ADR-017), the only front end.
 - `packaging/` and `scripts/package-*.sh` (M6 step 6, 2026-09-05):
   the Linux desktop entry, icon and `install.sh`, and the script that
   stages doc 07's install layout. `player/build.rs`'s rpath and the
   `package` check in `scripts/test.sh` are the two places this track
-  reaches outside `launcher/` — both minimal, both named in the commit.
+  reaches outside the launcher crates — both minimal, both named in the
+  commit.
 - Docs: doc 07 (this track's design doc — update as decisions land, e.g.
   the toolkit choice above), the M6 section of doc 08, this file, the M6
   row of the state table and "Next steps" in `docs/00-status.md`.
 - Shared (rebase first, edit minimally, say which track in the commit):
-  `Cargo.toml` (workspace members — already lists `launcher`), `CLAUDE.md`
-  if a launcher-specific test tool is added to the table, `docs/00-status.md`
-  outside the M6 row. The machine bundle format (`machine.toml`) will
-  eventually be read by both `player/` and `launcher/`; when that lands,
-  decide then whether it needs a shared crate — don't preempt it now.
+  `Cargo.toml` (workspace members — lists `launcher-core` and
+  `launcher-capi`), `CLAUDE.md` if a launcher-specific test tool is added
+  to the table, `docs/00-status.md` outside the M6 row. The machine
+  bundle format (`machine.toml`) is `launcher-core/src/bundle.rs`; the
+  player takes the arguments the launcher derives from it rather than
+  reading it.
 - **`shader-chain/` is now a shared crate** (2026-09-05, factored out of
   `player/src/shader.rs` for the shader-preview feature below): both
-  `player/` and `launcher/` depend on it for the librashader filter
+  `player/` and `launcher-core/` depend on it for the librashader filter
   chain itself. A change here affects both binaries — rebuild and
   retest both (the player's `PLAYER_DUMP_OUT` dump-diff and the
   launcher's `--preview-shader` debug verb, both below) before pushing.
@@ -1114,7 +1119,19 @@ for 6b′ onwards, so rebase on `main` before the next push.
     either in a checkout's `third_party/` or in a data directory nobody
     would navigate to by hand. A field that already points somewhere
     still wins — `filepicker::browse_start` is `start_dir` first, the
-    suggestion second, the OS default last.
+    suggestion second, the OS default last. **Since 2026-09-12 the
+    directory the last dialog was browsing comes before the OS default**
+    (`browse::remember` / `browse::last_dir`, one line in
+    `<data dir>/last-browse.txt`, `LAUNCHER_BROWSE_MEMORY` overrides):
+    no platform picker kept a last-used location for us — Qt's
+    `FileDialog` handed an empty folder opens in the working directory —
+    so every empty field, and the disc shelf's adder after every disc,
+    started over (user-reported). Both front ends remember every pick,
+    file and folder dialogs alike; Qt's through a `Browse` QObject
+    (`launcher-qt/src/qt/browse.rs`), which also replaced QML's
+    `"file://" + path` with `QUrl`'s own local-file conversion. The
+    `qtshelf` check asks `launcherx --browse-start "" file` after its
+    picked disc.
 
   Verified for real, over the network and through the widgets. **The
   fetch:** `--download-shaders <dir>` pulled 50.3 MB and unpacked 2554
@@ -2091,3 +2108,39 @@ verbs are — `launcher` is not a default workspace member since
 2026-09-07, so the suite would skip it on most hosts — which is also why
 `first_run_ui` is a free function taking the model rather than a method
 on `LauncherApp`, the shape `wizard::show` already has.
+
+## Clone… (2026-09-13)
+
+A row's **Clone…** makes a new machine under a name the user picks, with
+the same settings and its own copy of the disk (doc 07 has the rules). The
+model is `launcher-core/src/clone_machine.rs`; the Qt window is
+`CloneWindow.qml` over `src/qt/clone_machine.rs`, the verb is `launcherx
+--clone <machine.toml> [name]`, and the C ABI is `lc_machines_clone` /
+`lc_machines_clone_name`.
+
+Three choices worth keeping. The disk's destination is recorded when the
+copy is planned — the disk is found among the bundle's files by its
+canonical path — and never recovered afterwards by comparing how two
+paths are spelled, because a miss there leaves the clone booting the
+original's disk. The new `machine.toml` is written last, so the grid never
+shows a clone that is still copying or failed. And "running" includes a
+listening monitor socket, which is also what makes the refusal testable
+without a player: the `clone` check starts a bare `qemu-system-i386
+-machine none -S` on the machine's socket.
+
+Checked two ways. `clone` drives `launcherx` against a real qcow2: the copy
+is byte-identical, boots its own disk (`--print-args`), keeps the
+snapshot, and from then on writes nothing the original sees (qemu-io
+patterns both ways); the offered name moves on to "(copy 2)"; a taken or
+empty name is refused; an overlay outside the library whose backing file
+is named relative to it is copied in and still reads through; a machine
+with a QEMU on its socket is refused and leaves no folder. `qt-clone`
+drives the window (`LAUNCHER_QT_SCREEN=clone`; `<path>;show` stops at the
+open window for a picture): the offered name in the field, a typed name
+reaching the model, the window gone once the copy lands, and the grid
+rescanned to show the new machine.
+
+Not done: a copy cannot be cancelled once started (`std::fs::copy` keeps
+the kernel's fast paths — reflinks, `copy_file_range` — and has no way to
+stop mid-file), so Cancel and Esc are off while one runs; closing the
+window lets the copy finish and land on its own.

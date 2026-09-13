@@ -46,6 +46,16 @@
 #                  window's own hide, which on macOS left the main window locked
 #                  behind a dialog that was gone (only if a launcher-qt has
 #                  been built)
+#   qt-esc         Esc reaches the shader editor that New profile… opens over the
+#                  profile list: the editor must have the keyboard and be the
+#                  only window whose Esc matches — Quick Controls matches every
+#                  open window's at once, and two is an ambiguous shortcut Qt
+#                  fires in neither (only if a launcher-qt has been built)
+#   qt-snapshots   the Qt snapshots window's first layout, on a stopped machine
+#                  with a real qcow2: the list box must take all the spare
+#                  height, i.e. the "New snapshot" row ends at the bottom of
+#                  the column — an empty status row used to take half of it
+#                  (only if a launcher-qt and qemu-img have been built)
 #   qt-profile     the Qt shader-profile windows, driven: a new profile saved from
 #                  the editor has to appear in the list behind it, and the next
 #                  New profile… has to come up with an *empty* preset field —
@@ -68,6 +78,22 @@
 #                  result dialog — the sequence that broke when one dialog
 #                  followed the model, since accept()/close() both emit
 #                  rejected() (only if a launcher-qt has been built)
+#   qt-clone       the Qt "Clone…" window, driven: it comes up offering
+#                  "<name> (copy)", a name typed over that reaches the model,
+#                  Clone copies the machine on its thread, and the window
+#                  goes away and the grid rescans to show the new machine,
+#                  whose bundle has that name and its own copy of the disk
+#                  (only if a launcher-qt has been built)
+#   clone          "Clone…" without a toolkit (doc 07): a wizard-made machine
+#                  with data and a snapshot on its disk is cloned under the
+#                  offered name, boots a disk of its own that is a byte copy,
+#                  keeps the snapshot, and from then on writes nothing the
+#                  original sees; the offered name moves on to "(copy 2)", a
+#                  taken name and an empty one are refused; a disk outside
+#                  the library whose backing file is named relative to it is
+#                  copied into the clone and still reads through to the
+#                  backing file; and a machine with a QEMU on its monitor
+#                  socket is refused and leaves nothing behind
 #   shader-defaults the first-run shader offer without a toolkit: a launcher with
 #                  no collection asks and one with a collection does not, "Not
 #                  now" is remembered so the question is asked exactly once, and
@@ -158,7 +184,7 @@
 #                  cannot be acknowledged holds the line and every interrupt
 #                  after it is lost to the edge-triggered i8259
 #   capi           launcher-capi/examples/smoke.c: a third front end, in C, over
-#                  the same models the egui and Qt builds use — the wizard's
+#                  the same models the Qt launcher uses — the wizard's
 #                  DOS defaults, the disc shelf, snapshots and the profile
 #                  editor, driven through include/launcher_core.h (doc 07)
 #   preview-anim   the launcher's shader preview keeps drawing (doc 07): a preset
@@ -211,6 +237,11 @@
 #                  buffer red through the LFB, reads a pixel back, swaps; a
 #                  screendump must be the 640x480 red frame while the Voodoo has
 #                  the monitor and the VGA's text screen after it lets go. ~10 s
+#   voodoo-guest-d3dpt  the same beside `-device d3dpt-vga`, the pairing a launcher
+#                  machine builds, with the adapter first put in an 800x600x32
+#                  linear mode: after the hand-back the screendump must be that
+#                  mode, not the Voodoo's last frame (a desktop that never came
+#                  back after a full-screen switch, 2026-09-12). ~10 s
 #   pit-guest      tools/pit-guest-test.py: the PIT as a DOS game's clock meets it
 #                  (patch 34) — QCLOCK.COM, DOS Quake's Sys_FloatTime (the BIOS
 #                  tick word plus counter 0) read in a tight loop beside the TSC:
@@ -276,6 +307,9 @@ BUDGET="${D3D_GOLDEN_BUDGET:-1200}"
 case "$OS" in Darwin) SO=dylib;; *) SO=so;; esac
 export D3DPT_EXEC_LIB="${D3DPT_EXEC_LIB:-$ROOT/build/d3dpt/libd3dpt_exec.$SO}"
 export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)}"
+# A player window the compositor focuses would otherwise take the desktop's
+# own shortcuts for the length of the run (player/src/kbcapture.rs).
+export PLAYER_KEYBOARD_CAPTURE="${PLAYER_KEYBOARD_CAPTURE:-0}"
 if [ "$OS" = Darwin ]; then
   # The cargo builds below link for the same macOS as everything else
   # (Homebrew's floor, scripts/macos-floor.sh), not for rustc's default.
@@ -515,6 +549,135 @@ shelforder_check() { # the disc shelf is in order by label, all the way to the g
   [ "$o" = "Age of Empires" ] || { echo "a disc added later did not land in order (first row: $o)"; rc=1; }
   return $rc
 }
+clone_check() { # "Clone…", from the model to a disk our QEMU reads (doc 07)
+  local rc=0 dir="$OUT/clone" img=build/qemu/qemu-img io=build/qemu/qemu-io
+  local bundle disk copy copy_disk o args outside twin sock qpid i
+  rm -rf "$dir"; mkdir -p "$dir/library" "$dir/vms"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" LAUNCHER_QEMU_IMG_BIN="$img"
+  # A machine the wizard made, disk and all, with something on the disk
+  # and an internal snapshot inside it. (`--wizard-new` passes qemu-img's
+  # "Formatting" line through, so the bundle is the last line.)
+  bundle="$(target/release/launcherx --wizard-new xp Original 1 2>/dev/null | tail -1)"
+  [ -f "$bundle" ] || { echo "--wizard-new made no bundle"; return 1; }
+  disk="$(dirname "$bundle")/disk.qcow2"
+  $io -c "write -P 0x5a 0 1M" "$disk" >/dev/null || { echo "qemu-io could not write the original"; return 1; }
+  target/release/launcherx --snapshots "$bundle" take before-clone >/dev/null 2>&1 \
+    || { echo "--snapshots take failed"; return 1; }
+  # No name: the one the window offers.
+  copy="$(target/release/launcherx --clone "$bundle" 2>&1)" || { echo "--clone failed: $copy"; return 1; }
+  copy_disk="$(dirname "$copy")/disk.qcow2"
+  grep -qx 'name = "Original (copy)"' "$copy" || { echo "the clone is not called Original (copy):"; grep '^name' "$copy"; rc=1; }
+  [ "$(dirname "$copy")" != "$(dirname "$bundle")" ] || { echo "the clone shares the original's directory"; rc=1; }
+  args="$(target/release/launcherx --print-args "$copy")"
+  case "$args" in *"file=$copy_disk,"*) ;; *) echo "the clone does not boot its own disk: $args"; rc=1;; esac
+  cmp -s "$disk" "$copy_disk" || { echo "the clone's disk is not a copy of the original's"; rc=1; }
+  o="$(target/release/launcherx --snapshots "$copy" 2>&1)"
+  printf '%s\n' "$o" | grep -q before-clone || { echo "the snapshot did not come along: $o"; rc=1; }
+  # Two machines from then on: what the clone writes, the original never sees.
+  $io -c "write -P 0xa5 0 1M" "$copy_disk" >/dev/null || { echo "qemu-io could not write the clone"; rc=1; }
+  o="$($io -r -c "read -P 0x5a 0 1M" "$disk" 2>&1)"
+  case "$o" in *failed*|*rror*) echo "writing the clone changed the original: $o"; rc=1;; *"read 1048576/"*) ;; *) echo "$o"; rc=1;; esac
+  o="$($io -r -c "read -P 0xa5 0 1M" "$copy_disk" 2>&1)"
+  case "$o" in *failed*|*rror*) echo "the clone did not keep its own write: $o"; rc=1;; *"read 1048576/"*) ;; *) echo "$o"; rc=1;; esac
+  # The name offered moves on when it is taken; a taken name or no name is refused.
+  o="$(target/release/launcherx --clone "$bundle" 2>&1)" && grep -qx 'name = "Original (copy 2)"' "$o" \
+    || { echo "a second clone was not offered Original (copy 2): $o"; rc=1; }
+  o="$(target/release/launcherx --clone "$bundle" "Original (copy)" 2>&1)" \
+    && { echo "a clone under a name already in the library was made: $o"; rc=1; }
+  case "$o" in *"already a machine called"*) ;; *) echo "...and not refused for that: $o"; rc=1;; esac
+  o="$(target/release/launcherx --clone "$bundle" " " 2>&1)" && { echo "a clone with no name was made"; rc=1; }
+  case "$o" in *"a name is required"*) ;; *) echo "...and not refused for that: $o"; rc=1;; esac
+  # A disk outside the library, as "Use an existing disk" leaves one, and
+  # an overlay whose backing file is named relative to it: the copy lands
+  # in the clone's own folder and still finds the backing file.
+  $img create -q -f qcow2 "$dir/vms/base.qcow2" 16M && $io -c "write -P 0x33 0 64k" "$dir/vms/base.qcow2" >/dev/null \
+    && $img create -q -f qcow2 -b base.qcow2 -F qcow2 "$dir/vms/overlay.qcow2" \
+    || { echo "could not make the overlay"; return 1; }
+  outside="$(target/release/launcherx --new xp Outside "$dir/vms/overlay.qcow2")"
+  twin="$(target/release/launcherx --clone "$outside" "Outside twin" 2>&1)" || { echo "--clone (outside) failed: $twin"; return 1; }
+  args="$(target/release/launcherx --print-args "$twin")"
+  case "$args" in *"file=$(dirname "$twin")/overlay.qcow2,"*) ;; *) echo "the outside disk was not copied into the clone: $args"; rc=1;; esac
+  o="$($img info --output=json "$(dirname "$twin")/overlay.qcow2" 2>&1)"
+  printf '%s' "$o" | grep -q "\"backing-filename\": \"$(realpath "$dir/vms/base.qcow2")\"" \
+    || { echo "the copy's backing file is not the original's, by absolute path:"; printf '%s\n' "$o" | grep backing; rc=1; }
+  o="$($io -r -c "read -P 0x33 0 64k" "$(dirname "$twin")/overlay.qcow2" 2>&1)"
+  case "$o" in *failed*|*rror*) echo "the copy does not read through to its backing file: $o"; rc=1;; *"read 65536/"*) ;; *) echo "$o"; rc=1;; esac
+  $img info --output=json "$dir/vms/overlay.qcow2" | grep -q '"backing-filename": "base.qcow2"' \
+    || { echo "the original overlay's header was changed"; rc=1; }
+  # A running machine is refused: a QEMU listening on its monitor socket is
+  # what a player that is up looks like, whoever started it.
+  if [ -x build/qemu/qemu-system-i386 ]; then
+    sock="$(target/release/launcherx --qmp-socket "$bundle")"
+    mkdir -p "$(dirname "$sock")"; rm -f "$sock"
+    build/qemu/qemu-system-i386 -machine none -S -display none -nodefaults \
+      -qmp "unix:$sock,server=on,wait=off" >"$dir/qemu.log" 2>&1 & qpid=$!
+    # The socket's own appearance, bounded: QEMU makes it before its main loop.
+    for i in $(seq 100); do [ -S "$sock" ] && break; sleep 0.05; done
+    o="$(target/release/launcherx --clone "$bundle" "While running" 2>&1)" && { echo "a running machine was cloned"; rc=1; }
+    case "$o" in *"is running"*) ;; *) echo "...and not refused for that: $o"; rc=1;; esac
+    [ ! -e "$dir/library/while-running" ] || { echo "a refused clone left a directory behind"; rc=1; }
+    kill "$qpid" 2>/dev/null; wait "$qpid" 2>/dev/null
+  else
+    echo "  (no build/qemu/qemu-system-i386: the running-machine refusal is not checked)"
+  fi
+  return $rc
+}
+qtclone_check() { # the Qt "Clone…" window, driven (doc 07)
+  local rc=0 dir="$OUT/qtclone" bin="launcher-qt/target/release/launcher-qt" bundle o saved
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
+  head -c 4194304 /dev/urandom >"$dir/disk.img"
+  bundle="$(target/release/launcherx --new win98 Original "$dir/disk.img")" || { echo "--new failed"; return 1; }
+  # The probe opens the window on the row, types a name over the one it
+  # offers, presses Clone and waits the copy out through the same timer a
+  # person's click is polled by. What it guards is the wiring: the offered
+  # name reaching the field, the typed one reaching the model, the window
+  # going away when the copy lands and the grid rescanning to show it.
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=clone LAUNCHER_QT_ARG="$bundle" LAUNCHER_QT_DELAY=300 \
+       "$bin" 2>&1 | sed -n 's/^\[diag\] clone //p')"
+  [ -n "$o" ] || { echo "the probe printed no clone line"; return 1; }
+  printf '  %s\n' "$o"
+  printf '%s' "$o" | grep -qF 'offered [Original (copy)] model [Original (copy)], window true, can clone true' \
+    || { echo "the window did not come up offering Original (copy)"; rc=1; }
+  printf '%s' "$o" | grep -q 'settled: open=false, window false, error \[\], status \[cloned Original as Typed twin\]' \
+    || { echo "the clone did not land cleanly, or the window stayed up"; rc=1; }
+  printf '%s' "$o" | grep -q 'grid 2$' || { echo "the grid did not rescan to two machines"; rc=1; }
+  saved="$(printf '%s' "$o" | sed -n 's/.*saved \(.*\), grid.*/\1/p')"
+  grep -qx 'name = "Typed twin"' "$saved" 2>/dev/null || { echo "no bundle called Typed twin at '$saved'"; rc=1; }
+  cmp -s "$dir/disk.img" "$(dirname "$saved")/disk.img" || { echo "the clone has no copy of the disk"; rc=1; }
+  return $rc
+}
+qtsnapshots_check() { # the Qt snapshots window's first layout (doc 07)
+  local dir="$OUT/qtsnapshots" bin="launcher-qt/target/release/launcher-qt" img=build/qemu/qemu-img bundle o
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" LAUNCHER_QEMU_IMG_BIN="$img" QT_QPA_PLATFORM=offscreen
+  "$img" create -q -f qcow2 "$dir/disk.qcow2" 64M || { echo "qemu-img create failed"; return 1; }
+  bundle="$(target/release/launcherx --new win98 Snap "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+  # The window opened on a stopped machine with no snapshots, no status
+  # and no error: the list box is the one item that grows, so the "New
+  # snapshot" row must end at the bottom of the column, give or take the
+  # one spacing (8) above the empty status row. A nested layout
+  # fills by default, and the status row -- both of its children hidden
+  # until there is a status -- has no maximum, so it split the spare
+  # height with the list box and the window came up with the list stopping
+  # halfway (user-reported, 2026-09-13, until a status line capped it).
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=snapshots LAUNCHER_QT_ARG="$bundle" LAUNCHER_QT_DELAY=300 \
+       "$bin" 2>&1 | sed -n 's/^\[diag\] snapshots layout: //p')"
+  [ -n "$o" ] || { echo "the probe printed no snapshots layout line"; return 1; }
+  echo "  $o"
+  printf '%s\n' "$o" | awk '{
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^h=/ && col == "") { col = substr($i, 3); continue }
+        if ($i == "new-row") { ry = substr($(i+1), 3); rh = substr($(i+2), 3) }
+      }
+      sub(/,$/, "", col); sub(/,$/, "", ry); sub(/,$/, "", rh)
+      exit !(ry + rh >= col - 9)
+    }' || { echo "the \"New snapshot\" row does not end at the bottom: something below it took the list box's height"; return 1; }
+  return 0
+}
 shaderdefaults_check() { # the first-run shader offer and its starter profiles (doc 07)
   local rc=0 dir="$OUT/shaderdefaults" o preset n
   rm -rf "$dir"; mkdir -p "$dir/profiles" "$dir/empty"
@@ -600,9 +763,8 @@ qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
   # hand-built row of buttons in a popup is what this replaced.
   printf '%s' "$o" | grep -q "modality=2, buttons=81920" \
     || { echo "not an application-modal Yes/No dialog"; rc=1; }
-  # The words in it are the shared model's (ADR-014): the egui build
-  # shows the same two strings, and a sentence typed into QML is exactly
-  # what used to drift between the two front ends.
+  # The words in it are the shared model's (ADR-014): a sentence typed
+  # into QML is exactly what used to drift between two front ends.
   printf '%s' "$o" | grep -q "firstrun text: There are no CRT shader presets" \
     || { echo "the dialog's text is not the model's headline"; rc=1; }
   printf '%s' "$o" | grep -q "slang-shaders (~50 MB) into $dir/empty" \
@@ -722,6 +884,27 @@ qtclose_check() { # the title bar's close button on a Qt dialog (doc 07)
     || { echo "the wizard's flag or window did not follow the close: $o"; return 1; }
   return 0
 }
+qtesc_check() { # Esc reaches the shader editor opened from the profile list (doc 07)
+  local dir="$OUT/qtesc" bin="launcher-qt/target/release/launcher-qt" o
+  rm -rf "$dir"; mkdir -p "$dir/library" "$dir/profiles"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
+  # Every secondary window closes on Esc through a `Shortcut`, and Quick
+  # Controls matches a window's shortcut when the window `isActive()` —
+  # which a transient window is whenever its parent is, so every visible
+  # secondary window matches at once. The editor is the one window opened
+  # over *another* (the profile list), and two matches for one key is an
+  # ambiguous shortcut, which Qt fires in neither: Esc did nothing in the
+  # editor (user-reported, 2026-09-13). The list stands down while the
+  # editor is open, so exactly one may match.
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=escfocus LAUNCHER_QT_DELAY=400 "$bin" 2>&1 \
+       | sed -n 's/^\[diag\] escfocus editor: //p')"
+  [ -n "$o" ] || { echo "the probe printed no escfocus line"; return 1; }
+  echo "  $o"
+  printf '%s' "$o" | grep -q "visible=true, focus=\[Shader profile\], esc armed=true, esc matches=1$" \
+    || { echo "Esc in the editor is not one armed shortcut in the focused window: $o"; return 1; }
+  return 0
+}
 qtprofile_check() { # the Qt shader-profile windows, driven (doc 07)
   local rc=0 dir="$OUT/qtprofile" bin="launcher-qt/target/release/launcher-qt" o list shown
   rm -rf "$dir"; mkdir -p "$dir/library" "$dir/profiles"
@@ -752,11 +935,17 @@ qtprofile_check() { # the Qt shader-profile windows, driven (doc 07)
   return $rc
 }
 qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
-  local rc=0 dir="$OUT/qtshelf" bin="launcher-qt/target/release/launcher-qt" o count field
+  local rc=0 dir="$OUT/qtshelf" bin="launcher-qt/target/release/launcher-qt" o count field start
   rm -rf "$dir"; mkdir -p "$dir/library"
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
-  : > "$dir/game.iso"
+  export LAUNCHER_BROWSE_MEMORY="$dir/last-browse.txt"
+  # Brackets and a space, like a disc named after its year: the dialog's
+  # URL leaves `[` `]` encoded in `toString()`, and QML that stripped
+  # `file://` off that shelved `%5B1996%5D`, a path that does not exist
+  # (user-reported, 2026-09-12).
+  local iso="$dir/Game [1996].iso"
+  : > "$iso"
   # A file dialog belongs to the window system and cannot be opened
   # offscreen, so the probe hands the field the path the dialog would
   # have — every line of the wiring under test is downstream of that.
@@ -764,7 +953,7 @@ qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
   # (user-reported, 2026-09-09, "Browse… only fills the field"), and the
   # field it came through is left empty, so the button beside it goes
   # back to being for typing.
-  o="$(timeout 120 env LAUNCHER_QT_SCREEN=pickdisc LAUNCHER_QT_ARG="$dir/game.iso" LAUNCHER_QT_DELAY=300 \
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=pickdisc LAUNCHER_QT_ARG="$iso" LAUNCHER_QT_DELAY=300 \
        "$bin" 2>&1 | sed -n 's/^\[diag\] pickdisc: //p')"
   [ -n "$o" ] || { echo "the probe printed no pickdisc line"; return 1; }
   echo "  $o"
@@ -772,13 +961,20 @@ qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
   field="$(printf '%s' "$o" | sed -n 's/.*field \[\(.*\)\], status.*/\1/p')"
   [ "$count" = 1 ] || { echo "the picked disc did not reach the shelf (it holds $count)"; rc=1; }
   [ -z "$field" ] || { echo "the picked path was left in the field ($field)"; rc=1; }
-  grep -q "game.iso" "$dir/discs.toml" 2>/dev/null \
-    || { echo "the shelf file never gained the disc"; rc=1; }
+  grep -qF "path = \"$iso\"" "$dir/discs.toml" 2>/dev/null \
+    || { echo "the shelf file does not name the disc by its own path"; cat "$dir/discs.toml" 2>/dev/null; rc=1; }
+  grep -q "%5B" "$dir/discs.toml" 2>/dev/null && { echo "the shelved path is still URL-encoded"; rc=1; }
   # Every dialog backend on Linux matches its globs case-sensitively, so
   # a lower-case-only filter hid `GAME.CUE` (user-reported, 2026-09-11):
   # the dialog must be handed both spellings (`browse::extensions`).
   printf '%s' "$o" | grep -q 'filters \[Disc images (.*\*\.cue \*\.CUE' \
     || { echo "the disc dialog's filter has no upper-case globs"; rc=1; }
+  # The next "Browse…" on an empty field opens where that disc was picked
+  # (user-reported, 2026-09-12: the shelf's adder empties itself, and every
+  # dialog after the first started over in the working directory). The
+  # core decides, so the core's own verb is asked.
+  start="$(target/release/launcherx --browse-start "" file)"
+  [ "$start" = "$dir" ] || { echo "an empty field's Browse… would open in '$start', not '$dir'"; rc=1; }
   return $rc
 }
 dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M5g)
@@ -1412,7 +1608,7 @@ music_check() { # the two pickers, and then the devices actually sounding
   done
   for f in xp other; do
     args="$(target/release/launcherx --print-args "$dir/library/music-$f/machine.toml")"
-    case "$args" in *opl3*) echo "$f: an FM chip arrived with a card that never had one"; echo "$args"; rc=1;; esac
+    case "$args" in *"-device opl3,"*) echo "$f: an FM chip arrived with a card that never had one"; echo "$args"; rc=1;; esac
     case "$args" in *mpu401*) echo "$f: a MIDI port arrived on a family whose default is none"; echo "$args"; rc=1;; esac
   done
   # The switch itself, on the 98 machine: to the AC'97 (which takes the
@@ -1422,7 +1618,9 @@ music_check() { # the two pickers, and then the devices actually sounding
   target/release/launcherx --music "$bundle" ac97 >/dev/null || { echo "--music ac97 failed"; rc=1; }
   args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *"AC97,audiodev=embed0,addr=0x04"*) ;; *) echo "98: the AC'97 did not arrive at its pinned slot"; echo "$args"; rc=1;; esac
-  case "$args" in *sb16*|*opl3*) echo "98: the SB16 or its FM is still there beside the AC'97"; echo "$args"; rc=1;; esac
+  # The device arguments, not the bare names: `-L` names the checkout, and
+  # a worktree called `sb16-dsound` put `sb16` in every line.
+  case "$args" in *"-device sb16,"*|*"-device opl3,"*) echo "98: the SB16 or its FM is still there beside the AC'97"; echo "$args"; rc=1;; esac
   target/release/launcherx --music "$bundle" gus none >/dev/null || { echo "--music gus failed"; rc=1; }
   args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *"gus,audiodev=embed0"*) ;; *) echo "98: no Gravis"; echo "$args"; rc=1;; esac
@@ -1953,6 +2151,9 @@ host_stage() {
     run_check dirshelf dirshelf.log dirshelf_check || true
     run_check shelforder shelforder.log shelforder_check || true
   else skip dirshelf "needs target/release/launcherx"; skip shelforder "needs target/release/launcherx"; fi
+  if [ -x target/release/launcherx ] && [ -x build/qemu/qemu-img ] && [ -x build/qemu/qemu-io ]; then
+    run_check clone clone.log clone_check || true
+  else skip clone "needs target/release/launcherx, build/qemu/qemu-img and qemu-io"; fi
   # The first-run shader offer and the starter profiles behind it. Needs
   # the preset collection to check what a "yes" writes, so it is skipped
   # on a checkout without the submodule rather than downloading 50 MB
@@ -1968,15 +2169,25 @@ host_stage() {
   if [ -x launcher-qt/target/release/launcher-qt ]; then
     run_check qt-wizard qt-wizard.log qtwizard_check || true
     run_check qt-close qt-close.log qtclose_check || true
+    run_check qt-esc qt-esc.log qtesc_check || true
     run_check qt-profile qt-profile.log qtprofile_check || true
     run_check qt-shelf qt-shelf.log qtshelf_check || true
     run_check qt-firstrun qt-firstrun.log qtfirstrun_check || true
+    run_check qt-clone qt-clone.log qtclone_check || true
+    if [ -x build/qemu/qemu-img ]; then
+      run_check qt-snapshots qt-snapshots.log qtsnapshots_check || true
+    else
+      skip qt-snapshots "needs build/qemu/qemu-img"
+    fi
   else
     skip qt-wizard "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-close "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+    skip qt-esc "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-profile "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-shelf "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-firstrun "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+    skip qt-clone "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+    skip qt-snapshots "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
   fi
 
   # the host GPU probe (ADR-013): what the launcher tells someone about 3D
@@ -2296,6 +2507,7 @@ guest_stage() {
       run_check midi-guest midi-guest.log python3 tools/midi-guest-test.py || true
       run_check pit-guest pit-guest.log python3 tools/pit-guest-test.py || true
       run_check voodoo-guest voodoo-guest.log python3 tools/voodoo-guest-test.py || true
+      run_check voodoo-guest-d3dpt voodoo-guest-d3dpt.log env VGA=d3dpt python3 tools/voodoo-guest-test.py || true
       run_check vbe-palette vbe-palette.log env VBEPAL=1 python3 tools/vga-dirty-guest-test.py vesa || true
       # The gameport as a DOS guest reads it (M13 path B). Unlike its
       # neighbours this one runs the **player**, because the pad reaches a
@@ -2317,10 +2529,10 @@ guest_stage() {
     # including `atapi-guest`, which is the only check that reads a disc from
     # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
     # weak-sector rule, which that battery is the regression guard for).
-    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest voodoo-guest vbe-palette pad-guest; do
+    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt vbe-palette pad-guest; do
       skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
     done; fi
-  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest voodoo-guest vbe-palette pad-guest; do
+  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt vbe-palette pad-guest; do
     skip "$c" "needs nasm, mtools and build/qemu"
   done; fi
   if [ "$OS" != Linux ]; then skip guest "Linux only for now (mkfs.fat, sfdisk, mtools)"; return; fi

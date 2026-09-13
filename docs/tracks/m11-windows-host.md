@@ -23,7 +23,7 @@ one. Windows had been "untested" since M1 (doc 08).
   backend) and `tools/wgl-probe.c`, `launcher-core/src/console.rs`,
   `launcher-core/src/fatal.rs`,
   `player/src/qmp.rs`,
-  `launcher/src/paths.rs` + `player.rs` + `wizard.rs` + `bundle.rs`
+  `launcher-core/src/paths.rs` + `player.rs` + `wizard.rs` + `bundle.rs`
   (the layout and the WHPX naming), `d3dpt/hw/d3dpt_exec_load.c`,
   `d3dpt/exec/*.cpp`, `libdisc/src/bin/discx.rs`.
 - Docs: `docs/build-windows.md`, this file, the M11 rows of
@@ -238,9 +238,9 @@ import is the backend.
 `scripts/package-windows.sh --qt` rolled a second, complete package whose
 `2ksbox.exe` was `launcher-qt`, so the two could be unzipped side by side
 on one machine and compared. That flag is gone: the Qt build is the
-launcher (ADR-015), the one zip carries it and Qt, and `launcher.exe` is
-still cross-built by the `rust` stage for anyone who wants a second
-opinion out of `target/x86_64-pc-windows-gnu/release`. Qt crosses better
+launcher (ADR-015), the one zip carries it and Qt, and `launcher.exe`
+was cross-built by the `rust` stage as a second opinion until the egui
+front end was deleted on 2026-09-13 (ADR-017). Qt crosses better
 than expected: Fedora has
 `mingw64-qt6-*` to link against, a native Qt of the same version for the
 tools that run here, and a `x86_64-w64-mingw32-qmake-qt6` whose `-query`

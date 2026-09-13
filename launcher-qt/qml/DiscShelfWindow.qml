@@ -4,7 +4,7 @@
 //
 // Library edits save as they're made — there is no "Save" button,
 // because a shelf is a list of things you own, not a document being
-// drafted (`launcher/src/discshelf.rs`).
+// drafted.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -36,7 +36,13 @@ Window {
     /// whole wiring under test is downstream of it.
     readonly property alias shownAdd: adder.shownText
     readonly property alias addFilters: adder.dialogFilters
-    function pickDisc(path) { adder.acceptPath(path) }
+    /// As the dialog would: the file's URL, then the field's own way back
+    /// to a path. Returns the URL's string for the probe to print.
+    function pickDisc(path) {
+        const url = adder.fileUrl(path)
+        adder.acceptUrl(url)
+        return url.toString()
+    }
 
     title: discs.title
     width: 880
@@ -112,19 +118,17 @@ Window {
 
             MenuSeparator { Layout.fillWidth: true }
 
-            Frame {
+            // See `Main.qml`: a list's box, not a restyled `Frame`.
+            Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                padding: 0
-                // See `Main.qml`: the style's Frame paints a border only.
-                background: Rectangle {
-                    color: palette.base
-                    border.color: palette.mid
-                }
+                color: palette.base
+                border.color: palette.mid
 
                 ListView {
                     id: shelf
                     anchors.fill: parent
+                    anchors.margins: 1
                     clip: true
                     model: root.discs
                     ScrollBar.vertical: ScrollBar {}
@@ -246,7 +250,10 @@ Window {
                     text: qsTr("Add folder…")
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("share a host directory with the guest as a generated disc")
-                    onClicked: folderDialog.open()
+                    onClicked: {
+                        folderDialog.currentFolder = folderBrowse.startUrl(adder.value, "")
+                        folderDialog.open()
+                    }
                 }
                 Button {
                     // Doc 07's one-click guest-tools attach: no path to find,
@@ -263,11 +270,15 @@ Window {
                 Item { Layout.fillWidth: true }
             }
 
+            Browse { id: folderBrowse }
             FolderDialog {
                 id: folderDialog
                 title: qsTr("Share a folder with the guest")
-                currentFolder: adder.value !== "" ? "file://" + adder.value : ""
-                onAccepted: root.discs.add(selectedFolder.toString().replace(/^file:\/\//, ""))
+                onAccepted: {
+                    const path = folderBrowse.localPath(selectedFolder)
+                    folderBrowse.remember(path)
+                    root.discs.add(path)
+                }
             }
 
             Label {

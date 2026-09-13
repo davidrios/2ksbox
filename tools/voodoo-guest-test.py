@@ -24,9 +24,18 @@ and one after it lets go must be the VGA's text screen again. Every
 The 2D adapter is whatever the machine has -- a Voodoo 2 is a 3D-only
 card that borrows the monitor -- and `VGA=` picks it: `std` (default),
 `cirrus`, or `d3dpt` for `-vga none -device d3dpt-vga`, the pairing a
-launcher machine on our own display driver would run.
+launcher machine on our own display driver would run. Beside `d3dpt` the
+program first puts that adapter in a linear mode, 800x600x32 filled
+green, the state a Windows desktop leaves it in: the monitor the Voodoo
+hands back is then a linear frame and not the VGA core's text screen, and
+the screendump after the hand-back must be that green frame. It used to
+stay the Voodoo's last one for good -- the adapter's invalidate did not
+put its own surface back on the console when its mode had not changed
+(2026-09-12: every full-screen switch on a Win98 machine with the card
+left a stale frame up for good).
 
-Outputs in build/voodoo-guest/. The `voodoo-guest` check in the guest
+Outputs in build/voodoo-guest/ (build/voodoo-guest-<VGA>/ beside another
+adapter). The `voodoo-guest` and `voodoo-guest-d3dpt` checks in the guest
 stage of scripts/test.sh.
 """
 import importlib.util
@@ -38,7 +47,8 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QEMU = os.path.join(ROOT, "build/qemu/qemu-system-i386")
-OUT = os.path.join(ROOT, "build/voodoo-guest")
+VGA = os.environ.get("VGA", "std")
+OUT = os.path.join(ROOT, "build/voodoo-guest" + ("" if VGA == "std" else "-" + VGA))
 
 spec = importlib.util.spec_from_file_location("x87gt", os.path.join(ROOT, "tools/x87-guest-test.py"))
 x87gt = importlib.util.module_from_spec(spec)
@@ -72,11 +82,22 @@ SST_vSync           equ 224h
 SST_clutData        equ 228h
 SST_dacData         equ 22Ch
 
+; d3dpt-vga (d3dpt/d3dpt_fb.h)
+D3D_ENABLE          equ 040h
+D3D_WIDTH           equ 044h
+D3D_HEIGHT          equ 048h
+D3D_BPP             equ 04Ch
+D3D_PITCH           equ 050h
+D3D_OFFSET          equ 054h
+D3D_HZ              equ 058h
+GREEN32             equ 0000FF00h
+
 start:
     mov si, str_hello
     call puts
     call a20_on
     call unreal_mode            ; FS = 4 GiB flat data segment
+    call d3dpt_linear           ; beside our own adapter: a linear desktop first
 
     ; --- find the card: bus 0, devices 0..31, function 0 ---------------
     xor bx, bx                  ; bx = device number
@@ -286,6 +307,77 @@ exit:
 
 ; ---------------------------------------------------------------- helpers
 
+; d3dpt-vga, when the machine has one: 800x600x32 filled green and ENABLE
+; set -- what a Windows desktop on our driver leaves the adapter in, so
+; the monitor the Voodoo later hands back is a linear frame. Its BARs are
+; where SeaBIOS put them (0 = VRAM, 1 = the registers).
+d3dpt_linear:
+    xor ebx, ebx
+.scan:
+    mov eax, 80000000h
+    mov ecx, ebx
+    shl ecx, 11
+    or eax, ecx
+    mov dx, 0CF8h
+    out dx, eax
+    mov dx, 0CFCh
+    in eax, dx
+    cmp eax, 3D001234h          ; vendor 1234, device 3d00
+    je .found
+    inc bx
+    cmp bx, 32
+    jb .scan
+    ret                         ; another adapter: nothing to do
+.found:
+    mov [pci_dev], bx
+    mov cl, 10h
+    call pci_read
+    and eax, 0FFFFFFF0h
+    mov [d3d_vram], eax
+    mov cl, 14h
+    call pci_read
+    and eax, 0FFFFFFF0h
+    mov [d3d_regs], eax
+    mov cl, 04h
+    call pci_read
+    or eax, 2                   ; memory space enable (SeaBIOS set it already)
+    mov cl, 04h
+    call pci_write
+    mov si, str_d3dpt
+    call puts
+    mov eax, [d3d_vram]
+    call puthex32
+    mov al, ' '
+    call putc
+    mov eax, [d3d_regs]
+    call puthex32
+    call putnl
+
+    mov edi, [d3d_vram]
+    mov ecx, 800 * 600
+.fill:
+    mov dword [fs:edi], GREEN32
+    add edi, 4
+    dec ecx
+    jnz .fill
+
+    mov edi, [d3d_regs]
+    mov dword [fs:edi + D3D_WIDTH], 800
+    mov dword [fs:edi + D3D_HEIGHT], 600
+    mov dword [fs:edi + D3D_BPP], 32
+    mov dword [fs:edi + D3D_PITCH], 0
+    mov dword [fs:edi + D3D_OFFSET], 0
+    mov dword [fs:edi + D3D_HZ], 60
+    mov dword [fs:edi + D3D_ENABLE], 1
+    mov eax, [fs:edi + D3D_ENABLE]
+    mov si, str_d3d_enable
+    call puts
+    call puthex32
+    call putnl
+    mov cx, 36                  ; ~2 s: the host's screendump shows the linear
+    call delay_ticks            ; mode, the way the player's refresh would
+    ret
+
 a20_on:
     in al, 92h
     or al, 2
@@ -441,6 +533,8 @@ gdtr:
 pci_dev:     dw 0
 init_enable: dd 0
 si_polls:    dd 0
+d3d_vram:    dd 0
+d3d_regs:    dd 0
 
 str_hello:    db "VOODOO2 guest test", 10, 0
 str_nocard:   db "NOCARD: no 121a:0002 on bus 0", 10, 0
@@ -457,6 +551,8 @@ str_rb_pass:  db "LFB PASS", 10, 0
 str_rb_fail:  db "LFB FAIL", 10, 0
 str_swapped:  db "SWAPPED", 10, 0
 str_done:     db "DONE", 10, 0
+str_d3dpt:    db "D3DPT ", 0
+str_d3d_enable: db "D3DPT ENABLE ", 0
 """
 
 
@@ -503,23 +599,32 @@ def wait_for(log, marker, p, timeout, what):
 
 
 def vga_args():
-    vga = os.environ.get("VGA", "std")
-    if vga == "d3dpt":
+    if VGA == "d3dpt":
         return ["-vga", "none", "-device", "d3dpt-vga"]
-    if vga in ("std", "cirrus"):
-        return ["-vga", vga]
+    if VGA in ("std", "cirrus"):
+        return ["-vga", VGA]
     raise SystemExit("VGA must be std, cirrus or d3dpt")
 
 
-def red_fraction(path):
-    """(width, height, fraction of pixels that are the CLUT-ramped red)."""
+def fraction(path, want):
+    """(width, height, fraction of pixels that are the colour `want` picks)."""
     w, h, px = vgadirty.read_ppm(path)
     n = w * h
-    red = 0
+    hit = 0
     for i in range(0, n * 3, 3):
-        if px[i] >= 240 and px[i + 1] < 8 and px[i + 2] < 8:
-            red += 1
-    return w, h, red / n if n else 0.0
+        if want(px[i], px[i + 1], px[i + 2]):
+            hit += 1
+    return w, h, hit / n if n else 0.0
+
+
+def red_fraction(path):
+    """The CLUT-ramped red the Voodoo draws."""
+    return fraction(path, lambda r, g, b: r >= 240 and g < 8 and b < 8)
+
+
+def green_fraction(path):
+    """The green the program leaves d3dpt-vga's linear mode showing."""
+    return fraction(path, lambda r, g, b: r < 8 and g >= 248 and b < 8)
 
 
 def main():
@@ -533,7 +638,8 @@ def main():
     sock = "/tmp/voodoo-guest-%d.qmp" % os.getpid()
     shot_on = os.path.join(OUT, "voodoo.ppm")
     shot_off = os.path.join(OUT, "vga.ppm")
-    for f in (log, qlog, shot_on, shot_off, sock):
+    shot_lin = os.path.join(OUT, "linear.ppm")
+    for f in (log, qlog, shot_on, shot_off, shot_lin, sock):
         if os.path.exists(f):
             os.unlink(f)
     ok = True
@@ -549,6 +655,14 @@ def main():
         t0 = time.time()
         try:
             q = vgadirty.Qmp(sock)
+            if VGA == "d3dpt":
+                # headless, nothing refreshes the console on its own: this
+                # dump is what makes the adapter put its linear surface up
+                # before the Voodoo takes the monitor, as the player's
+                # refresh does -- without it the hand-back finds no linear
+                # surface of the adapter's and the bug cannot show
+                wait_for(log, b"D3DPT ENABLE", p, 180, "the linear mode")
+                q.screendump(shot_lin)
             text = wait_for(log, b"SWAPPED", p, 180, "the guest's swap")
             q.screendump(shot_on)
             text = wait_for(log, b"DONE", p, 60, "the guest to finish")
@@ -559,7 +673,7 @@ def main():
                 p.wait()
             if os.path.exists(sock):
                 os.unlink(sock)
-    print("voodoo-guest: %.0f s in the guest, beside VGA=%s" % (time.time() - t0, os.environ.get("VGA", "std")))
+    print("voodoo-guest: %.0f s in the guest, beside VGA=%s" % (time.time() - t0, VGA))
     for line in text.splitlines():
         if line.strip():
             print("   ", line.strip())
@@ -596,6 +710,22 @@ def main():
     if frac > 0.5:
         print("FAIL the console did not go back to the VGA")
         ok = False
+    if VGA == "d3dpt":
+        # the linear desktop the program left behind, not the Voodoo's last
+        # frame on a surface the adapter kept updating
+        if "D3DPT ENABLE 00000001" not in text:
+            print("FAIL the program did not find d3dpt-vga or its ENABLE did not read back")
+            ok = False
+        w, h, frac = green_fraction(shot_lin)
+        print("    screendump before the Voodoo: %dx%d, %.1f%% green" % (w, h, frac * 100))
+        if (w, h) != (800, 600) or frac < 0.99:
+            print("FAIL d3dpt-vga did not show its 800x600 linear mode before the Voodoo")
+            ok = False
+        w, h, frac = green_fraction(shot_off)
+        print("    ... and %.1f%% the linear mode's green" % (frac * 100))
+        if (w, h) != (800, 600) or frac < 0.99:
+            print("FAIL the console did not go back to d3dpt-vga's 800x600 linear mode")
+            ok = False
     qtext = open(qlog, "rb").read().decode("latin-1")
     if "display on (VGA pass-through)" not in qtext or "display off (VGA back)" not in qtext:
         print("FAIL the device did not log both pass-through switches")

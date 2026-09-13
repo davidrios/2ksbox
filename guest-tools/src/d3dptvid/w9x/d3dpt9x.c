@@ -140,7 +140,7 @@ static void CallVDD_Simple(WORD fn);
     "call   dword ptr [VDDEntryPoint]"   \
     "pop    ebx"                    \
     "pop    eax"                    \
-    parm [ax];
+    parm [ax] modify [cx dx si di];
 
 /* VDD_DRIVER_REGISTER wants the size of the frame buffer the driver is
  * using — pitch times height, in ECX — and a far pointer to the routine the
@@ -159,7 +159,7 @@ static DWORD CallVDD_DriverRegister(WORD fn, WORD pitch, WORD height,
     "call   dword ptr [VDDEntryPoint]"   \
     "mov    edx, eax"               \
     "shr    edx, 16"                \
-    parm [bx] [ax] [dx] [es di];
+    parm [bx] [ax] [dx] [es di] modify [bx cx];
 
 /* ------------------------------------------------------------ the adapter */
 
@@ -987,12 +987,18 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
 /* Called to change resolution without a reboot. */
 UINT WINAPI __loadds ReEnable(LPVOID lpDevice, LPGDIINFO lpInfo)
 {
+    /* The mode in force, put back when the hardware half refuses the new
+     * one: the desktop stays where it was, and the next DOS box's
+     * RestoreDesktopMode would otherwise program the refused mode at the
+     * old pitch. */
+    WORD x = wScrX, y = wScrY, bpp = wBpp, pal = wPalettized;
     UINT rc;
 
     ReadDisplayConfig();
     bReEnabling = 1;
     rc = Enable(lpDevice, 0, NULL, NULL, NULL);
     if (rc) Enable(lpInfo, 1, NULL, NULL, NULL);
+    else { wScrX = x; wScrY = y; wBpp = bpp; wPalettized = pal; }
     bReEnabling = 0;
     return rc;
 }

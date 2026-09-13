@@ -80,6 +80,7 @@ struct D3dptVgaState {
     /* the linear mode currently shown (lin_on) */
     bool lin_on;
     bool full_update;
+    bool resurface;             /* invalidated: put our own surface on the console again */
     int64_t vga_grace_until;    /* hold the last frame after ENABLE 1->0 until then (ms) */
     uint8_t vga_sig[8];         /* the VGA core mode last reported */
     D3dptLinearMode lin;
@@ -256,6 +257,7 @@ static void fb_switch(D3dptVgaState *s, const D3dptLinearMode *m)
     s->lin = *m;
     s->lin_on = true;
     s->full_update = true;
+    s->resurface = false;
 }
 
 static void fb_update_span(D3dptVgaState *s, int y0, int y1)
@@ -382,7 +384,7 @@ static void d3dpt_vga_gfx_update(void *opaque)
         }
         s->full_update = true;
     }
-    if (!s->lin_on || memcmp(&s->lin, &m, sizeof(m)) != 0) {
+    if (!s->lin_on || s->resurface || memcmp(&s->lin, &m, sizeof(m)) != 0) {
         fb_switch(s, &m);
     }
     if (s->pal_dirty && m.bpp == 8) {
@@ -428,7 +430,14 @@ static void d3dpt_vga_invalidate(void *opaque)
 {
     D3dptVgaState *s = opaque;
 
+    /* A full frame, and into a surface of our own: another device may have
+     * had the console meanwhile and left its surface there -- a Voodoo 2
+     * giving the monitor back through VGA pass-through does exactly that --
+     * and a linear mode that did not change would otherwise go on updating
+     * that stranger's surface for ever, so the picture never came back
+     * (2026-09-12, doc 21 §7). */
     s->full_update = true;
+    s->resurface = true;
     s->vga.hw_ops->invalidate(&s->vga);
 }
 

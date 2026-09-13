@@ -229,6 +229,11 @@ echo "==> bsodvxd.vxd (blue-screens on load: the trigger for tools/win98-bsod-te
     -I"$DDK" -I"$SRC" -fo=bsodvxd.obj "$SRC/bsodvxd.c" )
 link_vxd bsodvxd bsodvxd
 
+echo "==> bsodtmr.vxd (the same fault from a timer callback: a blue screen with no screen switch, WHEN=event)"
+( cd "$BUILD" && wcc386 -q -wx -wcd=303 -s -zls -mf -6s -fp6 -ei -zp1 -DBSOD_TIMER \
+    -I"$DDK" -I"$SRC" -fo=bsodtmr.obj "$SRC/bsodvxd.c" )
+link_vxd bsodtmr bsodtmr
+
 echo "==> resources into the module"
 ( cd "$BUILD" && wrc -q d3dpt9x.res d3dpt9x.drv )
 
@@ -527,7 +532,7 @@ PYPE
      -o "$OUT/shtest.exe" "$ROOT/guest-tools/src/d3dptvid/shtest.c" -ld3d8 -lgdi32 -luser32
 
   # the DX8 feature probes (d3d8probe.h), as build-driver.sh builds them
-  for t in cubetest strmtest voltest fmttest bumptest sprtest anistest patchtst; do
+  for t in cubetest strmtest voltest fmttest bumptest sprtest anistest patchtst mgdtest; do
     echo "==> $t.exe (a DX8 feature probe through d3d8.dll on the DX8 DDI)"
     "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
        -march=pentium3 -mtune=generic \

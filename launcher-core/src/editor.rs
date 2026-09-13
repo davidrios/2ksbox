@@ -20,9 +20,9 @@
 //! * **Saving a new profile keeps the overrides.** `shader_library::create`
 //!   reserves the `<slug>.toml` and writes a bare profile; the overrides
 //!   the editor collected have to go into the same file straight after.
-//!   The egui build dropped them (`create(…).map(|_| ())`) and the Qt
-//!   build didn't, which is exactly the kind of divergence one
-//!   implementation makes impossible.
+//!   The egui build (retired 2026-09-13) dropped them
+//!   (`create(…).map(|_| ())`) and the Qt build didn't, which is exactly
+//!   the kind of divergence one implementation makes impossible.
 
 use crate::browse::Filter;
 use crate::shader_library;
@@ -193,9 +193,9 @@ impl Editor {
         self.reparse();
     }
 
-    /// Re-read the preset's parameters if the path changed. Cheap to
-    /// call on every frame (the egui build does) or from a field's
-    /// commit handler (the Qt build does).
+    /// Re-read the preset's parameters if the path changed. Cheap enough
+    /// to call from a field's commit handler (the Qt build does) or on
+    /// every frame.
     pub fn reparse(&mut self) {
         let trimmed = self.preset_path.trim();
         if trimmed.is_empty() {

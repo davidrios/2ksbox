@@ -95,7 +95,8 @@ DEFINE_GUID(IID_IDirect3DSurface8,      0xb96eebca, 0xb326, 0x4ea5, 0x88, 0x2f, 
 
 /* ------------------------------------------------------------ objects */
 struct d3d8 { const IDirect3D8Vtbl *vt; LONG ref; struct d3d9 *d9; };
-struct vs8 { struct vdecl *decl; struct shader *vs; float *consts; UINT const_start, const_count; DWORD *decl_tokens; UINT decl_bytes; };
+/* consts: the declaration's D3DVSD_CONST registers (128 float4s, NULL if none), mask: which */
+struct vs8 { struct vdecl *decl; struct shader *vs; float *consts; DWORD const_mask[4]; DWORD *decl_tokens; UINT decl_bytes; };
 struct dev8 {
     const IDirect3DDevice8Vtbl *vt;
     LONG ref;
@@ -715,11 +716,12 @@ static UINT vsd_tokens(const DWORD *d)
     }
     return i + 1;
 }
-/* returns the element count (END included); regs: bitmask of registers used; consts appended */
-static int vsd_convert(const DWORD *d, D3DVERTEXELEMENT9 *el, UINT *regs, float **consts, UINT *cstart, UINT *ccount)
+/* returns the element count (END included); regs: bitmask of registers used; every D3DVSD_CONST
+ * block lands at its own address in consts (allocated on the first), its registers set in mask */
+static int vsd_convert(const DWORD *d, D3DVERTEXELEMENT9 *el, UINT *regs, float **consts, DWORD *mask)
 {
     UINT i = 0, n = 0, stream = 0, offset = 0;
-    *regs = 0; *consts = NULL; *cstart = *ccount = 0;
+    *regs = 0; *consts = NULL; memset(mask, 0, 4 * sizeof *mask);
     for (;;) {
         DWORD t = d[i];
         DWORD type = (t >> 29) & 7;
@@ -737,12 +739,12 @@ static int vsd_convert(const DWORD *d, D3DVERTEXELEMENT9 *el, UINT *regs, float 
             }
         } else if (type == 4) {                                              /* D3DVSD_CONST: count float4s from register */
             UINT cnt = (t >> 25) & 0xF, reg = t & 0x7F, j;
-            float *c = HeapAlloc(GetProcessHeap(), 0, (*ccount + cnt) * 16);
-            if (!c) return -1;
-            if (*consts) { memcpy(c, *consts, *ccount * 16); HeapFree(GetProcessHeap(), 0, *consts); }
-            else *cstart = reg;
-            for (j = 0; j < cnt * 4; j++) memcpy(&c[*ccount * 4 + j], &d[i + 1 + j], 4);
-            *consts = c; *ccount += cnt;
+            if (reg + cnt > 128) return -1;
+            if (!*consts && !(*consts = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, 128 * 16))) return -1;
+            for (j = 0; j < cnt; j++) {
+                memcpy(*consts + (reg + j) * 4, &d[i + 1 + j * 4], 16);
+                mask[(reg + j) / 32] |= 1u << ((reg + j) % 32);
+            }
             i += 1 + cnt * 4;
         } else i++;                                                          /* tessellator and unknown tokens */
         if (i > 4096) return -1;
@@ -754,7 +756,7 @@ HRESULT WINAPI dev8_CreateVertexShader(IDirect3DDevice8 *This, const DWORD *decl
 {
     struct dev8 *d = D8(This);
     D3DVERTEXELEMENT9 el[65];
-    UINT regs, i, slot;
+    UINT regs, i, slot, nconst;
     struct vs8 v;
     HRESULT hr;
     int n;
@@ -762,8 +764,8 @@ HRESULT WINAPI dev8_CreateVertexShader(IDirect3DDevice8 *This, const DWORD *decl
     *handle = 0;
     if (!decl) return D3DERR_INVALIDCALL;
     memset(&v, 0, sizeof v);
-    n = vsd_convert(decl, el, &regs, &v.consts, &v.const_start, &v.const_count);
-    if (n < 0) return D3DERR_INVALIDCALL;
+    n = vsd_convert(decl, el, &regs, &v.consts, v.const_mask);
+    if (n < 0) { HeapFree(GetProcessHeap(), 0, v.consts); return D3DERR_INVALIDCALL; }
     hr = dev_CreateVertexDeclaration(DEV9(This), el, (IDirect3DVertexDeclaration9 **)&v.decl);
     if (FAILED(hr)) { HeapFree(GetProcessHeap(), 0, v.consts); return hr; }
     if (func) {
@@ -797,7 +799,8 @@ HRESULT WINAPI dev8_CreateVertexShader(IDirect3DDevice8 *This, const DWORD *decl
     }
     d->vs[slot] = v;
     *handle = SHADER_HANDLE_BIT | (slot + 1);
-    d3dpt_log("d3d8: CreateVertexShader -> handle %08lx (%d elements, %s function, %u constants)", (unsigned long)*handle, n - 1, func ? "with" : "no", v.const_count);
+    for (i = 0, nconst = 0; i < 128; i++) if (v.const_mask[i / 32] & (1u << (i % 32))) nconst++;
+    d3dpt_log("d3d8: CreateVertexShader -> handle %08lx (%d elements, %s function, %u constants)", (unsigned long)*handle, n - 1, func ? "with" : "no", nconst);
     return D3D_OK;
 }
 static struct vs8 *vs8_get(struct dev8 *d, DWORD h)
@@ -814,7 +817,15 @@ HRESULT WINAPI dev8_SetVertexShader(IDirect3DDevice8 *This, DWORD h)
         if (!v) return D3DERR_INVALIDCALL;
         dev_SetVertexDeclaration(DEV9(This), (IDirect3DVertexDeclaration9 *)v->decl);
         dev_SetVertexShader(DEV9(This), (IDirect3DVertexShader9 *)v->vs);
-        if (v->const_count) dev_SetVertexShaderConstantF(DEV9(This), v->const_start, v->consts, v->const_count);
+        if (v->consts) {        /* each run of the declaration's constant registers */
+            UINT r = 0, e;
+            while (r < 128) {
+                if (!(v->const_mask[r / 32] & (1u << (r % 32)))) { r++; continue; }
+                for (e = r; e < 128 && (v->const_mask[e / 32] & (1u << (e % 32))); e++) ;
+                dev_SetVertexShaderConstantF(DEV9(This), r, v->consts + r * 4, e - r);
+                r = e;
+            }
+        }
     } else {
         dev_SetVertexShader(DEV9(This), NULL);
         dev_SetFVF(DEV9(This), h);

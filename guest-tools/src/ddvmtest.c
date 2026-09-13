@@ -58,6 +58,15 @@ int main(int argc, char **argv)
     hr = IDirectDraw7_GetCaps(dd, &hal, &hel);
     out("ddvmtest: GetCaps -> 0x%08lx dwVidMemTotal %lu MB dwVidMemFree %lu MB",
         (unsigned long)hr, (unsigned long)(hal.dwVidMemTotal >> 20), (unsigned long)(hal.dwVidMemFree >> 20));
+    {   /* a QueryInterface'd reference released again must leave the object alive (the
+         * shim's QI once took no reference on the real object: this Release freed it) */
+        IDirectDraw7 *dd2 = NULL;
+        DWORD t2 = 0, a2 = 0;
+        hr = IDirectDraw7_QueryInterface(dd, &IID_IDirectDraw7, (void **)&dd2);
+        if (SUCCEEDED(hr) && dd2) IDirectDraw7_Release(dd2);
+        hr = IDirectDraw7_GetAvailableVidMem(dd, &caps, &t2, &a2);
+        out("ddvmtest: after QueryInterface + Release: GetAvailableVidMem -> 0x%08lx free %lu MB", (unsigned long)hr, (unsigned long)(a2 >> 20));
+    }
     IDirectDraw7_Release(dd);
     out("ddvmtest: %s (Vice City needs 12 MB free)", avail >= (12u << 20) ? "enough" : "NOT ENOUGH");
     if (g_log) fclose(g_log);

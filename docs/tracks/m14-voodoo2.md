@@ -65,22 +65,77 @@ the device or the shim, none in 86Box:
 The last two are reached at **Glide's window teardown**: after
 GLIDETEST's first `grSstWinOpen` draws its three cases (the 5 s line
 shows `640x480 on: 2 frames, 583 triangles` — the clear, the triangle,
-the reclear all render), `grSstWinClose` streams a burst of high-entropy
-dwords into the command-FIFO window (`0x2003xx`–`0x200404`) while the
-FIFO is off; with the FIFO off that window is the legacy register map
-(bit 21 = the alternate mapping Glide has enabled in `fbiInit3`), so the
-stream lands in the register file — `intrCtrl` (the refusal), the video
-registers (a garbage `videoDimensions` gives the 3741×1789 the log then
-shows), `fbiInit1`. After it the card never reports idle again and the
-guest spins in Glide's `sst1InitIdle` reading `status` at ~25 M/s. The
-same happens whether or not the fourth (reopen) case runs — it is the
-close, not the reopen — so `GLIDETEST -noreopen` does not avoid it and
-the program never exits (its `C:\GLIDE.LOG` redirect never flushes).
-Read against 3dfx's own source (`glide2x/cvg`, `github.com/SuperIlu/glide`)
-and the Voodoo2 spec §11, that stream would reach a real chip's registers
-too — the open question is why 86Box's `status` then stays busy for ever.
-**This is the track's next bug; the install and the first open+draw
-work.** 86Box upstream would abort at the same `intrCtrl` write.
+the reclear all render), Glide re-inits for another window: it calls
+`sst1InitRegisters`, which resets `fbiInit7` to its default (`0x08080000`,
+**FIFO off**) and zeroes `videoDimensions`, then **keeps streaming
+command-FIFO packets to the `0x200000` window without re-enabling the
+FIFO**. With the FIFO off that window is the legacy register map, so
+86Box (and a real chip) decode every packet dword as the register at bits
+9:2 — traced 2026-09-12 (`VOODOO2_TRACE=1`), the first is
+`0x2002c8=0001fa34` → register `0x2c8`. The corruption cascades: a dword
+whose bit 8 happens to be set lands on `fbiInit7` and spuriously turns the
+FIFO back **on** (seen: `0x20064c=c71dcf5f`), `videoDimensions` is never
+restored (written once at first open, zeroed here, never again — so
+`v_disp` stays 0 and the display timer's retrace generation breaks),
+garbage `triangleCMD`s queue geometry that keeps the render pipeline
+"busy", and `intrCtrl` gets hit (the refusal). Glide then spins in
+`sst1InitIdle` reading `status` at ~25 M/s waiting for an idle/vsync the
+garbage state never produces. It is the **close/re-init that streams to a
+reset FIFO**, not the reopen draw, so `GLIDETEST -noreopen` does not avoid
+it and the program never exits (its `C:\GLIDE.LOG` redirect never flushes).
+The device names this exactly now: `warning: voodoo2: command-FIFO packet
+… to the window … with the FIFO off -> decoded as register …`.
+**This is the track's next bug; the install and the first open+draw work.**
+The fix is a judgement call not yet made: drop `0x200000`-window writes
+while the FIFO is off (offset ≥ `0x100`, to keep the alternate-mapped
+`< 0x100` register writes), or work out why Glide's re-init leaves the
+hardware FIFO disabled while it keeps streaming and match the chip.
+86Box upstream would abort at the same `intrCtrl` write.
+
+**The monitor handed back to a desktop on our driver — fixed the same
+evening.** On the user's `test98` (d3dpt-vga + the card, 3dfx's driver,
+still on the desktop) every full-screen switch left a silver, glitched
+screen that never came back. The log said why: `voodoo2: display on` then
+`display off (VGA back)`, and no `[display] switch 800x600` from the
+player after it — `d3dpt-vga`'s invalidate only asked for a full repaint,
+and its linear path re-installs its own surface only on a mode change, so
+it kept updating the surface the Voodoo had left on console 0 (the
+Voodoo's last frame). The invalidate now re-surfaces (`resurface` in
+`d3dpt/hw/d3dpt_vga.c`), and `VGA=d3dpt tools/voodoo-guest-test.py` (the
+`voodoo-guest-d3dpt` check) first puts the adapter in an 800×600×32
+linear mode, so the hand-back must land on that mode.
+
+**DxDiag on the card, 2026-09-13** (DirectX 9.0c's, on a raw copy of
+`test98` with the fix: `RAW=… NO_DRIVER=1 EXTRA='-device voodoo2,addr=0x05'
+GUEST_CMD='C:\WINDOWS\SYSTEM\DXDIAG.EXE' CLICKS='80:298,68 100:550,307'
+KEYS=… tools/win98-game-test.sh`, outputs in `build/w98game/ddtest` and
+`d3dtest`). The two programs the user had seen strand the screen were
+DxDiag and a title called Tirtanium. What the runs showed:
+
+- **3dfx's driver switches the card on and off at every boot**, before
+  any program runs: `display on` / `display off` about 4 s after the
+  desktop's mode is set, with a 5 s line of `2 frames, ~1100 triangles`
+  and `status` polled ~2 M times. That boot-time hand-back is what left
+  the unfixed build on the Voodoo's frame from the first second of the
+  desktop, which is why "everything" full-screen looked broken.
+- **DxDiag lists the card as display 2**, "Voodoo2 DirectX 7 Driver",
+  `3dfxV2.drv` 4.11.0001.1151, DDI 7, 12 MB, DirectDraw and Direct3D
+  acceleration on.
+- **Its DirectDraw test passes on the chip**: full screen at 640×480,
+  the Voodoo takes the monitor (`640x480 on: 300 frames … in 5.0 s`,
+  60 fps, the white bouncing box by screendump), gives it back, and DxDiag
+  reports "Todos os testes tiveram êxito". The desktop is back every time.
+- **Its Direct3D 7 test fails at step 46, `GetDC`, `0x88760249`
+  (DDERR_CANTCREATEDC)**: two short on/off pairs and 4 frames, then the
+  error. Open: whether a real Voodoo 2 with this driver fails the same
+  step (the card has no GDI, so a refused DC may be the driver's normal
+  answer) or something the device does not model. The Direct3D 8 test
+  runs on `d3dpt-vga` instead (DirectX 8 has no device for a DDI 7
+  driver) and the Direct3D 9 one is skipped for the same reason.
+- No hang in either test; the machine powers off on the ACPI button.
+
+Tirtanium was not on the image, the shelf or the host; it is still to
+run.
 
 Diagnostics that came out of the day, all in `voodoo2.c`: the 5 s line's
 three histograms (registers read, written, config dwords read — a
@@ -149,6 +204,7 @@ and FIFO-window access, status polls collapsed), and the refusal dump.
 scripts/build.sh                      # or, after a voodoo/ edit:
 scripts/prepare-qemu.sh && ninja -C build/qemu qemu-system-i386 libqemu-embed-i386.so
 python3 tools/voodoo-guest-test.py    # ~10 s; outputs in build/voodoo-guest/
+VGA=d3dpt python3 tools/voodoo-guest-test.py   # beside our adapter in a linear mode
 scripts/test.sh all                   # voodoo-guest is in the guest stage
 ```
 

@@ -1,22 +1,20 @@
-//! Every debug verb that needs no toolkit, in one place, so both front
-//! ends answer the same ones with the same code (doc 07, and the README
-//! table). They are how the launcher is tested at all — CLAUDE.md's
-//! policy is integration and end-to-end only, and a verb here drives the
-//! real model a button drives, without a GUI click.
+//! Every debug verb that needs no toolkit, in one place, so the Qt
+//! launcher and `launcherx` answer the same ones with the same code
+//! (doc 07, and the README table). They are how the launcher is tested
+//! at all — CLAUDE.md's policy is integration and end-to-end only, and a
+//! verb here drives the real model a button drives, without a GUI click.
 //!
 //! `run` returns `Some(exit code)` when it recognised the verb, `None`
-//! when the caller should keep looking (its own toolkit-bound verbs) or
-//! open a window. Both binaries call it first thing, before a GUI exists.
+//! when the caller should keep looking or open a window. Both binaries
+//! call it first thing, before a GUI exists.
 //!
-//! Two verbs are deliberately *not* here, because they are the toolkit:
-//! `launcher --pick-file` pops the real `rfd` dialog (Qt's own dialog is
-//! declarative, in QML, and has nothing to call), and the `--diag-*`
-//! screenshot verbs render real frames — synthetic egui input on one
-//! side, `QT_QPA_PLATFORM=offscreen` and `grabToImage` on the other.
+//! The headless screenshots are deliberately *not* here, because they
+//! are the toolkit: `launcher-qt` renders its real windows under
+//! `QT_QPA_PLATFORM=offscreen` and `grabToImage` (`qt/diag.rs`).
 
 use crate::bundle::{self, Family, Machine, Music, Optimization, Sound};
-use crate::{browse, control, disc_library, firstrun, library, machines, player, preview, shader_library,
-    shader_profile, shader_source, shelf, snaps, wizard};
+use crate::{browse, clone_machine, control, disc_library, firstrun, library, machines, player, preview,
+    shader_library, shader_profile, shader_source, shelf, snaps, wizard};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -259,6 +257,30 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 None => panic!("save bundle: {}", form.error.unwrap_or_default()),
             }
         }
+        "--clone" => {
+            // Headless equivalent of a row's "Clone…" then "Clone": the
+            // same model, so the same default name, the same refusals (a
+            // running machine, a name already in the library) and the
+            // same copy. With no name it takes the one the window offers.
+            let usage = "usage: --clone <machine.toml> [new name]";
+            let path: PathBuf = args.next().expect(usage).into();
+            let mut window = clone_machine::CloneMachine::default();
+            window.open_for_path(&path, false);
+            if let Some(name) = args.next() {
+                window.name = name;
+            }
+            if window.error().is_none() {
+                window.submit();
+                window.wait();
+            }
+            match (window.error(), window.saved_path()) {
+                (None, Some(saved)) => println!("{}", saved.display()),
+                (error, _) => {
+                    eprintln!("[clone] {}", error.unwrap_or("nothing was cloned"));
+                    return Some(1);
+                }
+            }
+        }
         "--optimizations" => {
             // Headless equivalent of the wizard's "Emulation
             // optimizations" section: the real form's checkboxes and its
@@ -430,8 +452,8 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                     other => shelf.add(other.into()),
                 }
             }
-            // The egui window saves at the end of the frame it was
-            // edited in; headlessly there is no frame, so flush here.
+            // A window saves when a field reports a finished edit;
+            // headlessly there is no window, so flush here.
             shelf.flush().expect("save the shelf");
             if let Err(e) = shelf.last_result() {
                 eprintln!("[discs] {e}");
@@ -581,10 +603,16 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
         "--browse-start" => {
             // Where a path field's "Browse…" would open: the value's own
             // directory, or — for an empty preset field — the preset
-            // collection. The dialog itself is modal and needs a human,
-            // so this checks the decision, not the dialog.
+            // collection, or where the last dialog was browsing. A second
+            // argument `file` asks for any other field, which has no
+            // suggestion of its own. The dialog itself is modal and needs
+            // a human, so this checks the decision, not the dialog.
             let value = args.next().unwrap_or_default();
-            match browse::browse_start(&value, shader_source::presets_dir().as_deref()) {
+            let presets = match args.next().as_deref() {
+                Some("file") => None,
+                _ => shader_source::presets_dir(),
+            };
+            match browse::browse_start(&value, presets.as_deref()) {
                 Some(dir) => println!("{}", dir.display()),
                 None => println!("(OS default)"),
             }

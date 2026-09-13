@@ -12,9 +12,9 @@ costs each packager are in `docs/07-frontend.md`** ("Two front ends, one
 core"); the build and test loop is in `docs/tracks/m6-launcher.md`. Read
 those, not this file.
 
-`launcher/` (egui) is still maintained and is installed by nothing: it is
-the second view that keeps `launcher-core`'s boundary honest. Nothing
-here decides anything — every rule is in the core, and this crate is Qt.
+Nothing here decides anything — every rule is in `launcher-core`, and
+this crate is Qt. (An egui front end over the same core was retired on
+2026-09-13, ADR-017.)
 
 ## Building
 
@@ -54,7 +54,6 @@ export LAUNCHER_SHADER_PROFILES_DIR=/tmp/profiles
 # the same report `launcher --paths` prints
 ./target/debug/launcher-qt --paths
 
-# must be byte-identical to the egui build's output for the same input;
 # prints "animated" or "still" — whether the editor would keep redrawing
 # this preset — and `PREVIEW_FRAME=<n>` names the frame to render, since
 # the editor itself takes that from a clock

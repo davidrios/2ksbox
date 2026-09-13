@@ -53,7 +53,13 @@ typedef struct _DP2WALK {
     DWORD *rstates;
     BOOL eb;                    /* the stream is a DX3 execute buffer's instructions (doc 15) */
     ULONG bounce;               /* eb: offset of the first instruction the runtime must execute itself (~0 = none) */
-    ULONG stop;                 /* eb: bytes of the stream walked (an EXIT or the bounce ends it early) */
+    ULONG stop;                 /* eb: bytes of the stream walked (an EXIT or the bounce ends it early); a split: where */
+    ULONG start;                /* where this record's walk begins in the stream (dp2_run splits a call: see walk) */
+    BOOL can_split;             /* not an execute buffer, so a blit after a draw may end the record */
+    BOOL drawn;                 /* a draw is in this record already */
+    BOOL split;                 /* the walk stopped at stop, before a blit, for the next record to go on from */
+    BOOL rt_set;                /* a SETRENDERTARGET was walked: rt / z are the context's target from here on */
+    ULONG rt, z;
 } DP2WALK;
 
 static ULONG prim_verts(ULONG prim, ULONG n)
@@ -193,6 +199,27 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
     d3dpt_u32x2 ref;
     ULONG stride = vs->stride, vbytes, first = 0, ext[D3D_MAX_STREAMS], next = 0, i;
 
+    /* **A long non-indexed draw goes to the host in pieces.** The host takes
+     * at most 0x10000 vertices a draw while the caps allow 0xffff primitives,
+     * so DrawPrimitive(TRIANGLELIST, 0, 30000) — 90 000 vertices, legal on
+     * every card of the era — used to be skipped whole, with nothing said to
+     * the application. Lists are cut on a primitive boundary; a strip's next
+     * piece starts on the last vertices of the one before, and a triangle
+     * strip's pieces start on an even triangle so their winding is kept. A
+     * fan has no such cut and still skips. */
+    if (!nindices && prim >= 1 && prim <= 5 && stride && prim_verts(prim, count) > 0x10000) {
+        ULONG per = prim == 1 ? 0x10000 : prim == 2 ? 0x8000 : prim == 4 ? 0x5555 : 0xfffe;
+
+        while (count) {
+            ULONG n = count < per ? count : per;
+
+            walk_draw(w, prim, n, vs, voff, 0, 0, 0, 0);
+            voff += (prim == 3 || prim == 5 ? n : prim_verts(prim, n)) * stride;
+            count -= n;
+        }
+        return;
+    }
+
     /* a stride wider than the FVF is legal (the runtime passes the
      * application's stride for user-memory draws); under a vertex shader
      * the declaration decides what the stride must cover (checked on the
@@ -213,14 +240,16 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
         nverts = prim_verts(prim, count);
     }
     vbytes = nverts * stride;
-    if (nverts > 0x10000 || voff > vs->bytes || vbytes > vs->bytes - voff ||
+    /* stream 0's stride is bounded as the other streams' are below: the host
+     * refuses a draw wider than 1024 and fails the whole stream with it */
+    if (nverts > 0x10000 || stride > 1024 || voff > vs->bytes || vbytes > vs->bytes - voff ||
         (nindices && (!w->ib.mem || w->ib.stride != 2 || ioff > w->ib.bytes || nindices * 2 > w->ib.bytes - ioff))) {
         if (!w->skipped) {
             w->skip_info[0] = prim; w->skip_info[1] = count; w->skip_info[2] = voff;
             w->skip_info[3] = nverts; w->skip_info[4] = ioff; w->skip_info[5] = nindices;
         }
         w->skipped++;
-        w->skip_why |= (nverts > 0x10000 || voff > vs->bytes || vbytes > vs->bytes - voff) ? 16 : 32;
+        w->skip_why |= (nverts > 0x10000 || stride > 1024 || voff > vs->bytes || vbytes > vs->bytes - voff) ? 16 : 32;
         return;
     }
     /* the other streams: a shader's draw only, and only where stream 0's
@@ -238,6 +267,7 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
             }
         }
     }
+    w->drawn = TRUE;
     h.bCommand = (BYTE)D3DPT_DP2_DRAW8;
     h.bReserved = 0;
     h.wPrimitiveCount = 0;
@@ -280,7 +310,16 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
 }
 
 /* a TEXBLT's rectangle (b: the token) from one level list to another, level
- * 0 first, every level both have; DXT in blocks */
+ * 0 first, every level both have; DXT in blocks.
+ *
+ * A level's rectangle is every texel the level-0 one touches: the left / top
+ * edge rounded down and the right / bottom edge rounded **up**. Shifting the
+ * width instead dropped the last texel of an odd-aligned rectangle — (5,0)-
+ * (7,1) is texels 2..3 on level 1 and came out as texel 2 — and a DXT
+ * rectangle is whole blocks from the block its left / top edge is in, where
+ * rounding the texel offset up to a block had copied the block to the right
+ * of it. Only a dirty-rect update of a mipmapped texture reaches either; the
+ * full-surface TEXBLT the probes use is the same both ways. */
 static void blt_levels(ULONG fmt, ULONG src_w, ULONG src_h, const SURF_LEVEL *slv, ULONG dst_w, ULONG dst_h,
                        const SURF_LEVEL *dlv, ULONG levels, const ULONG *b)
 {
@@ -293,7 +332,8 @@ static void blt_levels(ULONG fmt, ULONG src_w, ULONG src_h, const SURF_LEVEL *sl
         ULONG spitch = slv[lv].pitch, dpitch = dlv[lv].pitch;
         ULONG sw = src_w >> lv, sh = src_h >> lv, dw = dst_w >> lv, dh = dst_h >> lv;
         ULONG x0 = (ULONG)sl >> lv, y0 = (ULONG)st >> lv, x1 = (ULONG)dx >> lv, y1 = (ULONG)dy >> lv;
-        ULONG cw = (ULONG)(sr - sl) >> lv, ch = (ULONG)(sb - st) >> lv, rows, rowbytes, y;
+        ULONG cw = (((ULONG)sr + (1u << lv) - 1) >> lv) - x0, ch = (((ULONG)sb + (1u << lv) - 1) >> lv) - y0;
+        ULONG rows, rowbytes, y;
 
         if (!sw) sw = 1;
         if (!sh) sh = 1;
@@ -309,10 +349,12 @@ static void blt_levels(ULONG fmt, ULONG src_w, ULONG src_h, const SURF_LEVEL *sl
             continue;
         }
         if (dxt) {
-            rows = (ch + 3) / 4;
-            rowbytes = fmt_row_bytes(fmt, cw);
-            smem += (y0 / 4) * spitch + fmt_row_bytes(fmt, x0);
-            dmem += (y1 / 4) * dpitch + fmt_row_bytes(fmt, x1);
+            ULONG block = fmt_row_bytes(fmt, 4);        /* one 4x4 block */
+
+            rows = (y0 + ch + 3) / 4 - y0 / 4;
+            rowbytes = ((x0 + cw + 3) / 4 - x0 / 4) * block;
+            smem += (y0 / 4) * spitch + (x0 / 4) * block;
+            dmem += (y1 / 4) * dpitch + (x1 / 4) * block;
         } else {
             rows = ch;
             rowbytes = cw * bpp;
@@ -604,7 +646,7 @@ static ULONG walk_body_size(ULONG op, ULONG count, const UCHAR *q, ULONG left, U
  * there (the rest is copied verbatim for the host to report) */
 static BOOL walk(DP2WALK *w)
 {
-    ULONG pos = 0, i;
+    ULONG pos = w->start, i;
 
     while (pos + 4 <= w->clen) {
         const D3DHAL_DP2COMMAND_ *c = (const D3DHAL_DP2COMMAND_ *)(w->cmd + pos);
@@ -687,6 +729,19 @@ static BOOL walk(DP2WALK *w)
             ULONG e = (pos + 4 + size + 3) & ~3u;
             size = e - pos - 4 <= left ? e - pos - 4 : left;
         }
+        /* **A blit after a draw ends the record here.** The copy is done now,
+         * by the guest, while the host reads a buffer or a texture when it
+         * runs the draw — so in one record every draw saw the last blit's
+         * bytes, draws the application issued before that blit included. A
+         * managed vertex buffer locked, drawn, locked again and drawn again
+         * arrives exactly so, BUFFERBLT DRAW BUFFERBLT DRAW in one call, and
+         * both draws came out with the second fill. dp2_run sends what came
+         * before and goes on from here; the blit then starts the next record. */
+        if ((op == 38 || op == 63 || op == 64) && w->drawn && w->can_split) {
+            w->split = TRUE;
+            w->stop = pos;
+            return TRUE;
+        }
         switch (op) {
         case 8:                                                 /* RENDERSTATE: mirrored for the runtime */
             if (w->rstates && !w->out) {
@@ -704,11 +759,13 @@ static BOOL walk(DP2WALK *w)
             walk_put(w, q + ipad, size - ipad);
             walk_pad(w);
             w->needs_vb = TRUE;
+            w->drawn = TRUE;
             break;
         }
         case 1: case 2: case 3: case 15: case 16: case 17: case 18: case 19: case 20: case 21: case 22:
         case 26: case 27:
             w->needs_vb = TRUE;
+            w->drawn = TRUE;
             walk_put(w, c, 4 + size);
             break;
         case 25: {                                              /* TEXTURESTAGESTATE: a bound texture's colour key, in pass 1 */
@@ -811,6 +868,18 @@ static BOOL walk(DP2WALK *w)
                 for (i = 0; i < count; i++) walk_volumeblt(w, (const ULONG *)(q + i * 48));
             }
             break;
+        case 41:                                                /* SETRENDERTARGET: render target, Z buffer */
+            /* passed through, and remembered: EndScene reads back the
+             * context's target, which was otherwise still the one from
+             * ContextCreate for a DX8 application rendering to a texture */
+            if (count) {
+                const ULONG *e = (const ULONG *)(q + (count - 1) * 8);
+                w->rt = e[0];
+                w->z = e[1];
+                w->rt_set = TRUE;
+            }
+            walk_put(w, c, 4 + size);
+            break;
         case 61: case 62: case 66: case 67:                    /* patches, dirty rects */
             break;
         default:                                                /* the DX7 state tokens and the shader tokens (45, 46, 48, 54..57) */
@@ -827,15 +896,16 @@ static BOOL walk(DP2WALK *w)
 }
 
 
-/* One DrawPrimitives2 call: two passes over the runtime's stream (the
- * first measures the output and does the blits, the second writes into
- * the record), then the record into the command window and the doorbell.
- * The layer has already resolved where the buffers are and which context
- * this is; what comes back is what it must tell the runtime. */
-void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
+/* One record of a DrawPrimitives2 call: the stream from start to its end or
+ * to the next split (a blit after a draw, see walk), in two passes — the
+ * first measures the output and does the blits, the second writes into the
+ * record — then the record into the command window and the doorbell. The
+ * doorbell runs it on the host before this returns, so the next record's
+ * blits land after this one's draws have read what they read. Returns where
+ * the next record starts, or ~0 when the stream is done or this one failed. */
+static ULONG dp2_record(d3dpt_core *p, D3DCTX *c, const d3dpt_dp2_call *call, ULONG start, d3dpt_dp2_result *out)
 {
-    D3DCTX *c = p ? ctx_of(p, call->ctx) : NULL;
-    ULONG vcopy, off, i;
+    ULONG vcopy, off, i, next;
     d3dpt_dp2 *r;
     d3dpt_ret *res;
     DP2WALK w, w0;
@@ -843,27 +913,12 @@ void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
     out->hr = DDERR_GENERIC;
     out->offset = 0;
     out->bounce = FALSE;
-    if (!c) {
-        if (p && p->dp2_errors < 8) {
-            p->dp2_errors++;
-            dbg_hex(p, "d3dptdisp: dp2 refused, context ", (ULONG)call->ctx);
-            dbg_puts(p, "\n");
-        }
-        return;
-    }
-    if (call->clen > (16u << 20) || call->vlen > (32u << 20)) {
-        if (p->dp2_errors < 8) {
-            p->dp2_errors++;
-            dbg_hex(p, "d3dptdisp: dp2 refused, command bytes ", call->clen);
-            dbg_hex(p, " vertex bytes ", call->vlen);
-            dbg_puts(p, "\n");
-        }
-        return;
-    }
     /* pass 1: the output size, the render-state mirror, the TEXBLTs; both
      * passes start from the context's DX8 state */
     memset(&w0, 0, sizeof(w0));
     w0.p = p;
+    w0.start = start;
+    w0.can_split = !call->eb;
     w0.cmd = call->cmd;
     w0.clen = call->clen;
     w0.vtx = call->vtx;
@@ -893,8 +948,9 @@ void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
         out->hr = D3DERR_COMMAND_UNPARSED_;
         out->bounce = TRUE;
         out->offset = 0;
-        return;
+        return ~0u;
     }
+    next = w.split ? w.stop : ~0u;
     vcopy = w.needs_vb ? call->vlen : 0;
     if (w.outlen > (48u << 20) || D3DPT_ALIGN8(w.outlen) + vcopy + sizeof(*r) + sizeof(d3dpt_cmd) > D3DPT_CMD_SIZE) {
         if (p->dp2_errors < 8) {
@@ -903,13 +959,13 @@ void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
             dbg_hex(p, " vertex copy ", vcopy);
             dbg_puts(p, "\n");
         }
-        return;
+        return ~0u;
     }
     p->dp2_calls++;
     off = d3dpt_enc_ret(&p->enc, 0);
     r = d3dpt_enc_cmd(&p->enc, D3DPT_OP_DP2, sizeof(*r), D3DPT_ALIGN8(w.outlen) + vcopy);
     if (!r) {
-        return;
+        return ~0u;
     }
     /* pass 2: the same walk, writing into the record; its end state is the
      * context's for the next call */
@@ -930,6 +986,10 @@ void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
         }
         c->ib_handle = w.ib.handle;
         c->ib_stride = w.ib.stride;
+        if (w.rt_set) {
+            c->rt = w.rt;
+            c->z = w.z;
+        }
         if (skipped && p->dp2_errors < 8) {
             p->dp2_errors++;
             dbg_hex(p, "d3dptdisp: dx8 draws skipped ", skipped);
@@ -981,4 +1041,39 @@ void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
         dbg_hex(p, " fvf ", call->vertex_type);
         dbg_puts(p, "\n");
     }
+    return out->hr == DD_OK ? next : ~0u;
+}
+
+/* One DrawPrimitives2 call: one record, or one per stretch between a draw
+ * and a blit after it (dp2_record). The layer has already resolved where the
+ * buffers are and which context this is; what comes back is what it must
+ * tell the runtime. */
+void dp2_run(d3dpt_core *p, const d3dpt_dp2_call *call, d3dpt_dp2_result *out)
+{
+    D3DCTX *c = p ? ctx_of(p, call->ctx) : NULL;
+    ULONG start = 0;
+
+    out->hr = DDERR_GENERIC;
+    out->offset = 0;
+    out->bounce = FALSE;
+    if (!c) {
+        if (p && p->dp2_errors < 8) {
+            p->dp2_errors++;
+            dbg_hex(p, "d3dptdisp: dp2 refused, context ", (ULONG)call->ctx);
+            dbg_puts(p, "\n");
+        }
+        return;
+    }
+    if (call->clen > (16u << 20) || call->vlen > (32u << 20)) {
+        if (p->dp2_errors < 8) {
+            p->dp2_errors++;
+            dbg_hex(p, "d3dptdisp: dp2 refused, command bytes ", call->clen);
+            dbg_hex(p, " vertex bytes ", call->vlen);
+            dbg_puts(p, "\n");
+        }
+        return;
+    }
+    do {
+        start = dp2_record(p, c, call, start, out);
+    } while (start != ~0u);
 }

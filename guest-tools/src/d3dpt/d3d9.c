@@ -54,6 +54,18 @@ static HMODULE sys_dll;
 static FARPROC sys_create;
 static int attached;
 static d3dpt_enc enc;
+/* The API lock. Every record goes through one encoder and one batch per
+ * process, so two threads calling at once interleave half-written records.
+ * Native D3D9 serialises the calls of a device created with
+ * D3DCREATE_MULTITHREADED and no others; ours does the same from the moment
+ * such a device exists, process-wide because the encoder is. Every vtable
+ * entry takes it (the wrappers gen_vtbl.py / gen_vtbl8.py generate), and so
+ * does the log's host copy; it is recursive, so the implementation calling
+ * back through a vtable is fine. */
+static CRITICAL_SECTION d3dpt_cs;
+static volatile LONG d3dpt_mt;
+#define D3DPT_LOCK()   int lk_ = d3dpt_mt; if (lk_) EnterCriticalSection(&d3dpt_cs)
+#define D3DPT_UNLOCK() if (lk_) LeaveCriticalSection(&d3dpt_cs)
 static void d3dpt_log(const char *fmt, ...)
 {
     char buf[512];
@@ -64,12 +76,15 @@ static void d3dpt_log(const char *fmt, ...)
     n = vsnprintf(buf, sizeof buf - 2, fmt, ap);
     va_end(ap);
     if (n < 0) return;
+    if (n > (int)sizeof buf - 3) n = sizeof buf - 3;    /* C99 vsnprintf returns the untruncated length */
     buf[n++] = '\n'; buf[n] = 0;
     OutputDebugStringA(buf);
     if (log_file) { fputs(buf, log_file); fflush(log_file); }
     if (attached && log_to_host) {
+        D3DPT_LOCK();
         d3dpt_u32x2 *p = d3dpt_enc_cmd(&enc, D3DPT_OP_LOG, sizeof *p, (uint32_t)n - 1);
         if (p) { p->a = (uint32_t)n - 1; p->b = 0; memcpy(p + 1, buf, n - 1); d3dpt_enc_flush(&enc); }
+        D3DPT_UNLOCK();
     }
 }
 /* Call trace (every vtable entry, generated wrappers in d3d9_vtbl.h /
@@ -89,6 +104,7 @@ static void d3dpt_trace(const char *fmt, ...)
     n = vsnprintf(buf, sizeof buf - 2, fmt, ap);
     va_end(ap);
     if (n < 0) return;
+    if (n > (int)sizeof buf - 3) n = sizeof buf - 3;
     buf[n++] = '\n'; buf[n] = 0;
     fputs(buf, trace_file); fflush(trace_file);
 }
@@ -248,6 +264,7 @@ struct device {
     BOOL swvp;
     struct shadow_state st;
     struct stateblock *recording;       /* BeginStateBlock .. EndStateBlock */
+    struct shadow_state *rec_saved;     /* the state at BeginStateBlock (objects referenced), put back at EndStateBlock */
     /* resources (d3d9_res.h) */
     struct surface *bb, *auto_ds;       /* the implicit backbuffer / depth, created on first use */
     struct surface *rt[4], *ds;         /* bound render targets / depth stencil (referenced) */
@@ -256,6 +273,11 @@ struct device {
 struct surface; struct texture; struct vbuf; struct ibuf; struct shader; struct vdecl;
 static struct sb_marks *rec_marks(struct device *dev);   /* d3d9_p3.h: the recording block's marks or NULL */
 #define SB_MARK(dev, expr) do { struct sb_marks *m_ = rec_marks(dev); if (m_) { expr; } } while (0)
+/* Native D3D9 records a setter called between BeginStateBlock and
+ * EndStateBlock and leaves the device's state alone. So while recording, a
+ * setter updates the shadow and its mark (the block's contents, taken at
+ * EndStateBlock, which then puts the shadow back) and sends nothing. */
+#define SB_RECORDING(dev) ((dev)->recording != NULL)
 static void device_unbind_all(struct device *dev);
 
 static HRESULT get_adapter_info(struct d3d9 *d)
@@ -605,6 +627,10 @@ HRESULT WINAPI d3d_CreateDevice(IDirect3D9 *This, UINT Adapter, D3DDEVTYPE Devic
     shadow_defaults(dev);
     dev->host_alive = 1;
     if (!(BehaviorFlags & D3DCREATE_FPU_PRESERVE)) set_fpu_pc24();
+    if ((BehaviorFlags & D3DCREATE_MULTITHREADED) && !d3dpt_mt) {
+        d3dpt_mt = 1;       /* from here on every call takes the API lock (for good: it is process-wide) */
+        d3dpt_log("d3dpt: D3DCREATE_MULTITHREADED: calls are serialised from now on");
+    }
     *out = (IDirect3DDevice9 *)dev;
     return D3D_OK;
 }
@@ -734,11 +760,15 @@ HRESULT WINAPI dev_EndScene(IDirect3DDevice9 *This) { d3dpt_enc_nobody(&enc, D3D
 HRESULT WINAPI dev_Clear(IDirect3DDevice9 *This, DWORD Count, const D3DRECT *pRects, DWORD Flags, D3DCOLOR Color, float Z, DWORD Stencil)
 {
     d3dpt_clear *c;
-    if (Count > 64 || (Count && !pRects)) return D3DERR_INVALIDCALL;
-    c = d3dpt_enc_cmd(&enc, D3DPT_OP_CLEAR, sizeof *c, Count * sizeof(D3DRECT));
-    if (!c) return E_FAIL;
-    c->count = Count; c->flags = Flags; c->color = Color; c->z = Z; c->stencil = Stencil; c->pad = 0;
-    if (Count) memcpy(c + 1, pRects, Count * sizeof(D3DRECT));
+    if (Count && !pRects) return D3DERR_INVALIDCALL;
+    do {    /* a record carries at most 64 rects (the host's limit): more go in several */
+        DWORD n = Count > 64 ? 64 : Count;
+        c = d3dpt_enc_cmd(&enc, D3DPT_OP_CLEAR, sizeof *c, n * sizeof(D3DRECT));
+        if (!c) return E_FAIL;
+        c->count = n; c->flags = Flags; c->color = Color; c->z = Z; c->stencil = Stencil; c->pad = 0;
+        if (n) memcpy(c + 1, pRects, n * sizeof(D3DRECT));
+        pRects += n; Count -= n;
+    } while (Count);
     return D3D_OK;
 }
 static D3DMATRIX *xform_slot(struct device *dev, D3DTRANSFORMSTATETYPE t)
@@ -755,6 +785,7 @@ HRESULT WINAPI dev_SetTransform(IDirect3DDevice9 *This, D3DTRANSFORMSTATETYPE St
     d3dpt_transform *t;
     if (!m) return D3DERR_INVALIDCALL;
     if (slot) { *slot = *m; SB_MARK(DEV(This), m_->xform |= State == D3DTS_VIEW ? 2u : State == D3DTS_PROJECTION ? 4u : State == D3DTS_WORLD ? 1u : 8u << (State - D3DTS_TEXTURE0)); }
+    if (SB_RECORDING(DEV(This))) return D3D_OK;
     t = d3dpt_enc_cmd(&enc, D3DPT_OP_SET_TRANSFORM, sizeof *t, 0);
     if (!t) return E_FAIL;
     t->state = State; t->pad = 0; memcpy(t->m, m, sizeof t->m);
@@ -785,6 +816,7 @@ HRESULT WINAPI dev_SetViewport(IDirect3DDevice9 *This, const D3DVIEWPORT9 *vp)
     if (!vp) return D3DERR_INVALIDCALL;
     DEV(This)->st.vp = *vp;
     SB_MARK(DEV(This), m_->misc |= SB_VP);
+    if (SB_RECORDING(DEV(This))) return D3D_OK;
     v = d3dpt_enc_cmd(&enc, D3DPT_OP_SET_VIEWPORT, sizeof *v, 0);
     if (!v) return E_FAIL;
     memcpy(v, vp, sizeof *v);
@@ -797,6 +829,7 @@ HRESULT WINAPI dev_SetMaterial(IDirect3DDevice9 *This, const D3DMATERIAL9 *m)
     if (!m) return D3DERR_INVALIDCALL;
     DEV(This)->st.material = *m;
     SB_MARK(DEV(This), m_->misc |= SB_MATERIAL);
+    if (SB_RECORDING(DEV(This))) return D3D_OK;
     p = d3dpt_enc_cmd(&enc, D3DPT_OP_SET_MATERIAL, sizeof *p, 0);
     if (!p) return E_FAIL;
     memcpy(p->material, m, sizeof p->material); p->pad = 0;
@@ -808,6 +841,7 @@ HRESULT WINAPI dev_SetLight(IDirect3DDevice9 *This, DWORD Index, const D3DLIGHT9
     d3dpt_light *p;
     if (!l) return D3DERR_INVALIDCALL;
     if (Index < 8) { DEV(This)->st.lights[Index] = *l; SB_MARK(DEV(This), m_->lights |= 1u << Index); }
+    if (SB_RECORDING(DEV(This))) return D3D_OK;
     p = d3dpt_enc_cmd(&enc, D3DPT_OP_SET_LIGHT, sizeof *p, 0);
     if (!p) return E_FAIL;
     p->index = Index; p->pad = 0; memcpy(p->light, l, sizeof p->light);
@@ -822,6 +856,7 @@ HRESULT WINAPI dev_GetLight(IDirect3DDevice9 *This, DWORD Index, D3DLIGHT9 *l)
 HRESULT WINAPI dev_LightEnable(IDirect3DDevice9 *This, DWORD Index, WINBOOL Enable)
 {
     if (Index < 8) { DEV(This)->st.light_on[Index] = Enable; SB_MARK(DEV(This), m_->light_on |= 1u << Index); }
+    if (SB_RECORDING(DEV(This))) return D3D_OK;
     d3dpt_enc_u32x2(&enc, D3DPT_OP_LIGHT_ENABLE, Index, Enable ? 1 : 0);
     return D3D_OK;
 }
@@ -834,6 +869,7 @@ HRESULT WINAPI dev_GetLightEnable(IDirect3DDevice9 *This, DWORD Index, WINBOOL *
 HRESULT WINAPI dev_SetRenderState(IDirect3DDevice9 *This, D3DRENDERSTATETYPE State, DWORD Value)
 {
     if ((DWORD)State < MAX_RS) { DEV(This)->st.rs[State] = Value; SB_MARK(DEV(This), m_->rs[State / 32] |= 1u << (State % 32)); }
+    if (SB_RECORDING(DEV(This))) return D3D_OK;
     d3dpt_enc_u32x2(&enc, D3DPT_OP_SET_RENDER_STATE, State, Value);
     return D3D_OK;
 }
@@ -846,6 +882,7 @@ HRESULT WINAPI dev_GetRenderState(IDirect3DDevice9 *This, D3DRENDERSTATETYPE Sta
 HRESULT WINAPI dev_SetTextureStageState(IDirect3DDevice9 *This, DWORD Stage, D3DTEXTURESTAGESTATETYPE Type, DWORD Value)
 {
     if (Stage < MAX_TSS_STAGES && (DWORD)Type < 33) { DEV(This)->st.tss[Stage][Type] = Value; SB_MARK(DEV(This), m_->tss[Stage] |= 1ull << Type); }
+    if (SB_RECORDING(DEV(This))) return D3D_OK;
     d3dpt_enc_u32x3(&enc, D3DPT_OP_SET_TEXTURE_STAGE_STATE, Stage, Type, Value);
     return D3D_OK;
 }
@@ -858,6 +895,7 @@ HRESULT WINAPI dev_GetTextureStageState(IDirect3DDevice9 *This, DWORD Stage, D3D
 HRESULT WINAPI dev_SetSamplerState(IDirect3DDevice9 *This, DWORD Sampler, D3DSAMPLERSTATETYPE Type, DWORD Value)
 {
     if (Sampler < MAX_SAMPLERS && (DWORD)Type < 14) { DEV(This)->st.samp[Sampler][Type] = Value; SB_MARK(DEV(This), m_->samp[Sampler] |= 1u << Type); }
+    if (SB_RECORDING(DEV(This))) return D3D_OK;
     d3dpt_enc_u32x3(&enc, D3DPT_OP_SET_SAMPLER_STATE, Sampler, Type, Value);
     return D3D_OK;
 }
@@ -873,6 +911,7 @@ HRESULT WINAPI dev_SetScissorRect(IDirect3DDevice9 *This, const RECT *pRect)
     if (!pRect) return D3DERR_INVALIDCALL;
     DEV(This)->st.scissor = *pRect;
     SB_MARK(DEV(This), m_->misc |= SB_SCISSOR);
+    if (SB_RECORDING(DEV(This))) return D3D_OK;
     d3dpt_enc_u32x4(&enc, D3DPT_OP_SET_SCISSOR_RECT, pRect->left, pRect->top, pRect->right, pRect->bottom);
     return D3D_OK;
 }
@@ -902,7 +941,13 @@ HRESULT WINAPI dev_DrawPrimitiveUP(IDirect3DDevice9 *This, D3DPRIMITIVETYPE Prim
     memcpy(d + 1, pVertexStreamZeroData, bytes);
     return D3D_OK;
 }
-HRESULT WINAPI dev_SetFVF(IDirect3DDevice9 *This, DWORD FVF) { DEV(This)->st.fvf = FVF; SB_MARK(DEV(This), m_->misc |= SB_FVF); d3dpt_enc_u32x2(&enc, D3DPT_OP_SET_FVF, FVF, 0); return D3D_OK; }
+HRESULT WINAPI dev_SetFVF(IDirect3DDevice9 *This, DWORD FVF)
+{
+    DEV(This)->st.fvf = FVF;
+    SB_MARK(DEV(This), m_->misc |= SB_FVF);
+    if (!SB_RECORDING(DEV(This))) d3dpt_enc_u32x2(&enc, D3DPT_OP_SET_FVF, FVF, 0);
+    return D3D_OK;
+}
 HRESULT WINAPI dev_GetFVF(IDirect3DDevice9 *This, DWORD *pFVF) { if (!pFVF) return D3DERR_INVALIDCALL; *pFVF = DEV(This)->st.fvf; return D3D_OK; }
 static HRESULT set_const_f(struct device *dev, uint32_t op, UINT start, const float *data, UINT count)
 {
@@ -912,6 +957,7 @@ static HRESULT set_const_f(struct device *dev, uint32_t op, UINT start, const fl
     if (!count) return D3D_OK;
     memcpy(op == D3DPT_OP_SET_VS_CONST_F ? dev->st.vs_f[start] : dev->st.ps_f[start], data, count * 16);
     SB_MARK(dev, for (i = start; i < start + count; i++) { if (op == D3DPT_OP_SET_VS_CONST_F) m_->vs_f[i / 32] |= 1u << (i % 32); else m_->ps_f[i / 32] |= 1u << (i % 32); });
+    if (SB_RECORDING(dev)) return D3D_OK;
     p = d3dpt_enc_cmd(&enc, op, sizeof *p, count * 16);
     if (!p) return E_FAIL;
     p->a = start; p->b = count;
@@ -954,7 +1000,9 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
 {
     if (reason == DLL_PROCESS_ATTACH) {
         char path[MAX_PATH], *p;
-        const char *env = getenv("D3DPT_LOG");
+        const char *env;
+        InitializeCriticalSection(&d3dpt_cs);
+        env = getenv("D3DPT_LOG");
         if (env && env[0] == '0') log_enabled = 0;
         env = getenv("D3DPT_HOSTLOG");
         if (env && env[0] == '0') log_to_host = 0;
@@ -984,6 +1032,9 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID reserved)
             }
         }
     } else if (reason == DLL_PROCESS_DETACH) {
+        /* no lock from here: at process exit the other threads are gone, and one
+         * may have died holding it (nothing else runs in the process now) */
+        d3dpt_mt = 0;
         d3dpt_log("d3dpt: DLL_PROCESS_DETACH (%s)", reserved ? "process exit" : "FreeLibrary");
         transport_fini();
         d3dpt_log("d3dpt: detached");

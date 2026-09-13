@@ -14,11 +14,10 @@
 //! same thing a cold boot into a snapshot means. Reverting a running
 //! machine is the live half (`control.rs`).
 //!
-//! **Nothing here knows about a toolkit.** The window that drives it is
-//! `snapshots_ui.rs`; the two used to be one file, which made this the
-//! one shared module a second front end could not include (it copied the
-//! free half instead) and left `control.rs` — otherwise toolkit-free —
-//! importing a module that pulled in `egui::Context`. Split 2026-09-06.
+//! **Nothing here knows about a toolkit.** The window's model is
+//! `snaps.rs`; the two used to be one file with the egui window in it,
+//! which left `control.rs` — otherwise toolkit-free — importing a module
+//! that pulled in `egui::Context`. Split 2026-09-06.
 
 use crate::player;
 use std::path::Path;

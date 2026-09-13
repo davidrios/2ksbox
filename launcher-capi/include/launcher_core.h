@@ -1,8 +1,8 @@
 /* The 2ksbox launcher, as a C library (doc 07).
  *
  * Everything the launcher does that is not drawing lives in one Rust
- * crate (`launcher-core`), and the project's two front ends — the egui
- * one and the Qt/QML one — are views over it. This header is the same
+ * crate (`launcher-core`), and the project's front end — the Qt/QML
+ * one — is a view over it. This header is the same
  * thing for a front end that is not Rust: a native macOS app in Swift is
  * the case it was shaped for (Swift imports a C header directly, with no
  * bridge), but anything that speaks C works.
@@ -76,6 +76,14 @@ size_t lc_machines_reap(LcMachines *m, size_t *rows, size_t cap);
 /* After lc_shelf_take_saved: a disc added while a guest is up should
  * show in its own in-guest CDSHELF listing without a restart. */
 void lc_machines_republish_shelf(const LcMachines *m);
+/* "Clone…": the name offered for a row ("<name> (copy)", numbered when
+ * taken), and the clone itself — the same settings and its own copy of
+ * the disk, snapshots included, under `name` (NULL = the offered one).
+ * Refused for a running machine or a name already in the library.
+ * Blocks until the copy is done; *status (if given) is the new
+ * machine.toml on success, the reason otherwise. Refresh to see it. */
+char *lc_machines_clone_name(const LcMachines *m, size_t row);
+bool lc_machines_clone(LcMachines *m, size_t row, const char *name, char **status);
 char *lc_machines_library_dir(const LcMachines *m);
 char *lc_machines_disc_library_path(const LcMachines *m);
 char *lc_machines_profiles_dir(const LcMachines *m);

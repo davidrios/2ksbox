@@ -312,7 +312,27 @@ Target: **≤ 1 host frame added** between guest frame completion and photons at
   Ctrl+Alt+G gives it back. The player follows the guest either way
   (`mouse_is_absolute`), so a machine can be switched without touching it.
 - Keyboard: full scancode set (Pause/PrtSc correctness); host shortcuts
-  suppressed while grabbed.
+  go to the guest **while the window has focus**, grabbed or not
+  (2026-09-13, `player/src/kbcapture.rs`) — a Windows machine is on the
+  tablet and never grabs, and its Start menu is the Windows key. winit has
+  no keyboard grab, so it is one piece per windowing system: Wayland's
+  `zwp_keyboard_shortcuts_inhibit_manager_v1` (one inhibitor for the
+  window's life; the compositor applies it only while the surface has
+  focus, and its own `--inhibited` bindings are the user's way out), an
+  active `XGrabKeyboard` on X11, a `WH_KEYBOARD_LL` hook on Windows that
+  takes the two Windows keys and injects them itself, nothing on macOS
+  (Cmd reaches the app already). `PLAYER_KEYBOARD_CAPTURE=0` turns it off.
+  Ctrl+Alt+Del is the host's everywhere, so **Ctrl+Alt+Shift+D** is the
+  guest's: Shift let go, Delete pressed, and Delete released with D.
+  A key goes to the guest by **where it sits** (winit's physical key) —
+  the guest has a layout of its own — except the ones a host keymap
+  option moves (xkb's `ctrl:swapcaps`, `ctrl:nocaps`, `caps:escape`,
+  `altwin:swap_alt_win`): Control, Shift, Alt, AltGr, Super, Caps Lock
+  and Escape go as what the host reads them as (the logical key), so a
+  Caps Lock the host made Control is Control in the guest, and the real
+  Control no longer toggles the host's Caps Lock to reach it
+  (2026-09-13, `keymap::as_host_reads`). The press's answer is kept for
+  the release.
 
 ### Sampling outside the picture
 
@@ -323,8 +343,8 @@ is `clamp_to_border` and presets are written against it. librashader's
 wgpu runtime downgrades every such sampler to `clamp_to_edge`, without a
 word, on a device opened without `ADDRESS_MODE_CLAMP_TO_BORDER` — so the
 device the chain runs on is opened with it
-(`shader_chain::required_features`, used by the player, the launcher's
-egui device and the preview's headless one). Without it the outermost row
+(`shader_chain::required_features`, used by the player and the
+launcher preview's headless device). Without it the outermost row
 and column are smeared over everything outside the tube. The player says
 which it got at startup (`[shader] clamp-to-border sampling: …`).
 

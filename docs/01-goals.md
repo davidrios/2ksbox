@@ -61,7 +61,7 @@ rectangle in a window.
 | P2 | Guest display drivers | Native `d3dpt-vga` drivers: XP miniport + display driver with DirectDraw/Direct3D DX8 DDI; Win98 mini-VDD + 16-bit DIB engine driver | **Original work** |
 | P3 | Paravirtual Direct3D device | SysBus `d3dpt` device, protocol, guest DLLs, and DXVK native host executor | **Original work** |
 | P4 | Player display pipeline | In-process embed + pixel-accurate CRT-shaded display pipeline (wgpu + librashader), mode analysis, event-driven geometry | **Original work** |
-| P5 | Companion launcher | `launcher-core` library, shipped `launcher-qt` (Qt 6 / QML via cxx-qt), egui view, C ABI, machine wizard, disc shelf | **Original work** |
+| P5 | Companion launcher | `launcher-core` library, shipped `launcher-qt` (Qt 6 / QML via cxx-qt), C ABI, machine wizard, disc shelf | **Original work** |
 | P6 | Raw CD-ROM backend ("libdisc") | Raw optical disc model (cue/bin, CCD, MDS, ISO), ATAPI device patches, CD-DA, disc shelf, and `isodir:` directory discs | **Original work** |
 
 P2, P3, P4, P5, and P6 are the primary contributions that don't exist anywhere

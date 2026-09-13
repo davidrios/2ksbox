@@ -22,6 +22,7 @@
 #include <windows.h>
 #include <d3d9.h>
 #include <dlfcn.h>
+#include <pthread.h>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -93,6 +94,22 @@ inline void Sleep(DWORD ms) {
   struct timespec ts = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
   nanosleep(&ts, nullptr);
 }
+
+/* threads, for the feature test's loader thread (D3DCREATE_MULTITHREADED) */
+#define INFINITE 0xFFFFFFFFu
+typedef DWORD (WINAPI *LPTHREAD_START_ROUTINE)(LPVOID);
+namespace win32hl {
+  struct thread { pthread_t t; LPTHREAD_START_ROUTINE fn; LPVOID arg; };
+  inline void *thread_main(void *p) { thread *t = (thread *)p; t->fn(t->arg); return nullptr; }
+}
+inline HANDLE CreateThread(void *, size_t, LPTHREAD_START_ROUTINE fn, LPVOID arg, DWORD, DWORD *id) {
+  win32hl::thread *t = new win32hl::thread{ {}, fn, arg };
+  if (pthread_create(&t->t, nullptr, win32hl::thread_main, t)) { delete t; return nullptr; }
+  if (id) *id = 0;
+  return t;
+}
+inline DWORD WaitForSingleObject(HANDLE h, DWORD) { pthread_join(((win32hl::thread *)h)->t, nullptr); return 0; }
+inline BOOL CloseHandle(HANDLE h) { delete (win32hl::thread *)h; return TRUE; }
 
 /* NULL window: DXVK's headless WSI, no presenter, Present is a no-op */
 inline HWND CreateWindowA(LPCSTR, LPCSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE, void *) {

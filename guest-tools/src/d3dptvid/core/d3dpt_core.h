@@ -197,6 +197,7 @@ typedef struct d3dpt_core {
     BOOL flip_pending;          /* a flip is still waiting to be scanned out */
     ULONG flip_frame;           /* FRAMES when it was issued */
     LONGLONG flip_qpc;          /* and when, so a stalled refresh cannot hang a game */
+    ULONG vb_frame;             /* FRAMES at the last "in vertical blank" answer (vb_test) */
 
     /* the command window and the Direct3D state */
     ULONG cmd_offset;           /* window offset in VRAM (0 = the device has none) */
@@ -268,6 +269,7 @@ ULONG ddflags(d3dpt_core *c);
 void wait_frame(d3dpt_core *c);
 BOOL flip_done(d3dpt_core *c);
 void flip_issued(d3dpt_core *c);
+BOOL vb_test(d3dpt_core *c);
 BOOL d3d_init(d3dpt_core *c);
 
 /* --- core_caps.c: the caps the layer hands the runtime --- */

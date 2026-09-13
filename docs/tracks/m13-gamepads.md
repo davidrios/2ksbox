@@ -404,7 +404,7 @@ makes an axis a position; the `pad` check pins it.
   gap below the 3dfx band at 30.)
 - In `launcher-core/src/bundle.rs`: `Pad`, `pad_choices`, the per-family
   defaults and the arguments. The machine form's row in `wizard.rs` and
-  both front ends' views of it. **Conflict warning:** M12 is editing
+  the Qt front end's view of it. **Conflict warning:** M12 is editing
   this same file for `Sound` / `Music`. Sequence, or rebase.
 - `gamepad/qemu/gameport.{c,h}` — path B's device. ✅
 - `guest-tools/src/padtest.asm` — the DOS probe. ✅ (`padtest.c`, the

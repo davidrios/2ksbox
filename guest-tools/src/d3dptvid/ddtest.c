@@ -310,6 +310,25 @@ int main(int argc, char **argv)
     hr = dd->lpVtbl->WaitForVerticalBlank(dd, DDWAITVB_BLOCKBEGIN, NULL);
     logp("WaitForVerticalBlank %08lx\n", hr);
 
+    /* GetVerticalBlankStatus, in the loop a title of the era writes around
+     * it: how many "in blank" answers in 500 ms. The adapter has no beam
+     * position, so the driver says yes once a frame (about 30 at 60 Hz); it
+     * used to say no always, and `while (!in_vb)` never ended. */
+    {
+        DWORD t0 = GetTickCount(), polls = 0, yes = 0;
+        BOOL in_vb;
+
+        while (GetTickCount() - t0 < 500) {
+            in_vb = FALSE;
+            hr = dd->lpVtbl->GetVerticalBlankStatus(dd, &in_vb);
+            polls++;
+            if (hr == DD_OK && in_vb) yes++;
+        }
+        logp("GetVerticalBlankStatus: %lu of %lu polls in blank in 500 ms (last hr %08lx)%s\n",
+             (unsigned long)yes, (unsigned long)polls, (unsigned long)hr,
+             yes ? "" : "  FAIL: never in blank");
+    }
+
     memset(&sd, 0, sizeof(sd)); sd.dwSize = sizeof(sd);
     hr = back->lpVtbl->Lock(back, NULL, &sd, DDLOCK_WAIT | DDLOCK_READONLY, NULL);
     if (SUCCEEDED(hr)) {

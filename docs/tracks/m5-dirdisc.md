@@ -282,9 +282,10 @@ for the ISO 9660 metadata. Everything downstream — `read_cooked` /
   `tools/xp-cdimage-test.sh`.
 - Shared (rebase first, edit minimally, name the track in the commit) —
   all M6's files, and all moved by main's launcher split on 2026-09-06:
-  `launcher-core/src/{disc_library,bundle,control,cli,shelf}.rs`, the two
-  front ends (`launcher/src/{discshelf,filepicker,main}.rs`,
-  `launcher-qt/qml/DiscShelfWindow.qml`); `CLAUDE.md`'s tools table.
+  `launcher-core/src/{disc_library,bundle,control,cli,shelf}.rs`, the
+  front end (`launcher-qt/qml/DiscShelfWindow.qml`; the egui one,
+  `launcher/src/`, was deleted 2026-09-13, ADR-017); `CLAUDE.md`'s tools
+  table.
 
 ## The layout (what step 1 must produce)
 

@@ -18,7 +18,7 @@ first-class target.
 | Guest display drivers | **We build** — Native `d3dpt-vga` drivers: XP miniport + display driver with DirectDraw/Direct3D DX8 DDI; Win98 mini-VDD + 16-bit DIB engine driver; SoftGPU/WineD3D as fallback |
 | CRT shader ecosystem | Exists — libretro slang shaders via librashader (library, not RetroArch) |
 | **Player: in-process QEMU + pixel-accurate CRT-shaded display** | **We build** (Rust, wgpu + librashader, mode analysis, event-driven geometry, low-latency audio) |
-| **Companion launcher (library, creation wizard, disc shelf)** | **We build** (Rust: `launcher-core` library; shipped `launcher-qt` in Qt 6 / QML via cxx-qt; maintained `launcher` in egui; `launcher-capi` for C/Swift) |
+| **Companion launcher (library, creation wizard, disc shelf)** | **We build** (Rust: `launcher-core` library; shipped `launcher-qt` in Qt 6 / QML via cxx-qt; `launcher-capi` for C/Swift) |
 | **Raw CD-ROM backend (cue/bin, subchannel, C2, CD-DA, dir-as-CD)** | **We build** (Rust "libdisc"; ATAPI patches; live disc shelf; `isodir:` directory mounting) |
 | **Guest machine families** | **We build** — Win98, XP, DOS (with cycle-throttled CPU rates), and Other (BeOS, period Linux, OS/2) |
 
@@ -112,6 +112,12 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 # Ctrl+Alt+S writes the guest's own frame — its native size, no geometry stage and
 #   no CRT chain — as PLAYER_SHOT_DIR/2ksbox-NNNN.png (the next free number; the
 #   working directory when PLAYER_SHOT_DIR is unset). Ctrl+Alt+G releases the grab.
+# Ctrl+Alt+Shift+D is Ctrl+Alt+Del in the guest (the real one stays the host's).
+# While the window has focus the host's own shortcuts go to the guest — the Windows
+#   key opens the guest's Start menu (Wayland's shortcut inhibitor, an X11 keyboard
+#   grab, a low-level hook on Windows; nothing on macOS). PLAYER_KEYBOARD_CAPTURE=0
+#   leaves them the host's; scripts/test.sh sets it, so a test window sway focuses
+#   does not take the desktop's keys away.
 # PLAYER_SHOT_EVERY=300 takes that same shot on its own every 300 presented guest frames
 #   (a scripted run's window is behind a terminal and gets no redraws, so it is driven
 #   from the wake path): the only way a headless run sees a 3D frame, since a QMP
@@ -185,27 +191,19 @@ macOS / Apple Silicon specifics: [docs/build-macos.md](docs/build-macos.md).
 Everything the launcher *decides* — the `machine.toml` format, the
 machine library, the disc shelf, snapshots, shader profiles, the
 preview's render path, and every window's own state machine and the
-sentences it shows — lives in one crate, **`launcher-core`**. There are
-two maintained front ends over it, and both are views: they draw and
-forward events, and nothing else (doc 07). **`launcher-qt` is the one
-every package installs** as `2ksbox` (ADR-015); `launcher` is kept, and
-installed by nothing.
+sentences it shows — lives in one crate, **`launcher-core`**. The front
+end over it is a view: it draws and forwards events, and nothing else
+(doc 07). **`launcher-qt` is the launcher every package installs** as
+`2ksbox` (ADR-015). (An egui front end over the same core was retired on
+2026-09-13, ADR-017.)
 
 ```sh
 cd launcher-qt && cargo build --release # Qt 6 / QML through cxx-qt; what ships
-cargo build --release -p launcher       # egui/eframe; the second view, not a default member
 ```
-
-Neither is a *default* member of the root workspace: `launcher` left
-`default-members` on 2026-09-07, because it costs 70
-crates nobody else needs (eframe, accesskit, harfrust, icu) for a binary
-no packager installs. `scripts/build.sh`'s `rust` stage builds the
-default members and then `cargo check --release --workspace`, so the
-front end still cannot rot unnoticed.
 
 The toolkit-free debug verbs — `--print-args`, `--new`, `--discs`,
 `--host-check`, `--wizard-edit`, everything in `launcher_core::cli` —
-are a binary of their own, so a scripted check needs neither toolkit:
+are a binary of their own, so a scripted check needs no toolkit:
 
 ```sh
 cargo build --release -p launcher-core --bin launcherx
@@ -213,9 +211,9 @@ target/release/launcherx --print-args ~/.local/share/2ksbox/machines/xp/machine.
 ```
 
 `launcherx` is what `scripts/test.sh` and `tools/dos-guest-test.py` drive
-the launcher through. The verbs it cannot answer are the two that *are* a
-toolkit: `--pick-file` / `--pick-folder` (a real OS dialog) and the
-`--diag-*` frame grabs.
+the launcher through. What it cannot do is what *is* a toolkit: the
+headless frame grabs of real windows, which are `launcher-qt`'s
+(`QT_QPA_PLATFORM=offscreen`, doc 07).
 
 `launcher-qt` declares its own workspace, so a plain `cargo build` at the
 root never needs Qt 6 development files — `scripts/build.sh` has a `qt`
@@ -318,12 +316,11 @@ GPL-2.0, non-negotiable in practice for everything that links QEMU
 compiled into QEMU itself.
 
 The **launcher** — `launcher-core` and the front ends over it
-(`launcher`, `launcher-qt`, `launcher-capi`) — and the `shader-chain`
+(`launcher-qt`, `launcher-capi`) — and the `shader-chain`
 crate it shares with the player are **GPL-2.0-or-later** (ADR-009). None
 of them links QEMU code, since the launcher spawns the player as a
-separate process, and they do link Apache-2.0 crates (egui's `ab_glyph`,
-winit's `dpi`, `ring` under `ureq`'s rustls) that GPLv2 cannot take and
-GPLv3 can. `launcher-qt` links Qt 6 under the LGPLv3, which is the same
+separate process, and they do link Apache-2.0 crates (`ring` under
+`ureq`'s rustls, among others) that GPLv2 cannot take and GPLv3 can. `launcher-qt` links Qt 6 under the LGPLv3, which is the same
 reason.
 
 Original code is Rust wherever possible (see ADR-004 in

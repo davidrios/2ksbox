@@ -1,5 +1,5 @@
 // The launcher window: the machine library grid, and the four windows
-// off it. `launcher/src/main.rs`'s `LauncherApp::ui`, as a view.
+// off it.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -8,7 +8,9 @@ import com._2ksbox.launcher
 ApplicationWindow {
     id: root
 
-    width: 900
+    // Wide enough for a row's five buttons with room to spare: at 900
+    // "Clone…" sat flush against the edge, one longer label from clipped.
+    width: 980
     height: 560
     visible: true
     title: qsTr("2ksbox")
@@ -21,9 +23,7 @@ ApplicationWindow {
     }
 
     // A child process has no way to push the news that it exited, so
-    // this polls for it — where the egui build did the same work at the
-    // top of every frame, sixty times a second, because it had a frame
-    // anyway. Here the interval is stated out loud.
+    // this polls for it, at an interval stated out loud.
     Timer {
         interval: 500
         running: true
@@ -135,29 +135,33 @@ ApplicationWindow {
         spacing: 8
 
         // Column widths shared by the header and every row, so the two
-        // cannot drift the way two separate layouts would.
+        // cannot drift the way two separate layouts would. Each fixed
+        // column is pinned (minimum = preferred = maximum): a preferred
+        // width alone lets the RowLayout shrink or grow a column by its
+        // text, which put every row's buttons somewhere else (user-
+        // reported, 2026-09-12). The buttons take the unlabelled rest.
         QtObject {
             id: cols
             readonly property int name: 190
             readonly property int family: 80
             readonly property int shader: 170
-            readonly property int actions: 300
         }
 
-        Frame {
+        // A list's box, drawn by hand rather than a `Frame` with its
+        // `background` replaced: the native styles (macOS, Windows) refuse
+        // that customization and say so on every start, and Basic's Frame
+        // paints only a border, which let the area below the last row show
+        // whatever was behind the window — black in a grab. The content is
+        // inset a pixel so the border stays visible.
+        Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            padding: 0
-            // The Basic style's Frame paints only a border, so the area
-            // below the last row would otherwise show whatever is behind
-            // the window — black in a grab, the window colour on screen.
-            background: Rectangle {
-                color: palette.base
-                border.color: palette.mid
-            }
+            color: palette.base
+            border.color: palette.mid
 
             ColumnLayout {
                 anchors.fill: parent
+                anchors.margins: 1
                 spacing: 0
 
                 // Header row
@@ -172,11 +176,19 @@ ApplicationWindow {
                         anchors.rightMargin: 10
                         spacing: 10
 
-                        Label { text: qsTr("Name"); font.bold: true; Layout.preferredWidth: cols.name }
-                        Label { text: qsTr("Family"); font.bold: true; Layout.preferredWidth: cols.family }
-                        Label { text: qsTr("Shader"); font.bold: true; Layout.preferredWidth: cols.shader }
-                        Label { text: qsTr("Location"); font.bold: true; Layout.fillWidth: true }
-                        Item { Layout.preferredWidth: cols.actions }
+                        Label {
+                            text: qsTr("Name"); font.bold: true
+                            Layout.minimumWidth: cols.name; Layout.preferredWidth: cols.name; Layout.maximumWidth: cols.name
+                        }
+                        Label {
+                            text: qsTr("Family"); font.bold: true
+                            Layout.minimumWidth: cols.family; Layout.preferredWidth: cols.family; Layout.maximumWidth: cols.family
+                        }
+                        Label {
+                            text: qsTr("Shader"); font.bold: true
+                            Layout.minimumWidth: cols.shader; Layout.preferredWidth: cols.shader; Layout.maximumWidth: cols.shader
+                        }
+                        Item { Layout.fillWidth: true }
                     }
                 }
 
@@ -198,7 +210,6 @@ ApplicationWindow {
                         required property string name
                         required property string family
                         required property string shader
-                        required property string location
                         required property bool running
 
                         width: list.width
@@ -214,33 +225,22 @@ ApplicationWindow {
                             Label {
                                 text: machineRow.name
                                 elide: Text.ElideRight
-                                Layout.preferredWidth: cols.name
+                                Layout.minimumWidth: cols.name; Layout.preferredWidth: cols.name; Layout.maximumWidth: cols.name
                             }
                             Label {
                                 text: machineRow.family
-                                Layout.preferredWidth: cols.family
+                                elide: Text.ElideRight
+                                Layout.minimumWidth: cols.family; Layout.preferredWidth: cols.family; Layout.maximumWidth: cols.family
                             }
                             Label {
                                 text: machineRow.shader
                                 elide: Text.ElideRight
-                                Layout.preferredWidth: cols.shader
-                            }
-                            Label {
-                                // Elides from the left: a library's paths
-                                // share a long prefix, so the tail is the
-                                // half that identifies the row.
-                                text: machineRow.location
-                                elide: Text.ElideLeft
-                                opacity: 0.7
-                                Layout.fillWidth: true
-                                ToolTip.visible: pathHover.hovered
-                                ToolTip.text: machineRow.location
-                                HoverHandler { id: pathHover }
+                                Layout.minimumWidth: cols.shader; Layout.preferredWidth: cols.shader; Layout.maximumWidth: cols.shader
                             }
 
                             RowLayout {
                                 spacing: 6
-                                Layout.preferredWidth: cols.actions
+                                Layout.fillWidth: true
 
                                 Label {
                                     text: qsTr("Running")
@@ -277,6 +277,14 @@ ApplicationWindow {
                                                           machines.isRunning(machineRow.index))
                                         snapshotsWindow.show()
                                     }
+                                }
+                                Button {
+                                    text: qsTr("Clone…")
+                                    // One copy at a time: the window
+                                    // shows the one that is running.
+                                    enabled: !cloner.busy
+                                    onClicked: cloner.openFor(machines.bundlePath(machineRow.index),
+                                                              machines.isRunning(machineRow.index))
                                 }
                                 Item { Layout.fillWidth: true }
                             }
@@ -330,6 +338,27 @@ ApplicationWindow {
         // puts the window away wherever it was called from.
         onOpenChanged: open ? wizardWindow.show() : closeIfShown(wizardWindow)
     }
+    CloneModel {
+        id: cloner
+        // Same shape as the wizard: a clone that lands clears the flag
+        // and the window goes away wherever it was.
+        onOpenChanged: open ? cloneWindow.show() : closeIfShown(cloneWindow)
+    }
+    // A copy runs on its own thread; this asks after it, at an interval
+    // stated out loud, only while there is one. When it lands the grid
+    // rescans, which is where the new machine appears.
+    Timer {
+        interval: 300
+        repeat: true
+        running: cloner.busy
+        onTriggered: {
+            if (cloner.poll()) {
+                machines.refresh()
+                if (cloner.status !== "")
+                    machines.status = cloner.status
+            }
+        }
+    }
     DiscModel { id: discs }
     SnapshotModel { id: snapshots }
     ProfileModel { id: profiles }
@@ -370,6 +399,11 @@ ApplicationWindow {
         onSaved: machines.refresh()
     }
 
+    CloneWindow {
+        id: cloneWindow
+        cloner: cloner
+    }
+
     DiscShelfWindow {
         id: discShelfWindow
         discs: discs
@@ -377,9 +411,8 @@ ApplicationWindow {
             machines.refresh()
             // A disc added or renamed should show up in the guest's own
             // CDSHELF listing without restarting the machine, so every
-            // *running* drive gets the new shelf file — the egui build's
-            // `take_saved` loop, moved out here where the running set
-            // lives.
+            // *running* drive gets the new shelf file — here, where the
+            // running set lives.
             if (discs.takeSaved())
                 machines.republishShelf()
         }
@@ -417,7 +450,7 @@ ApplicationWindow {
         // `grabToImage` only works on an item the QML engine created
         // (see the note on `grabTimer` below). Its `firstrun` probe
         // screen prints what it holds instead of photographing it.
-        const windows = [wizardWindow, discShelfWindow, snapshotsWindow,
+        const windows = [wizardWindow, cloneWindow, discShelfWindow, snapshotsWindow,
                          shaderWindow, shaderEditorWindow]
         for (const d of windows)
             if (d.visible && d.grabItem)
@@ -512,8 +545,8 @@ ApplicationWindow {
                 // path, ending on the refreshed grid, so the run is only a
                 // pass if the bundle really landed in the library. The
                 // family is worth naming: a bundle written through this
-                // window has to come out the same as one written by the
-                // egui build or by `--wizard-new`, and DOS is the family
+                // window has to come out the same as one written by
+                // `--wizard-new`, and DOS is the family
                 // where that used to be false.
                 wizard.openFresh()
                 const spec = diag.arg.split(":")
@@ -526,6 +559,26 @@ ApplicationWindow {
                 diag.note("submit -> " + wizard.submit() + " " + wizard.savedPath())
                 machines.refresh()
                 break
+            case "clone":
+                // `LAUNCHER_QT_ARG=<machine.toml>` — a row's Clone… the
+                // way a person does it: the window up with the name the
+                // model offers, a new name typed over it, Clone pressed,
+                // and then the copy waited out (`cloneSettle`), ending
+                // on the rescanned grid — so it only passes if the new
+                // machine really landed in the library. `<path>;show`
+                // stops at the open window, for a picture of it.
+                const cloneSpec = diag.arg.split(";")
+                cloner.openFor(cloneSpec[0], false)
+                diag.note("clone offered [" + cloneWindow.shownName + "] model [" + cloner.name
+                          + "], window " + cloneWindow.visible + ", can clone " + cloner.canSubmit
+                          + ", error [" + cloner.error + "]")
+                if (cloneSpec[1] === "show")
+                    break
+                cloneWindow.retypeName("Typed twin")
+                cloneWindow.clickClone()
+                diag.note("clone started: busy=" + cloner.busy + ", error [" + cloner.error + "]")
+                cloneSettle.start()
+                return   // `cloneSettle` grabs when it is done
             case "adddisc":
                 // `LAUNCHER_QT_ARG=<path>` onto the shared shelf.
                 discs.openLibrary(machines.discLibraryPath())
@@ -541,10 +594,11 @@ ApplicationWindow {
                 // can see either half.
                 discs.openLibrary(machines.discLibraryPath())
                 discShelfWindow.show()
-                discShelfWindow.pickDisc(diag.arg)
+                const pickedUrl = discShelfWindow.pickDisc(diag.arg)
                 diag.note("pickdisc: shelf " + discs.count + ", field ["
                           + discShelfWindow.shownAdd + "], status: " + discs.status
-                          + ", filters [" + discShelfWindow.addFilters.join(" | ") + "]")
+                          + ", filters [" + discShelfWindow.addFilters.join(" | ") + "]"
+                          + ", url " + pickedUrl)
                 break
             case "discs":
                 if (diag.arg === "")
@@ -622,6 +676,18 @@ ApplicationWindow {
                     return   // `firstRunSettle` grabs when it is done
                 }
                 break
+            case "escfocus":
+                // New profile… from the profile list, and whether Esc can
+                // close the editor it opens: the editor has to have the
+                // keyboard, its Esc armed, and be the *only* armed Esc that
+                // matches — two is an ambiguous shortcut, which Qt fires in
+                // neither window. The steps are `escFocusSettle`, because
+                // activation is asynchronous.
+                profiles.refresh()
+                shaderWindow.show()
+                escFocusSettle.step = 0
+                escFocusSettle.start()
+                return   // `escFocusSettle` grabs when it is done
             case "editor":
                 // `<preset.slangp>;<preview image>`
                 const parts = diag.arg.split(";")
@@ -660,12 +726,63 @@ ApplicationWindow {
         }
     }
 
+    // The `clone` probe's wait: the copy is polled by the timer beside
+    // `cloner` above, exactly as for a person; this only waits for it to
+    // end and reports what it left — the window, the model and the grid.
+    Timer {
+        id: cloneSettle
+        interval: 200
+        repeat: true
+        onTriggered: {
+            if (cloner.busy)
+                return
+            stop()
+            diag.note("clone settled: open=" + cloner.open + ", window " + cloneWindow.visible
+                      + ", error [" + cloner.error + "], status [" + machines.status
+                      + "], saved " + cloner.savedPath() + ", grid " + machines.count)
+            grabTimer.restart()
+        }
+    }
+
+    // The `escfocus` probe's steps: the profile list has had a beat to
+    // come up, then New profile… the way its button does it, then the
+    // editor has had a beat. Each reports which window has the focus.
+    Timer {
+        id: escFocusSettle
+        property int step: 0
+        interval: diag.delayMs
+        repeat: true
+        onTriggered: {
+            if (step === 0) {
+                diag.note("escfocus list: focus=[" + diag.focusWindow() + "]")
+                editor.newProfile()
+                step = 1
+                return
+            }
+            stop()
+            // How many Esc shortcuts would claim the key, counted the way
+            // Quick Controls' matcher decides it: armed, in a window that
+            // is `active` — which a transient window reports whenever its
+            // parent is, so both windows here count. Two is ambiguous, and
+            // Qt fires *neither*.
+            const matches = [shaderWindow, shaderEditorWindow]
+                .filter(w => w.visible && w.active && w.escArmed).length
+            diag.note("escfocus editor: visible=" + shaderEditorWindow.visible
+                      + ", focus=[" + diag.focusWindow() + "]"
+                      + ", esc armed=" + shaderEditorWindow.escArmed
+                      + ", esc matches=" + matches)
+            grabTimer.restart()
+        }
+    }
+
     // A second beat so the window just opened has been laid out and
     // rendered before the grab.
     Timer {
         id: grabTimer
         interval: diag.delayMs
         onTriggered: {
+            if (snapshotsWindow.visible)
+                diag.note("snapshots layout: " + snapshotsWindow.layoutReport())
             if (diag.shotPath === "") {   // driven, not photographed
                 Qt.quit()
                 return
@@ -681,8 +798,7 @@ ApplicationWindow {
             // are always items declared in QML — and hence a *whole
             // window* headless shot, dialog frame and all, would need a
             // small C++ shim calling `QQuickWindow::grabWindow()`.
-            // Documented in doc 07: it is the one thing the egui build's
-            // own 150-line off-screen dump path does better.
+            // Documented in doc 07.
             const target = openWindowItem() || body
             diag.note("grabbing " + target.width + "x" + target.height
                       + " -> " + target.grabToImage(cb))

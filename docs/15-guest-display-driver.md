@@ -306,6 +306,18 @@ line at all while a game runs means it blits to the primary instead of
 flipping** — the vertical blank cannot pace that game, and if it is too
 fast the cause is the guest CPU, not the display path.
 
+**`GetVerticalBlankStatus` (2026-09-12).** The runtime asks it of the
+driver as `WaitForVerticalBlank(DDWAITVB_I_TESTVB)`, and both layers
+answered "not in the blank", always — so the loop a title of the era
+writes around it, `while (!in_vb) GetVerticalBlankStatus(&in_vb);`, never
+ended, on XP and on 98 alike. The adapter has a frame counter and no beam
+position, so `vb_test` (`core/core_flip.c`) says yes once a frame, the
+first time anyone asks after `FRAMES` moved, and no otherwise: `while
+(!in_vb)` ends at the next frame and `while (in_vb)` at the next question.
+`DDTEST` and `ddprobe` count the answers in a 500 ms loop — the unfixed 9x
+driver said yes 0 times in 530 887 polls, the fixed XP driver 30 times in
+about 130 000 at 8, 16 and 32 bpp and windowed (one a frame at 60 Hz).
+
 ## A DirectX 6 title's flip chain (2026-09-05, GTA 2)
 
 GTA 2 (1999, `IDirectDraw4` / `IDirect3D3`, 640×480×16) glitched on its

@@ -90,12 +90,12 @@ it goes to `%APPDATA%\2ksbox\data\player.log` instead.
 
 Neither has anywhere to put a *failure* either, which is what the third
 run on a real machine came back as — "it didn't start, no error messages
-nor anything". `launcher-core/src/fatal.rs` is what both front ends call
+nor anything". `launcher-core/src/fatal.rs` is what the launcher calls
 from the first line of `main`: `launcher.log` beside `player.log`, a
 milestone per start-up step (the last line in the file names the step
 that died), a panic hook that files message, location and backtrace and
-then says so in a message box, and `eframe`'s own error through the same
-door. `--diagnose` writes `--paths` and `--host-check` in there too,
+then says so in a message box (and, while the egui front end existed,
+`eframe`'s own error through the same door). `--diagnose` writes `--paths` and `--host-check` in there too,
 rather than printing them where a double-clicked program has no stdout.
 
 **And every Play writes the line it ran** (2026-09-07): the whole player
@@ -223,10 +223,10 @@ a real Windows driver is still ahead.
 ## Qt, which the package carries
 
 `2ksbox.exe` is `launcher-qt` (ADR-015, 2026-09-07), so the zip carries
-Qt: the DLLs, the platform plugin and the QtQuick QML trees. The egui
-build still cross-builds (`rust` stage, `launcher.exe`) and is packaged
-by nothing — run it out of `target/x86_64-pc-windows-gnu/release` when
-something needs a second opinion on a Windows machine.
+Qt: the DLLs, the platform plugin and the QtQuick QML trees. It is the
+only launcher: the egui build that used to cross-build beside it as
+`launcher.exe`, a second opinion on a Windows machine, was deleted
+2026-09-13 (ADR-017).
 
 Qt itself crosses more easily than it sounds: Fedora ships `mingw64-qt6-*`
 to link against and a native Qt of the *same version* for the tools that

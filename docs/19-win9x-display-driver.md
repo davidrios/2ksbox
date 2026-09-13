@@ -1990,6 +1990,27 @@ after the fact — stays in the harnesses, because it is also how a
 *continued* blue screen is proved to have happened, but it is no longer how
 a person at the window finds out.
 
+**Not every blue screen takes that road** (2026-09-13). The patch-44
+corruption of 2026-09-12 (docs/00-status.md) put up exception screens from
+VTDAPI's timer event, and every one of them was invisible again: the VDD
+drew the text screen without a screen switch, and the mini-VDD was told
+nothing — no `PRE_HIRES_TO_VGA`, no `SAVE_MESSAGE_MODE_STATE`, no INT 2Fh —
+so the adapter scanned out the frozen desktop over the message. A fault
+outside any VM's own execution (an event, a timer callback) is that kind.
+What every message screen does send is the VMM's own control message to
+every VxD: `Begin_Message_Mode` (0x10) before the VDD programs text mode
+and `End_Message_Mode` (0x11) after the key. `d3dptvxd.c` now answers both:
+the first reads `ENABLE`, keeps it and clears it; the second sets it again
+only if the first found it set — after a screen switch the linear mode is
+already off there and the VDD's own `VGA_TO_HIRES` is the way back, and at
+boot or for "it is now safe to turn off your computer" there is nothing to
+put back. The test is `WHEN=event tools/win98-bsod-test.sh`: `BSOD.EXE
+C:\BSODTMR.VXD` loads `bsodvxd.c` built with `-DBSOD_TIMER`, whose init
+arms a one-second global time-out and whose callback executes `ud2`
+(W32_DEVICEIOCONTROL answers `DIOC_OPEN` with 0 and `BSOD.EXE` holds the
+handle, or the VxD is unloaded before the callback runs); `NO_DRIVER=1` is
+the control on an image whose VxD predates the hook.
+
 `tools/win98-bsod-test.sh` is the guard: it blue-screens a copy of the
 image on purpose. `RUN.BAT` runs `BSOD.EXE` (`w9x/bsod.c`), which loads
 `BSODVXD.VXD` (`w9x/bsodvxd.c`) through the `\\.\<path>` door — a dynamic
@@ -2308,3 +2329,130 @@ fps**, 3DMarks 6014. The tracer's largest item, 110 GB of 128 KiB
 MMU indexes (tried as patch 40) changed nothing, because upstream's
 `tlb_flush_by_mmuidx_async_work` already flushes only indexes marked dirty
 — those wipes are of tables in use, ~2000 a second.
+
+### 32. A read of the whole driver: shared memory, one wrong structure, blits between draws (2026-09-12)
+
+A review of all three 9x binaries and the core they share with XP, each
+finding checked against the other side of its boundary before anything was
+changed. What was wrong, and is fixed:
+
+**The HAL (`w9x/d3dpthal.c`).**
+- **The core's memory came from the calling process's heap** while every
+  pointer to it lives in the DLL's data, which §23 made shared: the
+  surface table one game grew was still named by the shared pointer after
+  it exited, and the next Direct3D process read, wrote and finally freed a
+  block of its own address space that its heap never gave out (DDHELP's
+  cleanup did the same). `d3dpt_os_alloc` now takes a `HEAP_SHARED` heap
+  (9x kernel32 only, `0x04000000`), created on the first allocation, and
+  says so in the log if it ever lands below 2 GiB.
+- **`DDHAL_GETDRIVERSTATEDATA` had four invented fields** (`ddhal32.h`):
+  `GetDriverState32` wrote its `ddRVal` 12 bytes past the runtime's
+  20-byte structure and left the real one unset. It is the DDK's layout
+  now, the same as NT's.
+- **The destroy callbacks made up a surface handle** for a surface that
+  had none, from the counter `surf_handle` numbers the DX3-era surfaces
+  with — 101 up, the range the runtime numbers its own surfaces in — and
+  then released it on the host, which could drop a live texture of a game
+  with more than a hundred surfaces. They read the handle the surface
+  already has, and release nothing when there is none.
+- **The command-window lock** was re-entrant per *process*, so two
+  threads of one game both passed as the owner; it is per thread now. A
+  game that dies inside a callback dies holding it (`dp2_run` reads the
+  application's own pointers), and the runtime's `ContextDestroyAll` for
+  that process then waited for ever, and every later Direct3D process
+  with it; `ContextDestroyAll32` breaks a lock its process left behind.
+  The surface registrations in `Flip32`, `Lock32`, `CreateSurfaceEx32`,
+  the destroy callbacks and `LockExecuteBuffer32` now take the lock too.
+- **`GetVerticalBlankStatus` never said "in the blank"** — on XP either;
+  doc 15, "The flip chain's vertical blank".
+
+**The core (both families).**
+- **A blit after a draw is sent in a record of its own.** TEXBLT,
+  BUFFERBLT and VOLUMEBLT are copies the guest makes while it walks the
+  stream, and the host reads a buffer or texture when it runs the draw, so
+  in one record every draw saw the last blit's bytes — a managed vertex
+  buffer locked, drawn, locked and drawn again arrives as BUFFERBLT DRAW
+  BUFFERBLT DRAW in one call, and both draws came out with the second
+  fill. `dp2_run` now sends the stream in stretches, cut before any blit
+  that follows a draw; the doorbell runs each on the host before the next
+  one's blits happen. A stream with no such blit is one record, as before.
+  **No runtime has been seen to send one:** `DRIVER\MGDTEST.EXE` (below)
+  refills a managed vertex buffer, a managed texture and — through
+  `UpdateTexture`, the explicit TEXBLT — a default-pool texture between two
+  draws of one scene, and all three pass on the *unfixed* core too: XP's
+  d3d8.dll ends the DrawPrimitives2 call before any blit whose resource a
+  draw of that call reads. The cut is kept as what the protocol needs if a
+  runtime ever batches them (it costs nothing when there is nothing to cut)
+  — a safeguard, not a fix anybody's frame has needed yet.
+- **Long non-indexed draws are cut into pieces** the host takes (at most
+  0x10000 vertices): the caps allow 0xffff primitives, and a
+  `DrawPrimitive(TRIANGLELIST, 0, 30000)` was skipped whole, silently.
+  Lists cut on a primitive, strips overlap by their shared vertices and a
+  triangle strip's pieces start on an even triangle; a fan still skips.
+- Stream 0's stride is bounded at 1024 as the others were — the host
+  fails the whole stream on a wider one.
+- **TEXBLT's rectangle on mip levels** rounds the right and bottom edges
+  up, and a DXT rectangle starts at the block its edge is in (a dirty-rect
+  update of a mipmapped texture left stale texels and blocks).
+- **A DP2 `SETRENDERTARGET` becomes the context's target**, so EndScene
+  reads back the target a DX8 application is rendering to rather than the
+  one from `ContextCreate`.
+
+**The mini-VDD (`w9x/d3dptvxd.c`).** The two selectors were one page
+longer than their mappings (a page-granular limit is the last page, not
+the count). The way back from a DOS box turned the linear mode on
+unconditionally — also under the 16-colour drivers the INF hands low
+modes to, and after `PhysicalDisable` — and now does only if the switch
+to VGA found it on. The notification log's per-entry count was a byte
+counted on past its limit, so it wrapped and logged four more lines every
+256 calls, for ever.
+
+**The 16-bit driver (`w9x/d3dpt9x.c`).** Two inline-asm VDD calls did not
+declare the registers they write (`CallVDD_DriverRegister` CX and BX,
+`CallVDD_Simple` whatever the VDD returns in). Latent in this build — the
+only change to the generated code is a `push si` in `PhysicalEnable`'s
+prologue, read off an `ndisasm` of both `.drv`s — but it was one
+register-allocation change from corrupting a mode set. And a `ReEnable`
+the hardware half refuses puts the mode globals back, so the next DOS
+box's `RestoreDesktopMode` does not program the refused mode at the old
+pitch.
+
+**Checked and found not to matter.** GDIINFO's English and twips extents
+look wrong (MM_HIENGLISH has no window extent, MM_TWIPS's viewport points
+left and down), but Windows 98's GDI does not use them: a mapping-mode
+probe on the unfixed driver got every one of the five metric and English
+modes right, with window 254 over viewport 96 for MM_LOMETRIC — GDI builds
+them from `LOGPIXELS` (96) and reports `HORZSIZE` 211 mm at 800 wide, not
+the driver's 208. Left as they are. Not changed either: the runtime's
+parser pointer for the DX3 bounce is stored machine-wide from the last
+process that asked (right while system DLLs load at one base everywhere);
+the VxD agrees to a dynamic unload while the VDD's table points into it
+(nothing unloads it); two failure paths of the mini-VDD's mapping leak
+arena pages; and VOLUMEBLT still refuses DXT volumes (never seen sent).
+
+**Measured.** On a raw copy of `test98` (`tools/win98-game-test.sh`,
+one boot, `RUN.BAT` starting each program with `start /w`): `ddprobe`'s
+new `GetVerticalBlankStatus` loop said "in blank" 0 times in 530 887 polls
+on the unfixed driver and 30 in 939 575 with the fix; `SHTEST` 13 cases 0
+failed, `EBTEST` 5/0, `CKTEST` 4/0, and `D3D7TEST` byte-identical to
+`d3dpt-dp2-test`'s frame twice — the second time as a fresh process after
+four other Direct3D processes had come and gone, which is the case the
+shared heap is for (`d3dpthal: shared heap 0x93027000`, in the shared
+arena, and no private-arena line). That case was not run on the unfixed
+driver, so it is not a before/after: a stale table can equally land on
+memory the next process does not use. `gdiprobe`'s 57 cases fail the same
+five at 8 bpp before and after (nearest-palette colours).
+`tools/win98-bsod-test.sh` passes all seven of its checks with the
+mini-VDD's conditional re-enable: `PRE_HIRES_TO_VGA` turned the linear
+mode off, the blue screen was on the screen and in the text page, the
+desktop came back after the key and the machine powered off. On XP, the whole
+M7 battery on an overlay of `winxp-m7.qcow2` with the new core: `DDTEST`
+at every depth (30 "in blank" answers in ~130 000 polls), `D3D7TEST` 0 of
+307 200 pixels off the host frame, `SHTEST` 13/0, `CKTEST` 4/0, `EBTEST`
+5/0, the nine DX8 probes as before (`PATCHTST` not offered), `D3DGAME8`
+0 of 307 200 pixels off the native d3d9 frame, and no `dp2` error, refusal
+or skipped draw in any run's log, and `scripts/test.sh all` 45 passed
+(its guest stage's D3DGAME9 / D3DGAME8 / D3DFEAT9 among them). The new
+`MGDTEST` passes its three cases on both cores (above); no probe has a
+90 000-vertex draw, so the long-draw cut is proved not to break the
+streams that exist, not yet to fix one that needed it.

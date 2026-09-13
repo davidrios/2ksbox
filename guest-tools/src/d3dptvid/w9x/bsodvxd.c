@@ -45,6 +45,57 @@ DDB VXD_DDB = {
     'Rsv1', 'Rsv2', 'Rsv3',
 };
 
+#ifdef BSOD_TIMER
+/* bsodtmr.vxd: the same fault from a timer callback a second after load
+ * instead of from init. A fault in a VxD's init reaches the adapter through
+ * the VDD's screen switch (PRE_HIRES_TO_VGA); one outside any VM's own
+ * execution -- the patch-44 corruption's, from VTDAPI's timer event
+ * (2026-09-12) -- gets its blue screen with no switch and no mini-VDD call
+ * at all, only the VMM's Begin_Message_Mode, and that is the one this
+ * trigger makes. Two things keep the VxD loaded until the callback runs:
+ * W32_DEVICEIOCONTROL answers DIOC_OPEN with EAX = 0 (otherwise CreateFile
+ * fails and the loader unloads the VxD, pending time-out and all), and
+ * bsod.exe holds the handle open. */
+static void __declspec(naked) fault_cb(void)
+{
+    _asm {
+        db  0Fh, 0Bh            /* ud2 */
+        ret
+    }
+}
+
+static void __declspec(naked) arm_timer(void)
+{
+    _asm {
+        push esi
+        mov  eax, 1000          /* ms */
+        xor  edx, edx           /* reference data */
+        mov  esi, offset fault_cb
+    }
+    VMMCall(Set_Global_Time_Out);
+    _asm {
+        pop  esi
+        ret
+    }
+}
+
+void __declspec(naked) VXD_control(void)
+{
+    _asm {
+        cmp eax, Sys_Dynamic_Device_Init
+        jnz ctl_ioctl
+        call arm_timer
+        jmp ctl_ok
+      ctl_ioctl:
+        cmp eax, W32_DEVICEIOCONTROL
+        jnz ctl_ok
+        xor eax, eax            /* DIOC_OPEN and the rest: succeed */
+      ctl_ok:
+        clc
+        ret
+    }
+}
+#else
 /* Dynamic init: the fault. ud2 is the invalid opcode, chosen over a bad
  * memory access because linear 0 is a VM's V86 page on 9x and reads fine. */
 void __declspec(naked) VXD_control(void)
@@ -58,3 +109,4 @@ void __declspec(naked) VXD_control(void)
         ret
     }
 }
+#endif

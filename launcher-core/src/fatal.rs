@@ -1,8 +1,8 @@
 //! What a windowed program says when it dies.
 //!
-//! On Windows both front ends are `windows_subsystem = "windows"`
+//! On Windows the launcher is `windows_subsystem = "windows"`
 //! (`console.rs` says why), and a windowed process has no stderr: a
-//! panic, or an `eframe::run_native` that returns `Err`, prints into
+//! panic, or a QML engine that fails to load, prints into
 //! nothing and the process disappears with no window and no message.
 //! That is exactly the report a first run on someone else's machine
 //! comes back as — "it didn't start, no error, nothing" — and it names

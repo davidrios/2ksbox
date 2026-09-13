@@ -20,10 +20,9 @@
 //!   re-reads, and a successful re-read must not wipe that away (it did,
 //!   once: a failed live restore looked like it had worked).
 //!
-//! What each front end still owns is *when* `poll` is called — the egui
-//! build does it at the top of every frame because it has a frame
-//! anyway, Qt runs a `Timer` that says the interval out loud and stops
-//! when there is no job — and how a destructive restore is confirmed.
+//! What the front end still owns is *when* `poll` is called — Qt runs a
+//! `Timer` that says the interval out loud and stops when there is no
+//! job — and how a destructive restore is confirmed.
 
 use crate::bundle::Machine;
 use crate::control::{self, Control};
@@ -308,8 +307,7 @@ impl Snapshots {
     }
 
     /// Wait out an in-flight job, for a caller with no frames and no
-    /// timer (`cli`'s `--snapshots`, and the egui diagnostic verbs whose
-    /// frames run back to back).
+    /// timer (`cli`'s `--snapshots`).
     pub fn wait_for_job(&mut self, timeout: Duration) {
         let deadline = Instant::now() + timeout;
         while self.job_pending() && Instant::now() < deadline {

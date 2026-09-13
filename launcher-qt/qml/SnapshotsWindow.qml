@@ -1,6 +1,6 @@
 // Snapshots (doc 07). A running machine goes through its monitor, a
 // stopped one through `qemu-img`; the model decides which, this only
-// draws it — `launcher/src/snapshots.rs`'s `SnapshotWindow::show`.
+// draws it.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -41,9 +41,19 @@ Window {
     /// window's* interaction, not of the machine.
     property string confirmRestore: ""
 
-    // Only while a live job is in flight. The egui build polls at most
-    // twice a second from inside its repaint; here the interval is
-    // explicit and nothing runs when there is no job.
+    /// Where the layout put things, for the `snapshots` probe and the
+    /// `qt-snapshots` check: the list box should be the one item that
+    /// grows, so a short one means something under the "New snapshot" row
+    /// took a share of the spare height.
+    function layoutReport() {
+        return "window " + width + "x" + height
+            + ", column h=" + bodyLayout.height
+            + ", list y=" + listBox.y + " h=" + listBox.height
+            + ", new-row y=" + newRow.y + " h=" + newRow.height
+    }
+
+    // Only while a live job is in flight: the interval is explicit and
+    // nothing runs when there is no job.
     Timer {
         interval: 400
         repeat: true
@@ -70,18 +80,17 @@ Window {
                 text: qsTr("Live: this machine is running, so a snapshot also stores its RAM and CPU state.")
             }
 
-            Frame {
+            // See `Main.qml`: a list's box, not a restyled `Frame`.
+            Rectangle {
+                id: listBox
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                padding: 0
-                // See `Main.qml`: the style's Frame paints a border only.
-                background: Rectangle {
-                    color: palette.base
-                    border.color: palette.mid
-                }
+                color: palette.base
+                border.color: palette.mid
 
                 ColumnLayout {
                     anchors.fill: parent
+                    anchors.margins: 1
                     spacing: 0
 
                     Rectangle {
@@ -170,6 +179,7 @@ Window {
             }
 
             RowLayout {
+                id: newRow
                 Layout.fillWidth: true
                 spacing: 8
                 Label { text: qsTr("New snapshot") }
@@ -192,6 +202,13 @@ Window {
 
             RowLayout {
                 Layout.fillWidth: true
+                // Not a filler, unlike every nested layout's default: both
+                // children are hidden until there is a status, and an empty
+                // layout has no maximum, so it took half the spare height
+                // from the list box — which stopped halfway down the window
+                // until a snapshot's status line capped this row
+                // (user-reported, 2026-09-13; the `qt-snapshots` check).
+                Layout.fillHeight: false
                 spacing: 8
                 BusyIndicator {
                     running: root.snapshots.busy

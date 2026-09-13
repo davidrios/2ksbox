@@ -267,7 +267,7 @@ pub fn guest_tools_iso() -> Option<PathBuf> {
         .collect();
     candidates.sort();
     // Canonicalized because this one is *stored*: the build-time anchor
-    // is `<manifest>/../guest-tools/out`, and a `launcher/../guest-tools`
+    // is `<manifest>/../guest-tools/out`, and a `launcher-core/../guest-tools`
     // on the shelf would be correct but unreadable.
     candidates.pop().map(|(_, path)| path.canonicalize().unwrap_or(path))
 }
