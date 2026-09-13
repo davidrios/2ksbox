@@ -781,6 +781,8 @@ ApplicationWindow {
         id: grabTimer
         interval: diag.delayMs
         onTriggered: {
+            if (snapshotsWindow.visible)
+                diag.note("snapshots layout: " + snapshotsWindow.layoutReport())
             if (diag.shotPath === "") {   // driven, not photographed
                 Qt.quit()
                 return

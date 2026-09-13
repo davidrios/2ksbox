@@ -51,6 +51,11 @@
 #                  only window whose Esc matches — Quick Controls matches every
 #                  open window's at once, and two is an ambiguous shortcut Qt
 #                  fires in neither (only if a launcher-qt has been built)
+#   qt-snapshots   the Qt snapshots window's first layout, on a stopped machine
+#                  with a real qcow2: the list box must take all the spare
+#                  height, i.e. the "New snapshot" row ends at the bottom of
+#                  the column — an empty status row used to take half of it
+#                  (only if a launcher-qt and qemu-img have been built)
 #   qt-profile     the Qt shader-profile windows, driven: a new profile saved from
 #                  the editor has to appear in the list behind it, and the next
 #                  New profile… has to come up with an *empty* preset field —
@@ -639,6 +644,35 @@ qtclone_check() { # the Qt "Clone…" window, driven (doc 07)
   grep -qx 'name = "Typed twin"' "$saved" 2>/dev/null || { echo "no bundle called Typed twin at '$saved'"; rc=1; }
   cmp -s "$dir/disk.img" "$(dirname "$saved")/disk.img" || { echo "the clone has no copy of the disk"; rc=1; }
   return $rc
+}
+qtsnapshots_check() { # the Qt snapshots window's first layout (doc 07)
+  local dir="$OUT/qtsnapshots" bin="launcher-qt/target/release/launcher-qt" img=build/qemu/qemu-img bundle o
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" LAUNCHER_QEMU_IMG_BIN="$img" QT_QPA_PLATFORM=offscreen
+  "$img" create -q -f qcow2 "$dir/disk.qcow2" 64M || { echo "qemu-img create failed"; return 1; }
+  bundle="$(target/release/launcherx --new win98 Snap "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+  # The window opened on a stopped machine with no snapshots, no status
+  # and no error: the list box is the one item that grows, so the "New
+  # snapshot" row must end at the bottom of the column, give or take the
+  # one spacing (8) above the empty status row. A nested layout
+  # fills by default, and the status row -- both of its children hidden
+  # until there is a status -- has no maximum, so it split the spare
+  # height with the list box and the window came up with the list stopping
+  # halfway (user-reported, 2026-09-13, until a status line capped it).
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=snapshots LAUNCHER_QT_ARG="$bundle" LAUNCHER_QT_DELAY=300 \
+       "$bin" 2>&1 | sed -n 's/^\[diag\] snapshots layout: //p')"
+  [ -n "$o" ] || { echo "the probe printed no snapshots layout line"; return 1; }
+  echo "  $o"
+  printf '%s\n' "$o" | awk '{
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^h=/ && col == "") { col = substr($i, 3); continue }
+        if ($i == "new-row") { ry = substr($(i+1), 3); rh = substr($(i+2), 3) }
+      }
+      sub(/,$/, "", col); sub(/,$/, "", ry); sub(/,$/, "", rh)
+      exit !(ry + rh >= col - 9)
+    }' || { echo "the \"New snapshot\" row does not end at the bottom: something below it took the list box's height"; return 1; }
+  return 0
 }
 shaderdefaults_check() { # the first-run shader offer and its starter profiles (doc 07)
   local rc=0 dir="$OUT/shaderdefaults" o preset n
@@ -2136,6 +2170,11 @@ host_stage() {
     run_check qt-shelf qt-shelf.log qtshelf_check || true
     run_check qt-firstrun qt-firstrun.log qtfirstrun_check || true
     run_check qt-clone qt-clone.log qtclone_check || true
+    if [ -x build/qemu/qemu-img ]; then
+      run_check qt-snapshots qt-snapshots.log qtsnapshots_check || true
+    else
+      skip qt-snapshots "needs build/qemu/qemu-img"
+    fi
   else
     skip qt-wizard "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-close "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
@@ -2144,6 +2183,7 @@ host_stage() {
     skip qt-shelf "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-firstrun "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-clone "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+    skip qt-snapshots "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
   fi
 
   # the host GPU probe (ADR-013): what the launcher tells someone about 3D

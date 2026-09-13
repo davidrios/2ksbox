@@ -1585,7 +1585,17 @@ items nobody owns yet:
   current style does not support customization of this control" for every
   instance on every start. The four list boxes (machines, snapshots, disc
   shelf, shader profiles) were `Frame`s with a `Rectangle` background and
-  are now the `Rectangle` itself, content inset a pixel. A control drawn
+  are now the `Rectangle` itself, content inset a pixel. That exposed a
+  layout trap the `Frame` had been hiding: a nested `RowLayout` /
+  `ColumnLayout` has `Layout.fillHeight: true` by default, and one whose
+  children are all hidden has no maximum, so it shares the spare height
+  with the list box — evenly, when neither has an implicit height of its
+  own (measured: 212 px each; the `Frame` reported an implicit height,
+  which is likely why it never showed). The snapshots window's
+  status row did exactly that and the list stopped halfway down until a
+  status line capped the row (user-reported, fixed 2026-09-13,
+  `qt-snapshots`). **A row that can be empty beside a list box says
+  `Layout.fillHeight: false`.** A control drawn
   by hand from `AbstractButton` (`Disclosure.qml`) is fine: it has no
   native look to refuse with. Fonts the same way: name a family the
   platform has (`WizardWindow.qml`'s TOML box picks Menlo / Consolas /
