@@ -581,10 +581,16 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
         "--browse-start" => {
             // Where a path field's "Browse…" would open: the value's own
             // directory, or — for an empty preset field — the preset
-            // collection. The dialog itself is modal and needs a human,
-            // so this checks the decision, not the dialog.
+            // collection, or where the last dialog was browsing. A second
+            // argument `file` asks for any other field, which has no
+            // suggestion of its own. The dialog itself is modal and needs
+            // a human, so this checks the decision, not the dialog.
             let value = args.next().unwrap_or_default();
-            match browse::browse_start(&value, shader_source::presets_dir().as_deref()) {
+            let presets = match args.next().as_deref() {
+                Some("file") => None,
+                _ => shader_source::presets_dir(),
+            };
+            match browse::browse_start(&value, presets.as_deref()) {
                 Some(dir) => println!("{}", dir.display()),
                 None => println!("(OS default)"),
             }

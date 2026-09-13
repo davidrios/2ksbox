@@ -1578,6 +1578,26 @@ items nobody owns yet:
   dialogs take none); `PathField.qml` hides the doubled list with
   `HideNameFilterDetails`. The `qtshelf` check asks the real dialog object
   for `*.CUE`. A mixed-case `.Cue` is still missed; "All files" finds it.
+- **No file dialog remembers where it was for us.** Qt's `FileDialog`
+  handed an empty `currentFolder` opens in the working directory, so
+  every empty field's "Browse…" — a new machine's, and the disc shelf's
+  adder, which empties itself after every disc — started over there
+  (user-reported 2026-09-12). `launcher_core::browse::remember` now keeps
+  the directory of every pick in `<data dir>/last-browse.txt`
+  (`LAUNCHER_BROWSE_MEMORY` overrides it) and `browse_start` falls back
+  to it, both front ends and both dialog kinds; Qt reaches it through a
+  `Browse` QObject (`launcher-qt/src/qt/browse.rs`), which also turns
+  paths into URLs with `QUrl` instead of QML's `"file://" + path`. The
+  `qtshelf` check requires the next empty field to open where its disc
+  was picked.
+- **A QML grid column needs its width pinned, not preferred.** The Qt
+  machine grid's buttons sat at a different x in every row (user-reported
+  2026-09-12): `Layout.preferredWidth` alone lets a `RowLayout` shrink or
+  grow a column by its text, and the Location path's `fillWidth` took
+  whatever was left. The Location column is gone (a bundle's path is
+  the Edit window's business), Name/Family/Shader are pinned with
+  minimum = preferred = maximum, and the buttons fill an unlabelled last
+  column. The egui grid still shows Location.
 - `build-wrappers.sh` is `set -e` and writes the ISO last: a failing stage
   leaves the previous ISO in place, so an ISO older than the sources means a
   stage died, not that the change is missing. Homebrew's mingw is a symlink

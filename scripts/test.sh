@@ -748,10 +748,11 @@ qtprofile_check() { # the Qt shader-profile windows, driven (doc 07)
   return $rc
 }
 qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
-  local rc=0 dir="$OUT/qtshelf" bin="launcher-qt/target/release/launcher-qt" o count field
+  local rc=0 dir="$OUT/qtshelf" bin="launcher-qt/target/release/launcher-qt" o count field start
   rm -rf "$dir"; mkdir -p "$dir/library"
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
+  export LAUNCHER_BROWSE_MEMORY="$dir/last-browse.txt"
   : > "$dir/game.iso"
   # A file dialog belongs to the window system and cannot be opened
   # offscreen, so the probe hands the field the path the dialog would
@@ -775,6 +776,12 @@ qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
   # the dialog must be handed both spellings (`browse::extensions`).
   printf '%s' "$o" | grep -q 'filters \[Disc images (.*\*\.cue \*\.CUE' \
     || { echo "the disc dialog's filter has no upper-case globs"; rc=1; }
+  # The next "Browse…" on an empty field opens where that disc was picked
+  # (user-reported, 2026-09-12: the shelf's adder empties itself, and every
+  # dialog after the first started over in the working directory). The
+  # core decides, so the core's own verb is asked.
+  start="$(target/release/launcherx --browse-start "" file)"
+  [ "$start" = "$dir" ] || { echo "an empty field's Browse… would open in '$start', not '$dir'"; rc=1; }
   return $rc
 }
 dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M5g)
@@ -1408,7 +1415,7 @@ music_check() { # the two pickers, and then the devices actually sounding
   done
   for f in xp other; do
     args="$(target/release/launcherx --print-args "$dir/library/music-$f/machine.toml")"
-    case "$args" in *opl3*) echo "$f: an FM chip arrived with a card that never had one"; echo "$args"; rc=1;; esac
+    case "$args" in *"-device opl3,"*) echo "$f: an FM chip arrived with a card that never had one"; echo "$args"; rc=1;; esac
     case "$args" in *mpu401*) echo "$f: a MIDI port arrived on a family whose default is none"; echo "$args"; rc=1;; esac
   done
   # The switch itself, on the 98 machine: to the AC'97 (which takes the
@@ -1418,7 +1425,9 @@ music_check() { # the two pickers, and then the devices actually sounding
   target/release/launcherx --music "$bundle" ac97 >/dev/null || { echo "--music ac97 failed"; rc=1; }
   args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *"AC97,audiodev=embed0,addr=0x04"*) ;; *) echo "98: the AC'97 did not arrive at its pinned slot"; echo "$args"; rc=1;; esac
-  case "$args" in *sb16*|*opl3*) echo "98: the SB16 or its FM is still there beside the AC'97"; echo "$args"; rc=1;; esac
+  # The device arguments, not the bare names: `-L` names the checkout, and
+  # a worktree called `sb16-dsound` put `sb16` in every line.
+  case "$args" in *"-device sb16,"*|*"-device opl3,"*) echo "98: the SB16 or its FM is still there beside the AC'97"; echo "$args"; rc=1;; esac
   target/release/launcherx --music "$bundle" gus none >/dev/null || { echo "--music gus failed"; rc=1; }
   args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *"gus,audiodev=embed0"*) ;; *) echo "98: no Gravis"; echo "$args"; rc=1;; esac

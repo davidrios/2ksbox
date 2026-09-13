@@ -424,14 +424,21 @@ Window {
                         // folder" (the disc shelf's "Add folder…" has the
                         // same problem).
                         text: qsTr("Browse…")
-                        onClicked: mt32RomsDialog.open()
+                        onClicked: {
+                            mt32RomsDialog.currentFolder = mt32Browse.startUrl(root.wizard.mt32Roms, "")
+                            mt32RomsDialog.open()
+                        }
                     }
                 }
+                Browse { id: mt32Browse }
                 FolderDialog {
                     id: mt32RomsDialog
                     title: qsTr("Where your Roland CM-32L ROMs are")
-                    currentFolder: root.wizard.mt32Roms !== "" ? "file://" + root.wizard.mt32Roms : ""
-                    onAccepted: root.wizard.setMt32RomsPath(selectedFolder.toString().replace(/^file:\/\//, ""))
+                    onAccepted: {
+                        const path = mt32Browse.localPath(selectedFolder)
+                        mt32Browse.remember(path)
+                        root.wizard.setMt32RomsPath(path)
+                    }
                 }
 
                 // --- the gamepad (M13) --------------------------------------

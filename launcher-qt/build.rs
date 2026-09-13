@@ -65,6 +65,7 @@ fn main() {
     .qt_module("QuickControls2")
     .files([
         "src/qt/diag.rs",
+        "src/qt/browse.rs",
         "src/qt/discs.rs",
         "src/qt/firstrun.rs",
         "src/qt/machines.rs",

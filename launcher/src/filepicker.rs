@@ -20,12 +20,14 @@
 //! threads) — it's a plain synchronous egui app on winit's own thread,
 //! and a brief block while a modal file dialog is open is expected.
 
-pub use launcher_core::browse::{browse_start, start_dir, Filter};
+pub use launcher_core::browse::{browse_start, Filter};
 
 /// Pop the dialog without an egui field around it — `main.rs`'s
 /// `--pick-file` exercises the actual OS integration headlessly, since
 /// GUI click automation can't drive a real dialog to prove this wiring
-/// works. `start_dir`, when given, is where the dialog opens.
+/// works. `start_dir`, when given, is where the dialog opens. What it
+/// returns is remembered (`browse::remember`), so the next dialog on an
+/// empty field opens beside it.
 pub fn pick_file_headless(filter: Option<Filter>, start_dir: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     let mut dialog = rfd::FileDialog::new();
     if let Some(filter) = filter {
@@ -34,7 +36,11 @@ pub fn pick_file_headless(filter: Option<Filter>, start_dir: Option<&std::path::
     if let Some(dir) = start_dir {
         dialog = dialog.set_directory(dir);
     }
-    dialog.pick_file()
+    let picked = dialog.pick_file();
+    if let Some(path) = &picked {
+        launcher_core::browse::remember(path);
+    }
+    picked
 }
 
 /// The same for a *directory*: a shared folder goes on the shelf as a
@@ -45,7 +51,11 @@ pub fn pick_folder_headless(start_dir: Option<&std::path::Path>) -> Option<std::
     if let Some(dir) = start_dir {
         dialog = dialog.set_directory(dir);
     }
-    dialog.pick_folder()
+    let picked = dialog.pick_folder();
+    if let Some(path) = &picked {
+        launcher_core::browse::remember(path);
+    }
+    picked
 }
 
 /// A labeled text field with a "Browse…" button. Typing directly is still

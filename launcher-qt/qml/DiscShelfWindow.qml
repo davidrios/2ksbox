@@ -246,7 +246,10 @@ Window {
                     text: qsTr("Add folder…")
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("share a host directory with the guest as a generated disc")
-                    onClicked: folderDialog.open()
+                    onClicked: {
+                        folderDialog.currentFolder = folderBrowse.startUrl(adder.value, "")
+                        folderDialog.open()
+                    }
                 }
                 Button {
                     // Doc 07's one-click guest-tools attach: no path to find,
@@ -263,11 +266,15 @@ Window {
                 Item { Layout.fillWidth: true }
             }
 
+            Browse { id: folderBrowse }
             FolderDialog {
                 id: folderDialog
                 title: qsTr("Share a folder with the guest")
-                currentFolder: adder.value !== "" ? "file://" + adder.value : ""
-                onAccepted: root.discs.add(selectedFolder.toString().replace(/^file:\/\//, ""))
+                onAccepted: {
+                    const path = folderBrowse.localPath(selectedFolder)
+                    folderBrowse.remember(path)
+                    root.discs.add(path)
+                }
             }
 
             Label {

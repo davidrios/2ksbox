@@ -1114,7 +1114,19 @@ for 6b′ onwards, so rebase on `main` before the next push.
     either in a checkout's `third_party/` or in a data directory nobody
     would navigate to by hand. A field that already points somewhere
     still wins — `filepicker::browse_start` is `start_dir` first, the
-    suggestion second, the OS default last.
+    suggestion second, the OS default last. **Since 2026-09-12 the
+    directory the last dialog was browsing comes before the OS default**
+    (`browse::remember` / `browse::last_dir`, one line in
+    `<data dir>/last-browse.txt`, `LAUNCHER_BROWSE_MEMORY` overrides):
+    no platform picker kept a last-used location for us — Qt's
+    `FileDialog` handed an empty folder opens in the working directory —
+    so every empty field, and the disc shelf's adder after every disc,
+    started over (user-reported). Both front ends remember every pick,
+    file and folder dialogs alike; Qt's through a `Browse` QObject
+    (`launcher-qt/src/qt/browse.rs`), which also replaced QML's
+    `"file://" + path` with `QUrl`'s own local-file conversion. The
+    `qtshelf` check asks `launcherx --browse-start "" file` after its
+    picked disc.
 
   Verified for real, over the network and through the widgets. **The
   fetch:** `--download-shaders <dir>` pulled 50.3 MB and unpacked 2554

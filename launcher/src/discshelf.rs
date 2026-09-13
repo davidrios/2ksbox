@@ -191,7 +191,7 @@ impl DiscShelfWindow {
                 .on_hover_text("share a host directory with the guest as a generated disc")
                 .clicked()
             {
-                if let Some(dir) = filepicker::pick_folder_headless(filepicker::start_dir(&self.add_path).as_deref()) {
+                if let Some(dir) = filepicker::pick_folder_headless(filepicker::browse_start(&self.add_path, None).as_deref()) {
                     self.shelf.add(dir);
                 }
             }

@@ -135,13 +135,16 @@ ApplicationWindow {
         spacing: 8
 
         // Column widths shared by the header and every row, so the two
-        // cannot drift the way two separate layouts would.
+        // cannot drift the way two separate layouts would. Each fixed
+        // column is pinned (minimum = preferred = maximum): a preferred
+        // width alone lets the RowLayout shrink or grow a column by its
+        // text, which put every row's buttons somewhere else (user-
+        // reported, 2026-09-12). The buttons take the unlabelled rest.
         QtObject {
             id: cols
             readonly property int name: 190
             readonly property int family: 80
             readonly property int shader: 170
-            readonly property int actions: 300
         }
 
         Frame {
@@ -172,11 +175,19 @@ ApplicationWindow {
                         anchors.rightMargin: 10
                         spacing: 10
 
-                        Label { text: qsTr("Name"); font.bold: true; Layout.preferredWidth: cols.name }
-                        Label { text: qsTr("Family"); font.bold: true; Layout.preferredWidth: cols.family }
-                        Label { text: qsTr("Shader"); font.bold: true; Layout.preferredWidth: cols.shader }
-                        Label { text: qsTr("Location"); font.bold: true; Layout.fillWidth: true }
-                        Item { Layout.preferredWidth: cols.actions }
+                        Label {
+                            text: qsTr("Name"); font.bold: true
+                            Layout.minimumWidth: cols.name; Layout.preferredWidth: cols.name; Layout.maximumWidth: cols.name
+                        }
+                        Label {
+                            text: qsTr("Family"); font.bold: true
+                            Layout.minimumWidth: cols.family; Layout.preferredWidth: cols.family; Layout.maximumWidth: cols.family
+                        }
+                        Label {
+                            text: qsTr("Shader"); font.bold: true
+                            Layout.minimumWidth: cols.shader; Layout.preferredWidth: cols.shader; Layout.maximumWidth: cols.shader
+                        }
+                        Item { Layout.fillWidth: true }
                     }
                 }
 
@@ -198,7 +209,6 @@ ApplicationWindow {
                         required property string name
                         required property string family
                         required property string shader
-                        required property string location
                         required property bool running
 
                         width: list.width
@@ -214,33 +224,22 @@ ApplicationWindow {
                             Label {
                                 text: machineRow.name
                                 elide: Text.ElideRight
-                                Layout.preferredWidth: cols.name
+                                Layout.minimumWidth: cols.name; Layout.preferredWidth: cols.name; Layout.maximumWidth: cols.name
                             }
                             Label {
                                 text: machineRow.family
-                                Layout.preferredWidth: cols.family
+                                elide: Text.ElideRight
+                                Layout.minimumWidth: cols.family; Layout.preferredWidth: cols.family; Layout.maximumWidth: cols.family
                             }
                             Label {
                                 text: machineRow.shader
                                 elide: Text.ElideRight
-                                Layout.preferredWidth: cols.shader
-                            }
-                            Label {
-                                // Elides from the left: a library's paths
-                                // share a long prefix, so the tail is the
-                                // half that identifies the row.
-                                text: machineRow.location
-                                elide: Text.ElideLeft
-                                opacity: 0.7
-                                Layout.fillWidth: true
-                                ToolTip.visible: pathHover.hovered
-                                ToolTip.text: machineRow.location
-                                HoverHandler { id: pathHover }
+                                Layout.minimumWidth: cols.shader; Layout.preferredWidth: cols.shader; Layout.maximumWidth: cols.shader
                             }
 
                             RowLayout {
                                 spacing: 6
-                                Layout.preferredWidth: cols.actions
+                                Layout.fillWidth: true
 
                                 Label {
                                     text: qsTr("Running")

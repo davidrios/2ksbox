@@ -47,6 +47,7 @@
 mod preview;
 
 mod qt {
+    pub mod browse;
     pub mod diag;
     pub mod discs;
     pub mod firstrun;

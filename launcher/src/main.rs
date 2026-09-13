@@ -556,7 +556,7 @@ fn main() -> eframe::Result {
             // The same for the folder dialog behind "Add folder…": a
             // shared directory is a disc too (M5g), and it is a different
             // OS dialog, so it gets its own headless exercise.
-            let start_dir = args.next().and_then(|v| filepicker::start_dir(&v));
+            let start_dir = filepicker::browse_start(&args.next().unwrap_or_default(), None);
             match filepicker::pick_folder_headless(start_dir.as_deref()) {
                 Some(path) => println!("{}", path.display()),
                 None => println!("(cancelled)"),
