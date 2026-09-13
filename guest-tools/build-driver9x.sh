@@ -229,6 +229,11 @@ echo "==> bsodvxd.vxd (blue-screens on load: the trigger for tools/win98-bsod-te
     -I"$DDK" -I"$SRC" -fo=bsodvxd.obj "$SRC/bsodvxd.c" )
 link_vxd bsodvxd bsodvxd
 
+echo "==> bsodtmr.vxd (the same fault from a timer callback: a blue screen with no screen switch, WHEN=event)"
+( cd "$BUILD" && wcc386 -q -wx -wcd=303 -s -zls -mf -6s -fp6 -ei -zp1 -DBSOD_TIMER \
+    -I"$DDK" -I"$SRC" -fo=bsodtmr.obj "$SRC/bsodvxd.c" )
+link_vxd bsodtmr bsodtmr
+
 echo "==> resources into the module"
 ( cd "$BUILD" && wrc -q d3dpt9x.res d3dpt9x.drv )
 

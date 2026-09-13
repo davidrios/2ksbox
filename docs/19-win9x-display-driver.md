@@ -1990,6 +1990,27 @@ after the fact — stays in the harnesses, because it is also how a
 *continued* blue screen is proved to have happened, but it is no longer how
 a person at the window finds out.
 
+**Not every blue screen takes that road** (2026-09-13). The patch-44
+corruption of 2026-09-12 (docs/00-status.md) put up exception screens from
+VTDAPI's timer event, and every one of them was invisible again: the VDD
+drew the text screen without a screen switch, and the mini-VDD was told
+nothing — no `PRE_HIRES_TO_VGA`, no `SAVE_MESSAGE_MODE_STATE`, no INT 2Fh —
+so the adapter scanned out the frozen desktop over the message. A fault
+outside any VM's own execution (an event, a timer callback) is that kind.
+What every message screen does send is the VMM's own control message to
+every VxD: `Begin_Message_Mode` (0x10) before the VDD programs text mode
+and `End_Message_Mode` (0x11) after the key. `d3dptvxd.c` now answers both:
+the first reads `ENABLE`, keeps it and clears it; the second sets it again
+only if the first found it set — after a screen switch the linear mode is
+already off there and the VDD's own `VGA_TO_HIRES` is the way back, and at
+boot or for "it is now safe to turn off your computer" there is nothing to
+put back. The test is `WHEN=event tools/win98-bsod-test.sh`: `BSOD.EXE
+C:\BSODTMR.VXD` loads `bsodvxd.c` built with `-DBSOD_TIMER`, whose init
+arms a one-second global time-out and whose callback executes `ud2`
+(W32_DEVICEIOCONTROL answers `DIOC_OPEN` with 0 and `BSOD.EXE` holds the
+handle, or the VxD is unloaded before the callback runs); `NO_DRIVER=1` is
+the control on an image whose VxD predates the hook.
+
 `tools/win98-bsod-test.sh` is the guard: it blue-screens a copy of the
 image on purpose. `RUN.BAT` runs `BSOD.EXE` (`w9x/bsod.c`), which loads
 `BSODVXD.VXD` (`w9x/bsodvxd.c`) through the `\\.\<path>` door — a dynamic

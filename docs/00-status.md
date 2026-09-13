@@ -1314,6 +1314,19 @@ items nobody owns yet:
   Guard: `REBOOT=1 tools/setup-guest-test.sh <image> win98` — the proof is
   a second SeaBIOS banner on the debugcon, never a screendump.
 
+- **A blue screen that skips the screen switch is visible on `d3dpt-vga`**
+  — 2026-09-13 (`guest-tools/src/d3dptvid/w9x/d3dptvxd.c`, doc 19 §29).
+  The patch-44 corruption below put up its exception screens from VTDAPI's
+  timer event, and none showed: the VDD drew text mode with no screen
+  switch and told the mini-VDD nothing, so the adapter kept the frozen
+  desktop over the message. The mini-VDD now answers the VMM's
+  `Begin_Message_Mode` / `End_Message_Mode` control messages, which every
+  message screen sends to every VxD: `ENABLE` off on the first, back on on
+  the second if the first turned it off. Guard: `WHEN=event
+  tools/win98-bsod-test.sh <image>` (a VxD that faults from a timer
+  callback, `bsodvxd.c -DBSOD_TIMER`); `WHEN=init`, the default, is the
+  screen-switch kind it always tested.
+
 - **Windows 98 dying a few seconds into `SETUP.EXE`'s install was QEMU
   patch 44, not the installer and not the display driver** — fixed
   2026-09-12 (`patches/qemu/44-tlb-retire.patch`). The user's report
