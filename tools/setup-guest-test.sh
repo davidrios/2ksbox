@@ -45,9 +45,24 @@
 # WININIT.BAK (what WININIT renames the INI to once it has run it) must
 # name the driver files.
 #
+# VOODOO=1 puts the emulated Voodoo 2 on the machine (`-device voodoo2`,
+# doc 21), whose driver is 3dfx's own and brings a Glide under the names
+# the pass-through's wrappers have. With a 3dfx card present SETUP must
+# leave those names alone: before the install the batch writes a marker
+# file under each of them (GLIDE2X.DLL and GLIDE3X.DLL in the system
+# folder; on 9x FXMEMMAP.VXD and WINDOWS\GLIDE2X.OVL too) standing in for
+# 3dfx's copies, and every marker must still be there after `/ALL`. No
+# 3dfx driver is needed: Windows lists the card's devnode without one,
+# which is what SETUP asks. On Win98 the card gets a null driver (an INF
+# of ours, put into a raw copy of the overlay before the first boot), or
+# its new-hardware wizard holds the boot before the shell. Every run also
+# copies `/GAME 6` (the pass-through's Glide for one game) into C:\2KSBOX.
+#
 # Env: OUT=dir (default build/setup-test), BOOT_WAIT=s (cap, 300),
 # WARMUP_WAIT=s (cap, 300), NO_WARMUP=1, NO_KVM=1, FORCE_KVM=1 (Win98 under
-# KVM), REBOOT=1, KEEP=1.
+# KVM), REBOOT=1, VOODOO=1, NO_NET=1 (Win98: no network card), NO_USB=1
+# (no USB tablet), KEEP=1. A launcher machine's own image wants the knobs
+# its bundle implies: base98-br is `NO_NET=1 NO_USB=1`.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -110,8 +125,16 @@ if [ -n "${REBOOT:-}" ]; then
     echo 'echo AFTERREBOOT > COM1'
   } > "$OUT/RUN2.BAT"
 else
+if [ "$FAMILY" = win98 ]; then SYSDIR='%windir%\SYSTEM'; else SYSDIR='%windir%\system32'; fi
+# name|marker: what 3dfx's driver would have put there, as far as SETUP can tell
+MARKS=("$SYSDIR\\GLIDE2X.DLL|MARK-GLIDE2X" "$SYSDIR\\GLIDE3X.DLL|MARK-GLIDE3X")
+[ "$FAMILY" = win98 ] && MARKS+=("$SYSDIR\\FXMEMMAP.VXD|MARK-FXMEMMAP" '%windir%\GLIDE2X.OVL|MARK-OVL')
 {
   echo '@echo off'
+  if [ -n "${VOODOO:-}" ]; then
+    echo "echo ==== 3dfx's files, as markers > COM1"
+    for m in "${MARKS[@]}"; do echo "echo ${m#*|}> ${m%%|*}"; done
+  fi
   echo 'echo ==== list > COM1'
   setup_line '/LIST'
   echo 'echo ==== install > COM1'
@@ -131,6 +154,14 @@ else
   fi
   echo 'echo ==== per-game set 3 (OpenGL) > COM1'
   setup_line '/GAME 3 C:\2KSBOX'
+  echo 'echo ==== per-game set 6 (Glide pass-through) > COM1'
+  setup_line '/GAME 6 C:\2KSBOX'
+  if [ -n "${VOODOO:-}" ]; then
+    # FIND prints a matching line only if the marker is still the file's
+    # content; a copy of ours in its place prints just the file's name
+    echo "echo ==== are 3dfx's files still there > COM1"
+    for m in "${MARKS[@]}"; do echo "find \"${m#*|}\" ${m%%|*} > COM1"; done
+  fi
   echo 'echo ==== what is on the disk now > COM1'
   echo 'dir %windir%\CDSHELF.EXE > COM1'
   echo 'dir C:\2KSBOX\WGLGEARS.EXE > COM1'
@@ -162,6 +193,34 @@ mcopy -o -i "$FLOPPY" "$OUT/RUN.BAT" ::/RUN.BAT
 rm -f "$OVL"
 "$ROOT/build/qemu/qemu-img" create -q -f qcow2 -b "$IMG" -F qcow2 "$OVL"
 rm -f "$SOCK" "$LOG"
+DISK=(-hda "$OVL")
+RAWV=
+if [ -n "${VOODOO:-}" ] && [ "$FAMILY" = win98 ]; then
+  # Win98 meets a card it has no driver for with "Add New Hardware" before
+  # the shell starts — no taskbar, no Run dialog, and every knock's keys
+  # work the wizard's buttons by their mnemonics; cancelling it only opens
+  # the next one (2026-09-13, three runs). So the card gets a null driver
+  # before the first boot: an INF of ours in WINDOWS\INF, which PnP matches
+  # and installs with no clicks. The devnode is as present as ever, which
+  # is all SETUP asks. mtools cannot write a qcow2, so the machine boots a
+  # raw copy of the overlay with the INF put in it (never the image).
+  RAWV="$OUT/voodoo-$FAMILY.raw"
+  rm -f "$RAWV"; "$ROOT/build/qemu/qemu-img" convert -O raw "$OVL" "$RAWV"
+  OFF=$(python3 -c "
+import struct
+m=open('$RAWV','rb').read(512)
+for i in range(4):
+    e=m[446+i*16:446+(i+1)*16]
+    if e[4]: print(struct.unpack_from('<I',e,8)[0]*512); break")
+  [ -n "$OFF" ] || { echo "no partition in $RAWV"; exit 1; }
+  printf '%s\r\n' '[Version]' 'Signature="$CHICAGO$"' 'Class=Unknown' 'Provider=%P%' '' \
+    '[Manufacturer]' '%P%=Models' '' '[Models]' '%D%=NoDriver,PCI\VEN_121A&DEV_0002' '' \
+    '[NoDriver]' 'AddReg=NoDriver.AddReg' '' '[NoDriver.AddReg]' 'HKR,,NoDriver,,1' '' \
+    '[Strings]' 'P="2ksbox tests"' 'D="Voodoo 2 (no driver, tools/setup-guest-test.sh)"' \
+    > "$OUT/V2NULL.INF"
+  mcopy -i "$RAWV@@$OFF" -o "$OUT/V2NULL.INF" ::/WINDOWS/INF/V2NULL.INF
+  DISK=(-drive "file=$RAWV,format=raw,if=ide,index=0,media=disk")
+fi
 
 # Win98 re-detects its hardware on the first boot of a fresh overlay (the
 # device set is not the one the image was last shut down with), and that
@@ -170,8 +229,8 @@ rm -f "$SOCK" "$LOG"
 # down over ACPI, which needs no shell; the second boot comes up settled.
 warmup() {
   local pid
-  "$QEMU" -L "$ROOT/qemu/pc-bios" "${ACCEL[@]}" -machine pc "${HW[@]}" \
-    -hda "$OVL" -boot c -display none -qmp "unix:$SOCK,server,nowait" -monitor none \
+  "$QEMU" -L "$ROOT/qemu/pc-bios" "${ACCEL[@]}" -machine "$MACHINE" "${HW[@]}" \
+    "${DISK[@]}" -boot c -display none -qmp "unix:$SOCK,server,nowait" -monitor none \
     > "$OUT/warmup-$FAMILY.log" 2>&1 &
   pid=$!
   # The shell is the one thing this boot cannot be asked about — Explorer
@@ -195,6 +254,17 @@ warmup() {
 # and there is then no Start menu to type into. XP uses KVM when there is a
 # /dev/kvm. FORCE_KVM=1 runs Win98 under KVM anyway, to check that again.
 ACCEL=(-cpu pentium3)
+# Win98 as the launcher builds it: no HPET, which 98 has no driver for.
+# An image installed that way meets one here as an "Unknown Device" and a
+# new-hardware wizard that holds the boot before the shell (2026-09-13,
+# base98-br; the launcher's `hpet` check).
+MACHINE=pc
+[ "$FAMILY" = win98 ] && MACHINE=pc,hpet=off
+# NO_USB=1: an image that has never had a USB controller (a launcher machine
+# with `seamless_mouse = false`); 98 wants its setup disc for one. Nothing
+# here needs the pointer: the guest is driven by keyboard.
+TABLET=(-usb -device usb-tablet)
+[ -n "${NO_USB:-}" ] && TABLET=()
 if [ "$FAMILY" != win98 ] || [ -n "${FORCE_KVM:-}" ]; then
   [ -e /dev/kvm ] && [ -z "${NO_KVM:-}" ] && ACCEL=(-accel kvm -cpu pentium3)
 fi
@@ -203,12 +273,21 @@ if [ "$FAMILY" = win98 ]; then
   # re-detection this device set triggers on a fresh overlay)
   HW=(-m 256 -vga cirrus -netdev user,id=n0 -device pcnet,netdev=n0
       -audiodev none,id=a0 -device sb16,audiodev=a0)
+  # NO_NET=1: an image installed with no network card (a launcher machine
+  # with `network = false`, which the launcher boots `-nic none`: without
+  # that QEMU adds a NIC of its own). Given one, its first boot installs
+  # networking whose files are not on the disk — "vnetsup.vxd ... press any
+  # key" in text mode, or a new-hardware wizard, before any shell
+  # (2026-09-13, base98-br).
+  [ -n "${NO_NET:-}" ] && HW=(-m 256 -vga cirrus -nic none -audiodev none,id=a0 -device sb16,audiodev=a0)
   SHELL_CMD='command /c A:\RUN.BAT'
 else
   # the adapter the display-driver component installs a driver for
   HW=(-m 512 -vga none -device d3dpt-vga -net none)
   SHELL_CMD='cmd /k A:\RUN.BAT'
 fi
+# the launcher's slot for the card (bundle.rs), after the sound card's
+[ -n "${VOODOO:-}" ] && HW+=(-device voodoo2,addr=0x05)
 if [ "$FAMILY" = win98 ] && [ -z "${NO_WARMUP:-}" ]; then warmup; fi
 
 SEA="$OUT/seabios-$FAMILY.log"
@@ -219,9 +298,9 @@ if [ -n "${REBOOT:-}" ]; then
   rm -f "$SEA"
   DBG=(-chardev "file,path=$SEA,id=sea" -device isa-debugcon,iobase=0x402,chardev=sea)
 fi
-"$QEMU" -L "$ROOT/qemu/pc-bios" "${ACCEL[@]}" -machine pc "${HW[@]}" \
-  -hda "$OVL" -fda "$FLOPPY" -boot c -cdrom "$ISO" "${DBG[@]}" \
-  -usb -device usb-tablet -display none \
+"$QEMU" -L "$ROOT/qemu/pc-bios" "${ACCEL[@]}" -machine "$MACHINE" "${HW[@]}" \
+  "${DISK[@]}" -fda "$FLOPPY" -boot c -cdrom "$ISO" "${DBG[@]}" \
+  "${TABLET[@]}" -display none \
   -qmp "unix:$SOCK,server,nowait" -serial "file:$LOG" -monitor none > "$QLOG" 2>&1 &
 QPID=$!
 banners() { grep -c '^SeaBIOS (version' "$SEA" 2>/dev/null || echo 0; }
@@ -261,8 +340,10 @@ if [ -n "${REBOOT:-}" ]; then
 fi
 Q screendump "$OUT/$FAMILY-end.png" || true
 if [ "$FAMILY" = win98 ]; then
-  # a Win98 run ends with a Start-menu shutdown, never a kill (CLAUDE.md)
-  Q keys ctrl+esc || true; sleep 2; Q keys u || true; sleep 2; Q keys ret || true
+  # a Win98 run ends with the ACPI power button, never a kill (CLAUDE.md);
+  # the Start menu's keys were the English menu's (`u`), which a Portuguese
+  # 98 ignores, and the run was killed after 90 s (2026-09-13)
+  Q json '{"execute":"system_powerdown"}' >/dev/null || true
   gw_wait_exit "$QPID" 90 || true
 else
   Q json '{"execute":"system_powerdown"}' >/dev/null || true
@@ -270,6 +351,8 @@ else
 fi
 kill -0 $QPID 2>/dev/null && [ -z "${KEEP:-}" ] && kill $QPID 2>/dev/null || true
 wait $QPID 2>/dev/null || true
+# the raw copy is gigabytes; KEEP=1 keeps it to look at
+[ -n "$RAWV" ] && [ -z "${KEEP:-}" ] && rm -f "$RAWV" || true
 
 echo "---- $LOG"
 tr -d '\r' < "$LOG" || true
@@ -308,13 +391,24 @@ if [ -n "${REBOOT:-}" ]; then
   if [ "$fails" = 0 ]; then echo "setup guest test ($FAMILY, reboot): PASS"; exit 0; fi
   echo "setup guest test ($FAMILY, reboot): FAIL ($fails checks)"; exit 1
 fi
-want "GLIDE2X.DLL ->" "SETUP copied the Glide wrappers"
+if [ -n "${VOODOO:-}" ]; then
+  want 'a 3dfx card is on this machine (PCI\VEN_121A&DEV_0002' "SETUP found the Voodoo 2"
+  want "left alone, the card's Glide comes with 3dfx's driver" "SETUP left the system Glide DLLs to 3dfx's driver"
+  for m in "${MARKS[@]}"; do
+    want "${m#*|}" "3dfx's ${m%%|*} (a marker) survived /ALL"
+  done
+  [ "$FAMILY" = win98 ] && want "FXMEMMAP.VXD: already there, left alone" "the mapper already there was not downgraded"
+else
+  want "GLIDE2X.DLL ->" "SETUP copied the Glide wrappers"
+  never "a 3dfx card is on this machine" "no 3dfx card was seen on a machine without one"
+fi
+want 'GLIDE2X.DLL -> C:\2KSBOX' "per-game set 6 put the pass-through's Glide next to a game"
 want "CDSHELF.EXE ->" "SETUP copied the disc shelf tool"
 want "WGLGEARS.EXE" "the test programs are in C:\\2KSBOX (Windows' own dir)"
 want "OPENGL32.DLL" "the per-game set landed in C:\\2KSBOX (Windows' own dir)"
 if [ "$FAMILY" = win98 ]; then
   want "Windows 98" "the family was detected"
-  want "FXMEMMAP.VXD ->" "the 9x device mapper was installed"
+  [ -z "${VOODOO:-}" ] && want "FXMEMMAP.VXD ->" "the 9x device mapper was installed"
   # The 9x display driver is four files dropped where PnP will find them —
   # there is no installer to run and nothing to bind to until the next boot,
   # which is why this checks the copies and not the adapter. That the driver

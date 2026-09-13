@@ -22,6 +22,12 @@ GLIDE\    the device mapper and the 3dfx Glide wrappers.
           The mapper is not optional for OPENGL32.DLL or for D3DPT\:
           they reach the device through it, and without it they refuse
           to load (0xc0000142 / "failed to initialize" on 2000/XP).
+          A machine with a 3dfx card (the emulated Voodoo 2) gets its
+          Glide from 3dfx's own driver, under these same names: SETUP
+          then leaves GLIDE*.DLL, an FXMEMMAP.VXD already there and
+          GLIDE2X.OVL alone, and SETUP /GAME 6 (GLIDE*.DLL) or /GAME 7
+          (GLIDE2X.OVL) puts these next to one game that should use the
+          pass-through instead of the card.
 
 DRIVER\   the 2000/XP display driver for the paravirtual adapter. Boot
           the machine with -vga none -device d3dpt-vga, then run
