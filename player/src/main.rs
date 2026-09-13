@@ -773,6 +773,9 @@ struct App {
     /// The host's shortcuts to the guest while the window has focus
     /// (`kbcapture`): the Windows key is the guest's.
     kbd: Option<kbcapture::Capture>,
+    /// Ctrl+Alt+K turned that off (or `PLAYER_KEYBOARD_CAPTURE=0` started
+    /// the run with it off): the host keeps its shortcuts.
+    kbd_off: bool,
     /// Ctrl+Alt+Shift+D is down and the guest holds Delete for it; the
     /// modifiers it pressed because the guest had none are in `cad_extra`.
     cad_held: bool,
@@ -1272,6 +1275,42 @@ impl App {
         vm.input_flush();
     }
 
+    fn capture_keyboard(&mut self) {
+        if let (Some(vm), Some(gpu)) = (self.vm(), self.gpu.as_ref()) {
+            self.kbd = kbcapture::Capture::new(&gpu.window, vm);
+            if let Some(k) = self.kbd.as_mut() {
+                k.set_focused(gpu.window.has_focus());
+            }
+        }
+    }
+
+    /// Ctrl+Alt+K. Off drops the capture — the inhibitor destroyed, the
+    /// grab or the hook let go — and on makes a new one, so each state is
+    /// what the other was built from.
+    fn toggle_keyboard_capture(&mut self) {
+        self.kbd_off = !self.kbd_off;
+        if self.kbd_off {
+            self.kbd = None;
+            eprintln!("[keyboard] host shortcuts are the host's (Ctrl+Alt+K gives them to the guest)");
+        } else {
+            self.capture_keyboard();
+            eprintln!("[keyboard] host shortcuts go to the guest (Ctrl+Alt+K gives them back)");
+        }
+        self.apply_title();
+    }
+
+    fn apply_title(&self) {
+        let Some(gpu) = self.gpu.as_ref() else { return };
+        let mut title = String::from("2ksbox player");
+        if self.grabbed {
+            title.push_str(" — mouse grabbed (Ctrl+Alt+G releases)");
+        }
+        if self.kbd_off {
+            title.push_str(" — host shortcuts stay the host's (Ctrl+Alt+K)");
+        }
+        gpu.window.set_title(&title);
+    }
+
     fn set_grab(&mut self, on: bool) {
         let Some(window) = self.gpu.as_ref().map(|g| g.window.clone()) else { return };
         if on {
@@ -1280,12 +1319,11 @@ impl App {
             }
             self.hide_cursor(&window);
             self.cursor_applied = HostCursor::Hidden;
-            window.set_title("2ksbox player — mouse grabbed (Ctrl+Alt+G releases)");
         } else {
             let _ = window.set_cursor_grab(CursorGrabMode::None);
-            window.set_title("2ksbox player");
         }
         self.grabbed = on;
+        self.apply_title();
         // a hidden pointer is a shape now, so releasing the grab has to put
         // the right shape back rather than just turn the cursor on again
         if !on {
@@ -1507,13 +1545,11 @@ impl ApplicationHandler for App {
                 qmp_exec_done: false,
             }
         });
-        let vm = self.vm();
-        if let (Some(vm), Some(gpu)) = (vm, self.gpu.as_ref()) {
-            self.kbd = kbcapture::Capture::new(&gpu.window, vm);
-            if let Some(k) = self.kbd.as_mut() {
-                k.set_focused(gpu.window.has_focus());
-            }
+        self.kbd_off = !kbcapture::on_at_start();
+        if !self.kbd_off {
+            self.capture_keyboard();
         }
+        self.apply_title();
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
@@ -1564,6 +1600,18 @@ impl ApplicationHandler for App {
                 {
                     if let Some(gpu) = self.gpu.as_ref() {
                         gpu.screenshot();
+                    }
+                    return;
+                }
+                // Ctrl+Alt+K: the host's shortcuts to the host, or back to
+                // the guest (once per press: a held chord repeats)
+                if down
+                    && code == KeyCode::KeyK
+                    && self.modifiers.control_key()
+                    && self.modifiers.alt_key()
+                {
+                    if !event.repeat {
+                        self.toggle_keyboard_capture();
                     }
                     return;
                 }

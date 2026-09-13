@@ -14,7 +14,8 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
 - **Input:** grab model per doc 03 — absolute tablet for desktop mousing,
   relative PS/2 grab for games, hotkey toggle (default Ctrl+Alt+G,
   rebindable), auto-grab-on-click option. The host's keyboard shortcuts go
-  to the guest while the window has focus (doc 03); Ctrl+Alt+Shift+D sends
+  to the guest while the window has focus (doc 03), Ctrl+Alt+K toggles
+  that; Ctrl+Alt+Shift+D sends
   Ctrl+Alt+Del. Ctrl+Alt+S shoots the guest's own frame (below).
   Gamepads are their own track (M13, `docs/tracks/m13-gamepads.md`) and
   sit beside this grab model rather than inside it: a pad works whether

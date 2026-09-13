@@ -20,7 +20,10 @@
 //! - **macOS**: nothing. Cmd reaches the app already; Cmd+Tab would need an
 //!   event tap and the Accessibility permission.
 //!
-//! `PLAYER_KEYBOARD_CAPTURE=0` leaves the host's shortcuts alone.
+//! **Ctrl+Alt+K** hands them back to the host and, pressed again, to the
+//! guest again — the player drops the `Capture` and builds a new one, so
+//! "off" is exactly the state before it was made. `PLAYER_KEYBOARD_CAPTURE=0`
+//! starts a run with them the host's.
 
 use qemu_embed::Qemu;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -39,13 +42,14 @@ pub enum Capture {
     Windows(win::Hook),
 }
 
+/// Whether a run starts with the host's shortcuts going to the guest.
+pub fn on_at_start() -> bool {
+    std::env::var("PLAYER_KEYBOARD_CAPTURE").as_deref() != Ok("0")
+}
+
 impl Capture {
-    /// `None` when turned off, or on a host this cannot do anything on (the
-    /// reason is printed once).
+    /// `None` on a host this cannot do anything on (the reason is printed).
     pub fn new(window: &Window, vm: Qemu) -> Option<Capture> {
-        if std::env::var("PLAYER_KEYBOARD_CAPTURE").as_deref() == Ok("0") {
-            return None;
-        }
         let _ = &vm; // only the Windows hook injects keys itself
         let w = window.window_handle().ok()?.as_raw();
         let d = window.display_handle().ok()?.as_raw();

@@ -115,9 +115,11 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 # Ctrl+Alt+Shift+D is Ctrl+Alt+Del in the guest (the real one stays the host's).
 # While the window has focus the host's own shortcuts go to the guest — the Windows
 #   key opens the guest's Start menu (Wayland's shortcut inhibitor, an X11 keyboard
-#   grab, a low-level hook on Windows; nothing on macOS). PLAYER_KEYBOARD_CAPTURE=0
-#   leaves them the host's; scripts/test.sh sets it, so a test window sway focuses
-#   does not take the desktop's keys away.
+#   grab, a low-level hook on Windows; nothing on macOS). Ctrl+Alt+K hands them back
+#   to the host and, pressed again, to the guest (the title says when they are the
+#   host's). PLAYER_KEYBOARD_CAPTURE=0 starts a run with them the host's;
+#   scripts/test.sh sets it, so a test window sway focuses does not take the
+#   desktop's keys away.
 # PLAYER_SHOT_EVERY=300 takes that same shot on its own every 300 presented guest frames
 #   (a scripted run's window is behind a terminal and gets no redraws, so it is driven
 #   from the wake path): the only way a headless run sees a 3D frame, since a QMP

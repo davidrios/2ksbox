@@ -321,7 +321,11 @@ Target: **≤ 1 host frame added** between guest frame completion and photons at
   focus, and its own `--inhibited` bindings are the user's way out), an
   active `XGrabKeyboard` on X11, a `WH_KEYBOARD_LL` hook on Windows that
   takes the two Windows keys and injects them itself, nothing on macOS
-  (Cmd reaches the app already). `PLAYER_KEYBOARD_CAPTURE=0` turns it off.
+  (Cmd reaches the app already). **Ctrl+Alt+K** toggles it for the rest
+  of the run — off drops the capture outright (inhibitor destroyed, grab
+  or hook let go) and on builds a new one, and the window title says
+  when the host has its shortcuts; `PLAYER_KEYBOARD_CAPTURE=0` starts a
+  run off.
   Ctrl+Alt+Del is the host's everywhere, so **Ctrl+Alt+Shift+D** is the
   guest's: Shift let go, Delete pressed, and Delete released with D.
   A key goes to the guest by **where it sits** (winit's physical key) —
