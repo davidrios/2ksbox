@@ -92,6 +92,20 @@ while the FIFO is off (offset ≥ `0x100`, to keep the alternate-mapped
 hardware FIFO disabled while it keeps streaming and match the chip.
 86Box upstream would abort at the same `intrCtrl` write.
 
+**Real games on the card, by hand — 2026-09-13** (the user, on the
+launcher's `base98-br` machine, Win98 with 3dfx's driver): **Quake II,
+Unreal Tournament and Need for Speed: Porsche Unleashed all run on the
+emulated Voodoo 2, and all three quit cleanly.** UT and Porsche are Glide
+3 titles, so 3dfx's own `glide3x.dll` works on the chip; Quake II goes
+through 3dfx's MiniGL (Glide 2 in the build the game shipped). Quake II
+and UT felt fine; **Porsche felt slow**. **Starting another game after
+one has quit sometimes comes up with glitched graphics** — the same
+class of state as the teardown above (a register or the monitor left
+over from the last window), not yet looked at. A hand test: no numbers
+and no logs from it, and whether GLIDETEST still hangs at its close was
+not rechecked (a game quitting cleanly says the teardown burst does not
+wedge every close).
+
 **The monitor handed back to a desktop on our driver — fixed the same
 evening.** On the user's `test98` (d3dpt-vga + the card, 3dfx's driver,
 still on the desktop) every full-screen switch left a silver, glitched
@@ -234,18 +248,24 @@ voodoo2,addr=0x05`; both front ends, the C API, `launcherx --wizard-edit
    `GLIDE*.DLL`, `FXMEMMAP.VXD` and `GLIDE2X.OVL` alone, and `/GAME 6` /
    `/GAME 7` put the pass-through's next to one game; `VOODOO=1
    tools/setup-guest-test.sh` holds it (PASS on Win98 and XP; the files
-   it protects were stand-ins, since no image here has 3dfx's driver). **The open bug is Glide's window teardown wedging the
-   card** (above): trace it with `VOODOO2_TRACE=1`, find why `status`
-   stays busy after the garbage burst, and either recover or absorb it.
-   GLIDETEST hangs at `grSstWinClose` and so, most likely, does anything
-   that closes a Glide window — Diablo II's video test included.
-2. **A game and the numbers** (doc 21 §9): Carmageddon's 3dfx build or
-   Rayman 2 on the chip through `tools/win98-game-test.sh
-   EXTRA='-device voodoo2'`, the 5 s log line's frames against the game's
-   own counter, `perf` on the vCPU thread with the MMIO handlers named,
-   and the same run on the M1 Air. Does the 3dfx driver enable the
-   command FIFO? (the log will say: `fbiInit7` bit 8, and the wr/tex
-   counters). Then **Diablo II** — the title the route was chosen for.
+   it protects were stand-ins, since no image here has 3dfx's driver).
+   **The open bug is left-over state between Glide windows** (above): a
+   second game after one has quit sometimes starts glitched, and
+   GLIDETEST was last seen hanging at `grSstWinClose` — recheck it first,
+   since real games now quit cleanly. Trace with `VOODOO2_TRACE=1`: what
+   the teardown burst leaves in `videoDimensions`, `fbiInit*` and the
+   FIFO, and whether dropping `0x200000`-window writes with the FIFO off
+   cures both.
+2. **The numbers** (doc 21 §9) — games run now (Quake II, UT, Porsche,
+   above): Quake II's `timedemo demo1` (the software renderer as the
+   control) and **NFS Porsche**, the one that felt slow, through
+   `tools/win98-game-test.sh EXTRA='-device voodoo2,addr=0x05'` on a copy
+   of `base98-br`: the 5 s log line's frames against the game's own
+   counter (is the rasterizer keeping up, or the vCPU?), `perf` on the
+   vCPU thread with the MMIO handlers named, `threads=4` as the A/B, and
+   the same run on the M1 Air. Does the 3dfx driver enable the command
+   FIFO? (the log will say: `fbiInit7` bit 8, and the wr/tex counters).
+   Then **Diablo II** — the title the route was chosen for.
 3. **The two performance steps, if the profile asks for them**: the
    command-FIFO window as RAM (a `MemoryRegion` alias into `fb_mem`, the
    doorbell on `cmdFifoDepth` / the wake timer; no trap per dword), and
