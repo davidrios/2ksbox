@@ -16,7 +16,9 @@ SETUP.EXE   the installer: the components this guest's Windows can use,
 README.TXT  guest-tools/README-ISO.txt with the commit stamped in
 GLIDE\      the device mapper + Glide: GLIDE*.DLL, FXMEMMAP.VXD (9x),
             FXPTL.SYS + INSTDRV.EXE (2000/XP). Not optional for
-            OPENGL32.DLL or D3DPT\ — both reach the device through it
+            OPENGL32.DLL or D3DPT\ — both reach the device through it.
+            With a 3dfx card present (the Voodoo 2, doc 21) SETUP leaves
+            3dfx's same-named files alone; /GAME 6 and 7 are ours per game
 DRIVER\     the 2000/XP display driver for d3dpt-vga and its own test
             programs; also shipped alone as d3dpt-driver.iso
 DRIVER9X\   the Win98/Me display driver for d3dpt-vga (D3DPT9X.INF,

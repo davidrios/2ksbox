@@ -326,6 +326,31 @@ Detection: 3dfx's driver scans PCI for `121a:0002` and reads
 `initEnable`; a Voodoo 2 with no monitor pass-through cable is still a
 Voodoo 2 (the card never sees the cable).
 
+**Our guest tools stay out of its way** (2026-09-13). 3dfx's driver
+installs `GLIDE2X.DLL` / `GLIDE3X.DLL` / `FXMEMMAP.VXD` in the system
+folder — the names qemu-3dfx's wrappers have — and `SETUP.EXE`'s Glide
+component used to copy ours over them on every `/ALL`, so which Glide a
+game got was whichever was copied last. SETUP now looks for a *present*
+3dfx PCI device (9x: the devnode tree in `HKEY_DYN_DATA`; NT:
+`CM_Locate_DevNode`) and, with one, leaves `GLIDE*.DLL`, an existing
+`FXMEMMAP.VXD` and `GLIDE2X.OVL` alone. The mapper still goes in where
+there is none, because our Direct3D and OpenGL DLLs need it. qemu-3dfx's
+`FXMEMMAP.VXD` is 3dfx's own binary (4.10.01.0013, Glide 2.42), so either
+copy serves both. A title that should take the pass-through on such a
+machine gets ours next to its EXE: `SETUP /GAME 6` (the DLLs), `/GAME 7`
+(the DOS overlay). `VOODOO=1 tools/setup-guest-test.sh` is the check: it
+passed on Win98 and XP on 2026-09-13, where SETUP logged the card as
+`PCI\VEN_121A&DEV_0002&SUBSYS_00000000&REV_02\BUS_00&DEV_05&FUNC_00` (98)
+and `…\3&267a616a&0&28` (XP), and every marker planted under 3dfx's names
+survived `/ALL`. No 3dfx driver was involved: those files were stand-ins.
+
+The PCI map was checked the same day: on both adapters SeaBIOS puts the
+card's BAR at `0xfd000000`, clear of the fixed pass-through windows
+(Glide `0xfb000000`–`0xfb7fffff` and `0xfbdff000`, Mesa
+`0xea000000`–`0xefffefff`, d3dpt `0xd8000000`–`0xdfffefff`). Nothing
+reserves those windows to the guest, so a guest that moved the BAR could
+overlap them. An ACPI Win98 keeps the firmware's placement.
+
 **In the launcher** the card is one checkbox on the machine form
 ("Emulated 3dfx Voodoo 2", `voodoo2` in the bundle, doc 07): off unless
 picked, on every family, `-device voodoo2,addr=0x05` when on — the slot

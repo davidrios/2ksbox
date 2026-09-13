@@ -228,12 +228,13 @@ voodoo2,addr=0x05`; both front ends, the C API, `launcherx --wizard-edit
 
 1. **A guest driver — done 2026-09-12** (the user installed 3dfx's
    reference driver in `win98-2`; Device Manager binds `121a:0002`, and
-   Glide finds the card once siProcess counts down, above). Still to
-   settle with the driver in hand: `SETUP.EXE` puts the guest tools'
-   `GLIDE2X.DLL` in `SYSTEM` on 9x and so does 3dfx's driver — the user
-   removed ours by hand; the installer or the form should say which
-   Glide a machine with the card gets rather than leave it to whichever
-   was copied last. **The open bug is Glide's window teardown wedging the
+   Glide finds the card once siProcess counts down, above). Which Glide a
+   machine with the card gets is **settled in `SETUP.EXE`** (2026-09-13,
+   doc 21 §10): with a 3dfx device present it leaves 3dfx's
+   `GLIDE*.DLL`, `FXMEMMAP.VXD` and `GLIDE2X.OVL` alone, and `/GAME 6` /
+   `/GAME 7` put the pass-through's next to one game; `VOODOO=1
+   tools/setup-guest-test.sh` holds it (PASS on Win98 and XP; the files
+   it protects were stand-ins, since no image here has 3dfx's driver). **The open bug is Glide's window teardown wedging the
    card** (above): trace it with `VOODOO2_TRACE=1`, find why `status`
    stays busy after the garbage burst, and either recover or absorb it.
    GLIDETEST hangs at `grSstWinClose` and so, most likely, does anything

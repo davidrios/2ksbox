@@ -300,11 +300,91 @@ static int run_logged(const char *cmdline)
 
 /* ------------------------------------------------------------ components */
 
+/* A 3dfx card on this machine's PCI bus — the emulated Voodoo 2
+ * (`-device voodoo2`, doc 21), or any other 3dfx board — as its hardware
+ * ID ("PCI\VEN_121A&DEV_0002&..."), or empty. Its driver is 3dfx's own and
+ * brings a Glide under the very names the pass-through's wrappers have
+ * (GLIDE2X.DLL, GLIDE3X.DLL, FXMEMMAP.VXD), so step_glide must know.
+ *
+ * Only a device that is *present* counts: both families keep the registry
+ * entry of a card that has been taken out, and a machine that lost its
+ * Voodoo should get the pass-through's Glide again. 9x has the live
+ * devnode tree in HKEY_DYN_DATA; NT has CM_Locate_DevNode, which finds
+ * only present devnodes in its normal mode — loaded at run time, as
+ * nothing else here needs cfgmgr32. */
+static char g_3dfx[256];
+
+static int is_3dfx(const char *id)
+{
+    return !strnicmp(id, "PCI\\VEN_121A&", 13);
+}
+
+static void find_3dfx_9x(void)
+{
+    HKEY en, dn;
+    char name[32], hw[256];
+    DWORD i, len, type;
+
+    if (RegOpenKeyExA(HKEY_DYN_DATA, "Config Manager\\Enum", 0, KEY_READ, &en) != ERROR_SUCCESS)
+        return;
+    for (i = 0; !g_3dfx[0] && RegEnumKeyA(en, i, name, sizeof name) == ERROR_SUCCESS; i++) {
+        if (RegOpenKeyExA(en, name, 0, KEY_READ, &dn) != ERROR_SUCCESS)
+            continue;
+        len = sizeof hw;
+        if (RegQueryValueExA(dn, "HardWareKey", NULL, &type, (BYTE *)hw, &len) == ERROR_SUCCESS
+            && is_3dfx(hw))
+            lstrcpynA(g_3dfx, hw, sizeof g_3dfx);
+        RegCloseKey(dn);
+    }
+    RegCloseKey(en);
+}
+
+typedef DWORD (WINAPI *CmLocateDevNodeA)(DWORD *, char *, ULONG);
+
+static void find_3dfx_nt(void)
+{
+    HMODULE cm = LoadLibraryA("cfgmgr32.dll");
+    CmLocateDevNodeA locate = cm ? (CmLocateDevNodeA)GetProcAddress(cm, "CM_Locate_DevNodeA") : NULL;
+    HKEY pci, dev;
+    char d[200], inst[200], id[sizeof d + sizeof inst + 8];
+    DWORD i, j, dn;
+
+    if (locate && RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Enum\\PCI",
+                                0, KEY_READ, &pci) == ERROR_SUCCESS) {
+        for (i = 0; !g_3dfx[0] && RegEnumKeyA(pci, i, d, sizeof d) == ERROR_SUCCESS; i++) {
+            if (strnicmp(d, "VEN_121A&", 9)
+                || RegOpenKeyExA(pci, d, 0, KEY_READ, &dev) != ERROR_SUCCESS)
+                continue;
+            for (j = 0; RegEnumKeyA(dev, j, inst, sizeof inst) == ERROR_SUCCESS; j++) {
+                snprintf(id, sizeof id, "PCI\\%s\\%s", d, inst);
+                if (locate(&dn, id, 0 /* CM_LOCATE_DEVNODE_NORMAL */) == 0 /* CR_SUCCESS */) {
+                    lstrcpynA(g_3dfx, id, sizeof g_3dfx);
+                    break;
+                }
+            }
+            RegCloseKey(dev);
+        }
+        RegCloseKey(pci);
+    }
+    if (cm) FreeLibrary(cm);
+}
+
 /* Glide and the device mapper. The mapper is the part that matters even
  * to someone who never runs a Glide game: OPENGL32.DLL and our D3D DLLs
  * reach the device through it, and without it they refuse to load
  * (0xc0000142 on NT). 9x has it as a VxD that only needs to be in
- * SYSTEM; NT as a kernel driver a service must point at. */
+ * SYSTEM; NT as a kernel driver a service must point at.
+ *
+ * On a machine with a 3dfx card the Glide DLLs are not ours to install:
+ * the system folder's GLIDE2X.DLL is what every Glide game loads, and
+ * whichever was copied last decided silently whether a game drew on the
+ * card or on the pass-through — a SETUP /ALL run to update the display
+ * driver took the card away from every Glide game. So they stay out of
+ * it, and SETUP /GAME 6 puts the pass-through's next to one game. The 9x
+ * mapper is 3dfx's own binary (FXMEMMAP.VXD 4.10.01.0013, the Glide 2.42
+ * one, same IOCTLs), so a copy already there serves our DLLs as well and
+ * is left alone rather than downgraded; NT's FXPTL.SYS is qemu-3dfx's
+ * own name and installed as always. */
 static int step_glide(void)
 {
     static const char *const dlls[] = { "GLIDE.DLL", "GLIDE2X.DLL", "GLIDE3X.DLL", NULL };
@@ -314,18 +394,33 @@ static int step_glide(void)
     char drivers[PATHBUF], cmd[PATHBUF * 2], path[PATHBUF];
     SC_HANDLE scm, svc;
     SERVICE_STATUS st;
-    int bad, running;
+    int bad = 0, running;
 
     say("Glide and the device mapper:");
-    bad = copy_set("GLIDE", g_sys, dlls);
+    if (g_3dfx[0]) {
+        say("    a 3dfx card is on this machine (%s)", g_3dfx);
+        say("    GLIDE.DLL, GLIDE2X.DLL, GLIDE3X.DLL: left alone, the card's Glide comes with 3dfx's driver");
+        say("    (SETUP /GAME 6 <dir> puts the pass-through's next to one game)");
+    } else {
+        bad = copy_set("GLIDE", g_sys, dlls);
+    }
     if (!g_nt) {
         /* 9x also gets the DOS binding of the device: a DOS/4GW game run
          * from a DOS box loads GLIDE2X.OVL by name off the PATH, and the
          * Windows folder is on it (qemu-3dfx's own instruction). Missing
          * from a disc built without Open Watcom, which is worth a line in
-         * the log but not a failed Glide install. */
-        bad |= copy_set("GLIDE", g_sys, vxd);
-        copy_set("GLIDE", g_win, ovl);
+         * the log but not a failed Glide install. With a 3dfx card it
+         * stays out of the PATH too: a DOS game on the card wants 3dfx's
+         * overlay, and ours there would win over one the game lacks. */
+        snprintf(path, sizeof path, "%s\\FXMEMMAP.VXD", g_sys);
+        if (g_3dfx[0] && GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
+            say("    FXMEMMAP.VXD: already there, left alone (3dfx's driver brings its own)");
+        else
+            bad |= copy_set("GLIDE", g_sys, vxd);
+        if (g_3dfx[0])
+            say("    GLIDE2X.OVL: left out of the Windows folder (SETUP /GAME 7 <dir> for one DOS game)");
+        else
+            copy_set("GLIDE", g_win, ovl);
         return bad;
     }
 
@@ -673,6 +768,15 @@ static const GameSet g_sets[] = {
     { "WineD3D, DirectDraw and Direct3D up to 7 (DDRAW.DLL WINED3D.DLL OPENGL32.DLL)",
       "WINED3D\\DDRAW",  { "DDRAW.DLL", "DDRAW.DLL", "WINED3D.DLL", "WINED3D.DLL",
                            "OPENGL32.DLL", "OPENGL32.DLL", NULL } },
+    /* The pass-through's Glide for one game, on a machine whose system
+     * folder has 3dfx's (a 3dfx card: step_glide leaves those alone). They
+     * reach the device through the mapper, which the Glide component still
+     * installs. Last, so no earlier set's number moves. */
+    { "Glide pass-through (GLIDE.DLL GLIDE2X.DLL GLIDE3X.DLL)",
+      "GLIDE",   { "GLIDE.DLL", "GLIDE.DLL", "GLIDE2X.DLL", "GLIDE2X.DLL",
+                   "GLIDE3X.DLL", "GLIDE3X.DLL", NULL } },
+    { "DOS Glide pass-through (GLIDE2X.OVL)",
+      "GLIDE",   { "GLIDE2X.OVL", "GLIDE2X.OVL", NULL } },
 };
 #define NSETS ((int)(sizeof g_sets / sizeof g_sets[0]))
 
@@ -964,6 +1068,8 @@ int main(int argc, char **argv)
     if (slash) slash[1] = 0;
     GetSystemDirectoryA(g_sys, sizeof g_sys);
     GetWindowsDirectoryA(g_win, sizeof g_win);
+    if (g_nt) find_3dfx_nt();
+    else find_3dfx_9x();
 
     /* only the components this Windows can use, in the listed order */
     for (i = 0; i < MAX_COMPONENTS && g_comp[i].label; i++) {

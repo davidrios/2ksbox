@@ -148,11 +148,13 @@ gw_run_dialog() {  # <sock> <family> — dismiss whatever is up, open Run, clear
   local sock=$1 family=$2
   gw_qmp "$sock" keys ret; sleep 1          # a message box, if any
   gw_qmp "$sock" keys esc; sleep 1          # and whatever it left focused
-  if [ "$family" = win98 ]; then
-    gw_qmp "$sock" keys ctrl+esc; sleep 3; gw_qmp "$sock" keys r
-  else
-    gw_qmp "$sock" keys meta_l+r
-  fi
+  # Win+R on both families: Ctrl+Esc then R is the English Start menu's
+  # mnemonic, and a Portuguese 98 calls the item "Executar..." — the knocks
+  # opened the Start menu and typed into it (2026-09-13, base98-br). 98 has
+  # the Windows-key shortcuts too; tools/pad-guest-test.py opens Run on 98
+  # this way already. `family` is kept for the callers.
+  : "$family"
+  gw_qmp "$sock" keys meta_l+r
   sleep 3
   # the first key after the chord is lost, and Run opens with its last
   # command selected: a space and a backspace absorb the one and clear the
