@@ -343,6 +343,16 @@ int main(int argc, char **argv) {
         check_str("its family", lc_machines_family(m, found), "DOS");
         check_str("its shader", lc_machines_shader_label(m, found), "(default)");
         check("nothing is running", !lc_machines_is_running(m, found), NULL);
+        check_str("Clone… offers a name", lc_machines_clone_name(m, found), "capi dos (copy)");
+        /* This machine's disk is /dev/null, which is not a file: the
+         * refusal has to arrive as a sentence and leave nothing behind. */
+        size_t machines_before = lc_machines_count(m);
+        char *why = NULL;
+        check("a disk that is not a file cannot be cloned", !lc_machines_clone(m, found, NULL, &why), why);
+        check("...and says so", why && strstr(why, "not a file") != NULL, why);
+        lc_string_free(why);
+        lc_machines_refresh(m);
+        check("...with no new machine in the library", lc_machines_count(m) == machines_before, NULL);
     }
 
     printf("== the disc shelf\n");

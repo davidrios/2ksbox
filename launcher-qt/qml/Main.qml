@@ -8,7 +8,9 @@ import com._2ksbox.launcher
 ApplicationWindow {
     id: root
 
-    width: 900
+    // Wide enough for a row's five buttons with room to spare: at 900
+    // "Clone…" sat flush against the edge, one longer label from clipped.
+    width: 980
     height: 560
     visible: true
     title: qsTr("2ksbox")
@@ -275,6 +277,14 @@ ApplicationWindow {
                                         snapshotsWindow.show()
                                     }
                                 }
+                                Button {
+                                    text: qsTr("Clone…")
+                                    // One copy at a time: the window
+                                    // shows the one that is running.
+                                    enabled: !cloner.busy
+                                    onClicked: cloner.openFor(machines.bundlePath(machineRow.index),
+                                                              machines.isRunning(machineRow.index))
+                                }
                                 Item { Layout.fillWidth: true }
                             }
                         }
@@ -327,6 +337,27 @@ ApplicationWindow {
         // puts the window away wherever it was called from.
         onOpenChanged: open ? wizardWindow.show() : closeIfShown(wizardWindow)
     }
+    CloneModel {
+        id: cloner
+        // Same shape as the wizard: a clone that lands clears the flag
+        // and the window goes away wherever it was.
+        onOpenChanged: open ? cloneWindow.show() : closeIfShown(cloneWindow)
+    }
+    // A copy runs on its own thread; this asks after it, at an interval
+    // stated out loud, only while there is one. When it lands the grid
+    // rescans, which is where the new machine appears.
+    Timer {
+        interval: 300
+        repeat: true
+        running: cloner.busy
+        onTriggered: {
+            if (cloner.poll()) {
+                machines.refresh()
+                if (cloner.status !== "")
+                    machines.status = cloner.status
+            }
+        }
+    }
     DiscModel { id: discs }
     SnapshotModel { id: snapshots }
     ProfileModel { id: profiles }
@@ -365,6 +396,11 @@ ApplicationWindow {
         wizard: wizard
         profiles: profiles
         onSaved: machines.refresh()
+    }
+
+    CloneWindow {
+        id: cloneWindow
+        cloner: cloner
     }
 
     DiscShelfWindow {
@@ -413,7 +449,7 @@ ApplicationWindow {
         // `grabToImage` only works on an item the QML engine created
         // (see the note on `grabTimer` below). Its `firstrun` probe
         // screen prints what it holds instead of photographing it.
-        const windows = [wizardWindow, discShelfWindow, snapshotsWindow,
+        const windows = [wizardWindow, cloneWindow, discShelfWindow, snapshotsWindow,
                          shaderWindow, shaderEditorWindow]
         for (const d of windows)
             if (d.visible && d.grabItem)
@@ -522,6 +558,26 @@ ApplicationWindow {
                 diag.note("submit -> " + wizard.submit() + " " + wizard.savedPath())
                 machines.refresh()
                 break
+            case "clone":
+                // `LAUNCHER_QT_ARG=<machine.toml>` — a row's Clone… the
+                // way a person does it: the window up with the name the
+                // model offers, a new name typed over it, Clone pressed,
+                // and then the copy waited out (`cloneSettle`), ending
+                // on the rescanned grid — so it only passes if the new
+                // machine really landed in the library. `<path>;show`
+                // stops at the open window, for a picture of it.
+                const cloneSpec = diag.arg.split(";")
+                cloner.openFor(cloneSpec[0], false)
+                diag.note("clone offered [" + cloneWindow.shownName + "] model [" + cloner.name
+                          + "], window " + cloneWindow.visible + ", can clone " + cloner.canSubmit
+                          + ", error [" + cloner.error + "]")
+                if (cloneSpec[1] === "show")
+                    break
+                cloneWindow.retypeName("Typed twin")
+                cloneWindow.clickClone()
+                diag.note("clone started: busy=" + cloner.busy + ", error [" + cloner.error + "]")
+                cloneSettle.start()
+                return   // `cloneSettle` grabs when it is done
             case "adddisc":
                 // `LAUNCHER_QT_ARG=<path>` onto the shared shelf.
                 discs.openLibrary(machines.discLibraryPath())
@@ -653,6 +709,24 @@ ApplicationWindow {
                       + ", buttons=" + firstRunResultDialog.buttons
                       + ", text=" + firstRunResultDialog.text
                       + " | " + firstRunResultDialog.informativeText.replace(/\n/g, " "))
+            grabTimer.restart()
+        }
+    }
+
+    // The `clone` probe's wait: the copy is polled by the timer beside
+    // `cloner` above, exactly as for a person; this only waits for it to
+    // end and reports what it left — the window, the model and the grid.
+    Timer {
+        id: cloneSettle
+        interval: 200
+        repeat: true
+        onTriggered: {
+            if (cloner.busy)
+                return
+            stop()
+            diag.note("clone settled: open=" + cloner.open + ", window " + cloneWindow.visible
+                      + ", error [" + cloner.error + "], status [" + machines.status
+                      + "], saved " + cloner.savedPath() + ", grid " + machines.count)
             grabTimer.restart()
         }
     }

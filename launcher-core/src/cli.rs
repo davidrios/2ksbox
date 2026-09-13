@@ -13,8 +13,8 @@
 //! `QT_QPA_PLATFORM=offscreen` and `grabToImage` (`qt/diag.rs`).
 
 use crate::bundle::{self, Family, Machine, Music, Optimization, Sound};
-use crate::{browse, control, disc_library, firstrun, library, machines, player, preview, shader_library,
-    shader_profile, shader_source, shelf, snaps, wizard};
+use crate::{browse, clone_machine, control, disc_library, firstrun, library, machines, player, preview,
+    shader_library, shader_profile, shader_source, shelf, snaps, wizard};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -255,6 +255,30 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             match form.submit(&library::default_dir()) {
                 Some(saved) => println!("{}", saved.display()),
                 None => panic!("save bundle: {}", form.error.unwrap_or_default()),
+            }
+        }
+        "--clone" => {
+            // Headless equivalent of a row's "Clone…" then "Clone": the
+            // same model, so the same default name, the same refusals (a
+            // running machine, a name already in the library) and the
+            // same copy. With no name it takes the one the window offers.
+            let usage = "usage: --clone <machine.toml> [new name]";
+            let path: PathBuf = args.next().expect(usage).into();
+            let mut window = clone_machine::CloneMachine::default();
+            window.open_for_path(&path, false);
+            if let Some(name) = args.next() {
+                window.name = name;
+            }
+            if window.error().is_none() {
+                window.submit();
+                window.wait();
+            }
+            match (window.error(), window.saved_path()) {
+                (None, Some(saved)) => println!("{}", saved.display()),
+                (error, _) => {
+                    eprintln!("[clone] {}", error.unwrap_or("nothing was cloned"));
+                    return Some(1);
+                }
             }
         }
         "--optimizations" => {

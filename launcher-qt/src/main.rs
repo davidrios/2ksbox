@@ -48,6 +48,7 @@ mod preview;
 
 mod qt {
     pub mod browse;
+    pub mod clone_machine;
     pub mod diag;
     pub mod discs;
     pub mod firstrun;

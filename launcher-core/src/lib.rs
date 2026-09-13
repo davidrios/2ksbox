@@ -31,8 +31,8 @@
 //! * **The machinery.** `player` (spawning one, and `qemu-img`),
 //!   `control` (QMP to a running machine), `snapshots` (`qemu-img`'s
 //!   half of the same), `preview` (the shader chain on a still image).
-//! * **The window models.** `machines`, `wizard`, `shelf`, `snaps`,
-//!   `editor`, `firstrun` — one per window, holding its whole state
+//! * **The window models.** `machines`, `wizard`, `clone_machine`,
+//!   `shelf`, `snaps`, `editor`, `firstrun` — one per window, holding its whole state
 //!   machine and the sentences it shows, and
 //!   `browse` for the one file-dialog decision that is not the dialog.
 //!   `cli` is every debug verb that needs no toolkit, so both binaries
@@ -41,6 +41,8 @@
 pub mod browse;
 pub mod bundle;
 pub mod cli;
+// "Clone…": a new machine that is a whole copy of one, disk included.
+pub mod clone_machine;
 pub mod console;
 pub mod control;
 pub mod disc_library;

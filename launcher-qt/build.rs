@@ -37,6 +37,7 @@ fn main() {
             "qml/PathField.qml",
             "qml/PresetCollection.qml",
             "qml/WizardWindow.qml",
+            "qml/CloneWindow.qml",
             "qml/DiscShelfWindow.qml",
             "qml/SnapshotsWindow.qml",
             "qml/ShaderProfilesWindow.qml",
@@ -66,6 +67,7 @@ fn main() {
     .files([
         "src/qt/diag.rs",
         "src/qt/browse.rs",
+        "src/qt/clone_machine.rs",
         "src/qt/discs.rs",
         "src/qt/firstrun.rs",
         "src/qt/machines.rs",

@@ -68,6 +68,22 @@
 #                  result dialog — the sequence that broke when one dialog
 #                  followed the model, since accept()/close() both emit
 #                  rejected() (only if a launcher-qt has been built)
+#   qt-clone       the Qt "Clone…" window, driven: it comes up offering
+#                  "<name> (copy)", a name typed over that reaches the model,
+#                  Clone copies the machine on its thread, and the window
+#                  goes away and the grid rescans to show the new machine,
+#                  whose bundle has that name and its own copy of the disk
+#                  (only if a launcher-qt has been built)
+#   clone          "Clone…" without a toolkit (doc 07): a wizard-made machine
+#                  with data and a snapshot on its disk is cloned under the
+#                  offered name, boots a disk of its own that is a byte copy,
+#                  keeps the snapshot, and from then on writes nothing the
+#                  original sees; the offered name moves on to "(copy 2)", a
+#                  taken name and an empty one are refused; a disk outside
+#                  the library whose backing file is named relative to it is
+#                  copied into the clone and still reads through to the
+#                  backing file; and a machine with a QEMU on its monitor
+#                  socket is refused and leaves nothing behind
 #   shader-defaults the first-run shader offer without a toolkit: a launcher with
 #                  no collection asks and one with a collection does not, "Not
 #                  now" is remembered so the question is asked exactly once, and
@@ -514,6 +530,106 @@ shelforder_check() { # the disc shelf is in order by label, all the way to the g
   : >"$dir/Age of Empires.iso"
   o="$(target/release/launcherx --discs add "$dir/Age of Empires.iso" | cut -f1 | head -1)"
   [ "$o" = "Age of Empires" ] || { echo "a disc added later did not land in order (first row: $o)"; rc=1; }
+  return $rc
+}
+clone_check() { # "Clone…", from the model to a disk our QEMU reads (doc 07)
+  local rc=0 dir="$OUT/clone" img=build/qemu/qemu-img io=build/qemu/qemu-io
+  local bundle disk copy copy_disk o args outside twin sock qpid i
+  rm -rf "$dir"; mkdir -p "$dir/library" "$dir/vms"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" LAUNCHER_QEMU_IMG_BIN="$img"
+  # A machine the wizard made, disk and all, with something on the disk
+  # and an internal snapshot inside it. (`--wizard-new` passes qemu-img's
+  # "Formatting" line through, so the bundle is the last line.)
+  bundle="$(target/release/launcherx --wizard-new xp Original 1 2>/dev/null | tail -1)"
+  [ -f "$bundle" ] || { echo "--wizard-new made no bundle"; return 1; }
+  disk="$(dirname "$bundle")/disk.qcow2"
+  $io -c "write -P 0x5a 0 1M" "$disk" >/dev/null || { echo "qemu-io could not write the original"; return 1; }
+  target/release/launcherx --snapshots "$bundle" take before-clone >/dev/null 2>&1 \
+    || { echo "--snapshots take failed"; return 1; }
+  # No name: the one the window offers.
+  copy="$(target/release/launcherx --clone "$bundle" 2>&1)" || { echo "--clone failed: $copy"; return 1; }
+  copy_disk="$(dirname "$copy")/disk.qcow2"
+  grep -qx 'name = "Original (copy)"' "$copy" || { echo "the clone is not called Original (copy):"; grep '^name' "$copy"; rc=1; }
+  [ "$(dirname "$copy")" != "$(dirname "$bundle")" ] || { echo "the clone shares the original's directory"; rc=1; }
+  args="$(target/release/launcherx --print-args "$copy")"
+  case "$args" in *"file=$copy_disk,"*) ;; *) echo "the clone does not boot its own disk: $args"; rc=1;; esac
+  cmp -s "$disk" "$copy_disk" || { echo "the clone's disk is not a copy of the original's"; rc=1; }
+  o="$(target/release/launcherx --snapshots "$copy" 2>&1)"
+  printf '%s\n' "$o" | grep -q before-clone || { echo "the snapshot did not come along: $o"; rc=1; }
+  # Two machines from then on: what the clone writes, the original never sees.
+  $io -c "write -P 0xa5 0 1M" "$copy_disk" >/dev/null || { echo "qemu-io could not write the clone"; rc=1; }
+  o="$($io -r -c "read -P 0x5a 0 1M" "$disk" 2>&1)"
+  case "$o" in *failed*|*rror*) echo "writing the clone changed the original: $o"; rc=1;; *"read 1048576/"*) ;; *) echo "$o"; rc=1;; esac
+  o="$($io -r -c "read -P 0xa5 0 1M" "$copy_disk" 2>&1)"
+  case "$o" in *failed*|*rror*) echo "the clone did not keep its own write: $o"; rc=1;; *"read 1048576/"*) ;; *) echo "$o"; rc=1;; esac
+  # The name offered moves on when it is taken; a taken name or no name is refused.
+  o="$(target/release/launcherx --clone "$bundle" 2>&1)" && grep -qx 'name = "Original (copy 2)"' "$o" \
+    || { echo "a second clone was not offered Original (copy 2): $o"; rc=1; }
+  o="$(target/release/launcherx --clone "$bundle" "Original (copy)" 2>&1)" \
+    && { echo "a clone under a name already in the library was made: $o"; rc=1; }
+  case "$o" in *"already a machine called"*) ;; *) echo "...and not refused for that: $o"; rc=1;; esac
+  o="$(target/release/launcherx --clone "$bundle" " " 2>&1)" && { echo "a clone with no name was made"; rc=1; }
+  case "$o" in *"a name is required"*) ;; *) echo "...and not refused for that: $o"; rc=1;; esac
+  # A disk outside the library, as "Use an existing disk" leaves one, and
+  # an overlay whose backing file is named relative to it: the copy lands
+  # in the clone's own folder and still finds the backing file.
+  $img create -q -f qcow2 "$dir/vms/base.qcow2" 16M && $io -c "write -P 0x33 0 64k" "$dir/vms/base.qcow2" >/dev/null \
+    && $img create -q -f qcow2 -b base.qcow2 -F qcow2 "$dir/vms/overlay.qcow2" \
+    || { echo "could not make the overlay"; return 1; }
+  outside="$(target/release/launcherx --new xp Outside "$dir/vms/overlay.qcow2")"
+  twin="$(target/release/launcherx --clone "$outside" "Outside twin" 2>&1)" || { echo "--clone (outside) failed: $twin"; return 1; }
+  args="$(target/release/launcherx --print-args "$twin")"
+  case "$args" in *"file=$(dirname "$twin")/overlay.qcow2,"*) ;; *) echo "the outside disk was not copied into the clone: $args"; rc=1;; esac
+  o="$($img info --output=json "$(dirname "$twin")/overlay.qcow2" 2>&1)"
+  printf '%s' "$o" | grep -q "\"backing-filename\": \"$(realpath "$dir/vms/base.qcow2")\"" \
+    || { echo "the copy's backing file is not the original's, by absolute path:"; printf '%s\n' "$o" | grep backing; rc=1; }
+  o="$($io -r -c "read -P 0x33 0 64k" "$(dirname "$twin")/overlay.qcow2" 2>&1)"
+  case "$o" in *failed*|*rror*) echo "the copy does not read through to its backing file: $o"; rc=1;; *"read 65536/"*) ;; *) echo "$o"; rc=1;; esac
+  $img info --output=json "$dir/vms/overlay.qcow2" | grep -q '"backing-filename": "base.qcow2"' \
+    || { echo "the original overlay's header was changed"; rc=1; }
+  # A running machine is refused: a QEMU listening on its monitor socket is
+  # what a player that is up looks like, whoever started it.
+  if [ -x build/qemu/qemu-system-i386 ]; then
+    sock="$(target/release/launcherx --qmp-socket "$bundle")"
+    mkdir -p "$(dirname "$sock")"; rm -f "$sock"
+    build/qemu/qemu-system-i386 -machine none -S -display none -nodefaults \
+      -qmp "unix:$sock,server=on,wait=off" >"$dir/qemu.log" 2>&1 & qpid=$!
+    # The socket's own appearance, bounded: QEMU makes it before its main loop.
+    for i in $(seq 100); do [ -S "$sock" ] && break; sleep 0.05; done
+    o="$(target/release/launcherx --clone "$bundle" "While running" 2>&1)" && { echo "a running machine was cloned"; rc=1; }
+    case "$o" in *"is running"*) ;; *) echo "...and not refused for that: $o"; rc=1;; esac
+    [ ! -e "$dir/library/while-running" ] || { echo "a refused clone left a directory behind"; rc=1; }
+    kill "$qpid" 2>/dev/null; wait "$qpid" 2>/dev/null
+  else
+    echo "  (no build/qemu/qemu-system-i386: the running-machine refusal is not checked)"
+  fi
+  return $rc
+}
+qtclone_check() { # the Qt "Clone…" window, driven (doc 07)
+  local rc=0 dir="$OUT/qtclone" bin="launcher-qt/target/release/launcher-qt" bundle o saved
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
+  head -c 4194304 /dev/urandom >"$dir/disk.img"
+  bundle="$(target/release/launcherx --new win98 Original "$dir/disk.img")" || { echo "--new failed"; return 1; }
+  # The probe opens the window on the row, types a name over the one it
+  # offers, presses Clone and waits the copy out through the same timer a
+  # person's click is polled by. What it guards is the wiring: the offered
+  # name reaching the field, the typed one reaching the model, the window
+  # going away when the copy lands and the grid rescanning to show it.
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=clone LAUNCHER_QT_ARG="$bundle" LAUNCHER_QT_DELAY=300 \
+       "$bin" 2>&1 | sed -n 's/^\[diag\] clone //p')"
+  [ -n "$o" ] || { echo "the probe printed no clone line"; return 1; }
+  printf '  %s\n' "$o"
+  printf '%s' "$o" | grep -qF 'offered [Original (copy)] model [Original (copy)], window true, can clone true' \
+    || { echo "the window did not come up offering Original (copy)"; rc=1; }
+  printf '%s' "$o" | grep -q 'settled: open=false, window false, error \[\], status \[cloned Original as Typed twin\]' \
+    || { echo "the clone did not land cleanly, or the window stayed up"; rc=1; }
+  printf '%s' "$o" | grep -q 'grid 2$' || { echo "the grid did not rescan to two machines"; rc=1; }
+  saved="$(printf '%s' "$o" | sed -n 's/.*saved \(.*\), grid.*/\1/p')"
+  grep -qx 'name = "Typed twin"' "$saved" 2>/dev/null || { echo "no bundle called Typed twin at '$saved'"; rc=1; }
+  cmp -s "$dir/disk.img" "$(dirname "$saved")/disk.img" || { echo "the clone has no copy of the disk"; rc=1; }
   return $rc
 }
 shaderdefaults_check() { # the first-run shader offer and its starter profiles (doc 07)
@@ -1968,6 +2084,9 @@ host_stage() {
     run_check dirshelf dirshelf.log dirshelf_check || true
     run_check shelforder shelforder.log shelforder_check || true
   else skip dirshelf "needs target/release/launcherx"; skip shelforder "needs target/release/launcherx"; fi
+  if [ -x target/release/launcherx ] && [ -x build/qemu/qemu-img ] && [ -x build/qemu/qemu-io ]; then
+    run_check clone clone.log clone_check || true
+  else skip clone "needs target/release/launcherx, build/qemu/qemu-img and qemu-io"; fi
   # The first-run shader offer and the starter profiles behind it. Needs
   # the preset collection to check what a "yes" writes, so it is skipped
   # on a checkout without the submodule rather than downloading 50 MB
@@ -1986,12 +2105,14 @@ host_stage() {
     run_check qt-profile qt-profile.log qtprofile_check || true
     run_check qt-shelf qt-shelf.log qtshelf_check || true
     run_check qt-firstrun qt-firstrun.log qtfirstrun_check || true
+    run_check qt-clone qt-clone.log qtclone_check || true
   else
     skip qt-wizard "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-close "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-profile "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-shelf "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-firstrun "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+    skip qt-clone "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
   fi
 
   # the host GPU probe (ADR-013): what the launcher tells someone about 3D

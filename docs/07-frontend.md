@@ -31,6 +31,24 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
 
 - Machine library grid with last-frame thumbnails, family badge, running
   state; spawns a player per machine.
+- **Clone…** on a row (2026-09-13, `launcher-core/src/clone_machine.rs`):
+  a new machine under a name the user picks — offered as "<name> (copy)",
+  numbered when that is taken — with the same settings and its **own
+  copy of the disk**, internal snapshots included since they live in the
+  qcow2. The disk is copied wherever it is: a wizard-made bundle keeps it
+  in its own folder, but "Use an existing disk" can point anywhere, and
+  two machines on one image corrupt it the day both run. Anything else
+  the bundle names inside its own folder is copied and renamed into the
+  clone; what it names outside (shelf discs, a shader, a SoundFont) is
+  shared media and stays shared. A relative qcow2 backing file is made
+  absolute in the copy (`qemu-img rebase -u`), since the copy sits
+  elsewhere. **A running machine is refused** — its disk is being
+  written — and "running" is the grid's player map *or* a listening
+  monitor socket, so a player started by `--play` counts too. The copy
+  runs on a thread with a progress bar; the new `machine.toml` is written
+  last, so a clone still copying (or failed, whose folder is removed) is
+  never in the grid. `launcherx --clone <machine.toml> [name]` is the same
+  model headless; `lc_machines_clone` the same in C.
 - **Guided creation:** family (Win98/XP/DOS/Other) → name → memory → processor →
   acceleration →
   networking → the pointer → disk size → install media → bundle from the

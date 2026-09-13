@@ -2108,3 +2108,39 @@ verbs are — `launcher` is not a default workspace member since
 2026-09-07, so the suite would skip it on most hosts — which is also why
 `first_run_ui` is a free function taking the model rather than a method
 on `LauncherApp`, the shape `wizard::show` already has.
+
+## Clone… (2026-09-13)
+
+A row's **Clone…** makes a new machine under a name the user picks, with
+the same settings and its own copy of the disk (doc 07 has the rules). The
+model is `launcher-core/src/clone_machine.rs`; the Qt window is
+`CloneWindow.qml` over `src/qt/clone_machine.rs`, the verb is `launcherx
+--clone <machine.toml> [name]`, and the C ABI is `lc_machines_clone` /
+`lc_machines_clone_name`.
+
+Three choices worth keeping. The disk's destination is recorded when the
+copy is planned — the disk is found among the bundle's files by its
+canonical path — and never recovered afterwards by comparing how two
+paths are spelled, because a miss there leaves the clone booting the
+original's disk. The new `machine.toml` is written last, so the grid never
+shows a clone that is still copying or failed. And "running" includes a
+listening monitor socket, which is also what makes the refusal testable
+without a player: the `clone` check starts a bare `qemu-system-i386
+-machine none -S` on the machine's socket.
+
+Checked two ways. `clone` drives `launcherx` against a real qcow2: the copy
+is byte-identical, boots its own disk (`--print-args`), keeps the
+snapshot, and from then on writes nothing the original sees (qemu-io
+patterns both ways); the offered name moves on to "(copy 2)"; a taken or
+empty name is refused; an overlay outside the library whose backing file
+is named relative to it is copied in and still reads through; a machine
+with a QEMU on its socket is refused and leaves no folder. `qt-clone`
+drives the window (`LAUNCHER_QT_SCREEN=clone`; `<path>;show` stops at the
+open window for a picture): the offered name in the field, a typed name
+reaching the model, the window gone once the copy lands, and the grid
+rescanned to show the new machine.
+
+Not done: a copy cannot be cancelled once started (`std::fs::copy` keeps
+the kernel's fast paths — reflinks, `copy_file_range` — and has no way to
+stop mid-file), so Cancel and Esc are off while one runs; closing the
+window lets the copy finish and land on its own.
