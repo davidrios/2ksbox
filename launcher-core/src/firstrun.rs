@@ -72,8 +72,7 @@ pub struct Message {
 }
 
 /// The offer's whole state machine. Built by `check`, polled by `state`
-/// — from a repaint (egui) or a timer (Qt), the same way
-/// `editor::Presets` is.
+/// — from a timer (Qt), the same way `editor::Presets` is.
 #[derive(Default)]
 pub struct FirstRun {
     profiles_dir: PathBuf,
@@ -86,7 +85,7 @@ pub struct FirstRun {
 
 impl FirstRun {
     /// Decide whether to ask, given where profiles live
-    /// (`shader_library::default_dir()` for both front ends). Cheap: a
+    /// (`shader_library::default_dir()` for the front end). Cheap: a
     /// `stat` for the marker and, only when it is absent, `presets_dir`'s
     /// two-level walk.
     pub fn check(profiles_dir: PathBuf) -> FirstRun {
@@ -110,24 +109,6 @@ impl FirstRun {
     /// matching `editor::Presets::download_active`.
     pub fn busy(&self) -> bool {
         self.download.is_some()
-    }
-
-    /// The confirm button's words, for a toolkit that has no standard
-    /// buttons of its own to use (egui). A toolkit that *does* — Qt's
-    /// `MessageDialog` is a platform confirmation dialog, and on Windows
-    /// and macOS it is the system's own — uses those, because a native
-    /// dialog with hand-written button text is the thing that looks
-    /// wrong on every desktop at once. Which is why the size and the
-    /// destination are in the question and not only on the button.
-    pub fn confirm_label(&self) -> String {
-        format!("Download ({})", shader_source::DOWNLOAD_SIZE)
-    }
-
-    /// The cancel button's words, under the same rule. "Not now" rather
-    /// than "Cancel": the offer does not come back, and the profile
-    /// manager's button is where it is taken up later.
-    pub fn cancel_label(&self) -> &'static str {
-        "Not now"
     }
 
     /// Yes: remember the question was answered and start the download.

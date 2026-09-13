@@ -158,7 +158,7 @@
 #                  cannot be acknowledged holds the line and every interrupt
 #                  after it is lost to the edge-triggered i8259
 #   capi           launcher-capi/examples/smoke.c: a third front end, in C, over
-#                  the same models the egui and Qt builds use — the wizard's
+#                  the same models the Qt launcher uses — the wizard's
 #                  DOS defaults, the disc shelf, snapshots and the profile
 #                  editor, driven through include/launcher_core.h (doc 07)
 #   preview-anim   the launcher's shader preview keeps drawing (doc 07): a preset
@@ -601,9 +601,8 @@ qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
   # hand-built row of buttons in a popup is what this replaced.
   printf '%s' "$o" | grep -q "modality=2, buttons=81920" \
     || { echo "not an application-modal Yes/No dialog"; rc=1; }
-  # The words in it are the shared model's (ADR-014): the egui build
-  # shows the same two strings, and a sentence typed into QML is exactly
-  # what used to drift between the two front ends.
+  # The words in it are the shared model's (ADR-014): a sentence typed
+  # into QML is exactly what used to drift between two front ends.
   printf '%s' "$o" | grep -q "firstrun text: There are no CRT shader presets" \
     || { echo "the dialog's text is not the model's headline"; rc=1; }
   printf '%s' "$o" | grep -q "slang-shaders (~50 MB) into $dir/empty" \

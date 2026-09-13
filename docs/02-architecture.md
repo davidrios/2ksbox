@@ -34,7 +34,7 @@ qemu-3dfx + the CD backend), GPL-2.0 for everything that links it.
 │  │  mode analysis → geometry/shader params (event-driven)         │  │
 │  │  shader-chain / librashader-wgpu runtime (CRT presets)         │  │
 │  │  geometry stage (aspect, integer scale) → wgpu present         │  │
-│  │  winit events ────────────────────────┘   egui overlay         │  │
+│  │  winit events ────────────────────────┘   overlay UI           │  │
 │  │  QMP-JSON over socketpair (snapshots, media, status)           │  │
 │  └────────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────┘

@@ -40,33 +40,31 @@ backend later.
 - QEMU runs **in-process** (`libqemu-embed-<target>`, `embed/`) for latency.
 - **Standalone Rust player + launcher.** RetroArch/libretro was tried and
   rejected — never propose it again.
-- **The launcher is two front ends over one library** (ADR-014,
+- **The launcher is one front end over one library** (ADR-014,
   2026-09-06, doc 07): `launcher-core/` holds everything it *decides* — the bundle
   format, the machine library, the disc shelf, snapshots, shader
   profiles, the preview's render path, **and every window's own state
-  machine and the sentences it shows** — while `launcher/` (egui) and
-  `launcher-qt/` (Qt 6 / QML) are views over it, both maintained.
-  Nothing that a second front end could get differently goes in a front
-  end: not a default that follows the family, not a note under a
-  checkbox, not a combo box's labels. Every toolkit-free debug verb is
-  `launcher_core::cli`, so both binaries answer them identically — and so
-  does `launcherx`, `launcher-core`'s own toolkit-free binary, which is
-  what `scripts/test.sh` and `tools/dos-guest-test.py` drive. Since
-  2026-09-07 `launcher` (egui) is **not a default workspace member**:
-  `cargo build --release` skips it and its ~70 exclusive crates,
-  `scripts/build.sh` follows with `cargo check --release --workspace` so
-  it still cannot rot, and `cargo build -p launcher` builds it.
-  `launcher-capi/` is the same thing as a C ABI, for a front end in
-  another language. `launcher-qt` is not in the root workspace, so
-  `cargo build` never needs Qt 6.
+  machine and the sentences it shows** — while `launcher-qt/` (Qt 6 /
+  QML) is a view over it. Nothing that another front end could get
+  differently goes in the front end: not a default that follows the
+  family, not a note under a checkbox, not a combo box's labels. Every
+  toolkit-free debug verb is `launcher_core::cli`, so `launcher-qt`
+  answers them identically to `launcherx`, `launcher-core`'s own
+  toolkit-free binary, which is what `scripts/test.sh` and
+  `tools/dos-guest-test.py` drive. `launcher-capi/` is the same thing as
+  a C ABI, for a front end in another language; it is the root
+  workspace's one non-default member, and `scripts/build.sh` follows
+  `cargo build --release` with `cargo check --release --workspace` so it
+  cannot rot. `launcher-qt` is not in the root workspace, so `cargo
+  build` never needs Qt 6. **The egui front end (`launcher/`) was
+  deleted on 2026-09-13** (ADR-017, user decision): don't bring it back.
 - **The Qt front end is the one that ships** (ADR-015, 2026-09-07): every
   packager installs `launcher-qt` as `2ksbox` — Linux, the Flatpak (which
   moved to `org.kde.Platform` 6.10 for Qt), macOS (`macdeployqt` before
   our own dylib closure, `-qmldir=launcher-qt/qml` because our QML is a
   Qt resource) and Windows (the DLLs, `plugins\platforms\qwindows.dll`
   and the `qml\` trees, all staged by hand: there is no cross
-  `windeployqt`). `launcher/` (egui) stays maintained and is installed by
-  nothing. `scripts/build.sh` has a `qt` stage in its default set; a host
+  `windeployqt`). `scripts/build.sh` has a `qt` stage in its default set; a host
   with no Qt 6 builds everything else and can roll no package. Every
   packager also opens a **real window offscreen**
   (`QT_QPA_PLATFORM=offscreen` + `LAUNCHER_QT_SHOT`) and requires a PNG,
@@ -240,8 +238,8 @@ runs, for when a single stage has to be driven by hand:
 ```sh
 scripts/prepare-qemu.sh && scripts/configure-qemu.sh
 ninja -C build/qemu qemu-system-i386 qemu-img qemu-io libqemu-embed-i386.so   # .dylib on macOS
-cargo build --release                       # default members (not the egui launcher)
-cargo check --release --workspace           # `launcher` + `launcher-capi`, kept from rotting
+cargo build --release                       # default members (all but launcher-capi)
+cargo check --release --workspace           # `launcher-capi`, kept from rotting
 (cd launcher-qt && cargo build --release)   # the launcher the packages ship; needs Qt 6
 # configure-qemu.sh also builds libdisc (the CD-ROM model) and libsynth (the music
 # engines, doc 20) and links both into QEMU (patches 50 and 60)
@@ -316,7 +314,7 @@ GPU); don't propose wiring it in.
 | `tools/win98-game-test.sh <image> <name>` | a **real game** on the Win98 display driver, headless (doc 19 §26, M10 step 5) — the 9x counterpart of `xp-game-test.sh`. A raw copy of the image (never the image), the freshly built driver re-staged into it (`NO_DRIVER=1` to keep the image's own), the game started from `C:\RUN.BAT` through WIN.INI's `run=` with `GUEST_CMD=` as its body (one CRLF line each: a DOS game needs `cd` before its EXE; COMMAND.COM does not wait for a Windows program, so a second one needs `start /w` before the first), `CDS=a.cue:b.mds` on `ide.1`, a screendump every `SHOTS=` seconds, **`PLAYER=1` runs the same machine inside the player** — the only process with a 3D provider, so it is how a **Glide or OpenGL title** is run at all (Rayman 2 on Glide, 2026-09-10, doc 12 §5): the wrapper's log lands in `OUT/wrapper.log` and the player shoots the guest's own frame every `PLAYER_SHOT_EVERY` frames into `shots/2ksbox-NNNN.png`, because a QMP screendump shows the VGA surface, frozen while 3D presents, `KEYS=`/`CLICKS=` on a timeline, `JIGGLE=1` to move the mouse like a hand on it, `DUMP_EVERY=`/`TRACE=1` for the executor's frames and DP2 stream, `VGA=cirrus` for the in-box-driver control, `STAGE=` to put a probe of ours on C:\, `TEXT_AT=` to read the VGA text page out of VRAM mid-run (always read at the end too), and the ACPI power button at the end — a machine that does not answer it gets `info registers` twice and `info pic`/`info lapic` in `OUT/hang.txt` before it is killed, which is how an unrepainted desktop (EIP moving, `HLT=1`) is told from a dead guest. **It builds the machine `launcherx --print-args` gives for that bundle** — `-cpu pentium3`, `hpet=off`, an SB16 with its OPL3 and the MPU-401 (`MUSIC=gm|mt32|none`) on an audiodev — because a run with no sound card is a different test, not a quieter one: Total Annihilation prints "Sound system initialization failed" and quits before it draws a frame, which in the log reads exactly like the display driver failing (and a DOS game set up for General MIDI at 0x330, Blood, sends its music to a device that must be there). `EXTRA=` appends QEMU arguments (`-perfmap -name debug-threads=on` for a `perf` profile of the vCPU thread — and then delete `/tmp/perf-<pid>.map`: it grows by a line per translated instruction, and a retranslating game put 7.8 GB of it in the RAM-backed `/tmp` in five minutes). Local only, not in `scripts/test.sh` |
 | `tools/win98-bsod-test.sh <image>` | a Windows 98 **blue screen is visible** on `d3dpt-vga` (doc 19 §29): a 9x blue screen is *message mode* — the VDD programs VGA text mode itself — and the adapter has to have left its linear mode for it, or the message sits invisible in the first 32 KB of a frame buffer nobody scans out, which is where every blue screen of this driver's first three days went. Measured: a VxD's fatal exception arrives through the ordinary `PRE_HIRES_TO_VGA` switch (the §26 hook), and the mini-VDD also answers `SAVE_MESSAGE_MODE_STATE` (the DDK's door for message screens that skip the switch; called once at boot). The test blue-screens a raw copy of the image on purpose: `RUN.BAT` runs the staged `BSOD.EXE` (`w9x/bsod.c`), which loads `BSODVXD.VXD` (`w9x/bsodvxd.c`, a dynamic VxD of ours whose init executes `ud2` in ring 0 — "exception 06 in VxD BSODVXD(01)"; the famous `con\con` is patched on the test image and from a DOS box only kills the DOS box; `TRIGGER=`/`STAGE=` for another way; `WHEN=event` faults from a timer callback instead — `BSODTMR.VXD`, a blue screen with no screen switch that only the VMM's `Begin_Message_Mode`/`End_Message_Mode` announce, which the mini-VDD answers since 2026-09-13), and requires the VxD's `message mode` line and the device's `linear mode off`, a screendump meanwhile that is mostly the screen's blue, the VRAM text page naming a VxD or the `0028:` selector, and after a key (`press any key to attempt to continue`) `linear mode on` again, a last screendump that is not blue, and a clean power-off. A wrapper over `tools/win98-game-test.sh` (`TEXT_AT=` reads the text page mid-run). Local only (needs a guest image), not in `scripts/test.sh` |
 | `tools/win98-reboot-test.sh <image> [qmp\|guest\|both]` | a Win98 guest survives a **restart** (patch 22): boots an overlay headless, resets it both ways — a QMP `system_reset` and the Start menu's Shut Down → Restart — and requires a second SeaBIOS banner on the debugcon (the machine really reset) plus a whole boot's worth of disk reads after it (the guest really ran) with `LVT0` back to ExtINT. A screendump is no evidence here: the freeze this guards leaves a splash screen with a **blinking text caret**, drawn by `vga_draw_text` on the host with no guest running at all. `QEMU=`/`BIOS=0` runs the stock-QEMU control. Overlay only, never the image. Local only (needs a guest image), not in `scripts/test.sh` |
-| `launcher-capi/examples/smoke.c` | a third front end, in C, over the same models the egui and Qt builds use (`launcher-capi/include/launcher_core.h`): creates a DOS machine through the shared wizard and checks its answers (64 MB, a period processor, emulated, no network card, our own emulator fast paths all at their shipped setting and a checkbox that changes the count), **what the family picker does to the fields under it** (every untouched one moves to the new family's default, a picked one survives unless the new family has no such entry, "Default" puts a field back to following the family), then the disc shelf, the library and the profile editor. The `capi` check in `scripts/test.sh`; a scratch library, never the user's own. A changed default in a model fails here as well as in the two GUIs |
+| `launcher-capi/examples/smoke.c` | a third front end, in C, over the same models the Qt launcher uses (`launcher-capi/include/launcher_core.h`): creates a DOS machine through the shared wizard and checks its answers (64 MB, a period processor, emulated, no network card, our own emulator fast paths all at their shipped setting and a checkbox that changes the count), **what the family picker does to the fields under it** (every untouched one moves to the new family's default, a picked one survives unless the new family has no such entry, "Default" puts a field back to following the family), then the disc shelf, the library and the profile editor. The `capi` check in `scripts/test.sh`; a scratch library, never the user's own. A changed default in a model fails here as well as in the GUI |
 | `target/release/synthx` (`cargo build --release -p libsynth`) | the music engines (doc 20) without QEMU: `selftest <dir>` runs the AdLib detection sequence, a 440 Hz FM note measured by Goertzel against its neighbours, the same note through the **shipped bank** byte by byte down the MPU-401's own path, and a running-status note-off with a real-time byte inside the note-on (the `libsynth` check; `--roms <dir>` adds the CM-32L, which otherwise SKIPs); `wavtone <file.wav> <hz>` is what the `music` check asks of a wav QEMU recorded; `bank <file.sf2>` says whether a bank of your own plays; `opl <out.wav>` writes the FM tone to listen to. **`midilog <log>` / `opllog <log>` / `play <log> <out.wav>`** read a capture of what a guest wrote to a music device — `LIBSYNTH_MIDI_LOG=<file>` and `LIBSYNTH_OPL_LOG=<file>` in the player's environment, both at once if wanted, doc 20 §7.2: a row per channel and a column per second of note-ons (key-ons for the chip), what silenced each channel (volume/expression to zero, all-notes-off), notes left held or channels left keyed on, the most down at once against the engine's own voice count, bytes the parser could attach to nothing — and then the same writes played again with no guest at the timing they were written with. That is what separates "the guest stopped sending it" from "we stopped playing it" when music starts right and then goes wrong, and capturing both devices is how you tell a guest-side cause from ours: the two engines share no synthesis code, so a fault in both is in neither |
 | the `music` check in `scripts/test.sh` | the sound-card and music pickers (doc 20 §6) from a combo box to a real QEMU — each family's default is the card it always had, the FM chip follows the card, a card a family doesn't offer is refused, an MT-32 with no ROMs is refused at the form — and then the two devices **sounding**: the human monitor writes the ports a guest would (`o /b 0x388 …`, `o /b 0x330 …`), QEMU's own `wav` audiodev records what its mixer made of it, and the note has to be in the file |
 | the `sb-mixer` check in `scripts/test.sh` | the SB16's mixer volumes **applied** (patch 61, 2026-09-11): the FM note at unity and then with the card's FM volume, its master volume and the SB Pro's FM register each at −12 dB, written by the monitor the way a driver writes them, and QEMU's own wav has to come out 12 dB down all three ways. QEMU stored these registers and applied none, so Windows' sliders reached nothing and a race's effects over its CD music clipped. The CD half needs ATAPI, so it is `CDVOL=` in `tools/audio-glitch-test.py cd` |

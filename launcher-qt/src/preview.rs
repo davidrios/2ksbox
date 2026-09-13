@@ -2,23 +2,18 @@
 //!
 //! The render itself is `launcher_core::preview::Preview` — the same
 //! decode, the same `shader-chain`, the same "integer scale, then
-//! letterbox" viewport math as `player::Gpu::viewport` — shared with the
-//! egui build rather than written twice. What is here is the two things
-//! Qt makes different, and they are the interesting part of the whole
-//! port:
+//! letterbox" viewport math as `player::Gpu::viewport`. What is here is
+//! the two things Qt makes awkward:
 //!
-//! 1. **Whose GPU.** eframe hands egui a live `wgpu::Device`/`Queue` and
-//!    the egui build's preview borrows it. Qt Quick renders through its
-//!    own abstraction (QRhi) on Vulkan, and cxx-qt exposes no handle to
-//!    it, so this calls `Preview::headless` and gets a *second*,
-//!    windowless wgpu device. On this box that is a second Vulkan
-//!    logical device on the same physical GPU: about 40 MB of extra VRAM
-//!    and one more driver context, invisible in use, but a real cost the
-//!    egui build does not pay.
+//! 1. **Whose GPU.** Qt Quick renders through its own abstraction (QRhi)
+//!    on Vulkan, and cxx-qt exposes no handle to it, so this calls
+//!    `Preview::headless` and gets a *second*, windowless wgpu device. On
+//!    this box that is a second Vulkan logical device on the same
+//!    physical GPU: about 40 MB of extra VRAM and one more driver
+//!    context, invisible in use, but a real cost.
 //!
-//! 2. **How the frame reaches the widget.** egui takes the rendered
-//!    texture by id — zero copy, it is already on the device the UI
-//!    draws with. Nothing in cxx-qt can hand a foreign texture to a
+//! 2. **How the frame reaches the widget.** Nothing in cxx-qt can hand a
+//!    foreign texture to a
 //!    `QQuickItem`; doing it properly needs a `QQuickRhiItem` subclass
 //!    in C++ importing the Vulkan image, which is a real project. So the
 //!    frame is read back to the CPU (`Preview::read_frame`, which is
@@ -27,8 +22,7 @@
 //!    that QML's `Image` reloads. BMP, not PNG: no compression pass, and
 //!    this happens on every slider drag — measured at ~4 ms for a
 //!    1280x960 frame against ~90 ms for PNG. The readback itself is
-//!    ~3 ms. See doc 07: this is the one place the Qt build is
-//!    meaningfully worse, and it is fixable, in C++.
+//!    ~3 ms. See doc 07: it is fixable, in C++.
 
 use launcher_core::preview::Preview as Core;
 use std::path::{Path, PathBuf};

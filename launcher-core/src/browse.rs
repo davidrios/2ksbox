@@ -1,11 +1,10 @@
 //! The part of "Browse…" that is not a dialog.
 //!
-//! Neither front end's file dialog is here: the egui build has to bring
-//! one (`rfd` — egui draws pixels and nothing else), Qt ships its own
-//! (`QtQuick.Dialogs`' `FileDialog`), and both end up on the same three
-//! backends anyway — the XDG portal on Linux, `NSOpenPanel` on macOS,
-//! `IFileDialog` on Windows. What *is* here is the decision they were
-//! separately getting right: which extensions a field offers, and which
+//! The file dialog itself is not here: it is the toolkit's (Qt ships
+//! `QtQuick.Dialogs`' `FileDialog`, onto the XDG portal on Linux,
+//! `NSOpenPanel` on macOS and `IFileDialog` on Windows). What *is* here
+//! is the decision any front end has to get right: which extensions a
+//! field offers, and which
 //! directory the dialog opens in. A `.slangp` lives somewhere nobody
 //! would navigate to by hand, so getting that wrong is the difference
 //! between a working button and a dialog on the user's home directory.
@@ -53,8 +52,7 @@ pub fn name_filter(filter: Filter) -> String {
 /// or an initial default) if the field is empty or names a bare filename.
 ///
 /// A first attempt handed the dialog the *file* path instead of the
-/// directory containing it, which breaks it; `cli`'s `--pick-file` verb
-/// exercises this exact function for that reason.
+/// directory containing it, which breaks it.
 pub fn start_dir(value: &str) -> Option<PathBuf> {
     if value.is_empty() {
         return None;

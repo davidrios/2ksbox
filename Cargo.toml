@@ -1,24 +1,21 @@
 [workspace]
 resolver = "2"
-members = ["player", "libdisc", "libsynth", "gamepad", "launcher", "launcher-core", "launcher-capi", "qemu-embed", "shader-chain"]
-# Two members are deliberately not *default* members — they are built by
-# name, and `cargo check --workspace` (scripts/build.sh) is what keeps
-# them from rotting. `launcher-capi` builds a `cdylib` and a `staticlib`
-# of the whole launcher, which nobody needs unless they are building a
-# front end in another language. `launcher` is the egui front end, which
-# ADR-015 keeps maintained and no packager installs: it costs 70 crates
-# nobody else in this workspace needs (eframe, accesskit, harfrust, icu)
-# for a window that no scripted check ever opens. The toolkit-free debug
-# verbs both front ends share are `launcher-core`'s `launcherx` binary,
-# so `scripts/test.sh` does not need either of them.
-# `cargo build -p launcher` / `-p launcher-capi` when you want them.
+members = ["player", "libdisc", "libsynth", "gamepad", "launcher-core", "launcher-capi", "qemu-embed", "shader-chain"]
+# `launcher-capi` is deliberately not a *default* member: it builds a
+# `cdylib` and a `staticlib` of the whole launcher, which nobody needs
+# unless they are building a front end in another language.
+# `cargo check --workspace` (scripts/build.sh) is what keeps it from
+# rotting; `cargo build -p launcher-capi` when you want it. The launcher
+# itself is `launcher-qt/`, its own workspace so that nothing here needs
+# Qt 6 (ADR-015); the egui front end that used to be a member here was
+# retired on 2026-09-13 (ADR-017).
 default-members = ["player", "libdisc", "libsynth", "gamepad", "launcher-core", "qemu-embed", "shader-chain"]
 
 [workspace.package]
 version = "0.0.1"
 edition = "2021"
 # The default for crates that link QEMU (`player`, `qemu-embed`) or its
-# device model (`libdisc`, `libsynth`). `launcher`, `launcher-core` and
+# device model (`libdisc`, `libsynth`). `launcher-core` and
 # `shader-chain` opt out with `GPL-2.0-or-later` — see ADR-009 in
 # docs/10-decisions.md.
 license = "GPL-2.0-only"

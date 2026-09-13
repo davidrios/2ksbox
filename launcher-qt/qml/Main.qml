@@ -1,5 +1,5 @@
 // The launcher window: the machine library grid, and the four windows
-// off it. `launcher/src/main.rs`'s `LauncherApp::ui`, as a view.
+// off it.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -21,9 +21,7 @@ ApplicationWindow {
     }
 
     // A child process has no way to push the news that it exited, so
-    // this polls for it — where the egui build did the same work at the
-    // top of every frame, sixty times a second, because it had a frame
-    // anyway. Here the interval is stated out loud.
+    // this polls for it, at an interval stated out loud.
     Timer {
         interval: 500
         running: true
@@ -376,9 +374,8 @@ ApplicationWindow {
             machines.refresh()
             // A disc added or renamed should show up in the guest's own
             // CDSHELF listing without restarting the machine, so every
-            // *running* drive gets the new shelf file — the egui build's
-            // `take_saved` loop, moved out here where the running set
-            // lives.
+            // *running* drive gets the new shelf file — here, where the
+            // running set lives.
             if (discs.takeSaved())
                 machines.republishShelf()
         }
@@ -511,8 +508,8 @@ ApplicationWindow {
                 // path, ending on the refreshed grid, so the run is only a
                 // pass if the bundle really landed in the library. The
                 // family is worth naming: a bundle written through this
-                // window has to come out the same as one written by the
-                // egui build or by `--wizard-new`, and DOS is the family
+                // window has to come out the same as one written by
+                // `--wizard-new`, and DOS is the family
                 // where that used to be false.
                 wizard.openFresh()
                 const spec = diag.arg.split(":")
@@ -681,8 +678,7 @@ ApplicationWindow {
             // are always items declared in QML — and hence a *whole
             // window* headless shot, dialog frame and all, would need a
             // small C++ shim calling `QQuickWindow::grabWindow()`.
-            // Documented in doc 07: it is the one thing the egui build's
-            // own 150-line off-screen dump path does better.
+            // Documented in doc 07.
             const target = openWindowItem() || body
             diag.note("grabbing " + target.width + "x" + target.height
                       + " -> " + target.grabToImage(cb))

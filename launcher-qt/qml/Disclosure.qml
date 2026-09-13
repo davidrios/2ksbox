@@ -1,6 +1,4 @@
-// A section header that opens and closes what is under it — the Qt
-// equivalent of egui's `CollapsingHeader`, which is what the same
-// section is drawn with in the other front end.
+// A section header that opens and closes what is under it.
 //
 // It exists because the section it was written for used a plain
 // `CheckBox` as its expander, and a checkbox in front of "Emulation

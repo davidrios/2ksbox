@@ -20,8 +20,7 @@
 # The guest-tools ISO is included when guest-tools/out has one.
 #
 # The launcher is `launcher-qt` (ADR-015, 2026-09-07): Qt 6 / QML is the
-# front end the project ships, and `launcher/` (egui) stays a maintained
-# second view over `launcher-core` that no package installs. Qt itself is
+# front end the project ships, over `launcher-core`. Qt itself is
 # **not** in the tarball -- it is ~38 MB of shared libraries, QML modules
 # and plugins that every distribution already packages, and a tarball
 # that carried its own would still have to match the host's Wayland,

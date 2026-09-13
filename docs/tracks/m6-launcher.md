@@ -10,10 +10,18 @@ section (scope, exit criterion). Branch: `track/m6-launcher` (opened
 **Merged to `main` 2026-09-06** through step 6b; the branch stays open
 for 6b′ onwards, so rebase on `main` before the next push.
 
+**2026-09-13: the egui front end (`launcher/`) was deleted (ADR-017).**
+The launcher is now `launcher-core` plus one front end, `launcher-qt`,
+with `launcher-capi` (C ABI) and `launcherx` (the toolkit-free verbs) as
+the core's other callers. Everything below that describes `launcher/`,
+eframe or the `--diag-*-frame` verbs is the history of how the track got
+here; the rules it discovered are the core's and still hold.
+
 ## Decided this session
 
 - **UI toolkit: egui/eframe**, not Slint (doc 07 left this open;
-  resolved 2026-09-04). Reasons: MIT/Apache-2.0 (no friction with the
+  resolved 2026-09-04; superseded by ADR-015's Qt build on 2026-09-07,
+  and the egui build deleted on 2026-09-13, ADR-017). Reasons: MIT/Apache-2.0 (no friction with the
   project's GPL-2.0-only + "everything open source" stance — Slint's
   non-GPLv3 tiers are royalty-free/commercial, not verified compatible),
   pure Rust, same toolkit doc 07 already names for the player's overlay.
@@ -31,33 +39,30 @@ for 6b′ onwards, so rebase on `main` before the next push.
 
 ## Scope and files (this track owns them)
 
-- `launcher/` entirely: `Cargo.toml`, `src/` (currently one `main.rs`
-  skeleton; expect it to grow into `app.rs`, `library.rs` (machine
-  bundle scanning + grid state), `wizard.rs` (guided creation),
-  `bundle.rs` (the `machine.toml` format, shared conceptually with the
-  player but not necessarily a shared crate yet — decide when the
-  player needs to read the same format), `snapshots.rs`, `discshelf.rs`.
-- `launcher-core/`, `launcher-qt/` and `launcher-capi/` as well, since the
-  step-7 split (2026-09-06): the core decides, the two front ends draw,
-  the C ABI exposes the same models. `launcher-qt` is the one the
-  packages install (ADR-015).
+- `launcher-core/`, `launcher-qt/` and `launcher-capi/`, since the
+  step-7 split (2026-09-06): the core decides, the front end draws, the
+  C ABI exposes the same models. `launcher-qt` is the one the packages
+  install (ADR-015) and, since `launcher/` (egui) was deleted on
+  2026-09-13 (ADR-017), the only front end.
 - `packaging/` and `scripts/package-*.sh` (M6 step 6, 2026-09-05):
   the Linux desktop entry, icon and `install.sh`, and the script that
   stages doc 07's install layout. `player/build.rs`'s rpath and the
   `package` check in `scripts/test.sh` are the two places this track
-  reaches outside `launcher/` — both minimal, both named in the commit.
+  reaches outside the launcher crates — both minimal, both named in the
+  commit.
 - Docs: doc 07 (this track's design doc — update as decisions land, e.g.
   the toolkit choice above), the M6 section of doc 08, this file, the M6
   row of the state table and "Next steps" in `docs/00-status.md`.
 - Shared (rebase first, edit minimally, say which track in the commit):
-  `Cargo.toml` (workspace members — already lists `launcher`), `CLAUDE.md`
-  if a launcher-specific test tool is added to the table, `docs/00-status.md`
-  outside the M6 row. The machine bundle format (`machine.toml`) will
-  eventually be read by both `player/` and `launcher/`; when that lands,
-  decide then whether it needs a shared crate — don't preempt it now.
+  `Cargo.toml` (workspace members — lists `launcher-core` and
+  `launcher-capi`), `CLAUDE.md` if a launcher-specific test tool is added
+  to the table, `docs/00-status.md` outside the M6 row. The machine
+  bundle format (`machine.toml`) is `launcher-core/src/bundle.rs`; the
+  player takes the arguments the launcher derives from it rather than
+  reading it.
 - **`shader-chain/` is now a shared crate** (2026-09-05, factored out of
   `player/src/shader.rs` for the shader-preview feature below): both
-  `player/` and `launcher/` depend on it for the librashader filter
+  `player/` and `launcher-core/` depend on it for the librashader filter
   chain itself. A change here affects both binaries — rebuild and
   retest both (the player's `PLAYER_DUMP_OUT` dump-diff and the
   launcher's `--preview-shader` debug verb, both below) before pushing.

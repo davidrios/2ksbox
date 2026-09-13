@@ -1,7 +1,6 @@
 // The guided creation wizard (doc 07), over the shared form
 // (`launcher_core::wizard::Form`). The same form doubles as "Edit
-// machine" for an existing bundle, and the egui build draws the same
-// fields from the same model.
+// machine" for an existing bundle.
 //
 // Every field with a *consequence* goes through an invokable
 // (`chooseFamily`, `chooseRam`, …) rather than assigning the property:
@@ -126,8 +125,7 @@ Window {
             // fixed 720 tall and opening the optimizations section is
             // enough to push "Save" past the bottom edge — a form whose
             // save button cannot be reached is worse than one that
-            // scrolls. The egui build wraps the same fields in the same
-            // way.
+            // scrolls.
             ScrollView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -535,14 +533,12 @@ Window {
                 // bottom of the window. The header carries the count, so a
                 // machine with one turned off says so while closed. The
                 // labels, the sentences and the count all come from the
-                // shared form — the egui build draws the same section from
-                // the same strings.
+                // shared form.
                 //
                 // The header is a `Disclosure`, not a checkbox: a tick in
                 // front of "Emulation optimizations" reads as the switch
                 // that turns them all off, which is not what closing a
-                // section does (user, 2026-09-06). egui draws this one as
-                // a `CollapsingHeader` for the same reason.
+                // section does (user, 2026-09-06).
                 Disclosure {
                     id: optimizationsExpander
                     Layout.fillWidth: true

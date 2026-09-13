@@ -88,10 +88,11 @@ cd 2ksbox
 
 ```sh
 cargo build --release        # the default members; ~47 s on the Air
-# The egui front end is NOT one of them (2026-09-07): ADR-015 keeps it
-# maintained and no packager installs it, and its ~70 exclusive crates
-# were another ~44 s on every build here. This is what keeps it honest,
-# and it is what `scripts/build.sh` runs after the build above:
+# `launcher-capi` is the one member that is not a default (a cdylib and
+# a staticlib nobody needs unless writing a C front end). This is what
+# keeps it compiling, and it is what `scripts/build.sh` runs after the
+# build above (the egui front end it also used to guard was deleted
+# 2026-09-13, ADR-017):
 cargo check --release --workspace
 target/release/player          # window with the test pattern, rendered via wgpu → Metal
 ```

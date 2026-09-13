@@ -4,7 +4,7 @@
 //
 // Library edits save as they're made — there is no "Save" button,
 // because a shelf is a list of things you own, not a document being
-// drafted (`launcher/src/discshelf.rs`).
+// drafted.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

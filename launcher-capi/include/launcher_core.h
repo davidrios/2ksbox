@@ -1,8 +1,8 @@
 /* The 2ksbox launcher, as a C library (doc 07).
  *
  * Everything the launcher does that is not drawing lives in one Rust
- * crate (`launcher-core`), and the project's two front ends — the egui
- * one and the Qt/QML one — are views over it. This header is the same
+ * crate (`launcher-core`), and the project's front end — the Qt/QML
+ * one — is a view over it. This header is the same
  * thing for a front end that is not Rust: a native macOS app in Swift is
  * the case it was shaped for (Swift imports a C header directly, with no
  * bridge), but anything that speaks C works.

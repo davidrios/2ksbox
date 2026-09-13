@@ -86,11 +86,9 @@ fn main() {
     // (`launcher_core::fatal`).
     launcher_core::fatal::install("qt");
     // Debug verbs first, before a GUI exists. They are
-    // `launcher_core::cli`'s, so this binary answers every one the egui
-    // launcher does, identically — `--paths`, `--discs`, `--snapshots`,
-    // `--wizard-new`, `--preview-shader` and the rest — rather than the
-    // two it used to reimplement. (`--pick-file` is the one exception:
-    // it pops `rfd`'s dialog, and this build's file dialog is QML's.)
+    // `launcher_core::cli`'s, so this binary answers every one `launcherx`
+    // does, identically — `--paths`, `--discs`, `--snapshots`,
+    // `--wizard-new`, `--preview-shader` and the rest.
     let mut args = std::env::args().skip(1);
     let verb = args.next();
     if verb.is_some() {
@@ -116,8 +114,7 @@ fn main() {
     unsafe { launcher_qt_choose_style() };
     launcher_core::fatal::note("QGuiApplication");
     let mut app = QGuiApplication::new();
-    // The window's own identity, the two halves the egui build sets with
-    // `with_app_id` and `with_icon`: the desktop-entry name a Wayland
+    // The window's own identity, in two halves: the desktop-entry name a Wayland
     // compositor matches a window to its launcher (and its icon) by, and
     // the picture itself for every window system that takes one instead.
     // The PNG is one of the sizes `scripts/gen-icons.sh` derives from the

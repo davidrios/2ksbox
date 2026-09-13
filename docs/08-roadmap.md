@@ -127,7 +127,8 @@ Done, all through the in-process embed path:
 - **Architecture (ADR-014):** `launcher-core/` library owns all logic, models,
   state machines, bundle formats, and debug CLI verbs.
 - **Shipped front end (ADR-015):** `launcher-qt/` on Qt 6 / QML via cxx-qt
-  installs as `2ksbox`. `launcher/` (egui) kept as maintained reference view.
+  installs as `2ksbox`. The egui view `launcher/` was kept as a second
+  front end until 2026-09-13, when it was deleted (ADR-017).
   `launcher-capi/` exposes C ABI for external embedding.
 - **Machine library & wizard:** 4 families (Win98, XP, DOS, Other), RAM bounds,
   CPU throttling for DOS (`cpu_speed`), display adapter choice (`d3dpt`, `cirrus`, `std`),

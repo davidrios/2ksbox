@@ -14,12 +14,6 @@
 # `cargo/config` covers both because `CARGO_HOME` is the same for both
 # builds.
 #
-# The root lock file still names `launcher/`'s egui crates: the Flatpak no
-# longer builds that front end (ADR-015), so they are vendored and never
-# compiled. That costs a download and not a build, and dropping them would
-# mean generating from something other than the lock file — which is the
-# one thing here that is exact.
-#
 # Run it after any dependency change in either workspace, and commit the
 # result:
 #   scripts/gen-flatpak-cargo-sources.sh

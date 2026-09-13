@@ -1,5 +1,5 @@
 //! A C ABI over `launcher-core`, so a front end that is not Rust can
-//! drive the same models the egui and Qt builds do — a native macOS app
+//! drive the same models the Qt launcher does — a native macOS app
 //! in Swift is the case this was shaped for (Swift imports a C header
 //! directly, with no bridge crate), but anything that speaks C works.
 //!

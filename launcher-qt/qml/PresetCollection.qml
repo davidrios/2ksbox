@@ -40,8 +40,7 @@ ColumnLayout {
     Button {
         visible: editor.presetsDir === "" && !editor.downloadState.startsWith("running")
         // The size and the destination are the model's
-        // (`editor::PresetState::Missing`), not this file's: the egui
-        // build offers the same two.
+        // (`editor::PresetState::Missing`), not this file's.
         text: editor.downloadState.startsWith("failed")
             ? qsTr("Try again")
             : qsTr("Download presets (%1)").arg(editor.presetsDownloadSize)

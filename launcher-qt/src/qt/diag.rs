@@ -1,16 +1,11 @@
-//! Headless screenshots, the way `launcher --diag-*-frame` does them for
-//! the egui build.
+//! Headless screenshots of the real windows.
 //!
-//! The egui launcher has to *simulate* a frame to get one without a
-//! window: build an `egui::Context`, feed it synthetic pointer events,
-//! tessellate, paint into an off-screen texture, dump the texture
-//! (`main.rs`'s `dump_egui_frame` and `diag_window_frames`, ~150 lines).
 //! Qt Quick already knows how to render off-screen — `QT_QPA_PLATFORM=
 //! offscreen` with the software backend, and `Item.grabToImage()` — so
-//! this side is a handful of environment variables read into properties
-//! and four lines of QML. That is the largest single code saving in the
-//! whole port, and it is entirely because Qt separates "render" from
-//! "have a window" and egui does not.
+//! this is a handful of environment variables read into properties and
+//! four lines of QML. (The retired egui build had to *simulate* a frame
+//! for the same thing: ~150 lines of synthetic input and an off-screen
+//! paint, because egui does not separate "render" from "have a window".)
 //!
 //! `LAUNCHER_QT_SHOT=<file.png>` arms it, `LAUNCHER_QT_SCREEN=<name>`
 //! picks which window to open first, `LAUNCHER_QT_ARG=<value>` is that

@@ -2,7 +2,7 @@
 name = "launcher-qt"
 version = "0.0.1"
 edition = "2021"
-# Same reasoning as `launcher/Cargo.toml`: this binary links no QEMU code
+# ADR-009: this binary links no QEMU code
 # (it spawns the player as a separate process) and does link permissively
 # licensed crates, so "or later" lets the combined binary go out under
 # v3. Qt 6 itself is LGPLv3 here, which GPL-2.0-only could not take and
@@ -19,8 +19,7 @@ description = "Companion launcher, Qt 6 / QML front end over launcher-core (cxx-
 [workspace]
 
 [dependencies]
-# The same crate `launcher/` (egui) is built on, and the reason this
-# front end is a few thousand lines of view code rather than a second
+# The reason this front end is a few thousand lines of view code rather than a second
 # implementation of the launcher: every window's state machine, the
 # bundle format, the disc shelf, snapshots, shader profiles, the preview's
 # render path and the toolkit-free debug verbs are all in there.

@@ -1,25 +1,25 @@
 //! The launcher, minus the drawing.
 //!
-//! There are two front ends over this crate — `launcher/` (egui) and
-//! `launcher-qt/` (Qt 6 / QML through cxx-qt), both maintained, doc 07 —
-//! and the rule that keeps them honest is that **everything either of
-//! them could disagree about lives here**. Not just the file formats and
-//! the subprocesses: the *windows' own behaviour* too. Which memory
-//! default follows the family until someone picks a number, the exact
-//! sentence under the networking checkbox, when a snapshot job is
-//! polled, whether a running machine is driven through its monitor or
-//! through `qemu-img` — all of that is one implementation here, and a
-//! front end is the widgets that show it plus the events that call in.
+//! The front end over this crate is `launcher-qt/` (Qt 6 / QML through
+//! cxx-qt, doc 07); `launcher-capi/` is the same crate as a C ABI, and
+//! `launcherx` is its toolkit-free verbs with no front end at all. The
+//! rule is that **everything a front end could get differently lives
+//! here**. Not just the file formats and the subprocesses: the
+//! *windows' own behaviour* too. Which memory default follows the family
+//! until someone picks a number, the exact sentence under the networking
+//! checkbox, when a snapshot job is polled, whether a running machine is
+//! driven through its monitor or through `qemu-img` — all of that is one
+//! implementation here, and a front end is the widgets that show it plus
+//! the events that call in.
 //!
-//! The split it replaced was `#[path]`-including ten files from
-//! `launcher/src/` into the Qt crate, which proved the *file formats*
-//! were portable but left every window's state machine written twice.
-//! They had already drifted: the Qt wizard had no processor, floppy or
-//! boot field and its networking checkbox didn't follow the family; its
-//! "no network adapter" line said `Windows` where egui's said `the
-//! guest`; and saving a *new* shader profile dropped the parameter
-//! overrides on the egui side and kept them on the Qt side. Those are
-//! all one piece of code now, so there is nothing left to drift.
+//! The rule was learned from two front ends that each held their own
+//! copy: until 2026-09-06 an egui build and the Qt one shared only the
+//! file formats, and they had already drifted — the Qt wizard had no
+//! processor, floppy or boot field and its networking checkbox didn't
+//! follow the family, and saving a *new* shader profile dropped the
+//! parameter overrides in one of them and not the other. The egui build
+//! was retired on 2026-09-13 (ADR-017); the rule stays, because a C
+//! front end over `launcher-capi` would drift the same way.
 //!
 //! Three groups of modules:
 //!

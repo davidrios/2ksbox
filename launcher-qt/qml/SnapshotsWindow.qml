@@ -1,6 +1,6 @@
 // Snapshots (doc 07). A running machine goes through its monitor, a
 // stopped one through `qemu-img`; the model decides which, this only
-// draws it — `launcher/src/snapshots.rs`'s `SnapshotWindow::show`.
+// draws it.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -41,9 +41,8 @@ Window {
     /// window's* interaction, not of the machine.
     property string confirmRestore: ""
 
-    // Only while a live job is in flight. The egui build polls at most
-    // twice a second from inside its repaint; here the interval is
-    // explicit and nothing runs when there is no job.
+    // Only while a live job is in flight: the interval is explicit and
+    // nothing runs when there is no job.
     Timer {
         interval: 400
         repeat: true

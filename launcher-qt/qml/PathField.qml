@@ -1,11 +1,9 @@
-// A labelled path field with a "Browse…" button — the Qt equivalent of
-// `launcher/src/filepicker.rs`'s `path_field`.
+// A labelled path field with a "Browse…" button.
 //
 // Typing directly is still allowed (a path the user already knows, or one
 // on a mount the picker can't reach); the button is a convenience, not
 // the only way in. `FileDialog` is Qt's own, which on Linux is the XDG
-// desktop portal — the same backend the egui build reaches through
-// `rfd`, with no extra dependency.
+// desktop portal, with no extra dependency.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

@@ -1,18 +1,16 @@
-//! Every debug verb that needs no toolkit, in one place, so both front
-//! ends answer the same ones with the same code (doc 07, and the README
-//! table). They are how the launcher is tested at all — CLAUDE.md's
-//! policy is integration and end-to-end only, and a verb here drives the
-//! real model a button drives, without a GUI click.
+//! Every debug verb that needs no toolkit, in one place, so the Qt
+//! launcher and `launcherx` answer the same ones with the same code
+//! (doc 07, and the README table). They are how the launcher is tested
+//! at all — CLAUDE.md's policy is integration and end-to-end only, and a
+//! verb here drives the real model a button drives, without a GUI click.
 //!
 //! `run` returns `Some(exit code)` when it recognised the verb, `None`
-//! when the caller should keep looking (its own toolkit-bound verbs) or
-//! open a window. Both binaries call it first thing, before a GUI exists.
+//! when the caller should keep looking or open a window. Both binaries
+//! call it first thing, before a GUI exists.
 //!
-//! Two verbs are deliberately *not* here, because they are the toolkit:
-//! `launcher --pick-file` pops the real `rfd` dialog (Qt's own dialog is
-//! declarative, in QML, and has nothing to call), and the `--diag-*`
-//! screenshot verbs render real frames — synthetic egui input on one
-//! side, `QT_QPA_PLATFORM=offscreen` and `grabToImage` on the other.
+//! The headless screenshots are deliberately *not* here, because they
+//! are the toolkit: `launcher-qt` renders its real windows under
+//! `QT_QPA_PLATFORM=offscreen` and `grabToImage` (`qt/diag.rs`).
 
 use crate::bundle::{self, Family, Machine, Music, Optimization, Sound};
 use crate::{browse, control, disc_library, firstrun, library, machines, player, preview, shader_library,
@@ -430,8 +428,8 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                     other => shelf.add(other.into()),
                 }
             }
-            // The egui window saves at the end of the frame it was
-            // edited in; headlessly there is no frame, so flush here.
+            // A window saves when a field reports a finished edit;
+            // headlessly there is no window, so flush here.
             shelf.flush().expect("save the shelf");
             if let Err(e) = shelf.last_result() {
                 eprintln!("[discs] {e}");

@@ -323,8 +323,8 @@ is `clamp_to_border` and presets are written against it. librashader's
 wgpu runtime downgrades every such sampler to `clamp_to_edge`, without a
 word, on a device opened without `ADDRESS_MODE_CLAMP_TO_BORDER` — so the
 device the chain runs on is opened with it
-(`shader_chain::required_features`, used by the player, the launcher's
-egui device and the preview's headless one). Without it the outermost row
+(`shader_chain::required_features`, used by the player and the
+launcher preview's headless device). Without it the outermost row
 and column are smeared over everything outside the tube. The player says
 which it got at startup (`[shader] clamp-to-border sampling: …`).
 

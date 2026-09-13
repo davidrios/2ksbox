@@ -9,7 +9,7 @@
 // convention and it differs across the three we ship to.
 //
 // Every word is the model's: `text` and `informativeText` are its
-// `headline` and `detail`, and the egui build shows the same two. The
+// `headline` and `detail`. The
 // buttons are the deliberate exception — a native dialog with
 // hand-written button text is what looks wrong on every desktop at
 // once — so the size and the destination are in the question itself

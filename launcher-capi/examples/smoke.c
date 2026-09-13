@@ -1,5 +1,5 @@
 /* A third front end, in the smallest possible form: a C program that
- * drives the same models the egui and Qt builds do, through
+ * drives the same models the Qt launcher does, through
  * `include/launcher_core.h`.
  *
  * It is a *test*, not a demo — `scripts/test.sh host` builds and runs it

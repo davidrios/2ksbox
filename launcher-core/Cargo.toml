@@ -41,11 +41,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 ureq = "3"
 flate2 = "1"
 tar = "0.4"
-# `preview.rs` renders on whatever device it is handed (eframe's, for the
-# egui build) or opens a windowless one itself (`Preview::headless`, for
-# the Qt build and the `--preview-shader` verb), which is what these two
-# are for. Must stay on the version `shader-chain` pins, or the two see
-# different `wgpu::Device` types; eframe's own is unified with it by
-# Cargo.
+# `preview.rs` opens a windowless device of its own (`Preview::headless`,
+# for the Qt build and the `--preview-shader` verb), which is what these
+# two are for. Must stay on the version `shader-chain` pins, or the two
+# see different `wgpu::Device` types.
 wgpu = "30"
 pollster = "1"

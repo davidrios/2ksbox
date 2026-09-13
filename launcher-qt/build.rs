@@ -2,7 +2,7 @@
 //! finds Qt through `qmake6`, runs `moc` and `qmltyperegistrar` over the
 //! QObjects the bridges declare, compiles the generated C++ and links it
 //! into this binary — so `cargo build` is still the whole build command,
-//! which is what keeps this comparable to the egui launcher.
+//! like everything else in the tree.
 //!
 //! The QML files are compiled into the binary as a Qt resource, hence
 //! the `qrc:/qt/qml/<uri as a path>/…` URL `main.rs` loads: an installed
