@@ -36,7 +36,13 @@ Window {
     /// whole wiring under test is downstream of it.
     readonly property alias shownAdd: adder.shownText
     readonly property alias addFilters: adder.dialogFilters
-    function pickDisc(path) { adder.acceptPath(path) }
+    /// As the dialog would: the file's URL, then the field's own way back
+    /// to a path. Returns the URL's string for the probe to print.
+    function pickDisc(path) {
+        const url = adder.fileUrl(path)
+        adder.acceptUrl(url)
+        return url.toString()
+    }
 
     title: discs.title
     width: 880

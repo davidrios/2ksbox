@@ -1590,6 +1590,18 @@ items nobody owns yet:
   paths into URLs with `QUrl` instead of QML's `"file://" + path`. The
   `qtshelf` check requires the next empty field to open where its disc
   was picked.
+- **A dialog's URL is not a path with `file://` in front.** QML turned
+  `selectedFile` into a path by stripping `file://` off `toString()`,
+  which keeps `[` and `]` percent-encoded: a disc named "Game [1996]"
+  went on the shelf as `Game %5B1996%5D.iso`, and a machine booting it
+  would not start (user-reported 2026-09-12). The core and QEMU were
+  never the problem — the same name goes through `--discs add`,
+  `--boot-disc` and our QEMU's `info block` intact. Every Qt dialog now
+  converts through `QUrl::toLocalFile` (`Browse.localPath`), the probe
+  takes the dialog's own road (`PathField.acceptUrl` with
+  `Browse.fileUrl`), and the `qtshelf` check picks `Game [1996].iso`.
+  A disc already shelved with `%5B` in its path has to be removed and
+  added again.
 - **A QML grid column needs its width pinned, not preferred.** The Qt
   machine grid's buttons sat at a different x in every row (user-reported
   2026-09-12): `Layout.preferredWidth` alone lets a `RowLayout` shrink or

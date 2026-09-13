@@ -44,6 +44,14 @@ RowLayout {
     /// checking is downstream of this line (`Main.qml`'s `pickdisc`) —
     /// the directory the next empty field's dialog opens in included.
     function acceptPath(path) { browse.remember(path); root.edited(path); root.picked(path) }
+    /// The step before that: the dialog hands back a URL, not a path.
+    /// QML used to strip `file://` off `url.toString()`, which leaves
+    /// `[` and `]` as `%5B`/`%5D` — a disc called "Game [1996]" went on
+    /// the shelf under a path that does not exist and the machine booting
+    /// it would not start (user-reported, 2026-09-12). `fileUrl` is what
+    /// a probe hands this in place of a dialog.
+    function acceptUrl(url) { root.acceptPath(browse.localPath(url)) }
+    function fileUrl(path) { return browse.fileUrl(path) }
     /// e.g. "Disc images (*.iso *.cue *.ccd *.mds)". "All files (*)" is
     /// always offered alongside: a filter that hides the file someone is
     /// looking for is worse than no filter.
@@ -108,6 +116,6 @@ RowLayout {
         // Every glob comes in both cases (`browse::extensions`), which is
         // twice as long as anyone needs to read in the filter combo.
         options: FileDialog.HideNameFilterDetails
-        onAccepted: root.acceptPath(browse.localPath(selectedFile))
+        onAccepted: root.acceptUrl(selectedFile)
     }
 }

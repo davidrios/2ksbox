@@ -540,10 +540,11 @@ ApplicationWindow {
                 // can see either half.
                 discs.openLibrary(machines.discLibraryPath())
                 discShelfWindow.show()
-                discShelfWindow.pickDisc(diag.arg)
+                const pickedUrl = discShelfWindow.pickDisc(diag.arg)
                 diag.note("pickdisc: shelf " + discs.count + ", field ["
                           + discShelfWindow.shownAdd + "], status: " + discs.status
-                          + ", filters [" + discShelfWindow.addFilters.join(" | ") + "]")
+                          + ", filters [" + discShelfWindow.addFilters.join(" | ") + "]"
+                          + ", url " + pickedUrl)
                 break
             case "discs":
                 if (diag.arg === "")

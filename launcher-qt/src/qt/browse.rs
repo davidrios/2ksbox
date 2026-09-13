@@ -34,6 +34,12 @@ pub mod ffi {
         #[qinvokable]
         fn local_path(self: &Browse, url: &QUrl) -> QString;
 
+        /// The URL a dialog hands back for the file at `path`
+        /// (`QUrl::fromLocalFile`) — how a probe, which cannot open a
+        /// dialog, still takes the dialog's road into `local_path`.
+        #[qinvokable]
+        fn file_url(self: &Browse, path: &QString) -> QUrl;
+
         /// A path was picked in a dialog: the next one opens beside it.
         #[qinvokable]
         fn remember(self: &Browse, path: &QString);
@@ -61,6 +67,10 @@ impl ffi::Browse {
 
     fn local_path(&self, url: &QUrl) -> QString {
         url.to_local_file().unwrap_or_default()
+    }
+
+    fn file_url(&self, path: &QString) -> QUrl {
+        QUrl::from_user_input(path, &QString::default())
     }
 
     fn remember(&self, path: &QString) {

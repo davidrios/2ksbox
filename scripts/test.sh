@@ -753,7 +753,12 @@ qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
   export LAUNCHER_BROWSE_MEMORY="$dir/last-browse.txt"
-  : > "$dir/game.iso"
+  # Brackets and a space, like a disc named after its year: the dialog's
+  # URL leaves `[` `]` encoded in `toString()`, and QML that stripped
+  # `file://` off that shelved `%5B1996%5D`, a path that does not exist
+  # (user-reported, 2026-09-12).
+  local iso="$dir/Game [1996].iso"
+  : > "$iso"
   # A file dialog belongs to the window system and cannot be opened
   # offscreen, so the probe hands the field the path the dialog would
   # have — every line of the wiring under test is downstream of that.
@@ -761,7 +766,7 @@ qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
   # (user-reported, 2026-09-09, "Browse… only fills the field"), and the
   # field it came through is left empty, so the button beside it goes
   # back to being for typing.
-  o="$(timeout 120 env LAUNCHER_QT_SCREEN=pickdisc LAUNCHER_QT_ARG="$dir/game.iso" LAUNCHER_QT_DELAY=300 \
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=pickdisc LAUNCHER_QT_ARG="$iso" LAUNCHER_QT_DELAY=300 \
        "$bin" 2>&1 | sed -n 's/^\[diag\] pickdisc: //p')"
   [ -n "$o" ] || { echo "the probe printed no pickdisc line"; return 1; }
   echo "  $o"
@@ -769,8 +774,9 @@ qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
   field="$(printf '%s' "$o" | sed -n 's/.*field \[\(.*\)\], status.*/\1/p')"
   [ "$count" = 1 ] || { echo "the picked disc did not reach the shelf (it holds $count)"; rc=1; }
   [ -z "$field" ] || { echo "the picked path was left in the field ($field)"; rc=1; }
-  grep -q "game.iso" "$dir/discs.toml" 2>/dev/null \
-    || { echo "the shelf file never gained the disc"; rc=1; }
+  grep -qF "path = \"$iso\"" "$dir/discs.toml" 2>/dev/null \
+    || { echo "the shelf file does not name the disc by its own path"; cat "$dir/discs.toml" 2>/dev/null; rc=1; }
+  grep -q "%5B" "$dir/discs.toml" 2>/dev/null && { echo "the shelved path is still URL-encoded"; rc=1; }
   # Every dialog backend on Linux matches its globs case-sensitively, so
   # a lower-case-only filter hid `GAME.CUE` (user-reported, 2026-09-11):
   # the dialog must be handed both spellings (`browse::extensions`).
