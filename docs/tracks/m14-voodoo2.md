@@ -101,10 +101,9 @@ through 3dfx's MiniGL (Glide 2 in the build the game shipped). Quake II
 and UT felt fine; **Porsche felt slow**. **Starting another game after
 one has quit sometimes comes up with glitched graphics** — the same
 class of state as the teardown above (a register or the monitor left
-over from the last window), not yet looked at. A hand test: no numbers
-and no logs from it, and whether GLIDETEST still hangs at its close was
-not rechecked (a game quitting cleanly says the teardown burst does not
-wedge every close).
+over from the last window), not yet looked at. **GLIDETEST does not hang
+any more** either (the user's run, same day): the close above no longer
+wedges the card. Hand tests: no numbers and no logs from them.
 
 **The monitor handed back to a desktop on our driver — fixed the same
 evening.** On the user's `test98` (d3dpt-vga + the card, 3dfx's driver,
@@ -250,9 +249,8 @@ voodoo2,addr=0x05`; both front ends, the C API, `launcherx --wizard-edit
    tools/setup-guest-test.sh` holds it (PASS on Win98 and XP; the files
    it protects were stand-ins, since no image here has 3dfx's driver).
    **The open bug is left-over state between Glide windows** (above): a
-   second game after one has quit sometimes starts glitched, and
-   GLIDETEST was last seen hanging at `grSstWinClose` — recheck it first,
-   since real games now quit cleanly. Trace with `VOODOO2_TRACE=1`: what
+   second game after one has quit sometimes starts glitched (GLIDETEST's
+   close hang is gone, 2026-09-13). Trace with `VOODOO2_TRACE=1`: what
    the teardown burst leaves in `videoDimensions`, `fbiInit*` and the
    FIFO, and whether dropping `0x200000`-window writes with the FIFO off
    cures both.

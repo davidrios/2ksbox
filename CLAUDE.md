@@ -137,8 +137,8 @@ backend later.
   **Quake II, Unreal Tournament and NFS Porsche Unleashed run on it**
   (2026-09-13, the user by hand on `base98-br`: Glide 3 on the chip, and
   all three quit cleanly; Porsche is slow, and a second game after one
-  has quit sometimes starts glitched). GLIDETEST was last seen hanging at
-  `grSstWinClose` (the card never reports idle), not rechecked since. A
+  has quit sometimes starts glitched — M14's open bug). GLIDETEST no
+  longer hangs at `grSstWinClose` (the user's run, 2026-09-13). A
   spinning guest is read off the 5 s `voodoo2:` line's register histograms
   and `VOODOO2_TRACE=1`.
 - **XP's display adapter is our `d3dpt-vga` + real display driver** (doc

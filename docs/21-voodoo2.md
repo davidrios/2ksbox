@@ -203,10 +203,10 @@ the SLI bit set shows half its lines; this one ignores the bit. **The
 teardown burst is M14's open bug**: after it the card never reports idle
 and Glide spins in `sst1InitIdle` (GLIDETEST hangs at the close, whether
 or not the reopen case runs); the install and the first open+draw work.
-Real games do close cleanly (2026-09-13, by hand: Quake II, Unreal
-Tournament and NFS Porsche Unleashed on `base98-br`), so the burst does
-not wedge every close; a second game after one has quit sometimes starts
-with glitched graphics, which is likely the same left-over state.
+**No longer (2026-09-13, by hand on `base98-br`):** GLIDETEST does not
+hang, and Quake II, Unreal Tournament and NFS Porsche Unleashed all close
+cleanly. What remains is that a second game after one has quit sometimes
+starts with glitched graphics — likely state the burst leaves behind.
 
 
 **Display.** A Voodoo 1/2 is a pass-through card: the 2D adapter's signal
