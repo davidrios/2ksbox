@@ -81,7 +81,7 @@ index 0e4d6f1..11d8ee8 100644
 +     * can copy them into the retired table; -1 once too many to track,
 +     * which means the whole table is cleared and scanned, as before.
 +     */
-+    uint16_t *filled;
++    uint32_t *filled;
 +    int n_filled;
      /* The next index to use in the tlb victim table.  */
      size_t vindex;
@@ -254,7 +254,7 @@ index a8b64f1..52f96f7 100644
 +    desc->rt_fulltlb = NULL;
 +    desc->rt_n_entries = 0;
 +    desc->rt_valid = false;
-+    desc->filled = g_new(uint16_t, TLB_FILLED_MAX);
++    desc->filled = g_new(uint32_t, TLB_FILLED_MAX);
 +    desc->n_filled = -1;
      tlb_mmu_flush_locked(desc, fast);
  }

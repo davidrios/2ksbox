@@ -1539,7 +1539,14 @@ what remains, and they are verification, not optimization.
    a second): they could chain too.
 4c. ~~**Smaller TLB wipes of used tables**~~ — patch 44 clears only the
    filled entries; the x87 per-block reload (a double per register plus a
-   validity mask across blocks) stays open behind item 3.
+   validity mask across blocks) stays open behind item 3. **The filled
+   list was `uint16_t` until 2026-09-12**, while a table may grow to
+   `CPU_TLB_DYN_MAX_BITS` = 20 bits and `tlb-floor` never lets it shrink:
+   past 65,536 entries every recorded index wrapped, a CR3 flush cleared
+   the wrong slots and left live translations standing, and Windows 98
+   died at random a few seconds into `SETUP.EXE`'s install (VTDAPI's timer
+   records, a CD driver's data, a triple fault — docs/00-status.md). Any
+   list of table indexes has to hold the table's largest index.
 5. **x86-64 pinned registers** (doc 18's follow-up: the backend lists none
    yet — rbx, rbp, r12, r13, r15 are free): the largest general lever left,
    but patch 21's two open items come first.

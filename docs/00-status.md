@@ -308,8 +308,10 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   change: 19.0 → 19.1. **Patch 44** retires the TLB on a CR3 write and
   reuses an entry once its page-table entries check unchanged (95 % of the
   4.2 M walks per 10 s): **within noise on the Ryzen** (19.0 vs 18.9 fps,
-  CPU 3DMarks 16295 vs 16080 in the A/B) — the walks were cheap here; kept,
-  exact. The executor and DXVK are under 1 % of the vCPU thread: every
+  CPU 3DMarks 16295 vs 16080 in the A/B) — the walks were cheap here; kept.
+  It was **not** exact until 2026-09-12: its list of filled TLB slots was
+  `uint16_t`, a table past 65,536 entries wrapped it, and a CR3 flush left
+  stale translations live (the SETUP.EXE corruption below). The executor and DXVK are under 1 % of the vCPU thread: every
   lever left is TCG's generated code, 76 % of the frame, and by instruction
   form the x87 memory forms (20 %, 2.9 samples each) and the softmmu chain
   on 65 % of the instructions are the next two (the track doc's next steps
@@ -1289,9 +1291,41 @@ items nobody owns yet:
   Guard: `REBOOT=1 tools/setup-guest-test.sh <image> win98` — the proof is
   a second SeaBIOS banner on the debugcon, never a screendump.
 
+- **Windows 98 dying a few seconds into `SETUP.EXE`'s install was QEMU
+  patch 44, not the installer and not the display driver** — fixed
+  2026-09-12 (`patches/qemu/44-tlb-retire.patch`). The user's report
+  (the machine died at the "Restart Windows now (y/N)?" prompt, the band
+  of noise at the top that is a hidden text screen) survived the staging
+  change below, and reproduced headless on a copy of their image with no
+  window and so no stray input: on a fresh boot, with SETUP's install the
+  first real work, **7 of 9 runs died** — a fatal exception 05/0E whose
+  victim changed every time (VTDAPI's timer records called into a VM
+  handle, a CD-ROM driver's data run as code), then a recursive fault and
+  a triple fault, or a plain exit to real mode. On Windows' own Cirrus
+  too, which cleared our driver; a variant with no hardware cursor and one
+  with no logging hooks in the mini-VDD died as well. **Every run with
+  `-accel tcg,tlb-retire=off` survived** (all switches off, 42–44 off,
+  44 alone off), and the flaw was in the patch's flush, not its reuse
+  check: the list of TLB slots filled since the last flush was
+  `uint16_t`, a table grows to 2^20 entries and patch 16 never shrinks
+  it, so past 65,536 entries the indexes wrapped, a CR3 write (Windows 98
+  makes 2,400 a second) cleared the wrong slots, and translations that
+  should have died stayed live — stores went to whatever page they used
+  to hit. `uint32_t` now; **after the fix, three fresh boots with every
+  switch on at its shipped setting survived** the same run, 85 % of the
+  TLB refills served from the retired tables. What made it look like the
+  installer: SETUP's console keeps Windows switching between the System
+  VM and the DOS box while it copies from the CD, which is the busiest
+  TLB churn a Win98 desktop does; a run slowed by `-d int` survived, and
+  so did any where SETUP came late in a session. Doc: the patch README
+  row; the reproduction (a pause-on-reset QEMU, `-action
+  reboot=shutdown,shutdown=pause -d cpu_reset`, the blue screen read out
+  of VRAM) is the recipe for the next corruption like it.
+
 - **`SETUP /ALL` over an installed 9x display driver must not overwrite a
-  file of it in place** — fixed 2026-09-12 (`guest-tools/src/setup.c`,
-  `stage_set`). User report: a reinstall from the ISO on a machine running
+  file of it in place** — 2026-09-12 (`guest-tools/src/setup.c`,
+  `stage_set`); kept on its own merits, but **it was not what crashed the
+  user's machine** (the entry above). User report: a reinstall from the ISO on a machine running
   our driver died at the "Restart Windows now (y/N)?" prompt, with the band
   of coloured noise across the top of the screen that is a VGA text page
   under a linear frame buffer — a blue screen the image's older VxD could
