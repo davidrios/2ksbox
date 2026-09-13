@@ -113,6 +113,7 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 #   no CRT chain — as PLAYER_SHOT_DIR/2ksbox-NNNN.png (the next free number; the
 #   working directory when PLAYER_SHOT_DIR is unset). Ctrl+Alt+G releases the grab.
 # Ctrl+Alt+Shift+D is Ctrl+Alt+Del in the guest (the real one stays the host's).
+# Ctrl+Alt+Shift+F toggles windowed full screen (borderless, the window's monitor).
 # While the window has focus the host's own shortcuts go to the guest — the Windows
 #   key opens the guest's Start menu (Wayland's shortcut inhibitor, an X11 keyboard
 #   grab, a low-level hook on Windows; nothing on macOS). Ctrl+Alt+K hands them back
