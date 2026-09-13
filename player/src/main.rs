@@ -1512,6 +1512,15 @@ impl ApplicationHandler for App {
         }
     }
 
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        // Every way out passes here, a guest power-off included, and the
+        // windowing connection is still open: run_app() consumes the event
+        // loop, so by the time App drops the wl_display / X Display is gone
+        // and the inhibitor's destroy (or XUngrabKeyboard) touches freed
+        // memory -- a SIGSEGV after every power-off.
+        self.kbd = None;
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
