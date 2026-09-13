@@ -1559,6 +1559,20 @@ items nobody owns yet:
   while any of their `PathField`s — or their `FolderDialog` — is open. A
   new dialog in one of those windows has to join that `enabled:` line.
 
+- **`scripts/test.sh host` froze a 16 GB Mac** (user-reported, fixed
+  2026-09-13). Not the suite: `d3dfeat9-native` alone, whose loader thread
+  (`d9fe204`) made and released resources in a loop that never waited.
+  DXVK frees a released resource only once the frames that could have used
+  it are done, and at the dump frame the main thread stops presenting for
+  up to half a second of occlusion-query polling — the loader outran the
+  frees and the run hit a 17.8 GB footprint in five seconds (1.4 GB of it
+  resident: the rest is GPU memory, which on Apple Silicon is the same
+  RAM), then swapped for seven minutes at 0.7 fps. The loader is paced to
+  two rounds a frame now (doc 14). Measuring a DXVK program's memory on a
+  Mac: `/usr/bin/time -l`'s *peak memory footprint*, not RSS — and SIP
+  strips `DYLD_*` at every system binary, so put `env DYLD_LIBRARY_PATH=…`
+  last in the wrapper chain or DXVK finds no Vulkan loader and crashes.
+
 - **Esc did nothing in the shader editor opened by New profile…**
   (user-reported, fixed 2026-09-13). Not focus: the editor had the
   keyboard and its Esc was armed. Quick Controls installs its own

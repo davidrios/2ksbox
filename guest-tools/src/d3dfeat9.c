@@ -118,11 +118,22 @@ static void quad_at(struct vtx_pct *q, float cx, DWORD color)
 /* The loader thread: resources made, filled and dropped on a second thread
  * while the first one draws, as a game streaming its level does, on a device
  * created D3DCREATE_MULTITHREADED. Nothing it makes is drawn, so the frame
- * stays the oracle's; a call that failed is counted ("getters 3"). */
+ * stays the oracle's; a call that failed is counted ("getters 3").
+ *
+ * Paced to two rounds a frame. DXVK frees a released resource only once the
+ * frames that could have used it are done, so a loader that never waits
+ * outruns the frees whenever the main thread stops presenting -- the
+ * occlusion-query wait at the dump frame is up to half a second of that --
+ * and natively on an M1 the run reached a 17.8 GB footprint in five seconds
+ * and swapped the machine to a standstill (2026-09-13). Two a frame still
+ * races the lock on every frame. */
 static DWORD WINAPI loader_main(LPVOID unused)
 {
     (void)unused;
     while (!X.loader_stop) {
+        while (!X.loader_stop && (unsigned long)X.loader_rounds >= 2ul * (*(volatile unsigned *)&G.frame + 1))
+            Sleep(1);
+        if (X.loader_stop) break;
         IDirect3DTexture9 *t = NULL;
         IDirect3DVertexBuffer9 *b = NULL;
         D3DLOCKED_RECT lr;

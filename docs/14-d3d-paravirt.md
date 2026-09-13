@@ -267,9 +267,16 @@ DEFAULT offscreen surface and a GetRenderTargetData from an
 A16B16G16R16F target — frame and "getters" lines against the native DXVK
 run, as before. Its device is `D3DCREATE_MULTITHREADED` now, and a loader
 thread creates, fills and releases a texture and a vertex buffer in a loop
-for as long as the frames run (tens of thousands of rounds natively),
-counting its failed calls into a "getters 3" line; nothing it makes is
-drawn, so the frame stays the oracle's. `tools/d3dgame-native/
+for as long as the frames run, counting its failed calls into a "getters
+3" line; nothing it makes is drawn, so the frame stays the oracle's. The
+loop is **paced to two rounds a frame** (2026-09-13): DXVK frees a released
+resource only once the frames that could have used it are done, and an
+unpaced loader outran the frees whenever the main thread stopped
+presenting — the occlusion-query wait at the dump frame is up to half a
+second of that. Natively on the M1 the run reached a 17.8 GB footprint in
+five seconds (1.4 GB of it resident, the rest GPU memory) and swapped the
+machine to a standstill in `scripts/test.sh host`; the round counts below
+are from before the pacing. `tools/d3dgame-native/
 win32_headless.h` gained `CreateThread` / `WaitForSingleObject` over
 pthreads for it. `DDVMTEST` releases a QueryInterface'd reference and uses
 the object after it, and `tools/d3dpt-exec-test` sends a
