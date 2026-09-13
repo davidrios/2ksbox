@@ -161,7 +161,11 @@ static WORD MakeSelector(DWORD linear, DWORD bytes)
 {
     DWORD hi = 0, lo = 0, sel = 0;
 
-    BuildDesc_(linear, (bytes + 0xfff) >> 12, D3DPT_SEL_TYPE, 0x80, 0);
+    /* The limit is the last page, not the page count: with the granularity
+     * bit set a limit of N reaches N + 1 pages, and a selector a page longer
+     * than its mapping lets a stray access land on whatever the shared arena
+     * put next instead of faulting. */
+    BuildDesc_(linear, ((bytes + 0xfff) >> 12) - 1, D3DPT_SEL_TYPE, 0x80, 0);
     _asm {
         mov [hi], edx
         mov [lo], eax
@@ -379,10 +383,25 @@ static void __stdcall register_display_driver_proc(DWORD vm, PCRS_32 state)
  * run only the first two lines existed and the screen was still the frozen
  * desktop — the DOS box had not left its prompt yet — which reads exactly
  * like a one-way switch into a black screen. Wait for the run to end. */
+/* The linear mode was on when a switch to VGA turned it off. The way back
+ * turns it on again only then: this mini-VDD also runs under the 16-colour
+ * drivers the INF hands low-colour modes to, and after our driver's
+ * PhysicalDisable, and there an unconditional ENABLE put a stale linear
+ * frame (or none) over the VGA the display actually uses. Cleared only by
+ * the way back, so a second switch on top of the first cannot lose it. */
+static BOOL bLinearWasOn = FALSE;
+
+static void LinearOff(void)
+{
+    if (!dwRegsLin) return;
+    if (*(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE)) bLinearWasOn = TRUE;
+    *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 0;
+}
+
 static void __stdcall hires_to_vga_proc(void)
 {
     dbg_str("d3dptvxd: hi-res -> VGA");
-    if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 0;
+    LinearOff();
 }
 
 static void __stdcall post_hires_to_vga_proc(void)
@@ -398,7 +417,8 @@ static void __stdcall pre_vga_to_hires_proc(void)
 static void __stdcall vga_to_hires_proc(void)
 {
     dbg_str("d3dptvxd: VGA -> hi-res done");
-    if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 1;
+    if (dwRegsLin && bLinearWasOn) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 1;
+    bLinearWasOn = FALSE;
 }
 
 /* ------------------------------------------------- the blue screen
@@ -425,7 +445,7 @@ static void __stdcall vga_to_hires_proc(void)
 static void __stdcall save_message_mode_proc(void)
 {
     dbg_str("d3dptvxd: message mode: VGA text");
-    if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 0;
+    LinearOff();
 }
 
 /* The notifications that are only logged, the first four of each — enough
@@ -435,7 +455,12 @@ static BYTE seen[64] = {0};
 
 static void __stdcall note_proc(DWORD fn)
 {
-    if (fn < 64 && seen[fn]++ < 4) dbg_val("d3dptvxd: vdd fn", fn);
+    /* counted only up to the limit: a byte counted on wraps at 256 and
+     * logged four more every 256 calls, for ever */
+    if (fn < 64 && seen[fn] < 4) {
+        seen[fn]++;
+        dbg_val("d3dptvxd: vdd fn", fn);
+    }
 }
 
 /* The VDD calls a dispatch entry with EBX = VM and EBP = client registers.

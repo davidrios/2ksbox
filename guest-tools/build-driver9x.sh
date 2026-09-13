@@ -527,7 +527,7 @@ PYPE
      -o "$OUT/shtest.exe" "$ROOT/guest-tools/src/d3dptvid/shtest.c" -ld3d8 -lgdi32 -luser32
 
   # the DX8 feature probes (d3d8probe.h), as build-driver.sh builds them
-  for t in cubetest strmtest voltest fmttest bumptest sprtest anistest patchtst; do
+  for t in cubetest strmtest voltest fmttest bumptest sprtest anistest patchtst mgdtest; do
     echo "==> $t.exe (a DX8 feature probe through d3d8.dll on the DX8 DDI)"
     "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
        -march=pentium3 -mtune=generic \

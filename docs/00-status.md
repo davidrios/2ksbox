@@ -157,6 +157,29 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **A review of the display drivers (9x and the shared core) — 2026-09-12**
+  (doc 19 §32). Fixed: the 9x HAL kept the core's surface table in the
+  calling process's heap behind shared pointers (now a `HEAP_SHARED`
+  heap); its `DDHAL_GETDRIVERSTATEDATA` had the wrong layout and wrote
+  past the runtime's structure; its destroy callbacks invented a surface
+  handle and released it on the host; its command-window lock was
+  per-process and was never released when a game died holding it.
+  `GetVerticalBlankStatus` never said "in the blank" on either family
+  (doc 15), so `while (!in_vb)` spun for ever — 0 of 530 887 polls before,
+  one a frame after. In the core: a blit after a draw is sent in a record
+  of its own (the host would run every draw of a call on the last blit's
+  bytes — a safeguard: XP's d3d8.dll was measured to end the call before
+  such a blit itself, `MGDTEST` passing on the unfixed core too), long
+  non-indexed draws are cut into pieces the host takes, stream
+  0's stride is bounded, TEXBLT rounds mip rectangles right, and a DP2
+  `SETRENDERTARGET` becomes EndScene's readback target. The mini-VDD's
+  selectors were a page too long, and its DOS-box return turned the linear
+  mode on unconditionally. Proved by the Win98 battery on `test98` and the
+  whole M7 battery on XP (both frames byte-identical, every probe as
+  before, the new `MGDTEST` 3/0) and `scripts/test.sh all`. **Not proved by
+  a title**: the long-draw cut has no probe that needs it. GDIINFO's English/twips extents
+  look wrong and were measured not to matter (98's GDI uses LOGPIXELS).
+
 - **DirectSound on the SB16 "crashing on Linux" was the guest's language
   — 2026-09-12** (doc 20 §5.3). On `claude98` `dxdiag` died in
   DSOUND.DLL (`c0000409`, DirectX 9.0c's `/GS` cookie) and DirectSound

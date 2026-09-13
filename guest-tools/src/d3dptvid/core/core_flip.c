@@ -154,6 +154,28 @@ void flip_issued(d3dpt_core *p)
     d3dpt_os_ticks(&p->flip_qpc, NULL);
 }
 
+/* DDWAITVB_I_TESTVB: is the display in its vertical blank right now? The
+ * device counts frames and has no beam position, so the answer is yes once
+ * per frame — the first time anyone asks after the counter moved — and no
+ * otherwise. That keeps both loops a title of the era writes around
+ * GetVerticalBlankStatus finite: `while (!in_vb)` ends at the next frame,
+ * `while (in_vb)` at the next question. Both layers used to answer no,
+ * always, and the first of those loops never ended. */
+BOOL vb_test(d3dpt_core *p)
+{
+    ULONG f;
+
+    if (!p->regs) {
+        return FALSE;
+    }
+    f = p->regs[D3DPT_FB_REG_FRAMES / 4];
+    if (f == p->vb_frame) {
+        return FALSE;
+    }
+    p->vb_frame = f;
+    return TRUE;
+}
+
 /* ------------------------------------------------- the command window */
 
 static void d3d_doorbell(d3dpt_enc *e)

@@ -212,16 +212,18 @@ typedef struct _DDHAL_CREATESURFACEEXDATA {
     HRESULT ddRVal;
 } DDHAL_CREATESURFACEEXDATA, *LPDDHAL_CREATESURFACEEXDATA;
 
+/* The DDK's layout, the same as NT's DD_GETDRIVERSTATEDATA (ddk/ddrawint.h):
+ * 20 bytes, ddRVal at +16. This used to carry four fields of its own after
+ * the union, so GetDriverState32 wrote its ddRVal 12 bytes past the end of
+ * the runtime's structure and left the real one unset. */
 typedef struct _DDHAL_GETDRIVERSTATEDATA {
     DWORD dwFlags;
     union {
+        LPDDRAWI_DIRECTDRAW_GBL lpDD;
         ULONG_PTR dwhContext;
     };
-    LPDDRAWI_DIRECTDRAW_LCL lpDD;
-    DWORD dwWhichData;
-    DWORD dwActualSize;
-    DWORD dwExpectedSize;
-    LPVOID lpvData;
+    LPDWORD lpdwStates;
+    DWORD dwLength;
     HRESULT ddRVal;
 } DDHAL_GETDRIVERSTATEDATA, *LPDDHAL_GETDRIVERSTATEDATA;
 

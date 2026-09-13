@@ -882,7 +882,7 @@ static DWORD APIENTRY DdWaitForVerticalBlank(PDD_WAITFORVERTICALBLANKDATA d)
 
     switch (d->dwFlags) {
     case DDWAITVB_I_TESTVB:
-        d->bIsInVB = FALSE;
+        d->bIsInVB = vb_test(&p->core);
         d->ddRVal = DD_OK;
         break;
     case DDWAITVB_BLOCKBEGIN:
