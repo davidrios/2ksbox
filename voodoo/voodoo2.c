@@ -434,6 +434,12 @@ voodoo2_present(void *opaque, const bitmap_t *frame, int w, int h)
                    s->v->frame_count != s->blank_frames) {
             s->blank_swapped = true;
         }
+        if (s->blank) {
+            /* redraw every line next frame: a frame is only presented when
+             * lines are dirty, and a guest that swaps once and then draws
+             * nothing would otherwise leave the console black for good */
+            memset(s->v->dirty_line, 1, sizeof(s->v->dirty_line));
+        }
     }
     cur = qemu_console_surface(con);
     if (cur != s->surface || !cur ||

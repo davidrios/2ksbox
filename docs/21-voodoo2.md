@@ -247,7 +247,11 @@ swaps (`front_offset` moves, or `frame_count` for a swap on a retrace) —
 and one frame more, because a swap that lands mid-frame leaves the lines
 above it stale until the next frame redraws them all. A guest that never
 swaps (drawing only into the front buffer) is shown after 2 s
-(`VOODOO2_BLANK_MS`) regardless.
+(`VOODOO2_BLANK_MS`) regardless. While black, every line is marked dirty
+at each present, so a frame is presented at every retrace: the display
+timer presents only frames with dirty lines, and the first version of this
+left the guest test's frame black for good. That guest swaps once and then
+draws nothing, so the frame after its swap never came.
 
 **Reset.** 86Box has no reset entry for the card (the driver re-inits
 it), but a guest reboot must give the monitor back: `fbiInit0`,
