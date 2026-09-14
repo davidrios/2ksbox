@@ -2527,8 +2527,9 @@ back buffer 832 -> same`, five flips, and `GetDisplayMode` reporting pitch
 The user's report on `base98-br` (the unpatched `CRIMSON.EXE`, the disc in
 the drive): the menus have glitches "where it's supposed to be drawing
 text", and in flight "almost everything is transparent; some pieces leave
-draw trails". It works on the Voodoo 2, slowly. The flight half is fixed
-here; the text half is not (below).
+draw trails". It works on the Voodoo 2, slowly. Both are fixed here, and
+neither was a rendering bug: one is a Z buffer the host never saw reset,
+the other a texture cap the game branches on.
 
 **What a flight frame was.** Headless on a raw copy (`tools/win98-game-test.sh`
 with the play disc, the Voodoo 2 on the bus as on the machine, the Select
@@ -2593,8 +2594,51 @@ control. Run it with `STAGE=guest-tools/out/driver9x/zfilltest.exe
 PULL=ZFILLTEST.LOG GUEST_CMD=$'cd C:\\\r\nZFILLTEST.EXE'
 tools/win98-game-test.sh <image> zf`.
 
+#### The menu text: a texture cap, read before any call
+
+The Instant Action page drew every mission in its list and every name
+field (Pilot Plane, Mission, Environment...) as a bar of red, green, blue
+and brown blocks, while its labels ("Pilot Plane:", "Table of Contents")
+were right. The trace had it in one line per string: each is a quad drawn
+with texture handle 165, an **8x8 R5G6B5** texture of a diagonal
+four-colour pattern with full alpha — the engine's own "missing texture"
+— under UVs sized for a strip of about 131x16 texels (u = the string's
+width / 131, v = 15/16), no rebind between strings. The strings' own
+textures were never made: not a video-memory one, not even the
+system-memory surface the labels are painted into with GDI first. Every
+`CanCreateSurface` was followed by its `CreateSurface`, nothing was
+refused, the game's own `GAMEZ.ERR` said nothing — so it was a decision
+the game made from something the device reports, before any call a
+driver could log.
+
+The diff that found it is `DEVCAPS.EXE` (`w9x/devcaps.c`): every
+DirectDraw device — with `DDENUM_NONDISPLAYDEVICES`, or the Voodoo 2 is
+not enumerated at all — its DDCAPS, `GetAvailableVidMem` per kind, and
+every Direct3D device's `D3DDEVICEDESC7` by field and in hex. Against the
+Voodoo 2's DirectX 7 driver, on which the user says the menus work, the
+two answers a text engine sizes its textures from differed: 3dfx claims
+`D3DPTEXTURECAPS_POW2` and 256x256 at most, we claimed any size up to
+4096. Two A/B bits (`ddflags`) settled it on the game: both together, the
+text draws; **`POW2` alone, the text draws** — and the game makes 3 814
+textures on that screen, all powers of two, where it had made 218. So a
+device that allows any texture size sends it down a text path that never
+makes its strings' textures.
+
+**The fix** (`core/core_caps.c`, both families): the texture caps claim
+`D3DPTEXTURECAPS_POW2 | D3DPTEXTURECAPS_NONPOW2CONDITIONAL` — powers of
+two, other sizes only clamped and without a mip chain — which is what a
+GeForce 2 to 4 or a Radeon claims, rather than `POW2` alone, which would
+refuse a non-power-of-two texture to every title that makes one. The host
+has no such limit; the claim is for the titles. Measured on the default
+flags: the whole page's text is right, and flight draws (terrain, trees,
+the plane, the HUD). `ddflags=0x2` (`DDF_TEX_ANYSIZE`) puts the old
+answer back and `ddflags=0x20000000` (`DDF_TEX_256`) caps textures at
+256x256 like the Voodoo 2 — the two halves of this bisection.
+
 **Also found, and fixed, and not the cause of anything seen.** The DX7 and
 DX8 caps published `dwMaxTextureAspectRatio` / `MaxTextureAspectRatio` as
 0 (the structure is zeroed and the field was never set); they are 4096 now
 and `d3d7test` refuses a HAL that reports less than 8. Microsoft's own RGB
 device reports 0 as well, and publishing 4096 changed nothing in the game.
+And `D9F_CERTIFIED` (0x01000000, the 9x half of `ddflags`) is the same bit
+as the core's `DDF_NO_VOLUME`: whoever sets one sets both.

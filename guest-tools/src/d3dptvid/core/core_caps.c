@@ -17,6 +17,8 @@
 #include <ddraw.h>
 #include "d3dpt_ddi.h"
 #include "d3dpt_core.h"
+#define D3DPTEXTURECAPS_POW2_ 0x00000002
+#define D3DPTEXTURECAPS_NONPOW2CONDITIONAL_ 0x00000100
 
 D3DHAL_GLOBALDRIVERDATA_ d3d_global;
 D3DHAL_D3DEXTENDEDCAPS_ d3d_extcaps;
@@ -212,6 +214,15 @@ void d3d_caps_init(d3dpt_core *p)
                      D3DPSHADECAPS_SPECULARGOURAUDRGB | D3DPSHADECAPS_ALPHAFLATBLEND | D3DPSHADECAPS_ALPHAGOURAUDBLEND |
                      D3DPSHADECAPS_FOGFLAT | D3DPSHADECAPS_FOGGOURAUD;
     t->dwTextureCaps = D3DPTEXTURECAPS_PERSPECTIVE | D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_PROJECTED;
+    /* Powers of two, and other sizes only conditionally (clamped, no mip
+     * chain): what a GeForce 2 to 4 or a Radeon claims, and what the era's
+     * titles branch on. Claiming any size at all (no POW2) sent Crimson
+     * Skies down a text path that never makes its strings' textures: every
+     * list entry and name field drew its 8x8 placeholder (doc 19 §34,
+     * 2026-09-14). The host has no such limit; the claim is for the titles. */
+    if (!(ddflags(p) & DDF_TEX_ANYSIZE)) {
+        t->dwTextureCaps |= D3DPTEXTURECAPS_POW2_ | D3DPTEXTURECAPS_NONPOW2CONDITIONAL_;
+    }
     t->dwTextureFilterCaps = D3DPTFILTERCAPS_NEAREST | D3DPTFILTERCAPS_LINEAR | D3DPTFILTERCAPS_MIPNEAREST |
                              D3DPTFILTERCAPS_MIPLINEAR | D3DPTFILTERCAPS_LINEARMIPNEAREST | D3DPTFILTERCAPS_LINEARMIPLINEAR |
                              D3DPTFILTERCAPS_MINFPOINT | D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MIPFPOINT |
@@ -286,6 +297,9 @@ void d3d_caps_init(d3dpt_core *p)
      * real driver publishes a power of two here (doc 19 §34, 2026-09-14:
      * found while chasing Crimson Skies' list text, which it did not fix) */
     e->dwMaxTextureAspectRatio = 4096;
+    if (ddflags(p) & DDF_TEX_256) {
+        e->dwMaxTextureWidth = e->dwMaxTextureHeight = e->dwMaxTextureAspectRatio = 256;
+    }
     e->dwMaxTextureRepeat = 8192;
     e->dwMaxAnisotropy = (ddflags(p) & DDF_NO_ANISO) ? 1 : 16;
     e->dwStencilCaps = D3DSTENCILCAPS_ALL;
@@ -357,7 +371,8 @@ void d3d_caps_init(d3dpt_core *p)
     }
     c8->TextureAddressCaps = t->dwTextureAddressCaps | D3DPTADDRESSCAPS_MIRRORONCE;
     c8->LineCaps = D3DLINECAPS_TEXTURE | D3DLINECAPS_ZTEST | D3DLINECAPS_BLEND | D3DLINECAPS_ALPHACMP | D3DLINECAPS_FOG;
-    c8->MaxTextureWidth = c8->MaxTextureHeight = 4096;
+    c8->MaxTextureWidth = e->dwMaxTextureWidth;
+    c8->MaxTextureHeight = e->dwMaxTextureHeight;
     c8->MaxTextureAspectRatio = e->dwMaxTextureAspectRatio;
     c8->MaxTextureRepeat = 8192;
     c8->MaxAnisotropy = (ddflags(p) & DDF_NO_ANISO) ? 1 : 16;

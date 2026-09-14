@@ -448,6 +448,17 @@ got that far.
 
 ## Palettized textures and colour keying (2026-09-05, protocol v8)
 
+**Texture sizes (2026-09-14, doc 19 §34).** `dpcTriCaps.dwTextureCaps`
+claims `D3DPTEXTURECAPS_POW2 | NONPOW2CONDITIONAL` (and D3DCAPS8 with it),
+where it had claimed any size: Crimson Skies branches on `POW2` and, with
+it absent, never made the textures of its menu's strings. It is a GeForce's
+answer, so a title that makes a non-power-of-two texture still may,
+clamped and without mips. On XP afterwards the ten DX8 probes pass as
+before and `D3D7TEST`'s frame is still byte-identical to the host
+oracle. `ddflags=0x2` (`DDF_TEX_ANYSIZE`) is the A/B. The extended caps'
+`dwMaxTextureAspectRatio` (and `MaxTextureAspectRatio`) is 4096 now, not
+the 0 of a zeroed structure.
+
 Both gaps above are closed. What a 1997 title now gets from the HAL:
 
 - **The caps.** The DX7 texture format list has a tenth entry,
