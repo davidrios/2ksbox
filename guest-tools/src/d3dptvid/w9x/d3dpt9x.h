@@ -41,6 +41,18 @@ void ZeroFar(void __far *p, WORD n);
 DWORD MulW(WORD a, WORD b);
 #pragma aux MulW = "mul bx" parm [ax] [bx] value [dx ax];
 
+/* **One pitch for a mode, everywhere** (doc 19 §33, 2026-09-13). The HAL
+ * tells DirectDraw to align its heap surfaces to D3DPT9X_PITCH_ALIGN, and
+ * DirectDraw rounds a flip chain's back buffers' pitch up to it: 800x600x8
+ * got 832-byte back buffers on a screen scanned out at 800, and every flip
+ * showed a sheared frame (Diablo II's menu, a stripe per line). So the
+ * mode's own pitch — GDI's, the primary's, the HAL mode table's, the
+ * adapter's register — is rounded the same way, and whatever DirectDraw
+ * allocates for a flip chain has the pitch the screen is scanned at. */
+#define D3DPT9X_PITCH_ALIGN 64
+#define D3DPT9X_PITCH(w, bpp) \
+    ((MulW((w), ((bpp) + 7) / 8) + (D3DPT9X_PITCH_ALIGN - 1)) & ~(DWORD)(D3DPT9X_PITCH_ALIGN - 1))
+
 /* **The 9x half of `-device d3dpt-vga,ddflags=N`** (doc 19 §21). One
  * register, two drivers: the NT core owns the low half of DDFLAGS
  * (`core/d3dpt_core.h`'s `DDF_*`) and everything 9x-only lives in the

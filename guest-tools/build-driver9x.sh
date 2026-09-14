@@ -483,6 +483,11 @@ PYPE
      -march=pentium3 -mtune=generic -mwindows \
      -o "$OUT/ddprobe.exe" "$SRC/ddprobe.c" -lddraw -ldxguid -luser32
 
+  echo "==> devcaps.exe (every DirectDraw device's caps, for diffing ours against another driver)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic -mwindows \
+     -o "$OUT/devcaps.exe" "$SRC/devcaps.c" -lddraw -ldxguid -luser32
+
   echo "==> ebtest.exe (DirectX 3 execute buffers and texture handles)"
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
      -march=pentium3 -mtune=generic \
@@ -515,6 +520,11 @@ PYPE
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
      -march=pentium3 -mtune=generic \
      -o "$OUT/cktest.exe" "$ROOT/guest-tools/src/d3dptvid/cktest.c" -lddraw -ldxguid -lgdi32 -luser32
+
+  echo "==> zfilltest.exe (a Z buffer reset by a DirectDraw depth fill, doc 19 §34)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic \
+     -o "$OUT/zfilltest.exe" "$ROOT/guest-tools/src/d3dptvid/zfilltest.c" -lddraw -ldxguid -lgdi32 -luser32
 
   echo "==> dxttest.exe (which texture formats d3d8.dll creates, per pool)"
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \

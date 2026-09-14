@@ -1807,11 +1807,34 @@ static DWORD APIENTRY DdDestroySurface(PDD_DESTROYSURFACEDATA d)
     return DDHAL_DRIVER_NOTHANDLED;
 }
 
+/* A Z buffer locked for writing (doc 19 §34): a title that resets its
+ * depth by hand, or dxg's HEL doing a depth fill, writes VRAM the host's
+ * depth buffer never sees; DdUnlock hands it to the core, which makes a
+ * buffer written to one value a host Z clear. A read-only lock is left
+ * alone (a title reading its depth must not wipe the frame's). */
+static PDD_SURFACE_LOCAL zlock_surf;
+static ULONG zlocks, zlocks_said;
+
+static BOOL is_vram_z(PDD_SURFACE_LOCAL s)
+{
+    return s && s->lpGbl && (s->ddsCaps.dwCaps & DDSCAPS_ZBUFFER) && !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY);
+}
+
 static DWORD APIENTRY DdLock(PDD_LOCKDATA d)
 {
     PPDEV p = (PPDEV)d->lpDD->dhpdev;
     PDD_SURFACE_LOCAL s = d->lpDDSurface;
 
+    if (is_vram_z(s)) {
+        zlocks++;
+        if (zlocks_said < 16 || !(zlocks & 1023)) {
+            zlocks_said++;
+            dbg_hex(&p->core, "d3dptdisp: Z lock ", zlocks);
+            dbg_hex(&p->core, " flags ", d->dwFlags);
+            dbg_puts(&p->core, "\n");
+        }
+        zlock_surf = (d->dwFlags & DDLOCK_READONLY) ? NULL : s;
+    }
     /* a render target the host drew into: bring the frame into VRAM first */
     if (d3d_ctx_live && s && surf_is_target(s->ddsCaps.dwCaps)) {
         d3d_register_moved(&p->core, s);
@@ -1880,6 +1903,13 @@ static DWORD APIENTRY DdUnlock(PDD_UNLOCKDATA d)
     if (p->core.d3d && s && !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY) &&
         ((s->ddsCaps.dwCaps & DDSCAPS_TEXTURE) || (d3d_ctx_live && surf_is_target(s->ddsCaps.dwCaps)))) {
         d3d_handle_op(&p->core, D3DPT_OP_VRAM_DIRTY, surf_handle(s));
+    }
+    if (s && s == zlock_surf) {
+        zlock_surf = NULL;
+        if (p->core.d3d) {
+            d3d_z_written(&p->core, surf_handle(s), s->lpGbl->ddpfSurface.dwZBufferBitDepth,
+                          s->lpGbl->ddpfSurface.dwZBitMask);
+        }
     }
     d->ddRVal = DD_OK;
     return DDHAL_DRIVER_NOTHANDLED;

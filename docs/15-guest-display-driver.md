@@ -448,6 +448,26 @@ got that far.
 
 ## Palettized textures and colour keying (2026-09-05, protocol v8)
 
+**A Z buffer written through a Lock (2026-09-14, doc 19 §34).** A title
+that resets its depth by writing the Z buffer itself, and dxg's HEL doing
+an application's depth fill (it goes through `DdLock` as well — the driver
+claims no blits), wrote VRAM the host's depth buffer never reads.
+`DdUnlock` now hands a Z buffer locked for writing to the core
+(`d3d_z_written`), which samples a seventh of its rows and turns a buffer
+of one value into a host Z clear. `ZFILLTEST.EXE`: 3 of 3 on XP, and the
+driver before it fails two.
+
+**Texture sizes (2026-09-14, doc 19 §34).** `dpcTriCaps.dwTextureCaps`
+claims `D3DPTEXTURECAPS_POW2 | NONPOW2CONDITIONAL` (and D3DCAPS8 with it),
+where it had claimed any size: Crimson Skies branches on `POW2` and, with
+it absent, never made the textures of its menu's strings. It is a GeForce's
+answer, so a title that makes a non-power-of-two texture still may,
+clamped and without mips. On XP afterwards the ten DX8 probes pass as
+before and `D3D7TEST`'s frame is still byte-identical to the host
+oracle. `ddflags=0x2` (`DDF_TEX_ANYSIZE`) is the A/B. The extended caps'
+`dwMaxTextureAspectRatio` (and `MaxTextureAspectRatio`) is 4096 now, not
+the 0 of a zeroed structure.
+
 Both gaps above are closed. What a 1997 title now gets from the HAL:
 
 - **The caps.** The DX7 texture format list has a tenth entry,

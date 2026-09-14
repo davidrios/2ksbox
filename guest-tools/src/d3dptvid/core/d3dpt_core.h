@@ -27,6 +27,7 @@
  * up. Read off the adapter's DDFLAGS register, so they are the core's:
  * every one of them switches behaviour the core owns. */
 #define DDF_NO_GETDRIVERINFO   0x1    /* no GetDriverInfo / GETDRIVERINFOSET */
+#define DDF_TEX_ANYSIZE        0x2    /* the A/B: textures of any size claimed again (no D3DPTEXTURECAPS_POW2), as before 2026-09-14 */
 #define DDF_NO_SURFACE_CB      0x4    /* only MapMemory + CanCreateSurface */
 #define DDF_ENGINE_BITMAP      0x8    /* EngCreateBitmap primary instead of a device surface */
 #define DDF_GDI_CAP            0x10   /* add DDCAPS_GDI to dwCaps: dxg then drops the HAL (kept as the repro) */
@@ -56,6 +57,7 @@
 #define DDF_NO_MORE_FMTS       0x4000000 /* the A/B: none of L8 A8L8 A4L4 A8 X4R4G4B4 R3G3B2 A8R3G3B2 DXT2 DXT4 in the DX8 format list */
 #define DDF_NO_MSAA            0x8000000 /* the A/B: no multisample types in the DX8 format list, as before protocol v13 */
 #define DDF_NO_GAMMA           0x10000000 /* the A/B: no gamma ramp (DrvIcmSetDeviceGammaRamp refuses, no DirectDraw / D3D8 gamma caps) */
+#define DDF_TEX_256            0x20000000 /* the A/B: textures of 256x256 at most (aspect 256), as a Voodoo 2's */
 
 /* DDI-only DX8 device caps (d3dhal.h): the runtime puts vertex / index
  * buffers in video memory through the buffer callbacks when they are set */
@@ -204,6 +206,7 @@ typedef struct d3dpt_core {
     BOOL d3d;                   /* window mapped and the host executor answered */
     d3dpt_enc enc;
     ULONG dp2_calls, dp2_errors, reg_lines;
+    ULONG zwrites_said;         /* d3d_z_written's log lines (the first 16) */
     ULONG parse_lines, bufblt_lines;
     /* the runtime's parser for the tokens a DrawPrimitives2 stream may carry
      * that are not the driver's: the DX3 execute-buffer opcodes
@@ -319,6 +322,7 @@ HRESULT ctx_scene_capture(d3dpt_core *c, ULONG_PTR h, BOOL end);
 HRESULT ctx_set_render_target(d3dpt_core *c, ULONG_PTR h, ULONG rt, ULONG z);
 HRESULT ctx_clear2(d3dpt_core *c, ULONG_PTR h, ULONG flags, ULONG colour, float z, ULONG stencil,
                    const void *rects, ULONG nrects);
+ULONG d3d_z_written(d3dpt_core *c, ULONG handle, ULONG bits, ULONG mask);   /* doc 19 §34 */
 
 /* --- core_dp2.c: the DrawPrimitives2 token stream --- */
 /* everything one DrawPrimitives2 call gives the core, in neutral form */

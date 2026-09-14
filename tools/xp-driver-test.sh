@@ -65,7 +65,9 @@ if [ "$(uname -s)" = Darwin ]; then
 fi
 IMG="${1:?image.qcow2}"; MODE="${2:?install|ddtest|modes|d3d7|d3dgame8|shtest|cktest|cubetest|probe|probes|ebtest|gamma|cmd|bat}"; shift 2
 OUT="${OUT:-$ROOT/build/xp-driver-test}"; mkdir -p "$OUT"
-ISO="$ROOT/guest-tools/out/d3dpt-driver.iso"
+# DRIVER_ISO= another build's driver ISO: the A/B against an older driver
+# (built from `git archive <sha>` into a scratch tree, never over this one's)
+ISO="${DRIVER_ISO:-$ROOT/guest-tools/out/d3dpt-driver.iso}"
 [ -f "$ISO" ] || { echo "no $ISO: run guest-tools/build-driver.sh"; exit 1; }
 SCRATCH="$OUT/scratch.img"
 if [ ! -f "$SCRATCH" ]; then

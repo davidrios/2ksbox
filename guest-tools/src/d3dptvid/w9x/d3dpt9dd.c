@@ -346,12 +346,13 @@ static BOOL BuildHalInfo(void)
             WORD w = s_res[i].w;
             WORD h = s_res[i].h;
             WORD bpp = s_bpp[j];
-            DWORD need = MulW(w, (WORD)(h * ((bpp + 7) / 8)));
+            DWORD pitch = D3DPT9X_PITCH(w, bpp);
+            DWORD need = MulW((WORD)pitch, h);
             if (need <= pHal->vram_size && n < D3DPT_HAL9_MAX_MODES) {
                 DDHALMODEINFO_t __far *m = &mi[n];
                 m->dwWidth = w;
                 m->dwHeight = h;
-                m->lPitch = MulW(w, (bpp + 7) / 8);
+                m->lPitch = pitch;
                 m->dwBPP = bpp;
                 m->wFlags = (bpp == 8) ? DDMODEINFO_PALETTIZED : 0;
                 m->wRefreshRate = 0;
@@ -418,7 +419,7 @@ static BOOL BuildHalInfo(void)
     hi->vmiData.dwDisplayHeight = wScrY;
     hi->vmiData.lDisplayPitch = dwPitch;
     BuildPixelFormat(&hi->vmiData.ddpfDisplay);
-    hi->vmiData.dwOffscreenAlign = 64;
+    hi->vmiData.dwOffscreenAlign = D3DPT9X_PITCH_ALIGN;  /* = every mode's pitch rounding */
     hi->vmiData.dwZBufferAlign = 64;
     hi->vmiData.dwOverlayAlign = 64;
     hi->vmiData.dwAlphaAlign = 64;
@@ -464,6 +465,11 @@ static BOOL BuildHalInfo(void)
     hi->ddCaps.dwSize = sizeof(DDCORECAPS_t);
     /* DDCAPS_GDI is normal on 9x and fatal on NT (doc 19 §5): here it
      * says the primary is the same memory GDI draws into, which it is. */
+    /* No DDCAPS_BLTDEPTHFILL: claimed alone it does not route a depth fill
+     * to Blt32 — the runtime still does it itself, through a Lock of the Z
+     * buffer, which is where the HAL sees it (Unlock32, doc 19 §34) — and
+     * DDCAPS_BLT, which would, needs SRCCOPY and a real blitter behind it
+     * (the validator rules above). */
     hi->ddCaps.dwCaps = DDCAPS_GDI | DDCAPS_BLTQUEUE;
     /* **Never DDCAPS2_CERTIFIED**, which is what this step cost
      * (2026-09-08, doc 19 §21). "Certified" is something the runtime

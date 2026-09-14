@@ -2456,3 +2456,208 @@ or skipped draw in any run's log, and `scripts/test.sh all` 45 passed
 `MGDTEST` passes its three cases on both cores (above); no probe has a
 90 000-vertex draw, so the long-draw cut is proved not to break the
 streams that exist, not yet to fix one that needed it.
+
+### 33. Diablo II's sheared menu: a flip chain at a pitch the screen was not scanned at (2026-09-13)
+
+The user's report was "the Diablo II demo only shows garbled graphics"
+(the shareware v1.04, on the launcher's `base98-br`: `d3dpt-vga` with the
+Voodoo 2 beside it; the same demo ran on 86Box). The game's own log
+(`D2YYMMDD.TXT` in its folder) said the runs had been **DirectDraw** on
+our adapter, not Glide — "Initializing for DirectDraw on Fallback
+DirectDraw Device", a triple-buffered window at 800x600 — and the
+Voodoo's 5 s line said `off: 0 frames`. Headless
+(`tools/win98-game-test.sh`, a raw copy, `EXTRA='-device voodoo2,addr=0x05'`)
+every screendump was the menu's colours smeared into horizontal streaks.
+
+**The cause.** The mode was 800x600x8, scanned out at pitch 800
+(`linear mode on (800x600x8 pitch 800`), and every `Lock` the game made
+on its back buffer said **pitch 0x340 = 832**. DirectDraw sizes a flip
+chain's back buffers out of the HAL's heap with the pitch rounded up to
+the alignment the HAL advertises — every `vmiData.*Align` here was 64 —
+while the primary's pitch is the mode's own; the HAL's `Flip` then put a
+832-pitch buffer on a screen scanned at 800, and each line of the frame
+landed 32 bytes further along than the one before. 800 is the one 8 bpp
+width in the mode table that 64 does not divide (400x300 at 8 and 16 bpp
+are the others at any depth); 640, 1024 and 1280 hid it. NT never had it:
+its miniport's `bpp_pitch` rounds every mode to 32 bytes and `DdGetDriverInfo`
+advertises the same 32.
+
+**The fix: one pitch rule for a mode.** `D3DPT9X_PITCH(w, bpp)` in
+`w9x/d3dpt9x.h` is the mode's bytes per line rounded up to
+`D3DPT9X_PITCH_ALIGN` (64), and it is used by everything that has a pitch:
+GDI's `dwPitch` in `PhysicalEnable` (and so the PDEVICE's `deWidthBytes`,
+the VDD's registration and the primary's `lDisplayPitch`), the HAL mode
+table `SetMode32` programs the adapter from, both "does it fit in VRAM"
+checks, and `dwOffscreenAlign` itself, so the rounding DirectDraw applies
+and the rounding the screen has are one number. The adapter already took
+any pitch of at least width x bytes that is a multiple of 4. 800x600x8 is
+scanned at 832 now; 400x300x8 and x16 at 448 and 832.
+
+**Measured**, the same raw copy of `base98-br` before and after: the
+unfixed driver shows the streaks from 10 s to the end of a 90 s run; with
+the fix the adapter reports `linear mode on (800x600x8 pitch 832`, the
+back buffer's locks still say 832, and the menu draws (the fire moves
+from one screendump to the next; 125 page flips per 5 s both times). The
+same demo with `-3dfx` — Glide on the Voodoo 2 and 3dfx's own
+`glide3x.dll` — draws the menu correctly too (`voodoo2: 800x600 on: 125
+frames, ~32 000 triangles` per 5 s), so the Glide path never had the
+bug.
+
+**Why the game was on DirectDraw at all** — the user had picked 3dfx in
+the shareware's `D2VidTst`. It saved the pick (`Render` = 3, Glide) under
+`HKCU\Software\Blizzard Entertainment\Diablo II Shareware\VideoConfig`;
+the shareware's `Diablo II.exe` reads only `...\Diablo II\VideoConfig`
+(the strings in the binaries say so), which here is the retail install's
+key, never through its video test: `Render` = 0, DirectDraw. A Blizzard
+bug, not ours. Setting the retail key's `Render` to 3 (`regedit /s` from
+`RUN.BAT` on a copy) started the shareware on the Voodoo 2 with no
+`-3dfx`: `voodoo2: 800x600 on: 125 frames`.
+
+**The guard** is `ddprobe`'s new `pitch check:` line, which compares the
+flipping primary's pitch with its back buffer's. `DDPROBE 800 600 8`
+(`STAGE=` + `GUEST_CMD=` + `PULL=DDPROBE.LOG` through
+`tools/win98-game-test.sh`) on a fresh copy of `base98-br` with the
+image's own, unfixed driver (`NO_DRIVER=1`): `primary 800, back buffer
+832 -> DIFFERENT`; the same copy with this build staged: `primary 832,
+back buffer 832 -> same`, five flips, and `GetDisplayMode` reporting pitch
+832.
+
+### 34. Crimson Skies in flight: a Z buffer reset through a Lock (2026-09-14)
+
+The user's report on `base98-br` (the unpatched `CRIMSON.EXE`, the disc in
+the drive): the menus have glitches "where it's supposed to be drawing
+text", and in flight "almost everything is transparent; some pieces leave
+draw trails". It works on the Voodoo 2, slowly. Both are fixed here, and
+neither was a rendering bug: one is a Z buffer the host never saw reset,
+the other a texture cap the game branches on.
+
+**What a flight frame was.** Headless on a raw copy (`tools/win98-game-test.sh`
+with the play disc, the Voodoo 2 on the bus as on the machine, the Select
+Video Device dialog answered by `CLICKS=`/`KEYS=` and the rest driven over
+QMP — the game reads its mouse through DirectInput, so the adapter's cursor
+registers never move and `relclick` cannot aim; raw relative events do, at
+about 1.27 pixels a mickey), a `D3DPT_DP2_TRACE` frame at 1024x768: 454
+draws, and only the 13 HUD draws (z 1.0, rhw 1.0) changed a pixel. The 440
+world draws — z from 0.0 up, rhw ~0.00003, none outside [0, 1] — changed
+nothing. The game uses reversed depth: `ZFUNC GREATEREQUAL`, far = 0, near
+= 1, and no Clear anywhere in the frame (the executor traces every
+`CTX_CLEAR`, and a traced frame runs from one readback to the next, so none
+can fall outside it). So something reset depth to 0 that the host never
+saw, the host's depth buffer kept the frame before's, and everything
+farther than it failed — the black sky with only the HUD in it, and the
+trails wherever no draw covered last frame's pixels. The same bug is what
+§28 left open as the menu's QUIT button drawing only its top half: the
+buttons depth-test GREATEREQUAL without Z writes against a buffer nobody
+had reset on the host.
+
+**How the game resets it: by hand.** It Locks the Z buffer
+(`DDLOCK_WRITEONLY`) and writes 0 into it, every frame — not a Direct3D
+Clear (no `Clear2` call reached the HAL), not a DirectDraw depth fill
+handed to the driver (`Blt32` was never called). The guest's own VRAM said
+so first: the Z surface read out over QMP (`pmemsave` at BAR0 + its
+offset) was 480 000 pixels of `0x00000000`. The `Lock32` log did not,
+because it stops after 64 lines and the intro video's back-buffer locks
+spend them.
+
+**The fix**, in the shared core (`core/core_ctx.c`, `d3d_z_written`) so
+that both families have it: each layer remembers the Z buffer it locked
+for writing (`Unlock32` on 9x, `DdUnlock` on XP), and on its Unlock the
+core looks at it. If it holds one value, that value — in the surface's
+own Z bits, through `dwZBitMask`, turned into the host's [0, 1] with
+integers only, because on XP this runs in a kernel-mode display driver
+that may not touch the FPU unsaved — becomes a Z-only clear on every
+context whose Z buffer the surface is. A read-only lock is left alone (a
+title reading its depth, for the sun's occlusion say, must not wipe the
+frame's), and so is a Z buffer that is not one value, because there is no
+way yet to give the host a depth image. **Not every pixel is read**: every
+7th row, whole, and the last — about 15% of the buffer, spread from top to
+bottom (user's call, 2026-09-14: more than that much of a screen at one
+depth is not a frame anyone draws, and a fill of part of the buffer still
+reads as not uniform because every sampled row spans its width). The scan
+is the guest CPU's, every frame, so reading all 3 MB of a 1024x768 32-bit
+Z buffer was the cost to cut. Measured in the game: the flight draws —
+terrain in fog, the wreck burning after the crash nobody was steering away
+from — and the QUIT button is whole. The sampled scan was checked the same
+way (bridge, city, terrain, the plane drawn), and flew at 17.5 to 34
+frames/s where the full scan had flown at 14.6 to 22 — two different
+flights nobody was steering, so a hint of the saving rather than a
+measurement of it. Z locks are logged separately now (the first 16, then
+every 1024th), and the core's decision on each of the first 16.
+
+**What was tried on the way, so nobody tries it again.** A DirectDraw
+depth fill (`Blt(DDBLT_DEPTHFILL)`) from an application does not reach the
+driver either: claiming `DDCAPS_BLTDEPTHFILL` alone does not route it to
+`Blt32` — the runtime still fills through a Lock, which the same `Unlock32`
+check now catches — and `DDCAPS_BLT`, which would route it, needs SRCCOPY
+and a real blitter (the validator rules above). A depth fill of part of
+the buffer therefore reaches the host only if the whole buffer ends up one
+value; one that leaves two values is lost (measured: `zfilltest`'s
+left-half case failed, and was taken out). That wants a depth-image upload
+in the executor. XP's driver had the same gap by construction — no blit
+caps at all, so dxg's HEL does every fill, through `DdLock` — and has the
+same fix since 2026-09-14.
+
+**The guard** is `ZFILLTEST.EXE` (`guest-tools/src/d3dptvid/zfilltest.c`,
+built by `build-driver9x.sh`): Z known to the host at 1.0 from a Clear,
+then (A) a depth fill of 0, (B) a depth fill of 0xffff and (D) a Lock that
+writes 0, each followed by a quad at z 0.5 under GREATEREQUAL read back
+from the back buffer. On `base98-br` with this driver A, B and D pass; with
+the image's own driver (`NO_DRIVER=1`) A and D fail — the negative
+control. On XP (`winxp-m7`, built by `build-driver.sh` too, as
+`DRIVER\ZFILLTEST.EXE`) the same: 3 of 3 with this driver, and the driver
+from the commit before (built from `git archive 3fc4dfd` into a scratch
+tree and installed with `DRIVER_ISO=` on `tools/xp-driver-test.sh`) fails
+A and D. Run it there with `tools/xp-driver-test.sh <overlay> cmd 'cd /d
+%TEMP% & D:\DRIVER\ZFILLTEST.EXE & copy zfilltest.log E:\'` and read the
+log off `OUT/scratch.img` with mtools. Run it with `STAGE=guest-tools/out/driver9x/zfilltest.exe
+PULL=ZFILLTEST.LOG GUEST_CMD=$'cd C:\\\r\nZFILLTEST.EXE'
+tools/win98-game-test.sh <image> zf`.
+
+#### The menu text: a texture cap, read before any call
+
+The Instant Action page drew every mission in its list and every name
+field (Pilot Plane, Mission, Environment...) as a bar of red, green, blue
+and brown blocks, while its labels ("Pilot Plane:", "Table of Contents")
+were right. The trace had it in one line per string: each is a quad drawn
+with texture handle 165, an **8x8 R5G6B5** texture of a diagonal
+four-colour pattern with full alpha — the engine's own "missing texture"
+— under UVs sized for a strip of about 131x16 texels (u = the string's
+width / 131, v = 15/16), no rebind between strings. The strings' own
+textures were never made: not a video-memory one, not even the
+system-memory surface the labels are painted into with GDI first. Every
+`CanCreateSurface` was followed by its `CreateSurface`, nothing was
+refused, the game's own `GAMEZ.ERR` said nothing — so it was a decision
+the game made from something the device reports, before any call a
+driver could log.
+
+The diff that found it is `DEVCAPS.EXE` (`w9x/devcaps.c`): every
+DirectDraw device — with `DDENUM_NONDISPLAYDEVICES`, or the Voodoo 2 is
+not enumerated at all — its DDCAPS, `GetAvailableVidMem` per kind, and
+every Direct3D device's `D3DDEVICEDESC7` by field and in hex. Against the
+Voodoo 2's DirectX 7 driver, on which the user says the menus work, the
+two answers a text engine sizes its textures from differed: 3dfx claims
+`D3DPTEXTURECAPS_POW2` and 256x256 at most, we claimed any size up to
+4096. Two A/B bits (`ddflags`) settled it on the game: both together, the
+text draws; **`POW2` alone, the text draws** — and the game makes 3 814
+textures on that screen, all powers of two, where it had made 218. So a
+device that allows any texture size sends it down a text path that never
+makes its strings' textures.
+
+**The fix** (`core/core_caps.c`, both families): the texture caps claim
+`D3DPTEXTURECAPS_POW2 | D3DPTEXTURECAPS_NONPOW2CONDITIONAL` — powers of
+two, other sizes only clamped and without a mip chain — which is what a
+GeForce 2 to 4 or a Radeon claims, rather than `POW2` alone, which would
+refuse a non-power-of-two texture to every title that makes one. The host
+has no such limit; the claim is for the titles. Measured on the default
+flags: the whole page's text is right, and flight draws (terrain, trees,
+the plane, the HUD). `ddflags=0x2` (`DDF_TEX_ANYSIZE`) puts the old
+answer back and `ddflags=0x20000000` (`DDF_TEX_256`) caps textures at
+256x256 like the Voodoo 2 — the two halves of this bisection.
+
+**Also found, and fixed, and not the cause of anything seen.** The DX7 and
+DX8 caps published `dwMaxTextureAspectRatio` / `MaxTextureAspectRatio` as
+0 (the structure is zeroed and the field was never set); they are 4096 now
+and `d3d7test` refuses a HAL that reports less than 8. Microsoft's own RGB
+device reports 0 as well, and publishing 4096 changed nothing in the game.
+And `D9F_CERTIFIED` (0x01000000, the 9x half of `ddflags`) is the same bit
+as the core's `DDF_NO_VOLUME`: whoever sets one sets both.

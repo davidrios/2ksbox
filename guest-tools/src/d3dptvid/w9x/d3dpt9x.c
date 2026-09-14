@@ -290,7 +290,7 @@ static BOOL ModeOk(WORD x, WORD y, WORD bpp)
     if (bpp != 8 && bpp != 16 && bpp != 32) return FALSE;
     if (x < 320 || y < 200) return FALSE;
 
-    need = MulW(x, (WORD)(y * ((bpp + 7) / 8)));
+    need = MulW((WORD)D3DPT9X_PITCH(x, bpp), y);
     return need <= dwVramSize;
 }
 
@@ -340,7 +340,7 @@ int PhysicalEnable(void)
         return 0;
     }
 
-    dwPitch = MulW(wScrX, (wBpp + 7) / 8);
+    dwPitch = D3DPT9X_PITCH(wScrX, wBpp);
 
     /* The VDD virtualises the VGA for every VM and has to be told before
      * and after the hardware stops being one. */

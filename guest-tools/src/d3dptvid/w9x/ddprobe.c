@@ -32,6 +32,9 @@
  * where the HAL never sees it — a palette at 8 bpp, five frames drawn and
  * flipped, RestoreDisplayMode; every HRESULT in the log. It is what found
  * the PDEVICE overrun of doc 19 §30 once the game had pointed at it.
+ * Its `pitch check:` line compares the primary's pitch with the back
+ * buffer's, which must be the same number: `DDPROBE 800 600 8` said 800
+ * against 832 before doc 19 §33, and every flip showed a sheared frame.
  *
  * Build: guest-tools/build-driver9x.sh (mingw-w64, i686, msvcrt).
  *
@@ -381,6 +384,25 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                     int frame;
 
                     describe("  back buffer", back);
+                    {
+                        /* doc 19 §33: DirectDraw sizes a flip chain's back
+                         * buffers by the HAL's alignment, the primary by the
+                         * mode's pitch; if they differ, every flip scans a
+                         * buffer out at the wrong pitch (Diablo II at
+                         * 800x600x8: 832 against 800, a sheared frame) */
+                        DDSURFACEDESC pd, bd;
+
+                        memset(&pd, 0, sizeof(pd));
+                        pd.dwSize = sizeof(pd);
+                        memset(&bd, 0, sizeof(bd));
+                        bd.dwSize = sizeof(bd);
+                        if (SUCCEEDED(IDirectDrawSurface_GetSurfaceDesc(prim, &pd)) &&
+                            SUCCEEDED(IDirectDrawSurface_GetSurfaceDesc(back, &bd)))
+                            logf_("  pitch check: primary %ld, back buffer %ld -> %s",
+                                  (long)pd.lPitch, (long)bd.lPitch,
+                                  pd.lPitch == bd.lPitch ? "same"
+                                                         : "DIFFERENT (a flip shows a sheared frame)");
+                    }
                     for (frame = 0; frame < 5; frame++) {
                         DWORD t0, t1;
 
