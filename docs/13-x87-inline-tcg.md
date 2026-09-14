@@ -278,6 +278,50 @@ Measured, the Lobby on a raw copy of `base98-us`, the demo clicked as in
 doc 19 §36, no trace and no sampling (a traced run halves the rate), the
 executor's rate lines picked out by >100 draws a frame: 35.2 fps with the switch off, 50.3 fps with it on, over the same 23 five-second windows (worst 18.8 → 35.2, best 57.6 → 60.2, the 60 Hz cap).
 
+## PC=64 inline, exact (patch 48, 2026-09-14)
+
+The same day's second answer to the Lobby, after the user asked whether
+the exponent could be what gives instead of the mantissa. The first idea
+was double-double (two host doubles: a 106-bit mantissa, the double's
+exponent), but a 106-bit approximation still has to fall back wherever the
+result sits too close to a 64-bit rounding tie. The integer mantissa has
+no such case: the exact arithmetic already written for patch 47's first
+draft (a 64x64->128 product, a 128-bit aligned sum with a sticky bit, a
+128/64 quotient, rounded to 64 bits nearest-even) is exact by
+construction, and it keeps the x87's own 15-bit exponent.
+
+**Mode 3.** The x87 mode TB flag's fourth value, set by
+`update_fp_status` at PC=64 with RC nearest, PM masked and `x87-fast` on
+(and `x87-pc64-as-53` off, which maps PC=64 to mode 1 instead). The
+shadows are the x80 values: `cpu_x87_xl[]` (mantissa, i64) and
+`cpu_x87_xh[]` (sign | exponent, i32), backed by `env->x87_xl/xh[]`,
+holding zero or a normal like every mode's shadows (`x87s_x80_check` on a
+reload). Reload and materialization are copies; `fld m64`/`m32` are exact
+conversions of any zero or normal double/float (softfloat does not round
+loads at PC=64); `fild` normalizes the integer inline (`clz`); `fchs`,
+`fabs`, `fxch`, `fcmov`, `fld st`/`fst st`, the constants and every
+compare are integer operations (a compare orders two 128-bit signed keys,
+exponent:mantissa negated for a negative, so -0 is +0).
+
+**Arithmetic.** `+ - * /` call `helper_x87x_arith`, declared
+`TCG_CALL_NO_RWG_SE`: it reads and writes no guest state, so TCG keeps
+the shadows in host registers across the call and needs no boundary. It
+returns an i128 — the result mantissa, and its sign | exponent with an
+"inexact" bit (PE, unless the TB was translated with PE sticky) and an
+"ok" bit, clear when softfloat must decide (a pre-rounding exponent
+outside 1..0x7ffd, i.e. overflow or tininess; a divisor of zero; an
+operand that is not zero or normal), which branches to the slow block
+like every other mode's result checks. `fst m64`/`m32` and `fist m16/m32`
+are the same shape (`x87x_to_f64`/`_f32`/`_int`), rounding nearest-even to
+the destination and refusing what would be out of range. `fsqrt` and
+`frndint` are not inlined here. The unwinder (`x86_restore_state_to_opc`)
+copies `x87_xl/xh[]` back for a mode 3 TB. The ordinary helpers' PC=64
+arithmetic takes `x87f_binop_x` as well (`x87_fast_prec` returns
+`X87F_PREC_X`), so a PC=64 block that is not inlined — single-stepped,
+or past the 94-instruction limit, or a slow block's helper — is faster too.
+
+**Measured**, the same Lobby as above with no switch at all: 39.7 fps over the same 23 windows (worst 23.8), against 35.2 before and 50.3 with `x87-pc64-as-53` — exact, and a third of the way there. The call per `+ - * /` stays (cheap: no boundary, no flush), so inlining the integer arithmetic as TCG ops (`muluh_i64`, `add2`/`sub2`, `clz` all exist on both backends) is the next step if a profile of mode 3 says the calls dominate. `tools/x87-guest-test.py`: 906,713 lines identical on/off with the new PC=64 operands (exact 64-bit ties for add, a cancellation, two full mantissas), which exercise mode 3 at the battery's 033F and 833F control words.
+
 ## Follow-ups
 
 - `-cpu pentium3,x87-fast=off` stays as the fallback if something

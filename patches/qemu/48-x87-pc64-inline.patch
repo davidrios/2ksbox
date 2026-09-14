@@ -1,0 +1,1027 @@
+x87 at 64-bit precision inline and exact: the x80 itself as the shadow.
+
+Patches 06/37/45 keep the x87 stack in host registers across a TB at
+PC=53 (binary64 shadows) and PC=24 (binary32), and patch 47 can run PC=64
+at 53 bits, inexactly. Exact PC=64 code still took a helper call per
+instruction into softfloat's 80-bit path: 3DMark2001 SE's Lobby spends
+over half its vCPU there (FCW=033f, doc 13 "PC=64 as 53 bits").
+
+Mode 3 (x87_fast_mode 3: PC=64, RC nearest, PM masked, x87-fast on; the
+TB flag's fourth value) keeps the shadows as the x80 values themselves,
+the mantissa in an i64 global and sign | exponent in an i32 one (env
+x87_xl[] / x87_xh[]), zero or normal like the other modes' shadows. The
+exponent range is the x87's, so nothing falls back for range; reloads and
+materializations are copies, fld m32/m64 exact conversions, fild an inline
+normalization, compares a 128-bit integer key. +, -, * and / are calls to
+pure helpers (TCG_CALL_NO_RWG_SE, the shadows stay in host registers):
+x87f_binop_x in x87-fast.h, a 64x64->128 product, a 128-bit aligned sum
+with a sticky bit, a 128/64 quotient, rounded to 64 bits nearest-even --
+what softfloat computes, without its canonicalization -- returning an "ok"
+bit that sends overflow, tininess, denormals and NaNs to the slow block.
+fst m32/m64 and fist round through pure helpers of the same kind; fsqrt
+and frndint are not inlined in this mode. The unwinder copies x87_xl/xh
+back for a mode 3 TB. The PC=64 arithmetic of the ordinary helpers
+(x87_fast_prec) takes the same integer path, so code that is not inlined
+gains too.
+
+diff --git a/target/i386/cpu.h b/target/i386/cpu.h
+index 019dffe..269f47b 100644
+--- a/target/i386/cpu.h
++++ b/target/i386/cpu.h
+@@ -1798,8 +1798,9 @@ typedef struct CPUArchState {
+     floatx80 ft0;
+     /*
+      * x87 inline fast path (tcg/x87-shadow.c.inc): with RC nearest, PE
+-     * masked and property x87-fast on, 1 = PC 53 bits, 2 = PC 24 bits;
+-     * 0 otherwise. Derived from fpuc by update_fp_status(), not migrated.
++     * masked and property x87-fast on, 1 = PC 53 bits, 2 = PC 24 bits,
++     * 3 = PC 64 bits (patch 48); 0 otherwise. Derived from fpuc by
++     * update_fp_status(), not migrated.
+      */
+     uint8_t x87_fast_mode;
+     /*
+@@ -1817,6 +1818,9 @@ typedef struct CPUArchState {
+     uint64_t x87_sd[8];
+     /* the same as binary32 at PC=24 (x87_fast_mode 2) */
+     uint32_t x87_ss[8];
++    /* and as the x80 itself at PC=64 (mode 3, patch 48): mantissa, sign | exponent */
++    uint64_t x87_xl[8];
++    uint32_t x87_xh[8];
+ 
+     float_status mmx_status; /* for 3DNow! float ops */
+     float_status sse_status;
+@@ -2577,7 +2581,7 @@ int cpu_mmu_index_kernel(CPUX86State *env);
+ #include "hw/i386/apic.h"
+ #endif
+ 
+-/* TB flags (not hflags): x87 inline mode, env->x87_fast_mode (0, 1, 2) */
++/* TB flags (not hflags): x87 inline mode, env->x87_fast_mode (0..3) */
+ #define TB_FLAG_X87_MODE_SHIFT  29
+ #define TB_FLAG_X87_MODE_MASK   (3u << TB_FLAG_X87_MODE_SHIFT)
+ /* SSE inline mode: sse_fast_mode and the precision flag already sticky */
+diff --git a/target/i386/helper.h b/target/i386/helper.h
+index 75a5e66..c4b2abf 100644
+--- a/target/i386/helper.h
++++ b/target/i386/helper.h
+@@ -121,6 +121,11 @@ DEF_HELPER_2(fldt_ST0, void, env, tl)
+ DEF_HELPER_2(fstt_ST0, void, env, tl)
+ DEF_HELPER_1(fpush, void, env)
+ DEF_HELPER_1(fpop, void, env)
++/* x87 at PC=64, inline mode 3 (patch 48): pure, on raw x80 values */
++DEF_HELPER_FLAGS_5(x87x_arith, TCG_CALL_NO_RWG_SE, i128, i32, i64, i32, i64, i32)
++DEF_HELPER_FLAGS_2(x87x_to_f64, TCG_CALL_NO_RWG_SE, i128, i64, i32)
++DEF_HELPER_FLAGS_2(x87x_to_f32, TCG_CALL_NO_RWG_SE, i64, i64, i32)
++DEF_HELPER_FLAGS_3(x87x_to_int, TCG_CALL_NO_RWG_SE, i64, i64, i32, i32)
+ DEF_HELPER_1(fdecstp, void, env)
+ DEF_HELPER_1(fincstp, void, env)
+ DEF_HELPER_2(ffree_STN, void, env, int)
+diff --git a/target/i386/tcg/fpu_helper.c b/target/i386/tcg/fpu_helper.c
+index 8fab0f3..a5484e1 100644
+--- a/target/i386/tcg/fpu_helper.c
++++ b/target/i386/tcg/fpu_helper.c
+@@ -124,6 +124,8 @@ static inline int x87_fast_prec(CPUX86State *env)
+         return X87F_PREC_D;
+     case floatx80_precision_s:
+         return X87F_PREC_S;
++    case floatx80_precision_x:
++        return X87F_PREC_X;             /* patch 48: +, -, *, / on the integer mantissas */
+     default:
+         return -1;
+     }
+@@ -178,6 +180,66 @@ static inline __attribute__((always_inline)) floatx80 x87_binop(CPUX86State *env
+ #define x87_mul(env, a, b) x87_binop(env, X87F_MUL, a, b)
+ #define x87_div(env, a, b) x87_binop(env, X87F_DIV, a, b)
+ 
++/*
++ * PC=64 inline mode (x87-shadow's mode 3, patch 48): pure helpers on raw
++ * x80 values (mantissa, sign | exponent), exact (x87-fast.h). They touch
++ * no guest state, so the shadows stay in host registers across the call;
++ * a result's flags come back beside it: bit 16 of the high word inexact,
++ * bit 17 "ok" -- clear when the value needs softfloat (the caller's slow
++ * path), in which case nothing else is meaningful.
++ */
++#define X87X_INEXACT (1u << 16)
++#define X87X_OK      (1u << 17)
++
++Int128 helper_x87x_arith(uint32_t op, uint64_t al, uint32_t ah, uint64_t bl, uint32_t bh)
++{
++    floatx80 a = { .low = al, .high = ah }, b = { .low = bl, .high = bh }, r;
++    bool inexact;
++
++    if (!x87f_binop_x(op, a, b, &r, &inexact)) {
++        return int128_make128(0, 0);
++    }
++    return int128_make128(r.low, r.high | (inexact ? X87X_INEXACT : 0) | X87X_OK);
++}
++
++/* fst m64 / m32: the bits in the low word, the flags in the high one */
++Int128 helper_x87x_to_f64(uint64_t l, uint32_t h)
++{
++    floatx80 a = { .low = l, .high = h };
++    uint64_t bits;
++    bool inexact;
++
++    if (!x87f_x_to_fmt(a, 52, -1022, 1023, &bits, &inexact)) {
++        return int128_make128(0, 0);
++    }
++    return int128_make128(bits, (inexact ? X87X_INEXACT : 0) | X87X_OK);
++}
++
++uint64_t helper_x87x_to_f32(uint64_t l, uint32_t h)
++{
++    floatx80 a = { .low = l, .high = h };
++    uint64_t bits;
++    bool inexact;
++
++    if (!x87f_x_to_fmt(a, 23, -126, 127, &bits, &inexact)) {
++        return 0;
++    }
++    return bits | ((uint64_t)((inexact ? X87X_INEXACT : 0) | X87X_OK) << 16);
++}
++
++/* fist m16 / m32: the integer in the low 32 bits, the flags above */
++uint64_t helper_x87x_to_int(uint64_t l, uint32_t h, uint32_t m16)
++{
++    floatx80 a = { .low = l, .high = h };
++    int32_t v;
++    bool inexact;
++
++    if (!x87f_x_to_int(a, m16 ? 16 : 32, &v, &inexact)) {
++        return 0;
++    }
++    return (uint32_t)v | ((uint64_t)((inexact ? X87X_INEXACT : 0) | X87X_OK) << 16);
++}
++
+ static inline double floatx80_to_double(CPUX86State *env, floatx80 a)
+ {
+     union {
+@@ -987,6 +1049,8 @@ void update_fp_status(CPUX86State *env)
+             env->x87_fast_mode = 1;
+         } else if (rnd_prec == floatx80_precision_s) {
+             env->x87_fast_mode = 2;
++        } else if (rnd_prec == floatx80_precision_x) {
++            env->x87_fast_mode = 3;         /* patch 48: x80 shadows */
+         }
+     }
+ }
+diff --git a/target/i386/tcg/tcg-cpu.c b/target/i386/tcg/tcg-cpu.c
+index ffd846c..cd9c91d 100644
+--- a/target/i386/tcg/tcg-cpu.c
++++ b/target/i386/tcg/tcg-cpu.c
+@@ -99,18 +99,22 @@ static void x86_restore_state_to_opc(CPUState *cs,
+      * relative stack slots whose shadow is newer than fpregs[] and the
+      * push/pop delta since the frame's entry top. Materialize them: a TB
+      * translated for PC=24 (mode 2) keeps them as binary32 in x87_ss[],
++     * one for PC=64 (mode 3) as the x80 itself in x87_xl[] / x87_xh[],
+      * every other inline TB as binary64 in x87_sd[].
+      */
+     if (data[2] & 0xff) {
+         int delta = (data[2] >> 8) & 7;
+         int entry = (env->fpstt - delta) & 7;
+-        bool prec24 = (tb->flags & TB_FLAG_X87_MODE_MASK)
+-                      == (2u << TB_FLAG_X87_MODE_SHIFT);
++        int mode = (tb->flags & TB_FLAG_X87_MODE_MASK) >> TB_FLAG_X87_MODE_SHIFT;
++        bool prec24 = mode == 2;
+         int r;
+ 
+         for (r = 0; r < 8; r++) {
+             if (data[2] & (1u << r)) {
+-                if (prec24) {
++                if (mode == 3) {
++                    env->fpregs[(entry + r) & 7].d.low = env->x87_xl[r];
++                    env->fpregs[(entry + r) & 7].d.high = env->x87_xh[r];
++                } else if (prec24) {
+                     float f;
+                     memcpy(&f, &env->x87_ss[r], sizeof(f));
+                     env->fpregs[(entry + r) & 7].d = x87f_f_to_x80(f);
+diff --git a/target/i386/tcg/translate.c b/target/i386/tcg/translate.c
+index 80cf9dd..6d8d61c 100644
+--- a/target/i386/tcg/translate.c
++++ b/target/i386/tcg/translate.c
+@@ -83,6 +83,8 @@ static TCGv_i64 cpu_bndu[4];
+ /* x87 shadow doubles (x87-shadow.c.inc), relative stack slots */
+ static TCGv_i64 cpu_x87_sd[8];
+ static TCGv_i32 cpu_x87_ss[8];      /* the same as binary32 at PC=24 */
++static TCGv_i64 cpu_x87_xl[8];      /* and as the x80 at PC=64: mantissa */
++static TCGv_i32 cpu_x87_xh[8];      /* sign | exponent (patch 48) */
+ 
+ /* x87 shadow-double translation: one out-of-line slow block (x87-shadow.c.inc) */
+ typedef struct X87SlowBlock {
+@@ -169,6 +171,7 @@ typedef struct DisasContext {
+     bool x87s_pe_sticky;        /* TB_FLAG_X87_PE: no inexact bookkeeping */
+     bool x87s_mode_dynamic;     /* a control word changed: the lookup reads the mode from env (patch 43) */
+     bool x87s_prec24;           /* mode 2: PC=24, shadows hold 24-bit values */
++    bool x87s_x80;              /* mode 3: PC=64, shadows are the x80 values (patch 48) */
+     bool x87s_guarded;          /* runtime mode guard emitted */
+     TCGv_i32 x87s_top;          /* entry top of stack, NULL: no frame */
+     int x87s_delta;             /* current top = (entry top + delta) & 7 */
+@@ -4198,6 +4201,21 @@ void tcg_x86_init(void)
+                                                ss_names[i]);
+     }
+ 
++    for (i = 0; i < 8; ++i) {
++        static const char xl_names[8][4] = {
++            "xl0", "xl1", "xl2", "xl3", "xl4", "xl5", "xl6", "xl7"
++        };
++        static const char xh_names[8][4] = {
++            "xh0", "xh1", "xh2", "xh3", "xh4", "xh5", "xh6", "xh7"
++        };
++        cpu_x87_xl[i] = tcg_global_mem_new_i64(tcg_env,
++                                               offsetof(CPUX86State, x87_xl[i]),
++                                               xl_names[i]);
++        cpu_x87_xh[i] = tcg_global_mem_new_i32(tcg_env,
++                                               offsetof(CPUX86State, x87_xh[i]),
++                                               xh_names[i]);
++    }
++
+     for (i = 0; i < 4; ++i) {
+         cpu_bndl[i]
+             = tcg_global_mem_new_i64(tcg_env,
+@@ -4248,6 +4266,7 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
+     dc->x87s_on = dc->x87s_mode != 0 && tcg_f64_supported()
+         && !(flags & (HF_TF_MASK | HF_INHIBIT_IRQ_MASK));
+     dc->x87s_prec24 = dc->x87s_mode == 2;
++    dc->x87s_x80 = dc->x87s_mode == 3;
+     dc->x87s_pe_sticky = dc->x87s_on && (flags & TB_FLAG_X87_PE_MASK);
+     dc->x87s_mode_dynamic = false;
+     dc->x87s_guarded = false;
+diff --git a/target/i386/tcg/x87-fast.h b/target/i386/tcg/x87-fast.h
+index 8fb5a6f..e29910b 100644
+--- a/target/i386/tcg/x87-fast.h
++++ b/target/i386/tcg/x87-fast.h
+@@ -35,6 +35,7 @@
+ enum {
+     X87F_PREC_S = 0,        /* precision control 24 bits: host float */
+     X87F_PREC_D = 1,        /* precision control 53 bits: host double */
++    X87F_PREC_X = 2,        /* precision control 64 bits: the integer mantissas (patch 48) */
+ };
+ 
+ enum {
+@@ -262,6 +263,267 @@ static inline bool x87f_binop_f(int op, float a, float b,
+     return true;
+ }
+ 
++/* ---- 64-bit precision: the integer mantissas, exactly (patch 48) ----
++ *
++ * No host format holds a 64-bit mantissa, so PC=64 (x87-shadow's mode 3)
++ * is done on the integers: a normal x80 is m * 2^(e - 16383 - 63) with the
++ * integer bit set in m, and +, -, * and / of two of them are a 128-bit
++ * sum, product or quotient rounded back to 64 bits, nearest-even -- what
++ * softfloat's floatx80 path computes, without its canonicalisation.
++ * Operands: normal (integer bit set, exponent 1..0x7ffe) or zero;
++ * unnormals, denormals, pseudo-denormals, infinities and NaNs return false.
++ * Results: a pre-rounding exponent of 1..0x7ffd, so neither overflow nor
++ * tininess can arise; anything else returns false too. */
++
++static inline bool x87f_x_ok(floatx80 a)
++{
++    uint32_t e = a.high & 0x7fff;
++
++    if (e == 0) {
++        return a.low == 0;
++    }
++    return e != 0x7fff && (a.low >> 63);
++}
++
++/* m with the bits below it in `rest` (its top bit = half an ulp),
++ * nearest-even, packed with exponent e */
++static inline bool x87f_pack_x(uint32_t sign, int32_t e, uint64_t m, uint64_t rest,
++                               floatx80 *r, bool *inexact)
++{
++    const uint64_t half = 1ULL << 63;
++
++    if (e < 1 || e > 0x7ffd) {
++        return false;
++    }
++    *inexact = rest != 0;
++    if (rest > half || (rest == half && (m & 1))) {
++        if (++m == 0) {                         /* 0xffff...f + 1: 1.0 of the next binade */
++            m = half;
++            e++;
++        }
++    }
++    r->low = m;
++    r->high = sign | e;
++    return true;
++}
++
++static inline bool x87f_mul_x(floatx80 a, floatx80 b, floatx80 *r, bool *inexact)
++{
++    uint32_t sign = (a.high ^ b.high) & 0x8000;
++    int32_t ea = a.high & 0x7fff, eb = b.high & 0x7fff;
++    unsigned __int128 p;
++
++    if (ea == 0 || eb == 0) {                   /* times a zero: a signed zero */
++        r->low = 0;
++        r->high = sign;
++        *inexact = false;
++        return true;
++    }
++    p = (unsigned __int128)a.low * b.low;       /* [2^126, 2^128) */
++    if (p >> 127) {
++        return x87f_pack_x(sign, ea + eb - X87F_EXP_BIAS + 1, (uint64_t)(p >> 64), (uint64_t)p, r, inexact);
++    }
++    return x87f_pack_x(sign, ea + eb - X87F_EXP_BIAS, (uint64_t)(p >> 63), (uint64_t)p << 1, r, inexact);
++}
++
++static inline int x87f_clz128(unsigned __int128 v)
++{
++    uint64_t hi = (uint64_t)(v >> 64);
++
++    return hi ? __builtin_clzll(hi) : 64 + __builtin_clzll((uint64_t)v);
++}
++
++static inline bool x87f_add_x(floatx80 a, floatx80 b, bool sub, floatx80 *r, bool *inexact)
++{
++    uint32_t sa = a.high & 0x8000, sb = (b.high & 0x8000) ^ (sub ? 0x8000 : 0), sx;
++    int32_t ea = a.high & 0x7fff, eb = b.high & 0x7fff, ex, n;
++    uint64_t mx, my;
++    uint32_t d;
++    unsigned __int128 X, Y, S;
++
++    *inexact = false;
++    if (eb == 0) {
++        if (ea == 0) {                          /* 0 + 0: -0 only when both are, nearest-even */
++            r->low = 0;
++            r->high = sa & sb;
++        } else {
++            *r = a;
++        }
++        return true;
++    }
++    if (ea == 0) {
++        r->low = b.low;
++        r->high = sb | eb;
++        return true;
++    }
++    /* x the larger in magnitude */
++    if (ea > eb || (ea == eb && a.low >= b.low)) {
++        mx = a.low; ex = ea; sx = sa; my = b.low; d = ea - eb;
++    } else {
++        mx = b.low; ex = eb; sx = sb; my = a.low; d = eb - ea;
++    }
++    X = (unsigned __int128)mx << 64;
++    if (d <= 64) {
++        Y = ((unsigned __int128)my << 64) >> d; /* nothing shifted out */
++    } else if (d < 128) {
++        Y = ((unsigned __int128)my << 64) >> d;
++        Y |= (my << (128 - d)) != 0;            /* what went, as a sticky bit */
++    } else {
++        Y = 1;
++    }
++    if (sa == sb) {
++        S = X + Y;
++        if (S < X) {                            /* carried out of 2^128 */
++            S = (S >> 1) | (S & 1) | ((unsigned __int128)1 << 127);
++            ex++;
++        }
++    } else {
++        S = X - Y;
++        if (S == 0) {                           /* x - x: +0, nearest-even */
++            r->low = 0;
++            r->high = 0;
++            return true;
++        }
++        /* a shift of more than one place only follows d <= 1, where Y
++         * carries no sticky bit, so it is exact */
++        n = x87f_clz128(S);
++        S <<= n;
++        ex -= n;
++    }
++    return x87f_pack_x(sx, ex, (uint64_t)(S >> 64), (uint64_t)S, r, inexact);
++}
++
++static inline bool x87f_div_x(floatx80 a, floatx80 b, floatx80 *r, bool *inexact)
++{
++    uint32_t sign = (a.high ^ b.high) & 0x8000;
++    int32_t ea = a.high & 0x7fff, eb = b.high & 0x7fff, e;
++    unsigned __int128 n;
++    uint64_t q, rem, rest;
++
++    if (eb == 0) {                              /* by zero: ZE (or IE for 0/0) is softfloat's */
++        return false;
++    }
++    if (ea == 0) {
++        r->low = 0;
++        r->high = sign;
++        *inexact = false;
++        return true;
++    }
++    e = ea - eb + X87F_EXP_BIAS;
++    if (a.low >= b.low) {
++        n = (unsigned __int128)a.low << 63;     /* the quotient in [2^63, 2^64) */
++    } else {
++        n = (unsigned __int128)a.low << 64;
++        e--;
++    }
++    q = (uint64_t)(n / b.low);
++    rem = (uint64_t)(n - (unsigned __int128)q * b.low);
++    /* the remainder against half the divisor, as a `rest` for the rounding */
++    rest = rem == 0 ? 0 : rem > b.low - rem ? (1ULL << 63) + 1 : rem == b.low - rem ? 1ULL << 63 : 1;
++    return x87f_pack_x(sign, e, q, rest, r, inexact);
++}
++
++/* a OP b at PC=64; op as x87-shadow's: 0 add, 1 mul, 4 sub, 5 subr, 6 div, 7 divr */
++static inline bool x87f_binop_x(int op, floatx80 a, floatx80 b, floatx80 *r, bool *inexact)
++{
++    if (!x87f_x_ok(a) || !x87f_x_ok(b)) {
++        return false;
++    }
++    switch (op) {
++    case 0:
++        return x87f_add_x(a, b, false, r, inexact);
++    case 1:
++        return x87f_mul_x(a, b, r, inexact);
++    case 4:
++        return x87f_add_x(a, b, true, r, inexact);
++    case 5:
++        return x87f_add_x(b, a, true, r, inexact);
++    case 6:
++        return x87f_div_x(a, b, r, inexact);
++    case 7:
++        return x87f_div_x(b, a, r, inexact);
++    default:
++        return false;
++    }
++}
++
++/* a normal x80 (or zero) -> binary64 / binary32 bits, nearest-even, when
++ * the result is a normal of that format (or zero); fst m64 / m32 at PC=64 */
++static inline bool x87f_x_to_fmt(floatx80 a, int mbits, int emin, int emax, uint64_t *bits,
++                                 bool *inexact)
++{
++    uint32_t e = a.high & 0x7fff;
++    uint64_t sign = (uint64_t)(a.high >> 15) << (mbits + (mbits == 52 ? 11 : 8));
++    const uint64_t half = 1ULL << 63;
++    uint64_t m, rest;
++    int32_t ue;
++
++    *inexact = false;
++    if (e == 0 && a.low == 0) {
++        *bits = sign;
++        return true;
++    }
++    if (!x87f_x_ok(a)) {
++        return false;
++    }
++    ue = (int32_t)e - X87F_EXP_BIAS;
++    if (ue < emin || ue > emax) {
++        return false;
++    }
++    m = a.low >> (63 - mbits);                  /* mbits + 1 bits, the integer bit on top */
++    rest = a.low << (mbits + 1);
++    *inexact = rest != 0;
++    if (rest > half || (rest == half && (m & 1))) {
++        if (++m == (1ULL << (mbits + 1))) {
++            m >>= 1;
++            if (++ue > emax) {
++                return false;                   /* overflow: OE is softfloat's */
++            }
++        }
++    }
++    *bits = sign | ((uint64_t)(ue + emax) << mbits) | (m & ((1ULL << mbits) - 1));
++    return true;
++}
++
++/* a normal x80 (or zero) rounded to an integer, nearest-even, when it fits
++ * `bits` (16 or 32) signed bits with room to spare; fist at PC=64 */
++static inline bool x87f_x_to_int(floatx80 a, int bits, int32_t *out, bool *inexact)
++{
++    uint32_t e = a.high & 0x7fff;
++    const uint64_t half = 1ULL << 63;
++    uint64_t q, frac;
++    int32_t ue;
++
++    *inexact = false;
++    if (e == 0 && a.low == 0) {
++        *out = 0;
++        return true;
++    }
++    if (!x87f_x_ok(a)) {
++        return false;
++    }
++    ue = (int32_t)e - X87F_EXP_BIAS;
++    if (ue >= bits - 1) {                       /* |a| >= 2^(bits-1): the helper decides */
++        return false;
++    }
++    if (ue < 0) {
++        q = 0;
++        frac = ue == -1 ? a.low : 1;            /* [0.5, 1) as is; below 0.5, just "inexact" */
++    } else {
++        q = a.low >> (63 - ue);
++        frac = a.low << (ue + 1);
++    }
++    *inexact = frac != 0;
++    if (frac > half || (frac == half && (q & 1))) {
++        q++;
++    }
++    if (q >= (1ULL << (bits - 1))) {
++        return false;
++    }
++    *out = (a.high & 0x8000) ? -(int32_t)q : (int32_t)q;
++    return true;
++}
++
+ /*
+  * a OP b at precision `prec` (X87F_PREC_*), round-to-nearest-even.
+  * Returns false when the caller must use softfloat.
+@@ -269,6 +531,12 @@ static inline bool x87f_binop_f(int op, float a, float b,
+ static inline bool x87f_binop(int op, int prec, floatx80 a, floatx80 b,
+                               floatx80 *r, bool *inexact)
+ {
++    if (prec == X87F_PREC_X) {
++        /* X87F_ADD/SUB/MUL/DIV in x87f_binop_x's (x87-shadow's) numbering */
++        static const int xop[4] = { 0, 4, 1, 6 };
++
++        return x87f_binop_x(xop[op & 3], a, b, r, inexact);
++    }
+     if (prec == X87F_PREC_D) {
+         double da, db, dr;
+         if (!x87f_x80_to_d(a, &da) || !x87f_x80_to_d(b, &db)) {
+@@ -303,6 +571,9 @@ static inline bool x87f_sqrt(int prec, floatx80 a, floatx80 *r, bool *inexact)
+         }
+         return false;
+     }
++    if (prec == X87F_PREC_X) {
++        return false;                           /* no 64-bit square root here */
++    }
+     if (prec == X87F_PREC_D) {
+         double d, s;
+         if (!x87f_x80_to_d(a, &d)) {
+diff --git a/target/i386/tcg/x87-shadow.c.inc b/target/i386/tcg/x87-shadow.c.inc
+index 0c67926..e891fa7 100644
+--- a/target/i386/tcg/x87-shadow.c.inc
++++ b/target/i386/tcg/x87-shadow.c.inc
+@@ -67,6 +67,21 @@
+  * that does not fit 24 bits takes the helper. A store of m32 is the
+  * shadow's own bits. Results are identical to the PC=24 helper path.
+  *
++ * PC=64 (mode 3, patch 48). No host format holds a 64-bit mantissa, so
++ * the shadow is the x80 itself: its mantissa in an i64 global
++ * (cpu_x87_xl[], env->x87_xl[]) and sign | exponent in an i32 one
++ * (cpu_x87_xh[], env->x87_xh[]), zero or a normal (integer bit set,
++ * exponent 1..0x7ffe) like the other modes' shadows. Reloads and
++ * materializations are copies, loads of m32/m64 exact conversions (at
++ * PC=64 softfloat does not round them), compares an integer key, fild an
++ * integer normalization. +, -, * and / are calls to pure helpers
++ * (x87x_arith: 128-bit integer arithmetic rounded to 64 bits, x87-fast.h)
++ * that touch no guest state, so the shadows stay in host registers across
++ * them; fst m32/m64 and fist round through helpers of the same kind. Each
++ * returns an "ok" bit beside its result, clear when softfloat has to
++ * decide (overflow, tininess, out of range), and then the slow block runs.
++ * fsqrt and frndint are not inlined in this mode.
++ *
+  * SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+@@ -165,14 +180,37 @@ static void x87s_free_tmps(DisasContext *s)
+ }
+ 
+ /*
+- * A shadow value: a binary64 in .d at PC=53, a binary32 in .f at PC=24.
+- * The mode is the TB's (s->x87s_prec24), so only one member is ever set.
++ * A shadow value: a binary64 in .d at PC=53, a binary32 in .f at PC=24,
++ * the x80 in .xl (mantissa) / .xh (sign | exponent) at PC=64. The mode is
++ * the TB's (s->x87s_prec24, s->x87s_x80), so only one form is ever set.
+  */
+ typedef struct {
+     TCGv_i64 d;
+     TCGv_i32 f;
++    TCGv_i64 xl;
++    TCGv_i32 xh;
+ } X87SV;
+ 
++/* mode 3's helpers return their flags beside the result: in the high
++ * word of an i128 at these bits, or 16 bits higher in an i64 */
++#define X87S_XF_INEXACT     16
++#define X87S_XF_OK          17
++
++static TCGv_i128 x87s_tmp_i128(DisasContext *s)
++{
++    TCGv_i128 t = tcg_temp_ebb_new_i128();
++
++    x87s_track(s, tcgv_i128_temp(t));
++    return t;
++}
++
++static X87SV x87s_vx(TCGv_i64 l, TCGv_i32 h)
++{
++    X87SV v = { .xl = l, .xh = h };
++
++    return v;
++}
++
+ static X87SV x87s_v64(TCGv_i64 d)
+ {
+     X87SV v = { .d = d };
+@@ -190,18 +228,27 @@ static X87SV x87s_v32(TCGv_i32 f)
+ /* the global holding relative slot r's shadow */
+ static X87SV x87s_reg(DisasContext *s, int r)
+ {
++    if (s->x87s_x80) {
++        return x87s_vx(cpu_x87_xl[r], cpu_x87_xh[r]);
++    }
+     return s->x87s_prec24 ? x87s_v32(cpu_x87_ss[r]) : x87s_v64(cpu_x87_sd[r]);
+ }
+ 
+ static X87SV x87s_tmp_val(DisasContext *s)
+ {
++    if (s->x87s_x80) {
++        return x87s_vx(x87s_tmp_i64(s), x87s_tmp_i32(s));
++    }
+     return s->x87s_prec24 ? x87s_v32(x87s_tmp_i32(s))
+                           : x87s_v64(x87s_tmp_i64(s));
+ }
+ 
+ static void x87s_mov(DisasContext *s, X87SV dst, X87SV src)
+ {
+-    if (s->x87s_prec24) {
++    if (s->x87s_x80) {
++        tcg_gen_mov_i64(dst.xl, src.xl);
++        tcg_gen_mov_i32(dst.xh, src.xh);
++    } else if (s->x87s_prec24) {
+         tcg_gen_mov_i32(dst.f, src.f);
+     } else {
+         tcg_gen_mov_i64(dst.d, src.d);
+@@ -211,6 +258,16 @@ static void x87s_mov(DisasContext *s, X87SV dst, X87SV src)
+ /* the bits of a binary64 constant (fld1, fldz) in the mode's format */
+ static X87SV x87s_const(DisasContext *s, uint64_t bits)
+ {
++    if (s->x87s_x80) {
++        uint32_t e = (bits >> 52) & 0x7ff, h = (bits >> 48) & 0x8000;
++        uint64_t l = 0;
++
++        if (e) {                                /* a normal (the constants are 0 and 1) */
++            h |= e - X87S_BIAS_F64 + X87S_BIAS_X80;
++            l = (1ULL << 63) | ((bits & ((1ULL << 52) - 1)) << 11);
++        }
++        return x87s_vx(tcg_constant_i64(l), tcg_constant_i32(h));
++    }
+     if (s->x87s_prec24) {
+         double d;
+         float f;
+@@ -725,16 +782,78 @@ static void x87s_f64_to_f32(DisasContext *s, TCGv_i32 out, TCGv_i64 d,
+     x87s_set_pe(s, t);
+ }
+ 
++/*
++ * mode 3: branch to slow unless the x80 (low, high) is zero or a normal
++ * (integer bit set, exponent 1..0x7ffe) -- what a shadow may hold
++ */
++static void x87s_x80_check(DisasContext *s, TCGv_i64 low, TCGv_i32 high,
++                           TCGLabel *slow)
++{
++    TCGv_i64 e = x87s_tmp_i64(s);
++    TCGv_i64 t = x87s_tmp_i64(s);
++    TCGv_i64 bad = x87s_tmp_i64(s);
++    TCGv_i64 iszero = x87s_tmp_i64(s);
++
++    tcg_gen_extu_i32_i64(e, high);
++    tcg_gen_andi_i64(e, e, 0x7fff);
++    tcg_gen_or_i64(t, e, low);
++    tcg_gen_setcondi_i64(TCG_COND_EQ, iszero, t, 0);
++    tcg_gen_subi_i64(bad, e, 1);
++    tcg_gen_setcondi_i64(TCG_COND_GTU, bad, bad, 0x7ffd);  /* e == 0 or 0x7fff */
++    tcg_gen_setcondi_i64(TCG_COND_GE, t, low, 0);          /* integer bit clear */
++    tcg_gen_or_i64(bad, bad, t);
++    tcg_gen_andc_i64(bad, bad, iszero);
++    tcg_gen_brcondi_i64(TCG_COND_NE, bad, 0, slow);
++}
++
++/* mode 3: fpus |= PE if bit `bit` of a helper's flags is set */
++static void x87s_set_pe_bit(DisasContext *s, TCGv_i64 flags, int bit)
++{
++    TCGv_i64 t;
++    TCGv_i32 pe, fpus;
++
++    if (s->x87s_pe_sticky) {
++        return;
++    }
++    t = x87s_tmp_i64(s);
++    pe = x87s_tmp_i32(s);
++    fpus = x87s_tmp_i32(s);
++    tcg_gen_extract_i64(t, flags, bit, 1);
++    tcg_gen_extrl_i64_i32(pe, t);
++    tcg_gen_shli_i32(pe, pe, 5);            /* FPUS_PE */
++    tcg_gen_ld16u_i32(fpus, tcg_env, offsetof(CPUX86State, fpus));
++    tcg_gen_or_i32(fpus, fpus, pe);
++    tcg_gen_st16_i32(fpus, tcg_env, offsetof(CPUX86State, fpus));
++}
++
++/* mode 3: branch to slow unless bit `bit` ("ok") of a helper's flags is set */
++static void x87s_x80_ok(DisasContext *s, TCGv_i64 flags, int bit, TCGLabel *slow)
++{
++    TCGv_i64 t = x87s_tmp_i64(s);
++
++    tcg_gen_andi_i64(t, flags, 1ULL << bit);
++    tcg_gen_brcondi_i64(TCG_COND_EQ, t, 0, slow);
++}
++
+ /*
+  * m64 operand (fld/fxxx/fcom m64) as a shadow: zero or a normal inside
+  * the window; at PC=24 rounded to 24 bits with PE when inexact, as
+- * softfloat's float64_to_floatx80 does at that precision.
++ * softfloat's float64_to_floatx80 does at that precision. At PC=64 any
++ * zero or normal double, as its x80 (exact: softfloat does not round it).
+  */
+ static X87SV x87s_m64_operand(DisasContext *s, TCGv_i64 m, TCGLabel *slow)
+ {
+     TCGv_i32 f;
+     TCGv_i64 diff;
+ 
++    if (s->x87s_x80) {
++        TCGv_i64 l = x87s_tmp_i64(s);
++        TCGv_i32 h = x87s_tmp_i32(s);
++
++        x87s_f64_check(s, m, 1, 0x7fd, slow);  /* biased exponent 1..0x7fe, or zero */
++        x87s_f64_to_x80(s, l, h, m);
++        return x87s_vx(l, h);
++    }
+     x87s_f64_check_win(s, m, slow);
+     if (!s->x87s_prec24) {
+         return x87s_v64(m);
+@@ -757,6 +876,15 @@ static X87SV x87s_m64_operand(DisasContext *s, TCGv_i64 m, TCGLabel *slow)
+  */
+ static X87SV x87s_m32_operand(DisasContext *s, TCGv_i64 m, TCGLabel *slow)
+ {
++    if (s->x87s_x80) {
++        TCGv_i64 d = x87s_tmp_i64(s);
++        TCGv_i64 l = x87s_tmp_i64(s);
++        TCGv_i32 h = x87s_tmp_i32(s);
++
++        x87s_f32_to_f64(s, d, m, slow);         /* zero or normal, widened exactly */
++        x87s_f64_to_x80(s, l, h, d);
++        return x87s_vx(l, h);
++    }
+     if (s->x87s_prec24) {
+         TCGv_i32 f = x87s_tmp_i32(s);
+ 
+@@ -784,7 +912,11 @@ static X87SV x87s_get(DisasContext *s, int i, TCGLabel *slow)
+         TCGv_i32 high = x87s_tmp_i32(s);
+ 
+         x87s_ld_x80(low, high, x87s_slot_ptr(s, r));
+-        if (s->x87s_prec24) {
++        if (s->x87s_x80) {
++            x87s_x80_check(s, low, high, slow);
++            tcg_gen_mov_i64(cpu_x87_xl[r], low);
++            tcg_gen_mov_i32(cpu_x87_xh[r], high);
++        } else if (s->x87s_prec24) {
+             x87s_x80_to_f32(s, cpu_x87_ss[r], low, high, slow);
+         } else {
+             x87s_x80_to_f64(s, cpu_x87_sd[r], low, high, X87S_WIN, 0x7ff,
+@@ -800,6 +932,7 @@ static TCGv_i64 x87s_get64(DisasContext *s, int i, TCGLabel *slow)
+ {
+     X87SV v = x87s_get(s, i, slow);
+ 
++    tcg_debug_assert(!s->x87s_x80);             /* mode 3 has its own paths */
+     return s->x87s_prec24 ? x87s_widen(s, v.f) : v.d;
+ }
+ 
+@@ -807,7 +940,14 @@ static void x87s_set(DisasContext *s, int i, X87SV v)
+ {
+     int r = X87S_SLOT(s, i);
+ 
+-    if (s->x87s_prec24) {
++    if (s->x87s_x80) {
++        if (v.xl != cpu_x87_xl[r]) {
++            tcg_gen_mov_i64(cpu_x87_xl[r], v.xl);
++        }
++        if (v.xh != cpu_x87_xh[r]) {
++            tcg_gen_mov_i32(cpu_x87_xh[r], v.xh);
++        }
++    } else if (s->x87s_prec24) {
+         if (v.f != cpu_x87_ss[r]) {
+             tcg_gen_mov_i32(cpu_x87_ss[r], v.f);
+         }
+@@ -822,6 +962,10 @@ static void x87s_materialize_slot(DisasContext *s, int r)
+     TCGv_i64 low = x87s_tmp_i64(s);
+     TCGv_i32 high = x87s_tmp_i32(s);
+ 
++    if (s->x87s_x80) {
++        x87s_st_x80(x87s_slot_ptr(s, r), cpu_x87_xl[r], cpu_x87_xh[r]);
++        return;
++    }
+     if (s->x87s_prec24) {
+         x87s_f32_to_x80(s, low, high, cpu_x87_ss[r]);
+     } else {
+@@ -1245,11 +1389,29 @@ static void x87s_binop_f32(DisasContext *s, TCGv_i32 r, int op, TCGv_i32 a,
+     }
+ }
+ 
++/* r = a OP b on x80 shadows (mode 3): the exact integer arithmetic of
++ * x87x_arith, PE from its inexact bit, softfloat when it says so */
++static void x87s_binop_x80(DisasContext *s, X87SV r, int op, X87SV a, X87SV b,
++                           TCGLabel *slow)
++{
++    TCGv_i128 res = x87s_tmp_i128(s);
++    TCGv_i64 hi = x87s_tmp_i64(s);
++
++    gen_helper_x87x_arith(res, tcg_constant_i32(op), a.xl, a.xh, b.xl, b.xh);
++    tcg_gen_extr_i128_i64(r.xl, hi, res);
++    x87s_x80_ok(s, hi, X87S_XF_OK, slow);
++    tcg_gen_extrl_i64_i32(r.xh, hi);
++    tcg_gen_andi_i32(r.xh, r.xh, 0xffff);
++    x87s_set_pe_bit(s, hi, X87S_XF_INEXACT);
++}
++
+ /* r = a OP b in the mode's format */
+ static void x87s_binop(DisasContext *s, X87SV r, int op, X87SV a, X87SV b,
+                        TCGLabel *slow)
+ {
+-    if (!s->x87s_prec24) {
++    if (s->x87s_x80) {
++        x87s_binop_x80(s, r, op, a, b, slow);
++    } else if (!s->x87s_prec24) {
+         x87s_binop_f64(s, r.d, op, a.d, b.d, slow, NULL);
+     } else if (s->x87s_pe_sticky) {
+         x87s_binop_f32(s, r.f, op, a.f, b.f, slow);
+@@ -1337,10 +1499,56 @@ static void x87s_compare_f32(DisasContext *s, TCGv_i32 cc, TCGv_i32 a,
+                         cc);
+ }
+ 
++/* mode 3: a 128-bit signed ordering key of a zero-or-normal x80 -- its
++ * magnitude exponent:mantissa, negated for a negative (so -0 is +0) */
++static void x87s_cmp_key_x80(DisasContext *s, TCGv_i64 klo, TCGv_i64 khi, X87SV v)
++{
++    TCGv_i64 zero = tcg_constant_i64(0);
++    TCGv_i64 mhi = x87s_tmp_i64(s);
++    TCGv_i64 sgn = x87s_tmp_i64(s);
++    TCGv_i64 nlo = x87s_tmp_i64(s);
++    TCGv_i64 nhi = x87s_tmp_i64(s);
++
++    tcg_gen_extu_i32_i64(mhi, v.xh);
++    tcg_gen_shri_i64(sgn, mhi, 15);
++    tcg_gen_andi_i64(sgn, sgn, 1);
++    tcg_gen_andi_i64(mhi, mhi, 0x7fff);
++    tcg_gen_sub2_i64(nlo, nhi, zero, zero, v.xl, mhi);
++    tcg_gen_movcond_i64(TCG_COND_NE, klo, sgn, zero, nlo, v.xl);
++    tcg_gen_movcond_i64(TCG_COND_NE, khi, sgn, zero, nhi, mhi);
++}
++
++static void x87s_compare_x80(DisasContext *s, TCGv_i32 cc, X87SV a, X87SV b,
++                             bool eflags)
++{
++    TCGv_i64 alo = x87s_tmp_i64(s), ahi = x87s_tmp_i64(s);
++    TCGv_i64 blo = x87s_tmp_i64(s), bhi = x87s_tmp_i64(s);
++    TCGv_i64 lt = x87s_tmp_i64(s), eq = x87s_tmp_i64(s);
++    TCGv_i64 t = x87s_tmp_i64(s), u = x87s_tmp_i64(s);
++    TCGv_i64 zero = tcg_constant_i64(0);
++    int c_lt = eflags ? CC_C : 0x0100;
++    int c_eq = eflags ? CC_Z : 0x4000;
++
++    x87s_cmp_key_x80(s, alo, ahi, a);
++    x87s_cmp_key_x80(s, blo, bhi, b);
++    tcg_gen_setcond_i64(TCG_COND_EQ, t, ahi, bhi);
++    tcg_gen_setcond_i64(TCG_COND_LTU, u, alo, blo);
++    tcg_gen_and_i64(u, u, t);
++    tcg_gen_setcond_i64(TCG_COND_LT, lt, ahi, bhi);
++    tcg_gen_or_i64(lt, lt, u);
++    tcg_gen_setcond_i64(TCG_COND_EQ, eq, alo, blo);
++    tcg_gen_and_i64(eq, eq, t);
++    tcg_gen_movcond_i64(TCG_COND_NE, t, eq, zero, tcg_constant_i64(c_eq), zero);
++    tcg_gen_movcond_i64(TCG_COND_NE, t, lt, zero, tcg_constant_i64(c_lt), t);
++    tcg_gen_extrl_i64_i32(cc, t);
++}
++
+ static void x87s_compare(DisasContext *s, TCGv_i32 cc, X87SV a, X87SV b,
+                          bool eflags)
+ {
+-    if (s->x87s_prec24) {
++    if (s->x87s_x80) {
++        x87s_compare_x80(s, cc, a, b, eflags);
++    } else if (s->x87s_prec24) {
+         x87s_compare_f32(s, cc, a.f, b.f, eflags);
+     } else {
+         x87s_compare_f64(s, cc, a.d, b.d, eflags);
+@@ -1462,6 +1670,30 @@ static void gen_x87s_fild(DisasContext *s, bool m16)
+     X87SlowBlock *b = NULL;
+ 
+     x87s_begin(s);
++    if (s->x87s_x80) {
++        /* the integer normalized: mantissa |v| << clz, exponent 63 - clz */
++        TCGv_i64 a = x87s_tmp_i64(s);
++        TCGv_i64 n = x87s_tmp_i64(s);
++        TCGv_i64 l = x87s_tmp_i64(s);
++        TCGv_i64 e = x87s_tmp_i64(s);
++        TCGv_i64 zero = tcg_constant_i64(0);
++        TCGv_i32 h = x87s_tmp_i32(s);
++
++        tcg_gen_ext_i32_i64(v, s->tmp2_i32);
++        tcg_gen_abs_i64(a, v);
++        tcg_gen_clzi_i64(n, a, 64);
++        tcg_gen_andi_i64(t, n, 63);
++        tcg_gen_shl_i64(l, a, t);
++        tcg_gen_subfi_i64(e, X87S_BIAS_X80 + 63, n);
++        tcg_gen_movcond_i64(TCG_COND_EQ, e, a, zero, zero, e);  /* 0 -> +0 */
++        tcg_gen_shri_i64(t, v, 63);
++        tcg_gen_shli_i64(t, t, 15);
++        tcg_gen_or_i64(e, e, t);
++        tcg_gen_extrl_i64_i32(h, e);
++        x87s_push(s);
++        x87s_set(s, 0, x87s_vx(l, h));
++        return;
++    }
+     if (s->x87s_prec24 && !m16) {
+         b = x87s_new_slow(s, X87S_SLOW_FILD);
+         b->m = tcg_temp_new_i64();
+@@ -1503,6 +1735,21 @@ static void gen_x87s_fist(DisasContext *s, bool m16, bool pop)
+     b->m16 = m16;
+     b->pop = pop;
+     b->a0 = x87s_a0_copy(s);
++    if (s->x87s_x80) {
++        X87SV a = x87s_get(s, 0, b->label);
++        TCGv_i64 res = x87s_tmp_i64(s);
++
++        gen_helper_x87x_to_int(res, a.xl, a.xh, tcg_constant_i32(m16));
++        x87s_x80_ok(s, res, X87S_XF_OK + 16, b->label);
++        x87s_set_pe_bit(s, res, X87S_XF_INEXACT + 16);
++        tcg_gen_extrl_i64_i32(s->tmp2_i32, res);
++        tcg_gen_qemu_st_i32(s->tmp2_i32, s->A0, s->mem_index,
++                            m16 ? MO_LEUW : MO_LEUL);
++        if (pop) {
++            x87s_pop(s);
++        }
++        return;
++    }
+     v = x87s_get64(s, 0, b->label);
+     c = x87s_tmp_i64(s);
+     r = x87s_tmp_i64(s);
+@@ -1545,6 +1792,34 @@ static void gen_x87s_fst_mem(DisasContext *s, bool m64, bool pop)
+     b->m64 = m64;
+     b->pop = pop;
+     b->a0 = x87s_a0_copy(s);
++    if (s->x87s_x80) {
++        /* rounded to 53 / 24 bits by the helper, exactly as softfloat */
++        X87SV a = x87s_get(s, 0, b->label);
++
++        if (m64) {
++            TCGv_i128 res = x87s_tmp_i128(s);
++            TCGv_i64 bits = x87s_tmp_i64(s);
++            TCGv_i64 fl = x87s_tmp_i64(s);
++
++            gen_helper_x87x_to_f64(res, a.xl, a.xh);
++            tcg_gen_extr_i128_i64(bits, fl, res);
++            x87s_x80_ok(s, fl, X87S_XF_OK, b->label);
++            x87s_set_pe_bit(s, fl, X87S_XF_INEXACT);
++            tcg_gen_qemu_st_i64(bits, s->A0, s->mem_index, MO_LEUQ);
++        } else {
++            TCGv_i64 res = x87s_tmp_i64(s);
++
++            gen_helper_x87x_to_f32(res, a.xl, a.xh);
++            x87s_x80_ok(s, res, X87S_XF_OK + 16, b->label);
++            x87s_set_pe_bit(s, res, X87S_XF_INEXACT + 16);
++            tcg_gen_extrl_i64_i32(s->tmp2_i32, res);
++            tcg_gen_qemu_st_i32(s->tmp2_i32, s->A0, s->mem_index, MO_LEUL);
++        }
++        if (pop) {
++            x87s_pop(s);
++        }
++        return;
++    }
+     if (m64) {
+         v = x87s_get64(s, 0, b->label);
+         tcg_gen_qemu_st_i64(v, s->A0, s->mem_index, MO_LEUQ);
+@@ -1659,7 +1934,17 @@ static void gen_x87s_fcmov(DisasContext *s, int op1, int opreg)
+     b->cond = cond;
+     a = x87s_get(s, 0, b->label);
+     v = x87s_get(s, opreg, b->label);
+-    if (s->x87s_prec24) {
++    if (s->x87s_x80) {
++        TCGv_i64 c64 = x87s_tmp_i64(s);
++        TCGv_i32 c32 = x87s_tmp_i32(s);
++
++        tcg_gen_extu_tl_i64(c64, cond);
++        tcg_gen_trunc_tl_i32(c32, cond);
++        tcg_gen_movcond_i64(TCG_COND_NE, a.xl, c64, tcg_constant_i64(0),
++                            v.xl, a.xl);
++        tcg_gen_movcond_i32(TCG_COND_NE, a.xh, c32, tcg_constant_i32(0),
++                            v.xh, a.xh);
++    } else if (s->x87s_prec24) {
+         TCGv_i32 c32 = x87s_tmp_i32(s);
+ 
+         tcg_gen_trunc_tl_i32(c32, cond);
+@@ -1691,7 +1976,13 @@ static void gen_x87s_sign(DisasContext *s, bool chs)
+     x87s_begin(s);
+     r = X87S_SLOT(s, 0);
+     if (s->x87s_state[r] != X87S_MEM) {
+-        if (s->x87s_prec24) {
++        if (s->x87s_x80) {
++            if (chs) {
++                tcg_gen_xori_i32(cpu_x87_xh[r], cpu_x87_xh[r], 0x8000);
++            } else {
++                tcg_gen_andi_i32(cpu_x87_xh[r], cpu_x87_xh[r], 0x7fff);
++            }
++        } else if (s->x87s_prec24) {
+             if (chs) {
+                 tcg_gen_xori_i32(cpu_x87_ss[r], cpu_x87_ss[r], 1u << 31);
+             } else {
+@@ -1972,6 +2263,9 @@ static bool gen_x87s_insn_1(DisasContext *s, int op, int mod, int rm)
+         }
+         return false;
+     case 0x0f: /* grp d9/7 */
++        if (s->x87s_x80) {
++            return false;               /* fsqrt, frndint: the helpers, in mode 3 */
++        }
+         switch (rm) {
+         case 2: /* fsqrt */
+             gen_x87s_fsqrt(s);

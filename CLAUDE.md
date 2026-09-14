@@ -688,10 +688,11 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   53/24-bit common case on the host FPU and patch 06 (doc 13) keeps the
   stack as host doubles inside TCG at PC=53 — and, since patch 45
   (2026-09-12), as host **floats** at PC=24, where an op with the inexact
-  flag already sticky is one binary32 instruction. PC=64 has no fast
-  path, by design (nothing on the host holds 64 bits); patch 47's
-  `-cpu …,x87-pc64-as-53=on` runs it at 53 bits instead, which is **not
-  exact** and therefore off by default (2026-09-14). Test any change
+  flag already sticky is one binary32 instruction. At PC=64 (patch 48,
+  2026-09-14) the shadows are the x80 values themselves, and `+ - * /`
+  exact 128-bit integer arithmetic in pure helpers; patch 47's
+  `-cpu …,x87-pc64-as-53=on` runs PC=64 at 53 bits instead, faster and
+  **not exact**, therefore off by default. Test any change
   with both x87 tools above. SSE is patch 11 (doc 16): inline only when
   PE is already sticky in MXCSR; MMX/integer/permutes are patch 12
   (`simd-fast`); test both with `tools/sse-guest-test.py`.

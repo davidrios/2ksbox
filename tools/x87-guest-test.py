@@ -104,6 +104,13 @@ def pool_entries():
     p += [raw(0xC000000000000000, 0x7FFF), raw(0xA000000000000000, 0x7FFF)]  # qnan, snan
     p += [raw(0x0000000000000001, 0x0000), raw(0x8000000000000000, 0x0000)]  # denormal, pseudo-denormal
     p += [raw(0xB400000000000000, 0x3FFF), raw(0xB4000000000000FF, 0x3FFF)]  # float-exact, not
+    # PC=64 (patch 48's integer arithmetic): 1 + 2^-64 and (1 + 2^-63) + 2^-64
+    # are ties at 64 bits, 1.5 * 2^-64 is past one, 1 + 3 * 2^-63 cancels
+    # against 1 to 3 * 2^-63, and two arbitrary full mantissas for the
+    # carries and quotients
+    p += [raw(0x8000000000000000, 0x3FBF), raw(0xC000000000000000, 0x3FBF)]
+    p += [raw(0x8000000000000003, 0x3FFF)]
+    p += [raw(0x9E3779B97F4A7C15, 0x4005), raw(0xD1B54A32D192ED03, 0x3FF0)]
     # a few float32-exact values with float-range exponents
     for f in (1.0 / 3.0, 7.0e-20, 3.0e20, -6.5e-3):
         bits = struct.unpack("<I", struct.pack("<f", f))[0]

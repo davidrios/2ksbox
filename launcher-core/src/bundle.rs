@@ -839,11 +839,11 @@ impl Optimization {
                  loop - 30x on the blits an era game fills the screen with."
             }
             Optimization::X87Pc64As53 => {
-                "Code that sets the x87 unit to its full 64-bit precision gets no fast path above - \
-                 nothing on the host holds that many bits - and is simulated several times slower. \
-                 This runs it at 53 bits instead, so the fast path takes it. Results then differ from \
-                 a real FPU in their last bits; a game rarely notices, a benchmark's numbers may. \
-                 3DMark2001 SE's Lobby: 35 to 50 fps."
+                "Code that sets the x87 unit to its full 64-bit precision runs on an exact path of \
+                 its own, integer arithmetic on the 64-bit mantissas. This runs it at 53 bits \
+                 instead, on the host's floating point, which is faster still. Results then differ \
+                 from a real FPU in their last bits; a game rarely notices, a benchmark's numbers \
+                 may. 3DMark2001 SE's Lobby: 40 fps exact, 50 with this."
             }
             Optimization::SmcSameValue => {
                 "Self-modifying code usually writes back the bytes already there, and rewriting a \
