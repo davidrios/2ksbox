@@ -481,8 +481,13 @@ static BOOL BuildHalInfo(void)
      * afterwards, so the driver sees "DirectDraw took the HAL" and every
      * application sees a HAL with dwCaps DDCAPS_NOHARDWARE, no video
      * memory and not one callback ever entered. `D9F_CERTIFIED` puts it
-     * back, for when that has to be seen again. */
-    hi->ddCaps.dwCaps2 = (DDF() & D9F_CERTIFIED) ? DDCAPS2_CERTIFIED : 0;
+     * back, for when that has to be seen again.
+     *
+     * **DDCAPS2_WIDESURFACES**, as on NT: without it 9x DirectDraw puts no
+     * surface wider than the primary in video memory, so at 640x480 every
+     * 1024-wide texture stayed in system memory and d3d8.dll bound nothing
+     * in its place — 3DMark2001 SE's Nature sky drawn white (doc 19 §37). */
+    hi->ddCaps.dwCaps2 = DDCAPS2_WIDESURFACES | ((DDF() & D9F_CERTIFIED) ? DDCAPS2_CERTIFIED : 0);
     hi->ddCaps.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_PRIMARYSURFACE |
                                 DDSCAPS_FLIP | DDSCAPS_VIDEOMEMORY;
     /* The size of the heap above, not of the aperture: a total that counts

@@ -181,6 +181,20 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   one that failed; it names the failing one now. **Open**: `GetSwapChain`
   is a stub.
 
+- **White surfaces in 3DMark2001 SE on Win98: no surface wider than the
+  screen — 2026-09-14** (doc 19 §37). Nature's sky, the Dragothic ground and
+  the Lobby agent's coat drew white: d3d8.dll bound texture handle 0 for
+  them, because every 1024-wide texture stayed in system memory — 9x
+  DirectDraw puts nothing wider than the primary (640 at the demo's mode)
+  into video memory unless the driver claims `DDCAPS2_WIDESURFACES`, which
+  the NT driver always did and `d3dpt9dd.c` did not. Claimed now; the three
+  scenes draw right headless. The executor's trace dumps DXT textures
+  (decoded) since the same day. The same 3DMark with the guest DLLs quit
+  on an R8G8B8 render-target texture `CheckDeviceFormat` had promised and
+  DXVK does not have (doc 14): the wrapper answers the usage now, and the
+  demo plays through the guest DLLs too.
+  **Open:** the Lobby's debris still drops the demo to 10-35 frames/s.
+
 - **A texture bind read a surface the runtime had freed — 2026-09-14**
   (doc 19 §36). 3DMark2001 SE's demo froze black on `base98-us` right
   after its loading screen: the core kept each surface's OS object

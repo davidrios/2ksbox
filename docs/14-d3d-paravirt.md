@@ -334,6 +334,23 @@ Found and not changed: `GetSwapChain` a stub while
 state block set. The D3D8 constant fix has no case: the D3D8 path's only
 oracle is D3DGAME8 against the D3D9 frame, and D3DGAME8 has no shader.
 
+**`CheckDeviceFormat` answers the usage now (2026-09-14).** It said yes to
+every format in its list whatever the usage and resource type, R8G8B8
+included — which DXVK's d3d9 does not map at all ("Unsupported" in
+`d3d9_format.cpp`). 3DMark2001 SE on Win98 asked for an R8G8B8
+render-target texture, was told yes, got `D3DERR_INVALIDCALL` from the
+`CreateTexture` behind it and quit (`P_D3D::allocateMap - CreateTexture
+( for a rendertarget) failed` in its `error.log`). R8G8B8 is out of the
+list; a `D3DUSAGE_RENDERTARGET` question gets yes only for A8R8G8B8,
+X8R8G8B8, R5G6B5, X1R5G5B5 and A1R5G5B5 — the ones Vulkan makes every
+device render to, since the guest cannot ask the host; a
+`D3DUSAGE_DEPTHSTENCIL` question, and `CheckDepthStencilMatch`, only for a
+depth format. Measured on a raw copy of `base98-us` with the rebuilt
+`D3D8.DLL` next to the EXE (`tools/win98-game-test.sh`, `STAGE=`): the
+demo plays through the guest DLLs — past 8 000 presents, all `hr 0`, five
+vs 1.x shaders created, no `error.log` written — and the executor's frames
+show Dragothic, the Earth and Nature as they should be.
+
 ## Risks
 
 - **Host Vulkan capabilities:** MoltenVK lacked required Vulkan features and

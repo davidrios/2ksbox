@@ -2783,3 +2783,49 @@ and freezes the session. `cmd_lock_break` releases it only when the
 faulting process dies (`ContextDestroyAll`); an exception frame in the
 callbacks that releases the lock on unwind would turn the next such bug
 into one failed call.
+
+### 37. 3DMark2001 SE's white sky, ground and coat: no surface wider than the screen (2026-09-14)
+
+With the demo playing (§36), the user saw its surfaces white: the Dragothic
+ground, Nature's sky, the Lobby agent's coat and the wall debris, and the
+dragon's colours off. Reproduced headless on a raw copy of `base98-us`
+(`tools/win98-game-test.sh`, the demo clicked as in §36, a
+`D3DPT_DP2_TRACE` frame every 15-20 s): the d3dpt-vga screendumps are the
+game's own frames on 9x, and all four were white there too.
+
+**Not the textures' contents.** Of 1 470 traced binds only 20 had a VRAM
+mean of 0, and "Texture Format: Compressed" was a red herring: Dragothic
+and Nature bind A8R8G8B8 only, and the Lobby's DXT5s decode from VRAM to
+what they should be (the trace's texture dump decodes DXT since this
+section — `dxt_block` in the executor — and the "coat" DXT5 turned out to
+be the ejected shells' texture, correct).
+
+**Handle 0.** A per-draw summary of the traced frames (stage ops, bound
+texture, texgen) found, in every Dragothic, Nature and Lobby frame, draws
+whose stage reads `D3DTA_TEXTURE` with texture handle 0 bound: Nature's
+sky dome (528 triangles, stage 0 `SELECTARG1(TEXTURE)`, every frame), one
+large draw in Dragothic, and the Lobby's 6 131-triangle agent with stage
+1 `MODULATE(TEXTURE, CURRENT)`. The walker passes `TEXTUREMAP` through
+untouched (`core_dp2.c`), so the 0 is what d3d8.dll sent: the runtime had
+no video-memory copy of those managed textures to bind.
+
+**Why it had none.** The core's registration lines split the textures by
+where they live: every 1024-wide texture — 1024x1024, 1024x512 and
+1024x256 A8R8G8B8, 1024x1024 DXT1 — existed only as its system-memory
+copy, while the heap's highest allocation ended at 53.7 MB of 64. Space was
+not the reason; the width was. Windows 9x DirectDraw puts no surface wider
+than the primary into video memory unless the driver claims
+`DDCAPS2_WIDESURFACES`, and at the demo's 640x480x32 a 1024-wide texture
+is. The NT driver has claimed it from the start (doc 15); the 9x
+`d3dpt9dd.c` set `dwCaps2` to 0. It claims it now.
+
+**Measured**, the same run on a fresh raw copy with the rebuilt driver:
+every 1024-wide texture has its video-memory copy (5 registrations), no
+draw reads a texture stage with nothing bound, and the screendumps show
+Dragothic's ground, Nature's sky with its clouds and the agent's black
+leather coat. At 1024x768, where the user plays, the same textures fit the
+primary's pitch, which is why only larger ones would have been lost there.
+
+The Lobby's debris still drops the demo from the 60 Hz cap to 10-35
+frames/s (300-odd draws a frame, many one-quad debris pieces) — not looked
+into yet.

@@ -271,6 +271,47 @@ static uint32_t fmt_row_bytes(uint32_t f, uint32_t w) {
 }
 static uint32_t fmt_rows(uint32_t f, uint32_t h) { return fmt_dxt(f) ? (h + 3) / 4 : h; }
 
+/* one 4x4 DXT block as sixteen A8R8G8B8 texels, row by row (the trace's
+ * texture dump; the host itself samples DXT natively) */
+static void dxt_block(uint32_t f, const uint8_t *b, uint32_t out[16]) {
+    const uint8_t *cb = (f == D3DFMT_DXT1) ? b : b + 8;
+    uint16_t c0 = (uint16_t)(cb[0] | cb[1] << 8), c1 = (uint16_t)(cb[2] | cb[3] << 8);
+    uint32_t pal[4];
+    auto rgb = [](uint16_t c) {
+        uint32_t r = (c >> 11) & 31, g = (c >> 5) & 63, bl = c & 31;
+        return ((r << 3 | r >> 2) << 16) | ((g << 2 | g >> 4) << 8) | (bl << 3 | bl >> 2);
+    };
+    auto mix = [](uint32_t a, uint32_t b, uint32_t wa, uint32_t wb, uint32_t d) {
+        uint32_t o = 0;
+        for (int s = 0; s < 24; s += 8) o |= ((((a >> s) & 255) * wa + ((b >> s) & 255) * wb) / d) << s;
+        return o;
+    };
+    pal[0] = rgb(c0) | 0xff000000u;
+    pal[1] = rgb(c1) | 0xff000000u;
+    if (f != D3DFMT_DXT1 || c0 > c1) {
+        pal[2] = mix(pal[0], pal[1], 2, 1, 3) | 0xff000000u;
+        pal[3] = mix(pal[0], pal[1], 1, 2, 3) | 0xff000000u;
+    } else {
+        pal[2] = mix(pal[0], pal[1], 1, 1, 2) | 0xff000000u;
+        pal[3] = 0;                                     /* DXT1's transparent black */
+    }
+    uint32_t idx = (uint32_t)cb[4] | cb[5] << 8 | cb[6] << 16 | (uint32_t)cb[7] << 24;
+    for (int i = 0; i < 16; i++) out[i] = pal[(idx >> (2 * i)) & 3];
+    if (f == D3DFMT_DXT2 || f == D3DFMT_DXT3) {         /* explicit 4-bit alpha */
+        for (int i = 0; i < 16; i++) {
+            uint32_t a = (b[i / 2] >> (4 * (i & 1))) & 15;
+            out[i] = (out[i] & 0xffffff) | (a * 17) << 24;
+        }
+    } else if (f == D3DFMT_DXT4 || f == D3DFMT_DXT5) {  /* two endpoints, 3-bit indices */
+        uint32_t a[8] = { b[0], b[1] };
+        if (a[0] > a[1]) for (int k = 1; k < 7; k++) a[k + 1] = ((7 - k) * a[0] + k * a[1]) / 7;
+        else { for (int k = 1; k < 5; k++) a[k + 1] = ((5 - k) * a[0] + k * a[1]) / 5; a[6] = 0; a[7] = 255; }
+        uint64_t ai = 0;
+        for (int k = 0; k < 6; k++) ai |= (uint64_t)b[2 + k] << (8 * k);
+        for (int i = 0; i < 16; i++) out[i] = (out[i] & 0xffffff) | a[(ai >> (3 * i)) & 7] << 24;
+    }
+}
+
 /* formats texel_argb can expand that this host's DXVK may not take as they
  * are: R3G3B2 / A8R3G3B2 never (no Vulkan format), A4L4 only where the
  * device has the optional Vulkan format. Asked of the adapter once, when
@@ -955,6 +996,24 @@ struct Dp2 {
             if (!rgb || !al) { if (rgb) fclose(rgb); if (al) fclose(al); return; }
             fprintf(rgb, "P6\n%u %u\n255\n", w, h);
             fprintf(al, "P5\n%u %u\n255\n", w, h);
+            if (fmt_dxt(s.d.format)) {          /* decoded block by block: what the guest wrote, not the host copy */
+                std::vector<uint32_t> px((size_t)w * h);
+                for (uint32_t by = 0; by < (h + 3) / 4; by++)
+                    for (uint32_t bx = 0; bx < (w + 3) / 4; bx++) {
+                        uint32_t blk[16];
+                        dxt_block(s.d.format, x.vram + off + (size_t)by * pitch + bx * bpp, blk);   /* bpp: one block's bytes */
+                        for (uint32_t i = 0; i < 16; i++) {
+                            uint32_t xx = bx * 4 + (i & 3), yy = by * 4 + i / 4;
+                            if (xx < w && yy < h) px[(size_t)yy * w + xx] = blk[i];
+                        }
+                    }
+                for (uint32_t c : px) {
+                    uint8_t o[4] = { (uint8_t)(c >> 16), (uint8_t)(c >> 8), (uint8_t)c, (uint8_t)(c >> 24) };
+                    fwrite(o, 1, 3, rgb); fwrite(o + 3, 1, 1, al);
+                }
+                fclose(rgb); fclose(al);
+                continue;
+            }
             for (uint32_t yy = 0; yy < h; yy++) {
                 const uint8_t *row = x.vram + off + (size_t)yy * pitch;
                 for (uint32_t xx = 0; xx < w; xx++) {
@@ -1556,7 +1615,7 @@ struct Dp2 {
                         }
                     }
                     tr("  texture %u: %ux%u fmt %u levels %u caps 0x%x%s, vram mean %u/765 of %u samples", v, s->d.width, s->d.height, s->d.format, s->d.levels, s->d.caps, s->dirty ? " (re-read)" : "", n ? (unsigned)(sum / n) : 0, n);
-                    if (d.trace && (bpp == 4 || bpp == 2)) dump_texture(*s, v);
+                    if (d.trace && (bpp == 4 || bpp == 2 || fmt_dxt(s->d.format))) dump_texture(*s, v);
                 }
                 if (!s) { if (d.warn_once(0x50000)) x.log("ddi: dp2: texture handle %u unknown", v); }
             }

@@ -422,24 +422,41 @@ HRESULT WINAPI d3d_CheckDeviceType(IDirect3D9 *This, UINT Adapter, D3DDEVTYPE De
     if (Adapter || DevType != D3DDEVTYPE_HAL) return D3DERR_NOTAVAILABLE;
     return D3D_OK;
 }
+static int depth_format(D3DFORMAT f)
+{
+    return f == D3DFMT_D16 || f == D3DFMT_D24S8 || f == D3DFMT_D24X8 || f == D3DFMT_D32 || f == D3DFMT_D16_LOCKABLE;
+}
+/* No R8G8B8: DXVK's d3d9 has no mapping for it at all ("Unsupported"), so a
+ * yes here was a CreateTexture failing later — 3DMark2001 SE asked for an
+ * R8G8B8 render-target texture, was told yes and quit on the INVALIDCALL. */
 static int format_ok(D3DFORMAT f)
 {
     switch (f) {
     case D3DFMT_A8R8G8B8: case D3DFMT_X8R8G8B8: case D3DFMT_R5G6B5: case D3DFMT_X1R5G5B5: case D3DFMT_A1R5G5B5:
-    case D3DFMT_A4R4G4B4: case D3DFMT_X4R4G4B4: case D3DFMT_A8: case D3DFMT_L8: case D3DFMT_A8L8: case D3DFMT_R8G8B8:
+    case D3DFMT_A4R4G4B4: case D3DFMT_X4R4G4B4: case D3DFMT_A8: case D3DFMT_L8: case D3DFMT_A8L8:
     case D3DFMT_DXT1: case D3DFMT_DXT2: case D3DFMT_DXT3: case D3DFMT_DXT4: case D3DFMT_DXT5:
-    case D3DFMT_D16: case D3DFMT_D24S8: case D3DFMT_D24X8: case D3DFMT_D32: case D3DFMT_D16_LOCKABLE:
     case D3DFMT_INDEX16: case D3DFMT_INDEX32: case D3DFMT_VERTEXDATA:
     case D3DFMT_V8U8: case D3DFMT_Q8W8V8U8: case D3DFMT_A8B8G8R8: case D3DFMT_X8B8G8R8:
         return 1;
     default:
-        return 0;
+        return depth_format(f);
     }
+}
+/* what a render target can be: the formats Vulkan makes every device render
+ * to (DXVK's X1R5G5B5 is A1R5G5B5 with the alpha swizzled away); the guest
+ * cannot ask the host, so a format some hosts lack is not promised */
+static int rt_format(D3DFORMAT f)
+{
+    return f == D3DFMT_A8R8G8B8 || f == D3DFMT_X8R8G8B8 || f == D3DFMT_R5G6B5 || f == D3DFMT_X1R5G5B5 ||
+           f == D3DFMT_A1R5G5B5;
 }
 HRESULT WINAPI d3d_CheckDeviceFormat(IDirect3D9 *This, UINT Adapter, D3DDEVTYPE DeviceType, D3DFORMAT AdapterFormat, DWORD Usage, D3DRESOURCETYPE RType, D3DFORMAT CheckFormat)
 {
     if (Adapter || DeviceType != D3DDEVTYPE_HAL) return D3DERR_NOTAVAILABLE;
-    return format_ok(CheckFormat) ? D3D_OK : D3DERR_NOTAVAILABLE;
+    if (!format_ok(CheckFormat)) return D3DERR_NOTAVAILABLE;
+    if ((Usage & D3DUSAGE_RENDERTARGET) && !rt_format(CheckFormat)) return D3DERR_NOTAVAILABLE;
+    if (!!(Usage & D3DUSAGE_DEPTHSTENCIL) != depth_format(CheckFormat)) return D3DERR_NOTAVAILABLE;
+    return D3D_OK;
 }
 HRESULT WINAPI d3d_CheckDeviceMultiSampleType(IDirect3D9 *This, UINT Adapter, D3DDEVTYPE DeviceType, D3DFORMAT SurfaceFormat, WINBOOL Windowed, D3DMULTISAMPLE_TYPE MultiSampleType, DWORD *pQualityLevels)
 {
@@ -448,7 +465,7 @@ HRESULT WINAPI d3d_CheckDeviceMultiSampleType(IDirect3D9 *This, UINT Adapter, D3
 }
 HRESULT WINAPI d3d_CheckDepthStencilMatch(IDirect3D9 *This, UINT Adapter, D3DDEVTYPE DeviceType, D3DFORMAT AdapterFormat, D3DFORMAT RenderTargetFormat, D3DFORMAT DepthStencilFormat)
 {
-    return format_ok(DepthStencilFormat) ? D3D_OK : D3DERR_NOTAVAILABLE;
+    return depth_format(DepthStencilFormat) ? D3D_OK : D3DERR_NOTAVAILABLE;
 }
 HRESULT WINAPI d3d_CheckDeviceFormatConversion(IDirect3D9 *This, UINT Adapter, D3DDEVTYPE DeviceType, D3DFORMAT SourceFormat, D3DFORMAT TargetFormat) { return D3D_OK; }
 HRESULT WINAPI d3d_GetDeviceCaps(IDirect3D9 *This, UINT Adapter, D3DDEVTYPE DeviceType, D3DCAPS9 *pCaps)
