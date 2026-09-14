@@ -2503,6 +2503,16 @@ same demo with `-3dfx` — Glide on the Voodoo 2 and 3dfx's own
 frames, ~32 000 triangles` per 5 s), so the Glide path never had the
 bug.
 
+**Why the game was on DirectDraw at all** — the user had picked 3dfx in
+the shareware's `D2VidTst`. It saved the pick (`Render` = 3, Glide) under
+`HKCU\Software\Blizzard Entertainment\Diablo II Shareware\VideoConfig`;
+the shareware's `Diablo II.exe` reads only `...\Diablo II\VideoConfig`
+(the strings in the binaries say so), which here is the retail install's
+key, never through its video test: `Render` = 0, DirectDraw. A Blizzard
+bug, not ours. Setting the retail key's `Render` to 3 (`regedit /s` from
+`RUN.BAT` on a copy) started the shareware on the Voodoo 2 with no
+`-3dfx`: `voodoo2: 800x600 on: 125 frames`.
+
 **The guard** is `ddprobe`'s new `pitch check:` line, which compares the
 flipping primary's pitch with its back buffer's. `DDPROBE 800 600 8`
 (`STAGE=` + `GUEST_CMD=` + `PULL=DDPROBE.LOG` through
