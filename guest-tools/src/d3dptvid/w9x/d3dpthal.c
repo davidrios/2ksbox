@@ -859,6 +859,49 @@ static DWORD __stdcall ValidateTextureStageState32(D3DHAL_VALIDATETEXTURESTAGEST
     return DDHAL_DRIVER_HANDLED;
 }
 
+/* The DirectX 5 texture handles TextureCreate32 hands out, and the surface
+ * each stands for, for TextureGetSurf32. The layer keeps these pointers
+ * itself rather than the core's table (which keeps none, doc 19 §36): the
+ * runtime holds a texture handle only while its texture lives, and gives it
+ * back in TextureDestroy32. Under the command-window lock. */
+#define TEX_HANDLES 1024
+static struct {
+    ULONG handle;
+    LPDDRAWI_DDRAWSURFACE_LCL lcl;
+} tex_handles[TEX_HANDLES];
+
+static void tex_handle_set(ULONG handle, LPDDRAWI_DDRAWSURFACE_LCL s)
+{
+    ULONG i, spare = TEX_HANDLES;
+
+    for (i = 0; i < TEX_HANDLES; i++) {
+        if (tex_handles[i].handle == handle) {
+            tex_handles[i].handle = s ? handle : 0;
+            tex_handles[i].lcl = s;
+            return;
+        }
+        if (!tex_handles[i].handle && spare == TEX_HANDLES) {
+            spare = i;
+        }
+    }
+    if (s && spare < TEX_HANDLES) {
+        tex_handles[spare].handle = handle;
+        tex_handles[spare].lcl = s;
+    }
+}
+
+static LPDDRAWI_DDRAWSURFACE_LCL tex_handle_get(ULONG handle)
+{
+    ULONG i;
+
+    for (i = 0; handle && i < TEX_HANDLES; i++) {
+        if (tex_handles[i].handle == handle) {
+            return tex_handles[i].lcl;
+        }
+    }
+    return NULL;
+}
+
 static DWORD __stdcall TextureCreate32(D3DHAL_TEXTURECREATEDATA *d)
 {
     LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl(d->lpDDSLcl);
@@ -870,6 +913,7 @@ static DWORD __stdcall TextureCreate32(D3DHAL_TEXTURECREATEDATA *d)
     cmd_lock_acquire();
     d3d_register_chain(&core, s);
     d->dwHandle = surf_handle(s);
+    tex_handle_set(d->dwHandle, s);
     d->ddrval = DD_OK;
     cmd_lock_release();
     return DDHAL_DRIVER_HANDLED;
@@ -877,6 +921,9 @@ static DWORD __stdcall TextureCreate32(D3DHAL_TEXTURECREATEDATA *d)
 
 static DWORD __stdcall TextureDestroy32(D3DHAL_TEXTUREDESTROYDATA *d)
 {
+    cmd_lock_acquire();
+    tex_handle_set(d->dwHandle, NULL);
+    cmd_lock_release();
     d->ddrval = DD_OK;
     return DDHAL_DRIVER_HANDLED;
 }
@@ -889,17 +936,20 @@ static DWORD __stdcall TextureSwap32(D3DHAL_TEXTURESWAPDATA *d)
 
 static DWORD __stdcall TextureGetSurf32(D3DHAL_TEXTUREGETSURFDATA *d)
 {
-    SURF *s;
+    LPDDRAWI_DDRAWSURFACE_LCL s;
+
     if (!core.d3d) {
         d->ddrval = DDERR_GENERIC;
         return DDHAL_DRIVER_HANDLED;
     }
-    s = surf_slot(d->dwHandle, FALSE);
-    if (!s || !s->lcl) {
+    cmd_lock_acquire();
+    s = tex_handle_get(d->dwHandle);
+    cmd_lock_release();
+    if (!s) {
         d->ddrval = DDERR_GENERIC;
         return DDHAL_DRIVER_HANDLED;
     }
-    d->lpDDSLcl = (LPDDRAWI_DDRAWSURFACE_LCL)s->lcl;
+    d->lpDDSLcl = s;
     d->ddrval = DD_OK;
     return DDHAL_DRIVER_HANDLED;
 }

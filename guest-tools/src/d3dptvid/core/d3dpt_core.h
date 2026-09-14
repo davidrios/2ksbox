@@ -155,8 +155,9 @@ typedef struct _SURF {
     ULONG pitch, w, h, fmt;
     UCHAR used, sysmem, buffer, levels;
     SURF_LEVEL lv[15];          /* mip levels 1.. */
-    void *lcl;                  /* the OS's surface object (valid until it is destroyed): the colour key lives in it */
     UCHAR ck_on;                /* the key the host was told (0xff: not yet) */
+    UCHAR ck_src;               /* the surface carried a source key when it was registered (ck_lo..ck_hi
+                                 * until the host is told): the OS's object is never kept, doc 19 §36 */
     ULONG ck_lo, ck_hi;
     ULONG vram_off;             /* VRAM: the offset the host knows the surface at */
     ULONG lock_off, lock_len;   /* a VRAM buffer: the range of the current Lock (the whole buffer when the

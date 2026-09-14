@@ -746,9 +746,11 @@ structure the driver handles:
   record of everything the core reads off a surface (handle, caps,
   caps2, flags, w, h, pitch, linear size, `fpVidMem`, the resolved
   D3DFORMAT, the pixel format's flags for the log, the source colour
-  key). The core also keeps the OS's object as an opaque `void *`,
-  because a colour key set *after* a texture was mirrored is read off it
-  when the texture is next bound.
+  key). The core never keeps the OS's object past the call: a colour key
+  set *before* a texture was mirrored is taken off the record at
+  registration, one set *after* comes through `SetColorKey`. (It used to
+  keep the object as an opaque `void *` and read the key off it at every
+  bind, and that pointer outlived its surface: §36.)
 
 **Six hooks, and nothing else.** The core reaches the OS through
 `d3dpt_os_alloc` / `d3dpt_os_free` (NT: `EngAllocMem` with the pool tag),
@@ -2715,3 +2717,69 @@ fresh copy boots into a restart prompt that holds `RUN.BAT` back, so it
 needs `KEYS="60:ret,150:ret" TEXT_AT=120 RUN_SECS=200` (a key for the
 prompt, one for the blue screen); with the default single key at 70 s the
 key answers the prompt and the blue screen that follows waits for ever.
+||||||| parent of 772fc1a (d3dpt core: keep no OS surface pointer -- 3DMark2001 SE's demo froze after its loading screen)
+### 36. 3DMark2001 SE's demo: a freed surface, a swallowed fault, a lock left held (2026-09-14)
+
+The user's report, on `base98-us` with the current driver: the demo froze
+on a black screen right after its dragon loading screen, and the QEMU
+log's last line was `d3dptdisp: texture 0x00000058 bound` — no page flip
+and no `ddi:` frame after it. Reproduced twice, headless, the same line
+last both times: `tools/win98-game-test.sh` on a raw copy of the machine,
+3DMark started from `RUN.BAT`, Demo and "use the recommended 640x480"
+clicked over the PS/2 mouse.
+
+**What the frozen machine was doing.** EIP never moved from `003b:03ce`,
+an `int 30h` in the VMM's table of ring-3 callbacks, taken 62 000 times a
+second; the ring-3 stack under it was KERNEL32, `DestroySurface32`,
+`cmd_lock_acquire`. The command-window lock word was taken, by another
+thread, at depth 1 — the spin was `Sleep(0)` waiting for it. Patching that
+`push 0` to `push 1` through QEMU's gdbstub made the CPU idle (`HLT=1`)
+and left the lock held: its owner was **blocked**, not starved by
+priority, which was the first guess.
+
+**What blocked it**, from `log int` over the whole load: the thread doing
+the drawing (its stack at `0x00b6xxxx`) took a user read fault in our HAL,
+at `b00b3a3d` in `d3dpt_os_surf` — `CR2=10405020`, `ECX=8aedd524`,
+`EAX=10405008`. `ECX` was a surface LCL in the shared arena, and the word
+where its `lpGbl` lives held a surface's caps: the runtime had freed that
+LCL and reused the memory. The caller was `surf_colorkey_check`, which
+read the texture's colour key off `SURF::lcl` at every bind, and nothing
+ever cleared that pointer when the runtime freed a surface (`surf_forget`
+clears `used`, and only when a destroy callback still finds the handle).
+The fault came inside `DrawPrimitives2` with the lock held; KERNEL32
+dispatched it, a handler in the thread took it (whose, the capture does
+not say) — the thread ran 273
+more events and then waited for good — and 300 events later the main
+thread entered `DestroySurface32` and spun for the lock for ever.
+
+**The fix: the core keeps no pointer to an OS surface.** `d3d_register_at`
+and the cube faces take the source colour key off the descriptor they
+already read (`surf_key_snapshot`), `surf_colorkey_check` tells the host
+at the first bind from the table alone, and a key set later still comes
+through `SetColorKey` → `surf_colorkey_set` — the runtime calls it because
+both layers claim the colour-key caps. The one thing the old read also
+saw, a key taken off a texture without a `SetColorKey` call, is not seen.
+The core is shared, so XP gets the same change; there the stale read
+would have been in kernel mode. The HAL's other reader, `TextureGetSurf32`
+(a DirectX 5 texture handle back to its surface), keeps its own list,
+filled in `TextureCreate32` and emptied in `TextureDestroy32`, which did
+nothing before: the runtime holds such a handle only while its texture
+lives.
+
+**Measured**, the same run with the rebuilt driver staged into a fresh raw
+copy of `base98-us`: the demo goes past its loading screen, the
+`texture 0x00000058 bound` line goes by once, and the opening scene (the
+statue in the rain) presents at 60 frames/s — the flip cap — at 16 000 to
+30 000 draws per 5 s, with no batch refused, skipped or failed; three
+minutes in the demo is in its Nature scene (trees, grass, the river),
+its white frames there being the scene's own fades; it ends by itself
+back at 3DMark's window, and the machine powers off on the button. On XP,
+where the same core runs, `CKTEST` passes 4 of 4 with the rebuilt driver
+installed on an overlay of `winxp-m7` (the first bind now logs `bound, no
+key`, so it was the new build; the key arrives through `DdSetColorKey`).
+
+**Still open:** any fault inside a callback leaks the lock the same way
+and freezes the session. `cmd_lock_break` releases it only when the
+faulting process dies (`ContextDestroyAll`); an exception frame in the
+callbacks that releases the lock on unwind would turn the next such bug
+into one failed call.

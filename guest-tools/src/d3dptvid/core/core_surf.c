@@ -9,9 +9,10 @@
  * d3dpt_surf_desc (d3dpt_os_surf) and walks the attachment lists
  * (d3dpt_os_attached, d3dpt_os_next_mip); NT's DD_SURFACE_LOCAL and 9x's
  * DDRAWI_DDRAWSURFACE_LCL hold the same facts at different offsets, and
- * that hook is where they meet. The core does keep the object as an
- * opaque pointer (SURF::lcl), because a colour key set later is read off
- * it when the texture is next bound.
+ * that hook is where they meet. The core never keeps the object past the
+ * call that handed it over: the runtime frees it without always saying
+ * so, and a pointer kept for the colour key once outlived its surface
+ * (doc 19 §36).
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -172,6 +173,18 @@ void surf_forget(ULONG handle)
     }
 }
 
+/* the source colour key the surface carries as it is registered, for the
+ * host to hear when the texture is first bound (surf_colorkey_check) */
+static void surf_key_snapshot(SURF *t, const d3dpt_surf_desc *d)
+{
+    BOOL on = (d->flags & DDRAWISURF_HASCKEYSRCBLT_) != 0;
+
+    t->ck_on = 0xff;
+    t->ck_src = (UCHAR)on;
+    t->ck_lo = on ? d->ck_lo : 0;
+    t->ck_hi = on ? d->ck_hi : 0;
+}
+
 void d3d_colorkey_op(d3dpt_core *p, ULONG handle, ULONG lo, ULONG hi, ULONG flags)
 {
     d3dpt_u32x4 *k;
@@ -269,6 +282,7 @@ static ULONG cube_faces(d3dpt_core *p, void *root, void **face)
 static void d3d_register_cube(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG fmt, ULONG caps, BOOL sysmem)
 {
     void *face[6];
+    d3dpt_surf_desc fd[6];
     SURF_CUBE *cb;
     d3dpt_vram_surface *r;
     d3dpt_u32x2 *tail;
@@ -304,6 +318,7 @@ static void d3d_register_cube(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG fmt
             return;
         }
         cb->handle[f] = d.handle;
+        fd[f] = d;
         cb->f[f][0].mem = fb + d.vidmem;
         cb->f[f][0].pitch = surf_pitch(fmt, d.w, d.pitch);
         n = 1;
@@ -332,8 +347,7 @@ static void d3d_register_cube(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG fmt
         }
         t->cube = f == 0 ? cb : NULL;
         t->used = 1;
-        t->lcl = face[f];
-        t->ck_on = 0xff;
+        surf_key_snapshot(t, &fd[f]);
         t->sysmem = (UCHAR)sysmem;
         t->buffer = 0;
         t->mem = cb->f[f][0].mem;
@@ -511,8 +525,7 @@ void d3d_register_at(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG offset, BOOL
             t->cube = NULL;
         }
         t->used = 1;
-        t->lcl = s->os;
-        t->ck_on = 0xff;
+        surf_key_snapshot(t, s);
         t->sysmem = sysmem;
         t->buffer = buffer;
         t->mem = sysmem ? (ULONG_PTR)s->vidmem : (ULONG_PTR)p->fb + offset;
@@ -562,53 +575,47 @@ void d3d_register(d3dpt_core *p, const d3dpt_surf_desc *s)
     d3d_register_at(p, s, s->vidmem, FALSE);
 }
 
-/* The texture's source colour key, read off the OS's surface when a
- * TEXTURESTAGESTATE binds it (the HASCKEYSRCBLT flag + the key itself, as
- * the DDK's sample drivers do). The runtime records it there — and calls
- * the driver's SetColorKey — only for a driver with the colour-key
- * DirectDraw caps; this check covers a key set before the surface was
- * mirrored and a surface re-created under the same handle. The host hears
- * of it once per change. */
+/* A texture a TEXTURESTAGESTATE binds: the first time, the host hears the
+ * source colour key the surface was registered with, if it had one — a
+ * key set before the surface was mirrored, or on a surface re-created
+ * under the same handle (surf_key_snapshot). A key set later reaches
+ * surf_colorkey_set through the layer's SetColorKey, which the runtime
+ * calls because both layers claim the colour-key DirectDraw caps.
+ *
+ * **Only the table is read here, never the OS's surface.** This used to
+ * keep the surface object and read the key off it at every bind, and
+ * nothing cleared that pointer when the runtime freed the surface.
+ * 3DMark2001 SE's demo bound a texture whose slot pointed at an object the
+ * runtime had freed and reused: the read faulted inside DrawPrimitives2 with
+ * the command-window lock held, a handler in the faulting thread caught
+ * it, and the next thread to want the lock waited for ever (doc 19 §36). What that
+ * read also saw — a key taken off with no SetColorKey call — is lost. */
 void surf_colorkey_check(d3dpt_core *p, ULONG handle)
 {
     SURF *t = surf_slot(handle, FALSE);
-    d3dpt_surf_desc s;
-    UCHAR on;
-    ULONG lo, hi;
 
-    if (!t || !t->lcl || t->sysmem || t->buffer || !d3dpt_os_surf(p, t->lcl, &s)) {
+    if (!t || t->sysmem || t->buffer || t->ck_on != 0xff) {
         return;
     }
-    on = (s.flags & DDRAWISURF_HASCKEYSRCBLT_) ? 1 : 0;
-    lo = on ? s.ck_lo : 0;
-    hi = on ? s.ck_hi : 0;
-    if (t->ck_on == 0xff && p->reg_lines < 4096) {
+    if (p->reg_lines < 4096) {
         p->reg_lines++;
         dbg_hex(p, "d3dptdisp: texture ", handle);
-        dbg_hex(p, " bound, surface flags ", s.flags);
-        dbg_hex(p, " src key ", s.ck_lo);
-        dbg_hex(p, "..", s.ck_hi);
-        dbg_hex(p, " dst key ", s.ck_dst_lo);
+        dbg_hex(p, t->ck_src ? " bound, src key " : " bound, no key ", t->ck_lo);
+        dbg_hex(p, "..", t->ck_hi);
         dbg_puts(p, "\n");
     }
-    if (t->ck_on == on && t->ck_lo == lo && t->ck_hi == hi) {
-        return;
+    t->ck_on = t->ck_src;
+    if (!t->ck_src) {
+        return;                     /* never keyed: nothing to tell */
     }
-    if (t->ck_on == 0xff && !on) {
-        t->ck_on = 0;               /* never keyed: nothing to tell */
-        return;
-    }
-    t->ck_on = on;
-    t->ck_lo = lo;
-    t->ck_hi = hi;
     if (p->reg_lines < 4096) {
         p->reg_lines++;
         dbg_hex(p, "d3dptdisp: colour key of surface ", handle);
-        dbg_hex(p, on ? " on " : " off ", lo);
-        dbg_hex(p, "..", hi);
+        dbg_hex(p, " on ", t->ck_lo);
+        dbg_hex(p, "..", t->ck_hi);
         dbg_puts(p, "\n");
     }
-    d3d_colorkey_op(p, handle, lo, hi, on);
+    d3d_colorkey_op(p, handle, t->ck_lo, t->ck_hi, 1);
 }
 
 /* s and what is attached to it — a flip chain's other buffers, a Z buffer

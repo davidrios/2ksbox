@@ -1846,9 +1846,10 @@ static DWORD APIENTRY DdLock(PDD_LOCKDATA d)
 
 /* SetColorKey(DDCKEY_SRCBLT) on a video-memory texture: the host keys the
  * texels in [low, high] (alpha 0 + alpha test while COLORKEYENABLE is on).
- * dxg records the key in the surface as well (surf_colorkey_check finds
- * it there at texture bind, which covers a key set before the surface was
- * mirrored); dwFlags also carries DDCKEY_COLORSPACE for a range */
+ * dxg records the key in the surface as well, which is where registration
+ * takes it from for a key set before the surface was mirrored (the core's
+ * surf_key_snapshot; surf_colorkey_check tells the host at the first bind);
+ * dwFlags also carries DDCKEY_COLORSPACE for a range */
 static DWORD APIENTRY DdSetColorKey(PDD_SETCOLORKEYDATA d)
 {
     PPDEV p = (PPDEV)d->lpDD->dhpdev;
