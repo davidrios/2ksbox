@@ -322,6 +322,21 @@ or past the 94-instruction limit, or a slow block's helper — is faster too.
 
 **Measured**, the same Lobby as above with no switch at all: 39.7 fps over the same 23 windows (worst 23.8), against 35.2 before and 50.3 with `x87-pc64-as-53` — exact, and a third of the way there. The call per `+ - * /` stays (cheap: no boundary, no flush), so inlining the integer arithmetic as TCG ops (`muluh_i64`, `add2`/`sub2`, `clz` all exist on both backends) is the next step if a profile of mode 3 says the calls dominate. `tools/x87-guest-test.py`: 906,713 lines identical on/off with the new PC=64 operands (exact 64-bit ties for add, a cancellation, two full mantissas), which exercise mode 3 at the battery's 033F and 833F control words.
 
+**Multiply and `fst m32` inline (patch 49).** A profile of mode 3 in the
+Lobby (`tools/tcg-profile.py`, 30 s): softfloat gone (`parts128_*` at
+0.1 %, from ~20 %), generated code 60.7 %, and the arithmetic helpers
+(`x87f_binop_x`, `x87f_add_x`, `helper_x87x_arith`, `x87x_to_f32`) ~15 %,
+the three pages of x87 code that call them the hottest generated code.
+`fmul` and `fst m32` became TCG ops: the product by `mulu2_i64` (`mul` +
+`umulh` on aarch64), normalized by its top bit and packed by
+`x87s_pack_x80` (`x87f_pack_x` as ops, label-free apart from the slow
+branch); `fst m32` as the top 24 mantissa bits rounded by the 40 below,
+one range check after the carry. `+ − /` stay calls: an inline add has to
+compute both the add and the subtract and select one to stay label-free,
+about a hundred ops, which is not clearly cheaper than the call. **The
+Lobby 39.7 → 44.2 fps** (worst window 23.8 → 29.4), the x87 battery
+906,713 lines identical on/off.
+
 ## Follow-ups
 
 - `-cpu pentium3,x87-fast=off` stays as the fallback if something

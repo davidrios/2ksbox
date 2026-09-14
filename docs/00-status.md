@@ -187,7 +187,10 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   globals), so PC=64 code no longer takes a helper and softfloat per
   instruction: loads, stores, compares and `fild` are inline, `+ - * /`
   pure helper calls doing exact 128-bit integer arithmetic rounded to 64
-  bits. Exact, so on for everyone with `x87-fast`. 3DMark2001 SE's Lobby 35.2 → 39.7 fps (patch 47's inexact switch: 50.3); the x87 battery 906,713 lines identical on/off. **Open:** inlining the `+ - * /` helpers, if a profile says the calls dominate.
+  bits. Exact, so on for everyone with `x87-fast`. 3DMark2001 SE's Lobby 35.2 → 39.7 fps (patch 47's inexact switch: 50.3); the x87 battery 906,713 lines identical on/off. Patch 49 (same day) inlines
+  `fmul` and `fst m32` after a profile had the helper calls at ~15 %: the
+  Lobby 39.7 → 44.2 fps, still exact. **Open:** `+ − /`, `fst m64` and
+  `fist` are still pure helper calls.
 
 - **3DMark2001 SE's Lobby debris: x87 at 64-bit precision — 2026-09-14**
   (doc 13 "PC=64 as 53 bits", patch 47). The Lobby fell below the 60 Hz

@@ -1,0 +1,192 @@
+x87 at 64-bit precision: multiply and fst m32 inline, no helper call.
+
+A profile of 3DMark2001 SE's Lobby on patch 48's mode 3 had its x87
+arithmetic helpers at ~15 % of the vCPU and the three pages of x87 code
+that call them as the hottest generated code, where each call brings its
+argument setup, the i128 result's unpacking and the spills of
+call-clobbered registers. Two of the calls are short enough as TCG ops:
+
+- fmul: the mantissas' 128-bit product (mulu2_i64: mul + umulh on
+  aarch64, mul on x86-64), normalized by its top bit (it lies in
+  [2^126, 2^128)), and x87s_pack_x80 -- x87f_pack_x as TCG ops: the
+  pre-rounding exponent checked to 1..0x7ffd (else the slow block),
+  nearest-even on the 64 bits below, a carry out of 2^64 into the
+  exponent, PE unless sticky, a zero operand giving a signed zero.
+- fst m32: the top 24 mantissa bits rounded nearest-even by the 40 below,
+  the float's exponent range checked once after the rounding's carry
+  (pre-round out of range and overflow both leave [0, 253]), a zero kept
+  with its sign.
+
+Both branch-free apart from the branch to the slow block, like the rest
+of the fast path. + - / and fst m64 / fist stay helper calls: add and
+subtract would need both paths computed and one selected to stay
+label-free, about a hundred ops, no clear win over the call.
+
+diff --git a/target/i386/tcg/x87-shadow.c.inc b/target/i386/tcg/x87-shadow.c.inc
+index e891fa7..bef98f7 100644
+--- a/target/i386/tcg/x87-shadow.c.inc
++++ b/target/i386/tcg/x87-shadow.c.inc
+@@ -1389,14 +1389,100 @@ static void x87s_binop_f32(DisasContext *s, TCGv_i32 r, int op, TCGv_i32 a,
+     }
+ }
+ 
+-/* r = a OP b on x80 shadows (mode 3): the exact integer arithmetic of
+- * x87x_arith, PE from its inexact bit, softfloat when it says so */
++/*
++ * mode 3, inline (patch 49): r = sign | e : m rounded by `rest` (its top
++ * bit half an ulp) to nearest-even -- x87f_pack_x as TCG ops. z nonzero
++ * makes the result a signed zero (an operand was zero) and skips the range
++ * check; otherwise a pre-rounding e outside 1..0x7ffd (overflow, tininess)
++ * branches to slow. e, m and rest are clobbered.
++ */
++static void x87s_pack_x80(DisasContext *s, X87SV r, TCGv_i64 sign, TCGv_i64 e,
++                          TCGv_i64 m, TCGv_i64 rest, TCGv_i64 z, TCGLabel *slow)
++{
++    TCGv_i64 zero = tcg_constant_i64(0);
++    TCGv_i64 half = tcg_constant_i64(1ULL << 63);
++    TCGv_i64 bad = x87s_tmp_i64(s);
++    TCGv_i64 up = x87s_tmp_i64(s);
++    TCGv_i64 t = x87s_tmp_i64(s);
++
++    tcg_gen_subi_i64(bad, e, 1);
++    tcg_gen_setcondi_i64(TCG_COND_GTU, bad, bad, 0x7ffc);
++    tcg_gen_andc_i64(bad, bad, z);
++    tcg_gen_brcondi_i64(TCG_COND_NE, bad, 0, slow);
++
++    if (!s->x87s_pe_sticky) {
++        tcg_gen_setcondi_i64(TCG_COND_NE, t, rest, 0);
++        tcg_gen_andc_i64(t, t, z);
++        x87s_set_pe_bit(s, t, 0);
++    }
++    tcg_gen_setcond_i64(TCG_COND_GTU, up, rest, half);
++    tcg_gen_setcond_i64(TCG_COND_EQ, t, rest, half);
++    tcg_gen_and_i64(t, t, m);
++    tcg_gen_andi_i64(t, t, 1);
++    tcg_gen_or_i64(up, up, t);
++    tcg_gen_add_i64(m, m, up);
++    tcg_gen_setcondi_i64(TCG_COND_EQ, t, m, 0);         /* carried out of 2^64 */
++    tcg_gen_movcond_i64(TCG_COND_NE, m, t, zero, half, m);
++    tcg_gen_add_i64(e, e, t);
++    tcg_gen_movcond_i64(TCG_COND_NE, r.xl, z, zero, zero, m);
++    tcg_gen_movcond_i64(TCG_COND_NE, e, z, zero, zero, e);
++    tcg_gen_or_i64(e, e, sign);
++    tcg_gen_extrl_i64_i32(r.xh, e);
++}
++
++/* mode 3, inline (patch 49): r = a * b, the mantissas' 128-bit product
++ * normalized (it is in [2^126, 2^128): one bit at most) and packed */
++static void x87s_mul_x80(DisasContext *s, X87SV r, X87SV a, X87SV b,
++                         TCGLabel *slow)
++{
++    TCGv_i64 zero = tcg_constant_i64(0);
++    TCGv_i64 ea = x87s_tmp_i64(s);
++    TCGv_i64 eb = x87s_tmp_i64(s);
++    TCGv_i64 sign = x87s_tmp_i64(s);
++    TCGv_i64 z = x87s_tmp_i64(s);
++    TCGv_i64 t = x87s_tmp_i64(s);
++    TCGv_i64 lo = x87s_tmp_i64(s);
++    TCGv_i64 hi = x87s_tmp_i64(s);
++    TCGv_i64 top = x87s_tmp_i64(s);
++    TCGv_i64 m = x87s_tmp_i64(s);
++    TCGv_i64 rest = x87s_tmp_i64(s);
++
++    tcg_gen_extu_i32_i64(ea, a.xh);
++    tcg_gen_extu_i32_i64(eb, b.xh);
++    tcg_gen_xor_i64(sign, ea, eb);
++    tcg_gen_andi_i64(sign, sign, 0x8000);
++    tcg_gen_andi_i64(ea, ea, 0x7fff);
++    tcg_gen_andi_i64(eb, eb, 0x7fff);
++    tcg_gen_setcondi_i64(TCG_COND_EQ, z, ea, 0);        /* a shadow is zero or normal */
++    tcg_gen_setcondi_i64(TCG_COND_EQ, t, eb, 0);
++    tcg_gen_or_i64(z, z, t);
++    tcg_gen_mulu2_i64(lo, hi, a.xl, b.xl);
++    tcg_gen_shri_i64(top, hi, 63);
++    tcg_gen_extract2_i64(m, lo, hi, 63);                /* (hi:lo) >> 63 */
++    tcg_gen_shli_i64(rest, lo, 1);
++    tcg_gen_movcond_i64(TCG_COND_NE, m, top, zero, hi, m);
++    tcg_gen_movcond_i64(TCG_COND_NE, rest, top, zero, lo, rest);
++    tcg_gen_add_i64(ea, ea, eb);
++    tcg_gen_add_i64(ea, ea, top);
++    tcg_gen_subi_i64(ea, ea, X87S_BIAS_X80);
++    x87s_pack_x80(s, r, sign, ea, m, rest, z, slow);
++}
++
++/* r = a OP b on x80 shadows (mode 3): * inline, the others the exact
++ * integer arithmetic of x87x_arith, PE from its inexact bit, softfloat
++ * when it says so */
+ static void x87s_binop_x80(DisasContext *s, X87SV r, int op, X87SV a, X87SV b,
+                            TCGLabel *slow)
+ {
+-    TCGv_i128 res = x87s_tmp_i128(s);
+-    TCGv_i64 hi = x87s_tmp_i64(s);
++    TCGv_i128 res;
++    TCGv_i64 hi;
+ 
++    if (op == 1) {
++        x87s_mul_x80(s, r, a, b, slow);
++        return;
++    }
++    res = x87s_tmp_i128(s);
++    hi = x87s_tmp_i64(s);
+     gen_helper_x87x_arith(res, tcg_constant_i32(op), a.xl, a.xh, b.xl, b.xh);
+     tcg_gen_extr_i128_i64(r.xl, hi, res);
+     x87s_x80_ok(s, hi, X87S_XF_OK, slow);
+@@ -1807,12 +1893,52 @@ static void gen_x87s_fst_mem(DisasContext *s, bool m64, bool pop)
+             x87s_set_pe_bit(s, fl, X87S_XF_INEXACT);
+             tcg_gen_qemu_st_i64(bits, s->A0, s->mem_index, MO_LEUQ);
+         } else {
+-            TCGv_i64 res = x87s_tmp_i64(s);
+-
+-            gen_helper_x87x_to_f32(res, a.xl, a.xh);
+-            x87s_x80_ok(s, res, X87S_XF_OK + 16, b->label);
+-            x87s_set_pe_bit(s, res, X87S_XF_INEXACT + 16);
+-            tcg_gen_extrl_i64_i32(s->tmp2_i32, res);
++            /*
++             * inline (patch 49): the top 24 mantissa bits rounded
++             * nearest-even by the 40 below; a normal binary32 or zero,
++             * else the helper (x87f_x_to_fmt's checks)
++             */
++            TCGv_i64 zero = tcg_constant_i64(0);
++            TCGv_i64 h = x87s_tmp_i64(s);
++            TCGv_i64 ue = x87s_tmp_i64(s);
++            TCGv_i64 m = x87s_tmp_i64(s);
++            TCGv_i64 rest = x87s_tmp_i64(s);
++            TCGv_i64 up = x87s_tmp_i64(s);
++            TCGv_i64 t = x87s_tmp_i64(s);
++            TCGv_i64 z = x87s_tmp_i64(s);
++            TCGv_i64 bad = x87s_tmp_i64(s);
++            TCGv_i64 half = tcg_constant_i64(1ULL << 63);
++
++            tcg_gen_setcondi_i64(TCG_COND_EQ, z, a.xl, 0);     /* zero or normal */
++            tcg_gen_extu_i32_i64(h, a.xh);
++            tcg_gen_andi_i64(ue, h, 0x7fff);
++            tcg_gen_subi_i64(ue, ue, X87S_BIAS_X80 - 126);      /* + 126: [0, 253] */
++            tcg_gen_shri_i64(m, a.xl, 40);
++            tcg_gen_shli_i64(rest, a.xl, 24);
++            tcg_gen_setcond_i64(TCG_COND_GTU, up, rest, half);
++            tcg_gen_setcond_i64(TCG_COND_EQ, t, rest, half);
++            tcg_gen_and_i64(t, t, m);
++            tcg_gen_andi_i64(t, t, 1);
++            tcg_gen_or_i64(up, up, t);
++            tcg_gen_add_i64(m, m, up);
++            tcg_gen_shri_i64(t, m, 24);                         /* carried to 2^24 */
++            tcg_gen_add_i64(ue, ue, t);
++            tcg_gen_setcondi_i64(TCG_COND_GTU, bad, ue, 253);   /* pre-round out, or rounded past 2^128 */
++            tcg_gen_andc_i64(bad, bad, z);
++            tcg_gen_brcondi_i64(TCG_COND_NE, bad, 0, b->label);
++            if (!s->x87s_pe_sticky) {
++                tcg_gen_setcondi_i64(TCG_COND_NE, t, rest, 0);
++                x87s_set_pe_bit(s, t, 0);
++            }
++            tcg_gen_andi_i64(m, m, 0x7fffff);                   /* a carry leaves 0 here */
++            tcg_gen_addi_i64(ue, ue, 1);                        /* biased: ue + 127 */
++            tcg_gen_shli_i64(ue, ue, 23);
++            tcg_gen_or_i64(m, m, ue);
++            tcg_gen_movcond_i64(TCG_COND_NE, m, z, zero, zero, m);
++            tcg_gen_andi_i64(h, h, 0x8000);
++            tcg_gen_shli_i64(h, h, 16);
++            tcg_gen_or_i64(m, m, h);
++            tcg_gen_extrl_i64_i32(s->tmp2_i32, m);
+             tcg_gen_qemu_st_i32(s->tmp2_i32, s->A0, s->mem_index, MO_LEUL);
+         }
+         if (pop) {

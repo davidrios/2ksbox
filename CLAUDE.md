@@ -690,7 +690,8 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   (2026-09-12), as host **floats** at PC=24, where an op with the inexact
   flag already sticky is one binary32 instruction. At PC=64 (patch 48,
   2026-09-14) the shadows are the x80 values themselves, and `+ - * /`
-  exact 128-bit integer arithmetic in pure helpers; patch 47's
+  exact 128-bit integer arithmetic — `*` and `fst m32` inline since
+  patch 49, the rest in pure helpers; patch 47's
   `-cpu …,x87-pc64-as-53=on` runs PC=64 at 53 bits instead, faster and
   **not exact**, therefore off by default. Test any change
   with both x87 tools above. SSE is patch 11 (doc 16): inline only when

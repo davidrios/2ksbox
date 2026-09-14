@@ -843,7 +843,7 @@ impl Optimization {
                  its own, integer arithmetic on the 64-bit mantissas. This runs it at 53 bits \
                  instead, on the host's floating point, which is faster still. Results then differ \
                  from a real FPU in their last bits; a game rarely notices, a benchmark's numbers \
-                 may. 3DMark2001 SE's Lobby: 40 fps exact, 50 with this."
+                 may. 3DMark2001 SE's Lobby: 44 fps exact, 50 with this."
             }
             Optimization::SmcSameValue => {
                 "Self-modifying code usually writes back the bytes already there, and rewriting a \
