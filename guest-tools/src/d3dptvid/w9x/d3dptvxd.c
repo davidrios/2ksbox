@@ -481,6 +481,26 @@ static void __stdcall end_message_mode_proc(void)
     dwMsgEnable = 0;
 }
 
+/* **The display driver is going away: the linear mode goes first.** The
+ * main VDD sends DISPLAY_DRIVER_DISABLING when GDI disables the driver — at
+ * shutdown, at a restart, before DirectDraw's own Mode X — and goes on to
+ * put the VGA back, writing its planes from VRAM offset 0, which is the top
+ * of the linear frame. The display driver used to turn ENABLE off only
+ * after that, and a display refresh in between put the VGA's bytes into the
+ * last linear frame, which the adapter holds for a moment after ENABLE goes
+ * 0: Windows' shutdown screen came up as the desktop with a green band
+ * across its top, whenever a refresh landed in those 12 ms (2026-09-14, doc
+ * 19 §35). Nothing is kept to come back to — the way back from a disable is
+ * the driver's own Enable — and a switch or a message screen in flight
+ * forgets its own, so neither puts a stale linear frame over the VGA. */
+static void __stdcall driver_disabling_proc(void)
+{
+    dbg_str("d3dptvxd: display driver disabling");
+    bLinearWasOn = FALSE;
+    dwMsgEnable = 0;
+    if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 0;
+}
+
 /* The notifications that are only logged, the first four of each — enough
  * to read a sequence off, not enough to fill the log on a machine that
  * switches VMs all day (SAVE/RESTORE_REGISTERS run at every VM switch). */
@@ -560,7 +580,7 @@ static void __declspec(naked) save_message_mode_entry(void)
 }
 
 /* One logging thunk per entry, each pushing its own number (note_proc is
- * __stdcall, so it pops it). Thirteen copies rather than a macro, for the
+ * __stdcall, so it pops it). Twelve copies rather than a macro, for the
  * reason above: the inline assembler takes no macro parameter, not even a
  * literal — `push n` through one is "Invalid instruction operands". */
 static void __declspec(naked) note_8_entry(void)
@@ -647,12 +667,11 @@ static void __declspec(naked) note_15_entry(void)
     }
 }
 
-static void __declspec(naked) note_26_entry(void)
+static void __declspec(naked) driver_disabling_entry(void)
 {
     _asm {
         pushad
-        push 26
-        call note_proc
+        call driver_disabling_proc
         popad
         clc
         retn
@@ -761,7 +780,7 @@ void __stdcall Device_Init_proc(DWORD VM)
         DispatchTable[VDD_ENABLE_TRAPS]      = (DWORD)note_13_entry;
         DispatchTable[VDD_DISABLE_TRAPS]     = (DWORD)note_14_entry;
         DispatchTable[VDD_MAKE_HARDWARE_NOT_BUSY]    = (DWORD)note_15_entry;
-        DispatchTable[VDD_DISPLAY_DRIVER_DISABLING]  = (DWORD)note_26_entry;
+        DispatchTable[VDD_DISPLAY_DRIVER_DISABLING]  = (DWORD)driver_disabling_entry;
         DispatchTable[VDD_PRE_CRTC_MODE_CHANGE]      = (DWORD)note_28_entry;
         DispatchTable[VDD_POST_CRTC_MODE_CHANGE]     = (DWORD)note_29_entry;
         DispatchTable[VDD_PRE_HIRES_SAVE_RESTORE]    = (DWORD)note_39_entry;

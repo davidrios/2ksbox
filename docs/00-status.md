@@ -1205,7 +1205,9 @@ items nobody owns yet:
    matrix through the driver against the Glide/WineD3D control. Total
    Annihilation's reported exit crash did not reproduce from its main menu
    (EXIT clicked headless: desktop back in eight seconds, clean shutdown);
-   an exit from inside a skirmish is the untested path.
+   an exit from inside a skirmish is the untested path. The shutdown
+   screen's intermittent green band is fixed (2026-09-14, doc 19 §35):
+   the linear mode goes off before the VDD starts putting the VGA back.
 
 ## Gotchas learned (don't relearn)
 
@@ -1350,6 +1352,17 @@ items nobody owns yet:
   reports a refusal instead of printing the same sentence and stopping.
   Guard: `REBOOT=1 tools/setup-guest-test.sh <image> win98` — the proof is
   a second SeaBIOS banner on the debugcon, never a screendump.
+
+- **A green band across the top of Windows 98's shutdown screen was the
+  linear mode going off 12 ms late** — 2026-09-14 (doc 19 §35). The
+  display driver unregistered from the VDD before writing `ENABLE = 0`,
+  and the VDD starts restoring the VGA planes (VRAM offset 0, the top of
+  the frame) inside that call; a refresh in between put them into the
+  frame the adapter holds for 250 ms after `ENABLE` goes 0. Both the
+  driver and the mini-VDD (`DISPLAY_DRIVER_DISABLING`) now turn it off
+  first. **Only the player's own frames show a glitch this short**
+  (`PLAYER=1 PLAYER_SHOT_EVERY=6`): QMP screendumps come once a second
+  and a headless console refreshes only when asked.
 
 - **A blue screen that skips the screen switch is visible on `d3dpt-vga`**
   — 2026-09-13 (`guest-tools/src/d3dptvid/w9x/d3dptvxd.c`, doc 19 §29).

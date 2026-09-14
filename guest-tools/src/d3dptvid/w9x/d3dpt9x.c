@@ -505,8 +505,16 @@ void PhysicalDisable(void)
      * it would otherwise go on hovering over whatever comes next — a VGA
      * text screen, a fatal-exception message, a shutdown. */
     CursorHide();
-    if (VDDEntryPoint) CallVDD_Simple(VDD_DRIVER_UNREGISTER);
+    /* **The linear mode goes before the VDD is told.** Unregistering is when
+     * the VDD starts putting the VGA back — its planes land at VRAM offset
+     * 0, the top of our frame buffer — and with ENABLE still on, a display
+     * refresh in those few ms took them into the last linear frame, which
+     * the adapter then holds: Windows' shutdown came up as the desktop with
+     * a green band across the top (2026-09-14, doc 19 §35). The mini-VDD
+     * turns it off at DISPLAY_DRIVER_DISABLING too; this is the same order
+     * for a VDD that does not say. */
     if (wRegsSel) RegPut(D3DPT_FB_REG_ENABLE, 0);
+    if (VDDEntryPoint) CallVDD_Simple(VDD_DRIVER_UNREGISTER);
 }
 
 /* ------------------------------------------------------- the display config */

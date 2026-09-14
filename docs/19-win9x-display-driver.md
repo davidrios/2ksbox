@@ -2661,3 +2661,57 @@ and `d3d7test` refuses a HAL that reports less than 8. Microsoft's own RGB
 device reports 0 as well, and publishing 4096 changed nothing in the game.
 And `D9F_CERTIFIED` (0x01000000, the 9x half of `ddflags`) is the same bit
 as the core's `DDF_NO_VOLUME`: whoever sets one sets both.
+
+### 35. The shutdown screen's green band: the linear mode went off too late (2026-09-14)
+
+The user's report: some of the time, turning Windows off showed "the
+glitched green top" — the desktop with a bright green band across its
+top — where "O Windows está sendo desligado" should be. It is not a
+driver that fails to let go: every run's log has the disable and
+`linear mode off`, and a QMP screendump after the power-off (QEMU's
+`-no-shutdown` keeps the machine paused on its last screen) is the
+shutdown logo in the VGA core's Mode X (`cr9=40 sr4=06 gr5=40 gr6=05`),
+drawn right. The band lives for a quarter of a second, and only the
+**player** sees it: `PLAYER=1 PLAYER_SHOT_EVERY=6 tools/win98-game-test.sh`
+saves ten of its frames a second, and 22 ms after `linear mode off` one
+of them was the desktop with the band, 800×600, then 300 ms later the
+logo. One-a-second screendumps never catch it, and a headless console
+refreshes only when asked.
+
+**The band was in VRAM while the linear mode was still on.** A 16 bpp
+desktop is shown through the adapter's shadow copy, which only changes
+while `ENABLE` is 1, and the held frame (`D3DPT_FB_VGA_GRACE_MS`, §30) is
+that copy — so the VGA's bytes had to be converted into it before the
+linear mode went off. The log gives the window:
+`DISPLAY_DRIVER_DISABLING` (mini-VDD function 26) 12 ms *before*
+`linear mode off`. `PhysicalDisable` unregistered from the VDD first and
+wrote `ENABLE = 0` after, and the unregister is where the VDD announces
+the disable and starts putting the VGA back — writing its planes from
+VRAM offset 0, which is the top of the linear frame. A display refresh
+that fell in those 12 ms took them into the frame the adapter then held;
+one that did not left the desktop clean. That is the "some of the time",
+and a machine that powers off inside the hold ends on the band.
+
+**The fix** is the order, twice. `PhysicalDisable` writes `ENABLE = 0`
+before `VDD_DRIVER_UNREGISTER`, and the mini-VDD answers
+`DISPLAY_DRIVER_DISABLING` itself (`d3dptvxd.c`, `driver_disabling_proc`)
+by turning the linear mode off and forgetting any switch or message
+screen in flight — the way back from a disable is the driver's own
+`Enable`, so nothing may put a stale linear frame over the VGA after it.
+The log now reads `linear mode off`, then `d3dptvxd: display driver
+disabling` a millisecond later, which also shows the VDD sending function
+26 from inside the unregister. Measured with the player on `base98-br`
+(twice, one run kept paused by `-no-shutdown`): desktop, the clean desktop
+held, the logo — byte for byte the logo of the run before the fix.
+
+Driving it: on a Portuguese Windows 98 `d` in the Start menu selects
+"Documentos" before "Desligar…", so the keys are `ctrl+esc`, `up` (the
+menu opens with nothing selected and `up` wraps to its last item), `ret`,
+`ret`. And a machine with the Voodoo 2 checkbox wants `EXTRA="-device
+voodoo2"` in the harness: booted once without the card and once with it,
+Windows finds it as new hardware and asks for a restart.
+`tools/win98-bsod-test.sh` passes on the change, on `base98-br` — whose
+fresh copy boots into a restart prompt that holds `RUN.BAT` back, so it
+needs `KEYS="60:ret,150:ret" TEXT_AT=120 RUN_SECS=200` (a key for the
+prompt, one for the blue screen); with the default single key at 70 s the
+key answers the prompt and the blue screen that follows waits for ever.
