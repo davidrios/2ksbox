@@ -695,6 +695,7 @@ pub enum Optimization {
     SseFast,
     SimdFast,
     RepFast,
+    X87Pc64As53,
     SmcSameValue,
     SoftImm,
     InlineLookup,
@@ -721,13 +722,14 @@ enum Knob {
 
 impl Optimization {
     /// In the order the form lists them: the arithmetic fast paths
-    /// first, in the order they were written, then the two that are
-    /// about translation, then the experimental one.
-    pub const ALL: [Optimization; 14] = [
+    /// first, in the order they were written (the inexact one last), then
+    /// the ones about translation, then the experimental one.
+    pub const ALL: [Optimization; 15] = [
         Optimization::X87Fast,
         Optimization::SseFast,
         Optimization::SimdFast,
         Optimization::RepFast,
+        Optimization::X87Pc64As53,
         Optimization::SmcSameValue,
         Optimization::SoftImm,
         Optimization::InlineLookup,
@@ -749,6 +751,7 @@ impl Optimization {
             Optimization::SseFast => "sse-fast",
             Optimization::SimdFast => "simd-fast",
             Optimization::RepFast => "rep-fast",
+            Optimization::X87Pc64As53 => "x87-pc64-as-53",
             Optimization::SmcSameValue => "smc-same-value",
             Optimization::SoftImm => "soft-imm",
             Optimization::InlineLookup => "inline-lookup",
@@ -767,7 +770,8 @@ impl Optimization {
             Optimization::X87Fast
             | Optimization::SseFast
             | Optimization::SimdFast
-            | Optimization::RepFast => Knob::Cpu,
+            | Optimization::RepFast
+            | Optimization::X87Pc64As53 => Knob::Cpu,
             Optimization::SmcSameValue
             | Optimization::SoftImm
             | Optimization::InlineLookup
@@ -783,10 +787,12 @@ impl Optimization {
 
     /// Whether a machine that says nothing has it on. Everything that
     /// has shipped is on — turning one off is a diagnosis, not a
-    /// preference — and `pinned-regs` is off because the patch itself is
-    /// off by default while the work is in progress.
+    /// preference — and two are off: `pinned-regs` because the patch itself
+    /// is off by default while the work is in progress, and
+    /// `x87-pc64-as-53` because it is the one switch that changes what the
+    /// guest computes rather than how fast.
     pub fn default_on(self) -> bool {
-        self != Optimization::PinnedRegs
+        !matches!(self, Optimization::PinnedRegs | Optimization::X87Pc64As53)
     }
 
     /// The checkbox's label: what the fast path does, not what it is
@@ -797,6 +803,7 @@ impl Optimization {
             Optimization::SseFast => "SSE floating point on the host",
             Optimization::SimdFast => "MMX and SSE integer instructions inline",
             Optimization::RepFast => "Block string moves as whole-page copies",
+            Optimization::X87Pc64As53 => "Run x87 extended precision as double (not exact)",
             Optimization::SmcSameValue => "Skip retranslation when code is rewritten unchanged",
             Optimization::SoftImm => "Read patched operands from the guest's code as it runs",
             Optimization::InlineLookup => "Find the next block without leaving generated code",
@@ -830,6 +837,13 @@ impl Optimization {
             Optimization::RepFast => {
                 "REP MOVS / STOS copies a page at a time through memcpy instead of one element per \
                  loop - 30x on the blits an era game fills the screen with."
+            }
+            Optimization::X87Pc64As53 => {
+                "Code that sets the x87 unit to its full 64-bit precision gets no fast path above - \
+                 nothing on the host holds that many bits - and is simulated several times slower. \
+                 This runs it at 53 bits instead, so the fast path takes it. Results then differ from \
+                 a real FPU in their last bits; a game rarely notices, a benchmark's numbers may. \
+                 3DMark2001 SE's Lobby: 35 to 50 fps."
             }
             Optimization::SmcSameValue => {
                 "Self-modifying code usually writes back the bytes already there, and rewriting a \

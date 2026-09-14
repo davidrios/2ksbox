@@ -181,6 +181,16 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   one that failed; it names the failing one now. **Open**: `GetSwapChain`
   is a stub.
 
+- **3DMark2001 SE's Lobby debris: x87 at 64-bit precision — 2026-09-14**
+  (doc 13 "PC=64 as 53 bits", patch 47). The Lobby fell below the 60 Hz
+  cap while its debris flew, and not for alpha or the 3D path: a profile
+  there had the executor and DXVK under 1 % and the vCPU in 3DMark's own
+  code, over half of it x87 helpers and softfloat, because that code runs
+  at PC=64 (`FCW=033f`), which none of the x87 fast paths cover. New
+  optimization switch `x87-pc64-as-53` (a CPU property, **off by
+  default**, "not exact" in the machine form) runs PC=64 at 53 bits so
+  the fast paths and the inline mode take it. The Lobby 35.2 → 50.3 fps with it on (23 five-second windows, no trace).
+
 - **White surfaces in 3DMark2001 SE on Win98: no surface wider than the
   screen — 2026-09-14** (doc 19 §37). Nature's sky, the Dragothic ground and
   the Lobby agent's coat drew white: d3d8.dll bound texture handle 0 for

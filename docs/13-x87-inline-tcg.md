@@ -238,6 +238,46 @@ does land in mode 2; 377–504 fps for its triangle on the Air. Real-world
 check still to do: a D3D title in XP with `x87-fast=off` as the
 control.
 
+## PC=64 as 53 bits (patch 47, 2026-09-14)
+
+3DMark2001 SE's Lobby scene drops below the 60 Hz cap while its wall
+debris flies. A 30 s `sample` of the vCPU there (`tools/tcg-profile.py`
+on a `tools/win98-game-test.sh` run with `-perfmap`) put the executor and
+DXVK under 1 % and the guest at ~94 %: generated code 33.5 %, x87 helpers
+33.2 % (`helper_flds_ST0`, `helper_fmul_ST0_FT0`, `helper_fpop`, …) and
+softfloat's 80-bit path ~20 % (`parts128_canonicalize`,
+`parts128_uncanon_normal`, `floatx80_mul`, `floatx80_addsub`), 77 % of
+the generated code in 3DMark's own EXE. `info registers` six times in the
+scene read `FCW=033f` and `FCW=003f` alternately, within the same code
+pages: PC=64 and PC=24, round-to-nearest, everything masked. The PC=24
+half is mode 2; the PC=64 half is mode 0 — every x87 instruction a helper
+call, every arithmetic one through softfloat — and `x87-fast guard exits`
+rose 13 000 a second from the blocks meeting the other mode.
+
+Two ways to make PC=64 cheaper were weighed. **Exact**: add, sub, mul and
+div of normal operands on the integer mantissas (a 64x64->128 product, a
+128-bit aligned sum with a sticky bit, a 128/64 quotient) rounded to 64
+bits nearest-even — what softfloat computes, without its canonicalisation.
+It was written and dropped before it was built: it saves only the
+softfloat share, while the helper call per instruction and mode 0's
+translation stay, so the estimate was +15-25 % in the Lobby. **Inexact**:
+run PC=64 at 53 bits, so the blocks get mode 1 — the shadow doubles, no
+helper at all. That is the patch: the CPU property `x87-pc64-as-53`
+(default off) makes `update_fp_status` map PC=11b to
+`floatx80_precision_d`. Everything downstream follows from that one value
+— softfloat rounds at 53 bits, `x87_fast_prec` returns the double path,
+`x87_fast_mode` becomes 1 — and the guest's control word, as `fnstcw`
+reads it, is unchanged. What changes is the result: the low 11 bits of a
+64-bit mantissa, which a real x87 would compute. Sampling a program's
+operands first cannot tell which of its operations would survive that:
+two 53-bit operands make a 106-bit product, and whether the last bits
+matter is decided later, by a comparison or an accumulation. Hence off by
+default, and "not exact" in the launcher's label.
+
+Measured, the Lobby on a raw copy of `base98-us`, the demo clicked as in
+doc 19 §36, no trace and no sampling (a traced run halves the rate), the
+executor's rate lines picked out by >100 draws a frame: 35.2 fps with the switch off, 50.3 fps with it on, over the same 23 five-second windows (worst 18.8 → 35.2, best 57.6 → 60.2, the 60 Hz cap).
+
 ## Follow-ups
 
 - `-cpu pentium3,x87-fast=off` stays as the fallback if something

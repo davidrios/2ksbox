@@ -1,0 +1,60 @@
+x87 at 64-bit precision run at 53 bits: an opt-in, inexact trade.
+
+Patches 05, 06, 37 and 45 run the x87 on the host at the two precisions
+Windows and Direct3D use, 53 and 24 bits, bit-exactly. Code that sets the
+full 64-bit precision (PC=11b) gets none of it: no host format holds a
+64-bit mantissa, so every arithmetic instruction is a helper call into
+softfloat's 80-bit path. 3DMark2001 SE's Lobby scene runs part of its
+debris simulation at PC=64 (FCW 0x033f, alternating with Direct3D's
+0x003f) and fell from the 60 Hz cap to 10-35 frames/s, the vCPU's time
+there over half x87 helpers and softfloat (tcg-profile, 2026-09-14).
+
+The CPU property x87-pc64-as-53 (default off) makes update_fp_status map
+PC=64 to floatx80_precision_d, so softfloat rounds at 53 bits, the helper
+fast path applies and patch 06's inline mode takes the code (mode 1).
+The control word the guest reads back is unchanged. Results are then not
+what an x87 computes -- the last 11 bits of a 64-bit mantissa -- which is
+why it is off by default and why the launcher labels it "not exact".
+
+diff --git a/target/i386/cpu.c b/target/i386/cpu.c
+index 1208a39..48721cf 100644
+--- a/target/i386/cpu.c
++++ b/target/i386/cpu.c
+@@ -8496,6 +8496,7 @@ static Property x86_cpu_properties[] = {
+     DEFINE_PROP_BOOL("check", X86CPU, check_cpuid, true),
+     DEFINE_PROP_BOOL("enforce", X86CPU, enforce_cpuid, false),
+     DEFINE_PROP_BOOL("x87-fast", X86CPU, x87_fast, true),
++    DEFINE_PROP_BOOL("x87-pc64-as-53", X86CPU, x87_pc64_as_53, false),
+     DEFINE_PROP_BOOL("sse-fast", X86CPU, sse_fast, true),
+     DEFINE_PROP_BOOL("simd-fast", X86CPU, simd_fast, true),
+     DEFINE_PROP_BOOL("rep-fast", X86CPU, rep_fast, true),
+diff --git a/target/i386/cpu.h b/target/i386/cpu.h
+index cef14a9..019dffe 100644
+--- a/target/i386/cpu.h
++++ b/target/i386/cpu.h
+@@ -2131,6 +2131,8 @@ struct ArchCPU {
+     bool enforce_cpuid;
+     /* x87 host-FPU fast path (target/i386/tcg/x87-fast.h) */
+     bool x87_fast;
++    /* x87 at PC=64 run at 53 bits (patch 47): off by default, not exact */
++    bool x87_pc64_as_53;
+     /* SSE host-FPU inline path (target/i386/tcg/sse-fast.c.inc) */
+     bool sse_fast;
+     /* MMX/SSE integer and permutation ops inline (target/i386/tcg/simd-fast.c.inc) */
+diff --git a/target/i386/tcg/fpu_helper.c b/target/i386/tcg/fpu_helper.c
+index ec65620..8fab0f3 100644
+--- a/target/i386/tcg/fpu_helper.c
++++ b/target/i386/tcg/fpu_helper.c
+@@ -970,7 +970,11 @@ void update_fp_status(CPUX86State *env)
+         break;
+     case 3:
+     default:
+-        rnd_prec = floatx80_precision_x;
++        /* x87-pc64-as-53 (patch 47, off by default): run a guest's 64-bit
++         * precision at 53 bits, so the x87 fast paths and the inline mode
++         * take it. Not what the hardware computes -- an opt-in trade */
++        rnd_prec = env_archcpu(env)->x87_pc64_as_53 ? floatx80_precision_d
++                                                    : floatx80_precision_x;
+         break;
+     }
+     set_floatx80_rounding_precision(rnd_prec, &env->fp_status);

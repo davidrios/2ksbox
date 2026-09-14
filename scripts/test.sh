@@ -1969,15 +1969,16 @@ optimizations_check() { # the wizard's fast-path switches, all the way to a real
     x87-fast off sse-fast off simd-fast off rep-fast off \
     smc-same-value off soft-imm off inline-lookup off \
     tb-invalidate-fast off tlb-floor off tls-hot-paths off jump-cache-keep off \
-    eob-chain off tlb-retire off pinned-regs on >"$OUT/optimizations-set.log" 2>&1 \
+    eob-chain off tlb-retire off pinned-regs on x87-pc64-as-53 on >"$OUT/optimizations-set.log" 2>&1 \
     || { echo "--optimizations failed"; cat "$OUT/optimizations-set.log"; rc=1; }
   args="$(target/release/launcherx --print-args "$bundle")"
-  for p in x87-fast=off sse-fast=off simd-fast=off rep-fast=off; do
+  for p in x87-fast=off sse-fast=off simd-fast=off rep-fast=off x87-pc64-as-53=on; do
     case "$args" in *"-cpu pentium3,"*"$p"*) ;; *) echo "$p is not on -cpu"; echo "$args"; rc=1;; esac
   done
   # Since 2026-09-10 the three that had no switch have one, which is what
   # makes "turn everything off" a control run rather than eight of
-  # eleven (fourteen since patches 42-44): a guest that is still wrong with these off has cleared our
+  # eleven (fourteen since patches 42-44; fifteen with 47's x87-pc64-as-53,
+  # which ships off and is flipped on above): a guest that is still wrong with these off has cleared our
   # tree, and before this it had not.
   for p in smc-same-value=off soft-imm=off inline-lookup=off \
            tb-invalidate-fast=off tlb-floor=off tls-hot-paths=off jump-cache-keep=off \
