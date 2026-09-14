@@ -206,6 +206,7 @@ typedef struct d3dpt_core {
     BOOL d3d;                   /* window mapped and the host executor answered */
     d3dpt_enc enc;
     ULONG dp2_calls, dp2_errors, reg_lines;
+    ULONG zwrites_said;         /* d3d_z_written's log lines (the first 16) */
     ULONG parse_lines, bufblt_lines;
     /* the runtime's parser for the tokens a DrawPrimitives2 stream may carry
      * that are not the driver's: the DX3 execute-buffer opcodes
@@ -321,6 +322,7 @@ HRESULT ctx_scene_capture(d3dpt_core *c, ULONG_PTR h, BOOL end);
 HRESULT ctx_set_render_target(d3dpt_core *c, ULONG_PTR h, ULONG rt, ULONG z);
 HRESULT ctx_clear2(d3dpt_core *c, ULONG_PTR h, ULONG flags, ULONG colour, float z, ULONG stencil,
                    const void *rects, ULONG nrects);
+ULONG d3d_z_written(d3dpt_core *c, ULONG handle, ULONG bits, ULONG mask);   /* doc 19 §34 */
 
 /* --- core_dp2.c: the DrawPrimitives2 token stream --- */
 /* everything one DrawPrimitives2 call gives the core, in neutral form */

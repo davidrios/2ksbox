@@ -2559,17 +2559,30 @@ offset) was 480 000 pixels of `0x00000000`. The `Lock32` log did not,
 because it stops after 64 lines and the intro video's back-buffer locks
 spend them.
 
-**The fix** (`w9x/d3dpthal.c`): `Unlock32` looks at a Z buffer that was
-locked for writing, and if it holds one value everywhere, that value — in
-the surface's own Z bits, through `dwZBitMask` — becomes a Z-only clear on
-every context whose Z buffer the surface is. A read-only lock is left
-alone (a title reading its depth, for the sun's occlusion say, must not
-wipe the frame's), and so is a Z buffer that is not uniform, because there
-is no way yet to give the host a depth image. Measured in the game: the
-flight draws — terrain in fog, the wreck burning after the crash nobody
-was steering away from — and the QUIT button is whole. Z locks are logged
-separately now (the first 16, then every 1024th); the scan of a 1024x768
-32-bit Z buffer is 3 MB per frame in the guest, the cost of the fix.
+**The fix**, in the shared core (`core/core_ctx.c`, `d3d_z_written`) so
+that both families have it: each layer remembers the Z buffer it locked
+for writing (`Unlock32` on 9x, `DdUnlock` on XP), and on its Unlock the
+core looks at it. If it holds one value, that value — in the surface's
+own Z bits, through `dwZBitMask`, turned into the host's [0, 1] with
+integers only, because on XP this runs in a kernel-mode display driver
+that may not touch the FPU unsaved — becomes a Z-only clear on every
+context whose Z buffer the surface is. A read-only lock is left alone (a
+title reading its depth, for the sun's occlusion say, must not wipe the
+frame's), and so is a Z buffer that is not one value, because there is no
+way yet to give the host a depth image. **Not every pixel is read**: every
+7th row, whole, and the last — about 15% of the buffer, spread from top to
+bottom (user's call, 2026-09-14: more than that much of a screen at one
+depth is not a frame anyone draws, and a fill of part of the buffer still
+reads as not uniform because every sampled row spans its width). The scan
+is the guest CPU's, every frame, so reading all 3 MB of a 1024x768 32-bit
+Z buffer was the cost to cut. Measured in the game: the flight draws —
+terrain in fog, the wreck burning after the crash nobody was steering away
+from — and the QUIT button is whole. The sampled scan was checked the same
+way (bridge, city, terrain, the plane drawn), and flew at 17.5 to 34
+frames/s where the full scan had flown at 14.6 to 22 — two different
+flights nobody was steering, so a hint of the saving rather than a
+measurement of it. Z locks are logged separately now (the first 16, then
+every 1024th), and the core's decision on each of the first 16.
 
 **What was tried on the way, so nobody tries it again.** A DirectDraw
 depth fill (`Blt(DDBLT_DEPTHFILL)`) from an application does not reach the
@@ -2580,9 +2593,9 @@ and a real blitter (the validator rules above). A depth fill of part of
 the buffer therefore reaches the host only if the whole buffer ends up one
 value; one that leaves two values is lost (measured: `zfilltest`'s
 left-half case failed, and was taken out). That wants a depth-image upload
-in the executor. XP's driver has the same gap by construction — no blit
-caps at all, so dxg's HEL does every fill — and no title has shown it
-there yet.
+in the executor. XP's driver had the same gap by construction — no blit
+caps at all, so dxg's HEL does every fill, through `DdLock` — and has the
+same fix since 2026-09-14.
 
 **The guard** is `ZFILLTEST.EXE` (`guest-tools/src/d3dptvid/zfilltest.c`,
 built by `build-driver9x.sh`): Z known to the host at 1.0 from a Clear,
@@ -2590,7 +2603,13 @@ then (A) a depth fill of 0, (B) a depth fill of 0xffff and (D) a Lock that
 writes 0, each followed by a quad at z 0.5 under GREATEREQUAL read back
 from the back buffer. On `base98-br` with this driver A, B and D pass; with
 the image's own driver (`NO_DRIVER=1`) A and D fail — the negative
-control. Run it with `STAGE=guest-tools/out/driver9x/zfilltest.exe
+control. On XP (`winxp-m7`, built by `build-driver.sh` too, as
+`DRIVER\ZFILLTEST.EXE`) the same: 3 of 3 with this driver, and the driver
+from the commit before (built from `git archive 3fc4dfd` into a scratch
+tree and installed with `DRIVER_ISO=` on `tools/xp-driver-test.sh`) fails
+A and D. Run it there with `tools/xp-driver-test.sh <overlay> cmd 'cd /d
+%TEMP% & D:\DRIVER\ZFILLTEST.EXE & copy zfilltest.log E:\'` and read the
+log off `OUT/scratch.img` with mtools. Run it with `STAGE=guest-tools/out/driver9x/zfilltest.exe
 PULL=ZFILLTEST.LOG GUEST_CMD=$'cd C:\\\r\nZFILLTEST.EXE'
 tools/win98-game-test.sh <image> zf`.
 

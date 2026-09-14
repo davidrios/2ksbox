@@ -179,3 +179,106 @@ HRESULT ctx_clear2(d3dpt_core *p, ULONG_PTR h, ULONG flags, ULONG colour, float 
     } while (done < nrects);
     return DD_OK;
 }
+
+/* A value in a Z buffer's own bits (v & mask, shifted down) as the IEEE
+ * float the host clears to, q / m in [0, 1], with integers only: on NT
+ * this runs in a kernel-mode display driver, which may not touch the FPU
+ * without saving its state. 25 bits of quotient by long division, then
+ * the top 24 of them as the mantissa (truncated). */
+static ULONG z_unit_bits(ULONG q, ULONG m)
+{
+    ULONGLONG rem = q;
+    ULONG frac = 0, top = 0;
+    int k;
+
+    if (!q || !m) {
+        return 0;
+    }
+    if (q >= m) {
+        return 0x3f800000u;                 /* 1.0 */
+    }
+    for (k = 0; k < 25; k++) {              /* frac = q / m * 2^25 */
+        rem <<= 1;
+        frac <<= 1;
+        if (rem >= m) {
+            rem -= m;
+            frac |= 1;
+        }
+    }
+    if (!frac) {
+        return 0;
+    }
+    while (frac >> (top + 1)) {
+        top++;                              /* the leading bit's position, 0..24 */
+    }
+    return ((ULONG)(127 + (int)top - 25) << 23) |
+           ((top >= 23 ? frac >> (top - 23) : frac << (23 - top)) & 0x7fffffu);
+}
+
+/* A Z buffer the title wrote through a Lock (doc 19 §34). The host's depth
+ * buffer is never read back from VRAM, so a Z buffer written to one value
+ * -- a clear done by hand (Crimson Skies writes 0 every frame), or the
+ * runtime's own depth fill, which it also does through a Lock -- becomes a
+ * Z-only clear on every context whose Z buffer it is. Not every pixel is
+ * read: every 7th row, whole, and the last (about 15% of the buffer, top to
+ * bottom) is plenty to tell a clear from a depth image or a fill of part
+ * of the screen -- more than that much of a screen at one depth is not a
+ * frame anyone draws -- and it is the guest's CPU that pays for the scan,
+ * every frame. bits / mask are the surface's own Z format. Returns the
+ * contexts cleared. */
+ULONG d3d_z_written(d3dpt_core *p, ULONG handle, ULONG bits, ULONG mask)
+{
+    SURF *s = surf_slot(handle, FALSE);
+    const UCHAR *base;
+    ULONG v0, shift = 0, y = 0, x, n = 0, i, zb;
+    BOOL uniform = TRUE;
+    float z;
+
+    if (!s || !s->mem || s->sysmem || !s->w || !s->h || (bits != 16 && bits != 32)) {
+        return 0;
+    }
+    base = (const UCHAR *)s->mem;
+    if (!mask) {
+        mask = bits == 32 ? 0xffffffffu : 0xffffu;
+    }
+    v0 = bits == 16 ? *(const USHORT *)base : *(const ULONG *)base;
+    for (;;) {
+        const UCHAR *row = base + (SIZE_T)y * s->pitch;
+
+        if (bits == 16) {
+            for (x = 0; x < s->w; x++) if (((const USHORT *)row)[x] != v0) { uniform = FALSE; break; }
+        } else {
+            for (x = 0; x < s->w; x++) if (((const ULONG *)row)[x] != v0) { uniform = FALSE; break; }
+        }
+        if (!uniform || y == s->h - 1) {
+            break;
+        }
+        y = y + 7 < s->h ? y + 7 : s->h - 1;
+    }
+    if (uniform) {
+        while (shift < 31 && !(mask & (1u << shift))) {
+            shift++;
+        }
+        zb = z_unit_bits((v0 & mask) >> shift, mask >> shift);
+        memcpy(&z, &zb, 4);
+        for (i = 0; i < D3D_MAX_CTX; i++) {
+            if (d3d_ctx[i].used && d3d_ctx[i].z == handle) {
+                ctx_clear2(p, i + 1, 2 /* D3DCLEAR_ZBUFFER */, 0, z, 0, NULL, 0);
+                n++;
+            }
+        }
+    }
+    if (p->zwrites_said < 16) {
+        p->zwrites_said++;
+        dbg_hex(p, "d3dpt: Z buffer written through a lock, surface ", handle);
+        if (uniform) {
+            dbg_hex(p, ": all ", v0);
+            dbg_hex(p, " -> contexts ", n);
+        } else {
+            dbg_hex(p, ": not one value (row ", y);
+            dbg_puts(p, ")");
+        }
+        dbg_puts(p, "\n");
+    }
+    return n;
+}

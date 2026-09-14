@@ -96,6 +96,9 @@ echo "==> dxttest.exe (which texture formats d3d8.dll creates, per pool)"
 echo "==> cktest.exe (palettized textures and colour keying through the DX7 HAL)"
 "$CC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 -mtune=generic \
   -o "$OUT/cktest.exe" "$SRC/cktest.c" -lddraw -ldxguid -lgdi32 -luser32
+echo "==> zfilltest.exe (a Z buffer reset by a depth fill or through a Lock, doc 19 §34)"
+"$CC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 -mtune=generic \
+  -o "$OUT/zfilltest.exe" "$SRC/zfilltest.c" -lddraw -ldxguid -lgdi32 -luser32
 echo "==> ebtest.exe (the DirectX 3 path: execute buffers and texture handles on the HAL)"
 "$CC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 -mtune=generic \
   -o "$OUT/ebtest.exe" "$SRC/ebtest.c" -lddraw -ldxguid -lgdi32 -luser32
