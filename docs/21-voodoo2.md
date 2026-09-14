@@ -235,6 +235,20 @@ first; the screendump after the hand-back must be that mode). The monitor bitmap
 `h_disp`/`v_disp` are 12-bit fields a guest can set to anything and the
 display code indexes by them unchecked.
 
+**Black until the first swap** (2026-09-14, the user: "a gray pattern
+flashes before it adjusts" whenever a game took the card or changed
+mode). 86Box's frame buffer starts zeroed, so the pattern is the guest's
+own: 3dfx's init writing test patterns into the buffer while VGA_PASS is
+already on, or the last mode's contents read at a new pitch. A real Voodoo
+2 scanned that out too, but the monitor behind it was dark while it
+re-locked to the new timings. So the device shows black from the moment the
+card takes the monitor, or its `h_disp`×`v_disp` changes, until the guest
+swaps (`front_offset` moves, or `frame_count` for a swap on a retrace) —
+and one frame more, because a swap that lands mid-frame leaves the lines
+above it stale until the next frame redraws them all. A guest that never
+swaps (drawing only into the front buffer) is shown after 2 s
+(`VOODOO2_BLANK_MS`) regardless.
+
 **Reset.** 86Box has no reset entry for the card (the driver re-inits
 it), but a guest reboot must give the monitor back: `fbiInit0`,
 `fbiInit7`, `initEnable` and the mapping state are cleared and the
@@ -250,7 +264,9 @@ histograms are the four most-hit registers of the window (by `addr &
 dwords: **a guest that spins names what it is spinning on** (`0x000` is
 `status`, `0x054` in the config column was the siProcess loop). `; N
 writes refused` follows when 86Box's `fatal()` fired in the window. `display on (VGA pass-through)` / `off (VGA
-back)` at the switch. And `VOODOO2_TRACE=1` in the environment prints
+back)` at the switch, and `640x480 shown after 180 ms of black (first
+swap)` — or `(no swap)` when the 2 s ran out — once a new mode's first
+frame goes up. And `VOODOO2_TRACE=1` in the environment prints
 every register- and FIFO-window access (the status polls collapsed to a
 count) — thousands of lines a second, for reading one open sequence
 against 3dfx's own `sst1init` source.

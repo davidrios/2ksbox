@@ -61,6 +61,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(Voodoo2State, VOODOO2)
 #define VOODOO2_PCI_DEVICE 0x0002
 #define VOODOO2_BAR_SIZE   (16 * MiB)
 #define VOODOO2_STATS_MS   5000
+#define VOODOO2_BLANK_MS   2000   /* a guest that never swaps still shows */
 
 struct Voodoo2State {
     PCIDevice parent_obj;
@@ -75,6 +76,16 @@ struct Voodoo2State {
     int             override;
     bool            no_console_warned;
     uint32_t        frames;
+    /* black until the guest's first swap after the monitor changes hands or
+     * size: what the frame buffer holds then is the driver's memory test
+     * or the last mode's lines at the new pitch (a gray pattern), which a
+     * real monitor never showed because it was re-locking to the timings */
+    bool            blank;
+    bool            blank_swapped;  /* seen; the next frame is all new lines */
+    uint32_t        blank_front;
+    int             blank_frames;
+    int64_t         blank_since;
+    int             shown_w, shown_h;
 
     /* the 5 s activity line */
     QEMUTimer *stats;
@@ -368,6 +379,8 @@ voodoo2_set_override(void *opaque, int on)
         return;
     }
     s->override = on;
+    s->shown_w  = 0;
+    s->shown_h  = 0;
     if (!con) {
         return;
     }
@@ -398,6 +411,30 @@ voodoo2_present(void *opaque, const bitmap_t *frame, int w, int h)
     if (w <= 0 || h <= 0 || w > frame->w || h > frame->h) {
         return;
     }
+    if (w != s->shown_w || h != s->shown_h) {
+        /* the card just took the monitor, or its mode changed */
+        s->shown_w       = w;
+        s->shown_h       = h;
+        s->blank         = true;
+        s->blank_swapped = false;
+        s->blank_front   = s->v->front_offset;
+        s->blank_frames  = s->v->frame_count;
+        s->blank_since   = qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL);
+    }
+    if (s->blank) {
+        int64_t ms = qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) - s->blank_since;
+
+        if (s->blank_swapped || ms >= VOODOO2_BLANK_MS) {
+            /* a swap marks every line dirty, so the frame after the one it
+             * landed in is all the new buffer's */
+            s->blank = false;
+            info_report("voodoo2: %dx%d shown after %" PRId64 " ms of black (%s)",
+                        w, h, ms, s->blank_swapped ? "first swap" : "no swap");
+        } else if (s->v->front_offset != s->blank_front ||
+                   s->v->frame_count != s->blank_frames) {
+            s->blank_swapped = true;
+        }
+    }
     cur = qemu_console_surface(con);
     if (cur != s->surface || !cur ||
         surface_width(cur) != w || surface_height(cur) != h) {
@@ -407,7 +444,11 @@ voodoo2_present(void *opaque, const bitmap_t *frame, int w, int h)
     dst    = surface_data(s->surface);
     stride = surface_stride(s->surface);
     for (int y = 0; y < h; y++) {
-        memcpy(dst + (size_t) y * stride, frame->line[y], (size_t) w * 4);
+        if (s->blank) {
+            memset(dst + (size_t) y * stride, 0, (size_t) w * 4);
+        } else {
+            memcpy(dst + (size_t) y * stride, frame->line[y], (size_t) w * 4);
+        }
     }
     dpy_gfx_update_full(con);
     s->frames++;
