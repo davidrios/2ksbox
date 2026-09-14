@@ -281,6 +281,11 @@ void d3d_caps_init(d3dpt_core *p)
     e->dwSize = sizeof(*e);
     e->dwMinTextureWidth = e->dwMinTextureHeight = 1;
     e->dwMaxTextureWidth = e->dwMaxTextureHeight = 4096;
+    /* any shape a legal size makes. Left at 0 (the struct is zeroed above),
+     * which says no aspect ratio at all to a title that checks one; every
+     * real driver publishes a power of two here (doc 19 §34, 2026-09-14:
+     * found while chasing Crimson Skies' list text, which it did not fix) */
+    e->dwMaxTextureAspectRatio = 4096;
     e->dwMaxTextureRepeat = 8192;
     e->dwMaxAnisotropy = (ddflags(p) & DDF_NO_ANISO) ? 1 : 16;
     e->dwStencilCaps = D3DSTENCILCAPS_ALL;
@@ -353,6 +358,7 @@ void d3d_caps_init(d3dpt_core *p)
     c8->TextureAddressCaps = t->dwTextureAddressCaps | D3DPTADDRESSCAPS_MIRRORONCE;
     c8->LineCaps = D3DLINECAPS_TEXTURE | D3DLINECAPS_ZTEST | D3DLINECAPS_BLEND | D3DLINECAPS_ALPHACMP | D3DLINECAPS_FOG;
     c8->MaxTextureWidth = c8->MaxTextureHeight = 4096;
+    c8->MaxTextureAspectRatio = e->dwMaxTextureAspectRatio;
     c8->MaxTextureRepeat = 8192;
     c8->MaxAnisotropy = (ddflags(p) & DDF_NO_ANISO) ? 1 : 16;
     c8->MaxVertexW = 1.0e10f;

@@ -2521,3 +2521,80 @@ image's own, unfixed driver (`NO_DRIVER=1`): `primary 800, back buffer
 832 -> DIFFERENT`; the same copy with this build staged: `primary 832,
 back buffer 832 -> same`, five flips, and `GetDisplayMode` reporting pitch
 832.
+
+### 34. Crimson Skies in flight: a Z buffer reset through a Lock (2026-09-14)
+
+The user's report on `base98-br` (the unpatched `CRIMSON.EXE`, the disc in
+the drive): the menus have glitches "where it's supposed to be drawing
+text", and in flight "almost everything is transparent; some pieces leave
+draw trails". It works on the Voodoo 2, slowly. The flight half is fixed
+here; the text half is not (below).
+
+**What a flight frame was.** Headless on a raw copy (`tools/win98-game-test.sh`
+with the play disc, the Voodoo 2 on the bus as on the machine, the Select
+Video Device dialog answered by `CLICKS=`/`KEYS=` and the rest driven over
+QMP — the game reads its mouse through DirectInput, so the adapter's cursor
+registers never move and `relclick` cannot aim; raw relative events do, at
+about 1.27 pixels a mickey), a `D3DPT_DP2_TRACE` frame at 1024x768: 454
+draws, and only the 13 HUD draws (z 1.0, rhw 1.0) changed a pixel. The 440
+world draws — z from 0.0 up, rhw ~0.00003, none outside [0, 1] — changed
+nothing. The game uses reversed depth: `ZFUNC GREATEREQUAL`, far = 0, near
+= 1, and no Clear anywhere in the frame (the executor traces every
+`CTX_CLEAR`, and a traced frame runs from one readback to the next, so none
+can fall outside it). So something reset depth to 0 that the host never
+saw, the host's depth buffer kept the frame before's, and everything
+farther than it failed — the black sky with only the HUD in it, and the
+trails wherever no draw covered last frame's pixels. The same bug is what
+§28 left open as the menu's QUIT button drawing only its top half: the
+buttons depth-test GREATEREQUAL without Z writes against a buffer nobody
+had reset on the host.
+
+**How the game resets it: by hand.** It Locks the Z buffer
+(`DDLOCK_WRITEONLY`) and writes 0 into it, every frame — not a Direct3D
+Clear (no `Clear2` call reached the HAL), not a DirectDraw depth fill
+handed to the driver (`Blt32` was never called). The guest's own VRAM said
+so first: the Z surface read out over QMP (`pmemsave` at BAR0 + its
+offset) was 480 000 pixels of `0x00000000`. The `Lock32` log did not,
+because it stops after 64 lines and the intro video's back-buffer locks
+spend them.
+
+**The fix** (`w9x/d3dpthal.c`): `Unlock32` looks at a Z buffer that was
+locked for writing, and if it holds one value everywhere, that value — in
+the surface's own Z bits, through `dwZBitMask` — becomes a Z-only clear on
+every context whose Z buffer the surface is. A read-only lock is left
+alone (a title reading its depth, for the sun's occlusion say, must not
+wipe the frame's), and so is a Z buffer that is not uniform, because there
+is no way yet to give the host a depth image. Measured in the game: the
+flight draws — terrain in fog, the wreck burning after the crash nobody
+was steering away from — and the QUIT button is whole. Z locks are logged
+separately now (the first 16, then every 1024th); the scan of a 1024x768
+32-bit Z buffer is 3 MB per frame in the guest, the cost of the fix.
+
+**What was tried on the way, so nobody tries it again.** A DirectDraw
+depth fill (`Blt(DDBLT_DEPTHFILL)`) from an application does not reach the
+driver either: claiming `DDCAPS_BLTDEPTHFILL` alone does not route it to
+`Blt32` — the runtime still fills through a Lock, which the same `Unlock32`
+check now catches — and `DDCAPS_BLT`, which would route it, needs SRCCOPY
+and a real blitter (the validator rules above). A depth fill of part of
+the buffer therefore reaches the host only if the whole buffer ends up one
+value; one that leaves two values is lost (measured: `zfilltest`'s
+left-half case failed, and was taken out). That wants a depth-image upload
+in the executor. XP's driver has the same gap by construction — no blit
+caps at all, so dxg's HEL does every fill — and no title has shown it
+there yet.
+
+**The guard** is `ZFILLTEST.EXE` (`guest-tools/src/d3dptvid/zfilltest.c`,
+built by `build-driver9x.sh`): Z known to the host at 1.0 from a Clear,
+then (A) a depth fill of 0, (B) a depth fill of 0xffff and (D) a Lock that
+writes 0, each followed by a quad at z 0.5 under GREATEREQUAL read back
+from the back buffer. On `base98-br` with this driver A, B and D pass; with
+the image's own driver (`NO_DRIVER=1`) A and D fail — the negative
+control. Run it with `STAGE=guest-tools/out/driver9x/zfilltest.exe
+PULL=ZFILLTEST.LOG GUEST_CMD=$'cd C:\\\r\nZFILLTEST.EXE'
+tools/win98-game-test.sh <image> zf`.
+
+**Also found, and fixed, and not the cause of anything seen.** The DX7 and
+DX8 caps published `dwMaxTextureAspectRatio` / `MaxTextureAspectRatio` as
+0 (the structure is zeroed and the field was never set); they are 4096 now
+and `d3d7test` refuses a HAL that reports less than 8. Microsoft's own RGB
+device reports 0 as well, and publishing 4096 changed nothing in the game.

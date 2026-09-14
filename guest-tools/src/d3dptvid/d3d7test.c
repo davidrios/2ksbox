@@ -131,14 +131,19 @@ static void fill_texture_pattern(void *surface, long pitch)
 }
 
 static int enum_hal_dx7;
+static DWORD hal_aspect_dx7;
 static HRESULT CALLBACK enum_dev_dx7(char *desc, char *name, D3DDEVICEDESC7 *dd, void *ctx)
 {
     int hal = memcmp(&dd->deviceGUID, &IID_IDirect3DHALDevice, sizeof(GUID)) == 0;
     int tnl = memcmp(&dd->deviceGUID, &IID_IDirect3DTnLHalDevice, sizeof(GUID)) == 0;
-    logp("device: %s (%s)%s%s devcaps %08lx tex %lux%lu..%lux%lu stages %u simtex %u\n", name, desc,
+    logp("device: %s (%s)%s%s devcaps %08lx tex %lux%lu..%lux%lu aspect %lu stages %u simtex %u\n", name, desc,
          hal ? " HAL" : "", tnl ? " TnLHAL" : "", dd->dwDevCaps, dd->dwMinTextureWidth, dd->dwMinTextureHeight,
-         dd->dwMaxTextureWidth, dd->dwMaxTextureHeight, dd->wMaxTextureBlendStages, dd->wMaxSimultaneousTextures);
-    if (hal) enum_hal_dx7 = 1;
+         dd->dwMaxTextureWidth, dd->dwMaxTextureHeight, dd->dwMaxTextureAspectRatio, dd->wMaxTextureBlendStages,
+         dd->wMaxSimultaneousTextures);
+    if (hal) {
+        enum_hal_dx7 = 1;
+        hal_aspect_dx7 = dd->dwMaxTextureAspectRatio;
+    }
     return D3DENUMRET_OK;
 }
 
@@ -183,6 +188,12 @@ static int run_dx7(HWND hwnd, int w, int h, int bpp, int frames, int noz, pfnDir
     d3d->lpVtbl->EnumDevices(d3d, enum_dev_dx7, NULL);
     logp("HAL device %s\n", enum_hal_dx7 ? "present" : "ABSENT");
     if (!enum_hal_dx7) goto out;
+    /* 0 is "no aspect ratio at all" to a title that checks a texture's shape
+     * against it; the driver published 0 until 2026-09-14 (doc 19 §34) */
+    if (hal_aspect_dx7 < 8) {
+        logp("HAL device max texture aspect ratio %lu: below 8, refusing to go on\n", hal_aspect_dx7);
+        goto out;
+    }
 
     hr = dd->lpVtbl->SetCooperativeLevel(dd, hwnd, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN | DDSCL_ALLOWREBOOT);
     logp("SetCooperativeLevel %08lx\n", hr);

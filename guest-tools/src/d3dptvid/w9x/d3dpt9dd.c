@@ -465,6 +465,11 @@ static BOOL BuildHalInfo(void)
     hi->ddCaps.dwSize = sizeof(DDCORECAPS_t);
     /* DDCAPS_GDI is normal on 9x and fatal on NT (doc 19 §5): here it
      * says the primary is the same memory GDI draws into, which it is. */
+    /* No DDCAPS_BLTDEPTHFILL: claimed alone it does not route a depth fill
+     * to Blt32 — the runtime still does it itself, through a Lock of the Z
+     * buffer, which is where the HAL sees it (Unlock32, doc 19 §34) — and
+     * DDCAPS_BLT, which would, needs SRCCOPY and a real blitter behind it
+     * (the validator rules above). */
     hi->ddCaps.dwCaps = DDCAPS_GDI | DDCAPS_BLTQUEUE;
     /* **Never DDCAPS2_CERTIFIED**, which is what this step cost
      * (2026-09-08, doc 19 §21). "Certified" is something the runtime

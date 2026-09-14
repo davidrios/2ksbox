@@ -562,12 +562,121 @@ static DWORD __stdcall GetBltStatus32(d3dpt_ddhal_getbltstatus *d)
     return DDHAL_DRIVER_HANDLED;
 }
 
+/* A Z buffer written behind the host's back (doc 19 §34): by a DirectDraw
+ * depth fill (Blt32) or by the title itself through a Lock (Unlock32). The
+ * host's depth buffer is never read back from VRAM, so what it needs is the
+ * same reset as a clear: a value in the surface's own Z bits as the host's
+ * [0, 1], and a Z-only clear on every context whose Z buffer it is. */
+#define D3DCLEAR_ZBUFFER_ 0x00000002
+
+static float z_of(LPDDRAWI_DDRAWSURFACE_GBL g, ULONG v, ULONG *mask_out)
+{
+    ULONG bits = g->ddpfSurface.dwZBufferBitDepth, mask = g->ddpfSurface.dwZBitMask, shift = 0;
+
+    if (!mask) {
+        mask = bits >= 32 ? 0xffffffffu : (1u << bits) - 1;
+    }
+    while (shift < 31 && !(mask & (1u << shift))) {
+        shift++;
+    }
+    if (mask_out) {
+        *mask_out = mask;
+    }
+    return (float)((v & mask) >> shift) / (float)(mask >> shift);
+}
+
+static ULONG z_host_clear(LPDDRAWI_DDRAWSURFACE_LCL s, float z, LONG x0, LONG y0, LONG x1, LONG y1)
+{
+    ULONG h = surf_handle_known(s), n = 0, i;
+    BOOL whole = x0 == 0 && y0 == 0 && x1 == (LONG)s->lpGbl->wWidth && y1 == (LONG)s->lpGbl->wHeight;
+    D3DRECT_ r;
+
+    if (!core.d3d || !h) {
+        return 0;
+    }
+    r.x1 = x0;
+    r.y1 = y0;
+    r.x2 = x1;
+    r.y2 = y1;
+    cmd_lock_acquire();
+    for (i = 0; i < D3D_MAX_CTX; i++) {
+        if (d3d_ctx[i].used && d3d_ctx[i].z == h) {
+            ctx_clear2(&core, i + 1, D3DCLEAR_ZBUFFER_, 0, z, 0, whole ? NULL : &r, whole ? 0 : 1);
+            n++;
+        }
+    }
+    cmd_lock_release();
+    return n;
+}
+
+static BOOL is_vram_z(LPDDRAWI_DDRAWSURFACE_LCL s)
+{
+    return s && s->lpGbl && (s->ddsCaps.dwCaps & DDSCAPS_ZBUFFER) && !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY);
+}
+
+/* A Z buffer the title locked for writing, looked at again on its Unlock:
+ * one value everywhere is a clear done by hand, and becomes the host's. A
+ * read-only lock is left alone (a title reading its depth for, say, the
+ * sun's occlusion must not wipe the frame's), and so is anything that is
+ * not uniform — there is no way to hand the host a depth image. */
+static ULONG zlocks, zlocks_said, zwrites_said;
+static LPDDRAWI_DDRAWSURFACE_LCL zlock_surf;
+
+static void z_written(LPDDRAWI_DDRAWSURFACE_LCL s)
+{
+    LPDDRAWI_DDRAWSURFACE_GBL g = s->lpGbl;
+    ULONG bits = g->ddpfSurface.dwZBufferBitDepth, v0 = 0, n = 0;
+    LONG w = g->wWidth, h = g->wHeight, x = 0, y = 0;
+    const UCHAR *base = (const UCHAR *)(ULONG_PTR)g->fpVidMem;
+    BOOL uniform = TRUE;
+
+    if ((bits != 16 && bits != 32) || !base || w <= 0 || h <= 0) {
+        return;
+    }
+    v0 = bits == 16 ? *(const USHORT *)base : *(const ULONG *)base;
+    for (y = 0; y < h && uniform; y++) {
+        const UCHAR *row = base + (size_t)y * (ULONG)g->lPitch;
+
+        if (bits == 16) {
+            for (x = 0; x < w; x++) if (((const USHORT *)row)[x] != v0) { uniform = FALSE; break; }
+        } else {
+            for (x = 0; x < w; x++) if (((const ULONG *)row)[x] != v0) { uniform = FALSE; break; }
+        }
+    }
+    if (uniform) {
+        n = z_host_clear(s, z_of(g, v0, NULL), 0, 0, w, h);
+    }
+    if (zwrites_said < 16) {
+        zwrites_said++;
+        dbg_hex(&core, "d3dpthal: Z buffer written through a lock, surface ", surf_handle_known(s));
+        if (uniform) {
+            dbg_hex(&core, ": all ", v0);
+            dbg_hex(&core, " -> contexts ", n);
+        } else {
+            dbg_hex(&core, ": not uniform at ", ((ULONG)(x) << 16) | ((ULONG)(y - 1) & 0xffff));
+        }
+        dbg_puts(&core, "\n");
+    }
+}
+
 static ULONG locks_said;
 
 static DWORD __stdcall Lock32(d3dpt_ddhal_lock *d)
 {
     LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl((void *)d->lpDDSurface);
 
+    if (is_vram_z(s)) {
+        zlocks++;
+        if (zlocks_said < 16 || !(zlocks & 1023)) {
+            zlocks_said++;
+            dbg_hex(&core, "d3dpthal: Z lock ", zlocks);
+            dbg_hex(&core, " of surface ", surf_handle_known(s));
+            dbg_hex(&core, " flags ", d->dwFlags);
+            dbg_hex(&core, " rect ", d->bHasRect);
+            dbg_puts(&core, "\n");
+        }
+        zlock_surf = (d->dwFlags & DDLOCK_READONLY) ? NULL : s;
+    }
     if (locks_said < 64) {
         locks_said++;
         dbg_hex(&core, "d3dpthal: Lock32 s=", (ULONG)(ULONG_PTR)s);
@@ -602,6 +711,10 @@ static DWORD __stdcall Unlock32(d3dpt_ddhal_unlock *d)
         d3d_handle_op(&core, D3DPT_OP_VRAM_DIRTY, surf_handle(s));
         cmd_lock_release();
     }
+    if (s && s == zlock_surf) {
+        zlock_surf = NULL;
+        z_written(s);
+    }
     d->ddRVal = DD_OK;
     return DDHAL_DRIVER_NOTHANDLED;
 }
@@ -609,7 +722,9 @@ static DWORD __stdcall Unlock32(d3dpt_ddhal_unlock *d)
 /* Declined, always — this driver has no blitter and DirectDraw's own is
  * what draws. It logs, because "which blits does the runtime hand us, and
  * with what" is not answerable any other way and is the question behind a
- * 2D title that comes out wrong. First 24 only. */
+ * 2D title that comes out wrong. First 64 only. (A depth fill never comes
+ * here: without DDCAPS_BLT the runtime does it itself, through a Lock, and
+ * Unlock32 is where it is seen — doc 19 §34.) */
 static ULONG blts_said;
 
 static DWORD __stdcall Blt32(d3dpt_ddhal_blt *d)
@@ -782,8 +897,21 @@ static DWORD __stdcall SetRenderTarget32(D3DHAL_SETRENDERTARGETDATA *d)
 }
 
 
+static ULONG clears_said;
+
 static DWORD __stdcall Clear2_32(D3DHAL_CLEAR2DATA *d)
 {
+    if (clears_said < 16) {
+        ULONG z;
+
+        clears_said++;
+        memcpy(&z, &d->dvFillDepth, 4);
+        dbg_hex(&core, "d3dpthal: Clear2 flags ", d->dwFlags);
+        dbg_hex(&core, " colour ", d->dwFillColor);
+        dbg_hex(&core, " z bits ", z);
+        dbg_hex(&core, " rects ", d->dwNumRects);
+        dbg_puts(&core, "\n");
+    }
     if (!core.d3d) {
         d->ddrval = DDERR_GENERIC;
         return DDHAL_DRIVER_HANDLED;
