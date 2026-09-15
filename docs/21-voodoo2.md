@@ -320,6 +320,34 @@ writes per triangle, tens of thousands a frame. Two things reduce it:
    `cmdFifoDepth` write, or the wake timer) hands the batch over — the
    trick qemu-3dfx's own FIFO uses. Whether the 3dfx driver enables the
    command FIFO at all is the first thing the log will say.
+   **Done 2026-09-15 (`ramfifo`, on by default), and it was most of the
+   cost.** 3dfx's driver does use the FIFO, and a `perf` profile of Quake
+   II's demo showed why a trap per dword was so dear: under TCG an MMIO
+   store that is not a block's last instruction is a `cpu_io_recompile`
+   (unwind the block, look it up in the TB tree, regenerate a block that
+   ends at the store), about a third of the saturated vCPU, with the MMIO
+   path proper another sixth. Glide leaves hole counting on, so it rings
+   no doorbell: the chip is meant to see every write. So the device finds
+   them itself — the ring is an alias of a page-aligned `fb_mem` (86Box's
+   calloc is handed a replacement at realize and gets its own back at
+   close), consumed words are poisoned with `0xffffffff` (packet type 7,
+   which does not exist), and at every access the guest still makes to the
+   card the device walks whole packets from the last one it counted, by
+   86Box's own word counts, to the first poison header, and adds them to
+   the depth the per-dword writes used to add. The guest learns a slot is
+   free only by reading `cmdFifoRdPtr`, which the device answers after
+   poisoning up to exactly what it returns, so the guest never writes over
+   a word that is not poison. The limits are named in the code: it relies
+   on Glide writing a packet whole before it touches the card again, and a
+   packet it cannot follow (JSR/RET, AGP, Banshee types) sends the window
+   back to MMIO with a warning. **Quake II `timedemo demo1`: 41.1 → 147.5
+   fps** on the same build (`ramfifo=off` the A/B), the chip now the busy
+   side (tens of thousands of words queued, ~14 M words a second); UT's
+   flyby 33.6 → 40.7 fps; Quake II's frames checked by screendump. The
+   `voodoo-guest` check drives the FIFO the same way from a DOS program
+   (two batches, one across a JMP, one after a read-pointer read; the read
+   pointer and the frames are the verdict) and `voodoo-guest-mmiofifo` is
+   the same with `ramfifo=off`.
 2. **Dropping the BQL round trip** (`memory_region_clear_global_locking`)
    needs a lock of our own between the handlers and the display timer
    (§5). Second, if the profile says so.

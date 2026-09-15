@@ -95,14 +95,18 @@ hardware FIFO disabled while it keeps streaming and match the chip.
 **Real games on the card, by hand — 2026-09-13** (the user, on the
 launcher's `base98-br` machine, Win98 with 3dfx's driver): **Quake II,
 Unreal Tournament and Need for Speed: Porsche Unleashed all run on the
-emulated Voodoo 2, and all three quit cleanly.** UT is a Glide 3
-title (its log: `Found Glide: 2.56` through `GlideDrv`), so 3dfx's own
-`glide3x.dll` works on the chip; Quake II goes through 3dfx's MiniGL
-(Glide 2 in the build the game shipped). **Porsche is not Glide on this
-card**: its own `3DSetup\3dsetup.ini` sends a Voodoo 2 to `/M:dx`
-(`dx7z.dll`, Direct3D through 3dfx's HAL for the chip) and only a Voodoo 1
-or Rush to `voodoo2z.dll` — the headless run (2026-09-15) had the card
-take the monitor and `d3dpt-vga`'s own Direct3D draw nothing. Quake II
+emulated Voodoo 2, and all three quit cleanly.** UT is a **Glide 2**
+title — its `GlideDrv.dll` imports `glide2x.dll`, and its log says
+`Found Glide: 2.56` — and Quake II goes through 3dfx's MiniGL (Glide 2
+too). **Porsche is not Glide on this card**: its own
+`3DSetup\3dsetup.ini` sends a Voodoo 2 to `/M:dx` (`dx7z.dll`, Direct3D
+through 3dfx's HAL for the chip) and only a Voodoo 1 or Rush to
+`voodoo2z.dll` — the headless run (2026-09-15) had the card take the
+monitor and `d3dpt-vga`'s own Direct3D draw nothing. `voodoo2z.dll`
+imports `glide3x.dll` (`grVertexLayout`), so Porsche *has* a Glide 3
+renderer, reachable by pointing that ini line at `/M:voodoo2` and running
+3D Setup again; with Diablo II that makes two Glide 3 titles in hand, both
+frame-capped (30 and 25 fps). Quake II
 and UT felt fine; **Porsche felt slow**. **Starting another game after
 one has quit sometimes comes up with glitched graphics** — the same
 class of state as the teardown above (a register or the monitor left
@@ -293,6 +297,12 @@ voodoo2,addr=0x05`; both front ends, the C API, `launcherx --wizard-edit
    doorbell on `cmdFifoDepth` / the wake timer; no trap per dword), and
    the region without the BQL (`memory_region_clear_global_locking` plus
    a device lock between the MMIO handlers and the display timer).
+   **The first is done (2026-09-15, `ramfifo=on|off`, doc 21 §9)** —
+   without a doorbell, since Glide keeps hole counting on: poisoned
+   consumed words and a packet walk at every other access to the card.
+   **Quake II 41.1 → 147.5 fps, UT's flyby 33.6 → 40.7.** The second is
+   not worth it now: what still traps is mostly status polls while the
+   guest waits for the chip.
 4. **Harden `fatal()`**: 86Box aborts on a malformed command-FIFO packet
    and on `intrCtrl`; a guest must not be able to take QEMU down. Mark
    the card dead, have the FIFO thread drop the stream, log once.

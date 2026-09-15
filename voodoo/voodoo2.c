@@ -15,7 +15,14 @@
  *
  *   -device voodoo2[,fbmem=2|4][,texmem=2|4][,threads=1|2|4]
  *                  [,bilinear=on|off][,dither-sub=on|off][,filter=on|off]
- *                  [,recompiler=on|off]
+ *                  [,recompiler=on|off][,ramfifo=on|off]
+ *
+ * ramfifo (on by default): the command-FIFO ring is plain RAM to the guest,
+ * so Glide's packet stream is ordinary stores instead of one MMIO trap per
+ * dword -- and under TCG a trap mid-block is a cpu_io_recompile, which was
+ * most of the vCPU's time in Quake II (doc 21 §9). The chip learns what was
+ * written at the guest's next access to anything else on the card; see
+ * voodoo2_fifo_sync().
  *
  * Threads: the guest's MMIO writes run on the vCPU thread with the BQL; the
  * display timer on the main loop with the BQL (86Box has both on its CPU
@@ -25,6 +32,9 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 #include "qemu/osdep.h"
+#include "qemu/atomic.h"
+#include "qemu/host-utils.h"
+#include "qemu/memalign.h"
 #include "qemu/units.h"
 #include "qemu/module.h"
 #include "qemu/timer.h"
@@ -46,7 +56,15 @@
 #include "shim/86box/video.h"
 #include "shim/86box/vid_svga.h"
 #include "86box/vid_voodoo_common.h"
+#include "86box/vid_voodoo_fifo.h"
 #include "voodoo_shim.h"
+
+/* 86box/vid_voodoo_regs.h's offsets (the header itself does not compile
+ * outside 86Box's own files) */
+#define SST_cmdFifoBaseAddr 0x1e0
+#define SST_cmdFifoRdPtr    0x1e8
+#define SST_cmdFifoDepth    0x1f4
+#define SST_fbiInit7        0x24c
 
 /* vid_voodoo.c (no upstream header declares these three) */
 void   *voodoo_init(const device_t *info);
@@ -104,6 +122,20 @@ struct Voodoo2State {
     uint32_t   fifo_off_writes;   /* FIFO-window packets decoded as registers */
     uint32_t   last_fifo_off;
     bool       fifo_off_warned;
+
+    /* the command FIFO in RAM (ramfifo=on) */
+    uint8_t     *fb_86box;       /* 86Box's own fb_mem, given back at close */
+    MemoryRegion fb_ram;         /* the frame buffer as RAM, never mapped */
+    MemoryRegion fifo_win;       /* an alias of the ring at BAR 0x200000 */
+    bool         fifo_mapped;
+    bool         fifo_broken;    /* a packet not followed: MMIO for good */
+    bool         fifo_stray_warned;
+    uint32_t     fifo_base;      /* frame-buffer addresses of the ring */
+    uint32_t     fifo_size;
+    uint32_t     fifo_parse;     /* the next header nobody has counted */
+    uint32_t     fifo_poisoned;  /* consumed words poisoned up to here */
+    uint32_t     fifo_words, last_fifo_words;
+    uint32_t     fifo_syncs, last_fifo_syncs;
     /* register-window accesses by register (addr & 0x3fc) since the last
      * line: a guest that spins on one register names it here */
     uint32_t   rd_hist[256];
@@ -126,6 +158,7 @@ struct Voodoo2State {
     bool     dithersub;
     bool     filter;
     bool     recompiler;
+    bool     ramfifo;
 };
 
 /* ------------------------------------------------------------------ MMIO */
@@ -184,6 +217,245 @@ voodoo2_on_fatal(void *opaque)
     }
 }
 
+/* -------------------------------------------------- the command FIFO in RAM
+ *
+ * With the ring as RAM the device sees none of the guest's packet writes,
+ * and 3dfx's Glide tells the chip nothing either: it leaves hole counting
+ * on (cvg/init/util.c), i.e. the chip executes whatever it has seen written
+ * contiguously from its read pointer. So the device finds out itself, at
+ * the guest's next access to anything else on the card -- a status poll, a
+ * register, the LFB. The guest has finished its stores by then, and Glide
+ * writes a packet whole before it touches the card again, so every header
+ * found from the last one counted on is a packet ready to run: its words
+ * go to 86Box's consumer as the depth the per-dword writes used to add.
+ *
+ * Where the guest has not written yet is told by a poison header: a word
+ * the consumer has taken is set to 0xffffffff (packet type 7, which does
+ * not exist) before the guest can learn that its slot is free -- the only
+ * way it learns that is reading cmdFifoRdPtr, and that read is answered
+ * here, after the poisoning, with the pointer it poisoned up to. A packet
+ * this cannot follow (a JSR, AGP, a Banshee type) is warned about once and
+ * the window goes back to MMIO; ramfifo=off is the A/B.
+ */
+#define VOODOO2_FIFO_WIN     0x200000
+#define VOODOO2_FIFO_WIN_MAX 0x40000    /* the window decodes addr & 0x3fffc */
+#define VOODOO2_FIFO_POISON  0xffffffffu
+
+static inline uint32_t *
+voodoo2_fifo_word(voodoo_t *v, uint32_t a)
+{
+    return (uint32_t *) &v->fb_mem[a & v->fb_mask];
+}
+
+/* the words a packet takes, header included, exactly as 86Box's consumer
+ * takes them (vid_voodoo_fifo.c); 0 for one this does not follow */
+static uint32_t
+voodoo2_packet_words(uint32_t h)
+{
+    uint32_t pv;
+    uint32_t n;
+
+    switch (h & 7) {
+    case 0:
+        switch ((h >> 3) & 7) {
+        case 0:     /* NOP */
+        case 3:     /* JMP to the frame buffer: the caller follows it */
+            return 1;
+        default:    /* JSR/RET (a subroutine elsewhere), JMP AGP, reserved */
+            return 0;
+        }
+    case 1:
+        return 1 + (h >> 16);
+    case 2:
+        return 1 + ctpop32(h >> 3);
+    case 3:
+        pv = 2;                                         /* x, y */
+        if (h & (1 << 10)) {
+            pv += (h & (1u << 28)) ? 1 : 3;             /* packed ARGB or RGB */
+        }
+        if ((h & (1 << 11)) && !(h & (1u << 28))) {
+            pv++;                                       /* alpha */
+        }
+        pv += !!(h & (1 << 12)) + !!(h & (1 << 13)) + !!(h & (1 << 14));
+        pv += 2 * !!(h & (1 << 15));                    /* s0, t0 */
+        pv += !!(h & (1 << 16));                        /* w1 */
+        pv += 2 * !!(h & (1 << 17));                    /* s1, t1 */
+        return 1 + ((h >> 6) & 0xf) * pv + ((h >> 29) & 7);
+    case 4:
+        return 1 + ctpop32((h >> 15) & 0x3fff) + ((h >> 29) & 7);
+    case 5:
+        n = (h >> 3) & 0x7ffff;
+        return 2 + (n ? n : 1);
+    default:
+        return 0;
+    }
+}
+
+static void voodoo2_fifo_map(Voodoo2State *s);
+
+static void
+voodoo2_fifo_break(Voodoo2State *s, uint32_t a, uint32_t h, const char *why)
+{
+    s->fifo_broken = true;
+    warn_report("voodoo2: command FIFO back to MMIO: %s (header %08x at %08x, "
+                "ring %08x+%x); ramfifo=off is the A/B", why, h, a,
+                s->fifo_base, s->fifo_size);
+    voodoo2_fifo_map(s);
+}
+
+/* count every whole packet the guest has written since the last call */
+static void
+voodoo2_fifo_sync(Voodoo2State *s)
+{
+    voodoo_t *v     = s->v;
+    uint32_t  end   = s->fifo_base + s->fifo_size;
+    uint32_t  a     = s->fifo_parse;
+    uint32_t  words = 0;
+
+    if (a < s->fifo_base || a >= end) {
+        return;     /* the read pointer is not in the ring yet */
+    }
+    s->fifo_syncs++;
+    while (words < s->fifo_size / 4) {
+        uint32_t h = *voodoo2_fifo_word(v, a);
+        uint32_t n;
+
+        if (h == VOODOO2_FIFO_POISON) {
+            break;
+        }
+        n = voodoo2_packet_words(h);
+        if (!n) {
+            voodoo2_fifo_break(s, a, h, "a packet it does not follow");
+            break;
+        }
+        if ((h & 0x3f) == 0x18) {       /* JMP */
+            uint32_t to = (h >> 4) & 0xfffffc;
+
+            if (to < s->fifo_base || to >= end) {
+                voodoo2_fifo_break(s, a, h, "a jump out of the ring");
+                break;
+            }
+            words++;
+            a = to;
+            continue;
+        }
+        if (a + 4 * n > end) {
+            voodoo2_fifo_break(s, a, h, "a packet across the ring's end");
+            break;
+        }
+        words += n;
+        a     += 4 * n;
+    }
+    s->fifo_parse = a;
+    if (words) {
+        smp_wmb();      /* the words before the depth that says they are there */
+        v->cmdfifo_depth_wr += words;
+        s->fifo_words       += words;
+        voodoo_wake_fifo_thread_now(v);
+    }
+}
+
+/* the guest asks where the chip is: poison what it has taken since the last
+ * time, then tell -- the guest never writes past what it was told */
+static uint32_t
+voodoo2_fifo_rdptr(Voodoo2State *s)
+{
+    voodoo_t *v   = s->v;
+    uint32_t  rp  = qatomic_read(&v->cmdfifo_rp);
+    uint32_t  end = s->fifo_base + s->fifo_size;
+    uint32_t  a   = s->fifo_poisoned;
+
+    if (rp < s->fifo_base || rp >= end || a < s->fifo_base || a >= end) {
+        return rp;
+    }
+    for (uint32_t k = 0; a != rp && k < s->fifo_size / 4; k++) {
+        *voodoo2_fifo_word(v, a) = VOODOO2_FIFO_POISON;
+        a += 4;
+        if (a >= end) {
+            a = s->fifo_base;
+        }
+    }
+    s->fifo_poisoned = rp;
+    return rp;
+}
+
+/* a fresh ring: all poison, counted and poisoned from the read pointer */
+static void
+voodoo2_fifo_restart(Voodoo2State *s)
+{
+    voodoo_t *v = s->v;
+
+    for (uint32_t a = s->fifo_base; a < s->fifo_base + s->fifo_size; a += 4) {
+        *voodoo2_fifo_word(v, a) = VOODOO2_FIFO_POISON;
+    }
+    s->fifo_parse    = v->cmdfifo_rp;
+    s->fifo_poisoned = v->cmdfifo_rp;
+}
+
+/* map the ring as RAM when the FIFO is on and the ring fits the window, and
+ * back to MMIO when either stops being so */
+static void
+voodoo2_fifo_map(Voodoo2State *s)
+{
+    voodoo_t *v    = s->v;
+    uint32_t  base = v->cmdfifo_base;
+    uint32_t  size = v->cmdfifo_end + 0x1000 - base;
+    bool      want = s->ramfifo && s->fb_86box && !s->fifo_broken &&
+                     v->cmdfifo_enabled && !v->cmdfifo_in_agp &&
+                     v->cmdfifo_end >= base && size <= VOODOO2_FIFO_WIN_MAX &&
+                     base + size <= v->fb_mask + 1;
+
+    if (want == s->fifo_mapped &&
+        (!want || (base == s->fifo_base && size == s->fifo_size))) {
+        return;
+    }
+    memory_region_transaction_begin();
+    if (want) {
+        s->fifo_base = base;
+        s->fifo_size = size;
+        voodoo2_fifo_restart(s);
+        memory_region_set_alias_offset(&s->fifo_win, base);
+        memory_region_set_size(&s->fifo_win, size);
+    }
+    memory_region_set_enabled(&s->fifo_win, want);
+    memory_region_transaction_commit();
+    s->fifo_mapped = want;
+    info_report("voodoo2: command FIFO %s (ring %08x+%x)",
+                want ? "in RAM" : "through MMIO", base, size);
+}
+
+/* after a trapped write: the FIFO's own registers may have moved the ring */
+static void
+voodoo2_fifo_after_write(Voodoo2State *s, hwaddr addr)
+{
+    if (addr >= 0x400000 || !s->ramfifo || !s->fb_86box) {
+        return;
+    }
+    if (addr & VOODOO2_FIFO_WIN) {
+        if (s->fifo_mapped && !s->fifo_stray_warned) {
+            s->fifo_stray_warned = true;
+            warn_report("voodoo2: a command-FIFO write at %06x, outside the "
+                        "ring mapped as RAM (%08x+%x)", (unsigned) addr,
+                        s->fifo_base, s->fifo_size);
+        }
+        return;
+    }
+    switch (addr & 0x3fc) {
+    case SST_cmdFifoRdPtr:
+    case SST_cmdFifoDepth:
+        if (s->fifo_mapped) {
+            voodoo2_fifo_restart(s);
+        }
+        /* fall through */
+    case SST_cmdFifoBaseAddr:
+    case SST_fbiInit7:
+        voodoo2_fifo_map(s);
+        break;
+    default:
+        break;
+    }
+}
+
 static uint64_t
 voodoo2_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -194,6 +466,15 @@ voodoo2_mmio_read(void *opaque, hwaddr addr, unsigned size)
 
     if (addr < 0x400000) {
         s->rd_hist[(addr >> 2) & 0xff]++;
+    }
+    if (s->fifo_mapped) {
+        voodoo2_fifo_sync(s);
+        if (size == 4 && addr < VOODOO2_FIFO_WIN &&
+            (addr & 0x3fc) == SST_cmdFifoRdPtr && s->fifo_mapped) {
+            val = voodoo2_fifo_rdptr(s);
+            voodoo2_note(s, addr, val, size, false);
+            return val;
+        }
     }
     switch (size) {
     case 4:
@@ -217,6 +498,10 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     Voodoo2State *s = opaque;
     voodoo_t     *v = s->v;
 
+    if (s->fifo_mapped) {
+        /* what the guest put in the ring comes before this write */
+        voodoo2_fifo_sync(s);
+    }
     if (addr < 0x400000) {
         s->wr_hist[(addr >> 2) & 0xff]++;
     }
@@ -266,6 +551,7 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     default:
         break;
     }
+    voodoo2_fifo_after_write(s, addr);
 }
 
 static const MemoryRegionOps voodoo2_mmio_ops = {
@@ -512,7 +798,7 @@ voodoo2_stats(void *opaque)
 
     if (frames || tris || wr || rd || voodoo_shim_fatals != s->last_fatals ||
         s->fifo_off_writes != s->last_fifo_off) {
-        char rds[64], wrs[64], cfg[64], ref[48] = "", busy[96] = "";
+        char rds[64], wrs[64], cfg[64], ref[48] = "", busy[96] = "", ram[64] = "";
         int  written = v->cmd_written + v->cmd_written_fifo + v->cmd_written_fifo_2;
         int  outstanding = written - v->cmd_read;
         int  is_busy = outstanding ||
@@ -543,16 +829,23 @@ voodoo2_stats(void *opaque)
                      s->fifo_off_writes - s->last_fifo_off);
         }
         s->last_fifo_off = s->fifo_off_writes;
+        if (s->fifo_mapped || s->fifo_words != s->last_fifo_words) {
+            snprintf(ram, sizeof(ram), "; FIFO in RAM: %u words in %u syncs",
+                     s->fifo_words - s->last_fifo_words,
+                     s->fifo_syncs - s->last_fifo_syncs);
+        }
+        s->last_fifo_words = s->fifo_words;
+        s->last_fifo_syncs = s->fifo_syncs;
         /* frames = presents (a scan-out with any dirty line); new = those
          * showing a buffer the last one did not, i.e. the game's frame rate */
         info_report("voodoo2: %dx%d %s: %u frames (%u new), %d triangles, "
                     "%d writes (%d texture), %d reads in %.1f s; regs read%s; "
-                    "written%s; config read%s%s%s",
+                    "written%s; config read%s%s%s%s",
                     v->h_disp, v->v_disp, s->override ? "on" : "off",
                     frames, s->shown - s->last_shown, tris, wr, tex, rd,
                     VOODOO2_STATS_MS / 1000.0,
                     rds[0] ? rds : " none", wrs[0] ? wrs : " none",
-                    cfg[0] ? cfg : " none", ref, busy);
+                    cfg[0] ? cfg : " none", ref, busy, ram);
     }
     s->last_fatals = voodoo_shim_fatals;
     s->last_frames = s->frames;
@@ -617,6 +910,24 @@ voodoo2_realize(PCIDevice *dev, Error **errp)
 
     memory_region_init_io(&s->mmio, OBJECT(s), &voodoo2_mmio_ops, s,
                           "voodoo2.mmio", VOODOO2_BAR_SIZE);
+    if (s->ramfifo) {
+        /* the frame buffer page-aligned, so a slice of it can be RAM to the
+         * guest (86Box's own is a calloc, 16 bytes past a page, which a KVM
+         * memory slot refuses); nothing has used 86Box's yet, and it goes
+         * back before voodoo_close() frees it */
+        uint8_t *fb = qemu_memalign(qemu_real_host_page_size(), 4 * MiB);
+
+        memset(fb, 0, 4 * MiB);
+        s->fb_86box  = s->v->fb_mem;
+        s->v->fb_mem = fb;
+        memory_region_init_ram_ptr(&s->fb_ram, OBJECT(s), "voodoo2.fb",
+                                   4 * MiB, fb);
+        memory_region_init_alias(&s->fifo_win, OBJECT(s), "voodoo2.cmdfifo",
+                                 &s->fb_ram, 0, 0x1000);
+        memory_region_set_enabled(&s->fifo_win, false);
+        memory_region_add_subregion_overlap(&s->mmio, VOODOO2_FIFO_WIN,
+                                            &s->fifo_win, 1);
+    }
     pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->mmio);
     /* initEnable: writable (the read is answered by 86Box's handler) */
     for (int a = 0x40; a <= 0x43; a++) {
@@ -646,6 +957,11 @@ voodoo2_exit(PCIDevice *dev)
     }
     if (s->set) {
         voodoo2_set_override(s, 0);
+        if (s->fb_86box) {
+            qemu_vfree(s->v->fb_mem);
+            s->v->fb_mem = s->fb_86box;
+            s->fb_86box  = NULL;
+        }
         voodoo_close(s->set);
         s->set = NULL;
         s->v   = NULL;
@@ -676,6 +992,8 @@ voodoo2_reset(DeviceState *dev)
     v->pci_enable      = 0;
     v->memBaseAddr     = 0;
     voodoo2_set_override(s, 0);
+    s->fifo_broken = false;
+    voodoo2_fifo_map(s);
 }
 
 static Property voodoo2_properties[] = {
@@ -686,6 +1004,7 @@ static Property voodoo2_properties[] = {
     DEFINE_PROP_BOOL("dither-sub", Voodoo2State, dithersub, true),
     DEFINE_PROP_BOOL("filter", Voodoo2State, filter, false),
     DEFINE_PROP_BOOL("recompiler", Voodoo2State, recompiler, true),
+    DEFINE_PROP_BOOL("ramfifo", Voodoo2State, ramfifo, true),
     DEFINE_PROP_END_OF_LIST(),
 };
 

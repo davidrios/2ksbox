@@ -8,8 +8,18 @@ the init sequence 3dfx's own sst1init runs (frame-buffer geometry, video
 timing, the DAC's PLL, the colour lookup table, VGA pass-through), fills
 the back buffer with red through the linear frame buffer, reads a pixel
 of it back through the same window (which makes the chip flush its FIFO:
-a store that never landed reads back as something else), swaps, and
-then gives the monitor back to the VGA.
+a store that never landed reads back as something else), swaps, then
+drives the **command FIFO** the way 3dfx's Glide does -- packets written
+into the ring's window and the chip told nothing -- in two batches (a blue
+fastfill and swap that has to follow a JMP from the ring's end back to its
+start, then a magenta one after the read pointer was read), and gives the
+monitor back to the VGA.
+
+The FIFO half is what guards `ramfifo` (doc 21 §9): with it on (the
+default) the window is RAM and the device finds the packets itself at the
+guest's next access to the card, poisoning what the chip consumed before it
+answers the read pointer. `RAMFIFO=off` runs the same program on the
+per-dword MMIO path, the A/B (the `voodoo-guest-mmiofifo` check).
 
 The evidence is on the host side: a QMP screendump while the Voodoo has
 the monitor must be the 640x480 red frame (the whole path from a guest
@@ -48,7 +58,9 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QEMU = os.path.join(ROOT, "build/qemu/qemu-system-i386")
 VGA = os.environ.get("VGA", "std")
-OUT = os.path.join(ROOT, "build/voodoo-guest" + ("" if VGA == "std" else "-" + VGA))
+RAMFIFO = os.environ.get("RAMFIFO", "on")
+OUT = os.path.join(ROOT, "build/voodoo-guest" + ("" if VGA == "std" else "-" + VGA)
+                   + ("" if RAMFIFO == "on" else "-mmiofifo"))
 
 spec = importlib.util.spec_from_file_location("x87gt", os.path.join(ROOT, "tools/x87-guest-test.py"))
 x87gt = importlib.util.module_from_spec(spec)
@@ -81,6 +93,18 @@ SST_hSync           equ 220h
 SST_vSync           equ 224h
 SST_clutData        equ 228h
 SST_dacData         equ 22Ch
+SST_fbiInit7        equ 24Ch
+SST_cmdFifoBaseAddr equ 1E0h
+SST_cmdFifoRdPtr    equ 1E8h
+SST_cmdFifoDepth    equ 1F4h
+
+; the command FIFO: an 8 KiB ring at 3 MiB of frame-buffer memory (clear of
+; the three 640x480 buffers), written through its window at BAR + 200000h;
+; batch 1 starts near the ring's end so that it has to jump back
+FIFO_BASE           equ 300000h
+FIFO_SIZE           equ 2000h
+FIFO_START          equ 1F00h
+FIFO_WIN            equ BAR + 200000h
 
 ; d3dpt-vga (d3dpt/d3dpt_fb.h)
 D3D_ENABLE          equ 040h
@@ -293,6 +317,67 @@ start:
     mov cx, 36                  ; ~2 s: the host takes its screendump
     call delay_ticks
 
+    ; --- the command FIFO (doc 21 §9), the way 3dfx's Glide drives it:
+    ;     packets written into the ring's window, and the chip told nothing
+    ;     -- hole counting on, no doorbell. Under ramfifo=on the window is
+    ;     RAM and the device finds the packets at the next access to the
+    ;     card; the read pointer the guest polls says how far the chip got,
+    ;     and the frame says what it drew -------------------------------------
+    mov edi, BAR
+    mov eax, (FIFO_BASE >> 12) | (((FIFO_BASE + FIFO_SIZE - 1000h) >> 12) << 16)
+    mov [fs:edi + SST_cmdFifoBaseAddr], eax
+    mov eax, FIFO_BASE + FIFO_START
+    mov [fs:edi + SST_cmdFifoRdPtr], eax
+    xor eax, eax
+    mov [fs:edi + SST_cmdFifoDepth], eax
+    mov eax, 100h               ; fbiInit7: the command FIFO on
+    mov [fs:edi + SST_fbiInit7], eax
+
+    ; batch 1: fbzMode, the clip, color1 = blue, a jump to the ring's
+    ; start, then fastfill and swap there
+    mov edi, FIFO_WIN + FIFO_START
+    mov dword [fs:edi], 00010221h       ; packet 1: fbzMode
+    mov dword [fs:edi + 4], 4200h       ;   RGB writes, draw the back buffer
+    mov dword [fs:edi + 8], 00028231h   ; packet 1: 2 from clipLeftRight on
+    mov dword [fs:edi + 12], 280h       ;   x 0..640
+    mov dword [fs:edi + 16], 1E0h       ;   y 0..480
+    mov dword [fs:edi + 20], 00010291h  ; packet 1: color1
+    mov dword [fs:edi + 24], 0F8h       ;   blue
+    mov dword [fs:edi + 28], (FIFO_BASE << 4) | 18h   ; packet 0: JMP
+    mov edi, FIFO_WIN
+    mov dword [fs:edi], 00010249h       ; packet 1: fastfillCMD
+    mov dword [fs:edi + 4], 0
+    mov dword [fs:edi + 8], 00010251h   ; packet 1: swapbufferCMD
+    mov dword [fs:edi + 12], 1          ;   on the next retrace
+    mov edx, FIFO_BASE + 10h            ; where the read pointer must end
+    mov si, str_fifo1
+    call fifo_wait
+    mov si, str_fifo1_swapped
+    call puts
+    mov cx, 36                  ; ~2 s: the host takes its screendump
+    call delay_ticks
+
+    ; batch 2, after the read pointer was read (under ramfifo=on the words
+    ; batch 1 took are poison by then): color1 = magenta, fill, swap
+    mov edi, FIFO_WIN + 10h
+    mov dword [fs:edi], 00010291h       ; packet 1: color1
+    mov dword [fs:edi + 4], 0F800F8h    ;   magenta
+    mov dword [fs:edi + 8], 00010249h   ; packet 1: fastfillCMD
+    mov dword [fs:edi + 12], 0
+    mov dword [fs:edi + 16], 00010251h  ; packet 1: swapbufferCMD
+    mov dword [fs:edi + 20], 1
+    mov edx, FIFO_BASE + 28h
+    mov si, str_fifo2
+    call fifo_wait
+    mov si, str_fifo2_swapped
+    call puts
+    mov cx, 36
+    call delay_ticks
+
+    mov edi, BAR
+    xor eax, eax                ; fbiInit7: the command FIFO off again
+    mov [fs:edi + SST_fbiInit7], eax
+
     ; --- give the monitor back to the VGA -------------------------------
     mov edi, BAR
     xor eax, eax
@@ -376,6 +461,26 @@ d3dpt_linear:
     call putnl
     mov cx, 36                  ; ~2 s: the host's screendump shows the linear
     call delay_ticks            ; mode, the way the player's refresh would
+    ret
+
+; EDX = where the chip's read pointer has to end up, SI = the batch's label:
+; poll cmdFifoRdPtr until it gets there (bounded), print what it read, and
+; give the swap its retrace
+fifo_wait:
+    mov edi, BAR
+    mov ecx, 2000000
+.poll:
+    mov eax, [fs:edi + SST_cmdFifoRdPtr]
+    cmp eax, edx
+    je .there
+    dec ecx
+    jnz .poll
+.there:
+    call puts
+    call puthex32
+    call putnl
+    mov cx, 9                   ; ~0.5 s
+    call delay_ticks
     ret
 
 a20_on:
@@ -553,6 +658,10 @@ str_swapped:  db "SWAPPED", 10, 0
 str_done:     db "DONE", 10, 0
 str_d3dpt:    db "D3DPT ", 0
 str_d3d_enable: db "D3DPT ENABLE ", 0
+str_fifo1:    db "FIFO1 RDPTR ", 0
+str_fifo1_swapped: db "FIFO1 SWAPPED", 10, 0
+str_fifo2:    db "FIFO2 RDPTR ", 0
+str_fifo2_swapped: db "FIFO2 SWAPPED", 10, 0
 """
 
 
@@ -627,6 +736,16 @@ def green_fraction(path):
     return fraction(path, lambda r, g, b: r < 8 and g >= 248 and b < 8)
 
 
+def blue_fraction(path):
+    """The command FIFO's first fastfill."""
+    return fraction(path, lambda r, g, b: r < 8 and g < 8 and b >= 240)
+
+
+def magenta_fraction(path):
+    """The command FIFO's second fastfill."""
+    return fraction(path, lambda r, g, b: r >= 240 and g < 8 and b >= 240)
+
+
 def main():
     x87gt.ensure_prereqs()
     x87gt.ensure_floppy()
@@ -639,7 +758,9 @@ def main():
     shot_on = os.path.join(OUT, "voodoo.ppm")
     shot_off = os.path.join(OUT, "vga.ppm")
     shot_lin = os.path.join(OUT, "linear.ppm")
-    for f in (log, qlog, shot_on, shot_off, shot_lin, sock):
+    shot_f1 = os.path.join(OUT, "fifo1.ppm")
+    shot_f2 = os.path.join(OUT, "fifo2.ppm")
+    for f in (log, qlog, shot_on, shot_off, shot_lin, shot_f1, shot_f2, sock):
         if os.path.exists(f):
             os.unlink(f)
     ok = True
@@ -647,7 +768,7 @@ def main():
         p = subprocess.Popen([
             QEMU, "-machine", "pc", "-cpu", "pentium3", "-m", "64",
             "-L", os.path.join(ROOT, "qemu/pc-bios"), "-display", "none", "-net", "none",
-            *vga_args(), "-device", "voodoo2",
+            *vga_args(), "-device", "voodoo2,ramfifo=" + RAMFIFO,
             "-drive", "file=%s,if=floppy,index=0,format=raw" % img,
             "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
             "-qmp", "unix:%s,server,nowait" % sock, "-audiodev", "none,id=a0",
@@ -665,6 +786,10 @@ def main():
                 q.screendump(shot_lin)
             text = wait_for(log, b"SWAPPED", p, 180, "the guest's swap")
             q.screendump(shot_on)
+            text = wait_for(log, b"FIFO1 SWAPPED", p, 60, "the command FIFO's first batch")
+            q.screendump(shot_f1)
+            text = wait_for(log, b"FIFO2 SWAPPED", p, 60, "the command FIFO's second batch")
+            q.screendump(shot_f2)
             text = wait_for(log, b"DONE", p, 60, "the guest to finish")
             q.screendump(shot_off)
         finally:
@@ -705,6 +830,23 @@ def main():
     if (w, h) != (WIDTH, HEIGHT) or frac < 0.99:
         print("FAIL the console did not show the Voodoo's 640x480 red frame")
         ok = False
+    # the command FIFO: the read pointer where the packets end (the jump
+    # followed, every word counted once), and what the packets drew
+    for name, want, shot, frac_of, colour in (
+            ("FIFO1", "00300010", shot_f1, blue_fraction, "blue"),
+            ("FIFO2", "00300028", shot_f2, magenta_fraction, "magenta")):
+        rd = [l.split()[2] for l in text.splitlines()
+              if l.startswith(name + " RDPTR ") and len(l.split()) == 3]
+        if rd != [want]:
+            print("FAIL %s: the chip's read pointer ended at %s, not %s"
+                  % (name, rd[0] if rd else "nothing", want))
+            ok = False
+        w, h, frac = frac_of(shot)
+        print("    screendump after %s: %dx%d, %.1f%% %s" % (name, w, h, frac * 100, colour))
+        if (w, h) != (WIDTH, HEIGHT) or frac < 0.99:
+            print("FAIL the command FIFO's %s batch did not draw its %s frame"
+                  % (name, colour))
+            ok = False
     w, h, frac = red_fraction(shot_off)
     print("    screendump with the Voodoo off: %dx%d, %.1f%% red" % (w, h, frac * 100))
     if frac > 0.5:
@@ -729,6 +871,14 @@ def main():
     qtext = open(qlog, "rb").read().decode("latin-1")
     if "display on (VGA pass-through)" not in qtext or "display off (VGA back)" not in qtext:
         print("FAIL the device did not log both pass-through switches")
+        ok = False
+    in_ram = "command FIFO in RAM (ring 00300000+2000)" in qtext
+    if in_ram != (RAMFIFO == "on"):
+        print("FAIL the ring was %s with ramfifo=%s"
+              % ("mapped as RAM" if in_ram else "not mapped as RAM", RAMFIFO))
+        ok = False
+    if "command FIFO back to MMIO" in qtext:
+        print("FAIL the device gave up on a packet (see the warning above)")
         ok = False
     if not ok:
         raise SystemExit("voodoo-guest-test: failed")

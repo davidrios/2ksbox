@@ -232,7 +232,14 @@
 #                  Voodoo 2 strap, runs the chip's init sequence, fills the back
 #                  buffer red through the LFB, reads a pixel back, swaps; a
 #                  screendump must be the 640x480 red frame while the Voodoo has
-#                  the monitor and the VGA's text screen after it lets go. ~10 s
+#                  the monitor and the VGA's text screen after it lets go. Then
+#                  the command FIFO the way Glide drives it (doc 21 §9): two
+#                  batches of packets into the ring's window -- a blue fill and
+#                  swap across a JMP, a magenta one after a read-pointer read --
+#                  and the read pointer must end where the packets do and the
+#                  frames be blue, then magenta: under ramfifo=on (the default)
+#                  only the device's own packet walk can have run them. ~10 s
+#   voodoo-guest-mmiofifo  the same with ramfifo=off, the per-dword MMIO path. ~10 s
 #   voodoo-guest-d3dpt  the same beside `-device d3dpt-vga`, the pairing a launcher
 #                  machine builds, with the adapter first put in an 800x600x32
 #                  linear mode: after the hand-back the screendump must be that
@@ -2500,6 +2507,7 @@ guest_stage() {
       run_check pit-guest pit-guest.log python3 tools/pit-guest-test.py || true
       run_check voodoo-guest voodoo-guest.log python3 tools/voodoo-guest-test.py || true
       run_check voodoo-guest-d3dpt voodoo-guest-d3dpt.log env VGA=d3dpt python3 tools/voodoo-guest-test.py || true
+      run_check voodoo-guest-mmiofifo voodoo-guest-mmiofifo.log env RAMFIFO=off python3 tools/voodoo-guest-test.py || true
       run_check vbe-palette vbe-palette.log env VBEPAL=1 python3 tools/vga-dirty-guest-test.py vesa || true
       # The gameport as a DOS guest reads it (M13 path B). Unlike its
       # neighbours this one runs the **player**, because the pad reaches a
@@ -2521,10 +2529,10 @@ guest_stage() {
     # including `atapi-guest`, which is the only check that reads a disc from
     # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
     # weak-sector rule, which that battery is the regression guard for).
-    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt vbe-palette pad-guest; do
+    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo vbe-palette pad-guest; do
       skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
     done; fi
-  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt vbe-palette pad-guest; do
+  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo vbe-palette pad-guest; do
     skip "$c" "needs nasm, mtools and build/qemu"
   done; fi
   if [ "$OS" != Linux ]; then skip guest "Linux only for now (mkfs.fat, sfdisk, mtools)"; return; fi
