@@ -1237,15 +1237,17 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *pHalInfo, DWORD *p
     d3d_init(&p->core);
     *pdwNumHeaps = 1;
     /* the FOURCC surfaces DirectDraw may create at all (it checks this
-     * list before the pixel-format callbacks): the compressed textures.
-     * First call: the count; second call: the codes */
-    *pdwNumFourCCCodes = p->core.d3d ? 5 : 0;
+     * list before the pixel-format callbacks): the compressed textures,
+     * and the DX8 format with no DDPIXELFORMAT that d3d8.dll creates as a
+     * FOURCC of its D3DFORMAT. First call: the count; second call: the codes */
+    *pdwNumFourCCCodes = p->core.d3d ? 6 : 0;
     if (pdwFourCC && p->core.d3d) {
         pdwFourCC[0] = 0x31545844;      /* 'DXT1' (FOURCC_ is defined further down) */
         pdwFourCC[1] = 0x33545844;      /* 'DXT3' */
         pdwFourCC[2] = 0x35545844;      /* 'DXT5' */
         pdwFourCC[3] = 0x32545844;      /* 'DXT2' (DXT3 with premultiplied alpha: the host takes it as it is) */
         pdwFourCC[4] = 0x34545844;      /* 'DXT4' (DXT5's) */
+        pdwFourCC[5] = 63;              /* D3DFMT_Q8W8V8U8 (core_caps.c) */
     }
 
     for (i = 0; i < sizeof(*pHalInfo) / 4; i++) ((ULONG *)pHalInfo)[i] = 0;
@@ -1739,10 +1741,38 @@ static DWORD APIENTRY DdCreateSurface(PDD_CREATESURFACEDATA d)
         }
         return DDHAL_DRIVER_NOTHANDLED;
     }
-    if (!sd || !(sd->ddpfPixelFormat.dwFlags & DDPF_FOURCC) || !fmt_is_dxt(sd->ddpfPixelFormat.dwFourCC)) {
+    if (!sd || !(sd->ddpfPixelFormat.dwFlags & DDPF_FOURCC)) {
         return DDHAL_DRIVER_NOTHANDLED;
     }
     f = sd->ddpfPixelFormat.dwFourCC;
+    if (fmt_fourcc_rows(f)) {
+        /* Q8W8V8U8 (a D3DFORMAT as the FOURCC): dword-aligned texel rows,
+         * which dxg cannot size from a bit count it does not have */
+        for (i = 0; i < d->dwSCnt; i++) {
+            PDD_SURFACE_LOCAL s = d->lplpSList[i];
+            PDD_SURFACE_GLOBAL g = s ? s->lpGbl : NULL;
+            ULONG pitch;
+
+            if (!g) {
+                continue;
+            }
+            pitch = (fmt_row_bytes(f, g->wWidth) + 3) & ~3u;
+            g->lPitch = pitch;
+            if (!(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+                g->dwBlockSizeX = pitch * g->wHeight;
+                g->dwBlockSizeY = 1;
+                g->fpVidMem = DDHAL_PLEASEALLOC_BLOCKSIZE;
+            }
+            if (i == 0) {
+                sd->dwFlags |= DDSD_PITCH;
+                sd->lPitch = pitch;
+            }
+        }
+        return DDHAL_DRIVER_NOTHANDLED;
+    }
+    if (!fmt_is_dxt(f)) {
+        return DDHAL_DRIVER_NOTHANDLED;
+    }
     for (i = 0; i < d->dwSCnt; i++) {
         PDD_SURFACE_LOCAL s = d->lplpSList[i];
         PDD_SURFACE_GLOBAL g = s ? s->lpGbl : NULL;

@@ -453,11 +453,18 @@ void d3d_caps_init(d3dpt_core *p)
          * fixed function does the op, the texels go to the host as they are */
         fmt8_add(D3DFMT_V8U8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_BUMPMAP_);
         /* the luminance bump maps BUMPENVMAPLUMINANCE reads: DXVK converts
-         * both to float itself at upload. Not Q8W8V8U8: listed, d3d8.dll
-         * took CreateTexture and never made a video-memory surface for it
-         * (no CanCreateSurface either), so the draw sampled nothing */
+         * both to float itself at upload */
         fmt8_add(D3DFMT_L6V5U5_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_BUMPMAP_);
         fmt8_add(D3DFMT_X8L8V8U8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_BUMPMAP_);
+        /* the signed normal map (DXVK: R8G8B8A8_SNORM). 3DMark2001 SE asks
+         * for it (or W11V11U10) before Nature and refuses the test without
+         * ("device does not support bump normal maps"). It has no
+         * DDPIXELFORMAT of its own, so the runtime creates it as a FOURCC
+         * surface whose code is the D3DFORMAT: the layers list 63 among
+         * their FOURCC codes and size it in CreateSurface — without that,
+         * DirectDraw refused it before CanCreateSurface and the texture had
+         * no video-memory copy (doc 15, BUMPTEST on XP) */
+        fmt8_add(D3DFMT_Q8W8V8U8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_BUMPMAP_);
     }
     fmt8_add(D3DFMT_D16_, D3DFORMAT_OP_ZSTENCIL_ | D3DFORMAT_OP_ZSTENCIL_WITH_ARBITRARY_COLOR_DEPTH_);
     fmt8_add(D3DFMT_D24X8_, D3DFORMAT_OP_ZSTENCIL_ | D3DFORMAT_OP_ZSTENCIL_WITH_ARBITRARY_COLOR_DEPTH_);

@@ -523,9 +523,9 @@ static BOOL BuildHalInfo(void)
     pHal->fourcc[2] = 0x35545844;      /* 'DXT5' */
     pHal->fourcc[3] = 0x32545844;      /* 'DXT2' */
     pHal->fourcc[4] = 0x34545844;      /* 'DXT4' */
-    pHal->fourcc[5] = 0;
+    pHal->fourcc[5] = 63;              /* D3DFMT_Q8W8V8U8: d3d8.dll creates it as this FOURCC (core_caps.c) */
     hi->lpdwFourCC = (LPDWORD)HALFIELD(DWORD, fourcc);
-    hi->ddCaps.dwNumFourCCCodes = 5;
+    hi->ddCaps.dwNumFourCCCodes = 6;
 
     if (HalReachable(pHal->d3dhal_global) && HalReachable(pHal->d3dhal_callbacks)) {
         *(DWORD __far *)&hi->lpD3DGlobalDriverData = pHal->d3dhal_global;

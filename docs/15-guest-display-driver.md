@@ -2093,7 +2093,7 @@ OFFERED or FAIL. Where they stood on 2026-09-11 (the overlay above):
 | `STRMTEST` | more than one vertex stream (v10): three streams under a vs 1.1 from a StartVertex, indexed with a BaseVertexIndex and a MinIndex, a system-memory stream, the fixed function on three streams, streams 0 and 3 with a gap, stale streams under an FVF draw | PASS, 6 cases |
 | `VOLTEST` | volume textures (incl. `UpdateTexture`, the DDI's `VOLUMEBLT`) | PASS, 5 cases (since v12, the same day; its DXT1 case since the DXTs were offered as volumes, the same evening) |
 | `FMTTEST` | L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2, DXT4 (colour and replicated alpha each) | PASS, 9 cases (since the formats were listed, the same day; see the section above) |
-| `BUMPTEST` | EMBM on every bump format offered (V8U8 and Q8W8V8U8 under `BUMPENVMAP`, L6V5U5 and X8L8V8U8 under `BUMPENVMAPLUMINANCE`) and DOT3 | PASS, 8 cases (EMBM since V8U8 was listed; the luminance formats since they were and DXVK's patch 07, the same day; Q8W8V8U8 not listed, so skipped) |
+| `BUMPTEST` | EMBM on every bump format offered (V8U8 and Q8W8V8U8 under `BUMPENVMAP`, L6V5U5 and X8L8V8U8 under `BUMPENVMAPLUMINANCE`) and DOT3 | PASS, 8 cases (EMBM since V8U8 was listed; the luminance formats since they were and DXVK's patch 07, the same day; Q8W8V8U8 skipped until it was listed on 2026-09-15, 10 cases on Win98 since, XP not re-run yet) |
 | `SPRTEST` | point sprites, and a per-vertex size (`D3DFVF_PSIZE`) | PASS, 4 cases (the per-vertex case since `D3DFVFCAPS_PSIZE` was claimed, the same day) |
 | `ANISTEST` | anisotropic filtering | PASS, 1 case (since the caps claimed it, the same day: far-row contrast 0 trilinear, 252 anisotropic) |
 | `PATCHTST` | RT- and N-patches | NOT OFFERED |
@@ -2133,7 +2133,16 @@ half intensity. Two things came up on the way:
   driver about a video-memory surface (no `CanCreateSurface`, no
   registration). So nothing was bound at stage 0 and the draw had no
   bump offset. Why the runtime does that is open; fixed-function EMBM
-  titles use V8U8.
+  titles use V8U8. **Answered 2026-09-15** (doc 19 §38): Q8W8V8U8 has no
+  DDPIXELFORMAT, so d3d8.dll creates it as a FOURCC surface whose code is
+  the D3DFORMAT (63), and DirectDraw refuses a FOURCC missing from the
+  driver's list before any callback. Both layers list 63 now and size the
+  surface in `DdCreateSurface`, and the format is back in the list, because
+  3DMark2001 SE refuses Nature without it (or W11V11U10). Measured on
+  Win98, where BUMPTEST passes its Q8W8V8U8 cases. **XP not re-run:** on
+  2026-09-15 `xp-driver-test.sh install` could put no driver on an overlay
+  of `winxp-m7` (DRVINST never reported, no `linear mode on` after the
+  restart), and the driver built from the commit before failed the same way.
 
 The DX7 list still carries V8U8 alone. And per-vertex point size was one `FVFCaps` bit away (the driver's
 `fvf_stride` and the host already carried `D3DFVF_PSIZE`) — claimed the

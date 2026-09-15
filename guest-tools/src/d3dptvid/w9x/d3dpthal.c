@@ -348,10 +348,37 @@ static DWORD __stdcall CreateSurface32(d3dpt_ddhal_createsurface *d)
         }
         return DDHAL_DRIVER_NOTHANDLED;
     }
-    if (!sd || !(sd->ddpfPixelFormat.dwFlags & DDPF_FOURCC) || !fmt_is_dxt(sd->ddpfPixelFormat.dwFourCC)) {
+    if (!sd || !(sd->ddpfPixelFormat.dwFlags & DDPF_FOURCC)) {
         return DDHAL_DRIVER_NOTHANDLED;
     }
     f = sd->ddpfPixelFormat.dwFourCC;
+    if (fmt_fourcc_rows(f)) {
+        /* Q8W8V8U8 (a D3DFORMAT as the FOURCC): dword-aligned texel rows */
+        for (i = 0; i < d->dwSCnt; i++) {
+            LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl(d->lplpSList[i]);
+            LPDDRAWI_DDRAWSURFACE_GBL g = s ? s->lpGbl : NULL;
+            ULONG pitch;
+
+            if (!g) {
+                continue;
+            }
+            pitch = (fmt_row_bytes(f, g->wWidth) + 3) & ~3u;
+            g->lPitch = pitch;
+            if (!(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
+                g->dwBlockSizeX = pitch * g->wHeight;
+                g->dwBlockSizeY = 1;
+                g->fpVidMem = DDHAL_PLEASEALLOC_BLOCKSIZE;
+            }
+            if (i == 0) {
+                sd->dwFlags |= DDSD_PITCH;
+                sd->lPitch = pitch;
+            }
+        }
+        return DDHAL_DRIVER_NOTHANDLED;
+    }
+    if (!fmt_is_dxt(f)) {
+        return DDHAL_DRIVER_NOTHANDLED;
+    }
     for (i = 0; i < d->dwSCnt; i++) {
         LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl(d->lplpSList[i]);
         LPDDRAWI_DDRAWSURFACE_GBL g = s ? s->lpGbl : NULL;

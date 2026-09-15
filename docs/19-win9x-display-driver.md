@@ -2829,3 +2829,40 @@ primary's pitch, which is why only larger ones would have been lost there.
 The Lobby's debris still drops the demo from the 60 Hz cap to 10-35
 frames/s (300-odd draws a frame, many one-quad debris pieces) — not looked
 into yet.
+
+### 38. 3DMark2001 SE's Nature: "device does not support bump normal maps" (2026-09-15)
+
+The benchmark, which the demo never was, stopped before Nature with
+`P_D3D::DRV_allocateMap - device does not support bump normal maps`. The
+string is in `E2DRIVER\e2_d3d8_driver_mfc.dll`, and so is the check, in the
+function that calls `P_DisplayMode::setBumpSupport(bump, luminance,
+normal)`: six `IDirect3D8::CheckDeviceFormat(..., D3DRTYPE_TEXTURE, fmt)`
+calls, where bump is V8U8 or V16U16, luminance L6V5U5 or X8L8V8U8, and
+**normal is Q8W8V8U8 or W11V11U10**. Its format table (`linkFormat`) maps
+the same six to bump types 1–6. Our DX8 list had V8U8, L6V5U5 and
+X8L8V8U8 and none of the normal pair: Q8W8V8U8 was left out on
+2026-09-11, because with it listed XP's d3d8.dll made no video-memory
+copy of it (doc 15).
+
+**Why no copy.** Q8W8V8U8 has no DDPIXELFORMAT of its own, so d3d8.dll
+creates it as a **FOURCC surface whose code is the D3DFORMAT, 63** (here,
+BUMPTEST's 8×8 bump map arrives at `CanCreateSurface` as `pf 0x00000004`,
+`DDPF_FOURCC`). DirectDraw checks the driver's FOURCC list before it calls
+any pixel-format callback, and ours held only the five DXTs, so the runtime
+refused the video-memory surface before the driver ever heard of it. That
+was "no CanCreateSurface either", and it was never specific to NT. Both
+layers now list 63 among their FOURCC codes, and both CreateSurface
+callbacks size such a surface (`fmt_fourcc_rows`: dword-aligned texel rows
+in a block, since DirectDraw has no bit count to size it from). `pf_format`
+already read a D3DFORMAT in the FOURCC slot, and the host takes
+Q8W8V8U8 as it is (DXVK: `R8G8B8A8_SNORM`).
+
+**Measured** on a fresh raw copy of `base98-us`: BUMPTEST 10 of 10 (from 8;
+EMBM on Q8W8V8U8, both matrices), and 3DMark2001 SE's Benchmark runs every
+test, Nature with its river among them, at the 60 Hz cap, to the overall
+score dialog (5140 3D marks at 1024×768×32 under TCG), writing no
+`error.log`. The NT layer has the same two changes but is not measured:
+`xp-driver-test.sh install` on an overlay of `winxp-m7` installed nothing
+(DRVINST never reported, no `linear mode on` after the restart), and the
+driver built from the commit before failed identically, so BUMPTEST there
+found no Direct3D device at all.

@@ -310,6 +310,7 @@ void surf_colorkey_set(d3dpt_core *c, ULONG handle, ULONG lo, ULONG hi);
 void surf_lock_range(ULONG handle, BOOL has_rect, LONG left, LONG right);
 void surf_unlock_dirty(d3dpt_core *c, ULONG handle);
 ULONG surf_dxt_size(ULONG fourcc, ULONG w, ULONG h);
+BOOL fmt_fourcc_rows(ULONG fourcc);
 
 /* --- core_ctx.c: contexts, render targets, Clear2, scene capture --- */
 extern D3DCTX d3d_ctx[D3D_MAX_CTX];

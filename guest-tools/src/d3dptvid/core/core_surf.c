@@ -106,6 +106,14 @@ ULONG surf_dxt_size(ULONG fourcc, ULONG w, ULONG h)
     return fmt_row_bytes(fourcc, w) * ((h + 3) / 4);
 }
 
+/* a FOURCC code that is an uncompressed D3DFORMAT (Q8W8V8U8): the runtime
+ * creates a DX8 format with no DDPIXELFORMAT this way, and DirectDraw knows
+ * no bit count for it, so the layer's CreateSurface gives it its pitch */
+BOOL fmt_fourcc_rows(ULONG fourcc)
+{
+    return fourcc < 256 && fmt_row_bytes(fourcc, 1) != 0;
+}
+
 /* a render target, a primary or a member of a flip chain: the surfaces
  * the host may have drawn into and so must read back before a lock */
 BOOL surf_is_target(ULONG caps)

@@ -202,6 +202,20 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   default**, "not exact" in the machine form) runs PC=64 at 53 bits so
   the fast paths and the inline mode take it. The Lobby 35.2 → 50.3 fps with it on (23 five-second windows, no trace).
 
+- **3DMark2001 SE's Nature: Q8W8V8U8 — 2026-09-15** (doc 19 §38). The
+  benchmark stopped before Nature with "device does not support bump
+  normal maps": 3DMark asks `CheckDeviceFormat` for Q8W8V8U8 or W11V11U10,
+  and the DX8 list had neither. Q8W8V8U8 was left out on 2026-09-11 because
+  d3d8.dll never made its video-memory copy. The reason, found now: it has
+  no DDPIXELFORMAT, so the runtime creates it as FOURCC 63, and DirectDraw
+  refuses a FOURCC the driver does not list before asking the driver. Both
+  families list 63 and size the surface in CreateSurface. On `base98-us`
+  BUMPTEST passes 10 of 10 (from 8), and the whole benchmark runs, Nature
+  included, to a score of 5140 at 1024×768×32. **Open:** XP not re-run.
+  `xp-driver-test.sh install` could not install any driver on a
+  `winxp-m7` overlay today; HEAD's driver failed the same way, so the
+  harness or the image is at fault, not this change.
+
 - **White surfaces in 3DMark2001 SE on Win98: no surface wider than the
   screen — 2026-09-14** (doc 19 §37). Nature's sky, the Dragothic ground and
   the Lobby agent's coat drew white: d3d8.dll bound texture handle 0 for
