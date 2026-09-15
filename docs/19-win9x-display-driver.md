@@ -2866,3 +2866,42 @@ score dialog (5140 3D marks at 1024×768×32 under TCG), writing no
 (DRVINST never reported, no `linear mode on` after the restart), and the
 driver built from the commit before failed identically, so BUMPTEST there
 found no Direct3D device at all.
+
+### 39. 3DMark2001 SE's Pixel Shader ocean drew black: no cube map in video memory (2026-09-15)
+
+On the reference rig, the Pixel Shader feature test drew its sky and sun and
+left the ocean pure black. The same run headless showed it too (the full
+benchmark of §38, and Pixel Shader alone: Change..., Clear, the Pixel Shader
+box, which selects both pixel shader tests). A DP2 trace of one ocean frame
+(`TRACE=1`, re-armed every 6 s through the test) has three draws. Two are the
+sky, fixed function. The third is the water, a 4 900-vertex grid under
+vertex shader `0xa80442` and pixel shader 1, with texture 72 at stage 0 (the
+512×512 Q8W8V8U8 normal map of §38) and **texture handle 0 at stage 3**. The
+shader's shape is the classic ps 1.1 reflection: `tex t0` for the normal,
+`texm3x3pad t1` and `t2`, then `texm3x3vspec t3`, which samples a cube map at
+stage 3. With nothing bound there it samples black.
+
+**Handle 0 is the §37 symptom:** d3d8.dll binds it when a managed texture
+has no video-memory copy. The log had the cube:
+`cube 0x000000a5 not mirrored: w 0x100 h 0x100 faces found 0x00000001
+(system memory)`, a 256×256 cube registered only as the runtime's system-
+memory copy, and no video-memory cube at all. The core's cube support (v11)
+is shared, and CUBETEST passes on XP. The difference is what the 9x layer
+tells DirectDraw. **9x DirectDraw creates a cube map in video memory only if
+the driver claims `DDSCAPS2_CUBEMAP` in `DDMORESURFACECAPS.ddsCapsMore`**,
+answered through `GetDriverInfo` for `GUID_DDMoreSurfaceCaps`. The 9x layer
+never answered that GUID (NT's dxg never asked for it). It does now:
+`dwSize`, `dwCaps2 = DDSCAPS2_CUBEMAP`, and one heap's restrictions left
+empty. `ddflags=0x400000` (`DDF_NO_CUBE`) withholds it with the cube caps,
+as the A/B.
+
+**Measured** on a raw copy of `base98-us` with the rebuilt driver: as the
+Pixel Shader test loads, the core mirrors the ocean's cube into video memory
+(`cube 0x00000045 edge 0x00000100 … faces 0x44 0x43 0x42 0x97 0x96`). The
+ocean draws as water with the sun's reflection in it, at 53–60 frames/s, and
+Advanced Pixel Shader runs after it at the 60 Hz cap. **CUBETEST passes 9 of
+9 on Win98**, its first run on this family (`STAGE=…/cubetest.exe`, `start /w
+CUBETEST.EXE` in `RUN.BAT`, and `CUBETEST.LOG` read off the raw copy with
+mtools, since the harness's pull did not run after the power button). The
+negative control is the run before the change: the same scene traced with
+handle 0 at stage 3 and a black ocean.

@@ -772,6 +772,9 @@ static const GUID guid_parseunknown = {
 static const GUID guid_stereomode = {
     0xf828169c, 0xa8e8, 0x11d2, { 0xa1, 0xf2, 0x00, 0xa0, 0xc9, 0x83, 0xea, 0xf6 }
 };
+static const GUID guid_moresurfacecaps = {
+    0x3b8a0466, 0xf269, 0x11d1, { 0x88, 0x0b, 0x00, 0xc0, 0x4f, 0xd9, 0x30, 0xc5 }
+};
 
 static inline BOOL guid_eq(const GUID *a, const GUID *b)
 {
@@ -1224,6 +1227,19 @@ static DWORD __stdcall GetDriverInfo32(DDHAL_GETDRIVERINFODATA *d)
         info_copy(d, &ext, ext.dwSize);
     } else if (core.d3d && guid_eq(&d->guidInfo, &guid_zpixelformats)) {
         info_copy(d, &d3d_zformats, sizeof(d3d_zformats));
+    } else if (core.d3d && !(ddflags(&core) & DDF_NO_CUBE) && guid_eq(&d->guidInfo, &guid_moresurfacecaps)) {
+        /* DDMORESURFACECAPS: dwSize, ddsCapsMore (dwCaps2..4), then one
+         * pair of DDSCAPSEX heap restrictions per heap (ours: one, none).
+         * 9x DirectDraw puts a cube map in video memory only if dwCaps2
+         * claims DDSCAPS2_CUBEMAP: without it every cube stayed a
+         * system-memory copy, the runtime bound texture handle 0, and
+         * 3DMark2001 SE's Pixel Shader ocean (a texm3x3vspec into a cube)
+         * drew black (doc 19 §39). NT's dxg never asked for this */
+        ULONG more[10];
+        memset(more, 0, sizeof(more));
+        more[0] = d->dwExpectedSize <= sizeof(more) ? d->dwExpectedSize : sizeof(more);
+        more[1] = DDSCAPS2_CUBEMAP_;
+        info_copy(d, more, more[0]);
     } else if (core.d3d && !(ddflags(&core) & DDF_NO_MISC2) && guid_eq(&d->guidInfo, &guid_misc2callbacks)) {
         DDHAL_DDMISCELLANEOUS2CALLBACKS cb;
         memset(&cb, 0, sizeof(cb));

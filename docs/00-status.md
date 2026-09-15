@@ -203,6 +203,16 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   the fast paths and the inline mode take it. The Lobby 35.2 → 50.3 fps with it on (23 five-second windows, no trace).
 
 - **3DMark2001 SE's Nature: Q8W8V8U8 — 2026-09-15** (doc 19 §38). The
+- **3DMark2001 SE's Pixel Shader ocean: cube maps on Win98 — 2026-09-15**
+  (doc 19 §39). The ocean drew black (seen on the rig first): its
+  `texm3x3vspec` reflection samples a cube map at stage 3, and d3d8.dll
+  bound handle 0 there because no cube map ever reached video memory on
+  9x. 9x DirectDraw wants `DDSCAPS2_CUBEMAP` claimed in
+  `DDMORESURFACECAPS`, through `GetDriverInfo` for
+  `GUID_DDMoreSurfaceCaps`, which the 9x layer never answered (NT's dxg
+  never asks). It answers now. The ocean draws, and **CUBETEST passes 9 of
+  9 on Win98**, its first run there. `ddflags=0x400000` is the A/B.
+
   benchmark stopped before Nature with "device does not support bump
   normal maps": 3DMark asks `CheckDeviceFormat` for Q8W8V8U8 or W11V11U10,
   and the DX8 list had neither. Q8W8V8U8 was left out on 2026-09-11 because
