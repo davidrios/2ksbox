@@ -135,8 +135,9 @@ backend later.
   streams a burst into the command-FIFO window with the FIFO off, which
   lands in the register file (the device survives it, as the chip would).
   **Quake II, Unreal Tournament and NFS Porsche Unleashed run on it**
-  (2026-09-13, the user by hand on `base98-br`: Glide 3 on the chip, and
-  all three quit cleanly; Porsche is slow, and a second game after one
+  (2026-09-13, the user by hand on `base98-br`: Glide 3 on the chip for
+  UT, 3dfx's Direct3D HAL for Porsche — its 3D Setup picks that on a
+  Voodoo 2 — and all three quit cleanly; Porsche is slow, and a second game after one
   has quit sometimes starts glitched — M14's open bug). GLIDETEST no
   longer hangs at `grSstWinClose` (the user's run, 2026-09-13). A
   spinning guest is read off the 5 s `voodoo2:` line's register histograms

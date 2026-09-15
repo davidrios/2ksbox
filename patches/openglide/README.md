@@ -103,6 +103,13 @@ are not re-argued:
 
 ## Glide 3 — where it would come from (2026-09-10)
 
+**Abandoned 2026-09-15 (user decision).** The chip below was built first
+(`-device voodoo2`, doc 21) and runs 3dfx's own `glide3x.dll` for the
+Glide 3 titles. The OpenGLide extension this section proposes was written
+as far as step 1 (the `wrap3x_` layer, synthetic scenes only) and never
+merged; it lives on as the tag `m14-glide3-abandoned`. The survey is kept
+so it is not repeated.
+
 OpenGLide stops at Glide 2.x; the 62 entry points `hw/3dfx` looks up and
 does not find are Glide 3 and the Voodoo3/Napalm `…Ext` set. No title in
 hand is *blocked* on them — every Glide 3 game also has a Direct3D or

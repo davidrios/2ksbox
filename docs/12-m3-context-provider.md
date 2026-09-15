@@ -201,7 +201,9 @@ the tree but never compiled and the embed library is the only provider.
    a two-patch queue (`patches/openglide/README.md`) and built by
    `scripts/build-glide.sh` -- 121 of the 183 entry points `hw/3dfx` looks
    up, which is all of Glide 2.x; Glide 3 and the Voodoo3 `Ext` set are not
-   there. It is the implementation upstream's own wrapper is derived from,
+   there, and will not be: Glide 3 titles run on the emulated Voodoo 2
+   (doc 21), and the Glide 3 layer written for this wrapper was abandoned
+   on 2026-09-15 (tag `m14-glide3-abandoned`). It is the implementation upstream's own wrapper is derived from,
    so `glidewnd.c`'s `WRAPPER_FLAG_*` word already means something to it.
 
    The handshake is **reversed** rather than extended. Upstream hands the

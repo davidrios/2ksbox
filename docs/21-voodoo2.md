@@ -324,6 +324,15 @@ writes per triangle, tens of thousands a frame. Two things reduce it:
    needs a lock of our own between the handlers and the display timer
    (§5). Second, if the profile says so.
 
+The 5 s line's frame rate is its `(N new)` column (2026-09-15): the
+presents that showed a buffer the one before did not, i.e. the game's
+frames as the monitor shows them, capped at the refresh. `frames` beside
+it counts every present with a dirty line — an FMV written through the LFB
+reads 225 there with 0 new — and 86Box's own `frame_count` counts only the
+swaps that wait for a retrace, so a game with vsync off reads 0 on it.
+Against Quake II's own `timedemo` (41.3 fps) the column read ~35: two
+swaps inside one refresh show as one frame, so it is a floor.
+
 The measurements the track wants, in order: the 5 s log line's frames
 against the game's own counter (is the rasterizer keeping up?), the
 vCPU's share in MMIO (`perf` with the register handlers named), the same

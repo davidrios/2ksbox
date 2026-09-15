@@ -95,9 +95,14 @@ hardware FIFO disabled while it keeps streaming and match the chip.
 **Real games on the card, by hand — 2026-09-13** (the user, on the
 launcher's `base98-br` machine, Win98 with 3dfx's driver): **Quake II,
 Unreal Tournament and Need for Speed: Porsche Unleashed all run on the
-emulated Voodoo 2, and all three quit cleanly.** UT and Porsche are Glide
-3 titles, so 3dfx's own `glide3x.dll` works on the chip; Quake II goes
-through 3dfx's MiniGL (Glide 2 in the build the game shipped). Quake II
+emulated Voodoo 2, and all three quit cleanly.** UT is a Glide 3
+title (its log: `Found Glide: 2.56` through `GlideDrv`), so 3dfx's own
+`glide3x.dll` works on the chip; Quake II goes through 3dfx's MiniGL
+(Glide 2 in the build the game shipped). **Porsche is not Glide on this
+card**: its own `3DSetup\3dsetup.ini` sends a Voodoo 2 to `/M:dx`
+(`dx7z.dll`, Direct3D through 3dfx's HAL for the chip) and only a Voodoo 1
+or Rush to `voodoo2z.dll` — the headless run (2026-09-15) had the card
+take the monitor and `d3dpt-vga`'s own Direct3D draw nothing. Quake II
 and UT felt fine; **Porsche felt slow**. **Starting another game after
 one has quit sometimes comes up with glitched graphics** — the same
 class of state as the teardown above (a register or the monitor left
@@ -264,6 +269,25 @@ voodoo2,addr=0x05`; both front ends, the C API, `launcherx --wizard-edit
    the same run on the M1 Air. Does the 3dfx driver enable the command
    FIFO? (the log will say: `fbiInit7` bit 8, and the wr/tex counters).
    Then **Diablo II** — the title the route was chosen for.
+   **First numbers, this box, 2026-09-15** (raw copy of `base98-br`,
+   640×480, 2 render threads; the frame rate is the 5 s line's new
+   `(N new)` column, doc 21 §9, unless the game counts its own):
+   - **Quake II** `timedemo demo1`, `gl_swapinterval 0`: **40.7 / 41.3 /
+     42.2 fps** (game's own counter, three runs), ~3.3 M register writes
+     and ~10 k status reads a second while it plays — every write a trap
+     on the vCPU thread, which makes step 3's command FIFO in RAM the first
+     thing to try, before anything on the rasterizer's side.
+   - **UT** CityIntro flyby (no input, loops ~85 s): **33.6 fps** mean
+     over 32 windows, 18–57; 0.9 M writes a second.
+   - **Porsche**: its front end holds a flat **30 fps** (its own cap). No
+     race number: the keyboard never reaches its menu headless, and
+     `relclick` steers by `d3dpt-vga`'s cursor registers, which do not
+     move while the Voodoo has the monitor — a race wants a hand or a
+     tablet. It first needs its **3D Setup** run once (the user's image
+     never finished it: "Run 3D Setup before running the game"), and on
+     a Voodoo 2 that setup picks Direct3D, not Glide (above).
+   Patches 47–49 (x87 PC=64) change neither Quake II nor UT. Next: the
+   same runs on the Air, and `perf` on the vCPU thread here.
 3. **The two performance steps, if the profile asks for them**: the
    command-FIFO window as RAM (a `MemoryRegion` alias into `fb_mem`, the
    doorbell on `cmdFifoDepth` / the wake timer; no trap per dword), and

@@ -76,6 +76,11 @@ struct Voodoo2State {
     int             override;
     bool            no_console_warned;
     uint32_t        frames;
+    /* scan-outs of a buffer other than the last one: the game's frames as
+     * the monitor shows them (at most the refresh rate). v->frame_count
+     * cannot say this -- 86Box counts only swaps that wait for a retrace */
+    uint32_t        shown;
+    uint32_t        shown_front;
     /* black until the guest's first swap after the monitor changes hands or
      * size: what the frame buffer holds then is the driver's memory test
      * or the last mode's lines at the new pitch (a gray pattern), which a
@@ -90,6 +95,7 @@ struct Voodoo2State {
     /* the 5 s activity line */
     QEMUTimer *stats;
     uint32_t   last_frames;
+    uint32_t   last_shown;
     int        last_tris;
     int        last_wr;
     int        last_rd;
@@ -458,6 +464,10 @@ voodoo2_present(void *opaque, const bitmap_t *frame, int w, int h)
     }
     dpy_gfx_update_full(con);
     s->frames++;
+    if (s->v->front_offset != s->shown_front) {
+        s->shown_front = s->v->front_offset;
+        s->shown++;
+    }
 }
 
 /* ----------------------------------------------------------------- stats */
@@ -533,16 +543,20 @@ voodoo2_stats(void *opaque)
                      s->fifo_off_writes - s->last_fifo_off);
         }
         s->last_fifo_off = s->fifo_off_writes;
-        info_report("voodoo2: %dx%d %s: %u frames, %d triangles, %d writes "
-                    "(%d texture), %d reads in %.1f s; regs read%s; written%s; "
-                    "config read%s%s%s",
+        /* frames = presents (a scan-out with any dirty line); new = those
+         * showing a buffer the last one did not, i.e. the game's frame rate */
+        info_report("voodoo2: %dx%d %s: %u frames (%u new), %d triangles, "
+                    "%d writes (%d texture), %d reads in %.1f s; regs read%s; "
+                    "written%s; config read%s%s%s",
                     v->h_disp, v->v_disp, s->override ? "on" : "off",
-                    frames, tris, wr, tex, rd, VOODOO2_STATS_MS / 1000.0,
+                    frames, s->shown - s->last_shown, tris, wr, tex, rd,
+                    VOODOO2_STATS_MS / 1000.0,
                     rds[0] ? rds : " none", wrs[0] ? wrs : " none",
                     cfg[0] ? cfg : " none", ref, busy);
     }
     s->last_fatals = voodoo_shim_fatals;
     s->last_frames = s->frames;
+    s->last_shown  = s->shown;
     s->last_tris   = v->tri_count;
     s->last_wr     = v->wr_count;
     s->last_rd     = v->rd_count;
