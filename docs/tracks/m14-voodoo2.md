@@ -299,52 +299,159 @@ voodoo2,addr=0x05`; both front ends, the C API, `launcherx --wizard-edit
 window: the guest spins on `cmdFifoRdPtr` (register `0x1e8`, millions of
 reads a second, no writes; with `ramfifo=off` it spins on the status
 register `0x000` instead), and the card sits at a scribbled resolution —
-`3028x1044` twice, `3741x1789` once — with its display off. The QEMU log
+`3028x1044`, `1563x1563`, `3741x1789` — with its display off. The QEMU log
 shows, in order: `command FIFO in RAM (ring …)`, `command FIFO through
 MMIO (ring …)`, then `warning: voodoo2: command-FIFO packet … to the
 window at … with the FIFO off -> decoded as register 000`, then tens of
-thousands of `refused (86Box fatal): intrCtrl write …`. So Glide keeps
-streaming packets into the FIFO window after `fbiInit7` has been reset to
-FIFO-off, 86Box decodes each dword as the register at bits 9:2, and
-`videoDimensions`, `fbiInit*` and `intrCtrl` are scribbled.
+thousands of `refused (86Box fatal): intrCtrl write …`.
 
 **It is intermittent and it hits games** (the user, by hand, 2026-09-16).
-Headless it has been 100 % reproducible with the tools, which makes it the
-cheap way in.
-
-**Ruled out.** The RAM command FIFO (`ramfifo=off` hangs the same way, and
-the DOS program in `tools/voodoo-guest-test.py` drives the same FIFO
-through hundreds of thousands of packets without trouble); the rasterizer
-recompiler (`recompiler=off` unaffected); our own test program (the stock
-`TESTS\GLIDETEST.EXE -noreopen` hangs identically).
+Headless it is 100 % reproducible with the tools, which makes it the cheap
+way in.
 
 **Reproduce** (~2 min, no hands):
 
     OUT=build/w98game/gl1 RAW=build/w98game/bench.raw NO_DRIVER=1 \
       CDS=guest-tools/out/guest-tools-3dfx-<rev>.iso \
-      EXTRA='-device voodoo2,addr=0x05' RUN_SECS=80 SHOTS=10 \
+      EXTRA='-device voodoo2,addr=0x05' RUN_SECS=45 SHOTS=10 \
       PULL='GLIDETEST.LOG' \
-      GUEST_CMD=$'c:\ncd \\\nD:\\TESTS\\GLIDETEST.EXE -noreopen -hold 20' \
+      GUEST_CMD=$'c:\ncd \\\nD:\\TESTS\\GLIDETEST.EXE -noreopen -hold 10' \
       tools/win98-game-test.sh ~/.local/share/2ksbox/machines/base98-br/disk.qcow2 gl1
 
-It hangs: no `GLIDETEST.LOG`, the console shows only the program's first
-line, `qemu.log` has the sequence above. `build/w98game/gl1` is a kept run.
+#### What the 2026-09-16 session established
 
-**Where it lands.** `voodoo/voodoo2.c`, `voodoo2_mmio_write()`: the
-`fifo_off_writes` counter and its one-shot warning already name it exactly.
-The decode itself is 86Box's `voodoo_writel` switch (vendored, do not
-edit).
+**It is `grSstWinOpen`, not the close.** The screendump of a hung run shows
+*both* of the program's first lines — `Glide 2.56.00.0459, resolution 7 =
+640x480` **and** `1 board(s) reported` — so `grSstQueryHardware` returned
+and the program is inside `grSstWinOpen`. An earlier note here saying only
+the first line appears was wrong. `GLIDETEST.LOG` being empty is not
+evidence either: the guest is killed, so the FAT is never flushed.
 
-**The judgement call, still not made** (recorded 2026-09-12, now more
-urgent): either drop `0x200000`-window writes while the FIFO is off —
-offset ≥ `0x100`, so the alternate-mapped register writes below `0x100`
-still work — or find out why Glide streams into a FIFO that
-`sst1InitRegisters` has just turned off, and match what the chip does with
-those writes. The device already masks `fbiInit1` bit 23 for a
-neighbouring reason, so a targeted refusal is in keeping. Before choosing,
-take `VOODOO2_TRACE=1` of a hanging and a non-hanging boot and diff the
-order of `fbiInit7` / `cmdFifoBaseAddr` / `cmdFifoRdPtr` writes around the
-open — the intermittency should show up there.
+**`FX_GLIDE_NO_SPLASH=1` avoids the hang.** Put `set FX_GLIDE_NO_SPLASH=1`
+in the `GUEST_CMD` batch before the program and GLIDETEST runs to
+completion every time — `3 cases, 3 failed`, the failures being pixel
+readbacks, and a clean exit. So the code that actually wedges is Glide's
+3dfx splash, which `grSstWinOpen` runs last of all (`glide2x/cvg/glide/src/
+gsst.c`, `LoadLibrary("3dfxsplash2.dll")` and then `grSplash()`).
+
+**The splash is not the cause, though — it is what turns broken into
+hung.** With the splash off the card still ends at **`1x0` with its display
+off** and all three of GLIDETEST's readbacks come back black. On a real
+Voodoo 2 that program shows a red screen and passes.
+
+**What the register trace says.** `VOODOO2_TRACE=1` now collapses a spin on
+any one register (not just the status poll), so a whole run is a few MB and
+readable; two runs diffed against each other is how the following was read
+off (`awk` the two `initEnable <= 00000001` regions into files, strip the
+counts, `diff`). Glide runs `sst1InitRegisters` **twice**, and the two are
+write-for-write identical for 5 367 writes:
+
+  * the first one is followed by the video mode (`hSync`, `vSync`,
+    `backPorch`, `videoDimensions` — 640x480 or 800x600, whichever the app
+    asked for), the DAC gamma ramp, `sst1InitCmdFifo(FXTRUE)` (the
+    `0x1e0…0x1f8` block and `fbiInit7 |= 0x100`), and a swapbufferCMD. The
+    card comes up and shows its first frame;
+  * the second one ends at its register zero sweep — `vRetrace`,
+    `backPorch`, `videoDimensions`, `hSync`, `vSync` all to 0 and
+    `fbiInit7` to `SST_FBIINIT7_DEFAULT`, i.e. the command FIFO **off**
+    (`init/sst1init.c` ~527 and ~734) — and **nothing re-programs them**.
+    `sst1InitCmdFifo` never runs again.
+
+From there Glide goes on believing the FIFO it set up is live: its next
+packets go to the window at `0x200000` with `fbiInit7` saying off, 86Box
+decodes each dword as the register at bits 9:2 (`vid_voodoo.c`'s
+`voodoo_writel`, the `(addr & 0x200000) && (fbiInit7 & CMDFIFO_ENABLE)`
+branch not taken), `videoDimensions` and the `fbiInit`s are scribbled, and
+the guest spins on a read pointer that will never move.
+
+**Do not read the `x200006` status runs as timeouts.** They are Glide's
+fixed 200 000-iteration "wait for the video clock to stabilize" and "wait
+for the graphics clock to stabilize" delay loops (`init/video.c:585` and
+`:934`) — they always run to the end, and they appear in healthy runs too.
+That cost an hour.
+
+**Get the Glide source.** It answers these questions in minutes and none of
+the above is guessable from register traces alone:
+`https://codeload.github.com/sezero/glide/tar.gz/refs/heads/master`,
+then `glide2x/cvg` (`glide/src/gsst.c` is `grSstWinOpen`, `init/` is the
+`sst1Init*` layer).
+
+#### Two accounting bugs in 86Box found on the way — real, but not the fix
+
+Both are worth reporting upstream; neither, on the evidence below, is the
+root cause.
+
+  1. `vid_voodoo.c`, `voodoo_writel`, `case SST_swapbufferCMD`:
+     `cmd_written++` and `swap_count++` sit **above** the
+     `if (fbiInit7 & FBIINIT7_CMDFIFO_ENABLE) return;`, where
+     `triangleCMD`, `ftriangleCMD`, `fastfillCMD` and `nopCMD` all return
+     first. So a swap doorbell written to the register map with the FIFO on
+     is counted and then refused.
+  2. `vid_voodoo_fifo.c`: `cmd_written_fifo++` for a `swapbufferCMD` taken
+     out of the command FIFO is guarded by `type >= VOODOO_BANSHEE`, while
+     `vid_voodoo_reg.c` does `cmd_read++` for every card. So a swap that
+     comes through the FIFO is run but not counted.
+
+3dfx's Glide rings the doorbell **and** posts the packet for every swap, so
+the two cancel frame after frame — which is why the card works at all, and
+why neither can be corrected alone. The status register reports BUSY while
+`cmd_written + cmd_written_fifo + cmd_written_fifo_2` differs from
+`cmd_read` (a negative difference counts as busy too: the expression is
+used as a truth value), so wherever a doorbell and a packet do not pair
+off, BUSY sticks for the life of the card. **That is the user's second
+shape of this hang**: `busy: 1 cmds outstanding (wr 4911 rd 4910)`, 16 M
+status reads a second, the command FIFO drained and both render threads
+asleep.
+
+**What was tried, and what it did** (one run each, so leads, not results):
+
+  * dropping the register-map doorbell whole, and separately letting it
+    through and doing `v->cmd_written--` after: **both made
+    `grSstWinOpen` complete** — the card stayed `640x480 on`, the splash
+    rendered 297 787 triangles and 74 new frames in 5 s, no `fifo-off`
+    writes, no refusals — and then hung with `busy: -154 cmds outstanding
+    (wr 596 rd 750)`, exactly the 154 swaps of the run, i.e. bug 2 with
+    bug 1 no longer cancelling it;
+  * re-pairing the two counts at the `fbiInit7` write that switches the
+    command FIFO on or off (the one place a doorbell can be orphaned):
+    fired, but only later, at a *scribbled* `fbiInit7` during the garbage
+    phase — at the real teardown the counts were already equal. So the
+    orphan-at-teardown theory does not hold for this path;
+  * counting FIFO `swapbufferCMD` packets in `voodoo2_fifo_sync`'s walk
+    (packet type 1, register `0x128`) together with uncounting the
+    doorbell: regressed. The packet detection is probably over-counting;
+    `num == 0` and the address-range test both want checking.
+
+All of that was reverted; `voodoo/voodoo2.c` carries only the trace change.
+
+#### The lead to take next
+
+GLIDETEST calls `grSstWinOpen(0, …)` — **hWnd 0**, so Glide falls back to
+`GetActiveWindow()` (gsst.c warns about exactly this). The second
+`sst1InitRegisters` arrives ~0.2 s after the first frame and reads like a
+*teardown*: display off, VGA back, every video register zeroed, the FIFO
+switched off. That is what 3dfx's driver does when a Glide window loses the
+screen. A console program started from the Run dialog may well have no
+usable active window, which would make this a property of the harness
+rather than of the device — and would fit the user's games, which own a
+real window and mostly work. Worth answering first, because it decides
+whether the bug is ours at all:
+
+  * run a Glide program that owns a proper window (or pass a real `hWnd`)
+    and see whether the second `sst1InitRegisters` still comes;
+  * trace one of the user's games (Quake II, UT) through a window open and
+    look for the same second pass;
+  * if it is the harness, the fix is in the harness and GLIDETEST should
+    say so rather than hang.
+
+**Ruled out.** The RAM command FIFO (`ramfifo=off` hangs the same way, and
+the DOS program in `tools/voodoo-guest-test.py` drives the same FIFO
+through hundreds of thousands of packets without trouble); the rasterizer
+recompiler (`recompiler=off` unaffected); our own test program (the stock
+`TESTS\GLIDETEST.EXE -noreopen` hangs identically); the requested
+resolution (`-res 8`, 800x600, hangs the same way — an early guess that
+Glide skips re-programming when the mode is unchanged, which the trace
+disproved).
 
 **Guard it when fixed.** Intermittent wants repetition: a loop of N boots
 of the `GLIDETEST` run above, and `VOODOO=1 tools/setup-guest-test.sh` for

@@ -164,7 +164,28 @@ struct Voodoo2State {
 /* ------------------------------------------------------------------ MMIO */
 
 static bool     voodoo2_trace;          /* VOODOO2_TRACE=1 in the environment */
-static uint32_t voodoo2_trace_status;   /* status reads since the last other line */
+static uint32_t voodoo2_trace_addr;     /* the address of the held-back read run */
+static uint32_t voodoo2_trace_val;      /* what the last of them answered */
+static uint32_t voodoo2_trace_n;        /* how many of them there have been */
+
+/* A spin is millions of reads of one register a second -- the status poll,
+ * or cmdFifoRdPtr with the FIFO in RAM -- so a run of reads of one address
+ * is held back and printed as a count when anything else happens. What the
+ * trace is for is the writes between the spins. */
+static void
+voodoo2_trace_flush(void)
+{
+    if (!voodoo2_trace_n) {
+        return;
+    }
+    if (voodoo2_trace_n == 1) {
+        fprintf(stderr, "voodoo2: rd %06x %08x\n", voodoo2_trace_addr, voodoo2_trace_val);
+    } else {
+        fprintf(stderr, "voodoo2: rd %06x %08x x%u\n", voodoo2_trace_addr,
+                voodoo2_trace_val, voodoo2_trace_n);
+    }
+    voodoo2_trace_n = 0;
+}
 
 static inline void
 voodoo2_note(Voodoo2State *s, hwaddr addr, uint64_t val, unsigned size, bool write)
@@ -176,17 +197,22 @@ voodoo2_note(Voodoo2State *s, hwaddr addr, uint64_t val, unsigned size, bool wri
     s->ring[i].size  = size;
     s->ring[i].write = write;
     if (voodoo2_trace && addr < 0x400000) {
-        /* every register- and command-FIFO-window access, the status polls
-         * (thousands between two real accesses) as one count */
-        if (!write && (addr & 0x3fc) == 0 && !(addr & 0x200000)) {
-            voodoo2_trace_status++;
+        /* every register- and command-FIFO-window access, a spin on one
+         * register (the status poll, cmdFifoRdPtr) as one count */
+        if (!write) {
+            if (voodoo2_trace_n && (uint32_t) addr == voodoo2_trace_addr) {
+                voodoo2_trace_val = (uint32_t) val;
+                voodoo2_trace_n++;
+                return;
+            }
+            voodoo2_trace_flush();
+            voodoo2_trace_addr = (uint32_t) addr;
+            voodoo2_trace_val  = (uint32_t) val;
+            voodoo2_trace_n    = 1;
             return;
         }
-        if (voodoo2_trace_status) {
-            fprintf(stderr, "voodoo2:   (%u status reads)\n", voodoo2_trace_status);
-            voodoo2_trace_status = 0;
-        }
-        fprintf(stderr, "voodoo2: %s %06x %08x (initEnable %08x%s)\n", write ? "wr" : "rd",
+        voodoo2_trace_flush();
+        fprintf(stderr, "voodoo2: wr %06x %08x (initEnable %08x%s)\n",
                 (unsigned) addr, (unsigned) val, s->v->initEnable,
                 s->v->cmdfifo_enabled ? ", fifo on" : "");
     }
@@ -200,6 +226,7 @@ voodoo2_on_fatal(void *opaque)
     voodoo_t     *v = s->v;
     unsigned      n = MIN(s->ring_n, ARRAY_SIZE(s->ring));
 
+    voodoo2_trace_flush();
     fprintf(stderr, "voodoo2: initEnable %08x fbiInit0 %08x fbiInit7 %08x "
             "cmdfifo %s base %08x end %08x rp %08x depth wr %u rd %u; "
             "%dx%d, %s\n",
