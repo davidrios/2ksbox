@@ -1,0 +1,222 @@
+Subtract the dither on a blend read-back in both of 86Box's Voodoo
+code generators, as its interpreter does (doc 21 §9, M14 track job B).
+
+A Voodoo dithers what it writes, so a pixel read back to be blended with
+carries that position's dither offset, and the chip takes it out again
+when fbzMode's DITHER_SUB (bit 19) is set. 86Box's interpreter does that
+(vid_voodoo_render.c, dithersub_rb[] / dithersub_g[] and the 2x2 pair,
+gated also on voodoo->dithersub_enabled, `-device voodoo2,dither-sub=`);
+neither the x86-64 nor the ARM64 generator mentioned the tables, and the
+recompiler is the default, so a blend onto dithered pixels drifted a
+little further on every pass -- the voodoo-guest check's grey blended onto
+itself 96 times walked from 7c0f to 6b4d and showed as a grainy band.
+
+Both generators now replace the destination's rgb565[] entry with the
+three table lookups, under the interpreter's own two conditions, with the
+x the dither write uses and real_y, keeping the entry's alpha byte. The
+compiled-block cache already keys on the whole fbzMode, so a block with
+DITHER_SUB is its own block; dithersub_enabled is a device property and
+fixed for a run. x86-64 uses RCX, RSI and R8 (free at that point: R8 was
+only the rgb565 base, RSI is reloaded before it is read again), ARM64 x7,
+x10, x11, x13 and x16 (scratch; x7 is reloaded by the dest_afunc switch).
+
+The files are 86Box's, vendored verbatim in voodoo/86box and overlaid into
+hw/voodoo by prepare-qemu.sh, which is why this is a patch on the overlay
+rather than an edit there. Drop it when upstream 86Box has the fix and
+scripts/sync-86box-voodoo.sh brings it in.
+
+diff --git a/hw/voodoo/86box/vid_voodoo_codegen_arm64.h b/hw/voodoo/86box/vid_voodoo_codegen_arm64.h
+index fd51eef..bdfd1b3 100644
+--- a/hw/voodoo/86box/vid_voodoo_codegen_arm64.h
++++ b/hw/voodoo/86box/vid_voodoo_codegen_arm64.h
+@@ -3757,6 +3757,70 @@ voodoo_generate(uint8_t *code_block, voodoo_t *voodoo, voodoo_params_t *params,
+         /* Use pinned rgb565 pointer from x26 */
+         /* LDR w6, [x26, w6, UXTW #2] -- rgb565[pixel] */
+         addlong(ARM64_LDR_W_UXTW2(6, 26, 6));
++
++        /* DITHER SUBTRACTION: the destination was written dithered, so
++         * take that position's dither back out of each channel, as the
++         * interpreter does with dithersub_rb[] / dithersub_g[] before
++         * ALPHA_BLEND. Same table layout as the dither write in PHASE 6:
++         *   dithersub_rb[value][y&mask][x&mask] = base + value*stride^2
++         *                                         + y*stride + x
++         * w4 = x (the one the write uses), w24 = real_y.
++         * x7, x10, x11, x13 and x16 are free here (x7 is reloaded by the
++         * dest_afunc switch below). */
++        if (dithersub && voodoo->dithersub_enabled) {
++            int       _dmask = dither2x2 ? 1 : 2;  /* AND_MASK width */
++            int       _dsh   = dither2x2 ? 2 : 4;  /* value -> row offset */
++            uintptr_t _dsub  = dither2x2 ? (uintptr_t) dithersub_rb2x2 : (uintptr_t) dithersub_rb;
++            uintptr_t _dgoff = dither2x2 ? ((uintptr_t) dithersub_g2x2 - (uintptr_t) dithersub_rb2x2) :
++                                           ((uintptr_t) dithersub_g - (uintptr_t) dithersub_rb);
++
++            /* x7 = dithersub_rb base */
++            addlong(ARM64_MOVZ_X(7, _dsub & 0xFFFF));
++            if ((_dsub >> 16) & 0xFFFF)
++                addlong(ARM64_MOVK_X(7, (_dsub >> 16) & 0xFFFF, 1));
++            if ((_dsub >> 32) & 0xFFFF)
++                addlong(ARM64_MOVK_X(7, (_dsub >> 32) & 0xFFFF, 2));
++            if ((_dsub >> 48) & 0xFFFF)
++                addlong(ARM64_MOVK_X(7, (_dsub >> 48) & 0xFFFF, 3));
++
++            /* x7 += x + y*stride */
++            addlong(ARM64_AND_MASK(10, 4, _dmask));             /* w10 = x & mask */
++            addlong(ARM64_AND_MASK(11, 24, _dmask));            /* w11 = y & mask */
++            addlong(ARM64_ADD_REG_LSL(10, 10, 11, _dsh / 2));   /* w10 = x + y*stride */
++            addlong(ARM64_ADD_REG_X(7, 7, 10));
++
++            /* w6 = packed BGRA: B=byte0, G=byte1, R=byte2, A=byte3 */
++            /* w11 = dithersub_rb[B] */
++            addlong(ARM64_UBFX(11, 6, 0, 8));
++            addlong(ARM64_LSL_IMM(11, 11, _dsh));
++            addlong(ARM64_LDRB_REG(11, 7, 11));
++            /* w13 = dithersub_rb[R] */
++            addlong(ARM64_UBFX(13, 6, 16, 8));
++            addlong(ARM64_LSL_IMM(13, 13, _dsh));
++            addlong(ARM64_LDRB_REG(13, 7, 13));
++            /* w10 = dithersub_g[G] -- dithersub_g sits a fixed offset from dithersub_rb */
++            addlong(ARM64_UBFX(10, 6, 8, 8));
++            addlong(ARM64_LSL_IMM(10, 10, _dsh));
++            addlong(ARM64_MOVZ_X(16, _dgoff & 0xFFFF));
++            if ((_dgoff >> 16) & 0xFFFF)
++                addlong(ARM64_MOVK_X(16, (_dgoff >> 16) & 0xFFFF, 1));
++            if ((_dgoff >> 32) & 0xFFFF)
++                addlong(ARM64_MOVK_X(16, (_dgoff >> 32) & 0xFFFF, 2));
++            if ((_dgoff >> 48) & 0xFFFF)
++                addlong(ARM64_MOVK_X(16, (_dgoff >> 48) & 0xFFFF, 3));
++            addlong(ARM64_ADD_REG_X(10, 10, 16));
++            addlong(ARM64_LDRB_REG(10, 7, 10));
++
++            /* w6 = A << 24 | R << 16 | G << 8 | B */
++            addlong(ARM64_UBFX(6, 6, 24, 8));
++            addlong(ARM64_LSL_IMM(6, 6, 24));
++            addlong(ARM64_LSL_IMM(13, 13, 16));
++            addlong(ARM64_ORR_REG(6, 6, 13));
++            addlong(ARM64_LSL_IMM(10, 10, 8));
++            addlong(ARM64_ORR_REG(6, 6, 10));
++            addlong(ARM64_ORR_REG(6, 6, 11));
++        }
++
+         addlong(ARM64_FMOV_S_W(4, 6));
+         addlong(ARM64_UXTL_8H_8B(4, 4));
+ 
+diff --git a/hw/voodoo/86box/vid_voodoo_codegen_x86-64.h b/hw/voodoo/86box/vid_voodoo_codegen_x86-64.h
+index 0d2729b..cf8e692 100644
+--- a/hw/voodoo/86box/vid_voodoo_codegen_x86-64.h
++++ b/hw/voodoo/86box/vid_voodoo_codegen_x86-64.h
+@@ -2520,12 +2520,109 @@ voodoo_generate(uint8_t *code_block, voodoo_t *voodoo, voodoo_params_t *params,
+         addbyte(0x0f);
+         addbyte(0x60);
+         addbyte(0xc2);
+-        addbyte(0x66); /*MOVD XMM4, rgb565[EAX*4]*/
+-        addbyte(0x41);
+-        addbyte(0x0f);
+-        addbyte(0x6e);
+-        addbyte(0x24);
+-        addbyte(0x80);
++        if (dithersub && voodoo->dithersub_enabled) {
++            /* The destination was written dithered: take that position's
++               dither back out of each channel, as the interpreter does with
++               dithersub_rb[] / dithersub_g[] before ALPHA_BLEND. The x is
++               the one the dither write below uses. RCX, RSI and R8 are
++               free here. */
++            int dshift = dither2x2 ? 2 : 4;
++
++            addbyte(0x41); /*MOV ECX, [R8+RAX*4]*/ /*rgb565[pixel]*/
++            addbyte(0x8b);
++            addbyte(0x0c);
++            addbyte(0x80);
++            addbyte(0x8b); /*MOV ESI, state->x[EDI]*/
++            addbyte(0xb7);
++            if (params->col_tiled)
++                addlong(offsetof(voodoo_state_t, x_tiled));
++            else
++                addlong(offsetof(voodoo_state_t, x));
++            addbyte(0x83); /*AND ESI, 3 or 1*/
++            addbyte(0xe6);
++            addbyte(dither2x2 ? 1 : 3);
++            addbyte(0x44); /*MOV EAX, R14D (real_y)*/
++            addbyte(0x89);
++            addbyte(0xf0);
++            addbyte(0x83); /*AND EAX, 3 or 1*/
++            addbyte(0xe0);
++            addbyte(dither2x2 ? 1 : 3);
++            addbyte(0x8d); /*LEA ESI, [RSI+RAX*4 or *2]*/
++            addbyte(0x34);
++            addbyte(dither2x2 ? 0x46 : 0x86);
++            addbyte(0x49); /*MOV R8, dithersub_rb*/
++            addbyte(0xb8);
++            addquad(dither2x2 ? (uintptr_t) dithersub_rb2x2 : (uintptr_t) dithersub_rb);
++            addbyte(0x4c); /*ADD RSI, R8*/
++            addbyte(0x01);
++            addbyte(0xc6);
++            addbyte(0x0f); /*MOVZX EAX, CL*/ /*B*/
++            addbyte(0xb6);
++            addbyte(0xc1);
++            addbyte(0xc1); /*SHL EAX, 4 or 2*/
++            addbyte(0xe0);
++            addbyte(dshift);
++            addbyte(0x44); /*MOVZX R8D, dithersub_rb[RAX+RSI]*/
++            addbyte(0x0f);
++            addbyte(0xb6);
++            addbyte(0x04);
++            addbyte(0x06);
++            addbyte(0x0f); /*MOVZX EAX, CH*/ /*G*/
++            addbyte(0xb6);
++            addbyte(0xc5);
++            addbyte(0xc1); /*SHL EAX, 4 or 2*/
++            addbyte(0xe0);
++            addbyte(dshift);
++            addbyte(0x0f); /*MOVZX EAX, dithersub_g[RAX+RSI]*/
++            addbyte(0xb6);
++            addbyte(0x84);
++            addbyte(0x06);
++            addlong(dither2x2 ? ((uintptr_t) dithersub_g2x2 - (uintptr_t) dithersub_rb2x2) : ((uintptr_t) dithersub_g - (uintptr_t) dithersub_rb));
++            addbyte(0xc1); /*SHL EAX, 8*/
++            addbyte(0xe0);
++            addbyte(8);
++            addbyte(0x41); /*OR R8D, EAX*/
++            addbyte(0x09);
++            addbyte(0xc0);
++            addbyte(0xc1); /*SHR ECX, 16*/
++            addbyte(0xe9);
++            addbyte(16);
++            addbyte(0x0f); /*MOVZX EAX, CL*/ /*R*/
++            addbyte(0xb6);
++            addbyte(0xc1);
++            addbyte(0xc1); /*SHL EAX, 4 or 2*/
++            addbyte(0xe0);
++            addbyte(dshift);
++            addbyte(0x0f); /*MOVZX EAX, dithersub_rb[RAX+RSI]*/
++            addbyte(0xb6);
++            addbyte(0x04);
++            addbyte(0x06);
++            addbyte(0xc1); /*SHL EAX, 16*/
++            addbyte(0xe0);
++            addbyte(16);
++            addbyte(0x44); /*OR EAX, R8D*/
++            addbyte(0x09);
++            addbyte(0xc0);
++            addbyte(0xc1); /*SHR ECX, 8*/ /*A*/
++            addbyte(0xe9);
++            addbyte(8);
++            addbyte(0xc1); /*SHL ECX, 24*/
++            addbyte(0xe1);
++            addbyte(24);
++            addbyte(0x09); /*OR EAX, ECX*/
++            addbyte(0xc8);
++            addbyte(0x66); /*MOVD XMM4, EAX*/
++            addbyte(0x0f);
++            addbyte(0x6e);
++            addbyte(0xe0);
++        } else {
++            addbyte(0x66); /*MOVD XMM4, rgb565[EAX*4]*/
++            addbyte(0x41);
++            addbyte(0x0f);
++            addbyte(0x6e);
++            addbyte(0x24);
++            addbyte(0x80);
++        }
+         addbyte(0x66); /*PUNPCKLBW XMM4, XMM2*/
+         addbyte(0x0f);
+         addbyte(0x60);

@@ -354,27 +354,37 @@ writes per triangle, tens of thousands a frame. Two things reduce it:
    pointer and the frames are the verdict) and `voodoo-guest-mmiofifo` is
    the same with `ramfifo=off`.
 
-**Dither subtraction is missing from both recompilers** (2026-09-16). A
+**Dither subtraction in both recompilers** (2026-09-16, patch 64). A
 Voodoo dithers what it writes, so a pixel read back to be blended with
 carries that position's dither offset, and the chip subtracts it again when
 `fbzMode`'s `DITHER_SUB` (bit 19) is set — 86Box gates that on its own
 `dithersub` setting, which is on by default and is `-device
-voodoo2,dither-sub=on|off` here. 86Box's plain interpreter does it; neither
-the x86-64 nor the ARM64 code generator mentions `dithersub` at all, and
+voodoo2,dither-sub=on|off` here. 86Box's plain interpreter did it; neither
+the x86-64 nor the ARM64 code generator mentioned `dithersub` at all, and
 the recompiler is the default. Upstream's inconsistency, not the port's.
 The `voodoo-guest` check's last phase measures it: a grey that has to
 dither in every channel (130,130,130) drawn over the screen, then blended
 **onto itself** 96 times per column at falling alpha (128, 96 ... 12).
 Blending a colour onto itself is that colour, so every column should stay
 the background's and the bands above and below are the reference. With
-`recompiler=off` every column reads the reference exactly (`DITH COL` =
-`DITH REF` = 7c0f, green sd 1.32 — the background's own dither); with it on
-the columns walk away (7bef, 7bcf ... 6b4d) and the band shows as a grainy
-rectangle, green sd up to 7.19 with pixels 24 levels below the reference.
-`RECOMP=off tools/voodoo-guest-test.py` is the A/B, the frames are
-`build/voodoo-guest[-interp]/dither.ppm`. No title is known to care, which
-is why this is recorded rather than fixed; a fix belongs upstream in both
-code generators.
+`recompiler=off` every column read the reference exactly (`DITH COL` =
+`DITH REF` = 7c0f) and the frame was one 4x4 dither tile; with it on the
+columns walked away (7bef, 7bcf ... 6b4d), 10,240 pixels off the tile, a
+grainy rectangle. **Patch 64** gives both generators the interpreter's
+three table lookups at the destination read-back (`dithersub_rb` /
+`dithersub_g` or the 2x2 pair, keyed on the x the dither write uses and
+`real_y`, the entry's alpha byte kept), under the same two conditions; the
+block cache already keys on the whole `fbzMode`. It is a patch on the
+overlaid copy in `hw/voodoo`, so `voodoo/86box/` stays verbatim and the
+fix goes upstream to drop it. Both emissions were checked against the
+tables before a guest saw them — the x86-64 bytes run natively, the ARM64
+ones under Unicorn, every byte value per channel at every dither position —
+and the check now *requires* the columns to equal the reference and the
+screendump to be one tile, in both modes (`RECOMP=off
+tools/voodoo-guest-test.py` is the interpreter, `DITHER_SUB=off` the
+control, which fails on both paths with the numbers above; frames in
+`build/voodoo-guest[-interp]/dither.ppm`). No title was known to care.
+
 2. **Dropping the BQL round trip** (`memory_region_clear_global_locking`)
    needs a lock of our own between the handlers and the display timer
    (§5). Second, if the profile says so.

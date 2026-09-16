@@ -21,6 +21,18 @@ guest's next access to the card, poisoning what the chip consumed before it
 answers the read pointer. `RAMFIFO=off` runs the same program on the
 per-dword MMIO path, the A/B (the `voodoo-guest-mmiofifo` check).
 
+The last phase is the **dither subtraction** (doc 21 §9): a grey that
+dithers in every channel over the whole screen, then blended onto itself
+96 times per column at falling alpha, through the chip's own triangle
+setup. A colour blended onto itself is that colour, so every column's
+pixel must read the reference band's and the screendump must be one 4x4
+dither tile from corner to corner -- which it is only if each blend's
+read-back had its dither taken out. 86Box's interpreter always did;
+its two code generators did not until patch 64 (the columns walked
+7bef ... 6b4d, 10,240 pixels off the tile). `RECOMP=off` runs the
+interpreter, the A/B; `DITHER_SUB=off` (the device's `dither-sub=off`)
+is the control that must fail this phase on either path.
+
 The evidence is on the host side: a QMP screendump while the Voodoo has
 the monitor must be the 640x480 red frame (the whole path from a guest
 `mov` to the console surface -- register decode, the memory FIFO, the
@@ -60,9 +72,11 @@ QEMU = os.path.join(ROOT, "build/qemu/qemu-system-i386")
 VGA = os.environ.get("VGA", "std")
 RAMFIFO = os.environ.get("RAMFIFO", "on")
 RECOMP = os.environ.get("RECOMP", "on")
+DITHER_SUB = os.environ.get("DITHER_SUB", "on")
 OUT = os.path.join(ROOT, "build/voodoo-guest" + ("" if VGA == "std" else "-" + VGA)
                    + ("" if RAMFIFO == "on" else "-mmiofifo")
-                   + ("" if RECOMP == "on" else "-interp"))
+                   + ("" if RECOMP == "on" else "-interp")
+                   + ("" if DITHER_SUB == "on" else "-nodsub"))
 
 spec = importlib.util.spec_from_file_location("x87gt", os.path.join(ROOT, "tools/x87-guest-test.py"))
 x87gt = importlib.util.module_from_spec(spec)
@@ -486,8 +500,8 @@ d3dpt_linear:
 ; writes, so a pixel read back to be blended with carries this position's
 ; dither offset, and the chip subtracts it again on the way in when
 ; fbzMode's DITHER_SUB bit is set. 86Box's plain interpreter does that;
-; **neither of its recompilers does**, so the error accumulates there, one
-; blend at a time. The scene makes that visible: a grey that has to dither
+; its two recompilers did not until patch 64, so the error accumulated
+; there, one blend at a time. The scene makes that visible: a grey that has to dither
 ; in every channel (130,130,130 -- red and blue step by 8, green by 4),
 ; drawn over the screen, then blended *onto itself* at alpha 128 in eight
 ; columns, 1, 2, 4 ... 128 times. Blending a colour onto itself is that
@@ -976,6 +990,27 @@ def magenta_fraction(path):
     return fraction(path, lambda r, g, b: r >= 240 and g < 8 and b >= 240)
 
 
+def off_tile_pixels(path):
+    """Pixels of the dither scene that are not the 4x4 dither tile of its
+    reference band (rows 100-103). The scene is one grey over the whole
+    screen with columns blended onto themselves, so a chip that takes the
+    dither out on every read-back leaves the whole frame one tile."""
+    w, h, px = vgadirty.read_ppm(path)
+    tile = {}
+    for y in range(100, 104):
+        for x in range(4):
+            i = (y * w + x) * 3
+            tile[(x & 3, y & 3)] = px[i:i + 3]
+    bad = 0
+    for y in range(h):
+        row = [tile[(x, y & 3)] for x in range(4)]
+        for x in range(w):
+            i = (y * w + x) * 3
+            if px[i:i + 3] != row[x & 3]:
+                bad += 1
+    return w, h, bad
+
+
 def main():
     x87gt.ensure_prereqs()
     x87gt.ensure_floppy()
@@ -1000,7 +1035,7 @@ def main():
             QEMU, "-machine", "pc", "-cpu", "pentium3", "-m", "64",
             "-L", os.path.join(ROOT, "qemu/pc-bios"), "-display", "none", "-net", "none",
             *vga_args(),
-            "-device", "voodoo2,ramfifo=%s,recompiler=%s" % (RAMFIFO, RECOMP),
+            "-device", "voodoo2,ramfifo=%s,recompiler=%s,dither-sub=%s" % (RAMFIFO, RECOMP, DITHER_SUB),
             "-drive", "file=%s,if=floppy,index=0,format=raw" % img,
             "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
             "-qmp", "unix:%s,server,nowait" % sock, "-audiodev", "none,id=a0",
@@ -1081,6 +1116,23 @@ def main():
             print("FAIL the command FIFO's %s batch did not draw its %s frame"
                   % (name, colour))
             ok = False
+    # the dither phase: a colour blended onto itself is that colour, so
+    # every column reads the reference band's pixel and the frame is one
+    # dither tile -- which it is only if the read-back is un-dithered
+    # (patch 64 for the recompilers; the interpreter always did)
+    ref = [l.split()[2] for l in text.splitlines()
+           if l.startswith("DITH REF ") and len(l.split()) == 3]
+    cols = [l.split()[3] for l in text.splitlines()
+            if l.startswith("DITH COL ") and len(l.split()) == 4]
+    if len(ref) != 1 or len(cols) != 8 or any(c != ref[0] for c in cols):
+        print("FAIL the dither scene's columns (%s) are not the reference (%s): "
+              "a blend read-back kept its dither" % (" ".join(cols), ref[0] if ref else "none"))
+        ok = False
+    w, h, bad = off_tile_pixels(shot_dith)
+    print("    screendump of the dither scene: %dx%d, %d pixels off the dither tile" % (w, h, bad))
+    if (w, h) != (WIDTH, HEIGHT) or bad:
+        print("FAIL the dither scene is not one dither tile")
+        ok = False
     w, h, frac = red_fraction(shot_off)
     print("    screendump with the Voodoo off: %dx%d, %.1f%% red" % (w, h, frac * 100))
     if frac > 0.5:

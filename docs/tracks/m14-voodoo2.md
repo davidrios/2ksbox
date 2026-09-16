@@ -130,17 +130,17 @@ menu at **~50 fps against the Direct3D path's 30**, `build/w98game/nfsg`.
 **The green tire smoke is the game's, not ours** (2026-09-16): the user saw
 it on the chip under Glide *and* under the Glide pass-through, it did not
 move with `recompiler=off` (so not the rasterizer's dither subtraction,
-which the recompilers skip and the interpreter does — an upstream 86Box
-asymmetry worth knowing anyway), and **in Direct3D at 32-bit it is not
+which the recompilers skipped and the interpreter did — patch 64 since),
+and **in Direct3D at 32-bit it is not
 green** (the user, same day). Period reports say the same: a VOGONS thread
 on this game has DX7-era cards showing "a slight green tint" on the smoke
 with 32-bit colour as the cure, and PCGamingWiki carries that fix. A
 Voodoo 2 has no 32-bit mode, so on the chip the smoke is green exactly as
 it was on the real card. Don't debug it again.
 
-**What the smoke hunt did turn up: neither 86Box recompiler subtracts the
-dither on a blend read-back** (doc 21 §9), while its interpreter does and
-real hardware does. Measured 2026-09-16 by the `voodoo-guest` check's new
+**What the smoke hunt did turn up: neither 86Box recompiler subtracted the
+dither on a blend read-back** (doc 21 §9), while its interpreter did and
+real hardware does — **fixed by patch 64 the same day** (job B below). Measured 2026-09-16 by the `voodoo-guest` check's new
 dither phase — a grey blended onto itself 96 times per column at falling
 alpha, through the chip's own setup unit and the command FIFO, no Glide
 involved. `recompiler=off`: every column exactly the reference (7c0f, green
@@ -148,8 +148,8 @@ sd 1.32). Default: 7bef, 7bcf, 73ce, 73ae, 738e, 6b6d, 6b4d — a grainy
 band, green sd to 7.19, pixels 24 levels under the reference.
 `RECOMP=off tools/voodoo-guest-test.py` is the A/B; the frames are
 `build/voodoo-guest[-interp]/dither.ppm`. Not known to matter to any title
-(Porsche's smoke is green with and without it), so it is recorded, not
-fixed; a fix is two code generators upstream.
+(Porsche's smoke is green with and without it); fixed anyway, in both
+code generators, as a patch on the overlay (job B).
 With Diablo II that makes two Glide 3 titles in hand (Diablo II is capped
 at 25 fps). Quake II
 and UT felt fine; **Porsche felt slow**. **Starting another game after
@@ -481,35 +481,41 @@ of the `GLIDETEST` run above, and `VOODOO=1 tools/setup-guest-test.sh` for
 the driver side. The DOS FIFO phases in `tools/voodoo-guest-test.py` stay
 the deterministic floor.
 
-### B. Dither subtraction in 86Box's two recompilers — not blocking
+### B. Dither subtraction in 86Box's two recompilers — done (patch 64)
 
 **What.** On a blend the chip reads the pixel underneath, which was written
 dithered, and subtracts that position's dither offset again when
 `fbzMode`'s `DITHER_SUB` (bit 19) is set. 86Box's interpreter does it
 (`vid_voodoo_render.c` ~1310, tables `dithersub_rb` / `dithersub_g` and the
 2x2 pair, gated also by `voodoo->dithersub_enabled`, our `dither-sub=on`
-default). **Neither code generator mentions `dithersub`** — grep
-`vid_voodoo_codegen_x86-64.h` and `vid_voodoo_codegen_arm64.h` — and
-`recompiler=on` is the default, so in practice it never happens.
+default). Neither code generator mentioned `dithersub`, and
+`recompiler=on` is the default, so in practice it never happened.
 
-**Evidence, already in the suite.** The `voodoo-guest` check's dither
-phase: `recompiler=off` reads the reference in all eight columns (`7c0f`,
-green sd 1.32); the default walks `7bef, 7bcf, 73ce … 6b4d`, green sd to
-7.19, a visibly grainy band. `RECOMP=off tools/voodoo-guest-test.py` is the
-A/B; frames in `build/voodoo-guest[-interp]/dither.ppm`.
+**Done 2026-09-16, `patches/qemu/64-voodoo2-dither-sub-recompilers.patch`**,
+a patch on the overlaid `hw/voodoo/86box/` copy (the vendored files stay
+verbatim; `prepare-qemu.sh` rsyncs the overlay before the queue applies).
+x86-64: at the read-back, `rgb565[pixel]` goes into ECX and the three
+lookups (`dithersub_rb[B]`, `dithersub_g[G]`, `dithersub_rb[R]`, row
+`y*stride + x` with `x` from the same `state->x`/`x_tiled` the dither
+write reads and `real_y` from R14) are packed back with the entry's alpha
+into XMM4 — RCX, RSI and R8 are free there. ARM64: the same after `LDR w6,
+[x26, w6, UXTW #2]`, in x7/x10/x11/x13/x16. 114 bytes / 28 instructions
+per block that has the bit.
 
-**Where to change.** The x86-64 generator's blend section (it loads the
-destination pixel through the shared `rgb565` table around line 2506 and
-blends from there) and the ARM64 generator's PHASE 5 (~3736–3766, "Load
-dest RGB from framebuffer"). Both need the same table lookups the
-interpreter does, keyed on `(y & 3, x & 3)` or the 2x2 pair, under the same
-two conditions. **The files are vendored verbatim** (`voodoo/86box/`,
-`scripts/sync-86box-voodoo.sh`): the fix belongs upstream in 86Box, and
-comes back here with a sync.
+**How it was checked.** Before any guest: a scratch harness emitted both
+sequences with the generators' own code and macros and compared them with
+the C tables — the x86-64 bytes executed natively (52k cases: both dither
+sizes, tiled and not, every byte through each channel), the ARM64 ones
+under Unicorn (14k cases, garbage in the upper halves of the inputs and in
+every scratch register). Then the guest: the `voodoo-guest` dither phase
+now **requires** every `DITH COL` to equal `DITH REF` and the screendump
+to be one 4x4 dither tile (0 pixels off; the old recompiler frame is
+10,240 off, the interpreter's 0). `RECOMP=off` runs the interpreter.
+**Still to run: the ARM64 build on the Air** (the `voodoo-guest` check
+there is the proof on that generator).
 
-**Worth knowing before spending a day on it:** no title is known to care.
-Porsche's green tire smoke, which started this, is the game at 16 bpp and
-happens with and without dither subtraction.
+**Upstream.** The same change is worth offering to 86Box; when a sync
+brings it in, patch 64 stops applying and is dropped.
 
 ## Next steps, in order
 
@@ -584,7 +590,10 @@ happens with and without dither subtraction.
 ## Rules
 
 - The vendored files stay verbatim. A change 86Box needs goes upstream
-  or into the shim; `scripts/sync-86box-voodoo.sh` must keep working.
+  or into the shim — or, when it has to be in 86Box's own code, into a
+  QEMU queue patch on the overlaid `hw/voodoo/86box/` copy (patch 64),
+  dropped once upstream has it; `scripts/sync-86box-voodoo.sh` must keep
+  working.
 - Every claim about a game or a driver comes from a run with its log
   and screendump in `build/`; "the driver should find it" is not a
   state.
