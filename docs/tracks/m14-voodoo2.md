@@ -114,6 +114,16 @@ ini's mapping, so "3dfx" still meant Direct3D. Setting that value to
 **verified 2026-09-16** on a copy of that image with `DRIVERS\dx7z.dll`
 renamed away, so Direct3D could not load: the game came up and drew its
 menu at **~50 fps against the Direct3D path's 30**, `build/w98game/nfsg`.
+**The green tire smoke is the game's, not ours** (2026-09-16): the user saw
+it on the chip under Glide *and* under the Glide pass-through, it did not
+move with `recompiler=off` (so not the rasterizer's dither subtraction,
+which the recompilers skip and the interpreter does — an upstream 86Box
+asymmetry worth knowing anyway), and **in Direct3D at 32-bit it is not
+green** (the user, same day). Period reports say the same: a VOGONS thread
+on this game has DX7-era cards showing "a slight green tint" on the smoke
+with 32-bit colour as the cure, and PCGamingWiki carries that fix. A
+Voodoo 2 has no 32-bit mode, so on the chip the smoke is green exactly as
+it was on the real card. Don't debug it again.
 With Diablo II that makes two Glide 3 titles in hand (Diablo II is capped
 at 25 fps). Quake II
 and UT felt fine; **Porsche felt slow**. **Starting another game after
