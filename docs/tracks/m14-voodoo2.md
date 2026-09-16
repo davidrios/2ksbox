@@ -326,11 +326,12 @@ What changed:
     `GLIDE3X.DLL` at `0x01690000` under a `0x6000` one, RUNDLL32.EXE, which
     the registry's Run entry named.
 
-Still open, and not shown to be this: **your hand-run hangs.** This
-explains them only if the game started within a few seconds of the
-desktop. If one happens again, the QEMU log now says whether it was the
-collision; `busy: 1 cmds outstanding` with no such warning would be the
-86Box command-count pairing below, a different bug.
+**The hand-run hangs are this too** (the user, 2026-09-16): every time a
+game froze by hand there was a stray `rundll32` running that they could
+not account for — the helper. It is not only a login-time thing, then, or
+not only seconds long when it overlaps a game; either way the device's
+warning names it now. `busy: 1 cmds outstanding` with no such warning
+would be the 86Box command-count pairing below, a different bug.
 
 The investigation as it went, kept because most of it is still true and
 some of it is a trap:

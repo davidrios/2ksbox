@@ -497,3 +497,8 @@ command FIFO on`. Glide's own close-and-reopen does not trip it.
 batch on a machine with the card and prints the collision in its summary
 if the wait was not enough. By hand: give the desktop a few seconds before
 starting a Glide game.
+
+The hangs seen by hand were this too: the user had noticed a stray
+`rundll32` running every time a game froze and could not say why
+(2026-09-16). If that process ever turns up outside login, the warning
+above is still what names the collision.
