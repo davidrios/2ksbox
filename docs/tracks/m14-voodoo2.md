@@ -105,8 +105,17 @@ through 3dfx's HAL for the chip) and only a Voodoo 1 or Rush to
 monitor and `d3dpt-vga`'s own Direct3D draw nothing. `voodoo2z.dll`
 imports `glide3x.dll` (`grVertexLayout`), so Porsche *has* a Glide 3
 renderer, reachable by pointing that ini line at `/M:voodoo2` and running
-3D Setup again; with Diablo II that makes two Glide 3 titles in hand, both
-frame-capped (30 and 25 fps). Quake II
+3D Setup again. **What 3D Setup writes is one registry value** — the user
+ran it on `base98-br` on 2026-09-15 and picked 3dfx, and
+`HKLM\SOFTWARE\Electronic Arts\Need For Speed - Porsche 2000` came out
+`3D Card = 3Dfx Voodoo2`, `Group = 3Dfx`, **`Thrash Driver = dx`**: the
+ini's mapping, so "3dfx" still meant Direct3D. Setting that value to
+`voodoo2` (a `.reg` through `regedit /s`) is the whole switch, and it is
+**verified 2026-09-16** on a copy of that image with `DRIVERS\dx7z.dll`
+renamed away, so Direct3D could not load: the game came up and drew its
+menu at **~50 fps against the Direct3D path's 30**, `build/w98game/nfsg`.
+With Diablo II that makes two Glide 3 titles in hand (Diablo II is capped
+at 25 fps). Quake II
 and UT felt fine; **Porsche felt slow**. **Starting another game after
 one has quit sometimes comes up with glitched graphics** — the same
 class of state as the teardown above (a register or the monitor left
