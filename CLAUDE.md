@@ -294,7 +294,8 @@ the app's Homebrew libraries for that release's bottles
 `docs/build-macos.md` "The floor". `QEMU_PYTHON=<interpreter>` makes `configure-qemu.sh` use that one
 and never consult uv (3.8–3.13 enforced) — for a sandboxed build that has
 a Python already and cannot fetch one, i.e. the Flatpak. Player env knobs
-(`PLAYER_*`) are listed in `README.md`.
+(`PLAYER_*`) are listed in `docs/development.md`; `README.md` is the
+end-user document and carries no developer content.
 
 ## The QEMU patch queue
 

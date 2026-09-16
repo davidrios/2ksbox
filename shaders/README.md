@@ -22,7 +22,7 @@ top of it (`launcher/src/shader_profile.rs`), stored one per file under
 the profile library (`LAUNCHER_SHADER_PROFILES_DIR`, default the platform
 data dir's `shader-profiles`). A machine picks a profile by name in the
 wizard; the launcher resolves it into the player's own `--shader
---shader-params` (see README.md) when spawning it — hand-written bundles
+--shader-params` (see docs/development.md) when spawning it — hand-written bundles
 can still set `machine.toml`'s `shader` field directly instead, bypassing
 profiles entirely. The manager also previews a profile live against a
 chosen image (a screenshot), rendering the actual filter chain

@@ -1,350 +1,275 @@
 # 2ksbox
 
-An open-source, cross-platform stack for running Windows 98 and Windows XP as
-"native vintage boxes": hardware-accelerated period 3D (Direct3D / Glide /
-OpenGL), pixel-accurate CRT-shaded video output, and faithful CD-ROM drive
-emulation that works with raw disc dumps — including era copy protection
-(SafeDisc, SecuROM, etc.) — of discs you own.
+Run Windows 98, Windows XP and DOS the way the machines of the era did:
+period 3D games accelerated on your GPU, the picture on a CRT-shaded
+display instead of a blurry stretched rectangle, and a CD-ROM drive
+faithful enough to run raw dumps of the discs you own, copy protection
+included.
 
-Built on QEMU. Runs on Linux, Windows, and macOS, with Apple Silicon as a
-first-class target.
+Built on a patched QEMU. Runs on Linux, Windows and macOS (Apple Silicon).
+Free software, GPL-2.0.
 
-## What exists vs. what we build
+## What it does
 
-| Piece | Status |
+- **A machine library, not a command line.** The launcher creates a
+  Windows 98, Windows XP, DOS or "Other" (BeOS, a period Linux, OS/2)
+  machine from a short wizard, with sane defaults for each family. Each
+  machine opens in its own player window.
+- **Real 3D in the guest.** DirectX 1 up to 9 through our own paravirtual
+  device and driver, Glide through a host-side wrapper, OpenGL
+  pass-through, and an emulated 3dfx Voodoo 2 running 3dfx's own driver
+  for the games nothing else covers. Quake II, Unreal Tournament, GTA
+  Vice City, Max Payne and Need for Speed: Porsche Unleashed all run.
+- **A CRT on your monitor.** The guest's own framebuffer, at its native
+  resolution and aspect (320×200 included), through a libretro slang
+  shader chain. Shader profiles are managed in the launcher with a live
+  preview.
+- **Your discs.** cue/bin, CloneCD, Alcohol, ISO, and any folder on your
+  disk served as a CD. A shared disc shelf: swap discs while a machine
+  runs, from the launcher or from inside the guest. CD audio plays.
+- **Music.** A Sound Blaster 16 with a real OPL3, and an MPU-401 with
+  General MIDI (a bank is included) or a Roland MT-32 (bring your own
+  ROMs).
+- **Gamepad support.** Your PS/Xbox/Switch controller reaches the guest as a
+  generic USB controller or a DOS gamepad.
+- **Snapshots and clones.** Named snapshots of a machine ("fresh
+  install", "drivers in", "before game X") and one-click copies of a
+  whole machine.
+- **DOS at period speed.** A DOS machine's processor is throttled to a
+  chosen rate, so speed-sensitive games run as they were meant to. (Not fully tested!)
+
+Not the goal: cycle-accurate emulation of specific chipsets (that is
+86Box and PCem), modern guests, or condone piracy. Use only your own install
+media, licences and disc dumps!
+
+## What you need
+
+| Host | Requirements |
 |---|---|
-| x86 emulation/virtualization | Exists — QEMU fork (slimmer: 93 shared libraries; custom TCG fast paths for x87, SSE, SIMD, REP string, same-value SMC, and inline TB lookup; KVM/WHPX on x86) |
-| Guest 3D acceleration | **We build & integrate** — Paravirtual Direct3D device (`d3dpt`, DXVK native host executor) + qemu-3dfx GL pass-through + OpenGLide host Glide wrapper |
-| Guest display drivers | **We build** — Native `d3dpt-vga` drivers: XP miniport + display driver with DirectDraw/Direct3D DX8 DDI; Win98 mini-VDD + 16-bit DIB engine driver; SoftGPU/WineD3D as fallback |
-| CRT shader ecosystem | Exists — libretro slang shaders via librashader (library, not RetroArch) |
-| **Player: in-process QEMU + pixel-accurate CRT-shaded display** | **We build** (Rust, wgpu + librashader, mode analysis, event-driven geometry, low-latency audio) |
-| **Companion launcher (library, creation wizard, disc shelf)** | **We build** (Rust: `launcher-core` library; shipped `launcher-qt` in Qt 6 / QML via cxx-qt; `launcher-capi` for C/Swift) |
-| **Raw CD-ROM backend (cue/bin, subchannel, C2, CD-DA, dir-as-CD)** | **We build** (Rust "libdisc"; ATAPI patches; live disc shelf; `isodir:` directory mounting) |
-| **Guest machine families** | **We build** — Win98, XP, DOS (with cycle-throttled CPU rates), and Other (BeOS, period Linux, OS/2) |
+| Linux | An x86-64 machine. KVM for near-native XP (optional; Windows 98 is emulated on purpose). A GPU with Vulkan 1.3 for the fast Direct3D path; without it, Direct3D goes through OpenGL and WineD3D inside the guest, which still works. |
+| macOS | Apple Silicon, macOS 14 or newer. Guests are emulated (there is no x86 virtualization on these Macs) and still run comfortably faster than a period PC. The fast Direct3D path needs macOS 26; older releases use WineD3D inside the guest. |
+| Windows | 64-bit Windows 10 or 11. WHPX (the Windows Hypervisor Platform) accelerates XP when it is enabled. |
 
-Authentic-hardware Win98 emulation (real Voodoo, real S3) is 86Box's territory
-and explicitly **out of scope** — we don't duplicate that work.
+You also need install media for the guest operating system (your own
+Windows 98 / XP CD image, a DOS floppy or CD) and, for games, dumps of
+your own discs.
 
-## Design docs
+## Getting 2ksbox
 
-0. [**Status and how to resume**](docs/00-status.md) — read first
-1. [Goals and non-goals](docs/01-goals.md)
-2. [Architecture: in-process QEMU, process model, threading](docs/02-architecture.md)
-3. [Display pipeline: pixel accuracy, CRT shaders, latency](docs/03-display-pipeline.md)
-4. [3D acceleration: qemu-3dfx, paravirtual D3D, and guest drivers](docs/04-3d-acceleration.md)
-5. [CD-ROM backend: raw images, copy protection, and directory discs](docs/05-cdrom-backend.md)
-6. [Guest machines: Win98, XP, DOS, and Other reference configs](docs/06-guest-machines.md)
-7. [Frontend: machine library, UX, input, audio, and packaging](docs/07-frontend.md)
-8. [Roadmap and milestones](docs/08-roadmap.md)
-9. [Reference hardware rig](docs/09-reference-hardware.md)
-10. [Decision records (ADRs 001–015)](docs/10-decisions.md)
-11. [M1 embed API design](docs/11-m1-embed-api.md)
-12. [M3 window-less GL and Glide context provider design](docs/12-m3-context-provider.md)
-13. [x87 shadow doubles: the FPU stack as host doubles in TCG](docs/13-x87-inline-tcg.md)
-14. [Paravirtual Direct3D device for XP and Win98](docs/14-d3d-paravirt.md)
-15. [A real XP display driver: d3dpt-vga, miniport + Direct3D DDI](docs/15-guest-display-driver.md)
-16. [SSE on the host FPU: scalar and packed ops inline in TCG](docs/16-sse-inline-tcg.md)
-17. [CD-ROM backend: implementation specification](docs/17-cdrom-implementation.md)
-18. [Pinned guest registers: the x86 register file in TCG](docs/18-pinned-guest-registers.md)
-19. [A native Win98 display driver: d3dpt9x](docs/19-win9x-display-driver.md)
+There are no downloadable packages, so the way to get 2ksbox today is
+to build it from source. The build is one command once the tools are
+installed, and it produces the same launcher, player and guest-tools disc
+that are in the packaged releases.
 
-### Platform build guides and tracks
-- [Building and packaging on macOS (Apple Silicon)](docs/build-macos.md)
-- [Building and packaging for Windows (cross-build from Linux)](docs/build-windows.md)
-- [Parallel development tracks](docs/tracks/) (M4, M5, M5g, M6, M7, M8, M9, M10, M11)
+## Building from source
 
-## Building
+### 1. Install the tools
+
+**Linux** (Arch is what the project is developed on; the Debian/Ubuntu
+column was checked to install on Debian 12 and 13 and on Ubuntu 24.04 and
+26.04):
+
+| Purpose | Arch | Debian / Ubuntu |
+|---|---|---|
+| Compilers and build tools | `base-devel git ninja meson pkgconf` | `build-essential git ninja-build meson pkg-config` |
+| QEMU's libraries | `glib2 pixman zlib libslirp mesa libx11` | `libglib2.0-dev libpixman-1-dev zlib1g-dev libslirp-dev libgl-dev libx11-dev` |
+| The launcher (Qt 6) | `qt6-base qt6-declarative` | `qt6-base-dev qt6-declarative-dev qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-dialogs` |
+| Direct3D executor (optional) | `vulkan-headers vulkan-icd-loader glslang` | `libvulkan-dev glslang-tools` |
+| Guest tools disc (optional) | `mingw-w64-gcc xorriso` | `gcc-mingw-w64-i686 xorriso` |
+
+Then Rust and uv, from their own installers (uv provides the Python
+version QEMU's build wants; any system Python 3.8 to 3.13 works too if
+you set `QEMU_PYTHON` to it, but Ubuntu 26.04's system Python is 3.14,
+which QEMU's build refuses, so there uv is not optional):
 
 ```sh
-git clone --recurse-submodules https://github.com/davidrios/2ksbox
-cd 2ksbox                    # submodules: qemu (gitlab.com, pinned v9.2.4),
-                             #             third_party/qemu-3dfx (github.com)
-# already cloned without submodules? → git submodule update --init --depth 1
-
-scripts/build.sh             # everything, in order: qemu, rust, dxvk, the D3D
-                             # executor, the guest-tools ISO. This is the command
-                             # after every pull; `--test` chains the host test
-                             # stage, `--help` lists the individual stages.
-target/release/player        # M0: native window with test pattern (integer-scaled 4:3)
-
-# What build.sh runs, for driving a single stage by hand:
-scripts/prepare-qemu.sh      # overlay qemu-3dfx devices + embed/, patches, sign
-scripts/configure-qemu.sh    # configure (uv-managed python — needs uv, ninja, glib, pixman)
-ninja -C build/qemu qemu-system-i386 qemu-img qemu-io libqemu-embed-i386.so   # .dylib on macOS
-cargo build --release        # player links libqemu-embed (rpath into build/qemu)
-
-# M1: boot something in-process (firmware path needed until machine bundles land)
-target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
-  -drive file=path/to/floppy.img,format=raw,if=floppy -boot a -vga std -net none
-# PLAYER_DUMP=frame.png PLAYER_DUMP_SEQ=150 dumps guest frame #150 and exits (headless check)
-# --shader <preset.slangp> (or PLAYER_SHADER=) runs a libretro slang preset, e.g.
-#   target/release/player --shader third_party/slang-shaders/crt/crt-lottes.slangp -- ...
-# --shader-params <name=value,...> (or PLAYER_SHADER_PARAMS=) overrides the preset's own
-#   parameter defaults by name, e.g. --shader-params BRIGHTBOOST=1.4,GAMMA_INPUT=2.4 — this is
-#   what a launcher shader profile (launcher-core/src/shader_profile.rs) resolves to
-# PLAYER_DUMP_OUT=out.png dumps the shaded frame (GPU readback) at PLAYER_DUMP_SEQ and exits
-# PLAYER_KEYS="120:enter,360:ctrl+g" presses keys/chords at guest frames (headless input test);
-#   each press is held PLAYER_KEYS_HOLD frames (default 6 ≈ 100 ms) — a down+up in one flush is a
-#   zero-length press that a game polling the keyboard state never sees
-# LIBSYNTH_SF2=<file.sf2> is the General MIDI bank the machine's MIDI port plays through
-#   (doc 20). The player sets it itself — the packaged bank, or `soundfonts/` in a checkout —
-#   so this is only for trying another bank; a machine that names its own wins over both.
-# LIBSYNTH_MT32_ROMS=<dir> the same for the Roland CM-32L's ROMs, which are the user's own
-# PLAYER_AUDIO_NULL=<frames> drains the audio ring with no device: a thread taking that
-#   many frames a period at 48 kHz, like a DAC (`1` = 1024, PipeWire's default)
-# PLAYER_AUDIO_TAP=out.wav records exactly what the player handed the audio device,
-#   padded silence included (tools/audio-glitch-test.py counts clicks in it)
-# PLAYER_AUDIO_MS=40 (default) is the audio cushion QEMU keeps in the ring under the
-#   host device's own pull: the latency on top of the device's period, and how late
-#   QEMU's main loop may run (TCG, the D3D executor) before a gap is heard.
-#   `qemu-embed: audio:` and `[audio] … underruns` lines on stderr count gaps when they
-#   happen and `[audio] device asks for N frames` says how chunky the device is; raise
-#   it if gaps are counted, lower it under KVM. QEMU_EMBED_AUDIO_TRACE=1 prints the
-#   embed audiodev's pacing, a line per call. `[audio] the guest's mix went past full
-#   scale` says the machine's voices (card, FM, MIDI, CD audio) summed past what fits —
-#   QEMU applies no mixer volumes — and how far the player's limiter turned it down
-# --calib <bmp|dir> shades doc 09's CRT calibration patterns (tools/crtcal-render
-#   writes them; TESTS\CRTCAL.EXE puts the same ones on a real tube) and exits
-# --mode-sweep <dir> runs doc 03's mode sweep instead of a guest: every mode in the
-#   table, the geometry stage and the preset checked, a PNG of each dumped there
-# PLAYER_MODE_PARAMS=0 is the A/B control for mode analysis — the preset is left to
-#   guess the scanline count from the framebuffer height, as it did before M2
-# Ctrl+Alt+S writes the guest's own frame — its native size, no geometry stage and
-#   no CRT chain — as PLAYER_SHOT_DIR/2ksbox-NNNN.png (the next free number; the
-#   working directory when PLAYER_SHOT_DIR is unset). Ctrl+Alt+G releases the grab.
-# Ctrl+Alt+Shift+D is Ctrl+Alt+Del in the guest (the real one stays the host's).
-# Ctrl+Alt+Shift+F toggles windowed full screen (borderless, the window's monitor).
-# A close with Alt held (Alt+F4 while the host has its shortcuts) asks first, in the
-#   window: Enter, Close or a second Alt+F4 stops the machine, Esc or Back returns to
-#   it. The title bar's close button does not ask.
-# While the window has focus the host's own shortcuts go to the guest — the Windows
-#   key opens the guest's Start menu (Wayland's shortcut inhibitor, an X11 keyboard
-#   grab, a low-level hook on Windows; nothing on macOS). Ctrl+Alt+K hands them back
-#   to the host and, pressed again, to the guest (the title says when they are the
-#   host's). PLAYER_KEYBOARD_CAPTURE=0 starts a run with them the host's;
-#   scripts/test.sh sets it, so a test window sway focuses does not take the
-#   desktop's keys away.
-# PLAYER_SHOT_EVERY=300 takes that same shot on its own every 300 presented guest frames
-#   (a scripted run's window is behind a terminal and gets no redraws, so it is driven
-#   from the wake path): the only way a headless run sees a 3D frame, since a QMP
-#   screendump shows the VGA surface, frozen while the 3D device presents
-# Gamepad (M13, docs/tracks/m13-gamepads.md). `player --pads` says what this host
-#   can read, which is the one place a build without the `gilrs` feature or a
-#   sandbox with no /dev/input reports itself.
-# --pad usb (or PLAYER_PAD=usb) sends the pad to the machine's `usb-gamepad`
-#   (patch 26): two analog sticks, an 8-way hat and twelve buttons, which XP,
-#   Windows 98 SE and Me all see through their own HID driver with nothing
-#   installed — DirectInput and joy.cpl find it on the first start after the
-#   device is added. The launcher adds `-usb -device usb-gamepad` for a machine
-#   whose `pad = "usb"`. Not offered on DOS, which has no USB stack.
-# --pad keys (or PLAYER_PAD=keys) maps the pad onto the keys the player already
-#   sends: d-pad and left stick are the arrows, the four face buttons are Ctrl,
-#   Alt, Space and Enter, Start is Esc. The launcher writes it from the machine's
-#   own setting (`pad` in the bundle), the way it writes --shader. Works on every
-#   guest, because there is no device for the guest to support; a game that asks
-#   DirectInput for a joystick still finds none — that needs the USB gamepad.
-#   `launcherx --print-player-args <machine.toml>` shows what a bundle resolves to.
-# PLAYER_PAD_SCRIPT="30:lx=1.0,45:south=1,51:south=0" is a synthetic pad: set a
-#   control to a value at a guest frame number. Frames, not milliseconds, so a run
-#   lands in the same place in the guest's execution every time (as PLAYER_KEYS does).
-#   Controls: lx/ly/rx/ry (axes, -1.0..1.0; negative is left/up), south/east/west/
-#   north, dpad_up/down/left/right, l1/r1/l2/r2, l3/r3, select/start (0 or 1).
-#   It wins over real hardware, so a test is not perturbed by what is plugged in.
-# PLAYER_PAD_LOG=1 prints every shaped reading with its press/release transitions
-# PLAYER_PAD_SHAPING="0.30,0.55,0.40" overrides deadzone,press,release — the press
-#   and release thresholds differ on purpose, and release must be the lower of the
-#   two: with one number a stick held at it chatters at the poll rate
-# player --pad-sweep <frames> replays PLAYER_PAD_SCRIPT with no window, no QEMU and
-#   no guest, and prints what came out — with --pad keys, the key presses too.
-#   The `pad` check in scripts/test.sh
-# PLAYER_LATENCY=1 prints publish→present latency percentiles every 240 guest frames
-# PLAYER_REFRESH_LOG=1 prints a guest frame counter every 100 frames — whether the
-#   guest is drawing at all. Off by default: a machine left running printed it for
-#   as long as it was up, which buries the lines that mean something
-# PLAYER_REFRESH_MS=16 (default) is the guest frame pull interval (QEMU's own default is 30)
-# QMP: the player always attaches a control monitor over a socketpair (no socket file).
-#   PLAYER_QMP=1 logs every QMP event (SHUTDOWN/RESET/STOP/... are logged regardless)
-#   PLAYER_QMP_EXEC='{"execute":"query-status"}' (or a JSON array of requests) runs
-#   commands once the guest has drawn its first frame and prints the replies
-# Direct3D pass-through (doc 14): the d3dpt device is always present; it loads
-#   build/d3dpt/libd3dpt_exec.so (D3DPT_EXEC_LIB) and DXVK (D3DPT_DXVK_LIB) on the
-#   guest's first use. Build: scripts/prepare-dxvk.sh && scripts/configure-dxvk.sh &&
-#   ninja -C build/dxvk && scripts/build-d3dpt-exec.sh; guest side: D3DPT\ on the ISO.
-#   D3DPT_DUMP_DIR=dir D3DPT_DUMP_EVERY=60 makes the executor write every 60th
-#   presented frame as dir/frame-NNNNNN.ppm (works with bare qemu-system-i386 too).
-#   Guest side: D3DPT_TRACE=1 or a file d3dpt_trace.on next to the DLL writes the
-#   creation/lock/upload/present calls to d3d8_trace.log / d3d9_trace.log; a DLL
-#   that cannot open the device forwards Direct3DCreateN to the system DLL.
-#   While the device is active the player shows the VGA surface again after 1 s
-#   without a presented frame if the guest drew on it (a game's error dialog,
-#   a DirectShow movie, a crashed process): "[display] no 3D frame for …".
-# Glide pass-through (doc 12 §5): the guest's GLIDE2X.DLL reaches a host-side
-#   wrapper QEMU dlopens at grGlideInit -- qemu-3dfx ships none, so ours is
-#   OpenGLide: scripts/prepare-openglide.sh && scripts/build-glide.sh. It is found
-#   at QEMU_GLIDE_LIB, else build/glide/libglide2x.so, else the loader's path;
-#   the line "glidept: wrapper <path>" says which. It renders into the same
-#   window-less context as the GL pass-through, so Glide frames go through the
-#   shader chain like any other. GLIDE_HOST_LOG=<path|-> turns on its own log.
-#   Guest side: GLIDE\ on the ISO (SETUP.EXE installs it).
-# audio: the player adds -audiodev embed,id=embed0 automatically; attach e.g.
-#   -machine pc,pcspk-audiodev=embed0   or   -device sb16,audiodev=embed0
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-macOS / Apple Silicon specifics: [docs/build-macos.md](docs/build-macos.md).
-
-## The launcher's front ends
-
-Everything the launcher *decides* — the `machine.toml` format, the
-machine library, the disc shelf, snapshots, shader profiles, the
-preview's render path, and every window's own state machine and the
-sentences it shows — lives in one crate, **`launcher-core`**. The front
-end over it is a view: it draws and forwards events, and nothing else
-(doc 07). **`launcher-qt` is the launcher every package installs** as
-`2ksbox` (ADR-015). (An egui front end over the same core was retired on
-2026-09-13, ADR-017.)
+**macOS** (Apple Silicon):
 
 ```sh
-cd launcher-qt && cargo build --release # Qt 6 / QML through cxx-qt; what ships
+xcode-select --install
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew install ninja meson pkg-config glib pixman gnu-sed uv libslirp
+brew install qt                              # the launcher
+brew install --cask xquartz                  # log out and in once after this
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-The toolkit-free debug verbs — `--print-args`, `--new`, `--discs`,
-`--host-check`, `--wizard-edit`, everything in `launcher_core::cli` —
-are a binary of their own, so a scripted check needs no toolkit:
+Optional on macOS: `brew install mingw-w64 xorriso` for the guest tools
+disc, and the Vulkan SDK with KosmicKrisp for the Direct3D executor on
+macOS 26 (the recipe is in [docs/build-macos.md](docs/build-macos.md)).
+
+**Windows:** the Windows build is made *on a Linux machine* with podman
+or docker installed, and copied over as a zip. See step 5.
+
+### 2. Get the source
 
 ```sh
-cargo build --release -p launcher-core --bin launcherx
-target/release/launcherx --print-args ~/.local/share/2ksbox/machines/xp/machine.toml
+git clone --recurse-submodules --shallow-submodules https://github.com/davidrios/2ksbox
+cd 2ksbox
 ```
 
-`launcherx` is what `scripts/test.sh` and `tools/dos-guest-test.py` drive
-the launcher through. What it cannot do is what *is* a toolkit: the
-headless frame grabs of real windows, which are `launcher-qt`'s
-(`QT_QPA_PLATFORM=offscreen`, doc 07).
+Already cloned without submodules? Run
+`git submodule update --init --depth 1`.
 
-`launcher-qt` declares its own workspace, so a plain `cargo build` at the
-root never needs Qt 6 development files — `scripts/build.sh` has a `qt`
-stage for it instead, and skips that stage (and with it any package) on a
-host with no Qt 6. Building it is the whole build command — no CMake;
-`cxx-qt-build` finds Qt through `qmake6`.
-
-Because the core is a real library, a front end in another language is a
-view over it too. **`launcher-capi`** is a C ABI over the same models —
-opaque handles, index-addressed rows, caller-owned strings — for a native
-macOS app in Swift, or anything that speaks C:
+### 3. Build
 
 ```sh
-cargo build -p launcher-capi            # liblauncher_capi.{a,so}; not a default member
-cc -Ilauncher-capi/include my_frontend.c target/debug/liblauncher_capi.a -lstdc++ -lm -ldl -lpthread
+scripts/build.sh
 ```
 
-`launcher-capi/include/launcher_core.h` is the header;
-`launcher-capi/examples/smoke.c` is a working miniature front end, and is
-the `capi` check in `scripts/test.sh`.
+That builds everything this machine has the tools for, in order: QEMU,
+the Rust programs, the launcher, the Direct3D executor, the Glide wrapper
+and the guest-tools disc. The first build takes about fifteen minutes and
+several gigabytes; later ones redo only what changed. The summary at the
+end lists every stage as built or skipped and, for a skipped one, which
+tool was missing. A skipped optional stage means a missing feature (no
+Direct3D executor, no guest tools disc), not a broken build; install the
+tool and run the command again.
 
-## Packaging (Linux)
+Two things to check in the summary:
 
-Everything is named **2ksbox** (ADR-011): the repository, the installed
-commands, the user's data directory.
+- `qt` must be built, or there is no launcher.
+- `guest` should be built: without the guest-tools disc there are no
+  guest drivers, and a machine has plain VGA and no 3D.
+
+After every `git pull`, run `scripts/build.sh` again.
+
+### 4. Run it
 
 ```sh
-scripts/package-linux.sh              # build/package/2ksbox-<version>-linux-<arch>.tar.zst
-scripts/package-linux.sh --with-shaders   # + the ~80 MB preset collection
+launcher-qt/target/release/launcher-qt
 ```
 
-It stages the launcher, the player, the embed library, our `qemu-img`,
-QEMU's firmware and the guest-tools ISO into one relocatable prefix
-(doc 07's install layout), checks that the staged launcher resolves all of
-them *inside* the package with a scrubbed environment — and that it opens
-a real window offscreen, which is the only way to find out whether Qt's
-plugins and QML modules are there — and rolls a tarball. **Qt 6 is not in
-the tarball**: it needs the distribution's `qt6-base` and
-`qt6-declarative` (Debian/Ubuntu: `libqt6quick6` plus the
-`qml6-module-qtquick-*` packages), and `install.sh` names them if the
-loader cannot find them. The extracted tree runs where it lands — `bin/2ksbox` — and the
-`install.sh` inside it copies the tree into a prefix (`~/.local` by
-default) and adds a desktop entry (`com._2ksbox.Launcher.desktop`, the
-application ID the launcher's window also reports as its `app_id`):
+Nothing has to be installed: the launcher finds the player, QEMU, the
+firmware and the guest-tools disc in the checkout it was built from.
+Machines, discs and profiles go under your user data directory
+(`~/.local/share/2ksbox` on Linux, `~/Library/Application Support/2ksbox`
+on macOS).
 
-```sh
-tar xf 2ksbox-*.tar.zst && cd 2ksbox-*
-./install.sh                 # or --prefix /usr/local, or --uninstall
-```
+## First run
 
-The tarball ships no system libraries, so it wants a host much like the
-one that built it. The **Flatpak** is the portable answer — it builds
-everything from source against `org.kde.Sdk` (KDE's runtime, because that
-is where Qt 6 comes from; it is `org.freedesktop.Platform` 25.08
-underneath), so the ~191 libraries and Qt itself come from the runtime:
+1. **Shader presets.** The launcher offers to download the libretro
+   shader collection the first time it starts with none. Say yes: the
+   CRT look is the point, and the starter profiles are made from it. (A
+   source checkout already has the collection, so it will not ask.)
+2. **Create a machine.** *New machine* walks through family (Windows 98,
+   Windows XP, DOS, Other), name, memory, processor, acceleration,
+   networking, pointer, disk size and install media. The defaults are
+   what the family wants; you can change everything later from the
+   machine's settings.
+3. **Install the operating system.** Point the install media at your
+   Windows CD image and start the machine. Windows installs as it would
+   on a PC of the time.
+4. **Install the guest tools.** Open the disc shelf, press *Add
+   guest-tools ISO*, and put it in the machine's CD drive. Inside the
+   guest, run `SETUP.EXE` from that drive (`D:\SETUP.EXE /ALL` from the
+   Run box installs everything this Windows can use), then restart. This
+   brings the display driver, the Glide wrapper, the OpenGL pass-through
+   and the disc-shelf program into the machine. `SETUP /LIST` shows what
+   is on the disc; the disc's `README.TXT` explains every folder.
+5. **Take a snapshot.** *Snapshots…* on the machine: "fresh install" is
+   the one you will keep coming back to, especially on Windows 98.
 
-```sh
-scripts/package-flatpak.sh          # build, install --user, smoke check
-flatpak run com._2ksbox.Launcher
-```
+## Playing games
 
-Set `FLATPAK_BUILD_DIR` (and flatpak's own `FLATPAK_USER_DIR`) if the
-build tree — a whole QEMU plus a release Rust workspace, ~12 GB — should
-not land on your root filesystem.
+- **Install from your dumps.** Add the disc image (or a folder) to the
+  disc shelf, put it in the drive, install in the guest. Multi-disc
+  installs swap discs from the launcher, or from inside the guest with
+  `CDSHELF.EXE` (a DOS box has `CDSHELF.COM`), which the guest tools
+  install.
+- **DirectX 1 up to 8 games** run through our device once the display driver
+  is installed. Nothing to copy per game on XP. Where the host has no
+  Vulkan 1.3 (a Mac before macOS 26, an older GPU), copy the WineD3D set
+  next to the game instead: `SETUP /GAME` on the guest-tools disc, or
+  copy the `WINED3D\D3D8-9\` folder from Explorer.
+- **DirectX 9 games** need to have the d3d9.dll copied to their folder.
+- **3dfx/Glide games.** add the Voodoo 2 device in the machine settings and
+  install 3dfx's own Voodoo 2 driver in the guest.
+- **OpenGL games** (Quake II and friends) get `OPENGL32.DLL` from the
+  guest-tools disc copied next to the game's EXE.
+- **Speed.** On an M1 Mac or Ryzen 5700X the emulated machine is roughly
+  equivalent to a 1.7GHz Pentium 4 (circa 2001). The graphics performance was
+  tested with the M1 and an RX 9060 XT on the Ryzen, both running era games at
+  confortable FPS. The launcher's *Emulation optimizations* switches ship at
+  the settings that measured best and exist for troubleshooting, not tuning.
+- **Too fast, too slow, or wrong colours** usually means the game wants
+  something the machine's settings offer: a slower processor on a DOS
+  machine, a different display adapter, a sound card the game knows. The
+  wizard explains each choice next to it.
 
-The Flatpak builds with no network, as Flathub requires: every crate is a
-declared source with a checksum in `packaging/flatpak/cargo-sources.json`.
-Run `scripts/gen-flatpak-cargo-sources.sh` and commit the result whenever
-a dependency changes.
+## Day to day
 
-## Packaging (macOS and Windows)
+Keys in the player window:
 
-- **macOS (`2ksbox.app` / `.dmg`):** Built natively on Apple Silicon (`scripts/package-macos.sh`). The bundle includes the full non-system dylib closure (with unused Qt modules pruned to save 6 MB and dyld `@rpath` resolution verified), the OpenGLide wrapper, the Direct3D executor, and the LunarG Vulkan loader + KosmicKrisp ICD. Signed for Developer ID with the hardened runtime and `com.apple.security.cs.allow-jit` entitlement, notarized and stapled. Details in [docs/build-macos.md](docs/build-macos.md).
-- **Windows (`.zip`):** Cross-built from Linux via a Fedora mingw-w64 container (`scripts/win-cross.sh --build`, `scripts/build-windows.sh`, `scripts/package-windows.sh`). Packages `2ksbox.exe` (Qt launcher), `2ksbox-player.exe`, `libqemu-embed-i386.dll`, `d3dpt_exec.dll`, `qemu-img.exe`, WHPX acceleration, firmware, and guest tools into a portable zip. Details in [docs/build-windows.md](docs/build-windows.md).
+| Keys | What |
+|---|---|
+| Ctrl+Alt+G | release the mouse grab (a click grabs it again) |
+| Ctrl+Alt+K | hand the host's own shortcuts (the Windows key, Alt+Tab) back to the host, or to the guest again |
+| Ctrl+Alt+Shift+D | Ctrl+Alt+Del in the guest |
+| Ctrl+Alt+Shift+F | windowed full screen on and off |
+| Ctrl+Alt+S | save the guest's own frame as a PNG |
+| Alt+F4 | asks before stopping the machine; the window's close button does not |
 
-## Diagnostics and logs
+Windows machines use a "seamless" mouse by default (the host pointer is
+the guest's cursor and the window never grabs); turn it off in the
+machine's settings for games that want a real PS/2 mouse.
 
-`launcher --paths` prints where a given build looks for each
-companion — the first thing to ask when something says a file is missing;
-`launcher --diagnose` prints the same plus this host's 3D and *files* it
-in the launcher's own log (`launcher.log`, beside the machine library),
-which is what to send when the launcher itself did not come up. On
-Windows, where the launcher is a windowed program with no stdout at all,
-`2ksbox-debug.bat` in the package does that for you.
+- **Shader profiles…** names a preset plus your parameter overrides, with
+  a live preview against a screenshot. A machine picks a profile by name.
+- **Clone…** on a machine copies it whole, its disk and snapshots
+  included, under a new name.
+- **Gamepads.** A machine's settings choose whether a pad appears in the
+  guest as a USB controller (Windows 98 SE, Me and XP see it with no
+  driver) or a DOS gamepad.
+- **Music.** A machine's settings choose its sound card and its MIDI
+  port: General MIDI plays through the included bank or one of your own;
+  the MT-32 needs your own ROMs, which you point the launcher at.
 
-The Qt front end draws in **light colours whatever the desktop is set
-to** — its Quick Controls style paints controls light and takes only the
-surfaces around them from the palette, so a dark system palette gets you
-half a theme. `LAUNCHER_QT_SCHEME=system` hands the desktop's own palette
-back and `=dark` forces the other one; `launcher.log` records the style
-and the colours a run actually got.
+## When something goes wrong
 
-CI (`.github/workflows/ci.yml`) is currently manual-only — trigger it from the
-Actions tab (`workflow_dispatch`).
+- **"Something is missing."** `2ksbox --paths` (`launcher-qt --paths` in
+  a checkout) prints where this build looks for each companion program
+  and file. `2ksbox --diagnose` prints
+  the same plus what it found of this host's 3D, and writes it to
+  `launcher.log` beside the machine library. That log is what to attach
+  to a bug report. On Windows, `2ksbox-debug.bat` in the package does
+  both from a console window.
+- **"3D goes through OpenGL instead."** The launcher says this in the
+  wizard when the host has no Vulkan 1.3. It is not an error: Direct3D
+  games then use WineD3D inside the guest (see Playing games). "In
+  software (slow)" means a software Vulkan driver was found; a game may
+  be faster through WineD3D, so try both.
+- **The guest shows a black desktop or stops after a display-adapter
+  change.** Windows wants a driver for the new adapter. If the guest
+  tools were installed before the change, Windows finds it on the next
+  boot; otherwise switch back, run `SETUP /ALL` in the guest, and switch
+  again.
+
+## Documentation
+
+- [docs/06-guest-machines.md](docs/06-guest-machines.md) — what each
+  machine family is, its defaults, and what to expect from it.
+- [docs/07-frontend.md](docs/07-frontend.md) — the launcher and the
+  player in detail: the library, the wizard, snapshots, the disc shelf.
+- [docs/development.md](docs/development.md) — the developer guide: the
+  architecture and design documents, the build stage by stage, every
+  player option and environment variable, the launcher's front ends,
+  packaging and diagnostics.
+- [docs/build-macos.md](docs/build-macos.md) and
+  [docs/build-windows.md](docs/build-windows.md) — the platform
+  specifics.
 
 ## License
 
-GPL-2.0, non-negotiable in practice for everything that links QEMU
-(GPL-2.0) in-process: the `player`, `qemu-embed`, and `libdisc`, which is
-compiled into QEMU itself.
-
-The **launcher** — `launcher-core` and the front ends over it
-(`launcher-qt`, `launcher-capi`) — and the `shader-chain`
-crate it shares with the player are **GPL-2.0-or-later** (ADR-009). None
-of them links QEMU code, since the launcher spawns the player as a
-separate process, and they do link Apache-2.0 crates (`ring` under
-`ureq`'s rustls, among others) that GPLv2 cannot take and GPLv3 can. `launcher-qt` links Qt 6 under the LGPLv3, which is the same
-reason.
-
-Original code is Rust wherever possible (see ADR-004 in
-[decision records](docs/10-decisions.md)); C only inside QEMU/qemu-3dfx and
-in guest-side era code. The GPLv2 text is in [COPYING](COPYING), and every
-third-party component is listed in
+GPL-2.0. The player links QEMU in-process and is GPL-2.0-only; the
+launcher is GPL-2.0-or-later. The licence text is in [COPYING](COPYING)
+and every third-party component is listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-**If you package or redistribute the player, read this.** Its dependency
-tree contains **Apache-2.0-only** crates — `winit`, `cpal`, `ab_glyph`,
-`codespan-reporting` and `rspirv` among them — and Apache-2.0 is
-incompatible with GPLv2, which the player is pinned to because it links
-QEMU. This is a property of the modern Rust GUI stack rather than a
-dependency we chose carelessly (`winit` alone settles it), and removing the
-crates individually would change nothing: being clean means dropping wgpu
-and librashader, i.e. the CRT shader chain the project exists for. **We
-ship player binaries anyway**, with complete source and build scripts, and
-the reasoning — including the alternatives measured and rejected — is
-ADR-010. If your distribution's policy can't accept that, please open an
-issue rather than patching around it; the clean fix (QEMU in its own
-process) is designed and costed, not hypothetical.
+If you package or redistribute the player, read the licensing section of
+[docs/development.md](docs/development.md) first: its dependency tree
+contains Apache-2.0 crates that GPLv2 cannot formally combine with.
