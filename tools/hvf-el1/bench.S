@@ -540,3 +540,120 @@ _bench_diag_stenv_ldstbase:
     b.ne    1b
     mov     x0, #0
     ret
+
+// ---------------------------------------------------------------- mixes
+// (track/m9-hwmmu, 2026-09-16) Workload-shaped kernels: the chase and sum
+// kernels above are the two extremes (a dependent address chain, a pure
+// load stream); translated code sits between them, with ALU work per
+// access that an out-of-order core overlaps with the softmmu chain. Each
+// iteration here loads through a random index, runs K dependent ALU ops
+// on the value (K = 4: 7-Zip's match finder, one access per ~3 guest
+// instructions; K = 12: ALU-heavy code) and accumulates, so iterations are
+// independent and the loop is throughput-bound -- which is where the
+// chain's nine extra instructions per access are paid or hidden.
+// Sum:  x0 = base or env, x1 = u32 offsets, x2 = count -> x0 = accumulator
+// Copy: x0 = base or env, x1 = source offsets, x2 = count, x3 = destination
+//       offsets -> x0 = sum of the copied words (the store's own chain
+//       against addr_write @8 in the softmmu form)
+    .macro MIXOPS k
+    add     w11, w3, #1
+    .rept   \k - 1
+    eor     w11, w11, w11, ror #5
+    .endr
+    add     w8, w8, w11
+    .endm
+
+    .macro MIX_DIRECT name, k
+    .balign 64
+    .globl  \name
+\name:
+    mov     w8, #0
+1:  ldr     w3, [x1], #4
+    ldr     w3, [x0, w3, uxtw]
+    MIXOPS  \k
+    subs    x2, x2, #1
+    b.ne    1b
+    mov     x0, x8
+    ret
+    .endm
+
+    .macro MIX_SOFTMMU name, k
+    .balign 64
+    .globl  \name
+\name:
+    mov     w8, #0
+    mov     x10, x1
+1:  ldr     w1, [x10], #4
+    ldp     x3, x4, [x0]
+    and     x3, x3, x1, lsr #7
+    add     x4, x4, x3
+    ldr     w5, [x4]
+    ldr     x4, [x4, #24]
+    add     w6, w1, #3
+    and     w6, w6, #0xfffff000
+    cmp     w5, w6
+    b.ne    9f
+    ldr     w3, [x4, w1, uxtw]
+    MIXOPS  \k
+    subs    x2, x2, #1
+    b.ne    1b
+    mov     x0, x8
+    ret
+9:  mov     x0, #-1
+    ret
+    .endm
+
+    MIX_DIRECT  _bench_mix4_direct, 4
+    MIX_SOFTMMU _bench_mix4_softmmu, 4
+    MIX_DIRECT  _bench_mix12_direct, 12
+    MIX_SOFTMMU _bench_mix12_softmmu, 12
+
+    .balign 64
+    .globl _bench_copy_direct
+_bench_copy_direct:
+    mov     x5, #0
+1:  ldr     w6, [x1], #4
+    ldr     w7, [x0, w6, uxtw]
+    ldr     w8, [x3], #4
+    add     x5, x5, x7
+    str     w7, [x0, w8, uxtw]
+    subs    x2, x2, #1
+    b.ne    1b
+    mov     x0, x5
+    ret
+
+    .balign 64
+    .globl _bench_copy_softmmu
+_bench_copy_softmmu:
+    mov     x9, #0
+    mov     x10, x1
+    mov     x11, x3
+1:  ldr     w1, [x10], #4
+    ldp     x3, x4, [x0]             // the load's chain
+    and     x3, x3, x1, lsr #7
+    add     x4, x4, x3
+    ldr     w5, [x4]
+    ldr     x4, [x4, #24]
+    add     w6, w1, #3
+    and     w6, w6, #0xfffff000
+    cmp     w5, w6
+    b.ne    9f
+    ldr     w7, [x4, w1, uxtw]
+    ldr     w12, [x11], #4
+    ldp     x3, x4, [x0]             // the store's chain, against addr_write
+    and     x3, x3, x12, lsr #7
+    add     x4, x4, x3
+    ldr     w5, [x4, #8]
+    ldr     x4, [x4, #24]
+    add     w6, w12, #3
+    and     w6, w6, #0xfffff000
+    cmp     w5, w6
+    b.ne    9f
+    add     x9, x9, x7
+    str     w7, [x4, w12, uxtw]
+    subs    x2, x2, #1
+    b.ne    1b
+    mov     x0, x9
+    ret
+9:  mov     x0, #-1
+    ret

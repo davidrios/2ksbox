@@ -56,6 +56,18 @@ extern "C" {
     fn bench_sum_softmmu(env: u64, idx: u64, n: u64) -> u64;
     #[link_name = "_bench_sum_pinned"]
     fn bench_sum_pinned(env: u64, idx: u64, n: u64) -> u64;
+    #[link_name = "_bench_mix4_direct"]
+    fn bench_mix4_direct(base: u64, idx: u64, n: u64) -> u64;
+    #[link_name = "_bench_mix4_softmmu"]
+    fn bench_mix4_softmmu(env: u64, idx: u64, n: u64) -> u64;
+    #[link_name = "_bench_mix12_direct"]
+    fn bench_mix12_direct(base: u64, idx: u64, n: u64) -> u64;
+    #[link_name = "_bench_mix12_softmmu"]
+    fn bench_mix12_softmmu(env: u64, idx: u64, n: u64) -> u64;
+    #[link_name = "_bench_copy_direct"]
+    fn bench_copy_direct(base: u64, src: u64, n: u64, dst: u64) -> u64;
+    #[link_name = "_bench_copy_softmmu"]
+    fn bench_copy_softmmu(env: u64, src: u64, n: u64, dst: u64) -> u64;
     #[link_name = "_bench_touch"]
     fn bench_touch(base: u64, count: u64, stride: u64) -> u64;
     #[link_name = "_bench_movs_softmmu"]
@@ -540,6 +552,58 @@ fn bench_set(c: &Ctx, name: &str, pages: usize, rng: &mut Rng) {
         "load: {:>7} indep  direct {}.{:02} ns  softmmu {}.{:02} ns  pinned {}.{:02} ns   [{} loads, {} faults during the set]",
         name, d1, d2, s1, s2, p1, p2, n, faults() - f0
     );
+
+    // the workload-shaped kernels (track/m9-hwmmu): K ALU ops per independent load, and load + store
+    for (k, fd, fs) in [
+        (4u32, bench_mix4_direct as unsafe extern "C" fn(u64, u64, u64) -> u64, bench_mix4_softmmu as unsafe extern "C" fn(u64, u64, u64) -> u64),
+        (12u32, bench_mix12_direct as unsafe extern "C" fn(u64, u64, u64) -> u64, bench_mix12_softmmu as unsafe extern "C" fn(u64, u64, u64) -> u64),
+    ] {
+        let mut r = [0u64; 2];
+        let t0 = ticks();
+        for _ in 0..passes {
+            r[0] = r[0].wrapping_add(unsafe { fd(WIN0, idx_base(), IDX_N as u64) });
+        }
+        let t1 = ticks();
+        for _ in 0..passes {
+            r[1] = r[1].wrapping_add(unsafe { fs(env as u64, idx_base(), IDX_N as u64) });
+        }
+        let t2 = ticks();
+        if r[0] != r[1] {
+            panic!("mix{} results differ: {:#x} {:#x}", k, r[0], r[1]);
+        }
+        let (d1, d2) = ns_str(ps_per(t1 - t0, c.freq, n));
+        let (s1, s2) = ns_str(ps_per(t2 - t1, c.freq, n));
+        prln!(
+            "load: {:>7} mix{:<2}  direct {}.{:02} ns  softmmu {}.{:02} ns   [{} loads, {} ALU ops each]",
+            name, k, d1, d2, s1, s2, n, k
+        );
+    }
+    {
+        let half = (IDX_N / 2) as u64;
+        let dst = idx_base() + half * 4;
+        let f1 = faults();
+        unsafe { bench_copy_direct(WIN0, idx_base(), half, dst) };   // warm: the dirty upgrades
+        let fw = faults() - f1;
+        let mut r = [0u64; 2];
+        let t0 = ticks();
+        for _ in 0..passes {
+            r[0] = r[0].wrapping_add(unsafe { bench_copy_direct(WIN0, idx_base(), half, dst) });
+        }
+        let t1 = ticks();
+        for _ in 0..passes {
+            r[1] = r[1].wrapping_add(unsafe { bench_copy_softmmu(env as u64, idx_base(), half, dst) });
+        }
+        let t2 = ticks();
+        // no equality check: the stores change what the next pass loads
+        let _ = r;
+        let n = passes * half;
+        let (d1, d2) = ns_str(ps_per(t1 - t0, c.freq, n));
+        let (s1, s2) = ns_str(ps_per(t2 - t1, c.freq, n));
+        prln!(
+            "load: {:>7} copy   direct {}.{:02} ns  softmmu {}.{:02} ns   [{} load+store pairs, {} dirty faults in the warm pass]",
+            name, d1, d2, s1, s2, n, fw
+        );
+    }
 }
 
 /// The blit loop of a 2D game (`rep movsd` per 640-byte row) five ways:

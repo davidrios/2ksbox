@@ -577,6 +577,132 @@ before deciding. Steps 1 and 2 of the list below (inline TB lookup,
 pinned registers) are orthogonal and carry over into the VM unchanged;
 step 3 (pinned mask/table) is not worth a patch by itself.
 
+## Gauging the gain (2026-09-16, `track/m9-hwmmu`): the design priced on the real workloads
+
+The probe above priced the primitives; the question the user asked next
+was what the design would buy on the workloads, before the weeks. Two
+measurements, multiplied, answer it (`tools/hwmmu/`, README there):
+
+1. **A memory census of each workload** — `tools/hwmmu/census.c`, a TCG
+   plugin: instructions, loads, stores, the distinct 4 KiB pages touched
+   per second and per window of 65,536 accesses (the nested stage-1+2 TLB
+   holds 3072 of them, so a window beyond that misses — the one risk the
+   probe named), and the pages touched and written for the first time
+   (a mirror fill of 110–160 ns each, a dirty upgrade of ~500 ns each).
+   Run through `tools/specbench/run.sh` with the plugin on
+   (`QEMU_EXTRA=`), the guest 2.7x slower, every count exact;
+   `tools/hwmmu/phases.py` cuts the per-second lines at the programs'
+   start times.
+2. **Workload-shaped kernels in the probe** — `bench.S` gained `mix4` and
+   `mix12` (an independent load with four / twelve dependent ALU ops
+   behind it: throughput-bound, where an out-of-order core overlaps the
+   chain, the case translated code is closest to) and `copy` (load +
+   store, the store paying its own chain against `addr_write`), each as
+   today's softmmu sequence and as the mirrored direct access. Clean run,
+   alone on the Air, `build/hwmmu/probe-clean.txt`:
+
+   | set | mix4 direct / softmmu | mix12 | copy pair | per load Δ | per store Δ |
+   |---|---|---|---|---|---|
+   | 64 KiB | 0.69 / 0.97 ns | 1.63 / 1.98 | 0.40 / 1.17 | 0.28 | 0.46 |
+   | 4 MiB | 1.04 / 1.40 | 1.98 / 2.46 | 1.47 / 2.18 | 0.36 | 0.38 |
+   | 8 MiB | 1.17 / 1.79 | 2.14 / 2.81 | 1.52 / 2.70 | 0.62 | 0.66 |
+   | 16 MiB | 2.37 / 4.11 | 4.26 / 5.96 | 3.39 / 5.39 | | |
+
+   A store is the design's better half: its chain costs about what a
+   load's does and the mirrored store is a plain `str` (0.40 ns a pair at
+   64 KiB against 1.17). With ALU work to hide behind, the chain's price
+   is 0.3–0.6 ns per access rather than the 2–5 ns of a dependent chase.
+
+**The CPU tier's census** (`build/hwmmu/census-cpu.log`, one XP boot,
+`docs/22-data/hwmmu/census-cpu.txt`):
+
+| workload | G insn | acc / insn | stores | pages / s | pages per 64K-access window, mean / max | windows over 3072 | first touches / first writes |
+|---|---|---|---|---|---|---|---|
+| Super PI 1M | 54.0 | 0.55 | 38 % | 3,750 | 70 / 1,600 | 0 of 449,891 | 9,756 / 9,063 |
+| 7-Zip | 56.0 | 0.34 | 34 % | 5,100 | 240 / 1,150 | 0 of 286,139 | 2,548 / 2,582 |
+| nbench | 128.4 | 0.29 | 34 % | 410 | 8 / 926 | 0 of 570,340 | 811 / 384 |
+| SSEBENCH | 0.84 | 0.40 | 38 % | 580 | 9 / 279 | 0 of 5,089 | 2 / 2 |
+
+Not one window of 65,536 accesses touched more than 1,600 distinct pages
+on this tier: the nested-TLB risk does not exist here, and the first
+touches and first writes are thousands per run, i.e. milliseconds. The
+TLB refills (37.8 M in the 16-minute run, 40 k/s) and the flushes
+(505 partial a second) are of the same order.
+
+**The projection** (`tools/hwmmu/project.py`): each second of the
+workload at full speed, its loads times the per-load Δ plus its stores
+times the per-store Δ, at the three working-set rows a workload with
+windows under 2,000 pages could sit on — the fraction of the second the
+chain costs, and the speed-up its removal would be. Nothing else is
+counted (not the refills and flushes, not the helpers' own accesses, and
+not the pinned registers, which are orthogonal and carry over):
+
+| workload | G insn / s | M acc / s | 64 KiB row | 4 MiB row | 8 MiB row |
+|---|---|---|---|---|---|
+| Super PI 1M | 0.72 | 392 | 14 % → 1.16x | 14 % → 1.17x | 25 % → 1.33x |
+| 7-Zip | 1.44 | 483 | 16 % → 1.20x | 18 % → 1.22x | 31 % → 1.44x |
+| nbench | 0.50 | 146 | 5 % → 1.05x | 5 % → 1.06x | 9 % → 1.10x |
+| SSEBENCH | 0.47 | 188 | 7 % → 1.07x | 7 % → 1.07x | 12 % → 1.14x |
+
+The middle row is the estimate: **7-Zip 1.2x, Super PI 1.17x, the
+floating-point kernels 1.05–1.07x.** That is a third to a half of what
+the profile's "43 % of samples on the chain" suggested, because samples
+land on the chain's stalls while the core overlaps most of its
+instructions with the ALU work around it — which is exactly what the
+mix kernels measure and the chase kernels do not. It is also the size
+of one of the queue's control-flow patches, for the weeks the design
+costs, on this tier.
+
+**The games' census** (`base98-us` through `tools/w98-quake2.sh` and
+`tools/w98-blood.sh` with `EXTRA=` carrying the plugin; the guest 1.7–1.8x
+slower — Quake II's timedemo at 29.6 fps against 50.0, Blood's page flips
+at 72 a second against 128 — so the full-speed rates below are the
+census's counts over the run's wall time divided by that factor;
+`docs/22-data/hwmmu/census-quake2.txt`, `census-blood.txt`):
+
+| workload | G insn / s at full speed | acc / insn | stores | pages / s | pages per 64K-access window, mean / max | windows over 3072 |
+|---|---|---|---|---|---|---|
+| Quake II, software renderer, timedemo | 1.07 | 0.35 | 45 % | 495 | 52 / 334 | 0 of 605,108 |
+| Blood, the DOS box, e1m1 | 0.80 | 0.32 | 16 % | 1,115 | 94 / 367 | 0 of 242,234 |
+
+Again no window near the TLB's reach — a 1998 game's working set per
+tens of microseconds is a few hundred pages, on this tier and that one
+alike — and no first touches once the level is loaded. Quake II is
+store-heavy (45 %: the software renderer's spans); Blood, a VM86 DOS box,
+is not (16 %).
+
+| workload | M acc / s | 64 KiB row | 4 MiB row | 8 MiB row |
+|---|---|---|---|---|
+| Quake II timedemo | 372 | 13 % → 1.16x | 14 % → 1.16x | 24 % → 1.31x |
+| Blood | 257 | 8 % → 1.09x | 9 % → 1.10x | 16 % → 1.19x |
+
+**What the gauge says.** The design, on every workload measured, is
+worth **1.1–1.2x, and 1.3x at the pessimistic row**: 7-Zip 1.2x, Super
+PI and Quake II 1.16x, Blood 1.1x, the floating-point kernels 1.05x. The
+one risk the probe named — random working sets beyond the nested TLB's
+12 MiB — does not occur: over 2.3 million windows of 65,536 accesses
+across six workloads, none touched more than 1,600 distinct pages, and
+the cost the risk would carry is therefore zero. What the projection
+leaves out is small on the CPU tier (refills 40 k/s, flushes 500/s) and
+unmeasured on the Windows 98 games with 3D (3DMark's 2,400 CR3 writes a
+second, whose jump-cache and TLB halves patches 42 and 44 already took;
+the mirror's 19 ns switch would take the rest, worth at most the 3.9 %
+XP idle spends there). Against that: a freestanding build of ~45 KLOC,
+`cputlb.c` rewritten as the fault-driven mirror, a mailbox for devices
+and interrupts, and a player that carries the hypervisor entitlement —
+the 4–8 weeks of the verdict above, for a gain the size of one
+control-flow patch on the programs this project runs. The number is now
+measured rather than inferred from a profile's samples, and it says the
+port waits until the queue has nothing cheaper left.
+
+Two refinements would move the estimate, both cheap: the same census on a
+3D title through the player (3DMark 99's first-person test, FIFA), where
+the CR3 rate and the framebuffer's dirty logging enter; and a `mix`
+kernel with the *dependent* address pattern of a pointer-chasing loop at
+7-Zip's density, which would push 7-Zip toward the chase row (2.4x per
+load at 4 MiB) — the census cannot tell dependent from independent
+accesses, so 1.2x is a floor for that workload, not an estimate.
+
 ## Build / test loop
 
 ```sh

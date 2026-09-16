@@ -64,6 +64,11 @@ strongest confirmation the design gets. The user-space mmap variants are
 closed to us on the Air: macOS maps at 16 KiB and the guest's pages are
 4 KiB; only the VM has the 4 KiB granule (the probe measured `TGran4=0`).
 **Read Captive and the 2024 ISPRAS paper before reopening the track.**
+**Gauged on the real workloads on 2026-09-16** (`track/m9-hwmmu`, the
+track doc's "Gauging the gain"): a memory census of each workload times
+the probe's workload-shaped kernels projects 1.1–1.2x (7-Zip 1.2x, Super
+PI and Quake II 1.16x, Blood 1.1x, the FP kernels 1.05x), and the
+nested-TLB risk does not occur on any of them.
 
 Cheaper cuts at the same cost that we did take: patch 16 (TLB floor) and
 patch 44 (retire instead of flush). Also relevant: Tong, Koju, Kawahito,

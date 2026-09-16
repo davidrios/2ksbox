@@ -1,0 +1,116 @@
+hvf-el1: Hypervisor.framework EL1 probe (counter 24 MHz)
+host: VM created (IPA size default 36 / max 36 bits); image 52 KiB at 0x40000000, arena 64 MiB at 0x600000000 (host VA == IPA), MMIO probe at 0xf0000000 unmapped
+guest: up at EL1, MMU on, 24 MHz counter, arena at 0x600000000 (host VA == IPA == guest VA)
+id: CurrentEL=1 MIDR=0x610f0000 CNTFRQ=24000000 Hz
+id: ID_AA64MMFR0=0x10000f100001 TGran4=0 TGran16=1 TGran64=15 ASIDBits=0 PARange=1
+id: ID_AA64MMFR1=0x11212000 HAFDBS=0 VH=0 PAN=2 ID_AA64MMFR2=0x1001001100001011
+id: CTR_EL0=0x8444c004 DIC=0 IDC=0
+id: SCTLR_EL1=0x30d01985 TCR_EL1=0x280903510
+guest: x86 tables built (CR3 A 0x2c00000, CR3 B 0x2c01000), stage-1 roots with ASIDs 1 and 2
+exit: hvc round trip (guest -> host -> guest): 732.09 ns  [200000 calls]
+exit: MMIO load (stage-2 fault -> host emulates -> retry): 830.53 ns  [100000 loads, sum 30542634529360]
+trap: in-VM exception round trip (svc -> EL1 vector -> save/restore -> eret): 39.41 ns  [1000000 traps]
+call: in-VM helper call (bl to a Rust function): 0.93 ns  [20000000 calls, acc 16775608223978882689]
+stage2: first guest touch of the 48 MiB x86 RAM (identity map): 732.21 ns/4K page  [HVF's lazy stage-2 fill, once per page; xor 0x2802007]
+fill: first touch of 8192 pages through the window: 134.39 ns/page  [8192 faults: abort -> x86 walk -> PTE -> eret]
+fill: same 8192 pages after tlbi vmalle1: 6.14 ns/page  [0 faults: TLB misses, stage-1+2 walks]
+fill: 1024 pages touched again (warm): 6.46 ns/page
+pf: read of unmapped linear 0xff000000 -> x86 #PF error code 0 (value 0x10ff000000)
+pf: #PF round trip (abort -> walk -> resume, the in-VM cpu_loop_exit): 64.60 ns
+dirty: read code 0 (PTE 0x2328027: A set, D clear, mirrored RO); write code 0 in 541.66 ns, 1 fault(s), PTE 0x2328067 (D set, remapped RW); value 0x12345678
+dirty: read-only page: read code 0, write code 3 (expect 0 and 3)
+dirty: first write to 512 clean pages (permission fault -> D set -> remap RW -> tlbi vae1is + dsb ish): 475.91 ns/page, 512 faults
+dirty: the same with tlbi vae1 + dsb nsh (no broadcast): 475.99 ns/page, 512 faults
+load:  64 KiB chase  direct 1.25 ns  softmmu 3.18 ns  pinned 3.15 ns   [2000000 steps, TLB 256 entries]
+load:  64 KiB indep  direct 0.32 ns  softmmu 0.63 ns  pinned 0.62 ns   [4194304 loads, 0 faults during the set]
+load:  64 KiB mix4   direct 0.69 ns  softmmu 0.97 ns   [4194304 loads, 4 ALU ops each]
+load:  64 KiB mix12  direct 1.63 ns  softmmu 1.98 ns   [4194304 loads, 12 ALU ops each]
+load:  64 KiB copy   direct 0.40 ns  softmmu 1.17 ns   [2097152 load+store pairs, 0 dirty faults in the warm pass]
+load:   4 MiB chase  direct 3.39 ns  softmmu 5.76 ns  pinned 5.70 ns   [2000000 steps, TLB 2048 entries]
+load:   4 MiB indep  direct 0.79 ns  softmmu 1.12 ns  pinned 1.01 ns   [4194304 loads, 0 faults during the set]
+load:   4 MiB mix4   direct 1.04 ns  softmmu 1.40 ns   [4194304 loads, 4 ALU ops each]
+load:   4 MiB mix12  direct 1.98 ns  softmmu 2.46 ns   [4194304 loads, 12 ALU ops each]
+load:   4 MiB copy   direct 1.47 ns  softmmu 2.18 ns   [2097152 load+store pairs, 0 dirty faults in the warm pass]
+load:   8 MiB chase  direct 5.55 ns  softmmu 10.66 ns  pinned 10.51 ns   [2000000 steps, TLB 4096 entries]
+load:   8 MiB indep  direct 0.90 ns  softmmu 1.42 ns  pinned 1.27 ns   [4194304 loads, 0 faults during the set]
+load:   8 MiB mix4   direct 1.17 ns  softmmu 1.79 ns   [4194304 loads, 4 ALU ops each]
+load:   8 MiB mix12  direct 2.14 ns  softmmu 2.81 ns   [4194304 loads, 12 ALU ops each]
+load:   8 MiB copy   direct 1.52 ns  softmmu 2.70 ns   [2097152 load+store pairs, 0 dirty faults in the warm pass]
+load:  16 MiB chase  direct 28.57 ns  softmmu 33.48 ns  pinned 33.27 ns   [2000000 steps, TLB 8192 entries]
+load:  16 MiB indep  direct 1.78 ns  softmmu 3.25 ns  pinned 2.96 ns   [4194304 loads, 0 faults during the set]
+load:  16 MiB mix4   direct 2.37 ns  softmmu 4.11 ns   [4194304 loads, 4 ALU ops each]
+load:  16 MiB mix12  direct 4.26 ns  softmmu 5.96 ns   [4194304 loads, 12 ALU ops each]
+load:  16 MiB copy   direct 3.39 ns  softmmu 5.39 ns   [2097152 load+store pairs, 0 dirty faults in the warm pass]
+load:  32 MiB chase  direct 28.89 ns  softmmu 35.05 ns  pinned 35.16 ns   [2000000 steps, TLB 16384 entries]
+load:  32 MiB indep  direct 3.20 ns  softmmu 6.40 ns  pinned 5.41 ns   [4194304 loads, 0 faults during the set]
+load:  32 MiB mix4   direct 4.61 ns  softmmu 7.17 ns   [4194304 loads, 4 ALU ops each]
+load:  32 MiB mix12  direct 8.78 ns  softmmu 10.31 ns   [4194304 loads, 12 ALU ops each]
+load:  32 MiB copy   direct 8.64 ns  softmmu 12.18 ns   [2097152 load+store pairs, 0 dirty faults in the warm pass]
+movs:  32 KiB x2, rows of 640 B, env identity  today 4.45 ns/dword  no-mb 4.09  pinned+softmmu 2.86  pinned+direct 2.49  fast 0.09   [51 rows, 3084 passes]
+movs:  32 KiB x2, rows of 640 B, env in window  today 4.39 ns/dword  no-mb 4.17  pinned+softmmu 1.16  pinned+direct 0.40  fast 0.09   [51 rows, 3084 passes]
+movs:  32 KiB diag  direct-no-cc 0.36  stores-only 0.36  loads-only 0.36
+movs:  32 KiB diag3 via window: st-env+ld 0.31  st-env+st 2.50  st-env+ld+st 2.50
+movs:  32 KiB diag3 via identity: st-env+ld 0.31  st-env+st 0.31  st-env+ld+st 0.31
+movs:  32 KiB diag2 st-env 0.31  st-env-far 0.31  ld+st-env 0.31  st-stack 0.31  st+ld-window-line 0.31
+movs: 512 KiB x2, rows of 640 B, env identity  today 4.47 ns/dword  no-mb 4.04  pinned+softmmu 2.84  pinned+direct 2.50  fast 0.09   [819 rows, 192 passes]
+movs: 512 KiB x2, rows of 640 B, env in window  today 4.45 ns/dword  no-mb 4.20  pinned+softmmu 1.18  pinned+direct 0.40  fast 0.09   [819 rows, 192 passes]
+movs: 512 KiB diag  direct-no-cc 0.36  stores-only 0.36  loads-only 0.36
+movs: 512 KiB diag3 via window: st-env+ld 0.31  st-env+st 2.51  st-env+ld+st 2.53
+movs: 512 KiB diag3 via identity: st-env+ld 0.31  st-env+st 0.31  st-env+ld+st 0.31
+movs: 512 KiB diag2 st-env 0.31  st-env-far 0.31  ld+st-env 0.31  st-stack 0.31  st+ld-window-line 0.31
+movs:   8 MiB x2, rows of 640 B, env identity  today 4.47 ns/dword  no-mb 4.04  pinned+softmmu 2.84  pinned+direct 2.50  fast 0.10   [13107 rows, 12 passes]
+movs:   8 MiB x2, rows of 640 B, env in window  today 4.44 ns/dword  no-mb 4.21  pinned+softmmu 1.19  pinned+direct 0.41  fast 0.10   [13107 rows, 12 passes]
+movs:   8 MiB diag  direct-no-cc 0.36  stores-only 0.36  loads-only 0.36
+movs:   8 MiB diag3 via window: st-env+ld 0.31  st-env+st 2.50  st-env+ld+st 2.52
+movs:   8 MiB diag3 via identity: st-env+ld 0.31  st-env+st 0.32  st-env+ld+st 0.32
+movs:   8 MiB diag2 st-env 0.31  st-env-far 0.31  ld+st-env 0.31  st-stack 0.31  st+ld-window-line 0.31
+jit: code written by the host process executes in the VM: f(100) = 142 (expect 142)
+jit: patch + dc cvau/ic ivau/isb + call: 132.41 ns  [100000 rounds, 0 wrong]
+asid: B first touch, 1024 pages: 110.59 ns/page, 1024 faults (xor 0x0)
+asid: CR3 switch (msr ttbr0_el1 + isb, tables kept): 19.72 ns
+asid: A after the switches, 1024 pages: 8.66 ns/page, 0 faults (xor 0x0)
+asid: A flushed and refaulted, 1024 pages: 110.18 ns/page (xor 0x0)
+asid: A and B see their own pages through the same window: ok
+irq: host thread kick -> guest IRQ handler: min 1875 / median 1958 / max 3166 ns  [20 trials; guest clock, calibrated at the kick request]
+irq: of which hv_vcpus_exit -> hv_vcpu_run returns (host side): min 1000 / median 1041 ns; kick -> the handler's ack HVC seen by the host: min 1916 / median 1958 ns
+guest: done, 12291 window faults handled in the VM, 20 IRQs, tables used 116 KiB
+host: guest finished after 300135 exits, 3.98 s of vCPU wall time
+host: the same kernels natively in the macOS process (16 KiB host pages, no stage 2):
+load:  64 KiB chase  direct 1.24 ns  softmmu 3.13 ns  pinned 3.16 ns   [2000000 steps, TLB 256 entries]
+load:  64 KiB indep  direct 0.31 ns  softmmu 0.65 ns  pinned 0.67 ns   [4194304 loads]
+load:  64 KiB mix4   direct 0.69 ns  softmmu 0.97 ns   [4194304 loads, 4 ALU ops each]
+load:  64 KiB mix12  direct 1.64 ns  softmmu 1.98 ns   [4194304 loads, 12 ALU ops each]
+load:  64 KiB copy   direct 0.40 ns  softmmu 1.15 ns   [2097152 load+store pairs]
+load:   4 MiB chase  direct 2.37 ns  softmmu 4.70 ns  pinned 4.76 ns   [2000000 steps, TLB 2048 entries]
+load:   4 MiB indep  direct 0.71 ns  softmmu 1.02 ns  pinned 0.93 ns   [4194304 loads]
+load:   4 MiB mix4   direct 0.89 ns  softmmu 1.27 ns   [4194304 loads, 4 ALU ops each]
+load:   4 MiB mix12  direct 1.88 ns  softmmu 2.34 ns   [4194304 loads, 12 ALU ops each]
+load:   4 MiB copy   direct 1.34 ns  softmmu 2.07 ns   [2097152 load+store pairs]
+load:   8 MiB chase  direct 5.15 ns  softmmu 9.68 ns  pinned 9.67 ns   [2000000 steps, TLB 4096 entries]
+load:   8 MiB indep  direct 0.86 ns  softmmu 1.52 ns  pinned 1.38 ns   [4194304 loads]
+load:   8 MiB mix4   direct 1.15 ns  softmmu 1.88 ns   [4194304 loads, 4 ALU ops each]
+load:   8 MiB mix12  direct 2.15 ns  softmmu 2.93 ns   [4194304 loads, 12 ALU ops each]
+load:   8 MiB copy   direct 1.44 ns  softmmu 2.68 ns   [2097152 load+store pairs]
+load:  16 MiB chase  direct 7.28 ns  softmmu 12.30 ns  pinned 12.28 ns   [2000000 steps, TLB 8192 entries]
+load:  16 MiB indep  direct 1.73 ns  softmmu 3.22 ns  pinned 2.73 ns   [4194304 loads]
+load:  16 MiB mix4   direct 2.20 ns  softmmu 3.87 ns   [4194304 loads, 4 ALU ops each]
+load:  16 MiB mix12  direct 5.16 ns  softmmu 6.66 ns   [4194304 loads, 12 ALU ops each]
+load:  16 MiB copy   direct 2.76 ns  softmmu 5.07 ns   [2097152 load+store pairs]
+load:  32 MiB chase  direct 7.64 ns  softmmu 14.29 ns  pinned 14.23 ns   [2000000 steps, TLB 16384 entries]
+load:  32 MiB indep  direct 3.27 ns  softmmu 5.46 ns  pinned 4.73 ns   [4194304 loads]
+load:  32 MiB mix4   direct 3.98 ns  softmmu 6.53 ns   [4194304 loads, 4 ALU ops each]
+load:  32 MiB mix12  direct 6.92 ns  softmmu 9.01 ns   [4194304 loads, 12 ALU ops each]
+load:  32 MiB copy   direct 5.90 ns  softmmu 11.52 ns   [2097152 load+store pairs]
+movs:  32 KiB x2, rows of 640 B  today 2.10 ns/dword  no-mb 2.10  pinned+softmmu 1.17  pinned+direct 0.40  fast 0.09  memcpy 0.05   [51 rows, 3084 passes]
+movs:  32 KiB diag  direct-no-cc 0.36  stores-only 0.36  loads-only 0.36
+movs:  32 KiB diag2 st-env 0.31  st-env-far 0.31  ld+st-env 0.31  st-stack 0.31  st+ld-window-line 0.31
+movs:  32 KiB diag3 native: st-env+ld 0.31  st-env+st 0.31  st-env+ld+st 0.31
+movs: 512 KiB x2, rows of 640 B  today 2.14 ns/dword  no-mb 2.14  pinned+softmmu 1.19  pinned+direct 0.40  fast 0.09  memcpy 0.05   [819 rows, 192 passes]
+movs: 512 KiB diag  direct-no-cc 0.36  stores-only 0.36  loads-only 0.36
+movs: 512 KiB diag2 st-env 0.31  st-env-far 0.31  ld+st-env 0.31  st-stack 0.31  st+ld-window-line 0.31
+movs: 512 KiB diag3 native: st-env+ld 0.31  st-env+st 0.31  st-env+ld+st 0.31
+movs:   8 MiB x2, rows of 640 B  today 2.18 ns/dword  no-mb 2.17  pinned+softmmu 1.20  pinned+direct 0.40  fast 0.10  memcpy 0.06   [13107 rows, 12 passes]
+movs:   8 MiB diag  direct-no-cc 0.36  stores-only 0.36  loads-only 0.36
+movs:   8 MiB diag2 st-env 0.31  st-env-far 0.31  ld+st-env 0.31  st-stack 0.31  st+ld-window-line 0.31
+movs:   8 MiB diag3 native: st-env+ld 0.31  st-env+st 0.31  st-env+ld+st 0.33
+jit: native macOS: W^X toggle pair + patch + sys_icache_invalidate + call: 170.36 ns  [100000 rounds, 0 wrong]

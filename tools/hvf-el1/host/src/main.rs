@@ -81,6 +81,12 @@ extern "C" {
     fn bench_sum_direct(base: u64, idx: u64, n: u64) -> u64;
     fn bench_sum_softmmu(env: u64, idx: u64, n: u64) -> u64;
     fn bench_sum_pinned(env: u64, idx: u64, n: u64) -> u64;
+    fn bench_mix4_direct(base: u64, idx: u64, n: u64) -> u64;
+    fn bench_mix4_softmmu(env: u64, idx: u64, n: u64) -> u64;
+    fn bench_mix12_direct(base: u64, idx: u64, n: u64) -> u64;
+    fn bench_mix12_softmmu(env: u64, idx: u64, n: u64) -> u64;
+    fn bench_copy_direct(base: u64, src: u64, n: u64, dst: u64) -> u64;
+    fn bench_copy_softmmu(env: u64, src: u64, n: u64, dst: u64) -> u64;
     fn bench_movs_softmmu(base: u64, src: u64, dst: u64, rows: u64, w: u64, env: u64) -> u64;
     fn bench_movs_direct(base: u64, src: u64, dst: u64, rows: u64, w: u64, env: u64) -> u64;
     fn bench_movs_fast(base: u64, src: u64, dst: u64, rows: u64, w: u64, env: u64) -> u64;
@@ -456,6 +462,49 @@ fn native_set(name: &str, pages: usize, mem: *mut u8, rng: &mut Rng, freq: u64) 
         f(t2 - t1, n),
         f(t3 - t2, n)
     );
+    for (k, fd, fs) in [
+        (4u32, bench_mix4_direct as unsafe extern "C" fn(u64, u64, u64) -> u64, bench_mix4_softmmu as unsafe extern "C" fn(u64, u64, u64) -> u64),
+        (12u32, bench_mix12_direct as unsafe extern "C" fn(u64, u64, u64) -> u64, bench_mix12_softmmu as unsafe extern "C" fn(u64, u64, u64) -> u64),
+    ] {
+        let mut r = [0u64; 2];
+        let t0 = ticks();
+        for _ in 0..passes {
+            r[0] = r[0].wrapping_add(unsafe { fd(base, idx as u64, idx_n as u64) });
+        }
+        let t1 = ticks();
+        for _ in 0..passes {
+            r[1] = r[1].wrapping_add(unsafe { fs(envp, idx as u64, idx_n as u64) });
+        }
+        let t2 = ticks();
+        assert!(r[0] == r[1], "mix results differ");
+        println!(
+            "load: {name:>7} mix{k:<2}  direct {}  softmmu {}   [{n} loads, {k} ALU ops each]",
+            f(t1 - t0, n),
+            f(t2 - t1, n)
+        );
+    }
+    {
+        let half = (idx_n / 2) as u64;
+        let dst = idx as u64 + half * 4;
+        unsafe { bench_copy_direct(base, idx as u64, half, dst) };
+        let mut r = [0u64; 2];
+        let t0 = ticks();
+        for _ in 0..passes {
+            r[0] = r[0].wrapping_add(unsafe { bench_copy_direct(base, idx as u64, half, dst) });
+        }
+        let t1 = ticks();
+        for _ in 0..passes {
+            r[1] = r[1].wrapping_add(unsafe { bench_copy_softmmu(envp, idx as u64, half, dst) });
+        }
+        let t2 = ticks();
+        let _ = r; // the stores change what the next pass loads
+        let n = passes * half;
+        println!(
+            "load: {name:>7} copy   direct {}  softmmu {}   [{n} load+store pairs]",
+            f(t1 - t0, n),
+            f(t2 - t1, n)
+        );
+    }
 }
 
 fn native_baseline() {

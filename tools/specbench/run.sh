@@ -23,7 +23,8 @@
 #   pinned     default + pinned-regs=on (patch 21, opt-in)
 #   pc64as53   default + x87-pc64-as-53=on (patch 47, opt-in, inexact)
 #
-# Env: OUT=dir (build/specbench/runs), ISO=path (build/specbench/sb.iso, from
+# Env: QEMU_EXTRA='...' (appended to the QEMU line: a -plugin, a -d),
+# OUT=dir (build/specbench/runs), ISO=path (build/specbench/sb.iso, from
 # build-guest.sh), BOOT_WAIT=s (cap on the knock, 300), RUN_WAIT=s (cap on
 # the whole list, 5400), MEM=MB (512). The image boots snapshot=on and is
 # never written. Never run two of these at once (CLAUDE.md: two TCG guests
@@ -100,7 +101,7 @@ for cfg in "${CONFIGS[@]}"; do
     -drive "file=$IMG,if=ide,index=0,snapshot=on" -drive "file=$FDD,if=floppy,format=raw" \
     -cdrom "$ISO" -vga cirrus -net none -usb -device usb-tablet \
     -display none -qmp "unix:$SOCK,server,nowait" -serial "file:$D/serial.log" -monitor none \
-    > "$D/qemu.log" 2>&1 &
+    ${QEMU_EXTRA:-} > "$D/qemu.log" 2>&1 &
   QPID=$!; GW_PID=$QPID
   Q() { python3 "$ROOT/tools/qmpc.py" "$SOCK" "$@"; }
   t_boot=$(date +%s)
