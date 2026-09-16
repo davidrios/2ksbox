@@ -95,8 +95,10 @@ print their first line, hang, and leave the card at a scribbled
 second, no writes) after the `packet ... to the window with the FIFO off`
 warning and tens of thousands of refused `intrCtrl` writes. Not the RAM
 command FIFO: `ramfifo=off` hangs the same way (garbage dimensions, the
-spin on the status register instead). Games are unaffected because they
-open Glide themselves at startup; this is the reopen path.
+spin on the status register instead). **And it is intermittent, games included** (the user, 2026-09-16, testing
+by hand on this machine: sometimes a game hangs, sometimes the same game
+does not) — so it is neither a tools-only path nor a fixed sequence, and an
+earlier note here saying games were unaffected was wrong.
 The fix is a judgement call not yet made: drop `0x200000`-window writes
 while the FIFO is off (offset ≥ `0x100`, to keep the alternate-mapped
 `< 0x100` register writes), or work out why Glide's re-init leaves the
@@ -288,6 +290,96 @@ Voodoo 2" checkbox (`voodoo2 = true` in the bundle, `-device
 voodoo2,addr=0x05`; both front ends, the C API, `launcherx --wizard-edit
 … voodoo`; the `voodoo2` check), or `tools/win98-game-test.sh`'s
 `EXTRA='-device voodoo2'`.
+
+## Two jobs, written up for a new session (2026-09-16)
+
+### A. The Glide hang at `grSstWinOpen` — blocking, take this first
+
+**Symptom.** A Glide program on the emulated card wedges as it opens its
+window: the guest spins on `cmdFifoRdPtr` (register `0x1e8`, millions of
+reads a second, no writes; with `ramfifo=off` it spins on the status
+register `0x000` instead), and the card sits at a scribbled resolution —
+`3028x1044` twice, `3741x1789` once — with its display off. The QEMU log
+shows, in order: `command FIFO in RAM (ring …)`, `command FIFO through
+MMIO (ring …)`, then `warning: voodoo2: command-FIFO packet … to the
+window at … with the FIFO off -> decoded as register 000`, then tens of
+thousands of `refused (86Box fatal): intrCtrl write …`. So Glide keeps
+streaming packets into the FIFO window after `fbiInit7` has been reset to
+FIFO-off, 86Box decodes each dword as the register at bits 9:2, and
+`videoDimensions`, `fbiInit*` and `intrCtrl` are scribbled.
+
+**It is intermittent and it hits games** (the user, by hand, 2026-09-16).
+Headless it has been 100 % reproducible with the tools, which makes it the
+cheap way in.
+
+**Ruled out.** The RAM command FIFO (`ramfifo=off` hangs the same way, and
+the DOS program in `tools/voodoo-guest-test.py` drives the same FIFO
+through hundreds of thousands of packets without trouble); the rasterizer
+recompiler (`recompiler=off` unaffected); our own test program (the stock
+`TESTS\GLIDETEST.EXE -noreopen` hangs identically).
+
+**Reproduce** (~2 min, no hands):
+
+    OUT=build/w98game/gl1 RAW=build/w98game/bench.raw NO_DRIVER=1 \
+      CDS=guest-tools/out/guest-tools-3dfx-<rev>.iso \
+      EXTRA='-device voodoo2,addr=0x05' RUN_SECS=80 SHOTS=10 \
+      PULL='GLIDETEST.LOG' \
+      GUEST_CMD=$'c:\ncd \\\nD:\\TESTS\\GLIDETEST.EXE -noreopen -hold 20' \
+      tools/win98-game-test.sh ~/.local/share/2ksbox/machines/base98-br/disk.qcow2 gl1
+
+It hangs: no `GLIDETEST.LOG`, the console shows only the program's first
+line, `qemu.log` has the sequence above. `build/w98game/gl1` is a kept run.
+
+**Where it lands.** `voodoo/voodoo2.c`, `voodoo2_mmio_write()`: the
+`fifo_off_writes` counter and its one-shot warning already name it exactly.
+The decode itself is 86Box's `voodoo_writel` switch (vendored, do not
+edit).
+
+**The judgement call, still not made** (recorded 2026-09-12, now more
+urgent): either drop `0x200000`-window writes while the FIFO is off —
+offset ≥ `0x100`, so the alternate-mapped register writes below `0x100`
+still work — or find out why Glide streams into a FIFO that
+`sst1InitRegisters` has just turned off, and match what the chip does with
+those writes. The device already masks `fbiInit1` bit 23 for a
+neighbouring reason, so a targeted refusal is in keeping. Before choosing,
+take `VOODOO2_TRACE=1` of a hanging and a non-hanging boot and diff the
+order of `fbiInit7` / `cmdFifoBaseAddr` / `cmdFifoRdPtr` writes around the
+open — the intermittency should show up there.
+
+**Guard it when fixed.** Intermittent wants repetition: a loop of N boots
+of the `GLIDETEST` run above, and `VOODOO=1 tools/setup-guest-test.sh` for
+the driver side. The DOS FIFO phases in `tools/voodoo-guest-test.py` stay
+the deterministic floor.
+
+### B. Dither subtraction in 86Box's two recompilers — not blocking
+
+**What.** On a blend the chip reads the pixel underneath, which was written
+dithered, and subtracts that position's dither offset again when
+`fbzMode`'s `DITHER_SUB` (bit 19) is set. 86Box's interpreter does it
+(`vid_voodoo_render.c` ~1310, tables `dithersub_rb` / `dithersub_g` and the
+2x2 pair, gated also by `voodoo->dithersub_enabled`, our `dither-sub=on`
+default). **Neither code generator mentions `dithersub`** — grep
+`vid_voodoo_codegen_x86-64.h` and `vid_voodoo_codegen_arm64.h` — and
+`recompiler=on` is the default, so in practice it never happens.
+
+**Evidence, already in the suite.** The `voodoo-guest` check's dither
+phase: `recompiler=off` reads the reference in all eight columns (`7c0f`,
+green sd 1.32); the default walks `7bef, 7bcf, 73ce … 6b4d`, green sd to
+7.19, a visibly grainy band. `RECOMP=off tools/voodoo-guest-test.py` is the
+A/B; frames in `build/voodoo-guest[-interp]/dither.ppm`.
+
+**Where to change.** The x86-64 generator's blend section (it loads the
+destination pixel through the shared `rgb565` table around line 2506 and
+blends from there) and the ARM64 generator's PHASE 5 (~3736–3766, "Load
+dest RGB from framebuffer"). Both need the same table lookups the
+interpreter does, keyed on `(y & 3, x & 3)` or the 2x2 pair, under the same
+two conditions. **The files are vendored verbatim** (`voodoo/86box/`,
+`scripts/sync-86box-voodoo.sh`): the fix belongs upstream in 86Box, and
+comes back here with a sync.
+
+**Worth knowing before spending a day on it:** no title is known to care.
+Porsche's green tire smoke, which started this, is the game at 16 bpp and
+happens with and without dither subtraction.
 
 ## Next steps, in order
 
