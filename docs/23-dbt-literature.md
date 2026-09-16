@@ -68,7 +68,8 @@ closed to us on the Air: macOS maps at 16 KiB and the guest's pages are
 track doc's "Gauging the gain"): a memory census of each workload times
 the probe's workload-shaped kernels projects 1.1–1.2x (7-Zip 1.2x, Super
 PI and Quake II 1.16x, Blood 1.1x, the FP kernels 1.05x), and the
-nested-TLB risk does not occur on any of them.
+nested-TLB risk does not occur on any of them. **Abandoned for the
+time being (user decision, 2026-09-16)**: not worth the port's complexity.
 
 Cheaper cuts at the same cost that we did take: patch 16 (TLB floor) and
 patch 44 (retire instead of flush). Also relevant: Tong, Koju, Kawahito,

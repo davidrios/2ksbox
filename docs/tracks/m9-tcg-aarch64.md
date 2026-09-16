@@ -692,8 +692,9 @@ XP idle spends there). Against that: a freestanding build of ~45 KLOC,
 and interrupts, and a player that carries the hypervisor entitlement —
 the 4–8 weeks of the verdict above, for a gain the size of one
 control-flow patch on the programs this project runs. The number is now
-measured rather than inferred from a profile's samples, and it says the
-port waits until the queue has nothing cheaper left.
+measured rather than inferred from a profile's samples. **Decision
+(the user, 2026-09-16): abandoned for the time being** — a fifth is not
+worth the complexity, and the queue is already at a good place.
 
 **Why the 16 MiB row is not the estimate** (the user's question, same
 day). The kernel table's largest gap is at 16 MiB — 4.11 against 2.37 ns
@@ -1755,15 +1756,14 @@ above):
    per guest memory access. The probe's `pinned` kernels say this is
    worth 0 % on dependent loads and 10–20 % on independent ones; fold it
    into 2 if it comes for free, don't make it a patch of its own.
-   - **The VM design's risk number** (can go first, it is a day): a
-     counter of distinct guest pages touched per second and the
-     `tlb_fill` rate on 7-Zip / FIFA 2000 / D3DGAME9 (a `-d` line or a
-     QMP query, temporary), to predict the nested-TLB penalty the probe
-     measured (~21 ns per 4 KiB miss beyond 12 MiB of random working
-     set). With that number the "TCG inside an HVF VM" port (the probe
-     section above: ~45 KLOC freestanding + cputlb rewritten as the
-     fault-driven mirror + a mailbox protocol, 4–8 weeks) becomes a
-     decision instead of a bet; design doc 18 either way.
+   - ~~**The VM design's risk number**~~ — measured 2026-09-16 ("Gauging
+     the gain" above): the risk does not occur and the whole design is
+     worth 1.1–1.2x on every workload. **Abandoned for the time being,
+     user decision 2026-09-16**: 20 % is not worth the complexity of the
+     port (~45 KLOC freestanding, cputlb as a fault-driven mirror, a
+     mailbox protocol) at the speed the queue already reaches. The probe,
+     the census plugin and the projection stay in the tree for the day a
+     workload changes the number.
 4. **Carry at TB entry**: inline the ADC/SBB/shift cases of
    `gen_prepare_eflags_c`, or carry the static cc_op into the TB lookup
    key (the high half of `cs_base` is free in 32-bit mode) so a TB knows
