@@ -27,10 +27,23 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_version = QEMU_PLUGIN_VERSION;
 
 static struct qemu_plugin_scoreboard *insns_sb;
 static qemu_plugin_u64 insns;
-static uint64_t loads, stores, acc;
+static uint64_t loads, stores, acc;   /* acc: every access, the reuse clock */
 static uint64_t sec_bits[WORDS], win_bits[WORDS], ever_bits[WORDS], written_bits[WORDS];
 static uint64_t sec_pages, win_pages, win_n, win_sum, win_max, win_over3072;
 static uint64_t ever_pages, written_pages;
+/*
+ * The reuse distance of each access's page, in accesses since that page
+ * was last touched, in powers-of-two buckets: bucket b counts distances in
+ * [2^b, 2^(b+1)) for b = 0..29, bucket 30 the first touch. The probe's
+ * kernels touch R pages uniformly at random, so a kernel row corresponds
+ * to a mean distance of R accesses: the 64 KiB row to ~16, 4 MiB to ~1K,
+ * 8 MiB to ~2K, 16 MiB to ~4K, 32 MiB to ~8K -- with one word per page
+ * per access; real code touches many words per page between reuses, so
+ * a distance here counts accesses, and the mixture in project.py maps
+ * it through the window's own pages-per-access density.
+ */
+static uint32_t *last_touch;              /* per page: the access count at its last touch */
+static uint64_t reuse[32], last_reuse[32];
 static uint64_t last_loads, last_stores, last_insns, last_ever, last_written;
 static int64_t t0, next_report;
 static uint64_t win_acc;
@@ -60,6 +73,13 @@ static void report(int64_t now, bool final)
                     ever_pages - last_ever, written_pages - last_written,
                     ever_pages, written_pages, final ? " final" : "");
     qemu_plugin_outs(s->str);
+    g_string_printf(s, "reuse t=%.1f", dt);
+    for (int b = 0; b < 31; b++) {
+        g_string_append_printf(s, " %" PRIu64, reuse[b] - last_reuse[b]);
+        last_reuse[b] = reuse[b];
+    }
+    g_string_append(s, "\n");
+    qemu_plugin_outs(s->str);
     last_insns = ins; last_loads = loads; last_stores = stores;
     last_ever = ever_pages; last_written = written_pages;
     memset(sec_bits, 0, sizeof(sec_bits));
@@ -82,7 +102,13 @@ static void vcpu_mem(unsigned int cpu_index, qemu_plugin_meminfo_t info,
     }
     if (set_bit(ever_bits, page)) {
         ever_pages++;
+        reuse[30]++;
+    } else {
+        uint32_t d = (uint32_t)acc - last_touch[page];
+        reuse[d ? 63 - __builtin_clzll(d) : 0]++;
     }
+    last_touch[page] = (uint32_t)acc;
+    acc++;
     if (set_bit(sec_bits, page)) {
         sec_pages++;
     }
@@ -130,6 +156,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(qemu_plugin_id_t id,
                                            const qemu_info_t *info,
                                            int argc, char **argv)
 {
+    last_touch = g_malloc0(PAGES * sizeof(uint32_t));
     insns_sb = qemu_plugin_scoreboard_new(sizeof(uint64_t));
     insns = qemu_plugin_scoreboard_u64(insns_sb);
     t0 = g_get_monotonic_time();

@@ -29,7 +29,7 @@ for s in sets:
     delta[s] = (ld[1] - ld[0], (cp[1] - cp[0]) - (ind[1] - ind[0]))
 print("per access, ns (softmmu - direct):", ", ".join(f"{s}: load {d[0]:.2f} store {d[1]:.2f}" for s, d in delta.items()))
 print(f"{'workload':10} {'Ginsn/s':>8} {'Macc/s':>7} " + " ".join(f"{s:>14}" for s in sets))
-for spec in sys.argv[2:]:
+for spec in ([] if "--reuse" in sys.argv else sys.argv[2:]):
     name, gi, ld, st, wall = spec.split(':'); gi, ld, st, wall = map(float, (gi, ld, st, wall))
     ldr, str_ = ld * 1e6 / wall, st * 1e6 / wall
     cols = []
@@ -37,3 +37,48 @@ for spec in sys.argv[2:]:
         frac = (ldr * delta[s][0] + str_ * delta[s][1]) * 1e-9
         cols.append(f"{100*frac:4.0f}% -> {1/(1-frac):4.2f}x")
     print(f"{name:10} {gi/wall:8.2f} {(ldr+str_)/1e6:7.0f} " + " ".join(f"{c:>14}" for c in cols))
+
+# ---- the mixture: each access charged the row its own reuse distance puts it on ----
+# tools/hwmmu/project.py <probe> --reuse <census.log> <shell_after_s> name:Ginsn:Mld:Mst:wall_s:start:end ...
+if len(sys.argv) > 2 and sys.argv[2] == "--reuse":
+    log, shell = sys.argv[3], float(sys.argv[4])
+    rrx = re.compile(r"reuse t=([\d.]+)((?: \d+)+)")
+    crx = re.compile(r"census t=([\d.]+) insns=(\d+) ld=(\d+) st=(\d+) pages1s=(\d+) win64k avg=(\d+) max=(\d+)")
+    reuse_rows, dens_rows = [], []
+    for line in open(log):
+        m = rrx.match(line)
+        if m:
+            reuse_rows.append((float(m.group(1)), [int(x) for x in m.group(2).split()]))
+        m = crx.match(line)
+        if m:
+            dens_rows.append((float(m.group(1)), int(m.group(6)) / 65536.0))
+    allsets = ["64 KiB", "4 MiB", "8 MiB", "16 MiB", "32 MiB"]
+    for s_ in allsets:
+        if s_ not in delta:
+            ld = row("mix4", s_); ind = row("indep", s_); cp = row("copy", s_)
+            delta[s_] = (ld[1] - ld[0], (cp[1] - cp[0]) - (ind[1] - ind[0]))
+    def row_for_pages(pages):  # distinct pages between reuses -> the kernel row of that range
+        for lim, s_ in [(100, "64 KiB"), (1536, "4 MiB"), (3072, "8 MiB"), (6144, "16 MiB")]:
+            if pages < lim:
+                return s_
+        return "32 MiB"
+    print("\nmixture: each access on the row of its own reuse distance")
+    print(f"{'workload':10} {'first':>6} " + " ".join(f"{s_:>7}" for s_ in allsets) + f" {'by pages':>16} {'by accesses':>16}")
+    for spec in sys.argv[5:]:
+        name, gi, ld, st, wall, a, b = spec.split(':'); gi, ld, st, wall = map(float, (gi, ld, st, wall)); a, b = shell + float(a), shell + float(b)
+        sel = [r for t, r in reuse_rows if a <= t < b]
+        dens = [d for t, d in dens_rows if a <= t < b]
+        density = sum(dens) / len(dens)          # distinct pages per access in a window
+        tot = [sum(r[i] for r in sel) for i in range(31)]
+        n = sum(tot)
+        share = {s_: 0.0 for s_ in allsets}; share_acc = {s_: 0.0 for s_ in allsets}
+        for bkt in range(30):
+            d = 2 ** bkt * 1.5                    # the bucket's middle, in accesses
+            share[row_for_pages(d * density)] += tot[bkt] / n
+            share_acc[row_for_pages(d)] += tot[bkt] / n
+        ldr, str_ = ld * 1e6 / wall, st * 1e6 / wall
+        def proj(sh):
+            frac = sum(sh[s_] * (ldr * delta[s_][0] + str_ * delta[s_][1]) for s_ in allsets) * 1e-9
+            return f"{100*frac:4.0f}% -> {1/(1-frac):4.2f}x"
+        print(f"{name:10} {100*tot[30]/n:5.2f}% " + " ".join(f"{100*share[s_]:6.1f}%" for s_ in allsets) + f" {proj(share):>16} {proj(share_acc):>16}")
+        print(f"{'':10} accesses-distance shares: " + " ".join(f"{s_} {100*share_acc[s_]:.1f}%" for s_ in allsets) + f"; density {density:.4f} pages/access")

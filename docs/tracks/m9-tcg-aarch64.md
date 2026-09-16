@@ -695,6 +695,35 @@ control-flow patch on the programs this project runs. The number is now
 measured rather than inferred from a profile's samples, and it says the
 port waits until the queue has nothing cheaper left.
 
+**Why the 16 MiB row is not the estimate** (the user's question, same
+day). The kernel table's largest gap is at 16 MiB — 4.11 against 2.37 ns
+on `mix4` — and the census's windows are a coarse proxy for whether a
+workload's accesses sit there. So the census now records each access's
+**page reuse distance** (accesses since that 4 KiB page was last touched,
+in powers-of-two buckets, `reuse` lines; `docs/22-data/hwmmu/census-reuse.txt`,
+Super PI and 7-Zip re-run), and `project.py --reuse` charges each access
+the row its own distance corresponds to: a kernel over R pages touches
+one word of a random page per access, so its row is a mean reuse
+distance of ~R accesses (64 KiB ≈ 16, 4 MiB ≈ 1K, 8 MiB ≈ 2K, 16 MiB ≈
+4K, 32 MiB ≈ 8K), and a real access's distance in accesses is mapped
+either directly (the pessimistic reading) or through the window's own
+pages-per-access density (the realistic one).
+
+| share of accesses whose page was last touched ≥ 2^b accesses ago | 2^6 | 2^8 | 2^10 | 2^12 | 2^14 | 2^16 | 2^20 |
+|---|---|---|---|---|---|---|---|
+| Super PI 1M | 2.7 % | 0.5 % | 0.3 % | 0.2 % | 0.1 % | 0.0 % | 0.0 % |
+| 7-Zip | 3.5 % | 1.7 % | 0.7 % | 0.5 % | 0.4 % | 0.3 % | 0.1 % |
+
+97 % of both workloads' accesses re-touch a page within 64 accesses; the
+16 MiB row's distance (~4K accesses) holds 0.1 % of 7-Zip's accesses and
+none of Super PI's, and even the pessimistic mapping puts 98–99 % of
+accesses on the 64 KiB row. The mixture projection is therefore **Super
+PI 1.16x and 7-Zip 1.20x under both mappings** — the middle-row numbers
+above were, if anything, generous, and the pessimistic row is a bound
+the workloads never approach. The chase kernels' 2.4x per load likewise
+applies to a dependent-address minority the census cannot separate; the
+1.2x stands.
+
 Two refinements would move the estimate, both cheap: the same census on a
 3D title through the player (3DMark 99's first-person test, FIFA), where
 the CR3 rate and the framebuffer's dirty logging enter; and a `mix`
