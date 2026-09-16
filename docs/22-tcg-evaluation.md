@@ -32,7 +32,18 @@ against a screendump of what was on screen: 2.2x to 30x, because the
 patches for self-modifying code and for Windows 98's memory manager are
 invisible to a benchmark program and decisive under a game. A
 SPEC-CPU2006-derived integer suite, measured once, gains 1.07x, which says
-the patches do not target compiled integer code. The evaluation's first
+the patches do not target compiled integer code. We then asked what the
+literature's remaining ideas are worth on this tree: each candidate was
+implemented behind a switch and measured — a pc-indexed jump table and a
+back-edge-only interrupt check within noise, return prediction through a
+host call/return pair a loss — and the largest parked design, running the
+translator inside a hardware VM with the guest's page tables mirrored so
+that a guest access is a host access, was priced without building it: a
+memory census of every workload times microbenchmarks of the access
+sequences projects 1.1–1.2x, with the design's one risk (a working set
+beyond the nested TLB) absent from every workload measured. The tree is,
+on these programs, at the point where the remaining generic ideas buy a
+fifth at most. The evaluation's first
 finding was about its own method: on macOS/arm64 a third of QEMU launches
 place TCG's code buffer 8 GiB from the helpers and run helper-heavy code
 35–45 % slower, pristine QEMU included; a load-time reservation (patch 63)
@@ -74,7 +85,9 @@ check that every configuration computes the same output; (c) the games
 the patches were written for, measured on one Windows 98 machine with the
 same A/B and each number checked against a screendump; and (d) what a
 SPEC-style integer suite makes of the tree, so a reader from the
-binary-translation literature (§7) can place the numbers. It is written
+binary-translation literature (§7) can place the numbers; and (e) what
+the literature's remaining ideas are worth on this tree, each tried or
+priced (§8). It is written
 for developers: the mechanisms are explained at the level needed to reason
 about them, and every claim points at the patch or tool that carries it.
 
@@ -760,12 +773,13 @@ that is convergence, not citation:
   QEMU with an mmap view. We measured the same design on
   Hypervisor.framework (1.4–2.6x per load, `tools/hvf-el1/`) and parked
   it as weeks of work; patches 16 and 44 are the cheaper cuts at the same
-  cost.
+  cost — and §8.2 prices the design on our workloads at 1.1–1.2x.
 - **Indirect branches** — SPIRE (Jia et al., VEE 2013), MAMBO-X64's
   hardware return-address prediction (D'Antras et al., PLDI 2017) and
   Tiaozhuan's full address mapping (Li et al., TACO 2024; +3.9 % average,
   19.4 % peak on SPEC with an x86 guest). Patch 20 inlines QEMU's own
-  jump-cache probe; those go further.
+  jump-cache probe; those go further, and §8.1 tried them: the table
+  within noise, the return prediction a loss.
 - **Global register allocation** — Zurstraßen et al. (DATE 2025, static
   guest-to-host mappings, up to 1.4x over block-local) and Batuzov (ISP
   RAS) in QEMU. Patch 21 is the same idea on AArch64's callee-saved set.
@@ -785,7 +799,107 @@ that is convergence, not citation:
   1.36x), function offload to native code (2512.00487), IR-less
   translation (2501.03427).
 
-## 8. Conclusion
+## 8. What the remaining ideas are worth
+
+The related work of §7 leaves two kinds of candidate: techniques the queue
+has not tried, and the one design it parked for size. Both were priced on
+the same tier on 2026-09-16 (the full account is doc 23's last section and
+the M9 track doc's "Gauging the gain"; the diffs, scripts and runs are
+under `docs/22-data/spikes/` and `docs/22-data/hwmmu/`).
+
+### 8.1 The techniques, each tried
+
+Each was implemented behind its own `-accel tcg` switch on one build,
+exact (every battery of the guest test stage passes; Super PI's digits
+identical), and measured against a `default` run of the unchanged binary
+taken the same morning. Noise on this tier is ±2 %.
+
+| candidate | Super PI (s) | 7-Zip (MIPS) | SSEBENCH (ns) | verdict |
+|---|---|---|---|---|
+| control (the tree as committed) | 75.2 | 1553 | 2.37 | |
+| jump cache indexed by the pc itself (Tiaozhuan's full address mapping: 32 GiB reserved, populated on demand) | 73.5 | 1588 | 2.30 | within noise |
+| the exit-request check at back edges and indirect branches only (Niu et al.) | 74.3 | 1583 | 2.29 | within noise |
+| return prediction: a return-address ring, `call` through a host `bl`, `ret` through a host `ret` (MAMBO-X64), on top of both | 75.5 | 1574 | 2.45 | a loss, 2–6 % |
+| every SSE result check removed — inexact, the ceiling of any cheaper check (RAPIDO) | | | 2.17 | ≤ 6 % of the SSE score, none of it in the packed kernels |
+| pinned registers capped at seven (the DATE 2025 cross-check of patch 21) | XP rebooted in Super PI | | | the crash is the pinned path, not the eighth register |
+
+The two structural ones show nothing because the control-flow patches
+already took the part that mattered on an out-of-order host: the hash the
+jump table removes was not on the critical path of a probe that ends in
+five dependent loads, and the per-block interrupt check is an L1 load
+the core never waits for. Return prediction loses because the ring push
+at every call and the compare at every `ret` cost more than the
+hardware's prediction of a `ret` saves — which says the M1's indirect
+predictor was already right about most `br` targets. The back-edge check
+also taught something about the tree: patch 34 delivers the PIT's overdue
+interrupt on the `in` instruction and relied on the next block's check to
+take it before the next guest instruction; a block ended by an I/O
+instruction therefore keeps the check.
+
+### 8.2 The hardware-MMU design, priced without building it
+
+The design (the M9 track doc): run TCG's output inside a
+Hypervisor.framework VM whose stage-1 page tables mirror the x86 guest's,
+so a guest load is one host load instead of the softmmu chain — the
+Captive / ESPT / HSPT family of §7, 2–2.5x in their SPEC numbers. A probe
+had priced its primitives (1.4–2.6x per load); what a workload would gain
+was inferred from the profile's 43 % of samples on the chain. Two
+measurements replaced the inference:
+
+- **a memory census of each workload** (`tools/hwmmu/census.c`, a TCG
+  plugin): instructions, loads, stores, the distinct 4 KiB pages touched
+  per second and per window of 65,536 accesses (the nested TLB holds
+  3072), each access's page reuse distance, and first touches and first
+  writes (a mirror fill and a dirty upgrade each);
+- **workload-shaped kernels in the probe**: an independent load with
+  four or twelve ALU ops behind it, and a load-plus-store pair, as
+  today's softmmu sequence and as the mirrored access, at working sets
+  from 64 KiB to 32 MiB.
+
+| workload | acc / insn | stores | pages per 64K-access window, mean / max | windows over 3072 | accesses re-touching a page within 64 accesses |
+|---|---|---|---|---|---|
+| Super PI 1M | 0.55 | 38 % | 70 / 1,600 | 0 of 449,891 | 97 % |
+| 7-Zip | 0.34 | 34 % | 240 / 1,150 | 0 of 286,139 | 97 % |
+| nbench | 0.29 | 34 % | 8 / 926 | 0 of 570,340 | |
+| Quake II timedemo (Win98, software renderer) | 0.35 | 45 % | 52 / 334 | 0 of 605,108 | |
+| Blood (Win98 DOS box) | 0.32 | 16 % | 94 / 367 | 0 of 242,234 | |
+
+With ALU work to hide behind, the chain costs 0.3–0.6 ns per access
+rather than the 2–5 ns of a dependent chase, and a store is the better
+half (a plain `str` against a chain of its own). Charging each workload's
+full-speed access rate those differences, each access on the kernel row
+its own reuse distance puts it on:
+
+| workload | M accesses / s | projected gain |
+|---|---|---|
+| 7-Zip | 483 | 1.20x |
+| Super PI 1M | 392 | 1.16x |
+| Quake II timedemo | 372 | 1.16x |
+| Blood | 257 | 1.10x |
+| nbench, SSEBENCH | 146–188 | 1.05–1.07x |
+
+The design's one risk — random working sets beyond the nested TLB's
+12 MiB, where the probe measured ~21 ns per miss — does not occur: over
+2.3 million windows of 65,536 accesses on six workloads, none touched
+more than 1,600 distinct pages. The projection leaves out what would also
+change under the mirror (TLB refills at 40 k/s and flushes at 500/s on
+this tier, XP's 3.9 % idle in CR3 switches, the 2,400 CR3 writes a
+second of a Windows 98 game, whose largest costs patches 42 and 44
+already took), and it cannot separate dependent-address accesses, so
+7-Zip's number is a floor. The literature's 2–2.5x on SPEC does not
+transfer to these programs, and the reason is visible in the census: a
+1998 game or a 2003 benchmark re-touches its pages within a few dozen
+accesses, so the softmmu chain it pays is the throughput of nine
+overlapped instructions, not the latency of a dependent walk.
+
+**Decision (2026-09-16).** A fifth, for a freestanding build of the
+vCPU core, a rewrite of `cputlb.c` as a fault-driven mirror and a mailbox
+protocol between the VM and the device model, is not worth it at the
+speed the tree already reaches: the design is abandoned for the time
+being, with the census, the kernels and the projection kept in the tree
+for the day a workload changes the number.
+
+## 9. Conclusion
 
 The queue does what it was written to do, and the matrix says by how much
 on the programs the literature would measure: 2.3x geometric mean over
@@ -806,15 +920,20 @@ from the helpers and run helper-heavy guest code at 0.55–0.65x, pristine
 or patched, and a load-time reservation next to the image (patch 63)
 removes it.
 
-The literature's remaining candidates were each spiked on this tier on
-2026-09-16 (doc 23, last section): none moves it by more than the noise,
-and the pinned-register crash reproduces with seven registers.
+And the remaining ideas are priced (§8): the literature's untried
+techniques each move this tier by less than its noise or lose, and the
+hardware-MMU design that the field's SPEC numbers make look like 2x is
+worth 1.1–1.2x on these programs, because their accesses re-touch a page
+within a few dozen accesses and pay the softmmu chain as overlapped
+throughput rather than dependent latency. On the workloads this project
+runs, the tree is at the point where what is left to gain generically is
+a fifth at most, and the decision was to stop here.
 
 Open, in order: the games of §6 on the project's x86-64 machine; the
 x86-64 form of the placement question there, where the far form is the
 always case; patch 21's crash, reproducible by `tools/specbench/run.sh
-<image> pinned`; the denormal slow path (§5.3); and the "all off plus one
-switch" family for a reader lifting a single patch.
+<image> pinned`, set aside; the denormal slow path (§5.3); and the "all
+off plus one switch" family for a reader lifting a single patch.
 
 ## Appendix A. The SPEC-CPU2006-derived suite (measured once, not the headline)
 
@@ -878,7 +997,11 @@ report as `docs/22-data/report.md`; the A/B of patch 63 under
 the rebooting guest. The games are under `docs/22-data/games/<run>/`: the
 rate lines, the per-test placement (`tests.txt`), 3DMark's score and
 Details screendumps, Blood's per-second counts, the game frames the
-numbers were checked against, and Quake II's console log. The profiler
+numbers were checked against, and Quake II's console log. §8's material
+is under `docs/22-data/spikes/` (the spike diff, the scripts that produce
+it, every run's result lines, the rebooted `pinned-7` guest) and
+`docs/22-data/hwmmu/` (the census of every workload, the reuse-distance
+census, the probe's clean run). The profiler
 samples (one per configuration, inside Super PI) are not committed:
 `build/specbench/samples/` on the Air.
 
