@@ -1,0 +1,1 @@
+throttle window 21 s: flips 58.8 60.0 60.0 60.0 -> 59.7 fps; ddi 117.5 120.0 120.1 119.9 -> 119.4 fps

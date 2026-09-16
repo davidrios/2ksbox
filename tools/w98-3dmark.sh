@@ -11,6 +11,9 @@
 #     C:\ARQUIV~1\3DMARK~1), SHOTS=, DDFLAGS= (32768: vertical blank off),
 #     EXTRA= (-perfmap, -d out_asm ...), QEMU_BIN= (a wrapper, e.g. the
 #     memtrace preload) -- all passed through to win98-game-test.sh
+#     TABLET=0: no USB tablet; the clicks walk the PS/2 pointer instead
+#            (qmpc.py relclick) -- for a machine that has never bound a
+#            tablet and would stop in the New Hardware wizard (base98-us)
 #     perf:  a --call-graph dwarf profile for PERF_SECS from PERF_AT s after
 #            the Benchmark click (the first-person test is ~40-56 s)
 #     whole: a -F 199 profile of the whole run (PERF_SECS, default 200);
@@ -42,10 +45,12 @@ cd "$ROOT"
 # TDM_DIR=: 3DMark's 8.3 folder -- claude98 is a Portuguese Windows
 # ("Arquivos de programas"); an English one is \PROGRA~1\3DMARK~1.
 TDM_DIR=${TDM_DIR:-'\ARQUIV~1\3DMARK~1'}
-GUEST_CMD="cd $TDM_DIR"$'\n3DMARK.EXE' TABLET=1 RUN_SECS=900 SHOTS=${SHOTS:-0} \
+TABLET=${TABLET:-1}
+GUEST_CMD="cd $TDM_DIR"$'\n3DMARK.EXE' TABLET=$TABLET RUN_SECS=900 SHOTS=${SHOTS:-0} \
   OUT=$O tools/win98-game-test.sh "${IMG:-$HOME/.local/share/2ksbox/machines/claude98/disk.qcow2}" "$NAME" >"$LOG" 2>&1 &
 H=$!
 q() { python3 tools/qmpc.py "$O/qmp.sock" "$@"; }
+c() { if [ "$TABLET" = 1 ]; then q click "$1" "$2" 800 600; else q relclick "$1" "$2"; fi; }
 until grep -q "s of run" "$LOG"; do
   kill -0 $H 2>/dev/null || { echo "harness ended before the run"; tail "$LOG"; exit 1; }
   sleep 1
@@ -72,9 +77,9 @@ PY
 done
 [ $up = 1 ] || { echo "3DMark's welcome dialog never came up"; q json '{"execute":"system_powerdown"}'; wait $H; exit 1; }
 sleep 5
-q click 368 199 800 600; sleep 8
+c 368 199; sleep 8
 q screendump "$O/project.png" >/dev/null
-q click 448 457 800 600
+c 448 457
 T0=$(date +%s)
 python3 -c 'import time; print("%.9f" % time.time())' > "$O/click.txt"   # BSD date has no %N
 if [ -n "${JIT_SNAPS:-}" ]; then

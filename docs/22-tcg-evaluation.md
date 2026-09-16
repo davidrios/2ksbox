@@ -23,12 +23,14 @@ benchmarks**: programs with a fixed, deterministic workload, run headlessly
 inside the XP guest with their output checked — nbench (BYTEmark), 7-Zip's
 built-in benchmark, Super PI, and our own SSE/x87 kernel set — against
 pristine QEMU 9.2.4, against our tree with every switch off, and with each
-switch removed from the default. The second tier is the **game and
-application measurements** taken while the patches were written (Moto
-Racer, Blood, 3DMark 99 and 2001, 7-Zip on a real archive), which is where
-the largest gains are (a software-rendered game 14x) and which are
-reported separately because a game's frame rate depends on where the
-camera points, what the harness clicks and when. A SPEC-CPU2006-derived
+switch removed from the default. The second tier is the **games** — 3DMark 99 Max,
+3DMark2001 SE, Blood, Moto Racer and Quake II, remeasured on one Windows 98
+machine with the same every-switch-off against default A/B, each number
+checked against a screendump of what was on screen — which is where the
+largest gains are (2.2x to 30x, a software-rendered game 29x) and which
+are reported separately because a game's frame rate depends on where the
+camera points, what the harness clicks and when, and because pristine
+QEMU cannot run them at all (they need the paravirtual adapter). A SPEC-CPU2006-derived
 integer suite was also measured once and is reported in an appendix: it
 gains 1.07x geometric mean, which says the patches do not target compiled
 integer code, and that is why it is not the headline. The evaluation's
@@ -624,11 +626,60 @@ The patches were written against games and applications, and that is
 where the largest gains are — because a Windows 98 game is not a
 benchmark program: it patches its own code, it spends a quarter of its
 frame in x87 at 24-bit precision, it flips the TLB 2,400 times a second
-through the VMM, and it enters ring 0 five times per VxD call. These
-numbers are from the track docs (`docs/tracks/m9-tcg-aarch64.md`,
-`docs/13`, `docs/16`), taken on the same M1 Air unless noted, each with
-the patch that produced it and with what makes it less than
-reproducible:
+through the VMM, and it enters ring 0 five times per VxD call.
+
+### 6.0 The games remeasured (2026-09-16, the Air)
+
+Every game on one machine, `base98-us` (Windows 98 SE, our display driver,
+`-cpu pentium3`, an SB16), on the tree of §5 with patch 63 in, each run on
+a fresh raw copy of the image under a bare `qemu-system-i386`, one guest
+at a time, driven headless by the runners in `tools/w98-*.sh` (the
+CLAUDE.md table has each one's protocol). The A/B is the one the matrix
+uses: **every switch off** against **the default** — pristine QEMU cannot
+be the baseline here, since none of these run without the paravirtual
+adapter. Every number below was checked against a screendump of what was
+on screen when its window was taken (the 3DMark 99 game tests by their
+own frame counters, 3DMark2001's by its "Now Testing" splash and in-frame
+counter, Blood and Moto Racer by the frame itself); the screendumps and
+the raw rate lines are under `docs/22-data/games/`.
+
+| Workload | all switches off | default | default + `x87-pc64-as-53` | Note |
+|---|---|---|---|---|
+| **3DMark 99 Max**, Game 1 (race), vertical blank off | 39.3 fps | **89.2 fps** | — | 800×600×16, triple buffer, Pentium III optimizations; the executor's windows wholly inside the test's shots (`tests.txt`); 3DMark's own counter in the shots: 43–45 / 104 |
+| 3DMark 99 Max, Game 2 (first person), vertical blank off | 35.0 fps | **79.6 fps** | — | counter in the shots 26–29 / 67 (instantaneous, the window is a 5 s mean) |
+| 3DMark 99 Max, 3DMarks / CPU 3DMarks, vertical blank off | 3901 / 5728 | **8686 / 16609** | — | with the vertical blank on both game tests sit at the 60 Hz cap (59.8 / 59.2 fps) and the score is 5987 / 16614 |
+| **3DMark2001 SE**, Game 1 Car Chase, low / high detail | 29.5 / 1.3 fps | 59.0 / **16.9** fps | 59.7 / **24.8** fps | 1024×768×32, DXTC, pure hardware T&L; 3DMark's own per-test figures from its Details dialog; low detail is at the 60 Hz cap |
+| 3DMark2001 SE, Game 2 Dragothic, low / high | 53.1 / 28.4 | 60.7 / **52.9** | 60.0 / **56.1** | |
+| 3DMark2001 SE, Game 3 Lobby, low / high | 41.5 / 14.9 | 60.1 / **37.3** | 60.0 / **42.9** | the high-detail debris physics is x87 at PC=64 (§3.1): +15 % from the inexact switch here, +47 % in the Car Chase |
+| 3DMark2001 SE, Game 4 Nature | 51.5 | 64.0 | 60.1 | |
+| 3DMark2001 SE, 3DMark score | 3163 | **5222** | 5476 | run to run ±3 % (a first default run scored 5072) |
+| **Blood** (DOS Build engine in a Win98 DOS box), the crypt's first view | 4.2 fps | **127.9 fps** | — | 640×480 VESA; frames counted as the game's VBE display-start writes over 80 s; no frame cap |
+| **Moto Racer 1997**, software renderer, the race, vertical blank off | 2.9 fps | **83.5 fps** | — | 640×480, Direct3D turned off in the game's Options; page flips through the driver's chain over 21 s of throttle; the two runs are not at the same point of the lap (the slow one covers 12 s of race in 21 s) |
+| Moto Racer 1997, Direct3D (our HAL), vertical blank on | — | 59.7 fps | — | the flip cap, for the record |
+| **Quake II** 3.20, software renderer, `timedemo 1` demo1 | 34.8 fps | **50.0 fps** | — | 640×480 (`ref_soft`, mode 3); the game's own `689 frames, 13.8 seconds: 50.0 fps` line; a compiled software renderer with no self-modifying code, so the CPU tier's kind of gain (1.4x) |
+
+What the table says, against §5: the switches are worth 2.3x on the CPU
+tier and **2.2x to 30x on the games** — 3DMark 99's game tests 2.3x,
+3DMark2001's high-detail scenes 1.9–13x, Blood 30x, Moto Racer's
+software renderer 29x — because the game-only patches (§6.2: the
+self-modifying-code paths, the CR3 storm, the ring-0 round trips) are
+exactly what the "all off" column loses. The two game tests of 3DMark 99
+and every low-detail scene of 3DMark2001 sit at the 60 Hz flip cap on the
+default build, which is the number a user sees; the uncapped figures are
+what is left in hand. **The inexact PC=64 switch** (patch 47) is worth
++47 % in the scene that is all debris physics (the Car Chase, high
+detail), +15 % in the Lobby and +6 % in Dragothic, and nothing where
+there is none — the low-detail controls are at the cap with it off and
+on, as they should be.
+
+### 6.0.1 The earlier numbers
+
+The track docs' numbers below (`docs/tracks/m9-tcg-aarch64.md`,
+`docs/13`, `docs/16`) were taken while the patches were written, on the
+same M1 Air unless noted, each against the tree of its day, and every one
+of them predates patch 63 — so about a third of them were far-regime runs
+(§5.0). They are kept for the patch each one names and for what makes it
+less than reproducible:
 
 | Workload | Before | After | Patches | Note |
 |---|---|---|---|---|
@@ -636,8 +687,8 @@ reproducible:
 | 7-Zip 26.02 `b -mmt1` decompress rating | 1628 MIPS | 1853 MIPS | 20, 21 (pinned on) | +14 %; compress +3 % |
 | Moto Racer 1997, race (software renderer, self-patching spans) | 7.3 fps | 21.7 → 40 fps | 18, 19 | at the standing start; then the 60-dumps/s probe saturates |
 | Blood (DOS Build engine in a Win98 DOS box), starting room | 9.4 fps | 131 fps | 24 (+ its hash fix) | 14x; translations/3 s 117,254 → 34 |
-| 3DMark 99, race and first-person tests (Ryzen 7 5700X and the Air, TCG) | — | **to be remeasured** | 35–39, 41–45 | the earlier figures (4.5 → 95–105 fps on the Ryzen, race 95.6 / first person ≈ 85 fps on the Air) are withdrawn: the windows they were read from were misplaced by the test classifier (the track doc's 2026-09-12 correction), and the user ruled them invalid on 2026-09-15. Both tests will be measured again, on both machines, with `tools/w98-3dmark.sh` and the rates read from `tests.txt` |
-| 3DMark2001 SE, Lobby, high detail (x87 at 64-bit precision: the debris physics) | 35.2 fps | 44.2 fps exact; 50.3 with `x87-pc64-as-53` | 48, 49; 47 | Ryzen, TCG; the demo's own camera path, rates from the executor's `>100 draws` frames over 23 five-second windows. The high-detail Lobby and Car Chase are the inexact mode's benchmark (§3.1), their low-detail variants the control |
+| 3DMark 99, race and first-person tests (Ryzen 7 5700X and the Air, TCG) | — | withdrawn, see §6.0 | 35–39, 41–45 | the earlier figures (4.5 → 95–105 fps on the Ryzen, race 95.6 / first person ≈ 85 fps on the Air) were read from windows the test classifier had misplaced (the track doc's 2026-09-12 correction) and the user ruled them invalid on 2026-09-15; the classifier's one-missing-shot flaw is fixed and §6.0 has the Air's numbers |
+| 3DMark2001 SE, Lobby, high detail (x87 at 64-bit precision: the debris physics) | 35.2 fps | 44.2 fps exact; 50.3 with `x87-pc64-as-53` | 48, 49; 47 | Ryzen, TCG; the demo's own camera path, rates from the executor's `>100 draws` frames over 23 five-second windows. §6.0 has the benchmark's own per-test figures on the Air |
 
 ### 6.1 What the two tiers agree on
 
@@ -648,9 +699,11 @@ went 9:49 → 6:33 with patch 05 and → 1:25 with patch 06 and 14 on the
 43, 45 and the near buffer); 7-Zip's `b -mmt1` gained +12 % compress and
 +7 % decompress from patch 20 alone, and the matrix has `inline-lookup`
 worth +10 % / +4 % with the other switches on. Where the two tiers
-disagree is scale, not direction: the games' gains are 14x (Blood) and
-5x (Moto Racer) because the patches that produce them have no
-counterpart on this tier at all (§6.2).
+disagree is scale, not direction: the games' gains are 30x (Blood) and
+29x (Moto Racer's software renderer) because the patches that produce
+them have no counterpart on this tier at all (§6.2) — and Quake II, a
+compiled software renderer that patches nothing, gains the CPU tier's
+1.4x, which is the control for that claim.
 
 ### 6.2 What the reproducible tier cannot see
 
@@ -667,7 +720,17 @@ never touch the paths those designs make slower (page-table churn).
 ### 6.3 Threats to validity
 
 - **One host.** Everything is one M1 Air on one macOS. The Ryzen numbers
-  in §6 are from a different machine and are labelled.
+  in §6.0.1 are from a different machine and are labelled; the games of
+  §6.0 are to be taken on the Ryzen too.
+- **The games' baseline is "every switch off", not pristine QEMU**: none
+  of them runs without our adapter. §5 says the off paths are 3 % slower
+  than pristine on the CPU tier, so the games' ratios overstate the gain
+  over upstream by about that much.
+- **A game's frame rate depends on where the camera is.** Each runner
+  fixes the view it can (3DMark's tests are fixed animations; Blood's is
+  the first view of the level; Quake II's is a demo); Moto Racer's is a
+  throttle held from the standing start, and the slow run covers less of
+  the lap in its window.
 - **The tables are the near-buffer regime** (§5.0). A user's launch of a
   QEMU without the reservation fix is that regime about two times in
   three; the rest is 0.55–0.9x of these numbers on helper-heavy code, for
@@ -759,8 +822,8 @@ removes it. Everything measured before that was found — including the
 afternoon — was the lottery, and the tables above are the redone
 numbers.
 
-Open, in order: the 3DMark 99 and 3DMark2001 remeasurements on both
-machines (§6); the x86-64 form of the placement question on the rig,
+Open, in order: the games of §6.0 on the Ryzen (the Air's are done);
+the x86-64 form of the placement question on the rig,
 where the far form is the always case; patch 21's crash, now reproducible
 by `tools/specbench/run.sh <image> pinned`; the denormal slow path; and,
 at the user's call, the "all off plus one switch" family for readers

@@ -19,7 +19,9 @@ grey under the dialog's blue title bar), or a game frame (anything else).
 The first-person test is known by the green frame counter it draws
 top-left, the race is the run of game frames right before it (the two
 load too fast for a splash shot to separate them), and a rate line counts
-for a test only when its whole window lies inside that test's shots.
+for a test only when its whole window lies inside that test's shots. A
+run of shots survives one missing shot (a screendump that failed), and
+the longest run with the counter is the first-person test.
 Written to tests.txt.
 
     tools/w98-3dmark-tests.py classify <shot.png.ppm>   -> fp | game | splash | score | other
@@ -96,12 +98,18 @@ def report(run):
         k = "fp" if c == "fp" else ("game" if c == "game" else None)
         if k is None:
             continue
-        if runs and runs[-1][0] == k and s - runs[-1][2] <= 7:   # shots ~5 s apart
+        # shots are ~5 s apart; a screendump that failed (one did, at 32 s
+        # on 2026-09-12, and split the first-person test into two runs, of
+        # which the shorter was reported) must not end a run, so a gap of
+        # one missing shot still joins
+        if runs and runs[-1][0] == k and s - runs[-1][2] <= 12:
             runs[-1][2] = s
         else:
             runs.append([k, s, s])
     tests = []
-    fp = [r for r in runs if r[0] == "fp"]
+    # the longest run of "fp" shots is the test (a stray green frame
+    # elsewhere would otherwise be it)
+    fp = sorted((r for r in runs if r[0] == "fp"), key=lambda r: r[1] - r[2])
     if fp:
         i = runs.index(fp[0])
         if i > 0 and runs[i - 1][0] == "game":

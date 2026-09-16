@@ -1,0 +1,2 @@
+throttle window 21 s: flips 2.3 3.9 3.3 2.2 -> 2.9 fps; ddi 2.3 3.9 3.3 2.2 -> 2.9 fps
+distinct VGA frames: fps 3.0 dumps 1027 distinct 60

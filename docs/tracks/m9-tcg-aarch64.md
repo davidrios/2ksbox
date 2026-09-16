@@ -1514,12 +1514,17 @@ what remains, and they are verification, not optimization.
    inside it, 31–46 s after the click, read 87.9 / 82.7 / 84.2; 3DMark's
    own counter in the 43 s shot says 92.38) — some 10–15 % under the
    Ryzen's 95–105, and far clear of the cap either way. **A flaw in
-   `tools/w98-3dmark-tests.py`, open:** that run's `tests.txt` gave the
-   first-person test no rate, because the shot at ~32 s is missing and the
-   report only joins shots up to 7 s apart, so the test split into a
-   27–27 s run and a 37–48 s one and the report took the first; the
-   numbers above are from the raw `ddi:` lines and the screendump. Joining
-   across one missing shot, or taking the longest `f` run, would fix it.
+   `tools/w98-3dmark-tests.py`, fixed 2026-09-16:** that run's `tests.txt`
+   gave the first-person test no rate, because the shot at ~32 s is missing
+   and the report only joined shots up to 7 s apart, so the test split into
+   a 27–27 s run and a 37–48 s one and the report took the first; the
+   numbers above are from the raw `ddi:` lines and the screendump. The
+   report now joins across one missing shot and takes the longest run with
+   the counter. **Remeasured 2026-09-16 on `base98-us`** (docs/22 §6.0,
+   every window checked against its screendump): race 89.2 fps, first
+   person 79.6 fps uncapped (39.3 / 35.0 with every switch off), both at
+   the 60 Hz cap with the vertical blank on; 8686 3DMarks / 16609 CPU
+   3DMarks uncapped, 5987 / 16614 capped.
 3. ~~**x87 at PC=24 as binary32**~~ — **patch 45, 2026-09-12** (the
    section below): first person 26.2 → 27.8 fps with the vertical blank
    off, 19.0 → 19.5 with it on, CPU 3DMarks 16295 → 16899 — numbers of the
