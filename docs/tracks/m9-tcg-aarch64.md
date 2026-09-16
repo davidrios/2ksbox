@@ -1520,7 +1520,7 @@ what remains, and they are verification, not optimization.
    a 27–27 s run and a 37–48 s one and the report took the first; the
    numbers above are from the raw `ddi:` lines and the screendump. The
    report now joins across one missing shot and takes the longest run with
-   the counter. **Remeasured 2026-09-16 on `base98-us`** (docs/22 §6.0,
+   the counter. **Remeasured 2026-09-16 on `base98-us`** (docs/22 §6.2,
    every window checked against its screendump): race 89.2 fps, first
    person 79.6 fps uncapped (39.3 / 35.0 with every switch off), both at
    the 60 Hz cap with the vertical blank on; 8686 3DMarks / 16609 CPU
