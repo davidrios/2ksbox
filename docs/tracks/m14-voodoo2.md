@@ -86,6 +86,17 @@ it and the program never exits (its `C:\GLIDE.LOG` redirect never flushes).
 The device names this exactly now: `warning: voodoo2: command-FIFO packet
 … to the window … with the FIFO off -> decoded as register …`.
 **This is the track's next bug; the install and the first open+draw work.**
+**It is not only a teardown, and not only Diablo II (2026-09-16):** on
+`base98-br`, with the desktop up (3dfx's driver has switched the card on
+and off once at boot), *any* Glide program wedges at `grSstWinOpen` —
+`TESTS\GLIDETEST.EXE -noreopen` and the new `TESTS\DITHTEST.EXE` both
+print their first line, hang, and leave the card at a scribbled
+`3028x1044` with the guest spinning on `cmdFifoRdPtr` (millions of reads a
+second, no writes) after the `packet ... to the window with the FIFO off`
+warning and tens of thousands of refused `intrCtrl` writes. Not the RAM
+command FIFO: `ramfifo=off` hangs the same way (garbage dimensions, the
+spin on the status register instead). Games are unaffected because they
+open Glide themselves at startup; this is the reopen path.
 The fix is a judgement call not yet made: drop `0x200000`-window writes
 while the FIFO is off (offset ≥ `0x100`, to keep the alternate-mapped
 `< 0x100` register writes), or work out why Glide's re-init leaves the
@@ -124,6 +135,19 @@ on this game has DX7-era cards showing "a slight green tint" on the smoke
 with 32-bit colour as the cure, and PCGamingWiki carries that fix. A
 Voodoo 2 has no 32-bit mode, so on the chip the smoke is green exactly as
 it was on the real card. Don't debug it again.
+
+**What the smoke hunt did turn up: neither 86Box recompiler subtracts the
+dither on a blend read-back** (doc 21 §9), while its interpreter does and
+real hardware does. Measured 2026-09-16 by the `voodoo-guest` check's new
+dither phase — a grey blended onto itself 96 times per column at falling
+alpha, through the chip's own setup unit and the command FIFO, no Glide
+involved. `recompiler=off`: every column exactly the reference (7c0f, green
+sd 1.32). Default: 7bef, 7bcf, 73ce, 73ae, 738e, 6b6d, 6b4d — a grainy
+band, green sd to 7.19, pixels 24 levels under the reference.
+`RECOMP=off tools/voodoo-guest-test.py` is the A/B; the frames are
+`build/voodoo-guest[-interp]/dither.ppm`. Not known to matter to any title
+(Porsche's smoke is green with and without it), so it is recorded, not
+fixed; a fix is two code generators upstream.
 With Diablo II that makes two Glide 3 titles in hand (Diablo II is capped
 at 25 fps). Quake II
 and UT felt fine; **Porsche felt slow**. **Starting another game after

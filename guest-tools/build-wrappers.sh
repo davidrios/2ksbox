@@ -279,6 +279,15 @@ i686-w64-mingw32-gcc -O2 -o "$T/modetest.exe" "$ROOT/guest-tools/src/modetest.c"
 # implement. Run it next to (or with) the installed GLIDE2X.DLL.
 i686-w64-mingw32-gcc -O2 -o "$T/glidetest.exe" "$ROOT/guest-tools/src/glidetest.c" \
   -I"$ROOT/third_party/openglide" -L"$G" -lglide2x -luser32
+# DITHTEST.EXE: what repeated alpha blending does to a 16-bit frame buffer
+# (doc 21 §9) — a grey that dithers in every channel, blended onto itself
+# 1 to 128 times per column, so the dither the chip should subtract on a
+# blend read-back accumulates where it is not subtracted. 86Box's
+# interpreter subtracts it, neither of its recompilers does: run it with
+# `-device voodoo2,recompiler=on` and `=off` and compare. Same Glide 2.x
+# link as GLIDETEST, so it runs on 3dfx's own DLL on a machine with the card.
+i686-w64-mingw32-gcc -O2 -o "$T/dithtest.exe" "$ROOT/guest-tools/src/dithtest.c" \
+  -I"$ROOT/third_party/openglide" -L"$G" -lglide2x -luser32
 # GL smoke test: Mesa's wglgears, ships in qemu-3dfx's demos. Run it next to
 # OPENGL32.DLL inside the guest; the title/console shows the renderer.
 i686-w64-mingw32-gcc -O2 -o "$T/wglgears.exe" "$FX/wrappers/mesa/demos/wglgears.c" \

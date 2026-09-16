@@ -59,8 +59,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QEMU = os.path.join(ROOT, "build/qemu/qemu-system-i386")
 VGA = os.environ.get("VGA", "std")
 RAMFIFO = os.environ.get("RAMFIFO", "on")
+RECOMP = os.environ.get("RECOMP", "on")
 OUT = os.path.join(ROOT, "build/voodoo-guest" + ("" if VGA == "std" else "-" + VGA)
-                   + ("" if RAMFIFO == "on" else "-mmiofifo"))
+                   + ("" if RAMFIFO == "on" else "-mmiofifo")
+                   + ("" if RECOMP == "on" else "-interp"))
 
 spec = importlib.util.spec_from_file_location("x87gt", os.path.join(ROOT, "tools/x87-guest-test.py"))
 x87gt = importlib.util.module_from_spec(spec)
@@ -105,6 +107,18 @@ FIFO_BASE           equ 300000h
 FIFO_SIZE           equ 2000h
 FIFO_START          equ 1F00h
 FIFO_WIN            equ BAR + 200000h
+; the dither phase re-points the ring at 128 KiB: its whole scene is one
+; linear run of packets, so nothing has to wrap or wait for room
+DITH_SIZE           equ 40000h
+
+; IEEE floats, the setup unit's vertices and colours
+GREY_F              equ 43020000h       ; 130.0: dithers in every channel
+A255_F              equ 437F0000h       ; 255.0, opaque
+A128_F              equ 43000000h       ; 128.0, half
+F640                equ 44200000h
+F480                equ 43F00000h
+FBAND0              equ 43480000h       ; 200.0: the blended band's top
+FBAND1              equ 43B40000h       ; 360.0: and its bottom
 
 ; d3dpt-vga (d3dpt/d3dpt_fb.h)
 D3D_ENABLE          equ 040h
@@ -374,6 +388,8 @@ start:
     mov cx, 36
     call delay_ticks
 
+    call dither_phase
+
     mov edi, BAR
     xor eax, eax                ; fbiInit7: the command FIFO off again
     mov [fs:edi + SST_fbiInit7], eax
@@ -461,6 +477,195 @@ d3dpt_linear:
     call putnl
     mov cx, 36                  ; ~2 s: the host's screendump shows the linear
     call delay_ticks            ; mode, the way the player's refresh would
+    ret
+
+; --------------------------------------------------- the dither phase
+;
+; What repeated alpha blending does to a 16-bit frame buffer, drawn by the
+; chip's own triangle rasterizer (doc 21 §9). A Voodoo dithers what it
+; writes, so a pixel read back to be blended with carries this position's
+; dither offset, and the chip subtracts it again on the way in when
+; fbzMode's DITHER_SUB bit is set. 86Box's plain interpreter does that;
+; **neither of its recompilers does**, so the error accumulates there, one
+; blend at a time. The scene makes that visible: a grey that has to dither
+; in every channel (130,130,130 -- red and blue step by 8, green by 4),
+; drawn over the screen, then blended *onto itself* at alpha 128 in eight
+; columns, 1, 2, 4 ... 128 times. Blending a colour onto itself is that
+; colour, so every column should stay the background's grey and the bands
+; above and below are the reference. One pixel per column goes to COM1.
+;
+; Everything is packets: with the FIFO on, a direct register write is
+; ignored, and the vertices go through the setup unit (sBeginTriCMD /
+; sDrawTriCMD), which sorts them and works out the area's sign itself.
+dither_phase:
+    ; the ring again, 128 KiB this time: the whole scene is written in one
+    ; linear run, so nothing has to wrap or wait for room
+    mov edi, BAR
+    xor eax, eax
+    mov [fs:edi + SST_fbiInit7], eax        ; off while the ring moves
+    mov eax, (FIFO_BASE >> 12) | (((FIFO_BASE + DITH_SIZE - 1000h) >> 12) << 16)
+    mov [fs:edi + SST_cmdFifoBaseAddr], eax
+    mov eax, FIFO_BASE
+    mov [fs:edi + SST_cmdFifoRdPtr], eax
+    xor eax, eax
+    mov [fs:edi + SST_cmdFifoDepth], eax
+    mov eax, 100h
+    mov [fs:edi + SST_fbiInit7], eax
+
+    mov edi, FIFO_WIN
+    mov dword [fs:edi], 00010221h       ; fbzMode
+    mov dword [fs:edi + 4], 00084300h   ;   dither, dither-subtract, RGB write, back buffer
+    mov dword [fs:edi + 8], 00010209h   ; fbzColorPath
+    mov dword [fs:edi + 12], 00824100h  ;   flat iterated colour and alpha, no texture
+    mov dword [fs:edi + 16], 00010219h  ; alphaMode
+    mov dword [fs:edi + 20], 00005110h  ;   blend: src alpha, one minus src alpha
+    mov dword [fs:edi + 24], 000104C1h  ; sSetupMode
+    mov dword [fs:edi + 28], 3          ;   the vertices carry RGB and alpha
+    add edi, 32
+
+    ; the background: the grey over the whole screen, opaque (alpha 255),
+    ; written once through the pixel pipeline -- so it is dithered, which is
+    ; what the blends below then read back
+    mov eax, A255_F
+    mov [dith_a], eax
+    xor eax, eax
+    mov [dith_x0], eax                  ; 0.0
+    mov eax, F640
+    mov [dith_x1], eax
+    xor eax, eax
+    mov [dith_y0], eax                  ; 0.0
+    mov eax, F480
+    mov [dith_y1], eax
+    call dith_quad
+
+    ; and the columns: the same grey blended onto itself 96 times, each
+    ; column at a lower alpha than the one before (128, 96 ... 12). A blend
+    ; whose read-back was never un-dithered settles about d*(1-a)/a away
+    ; from the colour, so the lower the alpha the further the column sits
+    ; from the reference: a staircase where the dither is not subtracted,
+    ; flat where it is
+    mov eax, FBAND0
+    mov [dith_y0], eax
+    mov eax, FBAND1
+    mov [dith_y1], eax
+    xor ebx, ebx
+.col:
+    mov esi, ebx
+    shl esi, 2
+    mov eax, [col_x + esi]
+    mov [dith_x0], eax
+    mov eax, [col_x + esi + 4]
+    mov [dith_x1], eax
+    mov eax, [col_a + esi]
+    mov [dith_a], eax
+    mov dword [dith_passes], 96
+.pass:
+    call dith_quad
+    dec dword [dith_passes]
+    jnz .pass
+    inc ebx
+    cmp ebx, 8
+    jb .col
+
+    ; wait for the chip to reach the end of what was written
+    mov edx, edi
+    sub edx, FIFO_WIN
+    add edx, FIFO_BASE
+    mov si, str_dith_rp
+    call fifo_wait
+
+    ; read one pixel out of each column, and one out of the reference band
+    mov si, str_dith_ref
+    call puts
+    mov edi, LFB + (100 << 11) + (320 * 2)
+    movzx eax, word [fs:edi]
+    call puthex32
+    call putnl
+    xor ebx, ebx
+.read:
+    mov si, str_dith_col
+    call puts
+    mov eax, ebx
+    call puthex8
+    mov al, ' '
+    call putc
+    mov esi, ebx
+    shl esi, 2
+    mov edi, [col_px + esi]             ; the LFB address of this column
+    movzx eax, word [fs:edi]
+    call puthex32
+    call putnl
+    inc ebx
+    cmp ebx, 8
+    jb .read
+
+    ; show it: a swap, then the host's screendump
+    mov edi, [dith_cursor]
+    mov dword [fs:edi], 00010251h       ; swapbufferCMD
+    mov dword [fs:edi + 4], 1
+    add edi, 8
+    mov edx, edi
+    sub edx, FIFO_WIN
+    add edx, FIFO_BASE
+    mov si, str_dith_swap
+    call fifo_wait
+    mov si, str_dith_shown
+    call puts
+    mov cx, 54                          ; ~3 s: the host takes its screendump
+    call delay_ticks
+    ret
+
+; one rectangle, as the two triangles the setup unit wants: the vertex
+; registers and then its command, per vertex
+dith_quad:
+    mov [dith_cursor], edi
+    mov eax, [dith_x0]
+    mov edx, [dith_y0]
+    call dith_vertex_begin
+    mov eax, [dith_x1]
+    mov edx, [dith_y0]
+    call dith_vertex_draw
+    mov eax, [dith_x0]
+    mov edx, [dith_y1]
+    call dith_vertex_draw
+    mov eax, [dith_x1]
+    mov edx, [dith_y0]
+    call dith_vertex_begin
+    mov eax, [dith_x0]
+    mov edx, [dith_y1]
+    call dith_vertex_draw
+    mov eax, [dith_x1]
+    mov edx, [dith_y1]
+    call dith_vertex_draw
+    mov [dith_cursor], edi
+    ret
+
+; EAX = x, EDX = y (both IEEE floats); the colour is the grey, the alpha
+; whatever the caller set
+dith_vertex:
+    mov dword [fs:edi], 000284C9h       ; sVx, sVy
+    mov [fs:edi + 4], eax
+    mov [fs:edi + 8], edx
+    mov dword [fs:edi + 12], 000484E1h  ; sRed, sGreen, sBlue, sAlpha
+    mov eax, GREY_F
+    mov [fs:edi + 16], eax
+    mov [fs:edi + 20], eax
+    mov [fs:edi + 24], eax
+    mov eax, [dith_a]
+    mov [fs:edi + 28], eax
+    add edi, 32
+    ret
+dith_vertex_begin:
+    call dith_vertex
+    mov dword [fs:edi], 00010549h       ; sBeginTriCMD
+    mov dword [fs:edi + 4], 0
+    add edi, 8
+    ret
+dith_vertex_draw:
+    call dith_vertex
+    mov dword [fs:edi], 00010541h       ; sDrawTriCMD
+    mov dword [fs:edi + 4], 0
+    add edi, 8
     ret
 
 ; EDX = where the chip's read pointer has to end up, SI = the batch's label:
@@ -635,6 +840,26 @@ gdtr:
     dw 15
     dd 0
 
+; the dither phase's scratch and its tables
+dith_x0:     dd 0
+dith_x1:     dd 0
+dith_y0:     dd 0
+dith_y1:     dd 0
+dith_a:      dd 0
+dith_passes: dd 0
+dith_cursor: dd 0
+; the columns' left edges, as floats: 0, 64 ... 512, and one past the last
+col_x:       dd 0, 42800000h, 43000000h, 43400000h, 43800000h
+             dd 43A00000h, 43C00000h, 43E00000h, 44000000h
+; each column's blend weight, as a float: 128, 96, 64, 48, 32, 24, 16, 12
+col_a:       dd 43000000h, 42C00000h, 42800000h, 42400000h
+             dd 42000000h, 41C00000h, 41800000h, 41400000h
+; where each column is sampled: row 280, 32 pixels in from its left edge
+col_px:      dd LFB + (280 << 11) + 64,  LFB + (280 << 11) + 192
+             dd LFB + (280 << 11) + 320, LFB + (280 << 11) + 448
+             dd LFB + (280 << 11) + 576, LFB + (280 << 11) + 704
+             dd LFB + (280 << 11) + 832, LFB + (280 << 11) + 960
+
 pci_dev:     dw 0
 init_enable: dd 0
 si_polls:    dd 0
@@ -662,6 +887,11 @@ str_fifo1:    db "FIFO1 RDPTR ", 0
 str_fifo1_swapped: db "FIFO1 SWAPPED", 10, 0
 str_fifo2:    db "FIFO2 RDPTR ", 0
 str_fifo2_swapped: db "FIFO2 SWAPPED", 10, 0
+str_dith_rp:  db "DITH RDPTR ", 0
+str_dith_ref: db "DITH REF ", 0
+str_dith_col: db "DITH COL ", 0
+str_dith_swap: db "DITH SWAP RDPTR ", 0
+str_dith_shown: db "DITH SHOWN", 10, 0
 """
 
 
@@ -760,7 +990,8 @@ def main():
     shot_lin = os.path.join(OUT, "linear.ppm")
     shot_f1 = os.path.join(OUT, "fifo1.ppm")
     shot_f2 = os.path.join(OUT, "fifo2.ppm")
-    for f in (log, qlog, shot_on, shot_off, shot_lin, shot_f1, shot_f2, sock):
+    shot_dith = os.path.join(OUT, "dither.ppm")
+    for f in (log, qlog, shot_on, shot_off, shot_lin, shot_f1, shot_f2, shot_dith, sock):
         if os.path.exists(f):
             os.unlink(f)
     ok = True
@@ -768,7 +999,8 @@ def main():
         p = subprocess.Popen([
             QEMU, "-machine", "pc", "-cpu", "pentium3", "-m", "64",
             "-L", os.path.join(ROOT, "qemu/pc-bios"), "-display", "none", "-net", "none",
-            *vga_args(), "-device", "voodoo2,ramfifo=" + RAMFIFO,
+            *vga_args(),
+            "-device", "voodoo2,ramfifo=%s,recompiler=%s" % (RAMFIFO, RECOMP),
             "-drive", "file=%s,if=floppy,index=0,format=raw" % img,
             "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
             "-qmp", "unix:%s,server,nowait" % sock, "-audiodev", "none,id=a0",
@@ -790,6 +1022,8 @@ def main():
             q.screendump(shot_f1)
             text = wait_for(log, b"FIFO2 SWAPPED", p, 60, "the command FIFO's second batch")
             q.screendump(shot_f2)
+            text = wait_for(log, b"DITH SHOWN", p, 180, "the dither scene")
+            q.screendump(shot_dith)
             text = wait_for(log, b"DONE", p, 60, "the guest to finish")
             q.screendump(shot_off)
         finally:
