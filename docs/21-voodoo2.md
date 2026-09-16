@@ -207,6 +207,11 @@ or not the reopen case runs); the install and the first open+draw work.
 hang, and Quake II, Unreal Tournament and NFS Porsche Unleashed all close
 cleanly. What remains is that a second game after one has quit sometimes
 starts with glitched graphics — likely state the burst leaves behind.
+**What the "burst" was, at least in the reproducible case (2026-09-16,
+§11):** not Glide's own teardown but a second Glide client — 3dfx's login
+helper, in another process — initialising the card under a live window,
+so the running Glide went on writing packets into a FIFO that had been
+switched off behind it.
 
 
 **Display.** A Voodoo 1/2 is a pass-through card: the 2D adapter's signal
@@ -448,3 +453,47 @@ init sequence 3dfx's `sst1init` runs (fbiInit resets, the DAC PLL, video
 timing, `videoDimensions`, VGA_PASS), fills the LFB with a colour, swaps,
 and a screendump has to be that colour — the whole path from a guest
 store to the console surface, without a line of 3dfx code.
+
+## 11. Two Glides on one card: 3dfx's login helper
+
+3dfx's Voodoo 2 driver installs a Run entry, `Voodoo2`, that runs
+`rundll32.exe 3dfxv2ps.dll,UpdateRegSettings` at every login. That DLL is
+the driver's DirectDraw/Direct3D HAL, built on **Glide 3** (`GLIDE3X.DLL`),
+and the call brings the board up through Glide 3's own copy of the init
+library: `sst1InitMapBoard` (a first map shuts the video down) and
+`sst1InitRegisters`, which zeroes the video timing and puts `fbiInit7` back
+to its default — the command FIFO off. On a real card that is
+milliseconds after the desktop appears. Under TCG, with the init
+library's 200 000-iteration clock-settle loops (`init/video.c`), it is
+**about three seconds**.
+
+A Glide program started inside those seconds loses. It opens its window —
+video mode, `sst1InitCmdFifo(FXTRUE)`, a first swap — and then the helper's
+init lands on top of it, in another process with separate static state:
+display off, video registers zeroed, FIFO off. Nothing tells the program.
+It goes on writing command packets into the window at `0x200000`, where
+with the FIFO off they are register writes (§7): `videoDimensions`
+scribbled, `intrCtrl` fatals, and a guest spinning for ever on
+`cmdFifoRdPtr`. With the 3dfx splash disabled (`FX_GLIDE_NO_SPLASH=1`) the
+program survives to exit but draws nothing — the card is still torn down.
+
+How it was pinned (the track doc has the runs): `VOODOO2_TRACE=1` names the
+module doing each register write — the PE image around the guest's program
+counter, found by walking back to its `MZ` header, with the image at
+`0x00400000` identifying the process — and the first init came from
+`GLIDE2X.DLL` at `0x10000000` under a `0x42000` image (GLIDETEST.EXE), the
+second from `GLIDE3X.DLL` relocated to `0x01690000` under a `0x6000` image
+(RUNDLL32.EXE). The same GLIDETEST started 20 or 90 seconds after the
+desktop passes every case, the close/reopen one included.
+
+What the device does about it: nothing to the init, which is the chip's
+behaviour — two inits overlapping would wreck a real card too. It **names
+it**: a config write of `initEnable = 1` (how `sst1InitRegisters` opens)
+while the command FIFO is on can only be someone else's init, since
+Glide's own close turns the FIFO off first, and it warns `the card is
+being re-initialised (sst1InitRegisters) while a Glide window has the
+command FIFO on`. Glide's own close-and-reopen does not trip it.
+`tools/win98-game-test.sh` waits `VOODOO_WAIT` seconds (20) before its
+batch on a machine with the card and prints the collision in its summary
+if the wait was not enough. By hand: give the desktop a few seconds before
+starting a Glide game.

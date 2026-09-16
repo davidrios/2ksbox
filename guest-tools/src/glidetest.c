@@ -26,11 +26,13 @@
  *   GLIDETEST            640x480, the four cases
  *   GLIDETEST -res 8     another resolution (0-15, glidewnd.c's table)
  *   GLIDETEST -hold 5    keep the last frame up for 5 s, to look at it
- *   GLIDETEST -noreopen  skip the close/reopen case: 3dfx's own Glide 2.x
- *                        pushes a reopen's init through a command FIFO it
- *                        has just reset and never comes back from the idle
- *                        wait after it (the emulated Voodoo 2, 2026-09-12),
- *                        so on that Glide the first three cases are the test
+ *   GLIDETEST -noreopen  skip the close/reopen case. Added when the
+ *                        emulated Voodoo 2 hung there (2026-09-12); the case
+ *                        passes on 3dfx's own Glide 2.x since 2026-09-16,
+ *                        and that hang was the program colliding with 3dfx's
+ *                        login helper initialising the card from another
+ *                        process (doc 21 §11) -- run it more than a few
+ *                        seconds after the desktop appears
  *
  * Built by guest-tools/build-wrappers.sh into TESTS\ on the guest ISO;
  * needs GLIDE2X.DLL installed (SETUP.EXE's Glide component — on 2000/XP

@@ -293,30 +293,47 @@ voodoo2,addr=0x05`; both front ends, the C API, `launcherx --wizard-edit
 
 ## Two jobs, written up for a new session (2026-09-16)
 
-### A. The Glide hang at `grSstWinOpen` — blocking, take this first
+### A. The Glide hang at `grSstWinOpen` — **found, 2026-09-16: 3dfx's login helper**
 
-**Symptom.** A Glide program on the emulated card wedges as it opens its
-window: the guest spins on `cmdFifoRdPtr` (register `0x1e8`, millions of
-reads a second, no writes; with `ramfifo=off` it spins on the status
-register `0x000` instead), and the card sits at a scribbled resolution —
-`3028x1044`, `1563x1563`, `3741x1789` — with its display off. The QEMU log
-shows, in order: `command FIFO in RAM (ring …)`, `command FIFO through
-MMIO (ring …)`, then `warning: voodoo2: command-FIFO packet … to the
-window at … with the FIFO off -> decoded as register 000`, then tens of
-thousands of `refused (86Box fatal): intrCtrl write …`.
+**Answer first** (doc 21 §11 is the write-up): 3dfx's driver runs
+`rundll32.exe 3dfxv2ps.dll,UpdateRegSettings` from a Run entry named
+`Voodoo2` at every login, and that initialises the card through
+`GLIDE3X.DLL` — in another process, with its own copy of the init
+library's state. Under TCG it takes about three seconds. A Glide program
+started at the desktop (every headless harness run, and a game started by
+hand soon enough) has its window torn down under it: video registers
+zeroed, command FIFO switched off, and the program then streams packets
+into the FIFO window, which 86Box decodes as registers — the wedge below.
+**GLIDETEST started 20 s after the desktop passes all four cases, the
+close/reopen one included** (`build/w98game/glok`, `glre`); with no wait it
+wedges every time (`glcol`).
 
-**It is intermittent and it hits games** (the user, by hand, 2026-09-16).
-Headless it is 100 % reproducible with the tools, which makes it the cheap
-way in.
+What changed:
 
-**Reproduce** (~2 min, no hands):
+  * the device warns `the card is being re-initialised (sst1InitRegisters)
+    while a Glide window has the command FIFO on` at the config write that
+    starts such an init (`initEnable = 1` with the FIFO on — Glide's own
+    close turns the FIFO off first, and its own reopen does not trip it);
+  * `tools/win98-game-test.sh` puts `choice /c:y /t:y,$VOODOO_WAIT` (20 s)
+    before the batch when `EXTRA` has a `voodoo2`, and its summary names the
+    collision if the wait was not enough;
+  * `VOODOO2_TRACE=1` names the guest module behind each init — the PE
+    image around the program counter, walked back to its `MZ` header, with
+    the image at `0x00400000` naming the process. Reads are RAM only (a
+    first cut read through the card's own BAR mapping, which QEMU blocks as
+    re-entrant I/O). That is what found it: the first init from `GLIDE2X.DLL`
+    at `0x10000000` under GLIDETEST's `0x42000` image, the second from
+    `GLIDE3X.DLL` at `0x01690000` under a `0x6000` one, RUNDLL32.EXE, which
+    the registry's Run entry named.
 
-    OUT=build/w98game/gl1 RAW=build/w98game/bench.raw NO_DRIVER=1 \
-      CDS=guest-tools/out/guest-tools-3dfx-<rev>.iso \
-      EXTRA='-device voodoo2,addr=0x05' RUN_SECS=45 SHOTS=10 \
-      PULL='GLIDETEST.LOG' \
-      GUEST_CMD=$'c:\ncd \\\nD:\\TESTS\\GLIDETEST.EXE -noreopen -hold 10' \
-      tools/win98-game-test.sh ~/.local/share/2ksbox/machines/base98-br/disk.qcow2 gl1
+Still open, and not shown to be this: **your hand-run hangs.** This
+explains them only if the game started within a few seconds of the
+desktop. If one happens again, the QEMU log now says whether it was the
+collision; `busy: 1 cmds outstanding` with no such warning would be the
+86Box command-count pairing below, a different bug.
+
+The investigation as it went, kept because most of it is still true and
+some of it is a trap:
 
 #### What the 2026-09-16 session established
 
@@ -424,7 +441,7 @@ asleep.
 
 All of that was reverted; `voodoo/voodoo2.c` carries only the trace change.
 
-#### The lead to take next
+#### The lead that was taken (and why it was not the answer)
 
 GLIDETEST calls `grSstWinOpen(0, …)` — **hWnd 0**, so Glide falls back to
 `GetActiveWindow()` (gsst.c warns about exactly this). The second
@@ -443,6 +460,11 @@ whether the bug is ours at all:
     look for the same second pass;
   * if it is the harness, the fix is in the harness and GLIDETEST should
     say so rather than hang.
+
+It was neither the window nor `FXOEM2X.DLL` (skipped with
+`FX_GLIDE_REQUIREOEMDLL=249691887`, i.e. `GR_SKIP_OEMDLL` 0xee1feef in
+decimal — get that conversion from the shell; a wrong value silently loads
+the DLL): the second init came from another process, above.
 
 **Ruled out.** The RAM command FIFO (`ramfifo=off` hangs the same way, and
 the DOS program in `tools/voodoo-guest-test.py` drives the same FIFO

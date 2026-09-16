@@ -45,6 +45,10 @@
 #include "ui/console.h"
 #include "ui/surface.h"
 #include "qom/object.h"
+#include "hw/core/cpu.h"
+#include "exec/address-spaces.h"
+#include "exec/memory.h"
+#include "cpu.h"                /* before the shim: it #defines tsc */
 
 #include "shim/86box/86box.h"
 #include "shim/86box/device.h"
@@ -164,6 +168,7 @@ struct Voodoo2State {
 /* ------------------------------------------------------------------ MMIO */
 
 static bool     voodoo2_trace;          /* VOODOO2_TRACE=1 in the environment */
+static bool     voodoo2_trace_where_armed; /* name the module at the next write */
 static uint32_t voodoo2_trace_addr;     /* the address of the held-back read run */
 static uint32_t voodoo2_trace_val;      /* what the last of them answered */
 static uint32_t voodoo2_trace_n;        /* how many of them there have been */
@@ -186,6 +191,8 @@ voodoo2_trace_flush(void)
     }
     voodoo2_trace_n = 0;
 }
+
+static void voodoo2_trace_where(const char *why);
 
 static inline void
 voodoo2_note(Voodoo2State *s, hwaddr addr, uint64_t val, unsigned size, bool write)
@@ -212,10 +219,141 @@ voodoo2_note(Voodoo2State *s, hwaddr addr, uint64_t val, unsigned size, bool wri
             return;
         }
         voodoo2_trace_flush();
+        if (voodoo2_trace_where_armed || ((addr & 0x200000) && !s->v->cmdfifo_enabled &&
+                                         !s->fifo_off_writes)) {
+            voodoo2_trace_where_armed = false;
+            voodoo2_trace_where("writer");
+        }
         fprintf(stderr, "voodoo2: wr %06x %08x (initEnable %08x%s)\n",
                 (unsigned) addr, (unsigned) val, s->v->initEnable,
                 s->v->cmdfifo_enabled ? ", fifo on" : "");
     }
+}
+
+/* Which guest module is touching the card: the PE image around a linear
+ * address, found by walking back page by page to its MZ header and reading
+ * its export directory's name. Trace mode only -- it exists because a
+ * Win9x Glide process can hold more than one copy of 3dfx's init library
+ * (GLIDE2X.DLL, the OEM DLL, the splash DLL), each with its own idea of
+ * what state the card is in, and a register trace alone cannot say whose
+ * write is whose. */
+static bool
+voodoo2_guest_read(CPUState *cs, vaddr a, void *buf, int len)
+{
+    /* RAM only: a linear address can map the card's own BAR (or any other
+     * device), and a debug read of it is an MMIO access from inside this
+     * device's handler -- QEMU blocks it as re-entrant, and a read of the
+     * status register is not free anyway. Every page the read touches is
+     * checked. */
+    for (vaddr p = a & TARGET_PAGE_MASK; p < a + len; p += TARGET_PAGE_SIZE) {
+        hwaddr        phys = cpu_get_phys_page_debug(cs, p);
+        MemoryRegion *mr;
+        hwaddr        xlat, plen = 1;
+        bool          ram;
+
+        if (phys == -1) {
+            return false;
+        }
+        RCU_READ_LOCK_GUARD();
+        mr  = address_space_translate(&address_space_memory, phys, &xlat, &plen,
+                                      false, MEMTXATTRS_UNSPECIFIED);
+        ram = memory_region_is_ram(mr) && !memory_region_is_ram_device(mr);
+        if (!ram) {
+            return false;
+        }
+    }
+    return cpu_memory_rw_debug(cs, a, buf, len, false) == 0;
+}
+
+static bool
+voodoo2_guest_module(CPUState *cs, uint32_t a, uint32_t *base, char *name, size_t len)
+{
+    uint32_t page = a & ~0xfffu;
+
+    for (int k = 0; k < 4096 && page >= 0x1000; k++, page -= 0x1000) {
+        uint8_t  mz[2];
+        uint32_t lfanew, pe, ednames[2] = { 0, 0 }, edir;
+
+        if (!voodoo2_guest_read(cs, page, mz, 2) || mz[0] != 'M' || mz[1] != 'Z' ||
+            !voodoo2_guest_read(cs, page + 0x3c, &lfanew, 4) || lfanew > 0x1000 ||
+            !voodoo2_guest_read(cs, page + lfanew, &pe, 4) || pe != 0x00004550) {
+            continue;
+        }
+        *base = page;
+        {
+            uint32_t soi = 0;
+
+            voodoo2_guest_read(cs, page + lfanew + 24 + 56, &soi, 4);
+            snprintf(name, len, "[img %08x size %x]", page, soi);
+        }
+        /* PE32 optional header at +24, export data directory at +96 of it */
+        if (voodoo2_guest_read(cs, page + lfanew + 24 + 96, &edir, 4) && edir &&
+            voodoo2_guest_read(cs, page + edir + 12, ednames, 4)) {
+            char buf[40] = "";
+
+            if (voodoo2_guest_read(cs, page + ednames[0], buf, sizeof(buf) - 1)) {
+                buf[sizeof(buf) - 1] = 0;
+                snprintf(name, len, "%s", buf);
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+static void
+voodoo2_trace_where(const char *why)
+{
+    CPUState    *cs = current_cpu;
+    CPUX86State *env;
+    uint32_t     pc, esp, base = 0, stack[96];
+    char         name[40];
+    char         line[512];
+    size_t       n = 0;
+
+    if (!cs) {
+        return;
+    }
+    env = cpu_env(cs);
+    /* eip is the start of the current translation block or later, which is
+     * inside the same function -- all this needs */
+    pc  = (uint32_t) (env->segs[R_CS].base + env->eip);
+    esp = (uint32_t) (env->segs[R_SS].base + env->regs[R_ESP]);
+    if (voodoo2_guest_module(cs, pc, &base, name, sizeof(name))) {
+        n += snprintf(line + n, sizeof(line) - n, "%s+%x", name, pc - base);
+    } else {
+        n += snprintf(line + n, sizeof(line) - n, "%08x", pc);
+    }
+    /* callers: every stack word that lands in a module other than the last
+     * one named, innermost first */
+    if (voodoo2_guest_read(cs, esp, stack, sizeof(stack))) {
+        uint32_t last = base;
+
+        for (unsigned i = 0; i < ARRAY_SIZE(stack) && n < sizeof(line) - 48; i++) {
+            uint32_t b;
+            char     nm[40];
+
+            if (stack[i] < 0x00400000 || (stack[i] >= last && stack[i] < last + 0x100000) ||
+                !voodoo2_guest_module(cs, stack[i], &b, nm, sizeof(nm)) || b == last) {
+                continue;
+            }
+            n += snprintf(line + n, sizeof(line) - n, " <- %s+%x", nm, stack[i] - b);
+            last = b;
+        }
+    }
+    {
+        uint8_t code[24];
+
+        if (voodoo2_guest_read(cs, pc & ~0xfu, code, sizeof(code))) {
+            n += snprintf(line + n, sizeof(line) - n, " [code@%08x", pc & ~0xfu);
+            for (unsigned i = 0; i < sizeof(code) && n < sizeof(line) - 4; i++) {
+                n += snprintf(line + n, sizeof(line) - n, " %02x", code[i]);
+            }
+            n += snprintf(line + n, sizeof(line) - n, "]");
+        }
+    }
+    fprintf(stderr, "voodoo2: %s: cr3 %08x pc %08x: %s\n", why,
+            (uint32_t) env->cr[3], pc, line);
 }
 
 /* 86Box's fatal(): the state a bug report needs, before the abort */
@@ -535,18 +673,18 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     voodoo2_note(s, addr, val, size, true);
     if ((addr & 0x200000) && addr < 0x400000 && !v->cmdfifo_enabled &&
         (addr & 0x1fffff) >= 0x100) {
-        /* THE teardown bug (2026-09-12): a command-FIFO packet written to
-         * the 0x200000 window while the FIFO is off. With the FIFO off that
-         * window is the legacy register map, so 86Box decodes each packet
-         * dword as the register at bits 9:2 -- garbage into videoDimensions
-         * (v_disp -> 0, the display timer breaks and Glide's vsync wait
-         * hangs), triangleCMD (garbage geometry keeps the card busy), and
-         * fbiInit7 itself (a dword with bit 8 set spuriously turns the FIFO
-         * back on). It happens because 3dfx's Glide, on a window reopen,
-         * keeps streaming to the FIFO ring while sst1InitRegisters has just
-         * reset fbiInit7 to its default (FIFO off) and nothing re-enabled
-         * it. Not dropped yet -- the fix (match the chip, or drop) is the
-         * open question; this names it. */
+        /* A command-FIFO packet written to the 0x200000 window while the
+         * FIFO is off. With the FIFO off that window is the legacy register
+         * map, so 86Box decodes each packet dword as the register at bits
+         * 9:2 -- garbage into videoDimensions, triangleCMD, fbiInit7 (a dword
+         * with bit 8 set spuriously turns the FIFO back on) -- as the chip
+         * would. What puts a Glide in that state, measured 2026-09-16 (doc
+         * 21 §11): a *second* Glide client ran sst1InitRegisters under a
+         * live window -- 3dfx's login helper, `rundll32
+         * 3dfxv2ps.dll,UpdateRegSettings` through GLIDE3X.DLL -- which
+         * switched the FIFO off behind the running program's back. The
+         * config-space write that starts such an init warns of it; this
+         * names what follows. Kept as the chip's behaviour, not dropped. */
         s->fifo_off_writes++;
         if (!s->fifo_off_warned) {
             s->fifo_off_warned = true;
@@ -667,6 +805,29 @@ voodoo2_config_write(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
     }
     if (addr <= 0x43 && addr + len > 0x40) {
         info_report("voodoo2: initEnable <= %08x", s->v->initEnable);
+        voodoo2_trace_where_armed = voodoo2_trace;
+        if (s->v->initEnable == 0x00000001 && s->v->cmdfifo_enabled) {
+            /* A second Glide initialising the card under a live one (doc 21
+             * §11). sst1InitRegisters opens with initEnable = SST_INITWR_EN,
+             * exactly 1, and goes on to zero the video timing and put
+             * fbiInit7 back to its default, the command FIFO off. Glide's
+             * own close turns the FIFO off before any of that, so with the
+             * FIFO still on this is someone else's init -- and the Glide
+             * that owns the window goes on streaming packets into a FIFO
+             * that is now off, which 86Box decodes as registers: the card
+             * wedges. 3dfx's driver runs one at every login (the Run entry
+             * `Voodoo2`, rundll32 3dfxv2ps.dll,UpdateRegSettings, through
+             * GLIDE3X.DLL), a few seconds' work under TCG and milliseconds
+             * on the chip, so a Glide program started at the desktop lands
+             * in it. Named here because on its own it reads as the device
+             * hanging; VOODOO2_TRACE=1 names the writing module. */
+            warn_report("voodoo2: the card is being re-initialised "
+                        "(sst1InitRegisters) while a Glide window has the "
+                        "command FIFO on -- another Glide client is "
+                        "initialising it under this one (3dfx's login helper "
+                        "does, for a few seconds after the desktop appears); "
+                        "the running program will wedge");
+        }
     }
 }
 

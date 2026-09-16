@@ -31,6 +31,16 @@
 #   CDS="a.cue:b.mds"   discs after the disk, colon-separated. .cue/.mds/.ccd
 #                       go through our own cdimage driver (doc 17).
 #   RUN_SECS=n          how long to let it run after the desktop is up (180)
+#   VOODOO_WAIT=n       seconds RUN.BAT waits before GUEST_CMD when EXTRA puts
+#                       a voodoo2 on the machine (20; 0 = none). 3dfx's driver
+#                       re-initialises the card at every login from a Run
+#                       entry of its own (`Voodoo2`: rundll32
+#                       3dfxv2ps.dll,UpdateRegSettings), in another process;
+#                       a Glide program started at the desktop runs into it
+#                       and wedges (doc 21 §11). Measured at ~3 s under TCG;
+#                       the device warns `the card is being re-initialised`
+#                       when it happens, and the summary names it, so a wait
+#                       that turns out too short says so.
 #   SETTLE=n            seconds to let the desktop paint after the driver
 #                       programs the mode, before the run clock starts (30).
 #                       KEYS and CLICKS are timed from the end of it.
@@ -197,7 +207,14 @@ fi
 # program's own loader looks for its parts in the *current* directory
 # (Blood's `blood.exe` is a DOS/4GW stub, and from C:\ it says
 # "Stub exec failed: dos4gw.exe").
+# With the Voodoo 2 on the machine, first let 3dfx's login helper finish
+# initialising the card (VOODOO_WAIT above). CHOICE is the one wait a Win98
+# batch has; nothing a batch can see marks the other process's end.
+VOODOO_WAIT="${VOODOO_WAIT:-20}"
+case " ${EXTRA:-} " in *voodoo2*) ;; *) VOODOO_WAIT=0 ;; esac
+[ "$VOODOO_WAIT" -gt 99 ] && VOODOO_WAIT=99
 { printf '@echo off\r\n'
+  [ "$VOODOO_WAIT" -gt 0 ] && printf 'choice /c:y /t:y,%d >nul\r\n' "$VOODOO_WAIT"
   printf '%s\r\n' "$GUEST_CMD" | sed 's/\r$//' | while IFS= read -r l; do printf '%s\r\n' "$l"; done
   printf 'exit\r\n'; } > "$OUT/run.bat"
 echo "==> RUN.BAT:"; sed 's/\r$//; s/^/      /' "$OUT/run.bat"
@@ -467,6 +484,15 @@ echo "=== anything the device or the executor complained about"
 grep -iE 'refus|reject|invalid|unsupported|unknown|assert|error|fail|out of range|bad ' "$OUT/qemu.log" 2>/dev/null |
   sed 's/^\(.\{0,160\}\).*/\1/' | sort | uniq -c | sort -rn | head -25
 echo
+if grep -q "the card is being re-initialised" "$OUT/qemu.log" 2>/dev/null; then
+  echo "=== the Voodoo 2 was re-initialised under a live Glide window"
+  echo "   another Glide client initialised the card while the program had its"
+  echo "   command FIFO on -- 3dfx's login helper, if the program started right"
+  echo "   after the desktop (VOODOO_WAIT=$VOODOO_WAIT): the wedge that follows is"
+  echo "   that collision, not the device (doc 21 §11; VOODOO2_TRACE=1 names the"
+  echo "   module doing each init)"
+  echo
+fi
 echo "=== the 16-bit driver and the VxD (port 0xE9), last 20"
 tail -20 "$OUT/dbg.log" 2>/dev/null | sed 's/^/   /'
 if [ "${PLAYER:-0}" = 1 ]; then
