@@ -1819,26 +1819,24 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
   : >"$dir/disk.qcow2"
-  # What each family starts on. XP on our own adapter, because the whole
-  # display path is built on it (doc 15); Win98 on the Cirrus and the
-  # driver Windows has in the box, ours there being much the newer of the
-  # two (doc 19); Other on the standard VGA, the one every guest can fall
+  # What each family starts on. XP and Win98 on our own adapter, because
+  # the whole display path is built on it (docs 15 and 19; Win98 started
+  # on the Cirrus until 2026-09-16, user decision); Other on the standard VGA, the one every guest can fall
   # back on; DOS on the standard VGA too, since 2026-09-09 (user
   # decision): the fuller of the two VESA BIOSes, where the hardcoded
   # line it replaced said cirrus.
-  for f in win98:"-vga cirrus" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga std"; do
+  for f in win98:"-device d3dpt-vga,addr=0x02" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga std"; do
     want="${f#*:}"; f="${f%%:*}"
     bundle="$(target/release/launcherx --new "$f" "adapter-$f" "$dir/disk.qcow2")" || { echo "--new $f failed"; return 1; }
     args="$(target/release/launcherx --print-args "$bundle")"
     case "$args" in *"$want"*) ;; *) echo "a new $f machine is not on $want"; echo "$args"; rc=1;; esac
   done
   # The switch itself, on a Windows machine: away from the adapter the
-  # family starts on and back again — which is a different direction on
-  # each of them, since 98 starts on the Cirrus and XP on ours. The one
+  # family starts on (ours, on both) and back again. The one
   # it left must be *gone* — a machine with both would show the guest two
   # displays — and the cards pinned below it must not move, because a
   # card that moves is a hardware change an installed guest re-detects.
-  for f in win98:cirrus:d3dpt xp:d3dpt:cirrus; do
+  for f in win98:d3dpt:cirrus xp:d3dpt:cirrus; do
     other="${f##*:}"; f="${f%:*}"; first="${f#*:}"; f="${f%%:*}"
     bundle="$dir/library/adapter-$f/machine.toml"
     # A new machine has no NIC (`bundle::default_network`), and the

@@ -117,16 +117,19 @@ int main(int argc, char **argv) {
     check("the family picker offers Win98 and XP", win98 >= 0 && xp >= 0, NULL);
     lc_wizard_open_new(w, (size_t)win98);
     char *adapter = video_label(w);
-    check("a new Win98 machine starts on the Cirrus",
-          adapter && strstr(adapter, "Cirrus") != NULL, adapter);
+    check("a new Win98 machine starts on our adapter",
+          adapter && strstr(adapter, "d3dpt-vga") != NULL, adapter);
     lc_string_free(adapter);
     lc_wizard_choose_family(w, (size_t)xp);
     adapter = video_label(w);
-    check("switching it to XP moves the untouched adapter to XP's own",
+    check("switching it to XP keeps it, XP's own too",
           adapter && strstr(adapter, "d3dpt-vga") != NULL, adapter);
     lc_string_free(adapter);
     check("...and it counts as the default there", lc_wizard_video_is_default(w), NULL);
-    check("the card followed too", lc_wizard_sound_is_default(w), NULL);
+    /* The card is the field whose default differs between the two
+     * (the SB16 on 98, the AC'97 on XP), so it is the one that shows the
+     * untouched value moving. */
+    check("the card followed", lc_wizard_sound_is_default(w), NULL);
     check("and the MIDI port", lc_wizard_music_is_default(w), NULL);
     /* The pad follows the same rule in the form, but this API has no pad
      * row yet (M13 is newer than the C ABI), so it is unchecked here. */
@@ -153,13 +156,14 @@ int main(int argc, char **argv) {
     /* And "Default" puts the field back to *following* the family, so a
      * later switch moves it again rather than pinning what it reset to. */
     lc_wizard_choose_family(w, (size_t)win98);
-    lc_wizard_set_video(w, (size_t)video_index(w, "d3dpt-vga"));
+    lc_wizard_set_video(w, (size_t)video_index(w, "Cirrus"));
     lc_wizard_reset_video(w);
-    lc_wizard_choose_family(w, (size_t)xp);
     adapter = video_label(w);
-    check("\"Default\" makes the adapter follow the family again",
+    check("\"Default\" puts Win98 back on our adapter",
           adapter && strstr(adapter, "d3dpt-vga") != NULL, adapter);
     lc_string_free(adapter);
+    lc_wizard_choose_family(w, (size_t)xp);
+    check("...and it follows the family again", lc_wizard_video_is_default(w), NULL);
 
     /* The disk size follows the family the same way, and a size someone
      * typed stays put. */

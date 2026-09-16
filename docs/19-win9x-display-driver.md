@@ -1402,8 +1402,9 @@ formats — on a driver whose only difference from XP's is its per-OS layer,
 and every one of these passed without a change to `core/`.
 
 **A trap for whoever updates the image next.** Installing DirectX means
-booting the machine in the launcher, whose Win98 default is `-vga cirrus`
-(`bundle::video_choices`) — so Windows re-detects a Cirrus, rebinds the
+booting the machine in the launcher on `-vga cirrus` (the Win98 default
+until 2026-09-16, still one pick away in `bundle::video_choices`) — so
+Windows re-detects a Cirrus, rebinds the
 display to the in-box driver and drops `D3DPT9V.VXD` from `[386Enh]`.
 `[boot] display.drv=pnpdrvr.drv` still looks right, and `[boot.description]`
 is where it says `Cirrus Logic 5446 PCI` instead. `win98-driver-test.sh

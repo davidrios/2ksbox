@@ -96,8 +96,9 @@ pub struct Form {
     /// moves it to the new family's default; once it is, it survives the
     /// switch — unless the new family does not offer it at all, which no
     /// flag can rescue. It was missing until 2026-09-09, so a new
-    /// machine switched from 98 to XP kept the Cirrus, which is XP's
-    /// *non*-default, and the same for the three fields below.
+    /// machine switched from 98 to XP kept the Cirrus, which was 98's
+    /// default then and XP's *non*-default, and the same for the three
+    /// fields below.
     video_chosen: bool,
     /// The sound card, and what is on the MIDI port (doc 20 §6).
     /// Private for the same reason `video` is: each family offers a
@@ -383,8 +384,8 @@ impl Form {
         // new family's default on **either** of two counts, where the
         // fields above have only the first. Nobody has picked one, so it
         // is following the family like everything else — a new machine
-        // moved from 98 to XP has to arrive on XP's adapter, not sit on
-        // the Cirrus that was 98's. Or somebody did pick one and the new
+        // moved from 98 to XP has to arrive on XP's AC'97, not sit on
+        // the SB16 that was 98's. Or somebody did pick one and the new
         // family does not offer it at all, which no flag can rescue: our
         // own adapter is not on offer for BeOS, a Gravis is not on offer
         // to XP, an ES1370 not to DOS, and a `Usb` pad needs a USB stack
@@ -800,11 +801,7 @@ impl Form {
                 "Our own adapter and display driver: the mode table, the desktop straight from video memory, the page flips that pace a game, and Direct3D through the driver itself.",
                 "It needs the driver installed from the guest-tools ISO. Until it is, the guest comes up on the plain VGA the same device also is.",
             ],
-            (Video::Cirrus, Family::Win98) => &[
-                "The Cirrus GD5446, which Windows 98 has a driver for in the box, and where a new 98 machine starts: 2D only, and none of our display path — no mode table, no paced flips, no Direct3D through the driver.",
-                "Our own adapter is the step up from it, once its driver is installed from the guest-tools ISO.",
-            ],
-            (Video::Cirrus, Family::Xp) => &[
+            (Video::Cirrus, Family::Win98 | Family::Xp) => &[
                 "The Cirrus GD5446, which Windows has a driver for in the box: 2D only, and none of our display path — no mode table, no paced flips, no Direct3D through the driver.",
                 "The right answer for a machine whose driver isn't installed yet, and the A/B for a title that misbehaves on ours.",
             ],

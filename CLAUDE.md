@@ -186,10 +186,10 @@ backend later.
   multisampled and resolves into VRAM at every readback, windowed would
   need a driver blitter, `ddflags=0x8000000` is the A/B). **Win98 can run the same
   adapter since 2026-09-07** — a launcher Win98 machine takes
-  `-vga none -device d3dpt-vga` with the M10 driver (doc 19) when it is
-  picked, but its *default* is Windows' own `-vga cirrus`
-  (`bundle::video_choices`), so ours is one pick away rather than
-  automatic; an image whose adapter is changed either way
+  `-vga none -device d3dpt-vga` with the M10 driver (doc 19), and since
+  2026-09-16 that is its *default* too (`bundle::video_choices`; it was
+  Windows' own `-vga cirrus` before, which stays one pick away); an
+  image whose adapter is changed either way
   finds new hardware on its next start and wants a driver before it has
   its desktop back. The test tools keep their own cirrus machines.
 
@@ -647,12 +647,11 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   question but *which VESA BIOS the title finds*, and where changing it
   installs nothing. **DOS's default moved to `std` with that** (user
   decision): it had `-vga cirrus` hardcoded from the day the family
-  landed, and the Cirrus is `Other`'s adapter. The **defaults are
-  opposite ends of that pair** (`bundle::video_choices`, first entry wins):
-  XP starts on ours, Win98 on the `cirrus` and Windows' in-box driver
-  (2026-09-07, user decision — the 9x driver is much the newer of the two,
-  so a new 98 machine comes up on the driver Windows already has and is
-  moved to ours deliberately). Changing it under an installed guest is a
+  landed, and the Cirrus is `Other`'s adapter. **Both Windows families
+  start on ours** (`bundle::video_choices`, first entry wins): XP always
+  has, Win98 since 2026-09-16 (user decision; from 2026-09-07 it started
+  on the `cirrus` and Windows' in-box driver, while the 9x driver was
+  days old). Changing it under an installed guest is a
   hardware change — new adapter, plain VGA, wants a driver — which the
   wizard says in orange. Without our driver installed the adapter is
   a plain VGA (on XP that is vga.sys, 800×600×4), and `-vga std` has no XP

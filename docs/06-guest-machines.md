@@ -16,7 +16,7 @@ Modeled as a ~1998–2000 consumer PC.
 | Machine | `pc,hpet=off` (i440FX + PIIX) | period-correct chipset, best-tested with 9x. **No HPET** (2026-09-10): 98 has no driver for `PNP0103` and never uses one, so it was an Unknown Device with a yellow mark in Device Manager (the `hpet` check). QEMU's fw_cfg (`QEMU0002`) has no driver either, but its `_STA` hides it |
 | CPU model | `pentium3` (TCG) / host-masked (KVM) | avoids CPUID features 9x mishandles; sidesteps the fast-CPU Win9x bugs (e.g. the >2.1 GHz-class IOS/NDIS crashes). **Floor is pentium3 (SSE1)**: our guest-tools wrappers are built `-march=pentium3` (upstream builds them x86-64-v2 and expects `-cpu host`/`max`) |
 | RAM | 256 MB default, **≤ 512 MB hard cap** | 9x VCache breaks above ~512 MB without patches |
-| Video | **`-vga cirrus` (the default) or `-vga none -device d3dpt-vga` + our driver (doc 19)** — a choice since 2026-09-07 (`bundle::Video`) | ours is the whole display path: the mode table, the desktop straight from VRAM, the paced page flips, Direct3D through the driver. The Cirrus is Windows' in-box 2D driver and where this family **starts** (2026-09-07): the 9x driver of ours is much newer than XP's, so a new 98 machine comes up on the driver Windows already has and is moved to ours deliberately. The standard VGA is not offered on either Windows family |
+| Video | **`-vga none -device d3dpt-vga` + our driver (doc 19, the default since 2026-09-16) or `-vga cirrus`** — a choice since 2026-09-07 (`bundle::Video`) | ours is the whole display path: the mode table, the desktop straight from VRAM, the paced page flips, Direct3D through the driver, and where this family **starts** (2026-09-16, user decision; the Cirrus was the default from 2026-09-07, while the 9x driver was days old). The Cirrus is Windows' in-box 2D driver. The standard VGA is not offered on either Windows family |
 | Audio | **SB16 + its OPL3 (the default), or AC'97, or a Gravis Ultrasound, or none** — a choice since 2026-09-09 (`bundle::Sound`, doc 20) | the SB16 is what Windows has a driver for in the box and what a DOS box inside 98 expects, and since 2026-09-09 it carries the FM chip a real one had (QEMU's `sb16` has none, so 98's own MIDI output had nothing to play on). The AC'97 sounds better and needs the guest-tools driver; the Gravis needs Gravis's own |
 | Music | **an MPU-401 at 0x330 with a General MIDI synthesizer (the default), a Roland CM-32L, or nothing** (`bundle::Music`, doc 20) | 98 has no wavetable synthesizer of its own — its MIDI output is the FM chip — so this is what makes a game's music sound like anything. Windows finds the port after "MPU-401 Compatible" is added from Add New Hardware |
 | Net | PCnet (AMD), **off on a new machine** | driver in-box on 98. The card is what the wizard's networking checkbox gives the machine; since 2026-09-07 a new machine of every family starts without one (doc 07, `bundle::default_network`) — an unpatched guest is not put on a network before anyone asks |
@@ -221,7 +221,7 @@ family, and **the first entry is that family's default**
 | Family | Offers | Default |
 |---|---|---|
 | XP | `d3dpt` (our adapter + our driver) / `cirrus` (Windows' in-box driver) | `d3dpt` |
-| Win98 | `cirrus` / `d3dpt` | `cirrus` |
+| Win98 | `d3dpt` / `cirrus` | `d3dpt` |
 | Other | `std` (Bochs VGA, VBE 2.0) / `cirrus` | `std` |
 | DOS | `std` (Bochs VGA, VBE 2.0) / `cirrus` (period VESA BIOS) | `std` |
 
@@ -255,13 +255,12 @@ Existing DOS machines carry no `video` field and so move to the standard
 VGA on their next start; nothing is installed for them to lose, though a
 game that has been through its own setup may want that run again.
 
-The two Windows families therefore **start at opposite ends of the same
-pair**. XP starts on ours: the driver has been the whole display path
-there since 2026-09-04 and every game the M4 and M7 tracks were built on
-runs through it. Win98 starts on the Cirrus (2026-09-07, user decision):
-ours runs there too (doc 19, M10) and is one pick away, but that driver
-is a day old against XP's, so a machine the wizard makes comes up on the
-driver Windows already has in the box.
+Both Windows families **start on ours**. XP always has: the driver has
+been the whole display path there since 2026-09-04 and every game the M4
+and M7 tracks were built on runs through it. Win98 has since 2026-09-16
+(user decision). From 2026-09-07 it started on the Cirrus, the driver
+Windows has in the box, because ours (doc 19, M10) was then a day old
+against XP's; the Cirrus stays one pick away.
 
 Two rules make the field safe to hand-write:
 

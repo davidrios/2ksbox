@@ -440,8 +440,8 @@ layer when the guest was updated — `unwrap_surf()`'s pointer sniffing, the
 CALLBACKS2 `Clear` entry, `d3d7test.c`'s `IDirect3D3` path — each on the
 evidence of a one-shot log that never fired across a full `ebtest` and a
 `d3d7test`, not on inference. **Installing DirectX rebinds the display to
-Cirrus**: it means booting the machine in the launcher, whose Win98 default
-is `-vga cirrus`, so Windows re-detects that adapter, `[386Enh]` loses its
+Cirrus**: it means booting the machine in the launcher on `-vga cirrus` (the
+Win98 default until 2026-09-16), so Windows re-detects that adapter, `[386Enh]` loses its
 `D3DPT9V.VXD` line and `[boot.description]` reads `Cirrus Logic 5446 PCI`
 (`[boot] display.drv=pnpdrvr.drv` still looks right, which is the confusing
 part). Run `install`, not `boot`, after any hand session on the image.

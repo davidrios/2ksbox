@@ -93,9 +93,8 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   Cirrus Windows has an in-box driver for, an `Other` machine between the
   two standard adapters, and a DOS machine chooses nothing — its titles
   program a VGA/VESA BIOS directly. Which of them a new machine starts on
-  is the list's own first entry, and the two Windows families sit at
-  opposite ends of the same pair: XP on ours, Win98 on the Cirrus
-  (2026-09-07 — the 9x driver is much the newer of the two, doc 06). The
+  is the list's own first entry: ours on both Windows families (Win98
+  since 2026-09-16; it started on the Cirrus from 2026-09-07, doc 06). The
   row hides itself on the DOS case, and neither front end knows which family that is: it asks
   `video_applies()` and fills the combo from `video_choices()`. On the Qt
   side the labels are a *property* rather than an invokable for exactly
