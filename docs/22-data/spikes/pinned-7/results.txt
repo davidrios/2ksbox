@@ -1,0 +1,2 @@
+SPECRUN list=run.lst reps=2 qpc=3579545
+START superpi rep=1

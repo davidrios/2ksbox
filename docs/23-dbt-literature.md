@@ -197,3 +197,113 @@ trap; doc 21 §9's RAM-backed FIFO window remains the plan.
    items.
 4. The RAPIDO 2025 flag-check paper for doc 16's follow-ups.
 5. SC '25 double-word arithmetic for x87 PC=64 (speculative).
+
+## Spikes: each candidate tried, one at a time (2026-09-16)
+
+A user request: implement each of the ranked items as a spike and compare
+with the numbers of doc 22. The method is doc 22's reproducible tier
+(`tools/specbench/run.sh`, the XP image, every launch through `noaslr`),
+one build of the tree with every spike behind its own `-accel tcg`
+switch, a fresh `default` run of the unchanged binary the same morning as
+the control, and the guest stage of `scripts/test.sh` on every build (the
+DOS x87 / rep / SMC / SSE batteries, the PIT clock, MIDI, ATAPI, the pad;
+the three Voodoo checks were failing before the spikes on this checkout,
+because the tree's copy of `voodoo/voodoo2.c` predates the RAM FIFO —
+`scripts/build.sh` re-prepares it — and are out of scope here). Super PI's
+digits are identical in every row. The diff, the scripts that produce it
+and every run's result lines are under `docs/22-data/spikes/`; nothing
+from it is in the patch queue. Run-to-run noise on this tier is about
+±2 % (doc 22 §5.2), and the control itself came out 1–2 % under doc 22's
+row, so a difference under 3 % is nothing.
+
+| spike | switch | Super PI 1M (s) | 7-Zip (MIPS) | SSEBENCH (ns) | nbench | verdict |
+|---|---|---|---|---|---|---|
+| control, the tree as committed | — | 75.2 | 1553 | 2.37 | 1.00 | doc 22's `default`, remeasured |
+| **A** Tiaozhuan's full address mapping: the jump cache as a table indexed by the pc itself | `jump-table` | 73.5 | 1588 | 2.30 | 1.01 | ≤ 2 %, within noise |
+| **B** SYSTOR 2022, the exit-request check at back edges and indirect branches only | `irq-check-backedge` | 74.3 | 1583 | 2.29 | 1.01 | ≤ 2 %, within noise |
+| A + B | both | 73.9 | 1583 | 2.30 | 1.01 | as above |
+| **D** MAMBO-X64's return prediction: a return-address ring, `call` through a host `bl`, `ret` through a host `ret` | `ras`, on top of A + B | 75.5 | 1574 | 2.45 | 1.01 | a loss: −2 % Super PI, −6 % SSEBENCH |
+| **C** RAPIDO 2025, the ceiling: every SSE result check removed (inexact, `SSES_NOCHECK=1`) | — | — | — | 2.17 | — | the checks cost ≤ 6 % of the SSE score (convert 16 %, scalar chain 8 %, packed ops 0–1 %); nothing exact can take more |
+| **E** DATE 2025 / patch 21, pinned registers, capped at seven (`QEMU_TCG_PIN_MAX=7`) | `pinned-regs` | XP rebooted during Super PI | | | | the crash is not the eighth register: it reproduces at seven (`pinned-7/reboot.png`) |
+
+What each one is, and what the number says:
+
+- **A, the pc-indexed jump table** (§2, Tiaozhuan). 32 GiB of address
+  space reserved with `MAP_NORESERVE`, an entry per 32-bit pc holding the
+  TB pointer in its low 48 bits and patch 42's generation above them
+  (16 bits; the wrap re-maps the table), materialised a host page at a
+  time; a single-page TLB flush re-maps the page's 32 KiB rather than
+  writing it so an `invlpg` of a data page does not touch it; a TB flush
+  re-maps the whole thing. The inline probe's address chain to the entry
+  goes from eight dependent operations (the hash) to three, and there
+  are no conflict misses. Exact (the same cs_base / flags / cflags /
+  generation compare as before). The tier does not see it: 7-Zip's
+  indirect-branch working set already fit the 65,536-entry cache after
+  patch 42, and the hash was not on the critical path of a chain that
+  ends in five dependent loads anyway. Its case, if it has one, is a
+  Windows 98 game with thousands of virtual-call targets — which §6 of
+  doc 22 would have to measure; not done here.
+- **B, the check at back edges** (§7). A TB not under icount and not in
+  an interrupt shadow skips the `icount_decr` test at its start; the
+  target emits it before every backward direct jump and every indirect
+  branch (every cycle in the block graph contains one), and — found by the
+  PIT check, which failed on the first build — before the jump that ends
+  a TB an I/O instruction ended, because patch 34 delivers the PIT's
+  overdue edge on the `in` itself and counts on the next block start to
+  take it. Exact, and the interrupt latency in straight-line code goes
+  from "next block" to "next back edge or return". Two host
+  instructions per block, an L1 load that was never on the critical path
+  of an out-of-order core: nothing to measure. The paper's gains were on
+  an in-order LoongArch.
+- **D, return prediction** (§2, MAMBO-X64). Two TCG ops: `call_tb`
+  (a goto_tb reached through `bl` to a three-instruction stub in the
+  caller's TB, which stores the host return address into a ring entry
+  beside the guest return address and the calling TB) and `goto_ret`
+  (a goto_ptr emitted as `ret`), a 64-entry ring in the jump cache, the
+  `call` side in `gen_jmp_rel` (32-bit code, same-page continuation,
+  never for `call $+5`), the `ret` side before the ordinary probe: pop,
+  compare the popped address with the target, compare the calling TB's
+  cs_base / flags / cflags with the current ones (the landing is a
+  `goto_tb` to the continuation and must be the exact one), `ret` on a
+  hit, fall through to the probe on a miss. Exact; every battery passes.
+  And slower: the ring push at every call (eight instructions and two
+  stores) plus the branch at every `ret` cost more than the host `ret`'s
+  prediction saves, which says the M1's indirect predictor was already
+  getting most of the `br` targets right. Unmeasured: the ring's hit
+  rate, which a counter would give and which decides whether a second
+  iteration (the ring in the CPU's negative-offset state, no push for
+  leaf calls) is worth having. Parked with that note.
+- **C, cheaper IEEE checks** (§4). The paper's own point — an add or sub
+  cannot underflow, so that check is dead — was already true of patch 11:
+  add and sub check only "exponent field not all ones", two operations.
+  The experiment removes every check (inexact, an experiment knob only)
+  and bounds what any trimming could buy: 6 % of the SSE score, all of it
+  in the scalar and convert kernels, none in the packed ones the games
+  run. Closed.
+- **E, pinned registers** (§3). The DATE 2025 paper confirms the prize
+  patch 21 measured (+16 % on 7-Zip decompress); the open item was the
+  crash, believed to be an eighth pinned register. It is not: with the
+  count capped at seven the XP guest rebooted in Super PI's first
+  repetition exactly as doc 22's nine-register run did. The bug is in the
+  pinned path itself, and the next step is the one the M9 track lists
+  (`-d int` on the reboot, a bisect over the allocator changes), not a
+  different count.
+- **Not spiked.** §1, the hardware MMU: weeks, by the probe's own
+  estimate, and its user-space variants are closed on macOS (16 KiB
+  pages). §5, SC '25 double-word arithmetic for x87 at 64 bits: its
+  ceiling is already measured — `x87-pc64-as-53` is the same kernels with
+  the 64-bit rounding removed, LU 3.0x → 5.3x and neural net 2.7x → 4.9x
+  (doc 22 §5.3) — but the final rounding of a 106-bit double-double to a
+  64-bit mantissa has the double-rounding problem on halfway cases and
+  the argument that makes it exact is the whole work; not a spike. §6,
+  Transmeta's self-checking translations: only a Windows 98 renderer
+  exercises it, and the games tier is a day of runs. §8: measured free
+  already.
+
+**The conclusion.** On this tier the queue is at the point where the
+literature's remaining generic ideas buy nothing measurable: the
+control-flow patches already took the part of each that mattered on an
+out-of-order host, and the remaining large lever — the softmmu TLB chain,
+§1 — is the one that costs weeks. The two numbers that would change this
+are the games (a Windows 98 title's virtual-call working set for A) and
+the ring's hit rate (for D); both are cheap to take next.

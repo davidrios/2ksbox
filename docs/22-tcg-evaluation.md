@@ -806,6 +806,10 @@ from the helpers and run helper-heavy guest code at 0.55–0.65x, pristine
 or patched, and a load-time reservation next to the image (patch 63)
 removes it.
 
+The literature's remaining candidates were each spiked on this tier on
+2026-09-16 (doc 23, last section): none moves it by more than the noise,
+and the pinned-register crash reproduces with seven registers.
+
 Open, in order: the games of §6 on the project's x86-64 machine; the
 x86-64 form of the placement question there, where the far form is the
 always case; patch 21's crash, reproducible by `tools/specbench/run.sh
