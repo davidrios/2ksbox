@@ -1,0 +1,133 @@
+TCG's code buffer is reserved next to the helpers at load time, so a
+helper call is a near call in every launch.
+
+The aarch64 backend emits a helper call as one BL when the target is within
+128 MiB, as ADRP+ADD+BLR within 4 GiB, and beyond that as MOVZ + three
+MOVK + BLR; every host address a TB materialises (the indirect-jump helper,
+exit constants) follows the same rule. The buffer is mmap(NULL, 1 GiB) at
+TCG init, and on macOS/arm64 that landed at 0x3_0000_0000 -- 8 GiB from
+the text -- in about a third of launches, whenever the guest RAM and the
+libraries had already fragmented the space below the dyld shared cache.
+Those launches ran helper-heavy guest code 35-45 % slower with a
+byte-identical binary: x87 and SSE helpers at 0.55-0.65x, 7-Zip 0.89x, a
+tight generated loop 1.00x (docs/22-tcg-evaluation.md §5.0, 2026-09-15:
+found as "our tree with every switch off is 0.71x of stock", which was
+this lottery, not the patches). Pristine QEMU has it too.
+
+An mmap hint at TCG-init time is too late (the near windows are partly
+occupied and macOS returns the next free 1 GiB gap, 8 GiB away). A
+constructor runs when the image loads, before main() and before guest RAM
+exists, and takes a PROT_NONE MAP_JIT reservation within 2 GiB of its own
+image -- 1 GiB, or 512 or 256 MiB when the space above the image is
+already fragmented (it usually is: six paused launches got 1 GiB five
+times and 512 MiB once) -- -- the helpers live in the same image, whether that is
+qemu-system-i386 or libqemu-embed inside the player; alloc_code_gen_buffer_anon
+uses the reservation when the request is what it would have mapped
+anyway (PROT_NONE, MAP_JIT), shrinking the buffer to the reservation when
+that is smaller (a smaller buffer near beats a large one far), and falls
+back to mmap(NULL) otherwise. QEMU_JIT_DEBUG=1 prints every try. No switch: it runs before the command line exists;
+the A/B is a pristine build (build/qemu-stock), six ASLR-on launches each
+in doc 22 §5.0. Darwin only: Linux/x86-64 has the same reach rules (CALL
+rel32 = 2 GiB) but a different allocator; not measured there.
+
+diff --git a/tcg/region.c b/tcg/region.c
+index 478ec051c4..e5111fc963 100644
+--- a/tcg/region.c
++++ b/tcg/region.c
+@@ -24,6 +24,7 @@
+ 
+ #include "qemu/osdep.h"
+ #include "qemu/units.h"
++#include "qemu/units.h"
+ #include "qemu/madvise.h"
+ #include "qemu/mprotect.h"
+ #include "qemu/memalign.h"
+@@ -551,12 +552,86 @@ static int alloc_code_gen_buffer(size_t size, int splitwx, Error **errp)
+     return PROT_READ | PROT_WRITE | PROT_EXEC;
+ }
+ #else
++#if defined(CONFIG_DARWIN) && (defined(__aarch64__) || defined(__x86_64__))
++/*
++ * Reserve the code buffer's address space next to the helpers, at load
++ * time, before anything else fragments the region.
++ *
++ * The backends emit a direct call only when the target is close (aarch64
++ * BL: 128 MiB; x86-64 CALL rel32: 2 GiB) and a PC-relative address within
++ * 4 GiB (ADRP+ADD); beyond that every helper call and every host address a
++ * TB materialises is a 4-5 instruction sequence.  mmap(NULL) at TCG init
++ * time does not care: on macOS/arm64 the 1 GiB buffer landed 8 GiB from
++ * the text in about a third of launches, whenever the guest RAM and the
++ * libraries had already fragmented the space below the shared cache, and
++ * those launches ran helper-heavy guest code 35-45 % slower (2ksbox docs/22
++ * §5.0).  A constructor runs before main(), so the space is still free:
++ * take a PROT_NONE MAP_JIT reservation within 2 GiB of this image and hand
++ * it to alloc_code_gen_buffer_anon(), which would have asked for exactly
++ * that mapping.
++ */
++static void *jit_reserve;
++static size_t jit_reserve_size;
++
++static void __attribute__((constructor)) jit_reserve_near_helpers(void)
++{
++    const uintptr_t anchor = (uintptr_t)&jit_reserve_near_helpers;
++    const uintptr_t align = 64 * MiB;
++    /* 1 GiB is DEFAULT_CODE_GEN_BUFFER_SIZE on 64-bit hosts; a quarter of
++     * it is more than these guests translate between flushes, and a
++     * smaller window fits where a 1 GiB one does not */
++    static const size_t sizes[] = { 1 * GiB, 512 * MiB, 256 * MiB };
++    const int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT;
++
++    for (size_t si = 0; si < ARRAY_SIZE(sizes); si++) {
++        const size_t size = sizes[si];
++        const intptr_t reach = 2 * (intptr_t)GiB - (intptr_t)size;
++        for (intptr_t off = (intptr_t)align; off < reach; off += (intptr_t)align) {
++            uintptr_t hint = QEMU_ALIGN_UP(anchor + off, align);
++            void *try = mmap((void *)hint, size, PROT_NONE, flags, -1, 0);
++            intptr_t d;
++            if (getenv("QEMU_JIT_DEBUG")) {
++                fprintf(stderr, "jit-reserve: anchor %p size %zuM hint %p -> %p\n",
++                        (void *)anchor, size >> 20, (void *)hint, try);
++            }
++            if (try == MAP_FAILED) {
++                continue;
++            }
++            d = (intptr_t)(uintptr_t)try - (intptr_t)anchor;
++            if (d > 0 && d < reach) {
++                jit_reserve = try;
++                jit_reserve_size = size;
++                return;
++            }
++            munmap(try, size);
++        }
++    }
++}
++#endif
++
+ static int alloc_code_gen_buffer_anon(size_t size, int prot,
+                                       int flags, Error **errp)
+ {
+-    void *buf;
++    void *buf = MAP_FAILED;
+ 
+-    buf = mmap(NULL, size, prot, flags, -1, 0);
++#if defined(CONFIG_DARWIN) && (defined(__aarch64__) || defined(__x86_64__))
++    if (getenv("QEMU_JIT_DEBUG")) {
++        fprintf(stderr, "jit-alloc: reserve %p size %zu req %zu prot %d flags %x\n",
++                jit_reserve, jit_reserve_size, size, prot, flags);
++    }
++    if (jit_reserve && prot == PROT_NONE && (flags & MAP_JIT)) {
++        buf = jit_reserve;
++        if (size < jit_reserve_size) {
++            munmap((char *)jit_reserve + size, jit_reserve_size - size);
++        } else if (size > jit_reserve_size) {
++            size = jit_reserve_size;   /* a smaller buffer near beats a large one far */
++        }
++        jit_reserve = NULL;
++    }
++#endif
++    if (buf == MAP_FAILED) {
++        buf = mmap(NULL, size, prot, flags, -1, 0);
++    }
+     if (buf == MAP_FAILED) {
+         error_setg_errno(errp, errno,
+                          "allocate %zu bytes for jit buffer", size);
