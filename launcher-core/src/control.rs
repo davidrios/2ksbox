@@ -13,12 +13,23 @@
 //! straight through `player` simply has no launcher socket, which is the
 //! documented "the launcher is optional" path (doc 07).
 //!
-//! Unix sockets only, so this is Linux/macOS. On Windows the socket is
-//! never created and every live operation reports that; a named pipe or
-//! a loopback port is a packaging-time (M6 step 6) question.
+//! The monitor is a Unix-domain socket on **every** host, Windows
+//! included: QEMU's Windows build binds `unix:` addresses (Windows 10
+//! has had AF_UNIX since 1803, and QEMU 9.2 requires newer), so the
+//! argument is the same string everywhere and only this end differs —
+//! std has no `UnixStream` on Windows, so `imp` there makes the socket
+//! through Winsock. Not a loopback port: any local process can reach
+//! one, and a QMP monitor is complete control of the machine, where a
+//! socket file in the user's own runtime or temp directory is guarded
+//! by that directory's permissions on both kinds of host. Not a named
+//! pipe either: QEMU's `pipe` chardev on Windows waits for its one
+//! client inside machine start-up, so the player would not come up
+//! until the launcher connected, and it takes no second connection.
 
 use serde_json::Value;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// Where a machine's monitor socket lives: the platform runtime dir
 /// (`/run/user/<uid>/2ksbox` on Linux) or the temp dir, plus a
@@ -39,10 +50,6 @@ pub fn socket_path(bundle_dir: &Path) -> PathBuf {
     dir.join(format!("{stem}-{hash:016x}.qmp"))
 }
 
-/// The `-qmp` argument that makes QEMU listen on `path`, or `None` on a
-/// platform without Unix sockets. Also removes a stale socket file left
-/// by a player that was killed rather than shut down — QEMU refuses to
-/// bind over one.
 /// The flat shelf file this machine's ATAPI drive reads
 /// (`cdshelf/cdshelf_proto.h`), beside its monitor socket: both are
 /// per-run, per-machine host state that belongs in the runtime dir
@@ -51,13 +58,23 @@ pub fn shelf_path(bundle_dir: &Path) -> PathBuf {
     socket_path(bundle_dir).with_extension("shelf")
 }
 
+/// The `-qmp` argument that makes QEMU listen on `path`, or `None` when
+/// the path is too long for a socket address. Also removes a stale socket
+/// file left by a player that was killed rather than shut down.
+///
 /// A QMP monitor is complete control of the machine, so the directory
 /// holding these sockets is owner-only. The platform runtime dir already
 /// is (`/run/user/<uid>` is 0700, macOS's per-user `$TMPDIR` likewise),
 /// but our own subdirectory under it is created here, so it says so
 /// rather than inheriting whatever the umask happens to be.
 pub fn qmp_args(path: &Path) -> Option<Vec<String>> {
-    if !cfg!(unix) {
+    // `sun_path` is 108 bytes with its NUL on Linux and Windows (104 on
+    // macOS), and QEMU refuses a longer path — which would stop the
+    // machine from starting at all. A long temp directory (Windows puts
+    // the user name in it) costs live control, never the machine.
+    let max = if cfg!(target_os = "macos") { 103 } else { 107 };
+    if path.as_os_str().len() > max {
+        eprintln!("live control off: the monitor socket path is too long for a Unix socket: {}", path.display());
         return None;
     }
     if let Some(parent) = path.parent() {
@@ -71,118 +88,188 @@ pub fn qmp_args(path: &Path) -> Option<Vec<String>> {
     // A player that was killed rather than shut down leaves the socket
     // file behind, and QEMU refuses to bind over one.
     let _ = std::fs::remove_file(path);
+    // QEMU refuses to start a machine whose monitor it cannot bind, and a
+    // Windows PC can fail that where a Unix host never does (a build
+    // before AF_UNIX, a temp directory on a filesystem that cannot hold a
+    // socket file — and wine, which has no AF_UNIX at all). Bound here
+    // first, so such a host loses live control and keeps the machine.
+    #[cfg(windows)]
+    if let Err(e) = imp::bind_probe(path) {
+        eprintln!("live control off: this host cannot bind a Unix socket at {}: {e}", path.display());
+        return None;
+    }
     Some(vec!["-qmp".into(), format!("unix:{},server,nowait", path.display())])
+}
+
+/// Whether something is listening on `path` — a player that is up,
+/// whoever started it. A connection and nothing more: no greeting read.
+pub fn listening(path: &Path) -> bool {
+    imp::connect(path).is_ok()
 }
 
 #[cfg(unix)]
 mod imp {
-    use serde_json::{json, Value};
-    use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
     use std::path::Path;
-    use std::time::Duration;
 
-    /// A connected QMP session. Synchronous and single-threaded: the
-    /// launcher is the only client of this socket and issues one command
-    /// at a time, so replies are read inline (events in between are
-    /// dropped — nothing here subscribes to any).
-    pub struct Control {
-        writer: UnixStream,
-        reader: BufReader<UnixStream>,
-        next_id: u64,
-    }
+    pub type Stream = UnixStream;
 
-    impl Control {
-        /// Connect, answer the greeting with `qmp_capabilities` (QEMU
-        /// rejects every other command before that) and return the
-        /// session. A refused connection means the machine isn't running
-        /// (or was started outside the launcher).
-        pub fn connect(path: &Path) -> Result<Control, String> {
-            let stream = UnixStream::connect(path).map_err(|e| format!("{}: {e}", path.display()))?;
-            // Bounded so a wedged QEMU can't hang the UI thread forever;
-            // generous because a snapshot command runs on QEMU's main
-            // loop, which a busy guest can hold briefly.
-            let timeout = Duration::from_secs(10);
-            stream.set_read_timeout(Some(timeout)).map_err(|e| e.to_string())?;
-            stream.set_write_timeout(Some(timeout)).map_err(|e| e.to_string())?;
-            let reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
-            let mut control = Control { writer: stream, reader, next_id: 1 };
-            control.read_until(|v| v.get("QMP").is_some())?; // the greeting
-            control.execute("qmp_capabilities", Value::Null)?;
-            Ok(control)
-        }
-
-        /// Read lines until `want` accepts one. Events and replies to
-        /// commands we've stopped waiting for are skipped.
-        fn read_until(&mut self, want: impl Fn(&Value) -> bool) -> Result<Value, String> {
-            let mut line = String::new();
-            loop {
-                line.clear();
-                match self.reader.read_line(&mut line) {
-                    Ok(0) => return Err("monitor closed the connection".into()),
-                    Ok(_) => {}
-                    Err(e) => return Err(format!("reading the monitor: {e}")),
-                }
-                let Ok(v) = serde_json::from_str::<Value>(line.trim()) else {
-                    continue;
-                };
-                if want(&v) {
-                    return Ok(v);
-                }
-            }
-        }
-
-        /// Run one command and return its `return` payload, or QEMU's own
-        /// error description — which is what a window should show
-        /// ("Device 'ide1-cd0' is not removable" says more than a code).
-        pub fn execute(&mut self, cmd: &str, args: Value) -> Result<Value, String> {
-            let id = self.next_id;
-            self.next_id += 1;
-            let mut msg = json!({"execute": cmd, "id": id});
-            if !args.is_null() {
-                msg["arguments"] = args;
-            }
-            let mut line = msg.to_string();
-            line.push('\n');
-            self.writer.write_all(line.as_bytes()).map_err(|e| format!("writing to the monitor: {e}"))?;
-            let reply = self.read_until(|v| v.get("id").and_then(Value::as_u64) == Some(id))?;
-            if let Some(r) = reply.get("return") {
-                return Ok(r.clone());
-            }
-            if let Some(e) = reply.get("error") {
-                return Err(format!(
-                    "{}: {}",
-                    e.get("class").and_then(Value::as_str).unwrap_or("Error"),
-                    e.get("desc").and_then(Value::as_str).unwrap_or("?")
-                ));
-            }
-            Err(format!("malformed reply: {reply}"))
-        }
+    pub fn connect(path: &Path) -> std::io::Result<Stream> {
+        UnixStream::connect(path)
     }
 }
 
-#[cfg(not(unix))]
+/// Winsock's AF_UNIX. The connected socket is handed to std as a
+/// `TcpStream`, whose reads, writes and timeouts are plain `recv` /
+/// `send` / `SO_RCVTIMEO` on the handle and so do not care about the
+/// address family; nothing here asks it for a peer address, and it is
+/// never cloned (`WSADuplicateSocket` is the one call AF_UNIX does not
+/// take), which is why `Control` reads and writes through one stream.
+#[cfg(windows)]
 mod imp {
-    use serde_json::Value;
+    use std::net::TcpStream;
+    use std::os::windows::io::FromRawSocket;
     use std::path::Path;
+    use windows_sys::Win32::Networking::WinSock::{
+        bind, closesocket, connect as ws_connect, socket, WSAGetLastError, WSAStartup, AF_UNIX, INVALID_SOCKET,
+        SOCKADDR, SOCKADDR_UN, SOCKET, SOCK_STREAM, WSADATA,
+    };
 
-    /// Stub for a platform without Unix sockets (see the module docs):
-    /// the socket is never created, so connecting always fails with the
-    /// reason rather than the window pretending live control exists.
-    pub struct Control;
+    pub type Stream = TcpStream;
 
-    impl Control {
-        pub fn connect(_path: &Path) -> Result<Control, String> {
-            Err("live control needs a Unix socket (not available on this platform)".into())
+    /// A stream socket in the Unix family and the address of `path`.
+    /// WSAStartup is counted, and std may not have made its own call yet —
+    /// it does so lazily, on its first std::net use — so this one is ours.
+    fn unix_socket(path: &Path) -> std::io::Result<(SOCKET, SOCKADDR_UN)> {
+        let bytes = path.as_os_str().as_encoded_bytes();
+        let mut addr = SOCKADDR_UN { sun_family: AF_UNIX, sun_path: [0; 108] };
+        if bytes.len() >= addr.sun_path.len() {
+            return Err(std::io::Error::other("socket path too long"));
         }
-
-        pub fn execute(&mut self, _cmd: &str, _args: Value) -> Result<Value, String> {
-            Err("live control needs a Unix socket (not available on this platform)".into())
+        for (d, s) in addr.sun_path.iter_mut().zip(bytes) {
+            *d = *s as i8;
         }
+        // SAFETY: plain Winsock calls with a zeroed out-parameter.
+        unsafe {
+            let mut data: WSADATA = std::mem::zeroed();
+            let rc = WSAStartup(0x0202, &mut data);
+            if rc != 0 {
+                return Err(std::io::Error::from_raw_os_error(rc));
+            }
+            let s = socket(AF_UNIX as i32, SOCK_STREAM, 0);
+            if s == INVALID_SOCKET {
+                return Err(std::io::Error::from_raw_os_error(WSAGetLastError()));
+            }
+            Ok((s, addr))
+        }
+    }
+
+    const ADDR_LEN: i32 = std::mem::size_of::<SOCKADDR_UN>() as i32;
+
+    pub fn connect(path: &Path) -> std::io::Result<Stream> {
+        let (s, addr) = unix_socket(path)?;
+        // SAFETY: `s` is a socket we own; the address outlives the call.
+        unsafe {
+            if ws_connect(s, &addr as *const SOCKADDR_UN as *const SOCKADDR, ADDR_LEN) != 0 {
+                let err = std::io::Error::from_raw_os_error(WSAGetLastError());
+                closesocket(s);
+                return Err(err);
+            }
+            Ok(TcpStream::from_raw_socket(s as _))
+        }
+    }
+
+    /// Bind `path` and let it go again, leaving no socket file behind.
+    pub fn bind_probe(path: &Path) -> std::io::Result<()> {
+        let (s, addr) = unix_socket(path)?;
+        // SAFETY: as in `connect`.
+        let result = unsafe {
+            let rc = bind(s, &addr as *const SOCKADDR_UN as *const SOCKADDR, ADDR_LEN);
+            let err = (rc != 0).then(|| std::io::Error::from_raw_os_error(WSAGetLastError()));
+            closesocket(s);
+            err.map_or(Ok(()), Err)
+        };
+        let _ = std::fs::remove_file(path);
+        result
     }
 }
 
-pub use imp::Control;
+/// A connected QMP session. Synchronous and single-threaded: the launcher
+/// is the only client of this socket and issues one command at a time, so
+/// replies are read inline (events in between are dropped — nothing here
+/// subscribes to any). One stream for both directions, written through
+/// the reader: a `BufReader` only buffers what it has read.
+pub struct Control {
+    stream: BufReader<imp::Stream>,
+    next_id: u64,
+}
+
+impl Control {
+    /// Connect, answer the greeting with `qmp_capabilities` (QEMU rejects
+    /// every other command before that) and return the session. A refused
+    /// connection means the machine isn't running (or was started outside
+    /// the launcher).
+    pub fn connect(path: &Path) -> Result<Control, String> {
+        let stream = imp::connect(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        // Bounded so a wedged QEMU can't hang the UI thread forever;
+        // generous because a snapshot command runs on QEMU's main loop,
+        // which a busy guest can hold briefly.
+        let timeout = Duration::from_secs(10);
+        stream.set_read_timeout(Some(timeout)).map_err(|e| e.to_string())?;
+        stream.set_write_timeout(Some(timeout)).map_err(|e| e.to_string())?;
+        let mut control = Control { stream: BufReader::new(stream), next_id: 1 };
+        control.read_until(|v| v.get("QMP").is_some())?; // the greeting
+        control.execute("qmp_capabilities", Value::Null)?;
+        Ok(control)
+    }
+
+    /// Read lines until `want` accepts one. Events and replies to commands
+    /// we've stopped waiting for are skipped.
+    fn read_until(&mut self, want: impl Fn(&Value) -> bool) -> Result<Value, String> {
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match self.stream.read_line(&mut line) {
+                Ok(0) => return Err("monitor closed the connection".into()),
+                Ok(_) => {}
+                Err(e) => return Err(format!("reading the monitor: {e}")),
+            }
+            let Ok(v) = serde_json::from_str::<Value>(line.trim()) else {
+                continue;
+            };
+            if want(&v) {
+                return Ok(v);
+            }
+        }
+    }
+
+    /// Run one command and return its `return` payload, or QEMU's own error
+    /// description — which is what a window should show ("Device
+    /// 'ide1-cd0' is not removable" says more than a code).
+    pub fn execute(&mut self, cmd: &str, args: Value) -> Result<Value, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let mut msg = serde_json::json!({"execute": cmd, "id": id});
+        if !args.is_null() {
+            msg["arguments"] = args;
+        }
+        let mut line = msg.to_string();
+        line.push('\n');
+        self.stream.get_mut().write_all(line.as_bytes()).map_err(|e| format!("writing to the monitor: {e}"))?;
+        let reply = self.read_until(|v| v.get("id").and_then(Value::as_u64) == Some(id))?;
+        if let Some(r) = reply.get("return") {
+            return Ok(r.clone());
+        }
+        if let Some(e) = reply.get("error") {
+            return Err(format!(
+                "{}: {}",
+                e.get("class").and_then(Value::as_str).unwrap_or("Error"),
+                e.get("desc").and_then(Value::as_str).unwrap_or("?")
+            ));
+        }
+        Err(format!("malformed reply: {reply}"))
+    }
+}
 
 /// The qdev id `bundle::Machine::qemu_args` gives the CD-ROM, so a live
 /// medium change can name it.

@@ -47,3 +47,9 @@ tar = "0.4"
 # see different `wgpu::Device` types.
 wgpu = "30"
 pollster = "1"
+
+# Live control's monitor socket on Windows (`control.rs`): std has no
+# `UnixStream` there, so the AF_UNIX client is three Winsock calls. The
+# version already in the lock through wgpu's tree, so no new crate.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock"] }

@@ -477,7 +477,15 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    zip. QEMU's own `mingw32-nsis` recipe is in the cross image's reach.
 6. **Zero-copy frames** through a DXGI shared handle, the Windows answer
    to the dma-buf ring and IOSurface.
-7. **A second Windows check that boots a guest**, once (1) says what
+7. **Live control on the PC** (2026-09-16, written, not run on Windows):
+   the launcher's monitor is a Unix-domain socket here too — QEMU binds
+   `unix:` on Windows, the launcher connects through Winsock AF_UNIX
+   (`launcher-core/src/control.rs`). Wine has no AF_UNIX (`socket()`
+   answers 10047), so nothing here can run it: start a machine from the
+   launcher, open Snapshots… and take one, and swap a disc from the shelf.
+   `launcher.log` saying `live control off: …` means the trial bind
+   failed and the machine ran without it.
+8. **A second Windows check that boots a guest**, once (1) says what
    actually happens. The shape to aim for is `xp-driver-test.sh`'s: drive
    the machine over QMP, pull the artefacts out, diff a frame.
 

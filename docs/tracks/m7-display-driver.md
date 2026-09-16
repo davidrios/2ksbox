@@ -559,7 +559,8 @@ build/d3dpt-dp2-test x.bmp                              # the same scene through
    readback copy. A validator for SM2/3 bytecode on the d3d9 half (the
    M4 track's `d3dpt_exec.cpp` hands guest bytecode straight to DXVK,
    which asserts on garbage — see doc 15's shader section) is worth the
-   same treatment.
+   same treatment; not a v1 blocker (user decision, 2026-09-16: hostile
+   guest input is an accepted risk for now).
 2. Add a `driver` stage to `scripts/test.sh` (boot on `d3dpt-vga`, `modes`
    + `ddtest` with expected numbers) once the M4 track's suite structure
    is stable; until then `tools/xp-driver-test.sh` is the check.

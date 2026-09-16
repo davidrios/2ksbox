@@ -429,15 +429,7 @@ fn absolute_backing(original: &Path, copy: &Path) -> Result<(), String> {
 /// Whether something is listening on the bundle's monitor socket — a
 /// player that is up, whoever started it.
 fn monitor_listening(dir: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        std::os::unix::net::UnixStream::connect(crate::control::socket_path(dir)).is_ok()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = dir;
-        false
-    }
+    crate::control::listening(&crate::control::socket_path(dir))
 }
 
 fn size_label(bytes: u64) -> String {

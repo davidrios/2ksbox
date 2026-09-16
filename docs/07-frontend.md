@@ -422,8 +422,15 @@ is the same shape `tools/qmpc.py` already uses to drive a guest. A bundle run
 straight through `player` by hand has no such socket, which is exactly the
 "optional launcher" path above. The socket is derived from the bundle
 directory and lives in an owner-only directory (a QMP monitor is complete
-control of the machine). Unix sockets only, so live control is Linux/macOS;
-Windows needs a named pipe or a loopback port, settled with packaging.
+control of the machine). **The same Unix-domain socket on Windows** since
+2026-09-16: QEMU's Windows build binds `unix:` addresses, so only the
+launcher's client end differs (Winsock AF_UNIX in `control.rs`). Not a
+loopback port, which any local process can reach, and not a named pipe,
+whose QEMU chardev waits for its one client inside machine start-up. A
+Windows host that cannot bind one (no AF_UNIX, a temp directory on a
+filesystem that cannot hold a socket file, wine) is found by a trial bind
+before the player starts and simply runs without live control; so does a
+socket path longer than `sun_path`.
 
 A machine that *isn't* running has no monitor, so the launcher goes at the
 qcow2 with `qemu-img snapshot` instead — the same snapshots `savevm`/`loadvm`
@@ -571,9 +578,8 @@ screenshots) needs somewhere to host them.
 
 Still open: the Flatpak (its ID and metadata are settled by ADR-011; what
 is left is the manifest, hosted screenshots and a `flatpak-builder`) and
-the Windows installer, and with the latter Windows live control (a named
-pipe or a loopback port in place of the Unix monitor socket above). The
-macOS .app landed 2026-09-06.
+the Windows installer. Windows live control landed 2026-09-16 (the same
+Unix-domain monitor socket, above). The macOS .app landed 2026-09-06.
 
 ## One front end over a core
 

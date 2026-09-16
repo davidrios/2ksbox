@@ -717,10 +717,10 @@ here; the rules it discovered are the core's and still hold.
   existed when the bundle happened to ship a disc could never be loaded
   later, and a PC of the era has one regardless.
 
-  Unix sockets only, so live control is Linux/macOS; on Windows the
-  socket is never created and every live operation says so rather than
-  the window pretending otherwise (a named pipe or a loopback port is a
-  packaging-time, step 6, question). Snapshot *node names* are looked up
+  Unix-domain sockets on every host — on Windows too since 2026-09-16,
+  where QEMU binds `unix:` and the launcher connects through Winsock's
+  AF_UNIX (doc 07 has why not a loopback port or a named pipe); a host
+  that cannot bind one runs the machine without live control. Snapshot *node names* are looked up
   at runtime rather than pinned in `qemu_args` — QEMU generates them
   (`#block136`) and putting one in the bundle format would freeze a
   command-line implementation detail.
@@ -1769,9 +1769,10 @@ says 256`; against the fixed one, 256 / 512 / 64 (and 512 for the
 5. ~~**Snapshots UI + disc-shelf editing**~~ — done above: 5a disc-shelf
    editing (a bundle edit, no IPC), 5b snapshots offline (`qemu-img`),
    5c live media swap and snapshots over the launcher's own `-qmp unix:`
-   socket (no protocol, no player change). Windows live control and the
-   player's *own* overlay controls (doc 07 puts pause/snapshot/disc swap
-   in the player too) are still open.
+   socket (no protocol, no player change); on Windows too since
+   2026-09-16 (AF_UNIX, not yet run on a real PC). The player's *own*
+   overlay controls (doc 07 puts pause/snapshot/disc swap in the player
+   too) are still open.
 5b. ~~**The shelf from inside the guest**~~ — done above: the host half
    (patch 52 + the launcher publishing the shelf file) and both guest
    programs, `CDSHELF.EXE` (Win98/XP) and `CDSHELF.COM` (DOS), guarded by
@@ -1859,10 +1860,9 @@ says 256`; against the fixed one, 256 / 512 / 64 (and 512 for the
      (`Contents/MacOS` + `Contents/Resources`, a third candidate in
      `paths.rs`), signed with the JIT entitlement and notarized. The Mac
      is the user's M1 Air, so this one is driven from there.
-   - 6d **Windows**: installer + portable zip, and with it the Windows
-     half of live control — the launcher's monitor socket is a Unix
-     socket, so a named pipe or a loopback port is needed (doc 07's
-     "settled with packaging").
+   - 6d **Windows**: installer + portable zip. (The Windows half of live
+     control landed 2026-09-16 without it: the same Unix-domain socket,
+     AF_UNIX through Winsock.)
    - 6e the shader-pack release and the docs site from these documents
      (doc 08's M6 line), which have no prerequisites in the code.
 
