@@ -592,7 +592,7 @@ Window {
                     // The two shortcuts sit beside "All defaults" rather
                     // than replacing it: eleven switches is too many to
                     // walk through to build a control run, and the way
-                    // back is not "all on" (pinned-regs ships off) but
+                    // back is not "all on" (x87-pc64-as-53 ships off) but
                     // the defaults.
                     RowLayout {
                         spacing: 6

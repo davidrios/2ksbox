@@ -587,7 +587,8 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   off"** and **"Turn all on"** beside "All defaults"
   (`Optimizations::disable_all` / `enable_all` in `launcher-core`, so
   the Qt front end and the C ABI both have them), and "all on" is deliberately
-  *not* the same as the defaults: `pinned-regs` ships off. The note above
+  *not* the same as the defaults: `x87-pc64-as-53` ships off
+  (`pinned-regs` did too, until it left the form on 2026-09-16). The note above
   the switches says which of the three states the machine is in. Guarded
   by the `optimizations` check (all eleven on one command line, accepted
   by our own `qemu-system-i386`, with a name that does not exist still
@@ -1062,7 +1063,13 @@ nothing more on COM1: a bugcheck with XP's auto-restart
 Third sighting of the mixed-case instability doc 18 lists as open item 1
 (pin-8 boot crash); the run was killed and the configuration has no
 numbers. Off by default stays right; the bug is now reproducible by
-`tools/specbench/run.sh <image> pinned`.
+`tools/specbench/run.sh <image> pinned`. **Later the same day the switch
+left the launcher** (user decision: too unstable, too little to gain —
+1.1-1.2x at best): `bundle::Optimization` no longer has it, the form
+offers fourteen switches, and a bundle that still says
+`pinned-regs = true` keeps the entry without it reaching the command
+line until "All defaults" clears it (the `optimizations` check plants one).
+The patch and its accelerator property stay in the queue, off.
 
 **Doc 22's open measurements (2026-09-15, user decision):** the 3DMark 99 race
 and first-person figures in the M9 track doc and doc 22 are **withdrawn** — the

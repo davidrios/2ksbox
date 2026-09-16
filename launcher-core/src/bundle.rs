@@ -705,7 +705,6 @@ pub enum Optimization {
     JumpCacheKeep,
     EobChain,
     TlbRetire,
-    PinnedRegs,
 }
 
 /// Where an optimization's switch goes on the command line: a property
@@ -723,8 +722,15 @@ enum Knob {
 impl Optimization {
     /// In the order the form lists them: the arithmetic fast paths
     /// first, in the order they were written (the inexact one last), then
-    /// the ones about translation, then the experimental one.
-    pub const ALL: [Optimization; 15] = [
+    /// the ones about translation.
+    ///
+    /// Patch 21's `pinned-regs` is not here any more (2026-09-16, user
+    /// decision): it crashed guests and its gain was too small to pursue,
+    /// so the form no longer offers it. The patch keeps its accelerator
+    /// property, off by default; a bundle that still has the entry keeps
+    /// it in the table, never on the command line, until "All defaults"
+    /// (`Optimizations::RETIRED`).
+    pub const ALL: [Optimization; 14] = [
         Optimization::X87Fast,
         Optimization::SseFast,
         Optimization::SimdFast,
@@ -739,7 +745,6 @@ impl Optimization {
         Optimization::JumpCacheKeep,
         Optimization::EobChain,
         Optimization::TlbRetire,
-        Optimization::PinnedRegs,
     ];
 
     /// The QEMU property name, which is also the key in `machine.toml`:
@@ -761,7 +766,6 @@ impl Optimization {
             Optimization::JumpCacheKeep => "jump-cache-keep",
             Optimization::EobChain => "eob-chain",
             Optimization::TlbRetire => "tlb-retire",
-            Optimization::PinnedRegs => "pinned-regs",
         }
     }
 
@@ -780,19 +784,17 @@ impl Optimization {
             | Optimization::TlsHotPaths
             | Optimization::JumpCacheKeep
             | Optimization::EobChain
-            | Optimization::TlbRetire
-            | Optimization::PinnedRegs => Knob::Tcg,
+            | Optimization::TlbRetire => Knob::Tcg,
         }
     }
 
     /// Whether a machine that says nothing has it on. Everything that
     /// has shipped is on — turning one off is a diagnosis, not a
-    /// preference — and two are off: `pinned-regs` because the patch itself
-    /// is off by default while the work is in progress, and
-    /// `x87-pc64-as-53` because it is the one switch that changes what the
-    /// guest computes rather than how fast.
+    /// preference — and one is off: `x87-pc64-as-53`, because it is the
+    /// one switch that changes what the guest computes rather than how
+    /// fast.
     pub fn default_on(self) -> bool {
-        !matches!(self, Optimization::PinnedRegs | Optimization::X87Pc64As53)
+        !matches!(self, Optimization::X87Pc64As53)
     }
 
     /// The checkbox's label: what the fast path does, not what it is
@@ -813,7 +815,6 @@ impl Optimization {
             Optimization::JumpCacheKeep => "Keep the block cache across the guest's context switches",
             Optimization::EobChain => "Chain past segment loads, sti and popf when no interrupt waits",
             Optimization::TlbRetire => "Keep the address cache across the guest's own TLB flushes",
-            Optimization::PinnedRegs => "Keep guest registers in host registers (experimental)",
         }
     }
 
@@ -892,10 +893,6 @@ impl Optimization {
                  the page tables again for every page. The flushed cache is kept, and an entry comes \
                  back once the page-table entries it was computed from are checked unchanged."
             }
-            Optimization::PinnedRegs => {
-                "Apple Silicon only, and still being worked on - a boot crash has been seen with it \
-                 on. Leave it off unless you are testing it."
-            }
         }
     }
 }
@@ -934,12 +931,19 @@ impl Optimizations {
         }
     }
 
+    /// Switches the form offered once and no longer does. Nothing reads
+    /// them; "All defaults" removes them with the rest.
+    const RETIRED: [&'static str; 1] = ["pinned-regs"];
+
     /// Every optimization back on its default. Only the ones this build
-    /// knows about: an entry a newer launcher wrote is not something
-    /// this one can decide is wrong.
+    /// knows about, and the ones it retired: an entry a newer launcher
+    /// wrote is not something this one can decide is wrong.
     pub fn reset(&mut self) {
         for opt in Optimization::ALL {
             self.0.remove(opt.key());
+        }
+        for key in Self::RETIRED {
+            self.0.remove(key);
         }
     }
 
@@ -968,8 +972,8 @@ impl Optimizations {
     }
 
     /// Every optimization this build knows about turned **on**, the
-    /// other end of the same shortcut. `pinned-regs` comes on with it:
-    /// the switch means what it says, and its own note is where the
+    /// other end of the same shortcut. `x87-pc64-as-53` comes on with
+    /// it: the switch means what it says, and its own note is where the
     /// warning about it lives.
     pub fn enable_all(&mut self) {
         for opt in Optimization::ALL {

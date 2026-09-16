@@ -153,7 +153,7 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   the QEMU patches this project maintains (`patches/qemu/README.md`) with
   the off switch that patch already carried: `x87-fast`, `sse-fast`,
   `simd-fast` and `rep-fast` are guest-CPU properties, `smc-same-value`,
-  `inline-lookup`, `jump-cache-keep`, `eob-chain`, `tlb-retire` and `pinned-regs` are
+  `inline-lookup`, `jump-cache-keep`, `eob-chain` and `tlb-retire` are
   properties of the TCG accelerator
   itself. **They are exposed because the switch is the oracle.** Every
   one of them replaces simulated arithmetic with the host's own, so when
@@ -163,8 +163,13 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   measured gain under each switch, and says above them that on a machine
   headed for KVM they do nothing at all, because there is then no
   emulator in the path to have a fast path.
-  Everything that has shipped is on; `pinned-regs` is off, because the
-  patch itself is off by default while that work is in progress.
+  Everything that has shipped is on; `x87-pc64-as-53` is off, because it
+  is the one switch that changes what the guest computes. Patch 21's
+  `pinned-regs` was offered (off) until 2026-09-16 and is not any more
+  (user decision: it crashed guests for a gain too small to pursue); a
+  bundle still carrying the entry keeps it in its table, never on the
+  command line, until "All defaults" removes it
+  (`Optimizations::RETIRED`).
   **Only the difference is stored** (`[optimizations]` in the bundle, keyed
   by the QEMU property name): a machine that has changed nothing writes no
   table and produces the command line it always produced, and an

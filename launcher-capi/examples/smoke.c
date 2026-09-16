@@ -295,7 +295,7 @@ int main(int argc, char **argv) {
      * additions out of the guest's path in one click, which is what
      * answers "is one of ours what broke this" -- and it must really be
      * every one, so this asks each switch rather than trusting the flag.
-     * "All on" is not the same as the defaults: pinned-regs ships off. */
+     * "All on" is not the same as the defaults: x87-pc64-as-53 ships off. */
     lc_wizard_disable_all_optimizations(w);
     check("\"Turn all off\" says so", lc_wizard_optimizations_all_off(w), NULL);
     int still_on = 0;
