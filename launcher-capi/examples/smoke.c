@@ -161,6 +161,18 @@ int main(int argc, char **argv) {
           adapter && strstr(adapter, "d3dpt-vga") != NULL, adapter);
     lc_string_free(adapter);
 
+    /* The disk size follows the family the same way, and a size someone
+     * typed stays put. */
+    lc_wizard_open_new(w, (size_t)win98);
+    check("a new Win98 machine offers a 10 GB disk", lc_wizard_disk_size_gb(w) == 10, NULL);
+    lc_wizard_choose_family(w, (size_t)xp);
+    check("XP offers 20 GB", lc_wizard_disk_size_gb(w) == 20, NULL);
+    lc_wizard_choose_family(w, (size_t)dos);
+    check("DOS offers 2 GB", lc_wizard_disk_size_gb(w) == 2, NULL);
+    lc_wizard_set_disk_size_gb(w, 4);
+    lc_wizard_choose_family(w, (size_t)xp);
+    check("a typed disk size survives the switch", lc_wizard_disk_size_gb(w) == 4, NULL);
+
     lc_wizard_open_new(w, (size_t)dos);
 
     /* The whole point of a shared form: these are the same answers the

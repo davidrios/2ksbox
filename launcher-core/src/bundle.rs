@@ -1257,6 +1257,19 @@ pub fn default_video(family: Family) -> Option<Video> {
 }
 
 /// doc 06's RAM default for a family.
+/// The size a new machine's disk is offered at, in GB (a qcow2, so
+/// only what the guest writes is taken on the host). Enough for the OS
+/// and the era's games installed in full: a Windows 98 install is a few
+/// hundred MB and a big CD game another few hundred, XP itself wants
+/// ~1.5 GB, and DOS's largest games fit on a single CD.
+pub fn default_disk_size_gb(family: Family) -> u32 {
+    match family {
+        Family::Win98 | Family::Other => 10,
+        Family::Xp => 20,
+        Family::Dos => 2,
+    }
+}
+
 pub fn default_ram_mb(family: Family) -> u32 {
     match family {
         Family::Win98 => 256, // doc 06: 256 MB default, ≤512 MB hard cap

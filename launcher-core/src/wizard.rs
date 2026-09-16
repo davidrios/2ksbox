@@ -124,6 +124,9 @@ pub struct Form {
     pad_chosen: bool,
     pub existing_disk: bool,
     pub disk_path: String,
+    /// The new disk's size. Public, since it is a plain number field, so
+    /// there is no `_chosen` flag: `choose_family` moves it to the new
+    /// family's default only while it still holds the old family's.
     pub disk_size_gb: u32,
     pub install_media: String,
     /// A shader profile id (`shader_library`), or `None` for the app
@@ -210,7 +213,7 @@ impl Default for Form {
             pad_chosen: false,
             existing_disk: false,
             disk_path: String::new(),
-            disk_size_gb: 2,
+            disk_size_gb: bundle::default_disk_size_gb(Family::Win98),
             install_media: String::new(),
             shader_profile: None,
             advanced: false,
@@ -325,8 +328,11 @@ impl Form {
     /// set, so `submit`'s real disk-creation and save logic can be
     /// exercised without a GUI click (`cli`'s `--wizard-new`).
     pub fn with_new_disk(family: Family, name: String, disk_size_gb: u32) -> Form {
-        let mut form = Form { name, disk_size_gb, ..Default::default() };
+        let mut form = Form { name, ..Default::default() };
         form.choose_family(family);
+        // After the family, which would otherwise move a size that
+        // happens to equal Win98's default along to the new family's.
+        form.disk_size_gb = disk_size_gb;
         form
     }
 
@@ -354,6 +360,9 @@ impl Form {
     /// Pick the family, moving whatever nobody has chosen to that
     /// family's own default with it.
     pub fn choose_family(&mut self, family: Family) {
+        if self.disk_size_gb == bundle::default_disk_size_gb(self.family) {
+            self.disk_size_gb = bundle::default_disk_size_gb(family);
+        }
         self.family = family;
         if !self.ram_chosen {
             self.ram_mb = bundle::default_ram_mb(family);

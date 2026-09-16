@@ -57,7 +57,10 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   acceleration →
   networking → the pointer → disk size → install media → bundle from the
   reference definitions (doc 06). Advanced drawer edits the TOML. Never a QEMU
-  command line.
+  command line. The disk size starts at the family's own
+  (`bundle::default_disk_size_gb`: 10 GB for Win98 and Other, 20 GB for XP,
+  2 GB for DOS; 2026-09-16, user decision) and follows a family switch
+  until someone types another number.
 - **Memory and acceleration** are the two machine settings worth exposing
   next to the family, and the same form edits them on an existing
   machine. Memory offers the family's own default and is bounded by
