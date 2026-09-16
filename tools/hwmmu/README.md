@@ -11,7 +11,9 @@ design on the real workloads, in two halves that multiply:
   window of 65,536 accesses (the nested TLB holds 3072: a window beyond
   that misses), and the pages touched / written for the first time (a
   mirror fill / a dirty upgrade each). One line per second on the plugin
-  log. Build and use:
+  log, plus a `reuse` line with each access's page reuse distance in
+  powers-of-two buckets, which `project.py --reuse` maps onto the kernel
+  rows. Build and use:
 
   ```sh
   cc -O2 -shared -fPIC -undefined dynamic_lookup -I qemu/include/qemu \
