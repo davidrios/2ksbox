@@ -146,7 +146,7 @@ build_wined3d
 # except WineD3D's: its folders are meant to be copied whole from Explorer,
 # so each carries what it needs (see WINED3D\ below).
 rm -rf "$OUT/iso"
-mkdir -p "$OUT/iso"/{GLIDE,OPENGL,D3DPT,TESTS,CDSHELF} "$OUT/iso/WINED3D"/{D3D8-9,DDRAW,SYSTEM}
+mkdir -p "$OUT/iso"/{GLIDE,OPENGL,D3DPT,TESTS,CDSHELF,VOODOO2} "$OUT/iso/WINED3D"/{D3D8-9,DDRAW,SYSTEM}
 G="$FX/wrappers/3dfx/build"; M="$FX/wrappers/mesa/build"
 T="$OUT/iso/TESTS"
 
@@ -352,6 +352,15 @@ i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
 i686-w64-mingw32-gcc -O2 -Wall -mwindows -o "$OUT/iso/CDSHELF/cdshelf.exe" \
   "$ROOT/guest-tools/src/cdshelf.c" -I"$ROOT/cdshelf"
 nasm -f bin -o "$OUT/iso/CDSHELF/cdshelf.com" "$ROOT/guest-tools/src/cdshelf.asm"
+
+# VOODOO2\: V2START.EXE, the start-up guard for the emulated Voodoo 2's own
+# 3dfx driver (doc 21 §11). Its login helper initialises the card from
+# another process for seconds under TCG and hangs any Glide game started
+# meanwhile; SETUP takes the helper's Run entry and puts this in its place,
+# which runs it and keeps a notice on the desktop until it is done. Win98/Me only.
+i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+  -march=pentium3 -mtune=generic -mwindows -o "$OUT/iso/VOODOO2/v2start.exe" \
+  "$ROOT/guest-tools/src/v2start.c"
 
 # XP display driver for the d3dpt-vga adapter (doc 15, M7a): built and
 # checked by its own script (kernel-mode PE rules differ), staged as DRIVER\.

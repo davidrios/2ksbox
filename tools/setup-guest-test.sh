@@ -55,8 +55,13 @@
 # 3dfx driver is needed: Windows lists the card's devnode without one,
 # which is what SETUP asks. On Win98 the card gets a null driver (an INF
 # of ours, put into a raw copy of the overlay before the first boot), or
-# its new-hardware wizard holds the boot before the shell. Every run also
-# copies `/GAME 6` (the pass-through's Glide for one game) into C:\2KSBOX.
+# its new-hardware wizard holds the boot before the shell. On Win98 the
+# batch also plants 3dfx's login helper entry (`Voodoo2` in HKLM's Run key,
+# regedit /s from the floppy) before the install, and after it exports both
+# keys: the entry must have moved to HKLM\SOFTWARE\2ksbox\Voodoo2 and
+# V2START.EXE taken its place (doc 21 §11), and the second `/ALL` must find
+# it moved already. Every run also copies `/GAME 6` (the pass-through's
+# Glide for one game) into C:\2KSBOX.
 #
 # Env: OUT=dir (default build/setup-test), BOOT_WAIT=s (cap, 300),
 # WARMUP_WAIT=s (cap, 300), NO_WARMUP=1, NO_KVM=1, FORCE_KVM=1 (Win98 under
@@ -134,6 +139,10 @@ MARKS=("$SYSDIR\\GLIDE2X.DLL|MARK-GLIDE2X" "$SYSDIR\\GLIDE3X.DLL|MARK-GLIDE3X")
   if [ -n "${VOODOO:-}" ]; then
     echo "echo ==== 3dfx's files, as markers > COM1"
     for m in "${MARKS[@]}"; do echo "echo ${m#*|}> ${m%%|*}"; done
+    if [ "$FAMILY" = win98 ]; then
+      echo "echo ==== 3dfx's login helper entry > COM1"
+      echo 'regedit /s A:\V2RUN.REG'
+    fi
   fi
   echo 'echo ==== list > COM1'
   setup_line '/LIST'
@@ -161,6 +170,18 @@ MARKS=("$SYSDIR\\GLIDE2X.DLL|MARK-GLIDE2X" "$SYSDIR\\GLIDE3X.DLL|MARK-GLIDE3X")
     # content; a copy of ours in its place prints just the file's name
     echo "echo ==== are 3dfx's files still there > COM1"
     for m in "${MARKS[@]}"; do echo "find \"${m#*|}\" ${m%%|*} > COM1"; done
+    if [ "$FAMILY" = win98 ]; then
+      # FIND /C prints "---------- <file>: <count>": the helper's DLL must be
+      # named once under our key and no longer in the Run key.
+      echo "echo ==== where 3dfx's login helper is now > COM1"
+      echo 'regedit /e C:\RUNKEY.REG "HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run"'
+      echo 'regedit /e C:\V2KEY.REG "HKEY_LOCAL_MACHINE\SOFTWARE\2ksbox\Voodoo2"'
+      echo 'type C:\RUNKEY.REG > COM1'
+      echo 'type C:\V2KEY.REG > COM1'
+      echo 'find /c "3dfxv2ps" C:\RUNKEY.REG > COM1'
+      echo 'find /c "3dfxv2ps" C:\V2KEY.REG > COM1'
+      echo 'dir %windir%\V2START.EXE > COM1'
+    fi
   fi
   echo 'echo ==== what is on the disk now > COM1'
   echo 'dir %windir%\CDSHELF.EXE > COM1'
@@ -188,6 +209,12 @@ else
   mformat -C -f 1440 -i "$FLOPPY" :: || { echo "need mkfs.fat or mformat"; exit 1; }
 fi
 mcopy -o -i "$FLOPPY" "$OUT/RUN.BAT" ::/RUN.BAT
+if [ -n "${VOODOO:-}" ] && [ "$FAMILY" = win98 ]; then
+  # What 3dfx's VOODOO2.INF writes (its [Voodoo2.AddReg]), for SETUP to move.
+  printf 'REGEDIT4\r\n\r\n[HKEY_LOCAL_MACHINE\\SoftWare\\Microsoft\\Windows\\CurrentVersion\\Run]\r\n"Voodoo2"="rundll32.exe 3dfxv2ps.dll,UpdateRegSettings"\r\n\r\n' \
+    > "$OUT/V2RUN.REG"
+  mcopy -o -i "$FLOPPY" "$OUT/V2RUN.REG" ::/V2RUN.REG
+fi
 [ -n "${REBOOT:-}" ] && mcopy -o -i "$FLOPPY" "$OUT/RUN2.BAT" ::/RUN2.BAT
 
 rm -f "$OVL"
@@ -397,10 +424,20 @@ if [ -n "${VOODOO:-}" ]; then
   for m in "${MARKS[@]}"; do
     want "${m#*|}" "3dfx's ${m%%|*} (a marker) survived /ALL"
   done
-  [ "$FAMILY" = win98 ] && want "FXMEMMAP.VXD: already there, left alone" "the mapper already there was not downgraded"
+  if [ "$FAMILY" = win98 ]; then
+    want "FXMEMMAP.VXD: already there, left alone" "the mapper already there was not downgraded"
+    want "3dfx's start-up entry \"rundll32.exe 3dfxv2ps.dll,UpdateRegSettings\" moved to HKLM" \
+      "SETUP moved 3dfx's login helper out of the Run key"
+    want "3dfx's start-up entry was moved by an earlier install" "the second /ALL found it moved already"
+    want 'V2START.EXE -> ' "SETUP copied the Voodoo 2 start-up guard"
+    want '"2ksbox Voodoo 2"="C:\\WINDOWS\\V2START.EXE"' "the guard is in the Run key (Windows' own export)"
+    want 'RUNKEY.REG: 0' "3dfx's helper is no longer in the Run key (Windows' own export)"
+    want 'V2KEY.REG: 1' "3dfx's helper command is kept under HKLM\SOFTWARE\2ksbox\Voodoo2"
+  fi
 else
   want "GLIDE2X.DLL ->" "SETUP copied the Glide wrappers"
   never "a 3dfx card is on this machine" "no 3dfx card was seen on a machine without one"
+  [ "$FAMILY" = win98 ] && want "no 3dfx card on this machine; nothing to do" "no Voodoo 2 guard without a 3dfx card"
 fi
 want 'GLIDE2X.DLL -> C:\2KSBOX' "per-game set 6 put the pass-through's Glide next to a game"
 want "CDSHELF.EXE ->" "SETUP copied the disc shelf tool"

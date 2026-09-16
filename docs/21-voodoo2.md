@@ -503,10 +503,34 @@ while the command FIFO is on can only be someone else's init, since
 Glide's own close turns the FIFO off first, and it warns `the card is
 being re-initialised (sst1InitRegisters) while a Glide window has the
 command FIFO on`. Glide's own close-and-reopen does not trip it.
-`tools/win98-game-test.sh` waits `VOODOO_WAIT` seconds (20) before its
-batch on a machine with the card and prints the collision in its summary
-if the wait was not enough. By hand: give the desktop a few seconds before
-starting a Glide game.
+
+**What the guest tools do about it (2026-09-16): a start-up guard.**
+`SETUP /I 6` on 98/Me with a 3dfx card present ("Voodoo 2 start-up guard",
+`guest-tools/src/v2start.c`) moves 3dfx's `Voodoo2` value out of HKLM's
+Run key into `HKLM\SOFTWARE\2ksbox\Voodoo2` (`Command`) and puts
+`C:\WINDOWS\V2START.EXE` there instead. At login V2START runs that command
+itself, waits for it to exit (bounded at 120 s), and while it waits keeps
+a small topmost window up — "Voodoo 2 driver is loading, please wait
+before running 3dfx games" — shown only if the init is still going after
+half a second. It informs, it does not block: the desktop stays usable
+(user decision, over a first cut that covered the screen). It writes
+`C:\WINDOWS\V2START.LOG` when it is done, which is what a harness can
+watch. A driver reinstalled after SETUP puts the Run value back; V2START
+moves it again at the next login and waits for the rundll32 Explorer
+already started rather than starting a second init. A machine whose
+3dfx DLL is gone runs nothing (no rundll32 error box at every login).
+
+**Measured on `base98-br` with the guard (2026-09-16):** the helper took
+**11.3 s and 18.7 s** on two logins under TCG — not the ~3 s above, which
+was one quiet boot, and close to the harness's old fixed 20 s wait.
+GLIDETEST started the moment V2START's log appeared passed 3/0 both
+times, with no re-initialisation warning; the notice is in the
+screendumps (`build/w98game/v2shot/shots/`).
+
+`tools/win98-game-test.sh` on a machine with the card watches for that log
+when the image has V2START.EXE (`VOODOO_WAIT`, 60 s, is then the cap) and
+prints it; an image without the guard gets the old fixed wait (20 s).
+Either way the summary names a collision if one happened.
 
 The hangs seen by hand were this too: the user had noticed a stray
 `rundll32` running every time a game froze and could not say why

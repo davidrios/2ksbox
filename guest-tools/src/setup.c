@@ -720,6 +720,80 @@ static int step_sb16_names(void)
     return 0;
 }
 
+/* The Voodoo 2's start-up guard (doc 21 §11): V2START.EXE in the Windows
+ * folder and in the Run key, in place of 3dfx's own `Voodoo2` entry.
+ *
+ * 3dfx's driver runs `rundll32 3dfxv2ps.dll,UpdateRegSettings` at every
+ * login, which initialises the card from another process — about three
+ * seconds under TCG — and a Glide game started inside them hangs. The
+ * command moves to HKLM\SOFTWARE\2ksbox\Voodoo2 and V2START runs it at
+ * login instead, with a notice on the desktop until it has finished (the
+ * program's own header has the rest).
+ *
+ * Only on a machine with a 3dfx card. A card whose driver is not installed
+ * yet has no entry to move: the guard goes in anyway, and moves the entry
+ * itself at the first login after 3dfx's driver writes it. */
+#define RUN_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+#define V2_KEY "SOFTWARE\\2ksbox\\Voodoo2"
+#define V2_RUN_NAME "2ksbox Voodoo 2"
+
+static int step_voodoo2_guard(void)
+{
+    static const char *const exe[] = { "V2START.EXE", NULL };
+    char cmd[PATHBUF], ours[PATHBUF];
+    DWORD len = sizeof cmd, type;
+    HKEY run, v2;
+    int moved = 0, bad;
+
+    say("Voodoo 2 start-up guard:");
+    if (!g_3dfx[0]) {
+        say("    no 3dfx card on this machine; nothing to do");
+        return 0;
+    }
+    bad = copy_set("VOODOO2", g_win, exe);
+    if (bad)
+        return 1;
+    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, RUN_KEY, 0, NULL, 0, KEY_READ | KEY_WRITE, NULL,
+                        &run, NULL) != ERROR_SUCCESS) {
+        say("    HKLM\\%s: cannot open it (error %lu)", RUN_KEY, (unsigned long)GetLastError());
+        return 1;
+    }
+    if (RegQueryValueExA(run, "Voodoo2", NULL, &type, (BYTE *)cmd, &len) == ERROR_SUCCESS
+        && type == REG_SZ && len > 1) {
+        cmd[sizeof cmd - 1] = 0;
+        if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, V2_KEY, 0, NULL, 0, KEY_WRITE, NULL, &v2, NULL)
+                != ERROR_SUCCESS
+            || RegSetValueExA(v2, "Command", 0, REG_SZ, (BYTE *)cmd, strlen(cmd) + 1) != ERROR_SUCCESS) {
+            say("    HKLM\\%s: cannot write the command (error %lu)", V2_KEY, (unsigned long)GetLastError());
+            RegCloseKey(run);
+            return 1;
+        }
+        RegCloseKey(v2);
+        RegDeleteValueA(run, "Voodoo2");
+        say("    3dfx's start-up entry \"%s\" moved to HKLM\\%s", cmd, V2_KEY);
+        moved = 1;
+    }
+    snprintf(ours, sizeof ours, "%s\\V2START.EXE", g_win);
+    if (RegSetValueExA(run, V2_RUN_NAME, 0, REG_SZ, (BYTE *)ours, strlen(ours) + 1) != ERROR_SUCCESS) {
+        say("    HKLM\\%s: cannot add \"%s\" (error %lu)", RUN_KEY, V2_RUN_NAME, (unsigned long)GetLastError());
+        RegCloseKey(run);
+        return 1;
+    }
+    RegCloseKey(run);
+    if (!moved) {
+        len = sizeof cmd;
+        if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, V2_KEY, 0, KEY_READ, &v2) == ERROR_SUCCESS) {
+            if (RegQueryValueExA(v2, "Command", NULL, &type, (BYTE *)cmd, &len) == ERROR_SUCCESS)
+                moved = 2;
+            RegCloseKey(v2);
+        }
+        say(moved ? "    3dfx's start-up entry was moved by an earlier install"
+                  : "    3dfx's driver has no start-up entry yet; the guard takes it at the first login after it does");
+    }
+    say("    \"%s\" = %s: from the next start, a notice says when the card is ready", V2_RUN_NAME, ours);
+    return 0;
+}
+
 typedef struct {
     const char *label;
     const char *note;
@@ -735,6 +809,8 @@ static Component g_comp[MAX_COMPONENTS] = {
     { "Test programs",                      "in C:\\2KSBOX",                1, 1, 0, step_tests,   0 },
     /* last, so no earlier component's /I number moves */
     { "Sound Blaster 16 device names",      "DirectX 9 fix, only if needed", 1, 0, 1, step_sb16_names, 0 },
+    /* after it, for the same reason */
+    { "Voodoo 2 start-up guard",            "only with a 3dfx card",         1, 0, 1, step_voodoo2_guard, 0 },
 };
 static int g_ncomp;
 

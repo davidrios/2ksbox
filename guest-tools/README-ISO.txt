@@ -108,4 +108,15 @@ CDSHELF\  the host's disc shelf, from inside the machine. CDSHELF.EXE on
           An insert always empties the drive first and waits for it -
           without that, Windows and MSCDEX keep showing the old disc.
 
+VOODOO2\  V2START.EXE, for Windows 98/Me with the emulated Voodoo 2 and
+          3dfx's own driver. That driver initialises the card from a
+          start-up program for a few seconds after every login, and a
+          Glide game started meanwhile hangs. SETUP moves the driver's
+          "Voodoo2" entry out of HKLM\...\CurrentVersion\Run into
+          HKLM\SOFTWARE\2ksbox\Voodoo2 and puts V2START.EXE (in
+          C:\WINDOWS) in its place: it runs the same command and shows
+          "Voodoo 2 driver is loading, please wait before running 3dfx
+          games" until it has finished. What happened at the last login
+          is in C:\WINDOWS\V2START.LOG.
+
 Not included: GLIDE2X.OVL (DOS Glide games; needs Open Watcom to build).

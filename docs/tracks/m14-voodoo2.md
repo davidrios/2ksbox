@@ -316,7 +316,16 @@ What changed:
     close turns the FIFO off first, and its own reopen does not trip it);
   * `tools/win98-game-test.sh` puts `choice /c:y /t:y,$VOODOO_WAIT` (20 s)
     before the batch when `EXTRA` has a `voodoo2`, and its summary names the
-    collision if the wait was not enough;
+    collision if the wait was not enough — **since the same day it watches
+    for the guest tools' guard instead** (below);
+  * **the guard** (user request, same day): `SETUP /I 6` puts
+    `V2START.EXE` in the helper's place in the Run key; it runs the helper,
+    shows "Voodoo 2 driver is loading, please wait before running 3dfx
+    games" until it exits and writes `WINDOWS\V2START.LOG` (doc 21 §11). On
+    a raw copy of `base98-br` the helper took 11.3 s and 18.7 s, and
+    GLIDETEST started the moment the log appeared passed both times;
+    `VOODOO=1 tools/setup-guest-test.sh <image> win98` checks the registry
+    move in a guest;
   * `VOODOO2_TRACE=1` names the guest module behind each init — the PE
     image around the program counter, walked back to its `MZ` header, with
     the image at `0x00400000` naming the process. Reads are RAM only (a

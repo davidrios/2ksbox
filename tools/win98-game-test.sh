@@ -31,16 +31,20 @@
 #   CDS="a.cue:b.mds"   discs after the disk, colon-separated. .cue/.mds/.ccd
 #                       go through our own cdimage driver (doc 17).
 #   RUN_SECS=n          how long to let it run after the desktop is up (180)
-#   VOODOO_WAIT=n       seconds RUN.BAT waits before GUEST_CMD when EXTRA puts
-#                       a voodoo2 on the machine (20; 0 = none). 3dfx's driver
-#                       re-initialises the card at every login from a Run
-#                       entry of its own (`Voodoo2`: rundll32
-#                       3dfxv2ps.dll,UpdateRegSettings), in another process;
-#                       a Glide program started at the desktop runs into it
-#                       and wedges (doc 21 §11). Measured at ~3 s under TCG;
-#                       the device warns `the card is being re-initialised`
-#                       when it happens, and the summary names it, so a wait
-#                       that turns out too short says so.
+#   VOODOO_WAIT=n       when EXTRA puts a voodoo2 on the machine: 3dfx's
+#                       driver re-initialises the card at every login from a
+#                       Run entry of its own (`Voodoo2`: rundll32
+#                       3dfxv2ps.dll,UpdateRegSettings), in another process,
+#                       and a Glide program started meanwhile wedges (doc 21
+#                       §11; ~3 s under TCG). An image with the guest tools'
+#                       guard (`SETUP /I 6`: V2START.EXE runs that command and
+#                       writes WINDOWS\V2START.LOG when it has finished) is
+#                       watched: RUN.BAT starts GUEST_CMD as soon as the log
+#                       appears, giving up after n seconds (60), and the log
+#                       is printed. Without the guard it is a plain wait of n
+#                       seconds (20). 0 = no wait either way. The device warns
+#                       `the card is being re-initialised` when a collision
+#                       happens anyway, and the summary names it.
 #   SETTLE=n            seconds to let the desktop paint after the driver
 #                       programs the mode, before the run clock starts (30).
 #                       KEYS and CLICKS are timed from the end of it.
@@ -208,13 +212,34 @@ fi
 # (Blood's `blood.exe` is a DOS/4GW stub, and from C:\ it says
 # "Stub exec failed: dos4gw.exe").
 # With the Voodoo 2 on the machine, first let 3dfx's login helper finish
-# initialising the card (VOODOO_WAIT above). CHOICE is the one wait a Win98
-# batch has; nothing a batch can see marks the other process's end.
-VOODOO_WAIT="${VOODOO_WAIT:-20}"
-case " ${EXTRA:-} " in *voodoo2*) ;; *) VOODOO_WAIT=0 ;; esac
+# initialising the card (VOODOO_WAIT above). With the guard in the image its
+# log is the end of the helper, deleted here so only this login's counts;
+# FORs of one CHOICE second an iteration are the bounded loop COMMAND.COM
+# can write (rounded up to tens), and once the log is there each remaining
+# iteration is a no-op.
+# Without the guard nothing a batch can see marks the other process's end.
+V2GUARD=
+case " ${EXTRA:-} " in
+  *voodoo2*)
+    if mdir -i "$M" ::/WINDOWS/V2START.EXE >/dev/null 2>&1; then
+      V2GUARD=1; VOODOO_WAIT="${VOODOO_WAIT:-60}"
+      mdel -i "$M" ::/WINDOWS/V2START.LOG 2>/dev/null || true
+    else
+      VOODOO_WAIT="${VOODOO_WAIT:-20}"
+      echo "note: no V2START.EXE in this image (SETUP /I 6): waiting a fixed ${VOODOO_WAIT} s for 3dfx's login helper"
+    fi ;;
+  *) VOODOO_WAIT=0 ;;
+esac
 [ "$VOODOO_WAIT" -gt 99 ] && VOODOO_WAIT=99
 { printf '@echo off\r\n'
-  [ "$VOODOO_WAIT" -gt 0 ] && printf 'choice /c:y /t:y,%d >nul\r\n' "$VOODOO_WAIT"
+  if [ "$VOODOO_WAIT" -gt 0 ] && [ -n "$V2GUARD" ]; then
+    # ten seconds a line: COMMAND.COM cuts a batch line at 127 characters
+    for ((i = 0; i < (VOODOO_WAIT + 9) / 10; i++)); do
+      printf 'for %%%%i in (0 1 2 3 4 5 6 7 8 9) do if not exist C:\\WINDOWS\\V2START.LOG choice /c:y /t:y,1 >nul\r\n'
+    done
+  elif [ "$VOODOO_WAIT" -gt 0 ]; then
+    printf 'choice /c:y /t:y,%d >nul\r\n' "$VOODOO_WAIT"
+  fi
   printf '%s\r\n' "$GUEST_CMD" | sed 's/\r$//' | while IFS= read -r l; do printf '%s\r\n' "$l"; done
   printf 'exit\r\n'; } > "$OUT/run.bat"
 echo "==> RUN.BAT:"; sed 's/\r$//; s/^/      /' "$OUT/run.bat"
@@ -455,6 +480,14 @@ for l in sys.stdin:
 wait $VM 2>/dev/null || true
 trap - EXIT
 
+if [ -n "$V2GUARD" ]; then
+  if mcopy -i "$M" -n ::/WINDOWS/V2START.LOG "$OUT/V2START.LOG" 2>/dev/null; then
+    echo "=== V2START.LOG (3dfx's login helper, run by the guest tools' guard)"
+    sed 's/\r$//; s/^/    /' "$OUT/V2START.LOG"
+  else
+    echo "=== no V2START.LOG: the guard never finished (or never ran) this login"
+  fi
+fi
 for f in ${PULL:-}; do
   if mcopy -i "$M" -n "::/${f//\\//}" "$OUT/$(basename "${f//\\//}")" 2>/dev/null; then
     echo "pulled    $f"
@@ -488,7 +521,7 @@ if grep -q "the card is being re-initialised" "$OUT/qemu.log" 2>/dev/null; then
   echo "=== the Voodoo 2 was re-initialised under a live Glide window"
   echo "   another Glide client initialised the card while the program had its"
   echo "   command FIFO on -- 3dfx's login helper, if the program started right"
-  echo "   after the desktop (VOODOO_WAIT=$VOODOO_WAIT): the wedge that follows is"
+  echo "   after the desktop (VOODOO_WAIT=$VOODOO_WAIT${V2GUARD:+, watching V2START.LOG}): the wedge that follows is"
   echo "   that collision, not the device (doc 21 §11; VOODOO2_TRACE=1 names the"
   echo "   module doing each init)"
   echo
