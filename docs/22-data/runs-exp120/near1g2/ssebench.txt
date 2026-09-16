@@ -1,0 +1,13 @@
+ssebench: SSE yes, SSE2 no, x87 CW 001f (PC=53), 36 KB working set, mult 20
+kernel                                   ms   ns/iter     ns/op check
+xform (packed mul/add)                550.8      67.2      9.61 -891014
+normalize (packed, rsqrtps)           621.8     101.2      8.43 -110.369
+scalar chain (ss ops)                 203.5      33.1      4.14 6.14634e+06
+clamp+cmp (min/max/cmpps)             537.4      43.7     10.93 1.12949e+08
+convert (cvttss2si/cvtsi2ss)          307.0      25.0      6.25 1.06214e+09
+C xform (x87)                        5570.2     906.6     32.38 -520924
+C normalize (x87 fsqrt/fdiv)         2528.7     411.6     34.30 95.2173
+denormal decay (slow path)            229.2    3730.7     46.63 1.68156e-43
+MMX blend (unpck/mul/pack/avg)        164.6      26.8      1.91 148
+SSE score: 7.87 ns per SSE op (mean of the 5 SSE kernels; lower is better)
+done

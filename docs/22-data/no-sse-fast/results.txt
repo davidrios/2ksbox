@@ -1,0 +1,19 @@
+SPECRUN list=run.lst reps=2 qpc=3579545
+START superpi rep=1
+RESULT superpi rep=1 ms=93324 cpu=77343 crc=fdb79c48 exit=0
+START 7zip rep=1
+RESULT 7zip rep=1 ms=38914 cpu=38813 crc=ebb5b6b4 exit=0
+START ssebench rep=1
+RESULT ssebench rep=1 ms=3424 cpu=3375 crc=50a49301 exit=0
+START superpi rep=2
+RESULT superpi rep=2 ms=85697 cpu=74672 crc=fdb79c48 exit=0
+START 7zip rep=2
+RESULT 7zip rep=2 ms=38404 cpu=38343 crc=a4544b72 exit=0
+START ssebench rep=2
+RESULT ssebench rep=2 ms=3363 cpu=3329 crc=dfb33171 exit=0
+DONE
+SPECRUN list=once.lst reps=1 qpc=3579545
+START nbench rep=1
+RESULT nbench rep=1 ms=255619 cpu=255234 crc=7793951c exit=0
+DONE
+finished 

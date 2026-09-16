@@ -1,0 +1,25 @@
+BBBBBB   YYY   Y  TTTTTTT  EEEEEEE
+BBB   B  YYY   Y    TTT    EEE
+BBB   B  YYY   Y    TTT    EEE
+BBBBBB    YYY Y     TTT    EEEEEEE
+BBB   B    YYY      TTT    EEE
+BBB   B    YYY      TTT    EEE
+BBBBBB     YYY      TTT    EEEEEEE
+
+
+BYTEmark (tm) Native Mode Benchmark ver. 2 (10/95)
+NUMERIC SORT        :  Iterations/sec.:        585.86  Index:  15.02
+STRING SORT         :  Iterations/sec.:         64.04  Index:  28.61
+BITFIELD            :  Iterations/sec.:  360047595.12  Index:  61.76
+FP EMULATION        :  Iterations/sec.:        136.42  Index:  65.46
+FOURIER             :  Iterations/sec.:       3474.97  Index:   3.95
+ASSIGNMENT          :  Iterations/sec.:         19.69  Index:  74.91
+IDEA                :  Iterations/sec.:       3487.22  Index:  53.34
+HUFFMAN             :  Iterations/sec.:       1380.00  Index:  38.27
+NEURAL NET          :  Iterations/sec.:          2.60  Index:   4.18
+LU DECOMPOSITION    :  Iterations/sec.:        100.60  Index:   5.21
+==========================ORIGINAL BYTEMARK RESULTS==========================
+INTEGER INDEX       : 42.862
+FLOATING-POINT INDEX: 4.416
+Baseline (MSDOS*)   : Pentium* 90, 256 KB L2-cache, Watcom* compiler 10.0
+* Trademarks are property of their respective holder.

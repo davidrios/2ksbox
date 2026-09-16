@@ -1,0 +1,9 @@
+SPECRUN list=run.lst reps=2 qpc=3579545
+START ssebench rep=1
+RESULT ssebench rep=1 ms=11404 cpu=11203 crc=e8938ecd exit=0
+START ssebench rep=2
+RESULT ssebench rep=2 ms=11424 cpu=10937 crc=02392bba exit=0
+DONE
+SPECRUN list=once.lst reps=1 qpc=3579545
+DONE
+finished 

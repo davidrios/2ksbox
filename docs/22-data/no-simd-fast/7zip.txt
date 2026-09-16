@@ -1,0 +1,24 @@
+
+7-Zip (r) 26.03 (x86) : Igor Pavlov : Public domain : 2026-09-03
+
+ mt1 d=22
+Compiler:  MSC 1200.12008804
+Windows 5.1 2600 SP:3.0 : TCGTCGTCGTCG : 
+x86 6.703 threads:1 2GB f:14C
+GenuineIntel
+(673 : x86 Family 6 Model 7 Stepping 3) 998 MHz
+
+1T CPU Freq (MHz):  2910  3176  3158  3180  3180  3164  3160
+
+RAM size:     511 MB,  # CPU hardware threads:   1
+RAM usage:     57 MB,  # Benchmark threads:      1
+
+                       Compressing  |                  Decompressing
+Dict     Speed Usage    R/U Rating  |      Speed Usage    R/U Rating
+         KiB/s     %   MIPS   MIPS  |      KiB/s     %   MIPS   MIPS
+
+22:       1497   100   1458   1457  |      20257   100   1729   1730
+22:       1496   100   1455   1456  |      20288   100   1732   1732
+----------------------------------  | ------------------------------
+Avr:      1497   100   1456   1456  |      20273   100   1731   1731
+Tot:             100   1593   1594
