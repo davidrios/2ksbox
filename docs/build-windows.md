@@ -410,7 +410,19 @@ is also what MSYS2's `uname` reports) and puts `/mingw32/bin` first on
 `PATH`, with the x86_64 tools (python3, gendef) behind it. It adds shims
 for the target-prefixed binutils names our scripts call
 (`i686-w64-mingw32-objdump`, `-nm`, `-ar`, `-windres`), which MSYS2 does not
-install. And conf_wrapper's native mode writes a plain `gcc` into the
+install. **It links Linux's i686 runtime, not MSYS2's**: MSYS2 builds its
+32-bit runtime for the Pentium 4, so libmingwex's printf/dtoa, libgcc's
+double-to-unsigned conversion, msvcrt's stat and time helpers and
+libwinpthread all carry SSE2, and nearly every guest program linked with
+them fails the ISO's Pentium III check — `SETUP.EXE`, `DRVINST.EXE`, the
+Direct3D wrappers, the tests, 11 instructions each (measured on Linux with
+MSYS2's own libraries; MSYS2's msys-repo cross toolchain is built the same
+way). The first run downloads the packages the Linux ISO links — Arch's
+`mingw-w64-crt` and `-winpthreads` 14.0.0-1 and the i686 libgcc of
+`mingw-w64-gcc` 16.2.0-2 (293 MB, four files kept), pinned by sha256 —
+into `guest-tools/tools/i686-runtime/`, and the i686 `gcc` shims link
+against them with `-B`/`-L`; headers stay MSYS2's. MSYS2's i686 gcc has to
+be 16.2.0, or the script says to re-pin. And conf_wrapper's native mode writes a plain `gcc` into the
 Makefiles, so `build-wrappers.sh` gives plain `gcc` the same msvcrt and
 `-march=pentium3` flags its prefixed shim has. Open Watcom runs from
 `binnt64`. Two trees the ISO compiles against are prepared by other

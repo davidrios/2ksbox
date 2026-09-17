@@ -73,7 +73,7 @@ MSYS2_PACKAGES=(git rsync diffutils
   mingw-w64-x86_64-{gcc,clang,lld,gdb,ninja,meson,pkgconf,python,python-distlib}
   mingw-w64-x86_64-{glib2,pixman,zlib,libepoxy,libslirp}
   mingw-w64-x86_64-{glslang,qt6-base,qt6-declarative}
-  mingw-w64-i686-gcc mingw-w64-x86_64-tools make which vim perl nasm xorriso)
+  mingw-w64-i686-gcc mingw-w64-x86_64-tools make which vim perl nasm xorriso zstd)
 
 JOBS=(); PACKAGE=""; STAGES=(); EXPLICIT=""
 while [ $# -gt 0 ]; do
