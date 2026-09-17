@@ -1,0 +1,204 @@
+The PIT does not lose an IRQ 0 tick that arrives while the last one is
+still pending at the 8259: it is raised again when the CPU acknowledges.
+
+irq_timer runs when the main loop wakes, and a wakeup is late by however
+coarse the host's waits are. Every transition that came due meanwhile is
+raised back to back under the BQL, before the CPU can take one, and on
+the edge-triggered 8259 they are one interrupt. A guest at 1 kHz --
+Windows 9x's multimedia timer, which a MIDI sequencer and many games run
+on -- keeps time by counting IRQ 0, so its clock ran at the rate of the
+host's wakeups: 100 % on Linux, 50 % with 2 ms waits, and 6 % on a
+Windows host, whose waits round to its 15.6 ms timer tick unless the
+process asks otherwise (music "too slow" on the first Windows host,
+2026-09-17). Measured on Linux with the waits rounded that way
+(tools/wait-granularity.c) by guest-tools' PITRATE.COM, the rate phase of
+tools/pit-guest-test.py: 6 % before, 100 % after, spinning and halted.
+
+An edge that finds IRQ 0 requested and unmasked at the master PIC is
+counted; pic_intack calls a hook the PIT registers, which raises one owed
+tick as a fresh edge -- after the ISR is entered, so the PIC holds it until
+the EOI and the handler runs once per tick. Owed ticks are capped at a
+quarter second's worth and a new count drops them. A guest whose IRQ 0 is
+masked at the 8259 (an APIC HAL) owes nothing.
+
+-global isa-pit.reinject=off restores upstream's behaviour (the A/B).
+
+diff --git a/include/hw/intc/i8259.h b/include/hw/intc/i8259.h
+--- a/include/hw/intc/i8259.h
++++ b/include/hw/intc/i8259.h
+@@ -18,5 +18,11 @@
+ qemu_irq *kvm_i8259_init(ISABus *bus);
+ int pic_get_output(PICCommonState *s);
+ int pic_read_irq(PICCommonState *s);
++/*
++ * 2ksbox: called when the CPU acknowledges the master PIC's IRQ 0, so the
++ * PIT can raise a tick it owes the guest (i8254.c, "reinject").
++ */
++extern void (*pic_irq0_intack_hook)(void *opaque);
++extern void *pic_irq0_intack_opaque;
+ 
+ #endif
+diff --git a/hw/intc/i8259.c b/hw/intc/i8259.c
+--- a/hw/intc/i8259.c
++++ b/hw/intc/i8259.c
+@@ -56,6 +56,8 @@
+ static int64_t irq_time[16];
+ #endif
+ PICCommonState *isa_pic;
++void (*pic_irq0_intack_hook)(void *opaque);
++void *pic_irq0_intack_opaque;
+ static PICCommonState *slave_pic;
+ 
+ /* return the highest priority found in mask (highest = smallest
+@@ -171,6 +173,9 @@
+         s->irr &= ~(1 << irq);
+     }
+     pic_update_irq(s);
++    if (s->master && irq == 0 && pic_irq0_intack_hook) {
++        pic_irq0_intack_hook(pic_irq0_intack_opaque);
++    }
+ }
+ 
+ int pic_read_irq(PICCommonState *s)
+diff --git a/include/hw/timer/i8254_internal.h b/include/hw/timer/i8254_internal.h
+--- a/include/hw/timer/i8254_internal.h
++++ b/include/hw/timer/i8254_internal.h
+@@ -48,6 +48,11 @@
+     QEMUTimer *irq_timer;
+     qemu_irq irq;
+     uint32_t irq_disabled;
++    /* 2ksbox (reinject): the level last driven onto the IRQ line, and the
++     * ticks whose edge reached the PIC while the one before was still
++     * pending there */
++    int out_level;
++    uint32_t owed;
+ } PITChannelState;
+ 
+ struct PITCommonState {
+@@ -55,6 +60,7 @@
+     MemoryRegion ioports;
+     uint32_t iobase;
+     bool overdue_irq;
++    bool reinject;
+     PITChannelState channels[3];
+ };
+ 
+diff --git a/hw/timer/i8254_common.c b/hw/timer/i8254_common.c
+--- a/hw/timer/i8254_common.c
++++ b/hw/timer/i8254_common.c
+@@ -241,6 +241,7 @@
+ static Property pit_common_properties[] = {
+     DEFINE_PROP_UINT32("iobase", PITCommonState, iobase,  -1),
+     DEFINE_PROP_BOOL("overdue-irq", PITCommonState, overdue_irq, true),
++    DEFINE_PROP_BOOL("reinject", PITCommonState, reinject, true),
+     DEFINE_PROP_END_OF_LIST(),
+ };
+ 
+diff --git a/hw/timer/i8254.c b/hw/timer/i8254.c
+--- a/hw/timer/i8254.c
++++ b/hw/timer/i8254.c
+@@ -28,6 +28,8 @@
+ #include "qemu/timer.h"
+ #include "hw/timer/i8254.h"
+ #include "hw/timer/i8254_internal.h"
++#include "hw/intc/i8259.h"
++#include "hw/isa/i8259_internal.h"
+ #include "qom/object.h"
+ 
+ //#define DEBUG_PIT
+@@ -48,6 +50,7 @@
+ };
+ 
+ static void pit_irq_timer_update(PITChannelState *s, int64_t current_time);
++static void pit_count_merged_edge(PITChannelState *s);
+ 
+ static int pit_get_count(PITChannelState *s)
+ {
+@@ -111,6 +114,7 @@
+         val = 0x10000;
+     s->count_load_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+     s->count = val;
++    s->owed = 0;            /* ticks of the old rate are not the new rate's */
+     pit_irq_timer_update(s, s->count_load_time);
+ }
+ 
+@@ -293,6 +297,10 @@
+     }
+     expire_time = pit_get_next_transition_time(s, current_time);
+     irq_level = pit_get_out(s, current_time);
++    if (irq_level && !s->out_level && pic_irq0_intack_opaque == s) {
++        pit_count_merged_edge(s);
++    }
++    s->out_level = irq_level;
+     qemu_set_irq(s->irq, irq_level);
+ #ifdef DEBUG_PIT
+     printf("irq_level=%d next_delay=%f\n",
+@@ -306,6 +314,56 @@
+         timer_del(s->irq_timer);
+ }
+ 
++/*
++ * 2ksbox: a tick whose edge arrives while the last one is still pending at
++ * the PIC is not lost (-global isa-pit.reinject=off restores upstream).
++ *
++ * irq_timer runs when the main loop wakes, and a wakeup is late by however
++ * coarse the host's waits are: every transition that came due meanwhile is
++ * then raised back to back, under the BQL, before the CPU can take one of
++ * them -- and on the edge-triggered 8259 all of them are one interrupt. A
++ * guest at 1 kHz (Windows 9x's multimedia timer, what a MIDI sequencer and
++ * many games run on) counts time in those interrupts, so it ran at the rate
++ * of the host's wakeups: 50 % with 2 ms waits, and 6 % on a Windows host,
++ * whose waits round to its 15.6 ms timer tick. Measured on Linux with the
++ * waits rounded that way, and the tool that did it is the pit-rate phase of
++ * tools/pit-guest-test.py.
++ *
++ * So an edge that finds IRQ 0 still requested and unmasked at the master
++ * PIC is counted, and each count is raised as a fresh edge when the CPU
++ * acknowledges IRQ 0 (pic_intack) -- after the ISR is entered, so the PIC
++ * holds it until the EOI, and the guest runs its handler once per tick.
++ * Owed ticks are capped at a quarter second of them, so a host stall
++ * catches up only that far, and a new count drops what the old rate owed.
++ * A guest that routes IRQ 0 elsewhere (an APIC HAL masks it at the 8259)
++ * owes nothing.
++ */
++static void pit_count_merged_edge(PITChannelState *s)
++{
++    uint32_t hz = PIT_FREQ / (uint32_t)s->count;
++    uint32_t cap = MAX(8, hz / 4);
++
++    if (isa_pic && (isa_pic->irr & 1) && !(isa_pic->imr & 1) && s->owed < cap) {
++        s->owed++;
++    }
++}
++
++static void pit_irq0_acked(void *opaque)
++{
++    PITChannelState *s = opaque;
++
++    if (!s->owed || s->irq_disabled) {
++        return;
++    }
++    s->owed--;
++    /* a pulse, then the line back where the timer left it */
++    qemu_set_irq(s->irq, 0);
++    qemu_set_irq(s->irq, 1);
++    if (!s->out_level) {
++        qemu_set_irq(s->irq, 0);
++    }
++}
++
+ static void pit_irq_timer(void *opaque)
+ {
+     PITChannelState *s = opaque;
+@@ -379,6 +437,11 @@
+ 
+     qdev_init_gpio_in(dev, pit_irq_control, 1);
+ 
++    if (pit->reinject) {
++        pic_irq0_intack_opaque = s;
++        pic_irq0_intack_hook = pit_irq0_acked;
++    }
++
+     pc->parent_realize(dev, errp);
+ }
+ 

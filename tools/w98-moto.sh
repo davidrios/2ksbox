@@ -22,7 +22,8 @@
 #     our Direct3D HAL, which is the workload docs/22 §6 has for it; the
 #     rate then comes from tools/tcg-fps.py's distinct VGA frames, since the
 #     software renderer flips nothing), RACE_DELAY= (seconds into the race before the window, 5), FPS= (window
-#     seconds, 20), FRESH= (1)
+#     seconds, 20), FRESH= (1), MOTO_DIR= (the game's folder, 8.3:
+#     \PROGRA~1\MOTORA~1; a Portuguese Windows says \ARQUIV~1\MOTORA~1)
 # Output: build/w98game/<name>/ -- fps.txt, step screendumps (demo, title,
 # name, menu, mode, race, bike, loaded, racing), shots/, qemu.log.
 set -u
@@ -33,7 +34,8 @@ LOG=$ROOT/build/w98game/$NAME.run.log
 mkdir -p "$ROOT/build/w98game"
 cd "$ROOT"
 MOTO=${MOTO:-$HOME/isos/Moto.Racer.1997.DSI.CD/MOTO_RACER.mds}
-FRESH=${FRESH:-1} GUEST_CMD=$'cd \\PROGRA~1\\MOTORA~1\nMOTO.EXE' CDS="$MOTO" TABLET=0 RUN_SECS=${RUN_SECS:-500} SHOTS=${SHOTS:-5} \
+DIR=${MOTO_DIR:-'\PROGRA~1\MOTORA~1'}
+FRESH=${FRESH:-1} GUEST_CMD="cd $DIR"$'\nMOTO.EXE' CDS="$MOTO" TABLET=0 RUN_SECS=${RUN_SECS:-500} SHOTS=${SHOTS:-5} \
   OUT=$O tools/win98-game-test.sh "${IMG:-$HOME/Library/Application Support/2ksbox/machines/base98-us/disk.qcow2}" "$NAME" >"$LOG" 2>&1 &
 H=$!
 q() { python3 tools/qmpc.py "$O/qmp.sock" "$@"; }

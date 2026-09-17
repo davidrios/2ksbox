@@ -7,10 +7,10 @@
 #   scripts/build-d3dpt-exec.sh --windows   cross to build/win/d3dpt/d3dpt_exec.dll
 #
 # --windows compiles the same two files against mingw's own <windows.h> and
-# <d3d9.h> instead of DXVK's native stand-ins for them, and loads plain
-# `d3d9.dll` at run time: on Windows the host already has a Direct3D 9, and
-# a DXVK build dropped next to the player overrides it for free (the loader
-# searches the executable's directory first). Run it inside
+# <d3d9.h> instead of DXVK's native stand-ins for them, and loads DXVK's
+# d3d9.dll at run time under the name the package gives it,
+# `dxvk_d3d9.dll` (build/win/dxvk, scripts/configure-dxvk.sh --windows) —
+# never Windows' own Direct3D 9 (2026-09-17). Run it inside
 # scripts/win-cross.sh — docs/build-windows.md.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

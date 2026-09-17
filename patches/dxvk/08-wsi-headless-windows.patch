@@ -1,0 +1,15 @@
+diff --git a/meson.build b/meson.build
+--- a/meson.build
++++ b/meson.build
+@@ -127,6 +127,11 @@
+ 
+   dxvk_name_prefix = ''
+   compiler_args += ['-DDXVK_WSI_WIN32']
++  # 2ksbox: the window-less driver on Windows too. The executor of the
++  # paravirtual Direct3D device asks for it by DXVK_WSI_DRIVER=Headless on
++  # every host, so one d3d9 behaves the same everywhere; Win32 stays the
++  # default for anything that sets nothing.
++  compiler_args += ['-DDXVK_WSI_HEADLESS']
+ else
+   dxvk_abi_version = '0'
+   dxvk_version_raw = meson.project_version().strip('v').split('.')

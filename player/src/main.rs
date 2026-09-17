@@ -2223,6 +2223,16 @@ fn main() {
     // its own dlopen searches would otherwise look for in a checkout.
     // First, before any thread: it edits the environment.
     companions::announce();
+    // Windows rounds every wait to its timer tick, 15.6 ms unless a process
+    // asks for less, and QEMU's main loop waits for its timers: a guest's
+    // 1 kHz timer (a MIDI sequencer's, a game's) fired a tick late and its
+    // clock ran at 6 % (2026-09-17). Patch 65 keeps those ticks; this keeps
+    // them from arriving 15 at a time. For the life of the process, which
+    // is what the request is scoped to since Windows 10 2004.
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::Media::timeBeginPeriod(1);
+    }
     // player [--shader <preset.slangp>] [--shader-params <k=v,...>]
     //        [--mode-sweep <dir>] [--calib <bmp|dir>] [--companions]
     //        [--] <qemu args...>

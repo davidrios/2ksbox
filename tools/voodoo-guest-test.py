@@ -62,6 +62,7 @@ stage of scripts/test.sh.
 """
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -142,6 +143,14 @@ D3D_BPP             equ 04Ch
 D3D_PITCH           equ 050h
 D3D_OFFSET          equ 054h
 D3D_HZ              equ 058h
+D3D_CUR_ADDR        equ 090h
+D3D_CUR_W           equ 094h
+D3D_CUR_H           equ 098h
+D3D_CUR_DEFINE      equ 0A4h
+D3D_CUR_X           equ 0A8h
+D3D_CUR_Y           equ 0ACh
+D3D_CUR_ENABLE      equ 0B0h
+D3D_CUR_AT          equ 00200000h       ; past the 800x600x32 frame
 GREEN32             equ 0000FF00h
 
 start:
@@ -489,6 +498,27 @@ d3dpt_linear:
     call puts
     call puthex32
     call putnl
+
+    ; and a hardware cursor shown on it, as a Windows desktop has: a 2x2
+    ; white sprite at 100,100. While the Voodoo has the monitor it must not
+    ; be published as visible (patch 66), and after the hand-back it must be
+    push edi
+    mov edi, [d3d_vram]
+    add edi, D3D_CUR_AT
+    mov ecx, 4
+.cur:
+    mov dword [fs:edi], 0FFFFFFFFh
+    add edi, 4
+    dec ecx
+    jnz .cur
+    pop edi
+    mov dword [fs:edi + D3D_CUR_ADDR], D3D_CUR_AT
+    mov dword [fs:edi + D3D_CUR_W], 2
+    mov dword [fs:edi + D3D_CUR_H], 2
+    mov dword [fs:edi + D3D_CUR_DEFINE], 1
+    mov dword [fs:edi + D3D_CUR_X], 100
+    mov dword [fs:edi + D3D_CUR_Y], 100
+    mov dword [fs:edi + D3D_CUR_ENABLE], 1
     mov cx, 36                  ; ~2 s: the host's screendump shows the linear
     call delay_ticks            ; mode, the way the player's refresh would
     ret
@@ -1035,6 +1065,8 @@ def main():
             QEMU, "-machine", "pc", "-cpu", "pentium3", "-m", "64",
             "-L", os.path.join(ROOT, "qemu/pc-bios"), "-display", "none", "-net", "none",
             *vga_args(),
+            # the cursor the console publishes (patch 66), in this log
+            *(["-trace", "dpy_mouse_publish"] if VGA == "d3dpt" else []),
             "-device", "voodoo2,ramfifo=%s,recompiler=%s,dither-sub=%s" % (RAMFIFO, RECOMP, DITHER_SUB),
             "-drive", "file=%s,if=floppy,index=0,format=raw" % img,
             "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
@@ -1153,6 +1185,31 @@ def main():
         print("    ... and %.1f%% the linear mode's green" % (frac * 100))
         if (w, h) != (800, 600) or frac < 0.99:
             print("FAIL the console did not go back to d3dpt-vga's 800x600 linear mode")
+            ok = False
+        # the adapter's hardware cursor (patch 66): shown before the Voodoo
+        # takes the monitor, hidden while it has it -- a pass-through cable
+        # shows nothing of the 2D card, and Windows' desktop pointer was
+        # drawn over Moto Racer on the Voodoo 2 -- shown again after
+        # (the switch is published before the device logs it, so each
+        # line is placed by its own passthrough field)
+        cur, seen = [], False
+        for line in open(qlog, "rb").read().decode("latin-1").splitlines():
+            m = re.search(r"dpy_mouse_publish x=(-?\d+) y=(-?\d+) on=(\d) passthrough=(\d)", line)
+            if m:
+                on, through = int(m.group(3)), int(m.group(4))
+                seen = seen or through == 1
+                cur.append(("during" if through else "after" if seen else "before", on, through))
+        last = {k: [c for c in cur if c[0] == k][-1:] for k in ("before", "during", "after")}
+        print("    cursor published: before %s, during %s, after %s" % (
+            last["before"] or "-", last["during"] or "-", last["after"] or "-"))
+        if not last["before"] or last["before"][0][1] != 1:
+            print("FAIL the adapter's cursor was not published as shown before the Voodoo")
+            ok = False
+        if not last["during"] or last["during"][0][1] != 0:
+            print("FAIL the adapter's cursor stayed visible while the Voodoo had the monitor")
+            ok = False
+        if not last["after"] or last["after"][0][1] != 1:
+            print("FAIL the adapter's cursor did not come back with the monitor")
             ok = False
     qtext = open(qlog, "rb").read().decode("latin-1")
     if "display on (VGA pass-through)" not in qtext or "display off (VGA back)" not in qtext:

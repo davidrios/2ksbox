@@ -214,6 +214,12 @@
 #                  reply identical to discx's at byte-count limits 512 and 65534,
 #                  then the disc shelf (patch 52) and a second boot running the
 #                  real CDSHELF.COM against it
+#   atapi-read-error ATAPI_READ_ERROR=1 tools/atapi-guest-test.py: the same battery
+#                  with four sectors of the audio track unreadable on the host
+#                  (tools/read-error-inject.c, an LD_PRELOAD failing pread64 with
+#                  EIO; Linux only): the plays over them must advance and complete,
+#                  the sectors played as silence (patch 55 — without it CD music
+#                  stopped for good on one bad read of a disc on a network share)
 #   x87-guest      tools/x87-guest-test.py: a DOS x87 battery under TCG,
 #                  identical with the fast path on and off (needs nasm,
 #                  mtools and the FreeDOS floppy the tool fetches on first use)
@@ -250,7 +256,11 @@
 #                  tick word plus counter 0) read in a tight loop beside the TSC:
 #                  no backward reading and every window at 100 %, where upstream's
 #                  late IRQ 0 edge made it 200 %. The overdue-irq=off control is
-#                  reported, not required. Two boots, ~35 s
+#                  reported, not required. Then the rate phase (patch 65):
+#                  PITRATE.COM counts IRQ 0 at 1 kHz and the host times its lines
+#                  — 100 % as built and with QEMU's waits rounded to Windows'
+#                  15.6 ms tick (tools/wait-granularity.c), spinning and halted;
+#                  reinject=off under those waits is the control (6 %). ~2 min
 #   vbe-palette    VBEPAL=1 tools/vga-dirty-guest-test.py vesa: a VESA game's palette
 #                  through the VGA BIOS (patches/seabios, firmware/) — 4F09h sets 65
 #                  entries in banked 640x480x8 on std and cirrus, the pages must read
@@ -2518,6 +2528,9 @@ guest_stage() {
       run_check smc-guest smc-guest.log python3 tools/smc-guest-test.py || true
       run_check sse-guest sse-guest.log python3 tools/sse-guest-test.py || true
       run_check atapi-guest atapi-guest.log python3 tools/atapi-guest-test.py || true
+      if [ "$OS" = Linux ]; then
+        run_check atapi-read-error atapi-read-error.log env ATAPI_READ_ERROR=1 python3 tools/atapi-guest-test.py || true
+      else skip atapi-read-error "Linux only (an LD_PRELOAD over glibc's pread64)"; fi
       run_check midi-guest midi-guest.log python3 tools/midi-guest-test.py || true
       run_check pit-guest pit-guest.log python3 tools/pit-guest-test.py || true
       run_check voodoo-guest voodoo-guest.log python3 tools/voodoo-guest-test.py || true
@@ -2544,10 +2557,10 @@ guest_stage() {
     # including `atapi-guest`, which is the only check that reads a disc from
     # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
     # weak-sector rule, which that battery is the regression guard for).
-    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo vbe-palette pad-guest; do
+    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest atapi-read-error midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo vbe-palette pad-guest; do
       skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
     done; fi
-  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo vbe-palette pad-guest; do
+  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest atapi-read-error midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo vbe-palette pad-guest; do
     skip "$c" "needs nasm, mtools and build/qemu"
   done; fi
   if [ "$OS" != Linux ]; then skip guest "Linux only for now (mkfs.fat, sfdisk, mtools)"; return; fi

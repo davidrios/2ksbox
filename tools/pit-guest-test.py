@@ -20,8 +20,21 @@ The control is reported, not required: whether the gap is ever hit
 depends on how late this host's main loop wakes, so a host where it is not
 is one where this check cannot fail — said out loud, not failed.
 
+**The rate phase** (patch 65, 2026-09-17) asks a different question of the
+same timer: does every IRQ 0 of a 1 kHz PIT arrive? guest-tools'
+PITRATE.COM programs counter 0 to 1 ms — what Windows 9x's multimedia
+timer does for a MIDI sequencer — counts IRQ 0 itself and prints a line
+per 1000 ticks; the host timestamps the lines, so 1.000 s apart is a
+guest clock at 100 %. It runs as built, then with QEMU's waits rounded
+to Windows' 15.6 ms timer tick (tools/wait-granularity.c, Linux only),
+spinning and halted, and all three must be 97–103 %. The control,
+`-global isa-pit.reinject=off` under the same waits, is reported: it
+was 6 % — every transition that came due while the main loop slept
+raised back to back, one interrupt on the edge-triggered 8259.
+
     tools/pit-guest-test.py        # needs nasm, mtools, build/qemu
     PIT_SECS=30 tools/pit-guest-test.py
+    PIT_RATE=0 tools/pit-guest-test.py   # without the rate phase
 
 Outputs in build/pit-guest/. The `pit-guest` check in scripts/test.sh.
 """
@@ -81,6 +94,78 @@ def run(tag, extra):
     return wins, tuple(int(x) for x in total.groups()), data
 
 
+RATE_SRC = os.path.join(ROOT, "guest-tools/src/pitrate.asm")
+SHIM_SRC = os.path.join(ROOT, "tools/wait-granularity.c")
+
+
+def rate_run(tag, img, lines, extra, env_extra):
+    """PITRATE.COM's lines as they arrive; the seconds per 1000 ticks."""
+    env = dict(os.environ)
+    env.update(env_extra)
+    p = subprocess.Popen([
+        QEMU, "-machine", "pc,hpet=off", *x87gt.tcg_opts(), "-cpu", "pentium3", "-m", "64",
+        "-L", os.path.join(ROOT, "qemu/pc-bios"), "-display", "none", "-net", "none",
+        "-monitor", "none", "-drive", "file=%s,format=raw,if=floppy" % img, "-boot", "a",
+        "-serial", "stdio", *extra,
+    ], stdout=subprocess.PIPE, stdin=subprocess.DEVNULL, env=env)
+    stamps, line = [], b""
+    deadline = time.monotonic() + 60 + lines * 20
+    try:
+        while time.monotonic() < deadline:
+            c = p.stdout.read(1)
+            if not c:
+                break
+            if c != b"\n":
+                line += c
+                continue
+            line, got = b"", line.strip()
+            if got == b"T":
+                stamps.append(time.monotonic())
+            elif got == b"DONE":
+                break
+    finally:
+        p.terminate()
+        p.wait()
+    gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+    if not gaps:
+        raise SystemExit("FAIL rate %s: %d lines from PITRATE.COM" % (tag, len(stamps)))
+    mean = sum(gaps) / len(gaps)
+    print("rate %-28s %2d lines, %.3f s per 1000 ticks (%.3f..%.3f): guest clock at %.0f %%"
+          % (tag, len(stamps), mean, min(gaps), max(gaps), 100 / mean))
+    return 100 / mean
+
+
+def rate_phase():
+    com = os.path.join(OUT, "PITRATE.COM")
+    subprocess.run(["nasm", "-f", "bin", "-o", com, RATE_SRC], check=True)
+    img = {}
+    for mode, lines in (("spin", SECS), ("halt", SECS), ("ctl", 3)):
+        img[mode] = os.path.join(OUT, "fd-rate-%s.img" % mode)
+        shutil.copy(os.path.join(OUT, "fd.img"), img[mode])
+        bat = os.path.join(OUT, "FDAUTO.BAT")
+        with open(bat, "w") as f:
+            f.write("@echo off\r\nPITRATE.COM %s%d\r\n" % ("H " if mode == "halt" else "", lines + 1))
+        for src, dst in ((bat, "::FDAUTO.BAT"), (com, "::PITRATE.COM")):
+            subprocess.run(["mcopy", "-o", "-i", img[mode], src, dst], check=True)
+    ok = True
+    good = lambda pct: 97 <= pct <= 103
+    if not good(rate_run("as built", img["spin"], SECS, [], {})):
+        ok = False
+    shim = os.path.join(OUT, "wait-granularity.so")
+    if not sys.platform.startswith("linux") or shutil.which("cc") is None:
+        print("rate: SKIP the Windows-wait runs (tools/wait-granularity.c is a Linux LD_PRELOAD)")
+        return ok
+    subprocess.run(["cc", "-O2", "-shared", "-fPIC", "-o", shim, SHIM_SRC, "-ldl"], check=True)
+    coarse = {"LD_PRELOAD": shim}
+    for mode in ("spin", "halt"):
+        if not good(rate_run("15.6 ms waits, %s" % mode, img[mode], SECS, [], coarse)):
+            ok = False
+    rate_run("15.6 ms waits, reinject=off", img["ctl"], 3, ["-global", "isa-pit.reinject=off"], coarse)
+    if not ok:
+        print("FAIL: a 1 kHz guest clock off 100 % -- IRQ 0 edges lost at the 8259")
+    return ok
+
+
 def main():
     x87gt.ensure_prereqs()
     x87gt.ensure_floppy()
@@ -124,6 +209,8 @@ def main():
     if not cback:
         print("note: the control never hit the gap on this host — it cannot show the "
               "difference here, so a PASS above proves less than it does elsewhere")
+    if os.environ.get("PIT_RATE", "1") != "0" and not rate_phase():
+        ok = False
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1
 

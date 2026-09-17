@@ -16,10 +16,21 @@
  *          -Ithird_party/dxvk/include/native -Ithird_party/dxvk/include/native/windows \
  *          -Ithird_party/dxvk/include/native/directx -ldl
  * Run:   build/d3dpt-dp2-test [out.bmp]   (from the repo root, or D3DPT_EXEC_LIB / D3DPT_DXVK_LIB)
+ *
+ * Windows (the Windows executor on DXVK's d3d9.dll, 2026-09-17), inside
+ * scripts/win-cross.sh, then under wine or on the PC:
+ *        x86_64-w64-mingw32-g++ -std=c++17 -O2 -static -o build/win/d3dpt-dp2-test.exe tools/d3dpt-dp2-test.cpp
+ *        D3DPT_EXEC_LIB=build/win/d3dpt/d3dpt_exec.dll D3DPT_DXVK_LIB=<dxvk_d3d9.dll> wine build/win/d3dpt-dp2-test.exe
  */
 #include <windows.h>
 #include <d3d9.h>
+#ifdef _WIN32
+#define dlopen(p, f)  ((void *)LoadLibraryA(p))
+#define dlsym(h, s)   ((void *)GetProcAddress((HMODULE)(h), (s)))
+#define dlerror()     "LoadLibrary failed"
+#else
 #include <dlfcn.h>
+#endif
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>

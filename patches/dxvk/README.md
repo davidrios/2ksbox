@@ -4,8 +4,9 @@ Applied by `scripts/prepare-dxvk.sh` on top of the pinned DXVK submodule
 (`third_party/dxvk`, 3.1.0 master d7ac258) in filename order; the script
 restores every tracked file a patch touches and re-applies the queue on each
 run. DXVK's d3d9 is the host executor of the paravirtual Direct3D device
-(doc 14, ADR-006/007) on Linux and macOS; only `libdxvk_d3d9` is built
-(`scripts/configure-dxvk.sh` → `build/dxvk`).
+(doc 14, ADR-006/007) on Linux, macOS and — since 2026-09-17 — Windows;
+only `d3d9` is built (`scripts/configure-dxvk.sh` → `build/dxvk`, and
+`--windows` → `build/win/dxvk/src/d3d9/d3d9.dll`).
 
 | Patch | What / why | Drop when |
 |---|---|---|
@@ -17,6 +18,7 @@ run. DXVK's d3d9 is the host executor of the paravirtual Direct3D device
 | `06-vulkan-loader-beside-us` | the macOS Vulkan loader candidate list gains `@loader_path/libvulkan.1.dylib` (and the unversioned name) ahead of the bare leaf names, and the array becomes a plain one so the Apple list can be longer than the other two. macOS ships no Vulkan at all, so a redistributable `.app` (`scripts/package-macos.sh`) carries a loader and a KosmicKrisp ICD of its own beside the executor; `dlopen` resolves `@loader_path` against the calling image, where a bare leaf name reaches only `DYLD_LIBRARY_PATH` or `/usr/local/lib` — and `DYLD_*` is stripped from a hardened, notarized process. Inert in a checkout, where nothing sits there and the search falls through to the system's | upstream ships a macOS bundle story of its own |
 
 | `07-ff-bumpenvmap-luminance` | `D3DTOP_BUMPENVMAPLUMINANCE` in the fixed-function ubershader (`d3d9_fixed_function_frag.glsl`, `sampleTexture`) never applied its luminance: the previous stage's colour op was read into a variable declared a second time inside the `if`, so the outer one stayed 0 and the luminance branch was dead code (the bump offset still worked, from the inner copy), and the branch read the luminance from the stage's own texel (`texVal.z`, the environment map) rather than the bump map's (`previousStageTextureVal.z`, where DXVK's L6V5U5 / X8L8V8U8 conversion puts L). Found by BUMPTEST through our display driver (2026-09-11): full intensity where L = 1/2 was asked for. `tools/d3dpt-dp2-test.cpp`'s luminance bump-map case fails without it | upstream fixes both lines |
+| `08-wsi-headless-windows` | patch 04's headless WSI built on Windows too, beside Win32 (which stays the default when `DXVK_WSI_DRIVER` is unset). The Windows package ships this d3d9 as `dxvk_d3d9.dll` and the executor asks for `Headless` on every host, so one driver serves every device the executor makes, none of which has a window (2026-09-17: Windows' own d3d9 drew black; ADR-007's Windows amendment). Built by `scripts/configure-dxvk.sh --windows` in the cross container | never, as 04 |
 
 Building and testing (`tools/dxvk-d3d9-test.cpp`, build line in its header):
 `scripts/prepare-dxvk.sh && scripts/configure-dxvk.sh && ninja -C build/dxvk`.

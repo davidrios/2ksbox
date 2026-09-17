@@ -299,6 +299,19 @@ pub struct Payload {
 /// with the metadata blob.
 const FD_CACHE: usize = 8;
 
+/// A host file that failed a guest's read, said on stderr (the player's
+/// log) — the first few times only. A guest sees a failed sector as a sense
+/// code, and CD audio as a play that stops, with nothing anywhere to say
+/// which file or why: "CD music sometimes doesn't work, especially off a
+/// Samba share" was all there was to go on (2026-09-17).
+fn report_file_error(msg: &str) {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static SAID: AtomicU32 = AtomicU32::new(0);
+    if SAID.fetch_add(1, Ordering::Relaxed) < 32 {
+        eprintln!("libdisc: {msg}");
+    }
+}
+
 /// The disc.
 pub struct Disc {
     /// 1-based session numbers, ascending.
@@ -373,12 +386,25 @@ impl Disc {
             return Ok(file);
         }
         let p = &self.files[index];
-        let file = File::open(&p.path).map_err(|e| Error::Io(format!("{}: {}", p.path.display(), e)))?;
-        let md = file.metadata().map_err(|e| Error::Io(format!("{}: {}", p.path.display(), e)))?;
+        let io = |e: std::io::Error| {
+            let msg = format!("{}: reopening: {}", p.path.display(), e);
+            report_file_error(&msg);
+            Error::Io(msg)
+        };
+        let file = File::open(&p.path).map_err(io)?;
+        let md = file.metadata().map_err(io)?;
         if md.len() != p.len || md.modified().ok() != p.mtime {
             /* The disc was laid out over what this file was; serving the
                new bytes at the old offsets would hand the guest a torn
                file with no sign that anything happened. */
+            report_file_error(&format!(
+                "{}: changed since the disc was opened (length {} -> {}, modified {:?} -> {:?}): reads fail as a changed medium",
+                p.path.display(),
+                p.len,
+                md.len(),
+                p.mtime,
+                md.modified().ok()
+            ));
             return Err(Error::Medium);
         }
         let file = std::sync::Arc::new(file);
@@ -406,19 +432,26 @@ impl Disc {
         #[cfg(unix)]
         {
             use std::os::unix::fs::FileExt;
-            file.read_exact_at(buf, offset)
-                .map_err(|e| Error::Io(format!("{}: {} bytes at {}: {}", path.display(), buf.len(), offset, e)))
+            file.read_exact_at(buf, offset).map_err(|e| {
+                let msg = format!("{}: {} bytes at {}: {}", path.display(), buf.len(), offset, e);
+                report_file_error(&msg);
+                Error::Io(msg)
+            })
         }
         #[cfg(windows)]
         {
             use std::os::windows::fs::FileExt;
             let mut done = 0;
             while done < buf.len() {
-                let n = file
-                    .seek_read(&mut buf[done..], offset + done as u64)
-                    .map_err(|e| Error::Io(format!("{}: {}", path.display(), e)))?;
+                let n = file.seek_read(&mut buf[done..], offset + done as u64).map_err(|e| {
+                    let msg = format!("{}: {} bytes at {}: {}", path.display(), buf.len() - done, offset + done as u64, e);
+                    report_file_error(&msg);
+                    Error::Io(msg)
+                })?;
                 if n == 0 {
-                    return Err(Error::Io(format!("{}: short read at {}", path.display(), offset)));
+                    let msg = format!("{}: short read at {}", path.display(), offset + done as u64);
+                    report_file_error(&msg);
+                    return Err(Error::Io(msg));
                 }
                 done += n;
             }

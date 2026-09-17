@@ -27,6 +27,18 @@ checked the same way. That is the DOS half of the in-guest CDSHELF program;
 the Win98/XP half is guest-tools/src/cdshelf.c.
 
     tools/atapi-guest-test.py            # needs nasm, mtools, build/qemu, target/release/discx
+    ATAPI_READ_ERROR=1 tools/atapi-guest-test.py
+
+**ATAPI_READ_ERROR=1** (patch 55, the `atapi-read-error` check) runs the
+same battery with four sectors of track 2 (2152..2155) unreadable on the
+host: tools/read-error-inject.c fails every pread64 of lec.bin there with
+EIO, in QEMU alone, so `discx dump` still answers for the whole disc. A
+CD player reads through an unreadable audio sector as a dropout, so every
+audio check must still pass -- the play through 2150..2300 advancing, the
+ten-sector play completing at 2160 -- and QEMU's log must say the sectors
+were played as silence. Without patch 55 the play stopped at 2152 with
+status 0x14 and the music was off for good (a disc on a Samba share,
+2026-09-17). The shelf stage is skipped in this mode.
 
 The FreeDOS 1.3 boot floppy (build/images/144m/x86BOOT.img, git-ignored)
 is fetched by tools/x87-guest-test.py (same harness).
@@ -683,7 +695,22 @@ def write_shelf():
             f.write("%s\t%s\n" % (label, path))
 
 
-def run_qemu(img, log, done=b"DONE", qemu_log="qemu.log"):
+READ_ERROR = os.environ.get("ATAPI_READ_ERROR") == "1"
+READ_ERROR_SECTORS = (2152, 2156)   # inside the 2150..2300 and 2150..2160 plays
+
+
+def read_error_env():
+    """QEMU's environment with the host file failing READ_ERROR_SECTORS."""
+    so = os.path.join(OUT, "read-error-inject.so")
+    sh("cc", "-O2", "-shared", "-fPIC", "-o", so, os.path.join(ROOT, "tools/read-error-inject.c"), "-ldl")
+    env = dict(os.environ)
+    env.update({"LD_PRELOAD": so, "READ_ERROR_MATCH": "lec.bin",
+                "READ_ERROR_FROM": str(READ_ERROR_SECTORS[0] * 2352),
+                "READ_ERROR_TO": str(READ_ERROR_SECTORS[1] * 2352)})
+    return env
+
+
+def run_qemu(img, log, done=b"DONE", qemu_log="qemu.log", env=None):
     if os.path.exists(log):
         os.unlink(log)
     # QEMU_TCG_OPTS=<prop>=off runs the battery against an accelerator switch,
@@ -699,7 +726,7 @@ def run_qemu(img, log, done=b"DONE", qemu_log="qemu.log"):
         # shelf= so the vendor opcode answers at all (patch 52)
         "-device", "ide-cd,bus=ide.1,id=%s,drive=cd0,audiodev=w0,shelf=%s" % (CD_ID, SHELF),
         "-audiodev", "none,id=w0",
-    ], stderr=open(os.path.join(OUT, qemu_log), "w"))
+    ], stderr=open(os.path.join(OUT, qemu_log), "w"), env=env)
     t0 = time.time()
     try:
         while time.time() - t0 < 300:
@@ -1030,7 +1057,7 @@ def main():
     sh("mcopy", "-o", "-i", img, com, "::ATAPITST.COM")
     log = os.path.join(OUT, "serial.log")
     t0 = time.time()
-    run_qemu(img, log)
+    run_qemu(img, log, env=read_error_env() if READ_ERROR else None)
     print("guest run: %.1f s" % (time.time() - t0))
     text = open(log, "r", errors="replace").read()
     runs = parse_log(text)
@@ -1048,6 +1075,18 @@ def main():
             print("  " + f)
         return 1
     print("atapi guest test: %d replies over two byte-count limits identical to discx; audio positions consistent" % n)
+    if READ_ERROR:
+        qlog = open(os.path.join(OUT, "qemu.log"), errors="replace").read()
+        silent = ["ide-cd: CD audio sector %d unreadable: played as silence" % lba
+                  for lba in range(*READ_ERROR_SECTORS)]
+        missing = [m for m in silent if m not in qlog]
+        if missing or "read-error-inject: failing" not in qlog:
+            print("atapi read-error test: FAIL -- the injected errors were not played as silence "
+                  "(%s): %s" % (os.path.join(OUT, "qemu.log"), missing or "no read was failed"))
+            return 1
+        print("atapi read-error test: sectors %d..%d unreadable on the host, played as silence; "
+              "the plays over them advanced and completed" % (READ_ERROR_SECTORS[0], READ_ERROR_SECTORS[1] - 1))
+        return 0
 
     # the real DOS program on the same shelf (guest-tools/src/cdshelf.asm)
     t0 = time.time()

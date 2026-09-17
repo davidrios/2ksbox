@@ -58,7 +58,7 @@ base.
 | `qemu` | `build/win/qemu/{qemu-system-i386,qemu-img,qemu-io}.exe`, `libqemu-embed-i386.dll` | `configure-qemu.sh --windows`; **WHPX detected and built in** |
 | `rust` | `target/x86_64-pc-windows-gnu/release/{launcher,player,discx}.exe` | the embed DLL is found in `build/win/qemu` by `qemu-embed/build.rs` |
 | `qt` | `launcher-qt/target/x86_64-pc-windows-gnu/release/launcher-qt.exe` | **the package's `2ksbox.exe`** (ADR-015); its own cargo workspace, so its own stage |
-| `exec` | `build/win/d3dpt/d3dpt_exec.dll`, `build/win/wgl-probe.exe` | the Direct3D decoder + executor (doc 14), and the offscreen-GL diagnostic |
+| `exec` | `build/win/dxvk/src/d3d9/d3d9.dll`, `build/win/d3dpt/d3dpt_exec.dll`, `build/win/d3dpt-dp2-test.exe`, `build/win/wgl-probe.exe` | DXVK's d3d9 (`configure-dxvk.sh --windows`, patch 08's headless WSI), the Direct3D decoder + executor (doc 14) that runs on it, the display driver's host test, and the offscreen-GL diagnostic |
 | `guest` | `guest-tools/out/guest-tools-*.iso` | guest code: host-independent, so only built if absent |
 
 ## The package
@@ -70,7 +70,7 @@ under it:
 
 ```
 2ksbox.exe  2ksbox-player.exe  qemu-img.exe
-libqemu-embed-i386.dll  d3dpt_exec.dll  <the mingw runtime>
+libqemu-embed-i386.dll  d3dpt_exec.dll  dxvk_d3d9.dll  <the mingw runtime>
 pc-bios\  guest-tools\  shaders\  tools\  doc\
 2ksbox-debug.bat
 ```
@@ -173,10 +173,13 @@ stages it.)
 `scripts/package-windows.sh` then **runs the staged package under wine**,
 from outside the checkout with an empty environment: the launcher must
 answer `--paths` with paths inside the package, the **player** must
-answer `--companions` with the staged Direct3D executor (and a DXVK
-`d3d9.dll` where one exists) — the libraries QEMU `LoadLibrary`s by name,
+answer `--companions` with the staged Direct3D executor and its
+`dxvk_d3d9.dll` — the libraries QEMU `LoadLibrary`s by name,
 which are in no import table and which every Linux package silently
-shipped without until 2026-09-07 — and the packaged `qemu-img.exe` must
+shipped without until 2026-09-07 — the display driver's host test
+(`tools/d3dpt-dp2-test.cpp`) must draw its scene through that staged pair
+and read the right pixels back (through winevulkan onto this host's GPU;
+a host with no Vulkan device skips it), and the packaged `qemu-img.exe` must
 actually write a qcow2, which is also what proves the DLL closure, since
 it cannot start with one missing. Wine is not the
 target and a failure there is investigated rather than believed, but a

@@ -101,3 +101,11 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
     PKG_CONFIG=/usr/bin/x86_64-w64-mingw32-pkg-config \
     LANG=C.UTF-8
+
+# DXVK's d3d9 for Windows (ADR-007, 2026-09-17): the executor runs on the
+# same DXVK on every host, so the image builds it too. DXVK compiles its
+# GLSL to SPIR-V at build time with a *native* glslang; everything else it
+# needs (the Vulkan headers, dxbc-spirv, libdisplay-info) is a submodule
+# or a meson subproject. Last, so the layers above stay cached.
+RUN dnf install -y --setopt=install_weak_deps=False glslang \
+    && dnf clean all -y

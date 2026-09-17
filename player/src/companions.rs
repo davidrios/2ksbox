@@ -138,11 +138,12 @@ pub fn announce() {
     set_if_unset_and_present("QEMU_GLIDE_LIB", dylib("glide2x"));
     set_if_unset_and_present("D3DPT_EXEC_LIB", dylib("d3dpt_exec"));
     // DXVK's own soname, which carries its major version rather than the
-    // plain name the other three have.
+    // plain name the other three have. On Windows it is renamed in the
+    // package, so that nothing can mistake it for the system's d3d9.dll.
     let dxvk = if cfg!(target_os = "macos") {
         "lib/2ksbox/libdxvk_d3d9.0.dylib"
     } else if cfg!(windows) {
-        "bin/d3d9.dll"
+        "bin/dxvk_d3d9.dll"
     } else {
         "lib/2ksbox/libdxvk_d3d9.so.0"
     };

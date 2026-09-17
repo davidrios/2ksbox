@@ -1,0 +1,68 @@
+An audio sector the host file cannot deliver plays as silence and CD audio
+goes on, instead of stopping with an error status for good.
+
+A disc image on a network share (a Samba mount on the first Windows host,
+2026-09-17: "CD music sometimes doesn't work") fails a read now and then
+where a local file never does. The audio callback read every sector of a
+play range through libdisc and turned any failure into audio status 0x14,
+the drive's "stopped due to error" -- so one transient read error left a
+game's music off until the game itself started another track, which most
+never do. A real drive reads through a bad audio sector as a dropout.
+
+Now a failure libdisc reports as a host I/O error (LIBDISC_EIO, which it
+also names on stderr with the file, offset and OS error since the same
+day) is 2352 bytes of silence and the next sector is read again from the
+file. A data sector inside the range and a medium that is gone (changed
+under the disc, ejected) still stop with 0x14, and both now say so as a
+warning. The first eight silent sectors of a drive are warned about.
+
+diff --git a/include/hw/ide/ide-dev.h b/include/hw/ide/ide-dev.h
+--- a/include/hw/ide/ide-dev.h
++++ b/include/hw/ide/ide-dev.h
+@@ -152,6 +152,7 @@
+     uint8_t atapi_ascq;
+     uint32_t atapi_last_lba;
+     uint8_t atapi_audio_status;     /* 0x11 playing 0x12 paused 0x13 completed 0x14 error 0x15 none */
++    uint32_t atapi_audio_read_errors; /* 2ksbox: unreadable audio sectors played as silence (logged) */
+     uint32_t atapi_play_lba, atapi_play_end, atapi_play_start_lba;
+     int64_t atapi_play_start_ns;
+     uint8_t atapi_audio_port[4], atapi_audio_vol[4];
+diff --git a/hw/ide/atapi.c b/hw/ide/atapi.c
+--- a/hw/ide/atapi.c
++++ b/hw/ide/atapi.c
+@@ -321,11 +321,32 @@
+             libdisc *disc = atapi_disc(s);
+             uint8_t raw[2352];
+             LibdiscSectorInfo info;
++            int rc = disc ? libdisc_sector_info(disc, s->atapi_play_lba, &info) : LIBDISC_EMEDIUM;
+ 
+-            if (!disc || libdisc_sector_info(disc, s->atapi_play_lba, &info) < 0 ||
+-                info.kind != LIBDISC_KIND_AUDIO ||
+-                libdisc_read_raw(disc, s->atapi_play_lba, raw) < 0) {
++            if (rc >= 0 && info.kind == LIBDISC_KIND_AUDIO) {
++                rc = libdisc_read_raw(disc, s->atapi_play_lba, raw);
++            }
++            if (rc == LIBDISC_EIO) {
++                /*
++                 * 2ksbox: the host file failed this read (libdisc has said
++                 * which file and why on stderr). A CD player plays an
++                 * unreadable audio sector as silence and goes on, and a
++                 * network share's hiccup is exactly that: the next sector
++                 * is read again from the file. Stopping here left a game's
++                 * music off for good after one bad read.
++                 */
++                if (s->atapi_audio_read_errors++ < 8) {
++                    warn_report("ide-cd: CD audio sector %u unreadable: played as silence",
++                                s->atapi_play_lba);
++                }
++                memset(raw, 0, sizeof(raw));
++                rc = 0;
++                info.kind = LIBDISC_KIND_AUDIO;
++            }
++            if (rc < 0 || info.kind != LIBDISC_KIND_AUDIO) {
+                 /* a data sector or a lost medium inside the range: error stop */
++                warn_report("ide-cd: CD audio stopped at sector %u (%s)", s->atapi_play_lba,
++                            rc < 0 ? "the disc could not be read" : "not an audio sector");
+                 s->atapi_audio_status = 0x14;
+                 AUD_set_active_out(s->atapi_voice, 0);
+                 return;

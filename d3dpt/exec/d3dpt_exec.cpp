@@ -16,10 +16,11 @@
 
 /*
  * The one dynamic load in here is the D3D9 implementation itself: DXVK's
- * native library on Linux and macOS, and on Windows whatever answers to
- * d3d9.dll -- the system one, or a DXVK build dropped next to the player,
- * which the loader prefers because it searches the executable's own
- * directory first.
+ * d3d9 on every host -- the native library on Linux and macOS, and on
+ * Windows DXVK's own d3d9.dll shipped as dxvk_d3d9.dll (2026-09-17). Never
+ * Windows' own d3d9: it refuses what DXVK accepts (draws outside a scene,
+ * a device with no window) and its first run drew black, so a Windows
+ * host without DXVK has no pass-through, like any host below Vulkan 1.3.
  */
 #ifdef _WIN32
 #include <windows.h>
@@ -781,10 +782,9 @@ d3dpt_exec_t *d3dpt_exec_create(const d3dpt_exec_ops *ops)
     const char *lib = getenv("D3DPT_DXVK_LIB");
     const char *candidates[] = { lib,
 #ifdef _WIN32
-        /* The loader looks in the player's own directory first, so a DXVK
-         * build placed there wins over the system implementation without
-         * anything here having to know about it. */
-        "d3d9.dll",
+        /* not "d3d9.dll": that name is Windows' own implementation's too.
+         * The player names the packaged copy by its full path. */
+        "dxvk_d3d9.dll",
 #else
         "build/dxvk/src/d3d9/libdxvk_d3d9.so.0",
 #ifdef __APPLE__
@@ -801,8 +801,9 @@ d3dpt_exec_t *d3dpt_exec_create(const d3dpt_exec_ops *ops)
     }
     if (!x->dxvk) { x->log("no d3d9 library found (D3DPT_DXVK_LIB)"); delete x; return nullptr; }
 #ifdef _WIN32
-    /* DXVK only; the system d3d9 ignores it. Not overwritten if set. */
-    if (!getenv("DXVK_WSI_DRIVER")) _putenv_s("DXVK_WSI_DRIVER", "Headless");
+    /* DXVK reads it through GetEnvironmentVariableW, so the process
+     * environment rather than this module's C runtime. Not overwritten if set. */
+    if (!GetEnvironmentVariableA("DXVK_WSI_DRIVER", nullptr, 0)) SetEnvironmentVariableA("DXVK_WSI_DRIVER", "Headless");
 #else
     setenv("DXVK_WSI_DRIVER", "Headless", 0);
 #endif

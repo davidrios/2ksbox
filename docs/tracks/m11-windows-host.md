@@ -52,10 +52,11 @@ That run also added the check the Linux packages needed
 (2026-09-07): the staged **player** must answer `--companions` with the
 libraries QEMU `LoadLibrary`s by name rather than through an import
 table. On Windows that is `d3dpt_exec.dll` — staged, and resolved inside
-the package — with `glide` and `dxvk` legitimately "(not shipped)": there
+the package — with `glide` legitimately "(not shipped)": there
 is no Glide wrapper for Windows yet (M3: the cross build has no glide
-stage), and DXVK is not built there because the host has a real
-Direct3D 9 and a `d3d9.dll` beside the player would override it.
+stage). DXVK was not shipped either until 2026-09-17, when the executor's
+first real run on Windows' own Direct3D 9 drew black (item 5 below); it is
+`dxvk_d3d9.dll` beside the executor now.
 
 `scripts/build-windows.sh`
 then `scripts/package-windows.sh` produce a zip holding
@@ -426,17 +427,27 @@ where a guest's 3D actually fails.
    build dropped next to the player, which the loader prefers because it
    searches the executable's directory first. `access()` became a
    `fopen` probe and `%zu` needs `__USE_MINGW_ANSI_STDIO`.
-   **Weighed again 2026-09-08 and kept** (user decision): the package
-   ships no DXVK for Windows, because the OS has a Direct3D 9 of its own
-   and DXVK is one `d3d9.dll` away for anyone who wants it. What that
-   costs, so nobody has to rediscover it: Windows is then the only build
-   whose D3D path has no oracle — `d3dgame9-nat` / `d3dfeat9-nat` are
-   golden frames *from DXVK*, and a system d3d9 is a different rasteriser
-   — and no batch has ever run through the executor there at all (the
-   wine pass covers the launcher, `qemu-img.exe`, the DLL closure and
-   `wgl-probe.exe`, not the executor). If that changes, DXVK carries its
-   own mingw cross file (`build-win64.txt`) and the container has the
-   toolchain, so the stage is small.
+   **Reversed 2026-09-17 (user decision): the executor runs on DXVK on
+   Windows too, and only on DXVK.** It was weighed on 2026-09-08 and kept
+   on the system d3d9, with the cost written down — Windows the only build
+   whose D3D path had no oracle, and no batch ever run through it — and
+   the first real run paid it: on the user's PC (RTX 3090) dxdiag and
+   3DMark 99 ran in a Win98 guest at 60–170 frames/s of host draws and
+   showed black, every readback's first pixel zero. Reading the executor
+   against Windows' own Direct3D 9 found two things DXVK accepts and it
+   refuses: the display driver's path draws with no `BeginScene`, and
+   every device is created with no window at all. Rather than keep a
+   second rasteriser bug-for-bug equal, the package ships DXVK's own
+   `d3d9.dll` (`configure-dxvk.sh --windows`, DXVK's `build-win64.txt`,
+   glslang in the cross image) renamed `dxvk_d3d9.dll`, so nothing can
+   mistake it for the system's, and the executor loads that name or
+   `D3DPT_DXVK_LIB` and nothing else. Patch 08 builds the headless WSI
+   on Windows beside Win32, and the executor asks for it on every host.
+   The display driver's host test cross-builds (`d3dpt-dp2-test.exe`)
+   and `package-windows.sh` runs it under wine against the *staged* pair:
+   107 checks, the frame byte-identical to the Linux build's. A Windows
+   host below Vulkan 1.3 has no Direct3D pass-through, like any other
+   host (ADR-013).
 6. **The package layout.** A Unix prefix's `bin`/`lib`/`libexec`/`share`
    split is wrong on Windows, where the loader wants the DLLs beside the
    exe and the user wants one folder. `paths.rs` now knows both shapes;
@@ -457,6 +468,11 @@ images and a GPU, and now a Windows host too. The Windows evidence is
 
 ## Next steps, in order
 
+0. **The 2026-09-17 package on the PC** (docs/00-status.md, "The first
+   Windows host run"): dxdiag / 3DMark 99 on DXVK, a MIDI's tempo, the
+   Windows key in a game, and Moto Racer's speed. If it is still slow, the
+   emulated-TLS lead is next: build QEMU for Windows with llvm-mingw
+   (native TLS) and repeat the wine kernel measurement first.
 1. **Rebuild and re-package for the ADR-015 shape**, then
    `2ksbox-debug.bat` on the PC and read the `2ksbox-debug.log` it
    writes: there is one zip now, its `2ksbox.exe` is the Qt launcher, and

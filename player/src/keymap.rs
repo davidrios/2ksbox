@@ -116,11 +116,22 @@ pub fn atset1(code: K) -> Option<u32> {
         K::IntlBackslash => 0x56,
         K::F11 => 0x57,
         K::F12 => 0x58,
+        K::NumpadEqual => 0x59,
+        // the keys of a Brazilian ABNT2 and a Japanese keyboard that a US
+        // one lacks: ABNT2's `/?` beside the right Shift and its keypad `.`
+        // never reached a Portuguese Windows before 2026-09-17
+        K::KanaMode => 0x70,
+        K::IntlRo => 0x73,
+        K::Convert => 0x79,
+        K::NonConvert => 0x7B,
+        K::IntlYen => 0x7D,
+        K::NumpadComma => 0x7E,
         // extended
         K::NumpadEnter => 0xE01C,
         K::ControlRight => 0xE01D,
         K::NumpadDivide => 0xE035,
         K::PrintScreen => 0xE037,
+        K::Pause => 0xE046,
         K::AltRight => 0xE038,
         K::Home => 0xE047,
         K::ArrowUp => 0xE048,

@@ -7,9 +7,23 @@
 #   macOS: brew install vulkan-headers vulkan-loader glslang meson ninja
 #          (+ the LunarG SDK for the KosmicKrisp ICD on macOS 26)
 #   Arch:  pacman -S vulkan-headers vulkan-icd-loader glslang meson ninja
+#
+#   scripts/configure-dxvk.sh --windows   cross into build/win/dxvk (d3d9.dll),
+#          inside scripts/win-cross.sh: DXVK's own mingw cross file, and
+#          patch 08's headless WSI beside Win32, so the Windows executor
+#          runs the same d3d9 as every other host (2026-09-17)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD="${1:-$ROOT/build/dxvk}"
+cross=()
+if [ "${1:-}" = "--windows" ]; then
+  shift
+  BUILD="${1:-$ROOT/build/win/dxvk}"
+  # The image's PKG_CONFIG answers for the mingw sysroot, which has no
+  # libdisplay-info: meson falls back to DXVK's own subproject either way.
+  cross=(--cross-file "$ROOT/third_party/dxvk/build-win64.txt")
+else
+  BUILD="${1:-$ROOT/build/dxvk}"
+fi
 darwin=()
 if [ "$(uname -s)" = Darwin ]; then
   export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
@@ -21,7 +35,7 @@ if [ "$(uname -s)" = Darwin ]; then
           -Dc_link_args="-mmacosx-version-min=$T" -Dcpp_link_args="-mmacosx-version-min=$T")
 fi
 opts=(--buildtype release -Denable_dxgi=false -Denable_d3d8=false -Denable_d3d10=false -Denable_d3d11=false
-      -Dnative_sdl2=disabled -Dnative_glfw=disabled -Dnative_sdl3=disabled ${darwin[@]+"${darwin[@]}"})
+      -Dnative_sdl2=disabled -Dnative_glfw=disabled -Dnative_sdl3=disabled ${darwin[@]+"${darwin[@]}"} ${cross[@]+"${cross[@]}"})
 # A meson build directory holds absolute paths and cannot be relocated, so
 # a renamed or moved checkout (2ksbox, 2026-09-06) leaves one whose
 # --reconfigure walks into directories that no longer exist: "[Errno 2] No

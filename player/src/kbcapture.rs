@@ -245,20 +245,30 @@ mod x11 {
 mod win {
     use qemu_embed::Qemu;
     use std::sync::atomic::{AtomicIsize, Ordering};
-    use std::sync::Mutex;
+    use std::sync::{mpsc, Mutex};
+    use std::thread::JoinHandle;
     use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentThread, GetCurrentThreadId, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
+    };
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_F4, VK_LWIN, VK_RWIN, VK_SPACE, VK_TAB,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, GetForegroundWindow, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, HHOOK,
-        KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, LLKHF_EXTENDED, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+        CallNextHookEx, GetForegroundWindow, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
+        UnhookWindowsHookEx, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, LLKHF_EXTENDED, MSG,
+        WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
     };
 
     // The hook procedure is a bare `extern "system" fn`, so what it needs
-    // lives in statics. It runs on the thread that installed it — the event
-    // loop's, whose message pump is what calls it.
+    // lives in statics. It runs on the thread that installed it, inside
+    // that thread's message pump — which is why that is a thread of its own
+    // and not the event loop's (2026-09-17). Windows gives a low-level hook
+    // `LowLevelHooksTimeout` (300 ms to 1 s) per key, and since Windows 7 a
+    // hook that misses it is removed silently and for good: one keystroke
+    // during a shader compile or a slow present on the render thread, and
+    // the Windows key was the host's again for the rest of the session.
     static VM: Mutex<Option<Qemu>> = Mutex::new(None);
     static WINDOW: AtomicIsize = AtomicIsize::new(0);
     /// The keys the hook took that the guest holds, as set 1 scancodes: their
@@ -267,25 +277,49 @@ mod win {
     static HELD: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
     pub struct Hook {
-        hook: HHOOK,
+        /// The hook's thread and its id, for the `WM_QUIT` that ends it.
+        thread: Option<(u32, JoinHandle<()>)>,
     }
 
     impl Hook {
         pub fn new(hwnd: isize, vm: Qemu) -> Self {
             *VM.lock().unwrap_or_else(|e| e.into_inner()) = Some(vm);
             WINDOW.store(hwnd, Ordering::Relaxed);
-            Hook { hook: 0 }
+            Hook { thread: None }
         }
 
         pub fn set(&mut self, on: bool) {
-            if on && self.hook == 0 {
-                self.hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook), GetModuleHandleW(std::ptr::null()), 0) };
-                if self.hook == 0 {
-                    eprintln!("[keyboard] SetWindowsHookExW failed: the Windows key stays the host's");
+            if on && self.thread.is_none() {
+                let (tx, rx) = mpsc::channel();
+                let join = std::thread::Builder::new().name("keyboard hook".into()).spawn(move || unsafe {
+                    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+                    let h = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook), GetModuleHandleW(std::ptr::null()), 0);
+                    // the hook call made this thread's message queue, so the
+                    // id can take a WM_QUIT from here on
+                    let _ = tx.send((GetCurrentThreadId(), h != 0));
+                    if h == 0 {
+                        return;
+                    }
+                    let mut msg: MSG = std::mem::zeroed();
+                    while GetMessageW(&mut msg, 0, 0, 0) > 0 {}
+                    UnhookWindowsHookEx(h);
+                });
+                let Ok(join) = join else {
+                    eprintln!("[keyboard] no hook thread: the Windows key stays the host's");
+                    return;
+                };
+                match rx.recv() {
+                    Ok((id, true)) => self.thread = Some((id, join)),
+                    _ => {
+                        let _ = join.join();
+                        eprintln!("[keyboard] SetWindowsHookExW failed: the Windows key stays the host's");
+                    }
                 }
-            } else if !on && self.hook != 0 {
-                unsafe { UnhookWindowsHookEx(self.hook) };
-                self.hook = 0;
+            } else if !on {
+                if let Some((id, join)) = self.thread.take() {
+                    unsafe { PostThreadMessageW(id, WM_QUIT, 0, 0) };
+                    let _ = join.join();
+                }
                 // the release went to whoever took focus: let go in the guest
                 let held = std::mem::take(&mut *HELD.lock().unwrap_or_else(|e| e.into_inner()));
                 for sc in held {

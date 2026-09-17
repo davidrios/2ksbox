@@ -26,6 +26,9 @@
 #   qemu-img.exe                ours, patched
 #   libqemu-embed-i386.dll      QEMU as a library, what the player runs
 #   d3dpt_exec.dll              the Direct3D executor (doc 14)
+#   dxvk_d3d9.dll               DXVK's d3d9, what the executor runs on --
+#                               renamed, so it is never mistaken for
+#                               Windows' own d3d9.dll
 #   *.dll                       the mingw and Qt 6 runtimes those need
 #   plugins\                    Qt's platform plugin and friends
 #   qml\                        the QtQuick module trees the views import
@@ -82,10 +85,19 @@ cp -a qemu/pc-bios "$STAGE/pc-bios"
 # executor" and the guest falls back), so a package without it is a
 # package, not a failure — but say so, because "3D does nothing" is not a
 # symptom anyone enjoys tracing back to a packaging step.
-if [ -f build/win/d3dpt/d3dpt_exec.dll ]; then
+#
+# Both or neither, as on Linux: the executor runs on DXVK's d3d9 and on
+# nothing else (2026-09-17 — Windows' own Direct3D 9 drew black frames on
+# its first real run). DXVK's release build keeps its symbols, 21 MB of
+# them, so the staged copy is stripped.
+if [ -f build/win/d3dpt/d3dpt_exec.dll ] && [ -f build/win/dxvk/src/d3d9/d3d9.dll ]; then
   install -m755 build/win/d3dpt/d3dpt_exec.dll "$STAGE/"
+  install -m755 build/win/dxvk/src/d3d9/d3d9.dll "$STAGE/dxvk_d3d9.dll"
+  STRIP=${WIN_STRIP:-x86_64-w64-mingw32-strip}
+  if command -v "$STRIP" >/dev/null; then "$STRIP" --strip-debug "$STAGE/dxvk_d3d9.dll"
+  else scripts/win-cross.sh x86_64-w64-mingw32-strip --strip-debug "$STAGE/dxvk_d3d9.dll"; fi
 else
-  echo "package-windows.sh: no build/win/d3dpt/d3dpt_exec.dll (scripts/build-windows.sh exec); packaging without Direct3D pass-through"
+  echo "package-windows.sh: no build/win/d3dpt/d3dpt_exec.dll and build/win/dxvk/src/d3d9/d3d9.dll (scripts/build-windows.sh exec); packaging without Direct3D pass-through"
 fi
 
 # The diagnostic that answers "why does my Win98 guest get no OpenGL" on
@@ -146,7 +158,12 @@ rem  stdout, so `--diagnose` files its answers instead of printing them.
 setlocal
 cd /d "%~dp0"
 set LOG=%APPDATA%\2ksbox\data\launcher.log
+set PLOG=%APPDATA%\2ksbox\data\player.log
 set OUT=%~dp02ksbox-debug.log
+rem  player.log is appended to by every machine ever started, so only the
+rem  lines this run adds are kept: count them now, skip them at the end.
+set PSKIP=0
+if exist "%PLOG%" for /f %%n in ('type "%PLOG%" ^| find /c /v ""') do set PSKIP=%%n
 echo === 2ksbox debug run, %DATE% %TIME% === > "%OUT%"
 echo Asking the launcher what it can see ...
 start "" /b /wait 2ksbox.exe --diagnose
@@ -161,6 +178,13 @@ if exist "%LOG%" (
   type "%LOG%" >> "%OUT%"
 ) else (
   echo (no launcher.log: nothing of ours ran, so it died in the loader^) >> "%OUT%"
+)
+echo. >> "%OUT%"
+if exist "%PLOG%" (
+  echo --- %%APPDATA%%\2ksbox\data\player.log, this run --- >> "%OUT%"
+  more +%PSKIP% "%PLOG%" >> "%OUT%"
+) else (
+  echo (no player.log: no machine was started^) >> "%OUT%"
 )
 echo.
 type "%OUT%"
@@ -369,8 +393,8 @@ if command -v wine >/dev/null; then
   fi
 
   # The libraries QEMU `dlopen`s (`LoadLibrary`s) by name rather than
-  # through an import table — here that is the Direct3D executor, and a
-  # DXVK `d3d9.dll` if one was ever dropped in. Nothing above can see
+  # through an import table — here that is the Direct3D executor and
+  # the DXVK `d3d9` it runs on. Nothing above can see
   # them: they are in no import table, and the Linux packages shipped
   # without them for months for exactly that reason (2026-09-07). The
   # staged *player* knows where they should be
@@ -389,11 +413,35 @@ if command -v wine >/dev/null; then
     done <<EOF
 glide       glide2x.dll
 d3dpt-exec  d3dpt_exec.dll
-dxvk        d3d9.dll
+dxvk        dxvk_d3d9.dll
 EOF
   else
     echo "package-windows.sh: the staged player printed nothing for --companions" >&2
     fail=1
+  fi
+
+  # A frame through the staged pair: the display driver's host test
+  # (tools/d3dpt-dp2-test.cpp, built by `build-windows.sh exec`) loads the
+  # package's own d3dpt_exec.dll and dxvk_d3d9.dll and checks the pixels
+  # it reads back. The Windows executor's first real run drew black on
+  # Windows' own d3d9 (2026-09-17) with every check here green, because
+  # nothing had ever put a batch through it. Under wine this reaches the
+  # host GPU through winevulkan; a host with no Vulkan device skips (77).
+  if [ -f "$STAGE/dxvk_d3d9.dll" ] && [ -f build/win/d3dpt-dp2-test.exe ]; then
+    cp build/win/d3dpt-dp2-test.exe "$scratch/"
+    rc=0
+    (cd "$STAGE" && WINEDEBUG=-all D3DPT_EXEC_LIB=d3dpt_exec.dll D3DPT_DXVK_LIB=dxvk_d3d9.dll \
+       timeout 300 wine "$scratch/d3dpt-dp2-test.exe" "$scratch/dp2.bmp" > "$scratch/dp2.log" 2>&1) || rc=$?
+    ok=$(grep -c '^ok:' "$scratch/dp2.log" || true); bad=$(grep -c '^FAIL' "$scratch/dp2.log" || true)
+    if [ "$rc" = 77 ]; then
+      echo "direct3d       SKIP: no Vulkan device under wine"
+    elif [ "$rc" = 0 ] && [ "$bad" = 0 ] && [ "$ok" -gt 0 ]; then
+      echo "direct3d       $ok checks through the staged d3dpt_exec.dll + dxvk_d3d9.dll"
+    else
+      echo "package-windows.sh: the staged Direct3D executor failed its host test (exit $rc, $bad failed):" >&2
+      grep '^FAIL\|^exec: \|^dlopen\|^bad \|mismatch' "$scratch/dp2.log" | head -20 >&2
+      fail=1
+    fi
   fi
 
   # The package has to be able to say why it failed, which is the whole

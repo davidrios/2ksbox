@@ -161,6 +161,15 @@ Air (macOS 26.6.2, SDK 1.4.357.1): one more required feature had to be made
 optional (`fillModeNonSolid`, patch 05), then the reference frame matches
 the rig as closely as on RADV (spike C, "Verified on KosmicKrisp").
 
+**Windows too, since 2026-09-17** (user decision, reversing the M11
+track's 2026-09-08 choice of the system Direct3D 9): the executor's first
+real run on Windows' own d3d9 drew black frames, and a second rasteriser
+to keep bug-for-bug equal is exactly what this ADR rejected for macOS.
+The Windows package carries DXVK's own `d3d9.dll` as `dxvk_d3d9.dll`
+(patch 08 adds the headless WSI there), the executor loads nothing else,
+and a Windows host below Vulkan 1.3 is under ADR-013 like any other
+(docs/tracks/m11-windows-host.md, item 5).
+
 ## ADR-008: A real guest display driver is the long-term shape; staged after the DLL device (2026-09-04)
 
 **Decision.** The paravirtual Direct3D device keeps ADR-006's shape today

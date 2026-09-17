@@ -22,10 +22,11 @@
 #           Cross-compiled like everything else — the image carries the
 #           mingw Qt to link against and the native Qt of the same
 #           version for moc/rcc/qmltyperegistrar.
-#   exec    build-d3dpt-exec.sh --windows: d3dpt_exec.dll, the Direct3D
-#           executor (doc 14). No DXVK build: on Windows the host has a
-#           Direct3D 9, and a DXVK d3d9.dll dropped next to the player
-#           overrides it.
+#   exec    DXVK's d3d9.dll into build/win/dxvk (configure-dxvk.sh
+#           --windows), then build-d3dpt-exec.sh --windows: d3dpt_exec.dll,
+#           the Direct3D executor (doc 14). The package ships DXVK as
+#           dxvk_d3d9.dll and the executor runs on nothing else — the same
+#           d3d9 as every other host (2026-09-17).
 #   guest   guest-tools/build-wrappers.sh: the guest-tools ISO. Host-side
 #           and host-independent -- the ISO is 32-bit guest code, the same
 #           file the Linux package ships -- so it is only built here when
@@ -113,8 +114,30 @@ if want qt; then
 fi
 
 if want exec; then
+  # The queue is applied on the host, like qemu's above. The DXVK tree is
+  # shared with the native build, so this keeps scripts/build.sh's own
+  # stamp (same file, same hash): a prepare hands both builds fresh
+  # mtimes, and one that changed nothing would cost the native DXVK a
+  # full rebuild.
+  say "exec: DXVK d3d9.dll (prepare + mingw cross)"
+  dxvk_stamp=$( { git -C third_party/dxvk rev-parse HEAD 2>/dev/null || echo none
+                  find patches/dxvk scripts/prepare-dxvk.sh -type f | LC_ALL=C sort | tr '\n' '\0' | xargs -0 cat
+                } | sha256sum | cut -d' ' -f1)
+  if [ "$(cat build/.stamp-dxvk-prepare 2>/dev/null || true)" != "$dxvk_stamp" ]; then
+    scripts/prepare-dxvk.sh
+    mkdir -p build && printf '%s\n' "$dxvk_stamp" > build/.stamp-dxvk-prepare
+  else
+    echo "    patch queue and submodule unchanged - skipping prepare"
+  fi
+  if [ ! -f build/win/dxvk/build.ninja ]; then
+    inw scripts/configure-dxvk.sh --windows
+  fi
+  inw ninja -C build/win/dxvk ${JOBS[@]+"${JOBS[@]}"} src/d3d9/d3d9.dll
   say "exec: d3dpt_exec.dll (the Direct3D decoder + executor)"
   inw scripts/build-d3dpt-exec.sh --windows
+  # ... and the display driver's host test, which package-windows.sh runs
+  # under wine against the staged pair: a frame through the Windows DLLs.
+  inw x86_64-w64-mingw32-g++ -std=c++17 -O2 -static -o build/win/d3dpt-dp2-test.exe tools/d3dpt-dp2-test.cpp
   # The WGL probe rides along: it is the same 3D stage, it is one
   # compile, and it is the first thing to run on a Windows machine whose
   # Win98 guest gets no OpenGL (tools/wgl-probe.c).

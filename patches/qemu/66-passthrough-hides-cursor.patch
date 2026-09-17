@@ -1,0 +1,109 @@
+While another card has the monitor, the display adapter's hardware cursor
+is published as hidden, and as it really is again when the monitor comes
+back.
+
+A Voodoo 2 takes the monitor through graphic_hw_passthrough (voodoo2.c's
+fbiInit0 VGA_PASS), and so does the 3D frontend showing swaps (embedfx.c).
+The 2D adapter behind it goes on holding whatever cursor its driver set:
+Windows' desktop pointer on d3dpt-vga stays enabled behind a full-screen
+Glide game, because on real hardware nothing needs to turn it off -- the
+pass-through cable shows the 3D card's picture and nothing of the 2D
+card's. The console published it anyway, so the player drew Windows'
+arrow over Moto Racer on the Voodoo 2, beside the game's own pointer
+(2026-09-17, the first Windows host; it was never platform-specific).
+
+dpy_mouse_set keeps storing what the device says and publishes it through
+dpy_mouse_publish, which reports it hidden while the console is in
+pass-through; graphic_hw_passthrough publishes again on every change, and a
+listener registered meanwhile gets the same answer. A new trace event,
+dpy_mouse_publish, is what the voodoo-guest-d3dpt check reads: a cursor set
+on d3dpt-vga must be published shown before the Voodoo takes the monitor,
+hidden while it has it, and shown after.
+
+diff --git a/ui/trace-events b/ui/trace-events
+--- a/ui/trace-events
++++ b/ui/trace-events
+@@ -1,6 +1,7 @@
+ # See docs/devel/tracing.rst for syntax documentation.
+ 
+ # console.c
++dpy_mouse_publish(int x, int y, int on, int passthrough) "x=%d y=%d on=%d passthrough=%d"
+ console_gfx_new(void) ""
+ console_gfx_reuse(int index) "%d"
+ console_gfx_close(int index) "%d"
+diff --git a/ui/console.c b/ui/console.c
+--- a/ui/console.c
++++ b/ui/console.c
+@@ -126,9 +126,26 @@
+     }
+ }
+ 
++static void dpy_mouse_publish(QemuConsole *c);
++
++/*
++ * 2ksbox: while another card has the monitor (a Voodoo 2 through its
++ * pass-through cable, or the 3D frontend showing swaps), the display
++ * adapter's hardware cursor is not on the screen: a real pass-through
++ * cable shows the 3D card's picture and nothing of the 2D card's. The
++ * adapter's own cursor state is kept and published again when the monitor
++ * comes back. Before this, Windows' desktop pointer -- still enabled on the
++ * 2D adapter behind a full-screen Glide game -- was drawn over the game,
++ * beside the game's own pointer (Moto Racer on the Voodoo 2, 2026-09-17).
++ */
+ void graphic_hw_passthrough(QemuConsole *con, bool passthrough)
+ {
++    bool was = con->ui_info.passthrough;
++
+     con->ui_info.passthrough = passthrough;
++    if (was != passthrough && QEMU_IS_GRAPHIC_CONSOLE(con)) {
++        dpy_mouse_publish(con);
++    }
+ }
+ 
+ void graphic_hw_update_done(QemuConsole *con)
+@@ -687,7 +704,8 @@
+         dcl->ops->dpy_cursor_define(dcl, con->cursor);
+     }
+     if (con && dcl->ops->dpy_mouse_set) {
+-        dcl->ops->dpy_mouse_set(dcl, con->cursor_x, con->cursor_y, con->cursor_on);
++        dcl->ops->dpy_mouse_set(dcl, con->cursor_x, con->cursor_y,
++                                con->cursor_on && !QEMU_CONSOLE(con)->ui_info.passthrough);
+     }
+ }
+ 
+@@ -946,13 +964,23 @@
+ void dpy_mouse_set(QemuConsole *c, int x, int y, bool on)
+ {
+     QemuGraphicConsole *con = QEMU_GRAPHIC_CONSOLE(c);
+-    DisplayState *s = c->ds;
+-    DisplayChangeListener *dcl;
+ 
+     con->cursor_x = x;
+     con->cursor_y = y;
+     con->cursor_on = on;
+-    if (!qemu_console_is_visible(c)) {
++    dpy_mouse_publish(c);
++}
++
++/* the stored cursor to the listeners, hidden while in pass-through */
++static void dpy_mouse_publish(QemuConsole *c)
++{
++    QemuGraphicConsole *con = QEMU_GRAPHIC_CONSOLE(c);
++    DisplayState *s = c->ds;
++    DisplayChangeListener *dcl;
++    bool on = con->cursor_on && !c->ui_info.passthrough;
++
++    trace_dpy_mouse_publish(con->cursor_x, con->cursor_y, on, c->ui_info.passthrough);
++    if (!s || !qemu_console_is_visible(c)) {
+         return;
+     }
+     QLIST_FOREACH(dcl, &s->listeners, next) {
+@@ -960,7 +988,7 @@
+             continue;
+         }
+         if (dcl->ops->dpy_mouse_set) {
+-            dcl->ops->dpy_mouse_set(dcl, x, y, on);
++            dcl->ops->dpy_mouse_set(dcl, con->cursor_x, con->cursor_y, on);
+         }
+     }
+ }

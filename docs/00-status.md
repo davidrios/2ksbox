@@ -159,6 +159,59 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **The first Windows host run of a real guest — 2026-09-17** (M11,
+  `docs/tracks/m11-windows-host.md`; the user's PC: Ryzen 9 5900X, RTX 3090,
+  the `base98-br` image). Seven reports, each taken apart here:
+  1. **dxdiag and 3DMark drew black.** The executor ran on Windows' own
+     Direct3D 9, which it had never done (no batch had gone through it on
+     Windows): the host drew 60–170 frames/s and every readback was zero.
+     Two calls DXVK accepts and native d3d9 refuses were found (no
+     `BeginScene` on the display driver's path, a device with no window).
+     **Fixed by not using it** (user decision, ADR-007's amendment): the
+     package ships DXVK's `d3d9.dll` as `dxvk_d3d9.dll` (patch 08 for the
+     headless WSI), and `package-windows.sh` draws a frame through the
+     staged pair under wine — 107 checks, byte-identical to Linux. Not yet
+     run on the PC.
+  2. **MIDI too slow, with the SB16's FM synth and with the MPU-401 alike.**
+     Windows rounds QEMU's waits to its 15.6 ms timer tick; every PIT
+     transition that came due meanwhile was raised in one burst, one
+     interrupt at the 8259, and Win98's 1 kHz multimedia timer ran at the
+     rate of the wakeups. Reproduced on Linux with the waits rounded that way
+     (`tools/wait-granularity.c`): a 120-note metronome MIDI in Win98 played
+     42 notes in 171 s. **Fixed**: patch 65 keeps those ticks (the same
+     file: 59.50 s), and the player calls `timeBeginPeriod(1)`. Guarded by
+     `pit-guest`'s rate phase.
+  3. **CD music sometimes stops, especially off a Samba share.** One
+     failed host read inside a play stopped CD audio for good (status 0x14).
+     **Fixed** (patch 55: played as silence, the `atapi-read-error` check);
+     libdisc now names every failed host read in `player.log`. Not
+     reproduced on a real share: if it still happens, the log will say which
+     file and what error.
+  4. **Windows' arrow over Moto Racer's own pointer.** Not Windows: on
+     `base98-br` the game runs on the Voodoo 2, and the 2D adapter's cursor
+     stayed published behind the pass-through. **Fixed** (patch 66, the
+     `voodoo-guest-d3dpt` check) — measured headless on a copy of the image.
+  5. **The Windows key reaches the host.** The low-level hook was installed
+     on the player's event-loop thread; Windows silently removes a hook
+     that misses `LowLevelHooksTimeout` once, so one slow frame lost it for
+     the session. It runs on a thread of its own now, at time-critical
+     priority. **Unverified** (no Windows here). Also: ABNT2's `/?` and
+     keypad `.`, and Pause, were in no keymap.
+  6. **Moto Racer slow on the 5900X with the CPU at 5 %** — one of 24
+     threads, so CPU-bound, not waiting. Not reproduced: timer granularity
+     is not it (the Voodoo race held 60 fps under 15.6 ms waits). The lead,
+     measured under wine with a DOS kernel per path: the Windows build is
+     equal on memory and generated code but **2.7x slower on a port I/O
+     and 1.25x on x87 helpers**, and mingw GCC 15 has only *emulated* TLS
+     — every `__thread` access (`current_cpu`, the BQL flag, RCU…) is a
+     call, 10.5 ns against 1 ns — while Moto Racer's Glide reads the
+     Voodoo's status register 2.8 million times a second. A clang
+     (llvm-mingw) build of QEMU has native TLS; that toolchain change is
+     the user's call. Placing the JIT buffer near the helpers on Windows
+     was tried and measured no difference, so it was dropped.
+  7. **`2ksbox-debug.bat` did not collect `player.log`.** It does now, the
+     lines this run added.
+
 - **A review of the guest D3D8/D3D9 DLLs — 2026-09-13** (doc 14, "A
   review of the guest DLLs"). Fixed: UpdateTexture into a DEFAULT texture
   put a record naming handle 0 in the batch, and the host refused the batch

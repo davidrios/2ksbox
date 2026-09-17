@@ -76,6 +76,8 @@ struct D3dptVgaState {
     int32_t cur_x, cur_y;
     bool cur_on, cur_defined;
     uint32_t cur_defines, cur_moves;
+    bool cur_shown;             /* the visibility last published */
+    uint32_t cur_flips;         /* show / hide changes logged so far */
 
     /* the linear mode currently shown (lin_on) */
     bool lin_on;
@@ -601,9 +603,16 @@ static void fb_cursor_move(D3dptVgaState *s)
 {
     bool on = s->cur_on && s->r_enable;
 
+    /* the first moves, and then every show / hide: a pointer that should
+     * not be on the screen (a game drawing its own) is a question of when
+     * the guest turned it off, which the first four lines never reach */
     if (s->cur_moves++ < 4) {
         info_report("d3dpt-vga: cursor %s at %d,%d", on ? "shown" : "hidden", s->cur_x, s->cur_y);
+    } else if (on != s->cur_shown && s->cur_flips++ < 256) {
+        info_report("d3dpt-vga: cursor %s at %d,%d (%ux%u mode)", on ? "shown" : "hidden",
+                    s->cur_x, s->cur_y, s->r_w, s->r_h);
     }
+    s->cur_shown = on;
     dpy_mouse_set(s->vga.con, s->cur_x, s->cur_y, on);
 }
 
