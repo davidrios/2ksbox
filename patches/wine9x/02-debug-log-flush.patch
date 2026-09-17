@@ -7,9 +7,9 @@ index 1ec7fc1..c3cf245 100644
    if(log_file)
    {
 -  	return vfprintf(log_file, format, args );
-+  	int r = vfprintf(log_file, format, args );
-+  	fflush(log_file);   /* crash-safe: the log must survive an access violation */
-+  	return r;
++	int r = vfprintf(log_file, format, args );
++	fflush(log_file);   /* crash-safe: the log must survive an access violation */
++	return r;
    }
    return 0;
  # else
