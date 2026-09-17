@@ -2386,7 +2386,10 @@ host_stage() {
          $CAPI_LIBS >>"$OUT/capi-build.log" 2>&1; then
       rm -rf "$OUT/capi"; mkdir -p "$OUT/capi/library"
       : >"$OUT/capi/disc.iso"
+      # No Vulkan driver, as `host_check_probe` makes one: the 3D line
+      # then has to tell the user to keep our adapter, on every host.
       run_check capi capi.log env \
+        VK_DRIVER_FILES=/nonexistent.json VK_ICD_FILENAMES=/nonexistent.json \
         LAUNCHER_LIBRARY_DIR="$OUT/capi/library" \
         LAUNCHER_DISC_LIBRARY="$OUT/capi/discs.toml" \
         LAUNCHER_SHADER_PROFILES_DIR="$OUT/capi/profiles" \

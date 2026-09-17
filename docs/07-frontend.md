@@ -116,7 +116,14 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   warning rather than a note, because it works and disappoints: it says
   to expect it to be very slow and that WineD3D may well beat it, both
   being worth trying. A host with no Vulkan at all is a plain note;
-  nothing is wrong and every machine still runs. DOS and Other machines
+  nothing is wrong and every machine still runs. While our adapter is the
+  one picked, that note also says to keep it (2026-09-17): the guest
+  driver reads `D3D_STATUS` before it offers Direct3D, so a host with no
+  executor loses only that half, and the Cirrus has no Direct3D either
+  while losing the flip chain's vertical blank, the 8 bpp modes, gamma and
+  the cursor. The adapter is not picked from the host on purpose: an image
+  moves between hosts, and changing its adapter is a driver install. The
+  `capi` check runs the C smoke with no Vulkan driver for this line. DOS and Other machines
   get no line: neither has any Direct3D to place, since the guest half of
   the pass-through is a set of Windows DLLs. The sentence is the shared form's (`graphics_note()`), like every
   other note under a row, so the Qt build and the C ABI cannot drift; `launcher --host-check` is the same answer in full, for a

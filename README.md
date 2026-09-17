@@ -239,7 +239,9 @@ machine's settings for games that want a real PS/2 mouse.
   both from a console window.
 - **"3D goes through OpenGL instead."** The launcher says this in the
   wizard when the host has no Vulkan 1.3. It is not an error: Direct3D
-  games then use WineD3D inside the guest (see Playing games). "In
+  games then use WineD3D inside the guest (see Playing games). Keep the
+  2ksbox adapter anyway: only its Direct3D needs Vulkan, and everything
+  else it does still works, which the Cirrus cannot match. "In
   software (slow)" means a software Vulkan driver was found; a game may
   be faster through WineD3D, so try both.
 - **The guest shows a black desktop or stops after a display-adapter

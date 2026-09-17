@@ -924,7 +924,12 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   `host-check` check in `scripts/test.sh`) reports the verdict and every
   device behind it, and the wizard says the one-line version under the
   acceleration row through the shared model's `graphics_note()`, so all
-  three front ends say the same thing. **Software Vulkan is used, not
+  three front ends say the same thing. **With no Vulkan, the note says to
+  keep our adapter** (2026-09-17, only while `d3dpt` is the one picked):
+  the driver offers Direct3D only after `D3D_STATUS` says the executor
+  loaded, so the rest of the adapter works, and picking the Cirrus from
+  the host was rejected because an image moves between hosts and an
+  adapter change is a driver install (doc 07). **Software Vulkan is used, not
   refused** (the same-day amendment): lavapipe presents `llvmpipe` at
   1.4.354, DXVK ranks a CPU device last but never excludes it, so the
   verdict is "available, in software (slow)" with the note that

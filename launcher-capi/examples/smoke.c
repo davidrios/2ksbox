@@ -133,6 +133,18 @@ int main(int argc, char **argv) {
     check("and the MIDI port", lc_wizard_music_is_default(w), NULL);
     /* The pad follows the same rule in the form, but this API has no pad
      * row yet (M13 is newer than the C ABI), so it is unchecked here. */
+    /* A host with no Vulkan 1.3 loses only our adapter's Direct3D, so the
+     * 3D line tells the user to keep the adapter — and says it only while
+     * that adapter is the one picked. `scripts/test.sh` runs this with no
+     * Vulkan driver; on a host with one the line must be absent. */
+    bool gfx_warning = false;
+    char *gfx = lc_wizard_graphics_note(w, &gfx_warning);
+    int no_vulkan = gfx && strstr(gfx, "goes through OpenGL") != NULL;
+    int keep = gfx && strstr(gfx, "Keep the 2ksbox adapter") != NULL;
+    check(no_vulkan ? "no Vulkan: keep our adapter, it says"
+                    : "Vulkan: nothing about keeping the adapter",
+          gfx && keep == no_vulkan, gfx);
+    lc_string_free(gfx);
     /* Now pick one by hand: it is a decision, and the next family switch
      * must not throw it away. */
     long cirrus = video_index(w, "Cirrus");
@@ -143,6 +155,10 @@ int main(int argc, char **argv) {
     check("a chosen adapter survives the switch back",
           adapter && strstr(adapter, "Cirrus") != NULL, adapter);
     lc_string_free(adapter);
+    gfx = lc_wizard_graphics_note(w, &gfx_warning);
+    check("on the Cirrus, nothing about keeping our adapter",
+          gfx && strstr(gfx, "Keep the 2ksbox adapter") == NULL, gfx);
+    lc_string_free(gfx);
     /* Unless the new family has no such adapter: DOS is offered neither
      * of ours, so a d3dpt picked on XP cannot come along. */
     lc_wizard_choose_family(w, (size_t)xp);
@@ -194,8 +210,8 @@ int main(int argc, char **argv) {
 
     /* A DOS machine has no Direct3D to place, so the 3D line is absent
      * whatever this host's GPU is (ADR-013). */
-    bool gfx_warning = true;
-    char *gfx = lc_wizard_graphics_note(w, &gfx_warning);
+    gfx_warning = true;
+    gfx = lc_wizard_graphics_note(w, &gfx_warning);
     check("a DOS machine says nothing about 3D", gfx == NULL && !gfx_warning, gfx);
     lc_string_free(gfx);
 

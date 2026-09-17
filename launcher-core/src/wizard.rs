@@ -547,11 +547,21 @@ impl Form {
     /// what the user sees will disappoint them. A host with no Vulkan at
     /// all is a plain note: it runs every machine, through the OpenGL
     /// pass-through with WineD3D in the guest, and nothing is wrong.
+    ///
+    /// On such a host with our adapter picked, the note also says to keep
+    /// it: the guest driver asks the host for an executor before it offers
+    /// Direct3D, so only that half goes, and the Cirrus has no Direct3D
+    /// either while losing the flip chain's pacing, 8 bpp palettes and
+    /// the cursor. Switching adapters would cost a driver install for
+    /// nothing, and the image may later move to a host that has Vulkan.
     pub fn graphics_note(&self) -> Option<AccelNote> {
         if matches!(self.family, Family::Dos | Family::Other) {
             return None;
         }
         let mut text = format!("3D: {}", self.host_gpu.headline());
+        if !self.host_gpu.d3d_available() && self.video == Video::D3dpt {
+            text.push_str("\nKeep the 2ksbox adapter anyway. Only its Direct3D needs Vulkan.");
+        }
         if let Some(advice) = self.host_gpu.advice() {
             text.push('\n');
             text.push_str(advice);
