@@ -382,7 +382,11 @@ What is different from the cross build, and why:
   next to its own DLLs (found with `ldd`) and sets `QMAKE` to
   `packaging/windows/qmake-host.c`, a static wrapper that answers the
   tool-directory queries with that folder and hands every other query to
-  MSYS2's `qmake6`. MSYS2's own tree is left alone.
+  MSYS2's `qmake6`. MSYS2's own tree is left alone. The stage then runs
+  the wrapper and each copied tool the way qt-build-utils does, with an
+  empty environment (a native Python's `env={}`; MSYS2's `env -i` puts
+  Windows' variables back), and prints exit codes and output when one
+  fails — qt-build-utils itself only says "could not find Qt".
 - **Package versions follow MSYS2** (Qt 6.11 against Fedora's 6.10, GCC
   16 against 15). A difference that matters shows up as a fault in one
   and not the other, so the zip remains the verdict.

@@ -191,7 +191,7 @@ fi
 # answers the tool-directory queries with that folder and passes everything
 # else to qmake6. MSYS2's own tree is not touched.
 msys2_qt_host() {
-  local dir="$ROOT/build/win/qt-host" libexec tool dll
+  local dir="$ROOT/build/win/qt-host" libexec tool dll real
   libexec="$(cygpath -u "$(qmake6 -query QT_HOST_LIBEXECS | tr -d '\r')")"
   rm -rf "$dir" && mkdir -p "$dir"
   for tool in moc rcc qmltyperegistrar qmlcachegen qtpaths; do
@@ -201,10 +201,42 @@ msys2_qt_host() {
       [ -f "$dir/$(basename "$dll")" ] || cp "$dll" "$dir/"
     done
   done
-  printf '#define REAL_QMAKE "%s.exe"\n#define HOST_TOOLS "%s"\n' \
-    "$(cygpath -m "$(command -v qmake6)")" "$(cygpath -m "$dir")" > "$dir/qt-host-paths.h"
+  # whether `command -v` says .exe or not, exactly one
+  real="$(cygpath -m "$(command -v qmake6)")"; real="${real%.exe}.exe"
+  printf '#define REAL_QMAKE "%s"\n#define HOST_TOOLS "%s"\n' "$real" "$(cygpath -m "$dir")" \
+    > "$dir/qt-host-paths.h"
   gcc -O2 -Wall -static -I"$dir" -o "$dir/qmake-host.exe" packaging/windows/qmake-host.c
   export QMAKE="$(cygpath -m "$dir/qmake-host.exe")"
+  # Each of them the way qt-build-utils runs it -- with no environment at all
+  # -- because its own failure is "could not find Qt" with the output thrown
+  # away. MSYS2's `env -i` would not do: it puts Windows' own variables back
+  # for a native program. A native Python's env={} does not.
+  python3 - "$QMAKE" "$real" "$(cygpath -m "$dir")" <<'PY' || exit 1
+import os, subprocess, sys
+qmake, real, tools = sys.argv[1:4]
+def run(what, argv):
+    try:
+        r = subprocess.run(argv, env={}, capture_output=True, text=True)
+    except OSError as e:
+        print(f"    {what}: cannot start: {e}")
+        return None
+    if r.returncode != 0:
+        print(f"    {what}: exit {r.returncode:#x}\n      stdout: {r.stdout.strip()!r}\n      stderr: {r.stderr.strip()!r}")
+        return None
+    return r.stdout.strip()
+v = run("qmake-host -query QT_VERSION", [qmake, "-query", "QT_VERSION"])
+if v is None:
+    run("qmake6 itself, the same way", [real, "-query", "QT_VERSION"])
+    print("build-windows.sh: the QMAKE wrapper does not answer with no environment (above)")
+    sys.exit(1)
+print(f"    qmake-host: Qt {v}, tools from {run('qmake-host -query QT_HOST_LIBEXECS', [qmake, '-query', 'QT_HOST_LIBEXECS'])}")
+bad = [t for t in ("moc", "rcc", "qmltyperegistrar", "qmlcachegen", "qtpaths")
+       if os.path.exists(os.path.join(tools, t + ".exe"))
+       and run(t + " --help", [os.path.join(tools, t + ".exe"), "--help"]) is None]
+if bad:
+    print("build-windows.sh: these Qt tools do not start with no environment: " + " ".join(bad))
+    sys.exit(1)
+PY
 }
 
 if want qt; then
