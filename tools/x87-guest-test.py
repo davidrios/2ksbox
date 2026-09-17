@@ -31,7 +31,7 @@ import urllib.request
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-QEMU = os.path.join(ROOT, "build/qemu/qemu-system-i386")
+QEMU = os.environ.get("QEMU_BIN") or os.path.join(ROOT, "build/qemu/qemu-system-i386")
 FLOPPY = os.path.join(ROOT, "build/images/144m/x86BOOT.img")
 FLOPPY_ZIP = os.path.join(ROOT, "build/images/FD13-FloppyEdition.zip")
 FLOPPY_URL = ("https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/"

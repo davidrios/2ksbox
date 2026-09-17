@@ -55,7 +55,7 @@ base.
 
 | Stage | Output | Notes |
 |---|---|---|
-| `qemu` | `build/win/qemu/{qemu-system-i386,qemu-img,qemu-io}.exe`, `libqemu-embed-i386.dll` | `configure-qemu.sh --windows`; **WHPX detected and built in** |
+| `qemu` | `build/win/qemu/{qemu-system-i386,qemu-img,qemu-io}.exe`, `libqemu-embed-i386.dll` | `configure-qemu.sh --windows`; **WHPX detected and built in**; **built with clang** since 2026-09-17 (patch 68: mingw GCC has only emulated TLS, a device access cost 2.3x Linux's; `WIN_QEMU_CC=gcc` for the old build) |
 | `rust` | `target/x86_64-pc-windows-gnu/release/{launcher,player,discx}.exe` | the embed DLL is found in `build/win/qemu` by `qemu-embed/build.rs` |
 | `qt` | `launcher-qt/target/x86_64-pc-windows-gnu/release/launcher-qt.exe` | **the package's `2ksbox.exe`** (ADR-015); its own cargo workspace, so its own stage |
 | `exec` | `build/win/dxvk/src/d3d9/d3d9.dll`, `build/win/d3dpt/d3dpt_exec.dll`, `build/win/d3dpt-dp2-test.exe`, `build/win/wgl-probe.exe` | DXVK's d3d9 (`configure-dxvk.sh --windows`, patch 08's headless WSI), the Direct3D decoder + executor (doc 14) that runs on it, the display driver's host test, and the offscreen-GL diagnostic |

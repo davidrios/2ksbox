@@ -82,6 +82,18 @@ if [ -n "$WINDOWS" ]; then
   CFG=(--cross-prefix=x86_64-w64-mingw32-)
   command -v x86_64-w64-mingw32-gcc >/dev/null || {
     echo "no x86_64-w64-mingw32-gcc — run this inside scripts/win-cross.sh"; exit 1; }
+  # clang, not GCC (2026-09-17, patch 68): mingw GCC 15 has only emulated
+  # TLS, a call on every __thread access, and QEMU makes several on every
+  # device access -- 121.6 ns against clang's 64.3 for one VGA register
+  # read (Linux: 52.7). The cross prefix still names the binutils and the
+  # mingw sysroot. WIN_QEMU_CC=gcc builds the old way. No TCG plugins:
+  # lld has no --dynamic-list, and nothing here loads a plugin.
+  if [ "${WIN_QEMU_CC:-clang}" = clang ]; then
+    command -v clang >/dev/null && command -v ld.lld >/dev/null || {
+      echo "no clang/lld in the cross image — scripts/win-cross.sh --build"; exit 1; }
+    CFG+=(--cc="$ROOT/packaging/windows/clang-mingw-cc" --cxx="$ROOT/packaging/windows/clang-mingw-cxx"
+          --host-cc=gcc --disable-plugins)
+  fi
 elif [ "$(uname -s)" = Darwin ]; then
   # qemu-3dfx's Darwin path is GLX via XQuartz (patched meson.build hardcodes
   # /opt/X11 into every emulator's link line, so the headers must be there

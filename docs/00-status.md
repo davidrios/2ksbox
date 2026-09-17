@@ -198,7 +198,11 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
      priority. **Unverified** (no Windows here). Also: ABNT2's `/?` and
      keypad `.`, and Pause, were in no keymap.
   6. **Moto Racer slow on the 5900X with the CPU at 5 %** — one of 24
-     threads, so CPU-bound, not waiting. Not reproduced: timer granularity
+     threads, so CPU-bound, not waiting. **Addressed: the Windows QEMU is
+     built with clang now** (patch 68; x87 helper call shape, patch 67): a
+     device register read under wine went from 121.6 ns to 63.5 (Linux
+     52.7), every battery identical on the clang build. What follows is how
+     it was found. Not reproduced: timer granularity
      is not it (the Voodoo race held 60 fps under 15.6 ms waits). The lead,
      measured under wine with a DOS kernel per path: the Windows build is
      equal on memory and generated code but **2.7x slower on a port I/O
@@ -216,7 +220,10 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
      bug: patch 65 divided by a PIT count of 0 before the reset, which
      GCC's evaluation order happened to skip and clang's did not (fixed).
      Placing the JIT buffer near the helpers on Windows was tried and
-     measured no difference, so it was dropped.
+     measured no difference, so it was dropped. The port-I/O kernel above
+     turned out to read the PIT's clock, and wine's QueryPerformanceCounter
+     is a syscall where Windows' is not; a VGA register read is the clean
+     number (the table in patch 68's row). Not yet run on the PC.
   7. **`2ksbox-debug.bat` did not collect `player.log`.** It does now, the
      lines this run added.
 

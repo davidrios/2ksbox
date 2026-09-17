@@ -470,9 +470,8 @@ images and a GPU, and now a Windows host too. The Windows evidence is
 
 0. **The 2026-09-17 package on the PC** (docs/00-status.md, "The first
    Windows host run"): dxdiag / 3DMark 99 on DXVK, a MIDI's tempo, the
-   Windows key in a game, and Moto Racer's speed. If it is still slow, the
-   emulated-TLS lead is next: build QEMU for Windows with llvm-mingw
-   (native TLS) and repeat the wine kernel measurement first.
+   Windows key in a game, and Moto Racer's speed — the first clang-built
+   QEMU (patch 68) ever to run on real Windows.
 1. **Rebuild and re-package for the ADR-015 shape**, then
    `2ksbox-debug.bat` on the PC and read the `2ksbox-debug.log` it
    writes: there is one zip now, its `2ksbox.exe` is the Qt launcher, and
@@ -505,7 +504,14 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    actually happens. The shape to aim for is `xp-driver-test.sh`'s: drive
    the machine over QMP, pull the artefacts out, diff a frame.
 
-## A clang-built QEMU (2026-09-17, an experiment, not shipped)
+## A clang-built QEMU (2026-09-17: measured, then shipped as patch 68)
+
+**Superseded the same day**: `configure-qemu.sh --windows` builds with clang
+now (patch 68 makes QEMU accept it; `WIN_QEMU_CC=gcc` is the old build), and
+a VGA register read — a device access with no clock behind it, which the
+port-I/O kernel below was not (it read the PIT, and wine's
+QueryPerformanceCounter is a syscall) — measured 52.7 ns on Linux, 121.6 on
+GCC, 63.5 on the clang package. The recipe below is how it was first tried.
 
 mingw GCC 15 has only emulated TLS: every `__thread` access is a call to
 `__emutls_get_address` (10.5 ns against 1 ns for a global, under wine), and

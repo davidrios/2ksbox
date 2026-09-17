@@ -21,7 +21,10 @@ backend later.
   from Linux** in a container (`scripts/win-cross.sh`,
   `scripts/build-windows.sh`, `scripts/package-windows.sh`). Windows
   artefacts go to `build/win/` and
-  `target/x86_64-pc-windows-gnu/`, never over the native ones.
+  `target/x86_64-pc-windows-gnu/`, never over the native ones. The Windows
+  QEMU is built with **clang**, not mingw GCC (patch 68, 2026-09-17: GCC's
+  emulated TLS made every device access 2.3x Linux's), and the executor
+  runs on DXVK there too (`dxvk_d3d9.dll`, never Windows' own d3d9).
 
 ## Locked decisions (do not reopen)
 

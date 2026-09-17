@@ -50,7 +50,7 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-QEMU = os.path.join(ROOT, "build/qemu/qemu-system-i386")
+QEMU = os.environ.get("QEMU_BIN") or os.path.join(ROOT, "build/qemu/qemu-system-i386")
 DISCX = os.path.join(ROOT, "target/release/discx")
 FLOPPY = os.path.join(ROOT, "build/images/144m/x86BOOT.img")
 OUT = os.path.join(ROOT, "build/atapi-guest")

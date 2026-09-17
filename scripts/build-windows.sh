@@ -77,9 +77,17 @@ if want qemu; then
   say "qemu: prepare (overlay + patch queue)"
   scripts/prepare-qemu.sh
 
+  # the compiler is part of a build directory: meson will not switch one
+  # (patch 68 moved the Windows QEMU from GCC to clang, 2026-09-17)
+  want_cc="${WIN_QEMU_CC:-clang}"
+  if [ -f build/win/qemu/build.ninja ] && [ "$(cat build/win/qemu/.2ksbox-cc 2>/dev/null || echo gcc)" != "$want_cc" ]; then
+    echo "    build/win/qemu was built with $(cat build/win/qemu/.2ksbox-cc 2>/dev/null || echo gcc), wanted $want_cc - configuring afresh"
+    rm -rf build/win/qemu
+  fi
   if [ ! -f build/win/qemu/build.ninja ]; then
-    say "qemu: configure (mingw-w64 cross)"
+    say "qemu: configure (mingw-w64 cross, $want_cc)"
     inw scripts/configure-qemu.sh --windows
+    echo "$want_cc" > build/win/qemu/.2ksbox-cc
   else
     echo "    build/win/qemu is configured - skipping configure"
     # prepare re-applied the queue, so meson may need to regenerate; ninja
