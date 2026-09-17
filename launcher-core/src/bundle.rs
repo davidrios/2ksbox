@@ -1135,6 +1135,14 @@ pub struct Machine {
     /// serializes to a TOML *table*, and a table swallows every
     /// key-value line that follows it: written anywhere else, the fields
     /// after it would be read back as part of `[optimizations]`.
+    /// Arguments added to the end of QEMU's command line, one list
+    /// entry per argument, exactly as typed into the form's "Extra QEMU
+    /// arguments" field. The escape hatch for what the form has no field
+    /// for: a device property (`-global d3dpt-vga.ddflags=32768`), a
+    /// trace, a debug knob. Nothing checks them; a machine QEMU refuses
+    /// says so at start. Absent from every bundle that has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_qemu_args: Vec<String>,
     #[serde(default, skip_serializing_if = "Optimizations::is_empty")]
     pub optimizations: Optimizations,
 }
@@ -1311,6 +1319,7 @@ impl Machine {
             soundfont: None,
             mt32_roms: None,
             pad: Some(default_pad(family)),
+            extra_qemu_args: Vec::new(),
             optimizations: Optimizations::default(),
         }
     }
@@ -1726,6 +1735,64 @@ impl Machine {
             cd.push_str(&format!(",shelf={}", opt_value(&shelf.display().to_string())));
         }
         args.extend(["-drive".into(), drive, "-device".into(), cd]);
+        // Last, so an option given twice is the user's: QEMU takes the
+        // later of most repeated options.
+        args.extend(self.extra_qemu_args.iter().cloned());
         args
     }
+}
+
+/// One line of arguments, as the form's "Extra QEMU arguments" field
+/// takes them, into a list. Whitespace separates; single or double quotes
+/// group, and are removed, wherever they sit in a word (`-name "a b"`,
+/// `file="C:\My Games\x.img"`). There is no escape character, so a
+/// Windows path's backslashes stay what they are. `Err` for a quote that
+/// is never closed.
+pub fn split_args(line: &str) -> Result<Vec<String>, &'static str> {
+    let mut args = Vec::new();
+    let mut word: Option<String> = None;
+    let mut quote: Option<char> = None;
+    for c in line.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => word.get_or_insert_with(String::new).push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                word.get_or_insert_with(String::new);
+            }
+            None if c.is_whitespace() => args.extend(word.take()),
+            None => word.get_or_insert_with(String::new).push(c),
+        }
+    }
+    if quote.is_some() {
+        return Err("A quote in the extra QEMU arguments is never closed.");
+    }
+    args.extend(word);
+    Ok(args)
+}
+
+/// The inverse of [`split_args`]: a list back into the one line the form
+/// shows, quoting only what needs it, so `split_args(&join_args(a)) == a`.
+pub fn join_args(args: &[String]) -> String {
+    let words: Vec<String> = args
+        .iter()
+        .map(|arg| {
+            if !arg.is_empty() && !arg.chars().any(|c| c.is_whitespace() || c == '"' || c == '\'') {
+                return arg.clone();
+            }
+            // Double quotes around everything, and a double quote itself
+            // as '"', the one thing a double-quoted run cannot hold.
+            let mut out = String::from("\"");
+            for c in arg.chars() {
+                if c == '"' {
+                    out.push_str("\"'\"'\"");
+                } else {
+                    out.push(c);
+                }
+            }
+            out.push('"');
+            out
+        })
+        .collect();
+    words.join(" ")
 }

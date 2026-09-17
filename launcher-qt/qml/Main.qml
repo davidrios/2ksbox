@@ -492,6 +492,7 @@ ApplicationWindow {
                 // without catching it up first writes the form's stale,
                 // empty name back over what was typed (user, 2026-09-08).
                 wizardWindow.typeName("Typed name")
+                wizardWindow.typeExtraQemuArgs('-name "typed args"')
                 if (families.indexOf(diag.arg) >= 0)
                     wizard.chooseFamily(families.indexOf(diag.arg))
                 // What the memory field ended up showing, beside what the
@@ -504,6 +505,9 @@ ApplicationWindow {
                           + ", range " + wizard.ramMin + ".." + wizard.ramMax)
                 diag.note("wizard name: shown [" + wizardWindow.shownName
                           + "] model [" + wizard.name + "]")
+                diag.note("wizard extra args: shown [" + wizardWindow.shownExtraQemuArgs
+                          + "] model [" + wizard.extraQemuArgs + "]")
+                Qt.callLater(wizardWindow.revealExtraQemuArgs)
                 break
             case "optall":
                 // The optimization shortcuts beside boxes somebody already

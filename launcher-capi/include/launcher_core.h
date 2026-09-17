@@ -195,6 +195,12 @@ void lc_wizard_choose_voodoo2(LcWizard *w, bool voodoo2);
 /* Newline-separated. */
 char *lc_wizard_voodoo2_note(const LcWizard *w);
 
+/* Arguments added to the end of QEMU's command line: the plain text
+ * field "extra_qemu_args" (lc_wizard_get/set), one line, quotes group.
+ * The note under it; `warning` (may be NULL) is set for a quote that is
+ * never closed, which lc_wizard_submit refuses. */
+char *lc_wizard_extra_qemu_args_note(const LcWizard *w, bool *warning);
+
 size_t lc_wizard_boot(const LcWizard *w);
 void lc_wizard_set_boot(LcWizard *w, size_t boot);
 char *lc_wizard_boot_note(const LcWizard *w);
@@ -250,7 +256,8 @@ bool lc_wizard_mt32_roms_applies(const LcWizard *w);
 
 /* The plain fields, by name — one pair of accessors rather than a dozen,
  * because there is no behaviour behind them.
- *   text:  "name" "disk_path" "install_media" "floppy" "shader_profile"
+ *   text:  "name" "disk_path" "install_media" "floppy" "soundfont"
+ *          "mt32_roms" "extra_qemu_args" "shader_profile"
  *   flag:  "existing_disk"                                             */
 char *lc_wizard_get(const LcWizard *w, const char *field);
 bool lc_wizard_set(LcWizard *w, const char *field, const char *value);

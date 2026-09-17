@@ -126,6 +126,11 @@ pub struct Form {
     /// family's default only while it still holds the old family's.
     pub disk_size_gb: u32,
     pub install_media: String,
+    /// The "Extra QEMU arguments" line, as typed. Split into the
+    /// bundle's list only when the machine is written
+    /// (`bundle::split_args`), so a quote still being typed is not an
+    /// error until then.
+    pub extra_qemu_args: String,
     /// A shader profile id (`shader_library`), or `None` for the app
     /// default. Independent of `EditTarget::shader` (see `bundle::Machine`).
     pub shader_profile: Option<String>,
@@ -223,6 +228,7 @@ impl Default for Form {
             seamless_mouse: bundle::default_seamless_mouse(Family::Win98),
             seamless_mouse_chosen: false,
             voodoo2: false,
+            extra_qemu_args: String::new(),
             cpu_speed: bundle::default_cpu_speed(Family::Win98),
             cpu_speed_chosen: false,
             optimizations: Optimizations::default(),
@@ -268,6 +274,7 @@ impl Form {
             seamless_mouse: machine.seamless_mouse,
             seamless_mouse_chosen: true,
             voodoo2: machine.voodoo2,
+            extra_qemu_args: bundle::join_args(&machine.extra_qemu_args),
             cpu_speed: machine.effective_cpu_speed(),
             cpu_speed_chosen: true,
             optimizations: machine.optimizations.clone(),
@@ -607,6 +614,21 @@ impl Form {
 
     pub fn voodoo2(&self) -> bool {
         self.voodoo2
+    }
+
+    /// Under the "Extra QEMU arguments" field: what it is for, and a
+    /// quote left open said while the form is still there to fix it
+    /// (saving refuses it too).
+    pub fn extra_qemu_args_note(&self) -> AccelNote {
+        match bundle::split_args(&self.extra_qemu_args) {
+            Err(e) => AccelNote { text: e.to_string(), warning: true },
+            Ok(_) => AccelNote {
+                text: "Added to the end of QEMU's command line, for testing. Quote an argument that has spaces. \
+                       A wrong one can stop the machine from starting."
+                    .to_string(),
+                warning: false,
+            },
+        }
     }
 
     pub fn choose_voodoo2(&mut self, voodoo2: bool) {
@@ -1121,6 +1143,7 @@ impl Form {
                 network: self.network,
                 seamless_mouse: self.seamless_mouse,
                 voodoo2: self.voodoo2,
+                extra_qemu_args: Vec::new(),
                 disk,
                 disc: None,
                 discs: Vec::new(),
@@ -1157,6 +1180,8 @@ impl Form {
             bundle::default_seamless_mouse(self.family)
         };
         machine.voodoo2 = self.voodoo2;
+        // `write` refuses a line that does not split before it gets here.
+        machine.extra_qemu_args = bundle::split_args(&self.extra_qemu_args).unwrap_or_default();
         machine.cpu_speed =
             Some(if self.cpu_speed_chosen { self.cpu_speed } else { bundle::default_cpu_speed(self.family) });
         // Only what someone turned off is in here, so this is a clone
@@ -1230,6 +1255,9 @@ impl Form {
             return Err(std::io::Error::other(
                 "The Roland MT-32 needs a folder with your own CM-32L ROM images.",
             ));
+        }
+        if let Err(e) = bundle::split_args(&self.extra_qemu_args) {
+            return Err(std::io::Error::other(e));
         }
         if let Some(edit) = &self.editing {
             let bundle_path = edit.bundle_path.clone();

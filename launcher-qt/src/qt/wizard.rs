@@ -112,6 +112,12 @@ pub mod ffi {
         /// The 3dfx Voodoo 2 (doc 21) and the sentences under it.
         #[qproperty(bool, voodoo2)]
         #[qproperty(QString, voodoo2_note)]
+        /// Arguments added to the end of QEMU's command line, as one
+        /// line: two-way bound like `name`, and caught up by `pull`. The
+        /// note is orange for a quote left open, which saving refuses.
+        #[qproperty(QString, extra_qemu_args)]
+        #[qproperty(QString, extra_qemu_args_note)]
+        #[qproperty(bool, extra_qemu_args_warning)]
         /// Our own emulator fast paths, as a bit per `Optimization::ALL`
         /// entry — set means on. A bitmask rather than a list because a
         /// QML `CheckBox` needs a *property* to bind `checked` to (a
@@ -182,6 +188,11 @@ pub mod ffi {
         /// A 3dfx Voodoo 2 in the machine, or not (doc 21).
         #[qinvokable]
         fn choose_voodoo2(self: Pin<&mut Wizard>, voodoo2: bool);
+
+        /// The extra-arguments field lost focus: take its text and say
+        /// what the form makes of it (the note under it).
+        #[qinvokable]
+        fn commit_extra_qemu_args(self: Pin<&mut Wizard>);
 
         /// Turn one fast path on or off, by its index in
         /// `optimization_labels()`.
@@ -366,6 +377,9 @@ pub struct WizardRust {
     seamless_mouse_note: QString,
     voodoo2: bool,
     voodoo2_note: QString,
+    extra_qemu_args: QString,
+    extra_qemu_args_note: QString,
+    extra_qemu_args_warning: bool,
     optimizations_mask: i32,
     optimizations_summary: QString,
     optimizations_note: QString,
@@ -527,6 +541,11 @@ impl ffi::Wizard {
         self.edit(Form::reset_music);
     }
 
+    fn commit_extra_qemu_args(self: Pin<&mut Self>) {
+        // `pull` has already taken the text; publishing is the point.
+        self.edit(|_| {});
+    }
+
     fn set_soundfont_path(self: Pin<&mut Self>, soundfont: &QString) {
         let soundfont = soundfont.to_string();
         self.edit(|form| form.soundfont = soundfont);
@@ -613,12 +632,13 @@ impl ffi::Wizard {
     /// `TextField` writes its property and nothing else, so this catches
     /// the form up before anything reads it.
     fn pull(mut self: Pin<&mut Self>) {
-        let (name, disk_path, install_media, floppy, shader_profile) = (
+        let (name, disk_path, install_media, floppy, shader_profile, extra_qemu_args) = (
             self.name.to_string(),
             self.disk_path.to_string(),
             self.install_media.to_string(),
             self.floppy.to_string(),
             self.shader_profile.to_string(),
+            self.extra_qemu_args.to_string(),
         );
         let (existing_disk, disk_size_gb) = (self.existing_disk, self.disk_size_gb);
         let form = &mut self.as_mut().rust_mut().form;
@@ -627,6 +647,7 @@ impl ffi::Wizard {
         form.install_media = install_media;
         form.floppy = floppy;
         form.shader_profile = Some(shader_profile).filter(|p| !p.is_empty());
+        form.extra_qemu_args = extra_qemu_args;
         form.existing_disk = existing_disk;
         form.disk_size_gb = disk_size_gb.max(1) as u32;
     }
@@ -664,6 +685,7 @@ impl ffi::Wizard {
         let (accel, accel_note, accel_warning, accel_is_default, network, network_note);
         let (seamless_mouse, seamless_mouse_note);
         let (voodoo2, voodoo2_note);
+        let (extra_qemu_args, extra_qemu_args_note, extra_qemu_args_warning);
         let (graphics_note, graphics_warning);
         let (video, video_applies, video_labels, video_is_default, video_note, video_warning);
         let (sound, sound_labels, sound_is_default, sound_note, sound_warning);
@@ -731,6 +753,10 @@ impl ffi::Wizard {
             seamless_mouse_note = qs(f.seamless_mouse_notes().join("\n"));
             voodoo2 = f.voodoo2();
             voodoo2_note = qs(f.voodoo2_notes().join("\n"));
+            extra_qemu_args = qs(&f.extra_qemu_args);
+            let args_note = f.extra_qemu_args_note();
+            extra_qemu_args_note = qs(args_note.text);
+            extra_qemu_args_warning = args_note.warning;
             optimizations_mask = Optimization::ALL
                 .iter()
                 .enumerate()
@@ -806,6 +832,9 @@ impl ffi::Wizard {
         self.as_mut().set_seamless_mouse_note(seamless_mouse_note);
         self.as_mut().set_voodoo2(voodoo2);
         self.as_mut().set_voodoo2_note(voodoo2_note);
+        self.as_mut().set_extra_qemu_args(extra_qemu_args);
+        self.as_mut().set_extra_qemu_args_note(extra_qemu_args_note);
+        self.as_mut().set_extra_qemu_args_warning(extra_qemu_args_warning);
         self.as_mut().set_optimizations_mask(optimizations_mask);
         self.as_mut().set_optimizations_summary(optimizations_summary);
         self.as_mut().set_optimizations_note(optimizations_note);

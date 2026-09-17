@@ -193,6 +193,22 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   the two spellings together. It is the same code path — two `-accel`
   options are tried in order and the first that initializes wins, which is
   exactly what `kvm:tcg` did.
+- **Extra QEMU arguments** is one text field under the fast paths
+  (2026-09-17, user request): the escape hatch for what the form has no
+  field for — a device property such as `-global d3dpt-vga.ddflags=32768`
+  (the vertical blank off), a trace, a debug knob. One line; whitespace
+  separates, single or double quotes group and are removed, and there is
+  no escape character, so a Windows path's backslashes stay as typed
+  (`bundle::split_args` / `join_args`). The bundle keeps it as a list,
+  `extra_qemu_args`, one entry per argument and absent when empty, and
+  `qemu_args` appends it **last**, so a repeated option is the user's.
+  Nothing validates the arguments themselves; a quote left open is an
+  orange note while typing and a refusal at save. The `extra-args` check
+  walks it from `--wizard-edit` to `info qtree` on our QEMU, including an
+  edit of another field (the line is joined back out of the bundle and
+  split again, so quoting must round-trip); `qt-wizard` types into the
+  real field before a family switch, and the `capi` smoke has the
+  refusal.
 - **Networking** is one checkbox (`network` in the bundle), and since
   2026-09-07 (the user's decision) a new machine of **every** family
   starts with it **off**. These are unpatched systems — the note under

@@ -352,6 +352,27 @@ int main(int argc, char **argv) {
     lc_wizard_set(w, "name", "capi dos");
     lc_wizard_set_flag(w, "existing_disk", true);
     lc_wizard_set(w, "disk_path", "/dev/null");
+
+    /* Extra QEMU arguments: a plain line, where a quote left open is an
+     * orange note while typing and a refusal at submit, with the form
+     * still open to fix it. The saved list itself is the `extra-args`
+     * check's, from --print-args to a real QEMU. */
+    bool args_warning = true;
+    char *args_note = lc_wizard_extra_qemu_args_note(w, &args_warning);
+    check("no extra QEMU arguments, and no warning", !args_warning, args_note);
+    lc_string_free(args_note);
+    lc_wizard_set(w, "extra_qemu_args", "-name \"capi dos");
+    args_note = lc_wizard_extra_qemu_args_note(w, &args_warning);
+    check("an open quote is a warning while typing",
+          args_warning && args_note && strstr(args_note, "never closed") != NULL, args_note);
+    lc_string_free(args_note);
+    check("...and submit refuses it", !lc_wizard_submit(w, library_dir), NULL);
+    char *args_error = lc_wizard_error(w);
+    check("...saying why", args_error && strstr(args_error, "never closed") != NULL, args_error);
+    lc_string_free(args_error);
+    check("...with the form still open", lc_wizard_is_open(w), NULL);
+    lc_wizard_set(w, "extra_qemu_args", "-name \"capi dos\"");
+
     check("submit", lc_wizard_submit(w, library_dir), NULL);
 
     char *saved = lc_wizard_saved_path(w);

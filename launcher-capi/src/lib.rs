@@ -788,6 +788,20 @@ pub unsafe extern "C" fn lc_wizard_choose_voodoo2(w: *mut LcWizard, voodoo2: boo
     handle_mut!(w, ()).0.choose_voodoo2(voodoo2);
 }
 
+/// The line under the "Extra QEMU arguments" field; `warning` is set
+/// when the line has a quote that is never closed, which `submit` refuses.
+///
+/// # Safety
+/// `w` must be a live handle; `warning` null or writable.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_extra_qemu_args_note(w: *const LcWizard, warning: *mut bool) -> *mut c_char {
+    let note = handle!(w, std::ptr::null_mut()).0.extra_qemu_args_note();
+    if !warning.is_null() {
+        unsafe { *warning = note.warning };
+    }
+    out(note.text)
+}
+
 /// The lines under the Voodoo 2 checkbox, newline-separated (doc 21).
 ///
 /// # Safety
@@ -1081,7 +1095,7 @@ pub unsafe extern "C" fn lc_wizard_mt32_roms_applies(w: *const LcWizard) -> bool
 
 /// The plain text and flag fields, by name: "name", "disk_path",
 /// "install_media", "floppy", "soundfont", "mt32_roms",
-/// "shader_profile". One
+/// "extra_qemu_args", "shader_profile". One
 /// pair of accessors rather than a dozen, because these have no
 /// behaviour behind them — a field with a consequence has a `choose_*`
 /// above instead, and there is no way to reach one from here.
@@ -1098,6 +1112,7 @@ pub unsafe extern "C" fn lc_wizard_get(w: *const LcWizard, field: *const c_char)
         "floppy" => out(f.floppy.clone()),
         "soundfont" => out(f.soundfont.clone()),
         "mt32_roms" => out(f.mt32_roms.clone()),
+        "extra_qemu_args" => out(f.extra_qemu_args.clone()),
         "shader_profile" => out(f.shader_profile.clone().unwrap_or_default()),
         _ => std::ptr::null_mut(),
     }
@@ -1116,6 +1131,7 @@ pub unsafe extern "C" fn lc_wizard_set(w: *mut LcWizard, field: *const c_char, v
         "floppy" => f.floppy = value,
         "soundfont" => f.soundfont = value,
         "mt32_roms" => f.mt32_roms = value,
+        "extra_qemu_args" => f.extra_qemu_args = value,
         "shader_profile" => f.shader_profile = Some(value).filter(|v| !v.is_empty()),
         _ => return false,
     }

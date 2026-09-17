@@ -135,6 +135,12 @@
 #                  voodoo2` in the slot after the sound card's and removes
 #                  it again, our QEMU accepts the machine with it, and the
 #                  device is on the bus of the machine it booted
+#   extra-args     the form's "Extra QEMU arguments" field: none on a new
+#                  machine, a line with a quoted argument lands at the end of
+#                  --print-args and in the bundle as a list, survives an
+#                  edit that does not touch it, a quote left open is refused
+#                  with the bundle unchanged, our QEMU applies a -global from
+#                  it to our adapter, and an empty line clears it
 #   pad            the gamepad (M13 step 0): a new machine on every family
 #                  ignores a controller, neither setting adds anything to the
 #                  QEMU command line, a bundle naming a setting from a later
@@ -852,6 +858,13 @@ qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
     model="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] model \[\(.*\)\]$/\1/p')"
     [ "$shown" = "Typed name" ] || { echo "$f: the name field lost what was typed (shows: $shown)"; rc=1; }
     [ "$model" = "Typed name" ] || { echo "$f: the model lost the typed name (holds: $model)"; rc=1; }
+    # ...and the extra QEMU arguments, bound the same way and typed
+    # before the same family switch.
+    o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] wizard extra args: //p')"
+    shown="$(printf '%s' "$o" | sed -n 's/^shown \[\(.*\)\] model \[.*\]$/\1/p')"
+    model="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] model \[\(.*\)\]$/\1/p')"
+    [ "$shown" = '-name "typed args"' ] || { echo "$f: the extra-arguments field lost what was typed (shows: $shown)"; rc=1; }
+    [ "$model" = '-name "typed args"' ] || { echo "$f: the model lost the typed extra arguments (holds: $model)"; rc=1; }
   done
   # The optimization shortcuts beside boxes that were clicked by hand
   # (user, 2026-09-12: "Turn all on / off does nothing" after three boxes
@@ -1402,6 +1415,64 @@ voodoo2_check() { # the wizard's Voodoo 2 switch (doc 21), from a checkbox to a 
   else
     echo "  (no build/qemu: the QEMU half skipped)"
   fi
+  return $rc
+}
+
+extra_args_check() { # the form's "Extra QEMU arguments" field, from the line to a real QEMU
+  local rc=0 dir="$OUT/extra-args" bundle args o list
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  : >"$dir/disk.qcow2"
+  bundle="$(target/release/launcherx --new xp extra "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *"-global"*) echo "a new machine has extra arguments nobody typed"; echo "$args"; rc=1;; esac
+  grep -q '^extra_qemu_args' "$bundle" && { echo "a new machine's bundle has an extra_qemu_args entry"; rc=1; }
+  # Through the real form (`--wizard-edit`'s last field), with a quoted
+  # argument: one list entry per argument, the quotes gone.
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - - - - \
+      '-global d3dpt-vga.ddflags=32768 -name "extra args"' >/dev/null \
+    || { echo "--wizard-edit with extra arguments failed"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *" -global d3dpt-vga.ddflags=32768 -name extra args") ;;
+    *) echo "the extra arguments are not at the end of the command line"; echo "$args"; rc=1;; esac
+  # (whitespace squeezed out: the TOML writer puts a list on many lines)
+  list='extra_qemu_args=["-global","d3dpt-vga.ddflags=32768","-name","extraargs",]'
+  [ "$(tr -d ' \n' <"$bundle" | grep -o 'extra_qemu_args=\[[^]]*\]')" = "$list" ] \
+    || { echo "the bundle does not hold the arguments as a list"; grep -A6 extra_qemu_args "$bundle"; rc=1; }
+  # An edit of another field reads the line back out of the bundle and
+  # writes it again, so the quoting has to round-trip.
+  target/release/launcherx --wizard-edit "$bundle" - 1024 >/dev/null || { echo "--wizard-edit of the memory failed"; rc=1; }
+  [ "$(tr -d ' \n' <"$bundle" | grep -o 'extra_qemu_args=\[[^]]*\]')" = "$list" ] \
+    || { echo "an edit of another field changed the arguments"; grep -A6 extra_qemu_args "$bundle"; rc=1; }
+  # A quote left open is refused at save, and nothing is written.
+  cp "$bundle" "$dir/before.toml"
+  o="$(target/release/launcherx --wizard-edit "$bundle" - - - - - - - - - - '-name "open' 2>&1)" \
+    && { echo "a quote left open was saved"; rc=1; }
+  case "$o" in *"never closed"*) ;; *) echo "the refusal does not say why"; echo "$o" | tail -3; rc=1;; esac
+  cmp -s "$bundle" "$dir/before.toml" || { echo "a refused save changed the bundle"; rc=1; }
+  # Our QEMU takes the line and the -global reaches our adapter.
+  if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
+    target/release/launcherx --wizard-edit "$bundle" - - - - - - - - - - \
+        '-global d3dpt-vga.ddflags=32768' >/dev/null || rc=1
+    build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
+    args="$(target/release/launcherx --print-args "$bundle")"
+    # shellcheck disable=SC2086
+    o="$(printf '%s\n' '{"execute":"qmp_capabilities"}' \
+           '{"execute":"human-monitor-command","arguments":{"command-line":"info qtree"}}' \
+           '{"execute":"quit"}' \
+         | timeout 30 build/qemu/qemu-system-i386 $args \
+             -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
+      || { echo "our QEMU refused the machine with extra arguments"; echo "$o" | tail -3; rc=1; }
+    case "$o" in *"ddflags = 32768"*) ;; *) echo "the -global did not reach d3dpt-vga"; echo "$o" | tail -3; rc=1;; esac
+  else
+    echo "  (no build/qemu: the QEMU half skipped)"
+  fi
+  # An empty line clears them.
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - - - - '' >/dev/null || rc=1
+  grep -q '^extra_qemu_args' "$bundle" && { echo "an empty line left extra_qemu_args in the bundle"; rc=1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *"-global"*) echo "an empty line left the arguments on the command line"; echo "$args"; rc=1;; esac
   return $rc
 }
 
@@ -2250,6 +2321,7 @@ host_stage() {
   if [ -x target/release/launcherx ]; then
     run_check pointer pointer.log pointer_check || true
     run_check voodoo2 voodoo2.log voodoo2_check || true
+    run_check extra-args extra-args.log extra_args_check || true
   fi
 
   # the gamepad (M13 step 0): a new machine ignores a controller on every

@@ -63,6 +63,15 @@ Window {
     /// user sees.
     readonly property alias shownName: nameField.text
     function typeName(text) { nameField.insert(nameField.length, text) }
+    /// The same for the extra QEMU arguments, which is bound the same way,
+    /// plus a scroll to it so a screenshot shows it.
+    readonly property alias shownExtraQemuArgs: extraQemuArgsField.text
+    function typeExtraQemuArgs(text) { extraQemuArgsField.insert(extraQemuArgsField.length, text) }
+    function revealExtraQemuArgs() {
+        const flick = formScroll.contentItem
+        flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height,
+            extraQemuArgsField.mapToItem(fields, 0, 0).y - flick.height / 2))
+    }
 
     /// What the emulation-optimization boxes are *showing*, as a mask in
     /// the model's own bit order (`optimizationsMask`), and a way to click
@@ -127,6 +136,7 @@ Window {
             // save button cannot be reached is worse than one that
             // scrolls.
             ScrollView {
+                id: formScroll
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 contentWidth: availableWidth
@@ -615,6 +625,34 @@ Window {
                             onClicked: root.wizard.resetOptimizations()
                         }
                     }
+                }
+
+                // --- extra QEMU arguments -------------------------------------
+                // The escape hatch for what the form has no field for. Bound
+                // both ways like the name (the model's `pull` takes the text
+                // before a save), and committed when the field loses focus so
+                // the note under it catches a quote left open.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Label { text: qsTr("Extra QEMU arguments"); Layout.minimumWidth: 150 }
+                    TextField {
+                        id: extraQemuArgsField
+                        Layout.fillWidth: true
+                        text: root.wizard.extraQemuArgs
+                        placeholderText: qsTr("-global d3dpt-vga.ddflags=32768")
+                        selectByMouse: true
+                        onTextChanged: root.wizard.extraQemuArgs = text
+                        onEditingFinished: root.wizard.commitExtraQemuArgs()
+                    }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: root.wizard.extraQemuArgsNote
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    color: root.wizard.extraQemuArgsWarning ? "#c88200" : palette.windowText
+                    opacity: root.wizard.extraQemuArgsWarning ? 1.0 : 0.75
                 }
 
                 MenuSeparator { Layout.fillWidth: true }

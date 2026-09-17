@@ -160,7 +160,7 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // a bundle, change the fields given, save it back in place.
             // `-` keeps a field as it is.
             let usage =
-                "usage: --wizard-edit <machine.toml> <new-name|-> [ram-mb|-] [auto|kvm|tcg|-] [net|nonet] [cpu-speed|-] [boot|-] [seamless|noseamless] [d3dpt|std|cirrus|-] [none|usb|keys|-] [voodoo|novoodoo|-]";
+                "usage: --wizard-edit <machine.toml> <new-name|-> [ram-mb|-] [auto|kvm|tcg|-] [net|nonet] [cpu-speed|-] [boot|-] [seamless|noseamless] [d3dpt|std|cirrus|-] [none|usb|keys|-] [voodoo|novoodoo|-] [extra-qemu-args|-]";
             let path: PathBuf = args.next().expect(usage).into();
             let new_name = args.next().expect(usage);
             let mut form = wizard::Form::default();
@@ -251,6 +251,13 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 Some("voodoo") => form.choose_voodoo2(true),
                 Some("novoodoo") => form.choose_voodoo2(false),
                 Some(other) => panic!("the Voodoo 2 is voodoo or novoodoo, not {other:?}; {usage}"),
+            }
+            // The extra QEMU arguments, as one line the way the field
+            // takes them; an empty one clears them. A quote left open is
+            // the form's refusal at `submit`, like any other.
+            match args.next().as_deref() {
+                None | Some("-") => {}
+                Some(line) => form.extra_qemu_args = line.to_string(),
             }
             match form.submit(&library::default_dir()) {
                 Some(saved) => println!("{}", saved.display()),
