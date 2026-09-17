@@ -31,6 +31,12 @@
 
 static D3dptExecLib lib;
 static bool tried;
+static bool refused;
+
+void d3dpt_exec_refuse(void)
+{
+    refused = true;
+}
 
 const D3dptExecLib *d3dpt_exec_lib(void)
 {
@@ -52,6 +58,13 @@ const D3dptExecLib *d3dpt_exec_lib(void)
         return lib.handle ? &lib : NULL;
     }
     tried = true;
+    if (refused) {
+        /* the same sentence the real floor prints, so a log from a run with
+         * this flag reads like a log from such a host */
+        warn_report("d3dpt: no-exec=on: no Vulkan 1.3 device on this host; "
+                    "Direct3D pass-through off");
+        return NULL;
+    }
     for (size_t i = 0; i < ARRAY_SIZE(candidates); i++) {
         if (!candidates[i]) {
             continue;

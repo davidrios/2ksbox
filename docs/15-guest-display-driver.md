@@ -191,6 +191,25 @@ What Microsoft's `ddraw.dll` → `dxg.sys` sees behind the display driver
   primary, 0x10 = add `DDCAPS_GDI`, 0x8000 = no vertical blank (flips
   complete instantly, the M7b behaviour: throughput runs). That is how the caps were bisected
   in one afternoon: one boot per variant, `DDTEST` and the QEMU log tell.
+- **`-device d3dpt-vga,no-exec=on`** (also `-global d3dpt-vga.no-exec=on`,
+  which is what the machine form's "Extra QEMU arguments" field takes, and
+  `NO_EXEC=1 tools/xp-driver-test.sh`) makes the adapter answer
+  `D3D_STATUS` with `NO_EXEC`, which is what a host **below ADR-013's
+  Vulkan 1.3 floor** answers: the command window is there, the executor
+  library is there, and nothing on the host can run a batch. The driver
+  then keeps its whole DirectDraw half — modes, the flip chain, the
+  cursor, gamma, the palette — and offers no Direct3D at all, so a game
+  falls back exactly as it does on a pre-Broadwell Intel, a Kepler, an
+  Intel Mac: to the runtime's software device, or to WineD3D staged next
+  to it (`SETUP /GAME 4`, doc 04's fallback row). The flag is how one of
+  those hosts is met from a host that has Vulkan; it sets the *loader's*
+  refusal, so the doc 14 SysBus device answers `NO_EXEC` too — it is one
+  host, not one device. The QEMU log says
+  `d3dpt: no-exec=on: no Vulkan 1.3 device on this host` and the driver's
+  own `d3dptdisp: no Direct3D executor on the host` follows it.
+  **Not `ddflags=0x20`** (`DDF_NO_D3D`): that one makes the *driver*
+  decide and never reads `D3D_STATUS`, so it proves nothing about the
+  path a real below-floor user takes.
 - **Test:** `DRIVER\DDTEST.EXE [w h bpp] [frames] [-windowed]` (guest-tools
   ISO): caps, exclusive flip chain (Lock/Unlock pattern + `Blt` colour fill
   + `Flip`) or a windowed offscreen surface blitted to the primary, fps,

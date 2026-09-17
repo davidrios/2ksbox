@@ -67,6 +67,9 @@ struct D3dptVgaState {
     uint32_t flips_last;        /* flips at the last rate report */
     int64_t flips_ns;           /* and when it was made */
     uint32_t ddflags;           /* property: test knob read by the guest driver */
+    bool no_exec;               /* property: act as a host with no Vulkan 1.3 device
+                                   (ADR-013's floor unmet) — D3D_STATUS then reads
+                                   NO_EXEC and the guest driver offers DirectDraw only */
     uint32_t fb_version;        /* property: the VERSION register (D3DPT_FB_VERSION) —
                                    a newer one checks that installed drivers accept it */
 
@@ -913,6 +916,14 @@ static void d3dpt_vga_realize(PCIDevice *dev, Error **errp)
     pci_register_bar(dev, 0, PCI_BASE_ADDRESS_MEM_PREFETCH, &vga->vram);
     pci_register_bar(dev, 1, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->regs);
 
+    /* no-exec=on, before the first D3D_STATUS read, which is what loads the
+     * library. The command window below is still made: a real host below the
+     * Vulkan 1.3 floor has the adapter and the executor library too, and only
+     * no device to run a batch on. */
+    if (s->no_exec) {
+        d3dpt_exec_refuse();
+    }
+
     /* the command window takes the top 64 MiB when at least as much is
      * left below it for the frame buffer and the DirectDraw heap */
     if (vga->vram_size >= 2 * D3DPT_SHM_SIZE) {
@@ -950,6 +961,13 @@ static Property d3dpt_vga_properties[] = {
     DEFINE_PROP_UINT32("vgamem_mb", D3dptVgaState, vga.vram_size_mb, D3DPT_FB_VRAM_MB),
     DEFINE_PROP_BOOL("global-vmstate", D3dptVgaState, vga.global_vmstate, false),
     DEFINE_PROP_UINT32("ddflags", D3dptVgaState, ddflags, 0),
+    /* no-exec=on: this host is below ADR-013's Vulkan 1.3 floor. Every
+     * d3dpt device then reports D3DPT_STATUS_NO_EXEC, the display driver
+     * keeps its DirectDraw half and offers no Direct3D, and a game falls
+     * back the way it does on such a host (the runtime's software device,
+     * or WineD3D staged next to it). Testing knob only: it is how a host
+     * we cannot borrow is met from one that has Vulkan. */
+    DEFINE_PROP_BOOL("no-exec", D3dptVgaState, no_exec, false),
     /* the register set version the adapter reports: a newer one than the
      * device implements is the check that an installed driver accepts a
      * QEMU update (d3dpt_fb.h, "Versions only add"). Nothing else reads it. */

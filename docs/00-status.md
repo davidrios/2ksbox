@@ -143,6 +143,12 @@ mcopy -i ~/vms/scratch.img@@1048576 ::/OUT/G9.BMP g9.bmp && tools/bmpdiff.py ref
 # XP on our display driver (M7 track, doc 15): -vga none -device d3dpt-vga instead of -vga cirrus,
 # driver installed once per image from the ISO's DRIVER\ (DRVINST.EXE -reboot); headless loops:
 guest-tools/build-driver.sh && tools/xp-driver-test.sh ~/vms/winxp-m7c.qcow2 ddtest   # or d3d7
+# as a user below ADR-013's Vulkan 1.3 floor (doc 15): the adapter reports no executor,
+# so the driver offers DirectDraw and no Direct3D — the whole point of the WineD3D row.
+# One flag, and `-global d3dpt-vga.no-exec=on` is the form's Extra-QEMU-arguments spelling.
+NO_EXEC=1 tools/xp-driver-test.sh ~/vms/winxp-m7c.qcow2 d3d7      # d3dpt-vga,no-exec=on
+# (the launcher's own probe still sees this host's Vulkan: to take that away too, run
+#  tools/xp-wined3d-test.sh, which empties VK_DRIVER_FILES / VK_ICD_FILENAMES)
 ```
 Player env knobs: `PLAYER_DUMP`, `PLAYER_DUMP_OUT`, `PLAYER_DUMP_SEQ`,
 `PLAYER_KEYS`, `PLAYER_AUDIO_NULL`, `PLAYER_AUDIO_TAP`, `PLAYER_AUDIO_MS`,

@@ -106,7 +106,16 @@ backend later.
   stacks is too slow was the mistake; warn and let the box answer. The
   probe is `launcher-core/src/host_gpu.rs` / `launcher --host-check`, and
   its sentence for the wizard is the shared `wizard::Form::graphics_note()`,
-  never a front end's own.
+  never a front end's own. **Such a host is met from one that has Vulkan
+  with one flag**: `-global d3dpt-vga.no-exec=on` (the machine form's
+  Extra-QEMU-arguments spelling; `-device d3dpt-vga,no-exec=on` by hand,
+  `NO_EXEC=1 tools/xp-driver-test.sh`) makes every d3dpt device report
+  `D3DPT_STATUS_NO_EXEC`, so the display driver keeps its DirectDraw half
+  and offers no Direct3D, and a game falls back the way it does there —
+  doc 15, not `ddflags=0x20`, which has the *driver* decide. It leaves the
+  launcher's own probe seeing this host's Vulkan; `tools/xp-wined3d-test.sh`
+  empties the loader variables when the probe and its note are the
+  question.
 - **The host-side Glide wrapper is our own build of OpenGLide** (doc 12 §5,
   2026-09-06). qemu-3dfx's `hw/3dfx` only *dispatches* -- it `dlopen`s a
   `libglide2x` and looks up 183 entry points -- and upstream ships that

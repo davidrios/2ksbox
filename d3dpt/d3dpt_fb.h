@@ -24,6 +24,13 @@
  * an executor (reading it loads the library). The DirectDraw heap the
  * driver exposes ends at CMD_OFFSET.
  *
+ * -device d3dpt-vga,no-exec=on makes the adapter answer D3D_STATUS as a
+ * host below ADR-013's Vulkan 1.3 floor does: the command window is there,
+ * nothing on the host can run it, so the driver keeps its DirectDraw half
+ * and offers no Direct3D. That is how one of those hosts is tested from a
+ * host that has Vulkan. It is not DDFLAGS bit 0x20 (DDF_NO_D3D), which
+ * makes the *driver* decide and never reads D3D_STATUS at all.
+ *
  * The guest driver reads the host's mode table (MODE_COUNT, then MODE_SEL
  * + MODE_W/H/BPP/HZ per entry), programs a linear mode (W, H, BPP, PITCH,
  * OFFSET into VRAM) and sets ENABLE = 1; the VGA core is bypassed while
@@ -114,7 +121,8 @@
 
 #define D3DPT_FB_REG_CMD_OFFSET  0x80u   /* R: byte offset of the command window in BAR 0 (0 = none) */
 #define D3DPT_FB_REG_DOORBELL    0x84u   /* W: 1 = execute the batch in the window; R: last D3DPT_ERR_* */
-#define D3DPT_FB_REG_D3D_STATUS  0x88u   /* R: D3DPT_STATUS_* (0 = no executor on the host, 1 = ready) */
+#define D3DPT_FB_REG_D3D_STATUS  0x88u   /* R: D3DPT_STATUS_* (0 = no executor on the host — no library,
+                                            no Vulkan 1.3 device, or no-exec=on; 1 = ready) */
 
 /* the hardware cursor (version 4) */
 #define D3DPT_FB_REG_CURSOR_ADDR 0x90u   /* RW: byte offset in VRAM of the a8r8g8b8 image, W * H * 4 bytes, rows packed */

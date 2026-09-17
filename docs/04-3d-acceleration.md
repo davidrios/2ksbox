@@ -48,6 +48,13 @@ Known qemu-3dfx / 3D constraints we design around:
   recommendation.
 - **WineD3D fallback**: Wine 1.7.55 fork (wine9x) built for guests when
   host lacks Vulkan 1.3 or for legacy D3D compatibility testing.
+  A host with Vulkan tests this row with **`-global d3dpt-vga.no-exec=on`**
+  (doc 15): the adapter then reports no executor, exactly as a below-floor
+  host's does, so the guest driver offers no Direct3D and the machine has
+  to carry on the way one of those users' machines does.
+  `tools/xp-wined3d-test.sh` takes the whole host's Vulkan away instead
+  (`VK_DRIVER_FILES=/nonexistent.json`), which is what to use when the
+  launcher's own probe and its wizard note are part of the question.
 
 ## Guest tools ISO (P2)
 
