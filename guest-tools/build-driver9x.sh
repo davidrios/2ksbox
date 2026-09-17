@@ -22,6 +22,10 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 set -euo pipefail
+# A step that fails without a word of its own (a check that exits after
+# printing to a stdout nobody shows) still says where it stopped.
+set -E
+trap 'echo "$(basename "$0"): stopped at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/guest-tools/msys2-i686.sh"

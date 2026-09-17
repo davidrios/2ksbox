@@ -12,6 +12,10 @@
 # the DDK headers and import libraries. Same toolchain as the wrappers;
 # needs i686-w64-mingw32-gcc, xorriso (or genisoimage/mkisofs) for the ISO.
 set -euo pipefail
+# A step that fails without a word of its own (a check that exits after
+# printing to a stdout nobody shows) still says where it stopped.
+set -E
+trap 'echo "$(basename "$0"): stopped at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/guest-tools/msys2-i686.sh"

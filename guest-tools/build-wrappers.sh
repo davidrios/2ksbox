@@ -12,6 +12,10 @@
 # GLIDE2X.OVL (the DOS Glide binding) needs Open Watcom and is skipped
 # with a note without it; the DJGPP DXEs are skipped outright.
 set -euo pipefail
+# A step that fails without a word of its own (a check that exits after
+# printing to a stdout nobody shows) still says where it stopped.
+set -E
+trap 'echo "$(basename "$0"): stopped at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FX="$ROOT/third_party/qemu-3dfx"
@@ -393,7 +397,14 @@ i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
 
 # XP display driver for the d3dpt-vga adapter (doc 15, M7a): built and
 # checked by its own script (kernel-mode PE rules differ), staged as DRIVER\.
-"$ROOT/guest-tools/build-driver.sh" >/dev/null
+# Its progress is not wanted here, its failure is: the script reports a
+# failed check on stdout and exits, which under >/dev/null ended this whole
+# ISO build without a word (MSYS2, 2026-09-17).
+if ! drv_log="$("$ROOT/guest-tools/build-driver.sh" 2>&1)"; then
+  echo "the XP display driver did not build (guest-tools/build-driver.sh):" >&2
+  printf '%s\n' "$drv_log" | tail -15 | sed 's/^/    /' >&2
+  exit 1
+fi
 mkdir -p "$OUT/iso/DRIVER" && cp "$ROOT"/guest-tools/out/driver/* "$OUT/iso/DRIVER/"
 
 # The Win98/Me display driver for the same adapter (doc 19, M10), staged as
