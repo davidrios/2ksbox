@@ -726,35 +726,6 @@ Window {
                         }
                     }
                 }
-
-                MenuSeparator { Layout.fillWidth: true }
-
-                CheckBox {
-                    text: qsTr("Advanced: edit machine.toml directly")
-                    checked: root.wizard.advanced
-                    onToggled: {
-                        root.wizard.advanced = checked
-                        if (checked)
-                            root.wizard.fillAdvanced()
-                    }
-                }
-                ScrollView {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 180
-                    visible: root.wizard.advanced
-                    TextArea {
-                        text: root.wizard.advancedToml
-                        // A family each platform really has: "monospace"
-                        // is a fontconfig alias, and asking macOS or
-                        // Windows for it costs a font-alias scan and a
-                        // warning on every start.
-                        font.family: Qt.platform.os === "osx" || Qt.platform.os === "macos" ? "Menlo"
-                            : Qt.platform.os === "windows" ? "Consolas"
-                            : "monospace"
-                        selectByMouse: true
-                        onTextChanged: root.wizard.advancedToml = text
-                    }
-                }
                 }   // ColumnLayout: fields
             }       // ScrollView
 

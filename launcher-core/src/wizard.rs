@@ -3,8 +3,8 @@
 //! install media → a
 //! bundle written from doc 06's reference defaults. The same form edits
 //! an existing bundle (`open_edit`), where `submit` writes back in place
-//! instead of reserving a new library directory. An advanced toggle
-//! edits the raw TOML instead — still never a QEMU command line.
+//! instead of reserving a new library directory. Never a QEMU command
+//! line.
 //!
 //! **Everything except the widgets is here**, including the sentences.
 //! A front end reads `ram_note()`, `accel_note()`, `network_notes()`,
@@ -48,13 +48,9 @@ pub const MEDIA_FILTER: Filter<'static> = DISC_FILTER;
 
 /// What editing an existing bundle needs to preserve: the fields this
 /// form doesn't expose, so a quick edit can't silently discard them.
-/// `original_toml` is the file's exact current text, used as the
-/// advanced box's starting point instead of a reconstruction — no
-/// information loss even for a field a future form doesn't model.
 struct EditTarget {
     bundle_path: PathBuf,
     shader: Option<PathBuf>,
-    original_toml: String,
     /// The adapter the bundle had when it was opened, so the form can
     /// warn that changing it is a hardware change to a guest that is
     /// already installed (`video_warning`).
@@ -133,8 +129,6 @@ pub struct Form {
     /// A shader profile id (`shader_library`), or `None` for the app
     /// default. Independent of `EditTarget::shader` (see `bundle::Machine`).
     pub shader_profile: Option<String>,
-    pub advanced: bool,
-    pub advanced_toml: String,
     /// What the last `submit` failed with, for the form to show.
     pub error: Option<String>,
     /// The bundle the last successful `submit` wrote.
@@ -217,8 +211,6 @@ impl Default for Form {
             disk_size_gb: bundle::default_disk_size_gb(Family::Win98),
             install_media: String::new(),
             shader_profile: None,
-            advanced: false,
-            advanced_toml: String::new(),
             error: None,
             saved_path: None,
             family: Family::Win98,
@@ -260,7 +252,6 @@ impl Form {
     /// Open the form pre-filled from an existing bundle, to edit it in
     /// place instead of creating a new one.
     pub fn open_edit(&mut self, machine: &Machine, bundle_path: PathBuf) {
-        let original_toml = std::fs::read_to_string(&bundle_path).unwrap_or_default();
         *self = Form {
             open: true,
             name: machine.name.clone(),
@@ -302,7 +293,6 @@ impl Form {
             editing: Some(EditTarget {
                 bundle_path,
                 shader: machine.shader.clone(),
-                original_toml,
                 video: machine.effective_video().unwrap_or(Video::Std),
                 sound: machine.effective_sound(),
                 pad: machine.effective_pad(),
@@ -1116,9 +1106,7 @@ impl Form {
 impl Form {
     /// The `Machine` the current field values describe, given the disk
     /// path to use (a fresh disk's path isn't known until it's created,
-    /// so callers that might still need to do that pass it in). Shared
-    /// by the advanced box's default and the plain submit path, so the
-    /// two cannot silently disagree.
+    /// so callers that might still need to do that pass it in).
     pub fn build_machine(&self, disk: PathBuf) -> Machine {
         let mut machine = match &self.editing {
             Some(edit) => Machine {
@@ -1204,26 +1192,6 @@ impl Form {
         machine
     }
 
-    /// What the advanced box opens on: the file's exact current text
-    /// when editing, the TOML this form describes when creating.
-    pub fn preview_toml(&self) -> String {
-        if let Some(edit) = &self.editing {
-            return edit.original_toml.clone();
-        }
-        let disk: PathBuf =
-            if self.existing_disk { self.disk_path.clone().into() } else { "disk.qcow2".into() };
-        toml::to_string_pretty(&self.build_machine(disk)).unwrap_or_default()
-    }
-
-    /// Fill the advanced box if it is still empty. Called when the
-    /// toggle goes on: an immediate-mode front end does it while
-    /// drawing, a retained-mode one from the checkbox's handler.
-    pub fn fill_advanced(&mut self) {
-        if self.advanced_toml.is_empty() {
-            self.advanced_toml = self.preview_toml();
-        }
-    }
-
     /// Create or save the machine, closing the form on success. `None`
     /// leaves it open with `error` saying why.
     pub fn submit(&mut self, library_dir: &Path) -> Option<PathBuf> {
@@ -1261,23 +1229,11 @@ impl Form {
         }
         if let Some(edit) = &self.editing {
             let bundle_path = edit.bundle_path.clone();
-            if self.advanced {
-                // Validate before writing: a bad hand-edit shouldn't
-                // silently corrupt the library with an unreadable bundle.
-                toml::from_str::<Machine>(&self.advanced_toml).map_err(std::io::Error::other)?;
-                std::fs::write(&bundle_path, &self.advanced_toml)?;
-                return Ok(bundle_path);
-            }
             self.build_machine(PathBuf::from(&self.disk_path)).save(&bundle_path)?;
             return Ok(bundle_path);
         }
         let dir = library::reserve_dir(library_dir, &self.name)?;
         let bundle_path = dir.join(library::BUNDLE_FILE);
-        if self.advanced {
-            toml::from_str::<Machine>(&self.advanced_toml).map_err(std::io::Error::other)?;
-            std::fs::write(&bundle_path, &self.advanced_toml)?;
-            return Ok(bundle_path);
-        }
         let disk_path = if self.existing_disk {
             PathBuf::from(&self.disk_path)
         } else {

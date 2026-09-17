@@ -1078,7 +1078,7 @@ pub struct Machine {
     #[serde(default)]
     pub shader_profile: Option<String>,
     /// Raw shader preset override, bypassing the profile manager (doc 07
-    /// settings taxonomy: the advanced/hand-written-bundle escape hatch).
+    /// settings taxonomy: the hand-written-bundle escape hatch).
     /// `None` uses the app default.
     #[serde(default)]
     pub shader: Option<PathBuf>,

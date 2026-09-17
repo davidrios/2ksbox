@@ -12,8 +12,7 @@
 //!   of `main.rs` for the trap that closes.
 //! * **`pull`** copies the plain, two-way-bound text fields back into
 //!   the form. A QML `TextField` writes its property and nothing else,
-//!   so the form is caught up before anything reads it (`submit`,
-//!   `fill_advanced`). The fields with a *consequence* never go this
+//!   so the form is caught up before anything reads it (`submit`). The fields with a *consequence* never go this
 //!   way: they have no writable property at all, only `choose_*`, which
 //!   is what makes the "…_chosen" rule impossible to forget in a new
 //!   widget.
@@ -133,8 +132,6 @@ pub mod ffi {
         #[qproperty(QString, boot_note)]
         /// The chosen shader profile's id, or "" for the app default.
         #[qproperty(QString, shader_profile)]
-        #[qproperty(bool, advanced)]
-        #[qproperty(QString, advanced_toml)]
         #[qproperty(QString, error)]
         type Wizard = super::WizardRust;
 
@@ -249,11 +246,6 @@ pub mod ffi {
         /// hard disk), so this is the one text field with a consequence.
         #[qinvokable]
         fn set_floppy_path(self: Pin<&mut Wizard>, floppy: &QString);
-
-        /// Fill the advanced box with the TOML this form currently
-        /// describes (or, when editing, the file's exact current text).
-        #[qinvokable]
-        fn fill_advanced(self: Pin<&mut Wizard>);
 
         /// Create or save the machine. Returns true on success, having
         /// closed the form; on failure `error` says why and it stays open.
@@ -388,8 +380,6 @@ pub struct WizardRust {
     boot: i32,
     boot_note: QString,
     shader_profile: QString,
-    advanced: bool,
-    advanced_toml: QString,
     error: QString,
 
     /// The form. Everything above is a projection of it.
@@ -552,10 +542,6 @@ impl ffi::Wizard {
         self.edit(|form| form.floppy = floppy);
     }
 
-    fn fill_advanced(self: Pin<&mut Self>) {
-        self.edit(Form::fill_advanced);
-    }
-
     fn submit(mut self: Pin<&mut Self>) -> bool {
         self.as_mut().pull();
         let library_dir = library::default_dir();
@@ -627,25 +613,22 @@ impl ffi::Wizard {
     /// `TextField` writes its property and nothing else, so this catches
     /// the form up before anything reads it.
     fn pull(mut self: Pin<&mut Self>) {
-        let (name, disk_path, install_media, floppy, advanced_toml, shader_profile) = (
+        let (name, disk_path, install_media, floppy, shader_profile) = (
             self.name.to_string(),
             self.disk_path.to_string(),
             self.install_media.to_string(),
             self.floppy.to_string(),
-            self.advanced_toml.to_string(),
             self.shader_profile.to_string(),
         );
-        let (existing_disk, disk_size_gb, advanced) = (self.existing_disk, self.disk_size_gb, self.advanced);
+        let (existing_disk, disk_size_gb) = (self.existing_disk, self.disk_size_gb);
         let form = &mut self.as_mut().rust_mut().form;
         form.name = name;
         form.disk_path = disk_path;
         form.install_media = install_media;
         form.floppy = floppy;
-        form.advanced_toml = advanced_toml;
         form.shader_profile = Some(shader_profile).filter(|p| !p.is_empty());
         form.existing_disk = existing_disk;
         form.disk_size_gb = disk_size_gb.max(1) as u32;
-        form.advanced = advanced;
     }
 
     /// The form, onto the properties — every one through its own setter,
@@ -689,7 +672,7 @@ impl ffi::Wizard {
         let (pad, pad_applies, pad_labels, pad_is_default, pad_note, pad_warning);
         let (optimizations_mask, optimizations_summary, optimizations_note, optimizations_are_default, optimizations_all_off, optimizations_all_on);
         let (existing_disk, disk_path, disk_size_gb, install_media, floppy, boot, boot_note);
-        let (shader_profile, advanced, advanced_toml, error);
+        let (shader_profile, error);
         {
             let f = &self.rust().form;
             let range = f.ram_range();
@@ -766,8 +749,6 @@ impl ffi::Wizard {
             boot = index_of(&Boot::ALL, f.boot);
             boot_note = qs_opt(f.boot_note());
             shader_profile = f.shader_profile.as_deref().map(qs).unwrap_or_default();
-            advanced = f.advanced;
-            advanced_toml = qs(&f.advanced_toml);
             error = qs_opt(f.error.as_deref());
         }
         self.as_mut().set_editing(editing);
@@ -839,8 +820,6 @@ impl ffi::Wizard {
         self.as_mut().set_boot(boot);
         self.as_mut().set_boot_note(boot_note);
         self.as_mut().set_shader_profile(shader_profile);
-        self.as_mut().set_advanced(advanced);
-        self.as_mut().set_advanced_toml(advanced_toml);
         self.as_mut().set_error(error);
         self.as_mut().set_open(open);
     }

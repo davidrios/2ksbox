@@ -1081,7 +1081,7 @@ pub unsafe extern "C" fn lc_wizard_mt32_roms_applies(w: *const LcWizard) -> bool
 
 /// The plain text and flag fields, by name: "name", "disk_path",
 /// "install_media", "floppy", "soundfont", "mt32_roms",
-/// "advanced_toml", "shader_profile". One
+/// "shader_profile". One
 /// pair of accessors rather than a dozen, because these have no
 /// behaviour behind them — a field with a consequence has a `choose_*`
 /// above instead, and there is no way to reach one from here.
@@ -1098,7 +1098,6 @@ pub unsafe extern "C" fn lc_wizard_get(w: *const LcWizard, field: *const c_char)
         "floppy" => out(f.floppy.clone()),
         "soundfont" => out(f.soundfont.clone()),
         "mt32_roms" => out(f.mt32_roms.clone()),
-        "advanced_toml" => out(f.advanced_toml.clone()),
         "shader_profile" => out(f.shader_profile.clone().unwrap_or_default()),
         _ => std::ptr::null_mut(),
     }
@@ -1117,15 +1116,13 @@ pub unsafe extern "C" fn lc_wizard_set(w: *mut LcWizard, field: *const c_char, v
         "floppy" => f.floppy = value,
         "soundfont" => f.soundfont = value,
         "mt32_roms" => f.mt32_roms = value,
-        "advanced_toml" => f.advanced_toml = value,
         "shader_profile" => f.shader_profile = Some(value).filter(|v| !v.is_empty()),
         _ => return false,
     }
     true
 }
 
-/// The three booleans and the disk size, by name: "existing_disk",
-/// "advanced" for the flags, "disk_size_gb" for the number.
+/// The one boolean, by name: "existing_disk".
 ///
 /// # Safety
 /// `w` must be a live handle; `field` NUL-terminated.
@@ -1134,7 +1131,6 @@ pub unsafe extern "C" fn lc_wizard_get_flag(w: *const LcWizard, field: *const c_
     let f = &handle!(w, false).0;
     match unsafe { borrow(field) } {
         "existing_disk" => f.existing_disk,
-        "advanced" => f.advanced,
         _ => false,
     }
 }
@@ -1146,7 +1142,6 @@ pub unsafe extern "C" fn lc_wizard_set_flag(w: *mut LcWizard, field: *const c_ch
     let f = &mut handle_mut!(w, false).0;
     match unsafe { borrow(field) } {
         "existing_disk" => f.existing_disk = value,
-        "advanced" => f.advanced = value,
         _ => return false,
     }
     true
@@ -1164,16 +1159,6 @@ pub unsafe extern "C" fn lc_wizard_disk_size_gb(w: *const LcWizard) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn lc_wizard_set_disk_size_gb(w: *mut LcWizard, gb: u32) {
     handle_mut!(w, ()).0.disk_size_gb = gb.max(1);
-}
-
-/// Fill the advanced box if it is still empty: the file's exact current
-/// text when editing, the TOML this form describes when creating.
-///
-/// # Safety
-/// `w` must be a live handle.
-#[no_mangle]
-pub unsafe extern "C" fn lc_wizard_fill_advanced(w: *mut LcWizard) {
-    handle_mut!(w, ()).0.fill_advanced();
 }
 
 /// Create or save the machine into `library_dir` (NULL or "" for the

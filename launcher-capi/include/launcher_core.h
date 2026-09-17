@@ -250,9 +250,8 @@ bool lc_wizard_mt32_roms_applies(const LcWizard *w);
 
 /* The plain fields, by name — one pair of accessors rather than a dozen,
  * because there is no behaviour behind them.
- *   text:  "name" "disk_path" "install_media" "floppy" "advanced_toml"
- *          "shader_profile"
- *   flags: "existing_disk" "advanced"                                  */
+ *   text:  "name" "disk_path" "install_media" "floppy" "shader_profile"
+ *   flag:  "existing_disk"                                             */
 char *lc_wizard_get(const LcWizard *w, const char *field);
 bool lc_wizard_set(LcWizard *w, const char *field, const char *value);
 bool lc_wizard_get_flag(const LcWizard *w, const char *field);
@@ -260,9 +259,6 @@ bool lc_wizard_set_flag(LcWizard *w, const char *field, bool value);
 uint32_t lc_wizard_disk_size_gb(const LcWizard *w);
 void lc_wizard_set_disk_size_gb(LcWizard *w, uint32_t gb);
 
-/* Fill the advanced box if empty: the file's exact text when editing,
- * the TOML this form describes when creating. */
-void lc_wizard_fill_advanced(LcWizard *w);
 /* library_dir may be NULL or "" for the user's own. False leaves the
  * form open with lc_wizard_error saying why. */
 bool lc_wizard_submit(LcWizard *w, const char *library_dir);
