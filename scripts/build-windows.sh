@@ -59,9 +59,11 @@ esac
 
 # Everything the native build needs from MSYS2, in one place: the cross
 # image's list (packaging/windows/Dockerfile) under MSYS2's names, plus gdb,
-# which is what building on the PC is for. Rust is not among them: it is
+# which is what building on the PC is for, and diffutils, which a bare MSYS2
+# lacks: QEMU's meson requires `diff` (tests/qapi-schema) and prepare-qemu.sh
+# keeps meson files' mtimes with `cmp`. Rust is not among them: it is
 # rustup's own installer, with the GNU host (docs/build-windows.md).
-MSYS2_PACKAGES=(git rsync
+MSYS2_PACKAGES=(git rsync diffutils
   mingw-w64-x86_64-{gcc,clang,lld,gdb,ninja,meson,pkgconf,python,python-distlib}
   mingw-w64-x86_64-{glib2,pixman,zlib,libepoxy,libslirp}
   mingw-w64-x86_64-{glslang,qt6-base,qt6-declarative})
@@ -108,7 +110,7 @@ if [ -n "$NATIVE" ]; then
     exit 1
   fi
   missing=()
-  for t in git rsync cygpath gcc g++ clang ld.lld ninja meson pkg-config windres glslangValidator cargo rustc; do
+  for t in git rsync diff cmp cygpath gcc g++ clang ld.lld ninja meson pkg-config windres glslangValidator cargo rustc; do
     command -v "$t" >/dev/null || missing+=("$t")
   done
   want qt && ! command -v qmake6 >/dev/null && missing+=(qmake6)
