@@ -485,7 +485,9 @@ images and a GPU, and now a Windows host too. The Windows evidence is
 0b. **The native build's first run on the PC** (2026-09-17: written and
    checked only so far as Linux can — the cross stages still build
    through the edited scripts, the Python check accepts 3.14 only with
-   `distlib`, and QEMU configures and generates on 3.14). Expect the first
+   `distlib`, and QEMU configures and generates on 3.14). The first run's
+   first failure was mkvenv's `file://C:/…` wheels URL under Python 3.14
+   on Windows (patch 69). Expect the next
    failures in the places Linux could not reach: the `\\?\` prefix in
    `qemu-embed/build.rs`, meson's `CC_LD=lld` for clang, cxx-qt against
    MSYS2's Qt 6.11, and DXVK's meson without a cross file.

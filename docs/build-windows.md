@@ -348,10 +348,13 @@ What is different from the cross build, and why:
 - **Python is MSYS2's own, 3.14**, with `python-distlib`. MSYS2 has no
   older Python, and QEMU's configure needs a MinGW interpreter: a
   python.org one makes a venv with `Scripts\` where configure looks for
-  `bin/`. What broke QEMU 9.2 on 3.14 was only the `distlib` that pip ≥ 26
+  `bin/`. What broke QEMU 9.2 on 3.14 was the `distlib` that pip ≥ 26
   no longer vendors whole; with the real one, configure and the build's
   generators pass (checked on Linux, 2026-09-17), and
-  `configure-qemu.sh` accepts 3.14 only with it.
+  `configure-qemu.sh` accepts 3.14 only with it. On Windows 3.14 also
+  broke the URL mkvenv gives pip for QEMU's bundled wheels
+  (`file://C:/…`, a host named `C:`), which patch 69 fixes — the first
+  failure of the first native run.
 - **Optional libraries are pinned off.** MSYS2 with Qt installed has
   zstd, gnutls and others that the cross image lacks, and QEMU links
   whatever it detects, so native `configure-qemu.sh` disables each one
