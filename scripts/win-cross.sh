@@ -49,7 +49,7 @@ opts=(--rm -v "$ROOT:$ROOT" -w "$ROOT" -e "HOME=$ROOT/build/win/home")
 if [ -t 0 ] && [ -t 1 ]; then opts+=(-it); fi
 # Pass through the knobs the build scripts read, so `WIN_STAGES=qemu
 # scripts/build-windows.sh` works from outside the container too.
-for v in JOBS WIN_STAGES WIN_SKIP_TEST QEMU_PYTHON CARGO_BUILD_JOBS QEMU_EMBED_LIB_DIR; do
+for v in JOBS WIN_STAGES WIN_SKIP_TEST QEMU_PYTHON CARGO_BUILD_JOBS QEMU_EMBED_LIB_DIR WIN_QEMU_BUILD; do
   [ -n "${!v:-}" ] && opts+=(-e "$v=${!v}")
 done
 

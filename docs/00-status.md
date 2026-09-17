@@ -205,10 +205,18 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
      and 1.25x on x87 helpers**, and mingw GCC 15 has only *emulated* TLS
      — every `__thread` access (`current_cpu`, the BQL flag, RCU…) is a
      call, 10.5 ns against 1 ns — while Moto Racer's Glide reads the
-     Voodoo's status register 2.8 million times a second. A clang
-     (llvm-mingw) build of QEMU has native TLS; that toolchain change is
-     the user's call. Placing the JIT buffer near the helpers on Windows
-     was tried and measured no difference, so it was dropped.
+     Voodoo's status register 2.8 million times a second. **A clang build
+     was then tried** (m11 track doc, "A clang-built QEMU"): native TLS
+     takes the port I/O from 206 to 146 ns (Linux 75), memory and generated
+     code unchanged, x87 helpers unchanged (1.31x) — about 60 ns of an MMIO
+     access, so ~15 % of the vCPU at Moto Racer's rate, and not the whole
+     gap. Shipping it needs QEMU 9.2's `gcc_struct` check replaced by
+     `-mno-ms-bitfields` (upstream's later route) and the plugin link flag
+     dropped, which is a decision, not a quick switch. It also found a real
+     bug: patch 65 divided by a PIT count of 0 before the reset, which
+     GCC's evaluation order happened to skip and clang's did not (fixed).
+     Placing the JIT buffer near the helpers on Windows was tried and
+     measured no difference, so it was dropped.
   7. **`2ksbox-debug.bat` did not collect `player.log`.** It does now, the
      lines this run added.
 

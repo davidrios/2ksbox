@@ -109,3 +109,8 @@ ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
 # or a meson subproject. Last, so the layers above stay cached.
 RUN dnf install -y --setopt=install_weak_deps=False glslang \
     && dnf clean all -y
+
+# clang + lld, for a QEMU built with native TLS (mingw GCC 15 has only
+# emulated TLS: every __thread access is a call, docs/tracks/m11-windows-host.md).
+RUN dnf install -y --setopt=install_weak_deps=False clang lld \
+    && dnf clean all -y

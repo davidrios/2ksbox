@@ -505,6 +505,36 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    actually happens. The shape to aim for is `xp-driver-test.sh`'s: drive
    the machine over QMP, pull the artefacts out, diff a frame.
 
+## A clang-built QEMU (2026-09-17, an experiment, not shipped)
+
+mingw GCC 15 has only emulated TLS: every `__thread` access is a call to
+`__emutls_get_address` (10.5 ns against 1 ns for a global, under wine), and
+QEMU touches `current_cpu`, the BQL flag and RCU state on every device
+access. clang for `x86_64-w64-mingw32` emits native TLS (`%gs:0x58`,
+`_tls_index`). The recipe (clang and lld are in the cross image; the tree
+edits are temporary and `prepare-qemu.sh` restores them):
+
+```sh
+# in qemu/: meson.build's gcc_struct check -> qemu_common_flags += '-mno-ms-bitfields'
+#           include/qemu/compiler.h: QEMU_PACKED without gcc_struct
+# build/win/clang/cc = clang --target=x86_64-w64-mingw32 -fuse-ld=lld "$@" (cxx likewise)
+WIN_QEMU_BUILD=$PWD/build/win/qemu-clang scripts/win-cross.sh scripts/configure-qemu.sh \
+  --windows --cc=$PWD/build/win/clang/cc --cxx=$PWD/build/win/clang/cxx --host-cc=gcc
+sed -i 's| -Xlinker --dynamic-list=[^ ]*qemu-plugin.symbols||g' build/win/qemu-clang/build.ninja
+scripts/win-cross.sh ninja -C build/win/qemu-clang qemu-system-i386.exe
+```
+
+Measured under wine against the Linux build, one DOS kernel per path, ns
+per pass (Linux / GCC / clang): memory blit 13.3 / 13.4 / 13.4, generated
+loop 16.9 / 16.9 / 16.9, x87 at 24-bit precision 28.7 / 29.1 / 29.5, x87
+helpers at 64-bit 73.5 / 93.1 / 96.5, **port I/O 74.6 / 206.0 / 146.3**. So
+native TLS is worth ~60 ns per device access, a third of the gap there;
+what remains is wine's or the Windows ABI's and cannot be told apart
+without the PC. The run also found patch 65's division by a PIT count of 0
+before the reset, which the GCC build never evaluated. Shipping clang
+means the `-mno-ms-bitfields` change for real (upstream took it later) and
+the embed DLL built the same way — the user's call.
+
 ## Gotchas found here
 
 - **Fedora has no `mingw64-libslirp`**, and QEMU's `-netdev user` is a

@@ -133,7 +133,7 @@ diff --git a/hw/timer/i8254.c b/hw/timer/i8254.c
      qemu_set_irq(s->irq, irq_level);
  #ifdef DEBUG_PIT
      printf("irq_level=%d next_delay=%f\n",
-@@ -306,6 +314,56 @@
+@@ -306,6 +314,57 @@
          timer_del(s->irq_timer);
  }
  
@@ -163,8 +163,9 @@ diff --git a/hw/timer/i8254.c b/hw/timer/i8254.c
 + */
 +static void pit_count_merged_edge(PITChannelState *s)
 +{
-+    uint32_t hz = PIT_FREQ / (uint32_t)s->count;
-+    uint32_t cap = MAX(8, hz / 4);
++    /* a count of 0 is 65536, and before the reset nothing has loaded one */
++    uint32_t count = s->count > 0 ? (uint32_t)s->count : 0x10000;
++    uint32_t cap = MAX(8, PIT_FREQ / count / 4);
 +
 +    if (isa_pic && (isa_pic->irr & 1) && !(isa_pic->imr & 1) && s->owed < cap) {
 +        s->owed++;
@@ -190,7 +191,7 @@ diff --git a/hw/timer/i8254.c b/hw/timer/i8254.c
  static void pit_irq_timer(void *opaque)
  {
      PITChannelState *s = opaque;
-@@ -379,6 +437,11 @@
+@@ -379,6 +438,11 @@
  
      qdev_init_gpio_in(dev, pit_irq_control, 1);
  

@@ -28,7 +28,7 @@ WINDOWS=""
 if [ "${1:-}" = "--windows" ]; then WINDOWS=1; shift; fi
 
 if [ -n "$WINDOWS" ]; then
-  BUILD="$ROOT/build/win/qemu"
+  BUILD="${WIN_QEMU_BUILD:-$ROOT/build/win/qemu}"
   CARGO_TARGET=x86_64-pc-windows-gnu
 else
   BUILD="$ROOT/build/qemu"
