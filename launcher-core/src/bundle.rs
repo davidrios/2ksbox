@@ -122,7 +122,7 @@ impl CpuSpeed {
 
     pub fn label(self) -> &'static str {
         match self {
-            CpuSpeed::Unthrottled => "Unthrottled (as fast as the host emulates)",
+            CpuSpeed::Unthrottled => "Full speed (no throttle)",
             CpuSpeed::Pentium133 => "Pentium 133 (~125 M instructions/s)",
             CpuSpeed::Pentium75 => "Pentium 75 (~62 M)",
             CpuSpeed::Dx266 => "486DX2-66 (~31 M)",
@@ -180,7 +180,7 @@ impl Video {
 
     pub fn label(self) -> &'static str {
         match self {
-            Video::D3dpt => "Our own adapter (d3dpt-vga)",
+            Video::D3dpt => "2ksbox adapter (d3dpt-vga)",
             Video::Std => "Standard VGA (Bochs, VBE 2.0)",
             Video::Cirrus => "Cirrus Logic GD5446",
         }
@@ -321,7 +321,7 @@ impl Pad {
             Pad::None => "No gamepad",
             Pad::Usb => "USB gamepad",
             Pad::Gameport => "Gameport joystick",
-            Pad::Keys => "Gamepad presses keys",
+            Pad::Keys => "Gamepad as keyboard keys",
         }
     }
 
@@ -821,75 +821,56 @@ impl Optimization {
     pub fn note(self) -> &'static str {
         match self {
             Optimization::X87Fast => {
-                "Windows and Direct3D run the x87 unit at a precision the host reproduces exactly, \
-                 so the guest's floating point is executed rather than simulated. Super PI 1M on the \
-                 M1 Air: 9:49 off, 1:57 on. Turn it off if a guest's arithmetic looks wrong."
+                "Runs the guest's x87 maths on the host FPU instead of simulating it. Super PI 1M on an \
+                 M1 Air: 9:49 off, 1:57 on. Turn it off if a program's arithmetic looks wrong."
             }
-            Optimization::SseFast => {
-                "Packed and scalar SSE/SSE2 arithmetic on the host's vector unit instead of a call \
-                 per instruction: 7-12x on packed code, 3-4x on scalar."
-            }
+            Optimization::SseFast => "Runs SSE/SSE2 floating point on the host's vector unit: 3 to 12x faster.",
             Optimization::SimdFast => {
-                "MMX and SSE integer maths, shuffles and packs become host vector instructions: \
-                 2-4x on the pixel loops of an era software renderer."
+                "Runs MMX and SSE integer instructions on the host's vector unit: 2 to 4x on software renderers."
             }
             Optimization::RepFast => {
-                "REP MOVS / STOS copies a page at a time through memcpy instead of one element per \
-                 loop - 30x on the blits an era game fills the screen with."
+                "Copies a page at a time for REP MOVS/STOS instead of one element per loop: about 30x on \
+                 screen blits."
             }
             Optimization::X87Pc64As53 => {
-                "Code that sets the x87 unit to its full 64-bit precision runs on an exact path of \
-                 its own, integer arithmetic on the 64-bit mantissas. This runs it at 53 bits \
-                 instead, on the host's floating point, which is faster still. Results then differ \
-                 from a real FPU in their last bits; a game rarely notices, a benchmark's numbers \
-                 may. 3DMark2001 SE's Lobby: 44 fps exact, 50 with this."
+                "Runs code that asks for 64-bit x87 precision at 53 bits on the host FPU. Faster, but the \
+                 last bits can differ from a real FPU: games rarely notice, benchmarks may. Off by default."
             }
             Optimization::SmcSameValue => {
-                "Self-modifying code usually writes back the bytes already there, and rewriting a \
-                 value with itself cannot invalidate anything. Moto Racer's race: 7.3 to 21.7 fps."
+                "Skips retranslation when self-modifying code writes back the bytes already there. \
+                 Moto Racer: 7 to 22 fps."
             }
             Optimization::SoftImm => {
-                "A game that patches the operands of its own inner loop -- every software renderer \
-                 of the era does -- has them read from its code as it runs, so the patch costs \
-                 nothing instead of a retranslation. Moto Racer's race: 41 to 58 fps."
+                "Reads the operands a program patches into its own code at run time instead of \
+                 retranslating. Moto Racer: 41 to 58 fps."
             }
             Optimization::InlineLookup => {
-                "Every return and indirect jump finds its next block in generated code rather than \
-                 through a helper call: 7-Zip in the guest, +7-12%."
+                "Finds the next code block after a return or indirect jump without leaving generated \
+                 code: 7 to 12% on 7-Zip."
             }
             Optimization::TbInvalidateFast => {
-                "A guest write into a page that holds code used to walk every block on it. Each page \
-                 now remembers where its code actually lies, so a write outside that range returns at \
-                 once. Found on a 1997 game whose data pages carried one stale block and were written \
-                 tens of thousands of times a second."
+                "Remembers where the code on a page really is, so a write to the data around it returns \
+                 at once instead of walking every block."
             }
             Optimization::TlbFloor => {
-                "The emulator's address-translation cache is resized at every flush, and a Windows \
-                 guest flushes at every context switch - which shrank it to 64 entries, where two live \
-                 pages collide constantly. It is held at 4096 instead."
+                "Keeps the address-translation cache at 4096 entries. Windows' flushes shrank it to 64, \
+                 where pages collide constantly."
             }
             Optimization::TlsHotPaths => {
-                "The bookkeeping that tracks which guest memory has changed took a lock per access; \
-                 it now runs under the one the emulator already holds for the whole run. On macOS each \
-                 of those was a call into the dynamic linker: 8% of a game's emulation thread."
+                "Takes the memory-tracking locks once per run instead of once per access. Up to 8% of a \
+                 game's emulation thread on macOS."
             }
             Optimization::JumpCacheKeep => {
-                "The cache that finds the next block after a return or an indirect jump was emptied \
-                 at every context switch, and Windows 98 makes thousands a second: every entry is \
-                 kept and checked against the page it came from instead. 3DMark 99's first-person \
-                 test on the Ryzen: 18.2 to 19.0 fps."
+                "Keeps the jump cache across the guest's context switches, checking each entry against \
+                 its page instead of emptying it."
             }
             Optimization::EobChain => {
-                "A block that ended after a segment-register load, an sti, a popf or a control-word \
-                 change used to return to the emulator's main loop every time; it now finds the next \
-                 block directly unless an interrupt is actually pending. Windows 98's ring-0 entry \
-                 alone was five such round trips per system call."
+                "Chains straight to the next block after a segment load, sti or popf when no interrupt \
+                 is pending."
             }
             Optimization::TlbRetire => {
-                "Windows 98 reloads CR3 to flush its TLB after every page it maps or unmaps, thousands \
-                 of times a second; the emulator used to throw its whole address cache away and walk \
-                 the page tables again for every page. The flushed cache is kept, and an entry comes \
-                 back once the page-table entries it was computed from are checked unchanged."
+                "Keeps address translations across the guest's own TLB flushes, rechecking the page \
+                 tables they came from."
             }
         }
     }

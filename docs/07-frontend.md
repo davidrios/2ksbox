@@ -619,7 +619,11 @@ and the line is drawn deliberately far into what usually counts as UI:
   both its button labels are the model's and not a QML string — plus
   `browse` for the one
   file-dialog decision that is not a dialog and `cli` for every debug
-  verb that needs no toolkit.
+  verb that needs no toolkit. The sentences themselves are short and
+  plain (rewritten 2026-09-16, user request): one or two per note, in
+  the words a user would use, with no dates, doc numbers, patch names or
+  benchmark stories in a window — the *why* stays in the code comments
+  and the docs, the window says what the setting does and what to do.
 
 That last group is the part worth arguing about, and the argument is
 settled by what happened without it. When the two builds each held their

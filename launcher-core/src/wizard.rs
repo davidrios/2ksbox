@@ -410,11 +410,10 @@ impl Form {
     /// an OS onto it.
     pub fn family_note(&self) -> Option<&'static str> {
         (self.family == Family::Other).then_some(
-            "For an era OS that isn't Windows or DOS: BeOS, a period Linux, OS/2. \
-             Standard hardware only — a VESA-capable VGA, an RTL8139 and an ES1370 \
-             sound card, all of which these systems have drivers for in the box.\n\
-             No 3D: our display driver and the Direct3D and Glide pass-through are \
-             Windows components, so this family is 2D, the CRT shaders and the CD-ROM drive.",
+            "For an era OS other than Windows or DOS: BeOS, a period Linux, OS/2. \
+             Standard hardware these systems have drivers for: a VESA VGA, an RTL8139 network card \
+             and an ES1370 sound card.\n\
+             No 3D: the display driver and the Direct3D and Glide pass-through are Windows-only.",
         )
     }
 
@@ -448,13 +447,13 @@ impl Form {
     pub fn ram_note(&self) -> Option<&'static str> {
         match self.family {
             Family::Win98 if self.ram_mb >= *self.ram_range().end() => {
-                Some("512 MB is Win98's ceiling (doc 06): more and it does not boot.")
+                Some("512 MB is the most Windows 98 can boot with.")
             }
             // The range cannot enforce this one — it depends on which OS
             // is going in, and the whole point of the family is that we
             // don't know. A period Linux is happy with 3 GB.
             Family::Other if self.ram_mb > 1024 => {
-                Some("Above 1 GB, BeOS R5 does not boot; most other systems of the era are fine.")
+                Some("BeOS R5 won't boot with more than 1 GB. Most other systems of the era are fine.")
             }
             _ => None,
         }
@@ -482,11 +481,11 @@ impl Form {
     /// is created rather than after it behaves oddly.
     pub fn cpu_speed_notes(&self) -> &'static [&'static str] {
         if self.cpu_speed == CpuSpeed::Unthrottled {
-            &["Full speed. Right for Windows; most DOS software of the 486 era needs a slower one."]
+            &["Full speed. Right for Windows. Most DOS games of the 486 era need a slower processor."]
         } else {
             &[
-                "DOS-era software times itself against the CPU it finds, so this is what makes a game playable.",
-                "A chosen processor means the machine is emulated: QEMU cannot slow a CPU down under KVM.",
+                "DOS-era software runs as fast as the CPU lets it, so a period processor keeps a game playable.",
+                "A chosen processor means the machine is emulated: KVM can't slow a CPU down.",
             ]
         }
     }
@@ -521,15 +520,15 @@ impl Form {
         // both wrong and unactionable.
         let hw = player::hw_accel_label().unwrap_or("Hardware acceleration");
         let mut text = match (self.accel, self.have_kvm) {
-            (Accel::Auto, true) => format!("{hw} is available on this host and will be used."),
-            (Accel::Auto, false) => format!("No {hw} on this host: this machine will be emulated."),
-            (Accel::Kvm, true) => format!("{hw} is available on this host."),
-            (Accel::Kvm, false) => format!("No {hw} on this host: this machine will refuse to start."),
-            (Accel::Tcg, _) => "Emulated: the era-CPU behaviour everything here is tuned for.".to_string(),
+            (Accel::Auto, true) => format!("{hw} is available and will be used."),
+            (Accel::Auto, false) => format!("No {hw} on this host, so the machine will be emulated."),
+            (Accel::Kvm, true) => format!("{hw} is available."),
+            (Accel::Kvm, false) => format!("No {hw} on this host. This machine won't start."),
+            (Accel::Tcg, _) => "Emulated. This is what everything here is tuned for.".to_string(),
         };
         if self.family == Family::Win98 && self.accel != Accel::Tcg && self.have_kvm {
             text.push('\n');
-            text.push_str(&format!("Win98 runs at host speed under {hw}, which its own fast-CPU bugs dislike."));
+            text.push_str(&format!("Under {hw} Windows 98 runs at full host speed, which triggers its fast-CPU bugs."));
         }
         AccelNote { text, warning: matches!((self.accel, self.have_kvm), (Accel::Kvm, false)) }
     }
@@ -579,11 +578,11 @@ impl Form {
     pub fn network_notes(&self) -> &'static [&'static str] {
         if self.network {
             &[
-                "Outbound only, through the host (user-mode NAT): nothing on the network can reach the guest.",
-                "These are unpatched systems — don't browse the web on one.",
+                "Outbound only, through the host (NAT). Nothing on the network can reach the guest.",
+                "These systems haven't had security updates in twenty years. Don't browse the web on them.",
             ]
         } else {
-            &["No network adapter at all: the guest won't see a card or ask for its driver."]
+            &["No network adapter. The guest won't see a card or ask for a driver."]
         }
     }
 
@@ -613,11 +612,11 @@ impl Form {
     pub fn voodoo2_notes(&self) -> &'static [&'static str] {
         if self.voodoo2 {
             &[
-                "A 3dfx Voodoo 2 on the PCI bus, beside the display adapter: the guest needs 3dfx's own Voodoo2 driver, and a Glide game then draws on the emulated chip — software rendering on the host's cores, at the chip's own 640×480 to 800×600.",
-                "The Glide pass-through stays: a game uses the chip or the wrapper by which glide2x.dll it loads (3dfx's in the system folder, the guest tools' next to the game).",
+                "Adds a 3dfx Voodoo 2 next to the display adapter. The guest needs 3dfx's own Voodoo2 driver. Glide games then render on the emulated chip, in software on the host CPU, at 640×480 to 800×600.",
+                "The Glide pass-through still works too. A game uses whichever glide2x.dll it loads: 3dfx's from the system folder, or the guest tools' next to the game.",
             ]
         } else {
-            &["No Voodoo 2. Glide games use the pass-through wrapper from the guest tools, which draws on the host GPU."]
+            &["No Voodoo 2. Glide games use the pass-through wrapper from the guest tools, rendered on the host GPU."]
         }
     }
 
@@ -638,19 +637,19 @@ impl Form {
     pub fn seamless_mouse_notes(&self) -> &'static [&'static str] {
         match (self.seamless_mouse, self.family) {
             (true, Family::Dos) => &[
-                "The host pointer moves straight into the guest, with no grab and no hotkey.",
-                "DOS mouse drivers read the PS/2 mouse: on this family the tablet leaves the guest with no pointer at all.",
+                "The host pointer moves straight into the guest. No grab, no hotkey.",
+                "DOS mouse drivers read the PS/2 mouse, so with the tablet a DOS guest has no pointer at all.",
             ],
             (true, Family::Other) => &[
-                "The host pointer moves straight into the guest, with no grab and no hotkey: the guest gets a USB tablet, which reports where the pointer is rather than how far it moved.",
-                "Whether it works is the guest's affair here — an absolute pointer needs its USB stack and its windowing system to agree, which BeOS and an era XFree86 do not do unconfigured. Turn it off if the cursor doesn't move.",
+                "The host pointer moves straight into the guest. No grab, no hotkey. The guest gets a USB tablet, which reports absolute positions.",
+                "Whether it works depends on the guest: BeOS and an old XFree86 need setting up for an absolute pointer. Turn this off if the cursor doesn't move.",
             ],
             (true, _) => &[
-                "The host pointer moves straight into the guest, with no grab and no hotkey: the guest gets a USB tablet, which reports where the pointer is rather than how far it moved.",
+                "The host pointer moves straight into the guest. No grab, no hotkey. The guest gets a USB tablet, which reports absolute positions.",
             ],
             (false, _) => &[
-                "The PS/2 mouse alone: click the window to take the pointer, Ctrl+Alt+G to give it back.",
-                "That is the relative movement mouselook needs — a game whose view sticks instead of turning wants this off.",
+                "PS/2 mouse only. Click the window to take the pointer, Ctrl+Alt+G to release it.",
+                "Mouselook needs this. If a game's view sticks instead of turning, turn seamless mouse off.",
             ],
         }
     }
@@ -712,15 +711,14 @@ impl Form {
     /// emulator in the path to have a fast path.
     pub fn optimizations_note(&self) -> &'static str {
         if self.will_use_kvm() {
-            "This machine runs on KVM, where none of these apply: they are fast paths in the emulator. \
+            "This machine runs on KVM, where these have no effect: they are speed-ups in the emulator. \
              Choose Emulation above (or a processor, which forces it) to use them."
         } else if self.optimizations.all_off() {
-            "Every one of them is off: this guest is running on the emulator with none of our own work in \
-             its path, which is the control to compare a misbehaving one against. Expect it to be slow."
+            "All off: the plain emulator with none of our speed-ups. Use this as the control when a guest \
+             misbehaves. Expect it to be slow."
         } else {
-            "Our own additions to QEMU, each measured (patches/qemu/README.md). Turn one off to find out \
-             whether it is what makes a guest compute the wrong number or stop drawing, or turn them all \
-             off at once for the control run and put back the ones that are not to blame."
+            "Our own speed-ups to QEMU's emulator. If a guest computes wrong numbers or stops drawing, \
+             turn these off one at a time, or all at once, to find out whether one of them is the cause."
         }
     }
 
@@ -788,28 +786,28 @@ impl Form {
     pub fn video_notes(&self) -> &'static [&'static str] {
         match (self.video, self.family) {
             (Video::D3dpt, _) => &[
-                "Our own adapter and display driver: the mode table, the desktop straight from video memory, the page flips that pace a game, and Direct3D through the driver itself.",
-                "It needs the driver installed from the guest-tools ISO. Until it is, the guest comes up on the plain VGA the same device also is.",
+                "2ksbox's own display adapter and driver: the full mode table, page flips that pace games, and Direct3D through the driver.",
+                "Needs the driver from the guest-tools ISO. Until it's installed, the guest sees a plain VGA.",
             ],
             (Video::Cirrus, Family::Win98 | Family::Xp) => &[
-                "The Cirrus GD5446, which Windows has a driver for in the box: 2D only, and none of our display path — no mode table, no paced flips, no Direct3D through the driver.",
-                "The right answer for a machine whose driver isn't installed yet, and the A/B for a title that misbehaves on ours.",
+                "A Cirrus Logic GD5446, which Windows has a driver for. 2D only: no paced page flips and no Direct3D through the driver.",
+                "Use it before our driver is installed, or to check whether a game misbehaves on ours.",
             ],
             (Video::Cirrus, Family::Dos) => &[
-                "The Cirrus GD5446 and its period VGA/VESA BIOS, which is what a DOS machine here has always had and where this family starts.",
-                "Nothing is installed either way — a DOS title programs the adapter itself — so the standard VGA is one restart away and back if a game's modes come out wrong on this one.",
+                "A Cirrus Logic GD5446 with its period VGA/VESA BIOS. This is what a DOS machine here always had.",
+                "Nothing to install either way. If a game's modes come out wrong, try the standard VGA.",
             ],
             (Video::Std, Family::Dos) => &[
-                "The Bochs adapter: VBE 2.0 and a linear frame buffer, the later and fuller of the two VESA BIOSes a DOS title can find here.",
-                "Worth trying when a game's high-resolution modes are wrong or missing on the Cirrus. It is not the safer answer, just the other one — some titles know the Cirrus and not this.",
+                "The Bochs adapter: VBE 2.0 with a linear frame buffer, the fuller of the two VESA BIOSes.",
+                "Try it when a game's high-resolution modes are wrong or missing on the Cirrus. Some games know the Cirrus and not this one.",
             ],
             (Video::Cirrus, _) => &[
-                "A chip that really existed, so a guest of the era is likely to have a native driver for it: BeOS R5 and XFree86 both ship one.",
-                "In exchange it is the weaker VESA adapter of the two. Try it when the standard VGA leaves the guest in plain VGA.",
+                "A real chip of the era, so the guest probably has a native driver for it. BeOS R5 and XFree86 both do.",
+                "Its VESA BIOS is the weaker of the two. Try it when the standard VGA leaves the guest in plain VGA.",
             ],
             (Video::Std, _) => &[
-                "The Bochs adapter: VBE 2.0 and a linear frame buffer, which is what a period VESA driver wants and what a modern Linux binds bochs-drm to.",
-                "The safe answer — a guest with no native driver still gets its VESA modes.",
+                "The Bochs adapter: VBE 2.0 with a linear frame buffer. Works with period VESA drivers and with a modern Linux (bochs-drm).",
+                "The safe choice: a guest with no native driver still gets its VESA modes.",
             ],
         }
     }
@@ -882,34 +880,34 @@ impl Form {
     pub fn sound_notes(&self) -> &'static [&'static str] {
         match (self.sound, self.family) {
             (Sound::Sb16, Family::Dos) => &[
-                "The card DOS titles know how to find, and its OPL3: AdLib music works with nothing installed.",
-                "Its line for AUTOEXEC.BAT is BLASTER=A220 I5 D1 H5 P330 T6 — the P330 is what points a game at the MIDI port.",
+                "The card DOS games look for, with an OPL3 for AdLib music. Nothing to install.",
+                "For AUTOEXEC.BAT: BLASTER=A220 I5 D1 H5 P330 T6. P330 is the MIDI port.",
             ],
             (Sound::Sb16, _) => &[
-                "Windows has this driver in the box, and a DOS box inside the guest finds the card it expects.",
-                "It carries the OPL3, so a game that only knows AdLib music has something to play on.",
+                "Windows has the driver built in, and DOS programs inside the guest find the card they expect.",
+                "Includes the OPL3, so games with AdLib-only music still play it.",
             ],
             (Sound::Ac97, Family::Win98) => &[
-                "Better sound than the SB16, but 98 has no driver for it in the box — install ours from the guest tools first.",
-                "No FM chip: a DOS game inside this machine will find no AdLib music. Its MIDI port still works.",
+                "Better sound than the SB16, but Windows 98 has no driver for it. Install ours from the guest tools first.",
+                "No FM chip: DOS games inside this machine get no AdLib music. The MIDI port still works.",
             ],
             (Sound::Ac97, _) => &[
-                "XP's own driver, and the card this family has always had.",
-                "No FM chip — nothing of the era needs one here.",
+                "XP has the driver built in. This is the card XP machines always had.",
+                "No FM chip. Nothing of this era needs one.",
             ],
             (Sound::Es1370, _) => &[
-                "The PCI card of the period BeOS R5 and a period Linux both drive with a driver they already have.",
+                "A PCI card that BeOS R5 and a period Linux both have drivers for.",
             ],
             (Sound::Gus, _) => &[
-                "A wavetable card: its music is its own, and the games written for one sound better on it than on anything else of the era.",
-                "The guest needs Gravis's own drivers and its ULTRASND line before it makes any sound at all.",
+                "A wavetable card. Games written for it sound better on it than on anything else.",
+                "The guest needs Gravis's own drivers and the ULTRASND line before it makes any sound.",
                 "No FM chip, and no Sound Blaster compatibility except through Gravis's own emulation.",
             ],
             (Sound::Adlib, _) => &[
-                "The 1990 machine: FM music and no digital audio at all, so a game's speech and sound effects will be silent.",
+                "FM music only, no digital audio. Speech and sound effects will be silent.",
             ],
             (Sound::None, _) => &[
-                "No card at all. The machine can still have a MIDI port, which is how music was done before cards could play samples.",
+                "No sound card. The machine can still have a MIDI port for music.",
             ],
         }
     }
@@ -918,20 +916,20 @@ impl Form {
     pub fn music_notes(&self) -> &'static [&'static str] {
         match (self.music, self.family) {
             (Music::Gm, Family::Win98) => &[
-                "An MPU-401 at 0x330 with a General MIDI synthesizer behind it — far better than the FM chip, which is what 98's own MIDI output uses otherwise.",
-                "Windows finds it only after \"MPU-401 Compatible\" is added from Add New Hardware, and picked in Multimedia.",
-                "Leave the bank empty for the one we ship; a bank of your own changes how everything sounds more than any other setting here.",
+                "An MPU-401 at 0x330 with a General MIDI synthesizer behind it. Much better than the FM chip Windows 98 plays MIDI on otherwise.",
+                "Windows finds it after you add \"MPU-401 Compatible\" in Add New Hardware and pick it under Multimedia.",
+                "Leave the bank empty to use the built-in one. Your own SoundFont changes how everything sounds.",
             ],
             (Music::Gm, _) => &[
-                "An MPU-401 at 0x330 with a General MIDI synthesizer behind it: what a game means by \"General MIDI\" or \"MPU-401\" on its setup screen.",
-                "Leave the bank empty for the one we ship; a bank of your own changes how everything sounds more than any other setting here.",
+                "An MPU-401 at 0x330 with a General MIDI synthesizer behind it: what a game's setup calls \"General MIDI\" or \"MPU-401\".",
+                "Leave the bank empty to use the built-in one. Your own SoundFont changes how everything sounds.",
             ],
             (Music::Mt32, _) => &[
-                "What a 1990 title means by \"Roland\": an MT-32 family module, which its music was written for and which sounds nothing like General MIDI.",
-                "It needs your own Roland CM-32L ROM images — nothing of Roland's is shipped with this program — and the machine will not start without them.",
+                "A Roland MT-32 family module, what a 1990 game means by \"Roland\". Sounds nothing like General MIDI.",
+                "Needs your own CM-32L ROM images. Nothing of Roland's is included, and the machine won't start without them.",
             ],
             (Music::None, _) => &[
-                "No MIDI port. A game offering General MIDI or Roland will find nothing and fall back to its FM or digital music.",
+                "No MIDI port. A game set to General MIDI or Roland finds nothing and falls back to FM or digital music.",
             ],
         }
     }
@@ -944,8 +942,8 @@ impl Form {
             None => false,
         };
         changed.then_some(
-            "This machine already exists: changing its sound card makes the guest find new hardware on its next start, \
-             and a game inside it will have to be told about the new card as well.",
+            "This machine already exists. Changing its sound card means the guest finds new hardware on its \
+             next start, and games inside it need to be set up for the new card.",
         )
     }
 
@@ -964,13 +962,12 @@ impl Form {
         }
         Some(match self.family {
             Family::Dos => {
-                "This machine already exists: it will boot on the new adapter with nothing to install, \
-                 but a game that has already run its own setup may have recorded a video mode this one \
-                 does not offer, and want that setup run again."
+                "This machine already exists. It boots on the new adapter with nothing to install, but a game \
+                 that already ran its setup may have saved a video mode this adapter doesn't offer."
             }
             _ => {
-                "This machine already exists: changing its adapter makes the guest find new hardware on its next start, \
-                 and it will want a driver for it before the desktop comes back."
+                "This machine already exists. Changing its adapter means the guest finds new hardware on its \
+                 next start and asks for a driver before the desktop comes back."
             }
         })
     }
@@ -1026,20 +1023,20 @@ impl Form {
     pub fn pad_notes(&self) -> &'static [&'static str] {
         match self.pad {
             Pad::None => &[
-                "A controller plugged into the host does nothing. The machine's keyboard and mouse are unaffected.",
+                "A controller plugged into the host does nothing. Keyboard and mouse are unaffected.",
             ],
             Pad::Usb => &[
-                "A real USB controller on the machine: two analog sticks, an 8-way hat and twelve buttons, which DirectInput and the Game Controllers panel both see.",
-                "Windows XP binds its own HID driver on the first start after the pad is added, with nothing to install. Windows 98 SE binds its own too, but asks for the Windows 98 files the first time — keep the CD in the drive, or point it at the CAB folder on the disk. Confirmed on both, 2026-09-09.",
+                "A USB controller in the machine: two analog sticks, an 8-way hat and twelve buttons, visible to DirectInput and the Game Controllers panel.",
+                "Windows XP installs its own driver on the next start. Windows 98 SE does too, but asks for its install files the first time: keep the CD in the drive, or point it at the CAB folder on the disk.",
             ],
             Pad::Gameport => &[
-                "The joystick port every stick of the era plugged into, at 0x201. Two axes and two buttons per connector, four of each in total — the hardware's own limit, so there is no hat and no second set of buttons. The d-pad steers the first two axes.",
-                "The only kind of controller DOS can use: a DOS game reads the port itself and needs nothing installed — a DOS box under Windows 98 included.",
-                "For a Windows game on 98, pick the USB controller instead: Windows finds that one by itself and games see it through both joystick APIs, where this port is not Plug and Play and wants Add New Hardware and then a calibration pass in the Game Controllers panel first.",
+                "The classic joystick port at 0x201: two axes and two buttons per stick, two sticks. No hat and no extra buttons. The d-pad drives the first two axes.",
+                "The only controller DOS can use. A DOS game reads the port directly with nothing to install, in a DOS box under Windows 98 too.",
+                "For Windows games on 98, pick the USB controller instead: Windows finds it by itself. This port needs Add New Hardware and a calibration pass in Game Controllers first.",
             ],
             Pad::Keys => &[
-                "The pad presses keys: the d-pad and left stick are the arrow keys, and the four face buttons are Ctrl, Alt, Space and Enter — what a DOS or early-Windows action game reads by default.",
-                "It is a mapping, not a controller: no analog steering, and a game that asks DirectInput for a joystick still finds none. The choice for a game that only ever read the keyboard.",
+                "The pad presses keys: the d-pad and left stick are the arrow keys, the four face buttons are Ctrl, Alt, Space and Enter.",
+                "A key mapping, not a controller: no analog steering, and a game that asks DirectInput for a joystick finds none. For games that only read the keyboard.",
             ],
         }
     }
@@ -1074,21 +1071,18 @@ impl Form {
         }
         Some(match self.pad {
             Pad::Usb => {
-                "This machine already exists: adding the USB controller makes the guest find new \
-                 hardware on its next start. Windows installs its own driver for it, but it will \
-                 say so."
+                "This machine already exists. Adding the USB controller means the guest finds new hardware \
+                 on its next start. Windows installs its own driver for it."
             }
             Pad::Gameport => {
-                "This machine already exists, and the joystick port is not Plug and Play: Windows \
-                 will not find it on its own — add \"Standard Game Port\" through Add New Hardware, \
-                 then calibrate the stick in the Game Controllers panel. A DOS guest needs neither, \
-                 and a Windows game on 98 is better served by the USB controller, which needs no \
-                 such step."
+                "This machine already exists, and the joystick port isn't Plug and Play. Add \"Standard Game \
+                 Port\" in Add New Hardware, then calibrate the stick in Game Controllers. DOS needs neither. \
+                 For Windows games on 98 the USB controller is the easier choice."
             }
             // Was a device, now is not.
             _ => {
-                "This machine already exists: taking its controller away is a hardware change too, \
-                 and the guest will notice the device has gone on its next start."
+                "This machine already exists. Removing the controller is a hardware change the guest will \
+                 notice on its next start."
             }
         })
     }
@@ -1097,7 +1091,7 @@ impl Form {
     /// machine told to boot from a floppy it hasn't got.
     pub fn boot_note(&self) -> Option<&'static str> {
         (self.boot == Boot::Floppy && self.floppy.trim().is_empty())
-            .then_some("No floppy image: the machine will fall through to the hard disk.")
+            .then_some("No floppy image, so the machine will boot from the hard disk.")
     }
 }
 
@@ -1216,7 +1210,7 @@ impl Form {
 
     fn write(&self, library_dir: &Path) -> std::io::Result<PathBuf> {
         if self.name.trim().is_empty() {
-            return Err(std::io::Error::other("a name is required"));
+            return Err(std::io::Error::other("A name is required."));
         }
         // The one field with no default and no fallback: an MT-32
         // machine with no ROMs is a machine that fails to start, and
@@ -1224,7 +1218,7 @@ impl Form {
         // (doc 20 §4).
         if self.music == Music::Mt32 && self.mt32_roms.trim().is_empty() {
             return Err(std::io::Error::other(
-                "the Roland MT-32 needs a directory holding your own CM-32L ROM images",
+                "The Roland MT-32 needs a folder with your own CM-32L ROM images.",
             ));
         }
         if let Some(edit) = &self.editing {

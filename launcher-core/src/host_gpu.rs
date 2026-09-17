@@ -76,18 +76,14 @@ impl HostGpu {
     /// does rather than what it lacks.
     pub fn headline(self) -> &'static str {
         match self {
-            HostGpu::Accelerated => "Direct3D pass-through available (Vulkan 1.3 hardware).",
+            HostGpu::Accelerated => "Direct3D pass-through available (Vulkan 1.3 GPU).",
             HostGpu::SoftwareOnly => {
-                "Direct3D pass-through will run on a software Vulkan driver: expect it to be very slow."
+                "Direct3D pass-through runs on a software Vulkan driver here. Expect it to be very slow."
             }
-            HostGpu::DeviceTooOld => {
-                "This GPU is below Vulkan 1.3; 3D goes through OpenGL instead."
-            }
-            HostGpu::NoDevice => "No Vulkan device was found; 3D goes through OpenGL instead.",
-            HostGpu::LoaderTooOld => {
-                "This host's Vulkan is older than 1.3; 3D goes through OpenGL instead."
-            }
-            HostGpu::NoLoader => "No Vulkan on this host; 3D goes through OpenGL instead.",
+            HostGpu::DeviceTooOld => "This GPU is below Vulkan 1.3, so 3D goes through OpenGL.",
+            HostGpu::NoDevice => "No Vulkan device found, so 3D goes through OpenGL.",
+            HostGpu::LoaderTooOld => "Vulkan on this host is older than 1.3, so 3D goes through OpenGL.",
+            HostGpu::NoLoader => "No Vulkan on this host, so 3D goes through OpenGL.",
         }
     }
 
@@ -97,14 +93,10 @@ impl HostGpu {
     pub fn advice(self) -> Option<&'static str> {
         match self {
             HostGpu::Accelerated => None,
-            HostGpu::SoftwareOnly => Some(
-                "A game rendering in software may well be faster through the guest tools' \
-                 WineD3D set (SETUP /GAME on the guest-tools disc) — worth trying both.",
-            ),
-            _ => Some(
-                "Install the guest tools' WineD3D set next to the game \
-                 (SETUP /GAME on the guest-tools disc).",
-            ),
+            HostGpu::SoftwareOnly => {
+                Some("The WineD3D set from the guest tools (SETUP /GAME) may be faster. Try both.")
+            }
+            _ => Some("Install the WineD3D set from the guest tools next to the game (SETUP /GAME)."),
         }
     }
 }

@@ -67,7 +67,7 @@ pub fn entry(line: &str) {
 /// looking at an empty desktop wondering what happened.
 pub fn fatal(what: &str) {
     append(&format!("[fatal] {what}"));
-    box_up("2ksbox — it could not start", what);
+    box_up("2ksbox could not start", what);
 }
 
 /// Install the panic hook and open the log with a header. Call it first
@@ -105,7 +105,7 @@ pub fn install(front_end: &str) {
         );
         append(&format!("[panic] {what}"));
         append(&format!("{}", std::backtrace::Backtrace::force_capture()));
-        box_up("2ksbox — it stopped", &what);
+        box_up("2ksbox stopped", &what);
     }));
 }
 

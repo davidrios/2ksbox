@@ -316,7 +316,7 @@ Window {
                 // One checkbox: a 3dfx Voodoo 2 beside the display adapter
                 // (doc 21) or not. The sentences are the shared form's.
                 CheckBox {
-                    text: qsTr("Emulated 3dfx Voodoo 2")
+                    text: qsTr("3dfx Voodoo 2")
                     checked: root.wizard.voodoo2
                     onToggled: root.wizard.chooseVoodoo2(checked)
                 }
@@ -413,7 +413,7 @@ Window {
                         id: mt32RomsField
                         Layout.fillWidth: true
                         text: root.wizard.mt32Roms
-                        placeholderText: qsTr("a directory holding your own CM-32L control and PCM ROMs")
+                        placeholderText: qsTr("Folder with your CM-32L control and PCM ROMs")
                         onEditingFinished: root.wizard.setMt32RomsPath(text)
                     }
                     Button {
@@ -431,7 +431,7 @@ Window {
                 Browse { id: mt32Browse }
                 FolderDialog {
                     id: mt32RomsDialog
-                    title: qsTr("Where your Roland CM-32L ROMs are")
+                    title: qsTr("Choose the folder with your CM-32L ROMs")
                     onAccepted: {
                         const path = mt32Browse.localPath(selectedFolder)
                         mt32Browse.remember(path)

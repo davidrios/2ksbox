@@ -306,11 +306,11 @@ impl Editor {
     /// it open with `error` saying why.
     pub fn save(&mut self, profiles_dir: &Path) -> bool {
         if self.name.trim().is_empty() {
-            self.error = Some("a name is required".into());
+            self.error = Some("A name is required.".into());
             return false;
         }
         if self.preset_path.trim().is_empty() {
-            self.error = Some("a preset is required".into());
+            self.error = Some("A preset is required.".into());
             return false;
         }
         let profile = self.build();

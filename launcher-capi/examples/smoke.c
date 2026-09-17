@@ -440,7 +440,7 @@ int main(int argc, char **argv) {
     check("...so nothing to redraw on a timer either", lc_editor_frame_interval_ms(e) == 0, NULL);
     check("saving it without a name is refused", !lc_editor_save(e, NULL), NULL);
     char *save_err = lc_editor_error(e);
-    check("...and says so", save_err && strcmp(save_err, "a name is required") == 0, save_err);
+    check("...and says so", save_err && strcmp(save_err, "A name is required.") == 0, save_err);
     lc_string_free(save_err);
     lc_editor_free(e);
 

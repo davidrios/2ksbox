@@ -27,7 +27,7 @@ AbstractButton {
     // that announced "checkbox" here would be repeating the mistake.
     Accessible.role: Accessible.Button
     Accessible.name: root.text
-    Accessible.description: root.checked ? qsTr("Showing") : qsTr("Hidden")
+    Accessible.description: root.checked ? qsTr("Expanded") : qsTr("Collapsed")
 
     background: Rectangle {
         radius: 3

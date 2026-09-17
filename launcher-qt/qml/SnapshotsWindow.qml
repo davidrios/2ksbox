@@ -77,7 +77,7 @@ Window {
                 visible: root.snapshots.running
                 wrapMode: Text.Wrap
                 opacity: 0.75
-                text: qsTr("Live: this machine is running, so a snapshot also stores its RAM and CPU state.")
+                text: qsTr("The machine is running, so a snapshot also saves its RAM and CPU state.")
             }
 
             // See `Main.qml`: a list's box, not a restyled `Frame`.
@@ -172,7 +172,7 @@ Window {
                             anchors.centerIn: parent
                             visible: root.snapshots.count === 0
                             opacity: 0.7
-                            text: qsTr("No snapshots.")
+                            text: qsTr("No snapshots yet.")
                         }
                     }
                 }

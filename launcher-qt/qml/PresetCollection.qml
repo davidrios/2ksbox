@@ -32,7 +32,7 @@ ColumnLayout {
     }
     Label {
         visible: editor.presetsDir === "" && editor.downloadState === ""
-        text: qsTr("No shader presets on this machine — a profile needs a .slangp to build on.")
+        text: qsTr("No shader presets installed. A profile is built on a .slangp preset.")
         opacity: 0.75
         wrapMode: Text.Wrap
         Layout.fillWidth: true
@@ -48,7 +48,7 @@ ColumnLayout {
     }
     Label {
         visible: editor.presetsDir === "" && editor.downloadState === ""
-        text: qsTr("libretro's slang-shaders, into %1").arg(editor.presetsInstallDir)
+        text: qsTr("libretro's slang-shaders, installed into %1").arg(editor.presetsInstallDir)
         opacity: 0.6
         font.pixelSize: 11
         wrapMode: Text.Wrap

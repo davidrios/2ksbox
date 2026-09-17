@@ -590,7 +590,7 @@ clone_check() { # "Clone…", from the model to a disk our QEMU reads (doc 07)
     && { echo "a clone under a name already in the library was made: $o"; rc=1; }
   case "$o" in *"already a machine called"*) ;; *) echo "...and not refused for that: $o"; rc=1;; esac
   o="$(target/release/launcherx --clone "$bundle" " " 2>&1)" && { echo "a clone with no name was made"; rc=1; }
-  case "$o" in *"a name is required"*) ;; *) echo "...and not refused for that: $o"; rc=1;; esac
+  case "$o" in *"name is required"*) ;; *) echo "...and not refused for that: $o"; rc=1;; esac
   # A disk outside the library, as "Use an existing disk" leaves one, and
   # an overlay whose backing file is named relative to it: the copy lands
   # in the clone's own folder and still finds the backing file.
@@ -768,7 +768,7 @@ qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
     || { echo "not an application-modal Yes/No dialog"; rc=1; }
   # The words in it are the shared model's (ADR-014): a sentence typed
   # into QML is exactly what used to drift between two front ends.
-  printf '%s' "$o" | grep -q "firstrun text: There are no CRT shader presets" \
+  printf '%s' "$o" | grep -q "firstrun text: No CRT shader presets are installed yet" \
     || { echo "the dialog's text is not the model's headline"; rc=1; }
   printf '%s' "$o" | grep -q "slang-shaders (~50 MB) into $dir/empty" \
     || { echo "the dialog does not say what it will download or where"; rc=1; }

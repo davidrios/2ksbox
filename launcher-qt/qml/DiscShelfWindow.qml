@@ -84,7 +84,7 @@ Window {
                 visible: !root.discs.forMachine
                 wrapMode: Text.Wrap
                 opacity: 0.75
-                text: qsTr("Discs available to every machine. A machine picks one to boot with; the rest are swapped in while it runs.")
+                text: qsTr("Discs any machine can use. Pick one to boot with; swap the others in while the machine runs.")
             }
 
             RowLayout {
@@ -93,7 +93,7 @@ Window {
                 spacing: 8
                 Label { text: qsTr("Boots with: %1").arg(root.discs.bootLabel) }
                 Button {
-                    text: qsTr("Boot with an empty tray")
+                    text: qsTr("Boot with empty tray")
                     enabled: root.discs.hasBoot
                     onClicked: { root.discs.clearBoot(); root.changed() }
                 }
@@ -108,7 +108,7 @@ Window {
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
                     opacity: 0.75
-                    text: qsTr("Running: “Insert” swaps the disc in the guest now; the boot choice applies next time.")
+                    text: qsTr("The machine is running: Insert swaps the disc now. The boot choice applies on the next start.")
                 }
                 Button {
                     text: qsTr("Eject")
@@ -209,7 +209,7 @@ Window {
                         anchors.centerIn: parent
                         visible: root.discs.count === 0
                         opacity: 0.7
-                        text: qsTr("The shelf is empty.")
+                        text: qsTr("No discs yet.")
                     }
                 }
             }
@@ -249,7 +249,7 @@ Window {
                     // PathField's FileDialog reaches.
                     text: qsTr("Add folder…")
                     ToolTip.visible: hovered
-                    ToolTip.text: qsTr("share a host directory with the guest as a generated disc")
+                    ToolTip.text: qsTr("Share a folder with the guest as a disc")
                     onClicked: {
                         folderDialog.currentFolder = folderBrowse.startUrl(adder.value, "")
                         folderDialog.open()
@@ -264,7 +264,7 @@ Window {
                     ToolTip.visible: hovered
                     ToolTip.text: root.discs.guestToolsIso !== ""
                         ? root.discs.guestToolsIso
-                        : qsTr("none built (guest-tools/build-wrappers.sh)")
+                        : qsTr("None built yet (guest-tools/build-wrappers.sh)")
                     onClicked: root.discs.addGuestTools()
                 }
                 Item { Layout.fillWidth: true }

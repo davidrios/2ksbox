@@ -179,11 +179,11 @@ impl FirstRun {
             // somewhere unnamed is one nobody can undo.
             None if self.asking => Message {
                 step: Step::Asking,
-                headline: "There are no CRT shader presets on this machine yet.".into(),
+                headline: "No CRT shader presets are installed yet.".into(),
                 detail: format!(
-                    "They are what makes a machine look like the monitor it was played on.\n\n\
+                    "They make a machine look like the monitor it was played on.\n\n\
                      Download libretro's slang-shaders ({size}) into {dir}?\n\n\
-                     {count} ready-made profiles are added with them: {names}.",
+                     This also adds {count} ready-made profiles: {names}.",
                     size = shader_source::DOWNLOAD_SIZE,
                     dir = shader_source::install_dir().display(),
                     count = shader_source::DEFAULT_PROFILES.len(),
@@ -204,9 +204,9 @@ impl FirstRun {
     /// be what duplicates somebody's library.
     fn install_defaults(&self, presets: &Path) -> String {
         let added = shader_library::create_defaults(&self.profiles_dir, presets);
-        let mut line = format!("Shader presets installed in {}.", presets.display());
+        let mut line = format!("Installed into {}.", presets.display());
         if !added.is_empty() {
-            line.push_str(&format!(" Added {} profiles: {}.", added.len(), added.join(", ")));
+            line.push_str(&format!(" Added {} ready-made profiles: {}.", added.len(), added.join(", ")));
         }
         line
     }

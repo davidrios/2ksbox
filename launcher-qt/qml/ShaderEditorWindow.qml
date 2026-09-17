@@ -320,7 +320,7 @@ Window {
                             anchors.centerIn: parent
                             visible: root.editor.previewImage === ""
                             color: "#909090"
-                            text: qsTr("Pick a screenshot to preview the shader on it.")
+                            text: qsTr("Pick a screenshot to preview the shader.")
                         }
                     }
                 }

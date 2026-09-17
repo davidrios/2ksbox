@@ -132,7 +132,7 @@ impl CloneMachine {
         let Some(s) = &self.source else { return String::new() };
         let mut note = format!(
             "A new machine with the same settings and its own copy of the disk ({}), \
-             snapshots included. The two go their own ways from then on.",
+             snapshots included.",
             size_label(s.bytes)
         );
         if s.disk_outside {
@@ -149,7 +149,7 @@ impl CloneMachine {
     pub fn warning(&self) -> Option<&'static str> {
         self.running.then_some(
             "This machine is running. Shut it down before cloning it: its disk is being written, \
-             and a copy taken now would not be a disk that boots.",
+             and a copy taken now wouldn't boot.",
         )
     }
 
@@ -203,10 +203,10 @@ impl CloneMachine {
         if let Some(warning) = self.warning() {
             return Err(warning.to_string());
         }
-        let source = self.source.as_ref().ok_or("no machine to clone")?;
+        let source = self.source.as_ref().ok_or("No machine to clone.")?;
         let name = self.name.trim().to_string();
         if name.is_empty() {
-            return Err("a name is required".into());
+            return Err("A name is required.".into());
         }
         if taken_names(&self.library_dir).iter().any(|n| n == &name) {
             return Err(format!("There is already a machine called \u{201c}{name}\u{201d}."));
@@ -245,7 +245,7 @@ impl CloneMachine {
             Err(mpsc::TryRecvError::Empty) => return false,
             Err(mpsc::TryRecvError::Disconnected) => {
                 let _ = std::fs::remove_dir_all(&job.dest_dir);
-                Err("the copy stopped without saying why".into())
+                Err("The copy stopped unexpectedly.".into())
             }
         };
         self.job = None;
@@ -293,7 +293,7 @@ fn plan(dir: &Path, machine: &Machine) -> Result<Source, String> {
     let disk_meta =
         std::fs::metadata(&machine.disk).map_err(|e| format!("the disk {}: {e}", machine.disk.display()))?;
     if !disk_meta.is_file() {
-        return Err(format!("the disk {} is not a file, so there is nothing to copy", machine.disk.display()));
+        return Err(format!("The disk {} is not a file.", machine.disk.display()));
     }
     let mut files = Vec::new();
     walk(dir, Path::new(""), &mut files).map_err(|e| format!("{}: {e}", dir.display()))?;
