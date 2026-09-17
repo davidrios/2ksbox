@@ -83,6 +83,26 @@ rsync -c "$ROOT/gamepad/qemu/usb-gamepad.h" "$QEMU/hw/usb/"
 rsync -c "$ROOT/gamepad/qemu/gameport.h" "$QEMU/hw/input/"
 rsync -c "$ROOT/gamepad/qemu/usb-gamepad.h" "$ROOT/gamepad/qemu/gameport.h" "$QEMU/embed/"
 
+# git in the QEMU tree, retried while the index is locked: on Windows a
+# scanner can hold the index.lock of the git that has just exited open for a
+# moment, and the next git dies with "Unable to create index.lock: File
+# exists" (2026-09-17, the PC -- three builds in a row). Every other failure
+# is reported and fatal, as before.
+qgit() {
+  local err rc
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    # stderr into `err`, stdout through (callers read `ls-files`)
+    { err=$(git -C "$QEMU" "$@" 2>&1 >&3); rc=$?; } 3>&1
+    if [ "$rc" -eq 0 ]; then return 0; fi
+    case "$err" in
+      *index.lock*) sleep 0.5 ;;
+      *) printf '%s\n' "$err" >&2; return "$rc" ;;
+    esac
+  done
+  printf '%s\n' "$err" >&2
+  return 1
+}
+
 # Deterministic: restore every TRACKED file any patch touches to pristine
 # v9.2.4, then apply the 3dfx patch and our queue fresh. (Overlay files were
 # already refreshed by rsync above.) Partial states — e.g. a manual
@@ -92,11 +112,21 @@ patched_files() {  # print paths from '+++ ./x' (diff -Nru) and '+++ b/x' (git) 
   sed -n 's|^+++ \./||p; s|^+++ b/||p' "$@" | sort -u
 }
 echo "==> restoring tracked files touched by patches"
-patched_files "$PATCH" "$ROOT"/patches/qemu/*.patch | while read -r f; do
-  if git -C "$QEMU" ls-files --error-unmatch "$f" >/dev/null 2>&1; then
-    git -C "$QEMU" checkout -q -- "$f"
+# One git per run, not one per file: on Windows a scanner can hold the
+# index.lock of the git that just finished open for a moment, and the next
+# one dies with "Unable to create index.lock: File exists" (2026-09-17, the
+# PC). `ls-files` prints the tracked subset, which is what may be restored.
+restore=()
+while IFS= read -r f; do restore+=("$f"); done < <(
+  patched_files "$PATCH" "$ROOT"/patches/qemu/*.patch)
+if [ ${#restore[@]} -gt 0 ]; then
+  tracked=()
+  while IFS= read -r f; do tracked+=("$f"); done < <(
+    qgit ls-files -- "${restore[@]}")
+  if [ ${#tracked[@]} -gt 0 ]; then
+    qgit checkout -q -- "${tracked[@]}"
   fi
-done
+fi
 # Files a patch CREATES ('--- /dev/null' header) must not pre-exist for
 # git apply. Untracked overlay files (hw/3dfx, hw/mesa, embed) are also
 # untracked but are refreshed by rsync above — never touch those here.
@@ -108,13 +138,13 @@ created_files "$PATCH" "$ROOT"/patches/qemu/*.patch | while read -r f; do
 done
 
 echo "==> applying $(basename "$PATCH")"
-git -C "$QEMU" apply "$PATCH"
+qgit apply "$PATCH"
 
 echo "==> applying our patch queue (patches/qemu/*.patch)"
 for p in "$ROOT"/patches/qemu/*.patch; do
   [ -e "$p" ] || continue
-  if git -C "$QEMU" apply --check "$p" 2>"$SNAP/apply.err"; then
-    git -C "$QEMU" apply "$p" && echo "    $(basename "$p"): applied"
+  if qgit apply --check "$p" 2>"$SNAP/apply.err"; then
+    qgit apply "$p" && echo "    $(basename "$p"): applied"
   else
     echo "    $(basename "$p"): DOES NOT APPLY"; sed 's/^/      /' "$SNAP/apply.err"; exit 1
   fi
@@ -138,10 +168,15 @@ done
 # 1994-1996 day, and the guests' own clocks come from the RTC.
 echo "==> stamping the legacy BIOS date (Win98 installs ACPI only past 12/01/99)"
 BIOS_DATE=12/31/99
+# one checkout for all three: a pristine blob each, and one git (see qgit)
+bios=()
+for b in bios.bin bios-256k.bin bios-microvm.bin; do
+  [ -f "$QEMU/pc-bios/$b" ] && bios+=("pc-bios/$b")
+done
+[ ${#bios[@]} -gt 0 ] && qgit checkout -q -- "${bios[@]}"
 for b in bios.bin bios-256k.bin bios-microvm.bin; do
   f="$QEMU/pc-bios/$b"
   [ -f "$f" ] || continue
-  git -C "$QEMU" checkout -q -- "pc-bios/$b"   # deterministic: stamp a pristine blob
   off=$(( $(wc -c < "$f") - 11 ))
   cur=$(dd if="$f" bs=1 skip="$off" count=8 2>/dev/null)
   case "$cur" in

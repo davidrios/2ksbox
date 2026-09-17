@@ -213,6 +213,33 @@ helper, in another process — initialising the card under a live window,
 so the running Glide went on writing packets into a FIFO that had been
 switched off behind it.
 
+**A second shape of it, on the Windows PC (2026-09-17, the user, 3DMark
+99 on `base98-br`): the consumer stops inside a packet.** 86Box's
+`cmdfifo_get` waits for the next word whenever `depth_rd == depth_wr`, so
+a packet header that promises more words than Glide wrote parks the FIFO
+thread there with `voodoo_busy` set — and Glide, which polls the status
+register for idle before it writes anything else, never writes the words
+that would free it. Neither side moves; the guest's Windows is fine, and
+a guest reset does not reset the card, so the next login's helper (§11)
+hangs on the same card with its "please wait" notice up for ever.
+Measured with `ramfifo=off`, where every packet word is counted as the
+guest writes it: 15.8 M status reads in 5 s, the ring fully consumed
+(`depth 47696494/47696494`), 0 commands outstanding. The same stall with
+the ring in RAM shows as Glide polling `cmdFifoRdPtr` instead (the
+2026-09-17 hang: 258 M reads over ~5 minutes, which is where the stall
+line below comes from), because our packet walk counts words with the
+same table, so a bad header stalls both paths alike. **What the device
+prints now**, two 5 s windows into such a stall: the word the consumer is
+waiting for, the ring around it, and the guest's last 64 accesses —
+`voodoo2: the command FIFO is stuck inside a packet`. It also warns on a
+packet word written narrower than a dword, which 86Box drops outright
+(its `writew` takes only the frame buffer and it has no byte handler), a
+lost word being one way to reach the same deadlock. Glide's own device
+probe is logged too — every LFB readback with the FIFO off, which is how
+its frame-buffer sizing, its TMU configuration strap and its texture
+memory sense (2/1/0 MB) can be watched: those four came back right on the
+PC, so a stale texture cache is not what broke the 800x600 open.
+
 
 **Display.** A Voodoo 1/2 is a pass-through card: the 2D adapter's signal
 goes through it, and with `fbiInit0`'s VGA_PASS bit the Voodoo drives the

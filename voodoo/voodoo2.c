@@ -140,6 +140,15 @@ struct Voodoo2State {
     uint32_t     fifo_poisoned;  /* consumed words poisoned up to here */
     uint32_t     fifo_words, last_fifo_words;
     uint32_t     fifo_syncs, last_fifo_syncs;
+    /* Glide's device probe (cvg/init/info.c) with the FIFO off: what it
+     * reads back through the LFB, a line per read, capped per window */
+    uint32_t     probe_fbzcp;    /* the last fbzColorPath written directly */
+    uint32_t     probe_lines;
+    /* the consumer waiting inside a packet while the guest waits for idle */
+    uint32_t     stall_windows;
+    bool         stall_dumped;
+    uint32_t     fifo_narrow;    /* packet words written narrower than a dword */
+    bool         fifo_narrow_warned;
     /* register-window accesses by register (addr & 0x3fc) since the last
      * line: a guest that spins on one register names it here */
     uint32_t   rd_hist[256];
@@ -356,13 +365,28 @@ voodoo2_trace_where(const char *why)
             (uint32_t) env->cr[3], pc, line);
 }
 
+/* the last accesses the guest made, oldest first */
+static void
+voodoo2_dump_accesses(Voodoo2State *s)
+{
+    unsigned n = MIN(s->ring_n, ARRAY_SIZE(s->ring));
+
+    fprintf(stderr, "voodoo2: the last %u accesses, oldest first:\n", n);
+    for (unsigned k = 0; k < n; k++) {
+        unsigned i = (s->ring_n - n + k) % ARRAY_SIZE(s->ring);
+
+        fprintf(stderr, "voodoo2:   %s %u %06x %08x\n",
+                s->ring[i].write ? "wr" : "rd", s->ring[i].size,
+                s->ring[i].addr, s->ring[i].val);
+    }
+}
+
 /* 86Box's fatal(): the state a bug report needs, before the abort */
 static void
 voodoo2_on_fatal(void *opaque)
 {
     Voodoo2State *s = opaque;
     voodoo_t     *v = s->v;
-    unsigned      n = MIN(s->ring_n, ARRAY_SIZE(s->ring));
 
     voodoo2_trace_flush();
     fprintf(stderr, "voodoo2: initEnable %08x fbiInit0 %08x fbiInit7 %08x "
@@ -372,14 +396,7 @@ voodoo2_on_fatal(void *opaque)
             v->cmdfifo_enabled ? "on" : "off", v->cmdfifo_base, v->cmdfifo_end,
             v->cmdfifo_rp, v->cmdfifo_depth_wr, v->cmdfifo_depth_rd,
             v->h_disp, v->v_disp, s->override ? "monitor" : "no monitor");
-    fprintf(stderr, "voodoo2: the last %u accesses, oldest first:\n", n);
-    for (unsigned k = 0; k < n; k++) {
-        unsigned i = (s->ring_n - n + k) % ARRAY_SIZE(s->ring);
-
-        fprintf(stderr, "voodoo2:   %s %u %06x %08x\n",
-                s->ring[i].write ? "wr" : "rd", s->ring[i].size,
-                s->ring[i].addr, s->ring[i].val);
-    }
+    voodoo2_dump_accesses(s);
 }
 
 /* -------------------------------------------------- the command FIFO in RAM
@@ -621,6 +638,40 @@ voodoo2_fifo_after_write(Voodoo2State *s, hwaddr addr)
     }
 }
 
+/* A read of the LFB with the command FIFO off: Glide's device probe, when
+ * it is one of its three checks -- fbiMemSize's 16-bit depth-buffer reads
+ * away from the origin, and a 32-bit read of the 4x4 at the origin under a
+ * textured fbzColorPath (the TMU configuration strap and the texture-memory
+ * sense, which samples texels just written at 2, 1 and 0 MB). A wrong value
+ * there makes Glide size the card smaller or refuse to open it; after a long
+ * session that is where a stale device (a texture cache) would show. */
+static void
+voodoo2_probe_read(Voodoo2State *s, hwaddr addr, uint64_t val, unsigned size)
+{
+    voodoo_t *v = s->v;
+    unsigned  x = (addr & 0x7fe) >> 1;
+    unsigned  y = (addr >> 11) & 0x3ff;
+    bool      mem  = size == 2 && (x || y);
+    bool      tmu  = size == 4 && x < 4 && y < 4 && (s->probe_fbzcp & (1u << 27));
+
+    if ((!mem && !tmu) || s->probe_lines >= 96) {
+        return;
+    }
+    s->probe_lines++;
+    if (mem) {
+        info_report("voodoo2: probe: LFB %u,%u reads %04x (lfbMode %08x "
+                    "fbiInit1 %08x fbiInit2 %08x, row %d, read at %06x, "
+                    "aux at %06x)", x, y, (unsigned) val, v->lfbMode,
+                    v->fbiInit1, v->fbiInit2, v->row_width,
+                    v->fb_read_offset, v->params.aux_offset);
+    } else {
+        info_report("voodoo2: probe: textured LFB %u,%u reads %08x "
+                    "(texBaseAddr %06x tLOD %08x textureMode %08x)", x, y,
+                    (unsigned) val, v->params.texBaseAddr[0],
+                    v->params.tLOD[0], v->params.textureMode[0]);
+    }
+}
+
 static uint64_t
 voodoo2_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -654,6 +705,9 @@ voodoo2_mmio_read(void *opaque, hwaddr addr, unsigned size)
         break;
     }
     voodoo2_note(s, addr, val, size, false);
+    if (!v->cmdfifo_enabled && (addr & 0xc00000) == 0x400000) {
+        voodoo2_probe_read(s, addr, val, size);
+    }
     return val;
 }
 
@@ -705,6 +759,23 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
          * stream walks the register file, fbiInit1 included). A real single
          * board with the bit set shows half its lines; this one ignores it. */
         val &= ~(1u << 23);
+    }
+    if (addr < 0x200000 && (addr & 0x3fc) == 0x104 && size == 4) {
+        s->probe_fbzcp = (uint32_t) val;     /* fbzColorPath, for the probe */
+    }
+    if (size != 4 && (addr & 0x200000) && addr < 0x400000 && v->cmdfifo_enabled) {
+        /* A packet word written narrower than a dword. 86Box's writew takes
+         * only the frame buffer and it has no byte handler at all, so the
+         * word is dropped and the consumer waits inside the packet for ever
+         * (the deadlock above). Name it: the guest is not at fault here. */
+        s->fifo_narrow++;
+        if (!s->fifo_narrow_warned) {
+            s->fifo_narrow_warned = true;
+            warn_report("voodoo2: a %u-byte write of %08x into the command-FIFO "
+                        "window at %06x: 86Box takes dwords there, so the word "
+                        "is lost and the FIFO will stall", size,
+                        (unsigned) val, (unsigned) addr);
+        }
     }
     switch (size) {
     case 4:
@@ -983,10 +1054,15 @@ voodoo2_stats(void *opaque)
     int           wr     = v->wr_count - s->last_wr;
     int           rd     = v->rd_count - s->last_rd;
     int           tex    = v->tex_count - s->last_tex;
+    uint32_t      syncs  = s->fifo_syncs - s->last_fifo_syncs;
 
+    /* a guest waiting on the FIFO in RAM reads only cmdFifoRdPtr, which is
+     * answered here and never reaches 86Box's read count: its syncs are the
+     * activity then (a whole hang went unreported, 2026-09-17) */
     if (frames || tris || wr || rd || voodoo_shim_fatals != s->last_fatals ||
-        s->fifo_off_writes != s->last_fifo_off) {
-        char rds[64], wrs[64], cfg[64], ref[48] = "", busy[96] = "", ram[64] = "";
+        s->fifo_off_writes != s->last_fifo_off ||
+        s->fifo_syncs != s->last_fifo_syncs) {
+        char rds[64], wrs[64], cfg[64], ref[48] = "", busy[96] = "", ram[256] = "";
         int  written = v->cmd_written + v->cmd_written_fifo + v->cmd_written_fifo_2;
         int  outstanding = written - v->cmd_read;
         int  is_busy = outstanding ||
@@ -1017,7 +1093,23 @@ voodoo2_stats(void *opaque)
                      s->fifo_off_writes - s->last_fifo_off);
         }
         s->last_fifo_off = s->fifo_off_writes;
-        if (s->fifo_mapped || s->fifo_words != s->last_fifo_words) {
+        if (s->fifo_mapped && s->fifo_words == s->last_fifo_words &&
+            s->fifo_syncs != s->last_fifo_syncs) {
+            /* polled and nothing counted: which side is waiting */
+            uint32_t rp = qatomic_read(&v->cmdfifo_rp);
+
+            snprintf(ram, sizeof(ram), "; FIFO in RAM: 0 words in %u syncs, "
+                     "ring %08x+%x rp %08x (%08x) parse %08x (%08x) "
+                     "poisoned %08x depth %u/%u%s%s",
+                     s->fifo_syncs - s->last_fifo_syncs,
+                     s->fifo_base, s->fifo_size,
+                     rp, *voodoo2_fifo_word(v, rp),
+                     s->fifo_parse, *voodoo2_fifo_word(v, s->fifo_parse),
+                     s->fifo_poisoned,
+                     (unsigned) v->cmdfifo_depth_rd, (unsigned) v->cmdfifo_depth_wr,
+                     v->cmdfifo_in_sub ? ", in sub" : "",
+                     v->swap_pending ? ", swap pending" : "");
+        } else if (s->fifo_mapped || s->fifo_words != s->last_fifo_words) {
             snprintf(ram, sizeof(ram), "; FIFO in RAM: %u words in %u syncs",
                      s->fifo_words - s->last_fifo_words,
                      s->fifo_syncs - s->last_fifo_syncs);
@@ -1035,6 +1127,44 @@ voodoo2_stats(void *opaque)
                     rds[0] ? rds : " none", wrs[0] ? wrs : " none",
                     cfg[0] ? cfg : " none", ref, busy, ram);
     }
+    /* The deadlock of 2026-09-17: 86Box's consumer waits inside cmdfifo_get
+     * for a word the guest never wrote (it read a packet header wanting more
+     * words than Glide put there), so `voodoo_busy` stays set with the ring
+     * fully consumed, and Glide -- which polls the status register for idle
+     * before it writes anything else -- never writes again. Neither side can
+     * move. Both are visible from here: the card busy, the ring empty, no
+     * work done, and the guest reading one register a million times. Name
+     * the packet: the words around the read pointer, and what the guest did
+     * last. */
+    if (v->voodoo_busy && v->cmdfifo_enabled && !v->cmdfifo_in_sub &&
+        v->cmdfifo_depth_rd == v->cmdfifo_depth_wr &&
+        !frames && !tris && wr < 16 &&
+        /* the guest polling hard: the status register through 86Box, or
+         * cmdFifoRdPtr, which is answered here and reaches no read count */
+        (rd > 100000 || syncs > 100000)) {
+        s->stall_windows++;
+    } else {
+        s->stall_windows = 0;
+    }
+    if (s->stall_windows >= 2 && !s->stall_dumped) {
+        uint32_t rp = qatomic_read(&v->cmdfifo_rp);
+
+        s->stall_dumped = true;
+        voodoo2_trace_flush();
+        fprintf(stderr, "voodoo2: the command FIFO is stuck inside a packet: "
+                "the consumer wants the word at %08x, which the guest has not "
+                "written, and the guest is waiting for the card to go idle "
+                "(ring %08x+%x, depth %u, %s, %u narrow writes)\n", rp,
+                v->cmdfifo_base, v->cmdfifo_end + 0x1000 - v->cmdfifo_base,
+                (unsigned) v->cmdfifo_depth_wr,
+                s->fifo_mapped ? "in RAM" : "through MMIO", s->fifo_narrow);
+        for (uint32_t a = rp - 0x40; a != rp + 0x10; a += 4) {
+            fprintf(stderr, "voodoo2:   %08x %08x%s\n", a,
+                    *voodoo2_fifo_word(v, a), a == rp ? "   <- wanted" : "");
+        }
+        voodoo2_dump_accesses(s);
+    }
+    s->probe_lines = 0;
     s->last_fatals = voodoo_shim_fatals;
     s->last_frames = s->frames;
     s->last_shown  = s->shown;

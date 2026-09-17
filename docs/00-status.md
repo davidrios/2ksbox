@@ -1491,6 +1491,18 @@ items nobody owns yet:
 
 ## Gotchas learned (don't relearn)
 
+- **On Windows a build dies with `Unable to create index.lock: File
+  exists` and the lock is gone by the time you look** (2026-09-17, the
+  PC, three builds in a row). Nothing else was running: a scanner holds
+  the `index.lock` of the git that has just exited open for a moment, and
+  the next one of a run of per-file gits fails. `prepare-qemu.sh` restores
+  the patched files and stamps the three BIOS blobs in one git each now,
+  and every git there goes through its own `qgit`, which retries while the
+  index is locked and is fatal on anything else. A helper that retries
+  must pass git's **stdout** through (`2>&1 >&3` inside `{ } 3>&1`): the
+  first cut captured it, so `ls-files` returned nothing, nothing was
+  restored, and the patch queue failed on an already-patched tree.
+
 - **A benchmark number on the Mac depends on where mmap put the code
   buffer** (2026-09-15, doc 22 §5.0): 8 GiB from the helpers is a 35–45 %
   slower run of helper-heavy code, near is not, and the profile looks
