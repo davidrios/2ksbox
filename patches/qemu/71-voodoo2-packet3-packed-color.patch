@@ -1,0 +1,103 @@
+A command-FIFO triangle packet's packed colour word is present whenever
+either the RGB or the alpha parameter is enabled, not only RGB (doc 21,
+M14).
+
+Glide's packet 3 carries the per-vertex parameters named by bits 17:10 of
+its header, and bit 28 says the colour comes as one packed ARGB word
+rather than three floats. 86Box read that word only under the RGB bit,
+and read a separate alpha float only when bit 28 was clear -- so a vertex
+with iterated *alpha over a constant colour*, which Glide sends with the
+packed bit set and the RGB bit clear (glide3x/cvg/glide3/src/gglide.c:
+STATE_REQUIRES_IT_ALPHA without STATE_REQUIRES_IT_DRGB sets SST_SETUP_A,
+sets packedRGB and adds one word per vertex), left one word per vertex in
+the FIFO unread.
+
+From there the stream is off by a word per vertex and every later packet
+header is read out of the middle of somebody's parameters. What the user
+saw on Windows with 3DMark 99 (2026-09-17): a loading screen drawn from
+desynchronised geometry, then a hang -- with the ring through MMIO the
+consumer waits inside a packet for words the guest never wrote
+(`voodoo_busy` set, ring fully consumed, 15.8 M status reads in 5 s while
+Glide waits for idle), and with the ring in RAM (doc 21 §9) our packet
+walk, which counts words with the same rule, runs into unwritten space
+and parks on a poison word while Glide polls cmdFifoRdPtr for ever
+(26 M reads in 5 s, `parse` and `rp` stopped at the same address).
+
+Both FIFO consumers in the file are fixed the same way: under bit 28 one
+packed word if either parameter is named, otherwise three floats for RGB
+and one for alpha, each under its own bit.
+
+The files are 86Box's, vendored verbatim in voodoo/86box and overlaid into
+hw/voodoo by prepare-qemu.sh, which is why this is a patch on the overlay
+rather than an edit there. Drop it when upstream 86Box has the fix and
+scripts/sync-86box-voodoo.sh brings it in.
+
+diff --git a/hw/voodoo/86box/vid_voodoo_fifo.c b/hw/voodoo/86box/vid_voodoo_fifo.c
+index c0fcfe3..720b8f8 100644
+--- a/hw/voodoo/86box/vid_voodoo_fifo.c
++++ b/hw/voodoo/86box/vid_voodoo_fifo.c
+@@ -613,21 +613,29 @@ voodoo_fifo_thread(void *param)
+                     while (num_verticies--) {
+                         voodoo->verts[3].sVx = cmdfifo_get_f(voodoo);
+                         voodoo->verts[3].sVy = cmdfifo_get_f(voodoo);
+-                        if (mask & CMDFIFO3_PC_MASK_RGB) {
+-                            if (header & CMDFIFO3_PC) {
++                        if (header & CMDFIFO3_PC) {
++                            /*One packed ARGB word carries colour and alpha
++                              alike, and it is there whenever either parameter
++                              is enabled: Glide sends iterated alpha over a
++                              constant colour with the packed bit set and the
++                              RGB bit clear (gglide.c, STATE_REQUIRES_IT_ALPHA
++                              without STATE_REQUIRES_IT_DRGB).*/
++                            if (mask & (CMDFIFO3_PC_MASK_RGB | CMDFIFO3_PC_MASK_ALPHA)) {
+                                 uint32_t val            = cmdfifo_get(voodoo);
+                                 voodoo->verts[3].sBlue  = (float) (val & 0xff);
+                                 voodoo->verts[3].sGreen = (float) ((val >> 8) & 0xff);
+                                 voodoo->verts[3].sRed   = (float) ((val >> 16) & 0xff);
+                                 voodoo->verts[3].sAlpha = (float) ((val >> 24) & 0xff);
+-                            } else {
++                            }
++                        } else {
++                            if (mask & CMDFIFO3_PC_MASK_RGB) {
+                                 voodoo->verts[3].sRed   = cmdfifo_get_f(voodoo);
+                                 voodoo->verts[3].sGreen = cmdfifo_get_f(voodoo);
+                                 voodoo->verts[3].sBlue  = cmdfifo_get_f(voodoo);
+                             }
++                            if (mask & CMDFIFO3_PC_MASK_ALPHA)
++                                voodoo->verts[3].sAlpha = cmdfifo_get_f(voodoo);
+                         }
+-                        if ((mask & CMDFIFO3_PC_MASK_ALPHA) && !(header & CMDFIFO3_PC))
+-                            voodoo->verts[3].sAlpha = cmdfifo_get_f(voodoo);
+                         if (mask & CMDFIFO3_PC_MASK_Z)
+                             voodoo->verts[3].sVz = cmdfifo_get_f(voodoo);
+                         if (mask & CMDFIFO3_PC_MASK_Wb)
+@@ -904,21 +912,24 @@ voodoo_fifo_thread(void *param)
+                     while (num_verticies--) {
+                         voodoo->verts[3].sVx = cmdfifo_get_f_2(voodoo);
+                         voodoo->verts[3].sVy = cmdfifo_get_f_2(voodoo);
+-                        if (mask & CMDFIFO3_PC_MASK_RGB) {
+-                            if (header & CMDFIFO3_PC) {
++                        if (header & CMDFIFO3_PC) {
++                            /*The packed word, as above*/
++                            if (mask & (CMDFIFO3_PC_MASK_RGB | CMDFIFO3_PC_MASK_ALPHA)) {
+                                 uint32_t val            = cmdfifo_get_2(voodoo);
+                                 voodoo->verts[3].sBlue  = (float) (val & 0xff);
+                                 voodoo->verts[3].sGreen = (float) ((val >> 8) & 0xff);
+                                 voodoo->verts[3].sRed   = (float) ((val >> 16) & 0xff);
+                                 voodoo->verts[3].sAlpha = (float) ((val >> 24) & 0xff);
+-                            } else {
++                            }
++                        } else {
++                            if (mask & CMDFIFO3_PC_MASK_RGB) {
+                                 voodoo->verts[3].sRed   = cmdfifo_get_f_2(voodoo);
+                                 voodoo->verts[3].sGreen = cmdfifo_get_f_2(voodoo);
+                                 voodoo->verts[3].sBlue  = cmdfifo_get_f_2(voodoo);
+                             }
++                            if (mask & CMDFIFO3_PC_MASK_ALPHA)
++                                voodoo->verts[3].sAlpha = cmdfifo_get_f_2(voodoo);
+                         }
+-                        if ((mask & CMDFIFO3_PC_MASK_ALPHA) && !(header & CMDFIFO3_PC))
+-                            voodoo->verts[3].sAlpha = cmdfifo_get_f_2(voodoo);
+                         if (mask & CMDFIFO3_PC_MASK_Z)
+                             voodoo->verts[3].sVz = cmdfifo_get_f_2(voodoo);
+                         if (mask & CMDFIFO3_PC_MASK_Wb)

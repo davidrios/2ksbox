@@ -149,6 +149,7 @@ struct Voodoo2State {
     bool         stall_dumped;
     uint32_t     fifo_narrow;    /* packet words written narrower than a dword */
     bool         fifo_narrow_warned;
+    bool         packed_alpha_seen;  /* the packet patch 71 is about */
     /* register-window accesses by register (addr & 0x3fc) since the last
      * line: a guest that spins on one register names it here */
     uint32_t   rd_hist[256];
@@ -452,11 +453,20 @@ voodoo2_packet_words(uint32_t h)
         return 1 + ctpop32(h >> 3);
     case 3:
         pv = 2;                                         /* x, y */
-        if (h & (1 << 10)) {
-            pv += (h & (1u << 28)) ? 1 : 3;             /* packed ARGB or RGB */
-        }
-        if ((h & (1 << 11)) && !(h & (1u << 28))) {
-            pv++;                                       /* alpha */
+        if (h & (1u << 28)) {
+            /* one packed ARGB word, there whenever either parameter is
+             * named -- Glide sends iterated alpha over a constant colour
+             * with the packed bit set and the RGB bit clear (patch 71) */
+            if (h & ((1 << 10) | (1 << 11))) {
+                pv++;
+            }
+        } else {
+            if (h & (1 << 10)) {
+                pv += 3;                                /* RGB */
+            }
+            if (h & (1 << 11)) {
+                pv++;                                   /* alpha */
+            }
         }
         pv += !!(h & (1 << 12)) + !!(h & (1 << 13)) + !!(h & (1 << 14));
         pv += 2 * !!(h & (1 << 15));                    /* s0, t0 */
@@ -504,6 +514,14 @@ voodoo2_fifo_sync(Voodoo2State *s)
 
         if (h == VOODOO2_FIFO_POISON) {
             break;
+        }
+        if ((h & 7) == 3 && (h & (1u << 28)) && !(h & (1 << 10)) &&
+            (h & (1 << 11)) && !s->packed_alpha_seen) {
+            /* the packet patch 71 is about, in this guest's own stream */
+            s->packed_alpha_seen = true;
+            info_report("voodoo2: packet 3 with a packed colour word and no "
+                        "RGB bit (header %08x): iterated alpha over a constant "
+                        "colour, one word a vertex (patch 71)", h);
         }
         n = voodoo2_packet_words(h);
         if (!n) {

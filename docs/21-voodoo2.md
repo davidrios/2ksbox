@@ -240,6 +240,26 @@ its frame-buffer sizing, its TMU configuration strap and its texture
 memory sense (2/1/0 MB) can be watched: those four came back right on the
 PC, so a stale texture cache is not what broke the 800x600 open.
 
+**One such hole was found and closed, and it is not what 3DMark 99 trips
+over** (patch 71, 2026-09-17). Packet 3 names its per-vertex parameters in
+bits 17:10, and bit 28 says the colour comes as one packed ARGB word; 86Box
+read that word only under the RGB bit, and a separate alpha float only when
+bit 28 was clear. Glide sends **iterated alpha over a constant colour**
+with the packed bit set and the RGB bit clear (`gglide.c`), one word a
+vertex, and both consumers read none — a word a vertex left in the ring,
+which is exactly the desynchronisation shape above. Our packet walk counted
+by the same rule and is fixed with them. **But the user's 3DMark 99 run
+sends no such packet**: the device says so once when it meets one, the line
+never appeared, and the glitched loading screen came back with the fix in.
+So the FIFO hole was real and the glitch is something else — and the
+screenshot says where to look. It is the **800x600 desktop on `d3dpt-vga`**
+(docs 15 and 19), 3DMark's own 2D loading screen, its text crisp and the
+picture around it in stale horizontal bands, not a Voodoo frame at all: the
+bands are what was on screen before, so the adapter kept them while the
+guest's writes went unseen. `-device d3dpt-vga,full-frames=on` converts the
+whole frame every refresh instead of the dirty spans, which is the A/B
+(`scripts/win-voodoo-ab.sh vga:full-frames=on`).
+
 
 **Display.** A Voodoo 1/2 is a pass-through card: the 2D adapter's signal
 goes through it, and with `fbiInit0`'s VGA_PASS bit the Voodoo drives the

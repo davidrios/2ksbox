@@ -86,6 +86,7 @@ struct D3dptVgaState {
     /* the linear mode currently shown (lin_on) */
     bool lin_on;
     bool full_update;
+    bool full_frames;           /* property: every refresh a whole frame */
     bool resurface;             /* invalidated: put our own surface on the console again */
     int64_t vga_grace_until;    /* hold the last frame after ENABLE 1->0 until then (ms) */
     uint8_t vga_sig[8];         /* the VGA core mode last reported */
@@ -396,6 +397,9 @@ static void d3dpt_vga_gfx_update(void *opaque)
     if (s->pal_dirty && m.bpp == 8) {
         /* a new palette recolours every pixel: one full conversion */
         fb_apply_palette(s);
+        s->full_update = true;
+    }
+    if (s->full_frames) {
         s->full_update = true;
     }
 
@@ -950,6 +954,11 @@ static Property d3dpt_vga_properties[] = {
      * device implements is the check that an installed driver accepts a
      * QEMU update (d3dpt_fb.h, "Versions only add"). Nothing else reads it. */
     DEFINE_PROP_UINT32("fb-version", D3dptVgaState, fb_version, D3DPT_FB_VERSION),
+    /* convert the whole frame every refresh instead of the dirty spans:
+     * the A/B for a picture that comes out in stale bands (2026-09-17, a
+     * 3DMark 99 loading screen on the PC). On means the pixels in VRAM are
+     * right and this device's incremental path is what lost them. */
+    DEFINE_PROP_BOOL("full-frames", D3dptVgaState, full_frames, false),
     DEFINE_PROP_END_OF_LIST(),
 };
 

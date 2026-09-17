@@ -7,6 +7,10 @@
 #   scripts/win-voodoo-ab.sh recompiler=off  86Box's interpreter
 #   scripts/win-voodoo-ab.sh threads=1       one render thread
 #
+# A `vga:` prefix puts the property on the display adapter instead:
+#
+#   scripts/win-voodoo-ab.sh vga:full-frames=on   whole frames, no dirty spans
+#
 # The machine is the launcher's own (its bundle's disk, its guest-tools
 # ISO); close the launcher's window for that machine first, or the disk's
 # write lock will refuse this one. The player started from a shell prints
@@ -29,6 +33,11 @@ ISO="$(ls -t "$ROOT"/guest-tools/out/guest-tools-3dfx-*.iso 2>/dev/null | head -
 win() { cygpath -w "$1"; }
 TMP="$(cygpath "${TMP:-/tmp}")"
 
+case "$PROP" in
+  vga:*) VGA_PROP=",${PROP#vga:}"; V2_PROP="" ;;
+  *)     VGA_PROP="";              V2_PROP=",$PROP" ;;
+esac
+
 LOG="$ROOT/build/win-voodoo-ab.log"
 mkdir -p "$ROOT/build"
 { echo; echo "=== voodoo2,$PROP — $(date) ==="; } >> "$LOG"
@@ -41,8 +50,8 @@ set -o pipefail
   -L "$(win "$ROOT/qemu/pc-bios")" \
   -machine pc,hpet=off -accel tcg -m 256 -cpu pentium3 \
   -drive "file=$(win "$M/disk.qcow2"),if=ide,index=0,media=disk" \
-  -device "voodoo2,addr=0x05,$PROP" \
-  -nic none -vga none -device d3dpt-vga,addr=0x02 \
+  -device "voodoo2,addr=0x05$V2_PROP" \
+  -nic none -vga none -device "d3dpt-vga,addr=0x02$VGA_PROP" \
   -device sb16,audiodev=embed0 \
   -device opl3,audiodev=embed0,sbbase=0x220 \
   -device mpu401,audiodev=embed0,synth=gm \
