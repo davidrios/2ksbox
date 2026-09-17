@@ -492,7 +492,9 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    with no `PATH` to its DLLs (`build/win/qt-host` +
    `packaging/windows/qmake-host.c`); the third, `once_proxy.cpp` not
    linking against GCC 16's libstdc++, which has no exported
-   `std::__once_call` and no need of the proxy. Expect the next
+   `std::__once_call` and no need of the proxy; the fourth, the ISO's
+   GLIDETEST including OpenGLide's SDK header from a tree nothing had
+   prepared (`<cstdint>` in C). Expect the next
    failures in the places Linux could not reach: the `\\?\` prefix in
    `qemu-embed/build.rs`, meson's `CC_LD=lld` for clang, cxx-qt against
    MSYS2's Qt 6.11, and DXVK's meson without a cross file. The guest-tools

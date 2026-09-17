@@ -193,6 +193,11 @@ build_ovl() {
     echo "note: GLIDE2X.OVL (DOS Glide) is NOT on this ISO — no Open Watcom at $w (WATCOM=)" >&2
     return 0
   fi
+  # The overlay's device header, which only scripts/prepare-qemu.sh puts in
+  # qemu/ -- the qemu stage of build.sh / build-windows.sh runs it first.
+  [ -f "$ROOT/qemu/hw/3dfx/g2xfuncs.h" ] || {
+    echo "GLIDE2X.OVL needs the prepared QEMU tree (qemu/hw/3dfx): run scripts/prepare-qemu.sh first" >&2
+    exit 1; }
   d="$OUT/ovl-build"; rm -rf "$d"; mkdir -p "$d"
   cp "$FX"/wrappers/3dfx/ovl/glideovl.c "$FX"/wrappers/3dfx/ovl/glideovl.lnk \
      "$FX"/wrappers/3dfx/ovl/clib.h "$d/"
@@ -256,6 +261,19 @@ i686-w64-mingw32-gcc -O2 -Wall -shared -o "$OUT/iso/D3DPT/ddraw.dll" "$ROOT/gues
 i686-w64-mingw32-gcc -O2 -Wall -shared -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
   -o "$OUT/iso/D3DPT/dinput.dll" "$ROOT/guest-tools/src/d3dpt/dinput.c" "$ROOT/guest-tools/src/d3dpt/dinput.def" \
   -static-libgcc -Wl,--kill-at -Wl,--enable-stdcall-fixup -ldxguid
+
+# GLIDETEST and DITHTEST below include OpenGLide's copy of the Glide SDK
+# header, which is C++ until patches/openglide/03-sdk-header-in-c.patch
+# (upstream `#include <cstdint>`). scripts/build.sh prepares that tree before
+# this script ever runs, so nothing here used to check; a checkout that
+# builds only the ISO (Windows, docs/build-windows.md) has a pristine one.
+# Prepared only when unpatched: a re-prepare hands the Glide wrapper's build
+# fresh mtimes.
+if ! grep -q '2ksbox' "$ROOT/third_party/openglide/sdk2_3dfx.h" 2>/dev/null; then
+  [ -f "$ROOT/third_party/openglide/Glide.cpp" ] || \
+    git -C "$ROOT" submodule update --init --depth 1 third_party/openglide
+  "$ROOT/scripts/prepare-openglide.sh"
+fi
 
 # TESTS\: every test, benchmark and calibration program, one copy each.
 # Which stack a test runs on is decided by what is copied next to it, not

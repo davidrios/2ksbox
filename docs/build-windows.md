@@ -413,7 +413,12 @@ for the target-prefixed binutils names our scripts call
 install. And conf_wrapper's native mode writes a plain `gcc` into the
 Makefiles, so `build-wrappers.sh` gives plain `gcc` the same msvcrt and
 `-march=pentium3` flags its prefixed shim has. Open Watcom runs from
-`binnt64`. Paths need no conversion: MSYS2 rewrites `/c/…` arguments
+`binnt64`. Two trees the ISO compiles against are prepared by other
+steps on Linux: OpenGLide's Glide SDK header (C only after
+`patches/openglide/03`), which `build-wrappers.sh` now prepares itself
+when it finds it unpatched, and `qemu/hw/3dfx` for `GLIDE2X.OVL`, which
+the `qemu` stage's `prepare-qemu.sh` provides and whose absence is now
+named. Paths need no conversion: MSYS2 rewrites `/c/…` arguments
 (`-I/c/…` included) and colon-separated path lists in the environment
 (Watcom's `INCLUDE`) for a native program. The one exception is Watcom's
 `@file`, which gets `cygpath -m`.
