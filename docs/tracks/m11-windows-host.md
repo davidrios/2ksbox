@@ -480,9 +480,11 @@ images and a GPU, and now a Windows host too. The Windows evidence is
 ## Next steps, in order
 
 0. **The 2026-09-17 package on the PC** (docs/00-status.md, "The first
-   Windows host run"): dxdiag / 3DMark 99 on DXVK, a MIDI's tempo, the
-   Windows key in a game, and Moto Racer's speed — the first clang-built
-   QEMU (patch 68) ever to run on real Windows.
+   Windows host run"): dxdiag / 3DMark 99 on DXVK, a MIDI's tempo, CD
+   music, the pointer over Moto Racer and `2ksbox-debug.bat` are
+   **confirmed fixed** by the user. Left: the Windows key in a game, and
+   Moto Racer's speed — the first clang-built QEMU (patch 68) ever to run
+   on real Windows.
 0b. **Run the native build on the PC.** It **builds there, every stage**
    (2026-09-17, the user: `qemu`, `rust`, `qt`, `exec` and the guest-tools
    ISO, in MSYS2's MINGW64 shell). Nothing built there has been run yet:
