@@ -196,10 +196,10 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   network only through a packet driver the user installs by hand. The
   default still follows the family until someone touches the box, exactly
   like memory and the processor — the families simply agree at the
-  moment. An existing bundle with no `network` field is untouched by any
-  of this and still has its card, whatever its family: taking one away
-  from a machine that has been running with it is a hardware change, not
-  a default. The checkbox is:
+  moment. A bundle with no `network` field has no card either, since
+  2026-09-16 (user decision: networking is off by default for every
+  machine; it used to mean on, as every bundle written before the field
+  ran, and the wizard has always written it). The checkbox is:
   the machine either has doc 06's per-family NIC on QEMU's user-mode NAT
   — outbound through the host, nothing on the network able to reach the
   guest — or it has no adapter at all, so Windows never sees a card, asks
@@ -207,10 +207,7 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   because QEMU otherwise supplies a NIC of its own when the command line
   asks for none; and XP's PCI devices carry the explicit addresses their
   order already gave them, so the NIC's absence doesn't slide the sound
-  card into its slot and make an installed guest re-detect hardware. An
-  absent `network` field means on, as every bundle written before it ran;
-  a new machine means off, and the two are separate answers for that
-  reason (`network_enabled_default` and `default_network`).
+  card into its slot and make an installed guest re-detect hardware.
 - **The Voodoo 2** is a checkbox right under the display adapter
   ("Emulated 3dfx Voodoo 2", `voodoo2` in the bundle; doc 21, M14): a 3dfx Voodoo 2 on
   the PCI bus beside whatever display adapter the machine has, as the

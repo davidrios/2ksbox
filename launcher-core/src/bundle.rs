@@ -1023,10 +1023,14 @@ pub struct Machine {
     /// mean Windows never sees a card, never asks for its driver and
     /// never waits on a network at boot.
     ///
-    /// Defaults to `true` when the field is absent, which is how every
-    /// bundle written before it existed ran — a machine must not lose
-    /// its network by being read by a newer launcher.
-    #[serde(default = "network_enabled_default")]
+    /// Defaults to `false` when the field is absent, like a new machine
+    /// (`default_network`). Until 2026-09-16 an absent field meant on,
+    /// which is how every bundle written before the field existed ran;
+    /// the user decided networking is off by default for every machine,
+    /// that one included (the wizard has always written the field, so it
+    /// is a hand-written bundle, or one from before 2026-09-05, that
+    /// loses its card).
+    #[serde(default)]
     pub network: bool,
     /// Whether the machine gets the USB tablet: an *absolute* pointing
     /// device, so the host pointer and the guest cursor are the same
@@ -1175,15 +1179,6 @@ pub fn default_accel(family: Family) -> Accel {
     }
 }
 
-/// Networking is on unless a bundle says otherwise: this is what every
-/// machine did before the field existed, and a machine must not lose its
-/// card by being read by a newer launcher. It is *not* what a new
-/// machine gets — that is `default_network`, and since 2026-09-07 it is
-/// off for every family.
-fn network_enabled_default() -> bool {
-    true
-}
-
 /// Whether a *new* machine of this family gets a card. **None of them
 /// do** (the user's decision, 2026-09-07): these guests stopped getting
 /// security fixes twenty years ago, so a machine that is on a network
@@ -1198,10 +1193,8 @@ fn network_enabled_default() -> bool {
 /// The family is still the argument, because that is what a default here
 /// is allowed to depend on and one of them may want a card again.
 ///
-/// (An existing bundle with no `network` field is unaffected — that is
-/// `network_enabled_default`, which stays *on* for every family, because
-/// taking a card away from a machine that has been running with one is a
-/// hardware change and not a default.)
+/// A bundle with no `network` field has no card either (since
+/// 2026-09-16, `Machine::network`).
 pub fn default_network(_family: Family) -> bool {
     false
 }
@@ -1224,8 +1217,9 @@ fn seamless_mouse_default() -> bool {
 /// that would fix it. The PS/2 mouse works everywhere, so that is what a
 /// machine we cannot test starts with; the checkbox turns it on for a
 /// guest that does handle it. (An existing bundle with no
-/// `seamless_mouse` field is unaffected, for the same reason
-/// `network_enabled_default` is unconditional.)
+/// `seamless_mouse` field is unaffected: taking a pointing device away
+/// from a machine that has been running with one is a hardware change,
+/// not a default.)
 pub fn default_seamless_mouse(family: Family) -> bool {
     !matches!(family, Family::Dos | Family::Other) && seamless_mouse_default()
 }

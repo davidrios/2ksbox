@@ -1746,6 +1746,13 @@ family_other_check() { # the "Other" family's hardware, from the picker to a rea
   args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *rtl8139*) echo "turning networking off left the NIC behind"; echo "$args"; rc=1;; esac
   case "$args" in *"ES1370,audiodev=embed0,addr=0x04"*) ;; *) echo "the sound card moved when the NIC went"; echo "$args"; rc=1;; esac
+  # A bundle with no `network` field at all has no card either (since
+  # 2026-09-16; it used to mean on). Written by hand, as the wizard always
+  # writes the field.
+  grep -v '^network' "$bundle" >"$dir/nofield.toml"
+  args="$(target/release/launcherx --print-args "$dir/nofield.toml")"
+  case "$args" in *rtl8139*|*-netdev*) echo "a bundle with no network field came with a card"; echo "$args"; rc=1;; esac
+  case "$args" in *"-nic none"*) ;; *) echo "a bundle with no network field did not emit -nic none"; echo "$args"; rc=1;; esac
   target/release/launcherx --wizard-edit "$bundle" - - - net >/dev/null || { echo "--wizard-edit net failed"; rc=1; }
   # Started paused on the real binary and told to quit, so a device our
   # QEMU does not have is an exit code rather than a hung guest.
