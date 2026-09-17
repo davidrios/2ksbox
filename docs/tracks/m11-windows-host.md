@@ -467,7 +467,8 @@ On the PC itself, in MSYS2's MINGW64 shell (docs/build-windows.md,
 "Building on Windows" — the one-time setup is there):
 
 ```sh
-scripts/build-windows.sh              # qemu, rust, qt, exec, natively
+scripts/build-windows.sh              # qemu, rust, qt, exec (and the ISO if absent), natively
+scripts/build-windows.sh guest        # the guest-tools ISO again, after a driver change
 scripts/win-run.sh launcher           # out of the checkout
 GDB=1 scripts/win-run.sh player ...   # the command line from launcher.log's [player] line
 ```
@@ -487,10 +488,15 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    through the edited scripts, the Python check accepts 3.14 only with
    `distlib`, and QEMU configures and generates on 3.14). The first run's
    first failure was mkvenv's `file://C:/…` wheels URL under Python 3.14
-   on Windows (patch 69). Expect the next
+   on Windows (patch 69); the second, qt-build-utils running MSYS2's moc
+   with no `PATH` to its DLLs (`build/win/qt-host` +
+   `packaging/windows/qmake-host.c`). Expect the next
    failures in the places Linux could not reach: the `\\?\` prefix in
    `qemu-embed/build.rs`, meson's `CC_LD=lld` for clang, cxx-qt against
-   MSYS2's Qt 6.11, and DXVK's meson without a cross file.
+   MSYS2's Qt 6.11, and DXVK's meson without a cross file. The guest-tools
+   ISO (2026-09-17, same day) is newer still and also unrun there: qemu-3dfx's
+   conf_wrapper under `MSYSTEM=MINGW32`, wine9x's make, and Open Watcom from
+   `binnt64`.
 1. **Rebuild and re-package for the ADR-015 shape**, then
    `2ksbox-debug.bat` on the PC and read the `2ksbox-debug.log` it
    writes: there is one zip now, its `2ksbox.exe` is the Qt launcher, and

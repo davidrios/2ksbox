@@ -14,6 +14,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/guest-tools/msys2-i686.sh"
 SRC="$ROOT/guest-tools/src/d3dptvid"
 NT="$SRC/nt"        # the NT layer: the miniport and the display driver
 CORE="$SRC/core"    # the OS-independent core both this and the 9x HAL link
@@ -28,6 +29,7 @@ command -v "$CC" >/dev/null || { echo "need $CC (mingw-w64)"; exit 1; }
 DDK_INC="$("$CC" -print-sysroot 2>/dev/null)/i686-w64-mingw32/include/ddk"
 [ -f "$DDK_INC/video.h" ] || DDK_INC="$(dirname "$(dirname "$(command -v "$CC")")")/i686-w64-mingw32/include/ddk"
 [ -f "$DDK_INC/video.h" ] || DDK_INC="/usr/i686-w64-mingw32/include/ddk"
+[ -f "$DDK_INC/video.h" ] || DDK_INC="/mingw32/include/ddk"   # MSYS2
 [ -f "$DDK_INC/video.h" ] || { echo "mingw-w64 DDK headers (ddk/video.h) not found"; exit 1; }
 
 # kernel mode: no stack probes (no __chkstk in the kernel), no stack
@@ -135,7 +137,9 @@ crlf < "$ROOT/guest-tools/README-DRIVER.txt" > "$OUT/README.TXT"
 crlf < "$NT/d3dptvid.inf" > "$OUT/d3dptvid.inf"
 
 # 8.3 upper-case names for the ISO folder
-( cd "$OUT" && for f in *; do u="$(echo "$f" | tr a-z A-Z)"; [ "$f" = "$u" ] || mv "$f" "$u"; done )
+# Through a temporary name: on a case-insensitive filesystem (NTFS under
+# MSYS2) a case-only rename can be refused as a move onto itself.
+( cd "$OUT" && for f in *; do u="$(echo "$f" | tr a-z A-Z)"; [ "$f" = "$u" ] || { mv "$f" "$f.~" && mv "$f.~" "$u"; }; done )
 ls -la "$OUT"
 
 ISO="$ROOT/guest-tools/out/d3dpt-driver.iso"

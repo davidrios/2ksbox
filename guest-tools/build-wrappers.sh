@@ -7,6 +7,8 @@
 # git, make, nasm; xorriso or genisoimage/mkisofs for the ISO.
 #   Linux (Arch):  pacman -S mingw-w64-gcc mingw-w64-tools xorriso
 #   macOS:         brew install mingw-w64 xorriso
+#   Windows:       MSYS2's MINGW64 shell, scripts/build-windows.sh --msys2-deps
+#                  (msys2-i686.sh sets up the rest; docs/build-windows.md)
 # GLIDE2X.OVL (the DOS Glide binding) needs Open Watcom and is skipped
 # with a note without it; the DJGPP DXEs are skipped outright.
 set -euo pipefail
@@ -15,6 +17,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FX="$ROOT/third_party/qemu-3dfx"
 OUT="$ROOT/guest-tools/out"
 REV="$(git -C "$FX" rev-parse --short HEAD)"
+. "$ROOT/guest-tools/msys2-i686.sh"
 
 # gendef (mingw-w64-tools) is not in Homebrew's mingw-w64; build it from
 # pinned upstream sources when missing. It is a standalone C program.
@@ -69,16 +72,23 @@ ensure_msvcrt_cc() {
   # prepended by the gendef/objdump steps): remove it first, or `command -v`
   # would find the shim itself and it would exec itself forever
   # ("argument list too long").
-  rm -f "$bin/i686-w64-mingw32-gcc"
+  rm -f "$bin/i686-w64-mingw32-gcc" "$bin/gcc"
   real="$(command -v i686-w64-mingw32-gcc || true)"
   case "$real" in "$bin"/*) echo "internal error: shim resolved to itself"; exit 1;; esac
   [ -n "$real" ] || { echo "need i686-w64-mingw32-gcc (mingw-w64)"; exit 1; }
   REAL_CC="$real"
   [ -f "$(dirname "$(dirname "$real")")/i686-w64-mingw32/lib/libmsvcrt-os.a" ] || \
   [ -f "$(dirname "$real")/../i686-w64-mingw32/lib/libmsvcrt-os.a" ] || \
+  [ -f "$(dirname "$real")/../lib/libmsvcrt-os.a" ] || \
     echo "warning: libmsvcrt-os.a not found next to the toolchain; msvcrt link may fail"
   printf '#!/usr/bin/env bash\nexec "%s" %s "$@" %s\n' "$real" "$MSVCRT_FLAGS" "$ARCH_FLAGS" > "$bin/i686-w64-mingw32-gcc"
   chmod +x "$bin/i686-w64-mingw32-gcc"
+  # MSYS2 (msys2-i686.sh): conf_wrapper's native mode writes CC=gcc into
+  # qemu-3dfx's Makefiles, not the prefixed name, so plain gcc gets the
+  # same flags there.
+  if [ "${MSYSTEM:-}" = MINGW32 ]; then
+    cp "$bin/i686-w64-mingw32-gcc" "$bin/gcc"
+  fi
 }
 ensure_msvcrt_cc
 
@@ -175,6 +185,7 @@ build_ovl() {
   case "$(uname -s)/$(uname -m)" in
     Darwin/arm64)   bins=armo64 ;;
     Darwin/x86_64)  bins=bino64 ;;
+    MINGW*|MSYS*)   bins="binnt64 binnt" ;;
     *)              bins="binl64 binl" ;;
   esac
   for bin in $bins; do [ -x "$w/$bin/wcc386" ] && break; done
@@ -411,7 +422,9 @@ sed -e "s/@REV@/$REV/" -e "s/@WINE9X@/${WINE9X_REF:0:7}/" "$ROOT/guest-tools/REA
   | crlf > "$OUT/iso/README.TXT"
 # 8.3-safe upper-case names for Win9x
 ( cd "$OUT/iso" && find . -type f | while IFS= read -r f; do
-    u="$(dirname "$f")/$(basename "$f" | tr a-z A-Z)"; [ "$f" = "$u" ] || mv "$f" "$u"; done )
+    u="$(dirname "$f")/$(basename "$f" | tr a-z A-Z)"
+    # through a temporary name: NTFS (MSYS2) may refuse a case-only rename
+    [ "$f" = "$u" ] || { mv "$f" "$f.~" && mv "$f.~" "$u"; }; done )
 
 ISO="$OUT/guest-tools-3dfx-$REV.iso"
 if command -v xorriso >/dev/null; then

@@ -5,8 +5,9 @@ does the rest of the work: the whole stack — QEMU with a mingw toolchain,
 Rust for `x86_64-pc-windows-gnu`, the Direct3D executor — crosses
 cleanly, and the result is a portable zip you copy to a Windows machine
 and unpack. The same stages also build **natively on a Windows PC** under
-MSYS2, for debugging there with gdb ("Building on Windows" below); the
-package still comes from Linux.
+MSYS2, for debugging there with gdb and for rebuilding the guest-tools
+ISO after a driver change ("Building on Windows" below); the package still
+comes from Linux.
 
 Track: `docs/tracks/m11-windows-host.md`. Names and layout: doc 07.
 
@@ -298,8 +299,8 @@ Added 2026-09-17 and **not run on Windows yet**. The cross build answers
 "does it work on Windows" only one zip at a time; debugging a fault that
 shows up only on real Windows wants a debugger and a rebuild on that
 machine. The same `scripts/build-windows.sh` does that when it runs in
-**MSYS2's MINGW64 shell** — its `qemu`, `rust`, `qt` and `exec` stages, with
-no container. The guest-tools ISO and the package stay on Linux.
+**MSYS2's MINGW64 shell** — its `qemu`, `rust`, `qt`, `exec` and `guest`
+stages, with no container. Only the package stays on Linux.
 
 **MINGW64 and not UCRT64 or CLANG64**, because it is the cross image's ABI:
 msvcrt, GCC's runtime and libstdc++, and Rust's `x86_64-pc-windows-gnu`.
@@ -322,19 +323,25 @@ cd 2ksbox && scripts/build-windows.sh --msys2-deps
 #    the default MSVC one needs Microsoft's linker for every build script:
 ./rustup-init.exe -y --default-host x86_64-pc-windows-gnu
 echo 'export PATH="$(cygpath "$USERPROFILE")/.cargo/bin:$PATH"' >> ~/.bashrc && . ~/.bashrc
+
+# 3. Open Watcom, for the ISO's Win98 display driver and GLIDE2X.OVL: the same
+#    ow-snapshot.tar.xz as on Linux (github.com/open-watcom/open-watcom-v2,
+#    the Last-CI-build release), which carries the Windows binaries in binnt64:
+mkdir -p /c/WATCOM && tar -C /c/WATCOM -xf ow-snapshot.tar.xz
+echo 'export WATCOM=/c/WATCOM' >> ~/.bashrc && . ~/.bashrc
 ```
 
 Then, as often as needed:
 
 ```sh
-scripts/build-windows.sh                  # qemu rust qt exec (guest is skipped)
+scripts/build-windows.sh                  # qemu rust qt exec, and the ISO if there is none
 scripts/build-windows.sh rust             # one stage
+scripts/build-windows.sh guest            # the ISO again, after a driver change
 scripts/win-run.sh launcher               # the Qt launcher, out of the checkout
 GDB=1 scripts/win-run.sh player ...       # the player under gdb
 ```
 
-Copy `guest-tools/out/guest-tools-*.iso` over from Linux for the wizard
-to find. `scripts/win-run.sh` does what a package does by being one
+`scripts/win-run.sh` does what a package does by being one
 folder: `build/win/qemu` on `PATH` for the embed DLL, the player named to
 the launcher (which is built into `launcher-qt/target/`, where it would
 never look), and the Direct3D executor and DXVK named to QEMU —
@@ -367,9 +374,36 @@ What is different from the cross build, and why:
   `qemu-embed/build.rs` strips `canonicalize`'s `\\?\` prefix for the same
   reason: the linker appends `/libqemu-embed-…` to it, and `/` is not a
   separator in a verbatim path.
+- **Qt's tools run from `build/win/qt-host`.** qt-build-utils starts moc,
+  rcc, qmltyperegistrar and qmlcachegen with an *empty* environment, and
+  MSYS2 installs them in `share/qt6/bin`, away from the DLLs in `bin/` they
+  load, so with no `PATH` none of them starts ("moc unexpectedly exited" —
+  the second failure of the first run). The `qt` stage copies each tool
+  next to its own DLLs (found with `ldd`) and sets `QMAKE` to
+  `packaging/windows/qmake-host.c`, a static wrapper that answers the
+  tool-directory queries with that folder and hands every other query to
+  MSYS2's `qmake6`. MSYS2's own tree is left alone.
 - **Package versions follow MSYS2** (Qt 6.11 against Fedora's 6.10, GCC
   16 against 15). A difference that matters shows up as a fault in one
   and not the other, so the zip remains the verdict.
+
+**The guest-tools ISO** is built by the same scripts as on Linux
+(`guest-tools/build-wrappers.sh`, which runs `build-driver.sh` and
+`build-driver9x.sh`), each of which sources `guest-tools/msys2-i686.sh`
+first. That file is the whole port. qemu-3dfx's `conf_wrapper` builds its
+wrappers natively only with `MSYSTEM=MINGW32` and an i686 `gcc`, and its
+Makefiles refuse any other `MSYSTEM`, so it sets `MSYSTEM=MINGW32` (which
+is also what MSYS2's `uname` reports) and puts `/mingw32/bin` first on
+`PATH`, with the x86_64 tools (python3, gendef) behind it. It adds shims
+for the target-prefixed binutils names our scripts call
+(`i686-w64-mingw32-objdump`, `-nm`, `-ar`, `-windres`), which MSYS2 does not
+install. And conf_wrapper's native mode writes a plain `gcc` into the
+Makefiles, so `build-wrappers.sh` gives plain `gcc` the same msvcrt and
+`-march=pentium3` flags its prefixed shim has. Open Watcom runs from
+`binnt64`. Paths need no conversion: MSYS2 rewrites `/c/…` arguments
+(`-I/c/…` included) and colon-separated path lists in the environment
+(Watcom's `INCLUDE`) for a native program. The one exception is Watcom's
+`@file`, which gets `cygpath -m`.
 
 Qemu's seven symbolic links are in Linux-only subprojects
 (`libvduse`, `libvhost-user`) and are never built, so a checkout without

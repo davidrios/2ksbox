@@ -8,8 +8,9 @@
 # On Windows itself, in MSYS2's MINGW64 shell, the same stages build
 # natively, for debugging on the PC: the same compilers, C runtime and
 # Rust target as the cross image, so a build here is the build that
-# ships. The guest-tools ISO and the package stay on Linux; copy an ISO
-# into guest-tools/out/ and run what was built with scripts/win-run.sh.
+# ships. The guest-tools ISO builds there too, with MSYS2's i686 toolchain
+# (guest-tools/msys2-i686.sh); the package stays on Linux. Run what was
+# built with scripts/win-run.sh.
 #
 #   scripts/build-windows.sh                everything this host can build
 #   scripts/build-windows.sh qemu rust      only those stages
@@ -36,8 +37,9 @@
 #           d3d9 as every other host (2026-09-17).
 #   guest   guest-tools/build-wrappers.sh: the guest-tools ISO. Host-side
 #           and host-independent -- the ISO is 32-bit guest code, the same
-#           file the Linux package ships -- so it is only built here when
-#           there is not one already.
+#           file the Linux package ships -- so a default run builds it only
+#           when there is not one already; naming the stage rebuilds it
+#           (a driver changed).
 #
 # docs/build-windows.md is the prose; docs/tracks/m11-windows-host.md is
 # the track. Nothing here writes to build/qemu or target/release: a
@@ -61,12 +63,17 @@ esac
 # image's list (packaging/windows/Dockerfile) under MSYS2's names, plus gdb,
 # which is what building on the PC is for, and diffutils, which a bare MSYS2
 # lacks: QEMU's meson requires `diff` (tests/qapi-schema) and prepare-qemu.sh
-# keeps meson files' mtimes with `cmp`. Rust is not among them: it is
-# rustup's own installer, with the GNU host (docs/build-windows.md).
+# keeps meson files' mtimes with `cmp`. The second half is the guest-tools
+# ISO's: the i686 toolchain, gendef, and what qemu-3dfx's and wine9x's
+# builds call (make, which, xxd from vim, shasum from perl, nasm), plus
+# xorriso. Not here: Rust, which is rustup's own installer with the GNU
+# host, and Open Watcom, which is a snapshot to unpack (both in
+# docs/build-windows.md).
 MSYS2_PACKAGES=(git rsync diffutils
   mingw-w64-x86_64-{gcc,clang,lld,gdb,ninja,meson,pkgconf,python,python-distlib}
   mingw-w64-x86_64-{glib2,pixman,zlib,libepoxy,libslirp}
-  mingw-w64-x86_64-{glslang,qt6-base,qt6-declarative})
+  mingw-w64-x86_64-{glslang,qt6-base,qt6-declarative}
+  mingw-w64-i686-gcc mingw-w64-x86_64-tools make which vim perl nasm xorriso)
 
 JOBS=(); PACKAGE=""; STAGES=(); EXPLICIT=""
 while [ $# -gt 0 ]; do
@@ -176,10 +183,35 @@ fi
 # launcher-qt is its own cargo workspace (so a plain `cargo build` never
 # needs Qt), which is why this is a separate stage with its own directory
 # rather than another member of the one above.
+# MSYS2 only. qt-build-utils runs moc and the other Qt tools with an empty
+# environment, and MSYS2 keeps them in share/qt6/bin, away from the DLLs in
+# bin/ they load -- so with no PATH none of them starts ("moc unexpectedly
+# exited"). build/win/qt-host gets a copy of each tool beside its own DLL
+# closure (ldd), and QMAKE becomes packaging/windows/qmake-host.c, which
+# answers the tool-directory queries with that folder and passes everything
+# else to qmake6. MSYS2's own tree is not touched.
+msys2_qt_host() {
+  local dir="$ROOT/build/win/qt-host" libexec tool dll
+  libexec="$(cygpath -u "$(qmake6 -query QT_HOST_LIBEXECS | tr -d '\r')")"
+  rm -rf "$dir" && mkdir -p "$dir"
+  for tool in moc rcc qmltyperegistrar qmlcachegen qtpaths; do
+    [ -f "$libexec/$tool.exe" ] || continue
+    cp "$libexec/$tool.exe" "$dir/"
+    ldd "$libexec/$tool.exe" | awk '$3 ~ /^\/mingw64\// { print $3 }' | while read -r dll; do
+      [ -f "$dir/$(basename "$dll")" ] || cp "$dll" "$dir/"
+    done
+  done
+  printf '#define REAL_QMAKE "%s.exe"\n#define HOST_TOOLS "%s"\n' \
+    "$(cygpath -m "$(command -v qmake6)")" "$(cygpath -m "$dir")" > "$dir/qt-host-paths.h"
+  gcc -O2 -Wall -static -I"$dir" -o "$dir/qmake-host.exe" packaging/windows/qmake-host.c
+  export QMAKE="$(cygpath -m "$dir/qmake-host.exe")"
+}
+
 if want qt; then
   if [ -z "$NATIVE" ] && ! scripts/win-cross.sh test -x /usr/bin/x86_64-w64-mingw32-qmake-qt6; then
     skip qt "the cross image has no mingw Qt 6 (rebuild it: scripts/win-cross.sh --build)" || true
   else
+    [ -z "$NATIVE" ] || msys2_qt_host
     say "qt: cargo build --release --target x86_64-pc-windows-gnu (launcher-qt)"
     inw sh -c 'cd launcher-qt && exec cargo build --release --target x86_64-pc-windows-gnu'
     BUILT+=(qt)
@@ -223,11 +255,15 @@ fi
 # The ISO is guest code and identical whatever host built it, so this
 # stage exists to notice that there is none rather than to rebuild one.
 if want guest; then
-  if ls guest-tools/out/guest-tools-*.iso >/dev/null 2>&1; then
+  if [ -z "$EXPLICIT" ] && ls guest-tools/out/guest-tools-*.iso >/dev/null 2>&1; then
     say "guest"
-    echo "    guest-tools ISO present - skipping (guest-tools/build-wrappers.sh rebuilds it)"
+    echo "    guest-tools ISO present - skipping (scripts/build-windows.sh guest rebuilds it)"
   elif [ -n "$NATIVE" ]; then
-    skip guest "built on Linux: copy guest-tools/out/guest-tools-*.iso from there" || true
+    # msys2-i686.sh, sourced by the script, switches it to MSYS2's i686
+    # toolchain and says what is missing
+    say "guest: guest-tools ISO (MSYS2 i686)"
+    guest-tools/build-wrappers.sh
+    BUILT+=(guest)
   elif ! command -v i686-w64-mingw32-gcc >/dev/null; then
     skip guest "needs mingw-w64 (i686-w64-mingw32-gcc)" || true
   elif ! command -v xorriso >/dev/null && ! command -v genisoimage >/dev/null; then

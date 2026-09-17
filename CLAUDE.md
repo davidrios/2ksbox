@@ -28,8 +28,10 @@ backend later.
   For debugging on a Windows PC the same `scripts/build-windows.sh`
   builds **natively in MSYS2's MINGW64 shell** (the cross image's ABI:
   msvcrt, libstdc++, `x86_64-pc-windows-gnu`) and `scripts/win-run.sh`
-  runs it out of the checkout, under gdb with `GDB=1`; the package still
-  comes from Linux.
+  runs it out of the checkout, under gdb with `GDB=1`. The guest-tools ISO
+  builds there too (`scripts/build-windows.sh guest`, through
+  `guest-tools/msys2-i686.sh`: MSYS2's i686 toolchain as MINGW32, which
+  qemu-3dfx's wrapper build requires); the package still comes from Linux.
 
 ## Locked decisions (do not reopen)
 

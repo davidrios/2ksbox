@@ -13,7 +13,8 @@
 # host binaries for all of our machines in one tarball:
 # https://github.com/open-watcom/open-watcom-v2 (the Last-CI-build release's
 # ow-snapshot.tar.xz unpacks ready to use, Linux x86-64 in binl64 and macOS
-# arm64 in armo64), so this builds on the Air as well as on the rig.
+# arm64 in armo64), so this builds on the Air as well as on the rig — and on
+# Windows, in MSYS2 (binnt64; WATCOM=/c/WATCOM wherever it was unpacked).
 #
 # The headers this builds against are in src/d3dptvid/ddk9x/ — no Microsoft
 # DDK, same rule as the XP driver (doc 15). dibeng.lib is made here by wlib
@@ -23,6 +24,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/guest-tools/msys2-i686.sh"
 SRC="$ROOT/guest-tools/src/d3dptvid/w9x"
 DDK="$ROOT/guest-tools/src/d3dptvid/ddk9x"
 OUT="$ROOT/guest-tools/out/driver9x"
@@ -34,6 +36,7 @@ WATCOM="${WATCOM:-$HOME/.local/opt/open-watcom}"
 case "$(uname -s)/$(uname -m)" in
   Darwin/arm64)   OWBIN=armo64 ;;
   Darwin/x86_64)  OWBIN=bino64 ;;
+  MINGW*|MSYS*)   OWBIN=binnt64 ;;
   *)              OWBIN=binl64 ;;
 esac
 
@@ -80,7 +83,11 @@ echo "==> d3dpt9x.res"
     -I"$WATCOM/h/win" d3dpt9x.rc )
 
 echo "==> dibeng.lib (import library, from the text list)"
-( cd "$BUILD" && wlib -b -q -n -fo -ii @"$DDK/dibeng.lbc" dibeng.lib >/dev/null )
+# An @file is a path only Watcom reads: on Windows it has to be one Windows
+# can open, and MSYS2's argument conversion does not reach behind the @.
+LBC="$DDK/dibeng.lbc"
+[ -z "${MSYSTEM:-}" ] || LBC="$(cygpath -m "$LBC")"
+( cd "$BUILD" && wlib -b -q -n -fo -ii @"$LBC" dibeng.lib >/dev/null )
 
 echo "==> d3dpt9x.drv (16-bit NE, module DISPLAY)"
 # wlink reads its directives from a real file (@name), not a pipe.
