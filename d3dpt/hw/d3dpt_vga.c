@@ -78,6 +78,9 @@ struct D3dptVgaState {
     uint32_t cur_defines, cur_moves;
     bool cur_shown;             /* the visibility last published */
     bool cur_flip_hidden;       /* a flip chain has the screen: see fb_cursor_move */
+    uint32_t cur_flip_desktop;  /* the scanout offset before the chain's first flip */
+    QEMUTimer *cur_flip_timer;  /* no flip for D3DPT_FB_FLIP_IDLE_MS: see fb_cursor_flip_idle */
+    uint32_t cur_flip_idles;    /* chains ended that way, for the log */
     uint32_t cur_flips;         /* show / hide changes logged so far */
 
     /* the linear mode currently shown (lin_on) */
@@ -594,8 +597,9 @@ static void fb_cursor_define(D3dptVgaState *s, bool on)
 }
 
 /* While a DirectDraw flip chain is scanning out, the sprite is hidden too,
- * from the first flip until the next mode set (ENABLE written, which is how
- * a game gives the screen back). Windows' pointer stays enabled behind an
+ * from the first flip until the chain gives the screen back: a mode set
+ * (ENABLE written), or the flips stopping on the desktop's own page (see
+ * fb_cursor_flip_idle). Windows' pointer stays enabled behind an
  * exclusive-mode game that never hides it -- on a card without a hardware
  * cursor GDI's pointer lives in the front buffer and the first flip wipes
  * it, so a page-flipping game draws its own -- and this device's sprite
@@ -609,6 +613,39 @@ static void fb_cursor_define(D3dptVgaState *s, bool on)
  * composites the sprite into the frame when the pointer is grabbed, and
  * over Blood's 640x480 VGA frame the desktop's arrow came out at the
  * desktop's coordinates, scaled with the frame (2026-09-09). */
+/* How long without a page flip before a flip chain counts as gone. Guest
+ * time, so a slow TCG frame or a paused VM does not count; long enough that
+ * a game at a few frames a second keeps the sprite hidden. */
+#define D3DPT_FB_FLIP_IDLE_MS 2000
+
+static void fb_cursor_move(D3dptVgaState *s);
+
+/* The other way a flip chain gives the screen back: it stops flipping, on
+ * the page the desktop was on before its first flip -- which is where
+ * DirectDraw leaves the scanout when the chain is released. A game that
+ * plays at the desktop's own mode never sets a mode on the way out (the
+ * runtime only calls the driver's SetMode when the mode changes), so "until
+ * the next mode set" hid the pointer for good after 3DMark 99 at 800x600x16
+ * (2026-09-17). A game still on its other page stays hidden; one idle on
+ * the desktop's page (a loading screen) gets the pointer until its next
+ * flip, which is what a card with no hardware cursor would show too. */
+static void fb_cursor_flip_idle(void *opaque)
+{
+    D3dptVgaState *s = opaque;
+
+    if (!s->cur_flip_hidden || !s->r_enable || s->r_offset != s->cur_flip_desktop) {
+        return;
+    }
+    s->cur_flip_hidden = false;
+    if (s->cur_flip_idles++ < 64) {
+        info_report("d3dpt-vga: no page flip for %d ms on the desktop's page (offset %u): "
+                    "the flip chain is gone", D3DPT_FB_FLIP_IDLE_MS, s->r_offset);
+    }
+    if (s->cur_defined && s->cur_on) {
+        fb_cursor_move(s);
+    }
+}
+
 static void fb_cursor_move(D3dptVgaState *s)
 {
     bool on = s->cur_on && s->r_enable && !s->cur_flip_hidden;
@@ -731,6 +768,7 @@ static void d3dpt_vga_regs_write(void *opaque, hwaddr addr, uint64_t val,
         s->r_enable = val != 0;
         s->vbl_ns = s->r_enable ? qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : 0;
         s->cur_flip_hidden = false;     /* a mode set: the flip chain is gone */
+        timer_del(s->cur_flip_timer);
         if (s->cur_defined && s->cur_on) {
             fb_cursor_move(s);      /* the sprite follows the linear mode */
         }
@@ -756,12 +794,17 @@ static void d3dpt_vga_regs_write(void *opaque, hwaddr addr, uint64_t val,
         if (val != s->r_offset) {
             s->flips++;
             fb_flip_rate(s);
-            s->r_offset = val;
-            if (!s->cur_flip_hidden && s->r_enable) {
-                s->cur_flip_hidden = true;
-                if (s->cur_defined && s->cur_on) {
-                    fb_cursor_move(s);  /* a flip chain has the screen */
+            if (s->r_enable) {
+                if (!s->cur_flip_hidden) {
+                    s->cur_flip_hidden = true;
+                    s->cur_flip_desktop = s->r_offset;  /* the page GDI was on */
+                    s->r_offset = val;
+                    if (s->cur_defined && s->cur_on) {
+                        fb_cursor_move(s);  /* a flip chain has the screen */
+                    }
                 }
+                timer_mod(s->cur_flip_timer,
+                          qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + D3DPT_FB_FLIP_IDLE_MS);
             }
         }
         s->r_offset = val;
@@ -856,6 +899,7 @@ static void d3dpt_vga_realize(PCIDevice *dev, Error **errp)
              pci_address_space_io(dev), true);
     /* one console; the VGA core's ops run through ours while ENABLE is 0 */
     vga->con = graphic_console_init(DEVICE(dev), 0, &d3dpt_vga_gfx_ops, s);
+    s->cur_flip_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, fb_cursor_flip_idle, s);
 
     memory_region_init_io(&s->regs, OBJECT(dev), &d3dpt_vga_regs_ops, s,
                           "d3dpt-vga.regs", D3DPT_FB_REGS_SIZE);
@@ -884,6 +928,7 @@ static void d3dpt_vga_reset(DeviceState *dev)
     s->r_offset = s->r_hz = s->r_sel = 0;
     s->vbl_ns = 0;
     s->cur_flip_hidden = false;
+    timer_del(s->cur_flip_timer);
     s->flips = s->flips_last = 0;
     s->flips_ns = 0;
     s->vga_grace_until = 0;

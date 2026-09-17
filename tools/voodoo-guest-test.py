@@ -524,6 +524,20 @@ d3dpt_linear:
     mov dword [fs:edi + D3D_OFFSET], 800 * 600 * 4
     mov dword [fs:edi + D3D_OFFSET], 0
     mov dword [fs:edi + D3D_ENABLE], 1
+    ; and a flip chain that ends with no mode set, as a game at the
+    ; desktop's own mode does (3DMark 99 at 800x600x16): idle on its other
+    ; page the sprite stays hidden, idle on the desktop's page it comes
+    ; back -- the device's 2 s without a flip, well inside each ~3 s wait
+    push edi
+    mov dword [fs:edi + D3D_OFFSET], 800 * 600 * 4
+    mov cx, 55
+    call delay_ticks
+    pop edi
+    push edi
+    mov dword [fs:edi + D3D_OFFSET], 0
+    mov cx, 55
+    call delay_ticks
+    pop edi
     mov cx, 36                  ; ~2 s: the host's screendump shows the linear
     call delay_ticks            ; mode, the way the player's refresh would
     ret
@@ -1206,14 +1220,21 @@ def main():
                 cur.append(("during" if through else "after" if seen else "before", on, through))
         last = {k: [c for c in cur if c[0] == k][-1:] for k in ("before", "during", "after")}
         # before the Voodoo: shown, hidden by the flip, shown again by the
-        # mode set (in that order; repeats of a state are fine)
+        # mode set; hidden by the next flip, kept hidden while that chain
+        # idles on its other page, shown again once it idles on the
+        # desktop's (in that order, exactly; repeats of a state are fine)
         seq = []
         for c in cur:
             if c[0] == "before" and (not seq or seq[-1] != c[1]):
                 seq.append(c[1])
         print("    cursor before the Voodoo, in order: %s" % seq)
-        if seq[-3:] != [1, 0, 1]:
-            print("FAIL the adapter's cursor was not hidden by a page flip and shown again by the mode set")
+        if 1 not in seq or seq[seq.index(1):] != [1, 0, 1, 0, 1]:
+            print("FAIL the adapter's cursor was not hidden by a page flip and shown again by the "
+                  "mode set, then hidden by a flip and shown again only once the flips stopped on "
+                  "the desktop's page")
+            ok = False
+        if "the flip chain is gone" not in open(qlog, "rb").read().decode("latin-1"):
+            print("FAIL d3dpt-vga did not log the idle flip chain it gave the cursor back from")
             ok = False
         print("    cursor published: before %s, during %s, after %s" % (
             last["before"] or "-", last["during"] or "-", last["after"] or "-"))

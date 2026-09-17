@@ -208,8 +208,16 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
      adapter, not Glide, and there Windows keeps its pointer enabled behind
      the exclusive-mode game, which never hides it: `d3dpt-vga` now hides
      the sprite from a DirectDraw flip chain's first page flip until the
-     next mode set (`d3dpt_vga.c`; a page-flipping game draws its own
-     pointer, since GDI's software pointer is wiped by the first flip). Moto
+     chain gives the screen back (`d3dpt_vga.c`; a page-flipping game draws
+     its own pointer, since GDI's software pointer is wiped by the first
+     flip). **That was first "until the next mode set", and the pointer
+     never came back after 3DMark 99** (the user, 2026-09-17): a game at
+     the desktop's own mode (800x600x16) sets no mode on the way out, since
+     DirectDraw calls the driver's SetMode only for a change. Now also 2 s
+     of guest time without a flip with the desktop's page on screen, where
+     DirectDraw leaves the scanout when a chain is released; a game idle on
+     its other page stays hidden, one idle on the desktop's page (a loading
+     screen) shows the pointer until its next flip. Moto
      Racer headless with the software renderer: shown at the game's mode
      switch, hidden at its first flip, back on the desktop after. Both are
      the `voodoo-guest-d3dpt` check.
