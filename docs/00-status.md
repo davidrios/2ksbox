@@ -187,18 +187,34 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
      libdisc now names every failed host read in `player.log`. Not
      reproduced on a real share: if it still happens, the log will say which
      file and what error.
-  4. **Windows' arrow over Moto Racer's own pointer.** Not Windows: on
-     `base98-br` the game runs on the Voodoo 2, and the 2D adapter's cursor
-     stayed published behind the pass-through. **Fixed** (patch 66, the
-     `voodoo-guest-d3dpt` check) — measured headless on a copy of the image.
+  4. **Windows' arrow over Moto Racer's own pointer.** Not Windows. Two
+     paths, both fixed. Headless on a copy of `base98-br`, 3dfx's login
+     helper had given the Voodoo 2 the monitor before the game started, so
+     the first run measured the Glide path: the 2D adapter's cursor stayed
+     published behind the pass-through (patch 66). The user plays it on our
+     adapter, not Glide, and there Windows keeps its pointer enabled behind
+     the exclusive-mode game, which never hides it: `d3dpt-vga` now hides
+     the sprite from a DirectDraw flip chain's first page flip until the
+     next mode set (`d3dpt_vga.c`; a page-flipping game draws its own
+     pointer, since GDI's software pointer is wiped by the first flip). Moto
+     Racer headless with the software renderer: shown at the game's mode
+     switch, hidden at its first flip, back on the desktop after. Both are
+     the `voodoo-guest-d3dpt` check.
   5. **The Windows key reaches the host.** The low-level hook was installed
      on the player's event-loop thread; Windows silently removes a hook
      that misses `LowLevelHooksTimeout` once, so one slow frame lost it for
      the session. It runs on a thread of its own now, at time-critical
      priority. **Unverified** (no Windows here). Also: ABNT2's `/?` and
      keypad `.`, and Pause, were in no keymap.
-  6. **Moto Racer slow on the 5900X with the CPU at 5 %** — one of 24
-     threads, so CPU-bound, not waiting. **Addressed: the Windows QEMU is
+  6. **Moto Racer slow on the 5900X with the CPU at 5 %** — in the menus
+     and with the software renderer (the user; not Glide, not the race on
+     Direct3D). **Not reproduced**: headless on Linux without the Voodoo,
+     the menus and the software race flip at 60/s, and still 60/s with
+     QEMU's waits rounded to 15.6 ms. The user's log has no software-race
+     window (no `0 draws` rates); its last session switches to 640x480 at
+     **8 bits** twice with no page flips, where this run was 16 bits and
+     flipping — the next question for the PC. The CPU at 5 % is one of 24
+     threads, so CPU-bound. **Addressed: the Windows QEMU is
      built with clang now** (patch 68; x87 helper call shape, patch 67): a
      device register read under wine went from 121.6 ns to 63.5 (Linux
      52.7), every battery identical on the clang build. What follows is how

@@ -77,6 +77,7 @@ struct D3dptVgaState {
     bool cur_on, cur_defined;
     uint32_t cur_defines, cur_moves;
     bool cur_shown;             /* the visibility last published */
+    bool cur_flip_hidden;       /* a flip chain has the screen: see fb_cursor_move */
     uint32_t cur_flips;         /* show / hide changes logged so far */
 
     /* the linear mode currently shown (lin_on) */
@@ -592,7 +593,16 @@ static void fb_cursor_define(D3dptVgaState *s, bool on)
     }
 }
 
-/* A VGA screen has no hardware cursor. While ENABLE is off — a full-screen
+/* While a DirectDraw flip chain is scanning out, the sprite is hidden too,
+ * from the first flip until the next mode set (ENABLE written, which is how
+ * a game gives the screen back). Windows' pointer stays enabled behind an
+ * exclusive-mode game that never hides it -- on a card without a hardware
+ * cursor GDI's pointer lives in the front buffer and the first flip wipes
+ * it, so a page-flipping game draws its own -- and this device's sprite
+ * put Windows' arrow beside Moto Racer's in its menus (2026-09-17). No
+ * guest driver learns of exclusive mode on 9x, so the flip is the signal.
+ *
+ * A VGA screen has no hardware cursor. While ENABLE is off — a full-screen
  * DOS box, a blue screen, the moments of a mode switch — the sprite stays
  * hidden whatever CURSOR_ENABLE says: the guest's driver is not running the
  * screen then and nothing of its will turn the sprite off. The player
@@ -601,7 +611,7 @@ static void fb_cursor_define(D3dptVgaState *s, bool on)
  * desktop's coordinates, scaled with the frame (2026-09-09). */
 static void fb_cursor_move(D3dptVgaState *s)
 {
-    bool on = s->cur_on && s->r_enable;
+    bool on = s->cur_on && s->r_enable && !s->cur_flip_hidden;
 
     /* the first moves, and then every show / hide: a pointer that should
      * not be on the screen (a game drawing its own) is a question of when
@@ -720,6 +730,7 @@ static void d3dpt_vga_regs_write(void *opaque, hwaddr addr, uint64_t val,
         }
         s->r_enable = val != 0;
         s->vbl_ns = s->r_enable ? qemu_clock_get_ns(QEMU_CLOCK_REALTIME) : 0;
+        s->cur_flip_hidden = false;     /* a mode set: the flip chain is gone */
         if (s->cur_defined && s->cur_on) {
             fb_cursor_move(s);      /* the sprite follows the linear mode */
         }
@@ -745,6 +756,13 @@ static void d3dpt_vga_regs_write(void *opaque, hwaddr addr, uint64_t val,
         if (val != s->r_offset) {
             s->flips++;
             fb_flip_rate(s);
+            s->r_offset = val;
+            if (!s->cur_flip_hidden && s->r_enable) {
+                s->cur_flip_hidden = true;
+                if (s->cur_defined && s->cur_on) {
+                    fb_cursor_move(s);  /* a flip chain has the screen */
+                }
+            }
         }
         s->r_offset = val;
         break;
@@ -865,6 +883,7 @@ static void d3dpt_vga_reset(DeviceState *dev)
     s->r_enable = s->r_w = s->r_h = s->r_bpp = s->r_pitch = 0;
     s->r_offset = s->r_hz = s->r_sel = 0;
     s->vbl_ns = 0;
+    s->cur_flip_hidden = false;
     s->flips = s->flips_last = 0;
     s->flips_ns = 0;
     s->vga_grace_until = 0;

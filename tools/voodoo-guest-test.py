@@ -519,6 +519,11 @@ d3dpt_linear:
     mov dword [fs:edi + D3D_CUR_X], 100
     mov dword [fs:edi + D3D_CUR_Y], 100
     mov dword [fs:edi + D3D_CUR_ENABLE], 1
+    ; a page flip, as a DirectDraw game makes: the sprite must go (a flip
+    ; chain draws its own pointer), and a mode set gives the screen back
+    mov dword [fs:edi + D3D_OFFSET], 800 * 600 * 4
+    mov dword [fs:edi + D3D_OFFSET], 0
+    mov dword [fs:edi + D3D_ENABLE], 1
     mov cx, 36                  ; ~2 s: the host's screendump shows the linear
     call delay_ticks            ; mode, the way the player's refresh would
     ret
@@ -1200,6 +1205,16 @@ def main():
                 seen = seen or through == 1
                 cur.append(("during" if through else "after" if seen else "before", on, through))
         last = {k: [c for c in cur if c[0] == k][-1:] for k in ("before", "during", "after")}
+        # before the Voodoo: shown, hidden by the flip, shown again by the
+        # mode set (in that order; repeats of a state are fine)
+        seq = []
+        for c in cur:
+            if c[0] == "before" and (not seq or seq[-1] != c[1]):
+                seq.append(c[1])
+        print("    cursor before the Voodoo, in order: %s" % seq)
+        if seq[-3:] != [1, 0, 1]:
+            print("FAIL the adapter's cursor was not hidden by a page flip and shown again by the mode set")
+            ok = False
         print("    cursor published: before %s, during %s, after %s" % (
             last["before"] or "-", last["during"] or "-", last["after"] or "-"))
         if not last["before"] or last["before"][0][1] != 1:
