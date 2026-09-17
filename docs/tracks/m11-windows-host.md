@@ -483,27 +483,22 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    Windows host run"): dxdiag / 3DMark 99 on DXVK, a MIDI's tempo, the
    Windows key in a game, and Moto Racer's speed — the first clang-built
    QEMU (patch 68) ever to run on real Windows.
-0b. **The native build's first run on the PC** (2026-09-17: written and
-   checked only so far as Linux can — the cross stages still build
-   through the edited scripts, the Python check accepts 3.14 only with
-   `distlib`, and QEMU configures and generates on 3.14). The first run's
-   first failure was mkvenv's `file://C:/…` wheels URL under Python 3.14
-   on Windows (patch 69); the second, qt-build-utils running MSYS2's moc
-   with no `PATH` to its DLLs (`build/win/qt-host` +
-   `packaging/windows/qmake-host.c`); the third, `once_proxy.cpp` not
-   linking against GCC 16's libstdc++, which has no exported
-   `std::__once_call` and no need of the proxy; the fourth, the ISO's
-   GLIDETEST including OpenGLide's SDK header from a tree nothing had
-   prepared (`<cstdint>` in C); the fifth, MSYS2's i686 runtime being
-   Pentium 4 code (SSE2 in libmingwex, libgcc, msvcrt helpers,
-   winpthreads), answered by linking Arch's pinned i686 runtime, the Linux
-   ISO's own. Expect the next
-   failures in the places Linux could not reach: the `\\?\` prefix in
-   `qemu-embed/build.rs`, meson's `CC_LD=lld` for clang, cxx-qt against
-   MSYS2's Qt 6.11, and DXVK's meson without a cross file. The guest-tools
-   ISO (2026-09-17, same day) is newer still and also unrun there: qemu-3dfx's
-   conf_wrapper under `MSYSTEM=MINGW32`, wine9x's make, and Open Watcom from
-   `binnt64`.
+0b. **Run the native build on the PC.** It **builds there, every stage**
+   (2026-09-17, the user: `qemu`, `rust`, `qt`, `exec` and the guest-tools
+   ISO, in MSYS2's MINGW64 shell). Nothing built there has been run yet:
+   next is `scripts/win-run.sh launcher`, a machine booted from it, and the
+   Windows-built ISO in a guest (its `SETUP.EXE`, a driver it installs).
+   What it took, in the order the PC hit it: `diffutils` (QEMU's meson
+   requires `diff`); mkvenv's `file://C:/…` wheels URL under Python 3.14
+   (patch 69); qt-build-utils running MSYS2's moc with no `PATH` to its
+   DLLs (`build/win/qt-host` + `packaging/windows/qmake-host.c`);
+   `once_proxy.cpp` not linking against GCC 16's libstdc++, which exports
+   no `std::__once_call` and needs no proxy; the ISO's GLIDETEST including
+   OpenGLide's SDK header from a tree nothing had prepared; the XP driver
+   script's failures hidden by `>/dev/null`; MSYS2's i686 runtime being
+   Pentium 4 code, answered by linking Arch's pinned i686 runtime (the
+   Linux ISO's own); and that runtime's `-L` folders shadowing wine9x's
+   own `libpthread.a` until they moved behind the caller's arguments.
 1. **Rebuild and re-package for the ADR-015 shape**, then
    `2ksbox-debug.bat` on the PC and read the `2ksbox-debug.log` it
    writes: there is one zip now, its `2ksbox.exe` is the Qt launcher, and

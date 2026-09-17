@@ -295,7 +295,8 @@ emulated regardless, as everywhere else.
 
 ## Building on Windows (for debugging on the PC)
 
-Added 2026-09-17 and **not run on Windows yet**. The cross build answers
+Added 2026-09-17; **every stage builds on the user's PC** the same day,
+and nothing built there has been run yet. The cross build answers
 "does it work on Windows" only one zip at a time; debugging a fault that
 shows up only on real Windows wants a debugger and a rebuild on that
 machine. The same `scripts/build-windows.sh` does that when it runs in
