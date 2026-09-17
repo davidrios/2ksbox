@@ -22,7 +22,7 @@ OUT="$ROOT/build/glide"; mkdir -p "$OUT"
 # platform/linux is the platform layer on both hosts: what we take from it
 # (clock.cpp, library.cpp) is POSIX, and __unix__ is what sdk2_3dfx.h looks
 # for. macOS has no GL/ headers -- the framework keeps its own under
-# OpenGL/, and the only GL/ on the box is XQuartz's Mesa, the one
+# OpenGL/, and the only GL/ a Mac may have is XQuartz's Mesa, the one
 # implementation this must not bind to -- so glidept/host/macos puts a
 # forwarding <GL/gl.h> and <GL/glext.h> on the include path there, and only
 # there.

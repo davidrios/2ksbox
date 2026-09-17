@@ -318,10 +318,9 @@ while read -r f; do
 done < <(find "$C/PlugIns" -type f -name '*.dylib' 2>/dev/null)
 
 # --- the dylib closure ------------------------------------------------
-# Everything outside /usr/lib and /System — Homebrew's glib/pixman/zstd/…,
-# XQuartz's libGL (QEMU's opengl feature links it even though the embed
-# backend only ever dlsyms OpenGL.framework: CLAUDE.md's macOS gotcha) —
-# copied into lib/2ksbox and rewritten to @rpath, transitively.
+# Everything outside /usr/lib and /System — Homebrew's glib/pixman/zstd/… —
+# copied into lib/2ksbox and rewritten to @rpath, transitively. (XQuartz's
+# libGL and X11 libraries used to be in it too, linked for nothing; patch 70.)
 LIBDIR="$C/lib/2ksbox"
 # A library's own install name is the first line `otool -L` prints and no
 # dependency: Qt's framework binaries keep Homebrew's, which loads nothing.

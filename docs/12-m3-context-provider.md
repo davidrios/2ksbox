@@ -12,7 +12,7 @@ on exit. macOS backend done and verified on the Air (CGL context without a
 drawable + FBO stand-in for the default framebuffer, binding 0 redirected
 via patch 32's `MesaGLSetFunc`; WGL pbuffers emulated with FBOs in the same
 context; all GL/CGL resolved through the framework handle because the
-build also links XQuartz's Mesa libGL): Win98 wglgears in the player,
+build also linked XQuartz's Mesa libGL until patch 70): Win98 wglgears in the player,
 `GL 2.1 Metal / Apple M1`. **Steps 1–2 complete on both platforms.**
 **Zero-copy on Linux done (2026-09-03):** the backend allocates a ring of
 three linear ARGB8888 GBM buffers, imports them into GL as EGLImage
@@ -46,7 +46,7 @@ patch `04-lfb-origin`: OpenGLide's `grLfbLock` never filled the caller's
 title's `grLfbBegin` from. **The wrapper compiles on macOS too** (a
 forwarding `<GL/gl.h>` / `<GL/glext.h>` in `glidept/host/macos/`, on the
 include path on Darwin only, because the framework's headers live under
-`OpenGL/` and the only `GL/` on a Mac is XQuartz's Mesa) — built and linked
+`OpenGL/` and the only `GL/` a Mac may have is XQuartz's Mesa) — built and linked
 against `OpenGL.framework` alone, but run by nothing there: `glide-host` is
 the EGL path and stays Linux-only. **A Glide title plays, 2026-09-10:
 Rayman 2** (its own `GliVd1vf.dll` Voodoo renderer over the guest's

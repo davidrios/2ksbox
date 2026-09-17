@@ -150,10 +150,6 @@ elif [ -n "$WINDOWS" ]; then
           --host-cc=gcc --disable-plugins)
   fi
 elif [ "$(uname -s)" = Darwin ]; then
-  # qemu-3dfx's Darwin path is GLX via XQuartz (patched meson.build hardcodes
-  # /opt/X11 into every emulator's link line, so the headers must be there
-  # even though only libqemu-embed's own backend ever creates a context).
-  [ -d /opt/X11/include ] || { echo "XQuartz missing: brew install --cask xquartz"; exit 1; }
   # Every Mac build targets Homebrew's floor, the oldest macOS the app's
   # Homebrew libraries exist for (scripts/macos-floor.sh; build.sh exports
   # the same value, and a preset one wins). It goes in as a flag as well as

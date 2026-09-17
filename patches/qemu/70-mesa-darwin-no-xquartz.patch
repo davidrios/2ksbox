@@ -1,0 +1,199 @@
+macOS builds without XQuartz: hw/mesa's Darwin backend is no longer GLX.
+
+qemu-3dfx's Mesa pass-through on macOS was GLX on XQuartz, so its meson
+hunk put -I/opt/X11/include and -L/opt/X11/lib -lX11 -lXxf86vm -lGL on
+every emulator's line, and configure-qemu.sh refused to run without
+XQuartz installed. Nothing has rendered through that backend since SDL
+went (2026-09-07): qemu-system-i386 registers no 3D provider, so the
+context was always refused (patch 04), and libqemu-embed brings its own
+CGL backend (embed/mglcntx_embed.c) whose strong definitions override
+the weak ones here (patch 31). XQuartz was a build dependency for a
+context nobody could create, and its libGL and X11 libraries were linked
+into the app, where the package copied them in for nothing.
+
+On Darwin the file now holds a small weak backend that refuses the same
+way GLX did with no window: it still calls mesa_prepare_window, so the
+"no 3D provider" warning still names the problem, answers the guest's
+window-ready poll, describes the one pixel format and its attributes,
+and fails context creation. It defines exactly the symbols the GLX
+backend does. dllname is OpenGL.framework's, the same as the embed
+backend's. Linux is unchanged: GLX stays the native backend there.
+-framework OpenGL stays on the link line, so a stray gl* call made by
+link binds to Apple's GL, not a GLX library.
+
+diff --git a/meson.build b/meson.build
+--- a/meson.build
++++ b/meson.build
+@@ -4178,8 +4178,9 @@ foreach target : target_dirs
+     link_args += ['-ldl', '-lX11', '-lXxf86vm', '-lGL']
+   endif
+   if host_os == 'darwin'
+-    c_args += ['-I/opt/X11/include']
+-    link_args += ['-L/opt/X11/lib', '-lX11', '-lXxf86vm', '-lGL', '-Wl,-framework,OpenGL']
++    # 2ksbox: no XQuartz. hw/mesa's Darwin backend is not GLX (patch 70),
++    # and every GL call is dlsym'd from OpenGL.framework's handle.
++    link_args += ['-Wl,-framework,OpenGL']
+   endif
+   if target.endswith('-softmmu')
+     target_type='system'
+diff --git a/hw/mesa/mglcntx_linux.c b/hw/mesa/mglcntx_linux.c
+--- a/hw/mesa/mglcntx_linux.c
++++ b/hw/mesa/mglcntx_linux.c
+@@ -33,10 +33,13 @@
+ /* win98-xp-virt: weak so libqemu-embed's window-less backend
+  * (embed/mglcntx_embed.c) overrides these; qemu-system keeps GLX. */
+ #define MGL_API __attribute__((weak))
++#ifdef CONFIG_LINUX
+ #include <GL/glx.h>
+ #include <X11/extensions/xf86vmode.h>
++#endif
+ #ifdef CONFIG_DARWIN
+-MGL_API const char dllname[] = "/opt/X11/lib/libGL.dylib";
++/* 2ksbox: no GLX on macOS, so no XQuartz -- see the backend at the end */
++MGL_API const char dllname[] = "/System/Library/Frameworks/OpenGL.framework/OpenGL";
+ MGL_API int MGLUpdateGuestBufo(mapbufo_t *bufo, int add) { return 0; }
+ #endif
+ #ifdef CONFIG_LINUX
+@@ -219,6 +222,7 @@ static const int iAttribs[] = {
+     0,0
+ };
+ 
++#ifdef CONFIG_LINUX
+ static int syncFBConfigToPFD(Display *dpy, const GLXFBConfig *fbc, const int nElem)
+ {
+     int ret = 0, colorBits;
+@@ -1017,4 +1021,134 @@ MGL_API void MGLFuncHandler(const char *name)
+     argsp[0] = 0;
+ }
+ 
++#else /* CONFIG_DARWIN */
++/*
++ * 2ksbox: macOS's backend for qemu-system, which has no window to render
++ * into and never will. Upstream's was GLX on XQuartz, and it made XQuartz
++ * a build dependency for a context nothing could ever create: the only
++ * process with 3D is the player, and libqemu-embed brings its own backend
++ * (embed/mglcntx_embed.c, CGL), whose strong definitions win over these.
++ * So this one only refuses, the way GLX did with no provider registered
++ * (patch 04): the provider hook is still asked, so the "no 3D provider"
++ * warning still names the problem, the guest's window-ready poll is
++ * answered, pixel formats are described and context creation fails.
++ */
++static int wnd_ready;
++
++static void cwnd_mesagl(void *swnd, void *nwnd, void *opaque)
++{
++    DPRINTF("MESAGL window %s", nwnd ? "offered, but qemu-system has no backend" : "refused");
++    qatomic_set(&wnd_ready, 1);
++}
++
++static int MGLPresetPixelFormat(void)
++{
++    qatomic_set(&wnd_ready, 0);
++    ImplMesaGLReset();
++    mesa_prepare_window(GetContextMSAA(), GL_CONTEXTALPHA, 0, &cwnd_mesagl);
++    return 1;
++}
++
++MGL_API int glwnd_ready(void) { return qatomic_read(&wnd_ready); }
++
++MGL_API int MGLExtIsAvail(const char *xstr, const char *str)
++{ return find_xstr(xstr, str); }
++
++MGL_API void SetMesaFuncPtr(void *p)
++{
++}
++
++MGL_API void *MesaGLGetProc(const char *proc)
++{
++    return NULL;
++}
++
++MGL_API void MGLTmpContext(void)
++{
++}
++
++MGL_API void MGLDeleteContext(int level)
++{
++}
++
++MGL_API void MGLWndRelease(void)
++{
++}
++
++MGL_API int MGLCreateContext(uint32_t gDC)
++{
++    DPRINTF("no window: GL context refused");
++    return 1;
++}
++
++MGL_API int MGLMakeCurrent(uint32_t cntxRC, int level)
++{
++    return 0;
++}
++
++MGL_API int MGLSwapBuffers(void)
++{
++    return 0;
++}
++
++MGL_API int MGLChoosePixelFormat(void)
++{
++    DPRINTF("ChoosePixelFormat()");
++    return MGLPresetPixelFormat();
++}
++
++MGL_API int MGLSetPixelFormat(int fmt, const void *p)
++{
++    DPRINTF("SetPixelFormat() ret %d", 1);
++    return MGLPresetPixelFormat();
++}
++
++MGL_API int MGLDescribePixelFormat(int fmt, unsigned int sz, void *p)
++{
++    memcpy(p, &pfd, sizeof(PIXELFORMATDESCRIPTOR));
++    return 1;
++}
++
++MGL_API int NumPbuffer(void)
++{
++    return 0;
++}
++
++MGL_API int DrawableContext(void)
++{
++    return 0;
++}
++
++MGL_API void MGLFuncHandler(const char *name)
++{
++    char fname[64];
++    uint32_t *argsp = (uint32_t *)(name + ALIGNED((strnlen(name, sizeof(fname))+1)));
++    strncpy(fname, name, sizeof(fname)-1);
++
++#define FUNCP_HANDLER(a) \
++    if (!memcmp(fname, a, sizeof(a)))
++
++    /* a pixel format's attributes need no context: the table GLX answered from */
++    FUNCP_HANDLER("wglGetPixelFormatAttribivARB") {
++        const int *ia = (const int *)&argsp[4], n = MIN(argsp[2], 64);
++        int pi[64];
++        for (int i = 0; i < n; i++) {
++            pi[i] = 0;
++            for (int j = 0; iAttribs[j]; j += 2) {
++                if (iAttribs[j] == ia[i]) {
++                    pi[i] = iAttribs[j + 1];
++                    break;
++                }
++            }
++        }
++        memcpy(&argsp[2], pi, n*sizeof(int));
++        argsp[0] = 1;
++        return;
++    }
++
++    DPRINTF("  *WARN* Unhandled GLFunc %s: no window", name);
++    argsp[0] = 0;
++}
++#endif /* CONFIG_LINUX */
++
+ #endif //CONFIG_LINUX

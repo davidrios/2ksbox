@@ -35,7 +35,7 @@ had to change *inside* OpenGLide is a patch.
 and `<GL/glext.h>` outright -- `platform/window.h` reaches for the framework
 only under `__MACOSX__`, an SDL-era define nothing sets -- and macOS has no
 `GL/` directory: the framework keeps its headers under `OpenGL/`, and the
-only `GL/` on the box belongs to XQuartz's Mesa, the one implementation this
+only `GL/` a Mac may have belongs to XQuartz's Mesa, the one implementation this
 must not bind to (`docs/build-macos.md`). So `glidept/host/macos/GL/` holds
 a forwarding `gl.h` and `glext.h`, and `build-glide.sh` puts that directory
 on the include path **on Darwin only** -- a Linux build still finds the real

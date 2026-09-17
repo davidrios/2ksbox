@@ -519,12 +519,13 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   else — on that variable. Unsetting it at runtime does not help; dyld read
   it at exec. Doc 00's gotchas has the diagnosis.
 - macOS embed backend: never call `gl*`/`CGL*`/`IOSurface*` by link — the
-  build also links XQuartz's Mesa libGL and the symbol binds there (a GLX
+  build used to link XQuartz's Mesa libGL and the symbol bound there (a GLX
   library that sees no CGL context and silently no-ops). `dlsym` from the
   OpenGL.framework handle, the same one the guest dispatch table uses.
-- The native Mesa backend (`mglcntx_linux.c`, the GLX one, on Linux **and**
-  macOS since SDL went) is linked **weak** (patch 31) so
-  `embed/mglcntx_embed.c` overrides it inside the embed library only.
+- The native Mesa backend (`mglcntx_linux.c`) is linked **weak** (patch 31)
+  so `embed/mglcntx_embed.c` overrides it inside the embed library only. It
+  is GLX on Linux; on macOS it is a backend that only refuses the context
+  (patch 70, 2026-09-17), so **the Mac build needs no XQuartz**.
 - **QEMU is built with only what we use** (2026-09-07). Four families of
   optional host library are disabled outright, because auto-detection
   otherwise makes the build depend on what the machine happened to have —

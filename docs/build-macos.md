@@ -9,7 +9,6 @@ xcode-select --install                       # Apple clang + git
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 brew install ninja meson pkg-config glib pixman gnu-sed uv libslirp
 brew install qt                              # Qt 6: the launcher, and macdeployqt
-brew install --cask xquartz                  # log out/in once after installing
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh      # Rust toolchain
 ```
 
@@ -18,11 +17,12 @@ Why each of the odd ones:
   formula brings `macdeployqt`, which is what puts Qt inside the `.app`.
   A Mac without it still builds everything else (`scripts/build.sh` skips
   its `qt` stage and says so); it just cannot package.
-- **XQuartz** — qemu-3dfx's Mesa pass-through uses its GLX backend on
-  macOS (it dlopens `/opt/X11/lib/libGL.dylib` at runtime); the patched
-  `meson.build` hardcodes `-I/opt/X11/include` and links
-  `-L/opt/X11/lib -lX11 -lXxf86vm -lGL -framework OpenGL`. Without it:
-  `GL/glcorearb.h not found`, then link errors, then no 3D at runtime.
+- **no XQuartz** — upstream qemu-3dfx's macOS 3D path is GLX on XQuartz,
+  and its `meson.build` put `/opt/X11` on every emulator's line. Patch 70
+  (2026-09-17) replaced that backend with one that only refuses (the
+  standalone `qemu-system-i386` never had a window to render into) and
+  dropped the flags; 3D is the player's CGL backend, which never used
+  XQuartz. An XQuartz already installed is simply unused.
 - **no sdl2** — qemu-3dfx makes SDL2 mandatory
   (`error('Featuring qemu-3dfx required SDL2')`), but patch 02 removes
   that and `configure-qemu.sh` passes `--disable-sdl`: nothing we ship
@@ -32,8 +32,8 @@ Why each of the odd ones:
   `scripts/prepare-qemu.sh` puts Homebrew's `gsed` first on PATH when present.
 - The Khronos `GL/glcorearb.h` is additionally vendored in
   `third_party/khronos` and put on the include path by
-  `scripts/configure-qemu.sh`, so the header itself never depends on
-  XQuartz's Mesa headers version.
+  `scripts/configure-qemu.sh`, so the header never depends on what the
+  Mac has installed.
 
 ## Vulkan for the Direct3D executor (macOS 26 only)
 
@@ -162,8 +162,8 @@ the window-less platform layer in `glidept/host/` (doc 12 §5,
 The Mac needs one thing Linux does not, and it is a header problem, not a
 library one. OpenGLide says `<GL/gl.h>` and `<GL/glext.h>`; macOS has no
 `GL/` directory, because the framework keeps its headers under `OpenGL/`.
-The one `GL/` that *does* exist here is `/opt/X11/include/GL`, XQuartz's
-Mesa — pointing the build at it compiles and then binds the wrapper to a GLX
+The one `GL/` a Mac may have is `/opt/X11/include/GL`, XQuartz's
+Mesa, if it is installed — pointing the build at it compiles and then binds the wrapper to a GLX
 library that will never see a CGL context, the same trap the embed backend's
 `dlsym` rule exists to avoid. So `glidept/host/macos/GL/` holds a forwarding
 `gl.h` and `glext.h`, on the include path on Darwin only, and the `glext.h`
@@ -290,10 +290,12 @@ to the GLX backend, which used it as an X11 window id — `X Error …
 BadDrawable, Major opcode 129 (Apple-DRI)` (Sequoia 15.7). Patch
 `02-mesa-sdlgl-on-darwin` worked around it by building qemu-3dfx's
 SDL/native-OpenGL backend (`mglcntx_sdlgl.c`) instead; that patch is gone
-with SDL, and Darwin now builds the same GLX file Linux does, which nothing
-calls. XQuartz stays a *build* dependency all the same: the qemu-3dfx meson
-overlay hardcodes `-L/opt/X11/lib -lX11 -lXxf86vm -lGL` into every
-emulator's link line.
+with SDL. Darwin then built the same GLX file Linux does, which nothing
+called, and XQuartz stayed a build dependency because the qemu-3dfx meson
+overlay hardcoded `-L/opt/X11/lib -lX11 -lXxf86vm -lGL` into every
+emulator's link line. Patch 70 (2026-09-17) ended that: on Darwin the file
+is a weak backend that refuses the context, as GLX did with no window, and
+the flags are gone.
 
 **Tuning knobs — `mesagl.cfg`:** qemu-3dfx reads `mesagl.cfg` from the
 *current working directory* at startup. Keys: `ExtensionsYear`,
@@ -392,9 +394,10 @@ framebuffer (framebuffer binding 0 is redirected to it, patch 32), and a
 Verified with Win98 wglgears: `GL 2.1 Metal - 89.4 / Apple M1`, FBO
 complete, gears in the player, Esc returns the desktop. Every GL/CGL call
 the backend makes is resolved with `dlsym` on the OpenGL.framework handle:
-the macOS QEMU build also links XQuartz's Mesa libGL, and a plainly linked
-`gl*` symbol binds to that (a GLX library that sees no CGL context and
-silently does nothing — the first two runs failed exactly that way).
+until patch 70 the macOS QEMU build also linked XQuartz's Mesa libGL, and a
+plainly linked `gl*` symbol bound to that (a GLX library that sees no CGL
+context and silently does nothing — the first two runs failed exactly that
+way). The rule stays: the dispatch table and the backend use one handle.
 
 ```sh
 git pull
@@ -634,8 +637,7 @@ the app measured macOS 26.6, because every build targeted the Mac it ran on:
 - **The package fails above it.** `LSMinimumSystemVersion` is still
   measured, the highest `LC_BUILD_VERSION` `minos` of everything the bundle
   carries, and any Mach-O above the floor fails `package-macos.sh` by name.
-  The LunarG loader and KosmicKrisp are 11.0 builds and XQuartz's libraries
-  11.0, so they never set it.
+  The LunarG loader and KosmicKrisp are 11.0 builds, so they never set it.
 
 Below macOS 26 there is no KosmicKrisp (it needs Metal on 26), so the
 Direct3D executor finds no Vulkan device there and XP's Direct3D takes

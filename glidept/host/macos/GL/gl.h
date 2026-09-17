@@ -5,7 +5,7 @@
 //* OpenGLide's platform/window.h reaches for <OpenGL/gl.h> only under
 //* __MACOSX__, an SDL-era define nothing sets, and everything else in the
 //* tree says <GL/gl.h> outright. macOS has no such header: the framework
-//* keeps its own under OpenGL/, and the only GL/ on the box belongs to
+//* keeps its own under OpenGL/, and the only GL/ a Mac may have belongs to
 //* XQuartz's Mesa, which is the one implementation this build must not
 //* bind to (docs/build-macos.md). So the include path gets this directory
 //* on Darwin only — scripts/build-glide.sh adds it, no other host sees it.

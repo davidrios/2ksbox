@@ -94,7 +94,6 @@ xcode-select --install
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 brew install ninja meson pkg-config glib pixman gnu-sed uv libslirp
 brew install qt                              # the launcher
-brew install --cask xquartz                  # log out and in once after this
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 

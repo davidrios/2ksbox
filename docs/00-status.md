@@ -159,6 +159,19 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **The Mac build no longer needs XQuartz — not yet built on the Air**
+  (2026-09-17, patch 70). On macOS, `hw/mesa/mglcntx_linux.c`'s GLX
+  backend, which nothing had called since SDL went, is now a weak backend
+  that only refuses the context, and the `/opt/X11` flags are out of the
+  meson hunk and `configure-qemu.sh`. Checked on Linux: the queue applies
+  twice, the Darwin branch compiles (gcc and clang) and defines the same
+  symbols as GLX, `scripts/build.sh` rebuilt everything, and `test.sh all`
+  was stopped part-way with 49 PASS and no FAIL (the whole host stage and
+  the guest checks up to `midi-guest`). Still to do
+  on the Air: `scripts/build.sh -f`, `otool -L` on `qemu-system-i386` and
+  `libqemu-embed-i386.dylib` with nothing under `/opt/X11`, wglgears in the
+  player, and `package-macos.sh --no-sign --no-dmg` with no XQuartz library
+  in the app.
 - **The first Windows host run of a real guest — 2026-09-17** (M11,
   `docs/tracks/m11-windows-host.md`; the user's PC: Ryzen 9 5900X, RTX 3090,
   the `base98-br` image). Seven reports, each taken apart here:
@@ -1044,9 +1057,10 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   `PLAYER_DUMP_OUT` dumps the shaded frame even when the window is
   occluded (compositor screenshots are useless then).
 - macOS embed backend: never call `gl*`/`CGL*` by link — the QEMU build
-  links XQuartz's Mesa libGL too and the symbol binds there (GLX library,
-  no CGL context → silent no-ops, NULL renderer). `dlsym` on the
-  OpenGL.framework handle, the same one the dispatch table uses.
+  used to link XQuartz's Mesa libGL too and the symbol bound there (GLX
+  library, no CGL context → silent no-ops, NULL renderer; patch 70 dropped
+  XQuartz on 2026-09-17). `dlsym` on the OpenGL.framework handle, the same
+  one the dispatch table uses.
 - The Mesa backend (`MGL*`) runs on the vCPU thread under the BQL and can
   be driven without a guest right after `qemu_embed_new` (BQL held):
   `tools/embed-3d-test.c`. Order: `InitMesaGL` → `MGLTmpContext` →
@@ -1945,8 +1959,9 @@ items nobody owns yet:
 - macOS link: `qemu_default_main` must exist — `embed/libqemu_embed.c`
   defines it, since `system/main.c` is not in the shared library (cocoa.m
   used to be the other caller; cocoa is disabled now). Plugin export list
-  hides symbols → our ld64 list; XQuartz required to build (the qemu-3dfx
-  meson overlay hardcodes its link flags). Nothing optional is: no
+  hides symbols → our ld64 list; no XQuartz since patch 70 (2026-09-17: the
+  qemu-3dfx meson overlay hardcoded its link flags for a GLX backend nothing
+  called). Nothing optional is: no
   display, no host audio, no extra network or block backend, guarded by
   the `no-optionals` check.
 - Guest audio that gets laggier the longer XP runs, worse under load, was the
