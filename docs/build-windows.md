@@ -304,9 +304,10 @@ stages, with no container. Only the package stays on Linux.
 
 **MINGW64 and not UCRT64 or CLANG64**, because it is the cross image's ABI:
 msvcrt, GCC's runtime and libstdc++, and Rust's `x86_64-pc-windows-gnu`.
-A fault reproduced here is then a fault in the build that ships, and
-Windows-only fixes such as `launcher-qt/src/once_proxy.cpp` (libstdc++'s
-emulated TLS) apply to it exactly as they do to the package. The scripts
+A fault reproduced here is then almost always a fault in the build that
+ships. The exception found so far is GCC's version: MSYS2's 16 is one
+ahead of Fedora's 15 and handles libstdc++'s thread-locals differently
+(below). The scripts
 refuse the other two shells.
 
 Once, on the PC:
@@ -387,6 +388,14 @@ What is different from the cross build, and why:
   empty environment (a native Python's `env={}`; MSYS2's `env -i` puts
   Windows' variables back), and prints exit codes and output when one
   fails — qt-build-utils itself only says "could not find Qt".
+- **GCC 16 has no `std::__once_call` to borrow.** Its mingw libstdc++ is
+  built with `_GLIBCXX_NO_EXTERN_THREAD_LOCAL` and reaches `call_once`'s
+  callable through functions inside the DLL (`std::__get_once_call()`),
+  where Fedora's GCC 15 exports the emulated thread-local itself. So the
+  pre-`main` fault `launcher-qt/src/once_proxy.cpp` answers cannot happen
+  there, and the proxy is compiled only when that macro is absent: a native
+  build links without it, the package still carries it (checked on both
+  sets of headers).
 - **Package versions follow MSYS2** (Qt 6.11 against Fedora's 6.10, GCC
   16 against 15). A difference that matters shows up as a fault in one
   and not the other, so the zip remains the verdict.

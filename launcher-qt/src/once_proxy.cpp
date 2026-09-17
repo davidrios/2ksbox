@@ -20,7 +20,20 @@
 //
 // Windows/mingw only. Everywhere else the C++ runtime is one module and
 // libstdc++'s own proxy is the right one.
+//
+// And only where libstdc++ exports the thread-local itself. GCC 16's mingw
+// headers define `_GLIBCXX_NO_EXTERN_THREAD_LOCAL` ("Windows does not
+// support exporting thread-local data"): `call_once` then reaches the
+// callable through `std::__get_once_call()`, a function in the DLL, so it is
+// written and read by the same module and the bug above cannot happen --
+// and `std::__once_call` is not exported at all, so this definition would
+// not link ("undefined reference to std::__once_call", MSYS2's GCC 16,
+// 2026-09-17). Fedora's GCC 15, which builds the package, has the extern
+// thread-local and needs the proxy.
 #if defined(_WIN32) && defined(__MINGW32__)
+#include <cstddef> // libstdc++'s configuration, os_defines.h included
+#endif
+#if defined(_WIN32) && defined(__MINGW32__) && !defined(_GLIBCXX_NO_EXTERN_THREAD_LOCAL)
 
 namespace std {
 extern __thread void (*__once_call)();
