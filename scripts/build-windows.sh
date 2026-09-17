@@ -5,9 +5,16 @@
 # (scripts/win-cross.sh, packaging/windows/Dockerfile) except the guest
 # tools and the packaging step, which are host-side by nature.
 #
+# On Windows itself, in MSYS2's MINGW64 shell, the same stages build
+# natively, for debugging on the PC: the same compilers, C runtime and
+# Rust target as the cross image, so a build here is the build that
+# ships. The guest-tools ISO and the package stay on Linux; copy an ISO
+# into guest-tools/out/ and run what was built with scripts/win-run.sh.
+#
 #   scripts/build-windows.sh                everything this host can build
 #   scripts/build-windows.sh qemu rust      only those stages
-#   scripts/build-windows.sh --package      ... and then roll the zip
+#   scripts/build-windows.sh --package      ... and then roll the zip (Linux)
+#   scripts/build-windows.sh --msys2-deps   (Windows) install what the build needs
 #
 # Stages, in the order they must run:
 #
@@ -40,13 +47,36 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Native on Windows (MSYS2's MINGW64 shell) or cross from Linux. The other
+# MSYS2 shells are other C runtimes and C++ libraries than the package's
+# msvcrt + libstdc++, so a build there would not be the one that ships.
+NATIVE=""; HOW=cross
+case "${MSYSTEM:-}" in
+  "") ;;
+  MINGW64) NATIVE=1; HOW=native ;;
+  *) echo "build-windows.sh: this is MSYS2's $MSYSTEM shell; open the MINGW64 one" >&2; exit 1 ;;
+esac
+
+# Everything the native build needs from MSYS2, in one place: the cross
+# image's list (packaging/windows/Dockerfile) under MSYS2's names, plus gdb,
+# which is what building on the PC is for. Rust is not among them: it is
+# rustup's own installer, with the GNU host (docs/build-windows.md).
+MSYS2_PACKAGES=(git rsync
+  mingw-w64-x86_64-{gcc,clang,lld,gdb,ninja,meson,pkgconf,python,python-distlib}
+  mingw-w64-x86_64-{glib2,pixman,zlib,libepoxy,libslirp}
+  mingw-w64-x86_64-{glslang,qt6-base,qt6-declarative})
+
 JOBS=(); PACKAGE=""; STAGES=(); EXPLICIT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -j) JOBS=(-j "$2"); shift 2 ;;
     -j*) JOBS=(-j "${1#-j}"); shift ;;
     -p|--package) PACKAGE=1; shift ;;
-    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --msys2-deps)
+      [ -n "$NATIVE" ] || { echo "build-windows.sh: --msys2-deps is for MSYS2's MINGW64 shell on Windows" >&2; exit 2; }
+      pacman -S --needed "${MSYS2_PACKAGES[@]}"
+      exit ;;
+    -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     qemu|rust|qt|exec|guest) STAGES+=("$1"); shift ;;
     *) echo "build-windows.sh: unknown argument '$1' (try --help)" >&2; exit 2 ;;
   esac
@@ -60,7 +90,40 @@ skip() { # stage, reason
   if [ -n "$EXPLICIT" ]; then echo "build-windows.sh: cannot build '$1': $2" >&2; exit 1; fi
   echo "    SKIP $1 - $2"; SKIPPED+=("$1 ($2)"); return 1
 }
-inw() { scripts/win-cross.sh "$@"; }
+if [ -n "$NATIVE" ]; then
+  inw() { "$@"; }
+  # MSYS2's compilers carry no target prefix: the host is the target.
+  WCC=gcc WCXX=g++
+else
+  inw() { scripts/win-cross.sh "$@"; }
+  WCC=x86_64-w64-mingw32-gcc WCXX=x86_64-w64-mingw32-g++
+fi
+
+if [ -n "$NATIVE" ]; then
+  [ -z "$PACKAGE" ] || { echo "build-windows.sh: --package runs on Linux (wine checks, the cross image's sysroot)" >&2; exit 2; }
+  # A checkout with CRLF line endings fails far from here: every patch of
+  # the queue "does not apply". Git for Windows converts by default.
+  if [ -f qemu/configure ] && grep -q $'\r' qemu/configure; then
+    echo "build-windows.sh: the checkout has CRLF line endings; clone again with core.autocrlf=false (docs/build-windows.md)" >&2
+    exit 1
+  fi
+  missing=()
+  for t in git rsync cygpath gcc g++ clang ld.lld ninja meson pkg-config windres glslangValidator cargo rustc; do
+    command -v "$t" >/dev/null || missing+=("$t")
+  done
+  want qt && ! command -v qmake6 >/dev/null && missing+=(qmake6)
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "build-windows.sh: not found: ${missing[*]} -- run scripts/build-windows.sh --msys2-deps" >&2
+    exit 1
+  fi
+  # rustup's default on Windows is the MSVC toolchain, whose build scripts
+  # need Microsoft's link.exe: the host has to be the GNU one.
+  host="$(rustc -vV | sed -n 's/^host: //p')"
+  [ "$host" = x86_64-pc-windows-gnu ] || {
+    echo "build-windows.sh: rustc's host is $host; run: rustup default stable-x86_64-pc-windows-gnu" >&2; exit 1; }
+  export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="${CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER:-gcc}"
+  export QMAKE="${QMAKE:-qmake6}"
+fi
 
 if [ ! -f qemu/VERSION ] || [ ! -f third_party/qemu-3dfx/00-qemu92x-mesa-glide.patch ]; then
   say "git submodule update --init (qemu, qemu-3dfx)"
@@ -85,7 +148,7 @@ if want qemu; then
     rm -rf build/win/qemu
   fi
   if [ ! -f build/win/qemu/build.ninja ]; then
-    say "qemu: configure (mingw-w64 cross, $want_cc)"
+    say "qemu: configure (mingw-w64 $HOW, $want_cc)"
     inw scripts/configure-qemu.sh --windows
     echo "$want_cc" > build/win/qemu/.2ksbox-cc
   else
@@ -112,7 +175,7 @@ fi
 # needs Qt), which is why this is a separate stage with its own directory
 # rather than another member of the one above.
 if want qt; then
-  if ! scripts/win-cross.sh test -x /usr/bin/x86_64-w64-mingw32-qmake-qt6; then
+  if [ -z "$NATIVE" ] && ! scripts/win-cross.sh test -x /usr/bin/x86_64-w64-mingw32-qmake-qt6; then
     skip qt "the cross image has no mingw Qt 6 (rebuild it: scripts/win-cross.sh --build)" || true
   else
     say "qt: cargo build --release --target x86_64-pc-windows-gnu (launcher-qt)"
@@ -127,7 +190,7 @@ if want exec; then
   # stamp (same file, same hash): a prepare hands both builds fresh
   # mtimes, and one that changed nothing would cost the native DXVK a
   # full rebuild.
-  say "exec: DXVK d3d9.dll (prepare + mingw cross)"
+  say "exec: DXVK d3d9.dll (prepare + mingw $HOW)"
   dxvk_stamp=$( { git -C third_party/dxvk rev-parse HEAD 2>/dev/null || echo none
                   find patches/dxvk scripts/prepare-dxvk.sh -type f | LC_ALL=C sort | tr '\n' '\0' | xargs -0 cat
                 } | sha256sum | cut -d' ' -f1)
@@ -145,12 +208,12 @@ if want exec; then
   inw scripts/build-d3dpt-exec.sh --windows
   # ... and the display driver's host test, which package-windows.sh runs
   # under wine against the staged pair: a frame through the Windows DLLs.
-  inw x86_64-w64-mingw32-g++ -std=c++17 -O2 -static -o build/win/d3dpt-dp2-test.exe tools/d3dpt-dp2-test.cpp
+  inw "$WCXX" -std=c++17 -O2 -static -o build/win/d3dpt-dp2-test.exe tools/d3dpt-dp2-test.cpp
   # The WGL probe rides along: it is the same 3D stage, it is one
   # compile, and it is the first thing to run on a Windows machine whose
   # Win98 guest gets no OpenGL (tools/wgl-probe.c).
   say "exec: wgl-probe.exe (the embed backend's WGL sequence, without QEMU)"
-  inw x86_64-w64-mingw32-gcc -O1 -o build/win/wgl-probe.exe tools/wgl-probe.c \
+  inw "$WCC" -O1 -o build/win/wgl-probe.exe tools/wgl-probe.c \
     -lopengl32 -lgdi32 -luser32
   BUILT+=(exec)
 fi
@@ -161,6 +224,8 @@ if want guest; then
   if ls guest-tools/out/guest-tools-*.iso >/dev/null 2>&1; then
     say "guest"
     echo "    guest-tools ISO present - skipping (guest-tools/build-wrappers.sh rebuilds it)"
+  elif [ -n "$NATIVE" ]; then
+    skip guest "built on Linux: copy guest-tools/out/guest-tools-*.iso from there" || true
   elif ! command -v i686-w64-mingw32-gcc >/dev/null; then
     skip guest "needs mingw-w64 (i686-w64-mingw32-gcc)" || true
   elif ! command -v xorriso >/dev/null && ! command -v genisoimage >/dev/null; then
@@ -181,4 +246,8 @@ if [ -n "$PACKAGE" ]; then
   exec scripts/package-windows.sh
 fi
 echo
-echo "    next: scripts/package-windows.sh   (the zip, checked under wine)"
+if [ -n "$NATIVE" ]; then
+  echo "    next: scripts/win-run.sh launcher   (or player / qemu; GDB=1 runs it under gdb)"
+else
+  echo "    next: scripts/package-windows.sh   (the zip, checked under wine)"
+fi

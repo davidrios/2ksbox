@@ -1,11 +1,12 @@
 # Building and packaging for Windows (from Linux)
 
-The Windows build is a **cross build**, done on the Linux machine that
-does the rest of the work, and it is the only supported way to produce
-Windows artefacts today: nobody here has a Windows box that builds, and
-the whole stack — QEMU with a mingw toolchain, Rust for
-`x86_64-pc-windows-gnu`, the Direct3D executor — crosses cleanly. The
-result is a portable zip you copy to a Windows machine and unpack.
+The Windows package is a **cross build**, done on the Linux machine that
+does the rest of the work: the whole stack — QEMU with a mingw toolchain,
+Rust for `x86_64-pc-windows-gnu`, the Direct3D executor — crosses
+cleanly, and the result is a portable zip you copy to a Windows machine
+and unpack. The same stages also build **natively on a Windows PC** under
+MSYS2, for debugging there with gdb ("Building on Windows" below); the
+package still comes from Linux.
 
 Track: `docs/tracks/m11-windows-host.md`. Names and layout: doc 07.
 
@@ -290,6 +291,86 @@ emulated regardless, as everywhere else.
   machine, answers QMP and quits cleanly, and the packaged launcher and
   `qemu-img.exe` do their jobs — but the player's own window hangs inside
   wine's Vulkan, so the first real run on a Windows PC is still ahead.
+
+## Building on Windows (for debugging on the PC)
+
+Added 2026-09-17 and **not run on Windows yet**. The cross build answers
+"does it work on Windows" only one zip at a time; debugging a fault that
+shows up only on real Windows wants a debugger and a rebuild on that
+machine. The same `scripts/build-windows.sh` does that when it runs in
+**MSYS2's MINGW64 shell** — its `qemu`, `rust`, `qt` and `exec` stages, with
+no container. The guest-tools ISO and the package stay on Linux.
+
+**MINGW64 and not UCRT64 or CLANG64**, because it is the cross image's ABI:
+msvcrt, GCC's runtime and libstdc++, and Rust's `x86_64-pc-windows-gnu`.
+A fault reproduced here is then a fault in the build that ships, and
+Windows-only fixes such as `launcher-qt/src/once_proxy.cpp` (libstdc++'s
+emulated TLS) apply to it exactly as they do to the package. The scripts
+refuse the other two shells.
+
+Once, on the PC:
+
+```sh
+# 1. MSYS2 from https://www.msys2.org, then the "MSYS2 MINGW64" shell:
+pacman -Syu                                   # again if it asks to restart
+pacman -S git
+git config --global core.autocrlf false       # CRLF breaks every patch of the queue
+cd /c && git clone --recurse-submodules --shallow-submodules https://github.com/davidrios/2ksbox
+cd 2ksbox && scripts/build-windows.sh --msys2-deps
+
+# 2. Rust, from rustup's own installer (https://rustup.rs), with the GNU host --
+#    the default MSVC one needs Microsoft's linker for every build script:
+./rustup-init.exe -y --default-host x86_64-pc-windows-gnu
+echo 'export PATH="$(cygpath "$USERPROFILE")/.cargo/bin:$PATH"' >> ~/.bashrc && . ~/.bashrc
+```
+
+Then, as often as needed:
+
+```sh
+scripts/build-windows.sh                  # qemu rust qt exec (guest is skipped)
+scripts/build-windows.sh rust             # one stage
+scripts/win-run.sh launcher               # the Qt launcher, out of the checkout
+GDB=1 scripts/win-run.sh player ...       # the player under gdb
+```
+
+Copy `guest-tools/out/guest-tools-*.iso` over from Linux for the wizard
+to find. `scripts/win-run.sh` does what a package does by being one
+folder: `build/win/qemu` on `PATH` for the embed DLL, the player named to
+the launcher (which is built into `launcher-qt/target/`, where it would
+never look), and the Direct3D executor and DXVK named to QEMU —
+DXVK copied to `dxvk_d3d9.dll`, the only name the executor loads it by.
+The launcher writes nothing to the terminal: `launcher.log` has every
+Play's full player command line (`[player] …`), which is what to paste
+after `GDB=1 scripts/win-run.sh player`.
+
+What is different from the cross build, and why:
+
+- **Python is MSYS2's own, 3.14**, with `python-distlib`. MSYS2 has no
+  older Python, and QEMU's configure needs a MinGW interpreter: a
+  python.org one makes a venv with `Scripts\` where configure looks for
+  `bin/`. What broke QEMU 9.2 on 3.14 was only the `distlib` that pip ≥ 26
+  no longer vendors whole; with the real one, configure and the build's
+  generators pass (checked on Linux, 2026-09-17), and
+  `configure-qemu.sh` accepts 3.14 only with it.
+- **Optional libraries are pinned off.** MSYS2 with Qt installed has
+  zstd, gnutls and others that the cross image lacks, and QEMU links
+  whatever it detects, so native `configure-qemu.sh` disables each one
+  whose cross summary said NO.
+- **lld is named through meson's `CC_LD`**, not through
+  `packaging/windows/clang-mingw-cc`: a native meson cannot execute a
+  shell script as a compiler. Same clang, same linker, same flags.
+- **Paths inside meson's files are `C:/…`** (`cygpath -m`), since the
+  compilers that read them are native programs that do not know `/c/…`.
+  `qemu-embed/build.rs` strips `canonicalize`'s `\\?\` prefix for the same
+  reason: the linker appends `/libqemu-embed-…` to it, and `/` is not a
+  separator in a verbatim path.
+- **Package versions follow MSYS2** (Qt 6.11 against Fedora's 6.10, GCC
+  16 against 15). A difference that matters shows up as a fault in one
+  and not the other, so the zip remains the verdict.
+
+Qemu's seven symbolic links are in Linux-only subprojects
+(`libvduse`, `libvhost-user`) and are never built, so a checkout without
+symlink support is fine.
 
 ## Running it there
 

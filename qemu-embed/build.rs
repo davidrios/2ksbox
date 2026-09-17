@@ -11,7 +11,7 @@ fn main() {
     let dir = std::env::var("QEMU_EMBED_LIB_DIR")
         .map(PathBuf::from)
         .unwrap_or(default);
-    let dir = dir.canonicalize().unwrap_or(dir);
+    let dir = dir.canonicalize().map(strip_verbatim).unwrap_or(dir);
     println!("cargo:rerun-if-env-changed=QEMU_EMBED_LIB_DIR");
     warn_if_overlay_stale(&manifest);
     println!("cargo:rustc-link-search=native={}", dir.display());
@@ -19,6 +19,19 @@ fn main() {
     // Exported to dependents as DEP_QEMU_EMBED_I386_LIBDIR (via `links`), so
     // binaries can bake an rpath — link-args here would not propagate.
     println!("cargo:libdir={}", dir.display());
+}
+
+/// `canonicalize` on a Windows host answers `\\?\C:\...`, a verbatim path in
+/// which `/` is not a separator — and the linker joins `/libqemu-embed-…`
+/// onto the search directory, so a native Windows build (MSYS2, docs/
+/// build-windows.md) would not find the library. A drive path loses the
+/// prefix; anything else (a UNC share) is left as it was.
+fn strip_verbatim(dir: PathBuf) -> PathBuf {
+    let s = dir.to_string_lossy();
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => dir,
+    }
 }
 
 /// `qemu/embed/` is an rsync copy of `embed/` made by `scripts/prepare-qemu.sh`;

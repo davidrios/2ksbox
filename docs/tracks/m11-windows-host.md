@@ -17,7 +17,8 @@ one. Windows had been "untested" since M1 (doc 08).
   `scripts/win-cross.sh`.
 - The Qt reproducer: `tools/qtmin/` (its README is the recipe).
 - The build: `scripts/build-windows.sh`, the `--windows` mode of
-  `scripts/configure-qemu.sh` and of `scripts/build-d3dpt-exec.sh`.
+  `scripts/configure-qemu.sh` and of `scripts/build-d3dpt-exec.sh`, and
+  their native MSYS2 mode with `scripts/win-run.sh`.
 - The package: `scripts/package-windows.sh`.
 - Windows branches of shared code: `embed/mglcntx_embed.c` (the WGL
   backend) and `tools/wgl-probe.c`, `launcher-core/src/console.rs`,
@@ -462,6 +463,15 @@ scripts/package-windows.sh            # zip + the wine checks
 scripts/build-windows.sh rust         # the inner loop while changing Rust
 ```
 
+On the PC itself, in MSYS2's MINGW64 shell (docs/build-windows.md,
+"Building on Windows" — the one-time setup is there):
+
+```sh
+scripts/build-windows.sh              # qemu, rust, qt, exec, natively
+scripts/win-run.sh launcher           # out of the checkout
+GDB=1 scripts/win-run.sh player ...   # the command line from launcher.log's [player] line
+```
+
 `scripts/test.sh` is unchanged and stays a Linux suite: it needs guest
 images and a GPU, and now a Windows host too. The Windows evidence is
 `package-windows.sh`'s own checks.
@@ -472,6 +482,13 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    Windows host run"): dxdiag / 3DMark 99 on DXVK, a MIDI's tempo, the
    Windows key in a game, and Moto Racer's speed — the first clang-built
    QEMU (patch 68) ever to run on real Windows.
+0b. **The native build's first run on the PC** (2026-09-17: written and
+   checked only so far as Linux can — the cross stages still build
+   through the edited scripts, the Python check accepts 3.14 only with
+   `distlib`, and QEMU configures and generates on 3.14). Expect the first
+   failures in the places Linux could not reach: the `\\?\` prefix in
+   `qemu-embed/build.rs`, meson's `CC_LD=lld` for clang, cxx-qt against
+   MSYS2's Qt 6.11, and DXVK's meson without a cross file.
 1. **Rebuild and re-package for the ADR-015 shape**, then
    `2ksbox-debug.bat` on the PC and read the `2ksbox-debug.log` it
    writes: there is one zip now, its `2ksbox.exe` is the Qt launcher, and

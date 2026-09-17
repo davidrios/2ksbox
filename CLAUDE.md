@@ -25,6 +25,11 @@ backend later.
   QEMU is built with **clang**, not mingw GCC (patch 68, 2026-09-17: GCC's
   emulated TLS made every device access 2.3x Linux's), and the executor
   runs on DXVK there too (`dxvk_d3d9.dll`, never Windows' own d3d9).
+  For debugging on a Windows PC the same `scripts/build-windows.sh`
+  builds **natively in MSYS2's MINGW64 shell** (the cross image's ABI:
+  msvcrt, libstdc++, `x86_64-pc-windows-gnu`) and `scripts/win-run.sh`
+  runs it out of the checkout, under gdb with `GDB=1`; the package still
+  comes from Linux.
 
 ## Locked decisions (do not reopen)
 
@@ -74,7 +79,8 @@ backend later.
   because Qt's platform plugin and QML modules are named in no import
   table and their absence is invisible to every other check.
 - Rust wherever possible; C only inside QEMU/qemu-3dfx and guest-side
-  era code. Python is uv-managed (3.12; 3.14 breaks QEMU's venv).
+  era code. Python is uv-managed (3.12; QEMU 9.2 takes 3.14 only
+  with the real `distlib` installed, which MSYS2's Windows build uses).
 - Everything open source; Apple Silicon must work (TCG), not just x86 hosts.
 - **Direct3D 8/9 on XP is our own paravirtual device** (doc 14, ADR-006):
   guest serializer DLLs + native host executor (DXVK). Protocol

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Configure the prepared QEMU tree with a uv-managed Python, so the build
 # never depends on whichever interpreter wins the host PATH race.
-# Python version pinned in .python-version (QEMU 9.2.x supports <= 3.13;
-# host 3.14s broke mkvenv/distlib).
+# Python version pinned in .python-version (QEMU 9.2.x supports <= 3.13,
+# and 3.14 only with a real distlib: see QEMU_PYTHON below).
 #
 # Usage: scripts/configure-qemu.sh [--windows] [extra configure flags...]
 #
@@ -14,18 +14,35 @@
 # directories are independent, so one checkout holds a Linux build and a
 # Windows build at once.
 #
+# On Windows itself, in MSYS2's MINGW64 shell, the same build is native
+# (docs/build-windows.md, "Building on Windows"): --windows is implied, no
+# cross prefix, and MSYS2's own Python rather than uv's — a python.org
+# interpreter makes a venv with `Scripts\` where QEMU's configure looks for
+# `bin/`.
+#
 # QEMU_PYTHON=<interpreter> uses that one and never consults uv — for a
 # build inside a sandbox that has a suitable Python already and cannot
 # fetch one (the Flatpak, M6 step 6b: no uv in org.freedesktop.Sdk, and no
 # network during the build). It is checked for version rather than
-# trusted, because the failure it prevents (3.14 breaking mkvenv) is
-# obscure at the point it bites.
+# trusted, because the failure it prevents is obscure at the point it
+# bites: QEMU 9.2's mkvenv supports 3.8–3.13, and 3.14 works only with the
+# real `distlib` installed, since pip >= 26 trimmed the vendored copy
+# mkvenv falls back to (a 3.14 configure and build with distlib passed on
+# 2026-09-17; MSYS2 has no older Python).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-WINDOWS=""
+WINDOWS=""; NATIVE=""
 if [ "${1:-}" = "--windows" ]; then WINDOWS=1; shift; fi
+case "${MSYSTEM:-}" in
+  "") ;;
+  MINGW64) WINDOWS=1; NATIVE=1 ;;
+  # UCRT64 and CLANG64 are other C runtimes and C++ libraries than the
+  # cross image's msvcrt + libstdc++, so a debugging build there would not
+  # be the build that ships.
+  *) echo "MSYS2 $MSYSTEM shell: build from the MINGW64 one (docs/build-windows.md)"; exit 1 ;;
+esac
 
 if [ -n "$WINDOWS" ]; then
   BUILD="${WIN_QEMU_BUILD:-$ROOT/build/win/qemu}"
@@ -34,19 +51,38 @@ else
   BUILD="$ROOT/build/qemu"
   CARGO_TARGET=""
 fi
-LIBDISC_DIR="$ROOT/target${CARGO_TARGET:+/$CARGO_TARGET}/release"
+# Paths that end up inside meson's files are read by native Windows
+# programs, which cannot resolve MSYS2's /c/... form: C:/... there.
+MROOT="$ROOT"
+[ -n "$NATIVE" ] && MROOT="$(cygpath -m "$ROOT")"
+LIBDISC_DIR="$MROOT/target${CARGO_TARGET:+/$CARGO_TARGET}/release"
 # libsynth's staticlib is built by the same cargo invocation family and
 # lands in the same directory; named separately because the two meson
 # options are separate and either can be pointed elsewhere.
 LIBSYNTH_DIR="$LIBDISC_DIR"
 
 PYVER="$(cat "$ROOT/.python-version")"
+check_python() {  # the variable that named it, for the message
+  command -v "$PYTHON" >/dev/null || { echo "$1=$PYTHON is not executable"; exit 1; }
+  "$PYTHON" -c '
+import sys
+v = sys.version_info[:2]
+if v == (3, 14):
+    import distlib.scripts, distlib.version
+elif not (3, 8) <= v <= (3, 13):
+    sys.exit(1)
+' 2>/dev/null || {
+    echo "$1=$PYTHON is $("$PYTHON" -V 2>&1); QEMU 9.2.x needs 3.8–3.13, or 3.14 with the distlib package"
+    exit 1; }
+}
 if [ -n "${QEMU_PYTHON:-}" ]; then
   PYTHON="$QEMU_PYTHON"
-  command -v "$PYTHON" >/dev/null || { echo "QEMU_PYTHON=$PYTHON is not executable"; exit 1; }
-  # QEMU 9.2.x supports 3.8 … 3.13; anything newer breaks mkvenv/distlib.
-  "$PYTHON" -c 'import sys; sys.exit(0 if (3,8) <= sys.version_info[:2] <= (3,13) else 1)' || {
-    echo "QEMU_PYTHON=$PYTHON is $("$PYTHON" -V 2>&1); QEMU 9.2.x needs 3.8–3.13"; exit 1; }
+  check_python QEMU_PYTHON
+elif [ -n "$NATIVE" ]; then
+  PYTHON=/mingw64/bin/python3
+  [ -x "$PYTHON.exe" ] || [ -x "$PYTHON" ] || {
+    echo "no $PYTHON: pacman -S mingw-w64-x86_64-python mingw-w64-x86_64-python-distlib"; exit 1; }
+  check_python "MSYS2's python"
 else
   command -v uv >/dev/null || {
     echo "uv not found — install it (https://docs.astral.sh/uv/), or set QEMU_PYTHON to a 3.8–3.13 interpreter"; exit 1; }
@@ -74,7 +110,26 @@ cd "$BUILD"
 # -fPIC: objects are also linked into libqemu-embed-<target> (shared)
 EXTRA_CFLAGS="-I$ROOT/third_party/khronos -fPIC"
 CFG=(-Db_staticpic=true)
-if [ -n "$WINDOWS" ]; then
+if [ -n "$NATIVE" ]; then
+  # On Windows, in MSYS2's MINGW64 shell: the cross build below without the
+  # cross. Same compiler (clang against GCC's mingw runtime), same linker
+  # (lld, named through meson's CC_LD rather than a wrapper script, which a
+  # native meson cannot execute), same flags.
+  EXTRA_CFLAGS="-I$MROOT/third_party/khronos"
+  # And the same libraries: MSYS2 with Qt installed has several the cross
+  # image lacks (zstd and friends arrive as Qt's dependencies), and QEMU
+  # links whatever it detects. Each of these said NO in the cross build's
+  # configure summary, so they are pinned to it here.
+  CFG=(--disable-zstd --disable-gnutls --disable-nettle --disable-gcrypt --disable-capstone
+       --disable-libusb --disable-usb-redir --disable-lzo --disable-snappy --disable-smartcard
+       --disable-libcbor --disable-lzfse)
+  if [ "${WIN_QEMU_CC:-clang}" = clang ]; then
+    command -v clang >/dev/null && command -v ld.lld >/dev/null || {
+      echo "no clang/lld: pacman -S mingw-w64-x86_64-clang mingw-w64-x86_64-lld"; exit 1; }
+    export CC_LD=lld CXX_LD=lld
+    CFG+=(--cc=clang --cxx=clang++ --disable-plugins)
+  fi
+elif [ -n "$WINDOWS" ]; then
   # PE code is position-independent by construction and gcc says so on every
   # file it compiles ("-fPIC ignored for target"), so the native build's flag
   # goes away here rather than being repeated a few thousand times.
@@ -190,7 +245,7 @@ fi
   --disable-glusterfs \
   --disable-blkio \
   --extra-cflags="$EXTRA_CFLAGS" \
-  "${CFG[@]}" \
+  ${CFG[@]+"${CFG[@]}"} \
   --target-list=i386-softmmu,x86_64-softmmu \
   -Dlibdisc_dir="$LIBDISC_DIR" \
   -Dlibsynth_dir="$LIBSYNTH_DIR" \

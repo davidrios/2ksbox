@@ -11,14 +11,16 @@
 # d3d9.dll at run time under the name the package gives it,
 # `dxvk_d3d9.dll` (build/win/dxvk, scripts/configure-dxvk.sh --windows) —
 # never Windows' own Direct3D 9 (2026-09-17). Run it inside
-# scripts/win-cross.sh — docs/build-windows.md.
+# scripts/win-cross.sh, or natively in MSYS2's MINGW64 shell —
+# docs/build-windows.md.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 if [ "${1:-}" = "--windows" ]; then
   OUT="$ROOT/build/win/d3dpt"; mkdir -p "$OUT"
   LIB="$OUT/d3dpt_exec.dll"
-  CXX="${CXX:-x86_64-w64-mingw32-g++}"
+  # MSYS2's compilers carry no target prefix: the host is the target.
+  if [ "${MSYSTEM:-}" = MINGW64 ]; then CXX="${CXX:-g++}"; else CXX="${CXX:-x86_64-w64-mingw32-g++}"; fi
   command -v "$CXX" >/dev/null || { echo "no $CXX — run this inside scripts/win-cross.sh"; exit 1; }
   # -static-libgcc/-libstdc++: the DLL is loaded by qemu-system.exe, which
   # is a C program, so it must not need the C++ runtime DLLs beside it.
