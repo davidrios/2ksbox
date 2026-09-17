@@ -538,6 +538,11 @@ d3dpt_linear:
     mov cx, 55
     call delay_ticks
     pop edi
+    ; back on the desktop's page: the host takes its linear-mode screendump
+    ; now, not at ENABLE (page 2 above is not the green one)
+    mov si, str_d3d_ready
+    call puts
+    call putnl
     mov cx, 36                  ; ~2 s: the host's screendump shows the linear
     call delay_ticks            ; mode, the way the player's refresh would
     ret
@@ -946,6 +951,7 @@ str_swapped:  db "SWAPPED", 10, 0
 str_done:     db "DONE", 10, 0
 str_d3dpt:    db "D3DPT ", 0
 str_d3d_enable: db "D3DPT ENABLE ", 0
+str_d3d_ready:  db "D3DPT READY", 0
 str_fifo1:    db "FIFO1 RDPTR ", 0
 str_fifo1_swapped: db "FIFO1 SWAPPED", 10, 0
 str_fifo2:    db "FIFO2 RDPTR ", 0
@@ -1100,7 +1106,7 @@ def main():
                 # before the Voodoo takes the monitor, as the player's
                 # refresh does -- without it the hand-back finds no linear
                 # surface of the adapter's and the bug cannot show
-                wait_for(log, b"D3DPT ENABLE", p, 180, "the linear mode")
+                wait_for(log, b"D3DPT READY", p, 180, "the linear mode, after its flips")
                 q.screendump(shot_lin)
             text = wait_for(log, b"SWAPPED", p, 180, "the guest's swap")
             q.screendump(shot_on)
