@@ -91,8 +91,11 @@ rsync -c "$ROOT/gamepad/qemu/usb-gamepad.h" "$ROOT/gamepad/qemu/gameport.h" "$QE
 qgit() {
   local err rc
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    # stderr into `err`, stdout through (callers read `ls-files`)
-    { err=$(git -C "$QEMU" "$@" 2>&1 >&3); rc=$?; } 3>&1
+    # stderr into `err`, stdout through (callers read `ls-files`). The
+    # assignment is its own command, so it must not be the last one in a
+    # bare list or `set -e` ends the script here, before the retry below
+    # and with git's message captured rather than printed (2026-09-17).
+    { err=$(git -C "$QEMU" "$@" 2>&1 >&3) && rc=0 || rc=$?; } 3>&1
     if [ "$rc" -eq 0 ]; then return 0; fi
     case "$err" in
       *index.lock*) sleep 0.5 ;;
