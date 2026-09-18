@@ -1100,7 +1100,7 @@ static int zc_slot_ensure(int i, int w, int h)
  * or a faster guest away from mattering, so this is a stopgap: put it back to
  * ZC_SLOTS once a slot's write-through survives the import.
  */
-#define ZC_SLOTS_DEFAULT 1
+#define ZC_SLOTS_DEFAULT ZC_SLOTS
 
 static int zc_slots(void)
 {
@@ -1157,6 +1157,117 @@ static void zc_sample(int i)
     }
 }
 
+/*
+ * `EMBED_ZC_PROBE=<n>`: every n-th present, before the blit, write a known
+ * colour into the slot through GL and read the buffer's own memory back.
+ * Unlike comparing the two readings of a frame, this cannot be fooled by a
+ * picture that did not change, so it says exactly which present a slot stops
+ * being the memory it was made over. The blit then paints over the probe, so
+ * nothing shows on screen.
+ */
+/*
+ * When to probe. A buffer that goes bad does so early -- on the first frame
+ * the guest renders in earnest, which is present 13 of GLQuake's every time
+ * -- and never recovers, so the schedule is dense while the ring is young
+ * and occasional afterwards. `EMBED_ZC_PROBE=<n>` forces a rate, `=0` turns
+ * it off.
+ */
+static int zc_probe_due(unsigned long long n)
+{
+    static int every = -2;
+
+    if (every == -2) {
+        every = zc_env("EMBED_ZC_PROBE", -1);
+    }
+    if (every == 0) {
+        return 0;
+    }
+    if (every > 0) {
+        return (n % (unsigned)every) == 0;
+    }
+    return (n < 64) || ((n % 512) == 0);
+}
+
+static void zc_probe(int i)
+{
+    static unsigned long long nth;
+    static int broken[ZC_SLOTS];
+    uint32_t want, got = 0;
+    void *mapd = NULL;
+    uint32_t mstride = 0, *cpu;
+    GLint prev_draw = 0;
+    unsigned long long n;
+
+    n = nth++;
+    if (!zc_probe_due(n)) {
+        return;
+    }
+    DPRINTF_COND(zc_env("EMBED_ZC_MARK", 0), "zc present %llu slot %d",
+                 (unsigned long long)n, i);
+    /*
+     * ARGB8888 in memory: A R G B. Red names the slot, green the present.
+     *
+     * Every piece of state this touches is put back, and the two that would
+     * quietly make the clear do nothing -- a scissor the guest left on, a
+     * colour mask it left closed -- are taken out of the way first. Leaving
+     * the clear colour behind cost the `embed-3d` check a frame the moment
+     * this was written: a guest that clears without setting the colour each
+     * time would have got ours.
+     */
+    {
+        uint32_t r = (uint32_t)(0x20 + i * 0x40), g = (uint32_t)((n / 16) & 0xff);
+        GLfloat cc[4];
+        GLboolean mask[4];
+        GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
+        want = 0xff000000u | (r << 16) | (g << 8);
+        glGetFloatv(GL_COLOR_CLEAR_VALUE, cc);
+        glGetBooleanv(GL_COLOR_WRITEMASK, mask);
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, zc[i].fbo);
+        if (scissor) {
+            glDisable(GL_SCISSOR_TEST);
+        }
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glClearColor((float)r / 255.f, (float)g / 255.f, 0.f, 1.f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glClearColor(cc[0], cc[1], cc[2], cc[3]);
+        glColorMask(mask[0], mask[1], mask[2], mask[3]);
+        if (scissor) {
+            glEnable(GL_SCISSOR_TEST);
+        }
+    }
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prev_draw);
+    glFinish();
+    /* one pixel, not the buffer: this runs beside a game */
+    cpu = gbm_bo_map(zc[i].bo, zc[i].w / 2, zc[i].h / 2, 2, 2, GBM_BO_TRANSFER_READ,
+                     &mstride, &mapd);
+    if (!cpu) {
+        return;
+    }
+    got = *cpu;
+    gbm_bo_unmap(zc[i].bo, mapd);
+    if (got != want && !broken[i]) {
+        broken[i] = 1;
+        DPRINTF("zc slot %d STOPPED ALIASING at present %llu: wrote %08x, buffer holds %08x",
+                i, (unsigned long long)n, want, got);
+        /* `EMBED_ZC_HEAL=1`: throw the buffer away and make the slot again.
+         * If the new one holds, a slot going bad is something the ring can
+         * recover from by itself rather than a reason to stand it down. */
+        if (zc_env("EMBED_ZC_HEAL", 1)) {
+            int w = zc[i].w, h = zc[i].h;
+            zc_slot_free(i);
+            DPRINTF("zc slot %d: remaking it", i);
+            if (!zc_slot_ensure(i, w, h)) {
+                DPRINTF("zc slot %d: remaking it failed", i);
+            }
+            broken[i] = 0;
+        }
+    } else if (got == want && broken[i]) {
+        broken[i] = 0;
+        DPRINTF("zc slot %d aliases its buffer again at present %llu", i, (unsigned long long)n);
+    }
+}
+
 /* present FBO 0 into the next ring slot; 1 = handed off, 0 = use readback */
 static int zc_present(void)
 {
@@ -1170,6 +1281,7 @@ static int zc_present(void)
     if (!zc_slot_ensure(i, win_w, win_h)) {
         return 0;
     }
+    zc_probe(i);
     GLint prev_read = 0, prev_draw = 0;
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);

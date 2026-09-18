@@ -570,7 +570,10 @@ int main(int argc, char **argv)
                      : !strcmp(argv[i] + 6, "shader") ? 2 : 0;
         } else if (!strncmp(argv[i], "--draw=", 7)) {
             draw_scene = !strcmp(argv[i] + 7, "scene") ? 1
-                       : !strcmp(argv[i] + 7, "front") ? 2 : 0;
+                       : !strcmp(argv[i] + 7, "front") ? 2
+                       : !strcmp(argv[i] + 7, "all") ? 3
+                       : !strcmp(argv[i] + 7, "alloc") ? 4
+                       : !strcmp(argv[i] + 7, "load") ? 5 : 0;
         } else if (!strcmp(argv[i], "--threaded")) {
             threaded = 1;
         } else if (!strncmp(argv[i], "--frames=", 9)) {
@@ -578,7 +581,7 @@ int main(int argc, char **argv)
         } else if (!strncmp(argv[i], "--bios=", 7)) {
             bios = argv[i] + 7;
         } else {
-            printf("usage: %s [--stage=NAME] [--use=none|copy|shader] [--draw=clear|scene|front] [--threaded] [--frames=N] [--bios=DIR]\n",
+            printf("usage: %s [--stage=NAME] [--use=none|copy|shader] [--draw=clear|scene|front|all|alloc|load] [--threaded] [--frames=N] [--bios=DIR]\n",
                    argv[0]);
             return 2;
         }
@@ -590,7 +593,7 @@ int main(int argc, char **argv)
     printf("stage %s, use %s, %s, draw %s, %d frames, ring %s\n", stage_name[stage],
            use_copy == 2 ? "shader" : use_copy ? "copy" : "none",
            threaded ? "vulkan on its own thread" : "one thread",
-           draw_scene == 2 ? "front" : draw_scene ? "scene" : "clear", frames, getenv("EMBED_ZC_SLOTS"));
+           draw_scene == 5 ? "load" : draw_scene == 4 ? "alloc" : draw_scene == 3 ? "all" : draw_scene == 2 ? "front" : draw_scene ? "scene" : "clear", frames, getenv("EMBED_ZC_SLOTS"));
 
     if (stage != ST_NONE && !vk_init()) {
         return 1;
@@ -663,7 +666,139 @@ int main(int argc, char **argv)
             glFlush();
             glDrawBuffer(GL_BACK);
         }
-        if (draw_scene) {
+        if (draw_scene == 5 && i == 20) {
+            /*
+             * The frame GLQuake breaks on, by its measured shape: a level
+             * load, which uploads ~934 textures and toggles the draw buffer
+             * to the front and back ~165 times in the one frame (the disc
+             * icon it flashes between loads). Neither volume appears in any
+             * frame before it, and that is the frame a slot stops aliasing.
+             */
+            static GLuint many[934];
+            uint32_t *px = calloc(64 * 64, 4);
+            glGenTextures(934, many);
+            for (int t = 0; t < 934; t++) {
+                if ((t % 6) == 0) {
+                    glDrawBuffer(GL_FRONT);
+                    glBegin(GL_QUADS);
+                    glVertex2f(.8f, .8f); glVertex2f(.9f, .8f);
+                    glVertex2f(.9f, .9f); glVertex2f(.8f, .9f);
+                    glEnd();
+                    glFlush();
+                    glDrawBuffer(GL_BACK);
+                }
+                glBindTexture(GL_TEXTURE_2D, many[t]);
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_BGRA,
+                             GL_UNSIGNED_BYTE, px);
+            }
+            free(px);
+            printf("level load: 934 textures, %d front/back toggles\n", 934 / 6);
+            fflush(stdout);
+            glBindTexture(GL_TEXTURE_2D, tex);
+        }
+        if (draw_scene == 4 && i == 20) {
+            /*
+             * A level load: a burst of texture allocation, which is what a
+             * game does a dozen frames in and neither wglgears nor the
+             * scene above does at all. If a slot stops aliasing its buffer
+             * here, the trigger is the driver moving memory under pressure,
+             * not any particular call.
+             */
+            static GLuint big[256];
+            static uint32_t *px;
+            px = calloc(512 * 512, 4);
+            glGenTextures(256, big);
+            for (int t = 0; t < 256; t++) {
+                glBindTexture(GL_TEXTURE_2D, big[t]);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 512, 512, 0, GL_BGRA,
+                             GL_UNSIGNED_BYTE, px);
+            }
+            free(px);
+            printf("uploaded 256 x 512x512 textures (256 MB)\n");
+            fflush(stdout);
+            glBindTexture(GL_TEXTURE_2D, tex);
+        }
+        if (draw_scene == 3 || draw_scene == 4 || draw_scene == 5) {
+            /*
+             * Every call the trace has for GLQuake and not for wglgears, in
+             * a frame shaped like one of its own: matrices, depth, culling,
+             * a texture rebuilt and sub-loaded each frame, alpha test,
+             * blending, immediate-mode colours and vertices, the gets, and
+             * the front-buffer pass. If the ring survives this, the cause
+             * is not in the set of calls and bisecting them is pointless.
+             */
+            glViewport(0, 0, slots[0].w ? slots[0].w : 640,
+                       slots[0].h ? slots[0].h : 480);
+            glMatrixMode(GL_PROJECTION);
+            glLoadIdentity();
+            glFrustum(-1, 1, -1, 1, 1, 4096);
+            glMatrixMode(GL_MODELVIEW);
+            glLoadIdentity();
+            glRotatef((float)i, 0, 0, 1);
+            glTranslatef(0, 0, -2.f);
+            GLfloat m[16];
+            glGetFloatv(GL_MODELVIEW_MATRIX, m);
+            (void)glGetString(GL_EXTENSIONS);
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_FRONT);
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LEQUAL);
+            glDepthMask(GL_TRUE);
+            glDepthRange(0, 1);
+            glEnable(GL_ALPHA_TEST);
+            glAlphaFunc(GL_GREATER, 0.666f);
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            for (int k = 0; k < 64 * 64; k++) {
+                texels[k] = 0xff000000u | (uint32_t)((k + i) & 0xff) << 8;
+            }
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_BGRA,
+                         GL_UNSIGNED_BYTE, texels);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 16, 16, GL_BGRA,
+                            GL_UNSIGNED_BYTE, texels);
+            glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+            static const GLubyte c3[3] = { 200, 180, 160 };
+            static const GLfloat c4[4] = { .8f, .7f, .6f, 1.f };
+            glColor3f(1.f, 1.f, 1.f);
+            glColor3ubv(c3);
+            glColor4f(.9f, .8f, .7f, 1.f);
+            glColor4fv(c4);
+            float z = (float)(i % 8) / 16.f;
+            glBegin(GL_QUADS);
+            glTexCoord2f(0, 0); glVertex3f(-.9f, -.9f, z);
+            glTexCoord2f(1, 0); glVertex3f(.9f, -.9f, z);
+            glTexCoord2f(1, 1);
+            GLfloat v[3] = { .9f, .9f, z };
+            glVertex3fv(v);
+            glTexCoord2f(0, 1); glVertex3f(-.9f, .9f, z);
+            glEnd();
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glMatrixMode(GL_PROJECTION);
+            glLoadIdentity();
+            glOrtho(0, 1, 1, 0, -99999, 99999);
+            glMatrixMode(GL_MODELVIEW);
+            glPushMatrix();
+            glScalef(.5f, .5f, 1.f);
+            glBegin(GL_QUADS);
+            glVertex2f(.1f, .1f); glVertex2f(.4f, .1f);
+            glVertex2f(.4f, .4f); glVertex2f(.1f, .4f);
+            glEnd();
+            glPopMatrix();
+            glDisable(GL_BLEND);
+            glDisable(GL_ALPHA_TEST);
+            glDrawBuffer(GL_FRONT);
+            glBegin(GL_QUADS);
+            glVertex2f(.8f, .8f); glVertex2f(.9f, .8f);
+            glVertex2f(.9f, .9f); glVertex2f(.8f, .9f);
+            glEnd();
+            glFlush();
+            glDrawBuffer(GL_BACK);
+            (void)m;
+        }
+        if (draw_scene == 1) {
             for (int k = 0; k < 64 * 64; k++) {
                 texels[k] = 0xff000000u | (uint32_t)((k + i) & 0xff) << 8;
             }

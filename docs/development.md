@@ -321,14 +321,20 @@ file. `SETUP /GAME` never overwrites one that is already there.
 
 Host side, the frames go through the embed backend's dma-buf ring:
 
-- `EMBED_ZC_SLOTS=<n>` uses the first n of the ring's buffers. **The
-  default is 1** — the ring is stood down, because its second buffer
-  stops being written through on this host (doc 12 §4). `=3` restores it.
+- `EMBED_ZC_PROBE=<n>` sets how often a buffer is checked for still being
+  the memory it was made over: a known colour written into it through GL,
+  read back with `gbm_bo_map` (doc 12 §4). A slot that fails is freed and
+  made again — the repair, not a diagnostic. The default schedule is dense
+  while the ring is young and one present in 512 after that; `=0` turns it
+  off and `EMBED_ZC_HEAL=0` leaves a bad slot alone to study it.
+- `EMBED_ZC_SLOTS=<n>` uses the first n of the ring's buffers (default:
+  all of them).
 - `EMBED_ZC_CHECK=<n>` reads four pixels out of the buffer just blitted
   into, every n-th present, twice: through GL and straight out of the
-  buffer's memory with `gbm_bo_map`. GL reading back what GL wrote proves
-  only that GL is self-consistent; the two lines disagreeing is a buffer
-  the frontend will see frozen.
+  buffer's memory. Weaker than the probe and easy to misread — while the
+  guest's picture does not change, the two readings agree whether or not
+  the buffer is being written. `EMBED_ZC_MARK=1` adds a line per present,
+  for cutting a `FuncTrace,2` log to the window a slot went bad in.
 - `tools/zc-vulkan-test.c` drives the ring with the frontend's Vulkan
   import and nothing else — no guest, no player, no wgpu — and checks each
   buffer's memory with the CPU after every frame. `--stage=` bisects the

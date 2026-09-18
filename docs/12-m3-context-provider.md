@@ -31,103 +31,83 @@ bound to rectangle textures with `CGLTexImageIOSurface2D`, flipped blit
 from the stand-in FBO, embed API v6 `on_3d_iosurface`; the player wraps
 the surface in a Metal texture (`player/src/iosurface.rs`). **§4 complete
 on both platforms.**
-**§4 open again on Linux (2026-09-17): the ring's second buffer stops
-being written through, and the ring is stood down to one.** Found as a
-fast flicker in GLQuake on `base98-br` — every third presented frame was
-the same frozen picture. What it is: the backend blits FBO 0 into slot
-*i* and publishes it, and slot 1's GL side is perfect — `glReadPixels`
-off `zc[1].fbo` gives back every frame that was blitted in — while the
-dma-buf's *own memory*, which the frontend imported and samples, keeps
-the frame it held first. `EMBED_ZC_CHECK=<n>` prints both readings; the
-GL and `gbm_bo_map` lines agree on slots 0 and 2 and disagree on slot 1
-(125 of 126 samples at a 2-slot ring, 0 of 127 for slot 0). The colour
-shows it too: slot 1 reads alpha `ff` where the others read `00`.
+**§4: a ring buffer can stop being written through, and the ring now
+notices and remakes it (2026-09-17/18, Linux).** Found as a fast flicker
+in GLQuake on `base98-br` — every third presented frame was the same
+frozen picture. The slot's GL side is perfect: `glReadPixels` off
+`zc[1].fbo` gives back every frame blitted in, while the dma-buf's *own*
+memory, which the frontend imported and samples, keeps the frame it held
+first.
 
-What it is **not**, each measured rather than reasoned. Two of these
-overturned an earlier reading of the same bug, so they are worth keeping:
+The fix is `zc_probe()`. Every so often, before the blit, it writes a
+known colour into the slot through GL and reads the buffer's own memory
+back with `gbm_bo_map`; a slot that does not answer with what was just
+written is freed and made again, and the new buffer holds. That is the
+whole of it — one slot goes bad, thirteen presents in, and a fresh one
+lasts the rest of the run. The schedule is dense while the ring is young
+and one present in 512 after that, because a buffer that goes bad does so
+early and never recovers; `EMBED_ZC_PROBE=<n>` forces a rate, `=0` turns
+it off and `EMBED_ZC_HEAL=0` leaves a bad slot alone to study it.
+Measured with the ring back at three slots: every presented frame
+distinct on all three, 72 fps, one `STOPPED ALIASING` line and one
+`remaking it`. wglgears in the same player never trips it.
 
-- **Not the frontend, and not the Vulkan import at all.** This was the
-  first answer and it was wrong. `PLAYER_ZC_IMPORT=0` makes the player
-  take every offer and import nothing — declining one turns the ring off,
-  so accepting without importing is the only way to run the ring with no
-  Vulkan behind it — and slot 1 still diverges, 94 of 95 samples. The
-  whole divergence is inside QEMU's own process: GL's writes against
-  `gbm_bo_map`'s reads of the same GBM buffer, with nothing else holding
-  it. Everything below about the import is therefore about a bystander.
+Comparing the two readings of a *frame* instead (`EMBED_ZC_CHECK=<n>`,
+which prints the GL and CPU views side by side) is the weaker instrument
+and misled this investigation twice: while the guest's picture does not
+change, a slot that is not being written through cannot be told from one
+that is. The known-value probe has no such blind spot, and it is what
+turned "somewhere before the first frame that differs" into "present 13,
+every time".
+
+What the cause is remains open, and the list of things it is **not** is
+worth keeping, because each cost a round:
+
+- **Not the frontend.** `PLAYER_ZC_IMPORT=0` makes the player take every
+  offer and import nothing — declining one turns the ring off, so this is
+  the only way to run the ring with no Vulkan behind it — and the slot
+  still goes bad, 94 of 95 samples. The divergence is GL's writes against
+  `gbm_bo_map`'s reads inside QEMU's own process.
 - **Not the import's parameters, or using the image.**
-  `tools/zc-vulkan-test.c` drives the ring and imports it with exactly
-  what `player/src/dmabuf.rs` passes, with no guest and no wgpu. Clean —
-  and so are `--use=copy` (transition out of `UNDEFINED` and copy back
-  every frame), `--use=shader` (left in the layout wgpu leaves a sampled
-  texture in) and `--threaded` (every Vulkan call, the import included, on
-  a thread of its own, which is where the frontend makes them).
-- **It is the guest's GL workload.** `wglgears` in the same player, on the
-  same machine, with the ring at three slots: 2234 samples per slot, zero
-  disagreements. GLQuake on the same machine diverges — full-screen at a
-  640x480 drawable and windowed at an 800x600 one, so it is not the size,
-  the stride or the mode change either.
-- **Not a workload this side can imitate yet.** `embed-3d-test`'s clear
-  is clean over 34 frames, and so is `zc-vulkan-test --draw=scene`, which
-  renders a depth-tested textured quad with the texture reuploaded every
-  frame. Whatever GLQuake asks of the driver, neither of those asks it.
-- **Not the ring's size** (slot 1 diverges at three slots and at two;
-  slot 0 never does), **not fd ownership** — a real double-close found
-  while looking and fixed: the frontend was handed the same fd the
-  EGLImage was created from, and importing it into Vulkan passes
-  ownership, so `zc_slot_free` closed it a second time — and **not a race
-  with the import** (`EMBED_ZC_SETTLE=100` changes nothing).
+  `tools/zc-vulkan-test.c` imports the ring exactly as
+  `player/src/dmabuf.rs` does, with no guest and no wgpu: clean, and so
+  are `--use=copy`, `--use=shader` and `--threaded` (every Vulkan call,
+  the import included, on a thread of its own).
+- **Not the set of GL calls the guest makes.** `FuncTrace,1` gives each
+  program's call set: GLQuake uses 42, wglgears 22, and the 27 GLQuake has
+  and wglgears has not (`glDrawBuffer`, `glTexImage2D`, `glDepthRange`,
+  the immediate-mode colours and vertices, …) are all in
+  `zc-vulkan-test --draw=all`, which is clean. That gate is why the
+  bisection was dropped rather than run.
+- **Not the shape of the frame it breaks on.** `FuncTrace,2` with a
+  marker per present puts the break inside GLQuake's first 3D frame — a
+  level load, 934 `glTexImage2D` and 330 `glDrawBuffer` toggles against a
+  previous frame of plain 2D quads. `--draw=load` does the same volumes:
+  clean. Nor is it allocation pressure (`--draw=alloc`, 256 MB of
+  textures: clean), the drawable's size or stride (GLQuake diverges
+  full-screen at 640x480 and windowed at 800x600), the render scaler
+  (which runs in the windowed case and not the full-screen one), the
+  ring's size, fd ownership, or a settling delay before first use.
 
-The shape of it, from `EMBED_ZC_CHECK=1` on a run from the start: slot
-1's *first* blit does write through, and no later one does. Every sample
-after that has GL moving and the buffer's memory frozen on that first
-frame. Slots 0 and 2 never do it.
+So the difference between a guest that trips it and one that does not is
+somewhere in mesapt's own path — the decoder's texture uploads through
+shared memory, the vertex-array cache, the mapped-buffer path — and not
+in the API the guest calls. That is where to look next. Until then the
+ring repairs itself, which is worth more than knowing why.
 
-So this is the backend and radeonsi, and the question is which GL call in
-what qemu-3dfx's mesagl does for GLQuake, but not for wglgears, makes the
-driver stop writing an EGLImage-backed texture through to its dma-buf.
+Found while looking and fixed: the frontend was handed the same fd the
+EGLImage was created from, and importing it into Vulkan passes ownership,
+so `zc_slot_free` closed it a second time. It gets its own
+`gbm_bo_get_fd` now, and a declined offer is closed rather than leaked —
+which is also what makes remaking a slot safe.
 
-**The trace diff, 2026-09-18.** `FuncTrace,1` in a `mesagl.cfg` in the
-player's working directory logs each GL function the guest uses once,
-which is exactly the set to compare (`FuncTrace,2` logs every call and
-floods). GLQuake uses 42, wglgears 22. The 27 GLQuake has and wglgears
-has not: `glAlphaFunc`, `glBindTextureEXT`, `glBlendFunc`,
-`glClearColor`, `glColor3f/3ubv/4f/4fv`, `glCullFace`,
-`glDebugMessageInsertARB`, `glDepthFunc`, `glDepthMask`, `glDepthRange`,
-`glDisable`, **`glDrawBuffer`**, `glGetFloatv`, `glGetString`, `glOrtho`,
-`glPolygonMode`, `glScalef`, `glTexCoord2f`, `glTexEnvf`, `glTexImage2D`,
-`glTexParameterf`, `glTexSubImage2D`, `glVertex2f`, `glVertex3fv` and the
-`Get`/`Enable` log lines. The other way round wglgears has display lists
-(`glNewList`/`glCallList`/`glGenLists`/`glEndList`), lighting
-(`glLightfv`, `glMaterialfv`), `glNormal3f` and `glClear`.
+`tools/embed-3d-test.c` drew two frames, one blit per slot, and a bad
+slot's first blit does land, which is why it stayed green through all of
+this; it runs several frames per slot now and requires each slot's memory
+to follow them. It also caught the probe leaving the GL clear colour
+behind on the first try, which is exactly the kind of thing that would
+have come back as a guest rendering wrongly.
 
-`glDrawBuffer` was the one worth trying first — the backend has a
-front-buffer hook where `glFlush`/`glFinish` publish a frame — but that
-hook is **macOS-only** (`CONFIG_DARWIN`, and this is Linux), and adding
-GLQuake's front-buffer pattern to the standalone test (`--draw=front`:
-draw into `GL_FRONT`, flush, back to `GL_BACK`) leaves it clean. So the
-candidate list is still 26 long and the bisection is the job.
-
-Two things the round did settle. The slot is **the same memory to begin
-with**: with `EMBED_ZC_CHECK` on, `zc_slot_ensure` now clears each fresh
-texture through GL and reads the buffer back with the CPU, and all three
-slots say `same memory`, in the player and standalone alike. And the
-moment the divergence becomes *visible* is GLQuake's first rendered
-frame — but that is an artefact of the measurement, not an event: until
-then the guest is showing a static console, and a slot that is not being
-written through cannot be told from one that is while the picture does
-not change. So slot 1 stops aliasing its buffer somewhere between its
-allocation and the first frame that differs, and nothing narrower than
-that is known.
-
-Meanwhile `ZC_SLOTS_DEFAULT` is 1: with one buffer there is no second
-slot to go bad. The cost is the margin the ring exists for — the frontend
-samples the buffer the next blit will overwrite, and the hand-off has no
-fence coming back — but on the reference workload it is not visible: 72
-fps either way, and a tear detector that catches 100 % of synthetic
-one-frame tears finds no more torn frames with one buffer (3.1 %) than on
-the tear-free readback path (3.1 %), the residue being GLQuake's own
-horizontal edges. `EMBED_ZC_SLOTS=3` restores the ring for the
-investigation; `PLAYER_ZERO_COPY=0` drops to readback entirely.
 **Glide (§5) done on Linux, 2026-09-06:** the host-side wrapper is ours now
 (OpenGLide, `third_party/openglide` + `patches/openglide`, built by
 `scripts/build-glide.sh`), it renders into the same window-less context as

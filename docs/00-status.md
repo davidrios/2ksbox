@@ -165,36 +165,28 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
-- **The zero-copy ring's second buffer stops being written through; the
-  ring is stood down to one** (2026-09-17, doc 12 §4). Found as a fast
+- **A zero-copy ring buffer can stop being written through; the ring now
+  notices and remakes it** (2026-09-18, doc 12 §4). Found as a fast
   flicker in GLQuake on `base98-br`: every third presented frame was the
-  same frozen picture. Slot 1's GL side is perfect — `glReadPixels` off
-  its FBO returns every frame blitted in — while the buffer's own memory
-  keeps the frame it held first (`EMBED_ZC_CHECK=<n>` prints both
-  readings; they disagree on slot 1 in 94 of 95 samples and never on slot
-  0 or 2). **The frontend has nothing to do with it:** with
-  `PLAYER_ZC_IMPORT=0` the player takes every offer and imports nothing,
-  and slot 1 still diverges, so the whole thing is GL's writes against
-  `gbm_bo_map`'s reads inside QEMU's own process. An earlier reading blamed
-  the Vulkan import and was wrong; `tools/zc-vulkan-test.c` imports the
-  ring exactly as `player/src/dmabuf.rs` does, with no guest and no wgpu,
-  and is clean in every stage, threaded and sampled included. **What it
-  does depend on is the guest's GL workload:** wglgears in the same player
-  is clean over 2234 samples a slot, GLQuake diverges both full-screen and
-  windowed, and slot 1's *first* blit writes through while no later one
-  does. Not the ring size, not fd ownership (a real double-close, fixed in
-  passing), not a settling delay. `ZC_SLOTS_DEFAULT` is 1 for now, which
-  costs no frames and no measurable tearing but gives up the margin the
-  ring is for. The trace diff is done (doc 12 §4): GLQuake uses 27 GL
-  calls wglgears does not, `glDrawBuffer` among them, and that one does
-  not reproduce it on its own — the backend's front-buffer hook is
-  macOS-only. **Next:** bisect the other 26 into
-  `tools/zc-vulkan-test.c --draw=`, which is mechanical now the list is
-  known. Also settled: each slot is the same memory as its buffer when it
-  is made (the `alias check` line under `EMBED_ZC_CHECK`), and the first
-  frame the divergence *shows* is only the first frame whose picture
-  differs, not an event. `EMBED_ZC_SLOTS=3` brings the ring back for the
-  investigation.
+  same frozen picture, because one ring slot's GL side kept returning
+  every frame blitted into it while the dma-buf's own memory — what the
+  frontend samples — held the frame it had first. `zc_probe()` now writes
+  a known colour into a slot through GL now and then and reads the
+  buffer's memory back; a slot that does not answer with it is freed and
+  made again, and the new one holds. Dense while the ring is young, one
+  present in 512 after that (`EMBED_ZC_PROBE=<n>` forces a rate, `=0` off,
+  `EMBED_ZC_HEAL=0` leaves it bad to study). The ring is back at three
+  slots and GLQuake is clean: every presented frame distinct on all three,
+  72 fps, one repair. **The cause is still open** and doc 12 §4 lists what
+  it is not, each measured: not the frontend at all (`PLAYER_ZC_IMPORT=0`
+  imports nothing and it still happens), not the Vulkan import's
+  parameters, not the set of GL calls the guest makes (all 27 GLQuake has
+  and wglgears has not, together, are clean in `tools/zc-vulkan-test.c
+  --draw=all`), not the shape of the frame it breaks on, not allocation
+  pressure, not the drawable's size or the render scaler. What is left is
+  mesapt's own host-side path — the decoder's texture uploads, the
+  vertex-array cache, the mapped-buffer path — rather than the API the
+  guest calls.
 - **A 1990s OpenGL game needs the extension string capped** (2026-09-17).
   A modern host reports several thousand characters of extension names
   and these titles read that into a fixed buffer: GLQuake's is 4096 bytes
