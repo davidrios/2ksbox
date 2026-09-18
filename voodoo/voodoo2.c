@@ -15,6 +15,7 @@
  *
  *   -device voodoo2[,fbmem=2|4][,texmem=2|4][,threads=1|2|4]
  *                  [,bilinear=on|off][,dither-sub=on|off][,filter=on|off]
+ *                  [,undither=on|off]
  *                  [,recompiler=on|off][,ramfifo=on|off]
  *
  * ramfifo (on by default): the command-FIFO ring is plain RAM to the guest,
@@ -62,6 +63,7 @@
 #include "86box/vid_voodoo_common.h"
 #include "86box/vid_voodoo_fifo.h"
 #include "voodoo_shim.h"
+#include "undither.h"
 
 /* 86box/vid_voodoo_regs.h's offsets (the header itself does not compile
  * outside 86Box's own files) */
@@ -69,6 +71,9 @@
 #define SST_cmdFifoRdPtr    0x1e8
 #define SST_cmdFifoDepth    0x1f4
 #define SST_fbiInit7        0x24c
+
+/* vid_voodoo_regs.h's FBZ_DITHER_2x2, for the undither's log line */
+#define FBZ_DITHER_2x2_BIT  (1 << 11)
 
 /* vid_voodoo.c (no upstream header declares these three) */
 void   *voodoo_init(const device_t *info);
@@ -183,8 +188,15 @@ struct Voodoo2State {
     bool     bilinear;
     bool     dithersub;
     bool     filter;
+    bool     undither;
     bool     recompiler;
     bool     ramfifo;
+
+    /* the undither's one-shot note: it says once that it is on, and once
+     * why it is not, because a frame it declines is an ordinary frame and
+     * nothing else would show that the setting did nothing */
+    bool        undither_on_noted;
+    const char *undither_why_noted;
 };
 
 /* ------------------------------------------------------------------ MMIO */
@@ -1154,6 +1166,25 @@ voodoo2_present(void *opaque, const bitmap_t *frame, int w, int h)
     }
     dst    = surface_data(s->surface);
     stride = surface_stride(s->surface);
+    /* The undither reads the front buffer itself -- it needs the stored 565
+     * codes, which is where the dither is; frame->line[] is what 86Box made
+     * of them. It declines a frame it cannot answer for (doc 21 §12). */
+    if (s->undither && !s->blank) {
+        const char *why = NULL;
+
+        if (voodoo_undither_frame(s->v, dst, stride, w, h, &why)) {
+            if (!s->undither_on_noted) {
+                s->undither_on_noted = true;
+                info_report("voodoo2: undither on (%s dither)",
+                            (s->v->params.fbzMode & FBZ_DITHER_2x2_BIT) ? "2x2" : "4x4");
+            }
+            goto done;
+        }
+        if (why && why != s->undither_why_noted) {
+            s->undither_why_noted = why;
+            info_report("voodoo2: undither off this frame: %s", why);
+        }
+    }
     for (int y = 0; y < h; y++) {
         if (s->blank) {
             memset(dst + (size_t) y * stride, 0, (size_t) w * 4);
@@ -1161,6 +1192,7 @@ voodoo2_present(void *opaque, const bitmap_t *frame, int w, int h)
             memcpy(dst + (size_t) y * stride, frame->line[y], (size_t) w * 4);
         }
     }
+done:
     dpy_gfx_update_full(con);
     s->frames++;
     if (s->v->front_offset != s->shown_front) {
@@ -1499,6 +1531,7 @@ static Property voodoo2_properties[] = {
     DEFINE_PROP_BOOL("bilinear", Voodoo2State, bilinear, true),
     DEFINE_PROP_BOOL("dither-sub", Voodoo2State, dithersub, true),
     DEFINE_PROP_BOOL("filter", Voodoo2State, filter, false),
+    DEFINE_PROP_BOOL("undither", Voodoo2State, undither, false),
     DEFINE_PROP_BOOL("recompiler", Voodoo2State, recompiler, true),
     DEFINE_PROP_BOOL("ramfifo", Voodoo2State, ramfifo, true),
     DEFINE_PROP_END_OF_LIST(),

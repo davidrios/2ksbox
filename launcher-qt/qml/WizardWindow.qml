@@ -323,16 +323,40 @@ Window {
                 }
 
                 // --- the Voodoo 2 -------------------------------------------
-                // One checkbox: a 3dfx Voodoo 2 beside the display adapter
-                // (doc 21) or not. The sentences are the shared form's.
-                CheckBox {
-                    text: qsTr("3dfx Voodoo 2")
-                    checked: root.wizard.voodoo2
-                    onToggled: root.wizard.chooseVoodoo2(checked)
+                // Two checkboxes on one line: the card beside the display
+                // adapter (doc 21), and the card's own dither undone at
+                // scanout (doc 21 §12), which is a property of that card and
+                // so belongs next to it rather than under a heading of its
+                // own. Whether the second can be answered at all is the
+                // form's to say, not this file's. The sentences are the
+                // shared form's too.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 16
+
+                    CheckBox {
+                        text: qsTr("3dfx Voodoo 2")
+                        checked: root.wizard.voodoo2
+                        onToggled: root.wizard.chooseVoodoo2(checked)
+                    }
+                    CheckBox {
+                        text: qsTr("Undo its dither")
+                        enabled: root.wizard.voodoo2UnditherEnabled
+                        checked: root.wizard.voodoo2Undither
+                        onToggled: root.wizard.chooseVoodoo2Undither(checked)
+                    }
+                    Item { Layout.fillWidth: true }
                 }
                 Label {
                     Layout.fillWidth: true
                     text: root.wizard.voodoo2Note
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    opacity: 0.75
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: root.wizard.voodoo2UnditherNote
                     wrapMode: Text.Wrap
                     font.pixelSize: 11
                     opacity: 0.75

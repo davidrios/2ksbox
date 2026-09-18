@@ -481,7 +481,9 @@ route was chosen for (memory `glide3-landscape`).
 
 Knobs: `threads=1|2|4` (default 2), `recompiler=off` (the interpreter, the
 A/B for a rasterizer bug), `bilinear`, `dither-sub`, `filter` (86Box's
-"screen filter", off), `fbmem=2|4`, `texmem=2|4` (per TMU; 4 is the 12 MB
+"screen filter", off — and a no-op until the guest programs `maxRgbDelta`,
+§12), `undither` (ours, off: the dither reconstructed away rather than
+blurred, §12), `fbmem=2|4`, `texmem=2|4` (per TMU; 4 is the 12 MB
 board).
 
 ## 10. The guest side
@@ -611,3 +613,129 @@ The hangs seen by hand were this too: the user had noticed a stray
 `rundll32` running every time a game froze and could not say why
 (2026-09-16). If that process ever turns up outside login, the warning
 above is still what names the collision.
+
+## 12. The dither, undone (`undither=on`)
+
+The chip renders colour at more than 16 bits and stores RGB565 through an
+ordered dither; 3dfx's RAMDAC put a box filter on the scanout that partly
+undid it, which is what "22-bit colour" meant. Two filters exist here now
+and they are not the same thing.
+
+**`filter=on`** is 86Box's — leilei's approximation of the RAMDAC, a pair
+of 256x256 blend tables (`voodoo_generate_filter_v2`) applied at
+`vid_voodoo_display.c:554`. On a Voodoo 2 it is a **single-scanline** pass:
+`voodoo_filterline_v2()` takes one row pointer and its `line` argument is
+`UNUSED`, taps sit at `src[x±1..3]`. So it softens the dither along a line,
+leaves the vertical half of every pattern, and it only runs at all once the
+guest has written a non-zero threshold to **`maxRgbDelta`** (register
+0x230, `SST_scrFilter`, and only with `initEnable & 1`): nothing seeds
+`scrfilterThreshold`, so `filter=on` alone is a no-op until 3dfx's driver
+programs it. It is kept as what the hardware's filter looked like.
+
+**`undither=on`** (`voodoo/undither.c`, ours) is the other direction. In an
+emulator the dither matrix is not something to approximate: it is the table
+the rasterizer dithered *with*. `86box/vid_voodoo_dither.h` holds it,
+`vid_voodoo_render.c:1329` applies it indexed by `(real_y & 3, x & 3)`, and
+for a linear non-SLI buffer the row dithered as row r is scanned out as row
+r — so at scanout the phase is `(y & 3, x & 3)`, known exactly. Inverting
+the table gives, per phase and per stored code, the interval of 8-bit
+values that dither to it.
+
+Pixels that came from one pre-dither colour carry intervals with a common
+member, and the intersection is what that colour can have been. Two window
+sizes, in that order:
+
+- **4x4, centred.** The interval comes out exactly **one value wide** for
+  every value and every phase of both 4x4 tables, so the output is the
+  colour the rasterizer had, exactly — and, what a 2x2 cannot do, the *same*
+  value at all sixteen phases.
+- **2x2, anchored** — the fallback where a 4x4 holds more than one colour
+  (an edge, a steep gradient). Within 2/255: the four tables measure 2 for
+  `dither_rb`, 1 for `dither_g`, 1 for both 2x2 ones.
+
+The 4x4 stage is not optional prettiness. A 2x2 alone is within 2/255, but
+its midpoint **moves with the phase**: measured, **255 of 256** flat colours
+come back out of a 2x2 with more than one level in them — a residual 1-LSB
+pattern exactly where there should be none. With the 4x4 stage first, every
+one of the 256 comes back as a single level equal to what was rendered. It
+is cheap because the 4x4 is the intersection of four *2x2* results, which a
+row of them already has: four lookups on top, not sixteen.
+
+An empty intersection at both sizes is the proof of the opposite: no single
+colour could have dithered into those pixels, so the window straddles an
+edge, and that pixel is written exactly as the unfiltered path wrote it
+(`code << 3`, `code << 2`). **An edge here is not "a difference bigger than
+N" — it is an arithmetic impossibility**, which is why this needs no
+threshold, never blurs across an edge, and leaves noisy texture untouched.
+
+Measured on a synthetic frame (sky gradient, lit sphere, checkered ground,
+noise panel) put through the real tables, mean error against what was
+rendered, and the worst single channel:
+
+| | mean | worst |
+|---|---|---|
+| dithered, as the card shows it today | 3.11 | 14 |
+| `filter=on` (86Box's, threshold 0x202020) | 2.91 | 42 |
+| a naive 2x2 box, for reference | 4.94 | 90 |
+| `undither=on` | **0.92** | 14 |
+
+The box filters are *worse than no filter at all* on that frame: they pull
+the checkerboard and the noise panel about. The undither cuts the error to
+under a third of the unfiltered frame's, and its worst case *is* the
+unfiltered worst case, because where it cannot fire it writes the
+unfiltered pixel.
+
+**The check is `voodoo-guest-undither`** (`UNDITHER=on
+tools/voodoo-guest-test.py`), and the dither phase is the oracle for it:
+that scene is one grey (130,130,130 — it dithers in every channel) drawn
+over the whole screen and blended onto itself, so a correct undither has to
+bring it back *flat*, at the colour the program drew rather than a level
+off it. Through the real device it does: `0 interior pixels are not the one
+colour (130, 130, 130)`, against the 4x4 tile the same scene is with the
+setting off. The outermost two rows and columns are exempt — their window
+is clamped at the edge of the screen and so has fewer than sixteen phases
+in it.
+
+It runs in `voodoo2_present()` — our own file, so no vendored edit and no
+patch — over the front buffer, on the main loop with the BQL, once per
+presented frame. **Cost: 1.4 ms a frame at 640x480** on the M1 Air, measured
+against the shipping routine with no QEMU around it, and got there in three
+steps from 4.7: the hot loops written plane-at-a-time over contiguous bytes,
+the CLUT lookup skipped when the ramp is the identity one, and then
+`combine_span` forced to vectorize — clang's cost model declines it, and it
+is worth 2.2x on the routine's hottest loop (1.88 ms of the frame to 0.86).
+By stage, at 640x480: `decode_row` 0.4 ms (three table lookups a pixel, a
+gather, the one part that stays scalar), `quad_row` 0.1, `emit_row` 0.9.
+
+That is a BQL hold, so it is in the same family as the 3D-race stalls
+`tools/audio-glitch-test.py` counts — well clear of the 10–14 ms ones that
+made it click, but it is per presented frame, so at Quake II's 147 fps it is
+~20 % of the main loop's core and at a 60 Hz cap ~8 %. Off by default.
+
+**Why not on the GPU.** The player could do this in its filter chain for
+nothing — librashader is already there, and the phase is `(y & 3, x & 3)` of
+the surface either way. It is not where this belongs, for three reasons.
+The dither is a property of the *card*, not of the monitor, and the player
+is the monitor (doc 03); the surface the player gets has been through the
+CLUT, so a shader can only invert the codes while that ramp is the identity
+one; and above all a shader's output exists only in the player's window,
+where **no QMP screendump can see it** — so the check that proves this
+correct, and every headless game tool that judges a frame, would be looking
+at the unfiltered picture. A frame that is right only where nothing can
+measure it is not what this is for. It reads `fb_mem` rather than `frame->line[]` because the
+stored 565 codes are where the dither is; `frame->line[]` is what 86Box
+already made of them. Consequences: the filtered pixels land in the console
+surface, so **QMP screendumps, the VNC fallback and the player all see
+them** (a player-side shader would not show in a screendump), and dirty-line
+tracking stops mattering for correctness since every present rebuilds the
+whole frame.
+
+It declines a frame it cannot answer for, says why once, and the ordinary
+copy runs instead: the guest is not dithering (`FBZ_DITHER` clear in the
+last `fbzMode` — an LFB-blitted menu, a 2D screen), the colour buffer is
+tiled (not scanned out linearly), or the front buffer would run past the
+frame buffer. `VOODOO2_UNDITHER_PATTERN=4x4|2x2` overrides the pattern
+`fbzMode` reports, for the A/B when a frame looks wrong.
+
+`undither=on` supersedes `filter=on` on any frame it accepts: it writes the
+whole surface itself and never looks at what the scanline filter did.

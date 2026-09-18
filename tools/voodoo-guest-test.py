@@ -74,10 +74,12 @@ VGA = os.environ.get("VGA", "std")
 RAMFIFO = os.environ.get("RAMFIFO", "on")
 RECOMP = os.environ.get("RECOMP", "on")
 DITHER_SUB = os.environ.get("DITHER_SUB", "on")
+UNDITHER = os.environ.get("UNDITHER", "off")
 OUT = os.path.join(ROOT, "build/voodoo-guest" + ("" if VGA == "std" else "-" + VGA)
                    + ("" if RAMFIFO == "on" else "-mmiofifo")
                    + ("" if RECOMP == "on" else "-interp")
-                   + ("" if DITHER_SUB == "on" else "-nodsub"))
+                   + ("" if DITHER_SUB == "on" else "-nodsub")
+                   + ("" if UNDITHER == "off" else "-undither"))
 
 spec = importlib.util.spec_from_file_location("x87gt", os.path.join(ROOT, "tools/x87-guest-test.py"))
 x87gt = importlib.util.module_from_spec(spec)
@@ -1066,6 +1068,28 @@ def off_tile_pixels(path):
     return w, h, bad
 
 
+def off_colour_pixels(path):
+    """Pixels of the dither scene that are not the one colour the scene is.
+
+    The scene is one grey over the whole screen (a blend of a colour onto
+    itself is that colour), dithered on the way into the frame buffer -- so
+    with `undither=on` the frame has to come back *flat*, and at the colour
+    that was rendered rather than near it. The interior only: the outermost
+    two rows and columns see a window clamped at the edge of the screen,
+    which has fewer than sixteen dither phases in it and so can land a level
+    away."""
+    w, h, px = vgadirty.read_ppm(path)
+    seen = {}
+    for y in range(2, h - 2):
+        for x in range(2, w - 2):
+            i = (y * w + x) * 3
+            c = bytes(px[i:i + 3])
+            seen[c] = seen.get(c, 0) + 1
+    best = max(seen, key=seen.get) if seen else b""
+    off = sum(n for c, n in seen.items() if c != best)
+    return w, h, off, tuple(best)
+
+
 def main():
     x87gt.ensure_prereqs()
     x87gt.ensure_floppy()
@@ -1092,7 +1116,8 @@ def main():
             *vga_args(),
             # the cursor the console publishes (patch 66), in this log
             *(["-trace", "dpy_mouse_publish"] if VGA == "d3dpt" else []),
-            "-device", "voodoo2,ramfifo=%s,recompiler=%s,dither-sub=%s" % (RAMFIFO, RECOMP, DITHER_SUB),
+            "-device", "voodoo2,ramfifo=%s,recompiler=%s,dither-sub=%s,undither=%s"
+            % (RAMFIFO, RECOMP, DITHER_SUB, UNDITHER),
             "-drive", "file=%s,if=floppy,index=0,format=raw" % img,
             "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
             "-qmp", "unix:%s,server,nowait" % sock, "-audiodev", "none,id=a0",
@@ -1185,11 +1210,26 @@ def main():
         print("FAIL the dither scene's columns (%s) are not the reference (%s): "
               "a blend read-back kept its dither" % (" ".join(cols), ref[0] if ref else "none"))
         ok = False
-    w, h, bad = off_tile_pixels(shot_dith)
-    print("    screendump of the dither scene: %dx%d, %d pixels off the dither tile" % (w, h, bad))
-    if (w, h) != (WIDTH, HEIGHT) or bad:
-        print("FAIL the dither scene is not one dither tile")
-        ok = False
+    if UNDITHER == "on":
+        # the same scene through the undither (doc 21 §12): the dither the
+        # rasterizer put in is reconstructed away at scanout, so the frame is
+        # not a tile any more, it is one colour
+        w, h, off, colour = off_colour_pixels(shot_dith)
+        print("    screendump of the dither scene: %dx%d, %d interior pixels are not "
+              "the one colour %s" % (w, h, off, colour))
+        if (w, h) != (WIDTH, HEIGHT) or off:
+            print("FAIL the undithered dither scene is not one flat colour")
+            ok = False
+        if colour and max(colour) - min(colour) > 2:
+            print("FAIL the undithered scene's colour %s is not the grey that was drawn"
+                  % (colour,))
+            ok = False
+    else:
+        w, h, bad = off_tile_pixels(shot_dith)
+        print("    screendump of the dither scene: %dx%d, %d pixels off the dither tile" % (w, h, bad))
+        if (w, h) != (WIDTH, HEIGHT) or bad:
+            print("FAIL the dither scene is not one dither tile")
+            ok = False
     w, h, frac = red_fraction(shot_off)
     print("    screendump with the Voodoo off: %dx%d, %.1f%% red" % (w, h, frac * 100))
     if frac > 0.5:

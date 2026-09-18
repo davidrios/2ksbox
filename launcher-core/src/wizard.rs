@@ -168,6 +168,11 @@ pub struct Form {
     /// family unless picked, so there is nothing to follow the family
     /// with and no `_chosen` flag.
     voodoo2: bool,
+    /// The card's dither undone at scanout (doc 21 §12). Off unless
+    /// picked, like the card itself, and only meaningful with it — the
+    /// form turns it off with the card rather than keeping a setting
+    /// that reaches no device.
+    voodoo2_undither: bool,
     /// The CPU the guest should feel like, with the same rule — it is
     /// the field that makes a DOS machine a DOS machine, so switching
     /// family to DOS must bring it along.
@@ -228,6 +233,7 @@ impl Default for Form {
             seamless_mouse: bundle::default_seamless_mouse(Family::Win98),
             seamless_mouse_chosen: false,
             voodoo2: false,
+            voodoo2_undither: false,
             extra_qemu_args: String::new(),
             cpu_speed: bundle::default_cpu_speed(Family::Win98),
             cpu_speed_chosen: false,
@@ -274,6 +280,7 @@ impl Form {
             seamless_mouse: machine.seamless_mouse,
             seamless_mouse_chosen: true,
             voodoo2: machine.voodoo2,
+            voodoo2_undither: machine.voodoo2_undither,
             extra_qemu_args: bundle::join_args(&machine.extra_qemu_args),
             cpu_speed: machine.effective_cpu_speed(),
             cpu_speed_chosen: true,
@@ -633,6 +640,43 @@ impl Form {
 
     pub fn choose_voodoo2(&mut self, voodoo2: bool) {
         self.voodoo2 = voodoo2;
+        if !voodoo2 {
+            // the setting belongs to the card: with no card it would
+            // reach no device, and leaving it ticked would say otherwise
+            self.voodoo2_undither = false;
+        }
+    }
+
+    pub fn voodoo2_undither(&self) -> bool {
+        self.voodoo2_undither
+    }
+
+    /// Only answerable with the card, so the front end shows it beside
+    /// the Voodoo 2's own box and disabled without it.
+    pub fn voodoo2_undither_enabled(&self) -> bool {
+        self.voodoo2
+    }
+
+    pub fn choose_voodoo2_undither(&mut self, undither: bool) {
+        self.voodoo2_undither = undither && self.voodoo2;
+    }
+
+    /// The sentence under the pair. What it has to carry is what the
+    /// setting is *not*: not a smoothing filter with a taste to it, but
+    /// the dither arithmetically undone, so nothing that was drawn sharp
+    /// comes back soft — and that it costs main-loop time per frame,
+    /// which is the reason it is not simply always on.
+    pub fn voodoo2_undither_notes(&self) -> &'static [&'static str] {
+        if !self.voodoo2 {
+            &["Needs the Voodoo 2: it undoes that card's own dither."]
+        } else if self.voodoo2_undither {
+            &[
+                "The card stores 16-bit colour through a dither pattern. This puts the original colour back by inverting that pattern, so skies, shading and light pools come out smooth instead of speckled.",
+                "Textures and edges are left exactly as they were: where no single colour could have made a group of pixels, nothing is changed. Costs about 1.4 ms per frame on the host.",
+            ]
+        } else {
+            &["The card's 16-bit dither pattern is shown as the chip wrote it."]
+        }
     }
 
     /// One checkbox: is there a 3dfx Voodoo 2 in the machine (doc 21).
@@ -1143,6 +1187,7 @@ impl Form {
                 network: self.network,
                 seamless_mouse: self.seamless_mouse,
                 voodoo2: self.voodoo2,
+                voodoo2_undither: self.voodoo2_undither,
                 extra_qemu_args: Vec::new(),
                 disk,
                 disc: None,
@@ -1180,6 +1225,7 @@ impl Form {
             bundle::default_seamless_mouse(self.family)
         };
         machine.voodoo2 = self.voodoo2;
+        machine.voodoo2_undither = self.voodoo2_undither;
         // `write` refuses a line that does not split before it gets here.
         machine.extra_qemu_args = bundle::split_args(&self.extra_qemu_args).unwrap_or_default();
         machine.cpu_speed =
