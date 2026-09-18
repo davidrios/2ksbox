@@ -332,7 +332,16 @@ Host side, the frames go through the embed backend's dma-buf ring:
 - `tools/zc-vulkan-test.c` drives the ring with the frontend's Vulkan
   import and nothing else — no guest, no player, no wgpu — and checks each
   buffer's memory with the CPU after every frame. `--stage=` bisects the
-  import, `--use=copy|shader` also reads it back through Vulkan.
+  import, `--use=copy|shader` also reads it back through Vulkan,
+  `--threaded` moves every Vulkan call to a thread of its own and
+  `--draw=scene` renders instead of clearing. Every combination is clean,
+  which is what rules the frontend out.
+- `PLAYER_ZC_IMPORT=0` takes every dma-buf the backend offers and imports
+  none of it. Declining one turns the ring off, so this is the only way to
+  run the ring with no Vulkan behind it — the run that showed the frozen
+  slot has nothing to do with the frontend. The picture is wrong while it
+  is set (every 3D frame falls back to the VGA surface); it is for reading
+  the backend's `EMBED_ZC_CHECK` lines.
 - `EMBED_ZC_SETTLE=<ms>` waits that long after offering a buffer to the
   frontend before using it. Accepting an offer only queues it — the
   import happens later, on the frontend's own thread — so the first blits

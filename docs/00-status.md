@@ -169,25 +169,27 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   ring is stood down to one** (2026-09-17, doc 12 §4). Found as a fast
   flicker in GLQuake on `base98-br`: every third presented frame was the
   same frozen picture. Slot 1's GL side is perfect — `glReadPixels` off
-  its FBO returns every frame blitted in — while the dma-buf's own memory,
-  which the frontend imported and samples, keeps the frame it held first
-  (`EMBED_ZC_CHECK=<n>` prints both readings; they disagree on slot 1 in
-  125 of 126 samples and never on slot 0). It needs the frontend's Vulkan
-  import to happen: the backend on its own writes through to all three
-  slots over 34 frames. Not the ring size, not fd ownership (a real
-  double-close, fixed in passing), not a race with the import
-  (`EMBED_ZC_SETTLE=100` changes nothing), and **not the import
-  parameters**: `tools/zc-vulkan-test.c` drives the same ring and imports
-  it with exactly what `player/src/dmabuf.rs` passes, with no guest and no
-  wgpu, and comes out clean — as does reading every frame back through
-  Vulkan (`--use=copy`) and leaving the image in the layout wgpu leaves a
-  sampled texture in (`--use=shader`). `ZC_SLOTS_DEFAULT` is 1 for now,
-  which costs no frames and no measurable tearing but gives up the margin
-  the ring is for. **Next:** what the reproducer still does not have —
-  wgpu itself, and the player's concurrency (blits on the vCPU thread,
-  Vulkan on the render thread, while the test is serialized). Thread the
-  test, or bisect from the player's side. `EMBED_ZC_SLOTS=3` brings the
-  ring back for the investigation.
+  its FBO returns every frame blitted in — while the buffer's own memory
+  keeps the frame it held first (`EMBED_ZC_CHECK=<n>` prints both
+  readings; they disagree on slot 1 in 94 of 95 samples and never on slot
+  0 or 2). **The frontend has nothing to do with it:** with
+  `PLAYER_ZC_IMPORT=0` the player takes every offer and imports nothing,
+  and slot 1 still diverges, so the whole thing is GL's writes against
+  `gbm_bo_map`'s reads inside QEMU's own process. An earlier reading blamed
+  the Vulkan import and was wrong; `tools/zc-vulkan-test.c` imports the
+  ring exactly as `player/src/dmabuf.rs` does, with no guest and no wgpu,
+  and is clean in every stage, threaded and sampled included. **What it
+  does depend on is the guest's GL workload:** wglgears in the same player
+  is clean over 2234 samples a slot, GLQuake diverges both full-screen and
+  windowed, and slot 1's *first* blit writes through while no later one
+  does. Not the ring size, not fd ownership (a real double-close, fixed in
+  passing), not a settling delay. `ZC_SLOTS_DEFAULT` is 1 for now, which
+  costs no frames and no measurable tearing but gives up the margin the
+  ring is for. **Next:** qemu-3dfx's `FuncTrace` (`mesagl.cfg`) logs the
+  guest's GL stream — trace GLQuake and wglgears and diff them to find the
+  call that makes radeonsi stop writing an EGLImage-backed texture through
+  to its dma-buf. Needs no frontend. `EMBED_ZC_SLOTS=3` brings the ring
+  back for the investigation.
 - **A 1990s OpenGL game needs the extension string capped** (2026-09-17).
   A modern host reports several thousand characters of extension names
   and these titles read that into a fixed buffer: GLQuake's is 4096 bytes

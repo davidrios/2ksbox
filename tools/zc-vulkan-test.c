@@ -31,6 +31,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <pthread.h>
 #include "libqemu_embed.h"
 
 int InitMesaGL(void);
@@ -77,6 +78,22 @@ static uint32_t qfam;
  * way the frontend samples it. Importing a buffer is not using it, and the
  * frontend does both. */
 static int use_copy;
+
+/*
+ * `--threaded` does every Vulkan call on a thread of its own, which is
+ * where the frontend does them: the blits are on QEMU's vCPU thread and the
+ * import and the sampling are on the render thread, and accepting an offer
+ * only queues it. Serialised on one thread the ring behaves; this is the
+ * last structural difference left between this test and the player.
+ */
+static int threaded;
+/* `--draw=scene`: render like a game instead of clearing (see main) */
+static int draw_scene;
+static pthread_t worker;
+static pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cnd = PTHREAD_COND_INITIALIZER;
+static struct { int slot, fd, w, h; uint32_t stride; uint64_t modifier; } pending[MAXSLOT];
+static int npending, ready_slot = -1, worker_stop;
 
 static struct {
     int w, h;
@@ -392,6 +409,60 @@ static int vk_import(int slot, int fd, int w, int h, uint32_t stride, uint64_t m
     return 1;
 }
 
+static void vk_record(int slot, uint32_t v)
+{
+    if (slots[slot].vk_n++ == 0) {
+        slots[slot].vk_first = v;
+    } else if (v != slots[slot].vk_first) {
+        slots[slot].vk_changed = 1;
+    }
+}
+
+/* The frontend's thread: import what has been offered, sample what is
+ * ready, and nothing else touches Vulkan. */
+static void *worker_main(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        struct { int slot, fd, w, h; uint32_t stride; uint64_t modifier; } todo[MAXSLOT];
+        int n = 0, slot;
+
+        pthread_mutex_lock(&mtx);
+        while (!npending && ready_slot < 0 && !worker_stop) {
+            pthread_cond_wait(&cnd, &mtx);
+        }
+        if (worker_stop && !npending && ready_slot < 0) {
+            pthread_mutex_unlock(&mtx);
+            return NULL;
+        }
+        n = npending;
+        memcpy(todo, pending, sizeof(pending[0]) * (size_t)n);
+        npending = 0;
+        slot = ready_slot;
+        ready_slot = -1;
+        pthread_mutex_unlock(&mtx);
+
+        for (int i = 0; i < n; i++) {
+            int ok = vk_import(todo[i].slot, todo[i].fd, todo[i].w, todo[i].h,
+                               todo[i].stride, todo[i].modifier);
+            slots[todo[i].slot].imported = ok;
+            if (!ok) {
+                close(todo[i].fd);
+            }
+            if (use_copy && !stage_buf
+                && !vk_stage((VkDeviceSize)todo[i].w * todo[i].h * 4)) {
+                printf("staging buffer failed; --use off\n");
+                use_copy = 0;
+            }
+            printf("slot %d: imported on the frontend's thread -> %s\n", todo[i].slot,
+                   ok ? "ok" : "FAILED");
+        }
+        if (slot >= 0 && use_copy && slots[slot].image && slots[slot].imported) {
+            vk_record(slot, vk_read(slot));
+        }
+    }
+}
+
 static int on_3d_dmabuf(void *ud, int slot, int fd, int w, int h, int stride,
                         uint32_t fourcc, uint64_t modifier)
 {
@@ -417,6 +488,12 @@ static int on_3d_dmabuf(void *ud, int slot, int fd, int w, int h, int stride,
     close(mapfd);
     if (stage == ST_NONE) {
         close(fd);
+    } else if (threaded) {
+        /* accepting only queues it, as the frontend's does */
+        pthread_mutex_lock(&mtx);
+        pending[npending++] = (typeof(pending[0])){ slot, fd, w, h, (uint32_t)stride, modifier };
+        pthread_cond_signal(&cnd);
+        pthread_mutex_unlock(&mtx);
     } else {
         slots[slot].imported = vk_import(slot, fd, w, h, (uint32_t)stride, modifier);
         if (!slots[slot].imported) {
@@ -435,7 +512,9 @@ static int on_3d_dmabuf(void *ud, int slot, int fd, int w, int h, int stride,
     printf("slot %d: %dx%d stride %d modifier 0x%llx fourcc %c%c%c%c -> %s\n",
            slot, w, h, stride, (unsigned long long)modifier,
            fourcc & 0xff, (fourcc >> 8) & 0xff, (fourcc >> 16) & 0xff, (fourcc >> 24) & 0xff,
-           stage == ST_NONE ? "no import" : (slots[slot].imported ? "imported" : "IMPORT FAILED"));
+           stage == ST_NONE ? "no import"
+           : threaded ? "queued for the frontend's thread"
+           : (slots[slot].imported ? "imported" : "IMPORT FAILED"));
     return 1;
 }
 
@@ -454,13 +533,17 @@ static void on_3d_frame_ready(void *ud, int slot)
     } else if (c != slots[slot].first) {
         slots[slot].changed = 1;
     }
-    if (use_copy && slots[slot].image && slots[slot].imported) {
-        uint32_t v = vk_read(slot);
-        if (slots[slot].vk_n++ == 0) {
-            slots[slot].vk_first = v;
-        } else if (v != slots[slot].vk_first) {
-            slots[slot].vk_changed = 1;
-        }
+    if (!use_copy) {
+        return;
+    }
+    if (threaded) {
+        /* the newest frame wins, as take_if_newer does */
+        pthread_mutex_lock(&mtx);
+        ready_slot = slot;
+        pthread_cond_signal(&cnd);
+        pthread_mutex_unlock(&mtx);
+    } else if (slots[slot].image && slots[slot].imported) {
+        vk_record(slot, vk_read(slot));
     }
 }
 
@@ -485,12 +568,16 @@ int main(int argc, char **argv)
         } else if (!strncmp(argv[i], "--use=", 6)) {
             use_copy = !strcmp(argv[i] + 6, "copy") ? 1
                      : !strcmp(argv[i] + 6, "shader") ? 2 : 0;
+        } else if (!strncmp(argv[i], "--draw=", 7)) {
+            draw_scene = !strcmp(argv[i] + 7, "scene");
+        } else if (!strcmp(argv[i], "--threaded")) {
+            threaded = 1;
         } else if (!strncmp(argv[i], "--frames=", 9)) {
             frames = atoi(argv[i] + 9);
         } else if (!strncmp(argv[i], "--bios=", 7)) {
             bios = argv[i] + 7;
         } else {
-            printf("usage: %s [--stage=NAME] [--use=none|copy|shader] [--frames=N] [--bios=DIR]\n",
+            printf("usage: %s [--stage=NAME] [--use=none|copy|shader] [--draw=clear|scene] [--threaded] [--frames=N] [--bios=DIR]\n",
                    argv[0]);
             return 2;
         }
@@ -499,10 +586,16 @@ int main(int argc, char **argv)
     if (!getenv("EMBED_ZC_SLOTS")) {
         setenv("EMBED_ZC_SLOTS", "3", 1);
     }
-    printf("stage %s, use %s, %d frames, ring %s\n", stage_name[stage],
-           use_copy == 2 ? "shader" : use_copy ? "copy" : "none", frames, getenv("EMBED_ZC_SLOTS"));
+    printf("stage %s, use %s, %s, draw %s, %d frames, ring %s\n", stage_name[stage],
+           use_copy == 2 ? "shader" : use_copy ? "copy" : "none",
+           threaded ? "vulkan on its own thread" : "one thread",
+           draw_scene ? "scene" : "clear", frames, getenv("EMBED_ZC_SLOTS"));
 
     if (stage != ST_NONE && !vk_init()) {
+        return 1;
+    }
+    if (threaded && stage != ST_NONE && pthread_create(&worker, NULL, worker_main, NULL)) {
+        printf("pthread_create failed\n");
         return 1;
     }
 
@@ -537,11 +630,49 @@ int main(int argc, char **argv)
     MGLMakeCurrent(MESAGL_MAGIC, 0);
     printf("GL %s\n", (const char *)glGetString(GL_VERSION));
 
-    /* A different colour every frame: each slot's own memory must follow. */
+    /*
+     * `--draw=scene` renders the way a game does rather than clearing: a
+     * depth-tested textured quad, the texture reuploaded every frame. A bare
+     * glClear is not what the guest does, and which of the two the producer
+     * is running turns out to decide whether a slot keeps being written
+     * through (GLQuake diverges, wglgears does not — doc 12 §4).
+     */
+    GLuint tex = 0;
+    static uint32_t texels[64 * 64];
+    if (draw_scene) {
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glEnable(GL_TEXTURE_2D);
+        glEnable(GL_DEPTH_TEST);
+    }
     for (int i = 0; i < frames; i++) {
         glClearColor(0.f, (float)(i % 16) / 16.f, (float)(i % 5) / 5.f, 1.f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | (draw_scene ? GL_DEPTH_BUFFER_BIT : 0));
+        if (draw_scene) {
+            for (int k = 0; k < 64 * 64; k++) {
+                texels[k] = 0xff000000u | (uint32_t)((k + i) & 0xff) << 8;
+            }
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_BGRA,
+                         GL_UNSIGNED_BYTE, texels);
+            float z = (float)(i % 8) / 16.f;
+            glBegin(GL_QUADS);
+            glTexCoord2f(0, 0); glVertex3f(-.9f, -.9f, z);
+            glTexCoord2f(1, 0); glVertex3f(.9f, -.9f, z);
+            glTexCoord2f(1, 1); glVertex3f(.9f, .9f, z);
+            glTexCoord2f(0, 1); glVertex3f(-.9f, .9f, z);
+            glEnd();
+        }
         MGLSwapBuffers();
+    }
+
+    if (threaded && stage != ST_NONE) {
+        pthread_mutex_lock(&mtx);
+        worker_stop = 1;
+        pthread_cond_signal(&cnd);
+        pthread_mutex_unlock(&mtx);
+        pthread_join(worker, NULL);
     }
 
     int bad = 0;

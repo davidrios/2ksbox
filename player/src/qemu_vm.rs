@@ -452,6 +452,18 @@ unsafe extern "C" fn on_3d_dmabuf(
     if !s.zero_copy || slot < 0 {
         return 0;
     }
+    // `PLAYER_ZC_IMPORT=0`: take the offer and import nothing. Declining one
+    // turns the whole ring off (the backend falls back to reading frames
+    // back), so this is the only way to have the ring running with no Vulkan
+    // behind it — which is what says whether importing a buffer is what
+    // stops it being written through (doc 12 §4). The picture is wrong while
+    // it is set: nothing has the slots, so every 3D frame falls back to the
+    // VGA surface. It is for reading the backend's own `EMBED_ZC_CHECK`
+    // lines, not for looking at.
+    if std::env::var("PLAYER_ZC_IMPORT").as_deref() == Ok("0") {
+        libc::close(fd);
+        return 1;
+    }
     s.dmabufs.push(DmaBuf {
         slot: slot as usize,
         fd,

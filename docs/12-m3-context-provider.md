@@ -43,51 +43,51 @@ GL and `gbm_bo_map` lines agree on slots 0 and 2 and disagree on slot 1
 (125 of 126 samples at a 2-slot ring, 0 of 127 for slot 0). The colour
 shows it too: slot 1 reads alpha `ff` where the others read `00`.
 
-What it is **not**, each measured rather than reasoned:
+What it is **not**, each measured rather than reasoned. Two of these
+overturned an earlier reading of the same bug, so they are worth keeping:
 
-- Not the backend alone. With no frontend import anywhere — no player, no
-  Vulkan, no guest — `tools/embed-3d-test.c` runs 34 frames through all
-  three slots and every slot's memory changes. It takes the frontend
-  importing the same dma-bufs into Vulkan, in the same process, for a
-  slot to diverge. That test used to draw *two* frames, one blit per
-  slot, and slot 1's first blit does land — which is why the `embed-3d`
-  check stayed green throughout. It now runs several frames per slot and
-  requires each slot's memory to change.
-- Not the ring's size. Slot 1 diverges at three slots and at two; slot 0
-  never does.
-- Not fd ownership, though that was a real bug found looking: the
-  frontend was handed the same fd the EGLImage was created from, and
-  importing it into Vulkan passes ownership, so `zc_slot_free` closed it
-  a second time. It gets its own `gbm_bo_get_fd` now, and a declined
-  offer is closed rather than leaked. The divergence is unchanged.
-- Not a race between the first blits and the import. Accepting an offer
-  only queues it — the frontend imports later, on its own thread — but
-  `EMBED_ZC_SETTLE=100` waits 100 ms before using a freshly offered slot
-  and 80 of 81 samples still diverge.
+- **Not the frontend, and not the Vulkan import at all.** This was the
+  first answer and it was wrong. `PLAYER_ZC_IMPORT=0` makes the player
+  take every offer and import nothing — declining one turns the ring off,
+  so accepting without importing is the only way to run the ring with no
+  Vulkan behind it — and slot 1 still diverges, 94 of 95 samples. The
+  whole divergence is inside QEMU's own process: GL's writes against
+  `gbm_bo_map`'s reads of the same GBM buffer, with nothing else holding
+  it. Everything below about the import is therefore about a bystander.
+- **Not the import's parameters, or using the image.**
+  `tools/zc-vulkan-test.c` drives the ring and imports it with exactly
+  what `player/src/dmabuf.rs` passes, with no guest and no wgpu. Clean —
+  and so are `--use=copy` (transition out of `UNDEFINED` and copy back
+  every frame), `--use=shader` (left in the layout wgpu leaves a sampled
+  texture in) and `--threaded` (every Vulkan call, the import included, on
+  a thread of its own, which is where the frontend makes them).
+- **It is the guest's GL workload.** `wglgears` in the same player, on the
+  same machine, with the ring at three slots: 2234 samples per slot, zero
+  disagreements. GLQuake on the same machine diverges — full-screen at a
+  640x480 drawable and windowed at an 800x600 one, so it is not the size,
+  the stride or the mode change either.
+- **Not a workload this side can imitate yet.** `embed-3d-test`'s clear
+  is clean over 34 frames, and so is `zc-vulkan-test --draw=scene`, which
+  renders a depth-tested textured quad with the texture reuploaded every
+  frame. Whatever GLQuake asks of the driver, neither of those asks it.
+- **Not the ring's size** (slot 1 diverges at three slots and at two;
+  slot 0 never does), **not fd ownership** — a real double-close found
+  while looking and fixed: the frontend was handed the same fd the
+  EGLImage was created from, and importing it into Vulkan passes
+  ownership, so `zc_slot_free` closed it a second time — and **not a race
+  with the import** (`EMBED_ZC_SETTLE=100` changes nothing).
 
-- **Not the import parameters, and not using the image.**
-  `tools/zc-vulkan-test.c` is the middle ground between the two tests
-  above: the same ring the backend drives, imported with exactly what
-  `player/src/dmabuf.rs` passes (`VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT`
-  with the explicit plane layout, `initial_layout: UNDEFINED`,
-  `MemoryDedicatedAllocateInfo` over `ImportMemoryFdInfoKHR`), and every
-  buffer's memory read back with the CPU after each frame. It comes out
-  **clean** — all three slots follow the blits — and so does `--use=copy`,
-  which transitions each image out of `UNDEFINED` and copies it back
-  through Vulkan every frame, and `--use=shader`, which leaves it in the
-  `SHADER_READ_ONLY_OPTIMAL` layout wgpu leaves a sampled texture in.
-  Vulkan's own view of the slot agrees with the CPU's throughout. So the
-  import description was the wrong suspect: raw Vulkan can import these
-  buffers and read them every frame without a slot diverging.
+The shape of it, from `EMBED_ZC_CHECK=1` on a run from the start: slot
+1's *first* blit does write through, and no later one does. Every sample
+after that has GL moving and the buffer's memory frozen on that first
+frame. Slots 0 and 2 never do it.
 
-What is still not replicated, and so is where the cause has to be: wgpu
-itself (its device, its own barriers and tracking, a bind group sampled
-in a real render pass with the CRT chain behind it), the **concurrency**
-— in the player the blits are on QEMU's vCPU thread and the Vulkan work
-on the render thread, while the test is serialized on one — and the
-guest's real GL workload against the test's `glClear`. Threading the test
-is the next cheap step; bisecting from the player's side (import a slot
-but never sample it, or run with the shader chain out) is the other.
+So this is the backend and radeonsi, and the question is which GL call in
+what qemu-3dfx's mesagl does for GLQuake, but not for wglgears, makes the
+driver stop writing an EGLImage-backed texture through to its dma-buf.
+The tool for that is qemu-3dfx's own `FuncTrace` in `mesagl.cfg`, which
+logs the guest's GL stream: trace both programs and diff them. That is
+the next step, and it needs no frontend at all.
 
 Meanwhile `ZC_SLOTS_DEFAULT` is 1: with one buffer there is no second
 slot to go bad. The cost is the margin the ring exists for — the frontend
