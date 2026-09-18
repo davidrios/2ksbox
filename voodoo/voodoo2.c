@@ -150,6 +150,18 @@ struct Voodoo2State {
     uint32_t     fifo_narrow;    /* packet words written narrower than a dword */
     bool         fifo_narrow_warned;
     bool         packed_alpha_seen;  /* the packet patch 71 is about */
+    struct {                         /* the last packets the walk counted */
+        uint32_t addr, hdr, n;
+    } seen[24];
+    uint32_t     seen_n;
+    uint32_t     in_packet;          /* words of the current packet still to count */
+    uint32_t     partial;            /* packets the guest was still writing */
+    uint32_t     idle_polls;         /* rdptr reads with the chip caught up */
+    bool         force_written;      /* take the rest of the packet regardless */
+    uint32_t     forced;             /* words taken that way */
+    uint32_t     trig_addr;          /* the guest access this walk runs from */
+    uint8_t      trig_size;
+    bool         trig_write;
     /* register-window accesses by register (addr & 0x3fc) since the last
      * line: a guest that spins on one register names it here */
     uint32_t   rd_hist[256];
@@ -407,22 +419,43 @@ voodoo2_on_fatal(void *opaque)
  * on (cvg/init/util.c), i.e. the chip executes whatever it has seen written
  * contiguously from its read pointer. So the device finds out itself, at
  * the guest's next access to anything else on the card -- a status poll, a
- * register, the LFB. The guest has finished its stores by then, and Glide
- * writes a packet whole before it touches the card again, so every header
- * found from the last one counted on is a packet ready to run: its words
- * go to 86Box's consumer as the depth the per-dword writes used to add.
+ * register, the LFB -- and what it counts is **words, not packets**: as
+ * many as the guest has written from the last one counted on, which go to
+ * 86Box's consumer as the depth the per-dword writes used to add. The
+ * consumer then parses them and blocks inside a packet whose rest has not
+ * arrived, which is what the chip does.
  *
- * Where the guest has not written yet is told by a poison header: a word
- * the consumer has taken is set to 0xffffffff (packet type 7, which does
- * not exist) before the guest can learn that its slot is free -- the only
- * way it learns that is reading cmdFifoRdPtr, and that read is answered
- * here, after the poisoning, with the pointer it poisoned up to. A packet
- * this cannot follow (a JSR, AGP, a Banshee type) is warned about once and
- * the window goes back to MMIO; ramfifo=off is the A/B.
+ * It counted whole packets once, on the header's word count. Glide does
+ * write each packet whole before it touches the card again -- the 5 s line
+ * counts the ones met half-written, and the count stays at 0 -- so counting
+ * words changes nothing in practice; it is what the chip does, and one
+ * assumption fewer between a guest and a hang (2026-09-17).
+ *
+ * Where the guest has not written yet is told by poison: a word the
+ * consumer has taken is set to VOODOO2_FIFO_POISON before the guest can
+ * learn that its slot is free -- the only way it learns that is reading
+ * cmdFifoRdPtr, and that read is answered here, after the poisoning, with
+ * the pointer it poisoned up to. The value is one no guest writes (see the
+ * define), because a poison word that a guest could also mean as data stops
+ * the FIFO on the guest's own bytes; a word that still reads as poison is
+ * taken as written anyway when a word close after it is, since the guest
+ * fills the ring in address order. A packet this cannot follow (a JSR, AGP,
+ * a Banshee type) is warned about once and the window goes back to MMIO;
+ * ramfifo=off is the A/B.
  */
 #define VOODOO2_FIFO_WIN     0x200000
 #define VOODOO2_FIFO_WIN_MAX 0x40000    /* the window decodes addr & 0x3fffc */
-#define VOODOO2_FIFO_POISON  0xffffffffu
+/* The mark for "the guest has not written here". It only has to be a word
+ * the chip could never run -- the low three bits are the packet type, and
+ * type 7 does not exist -- so the rest of it is chosen to be a word no guest
+ * would write: as a float it is -2.5e18, as a pair of 16-bit texels an odd
+ * dark blue beside a dirty pink, and in a hex dump it says what it is. It
+ * was 0xffffffff until 2026-09-17, which is a white texel: a texture with
+ * white in it read as unwritten ring and the FIFO stopped on the guest's own
+ * data (3DMark 99's loading screen, the user's idea to change the value). */
+#define VOODOO2_FIFO_POISON  0xdeadbee7u
+#define VOODOO2_FIFO_AHEAD   8          /* words looked past a poison-looking
+                                         * data word for one the guest wrote */
 
 static inline uint32_t *
 voodoo2_fifo_word(voodoo_t *v, uint32_t a)
@@ -483,6 +516,32 @@ voodoo2_packet_words(uint32_t h)
     }
 }
 
+/* Has the guest written the word at `a`? Poison says no -- unless the guest
+ * has written a word soon after it, which it can only have done by writing
+ * this one first (it fills the ring in address order), so the poison there
+ * is its own data. */
+static bool
+voodoo2_fifo_written(Voodoo2State *s, uint32_t a)
+{
+    voodoo_t *v   = s->v;
+    uint32_t  end = s->fifo_base + s->fifo_size;
+
+    if (*voodoo2_fifo_word(v, a) != VOODOO2_FIFO_POISON) {
+        return true;
+    }
+    for (uint32_t k = 1; k <= VOODOO2_FIFO_AHEAD; k++) {
+        uint32_t b = a + 4 * k;
+
+        if (b >= end) {
+            break;          /* the ring's end: the guest jumps, not runs on */
+        }
+        if (*voodoo2_fifo_word(v, b) != VOODOO2_FIFO_POISON) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void voodoo2_fifo_map(Voodoo2State *s);
 
 static void
@@ -495,7 +554,9 @@ voodoo2_fifo_break(Voodoo2State *s, uint32_t a, uint32_t h, const char *why)
     voodoo2_fifo_map(s);
 }
 
-/* count every whole packet the guest has written since the last call */
+/* count every word the guest has written since the last call, packet by
+ * packet so a jump is followed, and word by word inside one so a packet
+ * still being written goes to the consumer as far as it has got */
 static void
 voodoo2_fifo_sync(Voodoo2State *s)
 {
@@ -509,10 +570,46 @@ voodoo2_fifo_sync(Voodoo2State *s)
     }
     s->fifo_syncs++;
     while (words < s->fifo_size / 4) {
-        uint32_t h = *voodoo2_fifo_word(v, a);
+        uint32_t h;
         uint32_t n;
 
+        /* inside a packet whose rest was not there last time: take what has
+         * arrived since, and leave the consumer waiting for the remainder
+         * exactly where the chip would wait */
+        if (s->in_packet) {
+            uint32_t take = 0;
+
+            while (take < s->in_packet && voodoo2_fifo_written(s, a + 4 * take)) {
+                take++;
+            }
+            if (take < s->in_packet && s->force_written) {
+                /* The last resort, and with a poison word no guest writes it
+                 * should never be reached: a run of data that reads as poison
+                 * for longer than the look ahead. It is the guest's own data
+                 * and not a gap, because the chip has caught up with
+                 * everything counted, which leaves the whole ring free -- a
+                 * guest that polls there cannot be waiting for room, and one
+                 * waiting for room cannot have left the ring empty. Take the
+                 * rest of this packet rather than wait for ever; the 5 s line
+                 * counts the words, and any at all means this needs a look. */
+                s->forced += s->in_packet - take;
+                take       = s->in_packet;
+            }
+            s->force_written = false;
+            if (!take) {
+                break;
+            }
+            words       += take;
+            a           += 4 * take;
+            s->in_packet -= take;
+            continue;
+        }
+        h = *voodoo2_fifo_word(v, a);
         if (h == VOODOO2_FIFO_POISON) {
+            /* A header is the first word the guest writes of its packet, so
+             * poison there is a gap and never data waiting to be recognised:
+             * no look ahead here (it took a poison header for a packet and
+             * dropped the window back to MMIO mid-stream, 2026-09-17). */
             break;
         }
         if ((h & 7) == 3 && (h & (1u << 28)) && !(h & (1 << 10)) &&
@@ -543,8 +640,19 @@ voodoo2_fifo_sync(Voodoo2State *s)
             voodoo2_fifo_break(s, a, h, "a packet across the ring's end");
             break;
         }
-        words += n;
-        a     += 4 * n;
+        /* the last packets this walk counted, for the stall dump: a stream
+         * that stops is read backwards from here (2026-09-17) */
+        s->seen[s->seen_n % ARRAY_SIZE(s->seen)].addr = a;
+        s->seen[s->seen_n % ARRAY_SIZE(s->seen)].hdr  = h;
+        s->seen[s->seen_n % ARRAY_SIZE(s->seen)].n    = n;
+        s->seen_n++;
+        /* the header is written; its words are counted as they arrive, this
+         * call or a later one (the guest writes a long packet in pieces and
+         * waits for the chip in between: 3DMark 99 on the PC, 2026-09-17) */
+        if (n > 1 && !voodoo2_fifo_written(s, a + 4 * (n - 1))) {
+            s->partial++;
+        }
+        s->in_packet = n;
     }
     s->fifo_parse = a;
     if (words) {
@@ -565,6 +673,18 @@ voodoo2_fifo_rdptr(Voodoo2State *s)
     uint32_t  end = s->fifo_base + s->fifo_size;
     uint32_t  a   = s->fifo_poisoned;
 
+    /* The chip has run everything counted and the guest is still asking: the
+     * walk is stopped on a word that reads as poison with the ring empty
+     * behind it, which cannot be a gap (see the take above). After a few of
+     * these the next walk takes the rest of the packet. */
+    if (s->in_packet && rp == s->fifo_parse) {
+        if (++s->idle_polls > 64) {
+            s->idle_polls    = 0;
+            s->force_written = true;
+        }
+    } else {
+        s->idle_polls = 0;
+    }
     if (rp < s->fifo_base || rp >= end || a < s->fifo_base || a >= end) {
         return rp;
     }
@@ -585,11 +705,21 @@ voodoo2_fifo_restart(Voodoo2State *s)
 {
     voodoo_t *v = s->v;
 
+    /* Every word of the ring goes back to poison, so anything the guest has
+     * already written and the chip has not run yet is gone with it. That is
+     * right at an init -- Glide sets the pointers and starts afresh -- and
+     * wrong at any other moment, which is why every one is named here
+     * (2026-09-17: a ring restart under a live Glide would look exactly like
+     * the hang being chased). */
+    info_report("voodoo2: the command ring is poisoned afresh (ring %08x+%x, "
+                "rp %08x, %u words counted so far)", s->fifo_base, s->fifo_size,
+                (uint32_t) v->cmdfifo_rp, s->fifo_words);
     for (uint32_t a = s->fifo_base; a < s->fifo_base + s->fifo_size; a += 4) {
         *voodoo2_fifo_word(v, a) = VOODOO2_FIFO_POISON;
     }
     s->fifo_parse    = v->cmdfifo_rp;
     s->fifo_poisoned = v->cmdfifo_rp;
+    s->in_packet     = 0;
 }
 
 /* map the ring as RAM when the FIFO is on and the ring fits the window, and
@@ -702,6 +832,9 @@ voodoo2_mmio_read(void *opaque, hwaddr addr, unsigned size)
         s->rd_hist[(addr >> 2) & 0xff]++;
     }
     if (s->fifo_mapped) {
+        s->trig_addr  = (uint32_t) addr;
+        s->trig_size  = size;
+        s->trig_write = false;
         voodoo2_fifo_sync(s);
         if (size == 4 && addr < VOODOO2_FIFO_WIN &&
             (addr & 0x3fc) == SST_cmdFifoRdPtr && s->fifo_mapped) {
@@ -737,6 +870,9 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 
     if (s->fifo_mapped) {
         /* what the guest put in the ring comes before this write */
+        s->trig_addr  = (uint32_t) addr;
+        s->trig_size  = size;
+        s->trig_write = true;
         voodoo2_fifo_sync(s);
     }
     if (addr < 0x400000) {
@@ -1073,6 +1209,7 @@ voodoo2_stats(void *opaque)
     int           rd     = v->rd_count - s->last_rd;
     int           tex    = v->tex_count - s->last_tex;
     uint32_t      syncs  = s->fifo_syncs - s->last_fifo_syncs;
+    uint32_t      fwords = s->fifo_words - s->last_fifo_words;
 
     /* a guest waiting on the FIFO in RAM reads only cmdFifoRdPtr, which is
      * answered here and never reaches 86Box's read count: its syncs are the
@@ -1128,9 +1265,10 @@ voodoo2_stats(void *opaque)
                      v->cmdfifo_in_sub ? ", in sub" : "",
                      v->swap_pending ? ", swap pending" : "");
         } else if (s->fifo_mapped || s->fifo_words != s->last_fifo_words) {
-            snprintf(ram, sizeof(ram), "; FIFO in RAM: %u words in %u syncs",
+            snprintf(ram, sizeof(ram), "; FIFO in RAM: %u words in %u syncs, "
+                     "%u packets part-written, %u words taken as data",
                      s->fifo_words - s->last_fifo_words,
-                     s->fifo_syncs - s->last_fifo_syncs);
+                     s->fifo_syncs - s->last_fifo_syncs, s->partial, s->forced);
         }
         s->last_fifo_words = s->fifo_words;
         s->last_fifo_syncs = s->fifo_syncs;
@@ -1154,9 +1292,12 @@ voodoo2_stats(void *opaque)
      * work done, and the guest reading one register a million times. Name
      * the packet: the words around the read pointer, and what the guest did
      * last. */
-    if (v->voodoo_busy && v->cmdfifo_enabled && !v->cmdfifo_in_sub &&
+    if (v->cmdfifo_enabled && !v->cmdfifo_in_sub &&
         v->cmdfifo_depth_rd == v->cmdfifo_depth_wr &&
         !frames && !tris && wr < 16 &&
+        /* the consumer inside a packet (`voodoo_busy`), or the ring in RAM
+         * with nothing left to count and the guest still asking */
+        (v->voodoo_busy || (s->fifo_mapped && !fwords)) &&
         /* the guest polling hard: the status register through 86Box, or
          * cmdFifoRdPtr, which is answered here and reaches no read count */
         (rd > 100000 || syncs > 100000)) {
@@ -1172,11 +1313,30 @@ voodoo2_stats(void *opaque)
         fprintf(stderr, "voodoo2: the command FIFO is stuck inside a packet: "
                 "the consumer wants the word at %08x, which the guest has not "
                 "written, and the guest is waiting for the card to go idle "
-                "(ring %08x+%x, depth %u, %s, %u narrow writes)\n", rp,
+                "(ring %08x+%x, depth %u, %s, %u narrow writes, %u packets "
+                "met while the guest was still writing them)\n", rp,
                 v->cmdfifo_base, v->cmdfifo_end + 0x1000 - v->cmdfifo_base,
                 (unsigned) v->cmdfifo_depth_wr,
-                s->fifo_mapped ? "in RAM" : "through MMIO", s->fifo_narrow);
-        for (uint32_t a = rp - 0x40; a != rp + 0x10; a += 4) {
+                s->fifo_mapped ? "in RAM" : "through MMIO", s->fifo_narrow,
+                s->partial);
+        if (s->fifo_mapped) {
+            /* How this walk read the tail of the stream: a packet counted
+             * longer than the guest wrote lands the next header in unwritten
+             * space, and a shorter one lands it inside somebody's parameters
+             * -- either way the last few here say which packet did it. */
+            unsigned n = MIN(s->seen_n, ARRAY_SIZE(s->seen));
+
+            fprintf(stderr, "voodoo2: the last %u packets counted, oldest "
+                    "first (parse stopped at %08x):\n", n, s->fifo_parse);
+            for (unsigned k = 0; k < n; k++) {
+                unsigned i = (s->seen_n - n + k) % ARRAY_SIZE(s->seen);
+
+                fprintf(stderr, "voodoo2:   %08x header %08x type %u, "
+                        "%u words\n", s->seen[i].addr, s->seen[i].hdr,
+                        s->seen[i].hdr & 7, s->seen[i].n);
+            }
+        }
+        for (uint32_t a = rp - 0x40; a != rp + 0x20; a += 4) {
             fprintf(stderr, "voodoo2:   %08x %08x%s\n", a,
                     *voodoo2_fifo_word(v, a), a == rp ? "   <- wanted" : "");
         }

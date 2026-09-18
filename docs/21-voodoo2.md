@@ -382,17 +382,45 @@ writes per triangle, tens of thousands a frame. Two things reduce it:
    no doorbell: the chip is meant to see every write. So the device finds
    them itself — the ring is an alias of a page-aligned `fb_mem` (86Box's
    calloc is handed a replacement at realize and gets its own back at
-   close), consumed words are poisoned with `0xffffffff` (packet type 7,
+   close), consumed words are poisoned with `0xdeadbee7` (packet type 7,
    which does not exist), and at every access the guest still makes to the
-   card the device walks whole packets from the last one it counted, by
-   86Box's own word counts, to the first poison header, and adds them to
-   the depth the per-dword writes used to add. The guest learns a slot is
-   free only by reading `cmdFifoRdPtr`, which the device answers after
-   poisoning up to exactly what it returns, so the guest never writes over
-   a word that is not poison. The limits are named in the code: it relies
-   on Glide writing a packet whole before it touches the card again, and a
-   packet it cannot follow (JSR/RET, AGP, Banshee types) sends the window
-   back to MMIO with a warning. **Quake II `timedemo demo1`: 41.1 → 147.5
+   card the device walks the ring from the last word it counted and adds
+   what the guest has written to the depth the per-dword writes used to
+   add. The guest learns a slot is free only by reading `cmdFifoRdPtr`,
+   which the device answers after poisoning up to exactly what it returns,
+   so the guest never writes over a word that is not poison. A packet it
+   cannot follow (JSR/RET, AGP, Banshee types) sends the window back to
+   MMIO with a warning.
+
+   **The poison word must be one no guest writes** (2026-09-17, the user's
+   own call, and the fix for a fortnight of 3DMark 99 hangs on the Windows
+   PC). It was `0xffffffff` — which is a white texel. A texture download
+   carrying white read as unwritten ring, so the walk stopped on the
+   guest's own data and the chip stopped with it; Glide, which waits for
+   the read pointer to travel before writing more, then waited on a pointer
+   that could never move again (26 M reads of `cmdFifoRdPtr` in 5 s, the
+   ring empty behind it). The same collision fed half-read packets to the
+   consumer, which is what garbled the loading screens. Only the low three
+   bits of the value are forced (the packet type the chip has no meaning
+   for); the rest is chosen to be absurd as a float (-2.5e18), absurd as a
+   pair of texels, and to name itself in a hex dump: `0xdeadbee7`. The look
+   ahead applies to a packet's **payload** only — a header the guest has
+   not written is always a gap, since the header is the first word it
+   writes, and taking the poison there for a packet dropped the window back
+   to MMIO mid-stream on the first run with the new value.
+
+   **It counts words, not packets** (the same day). The chip runs words as
+   they arrive and 86Box's consumer blocks inside a half-written packet by
+   itself, so the walk hands over whatever has been written rather than a
+   packet at a time on the header's word count. Glide does write each
+   packet whole before it touches the card again — the 5 s line counts the
+   packets met half-written and the count stays at 0 — so this changes
+   nothing in practice; it is the faithful model, and it is one assumption
+   fewer between a guest and a hang. Should a run of data ever read as
+   poison anyway with the chip caught up (impossible with the value above:
+   an empty ring means the guest cannot be waiting for room), the walk
+   takes the rest of that packet rather than wait for ever, and the 5 s
+   line counts the words — any at all means this wants a look. **Quake II `timedemo demo1`: 41.1 → 147.5
    fps** on the same build (`ramfifo=off` the A/B), the chip now the busy
    side (tens of thousands of words queued, ~14 M words a second); UT's
    flyby 33.6 → 40.7 fps; Quake II's frames checked by screendump. The
