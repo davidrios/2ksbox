@@ -210,6 +210,43 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   `libqemu-embed-i386.dylib` with nothing under `/opt/X11`, wglgears in the
   player, and `package-macos.sh --no-sign --no-dmg` with no XQuartz library
   in the app.
+- **3DMark 99 on the Windows PC: the FIFO hangs are fixed, two threads
+  left open — 2026-09-17** (M14, doc 21; `base98-br` on the user's PC,
+  driven by `scripts/win-voodoo-ab.sh`, whose log is
+  `build/win-voodoo-ab.log`). The hangs and the garbled loading screens
+  were the ring in RAM marking unwritten words with `0xffffffff`, which is
+  a white texel: see doc 21 §9 and the commit. Several full runs at 640x480
+  and 800x600 since, a `ctrl+alt+del` mid-benchmark, the driver back after
+  the restart, no hang. What is left, for whoever picks this up:
+  - **A garbled loading screen, seen once since and not reproduced**
+    (usually the 4th, the Fill Rate one). The screenshot of it
+    (`2ksbox-0002.png` in the checkout, not committed) is the **800x600
+    desktop on `d3dpt-vga`**, 3DMark's own 2D screen: its text crisp and
+    the picture around it in stale bands, with the Voodoo not on the
+    monitor at all. `-device d3dpt-vga,full-frames=on` (a whole frame every
+    refresh, `scripts/win-voodoo-ab.sh vga:full-frames=on`) does not change
+    it, so the bytes in VRAM are what is wrong, not the repaint; no page
+    flips and no executor batches run while that screen is up, so the guest
+    wrote them itself. Next: which blit draws that background, and where it
+    reads from.
+  - **The whole machine 3x slower after some guest restarts** (the user,
+    with **no Voodoo at all** — `win-voodoo-ab.sh no-voodoo`, where 3DMark
+    falls back to our own Direct3D — so the card is not in it). Measured
+    per restart inside one player run: 46.3, 46.7, 62.4, **15.0**, 37.8 fps
+    over the game tests, and the slow one is slower at *everything* by the
+    same factor, with the ratio of batches to draws unchanged — the guest
+    does a third as much per second, not the rendering. Ruled out: a leak
+    of contexts (one live on every boot), the ring falling back to MMIO,
+    audio or input stalls. **For the next run:** `d3dpt-vga` now reports
+    its own share of every 5 s window (`N batches in 5.0 s, M ms of them in
+    the executor`) — flat host share with the rate halved is the guest or
+    the vCPU, a grown share is us — and the A/B script passes
+    `-msg timestamp=on`, so the log can be read as a timeline. Worth one
+    look inside Windows while it is slow (My Computer → Properties →
+    Performance: anything but "32-bit" for the file system, after the hard
+    resets this image has had, would explain it) and one at the host's own
+    CPU use.
+
 - **The first Windows host run of a real guest — 2026-09-17** (M11,
   `docs/tracks/m11-windows-host.md`; the user's PC: Ryzen 9 5900X, RTX 3090,
   the `base98-br` image). Seven reports, each taken apart here. **The user

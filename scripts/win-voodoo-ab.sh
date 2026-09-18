@@ -11,6 +11,12 @@
 #
 #   scripts/win-voodoo-ab.sh vga:full-frames=on   whole frames, no dirty spans
 #
+# And `no-voodoo` leaves the card out of the machine altogether, which is
+# how a picture drawn by the guest's 2D side is told from one the Voodoo
+# had a hand in:
+#
+#   scripts/win-voodoo-ab.sh no-voodoo
+#
 # The machine is the launcher's own (its bundle's disk, its guest-tools
 # ISO); close the launcher's window for that machine first, or the disk's
 # write lock will refuse this one. The player started from a shell prints
@@ -33,10 +39,16 @@ ISO="$(ls -t "$ROOT"/guest-tools/out/guest-tools-3dfx-*.iso 2>/dev/null | head -
 win() { cygpath -w "$1"; }
 TMP="$(cygpath "${TMP:-/tmp}")"
 
+V2_DEV=(-device)
 case "$PROP" in
-  vga:*) VGA_PROP=",${PROP#vga:}"; V2_PROP="" ;;
-  *)     VGA_PROP="";              V2_PROP=",$PROP" ;;
+  no-voodoo) VGA_PROP=""; V2_PROP=""; V2_DEV=(-name) ;;   # see below
+  vga:*)     VGA_PROP=",${PROP#vga:}"; V2_PROP="" ;;
+  *)         VGA_PROP="";              V2_PROP=",$PROP" ;;
 esac
+# `no-voodoo` turns the -device argument into a harmless -name one rather
+# than reshaping the command line: the machine is otherwise identical.
+V2_ARG="voodoo2,addr=0x05$V2_PROP"
+[ "$PROP" = no-voodoo ] && V2_ARG="base98-br-no-voodoo"
 
 LOG="$ROOT/build/win-voodoo-ab.log"
 mkdir -p "$ROOT/build"
@@ -47,10 +59,11 @@ set -o pipefail
 "$ROOT/scripts/win-run.sh" player \
   --shader "$(win "$DATA/shaders/crt/crt-aperture.slangp")" \
   -- \
+  -msg timestamp=on \
   -L "$(win "$ROOT/qemu/pc-bios")" \
   -machine pc,hpet=off -accel tcg -m 256 -cpu pentium3 \
   -drive "file=$(win "$M/disk.qcow2"),if=ide,index=0,media=disk" \
-  -device "voodoo2,addr=0x05$V2_PROP" \
+  "${V2_DEV[@]}" "$V2_ARG" \
   -nic none -vga none -device "d3dpt-vga,addr=0x02$VGA_PROP" \
   -device sb16,audiodev=embed0 \
   -device opl3,audiodev=embed0,sbbase=0x220 \

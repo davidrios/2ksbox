@@ -118,6 +118,9 @@ struct D3dptVgaState {
     bool exec_tried;
     uint32_t d3d_err;           /* last D3DPT_ERR_* of the doorbell */
     uint32_t batches;
+    int64_t exec_ns;            /* host time inside the executor, all batches */
+    uint32_t batches_last;      /* both at the last rate report */
+    int64_t exec_ns_last;
 };
 
 /* ------------------------------------------------------------ mode table
@@ -340,6 +343,19 @@ static void fb_flip_rate(D3dptVgaState *s)
                     s->flips - s->flips_last, secs,
                     (s->flips - s->flips_last) / secs);
     }
+    if (s->batches != s->batches_last) {
+        /* the host's own share of the frame: see d3d_doorbell */
+        info_report("d3dpt-vga: %u batches in %.1f s, %.1f ms of them in the "
+                    "executor (%.2f ms a batch, %.0f%% of the time)",
+                    s->batches - s->batches_last, secs,
+                    (s->exec_ns - s->exec_ns_last) / 1e6,
+                    (s->exec_ns - s->exec_ns_last) / 1e6 /
+                        (s->batches - s->batches_last),
+                    100.0 * (s->exec_ns - s->exec_ns_last) /
+                        (now - s->flips_ns));
+    }
+    s->batches_last = s->batches;
+    s->exec_ns_last = s->exec_ns;
     s->flips_ns = now;
     s->flips_last = s->flips;
 }
@@ -523,7 +539,14 @@ static void d3d_doorbell(D3dptVgaState *s)
     }
     s->batches++;
     if (d3d_load(s)) {
-        s->d3d_err = s->lib->submit(s->exec, win, D3DPT_SHM_SIZE);
+        /* How long the host spends in a batch, against how long the guest
+         * takes to bring the next one: a frame rate that halves with the
+         * host's share flat is a slow guest, and one that halves with the
+         * share grown is us (2026-09-17, 3DMark slow after some reboots). */
+        int64_t t0 = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
+
+        s->d3d_err  = s->lib->submit(s->exec, win, D3DPT_SHM_SIZE);
+        s->exec_ns += qemu_clock_get_ns(QEMU_CLOCK_REALTIME) - t0;
     } else {
         s->d3d_err = D3DPT_ERR_HOST;
         h->ret_status = D3DPT_ERR_HOST;
@@ -533,6 +556,7 @@ static void d3d_doorbell(D3dptVgaState *s)
     if (s->d3d_err && s->batches <= 8) {
         info_report("d3dpt-vga: batch %u: error %u at record %u", s->batches, s->d3d_err, h->ret_index);
     }
+    fb_flip_rate(s);    /* the 5 s line, for a game that blits and never flips */
 }
 
 /* guest reset: every context and surface the driver registered is gone */
