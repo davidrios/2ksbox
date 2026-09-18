@@ -410,13 +410,26 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
        the most recently installed hook is the one called first.
      - **"Is the window in front ours" is asked of the process**, not only of
        the one `HWND` the capture was built with.
-     - **`PLAYER_KEYBOARD_LOG=1`** makes the hook say which of the three it
-       is: a line for the install, the first re-arm, every key it is called
-       for while we are in front (taken or passed on), and every shortcut it
-       left to the host while we are not, with both window handles. Both
-       install and re-arm confirmed on the PC; that a focused player swallows
-       the key is the user's to confirm, a foreground window being the only
-       thing that can answer.
+     - **`PLAYER_KEYBOARD_LOG=1`** makes the hook say which of them it is: a
+       line for the install, the first re-arm, each focus change with both
+       window handles, every key it is called for while the keyboard is ours
+       (taken or passed on), and every shortcut left to the host while it is
+       not.
+     **And that trace named it the same day**: the hook is installed, it is
+     called for the Windows key, and it let the key through because
+     `GetForegroundWindow()` was **`SearchHost`'s CoreWindow** — Windows 11's
+     Start/Search UI, `class Windows.UI.Core.CoreWindow, title Search` —
+     and not the player's window. Asking Windows who is in front is asking
+     the shell, mid-shortcut, about a shortcut: by the time the hook runs the
+     shell already holds the foreground, so the handle comparison says the
+     key belongs to somebody else and hands the shell the very key the press
+     was meant to take away from it. **The hook asks winit too now**
+     (`WindowEvent::Focused`, the same event the X11 grab and the Wayland
+     inhibitor are driven by), and either answer is enough: winit's comes
+     from the window's own `WM_SETFOCUS` / `WM_KILLFOCUS` and matches what
+     the person is looking at. The failure the OR can have is the one X11's
+     grab has had all along — a stalled event loop leaves the capture on for
+     as long as it takes the focus event to arrive — and no worse.
   6. **Moto Racer slow on the 5900X with the CPU at 5 %** — in the menus
      and with the software renderer (the user; not Glide, not the race on
      Direct3D). **Not reproduced**: headless on Linux without the Voodoo,

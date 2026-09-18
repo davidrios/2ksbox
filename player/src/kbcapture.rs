@@ -13,8 +13,9 @@
 //! - **X11**: an active `XGrabKeyboard` while focused. An active grab beats
 //!   the window manager's passive ones on Super.
 //! - **Windows**: a `WH_KEYBOARD_LL` hook, installed for the window's whole
-//!   life and asking itself whether the window in front is ours, which takes
-//!   the keys of every shortcut Windows itself acts on before the shell sees
+//!   life and asking itself whether the keyboard is ours, which takes the
+//!   keys of every shortcut Windows itself acts on before the shell sees
+//!   them:
 //!   the two Windows keys (and so every Win+ shortcut), Tab, Esc, F4 and
 //!   Space under Alt (the switcher, Alt+Esc, and the two `DefWindowProc`
 //!   would turn into closing the player and opening its system menu), and
@@ -31,8 +32,9 @@
 //! "off" is exactly the state before it was made. `PLAYER_KEYBOARD_CAPTURE=0`
 //! starts a run with them the host's, and **`PLAYER_KEYBOARD_LOG=1`** makes
 //! the Windows hook say what it is doing — a shortcut that still reaches the
-//! host is one of three things, and only the hook can tell them apart: it was
-//! never installed, Windows took it away, or the window in front is not ours.
+//! host is one of four things, and only the hook can tell them apart: it was
+//! never installed, Windows took it away, another program's hook is ahead of
+//! ours, or the keyboard was not judged ours at that moment.
 
 use qemu_embed::Qemu;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -292,6 +294,18 @@ mod win {
     /// whether the hook is installed at all, whether it is called for that
     /// key, and whether the window in front is the one it is waiting for.
     static TRACE: AtomicBool = AtomicBool::new(false);
+    /// What winit last said about the window's focus. The hook asks this
+    /// *and* `GetForegroundWindow`, and one of the two saying yes is enough,
+    /// because the two answer at different moments and neither alone was
+    /// right (2026-09-18, the PC): Windows 11 had `SearchHost`'s CoreWindow
+    /// as the foreground window when the hook was called for the Windows
+    /// key, so the handle comparison said the key was somebody else's and
+    /// let it through — the shell got the key the press was meant to take
+    /// away from it. Asking Windows only who is in front is asking the
+    /// shell, mid-shortcut, about a shortcut; winit's answer comes from the
+    /// window's own `WM_SETFOCUS` / `WM_KILLFOCUS` and is the one that
+    /// matches what the person is looking at.
+    static FOCUSED: AtomicBool = AtomicBool::new(false);
 
     /// How often the hook is put back (ms). Windows removes a low-level hook
     /// that misses `LowLevelHooksTimeout` **silently**: nothing is returned,
@@ -383,10 +397,19 @@ mod win {
             }
         }
 
-        /// Focus decides only what is *taken*; what it is told here is that
-        /// the keys the guest is holding must be let go, because their
-        /// release went to whoever took the focus.
+        /// The hook stays where it is; what focus decides is whether a
+        /// shortcut is ours to take, and — on the way out — that the keys
+        /// the guest is holding must be let go, because their release went
+        /// to whoever took the focus.
         pub fn set(&mut self, focused: bool) {
+            FOCUSED.store(focused, Ordering::Relaxed);
+            if TRACE.load(Ordering::Relaxed) {
+                eprintln!(
+                    "[keyboard] focus: winit says {focused}, foreground {:#x}, our window {:#x}",
+                    unsafe { GetForegroundWindow() },
+                    WINDOW.load(Ordering::Relaxed),
+                );
+            }
             if focused {
                 return;
             }
@@ -451,12 +474,13 @@ mod win {
         }
     }
 
-    /// Is the window in front one of ours? The player has one window, so this
-    /// is the same question as "is it the player's window" — asked of the
-    /// process as well as the handle, because a window that is ours without
-    /// being *that* handle is still the player having the keyboard.
-    unsafe fn ours_in_front(fg: isize) -> bool {
-        if fg == WINDOW.load(Ordering::Relaxed) {
+    /// Is the keyboard ours to take from? Either answer is enough (see
+    /// `FOCUSED`): winit's, from the window's own focus messages, or
+    /// Windows', from whichever window is in front — asked of the process as
+    /// well as the handle, because a window that is ours without being
+    /// *that* handle is still the player having the keyboard.
+    unsafe fn ours(fg: isize) -> bool {
+        if FOCUSED.load(Ordering::Relaxed) || fg == WINDOW.load(Ordering::Relaxed) {
             return true;
         }
         let mut pid = 0u32;
@@ -471,7 +495,7 @@ mod win {
             let fg = GetForegroundWindow();
             let k = &*(lparam as *const KBDLLHOOKSTRUCT);
             let down = matches!(wparam as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
-            if ours_in_front(fg) {
+            if ours(fg) {
                 let sc = k.scanCode | if k.flags & LLKHF_EXTENDED != 0 { 0xE000 } else { 0 };
                 let held = HELD.lock().unwrap_or_else(|e| e.into_inner()).contains(&sc);
                 let take = held || (down && shortcut(k.vkCode as u16, k.flags));
@@ -490,8 +514,8 @@ mod win {
                 }
             } else if TRACE.load(Ordering::Relaxed) && down && shortcut(k.vkCode as u16, k.flags) {
                 eprintln!(
-                    "[keyboard] hook: vk {:#04x} left to the host — the window in front is not \
-                     ours (foreground {fg:#x}, our window {:#x})",
+                    "[keyboard] hook: vk {:#04x} left to the host — neither winit nor Windows \
+                     says the keyboard is ours (foreground {fg:#x}, our window {:#x})",
                     k.vkCode,
                     WINDOW.load(Ordering::Relaxed),
                 );

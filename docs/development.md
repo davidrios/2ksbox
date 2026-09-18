@@ -191,11 +191,12 @@ player [--shader <preset.slangp>] [--shader-params <k=v,...>] [--pad usb|keys]
   `PLAYER_KEYBOARD_CAPTURE=0` starts a run with them the host's;
   `scripts/test.sh` sets it, so a test window sway focuses does not take
   the desktop's keys away. **`PLAYER_KEYBOARD_LOG=1`** makes the Windows
-  hook print what it does — installed, re-armed, each key it is called for
-  while the player is in front, and each shortcut it left to the host while
-  something else is, with both window handles. A shortcut that still
-  reaches the host is one of three things (never installed, taken away by
-  Windows, or the window in front is not ours) and only those lines tell
+  hook print what it does — installed, re-armed, every focus change, each
+  key it is called for while the keyboard is ours (taken or passed on) and
+  each shortcut it left to the host while it is not, with both window
+  handles. A shortcut that still reaches the host is one of four things
+  (never installed, taken away by Windows, another program's hook ahead of
+  ours, or the keyboard not ours at that moment) and only those lines tell
   them apart.
 - `qemu-embed: input:` lines on stderr report the embed input queue's
   drain latency, key down/up pairs delivered in one drain (zero-length
