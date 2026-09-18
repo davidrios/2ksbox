@@ -65,13 +65,29 @@ What it is **not**, each measured rather than reasoned:
   `EMBED_ZC_SETTLE=100` waits 100 ms before using a freshly offered slot
   and 80 of 81 samples still diverge.
 
-So the suspects are the import parameters themselves
-(`player/src/dmabuf.rs`: `initial_layout: UNDEFINED` with no transition
-for externally written memory, `MemoryDedicatedAllocateInfo` on imported
-memory, the explicit plane layout's `row_pitch`/`size`), and the next
-step is a reproducer that imports the ring into Vulkan with exactly those
-parameters and no guest — which is also what anything filed upstream
-would need.
+- **Not the import parameters, and not using the image.**
+  `tools/zc-vulkan-test.c` is the middle ground between the two tests
+  above: the same ring the backend drives, imported with exactly what
+  `player/src/dmabuf.rs` passes (`VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT`
+  with the explicit plane layout, `initial_layout: UNDEFINED`,
+  `MemoryDedicatedAllocateInfo` over `ImportMemoryFdInfoKHR`), and every
+  buffer's memory read back with the CPU after each frame. It comes out
+  **clean** — all three slots follow the blits — and so does `--use=copy`,
+  which transitions each image out of `UNDEFINED` and copies it back
+  through Vulkan every frame, and `--use=shader`, which leaves it in the
+  `SHADER_READ_ONLY_OPTIMAL` layout wgpu leaves a sampled texture in.
+  Vulkan's own view of the slot agrees with the CPU's throughout. So the
+  import description was the wrong suspect: raw Vulkan can import these
+  buffers and read them every frame without a slot diverging.
+
+What is still not replicated, and so is where the cause has to be: wgpu
+itself (its device, its own barriers and tracking, a bind group sampled
+in a real render pass with the CRT chain behind it), the **concurrency**
+— in the player the blits are on QEMU's vCPU thread and the Vulkan work
+on the render thread, while the test is serialized on one — and the
+guest's real GL workload against the test's `glClear`. Threading the test
+is the next cheap step; bisecting from the player's side (import a slot
+but never sample it, or run with the shader chain out) is the other.
 
 Meanwhile `ZC_SLOTS_DEFAULT` is 1: with one buffer there is no second
 slot to go bad. The cost is the margin the ring exists for — the frontend

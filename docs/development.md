@@ -329,6 +329,10 @@ Host side, the frames go through the embed backend's dma-buf ring:
   buffer's memory with `gbm_bo_map`. GL reading back what GL wrote proves
   only that GL is self-consistent; the two lines disagreeing is a buffer
   the frontend will see frozen.
+- `tools/zc-vulkan-test.c` drives the ring with the frontend's Vulkan
+  import and nothing else — no guest, no player, no wgpu — and checks each
+  buffer's memory with the CPU after every frame. `--stage=` bisects the
+  import, `--use=copy|shader` also reads it back through Vulkan.
 - `EMBED_ZC_SETTLE=<ms>` waits that long after offering a buffer to the
   frontend before using it. Accepting an offer only queues it — the
   import happens later, on the frontend's own thread — so the first blits

@@ -176,13 +176,18 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   import to happen: the backend on its own writes through to all three
   slots over 34 frames. Not the ring size, not fd ownership (a real
   double-close, fixed in passing), not a race with the import
-  (`EMBED_ZC_SETTLE=100` changes nothing). `ZC_SLOTS_DEFAULT` is 1 for
-  now, which costs no frames and no measurable tearing but gives up the
-  margin the ring is for. **Next:** a reproducer that imports the ring
-  into Vulkan with `player/src/dmabuf.rs`'s exact parameters and no
-  guest — the only honest route to saying whose bug it is, and what
-  anything filed upstream would need. `EMBED_ZC_SLOTS=3` brings the ring
-  back for the investigation.
+  (`EMBED_ZC_SETTLE=100` changes nothing), and **not the import
+  parameters**: `tools/zc-vulkan-test.c` drives the same ring and imports
+  it with exactly what `player/src/dmabuf.rs` passes, with no guest and no
+  wgpu, and comes out clean — as does reading every frame back through
+  Vulkan (`--use=copy`) and leaving the image in the layout wgpu leaves a
+  sampled texture in (`--use=shader`). `ZC_SLOTS_DEFAULT` is 1 for now,
+  which costs no frames and no measurable tearing but gives up the margin
+  the ring is for. **Next:** what the reproducer still does not have —
+  wgpu itself, and the player's concurrency (blits on the vCPU thread,
+  Vulkan on the render thread, while the test is serialized). Thread the
+  test, or bisect from the player's side. `EMBED_ZC_SLOTS=3` brings the
+  ring back for the investigation.
 - **A 1990s OpenGL game needs the extension string capped** (2026-09-17).
   A modern host reports several thousand characters of extension names
   and these titles read that into a fixed buffer: GLQuake's is 4096 bytes
