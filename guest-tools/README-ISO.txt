@@ -98,6 +98,9 @@ TESTS\    every test, benchmark and calibration program on the disc, one
                                 run it when a fullscreen game dies at
                                 startup
             WGLGEARS            OpenGL, next to OPENGL32.DLL
+            WAITFILE            wait for a file to appear, then start
+                                something - a login wait that leaves the
+                                guest idle, unlike a batch file's CHOICE
             SSEBENCH            SSE and x87 throughput in ns per op
             CDTEST              CD audio through MCI
             CRTCAL              the CRT calibration patterns, exclusive

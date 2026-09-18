@@ -165,6 +165,21 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **A guest-side wait starved the guest it was waiting for** (2026-09-18).
+  `tools/win98-game-test.sh` held the login with a CHOICE loop in a DOS box,
+  which is the only bounded wait COMMAND.COM can write — and CHOICE polls,
+  so the box never idled, a host core sat at 100 % and 3dfx's card
+  initialisation competed with the wait for the same guest CPU. Measured on
+  `base98-br`, same image and same command line otherwise: the helper takes
+  **1,047 ms at an idle login, 3,625 ms behind a DOS box, 12,646 ms behind
+  the CHOICE loop**. `WIN.INI`'s `run=` now names `WAITFILE.EXE`
+  (`guest-tools/src/waitfile.c`), which sleeps until `V2START.LOG` appears
+  and then starts `RUN.BAT`, so no DOS box is open until the card is ready:
+  **1,097 ms**. Worth remembering twice over — every timing taken behind that
+  loop was of a starved guest, and the rule CLAUDE.md already has ("never
+  sleep-poll beside a long job") applies inside the guest, where it costs
+  more.
+
 - **A zero-copy ring buffer can stop being written through; the ring now
   notices and remakes it** (2026-09-18, doc 12 §4). Found as a fast
   flicker in GLQuake on `base98-br`: every third presented frame was the
