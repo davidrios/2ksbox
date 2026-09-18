@@ -33,6 +33,32 @@ its two code generators did not until patch 64 (the columns walked
 interpreter, the A/B; `DITHER_SUB=off` (the device's `dither-sub=off`)
 is the control that must fail this phase on either path.
 
+Then two phases about **order** (doc 21 §13). The chip has one way in from
+the PCI bus, so an LFB write is drawn after every packet the guest put in
+the ring before it and a register that reconfigures the FIFO lands behind
+them all; 86Box has two queues and empties the LFB one first. *Teardown* is
+the guard: a cyan fill and a swap go into the ring and fbiInit7's
+command-FIFO bit is cleared at once, with no idle wait -- the frame has to
+be cyan (the packets were run, not dropped) and the status register has to
+read idle afterwards, which is what Glide's grSstIdle waits for at
+grSstWinClose and what Carmageddon's 3dfx build hung on for ever
+(2026-09-18). Both halves of it fail without the fix.
+
+*Ordering* is the scene the `lfb-order` switch is for, not a guard: the ring
+gets a red fastfill over the whole screen, then with nothing waited for the
+guest writes a blue block through the LFB, then the ring gets the swap. The
+block has to be on top. It is on top with the switch either way on an
+unloaded host -- the consumer is scheduled before the second of the 38,400
+writes is queued -- which is the measurement that says this inversion is not
+what makes a game's HUD flash. `LFB_ORDER=on` puts the drain in.
+
+Both phases write swapbufferCMD to the register window as well as putting
+the packet in the ring, because 3dfx's Glide does and the card's own
+accounting needs it: only Banshee and later count a swap *packet* as
+written, while every card's swap decrements `cmd_read`, so the packet
+alone drives `written - cmd_read` negative and the status register reads
+busy for ever off that difference.
+
 The evidence is on the host side: a QMP screendump while the Voodoo has
 the monitor must be the 640x480 red frame (the whole path from a guest
 `mov` to the console surface -- register decode, the memory FIFO, the
@@ -75,11 +101,13 @@ RAMFIFO = os.environ.get("RAMFIFO", "on")
 RECOMP = os.environ.get("RECOMP", "on")
 DITHER_SUB = os.environ.get("DITHER_SUB", "on")
 UNDITHER = os.environ.get("UNDITHER", "off")
+LFB_ORDER = os.environ.get("LFB_ORDER", "on")
 OUT = os.path.join(ROOT, "build/voodoo-guest" + ("" if VGA == "std" else "-" + VGA)
                    + ("" if RAMFIFO == "on" else "-mmiofifo")
                    + ("" if RECOMP == "on" else "-interp")
                    + ("" if DITHER_SUB == "on" else "-nodsub")
-                   + ("" if UNDITHER == "off" else "-undither"))
+                   + ("" if UNDITHER == "off" else "-undither")
+                   + ("" if LFB_ORDER == "on" else "-noorder"))
 
 spec = importlib.util.spec_from_file_location("x87gt", os.path.join(ROOT, "tools/x87-guest-test.py"))
 x87gt = importlib.util.module_from_spec(spec)
@@ -99,6 +127,7 @@ bits 16
 BAR         equ 0E0000000h
 LFB         equ BAR + 400000h
 RED565      equ 0F800F800h          ; two RGB565 pixels of (248, 0, 0)
+BLUE565     equ 0001F001Fh          ; two RGB565 pixels of (0, 0, 248)
 
 ; register offsets (vid_voodoo_regs.h)
 SST_status          equ 000h
@@ -388,6 +417,7 @@ start:
     mov dword [fs:edi + 4], 0
     mov dword [fs:edi + 8], 00010251h   ; packet 1: swapbufferCMD
     mov dword [fs:edi + 12], 1          ;   on the next retrace
+    call swap_note
     mov edx, FIFO_BASE + 10h            ; where the read pointer must end
     mov si, str_fifo1
     call fifo_wait
@@ -405,6 +435,7 @@ start:
     mov dword [fs:edi + 12], 0
     mov dword [fs:edi + 16], 00010251h  ; packet 1: swapbufferCMD
     mov dword [fs:edi + 20], 1
+    call swap_note
     mov edx, FIFO_BASE + 28h
     mov si, str_fifo2
     call fifo_wait
@@ -414,6 +445,8 @@ start:
     call delay_ticks
 
     call dither_phase
+    call order_phase
+    call teardown_phase
 
     mov edi, BAR
     xor eax, eax                ; fbiInit7: the command FIFO off again
@@ -677,6 +710,7 @@ dither_phase:
     mov edx, edi
     sub edx, FIFO_WIN
     add edx, FIFO_BASE
+    call swap_note
     mov si, str_dith_swap
     call fifo_wait
     mov si, str_dith_shown
@@ -736,6 +770,146 @@ dith_vertex_draw:
     mov dword [fs:edi], 00010541h       ; sDrawTriCMD
     mov dword [fs:edi + 4], 0
     add edi, 8
+    ret
+
+; ------------------------------------------------- the ordering phase
+;
+; The chip has one way in from the PCI bus, so a write into the LFB window
+; is drawn after every packet the guest put in the ring before it. 86Box
+; has two queues and empties the LFB one first, which puts an LFB write in
+; front of work the guest wrote earlier -- a game that draws its world with
+; triangles and its HUD through the LFB then loses the HUD on whichever
+; frames the consumer was behind (Carmageddon, 2026-09-18). The scene is
+; the smallest statement of it: the ring gets a red fastfill over the whole
+; screen, then, with nothing waited for, the guest writes a blue block
+; through the LFB, then the ring gets the swap. The blue block has to be
+; there. Out of order the fastfill runs last and the frame is all red;
+; `lfb-order=off` is the A/B and fails here.
+order_phase:
+    mov edi, BAR
+    xor eax, eax
+    mov [fs:edi + SST_fbiInit7], eax        ; off while the ring moves back
+    mov eax, (FIFO_BASE >> 12) | (((FIFO_BASE + FIFO_SIZE - 1000h) >> 12) << 16)
+    mov [fs:edi + SST_cmdFifoBaseAddr], eax
+    mov eax, FIFO_BASE
+    mov [fs:edi + SST_cmdFifoRdPtr], eax
+    xor eax, eax
+    mov [fs:edi + SST_cmdFifoDepth], eax
+    mov eax, 100h
+    mov [fs:edi + SST_fbiInit7], eax
+
+    ; the fill, and the dither phase's pipeline state put back
+    mov edi, FIFO_WIN
+    mov dword [fs:edi], 00010221h       ; fbzMode
+    mov dword [fs:edi + 4], 4200h       ;   RGB writes, back buffer, no dither
+    mov dword [fs:edi + 8], 00010209h   ; fbzColorPath
+    mov dword [fs:edi + 12], 0
+    mov dword [fs:edi + 16], 00010219h  ; alphaMode
+    mov dword [fs:edi + 20], 0          ;   no blending
+    mov dword [fs:edi + 24], 00028231h  ; 2 from clipLeftRight on
+    mov dword [fs:edi + 28], 280h       ;   x 0..640
+    mov dword [fs:edi + 32], 1E0h       ;   y 0..480
+    mov dword [fs:edi + 36], 00010291h  ; color1
+    mov dword [fs:edi + 40], 0F80000h   ;   red
+    mov dword [fs:edi + 44], 00010249h  ; fastfillCMD
+    mov dword [fs:edi + 48], 0
+
+    ; and now, with the chip told nothing, the block through the LFB: rows
+    ; 100..339, 320 pixels wide. The first of these writes is the guest's
+    ; next access to the card, so it is where the packets above are counted
+    ; -- and where the two streams have to be put back in order
+    mov edi, LFB + (100 << 11)
+    mov edx, 240
+.row:
+    mov ecx, 160
+    mov ebx, edi
+.px:
+    mov dword [fs:ebx], BLUE565
+    add ebx, 4
+    dec ecx
+    jnz .px
+    add edi, 2048
+    dec edx
+    jnz .row
+
+    mov edi, FIFO_WIN + 34h
+    mov dword [fs:edi], 00010251h       ; swapbufferCMD
+    mov dword [fs:edi + 4], 1           ;   on the next retrace
+    call swap_note
+    mov edx, FIFO_BASE + 3Ch
+    mov si, str_order
+    call fifo_wait
+    mov si, str_order_swapped
+    call puts
+    mov cx, 36                  ; ~2 s: the host takes its screendump
+    call delay_ticks
+    ret
+
+; ------------------------------------------------- the teardown phase
+;
+; What Glide does at grSstWinClose: the last packets, then fbiInit7 with
+; the command-FIFO bit clear. On the chip the register write is behind them
+; on the same bus. Here 86Box's consumer stops the moment the bit goes, so
+; anything it has not reached is never run -- and the status register's
+; busy bit is `cmdfifo_depth_rd != cmdfifo_depth_wr`, so the card then
+; reads busy to every later poll and Glide's own idle wait never returns
+; (Carmageddon's 3dfx build hung on quit for exactly that, 2026-09-18).
+; The phase writes a cyan fill and a swap, turns the FIFO off with nothing
+; waited for, and then polls status the way grSstIdle does: the frame has
+; to be cyan (the packets were run, not dropped) and the card has to go
+; idle (bits 9:7 clear).
+teardown_phase:
+    mov edi, FIFO_WIN + 3Ch
+    mov dword [fs:edi], 00010291h       ; color1
+    mov dword [fs:edi + 4], 00F8F8h     ;   cyan
+    mov dword [fs:edi + 8], 00010249h   ; fastfillCMD
+    mov dword [fs:edi + 12], 0
+    mov dword [fs:edi + 16], 00010251h  ; swapbufferCMD
+    mov dword [fs:edi + 20], 1
+    call swap_note
+
+    mov edi, BAR
+    xor eax, eax                ; fbiInit7: the command FIFO off, at once
+    mov [fs:edi + SST_fbiInit7], eax
+
+    mov ecx, 200000             ; grSstIdle: poll until the busy bits clear
+.poll:
+    mov eax, [fs:edi + SST_status]
+    test eax, 380h
+    jz .idle
+    dec ecx
+    jnz .poll
+.idle:
+    push eax
+    mov si, str_td_status
+    call puts
+    pop eax
+    call puthex32
+    call putnl
+    mov si, str_td_swapped
+    call puts
+    mov cx, 36                  ; ~2 s: the host takes its screendump
+    call delay_ticks
+    ret
+
+; 3dfx's Glide writes swapbufferCMD to the register window as well as
+; putting the packet in the ring, and the measured stream of a real game
+; does one of each per frame. With the FIFO on the register write only
+; counts -- 86Box's `cmd_written`, and the swap backlog Glide reads out of
+; the status register's bits 31:28 -- and the packet is what swaps. It is
+; not decoration here: only Banshee and later count a *swap packet* as
+; written (`cmd_written_fifo`), while every card's swap decrements
+; `cmd_read`, so a program that sends the packet alone drives
+; `written - cmd_read` negative and the status register's busy bit is that
+; difference. The card then reads busy for ever, with nothing busy.
+swap_note:
+    push edi
+    push eax
+    mov edi, BAR
+    mov eax, 1
+    mov [fs:edi + SST_swapbufferCMD], eax
+    pop eax
+    pop edi
     ret
 
 ; EDX = where the chip's read pointer has to end up, SI = the batch's label:
@@ -963,6 +1137,10 @@ str_dith_ref: db "DITH REF ", 0
 str_dith_col: db "DITH COL ", 0
 str_dith_swap: db "DITH SWAP RDPTR ", 0
 str_dith_shown: db "DITH SHOWN", 10, 0
+str_order:    db "ORDER RDPTR ", 0
+str_order_swapped: db "ORDER SWAPPED", 10, 0
+str_td_status: db "TD STATUS ", 0
+str_td_swapped: db "TD SWAPPED", 10, 0
 """
 
 
@@ -1042,6 +1220,11 @@ def blue_fraction(path):
     return fraction(path, lambda r, g, b: r < 8 and g < 8 and b >= 240)
 
 
+def cyan_fraction(path):
+    """The teardown phase's fastfill."""
+    return fraction(path, lambda r, g, b: r < 8 and g >= 240 and b >= 240)
+
+
 def magenta_fraction(path):
     """The command FIFO's second fastfill."""
     return fraction(path, lambda r, g, b: r >= 240 and g < 8 and b >= 240)
@@ -1105,7 +1288,10 @@ def main():
     shot_f1 = os.path.join(OUT, "fifo1.ppm")
     shot_f2 = os.path.join(OUT, "fifo2.ppm")
     shot_dith = os.path.join(OUT, "dither.ppm")
-    for f in (log, qlog, shot_on, shot_off, shot_lin, shot_f1, shot_f2, shot_dith, sock):
+    shot_order = os.path.join(OUT, "order.ppm")
+    shot_td = os.path.join(OUT, "teardown.ppm")
+    for f in (log, qlog, shot_on, shot_off, shot_lin, shot_f1, shot_f2, shot_dith,
+              shot_order, shot_td, sock):
         if os.path.exists(f):
             os.unlink(f)
     ok = True
@@ -1116,8 +1302,9 @@ def main():
             *vga_args(),
             # the cursor the console publishes (patch 66), in this log
             *(["-trace", "dpy_mouse_publish"] if VGA == "d3dpt" else []),
-            "-device", "voodoo2,ramfifo=%s,recompiler=%s,dither-sub=%s,undither=%s"
-            % (RAMFIFO, RECOMP, DITHER_SUB, UNDITHER),
+            "-device",
+            "voodoo2,ramfifo=%s,recompiler=%s,dither-sub=%s,undither=%s,lfb-order=%s"
+            % (RAMFIFO, RECOMP, DITHER_SUB, UNDITHER, LFB_ORDER),
             "-drive", "file=%s,if=floppy,index=0,format=raw" % img,
             "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
             "-qmp", "unix:%s,server,nowait" % sock, "-audiodev", "none,id=a0",
@@ -1141,6 +1328,10 @@ def main():
             q.screendump(shot_f2)
             text = wait_for(log, b"DITH SHOWN", p, 180, "the dither scene")
             q.screendump(shot_dith)
+            text = wait_for(log, b"ORDER SWAPPED", p, 120, "the ordering scene")
+            q.screendump(shot_order)
+            text = wait_for(log, b"TD SWAPPED", p, 120, "the teardown scene")
+            q.screendump(shot_td)
             text = wait_for(log, b"DONE", p, 60, "the guest to finish")
             q.screendump(shot_off)
         finally:
@@ -1230,6 +1421,34 @@ def main():
         if (w, h) != (WIDTH, HEIGHT) or bad:
             print("FAIL the dither scene is not one dither tile")
             ok = False
+    # the ordering phase: the LFB block the guest wrote after the ring's
+    # fastfill has to be on top of it, not under it ("one order" in
+    # voodoo/voodoo2.c). Out of order the frame is all red.
+    w, h, blue = blue_fraction(shot_order)
+    _, _, red = red_fraction(shot_order)
+    print("    screendump of the ordering scene: %dx%d, %.1f%% blue on %.1f%% red"
+          % (w, h, blue * 100, red * 100))
+    if (w, h) != (WIDTH, HEIGHT) or blue < 0.20 or red < 0.60:
+        print("FAIL the LFB block the guest wrote after the ring's fastfill is not on "
+              "top of it: the two queues ran out of the guest's order")
+        ok = False
+    # the teardown: the packets written before the FIFO was turned off were
+    # run (the frame is cyan), and the card reads idle afterwards rather
+    # than busy for ever (Glide's own wait at grSstWinClose)
+    td = [l.split()[2] for l in text.splitlines()
+          if l.startswith("TD STATUS ") and len(l.split()) == 3]
+    print("    status after the command FIFO was turned off: %s"
+          % (td[0] if td else "nothing"))
+    if len(td) != 1 or int(td[0], 16) & 0x380:
+        print("FAIL the card still reads busy with the command FIFO off: a guest "
+              "polling for idle there never gets out")
+        ok = False
+    w, h, frac = cyan_fraction(shot_td)
+    print("    screendump of the teardown scene: %dx%d, %.1f%% cyan" % (w, h, frac * 100))
+    if (w, h) != (WIDTH, HEIGHT) or frac < 0.99:
+        print("FAIL the packets written before the command FIFO was turned off were "
+              "not run")
+        ok = False
     w, h, frac = red_fraction(shot_off)
     print("    screendump with the Voodoo off: %dx%d, %.1f%% red" % (w, h, frac * 100))
     if frac > 0.5:

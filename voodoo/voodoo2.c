@@ -16,7 +16,7 @@
  *   -device voodoo2[,fbmem=2|4][,texmem=2|4][,threads=1|2|4]
  *                  [,bilinear=on|off][,dither-sub=on|off][,filter=on|off]
  *                  [,undither=on|off]
- *                  [,recompiler=on|off][,ramfifo=on|off]
+ *                  [,recompiler=on|off][,ramfifo=on|off][,lfb-order=on|off]
  *
  * ramfifo (on by default): the command-FIFO ring is plain RAM to the guest,
  * so Glide's packet stream is ordinary stores instead of one MMIO trap per
@@ -167,6 +167,11 @@ struct Voodoo2State {
     uint32_t     trig_addr;          /* the guest access this walk runs from */
     uint8_t      trig_size;
     bool         trig_write;
+    /* putting the ring back in front of what came after it ("one order") */
+    uint32_t     drains;             /* waits for the ring before an access */
+    uint32_t     last_drains;
+    bool         drain_slow_warned;  /* one that did not finish in time */
+    bool         fifo_left_noted;    /* words stranded by the FIFO going off */
     /* register-window accesses by register (addr & 0x3fc) since the last
      * line: a guest that spins on one register names it here */
     uint32_t   rd_hist[256];
@@ -191,6 +196,7 @@ struct Voodoo2State {
     bool     undither;
     bool     recompiler;
     bool     ramfifo;
+    bool     lfb_order;
 
     /* the undither's one-shot note: it says once that it is on, and once
      * why it is not, because a frame it declines is an ordinary frame and
@@ -798,6 +804,143 @@ voodoo2_fifo_after_write(Voodoo2State *s, hwaddr addr)
     }
 }
 
+/* --------------------------------------------------------------- one order
+ *
+ * The chip has one way in from the PCI bus: a packet in the command FIFO, a
+ * write into the LFB or texture aperture, and a register write all reach it
+ * in the order the guest made them. 86Box has two queues -- `voodoo->fifo`,
+ * where a frame-buffer or texture write is queued, and the ring -- and its
+ * thread empties the whole of the first before it looks at the second
+ * (`vid_voodoo_fifo.c`); a register the vCPU thread writes here does not
+ * queue at all. So the ring is the stream that can be overtaken.
+ *
+ * **That is what hangs a guest at the end, and it is measured.** Glide's
+ * grSstWinClose writes its last packets and then clears fbiInit7's
+ * command-FIFO bit. The register write lands at once while the ring is
+ * still being consumed, and 86Box's consumer loop ends the moment
+ * `cmdfifo_enabled` goes false, so whatever it had not reached is never run
+ * -- and `SST_status`'s busy bit is `cmdfifo_depth_rd != cmdfifo_depth_wr`,
+ * so the card reads busy to every later poll. That poll is Glide's own
+ * grSstIdle. Carmageddon's 3dfx build hung there on 2026-09-18 with two
+ * words outstanding of the 104 the last walk counted, the card otherwise
+ * entirely idle: `busy: 0 cmds outstanding (wr 49668 rd 49668), fifo depth
+ * 59495109/59495111`, and 27 million reads of register 0x000 in five
+ * seconds. So a write that reconfigures the FIFO runs the ring out first,
+ * always; the teardown phase of tools/voodoo-guest-test.py is the check.
+ *
+ * **The LFB half is real but was not the flashing HUD** (`lfb-order`, off).
+ * An LFB write queued while ring words are counted and not yet run is drawn
+ * before them, so a game that draws its world through the ring and its HUD
+ * with grLfbWriteRegion can have the world painted over the HUD. The window
+ * is only as wide as the consumer's wake takes, though: measured in the
+ * ordering phase of the guest test on an unloaded host, the thread is always
+ * scheduled first and the block lands on top with the switch either way. It
+ * is kept as the A/B -- turning it on costs a wait for the rasterizer at
+ * every ring-then-LFB turn, which is once or twice a frame in a game of that
+ * shape -- and the 5 s line counts the waits.
+ */
+#define VOODOO2_DRAIN_MS 250
+
+static bool
+voodoo2_fifo_caught_up(voodoo_t *v)
+{
+    return ATOMIC_LOAD(v->cmdfifo_depth_rd) == ATOMIC_LOAD(v->cmdfifo_depth_wr) &&
+           !v->cmdfifo_in_sub;
+}
+
+/* Run out what the walk has counted, so what follows is ordered behind it.
+ * Bounded, and the bound is not a formality: the consumer waits inside a
+ * packet whose rest the guest has not written, which leaves the depths
+ * equal -- so that case returns at once -- but a stream this walk has
+ * mis-counted leaves them apart with nobody coming, and the guest must not
+ * be stopped with it. */
+static bool
+voodoo2_fifo_drain(Voodoo2State *s, const char *why)
+{
+    voodoo_t *v = s->v;
+    int64_t   deadline;
+
+    if (voodoo2_fifo_caught_up(v)) {
+        return true;
+    }
+    s->drains++;
+    deadline = qemu_clock_get_ms(QEMU_CLOCK_REALTIME) + VOODOO2_DRAIN_MS;
+    /* 86Box's own escape for a thread draining from the guest's side: with
+     * `flush` set, a swap in the ring completes without waiting for a
+     * retrace the display timer cannot deliver while this holds the BQL */
+    v->flush = 1;
+    while (!voodoo2_fifo_caught_up(v)) {
+        voodoo_wake_fifo_thread_now(v);
+        if (qemu_clock_get_ms(QEMU_CLOCK_REALTIME) >= deadline) {
+            v->flush = 0;
+            if (!s->drain_slow_warned) {
+                s->drain_slow_warned = true;
+                warn_report("voodoo2: the command FIFO did not run out in %d ms "
+                            "at %s (%u word(s) left of %u counted); the guest "
+                            "carries on and what follows may be drawn out of "
+                            "order",
+                            VOODOO2_DRAIN_MS, why,
+                            (unsigned) (v->cmdfifo_depth_wr - v->cmdfifo_depth_rd),
+                            s->fifo_words);
+            }
+            return false;
+        }
+        g_usleep(50);
+    }
+    v->flush = 0;
+    return true;
+}
+
+/* Is this write one that reconfigures the command FIFO? Only the register
+ * window proper: with the FIFO on, the window at 0x200000 carries packets,
+ * and with it off there is nothing to order. */
+static bool
+voodoo2_fifo_reconfigured_by(Voodoo2State *s, hwaddr addr, uint64_t val,
+                             unsigned size)
+{
+    if (addr >= 0x200000 || size != 4 || !ATOMIC_LOAD(s->v->cmdfifo_enabled) ||
+        !(s->v->initEnable & 1)) {
+        return false;
+    }
+    switch (addr & 0x3fc) {
+    case SST_fbiInit7:
+        return !(val & 0x100);          /* the bit that turns the FIFO off */
+    case SST_cmdFifoBaseAddr:
+    case SST_cmdFifoRdPtr:
+    case SST_cmdFifoDepth:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* After such a write: if the FIFO is off with words counted and not run,
+ * nobody is ever going to run them, and the difference is what the status
+ * register answers `busy` from. Close it, or the card is busy for ever. */
+static void
+voodoo2_fifo_settle(Voodoo2State *s, bool was_on)
+{
+    voodoo_t *v = s->v;
+    uint32_t  rd, wr;
+
+    if (!was_on || ATOMIC_LOAD(v->cmdfifo_enabled)) {
+        return;
+    }
+    rd = ATOMIC_LOAD(v->cmdfifo_depth_rd);
+    wr = ATOMIC_LOAD(v->cmdfifo_depth_wr);
+    if (rd == wr) {
+        return;
+    }
+    if (!s->fifo_left_noted) {
+        s->fifo_left_noted = true;
+        info_report("voodoo2: the command FIFO was turned off with %u word(s) "
+                    "counted and not run; the card goes idle rather than "
+                    "reading busy to every later poll", wr - rd);
+    }
+    ATOMIC_STORE(v->cmdfifo_depth_rd, wr);
+    v->cmdfifo_in_sub = 0;
+}
+
 /* A read of the LFB with the command FIFO off: Glide's device probe, when
  * it is one of its three checks -- fbiMemSize's 16-bit depth-buffer reads
  * away from the origin, and a 32-bit read of the 4x4 at the origin under a
@@ -879,6 +1022,7 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
     Voodoo2State *s = opaque;
     voodoo_t     *v = s->v;
+    bool          fifo_was_on;
 
     if (s->fifo_mapped) {
         /* what the guest put in the ring comes before this write */
@@ -943,6 +1087,14 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
                         (unsigned) val, (unsigned) addr);
         }
     }
+    /* the ring is what the guest wrote first: run it before this ("one
+     * order" above) */
+    if (voodoo2_fifo_reconfigured_by(s, addr, val, size)) {
+        voodoo2_fifo_drain(s, "a command-FIFO register");
+    } else if (s->lfb_order && addr >= 0x400000) {
+        voodoo2_fifo_drain(s, "an LFB or texture write");
+    }
+    fifo_was_on = ATOMIC_LOAD(v->cmdfifo_enabled) != 0;
     switch (size) {
     case 4:
         v->mapping.write_l((uint32_t) addr, (uint32_t) val, v->mapping.priv);
@@ -953,6 +1105,7 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     default:
         break;
     }
+    voodoo2_fifo_settle(s, fifo_was_on);
     voodoo2_fifo_after_write(s, addr);
 }
 
@@ -1298,10 +1451,13 @@ voodoo2_stats(void *opaque)
                      v->swap_pending ? ", swap pending" : "");
         } else if (s->fifo_mapped || s->fifo_words != s->last_fifo_words) {
             snprintf(ram, sizeof(ram), "; FIFO in RAM: %u words in %u syncs, "
-                     "%u packets part-written, %u words taken as data",
+                     "%u packets part-written, %u words taken as data, "
+                     "%u waits for the ring",
                      s->fifo_words - s->last_fifo_words,
-                     s->fifo_syncs - s->last_fifo_syncs, s->partial, s->forced);
+                     s->fifo_syncs - s->last_fifo_syncs, s->partial, s->forced,
+                     s->drains - s->last_drains);
         }
+        s->last_drains = s->drains;
         s->last_fifo_words = s->fifo_words;
         s->last_fifo_syncs = s->fifo_syncs;
         /* frames = presents (a scan-out with any dirty line); new = those
@@ -1534,6 +1690,7 @@ static Property voodoo2_properties[] = {
     DEFINE_PROP_BOOL("undither", Voodoo2State, undither, false),
     DEFINE_PROP_BOOL("recompiler", Voodoo2State, recompiler, true),
     DEFINE_PROP_BOOL("ramfifo", Voodoo2State, ramfifo, true),
+    DEFINE_PROP_BOOL("lfb-order", Voodoo2State, lfb_order, false),
     DEFINE_PROP_END_OF_LIST(),
 };
 

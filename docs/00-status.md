@@ -165,6 +165,46 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **Carmageddon's 3dfx build on the Voodoo 2: the quit hang is fixed, the
+  flashing HUD and a wrong menu aspect are open** (2026-09-18, doc 21 §13;
+  the user's own run on `base98-us`, `-device voodoo2,undither=on` with
+  `d3dpt-vga`, log kept as `/tmp/launcher.log`). Three symptoms were
+  reported; one is closed.
+  **The hang is closed.** Glide's `grSstWinClose` writes its last packets
+  and then clears fbiInit7's command-FIFO bit; here that register write is
+  applied at once while the ring is still being consumed, 86Box's consumer
+  loop ends the moment `cmdfifo_enabled` goes false, and `SST_status`'s busy
+  bit *is* `cmdfifo_depth_rd != cmdfifo_depth_wr`. Two words of the 104 the
+  last walk counted were left, so the card read busy to every later poll and
+  the DOS box spun in `grSstIdle` for minutes while Windows carried on
+  around it — `busy: 0 cmds outstanding (wr 49668 rd 49668), fifo depth
+  59495109/59495111` with 27 million reads of register 0x000 in five
+  seconds, which is the whole diagnosis in one line. Such a write now runs
+  the ring out first (`voodoo2.c`, "one order"; bounded at 250 ms, with
+  86Box's own `flush` escape so a swap in the ring does not wait for a
+  retrace the display timer cannot deliver while the vCPU holds the BQL),
+  and behind it, if a write still leaves the FIFO off with words counted and
+  not run, the depths are equalised and the card goes idle. Guarded by a new
+  **teardown phase** in `tools/voodoo-guest-test.py`, both halves of which
+  fail without the fix.
+  **The flashing HUD is open.** The obvious candidate was the same
+  inversion on the other queue — 86Box empties the LFB/texture queue before
+  the ring, so a game that draws its world through the ring and its HUD with
+  `grLfbWriteRegion` (Carmageddon does: ~750,000 triangles and ~5.2 M LFB
+  writes across 300 frames) can have the world painted over the HUD. It is a
+  real hole and `lfb-order=on` closes it, but the ordering phase added to
+  the same tool **measures the window to be shorter than the consumer's
+  wake**: on an unloaded host the block lands on top with the switch either
+  way. So the switch is off by default (it costs a wait for the rasterizer
+  at every ring-then-LFB turn) and the cause is still to be found. Next:
+  ask for the flash with `undither=off` — the undither landed the day
+  before and declines a frame whose last `fbzMode` has the dither bit clear,
+  so a game that alternates would alternate filters too.
+  **The menu's aspect is open** and needs a screenshot: the player's own
+  geometry is right in the log (`mode 640x480 VGA 640x480 — 4:3 picture,
+  pixel aspect 1.000, 480 scanlines`, from the surface size alone), so
+  whatever is wide is inside the guest's frame.
+
 - **A guest-side wait starved the guest it was waiting for** (2026-09-18).
   `tools/win98-game-test.sh` held the login with a CHOICE loop in a DOS box,
   which is the only bounded wait COMMAND.COM can write — and CHOICE polls,

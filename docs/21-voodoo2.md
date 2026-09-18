@@ -739,3 +739,105 @@ frame buffer. `VOODOO2_UNDITHER_PATTERN=4x4|2x2` overrides the pattern
 
 `undither=on` supersedes `filter=on` on any frame it accepts: it writes the
 whole surface itself and never looks at what the scanline filter did.
+
+## 13. One order: the ring, the teardown, and the LFB
+
+The chip has one way in from the PCI bus. A packet in the command FIFO, a
+write into the LFB or texture aperture and a register write all reach it in
+the order the guest made them. 86Box has **two** queues — `voodoo->fifo`,
+where a frame-buffer or texture write is queued, and the ring — and
+`voodoo_fifo_thread` empties the whole of the first before it looks at the
+second (`vid_voodoo_fifo.c`: the `while (!FIFO_EMPTY)` loop, then the
+`while (voodoo->cmdfifo_enabled && ...)` one). A register the vCPU thread
+writes does not queue at all. So the ring is the stream that can be
+overtaken, and it is what hangs a guest at the end.
+
+### The teardown hang
+
+Glide's `grSstWinClose` writes its last packets and then clears fbiInit7's
+command-FIFO bit. That write is applied at once while the ring is still
+being consumed, and 86Box's consumer loop ends the moment `cmdfifo_enabled`
+goes false — so whatever it had not reached is never run, and
+`cmdfifo_depth_rd != cmdfifo_depth_wr` for ever. `SST_status`'s busy bit
+(0x380) is built from exactly that difference (`vid_voodoo.c`, `case
+SST_status`), so the card reads **busy to every later poll**, and the poll
+is Glide's own `grSstIdle`.
+
+Carmageddon's 3dfx build hung there on 2026-09-18 — the user's own run, the
+DOS build in a Win98 DOS box on `base98-us`. The DOS box spun for minutes
+while Windows carried on around it. The log says it plainly, and the shape
+is worth knowing:
+
+    voodoo2: command FIFO through MMIO (ring 001c2000+40000)
+    voodoo2: 640x480 on: 122 frames (1 new), 0 triangles, 4 writes, 27298405 reads
+      in 5.0 s; regs read 0x000:27298401; busy: 0 cmds outstanding (wr 49668 rd
+      49668), fifo depth 59495109/59495111
+
+Nothing is busy — no commands outstanding, no `voodoo_busy`, no render
+thread — and the depths differ by two words of the 104 the last walk
+counted. Twenty-seven million reads of register 0x000 in five seconds is
+the guest asking about those two words.
+
+**The fix, in our own file** (`voodoo2.c`, "one order"): before a write that
+reconfigures the command FIFO — fbiInit7 clearing the enable, or the ring's
+own pointers — **run the ring out**. Everything the guest wrote before that
+access has just been counted by `voodoo2_fifo_sync()`, so waiting for the
+consumer to catch up puts the register behind the packets, where the bus
+puts it. The wait sets `voodoo->flush`, which is 86Box's own escape for a
+thread draining from the guest's side: a swap in the ring then completes
+without waiting for a retrace the display timer cannot deliver while the
+vCPU holds the BQL. It is bounded (250 ms) and says so once if it ever runs
+out — a consumer parked inside a packet the guest has not finished writing
+leaves the depths *equal* and returns at once, so the bound is for a stream
+this walk has mis-counted, nothing else.
+
+Behind it, unconditionally: if a write leaves the command FIFO off with
+words counted and not run, the depths are equalised and the card goes idle.
+Nothing is ever going to run those words, and a card that reads busy for
+ever is worse than a lost packet. It fires only on the off transition, so a
+`cmdFifoDepth` write made with the FIFO already off — which sets a
+difference on purpose — is never touched.
+
+**The check** is the teardown phase of `tools/voodoo-guest-test.py`: a cyan
+fill and a swap go into the ring and the FIFO is turned off at once, with no
+idle wait at all. The frame has to be cyan (the packets were run, not
+dropped) and the status register has to read idle afterwards. Both halves
+fail with `LFB_ORDER=off`.
+
+### One thing the DOS program had to learn: swapbufferCMD twice
+
+While writing that phase the card read busy with nothing pending, and the
+reason is in 86Box rather than here. On a Voodoo 2 a swap arriving as a
+**packet** does not increment `cmd_written_fifo` — only Banshee and later
+count one (`vid_voodoo_fifo.c`) — while every card's swap increments
+`cmd_read` (`vid_voodoo_reg.c`). A program that sends the packet alone
+therefore drives `written - cmd_read` negative, and the status register's
+busy bit is that difference. 3dfx's Glide never trips it because it writes
+`swapbufferCMD` to the register window as well as putting the packet in the
+ring — with the FIFO on that write only counts, and it is where the swap
+backlog in status bits 31:28 comes from. Carmageddon's stream shows exactly
+one of each per frame (`written 0x128:301` beside 301 swaps). The guest test
+does the same now.
+
+### The LFB half: real, and not the flashing HUD
+
+The same inversion applies to an LFB write queued while ring words are
+counted and not yet run: it is drawn *before* them, so a game that draws its
+world through the ring and its HUD with `grLfbWriteRegion` can have the
+world painted over the HUD. Carmageddon does draw that way — in the 5 s
+line, ~750,000 triangles and ~5.2 M LFB writes across 300 frames, about
+17,500 dwords a frame — and its HUD flashed in and out in the same run.
+
+But the window is only as wide as the consumer's *wake* takes. The ordering
+phase of the guest test is the measurement: the ring gets a red fastfill
+over the whole screen, then with nothing waited for the guest writes a
+38,400-dword blue block through the LFB, then the ring gets the swap. On an
+unloaded host the block is on top with the switch either way — the consumer
+is scheduled and has run the fastfill before the second write is queued. So
+this is not the explanation for the flashing HUD, and the HUD is still open.
+
+`lfb-order=on` puts the drain in anyway, and it is **off by default**
+because turning it on costs a wait for the rasterizer at every
+ring-then-LFB turn — once or twice a frame in a game of that shape, on the
+vCPU thread with the BQL held. The 5 s line counts the waits (`N waits for
+the ring`), which is how to price it on a real workload.

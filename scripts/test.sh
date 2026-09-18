@@ -250,7 +250,14 @@
 #                  swap across a JMP, a magenta one after a read-pointer read --
 #                  and the read pointer must end where the packets do and the
 #                  frames be blue, then magenta: under ramfifo=on (the default)
-#                  only the device's own packet walk can have run them. ~10 s
+#                  only the device's own packet walk can have run them. Then the
+#                  teardown (doc 21 §13): a fill and a swap go into the ring and
+#                  fbiInit7's command-FIFO bit is cleared at once, with no idle
+#                  wait -- the frame must be the fill (the packets were run, not
+#                  stranded) and the status register must read idle afterwards,
+#                  which is what Glide's grSstIdle waits for at grSstWinClose.
+#                  Carmageddon's 3dfx build spun there for ever with two words
+#                  outstanding (2026-09-18). ~20 s
 #   voodoo-guest-mmiofifo  the same with ramfifo=off, the per-dword MMIO path. ~10 s
 #   voodoo-guest-d3dpt  the same beside `-device d3dpt-vga`, the pairing a launcher
 #                  machine builds, with the adapter first put in an 800x600x32
