@@ -2906,3 +2906,82 @@ CUBETEST.EXE` in `RUN.BAT`, and `CUBETEST.LOG` read off the raw copy with
 mtools, since the harness's pull did not run after the power button). The
 negative control is the run before the change: the same scene traced with
 handle 0 at stage 3 and a black ocean.
+
+### 40. `no-exec` on 9x: the HAL claimed a Direct3D it did not have (2026-09-18)
+
+The user was testing ADR-013's fallback row on a Win98 machine — the machine
+form's Extra-QEMU-arguments field carrying `-global d3dpt-vga.no-exec=on`,
+the WineD3D DirectDraw folder copied next to two DirectX 3–6 games (doc 15's
+`no-exec` entry, `SETUP /GAME 5`) — and both games died with Windows' own
+"this program has performed an illegal operation", the details naming
+**`D3DPT9X.DRV` at `0001:000023dd`**. That offset is one instruction: with
+the linker map and the module's own bytes, `call far [ds:07c4]` — the
+`lpSetInfo(…)` at the end of `DDCreateDriverObject`, through the entry point
+DirectDraw handed us in `DDNEWCALLBACKFNS`.
+
+**`no-exec` was not the trigger.** Reproduced headless on a raw copy of the
+user's image (`tools/win98-game-test.sh`, `PLAYER=1`, Moto Racer from
+`RUN.BAT`), and then again with the flag *off* and the executor live: the
+game dies the same way. In both, and in a third run with the WineD3D DLLs
+taken out of the folder, the shape is the same — the game creates a device,
+throws it away and does it about two dozen times (48 `CanCreateSurface` /
+`CreateSurface` pairs; with the executor on it renders, 233 DP2 calls an
+iteration) and then faults. With the details pane opened by a click
+(`CLICKS=`), two of those runs name the fault outright: a **stack fault**, in
+`KERNEL32.DLL` at `0167:bff7142d` with `ESP=00832000`, and in `MOTO.EXE`
+itself at `0167:004426a5` — the game recursing until its stack is gone. A
+fourth run took the fallback proper (Wine's `DDRAW.DLL` the only DirectDraw
+loaded, Glide hidden, nothing having used DirectDraw first): **not one
+`DCICOMMAND` escape and not one HAL call reached this driver**, WineD3D came
+up on the GL pass-through, and the game died there too.
+
+**What it was: the game's own disc.** Every run above had the guest-tools ISO
+in the drive, as the user's machine did. With `MOTO_RACER.mds` on `ide.1`
+instead, and nothing else changed — `no-exec=on`, no WineD3D DLLs, Glide
+hidden — Moto Racer runs: its attract demo, **299 page flips in 5.0 s**
+through the DirectDraw flip chain, `ddi: frames 0` (no Direct3D is offered,
+so the game uses its own software renderer — ADR-013's row working), and a
+clean power-off. The control that pins it is that run with the disc taken
+back out and the *fixed* driver of the next paragraph: the stack fault
+returns, identical. The driver change is not what made it run; the crash is
+what this title does when it cannot find its CD.
+
+The same disc under the fallback (Wine's `DDRAW.DLL`, `no-exec=on`) does not
+crash either — and does not draw: 34 GL contexts created and destroyed, not
+one frame presented, the screen black for the whole run. For this title the
+WineD3D DirectDraw folder starts and renders nothing while the driver's own
+DirectDraw half runs it. That is open.
+
+**What the runs did find** is a real inconsistency in the `no-exec` path, and
+it is this driver's. `DriverInit` in `d3dpthal.c` published
+`d3dhal_global` / `d3dhal_callbacks` — and the execute-buffer callbacks —
+whatever `d3d_init` had answered. The `.drv` claims the whole Direct3D half
+off those two pointers (`DDCAPS_3D`, `DDSCAPS_3DDEVICE|TEXTURE|ZBUFFER|
+MIPMAP`, the Z depths, the DXT FourCCs), so with `no-exec=on` DirectDraw was
+offered a 3D device backed by a `D3DHAL_GLOBALDRIVERDATA` of zeros —
+`d3d_caps_init` runs inside `d3d_init`, which had refused. The log said both
+things at once: `d3dptdisp: no Direct3D executor on the host` and
+`d3dpt9dd:   d3d global=b00c1c60`. The NT driver has always gated every part
+of this on `p->core.d3d` (doc 15); the 9x one does now, and says
+`d3dpthal: no Direct3D on this host — DirectDraw only` when it withholds it.
+`NO_EXEC=1 tools/win98-driver-test.sh <image> boot` is the check: that line,
+no `d3d global=`, and DDPROBE's log showing the DirectDraw half intact.
+
+**And one hazard fixed while reading it.** `lpSetInfo` is a far pointer into
+DDRAW16, a module that is only loaded while some process has DirectDraw open,
+and the driver calls it again from `Enable` at every mode set
+(`DDCreateDriverObject(1)`). `DDNEWCALLBACKFNS` with a null table is
+DirectDraw taking that entry point back; the driver returned FALSE and kept
+the pointer. It now clears it, and verifies the selector with `lar` before
+the call either way — a far call into a module that has gone faults with
+nothing to say, in whatever program happened to be changing the mode.
+
+**One thing to know about the WineD3D folder on 9x**: whether a game gets
+Wine's `DDRAW.DLL` at all depends on what ran before it. In the runs where
+nothing had used DirectDraw, the copy next to the EXE was the one loaded and
+this driver saw no escape at all; in the runs where a small DirectDraw
+program (`ddprobe.exe`) ran first, the *system* `ddraw.dll` was used instead
+and every HAL call came back — Win9x resolves a `LoadLibrary` by module name
+against what is already loaded, and `DDHELP.EXE` keeps DirectDraw resident
+once anything has touched it. So a second game in the same Windows session
+can silently be on the system DirectDraw with the fallback folder in place.

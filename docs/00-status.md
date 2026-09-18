@@ -205,6 +205,36 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   pixel aspect 1.000, 480 scanlines`, from the surface size alone), so
   whatever is wide is inside the guest's frame.
 
+- **Moto Racer 1997 with no disc in the drive runs out of stack; the
+  WineD3D DirectDraw fallback starts and draws nothing** (2026-09-18,
+  doc 19 §40). Reported as "the WineD3D fallback crashes under
+  `no-exec=on`", with Windows naming `D3DPT9X.DRV 0001:000023dd` — which is
+  `lpSetInfo(…)`, the one far call in `DDCreateDriverObject`. It is neither
+  the fallback nor `no-exec`: headless on a raw copy of `base98-br-glide3`
+  the game dies the same way with the flag off and the executor live, with
+  the WineD3D DLLs taken out of the folder, and — Wine's `DDRAW.DLL` the
+  only DirectDraw loaded — with no `DCICOMMAND` escape reaching this driver
+  at all. Every one of those runs had the guest-tools ISO in the drive (as
+  the machine does) and the details pane names a **stack fault**:
+  `KERNEL32.DLL 0167:bff7142d, ESP=00832000`, and `MOTO.EXE 0167:004426a5`.
+  **With the game's own `MOTO_RACER.mds` on `ide.1` it runs** under
+  `no-exec=on`: the attract demo, 299 page flips in 5.0 s, `ddi: frames 0`
+  (the software renderer, which is ADR-013's row working), clean power-off —
+  and the control with the disc out again and the fixed driver brings the
+  stack fault straight back. **Open:** the same disc on Wine's `DDRAW.DLL`
+  does not crash and does not draw — 34 GL contexts made and destroyed, not
+  one frame presented, black for the whole run.
+
+- **A guest can kill the player through a Glide 3 entry point we do not
+  have** (2026-09-18). Moto Racer with `GLIDE3X.DLL` installed reaches
+  `grGlideInit`, and `hw/3dfx`'s `init_g3ext` then calls
+  `wrGetProcAddress` — `tblGlide2x[FEnum_grGetProcAddress].ptr`, which is
+  NULL, because our OpenGLide-based `libglide2x.so` exports no
+  `grGetProcAddress` (M14's Glide 3 work, memory `glide3-landscape.md`).
+  The vCPU thread jumps to 0 and the process dumps core
+  (`qemu/hw/3dfx/glide2x_impl.c:988`). Whatever Glide 3 ends up being, the
+  dispatcher should refuse a NULL entry rather than call it.
+
 - **A guest-side wait starved the guest it was waiting for** (2026-09-18).
   `tools/win98-game-test.sh` held the login with a CHOICE loop in a DOS box,
   which is the only bounded wait COMMAND.COM can write — and CHOICE polls,
