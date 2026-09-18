@@ -488,23 +488,18 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    (the user); the hook is installed for the capture's life rather than per
    focus, re-armed every 2 s at the head of the chain, and asks whether the
    *process* in front is ours (docs/00-status.md item 5). Install and re-arm
-   are measured on the PC, and the user's run the same day named the rest:
-   the hook **is** called for the Windows key and let it through, because
-   `GetForegroundWindow()` was `SearchHost`'s CoreWindow (Windows 11's
-   Start/Search) rather than the player's window — the shell has the
-   foreground before the hook runs. The hook asks winit's own focus too now,
-   and either answer is enough (docs/00-status.md item 5). To read a run:
-   `PLAYER_KEYBOARD_LOG=1 scripts/win-run.sh launcher`, a machine, the
-   Windows key, `%APPDATA%\2ksbox\data\player.log`:
-   - `hook: vk 0x5b … taken` — it works.
-   - `hook: vk 0x5b left to the host — neither winit nor Windows says the
-     keyboard is ours` — with the `focus:` line above it saying what winit
-     thought and what Windows had in front.
-   - no `hook:` line for the key at all — another program's hook is ahead of
-     ours and swallowed it (this PC runs three: PowerToys' Keyboard Manager
-     and PowerLauncher, Logitech Options+), or Windows removed ours between
-     re-arms.
-   - no `hook installed` line — `SetWindowsHookExW` was refused.
+   **Settled 2026-09-18**: the low-level hook is gone. It is called for every
+   key on the machine except while the player's own window is in front, which
+   is the only time it is wanted — measured every way on the PC
+   (docs/00-status.md item 5). The keyboard is registered for raw input with
+   `RIDEV_NOHOTKEYS` instead, which is scoped to the foreground window by the
+   window manager and leaves the key arriving as an ordinary `WM_KEYDOWN`:
+   three Windows keys at the focused player and the foreground never moves,
+   Ctrl+Alt+K and the next one opens Search. Alt+Tab and the other *system*
+   hotkeys stay Windows'. Left for the user to confirm: the guest's own Start
+   menu opening on a real keyboard, in a game. `PLAYER_KEYBOARD_LOG=1
+   scripts/win-run.sh launcher` prints the registration and every focus
+   change to `%APPDATA%\2ksbox\data\player.log`.
 0b. **Run the native build on the PC.** It **builds there, every stage**
    (2026-09-17, the user: `qemu`, `rust`, `qt`, `exec` and the guest-tools
    ISO, in MSYS2's MINGW64 shell). Nothing built there has been run yet:
