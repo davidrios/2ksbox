@@ -214,8 +214,15 @@ build_ovl() {
   cp "$d/glide2x.ovl" "$OUT/iso/GLIDE/"
 }
 build_ovl
-# OPENGL\: the GL pass-through wrapper, per game.
+# OPENGL\: the GL pass-through wrapper, per game, with the settings file
+# the wrapper reads from the game's own folder. It ships with a year cap on
+# the extension string: a modern host reports thousands of characters of
+# extension names and a 1990s title reads that into a fixed buffer (GLQuake
+# returns into the list itself and dies in an unknown module), so the
+# default is what such a game can hold. wrapgl32.ext is the one file here a
+# user edits, so SETUP /GAME never overwrites one already next to a game.
 cp "$M"/opengl32.dll "$OUT/iso/OPENGL/"
+cp "$ROOT/guest-tools/wrapgl32.ext" "$OUT/iso/OPENGL/WRAPGL32.EXT"
 # WINED3D\: one folder per kind of game, each copied whole next to the
 # game's EXE (2026-09-12, user request: the renames were what a user
 # would get wrong, and copying a folder in Explorer needs no terminal).

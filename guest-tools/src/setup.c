@@ -836,8 +836,9 @@ static const GameSet g_sets[] = {
       "D3DPT",   { "D3D8.DLL", "D3D8.DLL", "D3D9.DLL", "D3D9.DLL", "DDRAW.DLL", "DDRAW.DLL", NULL } },
     { "DirectInput keyboard fix (DINPUT.DLL)",
       "D3DPT",   { "DINPUT.DLL", "DINPUT.DLL", NULL } },
-    { "OpenGL pass-through (OPENGL32.DLL)",
-      "OPENGL",  { "OPENGL32.DLL", "OPENGL32.DLL", NULL } },
+    { "OpenGL pass-through (OPENGL32.DLL WRAPGL32.EXT)",
+      "OPENGL",  { "OPENGL32.DLL", "OPENGL32.DLL",
+                   "WRAPGL32.EXT", "WRAPGL32.EXT", NULL } },
     { "WineD3D, Direct3D 8/9 (D3D8.DLL D3D9.DLL WINED3D.DLL OPENGL32.DLL)",
       "WINED3D\\D3D8-9", { "D3D8.DLL", "D3D8.DLL", "D3D9.DLL", "D3D9.DLL", "WINED3D.DLL", "WINED3D.DLL",
                            "OPENGL32.DLL", "OPENGL32.DLL", NULL } },
@@ -856,10 +857,20 @@ static const GameSet g_sets[] = {
 };
 #define NSETS ((int)(sizeof g_sets / sizeof g_sets[0]))
 
+/* A file of a set that is settings rather than a binary: the user edits it
+ * next to the game (the OpenGL wrapper's own, which holds the extension-year
+ * cap a title needs), so a second SETUP /GAME must not undo that. The
+ * binaries beside it are still replaced, which is the point of running the
+ * verb again after a rebuild. */
+static int is_settings_file(const char *name)
+{
+    return !stricmp(name, "WRAPGL32.EXT");
+}
+
 static int copy_game_set(int n, const char *dir)
 {
     const GameSet *s;
-    char src[PATHBUF];
+    char src[PATHBUF], dst[PATHBUF];
     int bad = 0, i;
 
     if (n < 1 || n > NSETS) { say("no such set: %d", n); return 1; }
@@ -872,6 +883,12 @@ static int copy_game_set(int n, const char *dir)
     say("  into %s", dir);
     for (i = 0; s->files[i]; i += 2) {
         snprintf(src, sizeof src, "%s%s\\%s", g_root, s->dir, s->files[i]);
+        snprintf(dst, sizeof dst, "%s\\%s", dir, s->files[i + 1]);
+        if (is_settings_file(s->files[i + 1])
+            && GetFileAttributesA(dst) != INVALID_FILE_ATTRIBUTES) {
+            say("    %s: already there, left alone (it is yours to edit)", s->files[i + 1]);
+            continue;
+        }
         bad |= copy_one(src, dir, s->files[i + 1]);
     }
     return bad;

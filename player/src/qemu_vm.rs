@@ -345,6 +345,7 @@ unsafe extern "C" fn on_mouse_set(ud: *mut c_void, x: c_int, y: c_int, on: bool)
     // the new place when it has to (no cost when the host cursor is used —
     // the copy happens only if the UI takes the frame)
     if changed && s.cursor.is_some() && s.front.width != 0 && s.front.ext_slot.is_none() {
+        publish_trace(&format_args!("cursor"));
         s.front.seq += 1;
     }
     let waker = if changed { s.waker.clone() } else { None };
@@ -423,6 +424,7 @@ unsafe extern "C" fn on_3d_frame(ud: *mut c_void, px: *const u8, w: c_int, h: c_
         let row = std::slice::from_raw_parts(px.add(y * stride) as *const u32, w);
         s.front.pixels[y * w..(y + 1) * w].copy_from_slice(row);
     }
+    publish_trace(&format_args!("readback {w}x{h}"));
     s.front.ext_slot = None;
     s.front.seq += 1;
     s.front.published = std::time::Instant::now();
@@ -489,11 +491,29 @@ unsafe extern "C" fn on_3d_iosurface(
     1
 }
 
+/// `PLAYER_PUBLISH_LOG=1`: one line per published frame naming the source
+/// that made it — a ring slot, the readback path, the VGA surface or the
+/// cursor's republish. Which of them a frame came from is invisible in the
+/// picture, and a flicker is two of them taking turns.
+fn publish_trace(tag: &std::fmt::Arguments) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("PLAYER_PUBLISH_LOG").is_some()) {
+        return;
+    }
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    if n < 5000 {
+        eprintln!("[pub] {n} {tag}");
+    }
+}
+
 /// A ring slot holds a complete frame: publish by reference.
 unsafe extern "C" fn on_3d_frame_ready(ud: *mut c_void, slot: c_int) {
     let shared = &*(ud as *const Mutex<Shared>);
     let mut s = shared.lock().unwrap();
     note_3d_frame(&mut s);
+    publish_trace(&format_args!("slot {slot}"));
     s.front.ext_slot = Some(slot as usize);
     s.front.seq += 1;
     s.front.published = std::time::Instant::now();
@@ -587,6 +607,8 @@ unsafe extern "C" fn on_refresh_done(ud: *mut c_void) {
     } else {
         front.pixels.copy_from_slice(back);
     }
+    publish_trace(&format_args!("vga {}x{}{}", front.width, front.height,
+                                if transitional { " (transitional)" } else { "" }));
     front.ext_slot = None;
     front.seq += 1;
     front.published = std::time::Instant::now();

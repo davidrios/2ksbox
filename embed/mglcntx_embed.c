@@ -918,6 +918,14 @@ static int zc_init(void)
     return 1;
 }
 
+/* An integer knob from the environment, or `dflt`. */
+static int zc_env(const char *name, int dflt)
+{
+    const char *e = getenv(name);
+    int v = e ? atoi(e) : dflt;
+    return v < 0 ? dflt : v;
+}
+
 /* (re)allocate slot i at w x h and offer it to the frontend */
 static int zc_slot_ensure(int i, int w, int h)
 {
@@ -968,6 +976,21 @@ static int zc_slot_ensure(int i, int w, int h)
     glGenTextures(1, &zc[i].tex);
     glBindTexture(GL_TEXTURE_2D, zc[i].tex);
     glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, zc[i].img);
+    /* What the driver actually made of the dma-buf. The frontend imports
+     * every slot as one format from the fourcc we sent, so a slot whose
+     * texture came back a different shape is a slot the two sides disagree
+     * about -- which shows up as one frozen picture in a turning ring. */
+    {
+        GLint ifmt = 0, a = -1, r = -1;
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &ifmt);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_ALPHA_SIZE, &a);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_RED_SIZE, &r);
+        DPRINTF("zc slot %d texture: internal 0x%x red %d alpha %d; bo format 0x%x bpp %u "
+                "offset %u planes %d size %zu",
+                i, ifmt, r, a, gbm_bo_get_format(zc[i].bo), gbm_bo_get_bpp(zc[i].bo),
+                gbm_bo_get_offset(zc[i].bo, 0), gbm_bo_get_plane_count(zc[i].bo),
+                (size_t)gbm_bo_get_stride(zc[i].bo) * h);
+    }
     glBindTexture(GL_TEXTURE_2D, prev_tex);
     glGenFramebuffers(1, &zc[i].fbo);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, zc[i].fbo);
@@ -979,13 +1002,132 @@ static int zc_slot_ensure(int i, int w, int h)
         zc_off("dma-buf FBO incomplete");
         return 0;
     }
-    if (!embed_fx_dmabuf(i, zc[i].fd, w, h, zc[i].stride, DRM_FORMAT_ARGB8888, zc[i].modifier)) {
+    /*
+     * The frontend gets an fd of its own rather than the one this side keeps.
+     * Importing a dma-buf into Vulkan passes ownership: the frontend's
+     * vkAllocateMemory closes it with the memory, while zc_slot_free closes
+     * zc[i].fd too -- one description, two owners, and the number goes back
+     * to the process to hand to the next file it opens. A declined offer is
+     * still ours to close.
+     */
+    int share_fd = gbm_bo_get_fd(zc[i].bo);
+    if (share_fd < 0) {
+        zc_off("gbm_bo_get_fd for the frontend failed");
+        return 0;
+    }
+    if (!embed_fx_dmabuf(i, share_fd, w, h, zc[i].stride, DRM_FORMAT_ARGB8888, zc[i].modifier)) {
+        close(share_fd);
         zc_off("frontend declined the dma-buf");
         return 0;
     }
     DPRINTF("zero-copy slot %d: %dx%d stride %u modifier 0x%llx fd %d", i, w, h,
             zc[i].stride, (unsigned long long)zc[i].modifier, zc[i].fd);
+    /*
+     * `EMBED_ZC_SETTLE=<ms>`: wait before using a slot just offered. Accepting
+     * an offer only queues it -- the frontend imports on its own thread, later
+     * -- so as it stands the first blits into a slot race whatever importing
+     * it does. This says whether that race is what leaves a slot diverged.
+     */
+    {
+        int ms = zc_env("EMBED_ZC_SETTLE", 0);
+        if (ms) {
+            g_usleep((gulong)ms * 1000);
+        }
+    }
     return 1;
+}
+
+/*
+ * `EMBED_ZC_SLOTS=<n>`: rotate over the first n slots of the ring only. It
+ * defaults to ZC_SLOTS_DEFAULT, which is 1 while the ring is stood down.
+ * `EMBED_ZC_CHECK=<n>`: every n-th present, read four pixels back out of the
+ * slot just blitted into and log them beside the slot number.
+ *
+ * Both exist for one failure the frame counters cannot show: a ring slot the
+ * guest's frame stops reaching still gets published, so the picture flicks
+ * between the live frame and a frozen one at a third of the frame rate while
+ * every log says the ring is turning. The sample says whether the blit
+ * landed on *this* side of the hand-off; a slot whose sample keeps changing
+ * while the frontend shows it frozen puts the fault in the import instead.
+ */
+/*
+ * The ring is stood down to one buffer, which is not what it is for.
+ *
+ * On this host the second buffer the ring allocates stops being written
+ * through: GL reads back everything it blitted into it, while the dma-buf's
+ * own memory -- what the frontend imported and samples -- keeps the frame it
+ * held first. One publish in three is then a frozen picture, which on screen
+ * is a fast flicker (GLQuake on the Win98 machine, and any other title that
+ * presents through the GL pass-through). It needs the frontend to import the
+ * buffers into Vulkan: the backend on its own writes through to all three,
+ * which `embed-3d` now checks. Ring size, fd ownership and a settling delay
+ * before first use all make no difference -- doc 12 §4 has the measurements.
+ *
+ * With one buffer there is no second slot to go bad. What it gives up is the
+ * margin the ring exists for: the frontend samples the buffer the next blit
+ * is about to overwrite, and nothing but timing keeps them apart, since the
+ * hand-off has no fence coming back. Measured on the reference workload that
+ * costs nothing -- 72 fps either way, and a tear detector that catches every
+ * synthetic one-frame tear finds no more torn frames than the tear-free
+ * readback path does. It is still a smaller machine, a heavier shader chain
+ * or a faster guest away from mattering, so this is a stopgap: put it back to
+ * ZC_SLOTS once a slot's write-through survives the import.
+ */
+#define ZC_SLOTS_DEFAULT 1
+
+static int zc_slots(void)
+{
+    static int n;
+    if (!n) {
+        n = zc_env("EMBED_ZC_SLOTS", ZC_SLOTS_DEFAULT);
+        if (n < 1 || n > ZC_SLOTS) {
+            n = ZC_SLOTS_DEFAULT;
+        }
+        DPRINTF("zero-copy ring: %d of %d slot(s)%s", n, ZC_SLOTS,
+                (n == 1) ? " (one buffer: the ring is stood down)" : "");
+    }
+    return n;
+}
+
+/* Read four pixels out of the middle of the slot just written. */
+static void zc_sample(int i)
+{
+    static int every = -1;
+    static unsigned long long nth;
+    uint32_t px[4] = { 0, 0, 0, 0 };
+    GLint prev_read = 0;
+
+    if (every < 0) {
+        every = zc_env("EMBED_ZC_CHECK", 0);
+    }
+    if (!every || (nth++ % (unsigned)every)) {
+        return;
+    }
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, zc[i].fbo);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glReadPixels(win_w / 2, win_h / 2, 2, 2, GL_BGRA, GL_UNSIGNED_BYTE, px);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, prev_read);
+    /* The same four pixels straight out of the buffer's own memory. GL
+     * reading back what GL wrote proves only that GL is self-consistent: if
+     * the driver kept a private copy behind the EGLImage, the dma-buf the
+     * frontend imported never moves and the two lines disagree. That is the
+     * whole question a frozen ring slot asks. */
+    {
+        uint32_t *cpu;
+        void *mapd = NULL;
+        uint32_t mstride = 0;
+        cpu = gbm_bo_map(zc[i].bo, 0, 0, zc[i].w, zc[i].h, GBM_BO_TRANSFER_READ,
+                         &mstride, &mapd);
+        if (cpu) {
+            uint32_t *row = (uint32_t *)((char *)cpu + (size_t)(win_h / 2) * mstride);
+            DPRINTF("zc slot %d centre gl %08x %08x cpu %08x %08x", i, px[0], px[1],
+                    row[win_w / 2], row[win_w / 2 + 1]);
+            gbm_bo_unmap(zc[i].bo, mapd);
+        } else {
+            DPRINTF("zc slot %d centre gl %08x %08x cpu <map failed>", i, px[0], px[1]);
+        }
+    }
 }
 
 /* present FBO 0 into the next ring slot; 1 = handed off, 0 = use readback */
@@ -1014,8 +1156,9 @@ static int zc_present(void)
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prev_draw);
     /* bring-up sync: wait for the blit before publishing (fence fd later) */
     glFinish();
+    zc_sample(i);
     embed_fx_frame_ready(i);
-    zc_next = (i + 1) % ZC_SLOTS;
+    zc_next = (i + 1) % zc_slots();
     return 1;
 }
 

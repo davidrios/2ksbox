@@ -157,6 +157,18 @@ player [--shader <preset.slangp>] [--shader-params <k=v,...>] [--pad usb|keys]
   running printed it for as long as it was up.
 - `PLAYER_LATENCY=1` prints publish→present latency percentiles every
   240 guest frames.
+- `PLAYER_ZERO_COPY=0` refuses every dma-buf the backend offers, so 3D
+  frames come back through the readback path instead of the ring (doc 12
+  §4). The A/B that puts a wrong 3D picture on one side or the other of
+  the hand-off: the readback path copies under a lock, so a fault that
+  survives it is not the ring's.
+- `PLAYER_PUBLISH_LOG=1` prints a line per published frame naming what
+  made it — a ring slot and which one, the readback path, the VGA
+  surface, or the cursor's republish — and a line per frame *presented*,
+  on the render thread. Which source a frame came from is invisible in
+  the picture, and two of them taking turns is a flicker: pairing the
+  presented slot with `PLAYER_SHOT_EVERY=1`'s shot is how the frozen ring
+  slot below was found.
 
 ### Keys, pointer and window
 
@@ -294,6 +306,33 @@ path; the line `glidept: wrapper <path>` says which. It renders into the
 same window-less context as the GL pass-through, so Glide frames go
 through the shader chain like any other. `GLIDE_HOST_LOG=<path|->` turns
 on its own log. Guest side: `GLIDE\` on the ISO (`SETUP.EXE` installs it).
+
+### OpenGL pass-through (doc 12)
+
+The guest's `OPENGL32.DLL` (`OPENGL\` on the ISO, `SETUP /GAME 3`) is
+qemu-3dfx's wrapper; it reaches the device through the mapper the Glide
+component installs. It reads **`WRAPGL32.EXT` from the game's own
+folder**, which ships beside it and holds `ExtensionsYear,1997`: a modern
+host reports several thousand characters of extension names and a title
+of the 1990s reads that into a fixed buffer. GLQuake's is 4096 bytes and
+it dies in an unknown module, having returned into the text of the list
+(measured on `base98-br`). Raise the year for a later game, or delete the
+file. `SETUP /GAME` never overwrites one that is already there.
+
+Host side, the frames go through the embed backend's dma-buf ring:
+
+- `EMBED_ZC_SLOTS=<n>` uses the first n of the ring's buffers. **The
+  default is 1** — the ring is stood down, because its second buffer
+  stops being written through on this host (doc 12 §4). `=3` restores it.
+- `EMBED_ZC_CHECK=<n>` reads four pixels out of the buffer just blitted
+  into, every n-th present, twice: through GL and straight out of the
+  buffer's memory with `gbm_bo_map`. GL reading back what GL wrote proves
+  only that GL is self-consistent; the two lines disagreeing is a buffer
+  the frontend will see frozen.
+- `EMBED_ZC_SETTLE=<ms>` waits that long after offering a buffer to the
+  frontend before using it. Accepting an offer only queues it — the
+  import happens later, on the frontend's own thread — so the first blits
+  race it. This says whether that race is the cause. It is not.
 
 ## The launcher's front ends
 

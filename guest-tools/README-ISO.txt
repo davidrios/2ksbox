@@ -58,6 +58,15 @@ D3DPT\    Direct3D 8/9 through the paravirtual device, per game: copy
 OPENGL\   OPENGL32.DLL, the OpenGL pass-through wrapper: next to an
           OpenGL game's EXE (Quake 2 and friends). TESTS\WGLGEARS.EXE in
           the same folder is the two-second check that it works.
+          WRAPGL32.EXT goes with it, and is the one file here you edit:
+          it caps the OpenGL extension list the game is shown. A modern
+          host reports several thousand characters of extension names,
+          and a game of the 1990s reads that into a fixed buffer -
+          GLQuake's is 4096 bytes and it crashes on the real one. The
+          shipped cap is what such a game can hold; raise the year for a
+          later game, or delete the file to pass everything through.
+          SETUP /GAME 3 copies both, and never overwrites a
+          WRAPGL32.EXT you have already changed.
 
 WINED3D\  Direct3D -> OpenGL in the guest (wine9x @WINE9X@): the fallback
           for what the two stacks above do not cover, and the only

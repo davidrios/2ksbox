@@ -31,6 +31,57 @@ bound to rectangle textures with `CGLTexImageIOSurface2D`, flipped blit
 from the stand-in FBO, embed API v6 `on_3d_iosurface`; the player wraps
 the surface in a Metal texture (`player/src/iosurface.rs`). **§4 complete
 on both platforms.**
+**§4 open again on Linux (2026-09-17): the ring's second buffer stops
+being written through, and the ring is stood down to one.** Found as a
+fast flicker in GLQuake on `base98-br` — every third presented frame was
+the same frozen picture. What it is: the backend blits FBO 0 into slot
+*i* and publishes it, and slot 1's GL side is perfect — `glReadPixels`
+off `zc[1].fbo` gives back every frame that was blitted in — while the
+dma-buf's *own memory*, which the frontend imported and samples, keeps
+the frame it held first. `EMBED_ZC_CHECK=<n>` prints both readings; the
+GL and `gbm_bo_map` lines agree on slots 0 and 2 and disagree on slot 1
+(125 of 126 samples at a 2-slot ring, 0 of 127 for slot 0). The colour
+shows it too: slot 1 reads alpha `ff` where the others read `00`.
+
+What it is **not**, each measured rather than reasoned:
+
+- Not the backend alone. With no frontend import anywhere — no player, no
+  Vulkan, no guest — `tools/embed-3d-test.c` runs 34 frames through all
+  three slots and every slot's memory changes. It takes the frontend
+  importing the same dma-bufs into Vulkan, in the same process, for a
+  slot to diverge. That test used to draw *two* frames, one blit per
+  slot, and slot 1's first blit does land — which is why the `embed-3d`
+  check stayed green throughout. It now runs several frames per slot and
+  requires each slot's memory to change.
+- Not the ring's size. Slot 1 diverges at three slots and at two; slot 0
+  never does.
+- Not fd ownership, though that was a real bug found looking: the
+  frontend was handed the same fd the EGLImage was created from, and
+  importing it into Vulkan passes ownership, so `zc_slot_free` closed it
+  a second time. It gets its own `gbm_bo_get_fd` now, and a declined
+  offer is closed rather than leaked. The divergence is unchanged.
+- Not a race between the first blits and the import. Accepting an offer
+  only queues it — the frontend imports later, on its own thread — but
+  `EMBED_ZC_SETTLE=100` waits 100 ms before using a freshly offered slot
+  and 80 of 81 samples still diverge.
+
+So the suspects are the import parameters themselves
+(`player/src/dmabuf.rs`: `initial_layout: UNDEFINED` with no transition
+for externally written memory, `MemoryDedicatedAllocateInfo` on imported
+memory, the explicit plane layout's `row_pitch`/`size`), and the next
+step is a reproducer that imports the ring into Vulkan with exactly those
+parameters and no guest — which is also what anything filed upstream
+would need.
+
+Meanwhile `ZC_SLOTS_DEFAULT` is 1: with one buffer there is no second
+slot to go bad. The cost is the margin the ring exists for — the frontend
+samples the buffer the next blit will overwrite, and the hand-off has no
+fence coming back — but on the reference workload it is not visible: 72
+fps either way, and a tear detector that catches 100 % of synthetic
+one-frame tears finds no more torn frames with one buffer (3.1 %) than on
+the tear-free readback path (3.1 %), the residue being GLQuake's own
+horizontal edges. `EMBED_ZC_SLOTS=3` restores the ring for the
+investigation; `PLAYER_ZERO_COPY=0` drops to readback entirely.
 **Glide (§5) done on Linux, 2026-09-06:** the host-side wrapper is ours now
 (OpenGLide, `third_party/openglide` + `patches/openglide`, built by
 `scripts/build-glide.sh`), it renders into the same window-less context as

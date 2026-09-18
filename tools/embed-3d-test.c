@@ -38,6 +38,13 @@ static uint32_t px_tl, px_br, px_c;
 /* zero-copy: the dma-bufs the backend offered, mmap'ed for checking */
 static struct { int fd; int w, h, stride; void *map; size_t len; } slots[8];
 static int dmabufs, readies, last_slot = -1;
+/* Per slot, whether the buffer's own memory ever changed after its first
+ * frame. One blit per slot proves only that the ring was wired up: a slot
+ * whose first blit lands and whose later ones stop reaching the dma-buf
+ * still publishes, and on screen that is a fast flicker between the live
+ * picture and a frozen one at a third of the frame rate. */
+static uint32_t slot_first_c[8];
+static int slot_n[8], slot_changed[8];
 
 static int on_3d_dmabuf(void *ud, int slot, int fd, int w, int h, int stride,
                         uint32_t fourcc, uint64_t modifier)
@@ -78,6 +85,11 @@ static void on_3d_frame_ready(void *ud, int slot)
         px_tl = *(const uint32_t *)(p + 10 * st + 10 * 4);
         px_br = *(const uint32_t *)(p + (h - 10) * st + (w - 10) * 4);
         px_c = *(const uint32_t *)(p + (h / 2) * st + (w / 2) * 4);
+        if (slot_n[slot]++ == 0) {
+            slot_first_c[slot] = px_c;
+        } else if (px_c != slot_first_c[slot]) {
+            slot_changed[slot] = 1;
+        }
     }
 }
 
@@ -162,6 +174,21 @@ int main(int argc, char **argv)
     glClear(GL_COLOR_BUFFER_BIT);
     MGLSwapBuffers();
     ok = ok && frames == 2 && (px_tl & 0xffffff) == 0x00ff00;
+
+    /* Several frames per slot, each a different colour: every slot the ring
+     * hands out must show the new one in its own memory. */
+    for (int i = 0; i < 4 * 8; i++) {
+        glClearColor(0.f, 0.f, (float)(i % 8) / 8.f, 1.f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        MGLSwapBuffers();
+    }
+    for (int i = 0; i < 8; i++) {
+        if (slot_n[i] >= 2 && !slot_changed[i]) {
+            printf("slot %d: %d frames blitted into it, its memory never changed"
+                   " (frozen at %08x)\n", i, slot_n[i], slot_first_c[i]);
+            ok = 0;
+        }
+    }
 
     MGLDeleteContext(0);
     MGLWndRelease();

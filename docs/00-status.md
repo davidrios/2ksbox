@@ -1,4 +1,4 @@
-# 0. Status and how to resume (updated 2026-09-13)
+# 0. Status and how to resume (updated 2026-09-17)
 
 Read this first in a new session. Decisions: doc 10. Plan: doc 08.
 
@@ -164,6 +164,34 @@ macOS specifics: `docs/build-macos.md`. x87 tests need `brew install nasm
 mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
+
+- **The zero-copy ring's second buffer stops being written through; the
+  ring is stood down to one** (2026-09-17, doc 12 §4). Found as a fast
+  flicker in GLQuake on `base98-br`: every third presented frame was the
+  same frozen picture. Slot 1's GL side is perfect — `glReadPixels` off
+  its FBO returns every frame blitted in — while the dma-buf's own memory,
+  which the frontend imported and samples, keeps the frame it held first
+  (`EMBED_ZC_CHECK=<n>` prints both readings; they disagree on slot 1 in
+  125 of 126 samples and never on slot 0). It needs the frontend's Vulkan
+  import to happen: the backend on its own writes through to all three
+  slots over 34 frames. Not the ring size, not fd ownership (a real
+  double-close, fixed in passing), not a race with the import
+  (`EMBED_ZC_SETTLE=100` changes nothing). `ZC_SLOTS_DEFAULT` is 1 for
+  now, which costs no frames and no measurable tearing but gives up the
+  margin the ring is for. **Next:** a reproducer that imports the ring
+  into Vulkan with `player/src/dmabuf.rs`'s exact parameters and no
+  guest — the only honest route to saying whose bug it is, and what
+  anything filed upstream would need. `EMBED_ZC_SLOTS=3` brings the ring
+  back for the investigation.
+- **A 1990s OpenGL game needs the extension string capped** (2026-09-17).
+  A modern host reports several thousand characters of extension names
+  and these titles read that into a fixed buffer: GLQuake's is 4096 bytes
+  and it dies with an invalid page fault in an unknown module, having
+  returned into the text of the list. `WRAPGL32.EXT` now ships in the
+  ISO's `OPENGL\` beside `OPENGL32.DLL` with `ExtensionsYear,1997`, and
+  `SETUP /GAME 3` copies it — never overwriting one already next to a
+  game, since it is the file a user tunes per title. GLQuake then runs
+  full-screen 640x480 at 72 fps on the pass-through.
 
 - **The Mac build no longer needs XQuartz — not yet built on the Air**
   (2026-09-17, patch 70). On macOS, `hw/mesa/mglcntx_linux.c`'s GLX

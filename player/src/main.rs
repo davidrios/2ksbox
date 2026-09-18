@@ -104,8 +104,14 @@ impl Gpu {
                 (d, q, cfg!(target_os = "macos"))
             }
         };
+        // `PLAYER_ZERO_COPY=0` refuses every slot the backend offers, so it
+        // falls back to reading each frame back (doc 12 §4). The A/B that
+        // separates a fault in the ring from one in what the guest drew.
+        let zero_copy = zero_copy && std::env::var("PLAYER_ZERO_COPY").as_deref() != Ok("0");
         if zero_copy {
             eprintln!("[3d] zero-copy dma-buf import available");
+        } else {
+            eprintln!("[3d] zero-copy off: frames are read back");
         }
         // The CRT chain's border sampling, said out loud once. Without
         // it librashader samples clamp-to-edge (see
@@ -1162,6 +1168,12 @@ fn present_guest_frame(
     }
     let mut f = display.take_if_newer(*last_seq)?;
     *last_seq = f.seq;
+    if std::env::var_os("PLAYER_PUBLISH_LOG").is_some() {
+        match f.ext_slot {
+            Some(s) => eprintln!("[present] seq {} slot {s}", f.seq),
+            None => eprintln!("[present] seq {} surface {}x{}", f.seq, f.width, f.height),
+        }
+    }
     match f.ext_slot {
         Some(s) => gpu.use_slot(Some(s)),
         None => {
