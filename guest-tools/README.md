@@ -26,8 +26,9 @@ DRIVER9X\   the Win98/Me display driver for d3dpt-vga (D3DPT9X.INF,
 D3DPT\      per game: D3D8.DLL D3D9.DLL DDRAW.DLL DINPUT.DLL over our
             paravirtual device (doc 14)
 OPENGL\     per game: OPENGL32.DLL, the GL pass-through wrapper
-WINED3D\    the wine9x set under wine9x's own names, plus the switcher
-            DLLs for a system-wide install (WINE9X.TXT)
+WINED3D\    per game, whole folder: D3D8-9\ for DirectX 8/9 games,
+            DDRAW\ for DirectX 7 and older, each with WINED3D.DLL and
+            OPENGL32.DLL; README.TXT says which and when
 TESTS\      every test / benchmark / calibration program, one copy each
 CDSHELF\    CDSHELF.EXE (98/2000/XP) CDSHELF.COM (DOS)
 ```
@@ -46,8 +47,12 @@ had to rename (`WINED9.DLL` → `D3D9.DLL`), which is exactly what a user
 copying by hand gets wrong; since 2026-09-12 (user request) `WINED3D\D3D8-9\`
 and `WINED3D\DDRAW\` hold the DLLs under the names a game loads, each with
 `WINED3D.DLL` and our `OPENGL32.DLL`, ready to copy whole from Explorer. The
-files are the same for 98 and XP; `WINED3D\SYSTEM\` keeps wine9x's
-system-wide set (the per-family switchers) under its own names.
+files are the same for 98 and XP. Since 2026-09-18 (user decision) those two
+folders and a `README.TXT` are all the disc carries: `WINED3D\SYSTEM\`, which
+held wine9x's system-wide switchers, was a third way to do the same thing
+sitting beside them, and made the folder read as a choice a user had to
+understand (and 3.6 MB of the disc). The switchers are still built into
+`out/wine9x/` for anyone who wants that install by hand.
 
 
 **WineD3D (Direct3D 8/9 → OpenGL → pass-through):** built from
@@ -60,12 +65,13 @@ provides. A per-game install (`SETUP /GAME 4`/`5`, or one of
 `WINED3D\D3D8-9\` / `WINED3D\DDRAW\` copied by hand) is the Wine DX
 interfaces under the names a game loads — `wined9.dll` is `D3D9.DLL` on the
 disc — plus `WINED3D.DLL` and `OPENGL32.DLL`, which is the low-risk way to
-use them: nothing in system32 changes. The
+use them: nothing in system32 changes, so no other game's Direct3D moves.
+That is the only install the disc offers. wine9x's own
 switcher DLLs are the system-wide variant (they route each EXE to
 Wine or to Microsoft's DLLs by registry, `HKLM\Software\DDSwitcher`)
 for games that load D3D from elsewhere; that install replaces system32
-files and needs safe mode + dllcache on XP, wine9x's README (`WINE9X.TXT`
-on the ISO) has the steps. Wine's d3d8/d3d9 set the x87 to 24-bit
+files and needs safe mode + dllcache on XP, and wine9x's README in
+`out/wine9x/` has the steps. Wine's d3d8/d3d9 set the x87 to 24-bit
 precision on CreateDevice like native Direct3D, which is what QEMU's
 inline x87 mode 2 (doc 13) covers. Build notes: wine9x links the CRT
 (msvcrt through the same shim), its pthread9x sub-build hardcodes `ar`

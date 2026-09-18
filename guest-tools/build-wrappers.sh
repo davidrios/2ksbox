@@ -106,14 +106,20 @@ check_crt() {  # fail loudly if anything still imports the UCRT api-sets
     echo "ERROR: $1 links against the UCRT (not loadable on Win9x)"; exit 1
   fi
 }
+# Every text file staged on the disc goes through this: Win9x Notepad shows
+# LF-only text as one line.
+crlf() { awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }'; }
 
 # WineD3D for the guests: wine9x builds wined3d.dll (Wine 1.7.55 with the
 # 9x/XP fixes) plus the DX interfaces wined8/wined9/winedd and per-OS
-# "switcher" ddraw/d3d8/d3d9 DLLs for a system-wide install. wined3d links
-# the CRT, so it gets the msvcrt flags; not the shim's -march=pentium3
-# though, with which GCC emits a memset call inside the CRT-less switcher
-# DLLs (wine9x's own -march=pentium2 is below our floor anyway, and the
-# ISA check below covers the result). Its pthread9x sub-build hardcodes
+# "switcher" ddraw/d3d8/d3d9 DLLs for a system-wide install. The switchers
+# are not staged on the disc any more (see WINED3D\ below) but are still
+# built, because they are what wine9x's own README walks through and they
+# are one `make` target away. wined3d links the CRT, so it gets the msvcrt
+# flags; not the shim's -march=pentium3 though, with which GCC emits a
+# memset call inside the CRT-less switcher DLLs (wine9x's own
+# -march=pentium2 is below our floor anyway, and the ISA check below covers
+# every file that does reach the disc). Its pthread9x sub-build hardcodes
 # the host `ar`, which is BSD ar on macOS.
 WINE9X_URL="https://github.com/JHRobotics/wine9x.git"
 WINE9X_REF="8ab16c6c0930efc1f9138eddda7b3114d7f31e62"   # main, 2026-09 (v1.7.55.45 + tray/HAL change)
@@ -160,7 +166,7 @@ build_wined3d
 # except WineD3D's: its folders are meant to be copied whole from Explorer,
 # so each carries what it needs (see WINED3D\ below).
 rm -rf "$OUT/iso"
-mkdir -p "$OUT/iso"/{GLIDE,OPENGL,D3DPT,TESTS,CDSHELF,VOODOO2} "$OUT/iso/WINED3D"/{D3D8-9,DDRAW,SYSTEM}
+mkdir -p "$OUT/iso"/{GLIDE,OPENGL,D3DPT,TESTS,CDSHELF,VOODOO2} "$OUT/iso/WINED3D"/{D3D8-9,DDRAW}
 G="$FX/wrappers/3dfx/build"; M="$FX/wrappers/mesa/build"
 T="$OUT/iso/TESTS"
 
@@ -231,9 +237,13 @@ cp "$ROOT/guest-tools/wrapgl32.ext" "$OUT/iso/OPENGL/WRAPGL32.EXT"
 # XP (only the system-wide switchers differ per family) — plus
 # OPENGL32.DLL, because wined3d draws through the first opengl32.dll the
 # loader finds and without ours that is Windows' own software GL 1.1.
-# SETUP /GAME 4 and 5 copy the same two folders. SYSTEM\ is wine9x's
-# system-wide install under its own names (the switchers and the four
-# DLLs they load), which WINE9X.TXT walks through.
+# SETUP /GAME 4 and 5 copy the same two folders. The disc carries the two
+# per-game folders and nothing else (2026-09-18, user decision): wine9x's
+# system-wide install — the *_98 / *_XP switcher DLLs, which replace files
+# in the Windows system folder — was a third way to do the same thing on
+# the same disc, and only made the folder confusing. The switchers are
+# still built, in out/wine9x, for anyone who wants that install by hand.
+# README.TXT says which folder a game wants and when to reach for either.
 W="$OUT/wine9x"; WD="$OUT/iso/WINED3D"
 cp "$W"/wined8.dll "$WD/D3D8-9/D3D8.DLL"
 cp "$W"/wined9.dll "$WD/D3D8-9/D3D9.DLL"
@@ -242,10 +252,8 @@ for d in D3D8-9 DDRAW; do
   cp "$W"/wined3d.dll "$WD/$d/WINED3D.DLL"
   cp "$M"/opengl32.dll "$WD/$d/OPENGL32.DLL"
 done
-cp "$W"/wined3d.dll "$W"/winedd.dll "$W"/wined8.dll "$W"/wined9.dll \
-   "$W"/ddraw_xp.dll "$W"/d3d8_xp.dll "$W"/d3d9_xp.dll \
-   "$W"/ddraw_98.dll "$W"/d3d8_98.dll "$W"/d3d9_98.dll "$WD/SYSTEM/"
-cp "$W"/README.md "$WD/SYSTEM/WINE9X.TXT"
+sed "s/@WINE9X@/${WINE9X_REF:0:7}/" "$ROOT/guest-tools/README-WINED3D.txt" \
+  | crlf > "$WD/README.TXT"
 
 # D3DPT\: Direct3D 8/9 over our paravirtual device (doc 14), with
 # qemu-3dfx's fxlib device mapper (FXPTL.SYS / FXMEMMAP.VXD). Per game:
@@ -452,8 +460,6 @@ i686-w64-mingw32-gcc -O2 -Wall -o "$OUT/iso/setup.exe" "$ROOT/guest-tools/src/se
 # and whatever case it was staged in (those carry the names a game loads).
 while IFS= read -r f; do check_crt "$f"; check_isa "$f"; done \
   < <(find "$OUT/iso" -type f \( -iname '*.dll' -o -iname '*.exe' \))
-# CRLF: Win9x Notepad shows LF-only text as one line
-crlf() { awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }'; }
 sed -e "s/@REV@/$REV/" -e "s/@WINE9X@/${WINE9X_REF:0:7}/" "$ROOT/guest-tools/README-ISO.txt" \
   | crlf > "$OUT/iso/README.TXT"
 # 8.3-safe upper-case names for Win9x

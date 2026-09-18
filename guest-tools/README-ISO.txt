@@ -79,9 +79,7 @@ WINED3D\  Direct3D -> OpenGL in the guest (wine9x @WINE9X@): the fallback
           Both hold OPENGL32.DLL on purpose: WineD3D draws through it, and
           without it Windows' own software OpenGL is used instead.
           SETUP /GAME 4 and /GAME 5 copy the same two folders.
-          SYSTEM\ is wine9x's system-wide install (the *_98 / *_XP
-          switcher DLLs): read WINE9X.TXT first, it replaces files in
-          the Windows system folder.
+          WINED3D\README.TXT says the same at more length.
 
 TESTS\    every test, benchmark and calibration program on the disc, one
           copy each; SETUP puts them in C:\2KSBOX. A test that has to run
