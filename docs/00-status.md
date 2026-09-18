@@ -185,11 +185,16 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   does. Not the ring size, not fd ownership (a real double-close, fixed in
   passing), not a settling delay. `ZC_SLOTS_DEFAULT` is 1 for now, which
   costs no frames and no measurable tearing but gives up the margin the
-  ring is for. **Next:** qemu-3dfx's `FuncTrace` (`mesagl.cfg`) logs the
-  guest's GL stream — trace GLQuake and wglgears and diff them to find the
-  call that makes radeonsi stop writing an EGLImage-backed texture through
-  to its dma-buf. Needs no frontend. `EMBED_ZC_SLOTS=3` brings the ring
-  back for the investigation.
+  ring is for. The trace diff is done (doc 12 §4): GLQuake uses 27 GL
+  calls wglgears does not, `glDrawBuffer` among them, and that one does
+  not reproduce it on its own — the backend's front-buffer hook is
+  macOS-only. **Next:** bisect the other 26 into
+  `tools/zc-vulkan-test.c --draw=`, which is mechanical now the list is
+  known. Also settled: each slot is the same memory as its buffer when it
+  is made (the `alias check` line under `EMBED_ZC_CHECK`), and the first
+  frame the divergence *shows* is only the first frame whose picture
+  differs, not an event. `EMBED_ZC_SLOTS=3` brings the ring back for the
+  investigation.
 - **A 1990s OpenGL game needs the extension string capped** (2026-09-17).
   A modern host reports several thousand characters of extension names
   and these titles read that into a fixed buffer: GLQuake's is 4096 bytes

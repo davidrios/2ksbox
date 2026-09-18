@@ -85,9 +85,39 @@ frame. Slots 0 and 2 never do it.
 So this is the backend and radeonsi, and the question is which GL call in
 what qemu-3dfx's mesagl does for GLQuake, but not for wglgears, makes the
 driver stop writing an EGLImage-backed texture through to its dma-buf.
-The tool for that is qemu-3dfx's own `FuncTrace` in `mesagl.cfg`, which
-logs the guest's GL stream: trace both programs and diff them. That is
-the next step, and it needs no frontend at all.
+
+**The trace diff, 2026-09-18.** `FuncTrace,1` in a `mesagl.cfg` in the
+player's working directory logs each GL function the guest uses once,
+which is exactly the set to compare (`FuncTrace,2` logs every call and
+floods). GLQuake uses 42, wglgears 22. The 27 GLQuake has and wglgears
+has not: `glAlphaFunc`, `glBindTextureEXT`, `glBlendFunc`,
+`glClearColor`, `glColor3f/3ubv/4f/4fv`, `glCullFace`,
+`glDebugMessageInsertARB`, `glDepthFunc`, `glDepthMask`, `glDepthRange`,
+`glDisable`, **`glDrawBuffer`**, `glGetFloatv`, `glGetString`, `glOrtho`,
+`glPolygonMode`, `glScalef`, `glTexCoord2f`, `glTexEnvf`, `glTexImage2D`,
+`glTexParameterf`, `glTexSubImage2D`, `glVertex2f`, `glVertex3fv` and the
+`Get`/`Enable` log lines. The other way round wglgears has display lists
+(`glNewList`/`glCallList`/`glGenLists`/`glEndList`), lighting
+(`glLightfv`, `glMaterialfv`), `glNormal3f` and `glClear`.
+
+`glDrawBuffer` was the one worth trying first — the backend has a
+front-buffer hook where `glFlush`/`glFinish` publish a frame — but that
+hook is **macOS-only** (`CONFIG_DARWIN`, and this is Linux), and adding
+GLQuake's front-buffer pattern to the standalone test (`--draw=front`:
+draw into `GL_FRONT`, flush, back to `GL_BACK`) leaves it clean. So the
+candidate list is still 26 long and the bisection is the job.
+
+Two things the round did settle. The slot is **the same memory to begin
+with**: with `EMBED_ZC_CHECK` on, `zc_slot_ensure` now clears each fresh
+texture through GL and reads the buffer back with the CPU, and all three
+slots say `same memory`, in the player and standalone alike. And the
+moment the divergence becomes *visible* is GLQuake's first rendered
+frame — but that is an artefact of the measurement, not an event: until
+then the guest is showing a static console, and a slot that is not being
+written through cannot be told from one that is while the picture does
+not change. So slot 1 stops aliasing its buffer somewhere between its
+allocation and the first frame that differs, and nothing narrower than
+that is known.
 
 Meanwhile `ZC_SLOTS_DEFAULT` is 1: with one buffer there is no second
 slot to go bad. The cost is the margin the ring exists for — the frontend

@@ -1023,6 +1023,33 @@ static int zc_slot_ensure(int i, int w, int h)
     DPRINTF("zero-copy slot %d: %dx%d stride %u modifier 0x%llx fd %d", i, w, h,
             zc[i].stride, (unsigned long long)zc[i].modifier, zc[i].fd);
     /*
+     * With EMBED_ZC_CHECK on, prove at once that this texture and this
+     * buffer are the same memory: clear the one through GL and read the
+     * other with the CPU. A slot that fails here was never written through
+     * at all, and everything later blamed on the guest is the moment its
+     * picture stopped being constant -- which is the only moment the two
+     * readings can be told apart.
+     */
+    if (zc_env("EMBED_ZC_CHECK", 0)) {
+        GLint prev_draw = 0;
+        uint32_t want = 0xff000000u | (uint32_t)(0x10 + i * 0x40) << 8;
+        void *mapd = NULL;
+        uint32_t mstride = 0, *cpu;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, zc[i].fbo);
+        glClearColor(0.f, (float)(0x10 + i * 0x40) / 255.f, 0.f, 1.f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prev_draw);
+        glFinish();
+        cpu = gbm_bo_map(zc[i].bo, 0, 0, w, h, GBM_BO_TRANSFER_READ, &mstride, &mapd);
+        if (cpu) {
+            uint32_t got = *(uint32_t *)((char *)cpu + (size_t)(h / 2) * mstride + (w / 2) * 4);
+            DPRINTF("zc slot %d alias check: wrote %08x through GL, the buffer holds %08x -- %s",
+                    i, want, got, (got == want) ? "same memory" : "DIFFERENT MEMORY");
+            gbm_bo_unmap(zc[i].bo, mapd);
+        }
+    }
+    /*
      * `EMBED_ZC_SETTLE=<ms>`: wait before using a slot just offered. Accepting
      * an offer only queues it -- the frontend imports on its own thread, later
      * -- so as it stands the first blits into a slot race whatever importing

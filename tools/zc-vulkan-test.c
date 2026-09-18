@@ -569,7 +569,8 @@ int main(int argc, char **argv)
             use_copy = !strcmp(argv[i] + 6, "copy") ? 1
                      : !strcmp(argv[i] + 6, "shader") ? 2 : 0;
         } else if (!strncmp(argv[i], "--draw=", 7)) {
-            draw_scene = !strcmp(argv[i] + 7, "scene");
+            draw_scene = !strcmp(argv[i] + 7, "scene") ? 1
+                       : !strcmp(argv[i] + 7, "front") ? 2 : 0;
         } else if (!strcmp(argv[i], "--threaded")) {
             threaded = 1;
         } else if (!strncmp(argv[i], "--frames=", 9)) {
@@ -577,7 +578,7 @@ int main(int argc, char **argv)
         } else if (!strncmp(argv[i], "--bios=", 7)) {
             bios = argv[i] + 7;
         } else {
-            printf("usage: %s [--stage=NAME] [--use=none|copy|shader] [--draw=clear|scene] [--threaded] [--frames=N] [--bios=DIR]\n",
+            printf("usage: %s [--stage=NAME] [--use=none|copy|shader] [--draw=clear|scene|front] [--threaded] [--frames=N] [--bios=DIR]\n",
                    argv[0]);
             return 2;
         }
@@ -589,7 +590,7 @@ int main(int argc, char **argv)
     printf("stage %s, use %s, %s, draw %s, %d frames, ring %s\n", stage_name[stage],
            use_copy == 2 ? "shader" : use_copy ? "copy" : "none",
            threaded ? "vulkan on its own thread" : "one thread",
-           draw_scene ? "scene" : "clear", frames, getenv("EMBED_ZC_SLOTS"));
+           draw_scene == 2 ? "front" : draw_scene ? "scene" : "clear", frames, getenv("EMBED_ZC_SLOTS"));
 
     if (stage != ST_NONE && !vk_init()) {
         return 1;
@@ -650,6 +651,18 @@ int main(int argc, char **argv)
     for (int i = 0; i < frames; i++) {
         glClearColor(0.f, (float)(i % 16) / 16.f, (float)(i % 5) / 5.f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT | (draw_scene ? GL_DEPTH_BUFFER_BIT : 0));
+        if (draw_scene == 2) {
+            /* GLQuake's front-buffer path (the loading plaque and the disc
+             * icon): draw into GL_FRONT, flush, and go back to GL_BACK. It
+             * is the call the trace has that wglgears' has not. */
+            glDrawBuffer(GL_FRONT);
+            glBegin(GL_QUADS);
+            glVertex3f(-.2f, -.2f, 0.f); glVertex3f(.2f, -.2f, 0.f);
+            glVertex3f(.2f, .2f, 0.f);   glVertex3f(-.2f, .2f, 0.f);
+            glEnd();
+            glFlush();
+            glDrawBuffer(GL_BACK);
+        }
         if (draw_scene) {
             for (int k = 0; k < 64 * 64; k++) {
                 texels[k] = 0xff000000u | (uint32_t)((k + i) & 0xff) << 8;
