@@ -251,7 +251,26 @@
 #                  and the read pointer must end where the packets do and the
 #                  frames be blue, then magenta: under ramfifo=on (the default)
 #                  only the device's own packet walk can have run them. ~10 s
+#                  Then the **SLI pair** the device is by default (doc 21 §12):
+#                  the second board answers at function 1, both are set up for
+#                  1024x768 with scanline interleaving, and three fills prove
+#                  the pair -- red on the master and blue on the second board,
+#                  each through its own aperture, must come out as a striped
+#                  1024x768 frame (every line drawn by the board that owns it);
+#                  one green fill written *once* to the master must reach both
+#                  (the snoop); and one command-FIFO batch must too (the ring in
+#                  RAM is mirrored into the second board). ~15 s
 #   voodoo-guest-mmiofifo  the same with ramfifo=off, the per-dword MMIO path. ~10 s
+#   voodoo-guest-oneboard  the same with sli=off, one board: the SLI phase is
+#                  skipped, so this is the control that a single Voodoo 2 still
+#                  works the way it did before the pair became the default. ~10 s
+#   voodoo-guest-filter  the same with the Voodoo 3's 4x1 screen filter on
+#                  (`filter=4x1`, doc 21 §13, patch 72): the dither scene's flat
+#                  grey, which dithers by one 565 step in every channel, must
+#                  come out smooth along each line (a row spanning 8/4/8 raw,
+#                  3/1/3 filtered) and must no longer be the dither tile it is
+#                  without a filter -- a filter that never ran leaves the frame
+#                  byte for byte as `voodoo-guest` sees it. ~15 s
 #   voodoo-guest-d3dpt  the same beside `-device d3dpt-vga`, the pairing a launcher
 #                  machine builds, with the adapter first put in an 800x600x32
 #                  linear mode: after the hand-back the screendump must be that
@@ -2611,6 +2630,8 @@ guest_stage() {
       run_check voodoo-guest voodoo-guest.log python3 tools/voodoo-guest-test.py || true
       run_check voodoo-guest-d3dpt voodoo-guest-d3dpt.log env VGA=d3dpt python3 tools/voodoo-guest-test.py || true
       run_check voodoo-guest-mmiofifo voodoo-guest-mmiofifo.log env RAMFIFO=off python3 tools/voodoo-guest-test.py || true
+      run_check voodoo-guest-oneboard voodoo-guest-oneboard.log env SLI=off python3 tools/voodoo-guest-test.py || true
+      run_check voodoo-guest-filter voodoo-guest-filter.log env FILTER=4x1 python3 tools/voodoo-guest-test.py || true
       run_check vbe-palette vbe-palette.log env VBEPAL=1 python3 tools/vga-dirty-guest-test.py vesa || true
       # The gameport as a DOS guest reads it (M13 path B). Unlike its
       # neighbours this one runs the **player**, because the pad reaches a
@@ -2632,10 +2653,10 @@ guest_stage() {
     # including `atapi-guest`, which is the only check that reads a disc from
     # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
     # weak-sector rule, which that battery is the regression guard for).
-    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest atapi-read-error midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo vbe-palette pad-guest; do
+    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest atapi-read-error midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo voodoo-guest-oneboard voodoo-guest-filter vbe-palette pad-guest; do
       skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
     done; fi
-  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest atapi-read-error midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo vbe-palette pad-guest; do
+  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest atapi-read-error midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo voodoo-guest-oneboard voodoo-guest-filter vbe-palette pad-guest; do
     skip "$c" "needs nasm, mtools and build/qemu"
   done; fi
   if [ "$OS" != Linux ]; then skip guest "Linux only for now (mkfs.fat, sfdisk, mtools)"; return; fi

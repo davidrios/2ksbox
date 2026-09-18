@@ -41,4 +41,4 @@ voodoo86_lib = static_library('voodoo86', voodoo86_src,
                               build_by_default: false)
 voodoo86_dep = declare_dependency(link_whole: voodoo86_lib)
 
-i386_system_ss.add(files('voodoo2.c', 'voodoo_shim.c'), voodoo86_dep)
+i386_system_ss.add(files('voodoo2.c', 'voodoo_shim.c', 'voodoo_vbfilter.c'), voodoo86_dep)

@@ -31,7 +31,8 @@ released Glide source as an open driver if one is ever wanted. What it
 costs: the frame is drawn by a software rasterizer on host cores, at a
 Voodoo 2's own resolutions and formats (800×600, 16-bit, 256×256
 textures), and every register write the guest makes is an MMIO trap on
-the one vCPU thread (§9).
+the one vCPU thread (§9) — at a **pair's** resolutions since 2026-09-18
+(§12): 1024x768, which is what two boards' frame buffers buy.
 
 **It does not replace qemu-3dfx.** qemu-3dfx has two halves. The Glide
 half (`hw/3dfx` + the guest `GLIDE2X.DLL`/`.OVL` + OpenGLide) is what a
@@ -55,9 +56,11 @@ core; the four entry points the Voodoo 1/2 files still call on them are
 stubbed, and unreachable for `type < VOODOO_BANSHEE`) and the 32-bit x86
 recompiler. Licence GPL-2.0-or-later, QEMU's own.
 
-The emulation is one 3dfx *set* (`voodoo_set_t`) of one card; the type is
-fixed at `VOODOO_2` (a Voodoo Graphics is a property away but has no
-command FIFO, §9, so there is no reason to offer it). SLI is not modelled.
+The emulation is one 3dfx *set* (`voodoo_set_t`); the type is fixed at
+`VOODOO_2` (a Voodoo Graphics is a property away but has no command FIFO,
+§9, so there is no reason to offer it). The set holds **two** cards unless
+`sli=off` — 86Box models the SLI pair, and that is what `-device voodoo2`
+is by default (§12).
 
 ## 3. Layout
 
@@ -191,7 +194,7 @@ accesses wider than 4 bytes (an SSE store into the LFB) are split into
 dwords by the memory core. One bit is not passed on: **`fbiInit1` bit 23,
 scanline interleaving**. This device is one card with no partner, and
 86Box's display timer takes SLI at its word and draws the odd lines from
-`set->voodoos[1]`, a NULL here. The guest that set it was 3dfx's Glide 2.x
+`set->voodoos[1]`, a NULL when there is no second board. The guest that set it was 3dfx's Glide 2.x
 at **window teardown** (`grSstWinClose`, 2026-09-12): it streams a burst
 of dwords into the command-FIFO window with the FIFO off, and with the
 FIFO off that window is the legacy register map (bit 21 = the alternate
@@ -199,7 +202,11 @@ register mapping Glide has enabled in `fbiInit3`), so the burst walks the
 register file — `intrCtrl` (86Box's `fatal()`, §8), the video registers
 (a garbage `videoDimensions` is where the log's 3741×1789 comes from),
 `fbiInit1` — exactly as it would reach the chip. A real single board with
-the SLI bit set shows half its lines; this one ignores the bit. **The
+the SLI bit set shows half its lines; a single board here ignores the bit.
+With a pair (the default) the bit is the guest's to set and is passed
+straight on — that is the whole of §12 — and a guest that sets it while
+the second board is still locked is warned about, since every other line
+then comes out of a frame buffer nobody has written. **The
 teardown burst is M14's open bug**: after it the card never reports idle
 and Glide spins in `sst1InitIdle` (GLIDETEST hangs at the close, whether
 or not the reopen case runs); the install and the first open+draw work.
@@ -329,7 +336,8 @@ against 3dfx's own `sst1init` source.
 
 ## 8. Not modelled, and the hostile-guest question
 
-- **SLI** (two cards) and the **Voodoo Graphics** type: not offered.
+- The **Voodoo Graphics** type (`VOODOO_1`): not offered. **SLI** is, and
+  is the default (§12).
 - **Interrupts**: 86Box `fatal()`s on a write to `intrCtrl` /
   `userIntrCMD`, and on a malformed command-FIFO packet (`CMDFIFO packet
   5 bad space`, and a handful more), which in 86Box ends the emulator.
@@ -611,3 +619,167 @@ The hangs seen by hand were this too: the user had noticed a stray
 `rundll32` running every time a game froze and could not say why
 (2026-09-16). If that process ever turns up outside login, the warning
 above is still what names the collision.
+
+## 12. The SLI pair
+
+`-device voodoo2` is **two boards** unless `sli=off`. That is what 3dfx's
+own SLI cable made, and it is the only way to 1024x768: a Voodoo 2's frame
+buffer is 4 MB, and 1024x768 wants 1.5 MB a buffer — three of them and a
+depth buffer do not fit. Two boards each hold *every other line*, so each
+one's share is 768 KB and the set fits with room over. 800x600 was the
+ceiling of one board and 1024x768 is the ceiling of the pair, on real
+hardware and here. (User decision, 2026-09-18, which reverses the "SLI
+never" of the track doc's step 7.)
+
+**What is doubled and what is not.** The frame buffer is: 8 MB between the
+two boards, and with it the resolution. The rasterizer is, in the sense
+that each board has its own render threads (`threads=` is per board), so
+the software rasterizer's work is split over twice as many host cores —
+the fill rate of the pair is the honest doubling a real pair got. Texture
+memory is **not**: each board keeps its own copy of every texture, so a
+game's texture budget is still `texmem` per TMU, exactly as it was on the
+cable.
+
+**What the guest sees.** Two PCI functions of the same slot, both
+121a:0002, each with its own 16 MiB BAR and its own `initEnable`: the
+master is function 0 and the second board function 1, which the `voodoo2`
+device creates itself (type `voodoo2-sli`, not user-creatable, so there is
+one device on the command line and `addr=` places the pair). Two functions
+rather than two slots because the pair is one card to the launcher and one
+`-device` to a script; a driver counts boards by scanning configuration
+space for the vendor and device, which is what 3dfx's own does, and finds
+two either way — **unless its scan only looks at function 0 of each
+device**, which a 1998 PCI scan may well do and which nothing here can
+answer without the driver in front of it. That is what `sli-addr=` is for:
+`-device voodoo2,addr=0x05,sli-addr=0x06` puts the second board in its own
+slot, as two cards in two slots, and is the first thing to try if the
+driver sees one board.
+
+**What 86Box does with them**, all of it in the vendored files and none of
+it ours: `voodoo_init` puts both cards in one `voodoo_set_t` and sets
+`FBIINIT5_MULTI_CVG` on both (the strap that says "there are two of us");
+with `fbiInit1` bit 23 on, an LFB access is routed by the scanline's
+parity to the board that owns it, `voodoo_fastfill` and the triangle
+rasterizer each skip the lines that are not theirs, and the **master's**
+display timer draws every other line out of the other board's frame
+buffer through *that* board's own CLUT table — which is why an SLI board
+with no CLUT programmed shows black on half the picture. Which board owns
+the even lines is `initEnable` bit 11 (clear on the master, set on the
+second board: the order the LFB routing assumes). `initEnable` bit 23 on
+the second board is the **snoop**: 86Box then puts the set's snoop
+handlers over the master's address window, so one CPU write reaches both
+boards, which is how a driver programs the pair — it writes once.
+
+**What this device adds** is four small things:
+
+- the master's BAR goes to 86Box's snoop handlers whenever the snoop is on
+  (`voodoo2_map()`), which is that memory map and nothing more;
+- `fbiInit1` bit 23 is passed through when there is a partner (it is
+  masked off on a single board, §7), and a guest that turns it on while
+  the second board is still locked gets a warning naming what it will see;
+- **the ring in RAM is mirrored** (`ramfifo=on`, §9). A real pair snoops
+  every packet word as the CPU writes it; with the ring mapped as RAM
+  nothing traps those stores, so the words the device's own walk counts
+  are copied into the second board's ring at the same offsets before its
+  depth says they are there, and its consumer runs the same stream. The
+  mirror is live only while the snoop is on and the second board's FIFO is
+  enabled — a pair a guest drives as one board gets nothing, or its ring
+  would fill with a stream nobody reads. With `ramfifo=off` there is
+  nothing to mirror: the write is trapped and the snoop handlers put it in
+  both. The first mirrored batch says so once — `the command ring is
+  mirrored into the second board` — and the 5 s line carries the rest:
+  `second board: N triangles, N writes, interleaving, mirrored, fifo depth
+  R/W`;
+- a system reset clears both boards, and the snoop with them.
+
+**What proves it, with no 3dfx code in the picture**:
+`tools/voodoo-guest-test.py`'s SLI phase (the `voodoo-guest` check). The
+DOS program finds function 1, unlocks it, sets both boards up for 1024x768
+with interleaving on, and asks three things of the pair, each answered by
+a host screendump:
+
+1. a fastfill of **red on the master and blue on the second board**, each
+   through its own aperture: the frame must be 1024x768 with *every* line
+   the colour of the board that owns it — a striped frame, which takes
+   both boards having rasterised and the display interleaving them (a
+   black line is a board that never drew, or one with no CLUT);
+2. a fill of **green written once, to the master's aperture**, with the
+   snoop bit set: the whole frame must turn green — every other line stays
+   blue if the snoop does not reach the second board;
+3. the same again (**magenta**) as command-FIFO packets in the master's
+   ring: the whole frame again, which under `ramfifo=on` only the mirror
+   can have done.
+
+`SLI=off` runs the same program on one board (the `voodoo-guest-oneboard`
+check): the phase says `SLI NONE` and skips, which is the control that a
+single card still works the way it did.
+
+**Open.** The guest reads *the master's* `cmdFifoRdPtr` and never the
+second board's, so the pair is assumed to stay in step — as it is on the
+cable, where both FIFOs are written by the same cycles. If the second
+board's consumer ever falls behind, the guest could wrap the ring over
+words it has not run; the 5 s line prints both boards' depths, which is
+where that would show. And the garbage register burst of §7 can now turn
+interleaving on for real rather than being ignored, so a game that trips
+it may show half a picture instead of a whole one; the warning names it.
+And nothing here has been in front of **3dfx's own driver** yet: that it
+offers 1024x768, and whether its control panel wants SLI turned on, is the
+next thing to measure (the track doc).
+
+## 13. The screen filter (and the Voodoo 3's)
+
+A 3dfx card of this era draws into a **16-bit** frame buffer and hides the
+banding with an ordered dither; the RAMDAC takes the dither back out on
+the way to the monitor. That is what 3dfx sold as **22-bit colour**, and
+it is why a screenshot of a Voodoo game looks worse than the game did.
+`-device voodoo2,filter=` offers it, off by default:
+
+| `filter=` | what runs |
+|---|---|
+| `off` (default) | nothing; the 16-bit pixels reach the console as they are |
+| `v2` (`on`) | **this card's own** filter, 86Box's `voodoo_filterline_v2` |
+| `4x1` (`22bit`) | the **Voodoo 3's**, four taps along the scanline |
+| `2x2` | the **Voodoo 3's** other one: this line and the next |
+
+86Box has all three, but the last two live in `vid_voodoo_banshee.c`,
+which this port does not vendor (§2). They are ported into
+`voodoo/voodoo_vbfilter.c` — `voodoo_generate_vb_filters()` verbatim (the
+vendored display.c already declares and calls it, for a Banshee; the shim
+used to stub it out) and `voodoo_filterline_vb()`, which is
+`banshee_render_line()`'s two filtered cases with the overlay, the chroma
+key and the scaling taken out, in the shape the vendored
+`voodoo_filterline_v1`/`_v2` have. **Patch 72** is the three lines at the
+call site in the display timer that pick between the three, keyed on
+`voodoo->scrfilter` — which is no longer a flag but this property: 1 the
+card's own, 2 the 4x1, 3 the 2x2.
+
+Two things differ from 86Box deliberately. **The filter is on from the
+start**: 86Box waits for the guest to write the `scrFilter` register,
+which 3dfx's Voodoo 2 driver does only if its control panel asks for the
+card's own filter — and never with the Voodoo 3's thresholds, since it has
+never heard of them. A guest that writes the register still wins, as it
+would on the card. And **the thresholds are a property**,
+`filter-threshold=0xRRGGBB` (default `0x100810`): how far a pixel may
+bleed into its neighbour, per channel. Bigger is smoother and starts
+blurring real edges; the Voodoo 3's filters read only the red and green
+bytes (red covers blue too), the card's own reads all three, which is why
+the default names a blue cap as well.
+
+The 2x2 filter needs the **next scanline**, which the display timer draws
+one line at a time; `vb_next_line()` finds it, including the SLI case
+where that line is in the other board's frame buffer (§12).
+
+**What proves it** (the `voodoo-guest-filter` check): the guest test's
+dither scene, whose flat grey dithers by one 565 step in every channel, is
+exactly one 4x4 dither tile with no filter — that is what the
+`voodoo-guest` check requires — so with one on it must be *not* that, and
+must be smooth along each line. Measured on the Air, the widest range
+inside one row of that grey: **8/4/8 raw, 1/1/1 with `v2`, 3/1/3 with
+`4x1`, 0/2/0 with `2x2`**. A filter that never ran leaves the frame byte
+for byte as the unfiltered check sees it, which is the other half of the
+check.
+
+What it costs: the filter runs per scanline on the display timer (the main
+loop), three table lookups a pixel for the 4x1 and six for the 2x2, at the
+guest's refresh rate — a 640x480 frame is ~0.9 M lookups. It is not on the
+vCPU thread and not in the rasterizer's way.

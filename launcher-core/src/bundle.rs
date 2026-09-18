@@ -1031,7 +1031,11 @@ pub struct Machine {
     /// A 3dfx Voodoo 2 on the PCI bus (`-device voodoo2`: 86Box's
     /// emulation of the chip, doc 21, M14) beside whatever 2D adapter
     /// the machine has — it borrows the monitor from that adapter's
-    /// console, as the card borrowed it through a cable. Beside the
+    /// console, as the card borrowed it through a cable. An **SLI
+    /// pair**, which is what the device is unless told otherwise: two
+    /// boards, one PCI function each, 8 MB of frame buffer between them
+    /// and 1024×768, which one board's 4 MB cannot hold the buffers of
+    /// (doc 21 §12). `-device voodoo2,sli=off` by hand is one board. Beside the
     /// Glide pass-through, not instead of it (ADR-016): a game draws on
     /// whichever `glide2x.dll` it loads, 3dfx's or the guest tools'.
     /// The guest needs 3dfx's own Voodoo2 driver. Off unless picked, on
@@ -1580,7 +1584,9 @@ impl Machine {
             args.extend(["-device".into(), "gameport".into()]);
         }
         // The Voodoo 2 (doc 21): a PCI card of its own in the slot after
-        // the sound card's, on whichever 2D adapter the machine has.
+        // the sound card's, on whichever 2D adapter the machine has. An
+        // SLI pair, so it takes both functions of that slot — the device
+        // makes the second board itself, function 1.
         if self.voodoo2 {
             args.extend(["-device".into(), "voodoo2,addr=0x05".into()]);
         }

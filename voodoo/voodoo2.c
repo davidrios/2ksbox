@@ -13,9 +13,37 @@
  * Screendumps, the VNC fallback and the player's own surface path all see
  * that frame the way they see a VGA one.
  *
- *   -device voodoo2[,fbmem=2|4][,texmem=2|4][,threads=1|2|4]
- *                  [,bilinear=on|off][,dither-sub=on|off][,filter=on|off]
+ *   -device voodoo2[,sli=on|off][,fbmem=2|4][,texmem=2|4][,threads=1|2|4]
+ *                  [,bilinear=on|off][,dither-sub=on|off]
+ *                  [,filter=off|v2|4x1|2x2][,filter-threshold=0xRRGGBB]
  *                  [,recompiler=on|off][,ramfifo=on|off]
+ *
+ * filter (off by default): the RAMDAC's dither removal, what 3dfx sold as
+ * 22-bit colour. `v2` is this card's own, 86Box's; `4x1` and `2x2` are the
+ * Voodoo 3's, later and better tuned, ported from 86Box's Banshee sources
+ * (voodoo_vbfilter.c, patch 72, doc 21 §13). Unlike 86Box's, a filter
+ * asked for here is on from the start rather than waiting for a driver to
+ * write the scrFilter register -- no Voodoo 2 driver writes the Voodoo 3's
+ * thresholds, and a picture is what the option is for. filter-threshold is
+ * how far a pixel may bleed into its neighbour, one byte a channel
+ * (0xRRGGBB); bigger is smoother and starts blurring real edges. The
+ * Voodoo 3's filters read only the red and green bytes -- red covers blue
+ * as well -- while the card's own reads all three.
+ *
+ * sli (on by default): the card is a **Voodoo 2 SLI pair**, two whole
+ * boards -- 8 MB of frame buffer between them and 1024x768, which one
+ * board's 4 MB cannot hold three buffers and a depth buffer of. Each board
+ * is its own PCI function here (the master is function 0 of its slot, the
+ * second board function 1), with its own 16 MiB BAR and its own
+ * initEnable, because that is how a driver finds two of them: 3dfx's own
+ * scans configuration space for 121a:0002 and counts the boards. The
+ * interleaving is 86Box's, and the guest asks for it: with `fbiInit1` bit
+ * 23 on, an LFB access goes to the board that owns that scanline's parity,
+ * each board rasterises only its own lines, and the master's display timer
+ * reads every other line out of the other board's frame buffer. `sli=off`
+ * is the single board, the A/B. `sli-addr=<addr>` puts the second board
+ * somewhere else -- its own slot (`sli-addr=0x06`) for a driver that only
+ * looks at function 0 of each device, which a 1998 PCI scan may well do.
  *
  * ramfifo (on by default): the command-FIFO ring is plain RAM to the guest,
  * so Glide's packet stream is ordinary stores instead of one MMIO trap per
@@ -42,6 +70,7 @@
 #include "qapi/error.h"
 #include "hw/pci/pci_device.h"
 #include "hw/qdev-properties.h"
+#include "hw/qdev-properties-system.h"     /* DEFINE_PROP_PCI_DEVFN */
 #include "ui/console.h"
 #include "ui/surface.h"
 #include "qom/object.h"
@@ -60,7 +89,9 @@
 #include "shim/86box/video.h"
 #include "shim/86box/vid_svga.h"
 #include "86box/vid_voodoo_common.h"
+#include "86box/vid_voodoo_display.h"
 #include "86box/vid_voodoo_fifo.h"
+#include "voodoo_vbfilter.h"
 #include "voodoo_shim.h"
 
 /* 86box/vid_voodoo_regs.h's offsets (the header itself does not compile
@@ -79,6 +110,24 @@ void    voodoo_pci_write(int func, int addr, int len, uint8_t val, void *priv);
 #define TYPE_VOODOO2 "voodoo2"
 OBJECT_DECLARE_SIMPLE_TYPE(Voodoo2State, VOODOO2)
 
+/* the second board of an SLI pair: function 1 of the master's slot */
+#define TYPE_VOODOO2_SLI "voodoo2-sli"
+OBJECT_DECLARE_SIMPLE_TYPE(Voodoo2SliState, VOODOO2_SLI)
+
+/* Everything the second board needs of its own: a face on the bus (its
+ * configuration space and its BAR) over 86Box's second `voodoo_t`. The
+ * 86Box set, the shim's monitor, the display and the statistics line are
+ * the master's, one per machine; nothing here has a timer or a thread of
+ * its own that voodoo_init() did not already make. */
+struct Voodoo2SliState {
+    PCIDevice parent_obj;
+
+    MemoryRegion  mmio;
+    Voodoo2State *master;
+    voodoo_t     *v;            /* set->voodoos[1] */
+    uint32_t      cfg_hist[64];
+};
+
 #define VOODOO2_PCI_VENDOR 0x121a
 #define VOODOO2_PCI_DEVICE 0x0002
 #define VOODOO2_BAR_SIZE   (16 * MiB)
@@ -91,6 +140,8 @@ struct Voodoo2State {
     MemoryRegion  mmio;
     voodoo_set_t *set;
     voodoo_t     *v;
+    voodoo_t     *v1;           /* the second board (sli=on), or NULL */
+    Voodoo2SliState slave;      /* its PCI function */
 
     /* display */
     QemuConsole    *con;
@@ -119,13 +170,17 @@ struct Voodoo2State {
     uint32_t   last_frames;
     uint32_t   last_shown;
     int        last_tris;
+    int        last_tris1;      /* the second board's, for the same line */
     int        last_wr;
+    int        last_wr1;
     int        last_rd;
     int        last_tex;
     unsigned   last_fatals;
     uint32_t   fifo_off_writes;   /* FIFO-window packets decoded as registers */
     uint32_t   last_fifo_off;
     bool       fifo_off_warned;
+    bool       sli_warned;        /* SLI on with the second board still locked */
+    bool       mirror_said;       /* the ring's mirror into the second board */
 
     /* the command FIFO in RAM (ramfifo=on) */
     uint8_t     *fb_86box;       /* 86Box's own fb_mem, given back at close */
@@ -182,9 +237,12 @@ struct Voodoo2State {
     uint32_t threads;
     bool     bilinear;
     bool     dithersub;
-    bool     filter;
+    char    *filter;            /* off | v2 | 4x1 | 2x2 */
+    uint32_t filter_threshold;  /* 0xRRGGBB: how far a pixel may bleed */
     bool     recompiler;
     bool     ramfifo;
+    bool     sli;
+    int32_t  sli_addr;          /* the second board's devfn; -1 = ours + 1 */
 };
 
 /* ------------------------------------------------------------------ MMIO */
@@ -457,10 +515,71 @@ voodoo2_on_fatal(void *opaque)
 #define VOODOO2_FIFO_AHEAD   8          /* words looked past a poison-looking
                                          * data word for one the guest wrote */
 
+/* Which handlers the master's BAR is under, as 86Box's own
+ * voodoo_recalcmapping() decided: its own board's, or -- once the second
+ * board's initEnable says it snoops the bus (bit 23, what a driver sets to
+ * make one write reach both) -- the set's snoop handlers, which put every
+ * write into both boards and answer a read from the first. A real pair is
+ * wired exactly that way: the CPU writes once. */
+static inline mem_mapping_t *
+voodoo2_map(Voodoo2State *s)
+{
+    if (s->v1 && s->set->snoop_mapping.enable) {
+        return &s->set->snoop_mapping;
+    }
+    return &s->v->mapping;
+}
+
 static inline uint32_t *
 voodoo2_fifo_word(voodoo_t *v, uint32_t a)
 {
     return (uint32_t *) &v->fb_mem[a & v->fb_mask];
+}
+
+/* SLI with the ring in RAM: a real snoop puts each packet word into both
+ * boards' memory as the CPU writes it, and the guest's stores into the
+ * window mapped as RAM reach only the master's. So the words this walk
+ * counts are copied into the second board's ring first, at the same
+ * offsets, before its depth says they are there -- it runs the same stream
+ * beside the master, rasterising the other half of the lines. (With
+ * ramfifo=off nothing of this is needed: the write is trapped and the
+ * snoop handlers put it in both.) */
+static inline voodoo_t *
+voodoo2_fifo_partner(Voodoo2State *s)
+{
+    /* Only while the second board is really taking the master's stream:
+     * the guest has asked for the snoop and this board's own command FIFO
+     * is on. A pair a guest drives as one board (or has not set up yet)
+     * gets nothing, or its ring would fill with a stream its consumer is
+     * not reading. */
+    if (s->v1 && s->set->snoop_mapping.enable && s->v1->cmdfifo_enabled) {
+        return s->v1;
+    }
+    return NULL;
+}
+
+static void
+voodoo2_fifo_mirror(Voodoo2State *s, uint32_t a, uint32_t n)
+{
+    voodoo_t *v1 = voodoo2_fifo_partner(s);
+
+    if (!v1) {
+        return;
+    }
+    if (!s->mirror_said) {
+        /* Said once, where the other FIFO lines are said: a batch can be a
+         * few words and land inside one 5 s window, so the line below is
+         * what a harness can wait for (the one that used to be in the
+         * statistics line came and went with the window). */
+        s->mirror_said = true;
+        info_report("voodoo2: the command ring is mirrored into the second "
+                    "board (ring %08x+%x): what a real pair's snoop does to "
+                    "every packet word, which the ring in RAM bypasses",
+                    s->fifo_base, s->fifo_size);
+    }
+    for (uint32_t k = 0; k < n; k++) {
+        *voodoo2_fifo_word(v1, a + 4 * k) = *voodoo2_fifo_word(s->v, a + 4 * k);
+    }
 }
 
 /* the words a packet takes, header included, exactly as 86Box's consumer
@@ -599,6 +718,7 @@ voodoo2_fifo_sync(Voodoo2State *s)
             if (!take) {
                 break;
             }
+            voodoo2_fifo_mirror(s, a, take);
             words       += take;
             a           += 4 * take;
             s->in_packet -= take;
@@ -632,6 +752,7 @@ voodoo2_fifo_sync(Voodoo2State *s)
                 voodoo2_fifo_break(s, a, h, "a jump out of the ring");
                 break;
             }
+            voodoo2_fifo_mirror(s, a, 1);
             words++;
             a = to;
             continue;
@@ -660,6 +781,10 @@ voodoo2_fifo_sync(Voodoo2State *s)
         v->cmdfifo_depth_wr += words;
         s->fifo_words       += words;
         voodoo_wake_fifo_thread_now(v);
+        if (voodoo2_fifo_partner(s)) {
+            s->v1->cmdfifo_depth_wr += words;
+            voodoo_wake_fifo_thread_now(s->v1);
+        }
     }
 }
 
@@ -825,6 +950,7 @@ voodoo2_mmio_read(void *opaque, hwaddr addr, unsigned size)
 {
     Voodoo2State *s = opaque;
     voodoo_t     *v = s->v;
+    mem_mapping_t *m = voodoo2_map(s);
 
     uint64_t      val;
 
@@ -845,10 +971,10 @@ voodoo2_mmio_read(void *opaque, hwaddr addr, unsigned size)
     }
     switch (size) {
     case 4:
-        val = v->mapping.read_l((uint32_t) addr, v->mapping.priv);
+        val = m->read_l((uint32_t) addr, m->priv);
         break;
     case 2:
-        val = v->mapping.read_w((uint32_t) addr, v->mapping.priv);
+        val = m->read_w((uint32_t) addr, m->priv);
         break;
     default:
         /* the card has no byte lane: 86Box registers no byte handler */
@@ -865,8 +991,9 @@ voodoo2_mmio_read(void *opaque, hwaddr addr, unsigned size)
 static void
 voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
 {
-    Voodoo2State *s = opaque;
-    voodoo_t     *v = s->v;
+    Voodoo2State  *s = opaque;
+    voodoo_t      *v = s->v;
+    mem_mapping_t *m = voodoo2_map(s);
 
     if (s->fifo_mapped) {
         /* what the guest put in the ring comes before this write */
@@ -902,17 +1029,33 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
                         (unsigned) val, (unsigned) addr, (unsigned) (addr & 0x3fc));
         }
     }
-    if (addr < 0x400000 && (addr & 0x3fc) == 0x214 &&
+    if (addr < 0x400000 && (addr & 0x3fc) == 0x214 && !s->v1 &&
         !((addr & 0x200000) && v->cmdfifo_enabled)) {
-        /* fbiInit1 bit 23, scanline interleaving: this device is one card
-         * with no partner, so the bit is not writable -- 86Box's display
-         * timer takes SLI at its word and draws the odd lines from a second
-         * card that does not exist (a NULL, 2026-09-12: 3dfx's Glide on a
+        /* fbiInit1 bit 23, scanline interleaving, with no second board:
+         * the bit is not writable -- 86Box's display timer takes SLI at its
+         * word and draws the odd lines from a second card that does not
+         * exist (a NULL, 2026-09-12: 3dfx's Glide on a
          * grSstWinClose/grSstWinOpen pushes its reopen's register writes
          * through the command-FIFO transport with the FIFO off, and the
          * stream walks the register file, fbiInit1 included). A real single
-         * board with the bit set shows half its lines; this one ignores it. */
+         * board with the bit set shows half its lines; this one ignores it.
+         * With a pair (sli=on) the bit is the guest's to set, and a guest
+         * that sets it on a board whose partner was never initialised gets
+         * the other board's memory on every other line, as it would. */
         val &= ~(1u << 23);
+    }
+    if (s->v1 && addr < 0x400000 && (addr & 0x3fc) == 0x214 && (val & (1u << 23)) &&
+        !(s->v->fbiInit1 & (1u << 23)) && !(s->v1->initEnable & 1) && !s->sli_warned) {
+        /* Scanline interleaving turned on while the second board has never
+         * been unlocked, i.e. never initialised: every other line of the
+         * picture then comes out of a frame buffer nobody has written. A
+         * driver does not do this; the garbage burst of doc 21 §7 walks the
+         * register file and can. */
+        s->sli_warned = true;
+        warn_report("voodoo2: SLI turned on with the second board still "
+                    "locked (initEnable %08x): every other line will come "
+                    "from an uninitialised frame buffer",
+                    s->v1->initEnable);
     }
     if (addr < 0x200000 && (addr & 0x3fc) == 0x104 && size == 4) {
         s->probe_fbzcp = (uint32_t) val;     /* fbzColorPath, for the probe */
@@ -933,10 +1076,10 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     }
     switch (size) {
     case 4:
-        v->mapping.write_l((uint32_t) addr, (uint32_t) val, v->mapping.priv);
+        m->write_l((uint32_t) addr, (uint32_t) val, m->priv);
         break;
     case 2:
-        v->mapping.write_w((uint32_t) addr, (uint16_t) val, v->mapping.priv);
+        m->write_w((uint32_t) addr, (uint16_t) val, m->priv);
         break;
     default:
         break;
@@ -991,19 +1134,17 @@ voodoo2_siprocess(PCIDevice *dev)
     return si & ~SIPROCESS_OSC_CNTR;   /* held in reset: nothing counted */
 }
 
+/* the bytes 86Box owns (initEnable) and the one this file owns
+ * (siProcess), over what the PCI core answered; one board's */
 static uint32_t
-voodoo2_config_read(PCIDevice *dev, uint32_t addr, int len)
+voodoo2_cfg_overlay(PCIDevice *dev, voodoo_t *v, uint32_t addr, int len, uint32_t val)
 {
-    Voodoo2State *s   = VOODOO2(dev);
-    uint32_t      val = pci_default_read_config(dev, addr, len);
-
-    s->cfg_hist[(addr >> 2) & 63]++;
     for (int i = 0; i < len; i++) {
         uint32_t a = addr + i;
         int      b = -1;
 
         if (a >= 0x40 && a <= 0x43) {
-            b = voodoo_pci_read(0, (int) a, 1, s->v);
+            b = voodoo_pci_read(0, (int) a, 1, v);
         } else if (a >= VOODOO2_CFG_SIPROCESS && a < VOODOO2_CFG_SIPROCESS + 4) {
             b = (voodoo2_siprocess(dev) >> (8 * (a - VOODOO2_CFG_SIPROCESS))) & 0xff;
         }
@@ -1015,19 +1156,38 @@ voodoo2_config_read(PCIDevice *dev, uint32_t addr, int len)
     return val;
 }
 
+/* the ones 86Box acts on: the command register and the BAR's top byte
+ * (its own idea of being enabled and mapped, which is what decides the
+ * snoop of an SLI pair) and initEnable */
+static void
+voodoo2_cfg_forward(voodoo_t *v, uint32_t addr, uint32_t val, int len)
+{
+    for (int i = 0; i < len; i++) {
+        uint32_t a = addr + i;
+
+        if (a == PCI_COMMAND || a == 0x13 || (a >= 0x40 && a <= 0x43)) {
+            voodoo_pci_write(0, (int) a, 1, (val >> (8 * i)) & 0xff, v);
+        }
+    }
+}
+
+static uint32_t
+voodoo2_config_read(PCIDevice *dev, uint32_t addr, int len)
+{
+    Voodoo2State *s   = VOODOO2(dev);
+    uint32_t      val = pci_default_read_config(dev, addr, len);
+
+    s->cfg_hist[(addr >> 2) & 63]++;
+    return voodoo2_cfg_overlay(dev, s->v, addr, len, val);
+}
+
 static void
 voodoo2_config_write(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
 {
     Voodoo2State *s = VOODOO2(dev);
 
     pci_default_write_config(dev, addr, val, len);
-    for (int i = 0; i < len; i++) {
-        uint32_t a = addr + i;
-
-        if (a == PCI_COMMAND || a == 0x13 || (a >= 0x40 && a <= 0x43)) {
-            voodoo_pci_write(0, (int) a, 1, (val >> (8 * i)) & 0xff, s->v);
-        }
-    }
+    voodoo2_cfg_forward(s->v, addr, val, len);
     if (addr <= 0x43 && addr + len > 0x40) {
         info_report("voodoo2: initEnable <= %08x", s->v->initEnable);
         voodoo2_trace_where_armed = voodoo2_trace;
@@ -1054,6 +1214,115 @@ voodoo2_config_write(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
                         "the running program will wedge");
         }
     }
+}
+
+/* ------------------------------------------------- the second board (SLI)
+ *
+ * Function 1 of the master's slot: the same 121a:0002, its own 16 MiB BAR
+ * and its own initEnable, which is all a driver needs to count two boards
+ * (3dfx's own scans configuration space for the vendor and device). The
+ * BAR's accesses go to 86Box's second card; the master's go to both once
+ * the guest has asked for the snoop (voodoo2_map()). Nothing else is
+ * duplicated: the display, the shim's monitor and the 5 s line are the
+ * master's, and this board's frames reach the picture through the master's
+ * display timer, which reads every other line out of this frame buffer.
+ */
+static uint64_t
+voodoo2_sli_mmio_read(void *opaque, hwaddr addr, unsigned size)
+{
+    Voodoo2SliState *s = opaque;
+    voodoo_t        *v = s->v;
+
+    if (!v) {
+        return 0xffffffff;      /* the master has closed the set (exit) */
+    }
+    switch (size) {
+    case 4:
+        return v->mapping.read_l((uint32_t) addr, v->mapping.priv);
+    case 2:
+        return v->mapping.read_w((uint32_t) addr, v->mapping.priv);
+    default:
+        return 0xff;        /* the card has no byte lane */
+    }
+}
+
+static void
+voodoo2_sli_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+{
+    Voodoo2SliState *s = opaque;
+    voodoo_t        *v = s->v;
+
+    if (!v) {
+        return;
+    }
+    switch (size) {
+    case 4:
+        v->mapping.write_l((uint32_t) addr, (uint32_t) val, v->mapping.priv);
+        break;
+    case 2:
+        v->mapping.write_w((uint32_t) addr, (uint16_t) val, v->mapping.priv);
+        break;
+    default:
+        break;
+    }
+}
+
+static const MemoryRegionOps voodoo2_sli_mmio_ops = {
+    .read       = voodoo2_sli_mmio_read,
+    .write      = voodoo2_sli_mmio_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+    .valid = { .min_access_size = 1, .max_access_size = 8 },
+    .impl  = { .min_access_size = 1, .max_access_size = 4 },
+};
+
+static uint32_t
+voodoo2_sli_config_read(PCIDevice *dev, uint32_t addr, int len)
+{
+    Voodoo2SliState *s   = VOODOO2_SLI(dev);
+    uint32_t         val = pci_default_read_config(dev, addr, len);
+
+    s->cfg_hist[(addr >> 2) & 63]++;
+    if (!s->v) {
+        return val;
+    }
+    return voodoo2_cfg_overlay(dev, s->v, addr, len, val);
+}
+
+static void
+voodoo2_sli_config_write(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
+{
+    Voodoo2SliState *s = VOODOO2_SLI(dev);
+
+    pci_default_write_config(dev, addr, val, len);
+    if (!s->v) {
+        return;
+    }
+    voodoo2_cfg_forward(s->v, addr, val, len);
+    if (addr <= 0x43 && addr + len > 0x40) {
+        info_report("voodoo2: initEnable (second board) <= %08x%s",
+                    s->v->initEnable,
+                    (s->v->initEnable & (1u << 23)) ? ", snooping the master's bus" : "");
+    }
+}
+
+static void
+voodoo2_sli_realize(PCIDevice *dev, Error **errp)
+{
+    Voodoo2SliState *s = VOODOO2_SLI(dev);
+
+    if (!s->master || !s->v) {
+        error_setg(errp, "voodoo2-sli: the second board of an SLI pair is "
+                   "created by the voodoo2 device, not on its own");
+        return;
+    }
+    memory_region_init_io(&s->mmio, OBJECT(s), &voodoo2_sli_mmio_ops, s,
+                          "voodoo2-sli.mmio", VOODOO2_BAR_SIZE);
+    pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->mmio);
+    for (int a = 0x40; a <= 0x43; a++) {
+        dev->wmask[a] = 0xff;
+    }
+    pci_set_word(dev->config + PCI_SUBSYSTEM_VENDOR_ID, 0);
+    pci_set_word(dev->config + PCI_SUBSYSTEM_ID, 0);
 }
 
 /* --------------------------------------------------------------- display */
@@ -1218,6 +1487,7 @@ voodoo2_stats(void *opaque)
         s->fifo_off_writes != s->last_fifo_off ||
         s->fifo_syncs != s->last_fifo_syncs) {
         char rds[64], wrs[64], cfg[64], ref[48] = "", busy[96] = "", ram[256] = "";
+        char sli[112] = "";
         int  written = v->cmd_written + v->cmd_written_fifo + v->cmd_written_fifo_2;
         int  outstanding = written - v->cmd_read;
         int  is_busy = outstanding ||
@@ -1239,6 +1509,17 @@ voodoo2_stats(void *opaque)
                      (v->render_threads >= 2 && RENDER_VOODOO_BUSY(v, 1)) ? ", render1" : "");
         }
 
+        if (s->v1) {
+            /* the other half of the lines: its own triangles and its own
+             * ring, which under ramfifo=on is fed by the mirror */
+            snprintf(sli, sizeof(sli), "; second board: %d triangles, %d writes"
+                     "%s%s, fifo depth %u/%u", s->v1->tri_count - s->last_tris1,
+                     s->v1->wr_count - s->last_wr1,
+                     (s->v->fbiInit1 & (1u << 23)) ? ", interleaving" : "",
+                     (s->fifo_mapped && voodoo2_fifo_partner(s)) ? ", mirrored" : "",
+                     (unsigned) s->v1->cmdfifo_depth_rd,
+                     (unsigned) s->v1->cmdfifo_depth_wr);
+        }
         voodoo2_top_regs(s->rd_hist, 256, rds, sizeof(rds));
         voodoo2_top_regs(s->wr_hist, 256, wrs, sizeof(wrs));
         voodoo2_top_regs(s->cfg_hist, 64, cfg, sizeof(cfg));
@@ -1276,12 +1557,12 @@ voodoo2_stats(void *opaque)
          * showing a buffer the last one did not, i.e. the game's frame rate */
         info_report("voodoo2: %dx%d %s: %u frames (%u new), %d triangles, "
                     "%d writes (%d texture), %d reads in %.1f s; regs read%s; "
-                    "written%s; config read%s%s%s%s",
+                    "written%s; config read%s%s%s%s%s",
                     v->h_disp, v->v_disp, s->override ? "on" : "off",
                     frames, s->shown - s->last_shown, tris, wr, tex, rd,
                     VOODOO2_STATS_MS / 1000.0,
                     rds[0] ? rds : " none", wrs[0] ? wrs : " none",
-                    cfg[0] ? cfg : " none", ref, busy, ram);
+                    cfg[0] ? cfg : " none", ref, busy, ram, sli);
     }
     /* The deadlock of 2026-09-17: 86Box's consumer waits inside cmdfifo_get
      * for a word the guest never wrote (it read a packet header wanting more
@@ -1348,6 +1629,10 @@ voodoo2_stats(void *opaque)
     s->last_shown  = s->shown;
     s->last_tris   = v->tri_count;
     s->last_wr     = v->wr_count;
+    if (s->v1) {
+        s->last_tris1 = s->v1->tri_count;
+        s->last_wr1   = s->v1->wr_count;
+    }
     s->last_rd     = v->rd_count;
     s->last_tex    = v->tex_count;
     timer_mod(s->stats, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + VOODOO2_STATS_MS);
@@ -1357,10 +1642,70 @@ voodoo2_stats(void *opaque)
 
 static bool voodoo2_instantiated;
 
+/* `filter=`: which of the three dither removals the display timer runs,
+ * as 86Box's scrfilter value (patch 72). "on" is kept for the bool this
+ * property used to be, and means the card's own. */
+static int
+voodoo2_filter_mode(const char *name, Error **errp)
+{
+    static const struct {
+        const char *name;
+        int         mode;
+    } modes[] = {
+        { NULL,    VOODOO_FILTER_OFF },  { "off",   VOODOO_FILTER_OFF },
+        { "false", VOODOO_FILTER_OFF },  { "no",    VOODOO_FILTER_OFF },
+        { "on",    VOODOO_FILTER_CARD }, { "true",  VOODOO_FILTER_CARD },
+        { "yes",   VOODOO_FILTER_CARD }, { "v2",    VOODOO_FILTER_CARD },
+        { "card",  VOODOO_FILTER_CARD },
+        { "4x1",   VOODOO_FILTER_4X1 },  { "22bit", VOODOO_FILTER_4X1 },
+        { "2x2",   VOODOO_FILTER_2X2 },
+    };
+
+    for (unsigned i = 0; i < ARRAY_SIZE(modes); i++) {
+        if (modes[i].name == name ||
+            (name && modes[i].name && !strcmp(modes[i].name, name))) {
+            return modes[i].mode;
+        }
+    }
+    error_setg(errp, "voodoo2: filter must be off, v2 (this card's own), "
+               "4x1 or 2x2 (the Voodoo 3's), not \"%s\"", name);
+    return -1;
+}
+
+static const char *
+voodoo2_filter_name(int mode, uint32_t threshold)
+{
+    static char buf[64];
+
+    switch (mode) {
+    case VOODOO_FILTER_CARD:
+        snprintf(buf, sizeof(buf), "the card's own filter (%06x)", threshold & 0xffffff);
+        break;
+    case VOODOO_FILTER_4X1:
+        snprintf(buf, sizeof(buf), "the Voodoo 3's 4x1 filter (%06x)", threshold & 0xffffff);
+        break;
+    case VOODOO_FILTER_2X2:
+        snprintf(buf, sizeof(buf), "the Voodoo 3's 2x2 filter (%06x)", threshold & 0xffffff);
+        break;
+    default:
+        return "no screen filter";
+    }
+    return buf;
+}
+
+/* where the second board goes: function 1 of the master's slot unless
+ * sli-addr says otherwise */
+static int
+voodoo2_sli_devfn(Voodoo2State *s)
+{
+    return s->sli_addr >= 0 ? s->sli_addr : PCI_DEVICE(s)->devfn + 1;
+}
+
 static void
 voodoo2_realize(PCIDevice *dev, Error **errp)
 {
     Voodoo2State   *s = VOODOO2(dev);
+    int             filter;
     VoodooShimHooks hooks = {
         .opaque       = s,
         .set_override = voodoo2_set_override,
@@ -1370,8 +1715,20 @@ voodoo2_realize(PCIDevice *dev, Error **errp)
 
     if (voodoo2_instantiated) {
         /* 86Box's primary-SVGA hook and the shim's monitor are one per
-         * process; SLI is not modelled (fbiInit7 has no second card) */
-        error_setg(errp, "voodoo2: only one Voodoo 2 per machine");
+         * process; an SLI pair is two boards inside this one device */
+        error_setg(errp, "voodoo2: only one Voodoo 2 per machine (an SLI pair "
+                   "is sli=on, not a second -device)");
+        return;
+    }
+    if (s->sli && s->sli_addr < 0 && PCI_FUNC(dev->devfn) != 0) {
+        error_setg(errp, "voodoo2: an SLI pair takes function 0 of its slot "
+                   "(its second board is function 1); sli-addr= puts the "
+                   "second board elsewhere");
+        return;
+    }
+    if (s->sli && s->sli_addr == dev->devfn) {
+        error_setg(errp, "voodoo2: sli-addr is where the *second* board goes, "
+                   "and this one is already there");
         return;
     }
     if (s->fbmem_mb != 2 && s->fbmem_mb != 4) {
@@ -1386,23 +1743,53 @@ voodoo2_realize(PCIDevice *dev, Error **errp)
         error_setg(errp, "voodoo2: threads must be 1, 2 or 4");
         return;
     }
+    filter = voodoo2_filter_mode(s->filter, errp);
+    if (filter < 0) {
+        return;
+    }
     voodoo2_instantiated = true;
 
     voodoo2_trace = getenv("VOODOO2_TRACE") && *getenv("VOODOO2_TRACE") == '1';
     voodoo_shim_init(&hooks);
     voodoo_shim_set_config("bilinear", s->bilinear);
     voodoo_shim_set_config("dithersub", s->dithersub);
-    voodoo_shim_set_config("dacfilter", s->filter);
+    voodoo_shim_set_config("dacfilter", filter);
     voodoo_shim_set_config("texture_memory", (int) s->texmem_mb);
     voodoo_shim_set_config("framebuffer_memory", (int) s->fbmem_mb);
     voodoo_shim_set_config("render_threads", (int) s->threads);
     voodoo_shim_set_config("recompiler", s->recompiler);
-    voodoo_shim_set_config("sli", 0);
+    voodoo_shim_set_config("sli", s->sli);
 
     s->set = voodoo_init(NULL);
     s->v   = s->set->voodoos[0];
     /* the per-scanline display timer, coalesced (shim/86box/timer.h) */
     s->v->timer.slack_ns = 1000000;
+    if (s->sli) {
+        s->v1 = s->set->voodoos[1];
+        s->v1->timer.slack_ns = 1000000;
+        if (PCI_SLOT(voodoo2_sli_devfn(s)) == PCI_SLOT(dev->devfn)) {
+            /* function 0 of a multifunction device must say so, or the PCI
+             * core refuses to populate function 1 and no guest would look
+             * there */
+            dev->cap_present |= QEMU_PCI_CAP_MULTIFUNCTION;
+            dev->config[PCI_HEADER_TYPE] |= PCI_HEADER_TYPE_MULTI_FUNCTION;
+        }
+    }
+
+    if (filter != VOODOO_FILTER_OFF) {
+        /* On from the start, with the thresholds this device was given:
+         * 86Box waits for the guest to write the scrFilter register, which
+         * 3dfx's Voodoo 2 driver does only if its control panel asks for
+         * the card's own filter -- and never with the Voodoo 3's numbers.
+         * A guest that writes the register still wins, as it would. */
+        for (int b = 0; b < (s->v1 ? 2 : 1); b++) {
+            voodoo_t *v = s->set->voodoos[b];
+
+            v->scrfilterEnabled   = 1;
+            v->scrfilterThreshold = (int) (s->filter_threshold & 0xffffff);
+            voodoo_threshold_check(v);
+        }
+    }
 
     memory_region_init_io(&s->mmio, OBJECT(s), &voodoo2_mmio_ops, s,
                           "voodoo2.mmio", VOODOO2_BAR_SIZE);
@@ -1433,13 +1820,31 @@ voodoo2_realize(PCIDevice *dev, Error **errp)
     pci_set_word(dev->config + PCI_SUBSYSTEM_VENDOR_ID, 0);
     pci_set_word(dev->config + PCI_SUBSYSTEM_ID, 0);
 
+    if (s->sli) {
+        /* the second board: function 1 of this slot, or wherever sli-addr
+         * says */
+        /* not "sli": that name is the property that asked for it */
+        object_initialize_child(OBJECT(dev), "board2", &s->slave, TYPE_VOODOO2_SLI);
+        s->slave.master = s;
+        s->slave.v      = s->v1;
+        qdev_prop_set_int32(DEVICE(&s->slave), "addr", voodoo2_sli_devfn(s));
+        if (!qdev_realize(DEVICE(&s->slave), BUS(pci_get_bus(dev)), errp)) {
+            voodoo2_instantiated = false;
+            return;
+        }
+    }
+
     s->stats = timer_new_ms(QEMU_CLOCK_VIRTUAL, voodoo2_stats, s);
     timer_mod(s->stats, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + VOODOO2_STATS_MS);
 
-    info_report("voodoo2: %u MB frame buffer, %u MB per TMU, %u render "
-                "thread%s, recompiler %s",
-                s->fbmem_mb, s->texmem_mb, s->threads, s->threads > 1 ? "s" : "",
-                s->recompiler ? "on" : "off");
+    info_report("voodoo2: %s, %u MB frame buffer, %u MB per TMU, %u render "
+                "thread%s%s, recompiler %s, %s",
+                s->sli ? "an SLI pair" : "one board",
+                s->fbmem_mb, s->texmem_mb,
+                s->threads, s->threads > 1 ? "s" : "",
+                s->sli ? " a board" : "",
+                s->recompiler ? "on" : "off",
+                voodoo2_filter_name(filter, s->filter_threshold));
 }
 
 static void
@@ -1459,8 +1864,10 @@ voodoo2_exit(PCIDevice *dev)
             s->fb_86box  = NULL;
         }
         voodoo_close(s->set);
-        s->set = NULL;
-        s->v   = NULL;
+        s->set      = NULL;
+        s->v        = NULL;
+        s->v1       = NULL;
+        s->slave.v  = NULL;     /* its BAR may outlive the set it points into */
     }
     voodoo2_instantiated = false;
 }
@@ -1469,26 +1876,38 @@ voodoo2_exit(PCIDevice *dev)
  * re-initialises it), but the BAR is gone and the monitor must go back to
  * the VGA, or a rebooting guest stares at the last frame. */
 static void
-voodoo2_reset(DeviceState *dev)
+voodoo2_reset_card(voodoo_t *v)
 {
-    Voodoo2State *s = VOODOO2(dev);
-    voodoo_t     *v = s->v;
-
-    if (!v) {
-        return;
-    }
     thread_wait_mutex(v->force_blit_mutex);
     v->can_blit         = 0;
     v->force_blit_count = 0;
     thread_release_mutex(v->force_blit_mutex);
     v->fbiInit0        = 0;
+    v->fbiInit1       &= ~(1u << 23);   /* scanline interleaving off again */
     v->fbiInit7        = 0;
     v->cmdfifo_enabled = 0;
     v->initEnable      = 0;
     v->pci_enable      = 0;
     v->memBaseAddr     = 0;
+}
+
+static void
+voodoo2_reset(DeviceState *dev)
+{
+    Voodoo2State *s = VOODOO2(dev);
+
+    if (!s->v) {
+        return;
+    }
+    voodoo2_reset_card(s->v);
+    if (s->v1) {
+        voodoo2_reset_card(s->v1);
+        /* the snoop goes with it: both boards are unmapped again */
+        mem_mapping_disable(&s->set->snoop_mapping);
+    }
     voodoo2_set_override(s, 0);
     s->fifo_broken = false;
+    s->sli_warned  = false;
     voodoo2_fifo_map(s);
 }
 
@@ -1498,9 +1917,12 @@ static Property voodoo2_properties[] = {
     DEFINE_PROP_UINT32("threads", Voodoo2State, threads, 2),
     DEFINE_PROP_BOOL("bilinear", Voodoo2State, bilinear, true),
     DEFINE_PROP_BOOL("dither-sub", Voodoo2State, dithersub, true),
-    DEFINE_PROP_BOOL("filter", Voodoo2State, filter, false),
+    DEFINE_PROP_STRING("filter", Voodoo2State, filter),
+    DEFINE_PROP_UINT32("filter-threshold", Voodoo2State, filter_threshold, 0x00100810),
     DEFINE_PROP_BOOL("recompiler", Voodoo2State, recompiler, true),
     DEFINE_PROP_BOOL("ramfifo", Voodoo2State, ramfifo, true),
+    DEFINE_PROP_BOOL("sli", Voodoo2State, sli, true),
+    DEFINE_PROP_PCI_DEVFN("sli-addr", Voodoo2State, sli_addr, -1),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -1525,6 +1947,36 @@ voodoo2_class_init(ObjectClass *klass, void *data)
     set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
 }
 
+static void
+voodoo2_sli_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass    *dc = DEVICE_CLASS(klass);
+    PCIDeviceClass *k  = PCI_DEVICE_CLASS(klass);
+
+    k->realize      = voodoo2_sli_realize;
+    k->config_read  = voodoo2_sli_config_read;
+    k->config_write = voodoo2_sli_config_write;
+    k->vendor_id    = VOODOO2_PCI_VENDOR;
+    k->device_id    = VOODOO2_PCI_DEVICE;
+    k->revision     = 0x02;
+    k->class_id     = PCI_CLASS_MULTIMEDIA_VIDEO;
+    dc->desc           = "3dfx Voodoo 2, the second board of an SLI pair";
+    dc->hotpluggable   = false;
+    dc->user_creatable = false;     /* the voodoo2 device makes this one */
+    set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
+}
+
+static const TypeInfo voodoo2_sli_info = {
+    .name          = TYPE_VOODOO2_SLI,
+    .parent        = TYPE_PCI_DEVICE,
+    .instance_size = sizeof(Voodoo2SliState),
+    .class_init    = voodoo2_sli_class_init,
+    .interfaces    = (InterfaceInfo[]) {
+        { INTERFACE_CONVENTIONAL_PCI_DEVICE },
+        { },
+    },
+};
+
 static const TypeInfo voodoo2_info = {
     .name          = TYPE_VOODOO2,
     .parent        = TYPE_PCI_DEVICE,
@@ -1540,6 +1992,7 @@ static void
 voodoo2_register_types(void)
 {
     type_register_static(&voodoo2_info);
+    type_register_static(&voodoo2_sli_info);
 }
 
 type_init(voodoo2_register_types)

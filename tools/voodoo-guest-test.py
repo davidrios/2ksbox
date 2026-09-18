@@ -33,6 +33,23 @@ its two code generators did not until patch 64 (the columns walked
 interpreter, the A/B; `DITHER_SUB=off` (the device's `dither-sub=off`)
 is the control that must fail this phase on either path.
 
+The last phase but one is the **SLI pair** (doc 21 §12), which is what
+the device is unless `sli=off`: the second board answers at function 1 of
+the same slot, both boards are set up for 1024x768 -- the resolution one
+board's 4 MB frame buffer cannot hold three buffers and a depth buffer of
+-- with scanline interleaving on, and three fills are asked of the pair.
+A fastfill of red on the master and of blue on the second board, each
+through its own aperture, must come out as a striped 1024x768 frame with
+every line the colour of the board that owns it (a black line is a board
+that never drew, or one whose CLUT was never programmed). One green fill
+written *once*, to the master's aperture, must reach both boards, which is
+the snoop a real pair does on the master's bus. And one command-FIFO batch
+(magenta) must reach both too: under `ramfifo=on` the guest's packet words
+go into RAM that nothing traps, so only the device's mirror into the second
+board's ring can have run them. `SLI=off` runs the same program on one
+board, where the phase says `SLI NONE` and skips -- the control that a
+single card still works (the `voodoo-guest-oneboard` check).
+
 The evidence is on the host side: a QMP screendump while the Voodoo has
 the monitor must be the 640x480 red frame (the whole path from a guest
 `mov` to the console surface -- register decode, the memory FIFO, the
@@ -42,6 +59,7 @@ and one after it lets go must be the VGA's text screen again. Every
 
     tools/voodoo-guest-test.py          # needs nasm, mtools, build/qemu
     VGA=d3dpt tools/voodoo-guest-test.py   # beside our own adapter (std, cirrus, d3dpt)
+    SLI=off tools/voodoo-guest-test.py     # one board, without the SLI phase
 
 The 2D adapter is whatever the machine has -- a Voodoo 2 is a 3D-only
 card that borrows the monitor -- and `VGA=` picks it: `std` (default),
@@ -72,12 +90,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QEMU = os.path.join(ROOT, "build/qemu/qemu-system-i386")
 VGA = os.environ.get("VGA", "std")
 RAMFIFO = os.environ.get("RAMFIFO", "on")
+SLI = os.environ.get("SLI", "on")
+FILTER = os.environ.get("FILTER", "off")
 RECOMP = os.environ.get("RECOMP", "on")
 DITHER_SUB = os.environ.get("DITHER_SUB", "on")
 OUT = os.path.join(ROOT, "build/voodoo-guest" + ("" if VGA == "std" else "-" + VGA)
                    + ("" if RAMFIFO == "on" else "-mmiofifo")
                    + ("" if RECOMP == "on" else "-interp")
-                   + ("" if DITHER_SUB == "on" else "-nodsub"))
+                   + ("" if DITHER_SUB == "on" else "-nodsub")
+                   + ("" if SLI == "on" else "-oneboard")
+                   + ("" if FILTER == "off" else "-" + FILTER))
 
 spec = importlib.util.spec_from_file_location("x87gt", os.path.join(ROOT, "tools/x87-guest-test.py"))
 x87gt = importlib.util.module_from_spec(spec)
@@ -97,12 +119,19 @@ bits 16
 BAR         equ 0E0000000h
 LFB         equ BAR + 400000h
 RED565      equ 0F800F800h          ; two RGB565 pixels of (248, 0, 0)
+; the second board of an SLI pair, function 1 of the same slot
+BAR2        equ 0E1000000h
 
 ; register offsets (vid_voodoo_regs.h)
 SST_status          equ 000h
 SST_lfbMode         equ 114h
 SST_swapbufferCMD   equ 128h
 SST_videoDimensions equ 20Ch
+SST_fbzMode         equ 110h
+SST_clipLeftRight   equ 118h
+SST_clipLowYHighY   equ 11Ch
+SST_fastfillCMD     equ 124h
+SST_color1          equ 148h
 SST_fbiInit0        equ 210h
 SST_fbiInit1        equ 214h
 SST_fbiInit2        equ 218h
@@ -270,28 +299,7 @@ start:
     mov eax, 0537h              ; PLL0 high byte: n1 = 0x17 + 2 = 25, n2 = 1 -> 25.2 MHz
     mov [fs:edi + SST_dacData], eax
 
-    ; the CLUT: 33 entries, a linear ramp (entry i = 8i; the last one is
-    ; "set to 255" through bit 29, as the driver writes it)
-    xor ecx, ecx
-.clut:
-    mov eax, ecx
-    shl eax, 3                  ; 8i
-    mov ebx, eax
-    shl ebx, 8
-    or eax, ebx                 ; g
-    shl ebx, 8
-    or eax, ebx                 ; r
-    mov ebx, ecx
-    shl ebx, 24
-    or eax, ebx                 ; index
-    cmp ecx, 32
-    jb .clut_write
-    mov eax, (32 << 24) | 20000000h
-.clut_write:
-    mov [fs:edi + SST_clutData], eax
-    inc ecx
-    cmp ecx, 33
-    jb .clut
+    call clut_ramp              ; EDI = this board's BAR
 
     mov eax, 050h               ; lfbMode: RGB565, write the back buffer, read the back buffer
     mov [fs:edi + SST_lfbMode], eax
@@ -417,6 +425,8 @@ start:
     xor eax, eax                ; fbiInit7: the command FIFO off again
     mov [fs:edi + SST_fbiInit7], eax
 
+    call sli_phase
+
     ; --- give the monitor back to the VGA -------------------------------
     mov edi, BAR
     xor eax, eax
@@ -430,6 +440,215 @@ exit:
     int 21h
 
 ; ---------------------------------------------------------------- helpers
+
+; EDI = a board's BAR. The CLUT: 33 entries, a linear ramp (entry i = 8i;
+; the last one is "set to 255" through bit 29, as the driver writes it).
+; Each board makes its own 16-to-32-bit table out of this, and the display
+; reads every line through the table of the board that holds it -- so an
+; SLI pair whose second board has no CLUT shows black on every other line.
+clut_ramp:
+    xor ecx, ecx
+.clut:
+    mov eax, ecx
+    shl eax, 3                  ; 8i
+    mov ebx, eax
+    shl ebx, 8
+    or eax, ebx                 ; g
+    shl ebx, 8
+    or eax, ebx                 ; r
+    mov ebx, ecx
+    shl ebx, 24
+    or eax, ebx                 ; index
+    cmp ecx, 32
+    jb .clut_write
+    mov eax, (32 << 24) | 20000000h
+.clut_write:
+    mov [fs:edi + SST_clutData], eax
+    inc ecx
+    cmp ecx, 33
+    jb .clut
+    ret
+
+; ------------------------------------------------------- the SLI phase
+;
+; The pair an SLI cable makes (doc 21 §12), which is what this device is
+; unless sli=off: the second board is function 1 of the master's slot,
+; with a BAR and an initEnable of its own -- 3dfx's driver counts boards
+; by scanning configuration space for 121a:0002, and two is what it finds.
+; Both boards are set up for **1024x768**, the resolution one board's 4 MB
+; cannot hold three buffers and a depth buffer of, with scanline
+; interleaving on (fbiInit1 bit 23): the master owns the even lines and
+; the second board the odd ones (initEnable bit 11), each rasterises only
+; its own, and the master's display timer reads every other line out of
+; the other board's memory.
+;
+; Three things are asked of it, the frame being the evidence for each:
+;   - a fastfill of red on the master and of blue on the second board,
+;     each through its own aperture: the frame must come out striped, one
+;     line each, which takes both boards having drawn and the display
+;     interleaving them;
+;   - the same fill in green written *once*, to the master's aperture,
+;     with the second board's initEnable bit 23 set: a real pair snoops
+;     the master's bus, so one write reaches both and the whole frame is
+;     green -- every other line stays blue if it does not;
+;   - and the same again (magenta) as command-FIFO packets in the
+;     master's ring, which under ramfifo=on the guest writes into RAM
+;     that nothing traps: the device mirrors the words it counts into the
+;     second board's ring, or the odd lines stay green.
+sli_phase:
+    mov byte [pci_func], 1
+    xor cl, cl
+    call pci_read
+    mov byte [pci_func], 0
+    cmp eax, 0002121Ah
+    je .found
+    mov si, str_sli_none
+    call puts
+    ret
+.found:
+    ; map the second board, let it decode memory and unlock its fbiInit
+    ; registers, and give it the odd lines (initEnable bit 11)
+    mov byte [pci_func], 1
+    mov cl, 10h
+    mov eax, BAR2
+    call pci_write
+    mov cl, 04h
+    call pci_read
+    or eax, 2
+    mov cl, 04h
+    call pci_write
+    mov cl, 40h
+    mov eax, 1 | (1 << 11)
+    call pci_write
+    mov cl, 40h
+    call pci_read
+    mov byte [pci_func], 0
+    mov si, str_sli_found
+    call puts
+    call puthex32
+    call putnl
+
+    ; the second board first: interleaving is turned on for the pair by
+    ; the master's fbiInit1, and a board that is asked for its lines
+    ; before it has any is a frame buffer nobody has written
+    mov edi, BAR2
+    call sli_setup
+    mov edi, BAR
+    call sli_setup
+
+    ; --- red on the master, blue on the second board --------------------
+    mov edi, BAR
+    mov eax, 0FF0000h           ; color1: red
+    mov [fs:edi + SST_color1], eax
+    xor eax, eax
+    mov [fs:edi + SST_fastfillCMD], eax
+    mov edi, BAR2
+    mov eax, 0FFh               ; color1: blue
+    mov [fs:edi + SST_color1], eax
+    xor eax, eax
+    mov [fs:edi + SST_fastfillCMD], eax
+    ; each board swaps on its own retrace, and a swap is what marks every
+    ; line of that board dirty (a triangle does not, under SLI)
+    mov edi, BAR
+    mov eax, 1
+    mov [fs:edi + SST_swapbufferCMD], eax
+    mov edi, BAR2
+    mov eax, 1
+    mov [fs:edi + SST_swapbufferCMD], eax
+    mov cx, 18                  ; ~1 s
+    call delay_ticks
+    mov si, str_sli_stripes
+    call puts
+    mov cx, 36                  ; ~2 s: the host takes its screendump
+    call delay_ticks
+
+    ; --- the snoop: one write, both boards ------------------------------
+    mov byte [pci_func], 1
+    mov cl, 40h
+    mov eax, 1 | (1 << 11) | (1 << 23)
+    call pci_write
+    mov cl, 40h
+    call pci_read
+    mov byte [pci_func], 0
+    mov si, str_sli_snoop
+    call puts
+    call puthex32
+    call putnl
+    mov edi, BAR
+    mov eax, 0FF00h             ; color1: green, to the master's aperture
+    mov [fs:edi + SST_color1], eax
+    xor eax, eax
+    mov [fs:edi + SST_fastfillCMD], eax
+    mov eax, 1
+    mov [fs:edi + SST_swapbufferCMD], eax
+    mov cx, 18
+    call delay_ticks
+    mov si, str_sli_snooped
+    call puts
+    mov cx, 36
+    call delay_ticks
+
+    ; --- and through the command FIFO, mirrored into the second board ---
+    mov edi, BAR
+    mov eax, (FIFO_BASE >> 12) | (((FIFO_BASE + FIFO_SIZE - 1000h) >> 12) << 16)
+    mov [fs:edi + SST_cmdFifoBaseAddr], eax
+    mov eax, FIFO_BASE
+    mov [fs:edi + SST_cmdFifoRdPtr], eax
+    xor eax, eax
+    mov [fs:edi + SST_cmdFifoDepth], eax
+    mov eax, 100h               ; fbiInit7: the command FIFO on (both boards)
+    mov [fs:edi + SST_fbiInit7], eax
+    mov edi, FIFO_WIN
+    mov dword [fs:edi], 00010291h       ; packet 1: color1
+    mov dword [fs:edi + 4], 0FF00FFh    ;   magenta
+    mov dword [fs:edi + 8], 00010249h   ; packet 1: fastfillCMD
+    mov dword [fs:edi + 12], 0
+    mov dword [fs:edi + 16], 00010251h  ; packet 1: swapbufferCMD
+    mov dword [fs:edi + 20], 1
+    mov edx, FIFO_BASE + 18h            ; where the read pointer must end
+    mov si, str_sli_fifo
+    call fifo_wait
+    mov si, str_sli_fifo_swapped
+    call puts
+    mov cx, 36
+    call delay_ticks
+    mov edi, BAR
+    xor eax, eax                ; the FIFO off again, on both boards
+    mov [fs:edi + SST_fbiInit7], eax
+    ret
+
+; EDI = a board's BAR: 1024x768 interleaved, three buffers and a depth
+; buffer 768 KB apart, which is half a 1024x768 buffer -- an SLI board
+; holds every other line, and that is the whole reason the pair can show
+; a resolution one board cannot
+sli_setup:
+    mov eax, 01800000h          ; fbiInit1: 32 blocks of 32 px = 1024 px rows
+                                ;   (bit 24) and scanline interleaving (bit 23)
+    mov [fs:edi + SST_fbiInit1], eax
+    mov eax, 192 << 11          ; fbiInit2: buffers 192 x 4 KiB apart (1024 x 384 x 2)
+    mov [fs:edi + SST_fbiInit2], eax
+    mov eax, (768 << 16) | 1023 ; videoDimensions
+    mov [fs:edi + SST_videoDimensions], eax
+    mov eax, 0400h              ; dacData: PLL register select = 0
+    mov [fs:edi + SST_dacData], eax
+    mov eax, 0556h              ; PLL0 low byte
+    mov [fs:edi + SST_dacData], eax
+    mov eax, 0537h              ; PLL0 high byte
+    mov [fs:edi + SST_dacData], eax
+    mov eax, 015003FFh          ; hSync: 1024 active + 336 blank
+    mov [fs:edi + SST_hSync], eax
+    mov eax, 00260300h          ; vSync: 768 active + 38 blank
+    mov [fs:edi + SST_vSync], eax
+    call clut_ramp
+    mov eax, 4200h              ; fbzMode: RGB writes into the back buffer
+    mov [fs:edi + SST_fbzMode], eax
+    mov eax, 400h               ; clipLeftRight: x 0..1024
+    mov [fs:edi + SST_clipLeftRight], eax
+    mov eax, 300h               ; clipLowYHighY: y 0..768
+    mov [fs:edi + SST_clipLowYHighY], eax
+    mov eax, 1                  ; fbiInit0: VGA pass-through
+    mov [fs:edi + SST_fbiInit0], eax
+    ret
 
 ; d3dpt-vga, when the machine has one: 800x600x32 filled green and ENABLE
 ; set -- what a Windows desktop on our driver leaves the adapter in, so
@@ -789,11 +1008,17 @@ unreal_mode:
     sti
     ret
 
-; CL = register, EAX = value / result; the device found by the scan
+; CL = register, EAX = value / result; the device found by the scan, and
+; function [pci_func] -- 0 but for the second board of an SLI pair
 pci_addr:
+    push ecx
     movzx eax, byte [pci_dev]
     shl eax, 11
+    movzx ecx, byte [pci_func]
+    shl ecx, 8
+    or eax, ecx
     or eax, 80000000h
+    pop ecx
     movzx ecx, cl
     or eax, ecx
     mov dx, 0CF8h
@@ -929,6 +1154,7 @@ col_px:      dd LFB + (280 << 11) + 64,  LFB + (280 << 11) + 192
              dd LFB + (280 << 11) + 832, LFB + (280 << 11) + 960
 
 pci_dev:     dw 0
+pci_func:    db 0
 init_enable: dd 0
 si_polls:    dd 0
 d3d_vram:    dd 0
@@ -961,6 +1187,13 @@ str_dith_ref: db "DITH REF ", 0
 str_dith_col: db "DITH COL ", 0
 str_dith_swap: db "DITH SWAP RDPTR ", 0
 str_dith_shown: db "DITH SHOWN", 10, 0
+str_sli_none: db "SLI NONE: no second board at function 1", 10, 0
+str_sli_found: db "SLI FOUND INITENABLE ", 0
+str_sli_stripes: db "SLI STRIPES", 10, 0
+str_sli_snoop: db "SLI SNOOP INITENABLE ", 0
+str_sli_snooped: db "SLI SNOOPED", 10, 0
+str_sli_fifo: db "SLI FIFO RDPTR ", 0
+str_sli_fifo_swapped: db "SLI FIFO SWAPPED", 10, 0
 """
 
 
@@ -1045,6 +1278,55 @@ def magenta_fraction(path):
     return fraction(path, lambda r, g, b: r >= 240 and g < 8 and b >= 240)
 
 
+def fill_green_fraction(path):
+    """The CLUT-ramped green of a fastfill (RGB565's 6-bit green)."""
+    return fraction(path, lambda r, g, b: r < 8 and g >= 240 and b < 8)
+
+
+def interleaved_rows(path):
+    """(width, height, rows drawn by the board that owns them): the master
+    fills the even lines red and the second board the odd ones blue, so
+    every line of an SLI frame has one right colour and nothing else --
+    a black line is a board that never drew or has no CLUT of its own."""
+    w, h, px = vgadirty.read_ppm(path)
+    good = 0
+    for y in range(h):
+        red = (y % 2) == 0
+        ok = True
+        for x in range(0, w, 8):        # a fastfill is uniform: sample it
+            i = (y * w + x) * 3
+            r, g, b = px[i], px[i + 1], px[i + 2]
+            if red and not (r >= 240 and g < 8 and b < 8):
+                ok = False
+                break
+            if not red and not (r < 8 and g < 8 and b >= 240):
+                ok = False
+                break
+        good += ok
+    return w, h, good
+
+
+def row_spread(path, y0, y1):
+    """The widest per-channel range inside one row, over the rows sampled:
+    a dithered flat colour's own amplitude with no filter (8 in red and
+    blue, 4 in green -- one step of 565), and near nothing once a dither
+    remover has run along the line. The rows are taken from the dither
+    scene's plain band, above the blended columns."""
+    w, h, px = vgadirty.read_ppm(path)
+    worst = [0, 0, 0]
+    for y in range(y0, min(y1, h)):
+        lo = [255, 255, 255]
+        hi = [0, 0, 0]
+        for x in range(8, w - 8):
+            i = (y * w + x) * 3
+            for c in range(3):
+                lo[c] = min(lo[c], px[i + c])
+                hi[c] = max(hi[c], px[i + c])
+        for c in range(3):
+            worst[c] = max(worst[c], hi[c] - lo[c])
+    return w, h, worst
+
+
 def off_tile_pixels(path):
     """Pixels of the dither scene that are not the 4x4 dither tile of its
     reference band (rows 100-103). The scene is one grey over the whole
@@ -1081,7 +1363,11 @@ def main():
     shot_f1 = os.path.join(OUT, "fifo1.ppm")
     shot_f2 = os.path.join(OUT, "fifo2.ppm")
     shot_dith = os.path.join(OUT, "dither.ppm")
-    for f in (log, qlog, shot_on, shot_off, shot_lin, shot_f1, shot_f2, shot_dith, sock):
+    shot_sli1 = os.path.join(OUT, "sli-stripes.ppm")
+    shot_sli2 = os.path.join(OUT, "sli-snoop.ppm")
+    shot_sli3 = os.path.join(OUT, "sli-fifo.ppm")
+    for f in (log, qlog, shot_on, shot_off, shot_lin, shot_f1, shot_f2, shot_dith,
+              shot_sli1, shot_sli2, shot_sli3, sock):
         if os.path.exists(f):
             os.unlink(f)
     ok = True
@@ -1092,7 +1378,8 @@ def main():
             *vga_args(),
             # the cursor the console publishes (patch 66), in this log
             *(["-trace", "dpy_mouse_publish"] if VGA == "d3dpt" else []),
-            "-device", "voodoo2,ramfifo=%s,recompiler=%s,dither-sub=%s" % (RAMFIFO, RECOMP, DITHER_SUB),
+            "-device", "voodoo2,sli=%s,ramfifo=%s,recompiler=%s,dither-sub=%s,filter=%s"
+            % (SLI, RAMFIFO, RECOMP, DITHER_SUB, FILTER),
             "-drive", "file=%s,if=floppy,index=0,format=raw" % img,
             "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
             "-qmp", "unix:%s,server,nowait" % sock, "-audiodev", "none,id=a0",
@@ -1116,6 +1403,16 @@ def main():
             q.screendump(shot_f2)
             text = wait_for(log, b"DITH SHOWN", p, 180, "the dither scene")
             q.screendump(shot_dith)
+            if SLI == "on":
+                text = wait_for(log, b"SLI STRIPES", p, 180,
+                                "the SLI pair's 1024x768 frame")
+                q.screendump(shot_sli1)
+                text = wait_for(log, b"SLI SNOOPED", p, 120,
+                                "the fill written once to the master")
+                q.screendump(shot_sli2)
+                text = wait_for(log, b"SLI FIFO SWAPPED", p, 120,
+                                "the command-FIFO batch both boards ran")
+                q.screendump(shot_sli3)
             text = wait_for(log, b"DONE", p, 60, "the guest to finish")
             q.screendump(shot_off)
         finally:
@@ -1185,11 +1482,77 @@ def main():
         print("FAIL the dither scene's columns (%s) are not the reference (%s): "
               "a blend read-back kept its dither" % (" ".join(cols), ref[0] if ref else "none"))
         ok = False
-    w, h, bad = off_tile_pixels(shot_dith)
-    print("    screendump of the dither scene: %dx%d, %d pixels off the dither tile" % (w, h, bad))
-    if (w, h) != (WIDTH, HEIGHT) or bad:
-        print("FAIL the dither scene is not one dither tile")
-        ok = False
+    if FILTER == "off":
+        w, h, bad = off_tile_pixels(shot_dith)
+        print("    screendump of the dither scene: %dx%d, %d pixels off the dither tile" % (w, h, bad))
+        if (w, h) != (WIDTH, HEIGHT) or bad:
+            print("FAIL the dither scene is not one dither tile")
+            ok = False
+    else:
+        # A screen filter is a dither remover (doc 21 §13): the same scene,
+        # whose flat grey dithers by one 565 step in every channel, must
+        # come out smooth along each line -- and must no longer be the
+        # dither tile it is without one.
+        w, h, bad = off_tile_pixels(shot_dith)
+        w, h, spread = row_spread(shot_dith, 40, 60)
+        print("    screendump of the dither scene with filter=%s: %dx%d, widest "
+              "range within a row r%d g%d b%d, %d pixels off the unfiltered tile"
+              % (FILTER, w, h, spread[0], spread[1], spread[2], bad))
+        if (w, h) != (WIDTH, HEIGHT) or max(spread) > 4:
+            print("FAIL filter=%s did not take the dither out of a flat colour "
+                  "(a row still spans r%d g%d b%d; 8/4/8 is the raw dither)"
+                  % (FILTER, spread[0], spread[1], spread[2]))
+            ok = False
+        if not bad:
+            print("FAIL filter=%s left the frame exactly as the unfiltered dither "
+                  "tile: the filter never ran" % FILTER)
+            ok = False
+    if SLI == "on":
+        # the second board answered at function 1, with the Voodoo 2 strap
+        # (0x50) over its own initEnable: unlocked, owning the odd lines,
+        # and then snooping the master's bus as well
+        for want, what in (("SLI FOUND INITENABLE 00005801",
+                            "the second board did not read back its initEnable "
+                            "(unlocked, odd lines)"),
+                           ("SLI SNOOP INITENABLE 00805801",
+                            "the second board did not read back the snoop bit")):
+            if want not in text:
+                print("FAIL %s" % what)
+                ok = False
+        if "SLI NONE" in text:
+            print("FAIL the guest found no second board at function 1")
+            ok = False
+        w, h, rows = interleaved_rows(shot_sli1)
+        print("    screendump of the SLI pair: %dx%d, %d of %d lines drawn by "
+              "the board that owns them" % (w, h, rows, h))
+        if (w, h) != (1024, 768) or rows != h:
+            print("FAIL the pair did not show a 1024x768 frame of its two boards' "
+                  "interleaved lines (red from the master, blue from the second board)")
+            ok = False
+        w, h, frac = fill_green_fraction(shot_sli2)
+        print("    ... after one fill written to the master alone: %dx%d, %.1f%% green"
+              % (w, h, frac * 100))
+        if (w, h) != (1024, 768) or frac < 0.99:
+            print("FAIL the second board did not snoop the master's bus: a fill "
+                  "written once did not reach both boards")
+            ok = False
+        w, h, frac = magenta_fraction(shot_sli3)
+        print("    ... and after one command-FIFO batch: %dx%d, %.1f%% magenta"
+              % (w, h, frac * 100))
+        if (w, h) != (1024, 768) or frac < 0.99:
+            print("FAIL the command-FIFO batch did not reach both boards%s"
+                  % (" (the ring in RAM is mirrored into the second board)"
+                     if RAMFIFO == "on" else ""))
+            ok = False
+        qtext = open(qlog, "rb").read().decode("latin-1")
+        sli_lines = [l for l in qtext.splitlines() if "second board:" in l]
+        if not any("interleaving" in l for l in sli_lines):
+            print("FAIL the device never reported the pair interleaving")
+            ok = False
+        if RAMFIFO == "on" and "mirrored into the second board" not in qtext:
+            print("FAIL the device never said it was mirroring the ring into the "
+                  "second board")
+            ok = False
     w, h, frac = red_fraction(shot_off)
     print("    screendump with the Voodoo off: %dx%d, %.1f%% red" % (w, h, frac * 100))
     if frac > 0.5:

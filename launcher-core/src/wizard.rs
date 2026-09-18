@@ -638,13 +638,15 @@ impl Form {
     /// One checkbox: is there a 3dfx Voodoo 2 in the machine (doc 21).
     /// What the sentences have to carry is the one thing that is not
     /// obvious from the name — that the card is a second display device
-    /// the guest needs 3dfx's own driver for, and that a Glide game
-    /// picks the chip or the pass-through by which `glide2x.dll` it
+    /// the guest needs 3dfx's own driver for, that it is an SLI pair and
+    /// so shows up as two cards to bind that driver to, and that a Glide
+    /// game picks the chip or the pass-through by which `glide2x.dll` it
     /// loads — and, off, that Glide is not gone with it.
     pub fn voodoo2_notes(&self) -> &'static [&'static str] {
         if self.voodoo2 {
             &[
-                "Adds a 3dfx Voodoo 2 next to the display adapter. The guest needs 3dfx's own Voodoo2 driver. Glide games then render on the emulated chip, in software on the host CPU, at 640×480 to 800×600.",
+                "Adds a 3dfx Voodoo 2 SLI pair next to the display adapter — two boards, as the cable made them, so 1024×768 fits. The guest needs 3dfx's own Voodoo2 driver, and finds two cards to bind it to.",
+                "Glide games then render on the emulated chips, in software on the host CPU, at 640×480 to 1024×768.",
                 "The Glide pass-through still works too. A game uses whichever glide2x.dll it loads: 3dfx's from the system folder, or the guest tools' next to the game.",
             ]
         } else {

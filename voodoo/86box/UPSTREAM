@@ -7,9 +7,13 @@ copied verbatim (no edits: the port lives in ../shim and ../qemu) from
   src/include/86box/vid_voodoo*.h  ->  vid_voodoo*.h
 
 Not copied: vid_voodoo_banshee.c, vid_voodoo_banshee_blitter.c (the Banshee /
-Voodoo 3 are 2D+3D cards with their own VGA core; the four entry points the
-Voodoo 1/2 files still call on them are stubbed in ../qemu/voodoo_shim.c and
-are unreachable for type < VOODOO_BANSHEE) and vid_voodoo_codegen_x86.h (the
+Voodoo 3 are 2D+3D cards with their own VGA core; three of the four entry
+points the Voodoo 1/2 files still call on them are stubbed in
+../voodoo_shim.c and are unreachable for type < VOODOO_BANSHEE -- the
+fourth, voodoo_generate_vb_filters, is copied into ../voodoo_vbfilter.c
+along with the two filters of banshee_render_line that use it, because the
+Voodoo 3's screen filter is offered on our Voodoo 2: doc 21 §13, patch 72.
+Refresh those by hand from the same commit) and vid_voodoo_codegen_x86.h (the
 32-bit x86 recompiler; every 2ksbox host is 64-bit).
 
 Licence: GPL-2.0-or-later (86Box's; the files carry the authors' headers --

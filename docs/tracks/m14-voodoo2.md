@@ -56,8 +56,10 @@ the device or the shim, none in 86Box:
   emulator; here the write is refused, counted in the 5 s line, and the
   first one is printed with the FIFO state and the last 64 accesses.
   Declared `noreturn` it produced a SIGSEGV in the caller's next `case`.
-- **`fbiInit1` bit 23 (SLI) is not writable** on the single card: 86Box's
-  display timer dereferences `set->voodoos[1]` when it is set.
+- **`fbiInit1` bit 23 (SLI) is not writable** on a single card: 86Box's
+  display timer dereferences `set->voodoos[1]` when it is set. **Since
+  2026-09-18 the card is an SLI pair by default** and the bit is the
+  guest's (doc 21 §12), so this holds only under `sli=off`.
 - **The frame buffer and texture memories carry 64 MB of zero pages
   after them** (the shim's `calloc`/`free`): the display timer read 6.8 MB
   into a 4 MB frame buffer off garbage `videoDimensions`/`fbiInit1`.
@@ -594,7 +596,72 @@ brings it in, patch 64 stops applying and is dropped.
    build (`scripts/build-windows.sh`), and whether QEMU's `-Wundef` set
    and mingw like the 86Box sources.
 7. A Voodoo Graphics (`VOODOO_1`) type if a title wants one (no command
-   FIFO; otherwise the same code), and SLI never.
+   FIFO; otherwise the same code).
+   **The screen filter is done (2026-09-18, doc 21 §13)**: `filter=v2` is
+   the Voodoo 2's own, `filter=4x1` / `2x2` the Voodoo 3's, ported into
+   `voodoo/voodoo_vbfilter.c` from 86Box's Banshee sources with patch 72
+   as the call site, on from the start rather than waiting for a driver's
+   scrFilter write, `filter-threshold=0xRRGGBB` to tune. Measured by the
+   `voodoo-guest-filter` check on the dither scene. What is left is a
+   *game* through each of them, by eye: which of the three a Glide title
+   looks right in, and whether the 2x2's vertical blend costs anything
+   noticeable on the display timer at 1024x768.
+8. **SLI — the device half is done (2026-09-18, user decision, doc 21
+   §12)**, which reverses this step's old "SLI never". `-device voodoo2`
+   is two boards unless `sli=off`: function 1 of the same slot is the
+   second board, the master's BAR goes through 86Box's snoop handlers
+   once the guest asks for the snoop, and with `ramfifo=on` the words the
+   packet walk counts are mirrored into the second board's ring. The
+   `voodoo-guest` check's SLI phase proves the pair with no 3dfx code —
+   a 1024x768 frame of two boards' interleaved fills, a fill written once
+   to the master reaching both, and a command-FIFO batch doing the same;
+   `SLI=off` is the single-board control (`voodoo-guest-oneboard`).
+   **What is left is the guest driver**: 3dfx's own reference driver in
+   front of the pair — does it bind both boards, does its control panel
+   want SLI turned on, does Glide then offer 1024x768, and what a game
+   costs at that resolution against 800x600 on one board (the rasterizer
+   work is split over both boards' render threads, so the pair should not
+   cost twice). `base98-br` has the driver; `tools/win98-game-test.sh
+   EXTRA='-device voodoo2,addr=0x05'` is the harness, `GLIDETEST -res` is
+   the cheapest question to ask. **If the driver sees one board**, try
+   `sli-addr=0x06` first: the second board is function 1 of the master's
+   slot by default, and a period PCI scan that only probes function 0 of
+   each device would miss it — `sli-addr` puts it in a slot of its own,
+   which is how the two cards sat on a real machine.
+
+   **The first run in front of the driver froze** (the user, `base98-us`
+   on cirrus, 2026-09-18; the whole log was kept). Right-clicking the
+   Win98 desktop wedged the guest, and what the log holds is the doc 21
+   §11 signature rather than anything the pair does: two Glide inits back
+   to back (`initEnable` 1/3/5/3/5007/5003, the texture-memory probe run
+   twice, then 5007/5003 again) and then `1x0 off: … 1 737 886 reads, regs
+   read 0x000:1 735 741` — the card's video timing zeroed and the guest
+   spinning on the status register. The second board is untouched
+   throughout (no `initEnable (second board)` line at all; `second board:
+   0 triangles, 0 writes`), and the BAR layout with the pair moves only
+   the Voodoo itself (cirrus stays at `fa000000`, the master goes
+   `fd000000` → `fc000000` and board 2 takes `fd000000`, clear of every
+   fixed pass-through window). Whether `base98-us` has the V2START
+   guard installed was not checked, and it matters: without it the login
+   helper is free to land on a Glide program. **Still to do: the
+   same right-click under `-global voodoo2.sli=off`** in the machine's
+   extra arguments — the one run that separates "the known §11 wedge" from
+   "the pair did it". What the pair *could* have done on its own:
+   `fbiInit1` bit 23 is writable now and §7's garbage burst walks that
+   register, which would put every other line on a board nobody
+   initialised (the device warns when that happens).
+
+   **Unexplained, from the same log and not the pair's doing**: ~3 850
+   `mesapt: *WARN* Unhandled mesapt_write()` lines between the desktop
+   coming up and the Voodoo being touched at all, at addresses from
+   `0005ab8c` to `003fff18` carrying 16-bit pixel pairs and small
+   structures. The OpenGL pass-through's MMIO region is **one 4 KiB page**
+   (`MESAPT_MM_BASE 0xefffe000`), and the only caller of `mesapt_write` is
+   that region's ops, so an offset of `3fff18` should not be able to reach
+   it: either something calls it with an address that is not a region
+   offset, or the region is not what it looks like. qemu-3dfx's code, in
+   front of a guest that has the guest tools' `opengl32.dll` installed;
+   nothing of ours is in that path. Worth its own look.
 
 ## Rules
 

@@ -45,8 +45,9 @@
 # WININIT.BAK (what WININIT renames the INI to once it has run it) must
 # name the driver files.
 #
-# VOODOO=1 puts the emulated Voodoo 2 on the machine (`-device voodoo2`,
-# doc 21), whose driver is 3dfx's own and brings a Glide under the names
+# VOODOO=1 puts the emulated Voodoo 2 on the machine (`-device
+# voodoo2,sli=off` — one board is all this asks about; doc 21), whose
+# driver is 3dfx's own and brings a Glide under the names
 # the pass-through's wrappers have. With a 3dfx card present SETUP must
 # leave those names alone: before the install the batch writes a marker
 # file under each of them (GLIDE2X.DLL and GLIDE3X.DLL in the system
@@ -313,8 +314,12 @@ else
   HW=(-m 512 -vga none -device d3dpt-vga -net none)
   SHELL_CMD='cmd /k A:\RUN.BAT'
 fi
-# the launcher's slot for the card (bundle.rs), after the sound card's
-[ -n "${VOODOO:-}" ] && HW+=(-device voodoo2,addr=0x05)
+# The launcher's slot for the card (bundle.rs), after the sound card's.
+# `sli=off`: the device is an SLI pair by default (doc 21 §12) and what
+# this harness asks about is a 3dfx card being *present* — one board is
+# that, and two devnodes would mean two trips through the new-hardware
+# wizard of a Windows that has no driver for either.
+[ -n "${VOODOO:-}" ] && HW+=(-device voodoo2,addr=0x05,sli=off)
 if [ "$FAMILY" = win98 ] && [ -z "${NO_WARMUP:-}" ]; then warmup; fi
 
 SEA="$OUT/seabios-$FAMILY.log"

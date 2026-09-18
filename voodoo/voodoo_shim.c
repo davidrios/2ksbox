@@ -4,8 +4,9 @@
  * (QEMUTimer on the virtual clock, see shim/86box/timer.h for the units),
  * executable memory for the recompiler, the device configuration table, the
  * monitor bitmap the display timer paints into, the "SVGA override" that
- * hands the monitor to the Voodoo, and stubs for the four Banshee entry
- * points a Voodoo 1/2 never reaches.
+ * hands the monitor to the Voodoo, and stubs for the three Banshee entry
+ * points a Voodoo 1/2 never reaches (the fourth, the Banshee's screen
+ * filters, is ported for real in voodoo_vbfilter.c -- doc 21 §13).
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -674,10 +675,3 @@ voodoo_2d_reg_writel(voodoo_t *voodoo, uint32_t addr, uint32_t val)
     fatal("Banshee 2D register %08x=%08x on a Voodoo 2\n", addr, val);
 }
 
-void
-voodoo_generate_vb_filters(voodoo_t *voodoo, int fcr, int fcg)
-{
-    (void) voodoo;
-    (void) fcr;
-    (void) fcg;
-}

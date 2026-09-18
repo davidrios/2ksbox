@@ -1,0 +1,72 @@
+Offer the Voodoo 3 / Banshee post filter on a Voodoo 2 (doc 21 §13).
+
+A 3dfx card of this era draws into a 16-bit frame buffer with an ordered
+dither and takes the dither back out in the RAMDAC on the way to the
+monitor -- "22-bit colour". 86Box has three of those filters: one for the
+Voodoo Graphics, one for the Voodoo 2 (both in this file, and the Voodoo
+2's is what `-device voodoo2,filter=v2` already picks), and a third,
+later and better-tuned pair written for the Banshee and Voodoo 3 -- a 4x1
+and a 2x2 -- which live in vid_voodoo_banshee.c, a file this port does
+not vendor (voodoo/86box/UPSTREAM: a Banshee is a 2D+3D card with its own
+VGA core, and nothing else of it is reachable for a Voodoo 2).
+
+Those two are ported into voodoo/voodoo_vbfilter.c, ours, same licence:
+voodoo_generate_vb_filters() verbatim -- this file already declares and
+calls it, and the shim used to stub it -- and voodoo_filterline_vb(),
+which is banshee_render_line()'s two filtered cases with the overlay, the
+chroma key and the scaling taken out, in the shape voodoo_filterline_v1
+and _v2 have.
+
+What is left is the call site, which is here, and it is picked the way
+the other two are: `voodoo->scrfilter` is the device's `filter=` property
+and no longer just on or off -- 1 is the card's own filter, 2 the Voodoo
+3's 4x1, 3 its 2x2 -- so the display timer chooses between three filters
+instead of two, and voodoo_threshold_check() builds the Banshee tables
+for a Voodoo 2 that was asked for them as well as for a Banshee.
+
+The file is 86Box's, vendored verbatim in voodoo/86box and overlaid into
+hw/voodoo by prepare-qemu.sh, so the change is a patch on the overlaid
+copy (like patch 64) rather than an edit: scripts/sync-86box-voodoo.sh
+keeps working, and this is dropped the day the Banshee sources are
+vendored or 86Box offers its filters to a Voodoo 2 itself.
+
+diff --git a/hw/voodoo/86box/vid_voodoo_display.c b/hw/voodoo/86box/vid_voodoo_display.c
+index b126fc1..e80c3c8 100644
+--- a/hw/voodoo/86box/vid_voodoo_display.c
++++ b/hw/voodoo/86box/vid_voodoo_display.c
+@@ -38,6 +38,14 @@
+ #include <86box/vid_voodoo_regs.h>
+ #include <86box/vid_voodoo_render.h>
+ 
++/* 2ksbox: the Voodoo 3 / Banshee post filter over this card's scanlines
++ * (voodoo/voodoo_vbfilter.c, doc 21 §13) -- scrfilter 2 is its 4x1
++ * filter, the one 3dfx sold as 22-bit colour, and 3 its 2x2. Declared
++ * here because the file that has it is ours, not 86Box's: the Banshee
++ * sources these two filters come from are not vendored. */
++void voodoo_filterline_vb(voodoo_t *voodoo, uint8_t *fil, int column,
++                          uint16_t *src, int line, int mode);
++
+ #ifdef ENABLE_VOODOODISP_LOG
+ int voodoodisp_do_log = ENABLE_VOODOODISP_LOG;
+ 
+@@ -379,7 +387,7 @@ voodoo_threshold_check(voodoo_t *voodoo)
+         else
+             voodoo_generate_filter_v1(voodoo);
+ 
+-        if (voodoo->type >= VOODOO_BANSHEE)
++        if (voodoo->type >= VOODOO_BANSHEE || voodoo->scrfilter >= 2)
+             voodoo_generate_vb_filters(voodoo, FILTCAP, FILTCAPG);
+     }
+ }
+@@ -555,7 +563,10 @@ voodoo_callback(void *priv)
+                     uint8_t fil[4096 * 3]; /* interleaved 24-bit RGB */
+ 
+                     assert(voodoo->h_disp <= 4096);
+-                    if (voodoo->type == VOODOO_2)
++                    if (voodoo->scrfilter >= 2)
++                        voodoo_filterline_vb(voodoo, fil, voodoo->h_disp, src,
++                                             voodoo->line, voodoo->scrfilter - 1);
++                    else if (voodoo->type == VOODOO_2)
+                         voodoo_filterline_v2(voodoo, fil, voodoo->h_disp, src, voodoo->line);
+                     else
+                         voodoo_filterline_v1(voodoo, fil, voodoo->h_disp, src, voodoo->line);
