@@ -12,8 +12,9 @@
 //!   once), which is the user's way out and not ours to take.
 //! - **X11**: an active `XGrabKeyboard` while focused. An active grab beats
 //!   the window manager's passive ones on Super.
-//! - **Windows**: a `WH_KEYBOARD_LL` hook while focused that takes the keys
-//!   of every shortcut Windows itself acts on before the shell sees them:
+//! - **Windows**: a `WH_KEYBOARD_LL` hook, installed for the window's whole
+//!   life and asking itself whether the window in front is ours, which takes
+//!   the keys of every shortcut Windows itself acts on before the shell sees
 //!   the two Windows keys (and so every Win+ shortcut), Tab, Esc, F4 and
 //!   Space under Alt (the switcher, Alt+Esc, and the two `DefWindowProc`
 //!   would turn into closing the player and opening its system menu), and
@@ -28,7 +29,10 @@
 //! **Ctrl+Alt+K** hands them back to the host and, pressed again, to the
 //! guest again — the player drops the `Capture` and builds a new one, so
 //! "off" is exactly the state before it was made. `PLAYER_KEYBOARD_CAPTURE=0`
-//! starts a run with them the host's.
+//! starts a run with them the host's, and **`PLAYER_KEYBOARD_LOG=1`** makes
+//! the Windows hook say what it is doing — a shortcut that still reaches the
+//! host is one of three things, and only the hook can tell them apart: it was
+//! never installed, Windows took it away, or the window in front is not ours.
 
 use qemu_embed::Qemu;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -56,8 +60,13 @@ impl Capture {
     /// `None` on a host this cannot do anything on (the reason is printed).
     pub fn new(window: &Window, vm: Qemu) -> Option<Capture> {
         let _ = &vm; // only the Windows hook injects keys itself
-        let w = window.window_handle().ok()?.as_raw();
-        let d = window.display_handle().ok()?.as_raw();
+        let (w, d) = match (window.window_handle(), window.display_handle()) {
+            (Ok(w), Ok(d)) => (w.as_raw(), d.as_raw()),
+            _ => {
+                eprintln!("[keyboard] host shortcuts stay the host's: the window has no handle yet");
+                return None;
+            }
+        };
         let made: Result<Capture, String> = match (w, d) {
             #[cfg(all(unix, not(target_os = "macos")))]
             (RawWindowHandle::Wayland(w), RawDisplayHandle::Wayland(d)) => unsafe {
@@ -244,21 +253,23 @@ mod x11 {
 #[cfg(windows)]
 mod win {
     use qemu_embed::Qemu;
-    use std::sync::atomic::{AtomicIsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
     use std::sync::{mpsc, Mutex};
     use std::thread::JoinHandle;
     use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Threading::{
-        GetCurrentThread, GetCurrentThreadId, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
+        GetCurrentProcessId, GetCurrentThread, GetCurrentThreadId, SetThreadPriority,
+        THREAD_PRIORITY_TIME_CRITICAL,
     };
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_F4, VK_LWIN, VK_RWIN, VK_SPACE, VK_TAB,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, GetForegroundWindow, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
-        UnhookWindowsHookEx, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, LLKHF_EXTENDED, MSG,
-        WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
+        CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, KillTimer,
+        PostThreadMessageW, SetTimer, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, HHOOK,
+        KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, LLKHF_EXTENDED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT,
+        WM_SYSKEYDOWN, WM_TIMER,
     };
 
     // The hook procedure is a bare `extern "system" fn`, so what it needs
@@ -275,6 +286,22 @@ mod win {
     /// release is taken too, whatever the modifiers are by then (Alt let go
     /// before Tab).
     static HELD: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    /// `PLAYER_KEYBOARD_LOG=1`: a line per key the hook is called for while
+    /// the player is in front, and per shortcut it left to the host while it
+    /// is not. Nothing else can say why a shortcut still reached the host —
+    /// whether the hook is installed at all, whether it is called for that
+    /// key, and whether the window in front is the one it is waiting for.
+    static TRACE: AtomicBool = AtomicBool::new(false);
+
+    /// How often the hook is put back (ms). Windows removes a low-level hook
+    /// that misses `LowLevelHooksTimeout` **silently**: nothing is returned,
+    /// no message arrives, and `UnhookWindowsHookEx` on the dead handle still
+    /// succeeds. A thread of its own at time-critical priority makes that
+    /// unlikely and not impossible — this process also runs a TCG vCPU and a
+    /// GPU queue — so the hook is re-armed on a timer, and the new one goes
+    /// in *before* the old one comes out, which leaves no keystroke between
+    /// them. A re-arm is two system calls.
+    const REARM_MS: u32 = 2000;
 
     pub struct Hook {
         /// The hook's thread and its id, for the `WM_QUIT` that ends it.
@@ -282,58 +309,122 @@ mod win {
     }
 
     impl Hook {
+        /// The hook is installed for the capture's whole life, not for each
+        /// spell of focus: the hook procedure asks who is in front itself,
+        /// so nothing here depends on a focus event ever arriving. (The X11
+        /// grab is the one that must follow focus, because an active grab
+        /// takes the keyboard from whoever else has it.)
         pub fn new(hwnd: isize, vm: Qemu) -> Self {
+            TRACE.store(
+                std::env::var("PLAYER_KEYBOARD_LOG").as_deref() == Ok("1"),
+                Ordering::Relaxed,
+            );
             *VM.lock().unwrap_or_else(|e| e.into_inner()) = Some(vm);
             WINDOW.store(hwnd, Ordering::Relaxed);
-            Hook { thread: None }
+            let mut h = Hook { thread: None };
+            h.install();
+            h
         }
 
-        pub fn set(&mut self, on: bool) {
-            if on && self.thread.is_none() {
-                let (tx, rx) = mpsc::channel();
-                let join = std::thread::Builder::new().name("keyboard hook".into()).spawn(move || unsafe {
+        fn install(&mut self) {
+            let (tx, rx) = mpsc::channel();
+            let join = std::thread::Builder::new()
+                .name("keyboard hook".into())
+                .spawn(move || unsafe {
                     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
-                    let h = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook), GetModuleHandleW(std::ptr::null()), 0);
+                    let mut h = arm(0);
                     // the hook call made this thread's message queue, so the
                     // id can take a WM_QUIT from here on
                     let _ = tx.send((GetCurrentThreadId(), h != 0));
                     if h == 0 {
                         return;
                     }
+                    // A timer of the thread's own (no window): its WM_TIMER
+                    // comes out of the same `GetMessageW` the system calls
+                    // the hook from, so the re-arm costs the hook nothing and
+                    // shares no state with it.
+                    let timer = SetTimer(0, 0, REARM_MS, None);
                     let mut msg: MSG = std::mem::zeroed();
-                    while GetMessageW(&mut msg, 0, 0, 0) > 0 {}
-                    UnhookWindowsHookEx(h);
-                });
-                let Ok(join) = join else {
-                    eprintln!("[keyboard] no hook thread: the Windows key stays the host's");
-                    return;
-                };
-                match rx.recv() {
-                    Ok((id, true)) => self.thread = Some((id, join)),
-                    _ => {
-                        let _ = join.join();
-                        eprintln!("[keyboard] SetWindowsHookExW failed: the Windows key stays the host's");
+                    let mut said = false;
+                    while GetMessageW(&mut msg, 0, 0, 0) > 0 {
+                        if msg.message == WM_TIMER {
+                            h = arm(h);
+                            if !std::mem::replace(&mut said, true) && TRACE.load(Ordering::Relaxed) {
+                                eprintln!("[keyboard] hook re-armed (and every {REARM_MS} ms after)");
+                            }
+                        }
                     }
+                    KillTimer(0, timer);
+                    UnhookWindowsHookEx(h);
+                    if TRACE.load(Ordering::Relaxed) {
+                        eprintln!("[keyboard] hook removed");
+                    }
+                });
+            let Ok(join) = join else {
+                eprintln!("[keyboard] no hook thread: the Windows key stays the host's");
+                return;
+            };
+            match rx.recv() {
+                Ok((id, true)) => {
+                    if TRACE.load(Ordering::Relaxed) {
+                        eprintln!(
+                            "[keyboard] hook installed on thread {id}, window {:#x}",
+                            WINDOW.load(Ordering::Relaxed)
+                        );
+                    }
+                    self.thread = Some((id, join));
                 }
-            } else if !on {
-                if let Some((id, join)) = self.thread.take() {
-                    unsafe { PostThreadMessageW(id, WM_QUIT, 0, 0) };
+                _ => {
                     let _ = join.join();
+                    eprintln!(
+                        "[keyboard] SetWindowsHookExW failed: the Windows key stays the host's"
+                    );
                 }
-                // the release went to whoever took focus: let go in the guest
-                let held = std::mem::take(&mut *HELD.lock().unwrap_or_else(|e| e.into_inner()));
-                for sc in held {
-                    send(sc, false);
-                }
+            }
+        }
+
+        /// Focus decides only what is *taken*; what it is told here is that
+        /// the keys the guest is holding must be let go, because their
+        /// release went to whoever took the focus.
+        pub fn set(&mut self, focused: bool) {
+            if focused {
+                return;
+            }
+            let held = std::mem::take(&mut *HELD.lock().unwrap_or_else(|e| e.into_inner()));
+            for sc in held {
+                send(sc, false);
             }
         }
     }
 
     impl Drop for Hook {
         fn drop(&mut self) {
+            if let Some((id, join)) = self.thread.take() {
+                unsafe { PostThreadMessageW(id, WM_QUIT, 0, 0) };
+                let _ = join.join();
+            }
             self.set(false);
             *VM.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
+    }
+
+    /// Put the hook in, then take `old` out: in that order there is no moment
+    /// with no hook of ours, and the new one is at the head of the chain.
+    /// Returns the handle to keep — the old one, if the new one failed.
+    unsafe fn arm(old: HHOOK) -> HHOOK {
+        let new = SetWindowsHookExW(
+            WH_KEYBOARD_LL,
+            Some(hook),
+            GetModuleHandleW(std::ptr::null()),
+            0,
+        );
+        if new == 0 {
+            return old;
+        }
+        if old != 0 {
+            UnhookWindowsHookEx(old);
+        }
+        new
     }
 
     fn send(sc: u32, down: bool) {
@@ -360,17 +451,50 @@ mod win {
         }
     }
 
+    /// Is the window in front one of ours? The player has one window, so this
+    /// is the same question as "is it the player's window" — asked of the
+    /// process as well as the handle, because a window that is ours without
+    /// being *that* handle is still the player having the keyboard.
+    unsafe fn ours_in_front(fg: isize) -> bool {
+        if fg == WINDOW.load(Ordering::Relaxed) {
+            return true;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(fg, &mut pid);
+        pid != 0 && pid == GetCurrentProcessId()
+    }
+
     unsafe extern "system" fn hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        // installed only while focused, and checked again: focus moves
-        // before the event that says so reaches us
-        if code == HC_ACTION as i32 && GetForegroundWindow() == WINDOW.load(Ordering::Relaxed) {
+        if code == HC_ACTION as i32 {
+            // Every key on the machine passes here, ours or not, so the
+            // "not ours" side stays three system calls and an atomic.
+            let fg = GetForegroundWindow();
             let k = &*(lparam as *const KBDLLHOOKSTRUCT);
-            let sc = k.scanCode | if k.flags & LLKHF_EXTENDED != 0 { 0xE000 } else { 0 };
             let down = matches!(wparam as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
-            let held = HELD.lock().unwrap_or_else(|e| e.into_inner()).contains(&sc);
-            if held || (down && shortcut(k.vkCode as u16, k.flags)) {
-                send(sc, down);
-                return 1;
+            if ours_in_front(fg) {
+                let sc = k.scanCode | if k.flags & LLKHF_EXTENDED != 0 { 0xE000 } else { 0 };
+                let held = HELD.lock().unwrap_or_else(|e| e.into_inner()).contains(&sc);
+                let take = held || (down && shortcut(k.vkCode as u16, k.flags));
+                if TRACE.load(Ordering::Relaxed) {
+                    eprintln!(
+                        "[keyboard] hook: vk {:#04x} sc {sc:#06x} flags {:#04x} {} {}",
+                        k.vkCode,
+                        k.flags,
+                        if down { "down" } else { "up" },
+                        if take { "taken" } else { "passed on" },
+                    );
+                }
+                if take {
+                    send(sc, down);
+                    return 1;
+                }
+            } else if TRACE.load(Ordering::Relaxed) && down && shortcut(k.vkCode as u16, k.flags) {
+                eprintln!(
+                    "[keyboard] hook: vk {:#04x} left to the host — the window in front is not \
+                     ours (foreground {fg:#x}, our window {:#x})",
+                    k.vkCode,
+                    WINDOW.load(Ordering::Relaxed),
+                );
             }
         }
         CallNextHookEx(0, code, wparam, lparam)

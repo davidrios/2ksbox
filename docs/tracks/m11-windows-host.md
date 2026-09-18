@@ -484,7 +484,20 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    music, the pointer over Moto Racer and `2ksbox-debug.bat` are
    **confirmed fixed** by the user. Left: the Windows key in a game, and
    Moto Racer's speed — the first clang-built QEMU (patch 68) ever to run
-   on real Windows.
+   on real Windows. The Windows key was **still the host's on 2026-09-18**
+   (the user); the hook is installed for the capture's life rather than per
+   focus, re-armed every 2 s at the head of the chain, and asks whether the
+   *process* in front is ours (docs/00-status.md item 5). Install and re-arm
+   are measured on the PC; the next run is
+   `PLAYER_KEYBOARD_LOG=1 scripts/win-run.sh launcher`, a machine, the
+   Windows key, and `%APPDATA%\2ksbox\data\player.log`:
+   - `hook: vk 0x5b … taken` — it works.
+   - `hook: vk 0x5b left to the host — the window in front is not ours` —
+     the foreground window is somebody else's while the player looks focused.
+   - no `hook:` line for the key at all — another program's hook is ahead of
+     ours and swallowed it (this PC runs three), or Windows removed ours
+     between re-arms.
+   - no `hook installed` line — `SetWindowsHookExW` was refused.
 0b. **Run the native build on the PC.** It **builds there, every stage**
    (2026-09-17, the user: `qemu`, `rust`, `qt`, `exec` and the guest-tools
    ISO, in MSYS2's MINGW64 shell). Nothing built there has been run yet:
