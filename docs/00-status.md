@@ -165,45 +165,48 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
-- **Carmageddon's 3dfx build on the Voodoo 2: the quit hang is fixed, the
-  flashing HUD and a wrong menu aspect are open** (2026-09-18, doc 21 §13;
-  the user's own run on `base98-us`, `-device voodoo2,undither=on` with
-  `d3dpt-vga`, log kept as `/tmp/launcher.log`). Three symptoms were
-  reported; one is closed.
-  **The hang is closed.** Glide's `grSstWinClose` writes its last packets
-  and then clears fbiInit7's command-FIFO bit; here that register write is
-  applied at once while the ring is still being consumed, 86Box's consumer
-  loop ends the moment `cmdfifo_enabled` goes false, and `SST_status`'s busy
-  bit *is* `cmdfifo_depth_rd != cmdfifo_depth_wr`. Two words of the 104 the
-  last walk counted were left, so the card read busy to every later poll and
-  the DOS box spun in `grSstIdle` for minutes while Windows carried on
-  around it — `busy: 0 cmds outstanding (wr 49668 rd 49668), fifo depth
-  59495109/59495111` with 27 million reads of register 0x000 in five
-  seconds, which is the whole diagnosis in one line. Such a write now runs
-  the ring out first (`voodoo2.c`, "one order"; bounded at 250 ms, with
-  86Box's own `flush` escape so a swap in the ring does not wait for a
-  retrace the display timer cannot deliver while the vCPU holds the BQL),
-  and behind it, if a write still leaves the FIFO off with words counted and
-  not run, the depths are equalised and the card goes idle. Guarded by a new
-  **teardown phase** in `tools/voodoo-guest-test.py`, both halves of which
-  fail without the fix.
-  **The flashing HUD is open.** The obvious candidate was the same
-  inversion on the other queue — 86Box empties the LFB/texture queue before
-  the ring, so a game that draws its world through the ring and its HUD with
-  `grLfbWriteRegion` (Carmageddon does: ~750,000 triangles and ~5.2 M LFB
-  writes across 300 frames) can have the world painted over the HUD. It is a
-  real hole and `lfb-order=on` closes it, but the ordering phase added to
-  the same tool **measures the window to be shorter than the consumer's
-  wake**: on an unloaded host the block lands on top with the switch either
-  way. So the switch is off by default (it costs a wait for the rasterizer
-  at every ring-then-LFB turn) and the cause is still to be found. Next:
-  ask for the flash with `undither=off` — the undither landed the day
-  before and declines a frame whose last `fbzMode` has the dither bit clear,
-  so a game that alternates would alternate filters too.
-  **The menu's aspect is open** and needs a screenshot: the player's own
-  geometry is right in the log (`mode 640x480 VGA 640x480 — 4:3 picture,
-  pixel aspect 1.000, 480 scanlines`, from the surface size alone), so
-  whatever is wide is inside the guest's frame.
+- **Carmageddon's 3dfx build on the Voodoo 2: the quit hang and the flashing
+  HUD are fixed, the "wide" menu was the game's own letterbox** (2026-09-18,
+  doc 21 §13; the user's own runs on `base98-us`, the DOS `3DFX.EXE` started
+  from Explorer in a Win98 DOS box, `-device voodoo2` beside `d3dpt-vga`).
+  Three symptoms, one root cause between two of them: **86Box has two queues
+  into the chip and the guest has one bus.**
+  **The quit hang.** Glide's `grSstWinClose` writes its last packets and then
+  clears fbiInit7's command-FIFO bit; that register write is applied at once
+  while the ring is still being consumed, 86Box's consumer loop ends the
+  moment `cmdfifo_enabled` goes false, and `SST_status`'s busy bit *is*
+  `cmdfifo_depth_rd != cmdfifo_depth_wr`. Two words of the 104 the last walk
+  counted were left, so the card read busy to every later poll and the DOS
+  box spun in `grSstIdle` for minutes while Windows carried on around it —
+  `busy: 0 cmds outstanding (wr 49668 rd 49668), fifo depth
+  59495109/59495111` with 27 million reads of register 0x000 in five seconds,
+  which is the whole diagnosis in one line. Such a write now runs the ring
+  out first, and behind it, if one still leaves the FIFO off with words
+  counted and not run, the depths are equalised and the card goes idle.
+  **The flashing HUD.** The first guess — an LFB write overtaking packets
+  already counted — was measured away (the window is shorter than the
+  consumer's wake; it survives as `lfb-order`, off). The real one is the
+  other direction: 86Box's thread empties its MMIO queue only *between*
+  passes over the ring, and in a race the ring is never empty — **~19,000
+  words behind, every 5 s line**. So the HUD the game writes with
+  `grLfbWriteRegion` sits in that queue while the swap that follows it in the
+  ring is consumed, and lands in the buffer the swap has just turned into the
+  back one. The user's two shots of one race say it exactly: the panels
+  Carmageddon draws as geometry are in both, and the sprites it writes
+  through the LFB are in one and gone in the next. `voodoo2_fifo_sync()` now
+  waits for that queue at the ring's **publish point**, which is where the
+  ordering is — unconditional, skipped only while the walk is inside a packet
+  (the consumer is then waiting for exactly those words, and waiting for the
+  other queue would deadlock), counted and timed in the 5 s line.
+  **The "wide" menu is not ours.** Measured out of the screenshot rather than
+  argued: the player draws the 640x480 frame at exactly 3x with square pixels
+  (the CRT preset's scanline period is 3 host rows, autocorrelation peaks at
+  3/6/9), and the artwork is the middle 402 of 480 source rows. The guest
+  writes 153,601 dwords a frame — 640x480 at 16 bpp exactly — so the black
+  bands are in its own frame buffer: a 640x400 front end in a 640x480 Glide
+  buffer. The race frames from the same session measure 4:3 to four decimals.
+  **Still to confirm by hand:** the HUD fix on the game itself, and what the
+  `M for the LFB queue (T ms)` column costs there.
 
 - **Moto Racer 1997 with no disc in the drive runs out of stack; the
   WineD3D DirectDraw fallback starts and draws nothing** (2026-09-18,

@@ -819,25 +819,65 @@ backlog in status bits 31:28 comes from. Carmageddon's stream shows exactly
 one of each per frame (`written 0x128:301` beside 301 swaps). The guest test
 does the same now.
 
-### The LFB half: real, and not the flashing HUD
+### The flashing HUD: the other direction, and the ring is never empty
 
-The same inversion applies to an LFB write queued while ring words are
-counted and not yet run: it is drawn *before* them, so a game that draws its
-world through the ring and its HUD with `grLfbWriteRegion` can have the
-world painted over the HUD. Carmageddon does draw that way — in the 5 s
-line, ~750,000 triangles and ~5.2 M LFB writes across 300 frames, about
-17,500 dwords a frame — and its HUD flashed in and out in the same run.
+What the guest writes through the LFB **before** a batch of packets has to
+be on the card before they are — and 86Box's thread empties its MMIO queue
+only *between* passes over the ring. In a race the ring never empties. Every
+5 s line of Carmageddon's race says so:
 
-But the window is only as wide as the consumer's *wake* takes. The ordering
-phase of the guest test is the measurement: the ring gets a red fastfill
-over the whole screen, then with nothing waited for the guest writes a
-38,400-dword blue block through the LFB, then the ring gets the swap. On an
-unloaded host the block is on top with the switch either way — the consumer
-is scheduled and has run the fastfill before the second write is queued. So
-this is not the explanation for the flashing HUD, and the HUD is still open.
+    busy: 1 cmds outstanding (wr 58305 rd 58304), fifo depth 66330585/66349779,
+    voodoo_busy
 
-`lfb-order=on` puts the drain in anyway, and it is **off by default**
-because turning it on costs a wait for the rasterizer at every
-ring-then-LFB turn — once or twice a frame in a game of that shape, on the
-vCPU thread with the BQL held. The 5 s line counts the waits (`N waits for
-the ring`), which is how to price it on a real workload.
+Nineteen thousand words behind, all race long. So the HUD the game writes
+with `grLfbWriteRegion` — ~5.2 M LFB writes across 300 frames, about 23,000
+dwords a *new* frame — sits in that queue while the swap that follows it in
+the ring is consumed, and lands in the buffer the swap has just turned into
+the back one. It shows a frame late, or not at all.
+
+The user's two screenshots of one race, 26 s apart, say it exactly. In the
+first the HUD is whole. In the second the driver's portrait and the panel
+rectangles are there and **the sprites inside them are gone** — the top bar,
+the gauges, the speedometer, the damage map, each replaced by the flat panel
+it is drawn on. What survives is what the game draws as geometry, through
+the ring; what disappears is what it writes through the LFB.
+
+So `voodoo2_fifo_sync()` waits for that queue at the **publish point**, the
+moment the ring's new words become visible to the consumer, which is where
+the ordering actually is. It is unconditional. Two details:
+
+- Not while the walk is inside a packet (`in_packet`): the consumer is then
+  parked in `cmdfifo_get` waiting for exactly the words being held back, and
+  nothing else is going to empty the MMIO queue. That would be a deadlock,
+  and the bound alone would turn it into a stall.
+- The wait is counted and timed, and the 5 s line prints both (`N waits for
+  the ring, M for the LFB queue (T ms)`). That is what prices it on a real
+  workload — it should be about once per frame, for as long as the frame's
+  LFB writes take.
+
+**What `lfb-order` (off by default) adds** is the mirror: a wait for the ring
+before an LFB or texture write, so a packet already counted is drawn first.
+That window is only as wide as the consumer's wake, and the ordering phase of
+the guest test measures it away on an unloaded host — the block lands on top
+with the switch either way. It is kept as the A/B rather than turned on,
+because it costs a wait for the rasterizer at every ring-then-LFB turn.
+
+**The check** is the ordering phase: the ring gets a red fastfill, then the
+guest writes a 38,400-dword blue block through the LFB, then the ring gets
+the swap. The block has to be on top, *and* the device has to report at least
+one wait for 86Box's own FIFO at the publish point — the scene is built to
+make one, and none means the ordering point was never reached.
+
+### The menu that looked wide is the game's own letterbox
+
+Reported in the same run and measured out of the screenshots rather than
+argued: the player draws the guest's 640x480 frame at exactly 3x with square
+pixels, 1920x1440 in a full-width window, the CRT preset's scanline period 3
+host rows throughout (autocorrelation on the shot: peaks at lag 3, 6, 9).
+The menu's artwork is the middle 1,206 of those 1,440 rows — 402 source rows
+of 480, i.e. **400 rows of art with 40 black rows above and below**. The
+guest writes 153,601 dwords a frame, which is 640x480 at 16 bpp exactly, so
+the black bands are in the guest's own frame buffer: Carmageddon puts a
+640x400 front end in a 640x480 Glide buffer. Nothing in the display path
+stretches anything, and the race frames from the same session measure 4:3 to
+four decimal places.

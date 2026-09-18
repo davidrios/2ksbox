@@ -44,13 +44,17 @@ read idle afterwards, which is what Glide's grSstIdle waits for at
 grSstWinClose and what Carmageddon's 3dfx build hung on for ever
 (2026-09-18). Both halves of it fail without the fix.
 
-*Ordering* is the scene the `lfb-order` switch is for, not a guard: the ring
-gets a red fastfill over the whole screen, then with nothing waited for the
-guest writes a blue block through the LFB, then the ring gets the swap. The
-block has to be on top. It is on top with the switch either way on an
-unloaded host -- the consumer is scheduled before the second of the 38,400
-writes is queued -- which is the measurement that says this inversion is not
-what makes a game's HUD flash. `LFB_ORDER=on` puts the drain in.
+*Ordering* is the other one: the ring gets a red fastfill over the whole
+screen, then with nothing waited for the guest writes a 38,400-dword blue
+block through the LFB, then the ring gets the swap. The block has to be on
+top, and the device has to report at least one wait for 86Box's own FIFO at
+the ring's publish point -- the scene is built to make one, and none means
+the ordering point was never reached. That publish-point wait is what keeps
+a game's HUD from landing in the buffer a swap has just turned into the back
+one (Carmageddon's flashed in and out for it, 2026-09-18). The mirror of it,
+a wait for the *ring* before an LFB write, is `LFB_ORDER=on`: that window is
+shorter than the consumer's wake and the block is on top either way, which
+is the measurement that ruled it out as the HUD's cause.
 
 Both phases write swapbufferCMD to the register window as well as putting
 the packet in the ring, because 3dfx's Glide does and the card's own
@@ -1431,6 +1435,20 @@ def main():
     if (w, h) != (WIDTH, HEIGHT) or blue < 0.20 or red < 0.60:
         print("FAIL the LFB block the guest wrote after the ring's fastfill is not on "
               "top of it: the two queues ran out of the guest's order")
+        ok = False
+    # and the other direction, the one a game meets: the LFB block was
+    # written before the swap packet, so 86Box's own queue has to be empty
+    # before the ring's publish point lets that swap through -- on either
+    # transport (with ramfifo=off the publish point is the ring-window write
+    # itself). The device counts the times it waited; the scene above is
+    # built to make one, and none means the ordering point was never
+    # reached.
+    behind = sum(int(m) for m in re.findall(r"(\d+) for the LFB queue",
+                 open(qlog, "rb").read().decode("latin-1")))
+    print("    waits for 86Box's own FIFO at the ring's publish point: %d" % behind)
+    if not behind:
+        print("FAIL the ring published packets with no LFB write ever queued behind "
+              "them: the ordering scene did not reach the point it is about")
         ok = False
     # the teardown: the packets written before the FIFO was turned off were
     # run (the frame is cyan), and the card reads idle afterwards rather

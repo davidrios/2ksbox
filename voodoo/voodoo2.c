@@ -18,6 +18,11 @@
  *                  [,undither=on|off]
  *                  [,recompiler=on|off][,ramfifo=on|off][,lfb-order=on|off]
  *
+ * lfb-order (off): also wait for the ring before an LFB or texture write.
+ * The other half of that ordering -- waiting for 86Box's own FIFO before the
+ * ring's next packets, which is the one a game meets -- is unconditional.
+ * See "one order" below.
+ *
  * ramfifo (on by default): the command-FIFO ring is plain RAM to the guest,
  * so Glide's packet stream is ordinary stores instead of one MMIO trap per
  * dword -- and under TCG a trap mid-block is a cpu_io_recompile, which was
@@ -170,7 +175,12 @@ struct Voodoo2State {
     /* putting the ring back in front of what came after it ("one order") */
     uint32_t     drains;             /* waits for the ring before an access */
     uint32_t     last_drains;
+    uint32_t     behind;             /* publishes with LFB writes still queued */
+    uint32_t     last_behind;
+    uint32_t     behind_us;          /* microseconds spent waiting for them */
+    uint32_t     last_behind_us;
     bool         drain_slow_warned;  /* one that did not finish in time */
+    bool         behind_slow_warned;
     bool         fifo_left_noted;    /* words stranded by the FIFO going off */
     /* register-window accesses by register (addr & 0x3fc) since the last
      * line: a guest that spins on one register names it here */
@@ -561,6 +571,7 @@ voodoo2_fifo_written(Voodoo2State *s, uint32_t a)
 }
 
 static void voodoo2_fifo_map(Voodoo2State *s);
+static void voodoo2_mmio_drain(Voodoo2State *s);
 
 static void
 voodoo2_fifo_break(Voodoo2State *s, uint32_t a, uint32_t h, const char *why)
@@ -674,6 +685,16 @@ voodoo2_fifo_sync(Voodoo2State *s)
     }
     s->fifo_parse = a;
     if (words) {
+        /* Everything the guest wrote *before* these packets has to be on the
+         * card first, and an LFB or texture write it made is sitting in
+         * 86Box's other queue ("one order" below). Publishing without
+         * emptying that queue is what lets a swap in the ring overtake a
+         * HUD written through the LFB. Not while the consumer may be parked
+         * inside a packet of ours, though: then it is waiting for exactly
+         * these words and nothing else will empty that queue. */
+        if (!s->in_packet) {
+            voodoo2_mmio_drain(s);
+        }
         smp_wmb();      /* the words before the depth that says they are there */
         v->cmdfifo_depth_wr += words;
         s->fifo_words       += words;
@@ -828,16 +849,26 @@ voodoo2_fifo_after_write(Voodoo2State *s, hwaddr addr)
  * seconds. So a write that reconfigures the FIFO runs the ring out first,
  * always; the teardown phase of tools/voodoo-guest-test.py is the check.
  *
- * **The LFB half is real but was not the flashing HUD** (`lfb-order`, off).
- * An LFB write queued while ring words are counted and not yet run is drawn
- * before them, so a game that draws its world through the ring and its HUD
- * with grLfbWriteRegion can have the world painted over the HUD. The window
- * is only as wide as the consumer's wake takes, though: measured in the
- * ordering phase of the guest test on an unloaded host, the thread is always
- * scheduled first and the block lands on top with the switch either way. It
- * is kept as the A/B -- turning it on costs a wait for the rasterizer at
- * every ring-then-LFB turn, which is once or twice a frame in a game of that
- * shape -- and the 5 s line counts the waits.
+ * **And the other direction is the flashing HUD.** What the guest wrote
+ * through the LFB *before* a batch of packets has to be on the card before
+ * they are, and 86Box's thread empties its MMIO queue only between passes
+ * over the ring -- which in a race never empties: measured ~19,000 words
+ * behind, every 5 s line of Carmageddon's race. So the HUD the game writes
+ * with grLfbWriteRegion sits in that queue while the swap that follows it in
+ * the ring is consumed, and lands in the buffer the swap has just turned
+ * into the back one: a frame late, or not at all. The user's screenshots say
+ * it exactly -- the panels Carmageddon draws as geometry are there in both,
+ * and the sprites it writes through the LFB are in one and gone in the next.
+ * voodoo2_mmio_drain() is at the ring's publish point for that, and it is
+ * the ordering that matters, so it is unconditional.
+ *
+ * **What `lfb-order` (off) adds** is the mirror of it: a wait for the ring
+ * before an LFB or texture write, so a packet already counted is drawn
+ * first. That window is only as wide as the consumer's wake, and the
+ * ordering phase of the guest test measures it away on an unloaded host --
+ * the block lands on top with the switch either way -- so it is kept as the
+ * A/B rather than turned on, because it costs a wait for the rasterizer at
+ * every ring-then-LFB turn. The 5 s line counts both kinds of wait.
  */
 #define VOODOO2_DRAIN_MS 250
 
@@ -889,6 +920,53 @@ voodoo2_fifo_drain(Voodoo2State *s, const char *why)
     }
     v->flush = 0;
     return true;
+}
+
+/* The other direction, and the one that matters in a game: what the guest
+ * wrote through the LFB *before* the packets about to be published has to
+ * be on the card first. 86Box's thread empties its MMIO queue only between
+ * passes over the ring, and in a race the ring is never empty -- measured
+ * ~19,000 words behind, all race long -- so a HUD written through the LFB
+ * can sit in that queue while the swap that follows it in the ring is
+ * consumed, and land in the buffer the swap has just turned into the back
+ * one. It then shows a frame late, or not at all. That is Carmageddon's
+ * flashing HUD (2026-09-18): in the screenshots the panels the game draws
+ * as geometry are always there and the sprites it writes through the LFB
+ * come and go.
+ *
+ * So the ring's publish point waits for that queue, which is where the
+ * ordering actually is. `flush` is set for the same reason as above. The
+ * wait is bounded and counted: the 5 s line says how often it fired and for
+ * how long, which is what prices it on a real workload. */
+static void
+voodoo2_mmio_drain(Voodoo2State *s)
+{
+    voodoo_t *v = s->v;
+    int64_t   t0, now;
+
+    if (ATOMIC_LOAD(v->fifo_read_idx) == ATOMIC_LOAD(v->fifo_write_idx)) {
+        return;                         /* FIFO_EMPTY */
+    }
+    t0 = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+    s->behind++;
+    v->flush = 1;
+    while (ATOMIC_LOAD(v->fifo_read_idx) != ATOMIC_LOAD(v->fifo_write_idx)) {
+        voodoo_wake_fifo_thread_now(v);
+        now = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+        if (now - t0 >= VOODOO2_DRAIN_MS * 1000) {
+            if (!s->behind_slow_warned) {
+                s->behind_slow_warned = true;
+                warn_report("voodoo2: 86Box's own FIFO did not empty in %d ms "
+                            "before the ring's next packets; they go to the "
+                            "consumer anyway and a frame may be drawn out of "
+                            "order", VOODOO2_DRAIN_MS);
+            }
+            break;
+        }
+        g_usleep(20);
+    }
+    v->flush = 0;
+    s->behind_us += (uint32_t) (qemu_clock_get_us(QEMU_CLOCK_REALTIME) - t0);
 }
 
 /* Is this write one that reconfigures the command FIFO? Only the register
@@ -1086,6 +1164,15 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
                         "is lost and the FIFO will stall", size,
                         (unsigned) val, (unsigned) addr);
         }
+    }
+    if ((addr & 0x200000) && addr < 0x400000 && !s->fifo_mapped &&
+        ATOMIC_LOAD(v->cmdfifo_enabled)) {
+        /* ramfifo=off: this dword is a ring word, and 86Box counts it into
+         * cmdfifo_depth_wr itself -- so here is that transport's publish
+         * point, and what the guest wrote through the LFB before it has to
+         * be on the card first ("one order" below). Only the first word of
+         * a burst pays: the queue is empty for the rest of it. */
+        voodoo2_mmio_drain(s);
     }
     /* the ring is what the guest wrote first: run it before this ("one
      * order" above) */
@@ -1403,6 +1490,7 @@ voodoo2_stats(void *opaque)
         s->fifo_off_writes != s->last_fifo_off ||
         s->fifo_syncs != s->last_fifo_syncs) {
         char rds[64], wrs[64], cfg[64], ref[48] = "", busy[96] = "", ram[256] = "";
+        char ord[96] = "";
         int  written = v->cmd_written + v->cmd_written_fifo + v->cmd_written_fifo_2;
         int  outstanding = written - v->cmd_read;
         int  is_busy = outstanding ||
@@ -1451,25 +1539,33 @@ voodoo2_stats(void *opaque)
                      v->swap_pending ? ", swap pending" : "");
         } else if (s->fifo_mapped || s->fifo_words != s->last_fifo_words) {
             snprintf(ram, sizeof(ram), "; FIFO in RAM: %u words in %u syncs, "
-                     "%u packets part-written, %u words taken as data, "
-                     "%u waits for the ring",
+                     "%u packets part-written, %u words taken as data",
                      s->fifo_words - s->last_fifo_words,
-                     s->fifo_syncs - s->last_fifo_syncs, s->partial, s->forced,
-                     s->drains - s->last_drains);
+                     s->fifo_syncs - s->last_fifo_syncs, s->partial, s->forced);
+        }
+        /* the ordering waits ("one order"): what they cost, on whichever
+         * transport the ring is on */
+        if (s->drains != s->last_drains || s->behind != s->last_behind) {
+            snprintf(ord, sizeof(ord), "; %u waits for the ring, %u for the "
+                     "LFB queue (%u ms)", s->drains - s->last_drains,
+                     s->behind - s->last_behind,
+                     (s->behind_us - s->last_behind_us) / 1000);
         }
         s->last_drains = s->drains;
+        s->last_behind = s->behind;
+        s->last_behind_us = s->behind_us;
         s->last_fifo_words = s->fifo_words;
         s->last_fifo_syncs = s->fifo_syncs;
         /* frames = presents (a scan-out with any dirty line); new = those
          * showing a buffer the last one did not, i.e. the game's frame rate */
         info_report("voodoo2: %dx%d %s: %u frames (%u new), %d triangles, "
                     "%d writes (%d texture), %d reads in %.1f s; regs read%s; "
-                    "written%s; config read%s%s%s%s",
+                    "written%s; config read%s%s%s%s%s",
                     v->h_disp, v->v_disp, s->override ? "on" : "off",
                     frames, s->shown - s->last_shown, tris, wr, tex, rd,
                     VOODOO2_STATS_MS / 1000.0,
                     rds[0] ? rds : " none", wrs[0] ? wrs : " none",
-                    cfg[0] ? cfg : " none", ref, busy, ram);
+                    cfg[0] ? cfg : " none", ref, busy, ram, ord);
     }
     /* The deadlock of 2026-09-17: 86Box's consumer waits inside cmdfifo_get
      * for a word the guest never wrote (it read a packet header wanting more
