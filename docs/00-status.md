@@ -217,19 +217,32 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   mechanism: 3,200 waits and 1.8 s of vCPU time per 5 s, ~13 LFB-then-ring
   turns a frame, one per HUD element (the frame rate went *up* all the same,
   40–46 → 50–56 new frames a second, because the guest stopped spinning on
-  status: 7 M reads per 5 s → 950). **Patch 72 did not close it.** The run
-  after it is every present a new buffer (301 frames, 301 new, 60 Hz, `0
-  packets part-written`) and the HUD **almost never appears** — it flickers
-  into existence and goes again, and a run is bimodal: mostly present or
-  mostly absent. So the ordering between the two queues is not the whole
-  story, and the next thing to know is *which buffer the HUD goes into*: the
-  5 s line now says (`LFB writes: F to the front buffer, B to the back, E
-  elsewhere, rows lo..hi`). Two candidates to weigh against it — the game
-  writing a buffer that is never scanned out (triple buffering rotates three,
-  and a "back buffer" lock follows the rotation), and the card having read
-  **busy for the whole race** off one stale outstanding command, which had
-  the guest reading the status register 9–11 million times per 5 s and is
-  what `grLfbLock` waits on. The second is fixed in the same commit.
+  status: 7 M reads per 5 s → 950). **The first patch 72 was backwards**, and
+  saying so is the whole lesson: making the ring loop yield the moment
+  anything appears in the memory FIFO fixed one direction and broke the
+  other, because an LFB write then jumped *ahead* of ring words published
+  before it that the consumer — 20,000 words behind — had not reached. The
+  HUD landed before the world geometry of its own frame and was painted over,
+  and the user's run said exactly that: **the HUD almost never appeared**,
+  where before it had mostly appeared. Everything else about that run was
+  clean (301 frames, 301 new, 60 Hz, `0 packets part-written`, and `LFB
+  writes: 0 to the front buffer, 4446671 to the back, rows 0..469` — the HUD
+  going exactly where the game means it to). **Neither queue goes first:
+  they interleave**, and patch 72 now gives each memory-FIFO entry the ring's
+  write pointer as it was queued, so it runs once the ring has been consumed
+  that far and not before. A sequence number is what the thread never had,
+  and every arrangement without one is wrong in one direction or the other.
+  The guest test's ordering scene loads the ring with 192 full-screen fills
+  first, but does **not** discriminate on an idle host — measured both ways —
+  because the window needs a rasterizer that is behind. The game is the
+  oracle, and confirming this one is the open item.
+  **And the card read busy for the whole race** off one stale outstanding
+  command, which had the guest reading the status register 9–11 million times
+  per 5 s and is what `grLfbLock` waits on. The rule that puts a stale count
+  back could not reach it, because it ended a run of polls on any guest write
+  and `cmd_written_fifo` goes up on every triangle packet — 300,000 of them
+  in five seconds. It is the idle state itself that gates it now, held for
+  20 ms of continuous polling.
   **The `ramfifo=off` freeze (closed).** A different stuck-busy, and a
   general one: `written - cmd_read` is a running difference nothing ever
   resynchronises, and on a Voodoo 2 a swap *packet* counts a read without a

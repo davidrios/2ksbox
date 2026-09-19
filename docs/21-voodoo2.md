@@ -843,10 +843,24 @@ the gauges, the speedometer, the damage map, each replaced by the flat panel
 it is drawn on. What survives is what the game draws as geometry, through
 the ring; what disappears is what it writes through the LFB.
 
-**Patch 72 puts the ordering where it belongs**, in the thread: the ring
-loop yields the moment anything appears in the memory FIFO, and the whole
-pass repeats. Three lines, no wait anywhere, the same work in a different
-order — what a chip with one FIFO does.
+**And the first patch 72 was backwards.** Making the ring loop yield the
+moment anything appears in the memory FIFO fixed that direction and broke
+the other: an LFB write then jumped *ahead* of ring words the guest had
+published before it and the consumer had not reached — and the consumer is
+20,000 words behind. The HUD landed before the world geometry of its own
+frame and was painted over. The user's run: **the HUD almost never
+appeared**, where before it had mostly appeared. Every other measure of that
+run was clean — 301 frames, 301 new, 60 Hz, `0 packets part-written`, and
+`LFB writes: 0 to the front buffer, 4446671 to the back, rows 0..469`, which
+is the HUD going exactly where the game means it to go.
+
+**So neither queue goes first: they interleave.** Patch 72 gives each memory
+FIFO entry the ring's write pointer as it was queued (`cmdfifo_mark`). The
+entry runs once the ring has been consumed that far and not before, and the
+ring loop yields the moment the memory FIFO's head is due. That is the
+guest's own order, with no wait anywhere — the same work, sequenced. A
+sequence number is what the thread never had, and every arrangement without
+one is wrong in one direction or the other.
 
 The vCPU waited for the memory FIFO instead for a day, at the ring's publish
 point, and Carmageddon priced that: **3,200 waits and 1.8 s of vCPU time per
@@ -870,11 +884,16 @@ That window is only as wide as the consumer's wake, and the ordering phase of
 the guest test measures it away on an unloaded host — the block lands on top
 with the switch either way. It is kept as the A/B rather than turned on.
 
-**The check** is the ordering phase: the ring gets a red fastfill, then the
-guest writes a 38,400-dword blue block through the LFB, then the ring gets
-the swap. The block has to be on top, *and* the device has to report at least
-one publish behind the memory FIFO — the scene is built to make one, and none
-means the ordering point was never reached.
+**The check** is the ordering phase: the ring gets 192 full-screen red
+fastfills — a *loaded* ring, because a single one is consumed before the
+guest has written its second LFB dword and no arrangement can fail — then
+the guest writes a 38,400-dword blue block through the LFB, then the ring
+gets the swap. The block has to be on top, and the device has to report at
+least one publish behind the memory FIFO. It is a correctness statement
+rather than a discriminating guard: measured both ways on an unloaded host,
+the block lands on top with and without the patch, because the window needs
+a rasterizer that is actually behind, which is a game under TCG. The game is
+the oracle here, and the 5 s line is how to read it.
 
 ### A card cannot be busy with nothing to do
 

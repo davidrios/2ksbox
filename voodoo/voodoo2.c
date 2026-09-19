@@ -178,8 +178,7 @@ struct Voodoo2State {
     uint32_t     last_drains;
     uint32_t     behind;             /* publishes with LFB writes still queued */
     uint32_t     last_behind;
-    uint32_t     idle_status;        /* status reads with the card idle-busy */
-    int          idle_status_written; /* the command count they were read at */
+    int64_t      idle_status_since;  /* first of a run of idle-busy polls */
     bool         idle_status_noted;
     /* the LFB writes of a window, by the buffer the guest aimed them at:
      * which one a game's HUD goes into is the question they answer */
@@ -985,47 +984,47 @@ voodoo2_mmio_drain(Voodoo2State *s)
  * looks exactly like this, so it takes a long run of *consecutive* polls
  * with no guest write in between, which only a spinning guest can produce.
  */
-#define VOODOO2_IDLE_POLLS 20000
+#define VOODOO2_IDLE_MS 20
 
 static void
 voodoo2_status_unstick(Voodoo2State *s)
 {
     voodoo_t *v = s->v;
     int       written = v->cmd_written + v->cmd_written_fifo + v->cmd_written_fifo_2;
+    int64_t   now;
 
-    /* A run of polls ends when the guest really adds a command, not when it
-     * writes anything at all: a game writes the card all the time and the
-     * stale count would never be reached (Carmageddon's race carried one
-     * outstanding command for its whole length, 2026-09-19, and the guest
-     * read the status register 9-11 million times per 5 s because of it). */
-    if (written != s->idle_status_written) {
-        s->idle_status_written = written;
-        s->idle_status = 0;
-        return;
-    }
-    if (++s->idle_status < VOODOO2_IDLE_POLLS) {
-        return;
-    }
-    s->idle_status = 0;
-    if (written == v->cmd_read) {
-        return;
-    }
-    if (ATOMIC_LOAD(v->fifo_read_idx) != ATOMIC_LOAD(v->fifo_write_idx) ||
+    /* Every real sign of work, and the count against them. The gate is the
+     * idle state itself, held across a run of polls: counting polls since
+     * the guest last *wrote* does not work, because `cmd_written_fifo` goes
+     * up on every triangle packet and a game sends 300,000 of those in five
+     * seconds (2026-09-19, the run that showed that rule never firing). */
+    if (written == v->cmd_read ||
+        ATOMIC_LOAD(v->fifo_read_idx) != ATOMIC_LOAD(v->fifo_write_idx) ||
         ATOMIC_LOAD(v->cmdfifo_depth_rd) != ATOMIC_LOAD(v->cmdfifo_depth_wr) ||
         v->cmdfifo_in_sub || v->voodoo_busy || v->swap_pending ||
         RENDER_VOODOO_BUSY(v, 0) ||
         (v->render_threads >= 2 && RENDER_VOODOO_BUSY(v, 1)) ||
         (v->render_threads == 4 && (RENDER_VOODOO_BUSY(v, 2) || RENDER_VOODOO_BUSY(v, 3)))) {
-        return;                         /* something really is outstanding */
+        s->idle_status_since = 0;
+        return;
     }
+    now = qemu_clock_get_ms(QEMU_CLOCK_REALTIME);
+    if (!s->idle_status_since) {
+        s->idle_status_since = now;
+        return;
+    }
+    if (now - s->idle_status_since < VOODOO2_IDLE_MS) {
+        return;         /* the consumer may be between a command and its count */
+    }
+    s->idle_status_since = 0;
     if (!s->idle_status_noted) {
         s->idle_status_noted = true;
         info_report("voodoo2: the card read busy on %d command(s) outstanding "
                     "(written %d, read %d) with both FIFOs empty and nothing "
-                    "rendering, for %d polls running: the count is stale and "
+                    "rendering, for %d ms of polling: the count is stale and "
                     "goes back, or a guest waiting for idle never gets out",
                     written - v->cmd_read, written, (int) v->cmd_read,
-                    VOODOO2_IDLE_POLLS);
+                    VOODOO2_IDLE_MS);
     }
     ATOMIC_STORE(v->cmd_read, written);
 }

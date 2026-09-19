@@ -1,69 +1,162 @@
-86Box's FIFO thread yields the command ring to its own FIFO, so the guest's
-one order is kept (doc 21 §13, M14).
+86Box's FIFO thread runs its own FIFO and the command ring in the order the
+guest wrote them (doc 21 §13, M14).
 
 The guest has one bus into the chip: a write it puts in the memory FIFO
-(an LFB or texture write, `voodoo->fifo`) before a word it puts in the
-command ring has to reach the pixel pipeline first. `voodoo_fifo_thread`
-drained the memory FIFO once per wake and then stayed in the ring for as
-long as the guest kept feeding it -- which in a game is the whole frame,
-measured ~19,000 words behind all race long -- so an LFB write waited
-there while the swap that followed it in the ring was consumed, and landed
-in the buffer that swap had just turned into the back one. Carmageddon's
-HUD flashed in and out for exactly this (2026-09-18, the user's run).
+(an LFB or texture write, `voodoo->fifo`) and a word it puts in the command
+ring reach the pixel pipeline in the order it made them. 86Box's thread had
+no way to say which came first -- it drained the whole memory FIFO, then ran
+the ring until it was empty -- so with the ring running behind, which in a
+game it always is (Carmageddon's race: ~20,000 words), an LFB write landed
+far from where the guest put it. Both ways round, and both were seen:
 
-The ring loop now yields the moment anything appears in the memory FIFO,
-and the whole pass repeats, so the two are interleaved in the guest's own
-order. Three lines: a `do`, `&& FIFO_EMPTY` in the ring loop's condition,
-and a `while (!FIFO_EMPTY)` at the end; the loop bodies are left at their
-own indentation so the diff stays what it is.
+  * draining the memory FIFO first put a HUD written through the LFB *before*
+    the world geometry the guest had already queued, and the world painted
+    over it. The user's run of Carmageddon's 3dfx build: the HUD almost never
+    appeared.
+  * finishing the ring first put that HUD *after* the swap that followed it,
+    so it landed in the buffer the swap had just turned into the back one and
+    showed a frame late or not at all. The same game before this patch
+    existed: the HUD flashed in and out.
 
-It costs nothing -- no wait anywhere, the same work in a different order --
-and it is what a chip with one FIFO does. The one case it cannot reach is a
-consumer already parked inside `cmdfifo_get` waiting for the rest of a
-packet the guest has not finished writing; `voodoo/voodoo2.c` counts those
-(`N publishes behind the LFB queue` in the 5 s line) and they are 0 in
-every run so far.
+So each entry now carries the ring's write pointer as it was queued
+(`cmdfifo_mark`, in the three pad bytes' place). It runs once the ring has
+been consumed that far and not before, and the ring loop yields the moment
+the memory FIFO's head is due. Signed difference, because both counters run
+on for ever; with the command FIFO off the marks equal the read pointer and
+nothing changes. The per-type runs inside the memory FIFO stop at an entry
+the ring has not reached yet, which is the one-line change repeated five
+times.
+
+It costs nothing: no wait anywhere, the same work in the guest's order. The
+vCPU waited for the memory FIFO instead for a day, and Carmageddon priced
+that at 3,200 waits and 1.8 s of vCPU time per 5 s.
 
 The files are 86Box's, vendored verbatim in voodoo/86box and overlaid into
 hw/voodoo by prepare-qemu.sh, which is why this is a patch on the overlay
 rather than an edit there. Drop it when upstream 86Box has the fix and
 scripts/sync-86box-voodoo.sh brings it in.
 
+diff --git a/hw/voodoo/86box/vid_voodoo_common.h b/hw/voodoo/86box/vid_voodoo_common.h
+index 38d2f19..915b208 100644
+--- a/hw/voodoo/86box/vid_voodoo_common.h
++++ b/hw/voodoo/86box/vid_voodoo_common.h
+@@ -125,6 +125,11 @@ typedef struct
+     uint32_t val;
+     uint8_t  target_buf;
+     uint8_t  pad[3];
++    /* One order (2ksbox): the command ring's write pointer when the guest
++       made this write, so the thread can run the two streams in the order
++       the guest made them -- this entry belongs after every ring word
++       published before it and before every one published after it. */
++    uint32_t cmdfifo_mark;
+ } fifo_entry_t;
+ 
+ typedef struct voodoo_params_t {
 diff --git a/hw/voodoo/86box/vid_voodoo_fifo.c b/hw/voodoo/86box/vid_voodoo_fifo.c
-index 720b8f8..6b16fe0 100644
+index 720b8f8..9652c98 100644
 --- a/hw/voodoo/86box/vid_voodoo_fifo.c
 +++ b/hw/voodoo/86box/vid_voodoo_fifo.c
-@@ -388,6 +388,16 @@ voodoo_fifo_thread(void *param)
+@@ -219,9 +219,10 @@ voodoo_queue_command(voodoo_t *voodoo, uint32_t addr_type, uint32_t val)
+     thread_reset_event(voodoo->fifo_empty_event);
+ #endif
+ 
+-    fifo->val        = val;
+-    fifo->addr_type  = addr_type;
+-    fifo->target_buf = VOODOO_BUF_NONE;
++    fifo->val           = val;
++    fifo->addr_type     = addr_type;
++    fifo->target_buf    = VOODOO_BUF_NONE;
++    fifo->cmdfifo_mark  = voodoo->cmdfifo_depth_wr;
+ 
+     if (((addr_type & FIFO_TYPE) == FIFO_WRITEW_FB) ||
+         ((addr_type & FIFO_TYPE) == FIFO_WRITEL_FB)) {
+@@ -378,6 +379,17 @@ enum {
+     CMDFIFO3_PC = (1 << 28)
+ };
+ 
++/* One order (2ksbox): the guest has one bus into the chip, so a write it
++   put in this FIFO and a word it put in the command ring reach the pixel
++   pipeline in the order it made them. This says whether the head of this
++   FIFO is that next thing: its mark is where the ring stood when the guest
++   made it, so it runs once the ring has been consumed that far, and not
++   before. Signed difference, because both counters run on for ever. */
++#define FIFO_HEAD_READY                                                       \
++    (!FIFO_EMPTY &&                                                           \
++     (int) (voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK].cmdfifo_mark -    \
++            voodoo->cmdfifo_depth_rd) <= 0)
++
+ void
+ voodoo_fifo_thread(void *param)
+ {
+@@ -388,7 +400,8 @@ voodoo_fifo_thread(void *param)
          thread_wait_event(voodoo->wake_fifo_thread, -1);
          thread_reset_event(voodoo->wake_fifo_thread);
          voodoo->voodoo_busy = 1;
-+        /* One order (2ksbox): the guest has one bus into the chip, so a
-+           write it put in this FIFO before a word it put in the command
-+           ring has to run before that word. Draining this FIFO once and
-+           then staying in the ring for as long as the guest keeps feeding
-+           it -- which in a game is the whole frame -- breaks that: a HUD
-+           written through the LFB waits here while the swap that follows
-+           it in the ring is consumed, and lands in the buffer the swap has
-+           just turned into the back one. So the ring loop below yields the
-+           moment anything appears here, and this pass runs again. */
+-        while (!FIFO_EMPTY) {
 +        do {
-         while (!FIFO_EMPTY) {
++        while (FIFO_HEAD_READY) {
              uint64_t      start_time = plat_timer_read();
              uint64_t      end_time;
-@@ -480,7 +490,7 @@ voodoo_fifo_thread(void *param)
+             fifo_entry_t *fifo = &voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK];
+@@ -405,7 +418,7 @@ voodoo_fifo_thread(void *param)
+                         if (target_buf < VOODOO_BUF_COUNT) {
+                             ATOMIC_DEC(voodoo->pending_draw_cmds_buf[target_buf]);
+                         }
+-                        if (FIFO_EMPTY)
++                        if (!FIFO_HEAD_READY)
+                             break;
+                         fifo = &voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK];
+                     }
+@@ -421,7 +434,7 @@ voodoo_fifo_thread(void *param)
+                         if (target_buf < VOODOO_BUF_COUNT) {
+                             ATOMIC_DEC(voodoo->pending_fb_writes_buf[target_buf]);
+                         }
+-                        if (FIFO_EMPTY)
++                        if (!FIFO_HEAD_READY)
+                             break;
+                         fifo = &voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK];
+                     }
+@@ -437,7 +450,7 @@ voodoo_fifo_thread(void *param)
+                         if (target_buf < VOODOO_BUF_COUNT) {
+                             ATOMIC_DEC(voodoo->pending_fb_writes_buf[target_buf]);
+                         }
+-                        if (FIFO_EMPTY)
++                        if (!FIFO_HEAD_READY)
+                             break;
+                         fifo = &voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK];
+                     }
+@@ -448,7 +461,7 @@ voodoo_fifo_thread(void *param)
+                             voodoo_tex_writel(fifo->addr_type & FIFO_ADDR, fifo->val, voodoo);
+                         fifo->addr_type = FIFO_INVALID;
+                         voodoo->fifo_read_idx++;
+-                        if (FIFO_EMPTY)
++                        if (!FIFO_HEAD_READY)
+                             break;
+                         fifo = &voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK];
+                     }
+@@ -458,7 +471,7 @@ voodoo_fifo_thread(void *param)
+                         voodoo_2d_reg_writel(voodoo, fifo->addr_type & FIFO_ADDR, fifo->val);
+                         fifo->addr_type = FIFO_INVALID;
+                         voodoo->fifo_read_idx++;
+-                        if (FIFO_EMPTY)
++                        if (!FIFO_HEAD_READY)
+                             break;
+                         fifo = &voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK];
+                     }
+@@ -480,7 +493,7 @@ voodoo_fifo_thread(void *param)
          thread_set_event(voodoo->fifo_empty_event);
          ATOMIC_STORE(voodoo->fifo_empty_signaled, 1);
  
 -        while (voodoo->cmdfifo_enabled && (voodoo->cmdfifo_depth_rd != voodoo->cmdfifo_depth_wr || voodoo->cmdfifo_in_sub)) {
-+        while (voodoo->cmdfifo_enabled && FIFO_EMPTY && (voodoo->cmdfifo_depth_rd != voodoo->cmdfifo_depth_wr || voodoo->cmdfifo_in_sub)) {
++        while (voodoo->cmdfifo_enabled && !FIFO_HEAD_READY && (voodoo->cmdfifo_depth_rd != voodoo->cmdfifo_depth_wr || voodoo->cmdfifo_in_sub)) {
              uint64_t start_time = plat_timer_read();
              uint64_t end_time;
              uint32_t header = cmdfifo_get(voodoo);
-@@ -1072,6 +1082,7 @@ voodoo_fifo_thread(void *param)
+@@ -1072,6 +1085,7 @@ voodoo_fifo_thread(void *param)
              end_time = plat_timer_read();
              voodoo->time += end_time - start_time;
          }
-+        } while (!FIFO_EMPTY);          /* the ring loop yielded: drain again */
++        } while (FIFO_HEAD_READY);      /* the ring caught up: more is due */
  
          voodoo->voodoo_busy = 0;
      }

@@ -133,6 +133,9 @@ BAR         equ 0E0000000h
 LFB         equ BAR + 400000h
 RED565      equ 0F800F800h          ; two RGB565 pixels of (248, 0, 0)
 BLUE565     equ 0001F001Fh          ; two RGB565 pixels of (0, 0, 248)
+ORDER_FILLS equ 192                 ; full-screen fills the ordering scene
+                                    ; puts in the ring, to keep the consumer
+                                    ; behind while the LFB block is written
 
 ; register offsets (vid_voodoo_regs.h)
 SST_status          equ 000h
@@ -816,8 +819,21 @@ order_phase:
     mov dword [fs:edi + 32], 1E0h       ;   y 0..480
     mov dword [fs:edi + 36], 00010291h  ; color1
     mov dword [fs:edi + 40], 0F80000h   ;   red
-    mov dword [fs:edi + 44], 00010249h  ; fastfillCMD
-    mov dword [fs:edi + 48], 0
+
+    ; ORDER_FILLS fastfills, not one: the point of the scene is that the
+    ; consumer is *behind* when the LFB writes arrive, which is the state a
+    ; game is in all the time (Carmageddon's race ran ~20,000 words behind)
+    ; and the only state in which the ordering can be got wrong. A single
+    ; fastfill is consumed before the guest has written its second LFB
+    ; dword and the scene passes whatever the thread does.
+    mov edi, FIFO_WIN + 2Ch
+    mov ecx, ORDER_FILLS
+.fill:
+    mov dword [fs:edi], 00010249h       ; fastfillCMD
+    mov dword [fs:edi + 4], 0
+    add edi, 8
+    dec ecx
+    jnz .fill
 
     ; and now, with the chip told nothing, the block through the LFB: rows
     ; 100..339, 320 pixels wide. The first of these writes is the guest's
@@ -837,11 +853,11 @@ order_phase:
     dec edx
     jnz .row
 
-    mov edi, FIFO_WIN + 34h
+    mov edi, FIFO_WIN + 2Ch + ORDER_FILLS * 8
     mov dword [fs:edi], 00010251h       ; swapbufferCMD
     mov dword [fs:edi + 4], 1           ;   on the next retrace
     call swap_note
-    mov edx, FIFO_BASE + 3Ch
+    mov edx, FIFO_BASE + 34h + ORDER_FILLS * 8
     mov si, str_order
     call fifo_wait
     mov si, str_order_swapped
@@ -864,7 +880,7 @@ order_phase:
 ; to be cyan (the packets were run, not dropped) and the card has to go
 ; idle (bits 9:7 clear).
 teardown_phase:
-    mov edi, FIFO_WIN + 3Ch
+    mov edi, FIFO_WIN + 34h + ORDER_FILLS * 8
     mov dword [fs:edi], 00010291h       ; color1
     mov dword [fs:edi + 4], 00F8F8h     ;   cyan
     mov dword [fs:edi + 8], 00010249h   ; fastfillCMD
