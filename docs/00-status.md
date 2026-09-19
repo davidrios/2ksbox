@@ -195,10 +195,19 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   mechanism: 3,200 waits and 1.8 s of vCPU time per 5 s, ~13 LFB-then-ring
   turns a frame, one per HUD element (the frame rate went *up* all the same,
   40–46 → 50–56 new frames a second, because the guest stopped spinning on
-  status: 7 M reads per 5 s → 950). After it the user reported the flicker
-  much finer — "almost doesn't show", no element disappearing, "only the left
-  half of each element" — which is the state patch 72 was written from and
-  **still needs a screenshot**.
+  status: 7 M reads per 5 s → 950). **Patch 72 did not close it.** The run
+  after it is every present a new buffer (301 frames, 301 new, 60 Hz, `0
+  packets part-written`) and the HUD **almost never appears** — it flickers
+  into existence and goes again, and a run is bimodal: mostly present or
+  mostly absent. So the ordering between the two queues is not the whole
+  story, and the next thing to know is *which buffer the HUD goes into*: the
+  5 s line now says (`LFB writes: F to the front buffer, B to the back, E
+  elsewhere, rows lo..hi`). Two candidates to weigh against it — the game
+  writing a buffer that is never scanned out (triple buffering rotates three,
+  and a "back buffer" lock follows the rotation), and the card having read
+  **busy for the whole race** off one stale outstanding command, which had
+  the guest reading the status register 9–11 million times per 5 s and is
+  what `grLfbLock` waits on. The second is fixed in the same commit.
   **The `ramfifo=off` freeze (closed).** A different stuck-busy, and a
   general one: `written - cmd_read` is a running difference nothing ever
   resynchronises, and on a Voodoo 2 a swap *packet* counts a read without a

@@ -897,9 +897,28 @@ both FIFOs empty, the ring caught up, no render thread, no swap pending, the
 consumer not in its loop — the difference is stale and is put back. The
 hysteresis is what makes it safe: the consumer is briefly between dequeueing
 a command and counting it, and in that window the card looks exactly like
-this, so it takes 20,000 *consecutive* status reads with no guest write in
-between, which only a spinning guest can produce. It says so once when it
-fires.
+this, so it takes 20,000 status reads in a row, which only a spinning guest
+can produce. It says so once when it fires.
+
+**A run of those polls ends when the guest really adds a command**, not when
+it writes anything at all — that is the difference between a rule that fires
+and one that does not. Carmageddon's race carried one stale outstanding
+command for its whole length while writing the card thousands of times a
+second, so the card read busy to every poll and the guest read the status
+register **9 to 11 million times per 5 s** over it (2026-09-19). Between two
+swaps that is ~35,000 reads of one register, all of them the answer "busy"
+about a command that finished long ago.
+
+### What the 5 s line says about a game's LFB writes
+
+`LFB writes: F to the front buffer, B to the back, E elsewhere, rows lo..hi`
+— the buffer each write was aimed at, read from `fb_write_offset` against
+`params.front_offset` / `back_offset` as the guest made the write, and the
+rows it touched. It is there because "which buffer does the HUD go into" is
+the question a flickering overlay asks, and nothing else in the line
+answers it. A handful of writes land on the wrong side of a swap the
+consumer is making at that moment, so treat a small `front` count beside a
+large `back` one as noise; the shape is what matters.
 
 ### The menu that looked wide is the game's own letterbox
 

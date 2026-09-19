@@ -179,7 +179,13 @@ struct Voodoo2State {
     uint32_t     behind;             /* publishes with LFB writes still queued */
     uint32_t     last_behind;
     uint32_t     idle_status;        /* status reads with the card idle-busy */
+    int          idle_status_written; /* the command count they were read at */
     bool         idle_status_noted;
+    /* the LFB writes of a window, by the buffer the guest aimed them at:
+     * which one a game's HUD goes into is the question they answer */
+    uint32_t     lfb_front, lfb_back, lfb_else;
+    uint32_t     last_lfb_front, last_lfb_back, last_lfb_else;
+    uint32_t     lfb_y_lo, lfb_y_hi;
     bool         drain_slow_warned;  /* one that did not finish in time */
     bool         fifo_left_noted;    /* words stranded by the FIFO going off */
     /* register-window accesses by register (addr & 0x3fc) since the last
@@ -985,13 +991,22 @@ static void
 voodoo2_status_unstick(Voodoo2State *s)
 {
     voodoo_t *v = s->v;
-    int       written;
+    int       written = v->cmd_written + v->cmd_written_fifo + v->cmd_written_fifo_2;
 
+    /* A run of polls ends when the guest really adds a command, not when it
+     * writes anything at all: a game writes the card all the time and the
+     * stale count would never be reached (Carmageddon's race carried one
+     * outstanding command for its whole length, 2026-09-19, and the guest
+     * read the status register 9-11 million times per 5 s because of it). */
+    if (written != s->idle_status_written) {
+        s->idle_status_written = written;
+        s->idle_status = 0;
+        return;
+    }
     if (++s->idle_status < VOODOO2_IDLE_POLLS) {
         return;
     }
     s->idle_status = 0;
-    written = v->cmd_written + v->cmd_written_fifo + v->cmd_written_fifo_2;
     if (written == v->cmd_read) {
         return;
     }
@@ -1161,8 +1176,21 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     if (addr < 0x400000) {
         s->wr_hist[(addr >> 2) & 0xff]++;
     }
-    s->idle_status = 0;         /* the guest is doing something: not a spin */
     voodoo2_note(s, addr, val, size, true);
+    if (addr >= 0x400000 && addr < 0x800000) {
+        /* the buffer the guest is aiming this LFB write at, and the row */
+        uint32_t y = (addr >> 11) & 0x3ff;
+
+        if (v->fb_write_offset == v->params.front_offset) {
+            s->lfb_front++;
+        } else if (v->fb_write_offset == v->back_offset) {
+            s->lfb_back++;
+        } else {
+            s->lfb_else++;
+        }
+        s->lfb_y_lo = MIN(s->lfb_y_lo, y);
+        s->lfb_y_hi = MAX(s->lfb_y_hi, y);
+    }
     if ((addr & 0x200000) && addr < 0x400000 && !v->cmdfifo_enabled &&
         (addr & 0x1fffff) >= 0x100) {
         /* A command-FIFO packet written to the 0x200000 window while the
@@ -1538,7 +1566,7 @@ voodoo2_stats(void *opaque)
         s->fifo_off_writes != s->last_fifo_off ||
         s->fifo_syncs != s->last_fifo_syncs) {
         char rds[64], wrs[64], cfg[64], ref[48] = "", busy[96] = "", ram[256] = "";
-        char ord[96] = "";
+        char ord[96] = "", lfb[128] = "";
         int  written = v->cmd_written + v->cmd_written_fifo + v->cmd_written_fifo_2;
         int  outstanding = written - v->cmd_read;
         int  is_busy = outstanding ||
@@ -1598,6 +1626,20 @@ voodoo2_stats(void *opaque)
                      "behind the LFB queue", s->drains - s->last_drains,
                      s->behind - s->last_behind);
         }
+        if (s->lfb_front != s->last_lfb_front || s->lfb_back != s->last_lfb_back ||
+            s->lfb_else != s->last_lfb_else) {
+            snprintf(lfb, sizeof(lfb), "; LFB writes: %u to the front buffer, "
+                     "%u to the back, %u elsewhere, rows %u..%u",
+                     s->lfb_front - s->last_lfb_front,
+                     s->lfb_back - s->last_lfb_back,
+                     s->lfb_else - s->last_lfb_else,
+                     s->lfb_y_lo > s->lfb_y_hi ? 0 : s->lfb_y_lo, s->lfb_y_hi);
+        }
+        s->last_lfb_front = s->lfb_front;
+        s->last_lfb_back  = s->lfb_back;
+        s->last_lfb_else  = s->lfb_else;
+        s->lfb_y_lo = 0xffffffff;
+        s->lfb_y_hi = 0;
         s->last_drains = s->drains;
         s->last_behind = s->behind;
         s->last_fifo_words = s->fifo_words;
@@ -1606,12 +1648,12 @@ voodoo2_stats(void *opaque)
          * showing a buffer the last one did not, i.e. the game's frame rate */
         info_report("voodoo2: %dx%d %s: %u frames (%u new), %d triangles, "
                     "%d writes (%d texture), %d reads in %.1f s; regs read%s; "
-                    "written%s; config read%s%s%s%s%s",
+                    "written%s; config read%s%s%s%s%s%s",
                     v->h_disp, v->v_disp, s->override ? "on" : "off",
                     frames, s->shown - s->last_shown, tris, wr, tex, rd,
                     VOODOO2_STATS_MS / 1000.0,
                     rds[0] ? rds : " none", wrs[0] ? wrs : " none",
-                    cfg[0] ? cfg : " none", ref, busy, ram, ord);
+                    cfg[0] ? cfg : " none", ref, busy, ram, ord, lfb);
     }
     /* The deadlock of 2026-09-17: 86Box's consumer waits inside cmdfifo_get
      * for a word the guest never wrote (it read a packet header wanting more
@@ -1763,6 +1805,7 @@ voodoo2_realize(PCIDevice *dev, Error **errp)
     pci_set_word(dev->config + PCI_SUBSYSTEM_VENDOR_ID, 0);
     pci_set_word(dev->config + PCI_SUBSYSTEM_ID, 0);
 
+    s->lfb_y_lo = 0xffffffff;
     s->stats = timer_new_ms(QEMU_CLOCK_VIRTUAL, voodoo2_stats, s);
     timer_mod(s->stats, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + VOODOO2_STATS_MS);
 
