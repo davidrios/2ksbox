@@ -190,7 +190,16 @@ player [--shader <preset.slangp>] [--shader-params <k=v,...>] [--pad usb|keys]
   the guest (the title says when they are the host's).
   `PLAYER_KEYBOARD_CAPTURE=0` starts a run with them the host's;
   `scripts/test.sh` sets it, so a test window sway focuses does not take
-  the desktop's keys away.
+  the desktop's keys away. **`PLAYER_KEYBOARD_LOG=1`** makes the Windows
+  side print what it did: that the raw-input registration was accepted, and
+  what winit and Windows each thought about focus at every change — a
+  shortcut that still reaches the host is nearly always a window that was
+  not in front when it was pressed. On Windows what this covers is the two
+  Windows keys, every Win+ shortcut and Ctrl+Esc; Alt+Tab, Alt+Esc, Alt+F4,
+  Alt+Space, Ctrl+Alt+Del and Win+L are *system* hotkeys that no program gets
+  (docs/00-status.md, "The first Windows host run" item 5, has the
+  measurements, including why the low-level hook this replaced could never
+  have worked).
 - `qemu-embed: input:` lines on stderr report the embed input queue's
   drain latency, key down/up pairs delivered in one drain (zero-length
   presses) and drops — printed only when something is off.

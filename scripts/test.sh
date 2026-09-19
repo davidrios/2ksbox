@@ -250,13 +250,26 @@
 #                  swap across a JMP, a magenta one after a read-pointer read --
 #                  and the read pointer must end where the packets do and the
 #                  frames be blue, then magenta: under ramfifo=on (the default)
-#                  only the device's own packet walk can have run them. ~10 s
+#                  only the device's own packet walk can have run them. Then the
+#                  teardown (doc 21 §13): a fill and a swap go into the ring and
+#                  fbiInit7's command-FIFO bit is cleared at once, with no idle
+#                  wait -- the frame must be the fill (the packets were run, not
+#                  stranded) and the status register must read idle afterwards,
+#                  which is what Glide's grSstIdle waits for at grSstWinClose.
+#                  Carmageddon's 3dfx build spun there for ever with two words
+#                  outstanding (2026-09-18). ~20 s
 #   voodoo-guest-mmiofifo  the same with ramfifo=off, the per-dword MMIO path. ~10 s
 #   voodoo-guest-d3dpt  the same beside `-device d3dpt-vga`, the pairing a launcher
 #                  machine builds, with the adapter first put in an 800x600x32
 #                  linear mode: after the hand-back the screendump must be that
 #                  mode, not the Voodoo's last frame (a desktop that never came
 #                  back after a full-screen switch, 2026-09-12). ~10 s
+#   voodoo-guest-undither  the same with `undither=on` (doc 21 §12), where the
+#                  dither phase is the oracle: that scene is one grey over the
+#                  whole screen, dithered on the way into the frame buffer, so
+#                  with the dither reconstructed away at scanout the screendump
+#                  must come back one *flat* colour rather than one 4x4 tile --
+#                  and a grey, not a level off it. ~10 s
 #   pit-guest      tools/pit-guest-test.py: the PIT as a DOS game's clock meets it
 #                  (patch 34) — QCLOCK.COM, DOS Quake's Sys_FloatTime (the BIOS
 #                  tick word plus counter 0) read in a tight loop beside the TSC:
@@ -1396,6 +1409,25 @@ voodoo2_check() { # the wizard's Voodoo 2 switch (doc 21), from a checkbox to a 
     case "$args" in *"-device voodoo2,addr=0x05"*) ;; *) echo "picking the Voodoo 2 added no device"; echo "$args"; rc=1;; esac
     # ...and the bundle says so in the field a newer launcher reads back
     grep -q '^voodoo2 = true' "$b" || { echo "the bundle does not record the card"; rc=1; }
+    # The card's dither undone (doc 21 §12) is a setting of the card's,
+    # so it is off with the card just picked, it reaches the device as a
+    # property of that same -device, and it goes away with the card
+    # rather than staying behind as a line nothing reads.
+    case "$args" in *"undither=on"*) echo "picking the card turned its undither on too"; echo "$args"; rc=1;; esac
+    target/release/launcherx --wizard-edit "$b" - - - - - - - - - voodoo-undither >/dev/null \
+      || { echo "--wizard-edit voodoo-undither failed on $b"; rc=1; }
+    args="$(target/release/launcherx --print-args "$b")"
+    case "$args" in *"-device voodoo2,addr=0x05,undither=on"*) ;;
+      *) echo "the undither did not reach the card's device"; echo "$args"; rc=1;; esac
+    grep -q '^voodoo2_undither = true' "$b" || { echo "the bundle does not record the undither"; rc=1; }
+    target/release/launcherx --wizard-edit "$b" - - - - - - - - - novoodoo >/dev/null \
+      || { echo "--wizard-edit novoodoo failed on $b"; rc=1; }
+    args="$(target/release/launcherx --print-args "$b")"
+    case "$args" in *undither*) echo "the undither outlived the card"; echo "$args"; rc=1;; esac
+    grep -q '^voodoo2_undither = true' "$b" && { echo "the bundle kept an undither with no card"; rc=1; }
+    # and back on, so the rest of the check has the card it expects
+    target/release/launcherx --wizard-edit "$b" - - - - - - - - - voodoo >/dev/null \
+      || { echo "--wizard-edit voodoo failed on $b"; rc=1; }
   done
   target/release/launcherx --wizard-edit "$bundle" - - - - - - - - - novoodoo >/dev/null \
     || { echo "--wizard-edit novoodoo failed"; rc=1; }
@@ -2611,6 +2643,7 @@ guest_stage() {
       run_check voodoo-guest voodoo-guest.log python3 tools/voodoo-guest-test.py || true
       run_check voodoo-guest-d3dpt voodoo-guest-d3dpt.log env VGA=d3dpt python3 tools/voodoo-guest-test.py || true
       run_check voodoo-guest-mmiofifo voodoo-guest-mmiofifo.log env RAMFIFO=off python3 tools/voodoo-guest-test.py || true
+      run_check voodoo-guest-undither voodoo-guest-undither.log env UNDITHER=on python3 tools/voodoo-guest-test.py || true
       run_check vbe-palette vbe-palette.log env VBEPAL=1 python3 tools/vga-dirty-guest-test.py vesa || true
       # The gameport as a DOS guest reads it (M13 path B). Unlike its
       # neighbours this one runs the **player**, because the pad reaches a
@@ -2632,10 +2665,10 @@ guest_stage() {
     # including `atapi-guest`, which is the only check that reads a disc from
     # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
     # weak-sector rule, which that battery is the regression guard for).
-    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest atapi-read-error midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo vbe-palette pad-guest; do
+    else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest atapi-read-error midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo voodoo-guest-undither vbe-palette pad-guest; do
       skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
     done; fi
-  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest atapi-read-error midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo vbe-palette pad-guest; do
+  else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest atapi-read-error midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo voodoo-guest-undither vbe-palette pad-guest; do
     skip "$c" "needs nasm, mtools and build/qemu"
   done; fi
   if [ "$OS" != Linux ]; then skip guest "Linux only for now (mkfs.fat, sfdisk, mtools)"; return; fi

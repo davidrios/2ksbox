@@ -109,9 +109,14 @@ pub mod ffi {
         #[qproperty(QString, network_note)]
         #[qproperty(bool, seamless_mouse)]
         #[qproperty(QString, seamless_mouse_note)]
-        /// The 3dfx Voodoo 2 (doc 21) and the sentences under it.
+        /// The 3dfx Voodoo 2 (doc 21) and the sentences under it, and
+        /// beside it the card's own dither undone at scanout (doc 21
+        /// §12) — answerable only with the card, which the form says.
         #[qproperty(bool, voodoo2)]
         #[qproperty(QString, voodoo2_note)]
+        #[qproperty(bool, voodoo2_undither)]
+        #[qproperty(bool, voodoo2_undither_enabled)]
+        #[qproperty(QString, voodoo2_undither_note)]
         /// Arguments added to the end of QEMU's command line, as one
         /// line: two-way bound like `name`, and caught up by `pull`. The
         /// note is orange for a quote left open, which saving refuses.
@@ -188,6 +193,9 @@ pub mod ffi {
         /// A 3dfx Voodoo 2 in the machine, or not (doc 21).
         #[qinvokable]
         fn choose_voodoo2(self: Pin<&mut Wizard>, voodoo2: bool);
+        /// ... and that card's dither undone at scanout (doc 21 §12).
+        #[qinvokable]
+        fn choose_voodoo2_undither(self: Pin<&mut Wizard>, undither: bool);
 
         /// The extra-arguments field lost focus: take its text and say
         /// what the form makes of it (the note under it).
@@ -377,6 +385,9 @@ pub struct WizardRust {
     seamless_mouse_note: QString,
     voodoo2: bool,
     voodoo2_note: QString,
+    voodoo2_undither: bool,
+    voodoo2_undither_enabled: bool,
+    voodoo2_undither_note: QString,
     extra_qemu_args: QString,
     extra_qemu_args_note: QString,
     extra_qemu_args_warning: bool,
@@ -471,6 +482,10 @@ impl ffi::Wizard {
 
     fn choose_voodoo2(self: Pin<&mut Self>, voodoo2: bool) {
         self.edit(|form| form.choose_voodoo2(voodoo2));
+    }
+
+    fn choose_voodoo2_undither(self: Pin<&mut Self>, undither: bool) {
+        self.edit(|form| form.choose_voodoo2_undither(undither));
     }
 
     fn choose_optimization(self: Pin<&mut Self>, index: i32, on: bool) {
@@ -685,6 +700,7 @@ impl ffi::Wizard {
         let (accel, accel_note, accel_warning, accel_is_default, network, network_note);
         let (seamless_mouse, seamless_mouse_note);
         let (voodoo2, voodoo2_note);
+        let (voodoo2_undither, voodoo2_undither_enabled, voodoo2_undither_note);
         let (extra_qemu_args, extra_qemu_args_note, extra_qemu_args_warning);
         let (graphics_note, graphics_warning);
         let (video, video_applies, video_labels, video_is_default, video_note, video_warning);
@@ -753,6 +769,9 @@ impl ffi::Wizard {
             seamless_mouse_note = qs(f.seamless_mouse_notes().join("\n"));
             voodoo2 = f.voodoo2();
             voodoo2_note = qs(f.voodoo2_notes().join("\n"));
+            voodoo2_undither = f.voodoo2_undither();
+            voodoo2_undither_enabled = f.voodoo2_undither_enabled();
+            voodoo2_undither_note = qs(f.voodoo2_undither_notes().join("\n"));
             extra_qemu_args = qs(&f.extra_qemu_args);
             let args_note = f.extra_qemu_args_note();
             extra_qemu_args_note = qs(args_note.text);
@@ -832,6 +851,9 @@ impl ffi::Wizard {
         self.as_mut().set_seamless_mouse_note(seamless_mouse_note);
         self.as_mut().set_voodoo2(voodoo2);
         self.as_mut().set_voodoo2_note(voodoo2_note);
+        self.as_mut().set_voodoo2_undither(voodoo2_undither);
+        self.as_mut().set_voodoo2_undither_enabled(voodoo2_undither_enabled);
+        self.as_mut().set_voodoo2_undither_note(voodoo2_undither_note);
         self.as_mut().set_extra_qemu_args(extra_qemu_args);
         self.as_mut().set_extra_qemu_args_note(extra_qemu_args_note);
         self.as_mut().set_extra_qemu_args_warning(extra_qemu_args_warning);

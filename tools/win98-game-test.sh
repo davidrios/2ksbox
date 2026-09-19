@@ -213,11 +213,19 @@ fi
 # "Stub exec failed: dos4gw.exe").
 # With the Voodoo 2 on the machine, first let 3dfx's login helper finish
 # initialising the card (VOODOO_WAIT above). With the guard in the image its
-# log is the end of the helper, deleted here so only this login's counts;
-# FORs of one CHOICE second an iteration are the bounded loop COMMAND.COM
-# can write (rounded up to tens), and once the log is there each remaining
-# iteration is a no-op.
-# Without the guard nothing a batch can see marks the other process's end.
+# log is the end of the helper, deleted here so only this login's counts.
+#
+# **The wait is not a batch file's.** It used to be FORs of one CHOICE second
+# an iteration, which is the only bounded loop COMMAND.COM can write -- and
+# CHOICE polls, so the DOS box never idled, a host core sat at 100 %, and the
+# initialisation being waited for was competing with the wait for the same
+# guest CPU. Measured on base98-br, all else equal: 3dfx's helper takes
+# 1,047 ms at an idle login, 3,625 ms behind a DOS box, and 12,646 ms behind
+# the CHOICE loop. So WIN.INI's `run=` names WAITFILE.EXE instead, which
+# sleeps until the log appears and then starts RUN.BAT: no DOS box is open
+# until the card is ready. (`run=` drops arguments, hence WAITFILE.CFG.)
+# Without the guard nothing marks the other process's end, so that case is
+# still a flat wait -- one CHOICE of VOODOO_WAIT seconds, in the batch.
 V2GUARD=
 case " ${EXTRA:-} " in
   *voodoo2*)
@@ -233,10 +241,7 @@ esac
 [ "$VOODOO_WAIT" -gt 99 ] && VOODOO_WAIT=99
 { printf '@echo off\r\n'
   if [ "$VOODOO_WAIT" -gt 0 ] && [ -n "$V2GUARD" ]; then
-    # ten seconds a line: COMMAND.COM cuts a batch line at 127 characters
-    for ((i = 0; i < (VOODOO_WAIT + 9) / 10; i++)); do
-      printf 'for %%%%i in (0 1 2 3 4 5 6 7 8 9) do if not exist C:\\WINDOWS\\V2START.LOG choice /c:y /t:y,1 >nul\r\n'
-    done
+    :   # WAITFILE.EXE holds the login instead; see above
   elif [ "$VOODOO_WAIT" -gt 0 ]; then
     printf 'choice /c:y /t:y,%d >nul\r\n' "$VOODOO_WAIT"
   fi
@@ -245,12 +250,28 @@ esac
 echo "==> RUN.BAT:"; sed 's/\r$//; s/^/      /' "$OUT/run.bat"
 mattrib -i "$M" -r ::/RUN.BAT 2>/dev/null || true
 mcopy -i "$M" -o "$OUT/run.bat" ::/RUN.BAT
+# Who WIN.INI starts: the waiter when there is something to wait for and a
+# helper to do it with, else the batch itself.
+RUNENTRY='C:\RUN.BAT'
+WAITEXE="$ROOT/guest-tools/out/waitfile.exe"
+if [ "$VOODOO_WAIT" -gt 0 ] && [ -n "$V2GUARD" ]; then
+  if [ -f "$WAITEXE" ]; then
+    printf 'file=C:\\WINDOWS\\V2START.LOG\r\nseconds=%d\r\nthen=C:\\RUN.BAT\r\n' \
+      "$VOODOO_WAIT" > "$OUT/waitfile.cfg"
+    mcopy -i "$M" -o "$WAITEXE" ::/WAITFILE.EXE
+    mcopy -i "$M" -o "$OUT/waitfile.cfg" ::/WAITFILE.CFG
+    RUNENTRY='C:\WAITFILE.EXE'
+    echo "==> login waits for V2START.LOG in WAITFILE.EXE (up to ${VOODOO_WAIT}s), then runs RUN.BAT"
+  else
+    echo "note: no $WAITEXE (guest-tools/build-wrappers.sh): the login will not wait for 3dfx's helper"
+  fi
+fi
 mcopy -i "$M" -n ::/WINDOWS/WIN.INI "$OUT/win.ini"
-python3 - "$OUT/win.ini" <<'PYWIN'
+python3 - "$OUT/win.ini" "$RUNENTRY" <<'PYWIN'
 import re, sys
 p = sys.argv[1]
 b = open(p, 'rb').read()          # binary: WIN.INI is CRLF and text mode eats it
-line = b'run=C:\\RUN.BAT'
+line = b'run=' + sys.argv[2].encode()
 m = re.search(br'^run=[^\r\n]*', b, re.M | re.I)
 if m:
     b = b[:m.start()] + line + b[m.end():]

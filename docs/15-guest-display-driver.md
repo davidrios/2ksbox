@@ -206,7 +206,13 @@ What Microsoft's `ddraw.dll` → `dxg.sys` sees behind the display driver
   refusal, so the doc 14 SysBus device answers `NO_EXEC` too — it is one
   host, not one device. The QEMU log says
   `d3dpt: no-exec=on: no Vulkan 1.3 device on this host` and the driver's
-  own `d3dptdisp: no Direct3D executor on the host` follows it.
+  own `d3dptdisp: no Direct3D executor on the host` follows it. **On 9x that
+  was only half true until 2026-09-18** (doc 19 §40): the ring-3 HAL
+  published its Direct3D tables whatever `d3d_init` answered, so the 16-bit
+  driver went on claiming `DDCAPS_3D` and the 3D surface caps over a
+  `D3DHAL_GLOBALDRIVERDATA` of zeros. It is gated on `core.d3d` now, as it
+  always was here, and says `d3dpthal: no Direct3D on this host — DirectDraw
+  only`; `NO_EXEC=1 tools/win98-driver-test.sh` is the 9x check.
   **Not `ddflags=0x20`** (`DDF_NO_D3D`): that one makes the *driver*
   decide and never reads `D3D_STATUS`, so it proves nothing about the
   path a real below-floor user takes.

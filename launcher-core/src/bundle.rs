@@ -1039,6 +1039,17 @@ pub struct Machine {
     /// machine grows a card by being read by a newer launcher.
     #[serde(default)]
     pub voodoo2: bool,
+    /// The card's dither reconstructed away at scanout
+    /// (`-device voodoo2,undither=on`, doc 21 §12). A Voodoo stores
+    /// RGB565 through an ordered dither, and this puts back the colour
+    /// the rasterizer had by inverting that table — exact over a 4x4
+    /// window, and where no single colour could have produced a window
+    /// the pixel is left as it was, so an edge is never blurred. Off
+    /// unless picked, and meaningless without [`Machine::voodoo2`]: the
+    /// form keeps the two together and `--print-args` writes the
+    /// property only with the card.
+    #[serde(default)]
+    pub voodoo2_undither: bool,
     /// Primary IDE hard disk (qcow2).
     pub disk: PathBuf,
     /// The disc in the CD-ROM drive when the machine boots, if any. Just
@@ -1305,6 +1316,7 @@ impl Machine {
             network: default_network(family),
             seamless_mouse: default_seamless_mouse(family),
             voodoo2: false,
+            voodoo2_undither: false,
             disk,
             disc: None,
             discs: Vec::new(),
@@ -1582,7 +1594,12 @@ impl Machine {
         // The Voodoo 2 (doc 21): a PCI card of its own in the slot after
         // the sound card's, on whichever 2D adapter the machine has.
         if self.voodoo2 {
-            args.extend(["-device".into(), "voodoo2,addr=0x05".into()]);
+            let mut dev = String::from("voodoo2,addr=0x05");
+
+            if self.voodoo2_undither {
+                dev.push_str(",undither=on");
+            }
+            args.extend(["-device".into(), dev]);
         }
         // The CPU rate, when the machine asks for one. `align=on` is the
         // whole point and not a detail: `-icount shift=N` on its own only

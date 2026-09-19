@@ -83,6 +83,23 @@ static LPDDHAL_SETINFO lpSetInfo;       /* DirectDraw's, from DDNEWCALLBACKFNS *
 static void HalMode(void);
 static WORD wHalUnreachable;            /* said once, not once per call */
 
+/* `lar` on a selector: ZF comes back set when the descriptor is there and
+ * this ring may read it. It is the only question that can be asked about
+ * `lpSetInfo` before calling it — a far call into a module that has been
+ * unloaded faults with nothing to say and takes the caller's program with
+ * it (doc 19 §40). */
+extern WORD SelOk(WORD sel);
+#pragma aux SelOk =     \
+    "lar   ax, ax"      \
+    "mov   ax, 0"       \
+    "jnz   gone"        \
+    "inc   ax"          \
+    "gone:"             \
+    parm [ax] value [ax] modify [ax];
+
+/* the selector half of the far pointer (offset first, selector second) */
+#define SEL_OF(fp) (*((WORD *)&(fp) + 1))
+
 /* the bisection knob, read off the adapter (see D9F_* in d3dpt9x.h). Read
  * on every use rather than cached: the escapes arrive from more than one
  * place and there is no init this file owns that runs before all of them. */
@@ -518,16 +535,23 @@ static BOOL BuildHalInfo(void)
     }
     hi->lpDDExeBufCallbacks = (LPDDHAL_DDEXEBUFCALLBACKS)HALFIELD(DDHAL_DDEXEBUFCALLBACKS_t, cb_exebuf);
 
-    pHal->fourcc[0] = 0x31545844;      /* 'DXT1' */
-    pHal->fourcc[1] = 0x33545844;      /* 'DXT3' */
-    pHal->fourcc[2] = 0x35545844;      /* 'DXT5' */
-    pHal->fourcc[3] = 0x32545844;      /* 'DXT2' */
-    pHal->fourcc[4] = 0x34545844;      /* 'DXT4' */
-    pHal->fourcc[5] = 63;              /* D3DFMT_Q8W8V8U8: d3d8.dll creates it as this FOURCC (core_caps.c) */
-    hi->lpdwFourCC = (LPDWORD)HALFIELD(DWORD, fourcc);
-    hi->ddCaps.dwNumFourCCCodes = 6;
-
+    /* The Direct3D half, all of it together — and none of it when the DLL
+     * published no D3D (a host with no executor: doc 15's `no-exec=on`,
+     * where this driver is DirectDraw and the guest's own WineD3D does
+     * Direct3D). The FourCC list is part of it: those are the texture
+     * formats the executor decodes, and a HAL that offers them with no
+     * Direct3D behind them is the NT driver's `p->core.d3d ? 6 : 0`
+     * answered wrongly. */
     if (HalReachable(pHal->d3dhal_global) && HalReachable(pHal->d3dhal_callbacks)) {
+        pHal->fourcc[0] = 0x31545844;      /* 'DXT1' */
+        pHal->fourcc[1] = 0x33545844;      /* 'DXT3' */
+        pHal->fourcc[2] = 0x35545844;      /* 'DXT5' */
+        pHal->fourcc[3] = 0x32545844;      /* 'DXT2' */
+        pHal->fourcc[4] = 0x34545844;      /* 'DXT4' */
+        pHal->fourcc[5] = 63;              /* D3DFMT_Q8W8V8U8: d3d8.dll creates it as this FOURCC (core_caps.c) */
+        hi->lpdwFourCC = (LPDWORD)HALFIELD(DWORD, fourcc);
+        hi->ddCaps.dwNumFourCCCodes = 6;
+
         *(DWORD __far *)&hi->lpD3DGlobalDriverData = pHal->d3dhal_global;
         *(DWORD __far *)&hi->lpD3DHALCallbacks = pHal->d3dhal_callbacks;
         hi->ddCaps.dwCaps |= DDCAPS_3D | DDCAPS_COLORKEY;
@@ -580,7 +604,15 @@ BOOL DDNewCallbackFns(DCICMD_t __far *lpCmd)
 {
     LPDDHALDDRAWFNS pfns = (LPDDHALDDRAWFNS)lpCmd->dwParam1;
 
+    /* **An empty table means DirectDraw is taking its entry point back.**
+     * What we keep is a far pointer into DDRAW16, and that module is only
+     * loaded while some process has DirectDraw open; the next mode set
+     * calls it again from `Enable` (DDCreateDriverObject(1)), so keeping a
+     * pointer past the escape that withdrew it is a general protection
+     * fault in whatever program happened to change the mode. */
     if (pfns == 0) {
+        dbg_str("d3dpt9dd: DirectDraw withdrew its callbacks");
+        lpSetInfo = 0;
         return FALSE;
     }
     lpSetInfo = pfns->lpSetInfo;
@@ -603,6 +635,11 @@ void DDGetVersion(DDVERSIONDATA_t __far *lpVer)
  * rather than when the name was asked for. */
 BOOL DDCreateDriverObject(BOOL bReset)
 {
+    if (lpSetInfo != 0 && !SelOk(SEL_OF(lpSetInfo))) {
+        dbg_val("d3dpt9dd: DirectDraw's entry point is gone, selector", (DWORD)SEL_OF(lpSetInfo));
+        dbg_str("");
+        lpSetInfo = 0;
+    }
     if (lpSetInfo == 0) {
         if (bReset) {
             if (pHal != 0) HalMode();

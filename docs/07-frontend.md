@@ -245,6 +245,21 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   it before it existed. The sentences under it are
   `voodoo2_notes()`'s; the `voodoo2` check in `scripts/test.sh` walks
   it from the checkbox to `query-pci` on our own QEMU.
+- **"Undo its dither"** sits on that same line, because it is a setting
+  of that card and of nothing else (`voodoo2_undither` in the bundle;
+  doc 21 §12). On, the card's `-device` gains `,undither=on` and the
+  Voodoo's ordered dither is reconstructed away at scanout, so skies,
+  shading and light pools come out as the rasterizer had them instead of
+  speckled, while textures and edges are left untouched. Off unless
+  picked, and **the form keeps it with the card**: it is disabled without
+  one (`voodoo2_undither_enabled()`), turning the card off turns it off
+  too, and `--print-args` writes the property only where there is a
+  device to carry it — a setting that reaches no device would be a lie
+  on the screen. It costs about 1.4 ms of the main loop per presented
+  frame, which is why it is a choice and not simply always on. The
+  `voodoo2` check covers it: picked on its own it does not come on, it
+  reaches the device as a property of the same `-device`, and it does not
+  outlive the card in the bundle or on the command line.
 - **The pointer** is the next checkbox ("Seamless mouse",
   `seamless_mouse` in the bundle), and it follows the family the same
   way: on for Win98 and XP, **off for DOS**, whose mouse drivers read the

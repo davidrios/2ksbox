@@ -12,23 +12,41 @@
 //!   once), which is the user's way out and not ours to take.
 //! - **X11**: an active `XGrabKeyboard` while focused. An active grab beats
 //!   the window manager's passive ones on Super.
-//! - **Windows**: a `WH_KEYBOARD_LL` hook while focused that takes the keys
-//!   of every shortcut Windows itself acts on before the shell sees them:
-//!   the two Windows keys (and so every Win+ shortcut), Tab, Esc, F4 and
-//!   Space under Alt (the switcher, Alt+Esc, and the two `DefWindowProc`
-//!   would turn into closing the player and opening its system menu), and
-//!   Esc under Ctrl (the Start menu, Task Manager). winit then never sees
-//!   them either, so the hook hands them to the guest itself; the modifier
-//!   under them was never taken and reached the guest the ordinary way.
-//!   Ctrl+Alt+Del and Win+L are the kernel's and no program gets them —
-//!   hence the player's Ctrl+Alt+Shift+D.
+//! - **Windows**: the keyboard registered for raw input with
+//!   `RIDEV_NOHOTKEYS`, which stops the shell acting on the two Windows keys
+//!   — and so on every Win+ shortcut — while a window of this process is the
+//!   foreground one. The key still arrives at the window as an ordinary
+//!   `WM_KEYDOWN`, so winit delivers it and the guest gets it down the same
+//!   path as every other key: this takes the key from the shell without
+//!   taking it from us, and it needs no hook, no thread and no injection.
+//!   **Ctrl+Esc comes with them** (user-confirmed 2026-09-19): it is a
+//!   keyboard hotkey the shell acts on, so it stops with the rest and opens
+//!   the *guest's* Start menu. What it does not cover is what Windows calls
+//!   a *system* hotkey — Alt+Tab, Alt+Esc, Alt+F4, Alt+Space, Ctrl+Alt+Del,
+//!   Win+L — which no program gets; hence the player's Ctrl+Alt+Shift+D for
+//!   Ctrl+Alt+Del, and Alt+F4 asking before it stops the machine.
+//!
+//!   **This was a `WH_KEYBOARD_LL` hook until 2026-09-18**, and the hook
+//!   never worked: measured on the user's PC, a low-level keyboard hook in
+//!   the player is called for every key on the machine *except* while the
+//!   player's own window is the foreground one, which is the only time it
+//!   is wanted — zero calls, not late ones, with the hook installed and its
+//!   thread answering. A hook in a third process saw those same keys, and a
+//!   minimal program with a window and a hook of its own saw its own
+//!   window's keys, so it is neither a Windows rule nor that window; what in
+//!   this process does it was never found, and `RIDEV_NOHOTKEYS` makes the
+//!   question moot. docs/00-status.md, "The first Windows host run", item 5.
 //! - **macOS**: nothing. Cmd reaches the app already; Cmd+Tab would need an
 //!   event tap and the Accessibility permission.
 //!
 //! **Ctrl+Alt+K** hands them back to the host and, pressed again, to the
 //! guest again — the player drops the `Capture` and builds a new one, so
 //! "off" is exactly the state before it was made. `PLAYER_KEYBOARD_CAPTURE=0`
-//! starts a run with them the host's.
+//! starts a run with them the host's, and **`PLAYER_KEYBOARD_LOG=1`** makes
+//! the Windows side say what it did: that the registration was accepted, and
+//! what winit and Windows each thought about focus at every change — a
+//! shortcut that still reaches the host is nearly always a window that was
+//! not in front when it was pressed.
 
 use qemu_embed::Qemu;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -44,7 +62,7 @@ pub enum Capture {
     #[cfg(all(unix, not(target_os = "macos")))]
     X11(x11::Grab),
     #[cfg(windows)]
-    Windows(win::Hook),
+    Windows(win::NoHotkeys),
 }
 
 /// Whether a run starts with the host's shortcuts going to the guest.
@@ -55,9 +73,14 @@ pub fn on_at_start() -> bool {
 impl Capture {
     /// `None` on a host this cannot do anything on (the reason is printed).
     pub fn new(window: &Window, vm: Qemu) -> Option<Capture> {
-        let _ = &vm; // only the Windows hook injects keys itself
-        let w = window.window_handle().ok()?.as_raw();
-        let d = window.display_handle().ok()?.as_raw();
+        let _ = &vm; // every platform's keys reach the guest the ordinary way
+        let (w, d) = match (window.window_handle(), window.display_handle()) {
+            (Ok(w), Ok(d)) => (w.as_raw(), d.as_raw()),
+            _ => {
+                eprintln!("[keyboard] host shortcuts stay the host's: the window has no handle yet");
+                return None;
+            }
+        };
         let made: Result<Capture, String> = match (w, d) {
             #[cfg(all(unix, not(target_os = "macos")))]
             (RawWindowHandle::Wayland(w), RawDisplayHandle::Wayland(d)) => unsafe {
@@ -69,7 +92,7 @@ impl Capture {
                 None => Err("no Xlib display".into()),
             },
             #[cfg(windows)]
-            (RawWindowHandle::Win32(w), _) => Ok(Capture::Windows(win::Hook::new(w.hwnd.get(), vm))),
+            (RawWindowHandle::Win32(w), _) => win::NoHotkeys::new(w.hwnd.get()).map(Capture::Windows),
             _ => Err("nothing to do on this windowing system".into()),
         };
         match made {
@@ -243,136 +266,84 @@ mod x11 {
 
 #[cfg(windows)]
 mod win {
-    use qemu_embed::Qemu;
-    use std::sync::atomic::{AtomicIsize, Ordering};
-    use std::sync::{mpsc, Mutex};
-    use std::thread::JoinHandle;
-    use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
-    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows_sys::Win32::System::Threading::{
-        GetCurrentThread, GetCurrentThreadId, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
-    };
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_F4, VK_LWIN, VK_RWIN, VK_SPACE, VK_TAB,
-    };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, GetForegroundWindow, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
-        UnhookWindowsHookEx, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, LLKHF_EXTENDED, MSG,
-        WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
-    };
+    use windows_sys::Win32::Foundation::GetLastError;
+    use windows_sys::Win32::UI::Input::{RegisterRawInputDevices, RAWINPUTDEVICE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
-    // The hook procedure is a bare `extern "system" fn`, so what it needs
-    // lives in statics. It runs on the thread that installed it, inside
-    // that thread's message pump — which is why that is a thread of its own
-    // and not the event loop's (2026-09-17). Windows gives a low-level hook
-    // `LowLevelHooksTimeout` (300 ms to 1 s) per key, and since Windows 7 a
-    // hook that misses it is removed silently and for good: one keystroke
-    // during a shader compile or a slow present on the render thread, and
-    // the Windows key was the host's again for the rest of the session.
-    static VM: Mutex<Option<Qemu>> = Mutex::new(None);
-    static WINDOW: AtomicIsize = AtomicIsize::new(0);
-    /// The keys the hook took that the guest holds, as set 1 scancodes: their
-    /// release is taken too, whatever the modifiers are by then (Alt let go
-    /// before Tab).
-    static HELD: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    /// The HID usage a PC keyboard is: Generic Desktop page, Keyboard.
+    const USAGE_PAGE_GENERIC: u16 = 0x01;
+    const USAGE_KEYBOARD: u16 = 0x06;
+    /// `RIDEV_NOHOTKEYS`: while a window of this process is the foreground
+    /// one, the shell does not act on the keyboard's hotkeys.
+    const RIDEV_NOHOTKEYS: u32 = 0x0000_0200;
+    /// `RIDEV_REMOVE`: give the usage back. It wants a null target window.
+    const RIDEV_REMOVE: u32 = 0x0000_0001;
 
-    pub struct Hook {
-        /// The hook's thread and its id, for the `WM_QUIT` that ends it.
-        thread: Option<(u32, JoinHandle<()>)>,
+    /// The keyboard registered for raw input with `RIDEV_NOHOTKEYS`.
+    ///
+    /// Nothing here follows focus: the flag is a property of *being the
+    /// foreground window*, which is the rule this wants, applied by the
+    /// window manager rather than by us. The key still arrives at the
+    /// window as an ordinary `WM_KEYDOWN`, so winit delivers it and the
+    /// guest gets it down the same path as every other key — this takes
+    /// the key away from the shell without taking it away from us.
+    pub struct NoHotkeys {
+        trace: bool,
+        window: isize,
     }
 
-    impl Hook {
-        pub fn new(hwnd: isize, vm: Qemu) -> Self {
-            *VM.lock().unwrap_or_else(|e| e.into_inner()) = Some(vm);
-            WINDOW.store(hwnd, Ordering::Relaxed);
-            Hook { thread: None }
+    impl NoHotkeys {
+        pub fn new(hwnd: isize) -> Result<Self, String> {
+            register(RIDEV_NOHOTKEYS, hwnd)?;
+            let trace = std::env::var("PLAYER_KEYBOARD_LOG").as_deref() == Ok("1");
+            if trace {
+                eprintln!(
+                    "[keyboard] the Windows keys are the guest's while window {hwnd:#x} is in front"
+                );
+            }
+            Ok(NoHotkeys { trace, window: hwnd })
         }
 
-        pub fn set(&mut self, on: bool) {
-            if on && self.thread.is_none() {
-                let (tx, rx) = mpsc::channel();
-                let join = std::thread::Builder::new().name("keyboard hook".into()).spawn(move || unsafe {
-                    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
-                    let h = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook), GetModuleHandleW(std::ptr::null()), 0);
-                    // the hook call made this thread's message queue, so the
-                    // id can take a WM_QUIT from here on
-                    let _ = tx.send((GetCurrentThreadId(), h != 0));
-                    if h == 0 {
-                        return;
-                    }
-                    let mut msg: MSG = std::mem::zeroed();
-                    while GetMessageW(&mut msg, 0, 0, 0) > 0 {}
-                    UnhookWindowsHookEx(h);
-                });
-                let Ok(join) = join else {
-                    eprintln!("[keyboard] no hook thread: the Windows key stays the host's");
-                    return;
-                };
-                match rx.recv() {
-                    Ok((id, true)) => self.thread = Some((id, join)),
-                    _ => {
-                        let _ = join.join();
-                        eprintln!("[keyboard] SetWindowsHookExW failed: the Windows key stays the host's");
-                    }
-                }
-            } else if !on {
-                if let Some((id, join)) = self.thread.take() {
-                    unsafe { PostThreadMessageW(id, WM_QUIT, 0, 0) };
-                    let _ = join.join();
-                }
-                // the release went to whoever took focus: let go in the guest
-                let held = std::mem::take(&mut *HELD.lock().unwrap_or_else(|e| e.into_inner()));
-                for sc in held {
-                    send(sc, false);
-                }
+        /// Focus changes nothing here; the line is worth printing because a
+        /// shortcut that still reached the host is nearly always a window
+        /// that was not in front when it was pressed.
+        pub fn set(&mut self, focused: bool) {
+            if self.trace {
+                eprintln!(
+                    "[keyboard] focus: winit says {focused}, foreground {:#x}, our window {:#x}",
+                    unsafe { GetForegroundWindow() },
+                    self.window,
+                );
             }
         }
     }
 
-    impl Drop for Hook {
+    impl Drop for NoHotkeys {
         fn drop(&mut self) {
-            self.set(false);
-            *VM.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            let _ = register(RIDEV_REMOVE, 0);
         }
     }
 
-    fn send(sc: u32, down: bool) {
-        if let Some(vm) = *VM.lock().unwrap_or_else(|e| e.into_inner()) {
-            vm.key(qemu_embed::atset1_to_qcode(sc), down);
-            vm.input_flush();
+    /// Register (or unregister) the keyboard usage for this process.
+    ///
+    /// It replaces winit's own registration of that usage, which winit made
+    /// for `DeviceEvent::Key`; the player reads only `DeviceEvent::MouseMotion`,
+    /// a different usage, and that one is left alone.
+    fn register(flags: u32, hwnd: isize) -> Result<(), String> {
+        let rid = RAWINPUTDEVICE {
+            usUsagePage: USAGE_PAGE_GENERIC,
+            usUsage: USAGE_KEYBOARD,
+            dwFlags: flags,
+            hwndTarget: hwnd,
+        };
+        let ok = unsafe {
+            RegisterRawInputDevices(&rid, 1, std::mem::size_of::<RAWINPUTDEVICE>() as u32)
+        };
+        if ok == 0 {
+            return Err(format!("RegisterRawInputDevices failed ({})", unsafe {
+                GetLastError()
+            }));
         }
-        let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
-        held.retain(|&h| h != sc);
-        if down {
-            held.push(sc);
-        }
-    }
-
-    /// A key Windows would act on rather than pass to the window.
-    fn shortcut(vk: u16, flags: u32) -> bool {
-        let alt = flags & LLKHF_ALTDOWN != 0;
-        let ctrl = unsafe { GetAsyncKeyState(VK_CONTROL as i32) } < 0;
-        match vk {
-            VK_LWIN | VK_RWIN => true,
-            VK_TAB | VK_F4 | VK_SPACE => alt,
-            VK_ESCAPE => alt || ctrl,
-            _ => false,
-        }
-    }
-
-    unsafe extern "system" fn hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        // installed only while focused, and checked again: focus moves
-        // before the event that says so reaches us
-        if code == HC_ACTION as i32 && GetForegroundWindow() == WINDOW.load(Ordering::Relaxed) {
-            let k = &*(lparam as *const KBDLLHOOKSTRUCT);
-            let sc = k.scanCode | if k.flags & LLKHF_EXTENDED != 0 { 0xE000 } else { 0 };
-            let down = matches!(wparam as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
-            let held = HELD.lock().unwrap_or_else(|e| e.into_inner()).contains(&sc);
-            if held || (down && shortcut(k.vkCode as u16, k.flags)) {
-                send(sc, down);
-                return 1;
-            }
-        }
-        CallNextHookEx(0, code, wparam, lparam)
+        Ok(())
     }
 }

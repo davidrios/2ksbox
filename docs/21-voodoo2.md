@@ -481,7 +481,9 @@ route was chosen for (memory `glide3-landscape`).
 
 Knobs: `threads=1|2|4` (default 2), `recompiler=off` (the interpreter, the
 A/B for a rasterizer bug), `bilinear`, `dither-sub`, `filter` (86Box's
-"screen filter", off), `fbmem=2|4`, `texmem=2|4` (per TMU; 4 is the 12 MB
+"screen filter", off — and a no-op until the guest programs `maxRgbDelta`,
+§12), `undither` (ours, off: the dither reconstructed away rather than
+blurred, §12), `fbmem=2|4`, `texmem=2|4` (per TMU; 4 is the 12 MB
 board).
 
 ## 10. The guest side
@@ -611,3 +613,304 @@ The hangs seen by hand were this too: the user had noticed a stray
 `rundll32` running every time a game froze and could not say why
 (2026-09-16). If that process ever turns up outside login, the warning
 above is still what names the collision.
+
+## 12. The dither, undone (`undither=on`)
+
+The chip renders colour at more than 16 bits and stores RGB565 through an
+ordered dither; 3dfx's RAMDAC put a box filter on the scanout that partly
+undid it, which is what "22-bit colour" meant. Two filters exist here now
+and they are not the same thing.
+
+**`filter=on`** is 86Box's — leilei's approximation of the RAMDAC, a pair
+of 256x256 blend tables (`voodoo_generate_filter_v2`) applied at
+`vid_voodoo_display.c:554`. On a Voodoo 2 it is a **single-scanline** pass:
+`voodoo_filterline_v2()` takes one row pointer and its `line` argument is
+`UNUSED`, taps sit at `src[x±1..3]`. So it softens the dither along a line,
+leaves the vertical half of every pattern, and it only runs at all once the
+guest has written a non-zero threshold to **`maxRgbDelta`** (register
+0x230, `SST_scrFilter`, and only with `initEnable & 1`): nothing seeds
+`scrfilterThreshold`, so `filter=on` alone is a no-op until 3dfx's driver
+programs it. It is kept as what the hardware's filter looked like.
+
+**`undither=on`** (`voodoo/undither.c`, ours) is the other direction. In an
+emulator the dither matrix is not something to approximate: it is the table
+the rasterizer dithered *with*. `86box/vid_voodoo_dither.h` holds it,
+`vid_voodoo_render.c:1329` applies it indexed by `(real_y & 3, x & 3)`, and
+for a linear non-SLI buffer the row dithered as row r is scanned out as row
+r — so at scanout the phase is `(y & 3, x & 3)`, known exactly. Inverting
+the table gives, per phase and per stored code, the interval of 8-bit
+values that dither to it.
+
+Pixels that came from one pre-dither colour carry intervals with a common
+member, and the intersection is what that colour can have been. Two window
+sizes, in that order:
+
+- **4x4, centred.** The interval comes out exactly **one value wide** for
+  every value and every phase of both 4x4 tables, so the output is the
+  colour the rasterizer had, exactly — and, what a 2x2 cannot do, the *same*
+  value at all sixteen phases.
+- **2x2, anchored** — the fallback where a 4x4 holds more than one colour
+  (an edge, a steep gradient). Within 2/255: the four tables measure 2 for
+  `dither_rb`, 1 for `dither_g`, 1 for both 2x2 ones.
+
+The 4x4 stage is not optional prettiness. A 2x2 alone is within 2/255, but
+its midpoint **moves with the phase**: measured, **255 of 256** flat colours
+come back out of a 2x2 with more than one level in them — a residual 1-LSB
+pattern exactly where there should be none. With the 4x4 stage first, every
+one of the 256 comes back as a single level equal to what was rendered. It
+is cheap because the 4x4 is the intersection of four *2x2* results, which a
+row of them already has: four lookups on top, not sixteen.
+
+An empty intersection at both sizes is the proof of the opposite: no single
+colour could have dithered into those pixels, so the window straddles an
+edge, and that pixel is written exactly as the unfiltered path wrote it
+(`code << 3`, `code << 2`). **An edge here is not "a difference bigger than
+N" — it is an arithmetic impossibility**, which is why this needs no
+threshold, never blurs across an edge, and leaves noisy texture untouched.
+
+Measured on a synthetic frame (sky gradient, lit sphere, checkered ground,
+noise panel) put through the real tables, mean error against what was
+rendered, and the worst single channel:
+
+| | mean | worst |
+|---|---|---|
+| dithered, as the card shows it today | 3.11 | 14 |
+| `filter=on` (86Box's, threshold 0x202020) | 2.91 | 42 |
+| a naive 2x2 box, for reference | 4.94 | 90 |
+| `undither=on` | **0.92** | 14 |
+
+The box filters are *worse than no filter at all* on that frame: they pull
+the checkerboard and the noise panel about. The undither cuts the error to
+under a third of the unfiltered frame's, and its worst case *is* the
+unfiltered worst case, because where it cannot fire it writes the
+unfiltered pixel.
+
+**The check is `voodoo-guest-undither`** (`UNDITHER=on
+tools/voodoo-guest-test.py`), and the dither phase is the oracle for it:
+that scene is one grey (130,130,130 — it dithers in every channel) drawn
+over the whole screen and blended onto itself, so a correct undither has to
+bring it back *flat*, at the colour the program drew rather than a level
+off it. Through the real device it does: `0 interior pixels are not the one
+colour (130, 130, 130)`, against the 4x4 tile the same scene is with the
+setting off. The outermost two rows and columns are exempt — their window
+is clamped at the edge of the screen and so has fewer than sixteen phases
+in it.
+
+It runs in `voodoo2_present()` — our own file, so no vendored edit and no
+patch — over the front buffer, on the main loop with the BQL, once per
+presented frame. **Cost: 1.4 ms a frame at 640x480** on the M1 Air, measured
+against the shipping routine with no QEMU around it, and got there in three
+steps from 4.7: the hot loops written plane-at-a-time over contiguous bytes,
+the CLUT lookup skipped when the ramp is the identity one, and then
+`combine_span` forced to vectorize — clang's cost model declines it, and it
+is worth 2.2x on the routine's hottest loop (1.88 ms of the frame to 0.86).
+By stage, at 640x480: `decode_row` 0.4 ms (three table lookups a pixel, a
+gather, the one part that stays scalar), `quad_row` 0.1, `emit_row` 0.9.
+
+That is a BQL hold, so it is in the same family as the 3D-race stalls
+`tools/audio-glitch-test.py` counts — well clear of the 10–14 ms ones that
+made it click, but it is per presented frame, so at Quake II's 147 fps it is
+~20 % of the main loop's core and at a 60 Hz cap ~8 %. Off by default.
+
+**Why not on the GPU.** The player could do this in its filter chain for
+nothing — librashader is already there, and the phase is `(y & 3, x & 3)` of
+the surface either way. It is not where this belongs, for three reasons.
+The dither is a property of the *card*, not of the monitor, and the player
+is the monitor (doc 03); the surface the player gets has been through the
+CLUT, so a shader can only invert the codes while that ramp is the identity
+one; and above all a shader's output exists only in the player's window,
+where **no QMP screendump can see it** — so the check that proves this
+correct, and every headless game tool that judges a frame, would be looking
+at the unfiltered picture. A frame that is right only where nothing can
+measure it is not what this is for. It reads `fb_mem` rather than `frame->line[]` because the
+stored 565 codes are where the dither is; `frame->line[]` is what 86Box
+already made of them. Consequences: the filtered pixels land in the console
+surface, so **QMP screendumps, the VNC fallback and the player all see
+them** (a player-side shader would not show in a screendump), and dirty-line
+tracking stops mattering for correctness since every present rebuilds the
+whole frame.
+
+It declines a frame it cannot answer for, says why once, and the ordinary
+copy runs instead: the guest is not dithering (`FBZ_DITHER` clear in the
+last `fbzMode` — an LFB-blitted menu, a 2D screen), the colour buffer is
+tiled (not scanned out linearly), or the front buffer would run past the
+frame buffer. `VOODOO2_UNDITHER_PATTERN=4x4|2x2` overrides the pattern
+`fbzMode` reports, for the A/B when a frame looks wrong.
+
+`undither=on` supersedes `filter=on` on any frame it accepts: it writes the
+whole surface itself and never looks at what the scanline filter did.
+
+## 13. One order: the ring, the teardown, and the LFB
+
+The chip has one way in from the PCI bus. A packet in the command FIFO, a
+write into the LFB or texture aperture and a register write all reach it in
+the order the guest made them. 86Box has **two** queues — `voodoo->fifo`,
+where a frame-buffer or texture write is queued, and the ring — and
+`voodoo_fifo_thread` empties the whole of the first before it looks at the
+second (`vid_voodoo_fifo.c`: the `while (!FIFO_EMPTY)` loop, then the
+`while (voodoo->cmdfifo_enabled && ...)` one). A register the vCPU thread
+writes does not queue at all. So the ring is the stream that can be
+overtaken, and it is what hangs a guest at the end.
+
+### The teardown hang
+
+Glide's `grSstWinClose` writes its last packets and then clears fbiInit7's
+command-FIFO bit. That write is applied at once while the ring is still
+being consumed, and 86Box's consumer loop ends the moment `cmdfifo_enabled`
+goes false — so whatever it had not reached is never run, and
+`cmdfifo_depth_rd != cmdfifo_depth_wr` for ever. `SST_status`'s busy bit
+(0x380) is built from exactly that difference (`vid_voodoo.c`, `case
+SST_status`), so the card reads **busy to every later poll**, and the poll
+is Glide's own `grSstIdle`.
+
+Carmageddon's 3dfx build hung there on 2026-09-18 — the user's own run, the
+DOS build in a Win98 DOS box on `base98-us`. The DOS box spun for minutes
+while Windows carried on around it. The log says it plainly, and the shape
+is worth knowing:
+
+    voodoo2: command FIFO through MMIO (ring 001c2000+40000)
+    voodoo2: 640x480 on: 122 frames (1 new), 0 triangles, 4 writes, 27298405 reads
+      in 5.0 s; regs read 0x000:27298401; busy: 0 cmds outstanding (wr 49668 rd
+      49668), fifo depth 59495109/59495111
+
+Nothing is busy — no commands outstanding, no `voodoo_busy`, no render
+thread — and the depths differ by two words of the 104 the last walk
+counted. Twenty-seven million reads of register 0x000 in five seconds is
+the guest asking about those two words.
+
+**The fix, in our own file** (`voodoo2.c`, "one order"): before a write that
+reconfigures the command FIFO — fbiInit7 clearing the enable, or the ring's
+own pointers — **run the ring out**. Everything the guest wrote before that
+access has just been counted by `voodoo2_fifo_sync()`, so waiting for the
+consumer to catch up puts the register behind the packets, where the bus
+puts it. The wait sets `voodoo->flush`, which is 86Box's own escape for a
+thread draining from the guest's side: a swap in the ring then completes
+without waiting for a retrace the display timer cannot deliver while the
+vCPU holds the BQL. It is bounded (250 ms) and says so once if it ever runs
+out — a consumer parked inside a packet the guest has not finished writing
+leaves the depths *equal* and returns at once, so the bound is for a stream
+this walk has mis-counted, nothing else.
+
+Behind it, unconditionally: if a write leaves the command FIFO off with
+words counted and not run, the depths are equalised and the card goes idle.
+Nothing is ever going to run those words, and a card that reads busy for
+ever is worse than a lost packet. It fires only on the off transition, so a
+`cmdFifoDepth` write made with the FIFO already off — which sets a
+difference on purpose — is never touched.
+
+**The check** is the teardown phase of `tools/voodoo-guest-test.py`: a cyan
+fill and a swap go into the ring and the FIFO is turned off at once, with no
+idle wait at all. The frame has to be cyan (the packets were run, not
+dropped) and the status register has to read idle afterwards. Both halves
+fail with `LFB_ORDER=off`.
+
+### One thing the DOS program had to learn: swapbufferCMD twice
+
+While writing that phase the card read busy with nothing pending, and the
+reason is in 86Box rather than here. On a Voodoo 2 a swap arriving as a
+**packet** does not increment `cmd_written_fifo` — only Banshee and later
+count one (`vid_voodoo_fifo.c`) — while every card's swap increments
+`cmd_read` (`vid_voodoo_reg.c`). A program that sends the packet alone
+therefore drives `written - cmd_read` negative, and the status register's
+busy bit is that difference. 3dfx's Glide never trips it because it writes
+`swapbufferCMD` to the register window as well as putting the packet in the
+ring — with the FIFO on that write only counts, and it is where the swap
+backlog in status bits 31:28 comes from. Carmageddon's stream shows exactly
+one of each per frame (`written 0x128:301` beside 301 swaps). The guest test
+does the same now.
+
+### The flashing HUD: the other direction, and the ring is never empty
+
+What the guest writes through the LFB **before** a batch of packets has to
+be on the card before they are — and 86Box's `voodoo_fifo_thread` drained
+its memory FIFO once per wake and then stayed in the ring for as long as
+the guest kept feeding it. In a race that is the whole frame. Every 5 s line
+of Carmageddon's race says so:
+
+    busy: 1 cmds outstanding (wr 58305 rd 58304), fifo depth 66330585/66349779,
+    voodoo_busy
+
+Nineteen thousand words behind, all race long. So the HUD the game writes
+with `grLfbWriteRegion` — ~5.2 M LFB writes across 300 frames, about 23,000
+dwords a *new* frame — waited in the memory FIFO while the swap that
+followed it in the ring was consumed, and landed in the buffer that swap had
+just turned into the back one. It showed a frame late, or not at all.
+
+The user's two screenshots of one race, 26 s apart, say it exactly. In the
+first the HUD is whole. In the second the driver's portrait and the panel
+rectangles are there and **the sprites inside them are gone** — the top bar,
+the gauges, the speedometer, the damage map, each replaced by the flat panel
+it is drawn on. What survives is what the game draws as geometry, through
+the ring; what disappears is what it writes through the LFB.
+
+**Patch 72 puts the ordering where it belongs**, in the thread: the ring
+loop yields the moment anything appears in the memory FIFO, and the whole
+pass repeats. Three lines, no wait anywhere, the same work in a different
+order — what a chip with one FIFO does.
+
+The vCPU waited for the memory FIFO instead for a day, at the ring's publish
+point, and Carmageddon priced that: **3,200 waits and 1.8 s of vCPU time per
+5 s**, about thirteen LFB-then-ring turns a frame — one per HUD element.
+(The frame rate went *up* all the same, 40–46 to 50–56 new frames a second,
+because the guest stopped spinning on the status register: 7 M reads per 5 s
+became 950.) What is left of it in `voodoo2.c` is the count, `N publishes
+behind the LFB queue` in the 5 s line, on both transports: it is the number
+of times the ring published words with the memory FIFO not yet empty, which
+is the situation patch 72 handles.
+
+Neither reaches one case: a consumer already parked inside `cmdfifo_get`
+waiting for the rest of a packet the guest has not finished writing. It
+cannot drain the memory FIFO from there, and holding the words back would
+deadlock it. That shows as `partial` in the same line, and is 0 in every run
+so far.
+
+**What `lfb-order` (off by default) adds** is the mirror: a wait for the ring
+before an LFB or texture write, so a packet already counted is drawn first.
+That window is only as wide as the consumer's wake, and the ordering phase of
+the guest test measures it away on an unloaded host — the block lands on top
+with the switch either way. It is kept as the A/B rather than turned on.
+
+**The check** is the ordering phase: the ring gets a red fastfill, then the
+guest writes a 38,400-dword blue block through the LFB, then the ring gets
+the swap. The block has to be on top, *and* the device has to report at least
+one publish behind the memory FIFO — the scene is built to make one, and none
+means the ordering point was never reached.
+
+### A card cannot be busy with nothing to do
+
+`SST_status`'s busy bit is four things or-ed together, and one of them is
+`cmd_written + cmd_written_fifo - cmd_read`, a running difference that no
+event ever resynchronises. On a Voodoo 2 it is not symmetric: a swap arriving
+as a command-FIFO *packet* increments `cmd_read` and not `cmd_written_fifo`
+(only Banshee and later count one), while the register write Glide makes
+beside it increments `cmd_written`. The two are meant to cancel, and when for
+any reason they do not, the difference stands for ever — the card reads busy
+to every later poll and `grSstIdle` never returns.
+
+Measured 2026-09-19 on `ramfifo=off`: Carmageddon froze on its first race
+frame with `wr 3243 rd 3242`, **one** command outstanding, the ring caught up
+(`fifo depth 631660/631660`), nothing rendering, and the guest reading
+register 0x000 26 million times in five seconds.
+
+So when the guest is polling status and every real sign of work is clear —
+both FIFOs empty, the ring caught up, no render thread, no swap pending, the
+consumer not in its loop — the difference is stale and is put back. The
+hysteresis is what makes it safe: the consumer is briefly between dequeueing
+a command and counting it, and in that window the card looks exactly like
+this, so it takes 20,000 *consecutive* status reads with no guest write in
+between, which only a spinning guest can produce. It says so once when it
+fires.
+
+### The menu that looked wide is the game's own letterbox
+
+Reported in the same run and measured out of the screenshots rather than
+argued: the player draws the guest's 640x480 frame at exactly 3x with square
+pixels, 1920x1440 in a full-width window, the CRT preset's scanline period 3
+host rows throughout (autocorrelation on the shot: peaks at lag 3, 6, 9).
+The menu's artwork is the middle 1,206 of those 1,440 rows — 402 source rows
+of 480, i.e. **400 rows of art with 40 black rows above and below**. The
+guest writes 153,601 dwords a frame, which is 640x480 at 16 bpp exactly, so
+the black bands are in the guest's own frame buffer: Carmageddon puts a
+640x400 front end in a 640x480 Glide buffer. Nothing in the display path
+stretches anything, and the race frames from the same session measure 4:3 to
+four decimal places.

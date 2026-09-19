@@ -34,6 +34,17 @@ if host_machine.cpu_family() == 'x86_64'
   voodoo86_args += ['-msse2']
 endif
 
+# undither.c is ours, not 86Box's, but it reads 86Box's dither tables and its
+# voodoo_t, so it is built the same way: against the shim's headers, never
+# QEMU's. Its own static library keeps 86box/ meaning "vendored verbatim".
+voodoo_undither_lib = static_library('voodoo_undither', files('undither.c'),
+                                     include_directories: include_directories('.', 'shim'),
+                                     c_args: voodoo86_args + cc.get_supported_arguments(
+                                       '-Wno-unused-const-variable'),
+                                     pic: true,
+                                     build_by_default: false)
+voodoo_undither_dep = declare_dependency(link_whole: voodoo_undither_lib)
+
 voodoo86_lib = static_library('voodoo86', voodoo86_src,
                               include_directories: include_directories('.', 'shim'),
                               c_args: voodoo86_args,
@@ -41,4 +52,5 @@ voodoo86_lib = static_library('voodoo86', voodoo86_src,
                               build_by_default: false)
 voodoo86_dep = declare_dependency(link_whole: voodoo86_lib)
 
-i386_system_ss.add(files('voodoo2.c', 'voodoo_shim.c'), voodoo86_dep)
+i386_system_ss.add(files('voodoo2.c', 'voodoo_shim.c'), voodoo86_dep,
+                   voodoo_undither_dep)

@@ -470,7 +470,7 @@ static void RepaintScreen(void)
  * planes underneath it — VRAM offset 0, the top of the frame buffer —
  * took whatever the VDD wrote there: a frozen desktop with a coloured
  * band across the first 20 rows, and no way to tell it from a hang until
- * a keypress brought it back (doc 19 §40). The way back is unchanged:
+ * a keypress brought it back (doc 19 §41). The way back is unchanged:
  * `SwitchToFgnd` calls `RestoreDesktopMode`, which programs the mode and
  * ENABLE again, and in the announced switches the mini-VDD has already
  * turned it off before this runs, so this write is then a no-op.
@@ -1086,7 +1086,7 @@ UINT WINAPI __loadds ValidateMode(DISPVALMODE FAR *lpMode)
 /* DCICOMMAND itself comes from gdidefs.h */
 
 /* **Which escapes this driver is asked about, each one once.** The
- * monitor power-down (doc 19 §40) was read the wrong way round for want
+ * monitor power-down (doc 19 §41) was read the wrong way round for want
  * of this: a display driver *can* be asked for DPMS through
  * `SETPOWERMANAGEMENT` (6148), the way the NT miniport is asked through
  * `HwSetPowerState`, and the guess was that answering it would stop
@@ -1124,7 +1124,7 @@ LONG WINAPI __loadds Control(LPVOID lpDevice, UINT function,
         WORD code = *(WORD FAR *)lpInput;
         /* Which escapes Windows asks this driver about, each one once:
          * the answer to that question is what took a day of the monitor
-         * power-down (doc 19 §40), and GDI asks them all at start-up. */
+         * power-down (doc 19 §41), and GDI asks them all at start-up. */
         if (wEscSeen < 16 && !EscNoted(code)) {
             wEscAsked[wEscSeen++] = code;
             dbg_val("d3dpt9x: QUERYESCSUPPORT", code);

@@ -52,6 +52,13 @@
 # (`-device d3dpt-vga,ddflags=N`); the 9x driver reads the high half of it
 # (`D9F_*` in `w9x/d3dpt9x.h`), the NT one the low half.
 #
+# `NO_EXEC=1` adds `no-exec=on`: the adapter answers `D3D_STATUS` with
+# `NO_EXEC`, as a host below ADR-013's Vulkan 1.3 floor does, and the run then
+# shows what such a user gets — `d3dpthal: no Direct3D on this host —
+# DirectDraw only`, no `d3dpt9dd:   d3d global=`, and DDPROBE's log with the
+# DirectDraw half intact. A HAL that still claims `DDCAPS_3D` there is the
+# 2026-09-18 bug (doc 19 §40).
+#
 # `BOOT_WAIT=<s>` is that cap (it buys more time on a slow run), `SETTLE=<s>`
 # is the paint time after the mode switch, `SHOTS=<s>` adds a screendump
 # every <s> seconds (`t<n>.png` in the output directory) so that a screen
@@ -298,7 +305,7 @@ rm -f "$OUT/out/dbg.log" "$OUT/out/stderr.log" "$OUT/out"/t*.ppm* "$OUT/out"/t*.
 echo "==> booting on -vga none -device d3dpt-vga"
 "$QEMU" -L "$ROOT/qemu/pc-bios" -machine pc -m 256 -accel tcg \
   -drive file="$RAW",format=raw,if=ide,index=0 -vga none \
-  -device d3dpt-vga${DDFLAGS:+,ddflags=$DDFLAGS} \
+  -device d3dpt-vga${DDFLAGS:+,ddflags=$DDFLAGS}${NO_EXEC:+,no-exec=on} \
   -net none -display none -rtc base=localtime \
   -debugcon file:"$OUT/out/dbg.log" -qmp unix:"$SOCK",server,nowait \
   > "$OUT/out/stderr.log" 2>&1 &

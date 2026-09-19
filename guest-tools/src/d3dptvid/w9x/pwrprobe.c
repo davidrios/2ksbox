@@ -1,5 +1,5 @@
 /*
- * pwrprobe.c — the monitor power-down on demand, so that doc 19 §40 has a
+ * pwrprobe.c — the monitor power-down on demand, so that doc 19 §41 has a
  * test that does not wait on an idle timer.
  *
  * What went wrong without it: after the Control Panel's time-out Windows

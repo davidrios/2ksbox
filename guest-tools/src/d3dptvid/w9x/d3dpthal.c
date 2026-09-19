@@ -1331,23 +1331,47 @@ DWORD __stdcall DriverInit(LPVOID ptr)
     h->cb32.Blt                  = (unsigned long)(ULONG_PTR)Blt32;
     h->cb32.SetColorKeySurface   = (unsigned long)(ULONG_PTR)SetColorKey32;
     h->cb32.GetDriverInfo        = (unsigned long)(ULONG_PTR)GetDriverInfo32;
-    h->cb32.CanCreateExecuteBuffer = (unsigned long)(ULONG_PTR)CanCreateExecuteBuffer32;
-    h->cb32.CreateExecuteBuffer    = (unsigned long)(ULONG_PTR)CreateExecuteBuffer32;
-    h->cb32.DestroyExecuteBuffer   = (unsigned long)(ULONG_PTR)DestroyExecuteBuffer32;
-    h->cb32.LockExecuteBuffer      = (unsigned long)(ULONG_PTR)LockExecuteBuffer32;
-    h->cb32.UnlockExecuteBuffer    = (unsigned long)(ULONG_PTR)UnlockExecuteBuffer32;
 
-    d3d_callbacks.dwSize = sizeof(d3d_callbacks);
-    d3d_callbacks.ContextCreate = ContextCreate32;
-    d3d_callbacks.ContextDestroy = ContextDestroy32;
-    d3d_callbacks.ContextDestroyAll = ContextDestroyAll32;
-    d3d_callbacks.SceneCapture = SceneCapture32;
-    d3d_callbacks.TextureCreate = TextureCreate32;
-    d3d_callbacks.TextureDestroy = TextureDestroy32;
-    d3d_callbacks.TextureSwap = TextureSwap32;
-    d3d_callbacks.TextureGetSurf = TextureGetSurf32;
-    h->d3dhal_global = (unsigned long)(ULONG_PTR)&d3d_global;
-    h->d3dhal_callbacks = (unsigned long)(ULONG_PTR)&d3d_callbacks;
+    /* **Direct3D is published only when there is one.** `d3d_init` refuses
+     * on a host with no executor (`no-exec=on`, ADR-013's row: the machine
+     * runs WineD3D in the guest instead), and then every D3D callback in
+     * this file returns a refusal and `d3d_global` is the zero it was
+     * built as — nothing filled it, `d3d_caps_init` runs inside `d3d_init`.
+     * Publishing the pair anyway is what the .drv reads to claim
+     * DDCAPS_3D, DDSCAPS_3DDEVICE|TEXTURE|ZBUFFER|MIPMAP and the DXT
+     * FourCCs, so with `no-exec=on` DirectDraw was offered a 3D device
+     * backed by a D3DHAL_GLOBALDRIVERDATA of zeros, and a DirectX 3 title
+     * enumerated and created surfaces against it (2026-09-18, doc 19 §40 —
+     * where this is also *not* the crash that was being chased). The NT
+     * driver has always gated all of this on `core.d3d`; do the same. */
+    if (core.d3d) {
+        h->cb32.CanCreateExecuteBuffer = (unsigned long)(ULONG_PTR)CanCreateExecuteBuffer32;
+        h->cb32.CreateExecuteBuffer    = (unsigned long)(ULONG_PTR)CreateExecuteBuffer32;
+        h->cb32.DestroyExecuteBuffer   = (unsigned long)(ULONG_PTR)DestroyExecuteBuffer32;
+        h->cb32.LockExecuteBuffer      = (unsigned long)(ULONG_PTR)LockExecuteBuffer32;
+        h->cb32.UnlockExecuteBuffer    = (unsigned long)(ULONG_PTR)UnlockExecuteBuffer32;
+
+        d3d_callbacks.dwSize = sizeof(d3d_callbacks);
+        d3d_callbacks.ContextCreate = ContextCreate32;
+        d3d_callbacks.ContextDestroy = ContextDestroy32;
+        d3d_callbacks.ContextDestroyAll = ContextDestroyAll32;
+        d3d_callbacks.SceneCapture = SceneCapture32;
+        d3d_callbacks.TextureCreate = TextureCreate32;
+        d3d_callbacks.TextureDestroy = TextureDestroy32;
+        d3d_callbacks.TextureSwap = TextureSwap32;
+        d3d_callbacks.TextureGetSurf = TextureGetSurf32;
+        h->d3dhal_global = (unsigned long)(ULONG_PTR)&d3d_global;
+        h->d3dhal_callbacks = (unsigned long)(ULONG_PTR)&d3d_callbacks;
+    } else {
+        h->cb32.CanCreateExecuteBuffer = 0;
+        h->cb32.CreateExecuteBuffer    = 0;
+        h->cb32.DestroyExecuteBuffer   = 0;
+        h->cb32.LockExecuteBuffer      = 0;
+        h->cb32.UnlockExecuteBuffer    = 0;
+        h->d3dhal_global = 0;
+        h->d3dhal_callbacks = 0;
+        dbg_puts(&core, "d3dpthal: no Direct3D on this host — DirectDraw only\n");
+    }
 
     h->dll_ready = 1;
 

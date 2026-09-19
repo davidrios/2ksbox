@@ -391,6 +391,18 @@ i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
   -march=pentium3 -mtune=generic -mwindows -o "$T/wavecaps.exe" \
   "$ROOT/guest-tools/src/wavecaps.c" -lwinmm
 
+# WAITFILE.EXE: wait for a file, then start something. The harness's own
+# login wait used to be a CHOICE loop in a DOS box, which polls: it pegged
+# the guest and made 3dfx's card initialisation twelve times slower than at
+# an idle login (1,047 ms against 12,646 ms on base98-br). A sleeping Win32
+# program costs nothing, and with `then=` there is no DOS box open during
+# the wait at all. A loose copy beside the ISO too: tools/win98-game-test.sh
+# stages it into the image rather than mounting the disc.
+i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+  -march=pentium3 -mtune=generic -mwindows -o "$OUT/iso/TESTS/waitfile.exe" \
+  "$ROOT/guest-tools/src/waitfile.c"
+cp "$OUT/iso/TESTS/waitfile.exe" "$OUT/waitfile.exe"
+
 # CDSHELF: the host's disc shelf from inside the machine (doc 07, patch 52;
 # protocol cdshelf/cdshelf_proto.h). One EXE for both Windows families — SPTI
 # on XP, WNASPI32 loaded at run time on Win98 — plus a DOS .COM that drives
