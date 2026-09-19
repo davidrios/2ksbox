@@ -459,10 +459,32 @@ static void RepaintScreen(void)
     else            RepaintFunc();
 }
 
+/* **The linear mode goes off here too, for the switch nobody announces.**
+ * The mini-VDD turns it off at `PRE_HIRES_TO_VGA` and at
+ * `DISPLAY_DRIVER_DISABLING`, which covers a DOS box, a Mode X game and
+ * the shutdown — and covered every switch anyone had seen until
+ * 2026-09-18, when Windows' own **monitor power-down** arrived with none
+ * of them: the user's machine idled, this notification came alone, and
+ * nothing else reached the driver at all. With ENABLE still on the
+ * adapter went on scanning out the desktop's last frame while the VGA
+ * planes underneath it — VRAM offset 0, the top of the frame buffer —
+ * took whatever the VDD wrote there: a frozen desktop with a coloured
+ * band across the first 20 rows, and no way to tell it from a hang until
+ * a keypress brought it back (doc 19 §40). The way back is unchanged:
+ * `SwitchToFgnd` calls `RestoreDesktopMode`, which programs the mode and
+ * ENABLE again, and in the announced switches the mini-VDD has already
+ * turned it off before this runs, so this write is then a no-op.
+ *
+ * Measured with `PWRPROBE.EXE`, which asks for the power-down the idle
+ * time-out asks for, so neither run waits on a power scheme: without this
+ * write the linear mode stays on for the whole blank (`switched out`
+ * 13:19:28.83, `linear mode off` only at the restore, 13:19:34.50); with
+ * it the mode is gone 69 µs after the notification. */
 void __cdecl SwitchToBgnd(void)
 {
     dbg_str("d3dpt9x: switched out");
     if (lpDriverPDevice) lpDriverPDevice->deFlags |= BUSY;
+    if (wRegsSel) RegPut(D3DPT_FB_REG_ENABLE, 0);
 }
 
 void __cdecl SwitchToFgnd(void)
@@ -1063,6 +1085,26 @@ UINT WINAPI __loadds ValidateMode(DISPVALMODE FAR *lpMode)
 #define QUERYESCSUPPORT 8
 /* DCICOMMAND itself comes from gdidefs.h */
 
+/* **Which escapes this driver is asked about, each one once.** The
+ * monitor power-down (doc 19 §40) was read the wrong way round for want
+ * of this: a display driver *can* be asked for DPMS through
+ * `SETPOWERMANAGEMENT` (6148), the way the NT miniport is asked through
+ * `HwSetPowerState`, and the guess was that answering it would stop
+ * Windows taking the screen away for a blank. `PWRPROBE.EXE` says
+ * otherwise — on a monitor power-down this Windows asks about escape
+ * 0xc01 and escape 0x27 and nothing else, never 0x1804, and takes the
+ * screen away regardless. So the answer was dropped and this stayed:
+ * two log lines are what turned a guess into a measurement. */
+static WORD wEscAsked[16];
+static WORD wEscSeen = 0;
+
+static int EscNoted(WORD code)
+{
+    WORD i;
+    for (i = 0; i < wEscSeen; i++) if (wEscAsked[i] == code) return 1;
+    return 0;
+}
+
 /* the DirectDraw sub-commands of DCICOMMAND (doc 19 §2) */
 #define DDCREATEDRIVEROBJECT    10
 #define DDGET32BITDRIVERNAME    11
@@ -1080,6 +1122,14 @@ LONG WINAPI __loadds Control(LPVOID lpDevice, UINT function,
     }
     if (function == QUERYESCSUPPORT) {
         WORD code = *(WORD FAR *)lpInput;
+        /* Which escapes Windows asks this driver about, each one once:
+         * the answer to that question is what took a day of the monitor
+         * power-down (doc 19 §40), and GDI asks them all at start-up. */
+        if (wEscSeen < 16 && !EscNoted(code)) {
+            wEscAsked[wEscSeen++] = code;
+            dbg_val("d3dpt9x: QUERYESCSUPPORT", code);
+            dbg_str("");
+        }
         if (code == QUERYESCSUPPORT) return 1;
         if (code == DCICOMMAND) {
             /* **The answer is the HAL version, not "yes".** DirectDraw

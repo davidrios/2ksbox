@@ -2718,7 +2718,7 @@ fresh copy boots into a restart prompt that holds `RUN.BAT` back, so it
 needs `KEYS="60:ret,150:ret" TEXT_AT=120 RUN_SECS=200` (a key for the
 prompt, one for the blue screen); with the default single key at 70 s the
 key answers the prompt and the blue screen that follows waits for ever.
-||||||| parent of 772fc1a (d3dpt core: keep no OS surface pointer -- 3DMark2001 SE's demo froze after its loading screen)
+
 ### 36. 3DMark2001 SE's demo: a freed surface, a swallowed fault, a lock left held (2026-09-14)
 
 The user's report, on `base98-us` with the current driver: the demo froze
@@ -2906,3 +2906,89 @@ CUBETEST.EXE` in `RUN.BAT`, and `CUBETEST.LOG` read off the raw copy with
 mtools, since the harness's pull did not run after the power button). The
 negative control is the run before the change: the same scene traced with
 handle 0 at stage 3 and a black ocean.
+
+### 40. The monitor power-down: the screen is taken away, and the linear mode stayed on (2026-09-18)
+
+The user's report, twice in two nights on `base98-br-glide3`: the machine
+was left alone for a while, and on coming back the desktop was frozen with
+"a green corrupted band on the top band of the screen" — §35's band, with
+no shutdown anywhere near it.
+
+**What the log has, and what it does not.** The run's last guest line is
+
+    d3dpt-vga: guest: d3dpt9x: switched out
+
+and then nothing: no `hi-res -> VGA`, no `message mode begins`, no
+`display driver disabling`, no `linear mode off`. The four runs before it
+in the same log all end the ordinary way (`linear mode off`, then
+`d3dptvxd: display driver disabling`), which is what makes this one read
+as a fault. It is not one. The machine was still running: a `shift` sent
+over QMP brought back `switched in`, `RestoreDesktopMode` and the desktop,
+and `info registers` twice while it sat there showed `HLT=1` — an idle
+guest, not a dead one.
+
+**What raises INT 2Fh AX=4001h with no mini-VDD call is Windows' own
+monitor power-down**, and it is the *only* thing that reaches the driver
+for one. `SwitchToBgnd` marks the DIB Engine's PDEVICE `BUSY`, so GDI
+stops painting and the desktop freezes at its last frame (§29 is the same
+mechanism after a DOS box) — that part is Windows doing what it means to
+do. But the mini-VDD is told nothing, so `ENABLE` stayed 1 and the adapter
+went on scanning that frame out of VRAM offset 0, where the VGA planes
+live. At 800×600×16 the first 32 KB is 20 rows: the band across the top,
+§35's again, from the other end.
+
+**The guess that cost the session, and the probe that ended it.** A
+display driver *can* be asked for DPMS through `SETPOWERMANAGEMENT`
+(6148), the way the NT miniport is asked through `HwSetPowerState` — which
+answers `NO_ERROR` and leaves the picture up, there being no monitor here
+to power down. Answering it looked like the fix: Windows would have no
+reason to take the screen away at all. It was wrong, and the way it was
+found to be wrong is worth keeping: `Control` now logs each distinct
+escape it is asked about, once, and a monitor power-down asks about escape
+**0xc01 and escape 0x27 and nothing else** — never 0x1804. This Windows
+takes the screen away regardless, so the answers were dropped again and
+only the log line stayed.
+
+**The fix is therefore the guard, and it is proven.** `SwitchToBgnd`
+writes `ENABLE = 0`: a switch that arrives with no mini-VDD call behind it
+leaves the screen to the VGA core honestly, instead of scanning out a
+stale desktop with the VGA bleeding through its top. The way back is
+unchanged — `SwitchToFgnd` calls `RestoreDesktopMode` — and in an
+announced switch the mini-VDD has already turned it off before the
+notification arrives (`hi-res -> VGA`, `linear mode off`, `switched out`),
+so there the new write is a no-op.
+
+**Measured, on a raw copy of `base98-br-glide3`, both runs 100 s:**
+
+| | old driver (`NO_DRIVER=1`) | with the guard |
+|---|---|---|
+| `switched out` | 13:19:28.832921 | 13:22:13.726653 |
+| `linear mode off` | only at the restore, 13:19:34.502696 | **13:22:13.726722** (69 µs later) |
+| `switched in` → desktop | 13:19:34.50 | 13:22:19.72 |
+
+**`PWRPROBE.EXE` is what makes that a test rather than a vigil**
+(`guest-tools/src/d3dptvid/w9x/pwrprobe.c`). It broadcasts
+`WM_SYSCOMMAND` / `SC_MONITORPOWER` — the same request the Control Panel's
+idle time-out makes — waits, and asks for the monitor back, so the blank
+happens on command instead of depending on whichever power scheme the
+image happens to carry. That mattered: a 12-minute idle run on the same
+image blanked nothing at all, and its "no screen switches" proved nothing.
+The run is
+
+    STAGE=guest-tools/out/driver9x/pwrprobe.exe PULL=PWRPROBE.LOG \
+      GUEST_CMD='start /w C:\PWRPROBE.EXE 5' RUN_SECS=100 \
+      tools/win98-game-test.sh <image> pwr
+
+and the verdict is the QEMU log's: `switched out` followed by
+`linear mode off` within a millisecond is the pass, `NO_DRIVER=1` is the
+control that must fail, and `PWRPROBE.LOG` only says the broadcast was
+made.
+
+**Still open, and not this:** an ACPI **standby** (the same idle timer's
+next step) suspends the whole VM — QEMU emits `SUSPEND`, the vCPU stops,
+and the player says nothing, because `player/src/qmp.rs::is_notable` does
+not list `SUSPEND`/`WAKEUP`. On the wake the guest runs again but the
+screen comes back as a blank 720×400 VGA **text** page: nothing reprograms
+the adapter after the resume, and with no desktop to look at the machine
+idles straight back into standby. Measured twice on 2026-09-18 with the
+user driving standby by hand.

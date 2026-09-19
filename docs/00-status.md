@@ -165,6 +165,33 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **Win98's monitor power-down left the linear mode on, and standby is
+  still open** (2026-09-18, doc 19 §40). The user's report, twice: a
+  machine left alone came back frozen with "a green corrupted band on the
+  top band of the screen". Not a fault — an idle Windows takes the screen
+  away from the display driver for a monitor blank (`switched out`, INT 2Fh
+  AX=4001h), the driver marks the DIB Engine `BUSY` so nothing repaints,
+  and **the mini-VDD is told nothing**, so `ENABLE` stayed 1 and the
+  adapter went on scanning the frozen desktop out of VRAM offset 0, where
+  the VGA planes live — 20 rows of band at 800x600x16, §35's band from the
+  other end. `SwitchToBgnd` now drops the linear mode itself: measured with
+  the new `PWRPROBE.EXE`, `linear mode off` lands 69 µs after the
+  notification where the old driver held the mode for the whole 5.7 s
+  blank. **A guess was dropped on the way**: answering the DPMS escapes
+  (`SETPOWERMANAGEMENT`) looked like the real fix, and the escape log added
+  to find out says this Windows asks about escape 0xc01 and escape 0x27 and
+  never 0x1804 — it takes the screen away regardless, so the answers went
+  and the log line stayed. **Still open, and separate**: the same idle
+  timer's next step is an ACPI **standby**, which suspends the whole VM
+  (QMP `SUSPEND`; the vCPU stops, input piles up in the embed queue — 512
+  events, 151 dropped, 20 s of latency on the user's run — and the ALSA
+  stream errors for exactly its duration). The player says nothing about
+  it, because `player/src/qmp.rs::is_notable` lists neither `SUSPEND` nor
+  `WAKEUP`; and on the wake the guest runs again but the screen comes back
+  as a blank 720x400 VGA **text** page, with nothing reprogramming the
+  adapter after the resume, so the machine idles straight back into
+  standby. Measured twice with the user driving standby by hand.
+
 - **A zero-copy ring buffer can stop being written through; the ring now
   notices and remakes it** (2026-09-18, doc 12 §4). Found as a fast
   flicker in GLQuake on `base98-br`: every third presented frame was the

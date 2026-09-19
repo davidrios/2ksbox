@@ -494,6 +494,13 @@ PYPE
      -march=pentium3 -mtune=generic -mwindows \
      -o "$OUT/ddprobe.exe" "$SRC/ddprobe.c" -lddraw -ldxguid -luser32
 
+  # The monitor power-down without the wait: doc 19 §40's test, which
+  # otherwise depends on the power scheme in whichever image it is run on.
+  echo "==> pwrprobe.exe (asks for the monitor power-down the idle time-out asks for)"
+  "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+     -march=pentium3 -mtune=generic -mwindows \
+     -o "$OUT/pwrprobe.exe" "$SRC/pwrprobe.c" -luser32
+
   echo "==> devcaps.exe (every DirectDraw device's caps, for diffing ours against another driver)"
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
      -march=pentium3 -mtune=generic -mwindows \
