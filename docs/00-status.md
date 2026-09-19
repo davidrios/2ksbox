@@ -165,39 +165,48 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
-- **Carmageddon's 3dfx build on the Voodoo 2: the quit hang and the flashing
-  HUD are fixed, the "wide" menu was the game's own letterbox** (2026-09-18,
-  doc 21 §13; the user's own runs on `base98-us`, the DOS `3DFX.EXE` started
-  from Explorer in a Win98 DOS box, `-device voodoo2` beside `d3dpt-vga`).
-  Three symptoms, one root cause between two of them: **86Box has two queues
-  into the chip and the guest has one bus.**
-  **The quit hang.** Glide's `grSstWinClose` writes its last packets and then
-  clears fbiInit7's command-FIFO bit; that register write is applied at once
-  while the ring is still being consumed, 86Box's consumer loop ends the
-  moment `cmdfifo_enabled` goes false, and `SST_status`'s busy bit *is*
-  `cmdfifo_depth_rd != cmdfifo_depth_wr`. Two words of the 104 the last walk
-  counted were left, so the card read busy to every later poll and the DOS
-  box spun in `grSstIdle` for minutes while Windows carried on around it —
-  `busy: 0 cmds outstanding (wr 49668 rd 49668), fifo depth
-  59495109/59495111` with 27 million reads of register 0x000 in five seconds,
-  which is the whole diagnosis in one line. Such a write now runs the ring
-  out first, and behind it, if one still leaves the FIFO off with words
-  counted and not run, the depths are equalised and the card goes idle.
-  **The flashing HUD.** The first guess — an LFB write overtaking packets
-  already counted — was measured away (the window is shorter than the
-  consumer's wake; it survives as `lfb-order`, off). The real one is the
-  other direction: 86Box's thread empties its MMIO queue only *between*
-  passes over the ring, and in a race the ring is never empty — **~19,000
-  words behind, every 5 s line**. So the HUD the game writes with
-  `grLfbWriteRegion` sits in that queue while the swap that follows it in the
-  ring is consumed, and lands in the buffer the swap has just turned into the
-  back one. The user's two shots of one race say it exactly: the panels
-  Carmageddon draws as geometry are in both, and the sprites it writes
-  through the LFB are in one and gone in the next. `voodoo2_fifo_sync()` now
-  waits for that queue at the ring's **publish point**, which is where the
-  ordering is — unconditional, skipped only while the walk is inside a packet
-  (the consumer is then waiting for exactly those words, and waiting for the
-  other queue would deadlock), counted and timed in the 5 s line.
+- **Carmageddon's 3dfx build on the Voodoo 2: three hangs and a flicker, all
+  from one thing — 86Box has two queues into the chip and the guest has one
+  bus** (2026-09-18/19, doc 21 §13, patch 72; the user's own runs on
+  `base98-us`, the DOS `3DFX.EXE` started from Explorer in a Win98 DOS box,
+  `-device voodoo2` beside `d3dpt-vga`).
+  **The quit hang (closed).** Glide's `grSstWinClose` writes its last packets
+  and then clears fbiInit7's command-FIFO bit; that register write was
+  applied at once while the ring was still being consumed, 86Box's consumer
+  loop ends the moment `cmdfifo_enabled` goes false, and `SST_status`'s busy
+  bit *is* `cmdfifo_depth_rd != cmdfifo_depth_wr`. Two words of the 104 the
+  last walk counted were left, so the card read busy to every later poll and
+  the DOS box spun in `grSstIdle` for minutes while Windows carried on around
+  it — `busy: 0 cmds outstanding (wr 49668 rd 49668), fifo depth
+  59495109/59495111` with 27 million reads of register 0x000 in five seconds.
+  Such a write now runs the ring out first, and behind it the depths are
+  equalised if one still leaves the FIFO off with words unrun.
+  **The flashing HUD (fixed, one run still to confirm).** 86Box's thread
+  drained its memory FIFO once per wake and then stayed in the ring for as
+  long as the guest kept feeding it — in a race the whole frame, **~19,000
+  words behind, every 5 s line**. So the HUD written with `grLfbWriteRegion`
+  waited there while the swap that followed it in the ring was consumed, and
+  landed in the buffer that swap had just turned into the back one. The
+  user's two shots of one race say it exactly: the panels Carmageddon draws
+  as geometry are in both, the sprites it writes through the LFB are in one
+  and gone in the next. **Patch 72** makes the ring loop yield the moment
+  anything appears in the memory FIFO — three lines, no wait anywhere. The
+  vCPU waited for it instead for a day, and that is what priced the
+  mechanism: 3,200 waits and 1.8 s of vCPU time per 5 s, ~13 LFB-then-ring
+  turns a frame, one per HUD element (the frame rate went *up* all the same,
+  40–46 → 50–56 new frames a second, because the guest stopped spinning on
+  status: 7 M reads per 5 s → 950). After it the user reported the flicker
+  much finer — "almost doesn't show", no element disappearing, "only the left
+  half of each element" — which is the state patch 72 was written from and
+  **still needs a screenshot**.
+  **The `ramfifo=off` freeze (closed).** A different stuck-busy, and a
+  general one: `written - cmd_read` is a running difference nothing ever
+  resynchronises, and on a Voodoo 2 a swap *packet* counts a read without a
+  write while the register write Glide makes beside it counts a write. One
+  command drifted and the card read busy for ever — `wr 3243 rd 3242`, both
+  FIFOs empty, 26 million status reads per 5 s. A card cannot be busy with
+  nothing to do: after 20,000 consecutive status reads with no guest write in
+  between and every real sign of work clear, the count is put back.
   **The "wide" menu is not ours.** Measured out of the screenshot rather than
   argued: the player draws the 640x480 frame at exactly 3x with square pixels
   (the CRT preset's scanline period is 3 host rows, autocorrelation peaks at
@@ -205,38 +214,6 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   writes 153,601 dwords a frame — 640x480 at 16 bpp exactly — so the black
   bands are in its own frame buffer: a 640x400 front end in a 640x480 Glide
   buffer. The race frames from the same session measure 4:3 to four decimals.
-  **Still to confirm by hand:** the HUD fix on the game itself, and what the
-  `M for the LFB queue (T ms)` column costs there.
-
-- **Moto Racer 1997 with no disc in the drive runs out of stack; the
-  WineD3D DirectDraw fallback starts and draws nothing** (2026-09-18,
-  doc 19 §40). Reported as "the WineD3D fallback crashes under
-  `no-exec=on`", with Windows naming `D3DPT9X.DRV 0001:000023dd` — which is
-  `lpSetInfo(…)`, the one far call in `DDCreateDriverObject`. It is neither
-  the fallback nor `no-exec`: headless on a raw copy of `base98-br-glide3`
-  the game dies the same way with the flag off and the executor live, with
-  the WineD3D DLLs taken out of the folder, and — Wine's `DDRAW.DLL` the
-  only DirectDraw loaded — with no `DCICOMMAND` escape reaching this driver
-  at all. Every one of those runs had the guest-tools ISO in the drive (as
-  the machine does) and the details pane names a **stack fault**:
-  `KERNEL32.DLL 0167:bff7142d, ESP=00832000`, and `MOTO.EXE 0167:004426a5`.
-  **With the game's own `MOTO_RACER.mds` on `ide.1` it runs** under
-  `no-exec=on`: the attract demo, 299 page flips in 5.0 s, `ddi: frames 0`
-  (the software renderer, which is ADR-013's row working), clean power-off —
-  and the control with the disc out again and the fixed driver brings the
-  stack fault straight back. **Open:** the same disc on Wine's `DDRAW.DLL`
-  does not crash and does not draw — 34 GL contexts made and destroyed, not
-  one frame presented, black for the whole run.
-
-- **A guest can kill the player through a Glide 3 entry point we do not
-  have** (2026-09-18). Moto Racer with `GLIDE3X.DLL` installed reaches
-  `grGlideInit`, and `hw/3dfx`'s `init_g3ext` then calls
-  `wrGetProcAddress` — `tblGlide2x[FEnum_grGetProcAddress].ptr`, which is
-  NULL, because our OpenGLide-based `libglide2x.so` exports no
-  `grGetProcAddress` (M14's Glide 3 work, memory `glide3-landscape.md`).
-  The vCPU thread jumps to 0 and the process dumps core
-  (`qemu/hw/3dfx/glide2x_impl.c:988`). Whatever Glide 3 ends up being, the
-  dispatcher should refuse a NULL entry rather than call it.
 
 - **A guest-side wait starved the guest it was waiting for** (2026-09-18).
   `tools/win98-game-test.sh` held the login with a CHOICE loop in a DOS box,

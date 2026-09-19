@@ -72,6 +72,7 @@
 
 /* 86box/vid_voodoo_regs.h's offsets (the header itself does not compile
  * outside 86Box's own files) */
+#define SST_status          0x000
 #define SST_cmdFifoBaseAddr 0x1e0
 #define SST_cmdFifoRdPtr    0x1e8
 #define SST_cmdFifoDepth    0x1f4
@@ -177,10 +178,9 @@ struct Voodoo2State {
     uint32_t     last_drains;
     uint32_t     behind;             /* publishes with LFB writes still queued */
     uint32_t     last_behind;
-    uint32_t     behind_us;          /* microseconds spent waiting for them */
-    uint32_t     last_behind_us;
+    uint32_t     idle_status;        /* status reads with the card idle-busy */
+    bool         idle_status_noted;
     bool         drain_slow_warned;  /* one that did not finish in time */
-    bool         behind_slow_warned;
     bool         fifo_left_noted;    /* words stranded by the FIFO going off */
     /* register-window accesses by register (addr & 0x3fc) since the last
      * line: a guest that spins on one register names it here */
@@ -924,49 +924,95 @@ voodoo2_fifo_drain(Voodoo2State *s, const char *why)
 
 /* The other direction, and the one that matters in a game: what the guest
  * wrote through the LFB *before* the packets about to be published has to
- * be on the card first. 86Box's thread empties its MMIO queue only between
- * passes over the ring, and in a race the ring is never empty -- measured
- * ~19,000 words behind, all race long -- so a HUD written through the LFB
- * can sit in that queue while the swap that follows it in the ring is
- * consumed, and land in the buffer the swap has just turned into the back
- * one. It then shows a frame late, or not at all. That is Carmageddon's
- * flashing HUD (2026-09-18): in the screenshots the panels the game draws
- * as geometry are always there and the sprites it writes through the LFB
- * come and go.
+ * be on the card first. 86Box's thread drained its own FIFO once per wake
+ * and then stayed in the ring for as long as the guest kept feeding it --
+ * in a race that is the whole frame, measured ~19,000 words behind all race
+ * long -- so a HUD written through the LFB waited there while the swap that
+ * followed it in the ring was consumed, and landed in the buffer that swap
+ * had just turned into the back one. That was Carmageddon's flashing HUD
+ * (2026-09-18): in the user's screenshots of one race the panels the game
+ * draws as geometry are in both and the sprites it writes through the LFB
+ * are in one and gone in the next.
  *
- * So the ring's publish point waits for that queue, which is where the
- * ordering actually is. `flush` is set for the same reason as above. The
- * wait is bounded and counted: the 5 s line says how often it fired and for
- * how long, which is what prices it on a real workload. */
+ * **Patch 72 does the ordering**, in the thread where it belongs: the ring
+ * loop yields the moment anything appears in the other FIFO, and the pass
+ * repeats. Nothing waits anywhere. The vCPU used to wait here instead, and
+ * the measurement that ended that is Carmageddon's own: 3,200 waits and
+ * 1.8 s of vCPU time per 5 s -- ~13 LFB-then-ring turns a frame, one per
+ * HUD element -- for an ordering the consumer can keep by itself.
+ *
+ * What is left here is the count. It is the number of times the ring
+ * published words with the other FIFO not yet empty, which is the situation
+ * patch 72 handles, and the one case neither can reach: a consumer already
+ * parked inside cmdfifo_get waiting for the rest of a packet the guest has
+ * not finished writing. That shows as `partial` in the same line. */
 static void
 voodoo2_mmio_drain(Voodoo2State *s)
 {
     voodoo_t *v = s->v;
-    int64_t   t0, now;
 
-    if (ATOMIC_LOAD(v->fifo_read_idx) == ATOMIC_LOAD(v->fifo_write_idx)) {
-        return;                         /* FIFO_EMPTY */
+    if (ATOMIC_LOAD(v->fifo_read_idx) != ATOMIC_LOAD(v->fifo_write_idx)) {
+        s->behind++;                    /* not FIFO_EMPTY */
     }
-    t0 = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
-    s->behind++;
-    v->flush = 1;
-    while (ATOMIC_LOAD(v->fifo_read_idx) != ATOMIC_LOAD(v->fifo_write_idx)) {
-        voodoo_wake_fifo_thread_now(v);
-        now = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
-        if (now - t0 >= VOODOO2_DRAIN_MS * 1000) {
-            if (!s->behind_slow_warned) {
-                s->behind_slow_warned = true;
-                warn_report("voodoo2: 86Box's own FIFO did not empty in %d ms "
-                            "before the ring's next packets; they go to the "
-                            "consumer anyway and a frame may be drawn out of "
-                            "order", VOODOO2_DRAIN_MS);
-            }
-            break;
-        }
-        g_usleep(20);
+}
+
+/* A card cannot be busy with nothing to do.
+ *
+ * SST_status's busy bit is four things or-ed together, and one of them is
+ * `cmd_written + cmd_written_fifo - cmd_read`, a running difference that no
+ * event ever resynchronises. On a Voodoo 2 it is not symmetric: a swap
+ * arriving as a command-FIFO *packet* increments `cmd_read` and not
+ * `cmd_written_fifo` (only Banshee and later count one), while the register
+ * write Glide makes beside it increments `cmd_written`. The two are meant
+ * to cancel, and when for any reason they do not, the difference stands for
+ * ever -- the card reads busy to every later poll, and Glide's grSstIdle
+ * never returns. Measured 2026-09-19 on `ramfifo=off`: Carmageddon froze on
+ * its first race frame with `wr 3243 rd 3242`, one command outstanding, the
+ * ring caught up (`fifo depth 631660/631660`), nothing rendering, and the
+ * guest reading register 0x000 26 million times in five seconds.
+ *
+ * So: when the guest is polling status and every *real* sign of work is
+ * clear -- both FIFOs empty, the ring caught up, no render thread, no swap
+ * pending, the consumer not in its loop -- the difference is stale and is
+ * put back. The hysteresis is what makes it safe: the consumer is briefly
+ * between dequeueing a command and counting it, and in that window the card
+ * looks exactly like this, so it takes a long run of *consecutive* polls
+ * with no guest write in between, which only a spinning guest can produce.
+ */
+#define VOODOO2_IDLE_POLLS 20000
+
+static void
+voodoo2_status_unstick(Voodoo2State *s)
+{
+    voodoo_t *v = s->v;
+    int       written;
+
+    if (++s->idle_status < VOODOO2_IDLE_POLLS) {
+        return;
     }
-    v->flush = 0;
-    s->behind_us += (uint32_t) (qemu_clock_get_us(QEMU_CLOCK_REALTIME) - t0);
+    s->idle_status = 0;
+    written = v->cmd_written + v->cmd_written_fifo + v->cmd_written_fifo_2;
+    if (written == v->cmd_read) {
+        return;
+    }
+    if (ATOMIC_LOAD(v->fifo_read_idx) != ATOMIC_LOAD(v->fifo_write_idx) ||
+        ATOMIC_LOAD(v->cmdfifo_depth_rd) != ATOMIC_LOAD(v->cmdfifo_depth_wr) ||
+        v->cmdfifo_in_sub || v->voodoo_busy || v->swap_pending ||
+        RENDER_VOODOO_BUSY(v, 0) ||
+        (v->render_threads >= 2 && RENDER_VOODOO_BUSY(v, 1)) ||
+        (v->render_threads == 4 && (RENDER_VOODOO_BUSY(v, 2) || RENDER_VOODOO_BUSY(v, 3)))) {
+        return;                         /* something really is outstanding */
+    }
+    if (!s->idle_status_noted) {
+        s->idle_status_noted = true;
+        info_report("voodoo2: the card read busy on %d command(s) outstanding "
+                    "(written %d, read %d) with both FIFOs empty and nothing "
+                    "rendering, for %d polls running: the count is stale and "
+                    "goes back, or a guest waiting for idle never gets out",
+                    written - v->cmd_read, written, (int) v->cmd_read,
+                    VOODOO2_IDLE_POLLS);
+    }
+    ATOMIC_STORE(v->cmd_read, written);
 }
 
 /* Is this write one that reconfigures the command FIFO? Only the register
@@ -1076,6 +1122,9 @@ voodoo2_mmio_read(void *opaque, hwaddr addr, unsigned size)
             return val;
         }
     }
+    if (addr < 0x200000 && (addr & 0x3fc) == SST_status && size == 4) {
+        voodoo2_status_unstick(s);
+    }
     switch (size) {
     case 4:
         val = v->mapping.read_l((uint32_t) addr, v->mapping.priv);
@@ -1112,6 +1161,7 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     if (addr < 0x400000) {
         s->wr_hist[(addr >> 2) & 0xff]++;
     }
+    s->idle_status = 0;         /* the guest is doing something: not a spin */
     voodoo2_note(s, addr, val, size, true);
     if ((addr & 0x200000) && addr < 0x400000 && !v->cmdfifo_enabled &&
         (addr & 0x1fffff) >= 0x100) {
@@ -1169,9 +1219,7 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
         ATOMIC_LOAD(v->cmdfifo_enabled)) {
         /* ramfifo=off: this dword is a ring word, and 86Box counts it into
          * cmdfifo_depth_wr itself -- so here is that transport's publish
-         * point, and what the guest wrote through the LFB before it has to
-         * be on the card first ("one order" below). Only the first word of
-         * a burst pays: the queue is empty for the rest of it. */
+         * point ("one order" below). Patch 72 keeps the order on both. */
         voodoo2_mmio_drain(s);
     }
     /* the ring is what the guest wrote first: run it before this ("one
@@ -1546,14 +1594,12 @@ voodoo2_stats(void *opaque)
         /* the ordering waits ("one order"): what they cost, on whichever
          * transport the ring is on */
         if (s->drains != s->last_drains || s->behind != s->last_behind) {
-            snprintf(ord, sizeof(ord), "; %u waits for the ring, %u for the "
-                     "LFB queue (%u ms)", s->drains - s->last_drains,
-                     s->behind - s->last_behind,
-                     (s->behind_us - s->last_behind_us) / 1000);
+            snprintf(ord, sizeof(ord), "; %u waits for the ring, %u publishes "
+                     "behind the LFB queue", s->drains - s->last_drains,
+                     s->behind - s->last_behind);
         }
         s->last_drains = s->drains;
         s->last_behind = s->behind;
-        s->last_behind_us = s->behind_us;
         s->last_fifo_words = s->fifo_words;
         s->last_fifo_syncs = s->fifo_syncs;
         /* frames = presents (a scan-out with any dirty line); new = those

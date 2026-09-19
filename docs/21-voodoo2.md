@@ -822,18 +822,19 @@ does the same now.
 ### The flashing HUD: the other direction, and the ring is never empty
 
 What the guest writes through the LFB **before** a batch of packets has to
-be on the card before they are — and 86Box's thread empties its MMIO queue
-only *between* passes over the ring. In a race the ring never empties. Every
-5 s line of Carmageddon's race says so:
+be on the card before they are — and 86Box's `voodoo_fifo_thread` drained
+its memory FIFO once per wake and then stayed in the ring for as long as
+the guest kept feeding it. In a race that is the whole frame. Every 5 s line
+of Carmageddon's race says so:
 
     busy: 1 cmds outstanding (wr 58305 rd 58304), fifo depth 66330585/66349779,
     voodoo_busy
 
 Nineteen thousand words behind, all race long. So the HUD the game writes
 with `grLfbWriteRegion` — ~5.2 M LFB writes across 300 frames, about 23,000
-dwords a *new* frame — sits in that queue while the swap that follows it in
-the ring is consumed, and lands in the buffer the swap has just turned into
-the back one. It shows a frame late, or not at all.
+dwords a *new* frame — waited in the memory FIFO while the swap that
+followed it in the ring was consumed, and landed in the buffer that swap had
+just turned into the back one. It showed a frame late, or not at all.
 
 The user's two screenshots of one race, 26 s apart, say it exactly. In the
 first the HUD is whole. In the second the driver's portrait and the panel
@@ -842,31 +843,63 @@ the gauges, the speedometer, the damage map, each replaced by the flat panel
 it is drawn on. What survives is what the game draws as geometry, through
 the ring; what disappears is what it writes through the LFB.
 
-So `voodoo2_fifo_sync()` waits for that queue at the **publish point**, the
-moment the ring's new words become visible to the consumer, which is where
-the ordering actually is. It is unconditional. Two details:
+**Patch 72 puts the ordering where it belongs**, in the thread: the ring
+loop yields the moment anything appears in the memory FIFO, and the whole
+pass repeats. Three lines, no wait anywhere, the same work in a different
+order — what a chip with one FIFO does.
 
-- Not while the walk is inside a packet (`in_packet`): the consumer is then
-  parked in `cmdfifo_get` waiting for exactly the words being held back, and
-  nothing else is going to empty the MMIO queue. That would be a deadlock,
-  and the bound alone would turn it into a stall.
-- The wait is counted and timed, and the 5 s line prints both (`N waits for
-  the ring, M for the LFB queue (T ms)`). That is what prices it on a real
-  workload — it should be about once per frame, for as long as the frame's
-  LFB writes take.
+The vCPU waited for the memory FIFO instead for a day, at the ring's publish
+point, and Carmageddon priced that: **3,200 waits and 1.8 s of vCPU time per
+5 s**, about thirteen LFB-then-ring turns a frame — one per HUD element.
+(The frame rate went *up* all the same, 40–46 to 50–56 new frames a second,
+because the guest stopped spinning on the status register: 7 M reads per 5 s
+became 950.) What is left of it in `voodoo2.c` is the count, `N publishes
+behind the LFB queue` in the 5 s line, on both transports: it is the number
+of times the ring published words with the memory FIFO not yet empty, which
+is the situation patch 72 handles.
+
+Neither reaches one case: a consumer already parked inside `cmdfifo_get`
+waiting for the rest of a packet the guest has not finished writing. It
+cannot drain the memory FIFO from there, and holding the words back would
+deadlock it. That shows as `partial` in the same line, and is 0 in every run
+so far.
 
 **What `lfb-order` (off by default) adds** is the mirror: a wait for the ring
 before an LFB or texture write, so a packet already counted is drawn first.
 That window is only as wide as the consumer's wake, and the ordering phase of
 the guest test measures it away on an unloaded host — the block lands on top
-with the switch either way. It is kept as the A/B rather than turned on,
-because it costs a wait for the rasterizer at every ring-then-LFB turn.
+with the switch either way. It is kept as the A/B rather than turned on.
 
 **The check** is the ordering phase: the ring gets a red fastfill, then the
 guest writes a 38,400-dword blue block through the LFB, then the ring gets
 the swap. The block has to be on top, *and* the device has to report at least
-one wait for 86Box's own FIFO at the publish point — the scene is built to
-make one, and none means the ordering point was never reached.
+one publish behind the memory FIFO — the scene is built to make one, and none
+means the ordering point was never reached.
+
+### A card cannot be busy with nothing to do
+
+`SST_status`'s busy bit is four things or-ed together, and one of them is
+`cmd_written + cmd_written_fifo - cmd_read`, a running difference that no
+event ever resynchronises. On a Voodoo 2 it is not symmetric: a swap arriving
+as a command-FIFO *packet* increments `cmd_read` and not `cmd_written_fifo`
+(only Banshee and later count one), while the register write Glide makes
+beside it increments `cmd_written`. The two are meant to cancel, and when for
+any reason they do not, the difference stands for ever — the card reads busy
+to every later poll and `grSstIdle` never returns.
+
+Measured 2026-09-19 on `ramfifo=off`: Carmageddon froze on its first race
+frame with `wr 3243 rd 3242`, **one** command outstanding, the ring caught up
+(`fifo depth 631660/631660`), nothing rendering, and the guest reading
+register 0x000 26 million times in five seconds.
+
+So when the guest is polling status and every real sign of work is clear —
+both FIFOs empty, the ring caught up, no render thread, no swap pending, the
+consumer not in its loop — the difference is stale and is put back. The
+hysteresis is what makes it safe: the consumer is briefly between dequeueing
+a command and counting it, and in that window the card looks exactly like
+this, so it takes 20,000 *consecutive* status reads with no guest write in
+between, which only a spinning guest can produce. It says so once when it
+fires.
 
 ### The menu that looked wide is the game's own letterbox
 

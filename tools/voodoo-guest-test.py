@@ -47,14 +47,15 @@ grSstWinClose and what Carmageddon's 3dfx build hung on for ever
 *Ordering* is the other one: the ring gets a red fastfill over the whole
 screen, then with nothing waited for the guest writes a 38,400-dword blue
 block through the LFB, then the ring gets the swap. The block has to be on
-top, and the device has to report at least one wait for 86Box's own FIFO at
-the ring's publish point -- the scene is built to make one, and none means
-the ordering point was never reached. That publish-point wait is what keeps
-a game's HUD from landing in the buffer a swap has just turned into the back
-one (Carmageddon's flashed in and out for it, 2026-09-18). The mirror of it,
-a wait for the *ring* before an LFB write, is `LFB_ORDER=on`: that window is
-shorter than the consumer's wake and the block is on top either way, which
-is the measurement that ruled it out as the HUD's cause.
+top, and the device has to report at least one publish behind 86Box's own
+FIFO -- the scene is built to make one, and none means the ordering point
+was never reached. Keeping the order there is patch 72's job (the thread's
+ring loop yields the moment anything appears in the other FIFO), and it is
+what keeps a game's HUD from landing in the buffer a swap has just turned
+into the back one: Carmageddon's flashed in and out for it, 2026-09-18. The
+mirror of it, a wait for the *ring* before an LFB write, is `LFB_ORDER=on`:
+that window is shorter than the consumer's wake and the block is on top
+either way, which is the measurement that ruled it out as the HUD's cause.
 
 Both phases write swapbufferCMD to the register window as well as putting
 the packet in the ring, because 3dfx's Glide does and the card's own
@@ -1443,9 +1444,9 @@ def main():
     # itself). The device counts the times it waited; the scene above is
     # built to make one, and none means the ordering point was never
     # reached.
-    behind = sum(int(m) for m in re.findall(r"(\d+) for the LFB queue",
+    behind = sum(int(m) for m in re.findall(r"(\d+) publishes behind the LFB queue",
                  open(qlog, "rb").read().decode("latin-1")))
-    print("    waits for 86Box's own FIFO at the ring's publish point: %d" % behind)
+    print("    ring publishes with 86Box's own FIFO not yet empty: %d" % behind)
     if not behind:
         print("FAIL the ring published packets with no LFB write ever queued behind "
               "them: the ordering scene did not reach the point it is about")
