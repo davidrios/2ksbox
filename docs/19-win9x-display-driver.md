@@ -3071,4 +3071,78 @@ screen comes back as a blank 720×400 VGA **text** page: nothing reprograms
 the adapter after the resume, and with no desktop to look at the machine
 idles straight back into standby. Measured twice on 2026-09-18 with the
 user driving standby by hand.
-||||||| d81729b
+### 42. The WineD3D folder only works for the first DirectDraw program of the session (2026-09-19)
+
+The next report was the useful one: FIFA 2000's 3D setup, with
+`WINED3D\DDRAW\` copied next to `FIFA2000.EXE` and `no-exec=on`, offered no
+3D adapter at all. It is not FIFA, and not the fallback stack: **on 9x the
+copy of `DDRAW.DLL` beside a game is used only if that game is the first
+program in the Windows session to touch DirectDraw.**
+
+Measured with one binary, `D3D7TEST.EXE`, in one folder, with Wine's
+`DDRAW.DLL` beside it, on a raw copy of `base98-br-glide3` under
+`no-exec=on` (`tools/win98-game-test.sh`, `PLAYER=1` — the GL pass-through
+is what WineD3D draws through, so it has to be the player):
+
+| the session before it | what the probe got |
+|---|---|
+| nothing had used DirectDraw | `Wine D3D7 T&L HAL`, `Direct3D HAL (WINE … using WineD3D)`, `Wine D3D7 RGB`; HAL device, texture, Z buffer, 60 frames at 218 fps |
+| `DDPROBE.EXE` ran first, from another folder | `HAL caps 00000480 (no 3D)`, `RGB Emulation (Microsoft …)`, **`HAL device ABSENT`** |
+
+`0x00000480` is this driver's own caps under `no-exec` — the value `DDPROBE`
+had just read — so the second run was served the *system* `ddraw.dll`
+despite the copy beside the EXE. Win9x keeps one module per module *name*
+for the whole machine, and `DDHELP.EXE` stays resident once anything has
+touched DirectDraw, so from the second DirectDraw program onwards the folder
+copy is ignored. **XP does not have this**: the NT loader resolves by full
+path into a per-process module list and `ddraw.dll` is not a KnownDLL, which
+is why `tools/xp-wined3d-test.sh` works per game and `xp-fifa2000.bat` has
+to rename those files *away* to get the driver's own path back.
+
+Two things the same runs settled, both good: Wine's ddraw does bring up a
+working HAL on our GL pass-through under `no-exec` (the 218 fps above), and
+the **DirectX 3 execute-buffer path works** — `EBTEST.EXE` passes 5 of 5
+through it (viewport clear through a background material, flat triangles by
+`PROCESSVERTICES_COPY`, a textured quad by `TEXTUREHANDLE`, a colour-keyed
+texture, clipped `LVERTEX` through `PROCESSVERTICES_TRANSFORM`). The
+fallback stack is sound on 98; reaching it was the problem.
+
+**What makes it reachable: the module name, not the file.** Replacing
+`WINDOWS\SYSTEM\DDRAW.DLL` with wine9x's `ddraw_98.dll` switcher — the
+install its README walks through — does not survive here. Windows 98 SE's
+System File Protection puts up "os arquivos de sistema a seguir foram
+substituídos por versões mais antigas" at the next login, which also blocks
+`WIN.INI`'s `run=`, so a scripted run does nothing at all; and by the boot
+after that `DDRAW.DLL` is Microsoft's again, restored from `SYSBCKUP`. The
+version resources already match (both 4.09.00.0904), so matching them is not
+the answer.
+
+wine9x's own answer for Windows Me works on 98 and touches no protected
+file: the switcher goes in under its own name and one registry value
+redirects the *module name*.
+
+```
+WINDOWS\SYSTEM\DDRAWME.DLL   wine9x's ddraw_98.dll (the switcher)
+WINDOWS\SYSTEM\DDSYS.DLL     the machine's own DDRAW.DLL with the
+                             "DDRAW.DLL" that follows "DDRAW16.DLL" inside
+                             it changed to "DDSYS.DLL" (ddreplacer.c: the
+                             16-bit registration must not reach the wrong
+                             module) — what the switcher hands the callers
+                             that want the real DirectDraw
+WINDOWS\SYSTEM\WINEDD.DLL, WINED3D.DLL, and our OPENGL32.DLL
+[HKLM\System\CurrentControlSet\Control\SessionManager\KnownDLLs]
+"DDRAW"="ddrawme.dll"
+```
+
+Measured on the same image, two boots, with `DDPROBE.EXE` deliberately run
+first and **no Wine DLLs anywhere near the probe**: `DDPROBE` itself now
+reports `HAL dwCaps 0xf5408669` and 512 MB of video memory (Wine's), and
+`D3D7TEST` finds all three WINE devices, creates the HAL device and renders
+60 frames at 545 fps. No SFP dialog, `DDRAW.DLL` untouched, and every file
+still in place after the second boot. Deleting the one value undoes it.
+
+The cost is that it is system-wide: every DirectDraw title on that machine
+then draws through GL, which is what a host below ADR-013's Vulkan floor
+wants and what a host with our own Direct3D does not.
+`build/wined3d-sys98/` is a folder that applies it from inside the machine
+(`INSTALL.BAT`; the disc shelf serves a host folder with `isodir:`).
