@@ -195,8 +195,8 @@ player [--shader <preset.slangp>] [--shader-params <k=v,...>] [--pad usb|keys]
   what winit and Windows each thought about focus at every change — a
   shortcut that still reaches the host is nearly always a window that was
   not in front when it was pressed. On Windows what this covers is the two
-  Windows keys and every Win+ shortcut; Alt+Tab, Alt+Esc, Ctrl+Esc,
-  Ctrl+Alt+Del and Win+L are *system* hotkeys that no program gets
+  Windows keys, every Win+ shortcut and Ctrl+Esc; Alt+Tab, Alt+Esc, Alt+F4,
+  Alt+Space, Ctrl+Alt+Del and Win+L are *system* hotkeys that no program gets
   (docs/00-status.md, "The first Windows host run" item 5, has the
   measurements, including why the low-level hook this replaced could never
   have worked).

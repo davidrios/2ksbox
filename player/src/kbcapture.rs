@@ -19,10 +19,12 @@
 //!   `WM_KEYDOWN`, so winit delivers it and the guest gets it down the same
 //!   path as every other key: this takes the key from the shell without
 //!   taking it from us, and it needs no hook, no thread and no injection.
-//!   What it does not cover is what Windows calls a *system* hotkey —
-//!   Alt+Tab, Alt+Esc, Ctrl+Esc, Ctrl+Alt+Del, Win+L — which no program
-//!   gets; hence the player's Ctrl+Alt+Shift+D for Ctrl+Alt+Del, and
-//!   Alt+F4 asking before it stops the machine.
+//!   **Ctrl+Esc comes with them** (user-confirmed 2026-09-19): it is a
+//!   keyboard hotkey the shell acts on, so it stops with the rest and opens
+//!   the *guest's* Start menu. What it does not cover is what Windows calls
+//!   a *system* hotkey — Alt+Tab, Alt+Esc, Alt+F4, Alt+Space, Ctrl+Alt+Del,
+//!   Win+L — which no program gets; hence the player's Ctrl+Alt+Shift+D for
+//!   Ctrl+Alt+Del, and Alt+F4 asking before it stops the machine.
 //!
 //!   **This was a `WH_KEYBOARD_LL` hook until 2026-09-18**, and the hook
 //!   never worked: measured on the user's PC, a low-level keyboard hook in

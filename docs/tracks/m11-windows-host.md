@@ -482,12 +482,11 @@ images and a GPU, and now a Windows host too. The Windows evidence is
 0. **The 2026-09-17 package on the PC** (docs/00-status.md, "The first
    Windows host run"): dxdiag / 3DMark 99 on DXVK, a MIDI's tempo, CD
    music, the pointer over Moto Racer and `2ksbox-debug.bat` are
-   **confirmed fixed** by the user. Left: the Windows key in a game, and
-   Moto Racer's speed — the first clang-built QEMU (patch 68) ever to run
-   on real Windows. The Windows key was **still the host's on 2026-09-18**
-   (the user); the hook is installed for the capture's life rather than per
-   focus, re-armed every 2 s at the head of the chain, and asks whether the
-   *process* in front is ours (docs/00-status.md item 5). Install and re-arm
+   **confirmed fixed** by the user, and so is **the Windows key**
+   (2026-09-19). Left: Moto Racer's speed — the first clang-built QEMU
+   (patch 68) ever to run on real Windows.
+
+   The Windows key took three rounds and the first two were wrong.
    **Settled 2026-09-18**: the low-level hook is gone. It is called for every
    key on the machine except while the player's own window is in front, which
    is the only time it is wanted — measured every way on the PC
@@ -495,11 +494,12 @@ images and a GPU, and now a Windows host too. The Windows evidence is
    `RIDEV_NOHOTKEYS` instead, which is scoped to the foreground window by the
    window manager and leaves the key arriving as an ordinary `WM_KEYDOWN`:
    three Windows keys at the focused player and the foreground never moves,
-   Ctrl+Alt+K and the next one opens Search. Alt+Tab and the other *system*
-   hotkeys stay Windows'. Left for the user to confirm: the guest's own Start
-   menu opening on a real keyboard, in a game. `PLAYER_KEYBOARD_LOG=1
-   scripts/win-run.sh launcher` prints the registration and every focus
-   change to `%APPDATA%\2ksbox\data\player.log`.
+   Ctrl+Alt+K and the next one opens Search. **Confirmed by the user on
+   2026-09-19**, with a real keyboard in a real guest: the Windows keys and
+   **Ctrl+Esc** reach the guest; Alt+Tab and the other *system* hotkeys stay
+   Windows', as measured. `PLAYER_KEYBOARD_LOG=1 scripts/win-run.sh launcher`
+   prints the registration and every focus change to
+   `%APPDATA%\2ksbox\data\player.log`. **This item is closed.**
 0b. **Run the native build on the PC.** It **builds there, every stage**
    (2026-09-17, the user: `qemu`, `rust`, `qt`, `exec` and the guest-tools
    ISO, in MSYS2's MINGW64 shell). Nothing built there has been run yet:

@@ -427,12 +427,16 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
      in front), then Ctrl+Alt+K and the next one opens Search again, which is
      the unregister path.
 
-     What it does not cover is what Windows calls a *system* hotkey — Alt+Tab,
-     Alt+Esc, Ctrl+Esc, Ctrl+Alt+Del, Win+L — measured: Alt+Tab still
-     switches. No program gets those, the hook never took them either
-     (the same measurement), and the player answers Alt+F4 by asking before
-     it stops the machine. Also from this round: ABNT2's `/?` and keypad `.`,
-     and Pause, were in no keymap.
+     **Confirmed on the PC on 2026-09-19** (the user, a real keyboard in a
+     real guest), with one correction to what this said the day before:
+     **Ctrl+Esc reaches the guest too** — it is a keyboard hotkey the shell
+     acts on, so `RIDEV_NOHOTKEYS` stops it with the rest and it opens the
+     guest's Start menu. What it does not cover is what Windows calls a
+     *system* hotkey — Alt+Tab, Alt+Esc, Alt+F4, Alt+Space, Ctrl+Alt+Del,
+     Win+L — measured, and the user's run agrees: no program gets those, the
+     hook never took them either (the same measurement), and the player
+     answers Alt+F4 by asking before it stops the machine. Also from this
+     round: ABNT2's `/?` and keypad `.`, and Pause, were in no keymap.
   6. **Moto Racer slow on the 5900X with the CPU at 5 %** — in the menus
      and with the software renderer (the user; not Glide, not the race on
      Direct3D). **Not reproduced**: headless on Linux without the Voodoo,
