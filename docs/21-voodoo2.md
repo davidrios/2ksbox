@@ -860,7 +860,21 @@ entry runs once the ring has been consumed that far and not before, and the
 ring loop yields the moment the memory FIFO's head is due. That is the
 guest's own order, with no wait anywhere — the same work, sequenced. A
 sequence number is what the thread never had, and every arrangement without
-one is wrong in one direction or the other.
+one is wrong in one direction or the other. **The user's run
+confirmed it 2026-09-19: the flicker stopped.**
+
+One clause of it is not about ordering at all. A mark the ring can never
+reach — which a `cmdFifoDepth` write makes, because it puts the read pointer
+back to nothing under entries already queued — is *stale*, not in the
+future, and is taken as due. Without that, such an entry waits for a pointer
+that is not coming back and the next guest write blocks in
+`voodoo_queue_command` on a FIFO that never empties. Draining the memory
+FIFO from the guest's side instead is the obvious alternative and it is
+wrong: it means holding 86Box's `flush` while a swap goes past, and `flush`
+flips the buffer where it stands rather than at the retrace. Measured — it
+tore the teardown scene's frame exactly 64 rows down, which is where the
+beam was.
+
 
 The vCPU waited for the memory FIFO instead for a day, at the ring's publish
 point, and Carmageddon priced that: **3,200 waits and 1.8 s of vCPU time per

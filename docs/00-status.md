@@ -234,8 +234,29 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   and every arrangement without one is wrong in one direction or the other.
   The guest test's ordering scene loads the ring with 192 full-screen fills
   first, but does **not** discriminate on an idle host — measured both ways —
-  because the window needs a rasterizer that is behind. The game is the
-  oracle, and confirming this one is the open item.
+  because the window needs a rasterizer that is behind. The game was the
+  oracle and **the user's run of 2026-09-19 closed it: the flicker stopped.**
+  One clause of the patch is not about ordering: a mark the ring can never
+  reach, which a `cmdFifoDepth` write makes by putting the read pointer back
+  to nothing under entries already queued, is stale rather than in the
+  future and is taken as due — otherwise the entry waits for a pointer that
+  is not coming back and the next guest write blocks in
+  `voodoo_queue_command`. Draining the memory FIFO from the guest's side
+  instead is the obvious alternative and is wrong: it holds 86Box's `flush`
+  while a swap goes past, which flips the buffer where it stands instead of
+  at the retrace, and it tore the teardown scene's frame exactly 64 rows
+  down — where the beam was.
+  **Open: a DOS/4GW page fault**, once, mid-race, on the same run that fixed
+  the flicker (`exception 0Eh at 237:8AF5B704`, unrelocated `2:000B8704`,
+  `EBX = EDI = FFFFFFFF`, error code 4 = a user-mode read of a page that is
+  not there). Nothing on the device side is implicated by that log: no
+  warning of any kind, the ring healthy throughout (`0 packets
+  part-written`, `0 words taken as data`), and in the whole 5 s window the
+  guest made essentially no reads that were not the status register or
+  `cmdFifoRdPtr` — so the 0xFFFFFFFF in its registers did not come from a
+  read of ours. It may be the game, now that it runs far enough to be
+  played. If it recurs, whether it recurs at the same point is the thing to
+  note, and `VOODOO2_TRACE=1` keeps the guest's last accesses.
   **And the card read busy for the whole race** off one stale outstanding
   command, which had the guest reading the status register 9–11 million times
   per 5 s and is what `grLfbLock` waits on. The rule that puts a stale count

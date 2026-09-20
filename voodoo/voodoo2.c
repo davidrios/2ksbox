@@ -885,6 +885,13 @@ voodoo2_fifo_caught_up(voodoo_t *v)
 }
 
 /* Run out what the walk has counted, so what follows is ordered behind it.
+ * The ring only: waiting for 86Box's own FIFO here as well would mean
+ * holding `flush` while a swap goes past, and `flush` flips the buffer
+ * where it stands instead of at the retrace -- measured, it tore the
+ * teardown scene's frame 64 rows down (2026-09-19). Patch 72's marks
+ * survive the counter reset this write is about on their own: one the ring
+ * can never reach is taken as due rather than waited for.
+ *
  * Bounded, and the bound is not a formality: the consumer waits inside a
  * packet whose rest the guest has not written, which leaves the depths
  * equal -- so that case returns at once -- but a stream this walk has

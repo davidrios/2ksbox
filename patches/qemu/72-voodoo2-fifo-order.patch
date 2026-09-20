@@ -36,6 +36,23 @@ hw/voodoo by prepare-qemu.sh, which is why this is a patch on the overlay
 rather than an edit there. Drop it when upstream 86Box has the fix and
 scripts/sync-86box-voodoo.sh brings it in.
 
+A mark the ring can never reach -- which only a reset of its counters under
+an entry already queued can make, at a grSstWinClose or a fresh
+sst1InitRegisters -- is stale rather than in the future, and is taken as
+due: waiting for it would strand the entry and then fill this FIFO under
+the next guest write. `voodoo/voodoo2.c` also runs both out before it lets
+such a write through, so in practice there is nothing queued to strand.
+
+A mark the ring can never reach -- which only a reset of its counters under
+an entry already queued can make, at a grSstWinClose or a fresh
+sst1InitRegisters -- is stale rather than in the future, and is taken as
+due: waiting for it would strand the entry and then fill this FIFO under
+the next guest write. It is the only thing that has to hold across a
+grSstWinClose or a fresh sst1InitRegisters, and it holds without anyone
+waiting -- draining this FIFO from the guest's side instead would mean
+holding 86Box's `flush` while a swap goes past, which flips the buffer
+where it stands rather than at the retrace, and tears the frame.
+
 diff --git a/hw/voodoo/86box/vid_voodoo_common.h b/hw/voodoo/86box/vid_voodoo_common.h
 index 38d2f19..915b208 100644
 --- a/hw/voodoo/86box/vid_voodoo_common.h
@@ -53,7 +70,7 @@ index 38d2f19..915b208 100644
  
  typedef struct voodoo_params_t {
 diff --git a/hw/voodoo/86box/vid_voodoo_fifo.c b/hw/voodoo/86box/vid_voodoo_fifo.c
-index 720b8f8..9652c98 100644
+index 720b8f8..e3743b8 100644
 --- a/hw/voodoo/86box/vid_voodoo_fifo.c
 +++ b/hw/voodoo/86box/vid_voodoo_fifo.c
 @@ -219,9 +219,10 @@ voodoo_queue_command(voodoo_t *voodoo, uint32_t addr_type, uint32_t val)
@@ -70,7 +87,7 @@ index 720b8f8..9652c98 100644
  
      if (((addr_type & FIFO_TYPE) == FIFO_WRITEW_FB) ||
          ((addr_type & FIFO_TYPE) == FIFO_WRITEL_FB)) {
-@@ -378,6 +379,17 @@ enum {
+@@ -378,6 +379,24 @@ enum {
      CMDFIFO3_PC = (1 << 28)
  };
  
@@ -79,16 +96,23 @@ index 720b8f8..9652c98 100644
 +   pipeline in the order it made them. This says whether the head of this
 +   FIFO is that next thing: its mark is where the ring stood when the guest
 +   made it, so it runs once the ring has been consumed that far, and not
-+   before. Signed difference, because both counters run on for ever. */
++   before. Signed difference, because both counters run on for ever.
++
++   A mark the ring can never reach is stale rather than in the future --
++   only a reset of its counters under an entry already queued can make one,
++   and waiting for it would strand the entry and then fill this FIFO under
++   the next guest write. */
++#define FIFO_HEAD_MARK                                                        \
++    (voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK].cmdfifo_mark)
 +#define FIFO_HEAD_READY                                                       \
 +    (!FIFO_EMPTY &&                                                           \
-+     (int) (voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK].cmdfifo_mark -    \
-+            voodoo->cmdfifo_depth_rd) <= 0)
++     ((int) (FIFO_HEAD_MARK - voodoo->cmdfifo_depth_rd) <= 0 ||               \
++      (int) (FIFO_HEAD_MARK - voodoo->cmdfifo_depth_wr) > 0))
 +
  void
  voodoo_fifo_thread(void *param)
  {
-@@ -388,7 +400,8 @@ voodoo_fifo_thread(void *param)
+@@ -388,7 +407,8 @@ voodoo_fifo_thread(void *param)
          thread_wait_event(voodoo->wake_fifo_thread, -1);
          thread_reset_event(voodoo->wake_fifo_thread);
          voodoo->voodoo_busy = 1;
@@ -98,7 +122,7 @@ index 720b8f8..9652c98 100644
              uint64_t      start_time = plat_timer_read();
              uint64_t      end_time;
              fifo_entry_t *fifo = &voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK];
-@@ -405,7 +418,7 @@ voodoo_fifo_thread(void *param)
+@@ -405,7 +425,7 @@ voodoo_fifo_thread(void *param)
                          if (target_buf < VOODOO_BUF_COUNT) {
                              ATOMIC_DEC(voodoo->pending_draw_cmds_buf[target_buf]);
                          }
@@ -107,7 +131,7 @@ index 720b8f8..9652c98 100644
                              break;
                          fifo = &voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK];
                      }
-@@ -421,7 +434,7 @@ voodoo_fifo_thread(void *param)
+@@ -421,7 +441,7 @@ voodoo_fifo_thread(void *param)
                          if (target_buf < VOODOO_BUF_COUNT) {
                              ATOMIC_DEC(voodoo->pending_fb_writes_buf[target_buf]);
                          }
@@ -116,7 +140,7 @@ index 720b8f8..9652c98 100644
                              break;
                          fifo = &voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK];
                      }
-@@ -437,7 +450,7 @@ voodoo_fifo_thread(void *param)
+@@ -437,7 +457,7 @@ voodoo_fifo_thread(void *param)
                          if (target_buf < VOODOO_BUF_COUNT) {
                              ATOMIC_DEC(voodoo->pending_fb_writes_buf[target_buf]);
                          }
@@ -125,7 +149,7 @@ index 720b8f8..9652c98 100644
                              break;
                          fifo = &voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK];
                      }
-@@ -448,7 +461,7 @@ voodoo_fifo_thread(void *param)
+@@ -448,7 +468,7 @@ voodoo_fifo_thread(void *param)
                              voodoo_tex_writel(fifo->addr_type & FIFO_ADDR, fifo->val, voodoo);
                          fifo->addr_type = FIFO_INVALID;
                          voodoo->fifo_read_idx++;
@@ -134,7 +158,7 @@ index 720b8f8..9652c98 100644
                              break;
                          fifo = &voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK];
                      }
-@@ -458,7 +471,7 @@ voodoo_fifo_thread(void *param)
+@@ -458,7 +478,7 @@ voodoo_fifo_thread(void *param)
                          voodoo_2d_reg_writel(voodoo, fifo->addr_type & FIFO_ADDR, fifo->val);
                          fifo->addr_type = FIFO_INVALID;
                          voodoo->fifo_read_idx++;
@@ -143,7 +167,7 @@ index 720b8f8..9652c98 100644
                              break;
                          fifo = &voodoo->fifo[voodoo->fifo_read_idx & FIFO_MASK];
                      }
-@@ -480,7 +493,7 @@ voodoo_fifo_thread(void *param)
+@@ -480,7 +500,7 @@ voodoo_fifo_thread(void *param)
          thread_set_event(voodoo->fifo_empty_event);
          ATOMIC_STORE(voodoo->fifo_empty_signaled, 1);
  
@@ -152,7 +176,7 @@ index 720b8f8..9652c98 100644
              uint64_t start_time = plat_timer_read();
              uint64_t end_time;
              uint32_t header = cmdfifo_get(voodoo);
-@@ -1072,6 +1085,7 @@ voodoo_fifo_thread(void *param)
+@@ -1072,6 +1092,7 @@ voodoo_fifo_thread(void *param)
              end_time = plat_timer_read();
              voodoo->time += end_time - start_time;
          }
