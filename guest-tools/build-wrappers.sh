@@ -419,6 +419,15 @@ i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
   "$ROOT/guest-tools/src/waitfile.c"
 cp "$OUT/iso/TESTS/waitfile.exe" "$OUT/waitfile.exe"
 
+# GLPROBE: whose OpenGL a program on this machine gets (DDPROBE's counterpart,
+# doc 19 §43). It loads opengl32 at run time rather than importing it, so that
+# a pass-through refusing to load without its device mapper is a line in its
+# log instead of a program that dies before main().
+i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+  -march=pentium3 -mtune=generic -o "$OUT/iso/TESTS/glprobe.exe" \
+  "$ROOT/guest-tools/src/glprobe.c" -lgdi32 -luser32
+cp "$OUT/iso/TESTS/glprobe.exe" "$OUT/glprobe.exe"
+
 # CDSHELF: the host's disc shelf from inside the machine (doc 07, patch 52;
 # protocol cdshelf/cdshelf_proto.h). One EXE for both Windows families — SPTI
 # on XP, WNASPI32 loaded at run time on Win98 — plus a DOS .COM that drives

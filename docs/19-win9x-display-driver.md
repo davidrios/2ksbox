@@ -3214,6 +3214,25 @@ kept as `MSOGL32.DLL` and a second copy of ours as `WGLPT32.DLL` — which is
 what the helper puts back if Windows ever restores its own. Unlike
 `ddraw.dll`, `opengl32.dll` has not been restored in any run here.
 
+**And that half is not conditional, on purpose.** The DirectDraw switch is
+about which Direct3D a game gets; OpenGL has only one answer on these
+machines either way, because the pass-through *is* the accelerated GL and
+our own Direct3D does not use GL at all. `GLPROBE.EXE` (the OpenGL
+counterpart of DDPROBE: it loads opengl32 at run time, prints
+`GL_VENDOR`/`GL_RENDERER`/`GL_VERSION`, reads a cleared pixel back and times
+120 frames) says the same thing in both modes on the reference host —
+`GL_RENDERER AMD Radeon RX 9060 XT (radeonsi, gfx1200, …)`,
+`GL_VERSION 4.6 (Compatibility Profile) Mesa`, the clear reading `00ff00`,
+1052.6 fps with the executor on. `GDI Generic` there would be Microsoft's
+software renderer, which is what WineD3D came up empty on.
+
+The component therefore **depends on the device mapper** and says so rather
+than installing a trap: the pass-through's `DllMain` returns FALSE without
+FXMEMMAP.VXD, so a program that imports opengl32 does not start at all —
+where before it would have fallen back to Microsoft's software GL. `SETUP
+/ALL` installs the mapper first (it is component 2); a bare `/I 7` on a
+machine without it stops with that sentence.
+
 **Which way it points is the host's, not the image's.** The same disk runs
 on a machine with a Vulkan 1.3 card one day and without it the next, so the
 value is not written at install time. `D3DPRE.EXE` asks the display driver
@@ -3235,6 +3254,10 @@ the case a per-game folder loses. Measured 2026-09-20 on
 | 1 | `SETUP /I 7` | the five files in place, `DDSYS.DLL written from DDRAW.DLL (399872 bytes, 1 name changed)` |
 | 2 | `no-exec=on` | `adapter answered, d3d status 0 -> DirectDraw should be WineD3D's`; the probe finds `Wine D3D7 T&L HAL` after DDPROBE has loaded DirectDraw, and renders at **545.5 fps** |
 | 3 | the executor available | `adapter answered, d3d status 1 -> DirectDraw should be Windows' own`; the value is removed and the probe finds our own HAL |
+
+Both of those boots also run `GLPROBE.EXE`, and the point of asking twice is
+that the answer must *not* change: the pass-through, drawing correctly, in
+d3dpt mode as much as in the fallback.
 
 The third boot is the half that matters: a switch that never switches back
 would leave every machine on WineD3D the first time it met a host without

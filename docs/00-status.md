@@ -180,7 +180,14 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   2026-09-20: with `no-exec=on` the probe finds `Wine D3D7 T&L HAL` at
   **545.5 fps** *after* a DirectDraw program has already loaded Windows' own,
   and with the executor available the value is taken away again and the probe
-  is back on ours. Two things that do not work are measured there too:
+  is back on ours. **OpenGL is not part of the switch**: the pass-through is
+  the machine's GL in both modes (our own Direct3D does not use GL, and the
+  pass-through is the only accelerated one), which `TESTS\GLPROBE.EXE` says
+  in both boots — `GL_RENDERER AMD Radeon RX 9060 XT (radeonsi …)`, a cleared
+  pixel reading `00ff00`, 1052.6 fps with the executor on. That is why the
+  component refuses to install without the device mapper: the pass-through's
+  `DllMain` returns FALSE without it and every program that imports opengl32
+  would stop starting. Two things that do not work are measured there too:
   replacing `DDRAW.DLL` (System File Protection restores it) and preloading
   Wine's copy at login (an app-directory module never becomes the machine's,
   resident or not).

@@ -43,6 +43,7 @@ RAW="${RAW:-$ROOT/build/wined3d-sys/guest.raw}"
 COMP="${COMP:-7}"
 D="$ROOT/guest-tools/out/driver9x"
 WAIT="$ROOT/guest-tools/out/waitfile.exe"
+GLP="$ROOT/guest-tools/out/glprobe.exe"
 ISO="$(ls -t "$ROOT"/guest-tools/out/guest-tools-*.iso 2>/dev/null | head -1)"
 export MTOOLS_SKIP_CHECK=1
 
@@ -70,6 +71,25 @@ pull() {      # pull <guest path> <local name>
     && mv "$OUT/$2.txt" "$OUT/$2"
 }
 
+# **OpenGL is not part of the switch.** The pass-through is the only
+# accelerated GL on this machine whether or not WineD3D is in play, so this
+# component installs it as the system OPENGL32.DLL and leaves it there. Both
+# boots ask the same thing: "GDI Generic" here would mean Microsoft's software
+# renderer answered, which is what WineD3D came up empty on.
+gl_verdicts() {   # gl_verdicts <log> <when>
+  local log="$OUT/$1"
+  grep -q "GL_RENDERER" "$log" 2>/dev/null
+  verdict "OpenGL answered ($2)" $((1 - $?)) "$(sed -n 's/.*GL_RENDERER *//p' "$log" 2>/dev/null | head -1 | cut -c1-48)"
+  if grep -qi "GDI Generic" "$log" 2>/dev/null; then
+    verdict "and it is the pass-through ($2)" 0 "Microsoft's software GL"
+  else
+    grep -q "GL_RENDERER" "$log" 2>/dev/null
+    verdict "and it is the pass-through ($2)" $((1 - $?))
+  fi
+  grep -q "reads 00ff00" "$log" 2>/dev/null
+  verdict "GL draws what it is told ($2)" $((1 - $?)) "$(sed -n 's/.*cleared pixel //p' "$log" 2>/dev/null | head -1)"
+}
+
 # ---------------------------------------------------------------- boot 1
 echo "==> boot 1: SETUP /I $COMP"
 PLAYER=1 RAW="$RAW" \
@@ -90,8 +110,8 @@ verdict "D3DPRE.EXE installed" $((1 - $?))
 # ---------------------------------------------------------------- boot 2
 mdel -i "$M" ::/WINDOWS/D3DPRE.LOG 2>/dev/null   # the wait below must see *this* login's
 echo "==> boot 2: no executor on the host — the helper should switch DirectDraw over"
-PLAYER=1 RAW="$RAW" STAGE="$D/ddprobe.exe $WAIT" \
-GUEST_CMD=$'C:\\WAITFILE.EXE C:\\WINDOWS\\D3DPRE.LOG 90\ncd \\\nstart /w C:\\DDPROBE.EXE\ncd \\WTEST\nstart /w D3D7TEST.EXE 640 480 16 60\ncopy C:\\2KSBOX\\D3D7TEST.LOG C:\\D3D7W.LOG' \
+PLAYER=1 RAW="$RAW" STAGE="$D/ddprobe.exe $WAIT $GLP" \
+GUEST_CMD=$'C:\\WAITFILE.EXE C:\\WINDOWS\\D3DPRE.LOG 90\ncd \\\nstart /w C:\\DDPROBE.EXE\ncd \\WTEST\nstart /w D3D7TEST.EXE 640 480 16 60\ncopy C:\\2KSBOX\\D3D7TEST.LOG C:\\D3D7W.LOG\ncd \\\nC:\\GLPROBE.EXE 120' \
 EXTRA='-global d3dpt-vga.no-exec=on' TABLET=0 CDS="$ISO" \
 RUN_SECS=200 SHOTS=0 SETTLE=30 \
 OUT="$OUT/boot2" "$ROOT/tools/win98-game-test.sh" "$IMG" wined3dsys2 > "$OUT/boot2.log" 2>&1
@@ -105,6 +125,8 @@ grep -q "HAL device present" "$OUT/probe-noexec.log" 2>/dev/null
 verdict "a Direct3D HAL after DDPROBE" $((1 - $?))
 grep -qi "WineD3D" "$OUT/probe-noexec.log" 2>/dev/null
 verdict "and it is WineD3D's" $((1 - $?)) "$(grep -m1 'device:' "$OUT/probe-noexec.log" 2>/dev/null | cut -c1-70)"
+pull GLPROBE.LOG glprobe-noexec.log
+gl_verdicts glprobe-noexec.log "no executor"
 fps=$(sed -n 's/.*= \([0-9.]*\) fps/\1/p' "$OUT/probe-noexec.log" 2>/dev/null | head -1)
 # Microsoft's software GL would be single digits here; ours is hundreds. This
 # is what says the OPENGL32 redirection found the pass-through and not
@@ -115,13 +137,14 @@ verdict "rendering through the pass-through" $((1 - $?)) "${fps:-no} fps"
 # ---------------------------------------------------------------- boot 3
 mdel -i "$M" ::/WINDOWS/D3DPRE.LOG 2>/dev/null
 echo "==> boot 3: the executor is there — the helper should hand DirectDraw back"
-PLAYER=1 RAW="$RAW" STAGE="$D/ddprobe.exe $WAIT" \
-GUEST_CMD=$'C:\\WAITFILE.EXE C:\\WINDOWS\\D3DPRE.LOG 90\ncd \\\nstart /w C:\\DDPROBE.EXE\ncd \\WTEST\nstart /w D3D7TEST.EXE 640 480 16 60\ncopy C:\\2KSBOX\\D3D7TEST.LOG C:\\D3D7O.LOG' \
+PLAYER=1 RAW="$RAW" STAGE="$D/ddprobe.exe $WAIT $GLP" \
+GUEST_CMD=$'C:\\WAITFILE.EXE C:\\WINDOWS\\D3DPRE.LOG 90\ncd \\\nstart /w C:\\DDPROBE.EXE\ncd \\WTEST\nstart /w D3D7TEST.EXE 640 480 16 60\ncopy C:\\2KSBOX\\D3D7TEST.LOG C:\\D3D7O.LOG\ncd \\\nC:\\GLPROBE.EXE 120' \
 TABLET=0 CDS="$ISO" \
 RUN_SECS=200 SHOTS=0 SETTLE=30 \
 OUT="$OUT/boot3" "$ROOT/tools/win98-game-test.sh" "$IMG" wined3dsys3 > "$OUT/boot3.log" 2>&1
 pull WINDOWS/D3DPRE.LOG d3dpre-exec.log
 pull D3D7O.LOG probe-exec.log
+pull GLPROBE.LOG glprobe-exec.log
 grep -q "should be Windows' own" "$OUT/d3dpre-exec.log" 2>/dev/null
 verdict "helper chose our own Direct3D" $((1 - $?)) "$(head -1 "$OUT/d3dpre-exec.log" 2>/dev/null | cut -c1-90)"
 grep -q "DDRAW removed\|DDRAW -> " "$OUT/d3dpre-exec.log" 2>/dev/null
@@ -133,6 +156,7 @@ if grep -qi "WineD3D" "$OUT/probe-exec.log" 2>/dev/null; then
 else
   verdict "and it is ours, not WineD3D's" 1 "$(grep -m1 'device:' "$OUT/probe-exec.log" 2>/dev/null | cut -c1-70)"
 fi
+gl_verdicts glprobe-exec.log "executor on"
 
 [ "${KEEP:-0}" = 1 ] || rm -f "$RAW"
 echo

@@ -897,6 +897,20 @@ static int step_wined3d_sys(void)
     int bad = 0;
 
     say("WineD3D as this machine's DirectDraw:");
+    /* **The pass-through GL needs the device mapper**, and this component
+     * makes it the machine's OpenGL: without FXMEMMAP.VXD the wrapper's
+     * DllMain returns FALSE, and then *every* program that imports opengl32
+     * fails to start rather than falling back to Microsoft's software GL.
+     * `SETUP /ALL` installs the mapper first (it is component 2); a bare
+     * `/I` of this one on a machine without it would be a trap, so it stops
+     * instead. */
+    snprintf(src, sizeof src, "%s\\FXMEMMAP.VXD", g_sys);
+    if (GetFileAttributesA(src) == INVALID_FILE_ATTRIBUTES) {
+        say("    the device mapper is not installed: run \"Glide and the device");
+        say("    mapper\" first (SETUP /I 2, or SETUP /ALL). The OpenGL this");
+        say("    component installs does not load without it.");
+        return 1;
+    }
     snprintf(src, sizeof src, "%sWINED3D\\SYSTEM9X\\DDRAWME.DLL", g_root);
     bad |= copy_one(src, g_sys, "DDRAWME.DLL");
     snprintf(src, sizeof src, "%sWINED3D\\SYSTEM9X\\D3DPRE.EXE", g_root);
