@@ -252,6 +252,22 @@ for d in D3D8-9 DDRAW; do
   cp "$W"/wined3d.dll "$WD/$d/WINED3D.DLL"
   cp "$M"/opengl32.dll "$WD/$d/OPENGL32.DLL"
 done
+# SYSTEM9X\: the two files the *machine-wide* install needs that the
+# per-game folders do not (doc 19 §43, SETUP's "WineD3D as this machine's
+# DirectDraw"). Everything else that install puts in the system folder is
+# copied out of DDRAW\ above, so the disc still carries one of each file.
+# The switcher is wine9x's `ddraw_98.dll`: a DDRAW.DLL that decides per
+# caller between WineD3D and the real DirectDraw (which SETUP leaves in
+# place under the name DDSYS.DLL). It is not a "third way to install the
+# same thing" — on 9x a per-game folder reaches only the first DirectDraw
+# program of a session, so for the second game it is the only way.
+mkdir -p "$WD/SYSTEM9X"
+cp "$W"/ddraw_98.dll "$WD/SYSTEM9X/DDRAWME.DLL"
+echo "==> D3DPRE.EXE (the login helper that points DirectDraw either way)"
+i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
+  -march=pentium3 -mtune=generic -mwindows -I "$ROOT/guest-tools/src" \
+  -o "$WD/SYSTEM9X/D3DPRE.EXE" "$ROOT/guest-tools/src/d3dpre.c"
+
 sed "s/@WINE9X@/${WINE9X_REF:0:7}/" "$ROOT/guest-tools/README-WINED3D.txt" \
   | crlf > "$WD/README.TXT"
 

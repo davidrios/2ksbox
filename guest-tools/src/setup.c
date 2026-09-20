@@ -31,6 +31,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <ctype.h>
 
 #define MAX_COMPONENTS 8
@@ -794,6 +795,174 @@ static int step_voodoo2_guard(void)
     return 0;
 }
 
+/* ------------------------------- WineD3D as the machine's DirectDraw (9x)
+ *
+ * On 9x the WineD3D copy of DDRAW.DLL next to a game reaches that game only
+ * if it is the first program of the session to touch DirectDraw: Windows
+ * keeps one module per name for the whole machine and DDHELP.EXE keeps
+ * Windows' own ddraw.dll loaded once anything has used it, so the *second*
+ * game a user starts is served that one whatever sits in its folder — and on
+ * a host with no Direct3D executor its 3D setup then lists no device at all
+ * (doc 19 §42, measured both ways). Replacing the system file is not the
+ * answer: System File Protection restores it at the next boot.
+ *
+ * What works is redirecting the name. wine9x's switcher goes in as
+ * DDRAWME.DLL, the machine's own ddraw.dll is copied to DDSYS.DLL with the
+ * name inside it changed (the switcher hands the callers that want real
+ * DirectDraw to that one), and KnownDLLs\DDRAW points at the switcher. The
+ * loader reads that per LoadLibrary rather than once at boot, so it takes
+ * effect for every program started afterwards.
+ *
+ * Which way it should point is the *host's* business and changes between
+ * runs, so the value is not written here: D3DPRE.EXE writes it at every
+ * login, after asking the display driver whether this host has an executor
+ * (doc 19 §43). On a host that has one it removes the value again, and the
+ * machine is back on our own Direct3D with nothing to undo by hand. */
+#define D3DPRE_RUN_NAME "2ksbox WineD3D"
+
+/* WINDOWS\SYSTEM\DDSYS.DLL: this machine's own DirectDraw under another
+ * name, with the "DDRAW.DLL" that follows "DDRAW16.DLL" inside it changed to
+ * match (wine9x's ddreplacer.c does the same edit by hand). Without that
+ * edit the copy registers its 16-bit services under the name the switcher
+ * now answers to, and the registration reaches the wrong module. */
+static int make_ddsys(void)
+{
+    static const char pat[] = "DDRAW16.DLL\0DDRAW.DLL";   /* 21 bytes, NUL inside */
+    static const char to[] = "DDSYS.DLL";
+    char src[PATHBUF], dst[PATHBUF];
+    unsigned char *buf;
+    long size, i;
+    int found = 0;
+    FILE *f;
+
+    snprintf(dst, sizeof dst, "%s\\DDSYS.DLL", g_sys);
+    if (GetFileAttributesA(dst) != 0xffffffffu) {
+        say("    DDSYS.DLL is already there");
+        return 0;
+    }
+    snprintf(src, sizeof src, "%s\\DDRAW.DLL", g_sys);
+    if ((f = fopen(src, "rb")) == NULL) {
+        say("    %s: cannot read it", src);
+        return 1;
+    }
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size <= 0 || (buf = (unsigned char *)malloc((size_t)size)) == NULL) {
+        say("    %s: %ld bytes, no memory for it", src, size);
+        fclose(f);
+        return 1;
+    }
+    if (fread(buf, 1, (size_t)size, f) != (size_t)size) {
+        say("    %s: short read", src);
+        free(buf);
+        fclose(f);
+        return 1;
+    }
+    fclose(f);
+    for (i = 0; i + (long)sizeof pat <= size; i++) {
+        if (memcmp(buf + i, pat, sizeof pat - 1) == 0) {
+            memcpy(buf + i + 12, to, sizeof to - 1);
+            found++;
+        }
+    }
+    if (!found) {
+        /* Either this is not a DirectDraw this edit knows, or DDRAW.DLL has
+         * already been replaced by something else. Either way, stop: a
+         * switcher with nothing to forward to takes DirectDraw away. */
+        say("    %s: the name to patch is not in it — leaving everything alone", src);
+        free(buf);
+        return 1;
+    }
+    if ((f = fopen(dst, "wb")) == NULL || fwrite(buf, 1, (size_t)size, f) != (size_t)size) {
+        say("    %s: cannot write it", dst);
+        if (f) fclose(f);
+        free(buf);
+        return 1;
+    }
+    fclose(f);
+    free(buf);
+    say("    DDSYS.DLL written from DDRAW.DLL (%ld bytes, %d name%s changed)",
+        size, found, found == 1 ? "" : "s");
+    return 0;
+}
+
+static int step_wined3d_sys(void)
+{
+    char src[PATHBUF], ours[PATHBUF];
+    HKEY run;
+    int bad = 0;
+
+    say("WineD3D as this machine's DirectDraw:");
+    snprintf(src, sizeof src, "%sWINED3D\\SYSTEM9X\\DDRAWME.DLL", g_root);
+    bad |= copy_one(src, g_sys, "DDRAWME.DLL");
+    snprintf(src, sizeof src, "%sWINED3D\\SYSTEM9X\\D3DPRE.EXE", g_root);
+    bad |= copy_one(src, g_win, "D3DPRE.EXE");
+    /* what the switcher forwards to, out of the per-game folder's own copies
+     * so that the disc carries one of each file */
+    snprintf(src, sizeof src, "%sWINED3D\\DDRAW\\DDRAW.DLL", g_root);
+    bad |= copy_one(src, g_sys, "WINEDD.DLL");
+    snprintf(src, sizeof src, "%sWINED3D\\DDRAW\\WINED3D.DLL", g_root);
+    bad |= copy_one(src, g_sys, "WINED3D.DLL");
+    /* **WineD3D draws through the first opengl32.dll the loader finds**, and
+     * the one in the system folder is Microsoft's software GL — far too slow
+     * to play on, and on a machine-wide install there is no game directory to
+     * put ours in front of it. Redirecting the *name* the way DDRAW is
+     * redirected does not work here: WineD3D then comes up with no GL adapter
+     * at all (`tex 1x1..0x0`, doc 19 §43), so the pass-through goes in as the
+     * system OPENGL32.DLL itself — staged and swapped on the restart, because
+     * it may be loaded right now — with Microsoft's kept beside it as
+     * MSOGL32.DLL and a second copy of ours as WGLPT32.DLL, which is what
+     * D3DPRE.EXE puts back if Windows ever restores the original.
+     *
+     * It is the right OpenGL for this machine either way: it is the same DLL
+     * the per-game "OpenGL pass-through" set copies, and a GL program on a
+     * 2ksbox machine wants the pass-through whether or not WineD3D is in
+     * play. */
+    snprintf(src, sizeof src, "%s\\MSOGL32.DLL", g_sys);
+    if (GetFileAttributesA(src) == INVALID_FILE_ATTRIBUTES) {
+        char msgl[PATHBUF];
+
+        snprintf(msgl, sizeof msgl, "%s\\OPENGL32.DLL", g_sys);
+        if (CopyFileA(msgl, src, TRUE)) {
+            say("    Microsoft's OPENGL32.DLL kept as MSOGL32.DLL");
+        }
+    }
+    snprintf(src, sizeof src, "%sWINED3D\\DDRAW\\OPENGL32.DLL", g_root);
+    bad |= copy_one(src, g_sys, "WGLPT32.DLL");
+    snprintf(src, sizeof src, "%sOPENGL\\WRAPGL32.EXT", g_root);
+    bad |= copy_one(src, g_sys, "WRAPGL32.EXT");
+    {
+        static const char *const gl[] = { "OPENGL32.DLL", NULL };
+
+        bad |= stage_set("OPENGL", g_sys, gl);
+    }
+    if (bad) {
+        return 1;
+    }
+    if (make_ddsys()) {
+        return 1;
+    }
+    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, RUN_KEY, 0, NULL, 0, KEY_READ | KEY_WRITE, NULL,
+                        &run, NULL) != ERROR_SUCCESS) {
+        say("    HKLM\\%s: cannot open it (error %lu)", RUN_KEY, (unsigned long)GetLastError());
+        return 1;
+    }
+    snprintf(ours, sizeof ours, "%s\\D3DPRE.EXE", g_win);
+    if (RegSetValueExA(run, D3DPRE_RUN_NAME, 0, REG_SZ, (BYTE *)ours, strlen(ours) + 1)
+            != ERROR_SUCCESS) {
+        say("    HKLM\\%s: cannot add \"%s\" (error %lu)", RUN_KEY, D3DPRE_RUN_NAME,
+            (unsigned long)GetLastError());
+        RegCloseKey(run);
+        return 1;
+    }
+    RegCloseKey(run);
+    say("    \"%s\" = %s: from the next login it asks the adapter and points", D3DPRE_RUN_NAME, ours);
+    say("    DirectDraw at WineD3D on a host with no Direct3D of its own, or");
+    say("    back at Windows' own on a host that has one. D3DPRE.LOG says which.");
+    return 0;
+}
+
 typedef struct {
     const char *label;
     const char *note;
@@ -811,6 +980,8 @@ static Component g_comp[MAX_COMPONENTS] = {
     { "Sound Blaster 16 device names",      "DirectX 9 fix, only if needed", 1, 0, 1, step_sb16_names, 0 },
     /* after it, for the same reason */
     { "Voodoo 2 start-up guard",            "only with a 3dfx card",         1, 0, 1, step_voodoo2_guard, 0 },
+    /* and after that one */
+    { "WineD3D as this machine's DirectDraw", "9x only; used on a host with no Direct3D", 1, 0, 1, step_wined3d_sys, 0 },
 };
 static int g_ncomp;
 

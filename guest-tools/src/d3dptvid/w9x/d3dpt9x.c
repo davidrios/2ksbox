@@ -62,6 +62,7 @@
 #include "d3dpt9x.h"
 #include "d3dpt9v.h"
 #include "../../../../d3dpt/d3dpt_fb.h"
+#include "../d3dpt_esc.h"
 
 /* Pretend we have a 208 by 156 mm screen, as every driver of the era does. */
 #define DISPLAY_HORZ_MM     208
@@ -1131,6 +1132,10 @@ LONG WINAPI __loadds Control(LPVOID lpDevice, UINT function,
             dbg_str("");
         }
         if (code == QUERYESCSUPPORT) return 1;
+        /* ours (doc 19 §43): the one question a ring-3 program cannot ask
+         * any other way, since the register page is not its to map and
+         * DirectDraw is what the asker is deciding about. */
+        if (code == D3DPT_ESC_HOSTINFO) return 1;
         if (code == DCICOMMAND) {
             /* **The answer is the HAL version, not "yes".** DirectDraw
              * reads this return value to decide what the driver is: a
@@ -1148,6 +1153,22 @@ LONG WINAPI __loadds Control(LPVOID lpDevice, UINT function,
             return DD_HAL_VERSION;
         }
         /* everything else the DIB Engine answers for us */
+    }
+    /* What the host can do, for a program that has to decide before it
+     * loads DirectDraw: the adapter's own `D3D_STATUS`, which is
+     * `D3DPT_STATUS_NO_EXEC` on a host below ADR-013's Vulkan floor and on
+     * one started with `no-exec=on`. `D3DPRE.EXE` asks this at login and
+     * switches the machine's DirectDraw to WineD3D's, or back (doc 19 §43). */
+    if (function == D3DPT_ESC_HOSTINFO && lpOutput != 0) {
+        D3DPT_ESC_HOSTINFO_T FAR *hi = (D3DPT_ESC_HOSTINFO_T FAR *)lpOutput;
+
+        hi->magic = D3DPT_ESC_HOSTINFO_MAGIC;
+        hi->size = sizeof(*hi);
+        hi->d3d_status = RegGet(D3DPT_FB_REG_D3D_STATUS);
+        hi->fb_version = RegGet(D3DPT_FB_REG_VERSION);
+        dbg_val("d3dpt9x: host info escape, d3d status", hi->d3d_status);
+        dbg_str("");
+        return 1;
     }
     if (function == DCICOMMAND && lpInput != 0) {
         DCICMD_t FAR *cmd = (DCICMD_t FAR *)lpInput;

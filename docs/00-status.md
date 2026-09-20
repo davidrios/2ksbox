@@ -165,27 +165,25 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
-- **The WineD3D fallback folder reaches only the first DirectDraw program of
-  a 9x session** (2026-09-19, doc 19 §42). Reported as FIFA 2000's 3D setup
-  offering no adapter with `WINED3D\DDRAW\` next to the EXE and
-  `no-exec=on`. One binary, one folder, Wine's `DDRAW.DLL` beside it: with
-  nothing having used DirectDraw first the probe gets the three WINE devices
-  and renders 60 frames at 218 fps; with `DDPROBE.EXE` run first from another
-  folder it gets `HAL caps 00000480 (no 3D)` and `HAL device ABSENT` — our
-  own driver's caps, i.e. the *system* `ddraw.dll`. Win9x keeps one module
-  per name for the machine and DDHELP.EXE keeps DirectDraw resident. **XP is
-  not affected** (per-process, by path). The stack itself is fine on 98:
-  `EBTEST` passes 5/5 through Wine's ddraw, DirectX 3 execute buffers
-  included. **The fix that works is the module name, not the file**:
-  replacing `WINDOWS\SYSTEM\DDRAW.DLL` is undone by 98 SE's System File
-  Protection at the next boot, but wine9x's switcher as `DDRAWME.DLL` plus
-  `KnownDLLs\DDRAW = ddrawme.dll` needs no protected file and holds across
-  boots (measured: `DDPROBE` first, no Wine DLLs near the probe, and
-  `D3D7TEST` still finds the WINE HAL, 545 fps). `build/wined3d-sys98/`
-  applies it from inside the machine. **Open, and a decision:** whether that
-  becomes a `SETUP /I` component for 9x — it is system-wide, so it belongs
-  on a host below ADR-013's Vulkan floor and not on one with our own
-  Direct3D. Until then the shipped README says to start the game first.
+- **WineD3D can be the machine's DirectDraw on 9x, decided at every login**
+  (2026-09-20, doc 19 §43). The folder next to a game reaches only the first
+  DirectDraw program of a session (§42), so `SETUP /I 7` on 9x installs
+  wine9x's switcher as `DDRAWME.DLL`, this machine's own DirectDraw as
+  `DDSYS.DLL` (with the name inside it patched, `ddreplacer.c`'s edit), the
+  GL pass-through as the system `OPENGL32.DLL`, and `D3DPRE.EXE` in the Run
+  key. The helper asks the display driver through a private escape
+  (`d3dpt_esc.h`, answered from `D3DPT_FB_REG_D3D_STATUS`) whether this
+  *host* has a Direct3D executor, and writes or removes
+  `KnownDLLs\DDRAW = ddrawme.dll` — which the loader reads per
+  `LoadLibrary`, so it is in force for every program started afterwards with
+  no restart. `tools/wined3d-sys-test.sh` is the check, three boots, PASS on
+  2026-09-20: with `no-exec=on` the probe finds `Wine D3D7 T&L HAL` at
+  **545.5 fps** *after* a DirectDraw program has already loaded Windows' own,
+  and with the executor available the value is taken away again and the probe
+  is back on ours. Two things that do not work are measured there too:
+  replacing `DDRAW.DLL` (System File Protection restores it) and preloading
+  Wine's copy at login (an app-directory module never becomes the machine's,
+  resident or not).
 
 - **Carmageddon's 3dfx build on the Voodoo 2: three hangs and a flicker, all
   from one thing — 86Box has two queues into the chip and the guest has one

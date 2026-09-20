@@ -3146,3 +3146,97 @@ then draws through GL, which is what a host below ADR-013's Vulkan floor
 wants and what a host with our own Direct3D does not.
 `build/wined3d-sys98/` is a folder that applies it from inside the machine
 (`INSTALL.BAT`; the disc shelf serves a host folder with `isodir:`).
+
+### 43. WineD3D as the machine's DirectDraw, decided at every login (2026-09-20)
+
+§42 leaves a machine that cannot be told to use the fallback except by
+restarting it and being careful about what runs first. This is the component
+that does it properly: `SETUP /I 7` on 9x, "WineD3D as this machine's
+DirectDraw", and `D3DPRE.EXE` from the Run key deciding which way it should
+point at every login.
+
+**Three things that do not work**, each measured on a raw copy of
+`base98-br-glide3` before the one that does.
+
+*The folder next to the game* reaches only the first DirectDraw program of
+the session (§42).
+
+*Replacing `WINDOWS\SYSTEM\DDRAW.DLL`* with wine9x's switcher, which is what
+its README describes, is undone by Windows 98 SE: System File Protection
+blocks the login with "os arquivos de sistema… substituídos por versões mais
+antigas" — which also stops `WIN.INI`'s `run=`, so a scripted run does
+nothing at all — and by the boot after that the file is Microsoft's again,
+restored from `SYSBCKUP`. The version resources already match
+(4.09.00.0904), so matching them is not the lever.
+
+*Preloading Wine's copy at login* — the obvious cheap trick, and the one
+worth measuring twice: `EBTEST.EXE` ran from a folder with the Wine set,
+used it (5 of 5 cases), and exited; the next program got `HAL dwCaps
+0x00000480`, this driver's. Then with the holder **still running**
+(`D3D7TEST` rendering in Wine's own fullscreen mode) the next program still
+got `0x00000480`. An app-directory module never becomes the machine's,
+resident or not, and the internal name is `ddraw.dll` in both files — so
+that is not the discriminator either. What wins is being *in the system
+directory*, which is the file we cannot replace.
+
+**What works is the name.** `KnownDLLs` is read per `LoadLibrary`, not once
+at boot: a value written in the middle of a session is in force for every
+program started after it (measured — the write, then `DDPROBE`, then a probe
+with no Wine DLLs of its own, all in one batch). So nothing has to be
+replaced and nothing has to be restarted:
+
+```
+[HKLM\System\CurrentControlSet\Control\SessionManager\KnownDLLs]
+"DDRAW"="ddrawme.dll"
+```
+
+**What SETUP installs.** `DDRAWME.DLL` is wine9x's `ddraw_98.dll`, a
+DDRAW.DLL that decides per caller between WineD3D and the real DirectDraw;
+the real one is this machine's own, copied to `DDSYS.DLL` with the
+`DDRAW.DLL` that follows `DDRAW16.DLL` inside it changed to match, which is
+the edit `ddreplacer.c` makes by hand — without it the copy registers its
+16-bit services under the name the switcher now answers to. `WINEDD.DLL` and
+`WINED3D.DLL` come out of the per-game `WINED3D\DDRAW\` folder, so the disc
+still carries one of each file; the switcher and the helper are the only
+things `WINED3D\SYSTEM9X\` adds.
+
+**The OpenGL half is a replacement, not a redirection**, and that asymmetry
+is measured. WineD3D draws through the first `opengl32.dll` the loader
+finds, and on a machine-wide install there is no game directory to put ours
+in front of Microsoft's software GL. Redirecting `OPENGL32` the same way
+fails: WineD3D comes up with no GL adapter at all — `HAL caps f5408668 (no
+3D)`, every device `tex 1x1..0x0 aspect 0 stages 0`, and the probe stops
+before it draws. So the pass-through goes in *as* the system `OPENGL32.DLL`
+(staged and swapped on the restart, since it may be loaded), Microsoft's is
+kept as `MSOGL32.DLL` and a second copy of ours as `WGLPT32.DLL` — which is
+what the helper puts back if Windows ever restores its own. Unlike
+`ddraw.dll`, `opengl32.dll` has not been restored in any run here.
+
+**Which way it points is the host's, not the image's.** The same disk runs
+on a machine with a Vulkan 1.3 card one day and without it the next, so the
+value is not written at install time. `D3DPRE.EXE` asks the display driver
+at every login through a private escape — `D3DPT_ESC_HOSTINFO` in
+`guest-tools/src/d3dptvid/d3dpt_esc.h`, answered out of
+`D3DPT_FB_REG_D3D_STATUS`, because a program deciding *about* DirectDraw
+cannot ask DirectDraw — and writes the value, or takes it away again when
+the executor is there. A driver that is not ours answers nothing, which is
+its own answer: no d3dpt adapter means no executor either. `D3DPRE.LOG` in
+the Windows folder says what it decided.
+
+**The check is `tools/wined3d-sys-test.sh`**, three boots on a raw copy, and
+it deliberately runs `DDPROBE.EXE` from another folder *before* the probe —
+the case a per-game folder loses. Measured 2026-09-20 on
+`base98-br-glide3`:
+
+| boot | what it asks | result |
+|---|---|---|
+| 1 | `SETUP /I 7` | the five files in place, `DDSYS.DLL written from DDRAW.DLL (399872 bytes, 1 name changed)` |
+| 2 | `no-exec=on` | `adapter answered, d3d status 0 -> DirectDraw should be WineD3D's`; the probe finds `Wine D3D7 T&L HAL` after DDPROBE has loaded DirectDraw, and renders at **545.5 fps** |
+| 3 | the executor available | `adapter answered, d3d status 1 -> DirectDraw should be Windows' own`; the value is removed and the probe finds our own HAL |
+
+The third boot is the half that matters: a switch that never switches back
+would leave every machine on WineD3D the first time it met a host without
+Vulkan. A run where the probe raced the helper is what the batch's
+`WAITFILE.EXE C:\WINDOWS\D3DPRE.LOG` is for — the Run key and `WIN.INI`'s
+`run=` start at the same moment, and under TCG the helper does not always
+win.

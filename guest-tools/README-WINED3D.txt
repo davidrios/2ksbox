@@ -43,7 +43,7 @@ That OPENGL32.DLL needs the device mapper installed, which is SETUP's
 "Glide and the device mapper" component (SETUP /ALL installs it). Without
 it the DLL refuses to load and the game dies at startup.
 
-ON WINDOWS 98 AND ME, START THE GAME FIRST
+ON WINDOWS 98 AND ME, START THE GAME FIRST - OR LET SETUP DO IT
 
 These files reach a game only if it is the first program of the session to
 use DirectDraw. Windows 9x keeps one copy of a DLL per name for the whole
@@ -52,5 +52,12 @@ it, so the second game you run gets Windows' own DDRAW.DLL and none of this
 folder - a game's 3D setup then offers no 3D device at all. Restart the
 machine and start the game before anything else that draws.
 
+If that is a nuisance, SETUP's "WineD3D as this machine's DirectDraw"
+component does it for the whole machine instead, and only when it is
+needed: at every login it asks the display driver whether this host has
+Direct3D of its own, and points DirectDraw at WineD3D when it has not - or
+back at Windows' own when it has. Then no folder has to be copied at all.
+It writes WINDOWS\D3DPRE.LOG saying which way it went.
+
 (Windows XP and 2000 do not work this way: there the folder is used
-whatever ran before.)
+whatever ran before, and the component is not offered.)
