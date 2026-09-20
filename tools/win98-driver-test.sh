@@ -40,7 +40,7 @@
 #     tools/win98-driver-test.sh <image> install
 #
 # and the evidence is `d3dpt9dd:` / `d3dpthal:` lines in the guest log
-# plus the DDPROBE.LOG it leaves on C:.
+# plus the DDPROBE.LOG it leaves in C:\2KSBOX.
 #
 # The boot is not slept out: the adapter says `linear mode on` the moment the
 # driver programs the desktop mode, so the run waits for that and then lets
@@ -79,10 +79,13 @@ RAW="$OUT/win98-m10.raw"
 SOCK="/tmp/claude-$(id -u)/w98m10.sock"
 BOOT_WAIT="${BOOT_WAIT:-150}"
 
-# What a PROG may leave in C:\ — deleted before the run and read back after,
+# What a PROG may leave behind — deleted before the run and read back after,
 # so what comes out at the end is this run's or nothing. One list, because
 # three copies of it is how a new test's log silently never gets collected.
-PROG_OUTPUTS="DDPROBE.LOG D3D7TEST.LOG D3D7TEST.BMP EBTEST.LOG EB1.BMP EB2.BMP EB3.BMP EB4.BMP EB5.BMP CKTEST.LOG DXTTEST.LOG SHTEST.LOG D3DGAME8.LOG G8.BMP 3DMARK.TXT"
+# Guest paths: every program of ours writes its log and its BMPs to
+# C:\2KSBOX (guest-tools/src/guestlog.h) rather than to whatever directory
+# it was started from; the two at the end are named by the run batch itself.
+PROG_OUTPUTS="2KSBOX/DDPROBE.LOG 2KSBOX/D3D7TEST.LOG 2KSBOX/D3D7TEST.BMP 2KSBOX/EBTEST.LOG 2KSBOX/EB1.BMP 2KSBOX/EB2.BMP 2KSBOX/EB3.BMP 2KSBOX/EB4.BMP 2KSBOX/EB5.BMP 2KSBOX/CKTEST.LOG 2KSBOX/DXTTEST.LOG 2KSBOX/SHTEST.LOG 2KSBOX/D3DGAME8.LOG G8.BMP 3DMARK.TXT"
 
 # Stage PROG in C:\ and name it in WIN.INI's [windows] run=, with PROG_ARGS
 # after it, so the shell starts it at logon. This guest has no serial line and
@@ -446,12 +449,13 @@ PYTXT
 text_screen
 # whatever PROG left behind, if it left anything
 for f in $PROG_OUTPUTS; do
-  rm -f "$OUT/out/$f"
-  if mcopy -i "$RAW@@$OFF" -n "::/$f" "$OUT/out/$f" 2>/dev/null; then
-    echo "$f:"
+  b="${f##*/}"
+  rm -f "$OUT/out/$b"
+  if mcopy -i "$RAW@@$OFF" -n "::/$f" "$OUT/out/$b" 2>/dev/null; then
+    echo "$b:"
     case "$f" in
-      *.BMP) echo "          (extracted bitmap: $OUT/out/$f)" ;;
-      *)     sed 's/^/          /' "$OUT/out/$f" ;;
+      *.BMP) echo "          (extracted bitmap: $OUT/out/$b)" ;;
+      *)     sed 's/^/          /' "$OUT/out/$b" ;;
     esac
   fi
 done
@@ -505,12 +509,13 @@ else
 fi
 
 for f in $PROG_OUTPUTS; do
-  rm -f "$OUT/out/$f"
-  if mcopy -i "$RAW@@$OFF" -n "::/$f" "$OUT/out/$f" 2>/dev/null; then
-    echo "post-shutdown $f:"
+  b="${f##*/}"
+  rm -f "$OUT/out/$b"
+  if mcopy -i "$RAW@@$OFF" -n "::/$f" "$OUT/out/$b" 2>/dev/null; then
+    echo "post-shutdown $b:"
     case "$f" in
-      *.BMP) echo "          (extracted bitmap: $OUT/out/$f)" ;;
-      *)     sed 's/^/          /' "$OUT/out/$f" ;;
+      *.BMP) echo "          (extracted bitmap: $OUT/out/$b)" ;;
+      *)     sed 's/^/          /' "$OUT/out/$b" ;;
     esac
   fi
 done

@@ -97,9 +97,11 @@ stage_bat() {  # the Run dialog truncates long lines: stage a batch file on the 
 }
 [ "$MODE" = bat ] && stage_bat "${1:?batch file}"
 if [ "$MODE" = ddtest ]; then
+  # every guest program writes its log and BMP to C:\2KSBOX now (guestlog.h),
+  # not to whatever directory it was started from, so the copies name it
   printf '%s\n' '@echo off' 'cd /d E:\' 'for %%b in (8 16 32) do (' \
-    '  D:\DRIVER\DDTEST.EXE 640 480 %%b 300' '  copy ddtest.log E:\dd%%b.log > nul' '  copy ddtest.bmp E:\dd%%b.bmp > nul' ')' \
-    'D:\DRIVER\DDTEST.EXE 640 480 32 200 -windowed' 'copy ddtest.log E:\ddwin.log > nul' 'echo DDDONE > COM1' > "$OUT/ddtest.bat"
+    '  D:\DRIVER\DDTEST.EXE 640 480 %%b 300' '  copy C:\2KSBOX\DDTEST.LOG E:\dd%%b.log > nul' '  copy C:\2KSBOX\DDTEST.BMP E:\dd%%b.bmp > nul' ')' \
+    'D:\DRIVER\DDTEST.EXE 640 480 32 200 -windowed' 'copy C:\2KSBOX\DDTEST.LOG E:\ddwin.log > nul' 'echo DDDONE > COM1' > "$OUT/ddtest.bat"
   stage_bat "$OUT/ddtest.bat"
 fi
 if [ "$MODE" = d3dgame8 ]; then
@@ -109,14 +111,17 @@ if [ "$MODE" = d3dgame8 ]; then
   [ -f "$FULL_ISO" ] || { echo "no guest-tools ISO (TESTS\\D3DGAME8.EXE): run guest-tools/build-wrappers.sh"; exit 1; }
   ISO="$FULL_ISO"
   printf '%s\n' '@echo off' 'mkdir E:\G8' 'copy D:\TESTS\D3DGAME8.EXE E:\G8\ > nul' 'cd /d E:\G8' \
-    'D3DGAME8.EXE -frames 600 -dump 300 E:\G8.BMP' 'copy d3dgame8.log E:\g8.log > nul' 'echo done > E:\G8DONE.TXT' 'echo G8DONE > COM1' > "$OUT/g8.bat"
+    'D3DGAME8.EXE -frames 600 -dump 300 E:\G8.BMP' 'copy C:\2KSBOX\D3DGAME8.LOG E:\g8.log > nul' 'echo done > E:\G8DONE.TXT' 'echo G8DONE > COM1' > "$OUT/g8.bat"
   stage_bat "$OUT/g8.bat"
 fi
 PROBES="CUBETEST STRMTEST VOLTEST FMTTEST BUMPTEST SPRTEST ANISTEST PATCHTST MSAATEST MGDTEST"
 if [ "$MODE" = probes ]; then
-  # the DX8 feature probes one after the other; each writes <name>.log where it runs
-  { printf '%s\n' '@echo off' 'cd /d %TEMP%'
-    for p in $PROBES; do printf '%s\n' "D:\\DRIVER\\$p.EXE" "copy $p.LOG E:\\ > nul"; done
+  # the DX8 feature probes one after the other; each writes C:\2KSBOX\<name>.LOG
+  { printf '%s\n' '@echo off'
+    for p in $PROBES; do
+      printf '%s\n' "D:\\DRIVER\\$p.EXE" \
+        "copy C:\\2KSBOX\\$p.LOG E:\\$(echo "$p" | tr 'A-Z' 'a-z').log > nul"
+    done
     printf '%s\n' 'echo PRDONE > COM1'; } > "$OUT/probes.bat"
   stage_bat "$OUT/probes.bat"
 fi
@@ -213,7 +218,7 @@ case "$MODE" in
     finish
     pull modes.log ;;
   d3d7)
-    run 'D:\DRIVER\D3D7TEST.EXE 640 480 32 300 & copy d3d7test.log E:\d3d7.log & copy d3d7test.bmp E:\d3d7.bmp & echo D3D7DONE > COM1'
+    run 'D:\DRIVER\D3D7TEST.EXE 640 480 32 300 & copy C:\2KSBOX\D3D7TEST.LOG E:\d3d7.log & copy C:\2KSBOX\D3D7TEST.BMP E:\d3d7.bmp & echo D3D7DONE > COM1'
     sleep 8; Q screendump "$OUT/d3d7-fullscreen.png"
     gw_wait_log "$SER" D3D7DONE "${CMD_WAIT:-300}" || true
     finish
@@ -239,7 +244,7 @@ case "$MODE" in
         && echo "-- d3dgame8: frame within budget of the native d3d9 frame" || echo "-- d3dgame8: FRAME DIFFERS ($OUT/g8-diff.bmp)"
     else echo "-- d3dgame8: no frame ($OUT/G8.BMP) or no native oracle (build/test/g9-native.bmp: run scripts/test.sh host)"; fi ;;
   shtest)
-    run 'cd /d %TEMP% & D:\DRIVER\SHTEST.EXE & copy shtest.log E:\ & echo SHDONE > COM1'
+    run 'D:\DRIVER\SHTEST.EXE & copy C:\2KSBOX\SHTEST.LOG E:\shtest.log & echo SHDONE > COM1'
     sleep 8; Q screendump "$OUT/shtest-window.png" || true
     gw_wait_log "$SER" SHDONE "${CMD_WAIT:-300}" || true
     finish
@@ -248,7 +253,7 @@ case "$MODE" in
   cubetest|probe)
     p=CUBETEST; [ "$MODE" = probe ] && p="$(echo "${1:?probe name, e.g. VOLTEST}" | tr a-z A-Z)"
     lp="$(echo "$p" | tr A-Z a-z)"
-    run_until PRDONE "${CMD_WAIT:-300}" "cd /d %TEMP% & D:\\DRIVER\\$p.EXE & copy $lp.log E:\\"
+    run_until PRDONE "${CMD_WAIT:-300}" "D:\\DRIVER\\$p.EXE & copy C:\\2KSBOX\\$p.LOG E:\\$lp.log"
     finish
     pull "$lp.log" || true
     probe_verdict "$p" ;;
@@ -263,7 +268,7 @@ case "$MODE" in
     # evidence is the screen, not the probe: a screendump while each ramp is
     # held (the adapter says `gamma ramp on` / `off` when it takes one), and
     # the centre pixel of each, mid grey with blue at 3/4 and then unchanged
-    run "cd /d %TEMP% & D:\\DRIVER\\GAMMATEST.EXE & copy gammatest.log E:\\ & echo GMDONE > COM1"
+    run "D:\\DRIVER\\GAMMATEST.EXE & copy C:\\2KSBOX\\GAMMATEST.LOG E:\\gammatest.log & echo GMDONE > COM1"
     if gw_wait_log "$LOG" "gamma ramp on" "${CMD_WAIT:-300}"; then Q screendump "$OUT/gamma-on.png" || true; fi
     if gw_wait_log "$LOG" "gamma ramp off" "${CMD_WAIT:-300}"; then Q screendump "$OUT/gamma-off.png" || true; fi
     gw_wait_log "$SER" GMDONE "${CMD_WAIT:-300}" || true
@@ -295,20 +300,20 @@ print("-- gamma: " + ("PASS" if ok_on and ok_off and ok_log else "FAIL (see gamm
 PY
     ;;
   cktest)
-    run 'cd /d %TEMP% & D:\DRIVER\CKTEST.EXE & copy cktest.log E:\ & copy ck*.bmp E:\ & echo CKDONE > COM1'
+    run 'D:\DRIVER\CKTEST.EXE & copy C:\2KSBOX\CKTEST.LOG E:\cktest.log & copy C:\2KSBOX\CK*.BMP E:\ & echo CKDONE > COM1'
     sleep 8; Q screendump "$OUT/cktest-fullscreen.png" || true
     gw_wait_log "$SER" CKDONE "${CMD_WAIT:-300}" || true
     finish
     pull cktest.log
-    for n in 1 2 3 4 5 6; do mcopy -n -i "$SCRATCH@@1048576" "::/ck$n.bmp" "$OUT/ck$n.bmp" 2>/dev/null || true; done
+    for n in 1 2 3 4 5 6; do mcopy -n -i "$SCRATCH@@1048576" "::/CK$n.BMP" "$OUT/ck$n.bmp" 2>/dev/null || true; done
     if grep -q 'cktest: [1-9][0-9]* cases, 0 failed' "$OUT/cktest.log" 2>/dev/null; then echo "-- cktest: PASS"; else echo "-- cktest: FAIL (see $OUT/cktest.log and the device log)"; fi ;;
   ebtest)
-    run "cd /d %TEMP% & D:\\DRIVER\\EBTEST.EXE ${*:-} & copy ebtest.log E:\\ & copy eb*.bmp E:\\ & echo EBDONE > COM1"    # extra args: e.g. -rgb, the software-device control
+    run "D:\\DRIVER\\EBTEST.EXE ${*:-} & copy C:\\2KSBOX\\EBTEST.LOG E:\\ebtest.log & copy C:\\2KSBOX\\EB*.BMP E:\\ & echo EBDONE > COM1"    # extra args: e.g. -rgb, the software-device control
     sleep 8; Q screendump "$OUT/ebtest-fullscreen.png" || true
     gw_wait_log "$SER" EBDONE "${CMD_WAIT:-300}" || true
     finish
     pull ebtest.log
-    for n in 1 2 3 4 5 6; do mcopy -n -i "$SCRATCH@@1048576" "::/eb$n.bmp" "$OUT/eb$n.bmp" 2>/dev/null || true; done
+    for n in 1 2 3 4 5 6; do mcopy -n -i "$SCRATCH@@1048576" "::/EB$n.BMP" "$OUT/eb$n.bmp" 2>/dev/null || true; done
     if grep -q 'ebtest: [1-9][0-9]* cases, 0 failed' "$OUT/ebtest.log" 2>/dev/null; then echo "-- ebtest: PASS"; else echo "-- ebtest: FAIL (see $OUT/ebtest.log and the device log)"; fi ;;
   cmd|bat)
     if [ "$MODE" = bat ]; then run 'E:\RUN.BAT'; else run "${1:?guest command line}"; fi

@@ -373,7 +373,7 @@ int main(int argc, char **argv)
     HRESULT hr;
 
     game_init(&G, argc, argv);
-    game_log_open(G.o.log_file[0] ? G.o.log_file : "d3dgame9.log", argc, argv);
+    game_log_open(G.o.log_file[0] ? G.o.log_file : "D3DGAME9.LOG", argc, argv);
     hwnd = game_window(&G, "d3dgame9");
     X.d3d = Direct3DCreate9(D3D_SDK_VERSION);
     if (!X.d3d) { game_log("d3dgame9: Direct3DCreate9 failed"); return 1; }

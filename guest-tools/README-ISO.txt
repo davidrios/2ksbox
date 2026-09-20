@@ -8,6 +8,11 @@ command prompt or the Run box:  D:\SETUP.EXE
   SETUP /LIST            print the lists below and exit
   SETUP /GAME <n> <dir>  copy one file set next to a game's EXE
 
+Every program on this disc writes its log - and any BMP it dumps - to
+C:\2KSBOX, whichever folder you started it from: this disc is read-only,
+and the folder the Run box happened to be in is nobody's guess. Set
+BOXLOG to put them somewhere else:  set BOXLOG=E:\
+
 What is on the disc, if you would rather do it by hand:
 
 GLIDE\    the device mapper and the 3dfx Glide wrappers.

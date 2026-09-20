@@ -81,7 +81,7 @@ cdargs=(-cdrom "$DISC")
 if [ -n "${CDTEST:-}" ]; then
   [ -f "$CDTEST" ] || { echo "CDTEST=$CDTEST not found"; exit 2; }
   mcopy -i "$fat" "$CDTEST" ::/CDTEST.EXE
-  printf '@echo off\r\nmkdir E:\\OUT\r\necho started > E:\\OUT\\STARTED.TXT\r\necho started > COM1\r\ndir D:\\ /S > E:\\OUT\\DIR.TXT\r\nxcopy D:\\ E:\\CD\\ /I /Y /S /E /H > E:\\OUT\\XCOPY.TXT\r\necho %%ERRORLEVEL%% > E:\\OUT\\XCOPYRC.TXT\r\ncd /d E:\\OUT\r\nE:\\CDTEST.EXE D 2 > E:\\OUT\\CDTEST.TXT\r\necho done > E:\\OUT\\DONE.TXT\r\necho done > COM1\r\n' > "$OUT/RUN.BAT"
+  printf '@echo off\r\nmkdir E:\\OUT\r\necho started > E:\\OUT\\STARTED.TXT\r\necho started > COM1\r\ndir D:\\ /S > E:\\OUT\\DIR.TXT\r\nxcopy D:\\ E:\\CD\\ /I /Y /S /E /H > E:\\OUT\\XCOPY.TXT\r\necho %%ERRORLEVEL%% > E:\\OUT\\XCOPYRC.TXT\r\ncd /d E:\\OUT\r\nset BOXLOG=E:\\OUT\r\nE:\\CDTEST.EXE D 2 > E:\\OUT\\CDTEST.TXT\r\necho done > E:\\OUT\\DONE.TXT\r\necho done > COM1\r\n' > "$OUT/RUN.BAT"
   mcopy -o -i "$fat" "$OUT/RUN.BAT" ::/RUN.BAT
   rm -f "$OUT/cd.wav"
   cdargs=(-audiodev "wav,id=cd0,path=$OUT/cd.wav" -drive "if=none,id=cd0,media=cdrom,file=$DISC" -device "ide-cd,bus=ide.1,drive=cd0,audiodev=cd0")
@@ -147,7 +147,7 @@ extra=$(( $(find "$OUT/cd" -type f | wc -l) - n ))
 [ "$extra" -ne 0 ] && echo "  $extra file(s) on the copy that are not in the reference"
 [ "$n" -gt 0 ] || { echo "FAIL: no reference files under $REF (extract the ISO with bsdtar, or xorriso -osirrox on -indev x.iso -extract / dir)"; rc=1; }
 if [ -n "${CDTEST:-}" ]; then
-  mcopy -n -i "$fat" ::/OUT/cdtest.log "$OUT/cdtest.log" 2>/dev/null || mcopy -n -i "$fat" ::/OUT/CDTEST.LOG "$OUT/cdtest.log" 2>/dev/null
+  mcopy -n -i "$fat" ::/OUT/CDTEST.LOG "$OUT/cdtest.log" 2>/dev/null || mcopy -n -i "$fat" ::/OUT/cdtest.log "$OUT/cdtest.log" 2>/dev/null
   echo "cdtest.log:"; LC_ALL=C tr -d '\r' < "$OUT/cdtest.log" 2>/dev/null | grep -E 'tracks|play|position|mode|RESULT|error' | head -30 | sed 's/^/    /'
   # the verdict: MCI saw the play running with advancing positions, and the tone is in the wav; the
   # script's last line is reported but not required (XP's mcicda has ended CDTEST.EXE silently after

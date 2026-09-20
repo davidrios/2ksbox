@@ -21,6 +21,7 @@
 #include <d3d.h>
 #include <stdio.h>
 #include <string.h>
+#include "../../guestlog.h"
 
 static FILE *g_log;
 
@@ -31,7 +32,7 @@ static void out(const char *fmt, ...)
 {
     va_list ap;
 
-    g_log = fopen("C:\\DEVCAPS.LOG", "at");
+    g_log = guest_log_open("DEVCAPS.LOG", "at");
     if (!g_log) return;
     va_start(ap, fmt);
     vfprintf(g_log, fmt, ap);
@@ -137,7 +138,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     (void)prev;
     (void)cmd;
     (void)show;
-    g_log = fopen("C:\\DEVCAPS.LOG", "wt");
+    g_log = guest_log_open("DEVCAPS.LOG", "wt");
     if (!g_log) return 1;
     out("devcaps: D3DDEVICEDESC7 is %u bytes, DDCAPS %u\n", (unsigned)sizeof(D3DDEVICEDESC7), (unsigned)sizeof(DDCAPS));
     /* NONDISPLAYDEVICES: a 3D-only card (the Voodoo 2) is none of the other

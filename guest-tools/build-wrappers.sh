@@ -357,7 +357,7 @@ i686-w64-mingw32-gcc -O2 -o "$T/dithtest.exe" "$ROOT/guest-tools/src/dithtest.c"
 i686-w64-mingw32-gcc -O2 -o "$T/wglgears.exe" "$FX/wrappers/mesa/demos/wglgears.c" \
   -lopengl32 -lgdi32 -lglu32 -mwindows
 # SSE throughput (guest-tools/src/ssebench.c, doc 16): D3DX-shaped SSE1
-# kernels plus the same math in x87 C; ns per op, console + ssebench.log.
+# kernels plus the same math in x87 C; ns per op, console + C:\2KSBOX\SSEBENCH.LOG.
 i686-w64-mingw32-gcc -O2 -o "$T/ssebench.exe" "$ROOT/guest-tools/src/ssebench.c"
 # CDTEST.EXE: CD audio through MCI (doc 17 §6.3), the CD-ROM backend's in-guest check
 i686-w64-mingw32-gcc -O2 -o "$T/cdtest.exe" "$ROOT/guest-tools/src/cdtest.c" -lwinmm
@@ -400,7 +400,7 @@ i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
   -march=pentium3 -mtune=generic -o "$T/padwin.exe" "$ROOT/guest-tools/src/padwin.c" \
   -ldinput -ldxguid -lwinmm -luser32
 # WAVECAPS.EXE: every wave / MIDI / mixer device's 32-byte name as
-# GetDevCaps returns it, with where its NUL is, into C:\WAVECAPS.LOG. A name
+# GetDevCaps returns it, with where its NUL is, into C:\2KSBOX\WAVECAPS.LOG. A name
 # that fills all 32 bytes is what kills DirectX 9's DSOUND.DLL (its /GS
 # cookie, c0000409): the Portuguese Win98's SB16 wave-in name (doc 20 §5.3).
 i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \

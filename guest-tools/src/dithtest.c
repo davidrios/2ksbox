@@ -24,7 +24,7 @@
  *
  * Each column's centre pixel is read back through grLfbLock and printed
  * with its drift from the reference, so a run answers in numbers as well
- * as on the screen, and dithtest.log keeps them.
+ * as on the screen, and C:\2KSBOX\DITHTEST.LOG keeps them.
  *
  *   DITHTEST             640x480, alpha 128, the frame held 15 s
  *   DITHTEST -alpha 64   another blend weight
@@ -43,6 +43,7 @@
 #include <string.h>
 
 #include "sdk2_glide.h"
+#include "guestlog.h"
 
 #define COLUMNS 8
 
@@ -138,7 +139,8 @@ int main(int argc, char **argv)
     colw   = w / COLUMNS;
     top    = h / 6;             /* the reference strip: nothing blends there */
     bot    = h - 1;
-    logfp  = fopen("dithtest.log", "w");
+    logfp  = guest_log_open("DITHTEST.LOG", "w");
+    printf("log: %s\n", guest_log_path());
     for (i = 0; i < COLUMNS; i++) {
         passes[i] = 1 << i;     /* 1, 2, 4 ... 128 */
     }

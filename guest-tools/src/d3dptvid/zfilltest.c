@@ -29,6 +29,7 @@
 #include <d3d.h>
 #include <stdio.h>
 #include <string.h>
+#include "../guestlog.h"
 
 #define W 640
 #define H 480
@@ -254,7 +255,7 @@ int main(void)
     WNDCLASSA wc;
     HWND hwnd;
 
-    logfile = fopen("zfilltest.log", "w");
+    logfile = guest_log_open("ZFILLTEST.LOG", "w");
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(NULL);

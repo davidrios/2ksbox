@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "../guestlog.h"
 
 static FILE *logfile;
 static void logp(const char *fmt, ...)
@@ -320,11 +321,12 @@ nozbuf:
             hr = back->lpVtbl->Lock(back, NULL, &sd, DDLOCK_WAIT | DDLOCK_READONLY, NULL);
             if (SUCCEEDED(hr)) {
                 unsigned *px = (unsigned *)((unsigned char *)sd.lpSurface + 240 * sd.lPitch) + 480;
+                char bmp[GUEST_PATHBUF];
                 logp("back buffer after EndScene: fan centre %06x, corner %06x\n", *px & 0xffffff,
                      *(unsigned *)((unsigned char *)sd.lpSurface + 20 * sd.lPitch + 620 * 4) & 0xffffff);
-                dump_bmp("d3d7test.bmp", &sd);
+                dump_bmp(guest_path(bmp, sizeof bmp, "D3D7TEST.BMP"), &sd);
                 back->lpVtbl->Unlock(back, NULL);
-                logp("d3d7test.bmp written\n");
+                logp("%s written\n", bmp);
             } else {
                 logp("Lock(back) failed %08lx\n", hr);
             }
@@ -369,7 +371,7 @@ int main(int argc, char **argv)
         else if (argn == 2) { bpp = atoi(argv[i]); argn++; }
         else if (argn == 3) { frames = atoi(argv[i]); argn++; }
     }
-    logfile = fopen("d3d7test.log", "w");
+    logfile = guest_log_open("D3D7TEST.LOG", "w");
     logp("d3d7test: %dx%d %d bpp, %d frames\n", w, h, bpp, frames);
 
     memset(&wc, 0, sizeof(wc));

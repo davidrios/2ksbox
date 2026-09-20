@@ -36,6 +36,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
+#include "../../guestlog.h"
 
 static FILE *log_file;
 static int cases, failed;
@@ -426,7 +427,7 @@ int main(void)
     int first_bpp;
     HDC dc;
 
-    log_file = fopen("C:\\GDIPROBE.LOG", "w");
+    log_file = guest_log_open("GDIPROBE.LOG", "w");
 
     dc = GetDC(NULL);
     first_bpp = dc ? GetDeviceCaps(dc, BITSPIXEL) * GetDeviceCaps(dc, PLANES) : 0;

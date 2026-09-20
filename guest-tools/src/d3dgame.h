@@ -17,8 +17,9 @@
  * -shader     (d3d9) SM1.1 vs/ps for the cubes when D3DX is available
  *             (HLSL; d3dx9_33+ refuse ps_1_1, leaving vs_1_1 + the fixed
  *             pixel stage — kept that way on purpose, the golden set has it)
- * -log f      log file (default d3dgame9.log / d3dgame8.log next to the EXE,
- *             appended); everything printed to the console goes there too
+ * -log f      log file (default C:\2KSBOX\D3DGAME9.LOG / D3DGAME8.LOG,
+ *             guestlog.h, appended; a name with a path in it goes there
+ *             instead); everything printed to the console goes there too
  */
 #ifndef D3DGAME_H
 #define D3DGAME_H
@@ -29,6 +30,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdarg.h>
+#include "guestlog.h"
 
 #define GAME_W_DEFAULT 640
 #define GAME_H_DEFAULT 480
@@ -66,19 +68,28 @@ static void game_log(const char *fmt, ...)
     }
 }
 
-/* a bare file name goes next to the EXE, whatever the shortcut's "Start in" is */
-static void game_path_near_exe(char *out, size_t n, const char *name)
+/* Does `name` say where it goes itself? */
+static int game_path_given(const char *name)
 {
-    char exe[MAX_PATH], *slash;
-    if (strchr(name, '\\') || strchr(name, '/') || strchr(name, ':')) {
+    return strchr(name, '\\') || strchr(name, '/') || strchr(name, ':');
+}
+
+/*
+ * Where a bare -log / -dump name goes: the one output folder, C:\2KSBOX
+ * (guestlog.h). It used to be the folder the EXE is in, which is the
+ * read-only guest-tools CD whenever one of these is run from D:\TESTS —
+ * the log was not written at all there, and the harnesses' first step was
+ * to copy the EXE somewhere writable. A name with a path in it is still
+ * used exactly as given.
+ */
+static void game_out_path(char *out, size_t n, const char *name)
+{
+    if (game_path_given(name)) {
         strncpy(out, name, n - 1);
         out[n - 1] = 0;
         return;
     }
-    GetModuleFileNameA(NULL, exe, MAX_PATH);
-    slash = strrchr(exe, '\\');
-    if (slash) slash[1] = 0; else exe[0] = 0;
-    snprintf(out, n, "%s%s", exe, name);
+    guest_path(out, n, name);
 }
 
 static void game_log_open(const char *name, int argc, char **argv)
@@ -86,8 +97,14 @@ static void game_log_open(const char *name, int argc, char **argv)
     SYSTEMTIME st;
     int i;
     char path[MAX_PATH];
-    game_path_near_exe(path, sizeof(path), name);
-    g_log = fopen(path, "at");
+    if (game_path_given(name)) {
+        game_out_path(path, sizeof(path), name);
+        g_log = fopen(path, "at");
+    } else {
+        g_log = guest_log_open(name, "at");   /* and its TEMP fallback */
+        strncpy(path, guest_log_path(), sizeof(path) - 1);
+        path[sizeof(path) - 1] = 0;
+    }
     GetLocalTime(&st);
     game_log("---- %04d-%02d-%02d %02d:%02d:%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
     game_log("log %s", path);
@@ -124,7 +141,7 @@ static void opts_parse(struct opts *o, int argc, char **argv)
         else if (!strcmp(argv[i], "-frames") && i + 1 < argc) o->frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "-dump") && i + 2 < argc) {
             o->dump_frame = atoi(argv[++i]);
-            game_path_near_exe(o->dump_file, MAX_PATH, argv[++i]);
+            game_out_path(o->dump_file, MAX_PATH, argv[++i]);
         }
         else if (!strcmp(argv[i], "-log") && i + 1 < argc) strncpy(o->log_file, argv[++i], MAX_PATH - 1);
     }

@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../guestlog.h"
 
 static int screen_bpp(void)
 {
@@ -38,7 +39,7 @@ static int screen_bpp(void)
 
 int main(int argc, char **argv)
 {
-    FILE *f = fopen("C:\\SETBPP.LOG", "w");
+    FILE *f = guest_log_open("SETBPP.LOG", "w");
     DEVMODE dm;
     LONG rc;
 

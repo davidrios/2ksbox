@@ -271,7 +271,7 @@ int main(int argc, char **argv)
     HRESULT hr;
 
     game_init(&G, argc, argv);
-    game_log_open(G.o.log_file[0] ? G.o.log_file : "d3dgame8.log", argc, argv);
+    game_log_open(G.o.log_file[0] ? G.o.log_file : "D3DGAME8.LOG", argc, argv);
     hwnd = game_window(&G, "d3dgame8");
     X.d3d = Direct3DCreate8(D3D_SDK_VERSION);
     if (!X.d3d) { game_log("d3dgame8: Direct3DCreate8 failed"); return 1; }

@@ -1,6 +1,6 @@
 /*
  * wavecaps.c — WAVECAPS.EXE: every multimedia device's name as a program
- * of the era reads it, raw, into C:\WAVECAPS.LOG.
+ * of the era reads it, raw, into C:\2KSBOX\WAVECAPS.LOG (guestlog.h).
  *
  * The four GetDevCaps calls hand back a fixed 32-byte szPname, and nothing
  * makes the driver terminate it. DirectX 9.0c's DSOUND.DLL copies the wave
@@ -22,6 +22,7 @@
 #include <mmsystem.h>
 #include <stdio.h>
 #include <string.h>
+#include "guestlog.h"
 
 static FILE *f;
 
@@ -45,7 +46,7 @@ int WINAPI WinMain(HINSTANCE h, HINSTANCE p, LPSTR c, int s)
 {
     UINT i, n;
 
-    f = fopen("C:\\WAVECAPS.LOG", "w");
+    f = guest_log_open("WAVECAPS.LOG", "w");
     if (!f)
         return 1;
     /* each struct is filled with 0xcc first, so bytes the driver never

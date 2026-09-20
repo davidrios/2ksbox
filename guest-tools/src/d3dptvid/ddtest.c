@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../guestlog.h"
 
 static FILE *logf;
 static void logp(const char *fmt, ...)
@@ -125,7 +126,7 @@ int main(int argc, char **argv)
         else if (argn == 2) { bpp = atoi(argv[i]); argn++; }
         else if (argn == 3) { frames = atoi(argv[i]); argn++; }
     }
-    logf = fopen("ddtest.log", "w");
+    logf = guest_log_open("DDTEST.LOG", "w");
     logp("ddtest: %dx%d %d bpp, %d frames%s\n", w, h, bpp, frames, windowed ? ", windowed" : "");
 
     memset(&wc, 0, sizeof(wc));
@@ -332,9 +333,10 @@ int main(int argc, char **argv)
     memset(&sd, 0, sizeof(sd)); sd.dwSize = sizeof(sd);
     hr = back->lpVtbl->Lock(back, NULL, &sd, DDLOCK_WAIT | DDLOCK_READONLY, NULL);
     if (SUCCEEDED(hr)) {
-        dump_bmp("ddtest.bmp", &sd);
+        char bmp[GUEST_PATHBUF];
+        dump_bmp(guest_path(bmp, sizeof bmp, "DDTEST.BMP"), &sd);
         back->lpVtbl->Unlock(back, NULL);
-        logp("ddtest.bmp written (last back buffer)\n");
+        logp("%s written (last back buffer)\n", bmp);
     }
 out:
     if (back && !windowed) back = NULL;      /* attached: released with the primary */

@@ -867,7 +867,7 @@ here; the rules it discovered are the core's and still hold.
     drive (or every ASPI CD-ROM device) is asked, and the one that
     answers is used, so a machine with two drives needs no argument.
     `-d E:` overrides on NT, `-v` prints every CDB, and the run is
-    mirrored into `cdshelf.log`.
+    mirrored into `C:\2KSBOX\CDSHELF.LOG`.
   - `guest-tools/src/cdshelf.asm` → `CDSHELF\CDSHELF.COM`, the DOS
     build: PACKET commands by PIO, the same way
     `tools/atapi-guest-test.py` drives the drive (there is no DOS C
@@ -1210,6 +1210,20 @@ here; the rules it discovered are the core's and still hold.
   The insert runs on a worker thread and posts its result back, because
   a swap takes a second or two and a window that stops painting through
   it looks broken.
+
+  **Insert is grey while a disc is in the drive** (2026-09-19, user
+  request): emptying the tray is the Eject button's job, done
+  deliberately, rather than something that happens under a guest as a
+  side effect of asking for the next disc. The listing is what the
+  buttons follow — `loaded` in the shelf reply names the slot in the tray
+  — so the state is re-read on every refresh and after every swap, and
+  the status line says the way out of it ("In the drive: <disc> — Eject
+  it to put another disc in"). Enter on the list and a double-click reach
+  the same guard rather than the disabled button, so neither is a way
+  around it. **The command line is unchanged**: `CDSHELF <n>` with a disc
+  loaded still swaps in one step, ejecting first and waiting for the
+  empty tray as below — that is the form scripts use, and
+  `tools/cdshelf-guest-test.sh`'s SWAPTEST stage is exactly that.
 
   **DOS gets the same idea without a window**: with no arguments
   `CDSHELF.COM` prints the shelf and waits for a key — 0-9 puts that disc

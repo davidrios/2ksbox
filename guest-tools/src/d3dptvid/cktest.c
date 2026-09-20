@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../guestlog.h"
 
 #define TEX 64
 #define CLEAR_COLOR 0xff004000
@@ -153,15 +154,15 @@ static void dump_bmp(LPDIRECTDRAWSURFACE7 back, const char *path)
 static void check(LPDIRECTDRAWSURFACE7 back, const char *name, int x1, int y1, DWORD want1, int x2, int y2, DWORD want2)
 {
     DWORD p1 = readback(back, x1, y1), p2 = readback(back, x2, y2), p3 = readback(back, 340, 200), p1b;
-    char path[32];
+    char path[32], path2[GUEST_PATHBUF];
     int ok = near_(p1, want1, 12) && near_(p2, want2, 12);
     cases++;
     if (!ok) failed++;
     p1b = readback(back, x1, y1);       /* a second Lock: the same frame, or a readback caught mid-way */
     logp("%-52s (%d,%d) %06lx want %06lx  (%d,%d) %06lx want %06lx  (340,200) %06lx  again %06lx  %s\n", name,
          x1, y1, p1, want1, x2, y2, p2, want2, p3, p1b, ok ? "PASS" : "FAIL");
-    sprintf(path, "ck%u.bmp", cases);
-    dump_bmp(back, path);
+    sprintf(path, "CK%u.BMP", cases);
+    dump_bmp(back, guest_path(path2, sizeof path2, path));
 }
 
 /* the quad 100..420 x 80..320, u/v 0..1: texel (tx, ty) is at pixel (100 + tx * 5, 80 + ty * 3.75) */
@@ -210,7 +211,7 @@ int main(int argc, char **argv)
     int i;
 
     if (argc > 3) { w = atoi(argv[1]); h = atoi(argv[2]); bpp = atoi(argv[3]); }
-    logfile = fopen("cktest.log", "w");
+    logfile = guest_log_open("CKTEST.LOG", "w");
     logp("cktest: %dx%d %d bpp\n", w, h, bpp);
 
     memset(&wc, 0, sizeof wc);

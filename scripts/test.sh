@@ -2591,7 +2591,7 @@ host_stage() {
                  -Wl,-rpath,"$ROOT/build/dxvk/src/d3d9")
     if c++ -std=c++17 -O2 -o build/d3dgame9-native tools/d3dgame9-native.cpp "${flags[@]}" \
        && c++ -std=c++17 -O2 -o build/d3dfeat9-native tools/d3dfeat9-native.cpp "${flags[@]}"; then
-      rm -f "$OUT/d3dgame9.log" "$OUT/d3dfeat9.log"
+      rm -f "$OUT/D3DGAME9.LOG" "$OUT/D3DFEAT9.LOG"
       ( cd "$OUT" && DXVK_WSI_DRIVER="${DXVK_WSI_DRIVER:-Headless}" ../d3dgame9-native -frames 600 -dump 300 g9-native.bmp ) >"$OUT/d3dgame9-native.log" 2>&1
       if [ -f "$OUT/g9-native.bmp" ]; then
         run_check d3dgame9-nat d3dgame9-golden.log tools/bmpdiff.py "$GOLDEN" "$OUT/g9-native.bmp" \
@@ -2603,10 +2603,10 @@ host_stage() {
       # logged: a window-less client that nothing paces runs so far ahead of
       # the CS thread that GetData spins out and reports S_FALSE with 0
       # pixels, and then only the guest-vs-native diff notices (2026-09-07)
-      if [ -f "$OUT/f9-native.bmp" ] && grep -q "occlusion query at frame .*: 0x00000000, [1-9]" "$OUT/d3dfeat9.log"; then
+      if [ -f "$OUT/f9-native.bmp" ] && grep -q "occlusion query at frame .*: 0x00000000, [1-9]" "$OUT/D3DFEAT9.LOG"; then
         PASS+=(d3dfeat9-nat); echo "  PASS d3dfeat9-nat"
-        grep "occlusion query\|getters" "$OUT/d3dfeat9.log" | sed 's/^/       /'
-      else FAIL+=(d3dfeat9-nat); echo "  FAIL d3dfeat9-nat — $OUT/d3dfeat9-native.log"; grep "occlusion query" "$OUT/d3dfeat9.log" | sed 's/^/       /'; tail -3 "$OUT/d3dfeat9-native.log"; fi
+        grep "occlusion query\|getters" "$OUT/D3DFEAT9.LOG" | sed 's/^/       /'
+      else FAIL+=(d3dfeat9-nat); echo "  FAIL d3dfeat9-nat — $OUT/d3dfeat9-native.log"; grep "occlusion query" "$OUT/D3DFEAT9.LOG" | sed 's/^/       /'; tail -3 "$OUT/d3dfeat9-native.log"; fi
     else FAIL+=(d3d-native); echo "  FAIL d3d native harness (build)"; fi
   else
     skip d3dgame9-nat "needs build/dxvk"
@@ -2713,7 +2713,7 @@ guest_stage() {
   printf 'label: dos\nstart=2048, type=c\n' | sfdisk -q "$scratch" >/dev/null
   mkfs.fat -F 32 --offset 2048 "$scratch" >/dev/null
   local fat="$scratch@@1048576"
-  printf '@echo off\r\nxcopy D:\\D3DPT E:\\D3DPT\\ /I /Y\r\nxcopy D:\\TESTS E:\\D3DPT\\ /I /Y\r\nmkdir E:\\OUT\r\ncd /d E:\\D3DPT\r\nDDVMTEST.EXE\r\nD3DGAME9.EXE -frames 600 -dump 300 E:\\OUT\\G9.BMP\r\nD3DGAME8.EXE -frames 600 -dump 300 E:\\OUT\\G8.BMP\r\nD3DFEAT9.EXE -frames 600 -dump 300 E:\\OUT\\F9.BMP\r\necho done > E:\\OUT\\DONE.TXT\r\n' > "$OUT/RUN.BAT"
+  printf '@echo off\r\nxcopy D:\\D3DPT E:\\D3DPT\\ /I /Y\r\nxcopy D:\\TESTS E:\\D3DPT\\ /I /Y\r\nmkdir E:\\OUT\r\ncd /d E:\\D3DPT\r\nset BOXLOG=E:\\D3DPT\r\nDDVMTEST.EXE\r\nD3DGAME9.EXE -frames 600 -dump 300 E:\\OUT\\G9.BMP\r\nD3DGAME8.EXE -frames 600 -dump 300 E:\\OUT\\G8.BMP\r\nD3DFEAT9.EXE -frames 600 -dump 300 E:\\OUT\\F9.BMP\r\necho done > E:\\OUT\\DONE.TXT\r\n' > "$OUT/RUN.BAT"
   mcopy -i "$fat" "$OUT/RUN.BAT" ::/RUN.BAT
 
   SOCK="$OUT/qmp.sock"; rm -f "$SOCK"
@@ -2750,10 +2750,10 @@ guest_stage() {
   QEMU_KEEP="${TEST_KEEP:-0}"; TEST_KEEP=0 guest_teardown; TEST_KEEP="$QEMU_KEEP"; QEMU_PID=""
   rm -f "$OUT"/G9.BMP "$OUT"/G8.BMP "$OUT"/F9.BMP "$OUT"/guest-*.log
   mcopy -n -i "$fat" ::/OUT/G9.BMP ::/OUT/G8.BMP ::/OUT/F9.BMP "$OUT/" 2>/dev/null
-  mcopy -n -i "$fat" ::/D3DPT/d3dgame9.log "$OUT/guest-d3dgame9.log" 2>/dev/null
-  mcopy -n -i "$fat" ::/D3DPT/d3dgame8.log "$OUT/guest-d3dgame8.log" 2>/dev/null
-  mcopy -n -i "$fat" ::/D3DPT/d3dfeat9.log "$OUT/guest-d3dfeat9.log" 2>/dev/null
-  mcopy -n -i "$fat" ::/D3DPT/ddvmtest.log "$OUT/guest-ddvmtest.log" 2>/dev/null
+  mcopy -n -i "$fat" ::/D3DPT/D3DGAME9.LOG "$OUT/guest-d3dgame9.log" 2>/dev/null
+  mcopy -n -i "$fat" ::/D3DPT/D3DGAME8.LOG "$OUT/guest-d3dgame8.log" 2>/dev/null
+  mcopy -n -i "$fat" ::/D3DPT/D3DFEAT9.LOG "$OUT/guest-d3dfeat9.log" 2>/dev/null
+  mcopy -n -i "$fat" ::/D3DPT/DDVMTEST.LOG "$OUT/guest-ddvmtest.log" 2>/dev/null
   # the DirectDraw shim next to the EXE: a Vice City-style launcher check passes
   if grep -q "ddraw.dll is E:" "$OUT/guest-ddvmtest.log" 2>/dev/null && grep -q ": enough" "$OUT/guest-ddvmtest.log"; then
     PASS+=(guest-ddvm); echo "  PASS guest-ddvm"; grep "GetAvailableVidMem" "$OUT/guest-ddvmtest.log" | tr -d '\r' | sed 's/^/       /'
@@ -2768,7 +2768,7 @@ guest_stage() {
   if [ ! -f "$OUT/F9.BMP" ]; then FAIL+=(guest-F9); echo "  FAIL guest-F9 (no frame on the scratch disk)"
   else
     run_check "guest-F9=native" guest-F9-native.log cmp "$OUT/f9-native.bmp" "$OUT/F9.BMP" || true
-    grep -h "occlusion query\|getters" "$OUT/d3dfeat9.log" | sort > "$OUT/f9-native.lines"
+    grep -h "occlusion query\|getters" "$OUT/D3DFEAT9.LOG" | sort > "$OUT/f9-native.lines"
     grep -h "occlusion query\|getters" "$OUT/guest-d3dfeat9.log" 2>/dev/null | tr -d '\r' | sort > "$OUT/f9-guest.lines"
     run_check "guest-F9-log=native" guest-F9-log.log diff "$OUT/f9-native.lines" "$OUT/f9-guest.lines" || true
   fi

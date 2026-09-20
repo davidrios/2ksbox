@@ -71,7 +71,10 @@
 #                       as given; a probe RUN.BAT then starts by name)
 #   PULL="A.LOG B.TXT"  files to fetch off C:\ afterwards (deleted first, so
 #                       what comes back is this run's or nothing). A path
-#                       with \ in it is read from that directory.
+#                       with \ in it is read from that directory — which is
+#                       what a log of ours wants: every guest program here
+#                       writes to C:\2KSBOX (guest-tools/src/guestlog.h), so
+#                       PULL='2KSBOX\DDPROBE.LOG', not DDPROBE.LOG.
 #   DUMP_EVERY=n        the executor writes every n-th presented frame to
 #                       frames/ — what the *game* draws, which a screendump
 #                       cannot see while 3D is presenting

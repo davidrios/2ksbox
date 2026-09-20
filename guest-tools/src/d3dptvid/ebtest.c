@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../guestlog.h"
 
 #define TEX 64
 #define CLEAR_R 0x00
@@ -178,14 +179,14 @@ static void dump_bmp(LPDIRECTDRAWSURFACE back, const char *path)
 static void check(LPDIRECTDRAWSURFACE back, const char *name, int x1, int y1, DWORD want1, int x2, int y2, DWORD want2)
 {
     DWORD p1 = readback(back, x1, y1), p2 = readback(back, x2, y2), p3 = readback(back, 600, 440);
-    char path[32];
+    char path[32], path2[GUEST_PATHBUF];
     int ok = near_(p1, want1, 20) && near_(p2, want2, 20);     /* 16-bit rounding differs between the RGB device and the HAL */
     cases++;
     if (!ok) failed++;
     logp("%-58s (%d,%d) %06lx want %06lx  (%d,%d) %06lx want %06lx  (600,440) %06lx  %s\n", name,
          x1, y1, p1, want1, x2, y2, p2, want2, p3, ok ? "PASS" : "FAIL");
-    sprintf(path, "eb%u.bmp", cases);
-    dump_bmp(back, path);
+    sprintf(path, "EB%u.BMP", cases);
+    dump_bmp(back, guest_path(path2, sizeof path2, path));
 }
 
 /* --- the execute buffer: vertices first, then the instruction stream --- */
@@ -367,7 +368,7 @@ int main(int argc, char **argv)
 
     if (argc > 3 && argv[1][0] != '-') { w = atoi(argv[1]); h = atoi(argv[2]); bpp = atoi(argv[3]); }
     if (!strcmp(argv[argc - 1], "-rgb")) { use_rgb = 1; dev_guid = &IID_IDirect3DRGBDevice; }
-    logfile = fopen("ebtest.log", "w");
+    logfile = guest_log_open("EBTEST.LOG", "w");
     logp("ebtest: %dx%d %d bpp (DirectX 3 interfaces: IDirect3D, execute buffers, texture handles) on the %s device\n", w, h, bpp,
          use_rgb ? "RGB software" : "HAL");
 

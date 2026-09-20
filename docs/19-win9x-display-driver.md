@@ -910,7 +910,9 @@ which the shell honours once it is up — this harness has no serial line
 and no shell to type at, so that is the only hook there is. The program
 built for this is `ddprobe.exe`: it creates a DirectDraw object, prints
 the HAL and HEL caps and calls `WaitForVerticalBlank` twice, leaves
-`C:\DDPROBE.LOG` for the harness to read back, and draws nothing.
+`C:\2KSBOX\DDPROBE.LOG` for the harness to read back (every guest program
+of ours writes its log there since 2026-09-19, `guest-tools/src/guestlog.h`),
+and draws nothing.
 
 ```sh
 WATCOM=$HOME/.local/opt/open-watcom guest-tools/build-driver9x.sh
@@ -1014,7 +1016,7 @@ accepted here was accepted with an empty callback table.
 The harness grew two things in the same session, both of which this cost:
 a `boot` re-stages `d3dpt9hl.dll` and `PROG` as well as the two Watcom
 binaries, so an edit-build-test cycle on the DirectDraw half is one boot
-rather than a whole `install`; and it deletes `C:\DDPROBE.LOG` from the
+rather than a whole `install`; and it deletes `C:\2KSBOX\DDPROBE.LOG` from the
 image before booting, because a stale log read back after a run that
 wrote none is a session spent on the wrong evidence.
 
@@ -2518,7 +2520,7 @@ bug, not ours. Setting the retail key's `Render` to 3 (`regedit /s` from
 
 **The guard** is `ddprobe`'s new `pitch check:` line, which compares the
 flipping primary's pitch with its back buffer's. `DDPROBE 800 600 8`
-(`STAGE=` + `GUEST_CMD=` + `PULL=DDPROBE.LOG` through
+(`STAGE=` + `GUEST_CMD=` + `PULL=2KSBOX\DDPROBE.LOG` through
 `tools/win98-game-test.sh`) on a fresh copy of `base98-br` with the
 image's own, unfixed driver (`NO_DRIVER=1`): `primary 800, back buffer
 832 -> DIFFERENT`; the same copy with this build staged: `primary 832,
@@ -2610,10 +2612,10 @@ control. On XP (`winxp-m7`, built by `build-driver.sh` too, as
 `DRIVER\ZFILLTEST.EXE`) the same: 3 of 3 with this driver, and the driver
 from the commit before (built from `git archive 3fc4dfd` into a scratch
 tree and installed with `DRIVER_ISO=` on `tools/xp-driver-test.sh`) fails
-A and D. Run it there with `tools/xp-driver-test.sh <overlay> cmd 'cd /d
-%TEMP% & D:\DRIVER\ZFILLTEST.EXE & copy zfilltest.log E:\'` and read the
+A and D. Run it there with `tools/xp-driver-test.sh <overlay> cmd
+'D:\DRIVER\ZFILLTEST.EXE & copy C:\2KSBOX\ZFILLTEST.LOG E:\'` and read the
 log off `OUT/scratch.img` with mtools. Run it with `STAGE=guest-tools/out/driver9x/zfilltest.exe
-PULL=ZFILLTEST.LOG GUEST_CMD=$'cd C:\\\r\nZFILLTEST.EXE'
+PULL=2KSBOX\ZFILLTEST.LOG GUEST_CMD=$'cd C:\\\r\nZFILLTEST.EXE'
 tools/win98-game-test.sh <image> zf`.
 
 #### The menu text: a texture cap, read before any call

@@ -27,6 +27,7 @@
 #include <string.h>
 
 #include "crtcal.h"
+#include "guestlog.h"
 
 static FILE *calf;
 
@@ -119,7 +120,8 @@ int main(int argc, char **argv)
     uint32_t *fb = NULL;
     HRESULT hr;
 
-    calf = fopen("crtcal.log", "w");
+    calf = guest_log_open("CRTCAL.LOG", "w");
+    printf("log: %s\n", guest_log_path());
     if (argc >= 3) { w = atoi(argv[1]); h = atoi(argv[2]); }
     if (argc >= 4) bpp = atoi(argv[3]);
     for (i = 0; i < NMODES; i++)

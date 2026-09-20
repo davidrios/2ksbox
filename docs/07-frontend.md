@@ -421,7 +421,11 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   disc-2 prompt in a game is answered without leaving it. It is a
   *window* on Windows (pick a disc, press Insert) and a key-per-disc menu
   in a DOS box, because a disc swap is something a player does mid-game,
-  not a command line they retype; both also take verbs for scripting. The channel is a
+  not a command line they retype; both also take verbs for scripting.
+  In the window **Insert is grey while a disc is in the drive** (user
+  decision, 2026-09-19): the tray is emptied with Eject, as a step of its
+  own, rather than under a guest that is still reading it. The verbs are
+  not gated — `CDSHELF <n>` swaps in one step for scripts. The channel is a
   vendor ATAPI command on the machine's own CD-ROM drive (opcode 0xD0,
   patch 52, protocol `cdshelf/cdshelf_proto.h`), because that drive is the
   one thing DOS, Win98 and XP can all send a raw command to — PIO, ASPI

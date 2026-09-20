@@ -49,8 +49,9 @@
  *
  * Output goes three ways, because the harness, a person at the machine
  * and a post-mortem all want it: COM1 (opened directly, so the Run dialog
- * can start this with no shell to redirect), stdout, and %TEMP%\padwin.log
- * — the ISO it runs from is read-only, so the log cannot live beside it.
+ * can start this with no shell to redirect), stdout, and
+ * C:\2KSBOX\PADWIN.LOG (guestlog.h) — the ISO it runs from is read-only,
+ * so the log cannot live beside it.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -62,6 +63,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "guestlog.h"
 
 static FILE *logf;
 static HANDLE com1 = INVALID_HANDLE_VALUE;
@@ -302,17 +304,13 @@ static void read_winmm(long *ax, long *pov, long *btn)
 int main(int argc, char **argv)
 {
     int samples = argc > 1 ? atoi(argv[1]) : 200;
-    char path[MAX_PATH];
     HWND hwnd;
     HRESULT hr;
     DWORD ver;
     int i;
 
     open_com1();
-    if (GetTempPathA(sizeof path, path)) {
-        strncat(path, "padwin.log", sizeof path - strlen(path) - 1);
-        logf = fopen(path, "w");
-    }
+    logf = guest_log_open("PADWIN.LOG", "w");
     say("padwin: DirectInput gamepad probe\n");
 
     hwnd = make_window();

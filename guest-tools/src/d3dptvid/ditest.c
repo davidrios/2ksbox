@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../guestlog.h"
 
 static FILE *logf;
 static DWORD t0;
@@ -80,7 +81,7 @@ int main(int argc, char **argv)
         else if (seconds == 30 && atoi(argv[i]) > 0 && i == 1) seconds = atoi(argv[i]);
         else busy = atoi(argv[i]);
     }
-    logf = fopen("ditest.log", "w");
+    logf = guest_log_open("DITEST.LOG", "w");
     t0 = GetTickCount();
     logp("ditest: %d s, busy %d ms per iteration, %s, %s\n", seconds, busy,
          window ? "plain window" : "DirectDraw 640x480x16 fullscreen", excl ? "DISCL_EXCLUSIVE|FOREGROUND" : "DISCL_NONEXCLUSIVE|FOREGROUND");

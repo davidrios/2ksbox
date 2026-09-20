@@ -13,7 +13,7 @@
  *   the C kernels (default 53, what MSVC-built games run at; Direct3D sets 24;
  *   mingw's CRT startup leaves 64, where no x87 fast path applies).
  *
- * Output goes to the console and ssebench.log. Build (guest-tools/
+ * Output goes to the console and C:\2KSBOX\SSEBENCH.LOG. Build (guest-tools/
  * build-wrappers.sh): i686-w64-mingw32-gcc -O2 -o ssebench.exe ssebench.c
  * (-march=pentium3: SSE1 only, x87 for scalar C, msvcrt).
  */
@@ -25,6 +25,7 @@
 #include <float.h>
 #include <mmintrin.h>
 #include <xmmintrin.h>
+#include "guestlog.h"
 
 /*
  * The "C" kernels must stay scalar x87: gcc -O2 auto-vectorizes them into
@@ -329,7 +330,8 @@ int main(int argc, char **argv)
             pc = _PC_64;
         }
     }
-    logfile = fopen("ssebench.log", "w");
+    logfile = guest_log_open("SSEBENCH.LOG", "w");
+    printf("log: %s\n", guest_log_path());
     QueryPerformanceFrequency(&f);
     freq = (double)f.QuadPart;
     _controlfp(pc, _MCW_PC);

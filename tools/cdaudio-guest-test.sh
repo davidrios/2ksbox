@@ -16,7 +16,7 @@
 # The drive's audiodev is a wav file, so what the guest played is on the host
 # afterwards. The disc is the selftest's mixed-mode one (track 1 data, tracks
 # 2-3 audio, a 1 kHz tone in track 2) unless DISC= names another; the guest
-# writes `cdtest.log` to the floppy it booted the batch from, which is how it
+# writes CDTEST.LOG to the floppy it booted the batch from (BOXLOG), which is how it
 # comes back on a machine with no writable disk of its own.
 #
 # The image is never written: everything goes to a qcow2 overlay under
@@ -50,10 +50,12 @@ fi
 echo "==> disc: $DISC"
 "$ROOT/target/release/discx" info "$DISC" | sed 's/^/    /'
 
-# The batch runs from the floppy, so CDTEST's own `cdtest.log` (it writes it
-# in the current directory) lands somewhere this script can read back out.
+# CDTEST writes its log to C:\2KSBOX like every guest program of ours
+# (guest-tools/src/guestlog.h); BOXLOG puts it on the floppy instead, which
+# is the medium this script can read back out afterwards.
 {
   echo '@echo off'
+  echo 'set BOXLOG=A:\'
   echo 'echo CDAUDIOSTART > COM1'
   echo 'A:'
   echo 'cd \'

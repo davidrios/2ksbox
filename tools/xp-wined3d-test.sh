@@ -94,10 +94,11 @@ printf '%s\r\n' '@echo off' \
   'D:\SETUP.EXE /GAME 4 E:\WD3D /LOG E:\OUT\SETUP-WD3D.LOG > COM1' \
   'copy D:\TESTS\D3DGAME9.EXE E:\WD3D\ > COM1' \
   'cd /d E:\WD3D' \
+  'set BOXLOG=E:\WD3D' \
   'dir /b E:\WD3D > COM1' \
   'echo ==== d3dgame9 > COM1' \
   "D3DGAME9.EXE -frames $FRAMES -dump $DUMP E:\\OUT\\G9.BMP" \
-  'type d3dgame9.log > COM1' \
+  'type D3DGAME9.LOG > COM1' \
   'echo WD3DDONE > COM1' > "$OUT/RUN.BAT"
 mcopy -o -i "$fat" "$OUT/RUN.BAT" ::/RUN.BAT
 
@@ -137,7 +138,7 @@ GW_PID=; rm -f "$SOCK"
 rm -f "$OUT/G9.BMP"
 mcopy -n -i "$fat" ::/OUT/G9.BMP "$OUT/G9.BMP" 2>/dev/null || true
 for l in SETUP-MAPPER SETUP-GL SETUP-WD3D; do mcopy -n -i "$fat" "::/OUT/$l.LOG" "$OUT/$l.LOG" 2>/dev/null || true; done
-mcopy -n -i "$fat" ::/WD3D/d3dgame9.log "$OUT/d3dgame9.log" 2>/dev/null || true
+mcopy -n -i "$fat" ::/WD3D/D3DGAME9.LOG "$OUT/d3dgame9.log" 2>/dev/null || true
 
 echo
 echo "==== the guest's serial output ===================================="

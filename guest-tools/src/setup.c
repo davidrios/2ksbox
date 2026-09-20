@@ -33,13 +33,16 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include "guestlog.h"
 
 #define MAX_COMPONENTS 8
 
 /* Where the test programs go, and where the log goes with them: one folder
  * that is ours, on the hard disk, and the same one every time — not
- * WINDOWS, where a SETUP.LOG would sit among every other installer's. */
-#define BOXDIR "C:\\2KSBOX"
+ * WINDOWS, where a SETUP.LOG would sit among every other installer's. The
+ * same folder every other program here writes its log to (guestlog.h),
+ * which is where the one definition of it lives. */
+#define BOXDIR GUEST_DIR
 
 /* Every path here is <the SETUP.EXE folder> + <folder> + <name>, so the
  * buffers are deliberately wider than MAX_PATH: a root path close to the

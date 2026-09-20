@@ -1217,7 +1217,7 @@ Wired into the guest stage as `atapi-guest`.
 - `guest-tools/src/cdtest.c` (`TESTS\CDTEST.EXE`, msvcrt-linked like the
   rest): `mciSendString("open cdaudio alias cd")`, `status cd number of
   tracks`, `play cd from 2 to 3` (TMSF), poll `status cd position` for
-  3 s, print everything to `cdtest.log`. Run on the mixed test disc with
+  3 s, print everything to `C:\2KSBOX\CDTEST.LOG`. Run on the mixed test disc with
   `-audiodev wav,id=embed0,path=build/test/cd.wav` (headless) or the
   player's audio (by ear): the wav must contain the 1 kHz tone (Python:
   RMS over the middle second, dominant frequency by a naive DFT), and the

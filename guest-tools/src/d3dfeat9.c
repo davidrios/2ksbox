@@ -34,7 +34,7 @@
 #include <math.h>
 #include "d3dgame.h"
 
-#define LOG_NAME "d3dfeat9.log"
+#define LOG_NAME "D3DFEAT9.LOG"
 
 static const char *hr_str(HRESULT hr) { static char b[32]; sprintf(b, "0x%08lx", (unsigned long)hr); return b; }
 #define CHK(call) do { HRESULT hr_ = (call); if (FAILED(hr_)) { game_log("d3dfeat9: %s failed %s", #call, hr_str(hr_)); return 0; } } while (0)

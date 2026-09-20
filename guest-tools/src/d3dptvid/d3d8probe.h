@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include "../guestlog.h"
 
 #define CLEAR_COLOR 0xff004000
 
@@ -85,8 +86,8 @@ static BOOL probe_open(const char *name)
     char path[64];
 
     probe_name = name;
-    snprintf(path, sizeof path, "%s.log", name);
-    logf = fopen(path, "w");
+    snprintf(path, sizeof path, "%s.LOG", name);
+    logf = guest_log_open(path, "w");   /* C:\2KSBOX, not wherever it was started from */
     memset(&wc, 0, sizeof wc);
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(NULL);

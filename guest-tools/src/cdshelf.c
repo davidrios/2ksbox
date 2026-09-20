@@ -45,6 +45,7 @@
 #include <string.h>
 
 #include "cdshelf_proto.h"
+#include "guestlog.h"
 
 #define SENSE_LEN 32
 #define CDB_LEN CDSHELF_CDB_LEN
@@ -717,9 +718,22 @@ static void gui_status(const char *fmt, ...)
     SetWindowTextA(gui.status, buf);
 }
 
+/* Is one of the shelf's discs in the drive? The listing answers it:
+ * `loaded` is the slot in the tray, or CDSHELF_NO_SLOT, which is larger
+ * than any count. */
+static int gui_disc_in_drive(void)
+{
+    return gui.loaded < gui.count;
+}
+
+/* `on` is "the drive is free to be asked something". Insert has a second
+ * condition: while a disc is in the drive there is nowhere to put another
+ * one, and the tray has to be emptied first — the button says so by being
+ * grey, rather than by being pressed and then swapping a disc out from
+ * under whatever in the guest is reading it. */
 static void gui_enable(int on)
 {
-    EnableWindow(gui.insert, on);
+    EnableWindow(gui.insert, on && !gui_disc_in_drive());
     EnableWindow(gui.eject, on);
     EnableWindow(gui.refresh, on);
 }
@@ -735,8 +749,13 @@ static void gui_reload(void)
                    &gui.entry_size, &gui.loaded, &sense);
     SendMessageA(gui.list, LB_RESETCONTENT, 0, 0);
     if (r != CDB_OK) {
+        /* nothing listed and nothing known to be in the tray: the buttons
+         * must not be left following the last good listing */
+        gui.count = 0;
+        gui.loaded = CDSHELF_NO_SLOT;
         SendMessageA(gui.list, LB_ADDSTRING, 0, (LPARAM) "(the drive did not answer)");
         gui_status("Could not read the shelf.");
+        gui_enable(!gui.busy);
         return;
     }
     for (i = 0; i < gui.count; i++) {
@@ -756,14 +775,19 @@ static void gui_reload(void)
     SendMessageA(gui.list, LB_SETCURSEL, sel, 0);
     if (gui.total == 0) {
         gui_status("The host's shelf is empty.");
-    } else if (gui.loaded < gui.count) {
+    } else if (gui_disc_in_drive()) {
         char label[CDSHELF_LABEL_MAX + 1];
         entry_label(gui.buf + CDSHELF_LIST_HEADER_SIZE + gui.loaded * gui.entry_size,
                     label, sizeof label);
-        gui_status("In the drive: %s", label);
+        /* Insert is grey while this is true, so the status line is where
+         * the way out of it is said */
+        gui_status("In the drive: %s — Eject it to put another disc in.", label);
     } else {
         gui_status("%d disc%s on the shelf.", gui.total, gui.total == 1 ? "" : "s");
     }
+    /* the listing is what the buttons follow: it is where a disc appearing
+     * in the drive, or leaving it, becomes known */
+    gui_enable(!gui.busy);
 }
 
 static DWORD WINAPI gui_worker(LPVOID param)
@@ -787,6 +811,14 @@ static void gui_start(int slot)
         const BYTE *e = gui.buf + CDSHELF_LIST_HEADER_SIZE + slot * gui.entry_size;
         char label[CDSHELF_LABEL_MAX + 1];
 
+        /* Insert is grey while a disc is in the drive, but Enter in the
+         * list and a double-click still arrive here: the drive is emptied
+         * by the Eject button, deliberately, and not as a side effect of
+         * asking for another disc */
+        if (gui_disc_in_drive()) {
+            gui_status("There is a disc in the drive — Eject it first.");
+            return;
+        }
         if (e[CDSHELF_ENTRY_FLAGS_OFF] & CDSHELF_FLAG_MISSING) {
             gui_status("The host cannot reach that disc image.");
             return;
@@ -803,6 +835,21 @@ static void gui_start(int slot)
     if (!gui.thread) {   /* no thread: do it inline rather than not at all */
         gui_worker(NULL);
     }
+}
+
+/* Insert the highlighted disc. A list with nothing selected answers
+ * LB_GETCURSEL with LB_ERR, which is negative — and a negative slot is how
+ * gui_start() is told to empty the drive, so the row has to be checked
+ * before it is passed on. */
+static void gui_insert_selected(void)
+{
+    int sel = (int)SendMessageA(gui.list, LB_GETCURSEL, 0, 0);
+
+    if (sel < 0 || sel >= gui.count) {
+        gui_status("Choose a disc from the list first.");
+        return;
+    }
+    gui_start(sel);
 }
 
 static void gui_finished(void)
@@ -841,7 +888,7 @@ static LRESULT CALLBACK gui_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
          * into the default push button, which is Insert. Esc closes. */
         case IDOK:
         case ID_INSERT:
-            gui_start((int)SendMessageA(gui.list, LB_GETCURSEL, 0, 0));
+            gui_insert_selected();
             return 0;
         case ID_EJECT:
             gui_start(-1);
@@ -857,7 +904,7 @@ static LRESULT CALLBACK gui_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_LIST:
             if (HIWORD(wp) == LBN_DBLCLK) {
-                gui_start((int)SendMessageA(gui.list, LB_GETCURSEL, 0, 0));
+                gui_insert_selected();
             }
             return 0;
         }
@@ -955,8 +1002,12 @@ int main(int argc, char **argv)
     int slot = 0, total = 0, count = 0, entry_size = CDSHELF_ENTRY_SIZE;
     int loaded = CDSHELF_NO_SLOT, i, r, buflen, mode_given = 0;
 
-    lg = fopen("cdshelf.log", "w");
+    /* One folder, not the one the Run dialog happened to be in: guestlog.h */
+    lg = guest_log_open("CDSHELF.LOG", "w");
     logf_("CDSHELF - the host's disc shelf\n");
+    if (guest_log_path()[0]) {
+        logf_("log: %s\n", guest_log_path());
+    }
     for (i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-v")) {
             verbose = 1;

@@ -36,6 +36,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include "../guestlog.h"
 
 static FILE *logf;
 static unsigned cases, failed;
@@ -277,7 +278,7 @@ int main(int argc, char **argv)
     int hwvp;
     static const float red[4] = { 1, 0, 0, 1 }, green[4] = { 0, 1, 0, 1 }, magenta[4] = { 1, 0, 1, 1 }, yellow[4] = { 1, 1, 0, 1 };
 
-    logf = fopen("shtest.log", "w");
+    logf = guest_log_open("SHTEST.LOG", "w");
     memset(&wc, 0, sizeof wc);
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(NULL);

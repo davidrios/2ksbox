@@ -20,7 +20,8 @@
  *      is where a host that leaked its context fails the second open
  *
  * Prints "glidetest: N cases, M failed" as its last line and writes
- * glidetest.log beside itself, like the other guest tests. Console
+ * GLIDETEST.LOG in C:\2KSBOX (guestlog.h), like every guest test
+ * here. Console
  * program: a guest script can read the exit code (0 = all passed).
  *
  *   GLIDETEST            640x480, the four cases
@@ -45,6 +46,7 @@
 #include <string.h>
 
 #include "sdk2_glide.h"
+#include "guestlog.h"
 
 static FILE *logfp;
 static int cases, failed;
@@ -171,7 +173,8 @@ int main(int argc, char **argv)
     }
     w = tblRes[res].w;
     h = tblRes[res].h;
-    logfp = fopen("glidetest.log", "w");
+    logfp = guest_log_open("GLIDETEST.LOG", "w");
+    printf("log: %s\n", guest_log_path());
 
     grGlideInit();
     grGlideGetVersion(version);

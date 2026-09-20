@@ -45,6 +45,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "../../guestlog.h"
 
 static FILE *log_file;
 
@@ -65,7 +66,7 @@ static void logf_(const char *fmt, ...)
     va_end(ap);
     fputc('\n', log_file);
     fclose(log_file);
-    log_file = fopen("C:\\DDPROBE.LOG", "a");
+    log_file = guest_log_open("DDPROBE.LOG", "a");
 }
 
 /* Everything a surface can say about where it lives. The pointer matters
@@ -104,7 +105,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     HRESULT hr;
 
     (void)prev; (void)show;
-    log_file = fopen("C:\\DDPROBE.LOG", "w");
+    log_file = guest_log_open("DDPROBE.LOG", "w");
     logf_("ddprobe: start");
 
     /* **The runtime's own test, run here.** DirectDraw loads the 32-bit

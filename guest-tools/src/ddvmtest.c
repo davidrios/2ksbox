@@ -2,7 +2,7 @@
  * ddvmtest: what a DirectX 7-era launcher check sees. Creates a DirectDraw 7
  * object like GTA Vice City's psInitialize() does and prints total / free
  * video memory (GetAvailableVidMem, DDSCAPS_VIDEOMEMORY) plus the DDCAPS
- * figures, to the console and to ddvmtest.log next to the EXE. With the
+ * figures, to the console and to DDVMTEST.LOG in C:\2KSBOX (guestlog.h). With the
  * system ddraw.dll on the Cirrus adapter this shows the card's 4 MB; with
  * D3DPT\DDRAW.DLL next to it, the shim's answer. Exit status 0 when free
  * memory is at least 12 MB (Vice City's threshold), 1 otherwise.
@@ -14,6 +14,7 @@
 #include <ddraw.h>
 #include <stdio.h>
 #include <string.h>
+#include "guestlog.h"
 
 static FILE *g_log;
 static void out(const char *fmt, ...)
@@ -29,7 +30,7 @@ static void out(const char *fmt, ...)
 
 int main(int argc, char **argv)
 {
-    char path[MAX_PATH], *p;
+    char path[MAX_PATH];
     IDirectDraw7 *dd = NULL;
     DDSCAPS2 caps;
     DDCAPS hal, hel;
@@ -37,10 +38,8 @@ int main(int argc, char **argv)
     HRESULT hr;
     HMODULE m;
 
-    GetModuleFileNameA(NULL, path, sizeof path);
-    p = strrchr(path, '\\');
-    strcpy(p ? p + 1 : path, "ddvmtest.log");
-    g_log = fopen(path, "wt");
+    g_log = guest_log_open("DDVMTEST.LOG", "wt");
+    printf("log: %s\n", guest_log_path());
 
     hr = DirectDrawCreateEx(NULL, (void **)&dd, &IID_IDirectDraw7, NULL);
     out("ddvmtest: DirectDrawCreateEx -> 0x%08lx", (unsigned long)hr);

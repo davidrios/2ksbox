@@ -1,8 +1,8 @@
 /*
  * CDTEST.EXE — CD audio through MCI (doc 17 §6.3): opens the cdaudio
  * device, lists the tracks, plays track 2 for a few seconds while polling
- * the position, then track 3, and logs everything to cdtest.log next to
- * the EXE. Under the player the tone is heard; headless, `-audiodev
+ * the position, then track 3, and logs everything to CDTEST.LOG in
+ * C:\2KSBOX (guestlog.h). Under the player the tone is heard; headless, `-audiodev
  * wav,id=cd0,path=x.wav -device ide-cd,...,audiodev=cd0` records it.
  *
  *   CDTEST.EXE [drive letter] [seconds]      (defaults: the first CD drive, 2 s)
@@ -11,6 +11,7 @@
 #include <mmsystem.h>
 #include <stdio.h>
 #include <string.h>
+#include "guestlog.h"
 
 static FILE *lg;
 
@@ -54,7 +55,8 @@ int main(int argc, char **argv)
     int seconds = argc > 2 ? atoi(argv[2]) : 2, tracks = 0, i;
     DWORD t0;
 
-    lg = fopen("cdtest.log", "w");
+    lg = guest_log_open("CDTEST.LOG", "w");
+    printf("log: %s\n", guest_log_path());
     if (argc > 1) {
         snprintf(cmd, sizeof cmd, "open %c: type cdaudio alias cd", argv[1][0]);
     } else {

@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include "../guestlog.h"
 
 static FILE *logf;
 static void logp(const char *fmt, ...)
@@ -207,7 +208,7 @@ int main(int argc, char **argv)
     HRESULT hr;
     unsigned i, pi;
 
-    logf = fopen("dxttest.log", "w");
+    logf = guest_log_open("DXTTEST.LOG", "w");
     memset(&wc, 0, sizeof wc);
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(NULL);
