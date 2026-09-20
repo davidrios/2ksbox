@@ -91,7 +91,7 @@ verdict "D3DPRE.EXE installed" $((1 - $?))
 mdel -i "$M" ::/WINDOWS/D3DPRE.LOG 2>/dev/null   # the wait below must see *this* login's
 echo "==> boot 2: no executor on the host — the helper should switch DirectDraw over"
 PLAYER=1 RAW="$RAW" STAGE="$D/ddprobe.exe $WAIT" \
-GUEST_CMD=$'C:\\WAITFILE.EXE C:\\WINDOWS\\D3DPRE.LOG 90\ncd \\\nstart /w C:\\DDPROBE.EXE\ncd \\WTEST\nstart /w D3D7TEST.EXE 640 480 16 60\ncopy d3d7test.log C:\\D3D7W.LOG' \
+GUEST_CMD=$'C:\\WAITFILE.EXE C:\\WINDOWS\\D3DPRE.LOG 90\ncd \\\nstart /w C:\\DDPROBE.EXE\ncd \\WTEST\nstart /w D3D7TEST.EXE 640 480 16 60\ncopy C:\\2KSBOX\\D3D7TEST.LOG C:\\D3D7W.LOG' \
 EXTRA='-global d3dpt-vga.no-exec=on' TABLET=0 CDS="$ISO" \
 RUN_SECS=200 SHOTS=0 SETTLE=30 \
 OUT="$OUT/boot2" "$ROOT/tools/win98-game-test.sh" "$IMG" wined3dsys2 > "$OUT/boot2.log" 2>&1
@@ -116,7 +116,7 @@ verdict "rendering through the pass-through" $((1 - $?)) "${fps:-no} fps"
 mdel -i "$M" ::/WINDOWS/D3DPRE.LOG 2>/dev/null
 echo "==> boot 3: the executor is there — the helper should hand DirectDraw back"
 PLAYER=1 RAW="$RAW" STAGE="$D/ddprobe.exe $WAIT" \
-GUEST_CMD=$'C:\\WAITFILE.EXE C:\\WINDOWS\\D3DPRE.LOG 90\ncd \\\nstart /w C:\\DDPROBE.EXE\ncd \\WTEST\nstart /w D3D7TEST.EXE 640 480 16 60\ncopy d3d7test.log C:\\D3D7O.LOG' \
+GUEST_CMD=$'C:\\WAITFILE.EXE C:\\WINDOWS\\D3DPRE.LOG 90\ncd \\\nstart /w C:\\DDPROBE.EXE\ncd \\WTEST\nstart /w D3D7TEST.EXE 640 480 16 60\ncopy C:\\2KSBOX\\D3D7TEST.LOG C:\\D3D7O.LOG' \
 TABLET=0 CDS="$ISO" \
 RUN_SECS=200 SHOTS=0 SETTLE=30 \
 OUT="$OUT/boot3" "$ROOT/tools/win98-game-test.sh" "$IMG" wined3dsys3 > "$OUT/boot3.log" 2>&1

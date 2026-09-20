@@ -246,9 +246,10 @@ backend later.
   guest code calls `guest_log_open()` / `guest_path()`, never a bare name;
   a harness that wants the file on its own scratch disk sets `BOXLOG=<dir>`
   in the guest (`set BOXLOG=E:\`) instead of copying it afterwards. The
-  exceptions, both deliberate: `WINDOWS\V2START.LOG` (a login marker
-  `WAITFILE` waits on, doc 21 §11) and the per-game guest DLLs' logs, which
-  belong next to the game's EXE.
+  exceptions, all deliberate: `WINDOWS\V2START.LOG` and
+  `WINDOWS\D3DPRE.LOG` (login markers `WAITFILE` waits on, doc 21 §11 and
+  doc 19 §43) and the per-game guest DLLs' logs, which belong next to the
+  game's EXE.
 - **Never run `cargo fmt` over a package.** `player/src/` is not
   rustfmt-clean and there is no fmt gate, so a package-wide format rewrites
   files the change never touched and buries the real diff. Write new code in

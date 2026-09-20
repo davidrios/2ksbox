@@ -35,7 +35,10 @@
  * no executor either, and WineD3D is the only Direct3D on offer.
  *
  * SETUP installs this and the files it points at; it runs from the Run key
- * and exits at once — there is nothing to keep resident. `D3DPRE.LOG` in the
+ * and exits at once — there is nothing to keep resident. Its log stays in
+ * WINDOWS rather than going to C:\2KSBOX with every other program's
+ * (guestlog.h): it is the marker `WAITFILE.EXE` waits on to know this
+ * login's decision has been made, like V2START.LOG. `D3DPRE.LOG` in the
  * Windows folder says what it decided and why.
  *
  * Build: guest-tools/build-wrappers.sh (mingw-w64, i686, msvcrt).

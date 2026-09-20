@@ -27,13 +27,15 @@
  * like from the inside.
  *
  * `PWRPROBE [seconds]` powers the monitor off, waits (3 s by default),
- * asks for it back, and writes what it did to C:\PWRPROBE.LOG for the
+ * asks for it back, and writes what it did to C:\2KSBOX\PWRPROBE.LOG
+ * (guestlog.h, like every program here) for the
  * harness to read back with mtools. Window-less, so WIN.INI's `run=`
  * starts it, like `ddprobe.exe` beside it.
  */
 
 #include <windows.h>
 #include <stdio.h>
+#include "../../guestlog.h"
 
 #ifndef SC_MONITORPOWER
 #define SC_MONITORPOWER 0xF170
@@ -70,7 +72,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         if (n > 0 && n < 300) secs = n;
     }
 
-    log_file = fopen("C:\\PWRPROBE.LOG", "w");
+    log_file = guest_log_open("PWRPROBE.LOG", "w");
     say("pwrprobe: monitor off, %d s, then on", secs);
 
     /* The broadcast the idle time-out makes. SendMessage and not Post:

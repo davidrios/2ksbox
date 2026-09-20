@@ -3056,7 +3056,7 @@ image happens to carry. That mattered: a 12-minute idle run on the same
 image blanked nothing at all, and its "no screen switches" proved nothing.
 The run is
 
-    STAGE=guest-tools/out/driver9x/pwrprobe.exe PULL=PWRPROBE.LOG \
+    STAGE=guest-tools/out/driver9x/pwrprobe.exe PULL='2KSBOX\PWRPROBE.LOG' \
       GUEST_CMD='start /w C:\PWRPROBE.EXE 5' RUN_SECS=100 \
       tools/win98-game-test.sh <image> pwr
 
