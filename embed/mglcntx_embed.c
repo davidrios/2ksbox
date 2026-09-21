@@ -200,6 +200,9 @@ static void  plat_pbuffer_current(int i);
 static void  plat_pbuffer_bind_tex(int i, int gl_target, int gl_format);
 static void *plat_get_proc(const char *name);
 static void  plat_set_func_ptr(void *hdll);
+/* is <binding> (a framebuffer-binding query) the drawable that plays the
+ * guest's framebuffer 0, and what does a colour buffer of it become? */
+static int   plat_default_fb(unsigned binding, unsigned *target);
 
 /* guest 2D surface size = drawable size (the SDL window follows it too) */
 static void guest_size(int *w, int *h)
@@ -397,6 +400,90 @@ int MGLSwapBuffers(void)
     MesaBlitScale();
     present_frame();
     return 1;
+}
+
+/*
+ * Front-buffer presentation.
+ *
+ * A window has front and back buffers; the drawable that stands in for one
+ * here may have only the back (a pbuffer) or be an FBO with a single colour
+ * attachment (macOS). A GL_FRONT or GL_BACK variant selected while the
+ * guest's framebuffer 0 is bound therefore becomes whatever plays that
+ * buffer here -- passing GL_FRONT through is GL_INVALID_OPERATION on both,
+ * which is what WineD3D got. And while the front buffer is the selected draw
+ * buffer, glFlush/glFinish present the frame, since that is the moment a real
+ * window would show it: ddraw's primary-surface path draws into GL_FRONT and
+ * flushes, it never swaps, so nothing else would ever publish that frame.
+ *
+ * The hooks sit in the guest's dispatch table (MesaGLSetFunc), so only the
+ * guest's own calls take them; ours below go straight to GL. front_selected
+ * shadows a per-context piece of GL state with one variable, which at worst
+ * publishes a frame for a flush from another context -- a cost, not a wrong
+ * picture.
+ */
+static void (*real_draw_buffer)(unsigned);
+static void (*real_read_buffer)(unsigned);
+static void (*real_flush)(void);
+static void (*real_finish)(void);
+static int front_selected;
+
+static unsigned buffer_target(unsigned buf, unsigned binding, int *front)
+{
+    unsigned target;
+
+    switch (buf) {
+    case GL_FRONT: case GL_FRONT_LEFT: case GL_FRONT_AND_BACK: case GL_LEFT:
+    case GL_BACK: case GL_BACK_LEFT:
+        if (plat_default_fb(binding, &target)) {
+            if (front) {
+                *front = (buf != GL_BACK && buf != GL_BACK_LEFT);
+            }
+            return target;
+        }
+        break;
+    default:
+        break;
+    }
+    return buf;
+}
+static void fx_glDrawBuffer(unsigned buf)
+{
+    real_draw_buffer(buffer_target(buf, GL_FRAMEBUFFER_BINDING, &front_selected));
+}
+static void fx_glReadBuffer(unsigned buf)
+{
+    real_read_buffer(buffer_target(buf, GL_READ_FRAMEBUFFER_BINDING, NULL));
+}
+static void fx_glFlush(void)
+{
+    real_flush();
+    if (front_selected) {
+        present_frame();
+    }
+}
+static void fx_glFinish(void)
+{
+    real_finish();
+    if (front_selected) {
+        present_frame();
+    }
+}
+
+/* Re-applied after every InitMesaGL(), which reloads the dispatch table. */
+static void install_buffer_hooks(void)
+{
+#define HOOK(var, fenum, fn, name) do { \
+        var = MesaGLSetFunc(fenum, (void *)fn); \
+        if (!var || var == (void *)fn) var = plat_get_proc(name); \
+    } while (0)
+    HOOK(real_draw_buffer, FEnum_glDrawBuffer, fx_glDrawBuffer, "glDrawBuffer");
+    HOOK(real_read_buffer, FEnum_glReadBuffer, fx_glReadBuffer, "glReadBuffer");
+    HOOK(real_flush, FEnum_glFlush, fx_glFlush, "glFlush");
+    HOOK(real_finish, FEnum_glFinish, fx_glFinish, "glFinish");
+#undef HOOK
+    front_selected = 0;
+    DPRINTF("draw/read buffer + flush hooks installed (%p %p %p %p)", (void *)real_draw_buffer,
+            (void *)real_read_buffer, (void *)real_flush, (void *)real_finish);
 }
 
 /* ------------------------------------------------- Glide (doc 12 §5)
@@ -1536,8 +1623,28 @@ static void *plat_get_proc(const char *name)
     return (void *)eglGetProcAddress(name);
 }
 
+/*
+ * The pbuffer is framebuffer 0 and has one colour buffer -- the back one,
+ * unless the config came out single-buffered, in which case it is the front
+ * (see the shared hooks above).
+ */
+static int plat_default_fb(unsigned binding, unsigned *target)
+{
+    GLint fb = 0;
+    GLboolean dbl = GL_FALSE;
+
+    glGetIntegerv(binding, &fb);
+    if (fb) {
+        return 0;               /* an FBO of the guest's own */
+    }
+    glGetBooleanv(GL_DOUBLEBUFFER, &dbl);
+    *target = dbl ? GL_BACK : GL_FRONT;
+    return 1;
+}
+
 static void plat_set_func_ptr(void *hdll)
 {
+    install_buffer_hooks();
 }
 
 /* ============================================================== macOS */
@@ -1740,61 +1847,19 @@ static void fx_glBindFramebufferEXT(GLenum target, GLuint fb)
 }
 
 /*
- * A window has front and back buffers; the stand-in has one colour
- * attachment. A GL_FRONT or GL_BACK variant selected while framebuffer 0 (the
- * stand-in) is bound become GL_COLOR_ATTACHMENT0; passing them through is
- * GL_INVALID_OPERATION on an FBO, which is what WineD3D got. While the
- * front buffer is the selected draw buffer, glFlush/glFinish present the
- * frame, since that is the moment a real window would show it (ddraw's
- * primary-surface path draws into GL_FRONT and flushes, never swaps).
+ * The stand-in has one colour attachment, so both of a window's buffers are
+ * it (see the shared hooks above).
  */
-static void (*real_draw_buffer)(GLenum);
-static void (*real_read_buffer)(GLenum);
-static void (*real_flush)(void);
-static void (*real_finish)(void);
-static int front_selected;
-
-static GLenum dfbo_attachment(GLenum buf, GLenum binding, int *front)
+static int plat_default_fb(unsigned binding, unsigned *target)
 {
     GLint fb = 0;
 
-    switch (buf) {
-    case GL_FRONT: case GL_FRONT_LEFT: case GL_FRONT_AND_BACK: case GL_LEFT:
-    case GL_BACK: case GL_BACK_LEFT:
-        gl.GetIntegerv(binding, &fb);
-        if (cur_dfbo && (GLuint)fb == cur_dfbo) {
-            if (front) {
-                *front = (buf != GL_BACK && buf != GL_BACK_LEFT);
-            }
-            return GL_COLOR_ATTACHMENT0_EXT;
-        }
-        break;
-    default:
-        break;
+    gl.GetIntegerv(binding, &fb);
+    if (!cur_dfbo || (GLuint)fb != cur_dfbo) {
+        return 0;
     }
-    return buf;
-}
-static void fx_glDrawBuffer(GLenum buf)
-{
-    real_draw_buffer(dfbo_attachment(buf, GL_DRAW_FRAMEBUFFER_BINDING_EXT, &front_selected));
-}
-static void fx_glReadBuffer(GLenum buf)
-{
-    real_read_buffer(dfbo_attachment(buf, GL_READ_FRAMEBUFFER_BINDING_EXT, NULL));
-}
-static void fx_glFlush(void)
-{
-    real_flush();
-    if (front_selected) {
-        present_frame();
-    }
-}
-static void fx_glFinish(void)
-{
-    real_finish();
-    if (front_selected) {
-        present_frame();
-    }
+    *target = GL_COLOR_ATTACHMENT0_EXT;
+    return 1;
 }
 
 static const char *gl_err_str(GLenum e)
@@ -2349,19 +2414,7 @@ static void plat_set_func_ptr(void *h)
     if (real_bind_fb_ext == (void *)fx_glBindFramebufferEXT) {
         real_bind_fb_ext = NULL;
     }
-    /* front/back buffer selection and front-buffer presentation, see above */
-#define HOOK(var, fenum, fn, name) do { \
-        var = MesaGLSetFunc(fenum, (void *)fn); \
-        if (!var || var == (void *)fn) var = plat_get_proc(name); \
-    } while (0)
-    HOOK(real_draw_buffer, FEnum_glDrawBuffer, fx_glDrawBuffer, "glDrawBuffer");
-    HOOK(real_read_buffer, FEnum_glReadBuffer, fx_glReadBuffer, "glReadBuffer");
-    HOOK(real_flush, FEnum_glFlush, fx_glFlush, "glFlush");
-    HOOK(real_finish, FEnum_glFinish, fx_glFinish, "glFinish");
-#undef HOOK
-    front_selected = 0;
-    DPRINTF("draw/read buffer + flush hooks installed (%p %p %p %p)", (void *)real_draw_buffer,
-            (void *)real_read_buffer, (void *)real_flush, (void *)real_finish);
+    install_buffer_hooks();
 }
 
 /* ============================================================ Windows */
@@ -2741,9 +2794,29 @@ static void *plat_get_proc(const char *name)
     return p;
 }
 
+/*
+ * The pbuffer is framebuffer 0 and has one colour buffer -- the back one,
+ * unless the config came out single-buffered, in which case it is the front
+ * (see the shared hooks above).
+ */
+static int plat_default_fb(unsigned binding, unsigned *target)
+{
+    GLint fb = 0;
+    GLboolean dbl = GL_FALSE;
+
+    glGetIntegerv(binding, &fb);
+    if (fb) {
+        return 0;               /* an FBO of the guest's own */
+    }
+    glGetBooleanv(GL_DOUBLEBUFFER, &dbl);
+    *target = dbl ? GL_BACK : GL_FRONT;
+    return 1;
+}
+
 static void plat_set_func_ptr(void *hdll)
 {
     gl_dll = hdll;
+    install_buffer_hooks();
 }
 
 #else /* neither: no embed backend, the native (weak) one stays */

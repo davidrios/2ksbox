@@ -197,7 +197,9 @@
 #                  that stands still says so and renders the same picture at any
 #                  frame number, one that does not (an interlaced CRT) says so
 #                  and renders two different pictures at two frame numbers
-#   embed-3d       tools/embed-3d-test.c: the window-less Mesa backend (Linux)
+#   embed-3d       tools/embed-3d-test.c: the window-less Mesa backend (Linux):
+#                  swap presentation, and the front-buffer flush WineD3D's
+#                  ddraw presents its primary surface with
 #   glide-host     tools/glide-host-test.cpp: Glide pass-through without a guest
 #                  (Linux) — the real host wrapper loaded by hw/3dfx, opened
 #                  through glidewnd.c's handshake, a triangle checked in the
@@ -2507,7 +2509,7 @@ host_stage() {
 
   # the embed library's Mesa backend, Linux (EGL) only, one VM per process
   if [ "$OS" = Linux ] && [ -f build/qemu/libqemu-embed-i386.so ]; then
-    if cc -O1 -std=gnu11 -Iembed -o build/embed-3d-test tools/embed-3d-test.c \
+    if cc -O1 -std=gnu11 -Iembed -Iqemu/hw/mesa -o build/embed-3d-test tools/embed-3d-test.c \
          -Lbuild/qemu -lqemu-embed-i386 -Wl,-rpath,"$ROOT/build/qemu" -lepoxy; then
       run_check embed-3d embed-3d.log build/embed-3d-test || true
     else FAIL+=(embed-3d); echo "  FAIL embed-3d (build)"; fi

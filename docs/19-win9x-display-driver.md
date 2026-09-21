@@ -2952,7 +2952,8 @@ The same disc under the fallback (Wine's `DDRAW.DLL`, `no-exec=on`) does not
 crash either — and does not draw: 34 GL contexts created and destroyed, not
 one frame presented, the screen black for the whole run. For this title the
 WineD3D DirectDraw folder starts and renders nothing while the driver's own
-DirectDraw half runs it. That is open.
+DirectDraw half runs it. **That was the host's side of the pass-through, not
+this title's: §44.**
 
 **What the runs did find** is a real inconsistency in the `no-exec` path, and
 it is this driver's. `DriverInit` in `d3dpthal.c` published
@@ -3265,3 +3266,52 @@ Vulkan. A run where the probe raced the helper is what the batch's
 `WAITFILE.EXE C:\WINDOWS\D3DPRE.LOG` is for — the Run key and `WIN.INI`'s
 `run=` start at the same moment, and under TCG the helper does not always
 win.
+
+### 44. The fallback drew nothing on Linux: the frame a front-buffer flush presents (2026-09-20)
+
+§43 leaves a machine that points at WineD3D properly, and the user pointed
+`base98-br-glide3` at it and started a real game: FIFA 2000, whose 3D Setup
+now lists the host's card (Wine names the adapter after it) and takes it.
+The game then played its audio over a **black screen** — running, not frozen.
+Which is what §40's Moto Racer did under the fallback, and what DDPROBE and
+D3D7TEST never did, because they are the two cases the probes do not cover.
+
+**It is not in the guest.** Wine's ddraw presents the primary surface by
+drawing into `GL_FRONT` and flushing; it never calls `wglSwapBuffers`. The
+embed backend published a frame **on a swap only**, so nothing the guest
+drew that way ever reached the frontend. This was measured on XP on
+2026-09-03, where the same symptom was a white screen and the macOS backend
+grew the hooks that answer it; the note that day said "Linux (EGL pbuffer)
+has the same swap-only presentation and will need the flush path too", and
+it stayed in the macOS half of `embed/mglcntx_embed.c` for a year.
+
+So the hooks are the shared layer's now (`buffer_target`, `fx_glDrawBuffer`,
+`fx_glReadBuffer`, `fx_glFlush`, `fx_glFinish`, `install_buffer_hooks`), and
+what is left per OS is one question — what plays the guest's framebuffer 0,
+and what a colour buffer of it becomes: macOS's FBO stand-in answers
+`GL_COLOR_ATTACHMENT0`, Linux's EGL pbuffer and Windows' WGL one answer
+`GL_BACK`, or `GL_FRONT` if the config came out single-buffered. On a
+pbuffer Mesa **accepts** `glDrawBuffer(GL_FRONT)` with no error at all
+(measured: `err 0x0`), which is why nothing anywhere complained — the guest
+drew into a buffer nobody scans out.
+
+**The A/B**, one file apart, same raw copy of the user's machine, same disc,
+the game started from `RUN.BAT` in the player
+(`PLAYER=1 NO_DRIVER=1 EXTRA='-global d3dpt-vga.no-exec=on'
+CDS=FIFA2000.ISO tools/win98-game-test.sh`):
+
+| backend | what the player received |
+|---|---|
+| with the hooks | **206 frames**: the EA logo, the menus, the attract match (players, HUD, pitch lines) |
+| without them | **29**, the last one pure black — the user's report |
+
+The check with no guest in it is `embed-3d` (`tools/embed-3d-test.c`): after
+the swap and ring cases it selects the front buffer through the guest's own
+dispatch entry, clears magenta and flushes, and requires that frame to
+arrive. It fails on the old backend (`frames 34 -> 34`, the ring's last blue
+still the newest frame).
+
+One thing the run shows that is not this: the pitch is black where the grass
+belongs, players and lines drawn over it. That is a WineD3D rendering
+question of the same kind as the two the XP run parked in 2026-09-12
+(doc 00's `tools/xp-wined3d-test.sh` entry), not a presentation one.
