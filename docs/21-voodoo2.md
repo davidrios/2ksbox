@@ -895,7 +895,17 @@ difference on purpose — is never touched.
 fill and a swap go into the ring and the FIFO is turned off at once, with no
 idle wait at all. The frame has to be cyan (the packets were run, not
 dropped) and the status register has to read idle afterwards. Both halves
-fail with `LFB_ORDER=off`.
+fail with `LFB_ORDER=off`. One thing about its timing: the idle poll ends
+the moment the swap completes, and a swap completes at a retrace, after
+which the frame it swapped in is scanned out over the *next* frame period —
+the console shows what has been scanned out, line by line. The phase
+therefore waits half a second before it announces the scene, as every other
+phase does through `fifo_wait`; announced at once, a screendump within ~16
+ms of the marker was the previous scene whole, with the status idle and the
+ring consumed, which for a day (2026-09-21) read as the fill and swap no
+longer presenting after the swapped-pair phase — polling the serial log
+every millisecond instead of every 100 ms made it fail every time, and the
+device was never involved.
 
 ### One thing the DOS program had to learn: swapbufferCMD twice
 

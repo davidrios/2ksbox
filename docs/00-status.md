@@ -305,7 +305,12 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   Carmageddon's race start ended in a `fatal()` inside a texture download
   and 27 M `cmdFifoRdPtr` reads per 5 s. The device counts that path as the
   chip does now (doc 21 §13; the `voodoo-guest` check's swapped-pair
-  phase).
+  phase). What parked it for a day was the check itself: the teardown
+  phase announced its scene the instant status read idle, which is the
+  retrace the swap lands on, so a screendump within a frame period of the
+  marker was the previous scene whole with the ring consumed and the card
+  idle — polled every millisecond it failed every time, the device never
+  involved; the phase waits out the scanout now as the others do.
   **The "wide" menu is not ours.** Measured out of the screenshot rather than
   argued: the player draws the 640x480 frame at exactly 3x with square pixels
   (the CRT preset's scanline period is 3 host rows, autocorrelation peaks at

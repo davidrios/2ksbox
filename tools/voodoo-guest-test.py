@@ -1082,6 +1082,17 @@ partial_phase:
 ; waited for, and then polls status the way grSstIdle does: the frame has
 ; to be cyan (the packets were run, not dropped) and the card has to go
 ; idle (bits 9:7 clear).
+;
+; The idle poll ends the moment the swap completes, and the swap completes
+; at a retrace: the frame it swapped in is scanned out over the *next*
+; frame period, line by line, and the console shows what has been scanned
+; out. So the marker the host takes its screendump on must not go out until
+; that period is over -- announced at once, a dump within ~16 ms of it is
+; the previous scene whole, with the status idle and the ring consumed
+; (2026-09-21: what looked like the fill and swap no longer presenting after
+; the swapped-pair phase was this, and polling the serial log every 1 ms
+; instead of every 100 ms makes it fail every time). Every other phase's
+; marker follows fifo_wait's half-second; this one has its own.
 teardown_phase:
     mov edi, FIFO_WIN + 34h + ORDER_FILLS * 8
     mov dword [fs:edi], 00010291h       ; color1
@@ -1110,6 +1121,8 @@ teardown_phase:
     pop eax
     call puthex32
     call putnl
+    mov cx, 9                   ; ~0.5 s: the swapped-in frame's scanout
+    call delay_ticks
     mov si, str_td_swapped
     call puts
     mov cx, 36                  ; ~2 s: the host takes its screendump
@@ -1726,6 +1739,12 @@ def main():
         print("FAIL the ring published packets with no LFB write ever queued behind "
               "them: the ordering scene did not reach the point it is about")
         ok = False
+    # the mmio-holes=off control leaves the consumer parked inside the stale
+    # packet, eating whatever follows as its values (below): the teardown
+    # and partial-packet phases after the swapped pair are not judged
+    # there, they cannot mean anything
+    judged = not (MMIO_HOLES == "off" and RAMFIFO == "off")
+    fail = "FAIL" if judged else "    (not judged, the control:)"
     # the teardown: the packets written before the FIFO was turned off were
     # run (the frame is cyan), and the card reads idle afterwards rather
     # than busy for ever (Glide's own wait at grSstWinClose)
@@ -1734,9 +1753,9 @@ def main():
     print("    status after the command FIFO was turned off: %s"
           % (td[0] if td else "nothing"))
     if len(td) != 1 or int(td[0], 16) & 0x380:
-        print("FAIL the card still reads busy with the command FIFO off: a guest "
+        print(fail + " the card still reads busy with the command FIFO off: a guest "
               "polling for idle there never gets out")
-        ok = False
+        ok = False if judged else ok
     # the swapped pair: a packet's value written before its header, with the
     # consumer resting on the header's slot and a stale word planted there.
     # Counted per write (86Box's transport as it came), the consumer read the
@@ -1774,17 +1793,13 @@ def main():
         print("FAIL mmio-holes=off did not take the stale word as the header: "
               "the control proves nothing")
         ok = False
-    if MMIO_HOLES == "off" and RAMFIFO == "off":
-        # the control leaves the consumer parked inside the stale packet,
-        # eating whatever follows as its values: the phases after this one
-        # are not judged, they cannot mean anything there
+    if not judged:
         print("    (mmio-holes=off: the teardown and partial-packet phases are not "
               "judged, the consumer is parked inside the stale packet)")
-    judged = not (MMIO_HOLES == "off" and RAMFIFO == "off")   # the control, see above
     w, h, frac = cyan_fraction(shot_td)
     print("    screendump of the teardown scene: %dx%d, %.1f%% cyan" % (w, h, frac * 100))
     if (w, h) != (WIDTH, HEIGHT) or frac < 0.99:
-        print("FAIL the packets written before the command FIFO was turned off were "
+        print(fail + " the packets written before the command FIFO was turned off were "
               "not run")
         ok = False if judged else ok
     # the partial packet: the read pointer must never pass what the guest
@@ -1805,20 +1820,20 @@ def main():
           % (pp_h[0] if pp_h else "nothing", FIFO_BASE + 4,
              pp_d[0] if pp_d else "nothing", FIFO_BASE + 8))
     if len(pp_c) != 1 or len(pp_h) != 1 or len(pp_d) != 1:
-        print("FAIL the partial-packet phase did not report the read pointer")
+        print(fail + " the partial-packet phase did not report the read pointer")
         ok = False if judged else ok
     else:
         if int(pp_c[0], 16) != FIFO_BASE + 4:
-            print("FAIL the chip did not stop on the header (%s): the phase never "
+            print(fail + " the chip did not stop on the header (%s): the phase never "
                   "reached the state it is about" % pp_c[0])
             ok = False if judged else ok
         if int(pp_h[0], 16) != FIFO_BASE + 4:
-            print("FAIL the read pointer passed the words the guest had written: "
+            print(fail + " the read pointer passed the words the guest had written: "
                   "the walk took the rest of the packet on a guess, which leaves "
                   "a guest waiting for room on an empty ring")
             ok = False if judged else ok
         if int(pp_d[0], 16) != FIFO_BASE + 8:
-            print("FAIL the packet did not complete once its last word arrived")
+            print(fail + " the packet did not complete once its last word arrived")
             ok = False if judged else ok
     # the stranded client: a burst into the command-FIFO window with the
     # FIFO off must leave the ring's own register where it was. With
