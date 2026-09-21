@@ -211,7 +211,10 @@ starts with glitched graphics — likely state the burst leaves behind.
 §11):** not Glide's own teardown but a second Glide client — 3dfx's login
 helper, in another process — initialising the card under a live window,
 so the running Glide went on writing packets into a FIFO that had been
-switched off behind it.
+switched off behind it. **Refused since 2026-09-20** (§11's
+"stranded client"): the walk is what leaves the card unusable, a real chip
+is not, and the writes are nobody's on purpose — `fifo-off-regs=on` is the
+A/B that puts the walk back.
 
 **A second shape of it, on the Windows PC (2026-09-17, the user, 3DMark
 99 on `base98-br`): the consumer stops inside a packet.** 86Box's
@@ -580,6 +583,63 @@ while the command FIFO is on can only be someone else's init, since
 Glide's own close turns the FIFO off first, and it warns `the card is
 being re-initialised (sst1InitRegisters) while a Glide window has the
 command FIFO on`. Glide's own close-and-reopen does not trip it.
+
+### The stranded client's packets are refused (2026-09-20)
+
+**It also happens at a game's close, and there the warning above cannot
+fire.** FIFA 2000 on `base98-br`, the user's own run: 800×600 on the card
+for ~2½ minutes at 30 fps (150 frames per 5 s window, ~700 k triangles),
+then `command FIFO through MMIO` and `display off (VGA back)` — an
+ordinary `grSstWinClose` — then a full `sst1InitRegisters` with the memory
+probe, and then a client streaming command-FIFO packets into the window
+with the FIFO off. Because the close had already cleared `fbiInit7`, the
+re-initialisation warning's `cmdfifo_enabled` test was false and it said
+nothing. What a **healthy** reopen looks like is worth knowing, because it
+is unmistakable and none of it was there (`VOODOO2_TRACE=1` on GLIDETEST,
+same day):
+
+    initEnable <= 00005001
+    wr 0001e0 020101c2   cmdFifoBaseAddr      wr 0001f0 001c1ffc   amax
+    wr 0001e8 001c2000   rdPtr                wr 0001f4 00000000   depth
+    wr 0001ec 001c1ffc   amin                 wr 0001f8 00000000   holes
+    wr 00024c 0ffb8300   fbiInit7, bit 8: the FIFO on
+    initEnable <= 00005003
+
+FIFA's had no `00005001`, no `0x1e0`–`0x1f8` block and no `fbiInit7` with
+bit 8 — and the ring registers still held the *dead* session's values
+(`base 002e5000 … rp 002eee80`). So the streaming client had not reopened
+at all: it resumed on the old ring after someone else's init had switched
+the FIFO off under it. The guest then spun — 640 943 status reads and
+919 878 LFB writes to the front buffer in five seconds — and the machine
+reset five seconds after that, with no bugcheck (the display driver logged
+no `message mode: VGA text` and no `linear mode off`).
+
+**So the walk is refused by default now.** Nothing writes that window on
+purpose with the FIFO off — Glide only writes there when it believes the
+FIFO is on — so every such dword is a stranded client's packet, and
+letting them walk the register file destroys the card for everything
+after: `videoDimensions` is zeroed and never rewritten, so the display
+timer stops generating retraces and `status` never reads idle again;
+`fbiInit7` flips the FIFO on and off at random; `intrCtrl` reaches 86Box's
+`fatal()`. A real chip is not left unusable by this — 3dfx's own Glide
+does it routinely — so the permanence is the emulation's, not the card's.
+`-device voodoo2,fifo-off-regs=on` is the A/B, the walk exactly as 86Box
+decodes it. Offsets below `0x100` still pass either way: those are the
+vertex and triangle registers under Glide's alternate mapping, and a stray
+triangle renders and is over, where the rest sticks.
+
+The warning now also **names both sides** without the trace, once: `the
+packet comes from …` (the module and call chain around the guest's program
+counter, with its `cr3`) and `the last sst1InitRegisters was …`. The same
+`cr3` in both is one program re-initialising under itself; a different one
+is a second Glide client.
+
+The `voodoo-guest` check guards it (`tools/voodoo-guest-test.py`, the
+stranded-client phase): with the FIFO left off by the teardown phase, a
+burst goes into the window at the offsets of `cmdFifoBaseAddr`,
+`videoDimensions` and `fbiInit7`, and the ring's own register has to read
+back unmoved. `FIFO_OFF_REGS=on` is the control and must move it —
+measured `03010300 -> 02AD02EF`.
 
 **What the guest tools do about it (2026-09-16): a start-up guard.**
 `SETUP /I 6` on 98/Me with a 3dfx card present ("Voodoo 2 start-up guard",

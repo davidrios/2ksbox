@@ -57,6 +57,17 @@ mirror of it, a wait for the *ring* before an LFB write, is `LFB_ORDER=on`:
 that window is shorter than the consumer's wake and the block is on top
 either way, which is the measurement that ruled it out as the HUD's cause.
 
+Then the **stranded client** (doc 21 §11): with the FIFO still off from
+the teardown, a burst of dwords goes into the 0x200000 window -- what a
+Glide whose FIFO was switched off under it goes on doing -- at the offsets
+of cmdFifoBaseAddr, videoDimensions and fbiInit7. The device refuses such a
+write, so the ring's own register has to read back where it was;
+`FIFO_OFF_REGS=on` (the device's `fifo-off-regs=on`) is the control that
+decodes the burst as register writes the way 86Box does, and it has to move
+the ring. That walk is what leaves a card unusable after a game's close --
+FIFA 2000 on `base98-br` took the guest's Windows down with it on
+2026-09-20.
+
 Both phases write swapbufferCMD to the register window as well as putting
 the packet in the ring, because 3dfx's Glide does and the card's own
 accounting needs it: only Banshee and later count a swap *packet* as
@@ -106,12 +117,14 @@ RAMFIFO = os.environ.get("RAMFIFO", "on")
 RECOMP = os.environ.get("RECOMP", "on")
 DITHER_SUB = os.environ.get("DITHER_SUB", "on")
 UNDITHER = os.environ.get("UNDITHER", "off")
+FIFO_OFF_REGS = os.environ.get("FIFO_OFF_REGS", "off")
 LFB_ORDER = os.environ.get("LFB_ORDER", "on")
 OUT = os.path.join(ROOT, "build/voodoo-guest" + ("" if VGA == "std" else "-" + VGA)
                    + ("" if RAMFIFO == "on" else "-mmiofifo")
                    + ("" if RECOMP == "on" else "-interp")
                    + ("" if DITHER_SUB == "on" else "-nodsub")
                    + ("" if UNDITHER == "off" else "-undither")
+                   + ("" if FIFO_OFF_REGS == "off" else "-fifooffregs")
                    + ("" if LFB_ORDER == "on" else "-noorder"))
 
 spec = importlib.util.spec_from_file_location("x87gt", os.path.join(ROOT, "tools/x87-guest-test.py"))
@@ -455,6 +468,7 @@ start:
     call dither_phase
     call order_phase
     call teardown_phase
+    call stranded_phase
 
     mov edi, BAR
     xor eax, eax                ; fbiInit7: the command FIFO off again
@@ -913,6 +927,44 @@ teardown_phase:
     call delay_ticks
     ret
 
+; --------------------------------------------- the stranded-client phase
+;
+; What a Glide whose FIFO was switched off under it does (doc 21 §11): it
+; goes on writing command-FIFO packets into the 0x200000 window, and with
+; the FIFO off 86Box decodes each of them as the register at bits 9:2 --
+; the ring's own base, videoDimensions, fbiInit7 -- which destroys the card
+; for everything after it. The device refuses them by default
+; (`fifo-off-regs=on` is the control, the walk as 86Box decodes it). The
+; phase runs with the FIFO already off (the teardown left it so): it reads
+; cmdFifoBaseAddr, writes a burst into the window at the offsets of that
+; register, videoDimensions and fbiInit7, and reads it back. Refused, the
+; ring is where it was; decoded, it is wherever the burst put it.
+stranded_phase:
+    mov edi, BAR
+    mov eax, [fs:edi + SST_cmdFifoBaseAddr]
+    push eax
+    mov si, str_st_before
+    call puts
+    pop eax
+    call puthex32
+    call putnl
+
+    mov edi, FIFO_WIN
+    mov eax, 0DEADBEEFh
+    mov [fs:edi + SST_cmdFifoBaseAddr], eax
+    mov [fs:edi + SST_videoDimensions], eax
+    mov [fs:edi + SST_fbiInit7], eax
+
+    mov edi, BAR
+    mov eax, [fs:edi + SST_cmdFifoBaseAddr]
+    push eax
+    mov si, str_st_after
+    call puts
+    pop eax
+    call puthex32
+    call putnl
+    ret
+
 ; 3dfx's Glide writes swapbufferCMD to the register window as well as
 ; putting the packet in the ring, and the measured stream of a real game
 ; does one of each per frame. With the FIFO on the register write only
@@ -1162,6 +1214,8 @@ str_order:    db "ORDER RDPTR ", 0
 str_order_swapped: db "ORDER SWAPPED", 10, 0
 str_td_status: db "TD STATUS ", 0
 str_td_swapped: db "TD SWAPPED", 10, 0
+str_st_before: db "ST BEFORE ", 0
+str_st_after: db "ST AFTER ", 0
 """
 
 
@@ -1324,8 +1378,8 @@ def main():
             # the cursor the console publishes (patch 66), in this log
             *(["-trace", "dpy_mouse_publish"] if VGA == "d3dpt" else []),
             "-device",
-            "voodoo2,ramfifo=%s,recompiler=%s,dither-sub=%s,undither=%s,lfb-order=%s"
-            % (RAMFIFO, RECOMP, DITHER_SUB, UNDITHER, LFB_ORDER),
+            "voodoo2,ramfifo=%s,recompiler=%s,dither-sub=%s,undither=%s,lfb-order=%s,fifo-off-regs=%s"
+            % (RAMFIFO, RECOMP, DITHER_SUB, UNDITHER, LFB_ORDER, FIFO_OFF_REGS),
             "-drive", "file=%s,if=floppy,index=0,format=raw" % img,
             "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
             "-qmp", "unix:%s,server,nowait" % sock, "-audiodev", "none,id=a0",
@@ -1483,6 +1537,31 @@ def main():
     if (w, h) != (WIDTH, HEIGHT) or frac < 0.99:
         print("FAIL the packets written before the command FIFO was turned off were "
               "not run")
+        ok = False
+    # the stranded client: a burst into the command-FIFO window with the
+    # FIFO off must leave the ring's own register where it was. With
+    # fifo-off-regs=on it is decoded as a register write instead, the walk
+    # 86Box does and the chip is said to do -- the control, which must move
+    # it. That walk is what left a card unusable after a game's close
+    # (2026-09-20, FIFA 2000 on base98-br).
+    st_b = [l.split()[2] for l in text.splitlines()
+            if l.startswith("ST BEFORE ") and len(l.split()) == 3]
+    st_a = [l.split()[2] for l in text.splitlines()
+            if l.startswith("ST AFTER ") and len(l.split()) == 3]
+    print("    cmdFifoBaseAddr across a burst into the window with the FIFO off: "
+          "%s -> %s (fifo-off-regs=%s)"
+          % (st_b[0] if st_b else "nothing", st_a[0] if st_a else "nothing",
+             FIFO_OFF_REGS))
+    if len(st_b) != 1 or len(st_a) != 1:
+        print("FAIL the stranded-client phase did not report the ring's register")
+        ok = False
+    elif FIFO_OFF_REGS == "off" and st_a[0] != st_b[0]:
+        print("FAIL a command-FIFO packet met with the FIFO off moved the ring: "
+              "the burst walked the register file")
+        ok = False
+    elif FIFO_OFF_REGS == "on" and st_a[0] == st_b[0]:
+        print("FAIL fifo-off-regs=on did not decode the burst as register writes: "
+              "the control proves nothing")
         ok = False
     w, h, frac = red_fraction(shot_off)
     print("    screendump with the Voodoo off: %dx%d, %.1f%% red" % (w, h, frac * 100))

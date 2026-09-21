@@ -99,11 +99,35 @@ spin on the status register instead). **And it is intermittent, games included**
 by hand on this machine: sometimes a game hangs, sometimes the same game
 does not) — so it is neither a tools-only path nor a fixed sequence, and an
 earlier note here saying games were unaffected was wrong.
-The fix is a judgement call not yet made: drop `0x200000`-window writes
-while the FIFO is off (offset ≥ `0x100`, to keep the alternate-mapped
-`< 0x100` register writes), or work out why Glide's re-init leaves the
-hardware FIFO disabled while it keeps streaming and match the chip.
-86Box upstream would abort at the same `intrCtrl` write.
+**The judgement call is made (2026-09-20): the writes are refused**, at
+offset ≥ `0x100`, keeping the alternate-mapped `< 0x100` ones. The
+argument: nothing writes that window on purpose with the FIFO off — Glide
+only writes there when it believes the FIFO is on — so every such dword is
+a stranded client's packet; a real chip is not left unusable by them,
+3dfx's own Glide does this routinely, so the permanence is the
+emulation's; and the walk zeroes `videoDimensions`, which the reopen never
+rewrites, so the display timer stops generating retraces and `status`
+never reads idle again. `-device voodoo2,fifo-off-regs=on` is the A/B, the
+walk exactly as 86Box decodes it (86Box upstream would abort at the same
+`intrCtrl` write). What forced it: **FIFA 2000 on `base98-br` took the
+guest's Windows down at its close** (the user, 2026-09-20,
+`/tmp/launcher.log`) — 800×600 on the card for 2½ minutes at 30 fps, an
+ordinary `grSstWinClose`, then another `sst1InitRegisters` and a client
+still streaming on the *dead* session's ring (`base 002e5000 … rp
+002eee80`), 640 943 status reads and 919 878 front-buffer LFB writes in
+five seconds, then a guest reset with no bugcheck. The device now names
+the writing module and the last init's without `VOODOO2_TRACE=1` (the
+`cr3` in each says whether it is one program re-initialising under itself
+or two clients), and the `voodoo-guest` check has a stranded-client phase:
+a burst into the window at the offsets of `cmdFifoBaseAddr`,
+`videoDimensions` and `fbiInit7` must leave the ring's register unmoved,
+with `FIFO_OFF_REGS=on` the control that must move it (`03010300 ->
+02AD02EF`). **What is still open**: why the reopening client does not
+re-enable the FIFO. A healthy reopen is unmistakable — `initEnable <=
+00005001`, the whole `0x1e0`–`0x1f8` block, `fbiInit7` with bit 8 — and
+`VOODOO2_TRACE=1` on GLIDETEST shows it every time (its close/reopen case
+passes 4/0), while FIFA's had none of it. The next FIFA run's log will
+name the two modules itself.
 
 **Real games on the card, by hand — 2026-09-13** (the user, on the
 launcher's `base98-br` machine, Win98 with 3dfx's driver): **Quake II,

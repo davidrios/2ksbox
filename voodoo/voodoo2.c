@@ -134,9 +134,21 @@ struct Voodoo2State {
     int        last_rd;
     int        last_tex;
     unsigned   last_fatals;
-    uint32_t   fifo_off_writes;   /* FIFO-window packets decoded as registers */
+    uint32_t   fifo_off_writes;   /* FIFO-window packets met with the FIFO off */
     uint32_t   last_fifo_off;
     bool       fifo_off_warned;
+    /* which registers those dwords would have been, as a bitmap over
+     * (addr & 0x3fc) >> 2: a stranded client's packets walk the file at
+     * whatever offsets its addresses land on, and the 5 s line names them,
+     * because the question a refusal raises is whether one of them was the
+     * guest's own way back (fbiInit7 with bit 8) rather than a packet */
+    uint32_t   fifo_off_seen[8];
+    /* Who last ran sst1InitRegisters (an initEnable of exactly 1), kept for
+     * the report the first such packet makes: the process that wrote the
+     * packet against the one that switched the FIFO off under it. The same
+     * cr3 in both is one program re-initialising under itself; a different
+     * one is a second Glide client (doc 21 §11). */
+    char       init_who[512];
 
     /* the command FIFO in RAM (ramfifo=on) */
     uint8_t     *fb_86box;       /* 86Box's own fb_mem, given back at close */
@@ -212,6 +224,7 @@ struct Voodoo2State {
     bool     recompiler;
     bool     ramfifo;
     bool     lfb_order;
+    bool     fifo_off_regs;
 
     /* the undither's one-shot note: it says once that it is on, and once
      * why it is not, because a frame it declines is an ordinary frame and
@@ -274,8 +287,10 @@ voodoo2_note(Voodoo2State *s, hwaddr addr, uint64_t val, unsigned size, bool wri
             return;
         }
         voodoo2_trace_flush();
-        if (voodoo2_trace_where_armed || ((addr & 0x200000) && !s->v->cmdfifo_enabled &&
-                                         !s->fifo_off_writes)) {
+        if (voodoo2_trace_where_armed) {
+            /* the first write after an initEnable: whose init this is. The
+             * first packet met with the FIFO off names its own writer
+             * without the trace (voodoo2_mmio_write). */
             voodoo2_trace_where_armed = false;
             voodoo2_trace_where("writer");
         }
@@ -356,16 +371,19 @@ voodoo2_guest_module(CPUState *cs, uint32_t a, uint32_t *base, char *name, size_
     return false;
 }
 
+/* Where the guest is, as one line: the module and offset the program
+ * counter is in, the callers above it and the code around it. Empty when
+ * there is no CPU to ask (a timer, the FIFO thread). */
 static void
-voodoo2_trace_where(const char *why)
+voodoo2_where(char *line, size_t len)
 {
     CPUState    *cs = current_cpu;
     CPUX86State *env;
     uint32_t     pc, esp, base = 0, stack[96];
     char         name[40];
-    char         line[512];
     size_t       n = 0;
 
+    line[0] = 0;
     if (!cs) {
         return;
     }
@@ -374,17 +392,19 @@ voodoo2_trace_where(const char *why)
      * inside the same function -- all this needs */
     pc  = (uint32_t) (env->segs[R_CS].base + env->eip);
     esp = (uint32_t) (env->segs[R_SS].base + env->regs[R_ESP]);
+    n += snprintf(line + n, len - n, "cr3 %08x pc %08x: ",
+                  (uint32_t) env->cr[3], pc);
     if (voodoo2_guest_module(cs, pc, &base, name, sizeof(name))) {
-        n += snprintf(line + n, sizeof(line) - n, "%s+%x", name, pc - base);
+        n += snprintf(line + n, len - n, "%s+%x", name, pc - base);
     } else {
-        n += snprintf(line + n, sizeof(line) - n, "%08x", pc);
+        n += snprintf(line + n, len - n, "%08x", pc);
     }
     /* callers: every stack word that lands in a module other than the last
      * one named, innermost first */
     if (voodoo2_guest_read(cs, esp, stack, sizeof(stack))) {
         uint32_t last = base;
 
-        for (unsigned i = 0; i < ARRAY_SIZE(stack) && n < sizeof(line) - 48; i++) {
+        for (unsigned i = 0; i < ARRAY_SIZE(stack) && n < len - 48; i++) {
             uint32_t b;
             char     nm[40];
 
@@ -392,7 +412,7 @@ voodoo2_trace_where(const char *why)
                 !voodoo2_guest_module(cs, stack[i], &b, nm, sizeof(nm)) || b == last) {
                 continue;
             }
-            n += snprintf(line + n, sizeof(line) - n, " <- %s+%x", nm, stack[i] - b);
+            n += snprintf(line + n, len - n, " <- %s+%x", nm, stack[i] - b);
             last = b;
         }
     }
@@ -400,15 +420,24 @@ voodoo2_trace_where(const char *why)
         uint8_t code[24];
 
         if (voodoo2_guest_read(cs, pc & ~0xfu, code, sizeof(code))) {
-            n += snprintf(line + n, sizeof(line) - n, " [code@%08x", pc & ~0xfu);
-            for (unsigned i = 0; i < sizeof(code) && n < sizeof(line) - 4; i++) {
-                n += snprintf(line + n, sizeof(line) - n, " %02x", code[i]);
+            n += snprintf(line + n, len - n, " [code@%08x", pc & ~0xfu);
+            for (unsigned i = 0; i < sizeof(code) && n < len - 4; i++) {
+                n += snprintf(line + n, len - n, " %02x", code[i]);
             }
-            n += snprintf(line + n, sizeof(line) - n, "]");
+            n += snprintf(line + n, len - n, "]");
         }
     }
-    fprintf(stderr, "voodoo2: %s: cr3 %08x pc %08x: %s\n", why,
-            (uint32_t) env->cr[3], pc, line);
+}
+
+static void
+voodoo2_trace_where(const char *why)
+{
+    char line[512];
+
+    voodoo2_where(line, sizeof(line));
+    if (line[0]) {
+        fprintf(stderr, "voodoo2: %s: %s\n", why, line);
+    }
 }
 
 /* the last accesses the guest made, oldest first */
@@ -1208,16 +1237,51 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
          * 21 §11): a *second* Glide client ran sst1InitRegisters under a
          * live window -- 3dfx's login helper, `rundll32
          * 3dfxv2ps.dll,UpdateRegSettings` through GLIDE3X.DLL -- which
-         * switched the FIFO off behind the running program's back. The
-         * config-space write that starts such an init warns of it; this
-         * names what follows. Kept as the chip's behaviour, not dropped. */
+         * switched the FIFO off behind the running program's back. It is
+         * also what a game's own close can leave (2026-09-20, FIFA 2000 on
+         * `base98-br`: the window closed, another init ran, and the client
+         * that still owned the ring went on streaming to it).
+         *
+         * The stream is **refused** by default (`fifo-off-regs=on` is the
+         * A/B, the walk as 86Box decodes it). Nothing writes this window on
+         * purpose with the FIFO off -- Glide only writes there when it
+         * believes the FIFO is on -- so every one of these dwords is a
+         * stranded client's packet, and letting them walk the register file
+         * destroys the card for everything after: `videoDimensions` is
+         * zeroed and never rewritten, so the display timer stops generating
+         * retraces and `status` never reads idle again; `fbiInit7` flips the
+         * FIFO on and off at random; `intrCtrl` reaches 86Box's `fatal()`.
+         * On the real chip a game recovers from this -- 3dfx's own Glide
+         * does it routinely -- so permanent damage is the emulation's, not
+         * the card's. Offsets below 0x100 still pass: those are the vertex
+         * and triangle registers under Glide's alternate mapping, and a
+         * stray triangle renders and is over, where the rest sticks. */
         s->fifo_off_writes++;
+        s->fifo_off_seen[(addr & 0x3fc) >> 7] |= 1u << (((addr & 0x3fc) >> 2) & 31);
         if (!s->fifo_off_warned) {
+            char line[512];
+
             s->fifo_off_warned = true;
             warn_report("voodoo2: command-FIFO packet %08x to the window at "
-                        "%06x with the FIFO off -> decoded as register %03x "
+                        "%06x with the FIFO off -> %s register %03x "
                         "(Glide streaming to a reset FIFO: the teardown hang)",
-                        (unsigned) val, (unsigned) addr, (unsigned) (addr & 0x3fc));
+                        (unsigned) val, (unsigned) addr,
+                        s->fifo_off_regs ? "decoded as" : "refused; it would be",
+                        (unsigned) (addr & 0x3fc));
+            /* who is streaming, and who switched the FIFO off under them:
+             * the same cr3 in both is one program re-initialising under
+             * itself, a different one is a second Glide client */
+            voodoo2_where(line, sizeof(line));
+            if (line[0]) {
+                info_report("voodoo2: the packet comes from %s", line);
+            }
+            if (s->init_who[0]) {
+                info_report("voodoo2: the last sst1InitRegisters was %s",
+                            s->init_who);
+            }
+        }
+        if (!s->fifo_off_regs) {
+            return;
         }
     }
     if (addr < 0x400000 && (addr & 0x3fc) == 0x214 &&
@@ -1365,6 +1429,11 @@ voodoo2_config_write(PCIDevice *dev, uint32_t addr, uint32_t val, int len)
     if (addr <= 0x43 && addr + len > 0x40) {
         info_report("voodoo2: initEnable <= %08x", s->v->initEnable);
         voodoo2_trace_where_armed = voodoo2_trace;
+        if (s->v->initEnable == 0x00000001) {
+            /* sst1InitRegisters opens with exactly SST_INITWR_EN: remember
+             * whose it is, for the FIFO-off report above */
+            voodoo2_where(s->init_who, sizeof(s->init_who));
+        }
         if (s->v->initEnable == 0x00000001 && s->v->cmdfifo_enabled) {
             /* A second Glide initialising the card under a live one (doc 21
              * §11). sst1InitRegisters opens with initEnable = SST_INITWR_EN,
@@ -1598,9 +1667,22 @@ voodoo2_stats(void *opaque)
         voodoo2_top_regs(s->wr_hist, 256, wrs, sizeof(wrs));
         voodoo2_top_regs(s->cfg_hist, 64, cfg, sizeof(cfg));
         if (voodoo_shim_fatals != s->last_fatals || s->fifo_off_writes != s->last_fifo_off) {
-            snprintf(ref, sizeof(ref), "; %u refused, %u fifo-off",
+            char regs[128] = "";
+            size_t rn = 0;
+
+            for (unsigned i = 0; i < 256 && rn < sizeof(regs) - 8; i++) {
+                if (s->fifo_off_seen[i >> 5] & (1u << (i & 31))) {
+                    rn += snprintf(regs + rn, sizeof(regs) - rn, "%s%03x",
+                                   rn ? " " : " (as registers ", i * 4);
+                }
+            }
+            if (rn) {
+                snprintf(regs + rn, sizeof(regs) - rn, ")");
+            }
+            memset(s->fifo_off_seen, 0, sizeof(s->fifo_off_seen));
+            snprintf(ref, sizeof(ref), "; %u refused, %u fifo-off%s",
                      voodoo_shim_fatals - s->last_fatals,
-                     s->fifo_off_writes - s->last_fifo_off);
+                     s->fifo_off_writes - s->last_fifo_off, regs);
         }
         s->last_fifo_off = s->fifo_off_writes;
         if (s->fifo_mapped && s->fifo_words == s->last_fifo_words &&
@@ -1882,6 +1964,10 @@ static Property voodoo2_properties[] = {
     DEFINE_PROP_BOOL("recompiler", Voodoo2State, recompiler, true),
     DEFINE_PROP_BOOL("ramfifo", Voodoo2State, ramfifo, true),
     DEFINE_PROP_BOOL("lfb-order", Voodoo2State, lfb_order, false),
+    /* on: a command-FIFO-window write met with the FIFO off walks the
+     * register file, the way 86Box decodes it. Off (the default) refuses
+     * it -- see the site in voodoo2_mmio_write */
+    DEFINE_PROP_BOOL("fifo-off-regs", Voodoo2State, fifo_off_regs, false),
     DEFINE_PROP_END_OF_LIST(),
 };
 
