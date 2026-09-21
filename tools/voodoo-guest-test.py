@@ -73,6 +73,18 @@ yellow. Counted per write, the stale header eats the fill and the swap:
 control, and there the frame must *not* be yellow -- and the phases after
 it are not judged, the consumer being parked inside the stale packet.
 
+Then the **wrap** (doc 21 §13, the same day): the same pair, value first, at
+the ring's base right after the guest's JMP back to it, with a stale header
+there from the lap before -- what every lap of Carmageddon's race does.
+Glide writes cmdFifoAMin and AMax once at init and never at a wrap, so the
+write side has to follow the JMP itself to know where the contiguous count
+goes on; taking the value's slot as that point instead held every word of
+the next lap until the hole bitmap ran out. The phase plants a type-1 header
+claiming 256 values at the base as a real packet (run with its values, so
+the word stays), writes a JMP to the base and waits for the consumer to
+take it, then the pair value first, a fill and a swap: the frame has to be
+green. Not judged in the control, whose consumer is already parked.
+
 Then the **partial packet** (doc 21 §9): the header of a two-word packet
 is written and its value is not, and `cmdFifoRdPtr` is read 256 times. The
 chip takes the header and parks wanting the value, so the read pointer has
@@ -496,6 +508,7 @@ start:
     call dither_phase
     call order_phase
     call swapped_phase
+    call wrap_phase
     call partial_phase
     call teardown_phase
     call stranded_phase
@@ -998,6 +1011,82 @@ swapped_phase:
     call delay_ticks
     ret
 
+; ------------------------------------------------------ the wrap phase
+;
+; The same stale header, at the ring's base after Glide's JMP back to it.
+; Glide writes cmdFifoAMin and AMax once at init and never at a wrap, so
+; the chip follows its own JMP on the write side to know where the
+; contiguous count goes on, and the device does the same (doc 21 §13).
+; Without it the first packet after every wrap -- value first, header
+; second, at the base -- was taken as the guest continuing from the value,
+; its header as a jump back, and the words after it held until the hole
+; counter's bitmap ran out 64 words on (Carmageddon's race, 2026-09-21:
+; five laps of 359). The phase plants a type-1 header claiming 256 values
+; *at the base* -- as a real packet, run with its 256 values, so the word
+; stays there -- writes a JMP to the base after it and waits for the
+; consumer to take it (the read pointer at the base), writes the value of a
+; color1 packet to the second slot, lets the consumer look, then the header
+; to the first, a fill and a swap: the frame has to be green.
+wrap_phase:
+    mov edi, BAR                        ; a fresh ring at its base
+    xor eax, eax
+    mov [fs:edi + SST_fbiInit7], eax
+    mov eax, (FIFO_BASE >> 12) | (((FIFO_BASE + FIFO_SIZE - 1000h) >> 12) << 16)
+    mov [fs:edi + SST_cmdFifoBaseAddr], eax
+    mov eax, FIFO_BASE
+    mov [fs:edi + SST_cmdFifoRdPtr], eax
+    xor eax, eax
+    mov [fs:edi + SST_cmdFifoDepth], eax
+    mov eax, 100h
+    mov [fs:edi + SST_fbiInit7], eax
+
+    mov edi, FIFO_WIN                   ; the plant: color1 256 times over,
+    mov dword [fs:edi], 01000291h       ; a header the base keeps afterwards
+    add edi, 4
+    mov ecx, 256
+    xor eax, eax
+.plant:
+    mov [fs:edi], eax
+    add edi, 4
+    dec ecx
+    jnz .plant
+    mov edx, FIFO_BASE + 404h
+    mov si, str_wr_plant
+    call fifo_wait
+
+    mov edi, FIFO_WIN                   ; the JMP back to the base, and the
+    mov dword [fs:edi + 404h], (FIFO_BASE << 4) | 18h ; consumer taking it
+    mov edx, FIFO_BASE
+    mov si, str_wr_jump
+    call fifo_wait
+
+    mov edi, FIFO_WIN                   ; the value first: green, in the
+    mov dword [fs:edi + 4], 0000F800h   ; second slot
+    mov edi, BAR                        ; ... and the consumer has its look
+    mov ecx, 2000000
+.settle:
+    mov eax, [fs:edi + SST_cmdFifoDepth]
+    test eax, eax
+    jz .settled
+    dec ecx
+    jnz .settle
+.settled:
+    mov edi, FIFO_WIN                   ; then the header, in the first
+    mov dword [fs:edi], 00010291h       ; color1
+    mov dword [fs:edi + 8], 00010249h   ; fastfillCMD
+    mov dword [fs:edi + 12], 0
+    mov dword [fs:edi + 16], 00010251h  ; swapbufferCMD
+    mov dword [fs:edi + 20], 1
+    call swap_note
+    mov edx, FIFO_BASE + 24
+    mov si, str_wr_done
+    call fifo_wait
+    mov si, str_wr_swapped
+    call puts
+    mov cx, 36                          ; ~2 s: the host takes its screendump
+    call delay_ticks
+    ret
+
 ; ------------------------------------------------ the partial-packet phase
 ;
 ; The one invariant the RAM ring owes the guest: **the read pointer never
@@ -1419,6 +1508,10 @@ str_sp_plant: db "SP PLANTED ", 0
 str_sp_nop: db "SP NOP ", 0
 str_sp_done: db "SP WHOLE ", 0
 str_sp_swapped: db "SP SWAPPED", 10, 0
+str_wr_plant: db "WR PLANTED ", 0
+str_wr_jump: db "WR JUMPED ", 0
+str_wr_done: db "WR WHOLE ", 0
+str_wr_swapped: db "WR SWAPPED", 10, 0
 str_pp_head: db "PP HEAD ", 0
 str_pp_held: db "PP HELD ", 0
 str_pp_done: db "PP WHOLE ", 0
@@ -1519,6 +1612,11 @@ def yellow_fraction(path):
     return fraction(path, lambda r, g, b: r >= 240 and g >= 240 and b < 8)
 
 
+def green_fraction(path):
+    """The wrap phase's fastfill."""
+    return fraction(path, lambda r, g, b: r < 8 and g >= 240 and b < 8)
+
+
 def off_tile_pixels(path):
     """Pixels of the dither scene that are not the 4x4 dither tile of its
     reference band (rows 100-103). The scene is one grey over the whole
@@ -1579,9 +1677,10 @@ def main():
     shot_dith = os.path.join(OUT, "dither.ppm")
     shot_order = os.path.join(OUT, "order.ppm")
     shot_sp = os.path.join(OUT, "swapped.ppm")
+    shot_wr = os.path.join(OUT, "wrap.ppm")
     shot_td = os.path.join(OUT, "teardown.ppm")
     for f in (log, qlog, shot_on, shot_off, shot_lin, shot_f1, shot_f2, shot_dith,
-              shot_order, shot_sp, shot_td, sock):
+              shot_order, shot_sp, shot_wr, shot_td, sock):
         if os.path.exists(f):
             os.unlink(f)
     ok = True
@@ -1623,6 +1722,8 @@ def main():
             q.screendump(shot_order)
             text = wait_for(log, b"SP SWAPPED", p, 120, "the swapped-pair scene")
             q.screendump(shot_sp)
+            text = wait_for(log, b"WR SWAPPED", p, 120, "the wrap scene")
+            q.screendump(shot_wr)
             text = wait_for(log, b"TD SWAPPED", p, 120, "the teardown scene")
             q.screendump(shot_td)
             text = wait_for(log, b"DONE", p, 60, "the guest to finish")
@@ -1794,8 +1895,40 @@ def main():
               "the control proves nothing")
         ok = False
     if not judged:
-        print("    (mmio-holes=off: the teardown and partial-packet phases are not "
-              "judged, the consumer is parked inside the stale packet)")
+        print("    (mmio-holes=off: the wrap, teardown and partial-packet phases are "
+              "not judged, the consumer is parked inside the stale packet)")
+    # the wrap: the same pair, value first, at the ring's base right after
+    # the guest's JMP back to it, with a stale header there from the lap
+    # before. The write side has to follow the JMP to know the base is
+    # where the contiguous count goes on (Glide never says so through
+    # cmdFifoAMin); taking the value's slot as that point instead is what
+    # held every word of the next lap until the hole bitmap ran out.
+    wr_p = [l.split()[2] for l in text.splitlines()
+            if l.startswith("WR PLANTED ") and len(l.split()) == 3]
+    wr_j = [l.split()[2] for l in text.splitlines()
+            if l.startswith("WR JUMPED ") and len(l.split()) == 3]
+    wr_d = [l.split()[2] for l in text.splitlines()
+            if l.startswith("WR WHOLE ") and len(l.split()) == 3]
+    w, h, frac = green_fraction(shot_wr)
+    print("    wrap: read pointer after the plant %s (want %08X), after the jump "
+          "%s (want %08X), after the pair, fill and swap %s (want %08X); "
+          "screendump %dx%d, %.1f%% green"
+          % (wr_p[0] if wr_p else "nothing", FIFO_BASE + 0x404,
+             wr_j[0] if wr_j else "nothing", FIFO_BASE,
+             wr_d[0] if wr_d else "nothing", FIFO_BASE + 24, w, h, frac * 100))
+    if len(wr_p) != 1 or len(wr_j) != 1 or len(wr_d) != 1:
+        print(fail + " the wrap phase did not report the read pointer")
+        ok = False if judged else ok
+    elif int(wr_p[0], 16) != FIFO_BASE + 0x404 or int(wr_j[0], 16) != FIFO_BASE:
+        print(fail + " the consumer was not at rest on the base after the jump "
+              "when the value was written: the phase never reached the state it "
+              "is about")
+        ok = False if judged else ok
+    if judged and ((w, h) != (WIDTH, HEIGHT) or frac < 0.99):
+        print("FAIL a packet written value first at the ring's base after a jump "
+              "was read with a stale header: the write side did not follow the "
+              "JMP, and the fill and swap after it were lost")
+        ok = False
     w, h, frac = cyan_fraction(shot_td)
     print("    screendump of the teardown scene: %dx%d, %.1f%% cyan" % (w, h, frac * 100))
     if (w, h) != (WIDTH, HEIGHT) or frac < 0.99:

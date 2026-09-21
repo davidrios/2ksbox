@@ -1127,3 +1127,36 @@ its look, and only then the header goes into the second, followed by a
 fill and a swap. The frame has to be yellow. Counted per write, the stale
 header eats the fill and the swap; in RAM the restart poisons the slot and
 the phase only has to complete.
+
+**The wrap, the same day, from the first race that got past the start.**
+The count above took a write *below* the expected address as the guest
+continuing there after its JMP — and at every wrap the first packet Glide
+writes at the base is the same value-first pair, so the value at base+4
+became the expected point, the header at base a jump back, and every word
+of the next lap was held as ahead of a hole until the 64-word bitmap ran
+out (`the command FIFO moved from 200004 to 200104 with 63 word(s) written
+past a hole`, five laps of the 359 in a minute of Carmageddon's race). The
+chip cannot be doing that, and the trace says how it does not: Glide writes
+`cmdFifoAMin` and `AMax` three times in that minute, all at `grSstWinOpen`,
+never at a wrap — so the chip recognises its own JMP on the write side, at
+the point it becomes contiguous, and the device now does the same
+(`voodoo2_mmio_step`): every counted word is followed as the consumer will
+follow it, header by header with `voodoo2_packet_words`, and a JMP moves
+the expected address to its target. The base's pair is then an ordinary
+hole. The count also starts where `cmdFifoRdPtr` says the guest starts
+rather than at its first write, so the first pair after an init is one
+too. A write that still lands where nothing expected it — a hole wider
+than the bitmap, a ring taken up with no register written — is counted as
+it is with the old warning. The 5 s line adds `N jumps followed`. The
+`voodoo-guest` check's **wrap phase** holds it: the stale header planted
+at the base as a real packet (a type-1 header with its 256 values, run),
+a JMP to the base and the consumer waited for there, the pair value first,
+a fill and a swap, and the frame has to be green.
+
+What the race's crash after that is, the log cannot say: the guest's last
+ring writes are an ordinary mid-frame stream, then twelve status reads and
+Glide's shutdown with the FIFO turned off, no swap and no idle wait before
+it — a process dying and its exit handler closing the window, with nothing
+refused or warned on the device's side once the wrap is right. The A/Bs
+are the launcher's: `ramfifo=on` (the default; the `-global` line off) for
+the transport, and every emulation optimization off for the TCG fast paths.

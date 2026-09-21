@@ -310,7 +310,15 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   retrace the swap lands on, so a screendump within a frame period of the
   marker was the previous scene whole with the ring consumed and the card
   idle — polled every millisecond it failed every time, the device never
-  involved; the phase waits out the scanout now as the others do.
+  involved; the phase waits out the scanout now as the others do. The first
+  race that got past the start found the count's other hole: at every wrap
+  Glide's first packet at the base is the same value-first pair, and a write
+  below the expected address was taken as the guest continuing there, so
+  every word of the next lap was held until the bitmap ran out. Glide never
+  writes `cmdFifoAMin` at a wrap, so the chip follows its own JMP on the
+  write side, and the device does now (doc 21 §13; the check's wrap phase).
+  The race then crashes in the guest with nothing on the device's side:
+  the last ring writes are mid-frame, then Glide's shutdown — open.
   **The "wide" menu is not ours.** Measured out of the screenshot rather than
   argued: the player draws the 640x480 frame at exactly 3x with square pixels
   (the CRT preset's scanline period is 3 host rows, autocorrelation peaks at

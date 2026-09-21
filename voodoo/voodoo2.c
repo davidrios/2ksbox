@@ -194,8 +194,11 @@ struct Voodoo2State {
     uint64_t     mmio_ahead;         /* bit k: the word k past it has arrived already */
     uint32_t     mmio_holes;         /* words that arrived ahead of one before them */
     uint32_t     last_mmio_holes;
-    uint32_t     mmio_flushed;       /* counted at a jump with a hole still open */
+    uint32_t     mmio_flushed;       /* counted with a hole still open */
     uint32_t     last_mmio_flushed;
+    uint32_t     mmio_in_packet;     /* data words left of the packet being counted */
+    uint32_t     mmio_jumps;         /* JMP packets followed on the write side */
+    uint32_t     last_mmio_jumps;
     bool         mmio_holes_noted;
     bool         mmio_flushed_warned;
     int64_t      idle_status_since;  /* first of a run of idle-busy polls */
@@ -1066,6 +1069,75 @@ voodoo2_mmio_count(voodoo_t *v)
     }
 }
 
+/* The next contiguous word is counted and the expected address moves on:
+ * by one word, or to wherever a JMP packet points. The write side follows
+ * the packets the way the consumer will, header by header, because that is
+ * the only way to know where the guest goes next -- Glide writes
+ * cmdFifoAMin and AMax once at init and never at a wrap (the trace of
+ * Carmageddon's race, 2026-09-21: three writes to them in a minute, all at
+ * grSstWinOpen), so the chip recognises its JMP itself, at the point it
+ * becomes contiguous, and so does this. Without it the first packet after
+ * every wrap -- value first, header second, at the ring's base -- was taken
+ * as the guest continuing from wherever the value landed, its header then
+ * as a jump back, and every word after held as ahead of a hole until the
+ * bitmap ran out 64 words on (`moved from 200004 to 200104 with 63 word(s)
+ * written past a hole`; five laps of the 359 in that race). Returns true
+ * when a JMP moved the address. */
+static bool
+voodoo2_mmio_step(Voodoo2State *s)
+{
+    voodoo_t *v   = s->v;
+    uint32_t  off = s->mmio_next;
+    uint32_t  h, n;
+
+    voodoo2_mmio_count(v);
+    if (s->mmio_in_packet) {
+        s->mmio_in_packet--;
+        s->mmio_next += 4;
+        return false;
+    }
+    h = *(uint32_t *) &v->fb_mem[(v->cmdfifo_base + off) & v->fb_mask];
+    if ((h & 0x3f) == 0x18) {
+        uint32_t to = (h >> 4) & 0xfffffc;
+
+        if (to >= v->cmdfifo_base &&
+            to - v->cmdfifo_base < VOODOO2_FIFO_WIN_MAX) {
+            s->mmio_jumps++;
+            s->mmio_next = to - v->cmdfifo_base;
+            return true;
+        }
+    }
+    n = voodoo2_packet_words(h);
+    s->mmio_in_packet = n ? n - 1 : 0;  /* one it does not follow: the consumer refuses it */
+    s->mmio_next += 4;
+    return false;
+}
+
+/* words held ahead of a hole that is not going to close here: counted as
+ * they are, and said once */
+static void
+voodoo2_mmio_flush(Voodoo2State *s, uint32_t addr, const char *why)
+{
+    unsigned n;
+
+    if (!s->mmio_ahead) {
+        return;
+    }
+    n = ctpop64(s->mmio_ahead);
+    s->mmio_flushed += n;
+    if (!s->mmio_flushed_warned) {
+        s->mmio_flushed_warned = true;
+        warn_report("voodoo2: %s at %06x with %u word(s) written past a hole "
+                    "at %06x; they are counted as they are, and the consumer "
+                    "may read the hole", why, (unsigned) addr, n,
+                    (unsigned) (VOODOO2_FIFO_WIN + s->mmio_next));
+    }
+    while (n--) {
+        voodoo2_mmio_count(s->v);
+    }
+    s->mmio_ahead = 0;
+}
+
 static void
 voodoo2_mmio_ring_write(Voodoo2State *s, uint32_t addr, uint32_t val)
 {
@@ -1094,44 +1166,41 @@ voodoo2_mmio_ring_write(Voodoo2State *s, uint32_t addr, uint32_t val)
         return;
     }
     if (off != s->mmio_next) {
-        /* the guest's jump back to the ring's base, or a fresh ring: a
-         * hole still open here is counted rather than stranded */
-        if (s->mmio_ahead) {
-            unsigned n = ctpop64(s->mmio_ahead);
-
-            s->mmio_flushed += n;
-            if (!s->mmio_flushed_warned) {
-                s->mmio_flushed_warned = true;
-                warn_report("voodoo2: the command FIFO moved from %06x to "
-                            "%06x with %u word(s) written past a hole; they "
-                            "are counted as they are, and the consumer may "
-                            "read the hole", (unsigned) (VOODOO2_FIFO_WIN + s->mmio_next),
-                            (unsigned) addr, n);
-            }
-            while (n--) {
-                voodoo2_mmio_count(v);
-            }
-            s->mmio_ahead = 0;
-        }
-        s->mmio_next = off;
+        /* not where the count expected the guest and no JMP said so: a
+         * hole wider than the bitmap, or a ring taken up somewhere without
+         * its registers written. The count starts again here. */
+        voodoo2_mmio_flush(s, addr, "the command FIFO moved");
+        s->mmio_next      = off;
+        s->mmio_in_packet = 0;
     }
     /* this word, and every one after it that arrived early */
-    voodoo2_mmio_count(v);
-    s->mmio_next += 4;
-    s->mmio_ahead >>= 1;
-    while (s->mmio_ahead & 1) {
-        voodoo2_mmio_count(v);
-        s->mmio_next += 4;
+    for (;;) {
+        if (voodoo2_mmio_step(s)) {
+            /* a JMP: whatever was held past it lies beyond where the guest
+             * goes on, which no stream of Glide's has produced */
+            voodoo2_mmio_flush(s, addr, "the command FIFO jumped");
+            break;
+        }
         s->mmio_ahead >>= 1;
+        if (!(s->mmio_ahead & 1)) {
+            break;
+        }
     }
 }
 
-/* a ring set up afresh (its registers written) starts the count over */
+/* the ring's registers written, or the ring mapped either way: the count
+ * starts over where the read pointer says the guest does */
 static void
 voodoo2_mmio_ring_reset(Voodoo2State *s)
 {
-    s->mmio_next  = VOODOO2_MMIO_UNKNOWN;
-    s->mmio_ahead = 0;
+    voodoo_t *v  = s->v;
+    uint32_t  rp = v->cmdfifo_rp;
+
+    s->mmio_next = (rp >= v->cmdfifo_base &&
+                    rp - v->cmdfifo_base < VOODOO2_FIFO_WIN_MAX)
+                   ? rp - v->cmdfifo_base : VOODOO2_MMIO_UNKNOWN;
+    s->mmio_ahead     = 0;
+    s->mmio_in_packet = 0;
 }
 
 /* A card cannot be busy with nothing to do.
@@ -1796,7 +1865,7 @@ voodoo2_stats(void *opaque)
         s->fifo_off_writes != s->last_fifo_off ||
         s->fifo_syncs != s->last_fifo_syncs) {
         char rds[64], wrs[64], cfg[64], ref[48] = "", busy[96] = "", ram[256] = "";
-        char ord[96] = "", holes[96] = "", lfb[128] = "";
+        char ord[96] = "", holes[128] = "", lfb[128] = "";
         int  written = v->cmd_written + v->cmd_written_fifo + v->cmd_written_fifo_2;
         int  outstanding = written - v->cmd_read;
         int  is_busy = outstanding ||
@@ -1872,14 +1941,17 @@ voodoo2_stats(void *opaque)
         /* the MMIO ring's holes: words the guest wrote ahead of one it had
          * not written yet, and those counted with such a hole still open */
         if (s->mmio_holes != s->last_mmio_holes ||
-            s->mmio_flushed != s->last_mmio_flushed) {
+            s->mmio_flushed != s->last_mmio_flushed ||
+            s->mmio_jumps != s->last_mmio_jumps) {
             snprintf(holes, sizeof(holes), "; %u ring words written ahead of a "
-                     "hole, %u counted with one open",
+                     "hole, %u counted with one open, %u jumps followed",
                      s->mmio_holes - s->last_mmio_holes,
-                     s->mmio_flushed - s->last_mmio_flushed);
+                     s->mmio_flushed - s->last_mmio_flushed,
+                     s->mmio_jumps - s->last_mmio_jumps);
         }
         s->last_mmio_holes   = s->mmio_holes;
         s->last_mmio_flushed = s->mmio_flushed;
+        s->last_mmio_jumps   = s->mmio_jumps;
         if (s->lfb_front != s->last_lfb_front || s->lfb_back != s->last_lfb_back ||
             s->lfb_else != s->last_lfb_else) {
             snprintf(lfb, sizeof(lfb), "; LFB writes: %u to the front buffer, "
