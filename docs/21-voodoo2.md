@@ -419,11 +419,44 @@ writes per triangle, tens of thousands a frame. Two things reduce it:
    packet whole before it touches the card again — the 5 s line counts the
    packets met half-written and the count stays at 0 — so this changes
    nothing in practice; it is the faithful model, and it is one assumption
-   fewer between a guest and a hang. Should a run of data ever read as
-   poison anyway with the chip caught up (impossible with the value above:
-   an empty ring means the guest cannot be waiting for room), the walk
-   takes the rest of that packet rather than wait for ever, and the 5 s
-   line counts the words — any at all means this wants a look. **Quake II `timedemo demo1`: 41.1 → 147.5
+   fewer between a guest and a hang.
+
+   **The read pointer never passes what the guest has written** (2026-09-20).
+   There used to be one exception here: should a run of data ever read as
+   poison with the chip caught up, the walk took the rest of that packet
+   rather than wait for ever, on the argument that an empty ring means the
+   guest cannot be waiting for room. The argument eats itself. Glide's free
+   space is `rp - wp - 1`, so taking words the guest has not written puts
+   the read pointer *past* its write pointer — a state the chip cannot
+   reach — and the room the guest computes from that pointer is then a few
+   words instead of the whole ring. It waits for space; the ring it is
+   waiting on stays empty; nothing moves again.
+
+   **FIFA 2000's loading screen died on exactly that** (the user,
+   2026-09-20, `base98-br`): a 66-word type-5 LFB packet with 19 words
+   written, the walk idle on it for 64 `cmdFifoRdPtr` polls, 47 words taken
+   as data, and a guest with 46 words of room asking for 66 — then
+   22.7 M reads of `cmdFifoRdPtr` a second, `depth 24623/24623`, the card
+   idle, nothing written, for ever. The device said so itself: `1 packets
+   part-written, 47 words taken as data`, and `47 = 66 - 19` exactly. **The
+   same game runs matches start to finish on `ramfifo=off`** — the
+   transport that counts every write and guesses nothing — which is what
+   proved the guest was never the problem.
+
+   So nothing is taken that the guest has not written, however long the
+   wait looks: waiting is what the chip does, and a stall where the pointer
+   is honest can at least be read. The case the exception was written for —
+   real data reading as poison for longer than the look ahead — was closed
+   at its root when the poison word stopped being `0xffffffff` above; a run
+   of eight dwords of a guest's own data all reading `0xdeadbee7` is not a
+   trade worth a deadlock. The `voodoo-guest` check's **partial-packet
+   phase** holds the invariant: the header of a two-word packet is written
+   and its value is not, `cmdFifoRdPtr` is read 256 times (the old
+   exception waited for 64), and the pointer must read one word in —
+   `00300004`, the header consumed and the chip parked wanting the value —
+   and stay there; then the value arrives and the packet completes at
+   `00300008`. With the exception restored it reads `00300008` at the hold,
+   which is the FIFA failure in two words. **Quake II `timedemo demo1`: 41.1 → 147.5
    fps** on the same build (`ramfifo=off` the A/B), the chip now the busy
    side (tens of thousands of words queued, ~14 M words a second); UT's
    flyby 33.6 → 40.7 fps; Quake II's frames checked by screendump. The

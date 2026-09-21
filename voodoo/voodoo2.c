@@ -179,9 +179,6 @@ struct Voodoo2State {
     uint32_t     seen_n;
     uint32_t     in_packet;          /* words of the current packet still to count */
     uint32_t     partial;            /* packets the guest was still writing */
-    uint32_t     idle_polls;         /* rdptr reads with the chip caught up */
-    bool         force_written;      /* take the rest of the packet regardless */
-    uint32_t     forced;             /* words taken that way */
     uint32_t     trig_addr;          /* the guest access this walk runs from */
     uint8_t      trig_size;
     bool         trig_write;
@@ -489,9 +486,19 @@ voodoo2_on_fatal(void *opaque)
  *
  * It counted whole packets once, on the header's word count. Glide does
  * write each packet whole before it touches the card again -- the 5 s line
- * counts the ones met half-written, and the count stays at 0 -- so counting
- * words changes nothing in practice; it is what the chip does, and one
- * assumption fewer between a guest and a hang (2026-09-17).
+ * counts the ones met half-written -- so counting words changes nothing in
+ * practice; it is what the chip does, and one assumption fewer between a
+ * guest and a hang (2026-09-17).
+ *
+ * **The read pointer never passes what the guest has written.** That is the
+ * one invariant this reconstruction owes the guest, because Glide's free
+ * space is `rp - wp - 1` and a pointer past `wp` turns the whole ring into
+ * a few words of room: the guest then waits for space on a ring that is
+ * empty, for ever. It is also a state the chip cannot reach, which is the
+ * short way to say the same thing. So a word that reads as poison is never
+ * taken on a guess about what the guest must have meant -- waiting is what
+ * the chip does, and a stall where the pointer is honest can at least be
+ * read (2026-09-20, FIFA 2000: doc 21 §9).
  *
  * Where the guest has not written yet is told by poison: a word the
  * consumer has taken is set to VOODOO2_FIFO_POISON before the guest can
@@ -645,20 +652,25 @@ voodoo2_fifo_sync(Voodoo2State *s)
             while (take < s->in_packet && voodoo2_fifo_written(s, a + 4 * take)) {
                 take++;
             }
-            if (take < s->in_packet && s->force_written) {
-                /* The last resort, and with a poison word no guest writes it
-                 * should never be reached: a run of data that reads as poison
-                 * for longer than the look ahead. It is the guest's own data
-                 * and not a gap, because the chip has caught up with
-                 * everything counted, which leaves the whole ring free -- a
-                 * guest that polls there cannot be waiting for room, and one
-                 * waiting for room cannot have left the ring empty. Take the
-                 * rest of this packet rather than wait for ever; the 5 s line
-                 * counts the words, and any at all means this needs a look. */
-                s->forced += s->in_packet - take;
-                take       = s->in_packet;
-            }
-            s->force_written = false;
+            /* Nothing is ever taken that the guest has not written, however
+             * long the wait looks (2026-09-20). There used to be a last
+             * resort here: after 64 rdptr polls with the chip caught up, the
+             * rest of the packet was taken as data on the argument that a
+             * guest polling an empty ring cannot be waiting for room. The
+             * argument eats itself -- taking words the guest has not written
+             * puts the read pointer *past* its write pointer, which is a
+             * state no chip can be in, and the free space Glide computes
+             * from that pointer is then a few words instead of the whole
+             * ring, so the guest waits for room for ever and the ring it is
+             * waiting on stays empty. FIFA 2000's loading screen died on
+             * exactly that: a 66-word LFB packet with 19 words written, 47
+             * taken, and a guest with 46 words of room asking for 66. The
+             * case the last resort was for -- real data that reads as poison
+             * for longer than the look ahead -- was closed at its root when
+             * the poison word stopped being 0xffffffff (2026-09-17); a run
+             * of eight dwords of a guest's own data all reading 0xdeadbee7
+             * is not a trade worth a deadlock. `ramfifo=off` is the A/B, and
+             * it is the transport that needs no guessing at all. */
             if (!take) {
                 break;
             }
@@ -746,18 +758,6 @@ voodoo2_fifo_rdptr(Voodoo2State *s)
     uint32_t  end = s->fifo_base + s->fifo_size;
     uint32_t  a   = s->fifo_poisoned;
 
-    /* The chip has run everything counted and the guest is still asking: the
-     * walk is stopped on a word that reads as poison with the ring empty
-     * behind it, which cannot be a gap (see the take above). After a few of
-     * these the next walk takes the rest of the packet. */
-    if (s->in_packet && rp == s->fifo_parse) {
-        if (++s->idle_polls > 64) {
-            s->idle_polls    = 0;
-            s->force_written = true;
-        }
-    } else {
-        s->idle_polls = 0;
-    }
     if (rp < s->fifo_base || rp >= end || a < s->fifo_base || a >= end) {
         return rp;
     }
@@ -1703,9 +1703,9 @@ voodoo2_stats(void *opaque)
                      v->swap_pending ? ", swap pending" : "");
         } else if (s->fifo_mapped || s->fifo_words != s->last_fifo_words) {
             snprintf(ram, sizeof(ram), "; FIFO in RAM: %u words in %u syncs, "
-                     "%u packets part-written, %u words taken as data",
+                     "%u packets met part-written",
                      s->fifo_words - s->last_fifo_words,
-                     s->fifo_syncs - s->last_fifo_syncs, s->partial, s->forced);
+                     s->fifo_syncs - s->last_fifo_syncs, s->partial);
         }
         /* the ordering waits ("one order"): what they cost, on whichever
          * transport the ring is on */

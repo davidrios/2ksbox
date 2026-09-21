@@ -57,6 +57,15 @@ mirror of it, a wait for the *ring* before an LFB write, is `LFB_ORDER=on`:
 that window is shorter than the consumer's wake and the block is on top
 either way, which is the measurement that ruled it out as the HUD's cause.
 
+Then the **partial packet** (doc 21 §9): the header of a two-word packet
+is written and its value is not, and `cmdFifoRdPtr` is read 256 times. The
+chip takes the header and parks wanting the value, so the read pointer has
+to stop one word in and stay there -- it never passes what the guest has
+written, because Glide's free space is `rp - wp - 1` and a pointer past
+`wp` turns the whole ring into a few words of room, so the guest waits for
+space on a ring that is empty. FIFA 2000's loading screen died on exactly
+that. Then the value arrives and the packet completes.
+
 Then the **stranded client** (doc 21 §11): with the FIFO still off from
 the teardown, a burst of dwords goes into the 0x200000 window -- what a
 Glide whose FIFO was switched off under it goes on doing -- at the offsets
@@ -136,6 +145,7 @@ spec.loader.exec_module(vgadirty)
 
 # Where the guest maps the BAR (16 MiB, above RAM, below the APIC).
 BAR = 0xE0000000
+FIFO_BASE = 0x300000        # the ring's base, as the program's own equ
 WIDTH, HEIGHT = 640, 480
 
 ASM = r"""
@@ -467,6 +477,7 @@ start:
 
     call dither_phase
     call order_phase
+    call partial_phase
     call teardown_phase
     call stranded_phase
 
@@ -880,6 +891,77 @@ order_phase:
     call delay_ticks
     ret
 
+; ------------------------------------------------ the partial-packet phase
+;
+; The one invariant the RAM ring owes the guest: **the read pointer never
+; passes what the guest has written**. Glide's free space is `rp - wp - 1`,
+; so a pointer past the write pointer turns the whole ring into a few words
+; of room and the guest waits for space on a ring that is empty, for ever
+; (2026-09-20, FIFA 2000's loading screen: a 66-word LFB packet with 19
+; words written, 47 taken on a guess, and a guest with 46 words of room
+; asking for 66). It is also a state the chip cannot reach.
+;
+; The phase writes the *header* of a two-word packet and nothing else, then
+; reads cmdFifoRdPtr 256 times -- more than the 64 polls the old last
+; resort waited for. The chip consumes the header and parks wanting the
+; value, so the pointer has to read one word in and stay there. Then the
+; value arrives and the packet completes. Both transports answer the same:
+; with `ramfifo=off` every word is counted as it is written and nothing is
+; ever guessed at.
+partial_phase:
+    mov edi, BAR                        ; the ring back to its base
+    xor eax, eax
+    mov [fs:edi + SST_fbiInit7], eax
+    mov eax, (FIFO_BASE >> 12) | (((FIFO_BASE + FIFO_SIZE - 1000h) >> 12) << 16)
+    mov [fs:edi + SST_cmdFifoBaseAddr], eax
+    mov eax, FIFO_BASE
+    mov [fs:edi + SST_cmdFifoRdPtr], eax
+    xor eax, eax
+    mov [fs:edi + SST_cmdFifoDepth], eax
+    mov eax, 100h
+    mov [fs:edi + SST_fbiInit7], eax
+
+    mov edi, FIFO_WIN                   ; the header alone: one value to come
+    mov dword [fs:edi], 00010291h       ; color1
+
+    ; wait for the chip to take the header and park wanting the value, so
+    ; what follows measures the hold and not the consumer's head start
+    mov edx, FIFO_BASE + 4
+    mov si, str_pp_head
+    call fifo_wait
+
+    mov edi, BAR
+    mov ecx, 256
+.poll:
+    mov eax, [fs:edi + SST_cmdFifoRdPtr]
+    dec ecx
+    jnz .poll
+    push eax
+    mov si, str_pp_held
+    call puts
+    pop eax
+    call puthex32
+    call putnl
+
+    mov edi, FIFO_WIN                   ; and now the value
+    mov dword [fs:edi + 4], 0F80000h    ;   red
+    mov edx, FIFO_BASE + 8
+    mov si, str_pp_done
+    call fifo_wait
+
+    mov edi, BAR                        ; the ring as the ordering phase left
+    xor eax, eax                        ; it, for the teardown below
+    mov [fs:edi + SST_fbiInit7], eax
+    mov eax, (FIFO_BASE >> 12) | (((FIFO_BASE + FIFO_SIZE - 1000h) >> 12) << 16)
+    mov [fs:edi + SST_cmdFifoBaseAddr], eax
+    mov eax, FIFO_BASE + 34h + ORDER_FILLS * 8
+    mov [fs:edi + SST_cmdFifoRdPtr], eax
+    xor eax, eax
+    mov [fs:edi + SST_cmdFifoDepth], eax
+    mov eax, 100h
+    mov [fs:edi + SST_fbiInit7], eax
+    ret
+
 ; ------------------------------------------------- the teardown phase
 ;
 ; What Glide does at grSstWinClose: the last packets, then fbiInit7 with
@@ -1213,6 +1295,9 @@ str_dith_shown: db "DITH SHOWN", 10, 0
 str_order:    db "ORDER RDPTR ", 0
 str_order_swapped: db "ORDER SWAPPED", 10, 0
 str_td_status: db "TD STATUS ", 0
+str_pp_head: db "PP HEAD ", 0
+str_pp_held: db "PP HELD ", 0
+str_pp_done: db "PP WHOLE ", 0
 str_td_swapped: db "TD SWAPPED", 10, 0
 str_st_before: db "ST BEFORE ", 0
 str_st_after: db "ST AFTER ", 0
@@ -1538,6 +1623,39 @@ def main():
         print("FAIL the packets written before the command FIFO was turned off were "
               "not run")
         ok = False
+    # the partial packet: the read pointer must never pass what the guest
+    # has written. The header alone is consumed and the chip parks wanting
+    # the value, one word in; then the value arrives and the packet
+    # completes. Taking the rest on a guess instead is what deadlocked FIFA
+    # 2000's loading screen (2026-09-20): the guest's free space is
+    # `rp - wp - 1`, so a pointer past the write pointer leaves it waiting
+    # for room on an empty ring.
+    pp_c = [l.split()[2] for l in text.splitlines()
+            if l.startswith("PP HEAD ") and len(l.split()) == 3]
+    pp_h = [l.split()[2] for l in text.splitlines()
+            if l.startswith("PP HELD ") and len(l.split()) == 3]
+    pp_d = [l.split()[2] for l in text.splitlines()
+            if l.startswith("PP WHOLE ") and len(l.split()) == 3]
+    print("    read pointer with a packet's header written and its value not: "
+          "%s (want %08X), and once the value arrived: %s (want %08X)"
+          % (pp_h[0] if pp_h else "nothing", FIFO_BASE + 4,
+             pp_d[0] if pp_d else "nothing", FIFO_BASE + 8))
+    if len(pp_c) != 1 or len(pp_h) != 1 or len(pp_d) != 1:
+        print("FAIL the partial-packet phase did not report the read pointer")
+        ok = False
+    else:
+        if int(pp_c[0], 16) != FIFO_BASE + 4:
+            print("FAIL the chip did not stop on the header (%s): the phase never "
+                  "reached the state it is about" % pp_c[0])
+            ok = False
+        if int(pp_h[0], 16) != FIFO_BASE + 4:
+            print("FAIL the read pointer passed the words the guest had written: "
+                  "the walk took the rest of the packet on a guess, which leaves "
+                  "a guest waiting for room on an empty ring")
+            ok = False
+        if int(pp_d[0], 16) != FIFO_BASE + 8:
+            print("FAIL the packet did not complete once its last word arrived")
+            ok = False
     # the stranded client: a burst into the command-FIFO window with the
     # FIFO off must leave the ring's own register where it was. With
     # fifo-off-regs=on it is decoded as a register write instead, the walk

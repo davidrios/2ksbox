@@ -122,7 +122,25 @@ or two clients), and the `voodoo-guest` check has a stranded-client phase:
 a burst into the window at the offsets of `cmdFifoBaseAddr`,
 `videoDimensions` and `fbiInit7` must leave the ring's register unmoved,
 with `FIFO_OFF_REGS=on` the control that must move it (`03010300 ->
-02AD02EF`). **What is still open**: why the reopening client does not
+02AD02EF`). **A second FIFA failure, and a second fix the same day
+(2026-09-20): the RAM walk must never pass the guest's write pointer.**
+With the refusal above in, the game reached a match and then froze on the
+*loading* screen — a different bug and an older one. The walk reconstructs
+the guest's write pointer from poison, and a last resort took the rest of a
+part-written packet as data after 64 idle `cmdFifoRdPtr` polls. Glide's
+free space is `rp - wp - 1`, so that puts the pointer past `wp` and the
+guest waits for room on an empty ring: a 66-word type-5 LFB packet with 19
+words written, 47 taken (`47 = 66 - 19`, and the 5 s line said `1 packets
+part-written, 47 words taken as data`), and a guest with 46 words free
+asking for 66 — 22.7 M `cmdFifoRdPtr` reads a second, `depth 24623/24623`,
+card idle, nothing written, for ever. **`ramfifo=off` runs the game through
+several matches start to finish** (the user), which is what proved the
+guest was never at fault. The guess is gone; the case it was written for
+was closed when the poison word stopped being `0xffffffff` (2026-09-17).
+The `voodoo-guest` check's partial-packet phase holds it, and the restored
+guess is the control that fails it (`00300008` where `00300004` is right).
+
+**What is still open**: why the reopening client does not
 re-enable the FIFO. A healthy reopen is unmistakable — `initEnable <=
 00005001`, the whole `0x1e0`–`0x1f8` block, `fbiInit7` with bit 8 — and
 `VOODOO2_TRACE=1` on GLIDETEST shows it every time (its close/reopen case
