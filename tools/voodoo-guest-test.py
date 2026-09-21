@@ -57,6 +57,22 @@ mirror of it, a wait for the *ring* before an LFB write, is `LFB_ORDER=on`:
 that window is shorter than the consumer's wake and the block is on top
 either way, which is the measurement that ruled it out as the HUD's cause.
 
+Then the **swapped pair** (doc 21 §13, 2026-09-21): Glide writes a two-word
+packet value first and header second, and the chip counts the ring's depth
+over what is written *contiguously* (its hole counter). 86Box counted every
+write as it came, so a consumer caught up with the guest read the header's
+slot the moment the value landed -- a stale word from the last lap, taken as
+a header -- which is how Carmageddon's 3dfx build froze on every race start
+on `ramfifo=off`. The phase plants such a stale word (a type-1 header
+claiming 256 values, written as a colour on a first lap), brings the
+consumer to rest on that slot, writes the value of a `color1` packet past
+it, lets the consumer look (`cmdFifoDepth` polled to zero), and only then
+writes the header, followed by a fill and a swap: the frame has to be
+yellow. Counted per write, the stale header eats the fill and the swap:
+`MMIO_HOLES=off` (the device's `mmio-holes=off`, 86Box's own count) is the
+control, and there the frame must *not* be yellow -- and the phases after
+it are not judged, the consumer being parked inside the stale packet.
+
 Then the **partial packet** (doc 21 §9): the header of a two-word packet
 is written and its value is not, and `cmdFifoRdPtr` is read 256 times. The
 chip takes the header and parks wanting the value, so the read pointer has
@@ -128,13 +144,15 @@ DITHER_SUB = os.environ.get("DITHER_SUB", "on")
 UNDITHER = os.environ.get("UNDITHER", "off")
 FIFO_OFF_REGS = os.environ.get("FIFO_OFF_REGS", "off")
 LFB_ORDER = os.environ.get("LFB_ORDER", "on")
+MMIO_HOLES = os.environ.get("MMIO_HOLES", "on")
 OUT = os.path.join(ROOT, "build/voodoo-guest" + ("" if VGA == "std" else "-" + VGA)
                    + ("" if RAMFIFO == "on" else "-mmiofifo")
                    + ("" if RECOMP == "on" else "-interp")
                    + ("" if DITHER_SUB == "on" else "-nodsub")
                    + ("" if UNDITHER == "off" else "-undither")
                    + ("" if FIFO_OFF_REGS == "off" else "-fifooffregs")
-                   + ("" if LFB_ORDER == "on" else "-noorder"))
+                   + ("" if LFB_ORDER == "on" else "-noorder")
+                   + ("" if MMIO_HOLES == "on" else "-noholes"))
 
 spec = importlib.util.spec_from_file_location("x87gt", os.path.join(ROOT, "tools/x87-guest-test.py"))
 x87gt = importlib.util.module_from_spec(spec)
@@ -477,6 +495,7 @@ start:
 
     call dither_phase
     call order_phase
+    call swapped_phase
     call partial_phase
     call teardown_phase
     call stranded_phase
@@ -891,6 +910,94 @@ order_phase:
     call delay_ticks
     ret
 
+; ------------------------------------------------ the swapped-pair phase
+;
+; Glide writes a two-word packet value first and header second, and the
+; chip counts the ring's depth over what has been written contiguously
+; (cmdFifoAMin / AMax / Holes). 86Box counted every write as it came, so a
+; consumer caught up with the guest read the header's slot the moment the
+; value landed -- a stale word from the last lap, taken as a header. One
+; that said "256 values follow" ate the next 256 words as data, and the
+; first word after those that read as a Banshee packet was a fatal():
+; Carmageddon's 3dfx build froze on every race start on `ramfifo=off`
+; (2026-09-21), the guest polling cmdFifoRdPtr for room the card would
+; never make. The device counts a word once every word before it has
+; arrived now, as the chip does.
+;
+; The phase plants exactly that stale word: one lap writes a color1 packet
+; whose *value* is a type-1 header claiming 256 values, and the chip runs
+; it (a colour, nothing more). Then the ring is set to its base again, a
+; NOP goes in the first slot and the consumer is waited for at the second,
+; where the stale word now sits; the value of a color1 packet is written
+; to the third slot, cmdFifoDepth polled down to zero so the consumer has
+; had its look, and only then the header to the second. A fill and a swap
+; follow. Counted as the chip counts, the frame is yellow; counted per
+; write, the stale header ate the fill and the swap and the frame is not.
+; With the ring in RAM the restart poisons the slot and nothing is stale,
+; so there the phase only has to complete.
+swapped_phase:
+    mov edi, BAR                        ; the ring at its base
+    xor eax, eax
+    mov [fs:edi + SST_fbiInit7], eax
+    mov eax, (FIFO_BASE >> 12) | (((FIFO_BASE + FIFO_SIZE - 1000h) >> 12) << 16)
+    mov [fs:edi + SST_cmdFifoBaseAddr], eax
+    mov eax, FIFO_BASE
+    mov [fs:edi + SST_cmdFifoRdPtr], eax
+    xor eax, eax
+    mov [fs:edi + SST_cmdFifoDepth], eax
+    mov eax, 100h
+    mov [fs:edi + SST_fbiInit7], eax
+
+    mov edi, FIFO_WIN                   ; lap 1: the stale word, planted in
+    mov dword [fs:edi], 00010291h       ; the second slot as a colour -- a
+    mov dword [fs:edi + 4], 01000291h   ; type-1 header, 256 values to come
+    mov edx, FIFO_BASE + 8
+    mov si, str_sp_plant
+    call fifo_wait
+
+    mov edi, BAR                        ; the ring at its base again, over
+    xor eax, eax                        ; the same memory
+    mov [fs:edi + SST_fbiInit7], eax
+    mov eax, FIFO_BASE
+    mov [fs:edi + SST_cmdFifoRdPtr], eax
+    xor eax, eax
+    mov [fs:edi + SST_cmdFifoDepth], eax
+    mov eax, 100h
+    mov [fs:edi + SST_fbiInit7], eax
+
+    mov edi, FIFO_WIN                   ; a NOP in the first slot, so the
+    mov dword [fs:edi], 0               ; consumer comes to rest on the second
+    mov edx, FIFO_BASE + 4
+    mov si, str_sp_nop
+    call fifo_wait
+
+    mov edi, FIFO_WIN                   ; the value first: yellow, in the
+    mov dword [fs:edi + 8], 00F8F800h   ; third slot
+    mov edi, BAR                        ; ... and the consumer has its look
+    mov ecx, 2000000
+.settle:
+    mov eax, [fs:edi + SST_cmdFifoDepth]
+    test eax, eax
+    jz .settled
+    dec ecx
+    jnz .settle
+.settled:
+    mov edi, FIFO_WIN                   ; then the header, in the second
+    mov dword [fs:edi + 4], 00010291h   ; color1
+    mov dword [fs:edi + 12], 00010249h  ; fastfillCMD
+    mov dword [fs:edi + 16], 0
+    mov dword [fs:edi + 20], 00010251h  ; swapbufferCMD
+    mov dword [fs:edi + 24], 1
+    call swap_note
+    mov edx, FIFO_BASE + 28
+    mov si, str_sp_done
+    call fifo_wait
+    mov si, str_sp_swapped
+    call puts
+    mov cx, 36                          ; ~2 s: the host takes its screendump
+    call delay_ticks
+    ret
+
 ; ------------------------------------------------ the partial-packet phase
 ;
 ; The one invariant the RAM ring owes the guest: **the read pointer never
@@ -1295,6 +1402,10 @@ str_dith_shown: db "DITH SHOWN", 10, 0
 str_order:    db "ORDER RDPTR ", 0
 str_order_swapped: db "ORDER SWAPPED", 10, 0
 str_td_status: db "TD STATUS ", 0
+str_sp_plant: db "SP PLANTED ", 0
+str_sp_nop: db "SP NOP ", 0
+str_sp_done: db "SP WHOLE ", 0
+str_sp_swapped: db "SP SWAPPED", 10, 0
 str_pp_head: db "PP HEAD ", 0
 str_pp_held: db "PP HELD ", 0
 str_pp_done: db "PP WHOLE ", 0
@@ -1390,6 +1501,11 @@ def magenta_fraction(path):
     return fraction(path, lambda r, g, b: r >= 240 and g < 8 and b >= 240)
 
 
+def yellow_fraction(path):
+    """The swapped-pair phase's fastfill."""
+    return fraction(path, lambda r, g, b: r >= 240 and g >= 240 and b < 8)
+
+
 def off_tile_pixels(path):
     """Pixels of the dither scene that are not the 4x4 dither tile of its
     reference band (rows 100-103). The scene is one grey over the whole
@@ -1449,9 +1565,10 @@ def main():
     shot_f2 = os.path.join(OUT, "fifo2.ppm")
     shot_dith = os.path.join(OUT, "dither.ppm")
     shot_order = os.path.join(OUT, "order.ppm")
+    shot_sp = os.path.join(OUT, "swapped.ppm")
     shot_td = os.path.join(OUT, "teardown.ppm")
     for f in (log, qlog, shot_on, shot_off, shot_lin, shot_f1, shot_f2, shot_dith,
-              shot_order, shot_td, sock):
+              shot_order, shot_sp, shot_td, sock):
         if os.path.exists(f):
             os.unlink(f)
     ok = True
@@ -1463,8 +1580,9 @@ def main():
             # the cursor the console publishes (patch 66), in this log
             *(["-trace", "dpy_mouse_publish"] if VGA == "d3dpt" else []),
             "-device",
-            "voodoo2,ramfifo=%s,recompiler=%s,dither-sub=%s,undither=%s,lfb-order=%s,fifo-off-regs=%s"
-            % (RAMFIFO, RECOMP, DITHER_SUB, UNDITHER, LFB_ORDER, FIFO_OFF_REGS),
+            "voodoo2,ramfifo=%s,recompiler=%s,dither-sub=%s,undither=%s,lfb-order=%s,"
+            "fifo-off-regs=%s,mmio-holes=%s"
+            % (RAMFIFO, RECOMP, DITHER_SUB, UNDITHER, LFB_ORDER, FIFO_OFF_REGS, MMIO_HOLES),
             "-drive", "file=%s,if=floppy,index=0,format=raw" % img,
             "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
             "-qmp", "unix:%s,server,nowait" % sock, "-audiodev", "none,id=a0",
@@ -1490,6 +1608,8 @@ def main():
             q.screendump(shot_dith)
             text = wait_for(log, b"ORDER SWAPPED", p, 120, "the ordering scene")
             q.screendump(shot_order)
+            text = wait_for(log, b"SP SWAPPED", p, 120, "the swapped-pair scene")
+            q.screendump(shot_sp)
             text = wait_for(log, b"TD SWAPPED", p, 120, "the teardown scene")
             q.screendump(shot_td)
             text = wait_for(log, b"DONE", p, 60, "the guest to finish")
@@ -1617,12 +1737,56 @@ def main():
         print("FAIL the card still reads busy with the command FIFO off: a guest "
               "polling for idle there never gets out")
         ok = False
+    # the swapped pair: a packet's value written before its header, with the
+    # consumer resting on the header's slot and a stale word planted there.
+    # Counted per write (86Box's transport as it came), the consumer read the
+    # stale word as the header the moment the value landed and ate the fill
+    # and the swap as its values; counted as the chip counts, contiguously,
+    # the pair goes in whole and the frame is the fill.
+    sp_p = [l.split()[2] for l in text.splitlines()
+            if l.startswith("SP PLANTED ") and len(l.split()) == 3]
+    sp_n = [l.split()[2] for l in text.splitlines()
+            if l.startswith("SP NOP ") and len(l.split()) == 3]
+    sp_d = [l.split()[2] for l in text.splitlines()
+            if l.startswith("SP WHOLE ") and len(l.split()) == 3]
+    w, h, frac = yellow_fraction(shot_sp)
+    print("    swapped pair: read pointer after the planted lap %s (want %08X), "
+          "resting %s (want %08X), after the pair, fill and swap %s (want %08X); "
+          "screendump %dx%d, %.1f%% yellow"
+          % (sp_p[0] if sp_p else "nothing", FIFO_BASE + 8,
+             sp_n[0] if sp_n else "nothing", FIFO_BASE + 4,
+             sp_d[0] if sp_d else "nothing", FIFO_BASE + 28, w, h, frac * 100))
+    if len(sp_p) != 1 or len(sp_n) != 1 or len(sp_d) != 1:
+        print("FAIL the swapped-pair phase did not report the read pointer")
+        ok = False
+    elif int(sp_p[0], 16) != FIFO_BASE + 8 or int(sp_n[0], 16) != FIFO_BASE + 4:
+        print("FAIL the consumer was not at rest on the planted slot when the "
+              "value was written: the phase never reached the state it is about")
+        ok = False
+    if MMIO_HOLES == "on" and RAMFIFO == "on" and frac >= 0.99:
+        pass    # in RAM the restart poisons the planted slot: nothing is stale
+    elif MMIO_HOLES == "on" and ((w, h) != (WIDTH, HEIGHT) or frac < 0.99):
+        print("FAIL a packet written value first, header second was read with a "
+              "stale header: the ring is counted per write, not as the chip "
+              "counts it, and the fill and swap after it were eaten as data")
+        ok = False
+    elif MMIO_HOLES == "off" and RAMFIFO == "off" and frac >= 0.99:
+        print("FAIL mmio-holes=off did not take the stale word as the header: "
+              "the control proves nothing")
+        ok = False
+    if MMIO_HOLES == "off" and RAMFIFO == "off":
+        # the control leaves the consumer parked inside the stale packet,
+        # eating whatever follows as its values: the phases after this one
+        # are not judged, they cannot mean anything there
+        print("    (mmio-holes=off: the teardown and partial-packet phases are not "
+              "judged, the consumer is parked inside the stale packet)")
+    judged = not (MMIO_HOLES == "off" and RAMFIFO == "off")   # the control, see above
     w, h, frac = cyan_fraction(shot_td)
     print("    screendump of the teardown scene: %dx%d, %.1f%% cyan" % (w, h, frac * 100))
     if (w, h) != (WIDTH, HEIGHT) or frac < 0.99:
         print("FAIL the packets written before the command FIFO was turned off were "
               "not run")
-        ok = False
+        ok = False if judged else ok
     # the partial packet: the read pointer must never pass what the guest
     # has written. The header alone is consumed and the chip parks wanting
     # the value, one word in; then the value arrives and the packet
@@ -1642,20 +1806,20 @@ def main():
              pp_d[0] if pp_d else "nothing", FIFO_BASE + 8))
     if len(pp_c) != 1 or len(pp_h) != 1 or len(pp_d) != 1:
         print("FAIL the partial-packet phase did not report the read pointer")
-        ok = False
+        ok = False if judged else ok
     else:
         if int(pp_c[0], 16) != FIFO_BASE + 4:
             print("FAIL the chip did not stop on the header (%s): the phase never "
                   "reached the state it is about" % pp_c[0])
-            ok = False
+            ok = False if judged else ok
         if int(pp_h[0], 16) != FIFO_BASE + 4:
             print("FAIL the read pointer passed the words the guest had written: "
                   "the walk took the rest of the packet on a guess, which leaves "
                   "a guest waiting for room on an empty ring")
-            ok = False
+            ok = False if judged else ok
         if int(pp_d[0], 16) != FIFO_BASE + 8:
             print("FAIL the packet did not complete once its last word arrived")
-            ok = False
+            ok = False if judged else ok
     # the stranded client: a burst into the command-FIFO window with the
     # FIFO off must leave the ring's own register where it was. With
     # fifo-off-regs=on it is decoded as a register write instead, the walk

@@ -1059,3 +1059,61 @@ the black bands are in the guest's own frame buffer: Carmageddon puts a
 640x400 front end in a 640x480 Glide buffer. Nothing in the display path
 stretches anything, and the race frames from the same session measure 4:3 to
 four decimal places.
+
+### The ring through MMIO counts what is contiguous (2026-09-21)
+
+`ramfifo=off` had one freeze of its own left, and it was the transport's.
+Carmageddon's 3dfx build froze on every race start on it (the user,
+`/tmp/launcher.log` with `VOODOO2_TRACE=1`): the 5 s line read `11
+refused`, the first of them 86Box's `fatal()` on `Banshee 2D register
+00000020=02020202` in the middle of a texture download, and after it 27
+million `cmdFifoRdPtr` reads per 5 s with nothing written — Glide waiting
+for room on a ring whose read pointer had stopped. The guest's ring
+content, all 65,503 words of that lap taken out of the trace, parses
+cleanly end to end by 86Box's own packet rules, so the decoder was wrong
+about no packet: the consumer had read a word before the guest wrote it.
+
+How: **Glide writes a two-word packet value first, header second** — 182 of
+the 65,503 words, every one the single-register packet (`color1`,
+`fastfillCMD`, `swapbufferCMD`: header at `n`, value at `n+4`, written
+`n+4` then `n`). The chip is built for that: `cmdFifoAMin` / `AMax` /
+`Holes` count what has been written *contiguously* and the depth advances
+over that alone, so a header whose value is missing is never seen. 86Box's
+`voodoo_writel` counts `cmdfifo_depth_wr++` on every write to the window,
+whatever its address, and its consumer reads one word from the read
+pointer for every count. A consumer that has caught up — at a race's start
+it has, the guest being the slow side while it decompresses textures —
+sits on the header's slot, the value's write wakes it, and it reads that
+slot as it is: whatever the last lap or the last session left there, taken
+as a header. A stale word that says "256 values follow" (a type-1 header,
+`num` in bits 31:16) eats the next 256 words as data and parks wanting
+more; the first word it then lands on with `2` in its low bits is a
+Banshee packet on a Voodoo 2, the `fatal()`; and the read pointer stops
+where the guest can never make room. The desync surfaced 2,300 words after
+the last swapped pair, which is what a swallowed run looks like.
+
+The device now does the chip's counting on this path
+(`voodoo2_mmio_ring_write`): the word is stored where 86Box's handler put
+it, and counted for the consumer only once every word before it has
+arrived — a word ahead of the next expected one is held in a 64-bit bitmap
+and counted when the gap closes; a write below the expected one is the
+guest continuing at the base after its jump packet, and a hole still open
+at that moment is counted rather than stranded, with a warning. The ring's
+own registers (`cmdFifoBaseAddr`, `RdPtr`, `Depth`, `fbiInit7`) start the
+count over. It replaces two lines of `voodoo_writel` and touches no
+vendored file. The 5 s line says `N ring words written ahead of a hole, M
+counted with one open`, and the first out-of-order write is named once.
+The ring in RAM never had the problem: its walk stops on a poison header
+and counts the pair when both are there, which is why the freeze was
+`ramfifo=off`'s alone.
+
+The `voodoo-guest` check's **swapped-pair phase** holds it, and it is the
+`voodoo-guest-mmiofifo` variant that discriminates: a first lap plants a
+type-1 header claiming 256 values in the ring's second slot (as a colour,
+run and harmless), the ring is set to its base again, a NOP brings the
+consumer to rest on that slot, the value of a `color1` packet goes into
+the third slot, `cmdFifoDepth` is polled to zero so the consumer has had
+its look, and only then the header goes into the second, followed by a
+fill and a swap. The frame has to be yellow. Counted per write, the stale
+header eats the fill and the swap; in RAM the restart poisons the slot and
+the phase only has to complete.
