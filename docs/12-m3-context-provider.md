@@ -328,6 +328,26 @@ the tree but never compiled and the embed library is the only provider.
    tools/glide-guest-test.sh` then runs the guest battery out of the
    package with nothing pointed at the wrapper by hand.
 
+## The two moments a frame is presented
+
+`MGLSwapBuffers` is the obvious one and was the only one for a year. The
+other is a **flush with the front buffer selected**: a program that renders
+into `GL_FRONT` never swaps, and on a real window it does not have to —
+the frame is on the screen as it is drawn. Wine's ddraw presents the
+DirectDraw primary surface exactly that way, so on our offscreen drawable
+every such frame went nowhere: a black screen with the guest running
+happily behind it (doc 19 §44, and the XP case on 2026-09-03).
+
+The backend therefore interposes four entry points in the guest's dispatch
+table (`MesaGLSetFunc`, patch 32): `glDrawBuffer` and `glReadBuffer`, which
+map a `GL_FRONT`/`GL_BACK` selection on the guest's framebuffer 0 onto
+whatever plays it here, and `glFlush`/`glFinish`, which publish the frame
+while the front buffer is the selected one. What plays framebuffer 0 is the
+one part that differs per OS: macOS's FBO stand-in answers
+`GL_COLOR_ATTACHMENT0`, the EGL and WGL pbuffers answer `GL_BACK` (or
+`GL_FRONT`, if the config came out single-buffered). Only the guest's own
+calls take the hooks — ours go straight to GL, so nothing here recurses.
+
 ## Order
 
 vtable patch -> embed provider on Linux with readback -> dma-buf import ->

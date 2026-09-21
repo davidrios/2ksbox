@@ -165,6 +165,25 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
 ## Known issues / open threads
 
+- **The WineD3D fallback drew nothing on Linux, and it was ours: a frame
+  presented by a front-buffer flush was never published** (2026-09-20, doc 19
+  §44). The user pointed `base98-br-glide3` at WineD3D (`no-exec=on`,
+  `SETUP /I 7`) and started FIFA 2000: its 3D Setup listed the host's card
+  and took it, and the game then played its audio over a black screen. §40's
+  Moto Racer did the same under the fallback. Wine's ddraw presents the
+  primary surface by drawing into `GL_FRONT` and flushing — it never swaps —
+  and the embed backend published on a swap only; Mesa does not even refuse
+  `glDrawBuffer(GL_FRONT)` on a pbuffer, so nothing complained. The hooks for
+  that were written for macOS on 2026-09-03 and are the shared layer's now
+  (`embed/mglcntx_embed.c`), with one question left per OS: what plays
+  framebuffer 0 (macOS's FBO stand-in → `GL_COLOR_ATTACHMENT0`, the EGL and
+  WGL pbuffers → `GL_BACK`). One file apart on the same raw copy, same disc:
+  **206 player frames** — EA logo, menus, the attract match — against **29**
+  ending in pure black. `embed-3d` has the case with no guest in it (a
+  front-buffer flush must publish the magenta it drew) and fails on the old
+  backend. Open, and not presentation: the pitch draws black under the
+  players and the lines.
+
 - **WineD3D can be the machine's DirectDraw on 9x, decided at every login**
   (2026-09-20, doc 19 §43). The folder next to a game reaches only the first
   DirectDraw program of a session (§42), so `SETUP /I 7` on 9x installs
@@ -1277,7 +1296,8 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   Fixed 2026-09-03 in `embed/mglcntx_embed.c` (macOS section): GL_FRONT/
   GL_BACK on framebuffer 0 → GL_COLOR_ATTACHMENT0, glFlush/glFinish present
   while the front buffer is selected. Not yet re-tested. Linux (EGL pbuffer)
-  has the same swap-only presentation and will need the flush path too. The
+  had the same swap-only presentation and the same black screen until
+  2026-09-20, when those hooks moved into the shared layer (doc 19 §44). The
   host also reports an ARB program failing to assemble ("out of range
   indirect offset +65", 9× per run): unexplained, may matter later. The
   stock software renderer also crashed once at match start with Microsoft's

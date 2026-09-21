@@ -5,8 +5,14 @@
  * check that on_3d_active/on_3d_frame arrive with the right pixels (green
  * clear, red quad in the top-left → verifies the bottom-up → top-down flip).
  *
+ * Then the other way a guest presents: WineD3D's ddraw draws the primary
+ * surface into the front buffer and flushes, it never swaps, so the frame
+ * has to arrive on the flush (the guest's dispatch entries are driven here,
+ * since that is where the backend's hooks live).
+ *
  * Linux only (EGL backend). Build & run from the repo root:
- *   cc -O1 -std=gnu11 -Iembed -o build/embed-3d-test tools/embed-3d-test.c \
+ *   cc -O1 -std=gnu11 -Iembed -Iqemu/hw/mesa -o build/embed-3d-test \
+ *      tools/embed-3d-test.c \
  *      -Lbuild/qemu -lqemu-embed-i386 -Wl,-rpath,$PWD/build/qemu -lepoxy \
  *      && build/embed-3d-test
  */
@@ -17,6 +23,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include "libqemu_embed.h"
+#include "mglfunci.h"     /* FEnum_*: the guest's dispatch slots */
 
 /* backend entry points (exported by the .so on Linux; internal API) */
 int InitMesaGL(void);
@@ -30,6 +37,16 @@ int MGLSwapBuffers(void);
 void MGLDeleteContext(int);
 void MGLWndRelease(void);
 int glwnd_ready(void);
+void *MesaGLSetFunc(int fenum, void *fn);
+
+/* what the guest's call to <fenum> reaches -- the backend's hook, if it
+ * installed one */
+static void *dispatch_of(int fenum)
+{
+    void *p = MesaGLSetFunc(fenum, NULL);
+    MesaGLSetFunc(fenum, p);
+    return p;
+}
 
 #define MESAGL_MAGIC 0x5b5eb5e5
 
@@ -189,6 +206,24 @@ int main(int argc, char **argv)
             ok = 0;
         }
     }
+
+    /* Front-buffer presentation: no swap, a flush with the front buffer
+     * selected. Magenta, so no earlier frame's colour can pass for it. */
+    void (*guest_draw_buffer)(GLenum) = dispatch_of(FEnum_glDrawBuffer);
+    void (*guest_flush)(void) = dispatch_of(FEnum_glFlush);
+    int before = frames;
+    guest_draw_buffer(GL_FRONT);
+    GLenum err = glGetError();
+    glClearColor(1.f, 0.f, 1.f, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    guest_flush();
+    printf("front buffer: glDrawBuffer(GL_FRONT) err 0x%x, frames %d -> %d, "
+           "center %08x\n", err, before, frames, px_c);
+    if (frames != before + 1 || (px_c & 0xffffff) != 0xff00ff) {
+        printf("  the frame a front-buffer flush presents never arrived\n");
+        ok = 0;
+    }
+    guest_draw_buffer(GL_BACK);
 
     MGLDeleteContext(0);
     MGLWndRelease();
