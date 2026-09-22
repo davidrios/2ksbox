@@ -7,6 +7,7 @@
 # diffs the frames it drew against the DXVK frames this host made.
 #
 #   tools/macvm-wine-spike.sh <user>@<guest ip>        # utmctl ip-address <vm> gives the ip
+#   RENDERER=vulkan …                                   # wined3d's Vulkan renderer (MoltenVK) instead of GL
 #
 # It expects, on this host, what the spike already made:
 #   build/wine/wine-staging-*-osx64.tar.xz   WineHQ's macOS build (x86_64)
@@ -15,18 +16,33 @@
 #   build/wine-spike/d3dpt-exec-test.exe     the DLL path's host test, mingw build
 #   build/wine-spike/libwinpthread-1.dll     Homebrew's mingw links it dynamically
 #   build/test/dp2-test.bmp, build/wine-spike/final-native.bmp   the DXVK frames (the oracle)
-# and, in the guest: an account with Remote Login on and Rosetta installed
-# (`softwareupdate --install-rosetta --agree-to-license`, once, by hand —
-# it wants an administrator). Everything else it copies in and runs.
+# and, in the guest, done once by hand: an account logged in at the
+# console with Remote Login on, Rosetta installed (`softwareupdate
+# --install-rosetta --agree-to-license`, it wants an administrator), and
+# passwordless sudo for that account (`echo 'USER ALL=(ALL) NOPASSWD: ALL'
+# | sudo tee /etc/sudoers.d/USER`) — because Wine has to run *in the
+# guest's GUI session*: a process started over ssh has no window server,
+# wined3d cannot make even its capability-probe window, and the only way
+# from ssh into that session is `launchctl asuser`, which is root's.
 #
-# Two questions only the guest can answer, and both come out in the log:
-# whether a Rosetta process on Apple's paravirtual GPU gets an OpenGL that
-# wined3d can use (the `GL_RENDERER` line), and how fast the tests run
-# there against this host (the `fps` line of the exec test).
+# What this found on 2026-09-22 (macOS 15.6.1 guest, WineHQ 11.17, the
+# Air): Apple's paravirtual GPU has Metal and no accelerated OpenGL —
+# CGL offers "Apple Software Renderer" only, to arm64 and x86_64 alike —
+# and Wine's Mac driver demands kCGLPFAAccelerated for its bootstrap
+# context (winemac.drv/opengl.c init_context; AllowSoftwareRendering only
+# widens the list it enumerates afterwards), so **Wine has no OpenGL in
+# such a guest at all** and wined3d's GL renderer, the community build's
+# path, cannot be tested in a VM. The VM answers the Vulkan-renderer
+# question instead (RENDERER=vulkan: MoltenVK sees the paravirtual GPU,
+# the DDI frame differs from DXVK's in 8 % of pixels and the DLL path's
+# device creation fails on a depth format), which is not the plan. The GL
+# path's test is a real pre-26 macOS: a second APFS volume on this Mac.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 target="${1:?usage: $0 user@guest-ip}"
+user="${target%@*}"
+RENDERER="${RENDERER:-gl}"
 OUT="${OUT:-build/macvm/spike}"; mkdir -p "$OUT"
 tar=$(ls build/wine/wine-staging-*-osx64.tar.xz | head -1)
 for f in build/wine-spike/d3dpt_exec.dll build/wine-spike/d3dpt-dp2-test.exe \
@@ -34,39 +50,46 @@ for f in build/wine-spike/d3dpt_exec.dll build/wine-spike/d3dpt-dp2-test.exe \
          build/test/dp2-test.bmp build/wine-spike/final-native.bmp; do
   [ -f "$f" ] || { echo "missing $f (run the spike on the host first: the track doc)"; exit 1; }
 done
-ssh_() { ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$target" "$@"; }
+ssh_() { ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o BatchMode=yes "$target" "$@"; }
 
 echo "==> guest"
-ssh_ 'sw_vers; uname -m; arch -x86_64 /usr/bin/true && echo "rosetta: yes" || echo "rosetta: NO -- softwareupdate --install-rosetta --agree-to-license in the guest first"' | tee "$OUT/guest.txt"
-grep -q "rosetta: yes" "$OUT/guest.txt" || exit 1
+ssh_ 'sw_vers | head -2; uname -m
+      arch -x86_64 /usr/bin/true 2>/dev/null && echo "rosetta: yes" || echo "rosetta: NO -- softwareupdate --install-rosetta --agree-to-license in the guest first"
+      sudo -n true 2>/dev/null && echo "sudo: yes" || echo "sudo: NO -- passwordless sudo for this account first (the header)"
+      [ "$(stat -f %Su /dev/console)" = "$(id -un)" ] && echo "console: yes" || echo "console: NO -- log this account in at the guest'"'"'s screen"' | tee "$OUT/guest.txt"
+grep -q "rosetta: yes" "$OUT/guest.txt" && grep -q "sudo: yes" "$OUT/guest.txt" && grep -q "console: yes" "$OUT/guest.txt" || exit 1
 
 echo "==> copying Wine ($(du -h "$tar" | cut -f1)) and the spike"
 ssh_ 'mkdir -p ~/2ksbox-spike'
 scp -q "$tar" build/wine-spike/d3dpt_exec.dll build/wine-spike/d3dpt-dp2-test.exe \
     build/wine-spike/d3dpt-exec-test.exe build/wine-spike/libwinpthread-1.dll "$target:~/2ksbox-spike/"
-ssh_ 'cd ~/2ksbox-spike && [ -d "Wine Staging.app" ] || tar xJf wine-staging-*-osx64.tar.xz'
+ssh_ 'cd ~/2ksbox-spike && { [ -d "Wine Staging.app" ] || tar xJf wine-staging-*-osx64.tar.xz; }'
 
-echo "==> running (the first start makes the prefix: ~30 s)"
-ssh_ 'cd ~/2ksbox-spike
-W="$HOME/2ksbox-spike/Wine Staging.app/Contents/Resources/wine/bin/wine"
-export WINEPREFIX="$HOME/2ksbox-spike/prefix" WINEDEBUG=-all WINEDLLOVERRIDES="d3d9=b;mscoree,mshtml="
-"$W" wineboot -i >/dev/null 2>&1 || true
-"$W" reg add "HKCU\\Software\\Wine\\Direct3D" /v renderer /d gl /f >/dev/null 2>&1
-"$W" --version
-D3DPT_EXEC_LIB=d3dpt_exec.dll D3DPT_D3D9=system WINEDEBUG=-all,+d3d "$W" d3dpt-dp2-test.exe dp2.bmp > dp2.log 2>&1; echo "dp2 exit=$?"
-D3DPT_EXEC_LIB=d3dpt_exec.dll D3DPT_D3D9=system "$W" d3dpt-exec-test.exe exec.bmp 120 60 > exec.log 2>&1; echo "exec exit=$?"
-grep -o "GL_RENDERER \"[^\"]*\"" dp2.log | head -1
+# The guest-side script: written whole, run in the GUI session.
+ssh_ "cat > ~/2ksbox-spike/run.sh" <<EOF
+#!/bin/bash
+cd "\$HOME/2ksbox-spike"
+W="\$HOME/2ksbox-spike/Wine Staging.app/Contents/Resources/wine/bin/wine"
+export WINEPREFIX="\$HOME/2ksbox-spike/prefix" WINEDEBUG=-all WINEDLLOVERRIDES="d3d9=b;mscoree,mshtml="
+"\$W" wineboot -i >/dev/null 2>&1 || true
+"\$W" reg add "HKCU\\\\Software\\\\Wine\\\\Direct3D" /v renderer /d $RENDERER /f >/dev/null 2>&1
+"\$W" --version
+D3DPT_EXEC_LIB=d3dpt_exec.dll D3DPT_D3D9=system WINEDEBUG=-all,+d3d,+wgl "\$W" d3dpt-dp2-test.exe dp2.bmp > dp2.log 2>&1; echo "dp2 exit=\$?"
+D3DPT_EXEC_LIB=d3dpt_exec.dll D3DPT_D3D9=system "\$W" d3dpt-exec-test.exe exec.bmp 120 60 > exec.log 2>&1; echo "exec exit=\$?"
+grep -o 'GL_RENDERER "[^"]*"' dp2.log | head -1
 grep "Using the .* renderer" dp2.log | head -1
+grep -q "init_context CGLChoosePixelFormat() failed" dp2.log && echo "no OpenGL for Wine in this guest: the Mac driver found no accelerated pixel format (a VM's paravirtual GPU has none)"
 grep "PASSED\|FAILED" dp2.log | tail -1
-grep "frames," exec.log' | tee "$OUT/run.txt"
+grep "frames," exec.log
+EOF
+
+echo "==> running in the guest's GUI session (the first start makes the prefix: ~30 s)"
+ssh_ "chmod +x ~/2ksbox-spike/run.sh; sudo -n launchctl asuser \$(id -u) sudo -u $user -i bash ~/2ksbox-spike/run.sh" | tee "$OUT/run.txt"
 
 echo "==> frames"
-scp -q "$target:~/2ksbox-spike/dp2.bmp" "$OUT/dp2.bmp"
-scp -q "$target:~/2ksbox-spike/exec.bmp" "$OUT/exec.bmp"
-scp -q "$target:~/2ksbox-spike/dp2.log" "$OUT/dp2.log"
-scp -q "$target:~/2ksbox-spike/exec.log" "$OUT/exec.log"
+for f in dp2.bmp exec.bmp dp2.log exec.log; do scp -q "$target:~/2ksbox-spike/$f" "$OUT/$f" 2>/dev/null || true; done
 rc=0
-python3 tools/bmpdiff.py build/test/dp2-test.bmp "$OUT/dp2.bmp" --tolerance 8 -o "$OUT/dp2-diff.bmp" || rc=1
-python3 tools/bmpdiff.py build/wine-spike/final-native.bmp "$OUT/exec.bmp" --tolerance 8 -o "$OUT/exec-diff.bmp" || rc=1
-[ $rc = 0 ] && echo "PASS: both frames match the DXVK frames" || echo "FAIL: a frame differs (diff images in $OUT)"
+[ -f "$OUT/dp2.bmp" ] && python3 tools/bmpdiff.py build/test/dp2-test.bmp "$OUT/dp2.bmp" --tolerance 8 -o "$OUT/dp2-diff.bmp" || rc=1
+[ -f "$OUT/exec.bmp" ] && python3 tools/bmpdiff.py build/wine-spike/final-native.bmp "$OUT/exec.bmp" --tolerance 8 -o "$OUT/exec-diff.bmp" || rc=1
+[ $rc = 0 ] && echo "PASS: both frames match the DXVK frames" || echo "FAIL: a frame is missing or differs (logs and diff images in $OUT)"
 exit $rc

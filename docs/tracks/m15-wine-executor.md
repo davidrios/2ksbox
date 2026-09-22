@@ -283,10 +283,29 @@ UTM's wizard — its AppleScript dictionary has no IPSW install — with
 Remote Login on and Rosetta installed once by hand), and
 `tools/macvm-wine-spike.sh <user>@<ip>` (`utmctl ip-address <vm>`) copies
 WineHQ's tarball and the PE pair in, runs both host tests on Wine's d3d9
-there over ssh, brings the frames back and diffs them against this
-host's DXVK frames. Its log answers the two things only that guest can:
-the `GL_RENDERER` a Rosetta process gets on Apple's paravirtual GPU, and
-the exec test's fps there.
+there over ssh — in the guest's GUI session through `launchctl asuser`,
+which is why the guest account needs passwordless sudo: over plain ssh
+there is no window server and wined3d cannot make even its probe window
+— brings the frames back and diffs them against this host's DXVK frames.
+
+**What the guest answered (2026-09-22, macOS 15.6.1, WineHQ 11.17): a
+VM cannot test the GL path.** Apple's paravirtual GPU has Metal and no
+accelerated OpenGL: CGL offers "Apple Software Renderer" (2.1 legacy /
+4.1 core) and nothing else, to arm64 and x86_64 processes alike, and
+Wine's Mac driver demands `kCGLPFAAccelerated` for its bootstrap context
+(`winemac.drv/opengl.c` `init_context`; `AllowSoftwareRendering` only
+widens the formats it enumerates afterwards), so Wine has **no OpenGL at
+all** in such a guest and wined3d's GL renderer never starts. Wined3d's
+Vulkan renderer over the bundled MoltenVK does start there
+(`RENDERER=vulkan`): the DDI frame differs from DXVK's in 8 % of pixels
+(max 255) and the DLL path's device creation fails on the depth format
+MoltenVK lacks — a data point, not a path (ADR-007). So the community
+build's GL path is tested on a **real** pre-26 macOS: on this Mac, a
+second APFS volume with macOS 15 (`softwareupdate
+--fetch-full-installer --full-installer-version 15.6.1`, install to the
+new volume, boot it, run the two commands of the spike); the VM keeps
+its use for the launcher and package flow, where the GPU does not
+matter. Logs of the run in `build/macvm/spike/`.
 
 ```sh
 scripts/build.sh                                  # the native stack; builds the PE pair too once the --wine stage exists
