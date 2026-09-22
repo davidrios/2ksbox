@@ -276,6 +276,18 @@ unpolished) and has no OpenGL in `winemac.drv`, so it is no help below
 
 ## Test loop
 
+A pre-26 macOS **guest** on this Mac is the community build's user
+(ADR-019): a UTM virtual machine of macOS 15 (Apple's Virtualization
+framework, the IPSW from Apple's CDN into `build/macvm/`, created in
+UTM's wizard — its AppleScript dictionary has no IPSW install — with
+Remote Login on and Rosetta installed once by hand), and
+`tools/macvm-wine-spike.sh <user>@<ip>` (`utmctl ip-address <vm>`) copies
+WineHQ's tarball and the PE pair in, runs both host tests on Wine's d3d9
+there over ssh, brings the frames back and diffs them against this
+host's DXVK frames. Its log answers the two things only that guest can:
+the `GL_RENDERER` a Rosetta process gets on Apple's paravirtual GPU, and
+the exec test's fps there.
+
 ```sh
 scripts/build.sh                                  # the native stack; builds the PE pair too once the --wine stage exists
 scripts/test.sh host                              # exec-wine: the two host tests through the remote executor (SKIP without a Wine)
