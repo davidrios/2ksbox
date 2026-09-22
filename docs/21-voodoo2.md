@@ -519,8 +519,9 @@ Knobs: `threads=1|2|4` (default 2), `recompiler=off` (the interpreter, the
 A/B for a rasterizer bug), `bilinear`, `dither-sub`, `filter` (86Box's
 "screen filter", off — and a no-op until the guest programs `maxRgbDelta`,
 §12), `undither` (ours, off: the dither reconstructed away rather than
-blurred, §12), `fbmem=2|4`, `texmem=2|4` (per TMU; 4 is the 12 MB
-board).
+blurred, §12), `fbmem=2|4`, `texmem=2|4` (per TMU; **2 is the default
+since 2026-09-21**, the 8 MB board, because the 12 MB board's 4 MB TMUs
+break a game written before it existed — §13, Carmageddon).
 
 ## 10. The guest side
 
@@ -1160,3 +1161,25 @@ it — a process dying and its exit handler closing the window, with nothing
 refused or warned on the device's side once the wrap is right. The A/Bs
 are the launcher's: `ramfifo=on` (the default; the `-global` line off) for
 the transport, and every emulation optimization off for the TCG fast paths.
+
+**Found the same evening: the 12 MB board.** The user's A/Bs changed
+nothing — RAM ring, Cirrus, every optimization off, the PIT switches — and
+the error screen did: a DOS/4GW page fault at the same address every time,
+in the game's own C runtime, `strnlen` on a string pointer just above
+0x200000 with the length at -1, i.e. `%s` inside a printf. The game's
+strings say which printf: its BRender 3dfx driver reports Glide errors as
+`(Glide) %s`, BRender's fatal handler prints `FATAL ERROR: %s`, and that
+print is what died, on a pointer into 3dfx's Glide overlay, whose data sits
+near 0x200000 in that DOS box. So Glide raised an error mid-race and the
+game fell over printing it. The overlay carries nine error strings; eight
+are init-time or "unsupported function" and would fire on 86Box too; the
+ninth depends on the card: `grTexDownloadMipMapLevelPartial: mipmap level
+cannot span 2 Mbyte boundary`. The game imports that function and sizes its
+texture space from `grTexMinAddress` / `grTexMaxAddress`, and this device
+reported **4 MB per TMU** — the 12 MB board — so a 1997 allocator written
+for 2 MB TMUs walked past the 2 MB line after 20 to 50 s of cars and
+scenery, and Glide refused the level that straddled it. An 8 MB Voodoo 2,
+86Box's default, has 2 MB TMUs and cannot reach that error. `-global
+voodoo2.texmem=2`: no crash (the user, the same evening). **The 8 MB board
+is the device's default now**; `texmem=4` is the 12 MB one for a title
+that wants it.

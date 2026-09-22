@@ -317,8 +317,13 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   every word of the next lap was held until the bitmap ran out. Glide never
   writes `cmdFifoAMin` at a wrap, so the chip follows its own JMP on the
   write side, and the device does now (doc 21 §13; the check's wrap phase).
-  The race then crashes in the guest with nothing on the device's side:
-  the last ring writes are mid-frame, then Glide's shutdown — open.
+  The race then crashed in the guest with nothing on the device's side,
+  and that one was the **12 MB board**: the game dies printing a Glide
+  error, and the one Glide error a card's configuration decides is a
+  texture level spanning a 2 MB boundary of TMU memory — this device
+  reported 4 MB per TMU, a 1997 allocator walked past the line, 86Box's
+  8 MB default never can. `texmem=2` (the 8 MB board) is the default now
+  (doc 21 §13; the user's A/B, no crash).
   **The "wide" menu is not ours.** Measured out of the screenshot rather than
   argued: the player draws the 640x480 frame at exactly 3x with square pixels
   (the CRT preset's scanline period is 3 host rows, autocorrelation peaks at

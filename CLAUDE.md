@@ -139,7 +139,10 @@ backend later.
   device (`voodoo/voodoo2.c`, patch 62 for the meson subdir). The guest
   runs 3dfx's own driver and the game's own Glide, so Glide 3 and the
   static-link stragglers come for free, at a software rasterizer's speed
-  on host cores. It **does not replace qemu-3dfx**: the Glide wrapper is
+  on host cores. **It is the 8 MB board by default** (`texmem=2`, 2026-09-21):
+  the 12 MB board's 4 MB TMUs let a 1997 game place a texture across a
+  2 MB boundary, which Glide refuses — Carmageddon died printing that
+  error every race; `texmem=4` is the 12 MB board for a title that wants it. It **does not replace qemu-3dfx**: the Glide wrapper is
   the fast path for the titles it covers and the OpenGL pass-through has
   no chip equivalent — never propose retiring either. The card takes the
   monitor through `graphic_hw_passthrough` on console 0 and its frames go

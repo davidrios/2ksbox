@@ -2193,8 +2193,16 @@ voodoo2_reset(DeviceState *dev)
 }
 
 static Property voodoo2_properties[] = {
+    /* the 8 MB board: 4 MB of frame buffer and 2 MB per TMU. It was the
+     * common Voodoo 2, and the 12 MB board's 4 MB TMUs break a game written
+     * before it existed: a texture level may not span a 2 MB boundary of
+     * TMU memory, Glide refuses one that does, and a 1997 allocator that
+     * walks the whole of a 4 MB range reaches that line sooner or later --
+     * Carmageddon's 3dfx build, every race, 20 to 50 s in, dying inside
+     * its own error print (doc 21 §13, 2026-09-21). texmem=4 is the 12 MB
+     * board, for a title that wants it. */
     DEFINE_PROP_UINT32("fbmem", Voodoo2State, fbmem_mb, 4),
-    DEFINE_PROP_UINT32("texmem", Voodoo2State, texmem_mb, 4),
+    DEFINE_PROP_UINT32("texmem", Voodoo2State, texmem_mb, 2),
     DEFINE_PROP_UINT32("threads", Voodoo2State, threads, 2),
     DEFINE_PROP_BOOL("bilinear", Voodoo2State, bilinear, true),
     DEFINE_PROP_BOOL("dither-sub", Voodoo2State, dithersub, true),
