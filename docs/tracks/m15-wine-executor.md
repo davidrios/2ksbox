@@ -301,11 +301,17 @@ Vulkan renderer over the bundled MoltenVK does start there
 (max 255) and the DLL path's device creation fails on the depth format
 MoltenVK lacks — a data point, not a path (ADR-007). So the community
 build's GL path is tested on a **real** pre-26 macOS: on this Mac, a
-second APFS volume with macOS 15 (`softwareupdate
---fetch-full-installer --full-installer-version 15.6.1`, install to the
-new volume, boot it, run the two commands of the spike); the VM keeps
-its use for the launcher and package flow, where the GPU does not
-matter. Logs of the run in `build/macvm/spike/`.
+second APFS volume with macOS 15 (`diskutil apfs addVolume disk3 APFS
+"macOS 15"`, the installer app onto it, boot it) and, from a Terminal
+there — one machine runs one macOS at a time, so not over ssh —
+`tools/macos-wine-spike-local.sh` in the other volume's checkout under
+`/Volumes/Macintosh HD - Data`: the host tests, the remote library, the
+PE pair and the Wine tarball link nothing of Homebrew, so they run on a
+bare install, and it prints the real GPU's `GL_RENDERER` for the Rosetta
+process and the fps. QEMU links Homebrew and is not for that round; the
+guest there comes with the packaged community build (step 4). The VM
+keeps its use for the launcher and package flow, where the GPU does not
+matter. Logs of the VM run in `build/macvm/spike/`.
 
 ```sh
 scripts/build.sh                                  # the native stack, libd3dpt_exec_remote, and with mingw the PE pair in build/d3dpt/wine/
