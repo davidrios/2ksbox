@@ -321,7 +321,22 @@ tools/xp-driver-test.sh build/xp.qcow2 install    # once: the image's driver mus
                                                   # 2026-09-12 refuses a newer one and XP falls back to VGA, silently)
 EXEC=wine D3DPT_WINE=<wine> tools/xp-driver-test.sh build/xp.qcow2 d3dgame8   # the reference scene in the guest, on Wine
 EXEC=dxvk tools/xp-driver-test.sh build/xp.qcow2 d3dgame8                     # the control, in process
+EXEC=wine tools/xp-driver-test.sh build/xp.qcow2 probes                       # the ten DX8 DDI probes in one boot, on Wine
+# the Win98 display driver's DX7 HAL on the same executor (D3D7TEST, the frame against
+# build/test/dp2-test.bmp); base98-us carries a Voodoo 2 -- in the launcher's slot, addr=0x05
+# (`launcherx --print-args <its machine.toml>`): without the card 3dfx's login helper fails in
+# an "Error" box that takes exclusive mode from the test, and in another slot Windows finds
+# new hardware and asks for a restart before the shell
+STAGE=guest-tools/out/driver9x/d3d7test.exe PULL='2KSBOX\D3D7TEST.LOG 2KSBOX\D3D7TEST.BMP' \
+  GUEST_CMD=$'start /w C:\\D3D7TEST.EXE 640 480 32 300' \
+  EXTRA='-device voodoo2,addr=0x05 -global voodoo2.texmem=2 -global d3dpt-vga.exec=wine' \
+  tools/win98-game-test.sh "$HOME/Library/Application Support/2ksbox/machines/base98-us/disk.qcow2" d3d7wine
+python3 tools/bmpdiff.py build/test/dp2-test.bmp build/w98game/d3d7wine/D3D7TEST.BMP --tolerance 8
 ```
+
+`D3DPT_WINE`, `D3DPT_WINEPREFIX` and `D3DPT_EXEC_REMOTE_LIB` in the
+environment name the Wine, the prefix (`build/wine-prefix`, the one the
+`exec-wine` check keeps) and the library, for both harnesses alike.
 
 On this Mac, which has Vulkan, `exec=wine` is the A/B; `auto` takes Wine
 only where DXVK's probe finds no device — and on such a host QEMU must
@@ -408,9 +423,67 @@ links dynamically where the Fedora cross image's does not):
    ran on its VGA fallback, D3DGAME8 died in a modal box and the killed
    guest lost its unflushed files — **run `install` on the overlay
    first** (its proof is the mode-set line after the restart), which
-   is in the test loop above now. Left: the same on the Win98 machine
-   (`tools/win98-game-test.sh` with `EXTRA=-global d3dpt-vga.exec=wine`)
-   and the DDI probes (`xp-driver-test.sh probes`) in one boot.
+   is in the test loop above now. **Finished 2026-09-22, later the same
+   day**, and it took four fixes to run a second time:
+   - `install` itself blocked for good three runs out of four: setupapi
+     shows one "has not passed Windows Logo testing" dialog *per unsigned
+     file* (the miniport, then the display DLL after its copy), and
+     DRVINST's watcher pressed for a fixed two minutes — under TCG the
+     second dialog came later than that. The watcher now lives as long as
+     the install call (`drvinst.c`), the harness sends DRVINST's own
+     lines to COM1 and takes a screendump every 20 s while it waits, and
+     `KEEP=1` leaves a machine up for a look (the install's proof was
+     `tasklist /v` and `setupapi.log` typed to COM1 from a second Run
+     dialog on the kept guest).
+   - **The DDI probes on Wine: nine PASS, PATCHTST NOT OFFERED** — the
+     same ten verdicts as the in-process run on KosmicKrisp (cube,
+     stream, volume, format, bump, sprite, anisotropy, MSAA and managed
+     probes all pass through the child).
+   - **The Win98 machine reset itself at D3D7TEST's first read of the
+     status register.** The Wine child made its Direct3D device lazily,
+     at the first `create()` — inside that MMIO read, 3.5 s under Rosetta
+     with the vCPU stopped — and the machine came back to the Startup
+     Menu's "Windows did not finish loading on the previous attempt"
+     (XP had taken the same stall the day before). The device is made at
+     the library's probe now, which the adapter's realize runs before the
+     guest boots, and `create()` collects it; the first cut of that made
+     two devices, because the child numbers executors from 0 and 0 read
+     as "none".
+   - With the reset gone D3D7TEST lost exclusive mode at its first
+     `BeginScene` (`DDERR_NOEXCLUSIVEMODE`, every surface lost) to a
+     dialog titled "Error" — 3dfx's Glide failing at login on
+     `base98-us`, whose bundle has a Voodoo 2 the harness run had left
+     off the bus; the in-process control had merely won that race. The
+     test logs the runtime's verdicts and the foreground window when
+     `BeginScene` fails now, and the run carries the card in the
+     launcher's own slot (`-device voodoo2,addr=0x05`; any other slot is
+     new hardware and a restart prompt before the shell).
+   - **Then the machine blue-screened at the first batch** — a fatal
+     exception 0D in the VMM, half a second after the executor logged the
+     batch's dropped render states. That first batch stalls the vCPU inside
+     the doorbell write for as long as wined3d takes to compile its
+     shaders, and the reset at the status read was the same thing with a
+     longer stall: **patch 65's tick reinjection** raised a quarter second
+     of owed 1 kHz ticks back to back the moment the guest could take one,
+     and Windows 98's timer handler (early acknowledge, interrupts on)
+     nests them until the VMM dies. `-global isa-pit.reinject=off` was the
+     A/B: dead with the burst, **300 frames at 57.3 fps and the frame
+     byte-identical to `dp2-test.bmp`** without. The fix is in the patch
+     (paced catch-up: an acknowledge raises an owed edge only half a period
+     after the last owed one, so a catch-up runs at twice the rate and
+     nests one deep at most — not through a timer of its own, which the
+     main loop's wakeup merges with the regular edge and left a 1 kHz
+     clock at 66 % in `pit-guest-test.py`'s rate phase), and the run
+     below is with it. It is not a Wine problem: any
+     executor slow enough to hold a batch for hundreds of milliseconds
+     would have done it, which is exactly what a below-floor host is.
+   Found beside it, open: **XP with its display driver refused shows a
+   black screen on the adapter** — the VGA core in a chained 256-colour
+   800×600 mode (`sr4=0a gr5=50`) that renders nothing, every screendump
+   of every failed install run included, while the BIOS text and DOS
+   mode 13h (`tools/vga-dirty-guest-test.py d3dpt 13h`, PASS) render
+   fine. Who programs that mode and what it draws is the question; it
+   blinds every headless look at a guest on the fallback.
 4. **The launcher and the packages**: the probe's third verdict, the
    graphics note, `--host-check`, `companions.rs`, the three packagers
    staging the PE pair and finding Wine, the `no-exec` paragraphs in

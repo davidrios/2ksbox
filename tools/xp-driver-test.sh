@@ -37,7 +37,12 @@
 # REBOOT_WAIT=s the cap on `install`'s restart — none of the three is a
 # sleep any more, see tools/guestwait.sh) or SHOTS=n SHOT_EVERY=s (n screendumps
 # cmd-01.png … every s seconds — for watching a game start; SHOT_KEYS="26:esc"
-# presses a key right before screendump n). Needs
+# presses a key right before screendump n). KEEP=1 leaves the machine
+# running at the end (QMP at OUT/qmp.sock; kill it yourself) for a look
+# at a guest that went wrong — `info registers` twice, `info pic`, a
+# second Run dialog typing `cmd /c type C:\WINDOWS\setupapi.log > COM1`.
+# `install` writes DRVINST's own lines to COM1 (serial-install.log) and a
+# screendump every 20 s (install-NN.png) while it waits. Needs
 # guest-tools/build-driver.sh run first (guest-tools/out/d3dpt-driver.iso),
 # mtools + python3, and mkfs.fat + sfdisk where they exist (the Mac has
 # neither: mformat then builds the scratch disk). Ends every run with a clean
@@ -174,6 +179,11 @@ probe_verdict() {  # <NAME>: a DX8 feature probe's last line as PASS, NOT OFFERE
 }
 finish() {
   Q screendump "$OUT/$MODE-end.png" || true
+  if [ "${KEEP:-0}" = 1 ]; then   # KEEP=1: leave the machine up for a look over QMP ($SOCK); kill it yourself
+    echo "KEEP=1: the guest is still running (pid $QPID, QMP $SOCK)"
+    echo "---- $LOG (device side)"; grep -v "^WARNING" "$LOG" | sed 's/qemu-system-i386: info: //' | tail -40
+    return 0
+  fi
   Q json '{"execute":"system_powerdown"}' >/dev/null || true
   gw_wait_exit "$QPID" 90 || true
   kill $QPID 2>/dev/null || true; wait $QPID 2>/dev/null || true
@@ -194,7 +204,15 @@ case "$MODE" in
   install)
     # a shorter cap than the rest: if DRVINST ever turns out not to return,
     # the restart below still works — cmd buffers the typed line until it does
-    run_until DRVDONE "${CMD_WAIT:-180}" 'D:\DRIVER\DRVINST.EXE'
+    # DRVINST's own words go to COM1 -- the serial log on the host, written
+    # the moment they are printed -- because an install that blocks (a
+    # dialog, a devnode restart that never comes back) shows a black
+    # screendump and nothing else, and its console window dies with the
+    # guest (2026-09-22: a run spent 480 s in it with no evidence at all)
+    # and a screendump every 20 s meanwhile (install-NN.png): the one at the
+    # end shows where it ended, not what it went through
+    ( i=0; while sleep 20; do i=$((i+1)); Q screendump "$OUT/install-$(printf %02d "$i").png" >/dev/null 2>&1 || true; done ) & SHOTPID=$!
+    run_until DRVDONE "${CMD_WAIT:-300}" 'D:\DRIVER\DRVINST.EXE > COM1'
     Q screendump "$OUT/install-done.png"
     # the count to beat: the machine has to program the desktop mode once
     # more, after the restart, and that — not a screendump of a desktop
@@ -205,7 +223,9 @@ case "$MODE" in
     Q type 'shutdown -r -t 0'; Q keys ret
     gw_wait_count "$LOG" "linear mode on" "$want" "${REBOOT_WAIT:-300}" || true
     Q screendump "$OUT/install-rebooted.png"
-    finish ;;
+    kill $SHOTPID 2>/dev/null || true
+    finish
+    echo "---- $SER (the installer's own lines)"; tr -d '\r' < "$SER" | grep -v '^$' | tail -12 ;;
   ddtest)
     run 'E:\RUN.BAT'                                        # 8 / 16 / 32 bpp chains, then windowed (staged above)
     sleep 5; Q screendump "$OUT/ddtest-fullscreen.png"      # the 8 bpp chain: the palette shows in the dump

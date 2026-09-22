@@ -269,7 +269,26 @@ nozbuf:
         hr = dev->lpVtbl->Clear(dev, 0, NULL, D3DCLEAR_TARGET | (noz ? 0 : D3DCLEAR_ZBUFFER), CLEAR_COLOR, 1.0f, 0);
         if (FAILED(hr)) { logp("Clear failed %08lx at frame %d\n", hr, i); goto out; }
         hr = dev->lpVtbl->BeginScene(dev);
-        if (FAILED(hr)) { logp("BeginScene failed %08lx at frame %d\n", hr, i); goto out; }
+        if (FAILED(hr)) {
+            /* whose fault: the runtime's own verdicts on the surfaces and on
+             * exclusive mode, and who owns the foreground -- a lost surface
+             * on 9x is the runtime's doing (a mode change, another window
+             * taking the activation), never a HAL return code */
+            HWND fg = GetForegroundWindow();
+            char cls[64] = "", title[128] = "";
+            if (fg) { GetClassNameA(fg, cls, sizeof cls); GetWindowTextA(fg, title, sizeof title); }
+            logp("BeginScene failed %08lx at frame %d: TestCooperativeLevel %08lx, IsLost prim %08lx back %08lx z %08lx tex %08lx, foreground %s (%s \"%s\"), active %s\n",
+                 hr, i, dd->lpVtbl->TestCooperativeLevel(dd),
+                 prim->lpVtbl->IsLost(prim), back->lpVtbl->IsLost(back),
+                 zbuf ? zbuf->lpVtbl->IsLost(zbuf) : 0, tex->lpVtbl->IsLost(tex),
+                 fg == hwnd ? "ours" : "another window", cls, title,
+                 GetActiveWindow() == hwnd ? "ours" : "not ours");
+            hr = dd->lpVtbl->RestoreAllSurfaces(dd);
+            logp("RestoreAllSurfaces %08lx\n", hr);
+            hr = dev->lpVtbl->BeginScene(dev);
+            logp("BeginScene again %08lx\n", hr);
+            if (FAILED(hr)) goto out;
+        }
         dev->lpVtbl->SetRenderState(dev, D3DRENDERSTATE_ZENABLE, noz ? D3DZB_FALSE : D3DZB_TRUE);
         dev->lpVtbl->SetRenderState(dev, D3DRENDERSTATE_ZWRITEENABLE, TRUE);
         dev->lpVtbl->SetRenderState(dev, D3DRENDERSTATE_ZFUNC, D3DCMP_LESSEQUAL);

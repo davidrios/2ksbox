@@ -59,6 +59,7 @@ static void set_signing_policy(void)
  * the template in every language. What commercial installers do. */
 static DWORD g_pid;
 static HWND g_button;
+static volatile LONG g_install_done;   /* the main thread is out of UpdateDriverForPlugAndPlayDevices */
 
 static BOOL CALLBACK find_button(HWND h, LPARAM lp)
 {
@@ -89,11 +90,16 @@ static BOOL CALLBACK find_dialog(HWND h, LPARAM lp)
     return TRUE;
 }
 
+/* For as long as the install runs, not for a fixed two minutes: setupapi
+ * shows one Logo dialog per unsigned file it copies (the miniport, then
+ * the display DLL after the copy), and under TCG the second one came
+ * after the watcher had given up -- DRVINST then sat behind it for good,
+ * three runs out of four on 2026-09-22, with nothing on the screen a
+ * headless run could see. */
 static DWORD WINAPI logo_watcher(LPVOID arg)
 {
-    int i;
     g_pid = GetCurrentProcessId();
-    for (i = 0; i < 1200; i++) {          /* up to two minutes */
+    while (!g_install_done) {
         Sleep(100);
         EnumWindows(find_dialog, 0);
     }
@@ -158,11 +164,13 @@ int main(int argc, char **argv)
     fflush(stdout);
     if (!update(NULL, HWID, full, INSTALLFLAG_FORCE, &need_reboot)) {
         DWORD e = GetLastError();
+        g_install_done = 1;
         printf("drvinst: failed, error %lu (0x%lx)%s\n", e, e,
                e == 0xE000020B /* ERROR_NO_SUCH_DEVINST */ ? " - device not present (-device d3dpt-vga?)" :
                e == ERROR_NO_MORE_ITEMS ? " - no better driver / INF does not match" : "");
         return 1;
     }
+    g_install_done = 1;
     printf("drvinst: installed%s\n", need_reboot ? ", reboot required" : "");
     if (need_reboot && want_reboot) {
         printf("drvinst: rebooting\n");

@@ -373,30 +373,66 @@ D3DPT_EXEC_API uint32_t d3dpt_exec_version(void)
     return D3DPT_PROTO_VERSION;
 }
 
-D3DPT_EXEC_API int d3dpt_exec_probe(void)
-{
-    return ensure_child();
-}
+/* The child's Direct3D device, made ahead of the first create(): under Wine
+ * that is Direct3DCreate9 plus a device on wined3d's GL renderer, 3.5 s on
+ * the Air under Rosetta, and the device makes it at the guest's first read
+ * of the status register -- inside an MMIO access, with the vCPU stopped.
+ * XP took that; Windows 98 did not (2026-09-22, D3D7TEST on base98-us: the
+ * machine reset at that read and came back to the Startup Menu's "Windows
+ * did not finish loading"). So the device is made here, at the probe the
+ * adapter's realize runs before the guest boots, and create() collects it;
+ * a second create() in the same process (the SysBus device beside the
+ * adapter) makes its own, as before. */
+static uint32_t ready_id;               /* an executor the child made at probe time (ids start at 0) */
+static int have_ready;
 
-D3DPT_EXEC_API d3dpt_exec_t *d3dpt_exec_create(const d3dpt_exec_ops *ops)
+static int make_device(uint32_t *id_out, const d3dpt_exec_ops *ops)
 {
-    if (!ensure_child()) return NULL;
     if (!frame_region) {
         frame_region = alloc_region(D3DPT_REMOTE_FRAME_ID, D3DPT_REMOTE_FRAME_SIZE);
-        if (!frame_region) return NULL;
+        if (!frame_region) return 0;
         frame_ptr = mmap(NULL, frame_region->size, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, (off_t)frame_region->off);
-        if (frame_ptr == MAP_FAILED) { say("cannot map the frame slot: %s", strerror(errno)); frame_ptr = NULL; return NULL; }
+        if (frame_ptr == MAP_FAILED) { say("cannot map the frame slot: %s", strerror(errno)); frame_ptr = NULL; return 0; }
         frame_region->ptr = frame_ptr;
-        if (!map_in_child(frame_region)) return NULL;
+        if (!map_in_child(frame_region)) return 0;
     }
     d3dpt_rq q = { D3DPT_RQ_CREATE, 0, 0, 0, 0, 0 };
     d3dpt_rp p; d3dpt_rp_range dummy[D3DPT_REMOTE_MAX_DIRTY];
     if (!call(&q, &p, dummy) || p.status) {
-        if (ops->log) ops->log(ops->ud, "the executor in the other process found no usable Direct3D 9");
+        if (ops && ops->log) ops->log(ops->ud, "the executor in the other process found no usable Direct3D 9");
+        else say("the executor in the other process found no usable Direct3D 9");
+        return 0;
+    }
+    *id_out = p.ret;
+    return 1;
+}
+
+D3DPT_EXEC_API int d3dpt_exec_probe(void)
+{
+    if (!ensure_child()) return 0;
+    if (!have_ready) {
+        if (!make_device(&ready_id, NULL)) {
+            child_gone("no Direct3D 9 device in the executor process");
+            return 0;
+        }
+        have_ready = 1;
+    }
+    return 1;
+}
+
+D3DPT_EXEC_API d3dpt_exec_t *d3dpt_exec_create(const d3dpt_exec_ops *ops)
+{
+    uint32_t id;
+
+    if (!ensure_child()) return NULL;
+    if (have_ready) {
+        id = ready_id;
+        have_ready = 0;
+    } else if (!make_device(&id, ops)) {
         return NULL;
     }
     struct d3dpt_exec *x = calloc(1, sizeof *x);
-    x->id = p.ret;
+    x->id = id;
     x->ops = *ops;
     if (ops->log) ops->log(ops->ud, "Direct3D executor in another process (Wine), ready");
     return x;

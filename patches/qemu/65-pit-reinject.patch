@@ -21,6 +21,17 @@ the EOI and the handler runs once per tick. Owed ticks are capped at a
 quarter second's worth and a new count drops them. A guest whose IRQ 0 is
 masked at the 8259 (an APIC HAL) owes nothing.
 
+The owed ticks are paced (2026-09-22): an acknowledge raises the next
+owed edge only when half a period has passed since the last owed one, so
+a catch-up runs at twice the rate -- a regular tick and an owed one per
+period -- rather than as one burst. Raised at the acknowledge itself they nest -- Windows 98's
+timer handler acknowledges early and runs with interrupts on -- and a
+quarter second of 1 kHz ticks delivered back to back, after the vCPU had
+stalled inside an MMIO access (the Direct3D executor in the Wine process
+compiling its first shaders), took the VMM down with a fatal exception
+0D; a 3.5 s stall reset the machine. Measured with D3D7TEST on the Win98
+machine: dead as one burst, 300 frames at 57 fps paced.
+
 -global isa-pit.reinject=off restores upstream's behaviour (the A/B).
 
 diff --git a/include/hw/intc/i8259.h b/include/hw/intc/i8259.h
@@ -63,7 +74,7 @@ diff --git a/hw/intc/i8259.c b/hw/intc/i8259.c
 diff --git a/include/hw/timer/i8254_internal.h b/include/hw/timer/i8254_internal.h
 --- a/include/hw/timer/i8254_internal.h
 +++ b/include/hw/timer/i8254_internal.h
-@@ -48,6 +48,11 @@
+@@ -48,6 +48,12 @@
      QEMUTimer *irq_timer;
      qemu_irq irq;
      uint32_t irq_disabled;
@@ -72,10 +83,11 @@ diff --git a/include/hw/timer/i8254_internal.h b/include/hw/timer/i8254_internal
 +     * pending there */
 +    int out_level;
 +    uint32_t owed;
++    int64_t owed_last;      /* when the last owed edge was raised: one per half period */
  } PITChannelState;
  
  struct PITCommonState {
-@@ -55,6 +60,7 @@
+@@ -55,6 +61,7 @@
      MemoryRegion ioports;
      uint32_t iobase;
      bool overdue_irq;
@@ -133,10 +145,12 @@ diff --git a/hw/timer/i8254.c b/hw/timer/i8254.c
      qemu_set_irq(s->irq, irq_level);
  #ifdef DEBUG_PIT
      printf("irq_level=%d next_delay=%f\n",
-@@ -306,6 +314,57 @@
+@@ -304,8 +312,85 @@
+         timer_mod(s->irq_timer, expire_time);
+     else
          timer_del(s->irq_timer);
- }
- 
++}
++
 +/*
 + * 2ksbox: a tick whose edge arrives while the last one is still pending at
 + * the PIC is not lost (-global isa-pit.reinject=off restores upstream).
@@ -160,6 +174,23 @@ diff --git a/hw/timer/i8254.c b/hw/timer/i8254.c
 + * catches up only that far, and a new count drops what the old rate owed.
 + * A guest that routes IRQ 0 elsewhere (an APIC HAL masks it at the 8259)
 + * owes nothing.
++ *
++ * And they are paced: an acknowledge raises the next owed edge only when
++ * half a period has passed since the last owed one, so a catch-up runs at
++ * twice the rate -- one regular tick and one owed per period -- and never
++ * as one burst. Raised at every acknowledge they nest: Windows 98's timer
++ * handler acknowledges early and runs with interrupts on, and a quarter
++ * second of 1 kHz ticks delivered back to back took the VMM down with a
++ * fatal exception 0D (2026-09-22, D3D7TEST on the Direct3D executor in
++ * the Wine process, whose first batch stalls the vCPU inside the doorbell
++ * write while wined3d compiles shaders; a 3.5 s stall at the status
++ * register reset the machine outright). Real hardware never stalls a CPU
++ * that long, and a guest that keeps interrupts off that long gets one
++ * edge; the paced catch-up is the nearest thing that keeps the clock. The
++ * pace is kept at the acknowledge and not by a timer of its own: a timer
++ * half a period out lands in the main loop's next wakeup beside the
++ * regular edge, the two merge into one, and the guest got one tick per
++ * wakeup -- 66 % on the Air, the rate phase of tools/pit-guest-test.py.
 + */
 +static void pit_count_merged_edge(PITChannelState *s)
 +{
@@ -170,15 +201,24 @@ diff --git a/hw/timer/i8254.c b/hw/timer/i8254.c
 +    if (isa_pic && (isa_pic->irr & 1) && !(isa_pic->imr & 1) && s->owed < cap) {
 +        s->owed++;
 +    }
-+}
-+
+ }
+ 
 +static void pit_irq0_acked(void *opaque)
 +{
 +    PITChannelState *s = opaque;
++    uint32_t count;
++    int64_t now, half;
 +
 +    if (!s->owed || s->irq_disabled) {
 +        return;
 +    }
++    count = s->count > 0 ? (uint32_t)s->count : 0x10000;
++    half = muldiv64(count, NANOSECONDS_PER_SECOND, PIT_FREQ) / 2;
++    now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
++    if (now - s->owed_last < half) {
++        return;             /* the next acknowledge, half a period on, raises it */
++    }
++    s->owed_last = now;
 +    s->owed--;
 +    /* a pulse, then the line back where the timer left it */
 +    qemu_set_irq(s->irq, 0);
@@ -191,7 +231,7 @@ diff --git a/hw/timer/i8254.c b/hw/timer/i8254.c
  static void pit_irq_timer(void *opaque)
  {
      PITChannelState *s = opaque;
-@@ -379,6 +438,11 @@
+@@ -379,6 +464,11 @@
  
      qdev_init_gpio_in(dev, pit_irq_control, 1);
  

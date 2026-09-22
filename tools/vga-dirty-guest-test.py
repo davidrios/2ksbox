@@ -696,7 +696,8 @@ def run(tag, adapter, img, extra):
     argv = [
         QEMU, "-machine", "pc", "-m", "64",
         "-L", os.path.join(ROOT, "qemu/pc-bios"),
-        "-vga", adapter, "-display", "none", "-net", "none", "-audiodev", "none,id=a",
+    ] + (["-vga", "none", "-device", "d3dpt-vga"] if adapter == "d3dpt" else ["-vga", adapter]) + [
+        "-display", "none", "-net", "none", "-audiodev", "none,id=a",
         "-fda", img, "-boot", "a",
         "-serial", "file:" + log, "-monitor", "none",
         "-qmp", "unix:%s,server,nowait" % qmp_sock,
