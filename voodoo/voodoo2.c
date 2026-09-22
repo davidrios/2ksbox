@@ -187,6 +187,20 @@ struct Voodoo2State {
     uint32_t     last_drains;
     uint32_t     behind;             /* publishes with LFB writes still queued */
     uint32_t     last_behind;
+    /* the ring through MMIO, counted the way the chip counts it: only words
+     * every predecessor of which has arrived ("the command FIFO through
+     * MMIO" below) */
+    uint32_t     mmio_next;          /* window offset of the next word in address order */
+    uint64_t     mmio_ahead;         /* bit k: the word k past it has arrived already */
+    uint32_t     mmio_holes;         /* words that arrived ahead of one before them */
+    uint32_t     last_mmio_holes;
+    uint32_t     mmio_flushed;       /* counted with a hole still open */
+    uint32_t     last_mmio_flushed;
+    uint32_t     mmio_in_packet;     /* data words left of the packet being counted */
+    uint32_t     mmio_jumps;         /* JMP packets followed on the write side */
+    uint32_t     last_mmio_jumps;
+    bool         mmio_holes_noted;
+    bool         mmio_flushed_warned;
     int64_t      idle_status_since;  /* first of a run of idle-busy polls */
     bool         idle_status_noted;
     /* the LFB writes of a window, by the buffer the guest aimed them at:
@@ -222,6 +236,7 @@ struct Voodoo2State {
     bool     ramfifo;
     bool     lfb_order;
     bool     fifo_off_regs;
+    bool     count_holes;   /* count the MMIO ring contiguously (the chip's way) */
 
     /* the undither's one-shot note: it says once that it is on, and once
      * why it is not, because a frame it declines is an ordinary frame and
@@ -613,6 +628,7 @@ voodoo2_fifo_written(Voodoo2State *s, uint32_t a)
 
 static void voodoo2_fifo_map(Voodoo2State *s);
 static void voodoo2_mmio_drain(Voodoo2State *s);
+static void voodoo2_mmio_ring_reset(Voodoo2State *s);
 
 static void
 voodoo2_fifo_break(Voodoo2State *s, uint32_t a, uint32_t h, const char *why)
@@ -823,6 +839,7 @@ voodoo2_fifo_map(Voodoo2State *s)
     memory_region_set_enabled(&s->fifo_win, want);
     memory_region_transaction_commit();
     s->fifo_mapped = want;
+    voodoo2_mmio_ring_reset(s);
     info_report("voodoo2: command FIFO %s (ring %08x+%x)",
                 want ? "in RAM" : "through MMIO", base, size);
 }
@@ -995,6 +1012,195 @@ voodoo2_mmio_drain(Voodoo2State *s)
     if (ATOMIC_LOAD(v->fifo_read_idx) != ATOMIC_LOAD(v->fifo_write_idx)) {
         s->behind++;                    /* not FIFO_EMPTY */
     }
+}
+
+/* --------------------------------------- the command FIFO through MMIO
+ *
+ * With `ramfifo=off` every dword the guest puts in the 0x200000 window is
+ * trapped here, and 86Box's handler stores it in the ring and counts it --
+ * `cmdfifo_depth_wr++` per write, whatever its address -- while its
+ * consumer reads the ring one word at a time from the read pointer, as far
+ * as that count lets it. That is one assumption too many, because **Glide
+ * does not write the ring in address order**: a two-word packet (one
+ * register and its value -- `color1`, `fastfillCMD`, `swapbufferCMD`) goes
+ * out value first and header second, so the chip never sees a header whose
+ * value is missing, and the chip is built for it -- cmdFifoAMin / AMax /
+ * Holes count what has been written *contiguously*, and the FIFO's depth
+ * advances over that alone. 86Box counts the value's write at once, and a
+ * consumer sitting on the header's slot -- caught up, which at the start
+ * of a race it is, the guest being the slow side -- reads that slot before
+ * the header lands: whatever was there from the last lap or the last
+ * session, taken as a header. A stale word that says "256 values follow"
+ * eats the next 256 words as data, the first word it then lands on that
+ * reads as a Banshee packet is 86Box's `fatal()` (refused here), and from
+ * there the read pointer stops where the guest cannot make room, so Glide
+ * waits for space on a ring the card will never drain.
+ *
+ * Measured 2026-09-21, Carmageddon's 3dfx build on `ramfifo=off` at a
+ * race's start: 182 such pairs among 65,503 ring words, every one the
+ * single-register packet; the parser off the rails inside a texture
+ * download 2,300 words after the last of them (`Banshee 2D register
+ * 00000020=02020202`), then 27 million cmdFifoRdPtr reads per 5 s for
+ * ever. The guest's final ring content parses cleanly end to end: it was
+ * the transport. The ring in RAM (`ramfifo=on`) never had the problem --
+ * its walk stops on a poison header and counts the pair when both are
+ * there -- which is why the freeze was this transport's alone.
+ *
+ * So the word is stored here and counted for the consumer only once every
+ * word before it has arrived, as the chip's hole counter does: a word
+ * ahead of the next expected one is remembered in a small bitmap and
+ * counted when the gap closes. A write below the expected one is the guest
+ * continuing at the ring's base after its jump packet (or a ring set up
+ * afresh, which also resets this), and the count starts again there; a
+ * hole still open at that moment is counted rather than stranded, and
+ * said once.
+ */
+#define VOODOO2_MMIO_UNKNOWN  0xffffffffu
+#define VOODOO2_MMIO_AHEAD    64            /* words a hole may span */
+
+/* 86Box's voodoo_writel, the two lines of it this path replaces: the count
+ * the consumer reads up to, and its wake when the ring is nearly empty */
+static void
+voodoo2_mmio_count(voodoo_t *v)
+{
+    v->cmdfifo_depth_wr++;
+    if ((v->cmdfifo_depth_wr - v->cmdfifo_depth_rd) < 20) {
+        voodoo_wake_fifo_thread(v);
+    }
+}
+
+/* The next contiguous word is counted and the expected address moves on:
+ * by one word, or to wherever a JMP packet points. The write side follows
+ * the packets the way the consumer will, header by header, because that is
+ * the only way to know where the guest goes next -- Glide writes
+ * cmdFifoAMin and AMax once at init and never at a wrap (the trace of
+ * Carmageddon's race, 2026-09-21: three writes to them in a minute, all at
+ * grSstWinOpen), so the chip recognises its JMP itself, at the point it
+ * becomes contiguous, and so does this. Without it the first packet after
+ * every wrap -- value first, header second, at the ring's base -- was taken
+ * as the guest continuing from wherever the value landed, its header then
+ * as a jump back, and every word after held as ahead of a hole until the
+ * bitmap ran out 64 words on (`moved from 200004 to 200104 with 63 word(s)
+ * written past a hole`; five laps of the 359 in that race). Returns true
+ * when a JMP moved the address. */
+static bool
+voodoo2_mmio_step(Voodoo2State *s)
+{
+    voodoo_t *v   = s->v;
+    uint32_t  off = s->mmio_next;
+    uint32_t  h, n;
+
+    voodoo2_mmio_count(v);
+    if (s->mmio_in_packet) {
+        s->mmio_in_packet--;
+        s->mmio_next += 4;
+        return false;
+    }
+    h = *(uint32_t *) &v->fb_mem[(v->cmdfifo_base + off) & v->fb_mask];
+    if ((h & 0x3f) == 0x18) {
+        uint32_t to = (h >> 4) & 0xfffffc;
+
+        if (to >= v->cmdfifo_base &&
+            to - v->cmdfifo_base < VOODOO2_FIFO_WIN_MAX) {
+            s->mmio_jumps++;
+            s->mmio_next = to - v->cmdfifo_base;
+            return true;
+        }
+    }
+    n = voodoo2_packet_words(h);
+    s->mmio_in_packet = n ? n - 1 : 0;  /* one it does not follow: the consumer refuses it */
+    s->mmio_next += 4;
+    return false;
+}
+
+/* words held ahead of a hole that is not going to close here: counted as
+ * they are, and said once */
+static void
+voodoo2_mmio_flush(Voodoo2State *s, uint32_t addr, const char *why)
+{
+    unsigned n;
+
+    if (!s->mmio_ahead) {
+        return;
+    }
+    n = ctpop64(s->mmio_ahead);
+    s->mmio_flushed += n;
+    if (!s->mmio_flushed_warned) {
+        s->mmio_flushed_warned = true;
+        warn_report("voodoo2: %s at %06x with %u word(s) written past a hole "
+                    "at %06x; they are counted as they are, and the consumer "
+                    "may read the hole", why, (unsigned) addr, n,
+                    (unsigned) (VOODOO2_FIFO_WIN + s->mmio_next));
+    }
+    while (n--) {
+        voodoo2_mmio_count(s->v);
+    }
+    s->mmio_ahead = 0;
+}
+
+static void
+voodoo2_mmio_ring_write(Voodoo2State *s, uint32_t addr, uint32_t val)
+{
+    voodoo_t *v   = s->v;
+    uint32_t  off = addr & 0x3fffc;         /* the window decodes this much */
+    uint32_t  gap;
+
+    /* the word itself, where 86Box's handler would have put it */
+    *(uint32_t *) &v->fb_mem[(v->cmdfifo_base + off) & v->fb_mask] = val;
+    v->wr_count++;
+
+    if (s->mmio_next != VOODOO2_MMIO_UNKNOWN && off > s->mmio_next &&
+        (gap = (off - s->mmio_next) / 4) < VOODOO2_MMIO_AHEAD) {
+        /* ahead of a word not written yet: held until the gap closes */
+        s->mmio_ahead |= 1ull << gap;
+        s->mmio_holes++;
+        if (!s->mmio_holes_noted) {
+            s->mmio_holes_noted = true;
+            info_report("voodoo2: the guest writes the command FIFO out of "
+                        "address order (%06x before %06x: a value before its "
+                        "header); a word is counted for the consumer once "
+                        "every word before it has arrived, as the chip's hole "
+                        "counter does", (unsigned) addr,
+                        (unsigned) (VOODOO2_FIFO_WIN + s->mmio_next));
+        }
+        return;
+    }
+    if (off != s->mmio_next) {
+        /* not where the count expected the guest and no JMP said so: a
+         * hole wider than the bitmap, or a ring taken up somewhere without
+         * its registers written. The count starts again here. */
+        voodoo2_mmio_flush(s, addr, "the command FIFO moved");
+        s->mmio_next      = off;
+        s->mmio_in_packet = 0;
+    }
+    /* this word, and every one after it that arrived early */
+    for (;;) {
+        if (voodoo2_mmio_step(s)) {
+            /* a JMP: whatever was held past it lies beyond where the guest
+             * goes on, which no stream of Glide's has produced */
+            voodoo2_mmio_flush(s, addr, "the command FIFO jumped");
+            break;
+        }
+        s->mmio_ahead >>= 1;
+        if (!(s->mmio_ahead & 1)) {
+            break;
+        }
+    }
+}
+
+/* the ring's registers written, or the ring mapped either way: the count
+ * starts over where the read pointer says the guest does */
+static void
+voodoo2_mmio_ring_reset(Voodoo2State *s)
+{
+    voodoo_t *v  = s->v;
+    uint32_t  rp = v->cmdfifo_rp;
+
+    s->mmio_next = (rp >= v->cmdfifo_base &&
+                    rp - v->cmdfifo_base < VOODOO2_FIFO_WIN_MAX)
+                   ? rp - v->cmdfifo_base : VOODOO2_MMIO_UNKNOWN;
+    s->mmio_ahead     = 0;
+    s->mmio_in_packet = 0;
 }
 
 /* A card cannot be busy with nothing to do.
@@ -1330,7 +1536,13 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     fifo_was_on = ATOMIC_LOAD(v->cmdfifo_enabled) != 0;
     switch (size) {
     case 4:
-        v->mapping.write_l((uint32_t) addr, (uint32_t) val, v->mapping.priv);
+        if ((addr & 0x200000) && addr < 0x400000 && !s->fifo_mapped &&
+            fifo_was_on && s->count_holes) {
+            /* a ring word through MMIO: counted as the chip counts it */
+            voodoo2_mmio_ring_write(s, (uint32_t) addr, (uint32_t) val);
+        } else {
+            v->mapping.write_l((uint32_t) addr, (uint32_t) val, v->mapping.priv);
+        }
         break;
     case 2:
         v->mapping.write_w((uint32_t) addr, (uint16_t) val, v->mapping.priv);
@@ -1340,6 +1552,18 @@ voodoo2_mmio_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
     }
     voodoo2_fifo_settle(s, fifo_was_on);
     voodoo2_fifo_after_write(s, addr);
+    if (addr < 0x200000 && size == 4) {
+        switch (addr & 0x3fc) {
+        case SST_cmdFifoBaseAddr:
+        case SST_cmdFifoRdPtr:
+        case SST_cmdFifoDepth:
+        case SST_fbiInit7:
+            voodoo2_mmio_ring_reset(s);
+            break;
+        default:
+            break;
+        }
+    }
 }
 
 static const MemoryRegionOps voodoo2_mmio_ops = {
@@ -1641,7 +1865,7 @@ voodoo2_stats(void *opaque)
         s->fifo_off_writes != s->last_fifo_off ||
         s->fifo_syncs != s->last_fifo_syncs) {
         char rds[64], wrs[64], cfg[64], ref[48] = "", busy[96] = "", ram[256] = "";
-        char ord[96] = "", lfb[128] = "";
+        char ord[96] = "", holes[128] = "", lfb[128] = "";
         int  written = v->cmd_written + v->cmd_written_fifo + v->cmd_written_fifo_2;
         int  outstanding = written - v->cmd_read;
         int  is_busy = outstanding ||
@@ -1714,6 +1938,20 @@ voodoo2_stats(void *opaque)
                      "behind the LFB queue", s->drains - s->last_drains,
                      s->behind - s->last_behind);
         }
+        /* the MMIO ring's holes: words the guest wrote ahead of one it had
+         * not written yet, and those counted with such a hole still open */
+        if (s->mmio_holes != s->last_mmio_holes ||
+            s->mmio_flushed != s->last_mmio_flushed ||
+            s->mmio_jumps != s->last_mmio_jumps) {
+            snprintf(holes, sizeof(holes), "; %u ring words written ahead of a "
+                     "hole, %u counted with one open, %u jumps followed",
+                     s->mmio_holes - s->last_mmio_holes,
+                     s->mmio_flushed - s->last_mmio_flushed,
+                     s->mmio_jumps - s->last_mmio_jumps);
+        }
+        s->last_mmio_holes   = s->mmio_holes;
+        s->last_mmio_flushed = s->mmio_flushed;
+        s->last_mmio_jumps   = s->mmio_jumps;
         if (s->lfb_front != s->last_lfb_front || s->lfb_back != s->last_lfb_back ||
             s->lfb_else != s->last_lfb_else) {
             snprintf(lfb, sizeof(lfb), "; LFB writes: %u to the front buffer, "
@@ -1736,12 +1974,12 @@ voodoo2_stats(void *opaque)
          * showing a buffer the last one did not, i.e. the game's frame rate */
         info_report("voodoo2: %dx%d %s: %u frames (%u new), %d triangles, "
                     "%d writes (%d texture), %d reads in %.1f s; regs read%s; "
-                    "written%s; config read%s%s%s%s%s%s",
+                    "written%s; config read%s%s%s%s%s%s%s",
                     v->h_disp, v->v_disp, s->override ? "on" : "off",
                     frames, s->shown - s->last_shown, tris, wr, tex, rd,
                     VOODOO2_STATS_MS / 1000.0,
                     rds[0] ? rds : " none", wrs[0] ? wrs : " none",
-                    cfg[0] ? cfg : " none", ref, busy, ram, ord, lfb);
+                    cfg[0] ? cfg : " none", ref, busy, ram, ord, holes, lfb);
     }
     /* The deadlock of 2026-09-17: 86Box's consumer waits inside cmdfifo_get
      * for a word the guest never wrote (it read a packet header wanting more
@@ -1894,6 +2132,7 @@ voodoo2_realize(PCIDevice *dev, Error **errp)
     pci_set_word(dev->config + PCI_SUBSYSTEM_ID, 0);
 
     s->lfb_y_lo = 0xffffffff;
+    voodoo2_mmio_ring_reset(s);
     s->stats = timer_new_ms(QEMU_CLOCK_VIRTUAL, voodoo2_stats, s);
     timer_mod(s->stats, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + VOODOO2_STATS_MS);
 
@@ -1954,8 +2193,16 @@ voodoo2_reset(DeviceState *dev)
 }
 
 static Property voodoo2_properties[] = {
+    /* the 8 MB board: 4 MB of frame buffer and 2 MB per TMU. It was the
+     * common Voodoo 2, and the 12 MB board's 4 MB TMUs break a game written
+     * before it existed: a texture level may not span a 2 MB boundary of
+     * TMU memory, Glide refuses one that does, and a 1997 allocator that
+     * walks the whole of a 4 MB range reaches that line sooner or later --
+     * Carmageddon's 3dfx build, every race, 20 to 50 s in, dying inside
+     * its own error print (doc 21 §13, 2026-09-21). texmem=4 is the 12 MB
+     * board, for a title that wants it. */
     DEFINE_PROP_UINT32("fbmem", Voodoo2State, fbmem_mb, 4),
-    DEFINE_PROP_UINT32("texmem", Voodoo2State, texmem_mb, 4),
+    DEFINE_PROP_UINT32("texmem", Voodoo2State, texmem_mb, 2),
     DEFINE_PROP_UINT32("threads", Voodoo2State, threads, 2),
     DEFINE_PROP_BOOL("bilinear", Voodoo2State, bilinear, true),
     DEFINE_PROP_BOOL("dither-sub", Voodoo2State, dithersub, true),
@@ -1968,6 +2215,9 @@ static Property voodoo2_properties[] = {
      * register file, the way 86Box decodes it. Off (the default) refuses
      * it -- see the site in voodoo2_mmio_write */
     DEFINE_PROP_BOOL("fifo-off-regs", Voodoo2State, fifo_off_regs, false),
+    /* off: 86Box's own count, a word per write whatever its address (the
+     * race-start freeze of 2026-09-21, the A/B) */
+    DEFINE_PROP_BOOL("mmio-holes", Voodoo2State, count_holes, true),
     DEFINE_PROP_END_OF_LIST(),
 };
 

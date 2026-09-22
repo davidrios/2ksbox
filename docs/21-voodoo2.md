@@ -519,8 +519,9 @@ Knobs: `threads=1|2|4` (default 2), `recompiler=off` (the interpreter, the
 A/B for a rasterizer bug), `bilinear`, `dither-sub`, `filter` (86Box's
 "screen filter", off — and a no-op until the guest programs `maxRgbDelta`,
 §12), `undither` (ours, off: the dither reconstructed away rather than
-blurred, §12), `fbmem=2|4`, `texmem=2|4` (per TMU; 4 is the 12 MB
-board).
+blurred, §12), `fbmem=2|4`, `texmem=2|4` (per TMU; **2 is the default
+since 2026-09-21**, the 8 MB board, because the 12 MB board's 4 MB TMUs
+break a game written before it existed — §13, Carmageddon).
 
 ## 10. The guest side
 
@@ -895,7 +896,17 @@ difference on purpose — is never touched.
 fill and a swap go into the ring and the FIFO is turned off at once, with no
 idle wait at all. The frame has to be cyan (the packets were run, not
 dropped) and the status register has to read idle afterwards. Both halves
-fail with `LFB_ORDER=off`.
+fail with `LFB_ORDER=off`. One thing about its timing: the idle poll ends
+the moment the swap completes, and a swap completes at a retrace, after
+which the frame it swapped in is scanned out over the *next* frame period —
+the console shows what has been scanned out, line by line. The phase
+therefore waits half a second before it announces the scene, as every other
+phase does through `fifo_wait`; announced at once, a screendump within ~16
+ms of the marker was the previous scene whole, with the status idle and the
+ring consumed, which for a day (2026-09-21) read as the fill and swap no
+longer presenting after the swapped-pair phase — polling the serial log
+every millisecond instead of every 100 ms made it fail every time, and the
+device was never involved.
 
 ### One thing the DOS program had to learn: swapbufferCMD twice
 
@@ -1059,3 +1070,116 @@ the black bands are in the guest's own frame buffer: Carmageddon puts a
 640x400 front end in a 640x480 Glide buffer. Nothing in the display path
 stretches anything, and the race frames from the same session measure 4:3 to
 four decimal places.
+
+### The ring through MMIO counts what is contiguous (2026-09-21)
+
+`ramfifo=off` had one freeze of its own left, and it was the transport's.
+Carmageddon's 3dfx build froze on every race start on it (the user,
+`/tmp/launcher.log` with `VOODOO2_TRACE=1`): the 5 s line read `11
+refused`, the first of them 86Box's `fatal()` on `Banshee 2D register
+00000020=02020202` in the middle of a texture download, and after it 27
+million `cmdFifoRdPtr` reads per 5 s with nothing written — Glide waiting
+for room on a ring whose read pointer had stopped. The guest's ring
+content, all 65,503 words of that lap taken out of the trace, parses
+cleanly end to end by 86Box's own packet rules, so the decoder was wrong
+about no packet: the consumer had read a word before the guest wrote it.
+
+How: **Glide writes a two-word packet value first, header second** — 182 of
+the 65,503 words, every one the single-register packet (`color1`,
+`fastfillCMD`, `swapbufferCMD`: header at `n`, value at `n+4`, written
+`n+4` then `n`). The chip is built for that: `cmdFifoAMin` / `AMax` /
+`Holes` count what has been written *contiguously* and the depth advances
+over that alone, so a header whose value is missing is never seen. 86Box's
+`voodoo_writel` counts `cmdfifo_depth_wr++` on every write to the window,
+whatever its address, and its consumer reads one word from the read
+pointer for every count. A consumer that has caught up — at a race's start
+it has, the guest being the slow side while it decompresses textures —
+sits on the header's slot, the value's write wakes it, and it reads that
+slot as it is: whatever the last lap or the last session left there, taken
+as a header. A stale word that says "256 values follow" (a type-1 header,
+`num` in bits 31:16) eats the next 256 words as data and parks wanting
+more; the first word it then lands on with `2` in its low bits is a
+Banshee packet on a Voodoo 2, the `fatal()`; and the read pointer stops
+where the guest can never make room. The desync surfaced 2,300 words after
+the last swapped pair, which is what a swallowed run looks like.
+
+The device now does the chip's counting on this path
+(`voodoo2_mmio_ring_write`): the word is stored where 86Box's handler put
+it, and counted for the consumer only once every word before it has
+arrived — a word ahead of the next expected one is held in a 64-bit bitmap
+and counted when the gap closes; a write below the expected one is the
+guest continuing at the base after its jump packet, and a hole still open
+at that moment is counted rather than stranded, with a warning. The ring's
+own registers (`cmdFifoBaseAddr`, `RdPtr`, `Depth`, `fbiInit7`) start the
+count over. It replaces two lines of `voodoo_writel` and touches no
+vendored file. The 5 s line says `N ring words written ahead of a hole, M
+counted with one open`, and the first out-of-order write is named once.
+The ring in RAM never had the problem: its walk stops on a poison header
+and counts the pair when both are there, which is why the freeze was
+`ramfifo=off`'s alone.
+
+The `voodoo-guest` check's **swapped-pair phase** holds it, and it is the
+`voodoo-guest-mmiofifo` variant that discriminates: a first lap plants a
+type-1 header claiming 256 values in the ring's second slot (as a colour,
+run and harmless), the ring is set to its base again, a NOP brings the
+consumer to rest on that slot, the value of a `color1` packet goes into
+the third slot, `cmdFifoDepth` is polled to zero so the consumer has had
+its look, and only then the header goes into the second, followed by a
+fill and a swap. The frame has to be yellow. Counted per write, the stale
+header eats the fill and the swap; in RAM the restart poisons the slot and
+the phase only has to complete.
+
+**The wrap, the same day, from the first race that got past the start.**
+The count above took a write *below* the expected address as the guest
+continuing there after its JMP — and at every wrap the first packet Glide
+writes at the base is the same value-first pair, so the value at base+4
+became the expected point, the header at base a jump back, and every word
+of the next lap was held as ahead of a hole until the 64-word bitmap ran
+out (`the command FIFO moved from 200004 to 200104 with 63 word(s) written
+past a hole`, five laps of the 359 in a minute of Carmageddon's race). The
+chip cannot be doing that, and the trace says how it does not: Glide writes
+`cmdFifoAMin` and `AMax` three times in that minute, all at `grSstWinOpen`,
+never at a wrap — so the chip recognises its own JMP on the write side, at
+the point it becomes contiguous, and the device now does the same
+(`voodoo2_mmio_step`): every counted word is followed as the consumer will
+follow it, header by header with `voodoo2_packet_words`, and a JMP moves
+the expected address to its target. The base's pair is then an ordinary
+hole. The count also starts where `cmdFifoRdPtr` says the guest starts
+rather than at its first write, so the first pair after an init is one
+too. A write that still lands where nothing expected it — a hole wider
+than the bitmap, a ring taken up with no register written — is counted as
+it is with the old warning. The 5 s line adds `N jumps followed`. The
+`voodoo-guest` check's **wrap phase** holds it: the stale header planted
+at the base as a real packet (a type-1 header with its 256 values, run),
+a JMP to the base and the consumer waited for there, the pair value first,
+a fill and a swap, and the frame has to be green.
+
+What the race's crash after that is, the log cannot say: the guest's last
+ring writes are an ordinary mid-frame stream, then twelve status reads and
+Glide's shutdown with the FIFO turned off, no swap and no idle wait before
+it — a process dying and its exit handler closing the window, with nothing
+refused or warned on the device's side once the wrap is right. The A/Bs
+are the launcher's: `ramfifo=on` (the default; the `-global` line off) for
+the transport, and every emulation optimization off for the TCG fast paths.
+
+**Found the same evening: the 12 MB board.** The user's A/Bs changed
+nothing — RAM ring, Cirrus, every optimization off, the PIT switches — and
+the error screen did: a DOS/4GW page fault at the same address every time,
+in the game's own C runtime, `strnlen` on a string pointer just above
+0x200000 with the length at -1, i.e. `%s` inside a printf. The game's
+strings say which printf: its BRender 3dfx driver reports Glide errors as
+`(Glide) %s`, BRender's fatal handler prints `FATAL ERROR: %s`, and that
+print is what died, on a pointer into 3dfx's Glide overlay, whose data sits
+near 0x200000 in that DOS box. So Glide raised an error mid-race and the
+game fell over printing it. The overlay carries nine error strings; eight
+are init-time or "unsupported function" and would fire on 86Box too; the
+ninth depends on the card: `grTexDownloadMipMapLevelPartial: mipmap level
+cannot span 2 Mbyte boundary`. The game imports that function and sizes its
+texture space from `grTexMinAddress` / `grTexMaxAddress`, and this device
+reported **4 MB per TMU** — the 12 MB board — so a 1997 allocator written
+for 2 MB TMUs walked past the 2 MB line after 20 to 50 s of cars and
+scenery, and Glide refused the level that straddled it. An 8 MB Voodoo 2,
+86Box's default, has 2 MB TMUs and cannot reach that error. `-global
+voodoo2.texmem=2`: no crash (the user, the same evening). **The 8 MB board
+is the device's default now**; `texmem=4` is the 12 MB one for a title
+that wants it.

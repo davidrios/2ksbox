@@ -135,7 +135,13 @@ part-written, 47 words taken as data`), and a guest with 46 words free
 asking for 66 — 22.7 M `cmdFifoRdPtr` reads a second, `depth 24623/24623`,
 card idle, nothing written, for ever. **`ramfifo=off` runs the game through
 several matches start to finish** (the user), which is what proved the
-guest was never at fault. The guess is gone; the case it was written for
+guest was never at fault. Not for every game, though: Carmageddon's
+race start froze on that transport the next day, and that one was the
+transport's own — Glide writes a two-word packet value first and header
+second, and 86Box counted each write as it came, so a caught-up consumer
+read the header's slot before it was written. Closed 2026-09-21, doc 21 §13
+("counts what is contiguous"), the `voodoo-guest` check's swapped-pair
+phase. The guess is gone; the case it was written for
 was closed when the poison word stopped being `0xffffffff` (2026-09-17).
 The `voodoo-guest` check's partial-packet phase holds it, and the restored
 guess is the control that fails it (`00300008` where `00300004` is right).
