@@ -36,9 +36,12 @@ built yet; this doc is the design and the ordered steps.
 - Docs: this file, ADR-018, doc 14 §"The executor on Wine", doc 04's
   fallback rows, the M15 rows of `docs/00-status.md` and doc 08.
 - Shared (rebase first, edit minimally, say so in the commit):
-  `d3dpt/exec/d3dpt_exec.cpp` (a hidden window on `_WIN32`, nothing
-  else), `d3dpt/d3dpt_proto.h` (untouched unless a record has to change,
-  which nothing here needs).
+  `d3dpt/exec/d3dpt_exec.cpp` — **which needs nothing for Wine**: the
+  hidden window and the executor-owned scene that Windows' own d3d9
+  wanted (ADR-007's second amendment, 2026-09-21) are exactly what
+  wined3d wants, and `D3DPT_D3D9=system` loads Wine's builtin
+  `system32\d3d9.dll` by the same full path. `d3dpt/d3dpt_proto.h`
+  untouched.
 - **Not this track's to touch until its last step:** everything of
   WineD3D-in-guest — `guest-tools/build-wrappers.sh`'s wine9x build,
   `patches/wine9x/`, `SETUP /GAME 4`/`5`, `/I 7`, `guest-tools/src/d3dpre.c`,
@@ -157,21 +160,20 @@ arm64; a `MAP_SHARED` file is the same pages either way.
   `WINEDLLOVERRIDES=d3d9=b` (Wine's builtin d3d9, never a DXVK someone
   put into a prefix — that one needs the Vulkan this host lacks), the
   renderer pinned to GL in the prefix's registry
-  (`HKCU\Software\Wine\Direct3D\renderer=gl`), and
-  `D3DPT_DXVK_LIB=d3d9.dll` for the DLL's own loader: the name the
-  executor deliberately never tries on a real Windows host, spelled out
-  here because under Wine it is the right one.
-- The executor gets a **hidden window** for the swap chain on `_WIN32`
-  (the one line in `d3dpt_exec.cpp`'s `fill_pp`/`CreateDevice`, harmless
-  under DXVK's headless WSI). Measured 2026-09-22: wined3d *creates* a
-  device on the NULL windows the executor passes today, and the DDI path
-  — which renders into its own VRAM-registered targets — draws the
-  right frame on it; the DLL path renders into the swap chain's back
-  buffer, and there wined3d's GL renderer cannot make a context current
-  on window 0 ("Failed to set pixel format … does not belong to window
-  0000000000000000"), and the frame comes out black. Nothing is ever
-  shown: the executor reads the back buffer back with
-  `GetRenderTargetData` after every `Present`, as it does on DXVK.
+  (`HKCU\Software\Wine\Direct3D\renderer=gl`), and `D3DPT_D3D9=system`
+  for the DLL's own loader: the "this host's own Direct3D 9" branch,
+  which under Wine is Wine's builtin d3d9 at `C:\windows\system32\d3d9.dll`
+  (the executor logs it as such).
+- The executor's `system` branch already gives the device a **hidden
+  window** and opens a scene for a draw made outside one (2026-09-21,
+  for Windows' own d3d9), and wined3d wants exactly those two things:
+  on the NULL windows the DXVK branch passes, wined3d's GL renderer
+  cannot make a context current for the swap chain's back buffer
+  ("Failed to set pixel format … does not belong to window
+  0000000000000000") and the DLL path's frame comes out black, while
+  the DDI path, rendering into its own VRAM-registered targets, is fine
+  either way. Nothing is ever shown: the executor reads the back buffer
+  back with `GetRenderTargetData` around every `Present`.
 - Wine's d3d9 accepts what Windows' own refused (the reason the Windows
   package moved to DXVK on 2026-09-17): a draw outside
   `BeginScene`/`EndScene` is not checked (`in_scene` guards only
@@ -310,25 +312,26 @@ links dynamically where the Fedora cross image's does not):
   with `renderer=gl` pinned in the prefix (`HKCU\Software\Wine\Direct3D`),
   which is the below-floor case. The prefix pins GL; the MoltenVK
   result is a data point, not a plan.
-- `d3dpt-exec-test.exe` (the DLL path; `tools/d3dpt-exec-test.cpp` got
-  the dp2 test's `_WIN32` shim so it builds with mingw): every batch
-  status equal to the DXVK run's, 120 frames at 372 fps, and the frame
-  **black** under the GL renderer — the hidden window, above. That is
-  step 1's remaining item.
+- `d3dpt-exec-test.exe` (the DLL path): with `D3DPT_D3D9=system`, so
+  the executor's hidden window and scene handling are in play, every
+  batch status equal to the DXVK run's, 120 frames at 863 fps under
+  Rosetta against 929 for DXVK on KosmicKrisp in process, and the frame
+  **0 of 307,200 pixels different** from DXVK's. (The DXVK branch on
+  the NULL window draws it black under wined3d's GL renderer — above.)
+  Along the way the test itself was wrong: it enabled an auto depth
+  buffer and never cleared it, DXVK over KosmicKrisp starts one at 0.0,
+  so the DXVK frame on the Air had been the clear colour alone all
+  along, and the test checks no pixels; it clears Z now. **Step 1 is
+  done on the Air; the same two commands on the rig (Linux Wine on a
+  real GL, `scripts/win-cross.sh`'s wine or the distro's) close it.**
 
 ## Next steps, in order
 
-1. **The spike** (above), on the rig first: the dp2 frame and the
-   `d3dpt-exec-test` batches through `d3dpt_exec.dll` on Wine's d3d9,
-   diffed against the DXVK frames (`build/test/dp2-test.bmp`; a
-   Windows build of `tools/d3dpt-exec-test.cpp` is one compile line
-   more, like the dp2 one in `scripts/build-windows.sh`). A GL
-   rasteriser and a Vulkan one will not be byte-identical; the
-   question is whether the differences are the rig golden's kind
-   (sub-pixel, a few hundred pixels within tolerance 8) or a wrong
-   frame. Every refusal WineD3D makes that DXVK did not (`hr` in the
-   test's log) is a row in doc 14 §"The executor on Wine", with the
-   executor's answer.
+1. **The spike** — **done on the Air 2026-09-22** (above): both host
+   tests pass through `d3dpt_exec.dll` on Wine's own d3d9 with frames
+   byte-identical to DXVK's, no executor change, no WineD3D refusal.
+   Left: the same two commands on the rig (Linux Wine, a real GL),
+   which is a run and not a question.
 2. **The transport**: `d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, the
    file-backed regions, `exec=` / `D3DPT_EXEC`. The dp2 test and the
    exec test through it become the `exec-wine` check; measure the

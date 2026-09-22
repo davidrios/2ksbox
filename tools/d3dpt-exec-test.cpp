@@ -143,7 +143,12 @@ int main(int argc, char **argv) {
     }
     ang += 0.02f;
     d3dpt_clear *cl = (d3dpt_clear *)d3dpt_enc_cmd(&enc, D3DPT_OP_CLEAR, sizeof(d3dpt_clear), 0);
-    cl->count = 0; cl->flags = D3DCLEAR_TARGET; cl->color = 0xff202040; cl->z = 1.0f; cl->stencil = 0; cl->pad = 0;
+    /* Z too: the device has an auto depth buffer and z-test on, and a depth
+     * buffer nobody has cleared is undefined -- DXVK over RADV and wined3d
+     * happened to start it at 1.0 and drew the triangle, DXVK over
+     * KosmicKrisp starts it at 0.0 and drew nothing, every frame, and this
+     * test checks no pixels so nobody saw (2026-09-22, the Air). */
+    cl->count = 0; cl->flags = D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER; cl->color = 0xff202040; cl->z = 1.0f; cl->stencil = 0; cl->pad = 0;
     d3dpt_enc_nobody(&enc, D3DPT_OP_BEGIN_SCENE);
     d3dpt_enc_u32x2(&enc, D3DPT_OP_SET_RENDER_STATE, D3DRS_LIGHTING, FALSE);
     d3dpt_enc_u32x2(&enc, D3DPT_OP_SET_RENDER_STATE, D3DRS_CULLMODE, D3DCULL_NONE);
