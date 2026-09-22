@@ -941,6 +941,13 @@ static void d3dpt_vga_realize(PCIDevice *dev, Error **errp)
     d3dpt_exec_prefer(s->d3d9);
     d3dpt_exec_prefer_backend(s->exec_pick);
     s->lib = d3dpt_exec_lib();
+#ifdef CONFIG_POSIX
+    /* Only the out-of-process executor shares VRAM, and that is Wine on a
+     * Linux or macOS host (ADR-018): the fd and the memory API that maps
+     * one as guest RAM are both POSIX. A Windows host below the Vulkan
+     * floor runs the executor in process on the system's own Direct3D 9
+     * (ADR-007's second amendment), so there is no library with
+     * shared_alloc there and the branch is compiled out. */
     if (s->lib && s->lib->shared_alloc) {
         uint64_t size = (uint64_t)vga->vram_size_mb << 20, off;
         int fd = s->lib->shared_alloc("d3dpt-vga.vram", size, &off);
@@ -953,6 +960,7 @@ static void d3dpt_vga_realize(PCIDevice *dev, Error **errp)
             s->lib->shared_map(off, memory_region_get_ram_ptr(&vga->vram));
         }
     }
+#endif
     if (!vga_common_init(vga, OBJECT(dev), errp)) {
         return;
     }

@@ -441,6 +441,20 @@ links dynamically where the Fedora cross image's does not):
   forking the decoder.
 - Every claim about a frame comes from a BMP in `build/` diffed with
   `tools/bmpdiff.py`; "WineD3D should accept it" is not a state.
+- **The shared-file path is POSIX-only in QEMU, and is compiled out of
+  the Windows build.** `memory_region_init_ram_from_fd` — the call that
+  makes the adapter's VRAM and the SysBus window regions of the
+  executor's file — lives inside `#ifdef CONFIG_POSIX` in QEMU's
+  `include/exec/memory.h`, so both call sites (`d3dpt/hw/d3dpt_vga.c`'s
+  realize and `d3dpt_mm.c`'s `exec_load`) carry the same guard: without
+  it the Windows cross/native build fails with `call to undeclared
+  function 'memory_region_init_ram_from_fd'` (2026-09-22). Nothing is
+  lost there — `libd3dpt_exec_remote` is built only on Linux and macOS
+  (`scripts/build-d3dpt-exec.sh`), and a Windows host below the Vulkan
+  floor runs the executor in process on the system's own Direct3D 9
+  (ADR-007's second amendment), so `lib->shared_alloc` is never
+  resolved on Windows. A future Windows out-of-process executor needs a
+  new mapping call, not this one.
 - The guest-side WineD3D stack is not touched before step 6, and step
   6 is one commit.
 - One TCG guest at a time on the box; end scripted Win98 runs with the

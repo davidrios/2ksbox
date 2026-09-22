@@ -89,6 +89,14 @@ static bool exec_load(D3dptState *s)
     if (!s->lib) {
         return false;
     }
+#ifdef CONFIG_POSIX
+    /* The out-of-process executor is Wine on a Linux or macOS host
+     * (ADR-018), so its shared file is a POSIX fd — and so is QEMU's own
+     * memory_region_init_ram_from_fd, which exists on no other host. A
+     * Windows host below the Vulkan floor runs the same executor in
+     * process on the system's own Direct3D 9 (ADR-007's second
+     * amendment) and never loads this library, so the branch is compiled
+     * out rather than made portable. */
     if (s->lib->shared_alloc && !s->shm_shared) {
         /* The executor lives in another process (M15) and reads the window
          * out of its shared file: the window becomes a region of that file
@@ -113,6 +121,7 @@ static bool exec_load(D3dptState *s)
             return false;
         }
     }
+#endif
     s->exec = s->lib->create(&ops);
     if (!s->exec) {
         warn_report("d3dpt: executor refused to start (no DXVK / Vulkan device)");
