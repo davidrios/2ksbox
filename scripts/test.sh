@@ -379,6 +379,9 @@ if [ "$OS" = Darwin ]; then
 fi
 
 PASS=(); FAIL=(); SKIP=()
+# The Wine executor (M15) that a check may start on a host without Vulkan
+# gets a prefix in the build tree, never the one under the user's data dir.
+export D3DPT_WINEPREFIX="${D3DPT_WINEPREFIX:-$PWD/build/wine-prefix}"
 log() { printf '\n==> %s\n' "$*"; }
 skip() { SKIP+=("$1: $2"); printf '  SKIP %s (%s)\n' "$1" "$2"; }
 # GNU coreutils' timeout(1) is not on a Mac (nor is gtimeout unless
@@ -411,6 +414,34 @@ run_check() { # name, log file, command...
   if [ $rc = 0 ]; then PASS+=("$name"); printf '  PASS %s\n' "$name"; return 0; fi
   if [ $rc = 77 ]; then skip "$name" "$(tail -1 "$lf")"; return 0; fi
   FAIL+=("$name"); printf '  FAIL %s (exit %d) — %s\n' "$name" $rc "$lf"; tail -5 "$lf" | sed 's/^/       /'; return 1
+}
+exec_wine_bin() { # a Wine for the executor's other process: D3DPT_WINE, the PATH, a Mac app, the spike's tarball
+  if [ -n "${D3DPT_WINE:-}" ]; then [ -x "$D3DPT_WINE" ] && echo "$D3DPT_WINE"; return; fi
+  local c
+  for c in "$(command -v wine64 2>/dev/null)" "$(command -v wine 2>/dev/null)" \
+           "/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine" \
+           "/Applications/Wine Staging.app/Contents/Resources/wine/bin/wine" \
+           build/wine/Wine*.app/Contents/Resources/wine/bin/wine; do
+    [ -n "$c" ] && [ -x "$c" ] && { echo "$c"; return 0; }
+  done
+  return 1
+}
+exec_wine_check() { # the two host tests through the remote executor, frames against the in-process ones
+  local wine="$1" rc=0
+  # macOS: no window server over ssh, and Wine's Mac driver needs one
+  if [ "$(uname -s)" = Darwin ] && [ -z "${TERM_PROGRAM:-}" ] && [ -n "${SSH_CONNECTION:-}" ]; then
+    echo "no GUI session (ssh): Wine's Mac driver has no window server here"; return 77
+  fi
+  export D3DPT_WINE="$wine" D3DPT_EXEC_LIB="build/d3dpt/libd3dpt_exec_remote.$SO"
+  export D3DPT_WINEPREFIX="${D3DPT_WINEPREFIX:-$PWD/build/wine-prefix}"   # kept across runs: a fresh one costs ~20 s
+  export D3DPT_REMOTE_DIR="$OUT"
+  echo "wine: $wine"; echo "prefix: $D3DPT_WINEPREFIX"
+  build/d3dpt-dp2-test "$OUT/dp2-wine.bmp" > "$OUT/exec-wine-dp2.log" 2>&1 || { echo "dp2 test through the remote executor failed:"; tail -5 "$OUT/exec-wine-dp2.log"; return 1; }
+  build/d3dpt-exec-test "$OUT/exec-wine.bmp" 120 60 > "$OUT/exec-wine-exec.log" 2>&1 || { echo "exec test through the remote executor failed:"; tail -5 "$OUT/exec-wine-exec.log"; return 1; }
+  grep -h "d3dpt-remote:\|d3dpt-exec-host: exec: d3d9\|frames," "$OUT/exec-wine-dp2.log" "$OUT/exec-wine-exec.log" | sort -u | head -8
+  python3 tools/bmpdiff.py "$OUT/dp2-test.bmp" "$OUT/dp2-wine.bmp" --tolerance 8 || rc=1
+  python3 tools/bmpdiff.py "$OUT/exec-test.bmp" "$OUT/exec-wine.bmp" --tolerance 8 || rc=1
+  return $rc
 }
 dirdisc_check() { # a host directory served as a disc, read back by someone else's ISO 9660 reader
   # discx's own dirdisc case (the libdisc check) proves the model reads
@@ -2121,7 +2152,8 @@ d3d9_backend_check() { # the machine form's Direct3D picker, from a combo box to
          | timeout 30 build/qemu/qemu-system-i386 $args \
              -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
       || { echo "our QEMU refused d3d9=system"; echo "$o" | tail -3; rc=1; }
-    case "$o" in *'d3d9 = "system"'*) ;; *) echo "the property did not reach d3dpt-vga"; echo "$o" | tail -3; rc=1;; esac
+    # the qtree text comes back JSON-escaped: the quotes around the value are \"
+    case "$o" in *'d3d9 = \"system\"'*|*'d3d9 = "system"'*) ;; *) echo "the property did not reach d3dpt-vga"; echo "$o" | tail -3; rc=1;; esac
   else
     echo "  (no build/qemu: the command lines were checked but not run)"
   fi
@@ -2649,6 +2681,22 @@ host_stage() {
     skip d3dpt-exec "needs $D3DPT_EXEC_LIB and $D3DPT_DXVK_LIB"
     skip d3dpt-dp2 "needs $D3DPT_EXEC_LIB and $D3DPT_DXVK_LIB"
   fi
+
+  # The executor in another process, on Wine (docs/tracks/m15-wine-executor.md,
+  # ADR-018): a host below DXVK's Vulkan 1.3 floor runs Direct3D on this.
+  # The two host tests above once more, through build/d3dpt/libd3dpt_exec_remote
+  # (the same API, a child d3dpt-exec-host.exe under Wine running the
+  # Windows build of the executor on Wine's own d3d9), and their frames must
+  # be the frames the in-process executor drew. SKIPs without a Wine or
+  # without mingw's pair; on macOS it needs a GUI session (Wine's Mac driver
+  # wants the window server), so it SKIPs over plain ssh.
+  if wine_bin=$(exec_wine_bin) && [ -f "build/d3dpt/wine/d3dpt-exec-host.exe" ] \
+     && [ -f "build/d3dpt/libd3dpt_exec_remote.$SO" ] && [ -f "$OUT/dp2-test.bmp" ] && [ -f "$OUT/exec-test.bmp" ]; then
+    run_check exec-wine exec-wine.log exec_wine_check "$wine_bin" || true
+  else
+    skip exec-wine "needs a Wine (D3DPT_WINE), build/d3dpt/wine/ (mingw) and the two host frames"
+  fi
+
 
   # the calibration patterns (doc 09): they render at every era mode, and the
   # circle in `grid` comes out round on the tube it is drawn for

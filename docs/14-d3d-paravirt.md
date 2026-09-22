@@ -375,6 +375,44 @@ demo plays through the guest DLLs — past 8 000 presents, all `hr 0`, five
 vs 1.x shaders created, no `error.log` written — and the executor's frames
 show Dragothic, the Earth and Nature as they should be.
 
+## The executor on Wine, in another process (M15, 2026-09-22)
+
+A Linux or macOS host below DXVK's Vulkan 1.3 floor runs the same
+executor on Wine's own d3d9 (ADR-018; the design and its state in
+`docs/tracks/m15-wine-executor.md`). Wine's d3d9 exists only inside a
+Wine process, so the executor runs there — the Windows build of
+`d3dpt_exec.dll`, unchanged, loaded by `d3dpt-exec-host.exe`
+(`d3dpt/exec/d3dpt_exec_host.c`) under Wine with `D3DPT_D3D9=system`,
+which under Wine is Wine's builtin — and QEMU talks to it through
+`libd3dpt_exec_remote` (`d3dpt/exec/d3dpt_exec_remote.c`): the six
+entry points of `d3dpt_exec.h` again, so `d3dpt_exec_load.c` opens it
+as it opens the in-process library, after that one's `d3dpt_exec_probe`
+found no device (`D3DPT_EXEC=auto|dxvk|wine|none`, the adapter's
+`exec=` property). The wire (`d3dpt/exec/d3dpt_remote.h`) is 32-byte
+records over the child's stdio, synchronous, one per call; every
+region with a size — the command window, VRAM, the frame the executor
+presents — is a region of one shared file the library owns
+(`d3dpt_exec_shared_alloc`), which the devices map as guest RAM with
+`memory_region_init_ram_from_fd` (the adapter's VRAM through QEMU patch
+73, the VGA core accepting a region its owner backed) and the child maps
+with `MapViewOfFile`, so a batch runs where the guest wrote it and a
+readback lands in VRAM with no copy. The reply carries the executor's
+`active` flag, the presented frame's geometry (its pixels in the frame
+slot) and up to 64 `vram_dirty` ranges, folded into one past that. A
+caller whose window is not shared memory — the host tests — is served by
+copy, said once in the log.
+
+Measured on the Air (this host has Vulkan, so `D3DPT_EXEC_LIB` points
+the tests at the remote library): `d3dpt-dp2-test` and `d3dpt-exec-test`
+through the child, on WineHQ 11.17 under Rosetta with wined3d's GL
+renderer, draw frames **byte-identical** to the in-process DXVK frames
+(the `exec-wine` check in `scripts/test.sh`); the exec test's 120 frames
+run at 553 fps through the pipe in copy mode against 929 in process. In
+the XP guest (`EXEC=wine tools/xp-driver-test.sh … d3dgame8`), with VRAM
+a region of the shared file, D3DGAME8's frame 300 is within the rig
+budget of the native frame, 600 frames in 3.4 s against 2.1 s in
+process.
+
 ## Risks
 
 - **Host Vulkan capabilities:** MoltenVK lacked required Vulkan features and

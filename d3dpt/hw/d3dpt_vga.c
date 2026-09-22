@@ -73,6 +73,8 @@ struct D3dptVgaState {
     char *d3d9;                 /* property: which Direct3D 9 the executor runs on —
                                    auto (DXVK, then this host's own on Windows),
                                    dxvk or system (d3dpt_exec_load.h) */
+    char *exec_pick;            /* property `exec`: which executor library — auto, dxvk
+                                   (in process), wine (another process, M15), none */
     uint32_t fb_version;        /* property: the VERSION register (D3DPT_FB_VERSION) —
                                    a newer one checks that installed drivers accept it */
 
@@ -517,7 +519,9 @@ static bool d3d_load(D3dptVgaState *s)
         return s->exec != NULL;
     }
     s->exec_tried = true;
-    s->lib = d3dpt_exec_lib();
+    if (!s->lib) {
+        s->lib = d3dpt_exec_lib();
+    }
     if (!s->lib) {
         return false;
     }
@@ -926,6 +930,29 @@ static void d3dpt_vga_realize(PCIDevice *dev, Error **errp)
     D3dptVgaState *s = D3DPT_VGA(dev);
     VGACommonState *vga = &s->vga;
 
+    /* no-exec=on, d3d9= and exec= before the library is chosen, and the
+     * library chosen here rather than at the first D3D_STATUS read: the
+     * out-of-process executor (M15) wants VRAM as a region of its shared
+     * file, and VRAM is made below. The command window is made either
+     * way: a host below the Vulkan 1.3 floor has the adapter too. */
+    if (s->no_exec) {
+        d3dpt_exec_refuse();
+    }
+    d3dpt_exec_prefer(s->d3d9);
+    d3dpt_exec_prefer_backend(s->exec_pick);
+    s->lib = d3dpt_exec_lib();
+    if (s->lib && s->lib->shared_alloc) {
+        uint64_t size = (uint64_t)vga->vram_size_mb << 20, off;
+        int fd = s->lib->shared_alloc("d3dpt-vga.vram", size, &off);
+        if (fd >= 0) {
+            /* the VGA core takes a region its owner backed already (patch 73) */
+            if (!memory_region_init_ram_from_fd(&vga->vram, OBJECT(dev), "vga.vram", size,
+                                                RAM_SHARED, fd, off, errp)) {
+                return;
+            }
+            s->lib->shared_map(off, memory_region_get_ram_ptr(&vga->vram));
+        }
+    }
     if (!vga_common_init(vga, OBJECT(dev), errp)) {
         return;
     }
@@ -942,15 +969,6 @@ static void d3dpt_vga_realize(PCIDevice *dev, Error **errp)
 
     pci_register_bar(dev, 0, PCI_BASE_ADDRESS_MEM_PREFETCH, &vga->vram);
     pci_register_bar(dev, 1, PCI_BASE_ADDRESS_SPACE_MEMORY, &s->regs);
-
-    /* no-exec=on, before the first D3D_STATUS read, which is what loads the
-     * library. The command window below is still made: a real host below the
-     * Vulkan 1.3 floor has the adapter and the executor library too, and only
-     * no device to run a batch on. */
-    if (s->no_exec) {
-        d3dpt_exec_refuse();
-    }
-    d3dpt_exec_prefer(s->d3d9);
 
     /* the command window takes the top 64 MiB when at least as much is
      * left below it for the frame buffer and the DirectDraw heap */
@@ -1005,6 +1023,12 @@ static Property d3dpt_vga_properties[] = {
      * A/B between the two rasterisers. Nothing here refuses `system` on
      * Linux or macOS: the executor answers that, and says so. */
     DEFINE_PROP_STRING("d3d9", D3dptVgaState, d3d9),
+    /* exec=auto|dxvk|wine|none: which executor library (d3dpt_exec_load.h).
+     * `wine` is the executor in another process on Wine's own Direct3D 9,
+     * a Linux or macOS host's fallback below the Vulkan 1.3 floor (ADR-018,
+     * docs/tracks/m15-wine-executor.md) and, on a host that has both, the
+     * A/B; `auto` takes it only when DXVK finds no device. */
+    DEFINE_PROP_STRING("exec", D3dptVgaState, exec_pick),
     /* the register set version the adapter reports: a newer one than the
      * device implements is the check that an installed driver accepts a
      * QEMU update (d3dpt_fb.h, "Versions only add"). Nothing else reads it. */

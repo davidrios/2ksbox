@@ -931,6 +931,26 @@ static void check_lost(Exec &x)
  * it is the case the whole fallback exists for. */
 static bool open_d3d9(Exec *x, const char *path, bool dxvk)
 {
+#ifndef _WIN32
+    /* DXVK's own precondition, asked here first: with no Vulkan loader on
+     * the host at all its Direct3DCreate9 logs "vkGetInstanceProcAddr not
+     * found" and then calls through a null pointer (2026-09-22, the Air with
+     * DYLD_LIBRARY_PATH unset: a segfault, in the host test and in QEMU's
+     * realize alike). A host with the loader and no device is DXVK's to
+     * refuse, and it does that cleanly. */
+    if (dxvk) {
+        static void *loader;
+        if (!loader) {
+#if defined(__APPLE__)
+            loader = dlopen("libvulkan.1.dylib", RTLD_NOW | RTLD_LOCAL);
+            if (!loader) loader = dlopen("libvulkan.dylib", RTLD_NOW | RTLD_LOCAL);
+#else
+            loader = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+#endif
+        }
+        if (!loader) { x->log("no Vulkan loader on this host (libvulkan): %s not tried", path); return false; }
+    }
+#endif
     void *h = D3DPT_DLOPEN(path);
     if (!h) return false;
     auto create = (IDirect3D9 *(*)(UINT))D3DPT_DLSYM(h, "Direct3DCreate9");
@@ -945,7 +965,8 @@ static bool open_d3d9(Exec *x, const char *path, bool dxvk)
     }
     if (!d3d) {
         if (dxvk) x->log("%s: Direct3DCreate9 found no usable device", path);
-        D3DPT_DLCLOSE(h);
+        /* left mapped: DXVK has started threads and statics by now, and
+         * unloading it under them is not safe */
         return false;
     }
     x->dxvk = h;
@@ -1106,6 +1127,21 @@ uint32_t d3dpt_exec_submit(d3dpt_exec_t *xp, void *shm, uint32_t shm_size)
     hdr->cmd_bytes = 0;
     hdr->cmd_count = 0;
     return b.err;
+}
+
+static void probe_log(void *, const char *msg) { fprintf(stderr, "d3dpt: probe: %s\n", msg); }
+
+/* Is there a Direct3D 9 to run on here at all? A create and a destroy,
+ * with nothing between: the loader asks this before it settles on a
+ * library, so a host below the Vulkan floor can move on to the executor
+ * in another process (libd3dpt_exec_remote) instead of keeping this one. */
+int d3dpt_exec_probe(void)
+{
+    d3dpt_exec_ops ops = { nullptr, probe_log, nullptr, nullptr, nullptr };
+    d3dpt_exec_t *x = d3dpt_exec_create(&ops);
+    if (!x) return 0;
+    d3dpt_exec_destroy(x);
+    return 1;
 }
 
 } // extern "C"

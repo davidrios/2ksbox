@@ -21,7 +21,19 @@ typedef struct D3dptExecLib {
     void (*attach)(d3dpt_exec_t *x, int attach);
     uint32_t (*submit)(d3dpt_exec_t *x, void *shm, uint32_t shm_size);
     void (*set_vram)(d3dpt_exec_t *x, void *vram, uint32_t size);
+    /* optional (d3dpt_exec.h): NULL when the library lacks them */
+    int (*probe)(void);
+    int (*shared_alloc)(const char *name, uint64_t size, uint64_t *offset);
+    void (*shared_map)(uint64_t offset, void *ptr);
+    const char *name;   /* what was opened, for the log */
 } D3dptExecLib;
+
+/* D3DPT_EXEC=auto|dxvk|wine|none, from the adapter's `exec=` property or the
+ * environment (which wins): which executor library to settle on. `auto`
+ * takes the in-process one when its probe finds a device and the
+ * out-of-process one (Wine on the host, M15) otherwise; `dxvk` and `wine`
+ * take only that one; `none` is d3dpt_exec_refuse(). */
+void d3dpt_exec_prefer_backend(const char *which);
 
 /* the library, or NULL if it is missing / speaks another protocol (warned
  * once; D3DPT_EXEC_LIB overrides the search) */

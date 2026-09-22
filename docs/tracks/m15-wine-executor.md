@@ -308,10 +308,21 @@ its use for the launcher and package flow, where the GPU does not
 matter. Logs of the run in `build/macvm/spike/`.
 
 ```sh
-scripts/build.sh                                  # the native stack; builds the PE pair too once the --wine stage exists
+scripts/build.sh                                  # the native stack, libd3dpt_exec_remote, and with mingw the PE pair in build/d3dpt/wine/
 scripts/test.sh host                              # exec-wine: the two host tests through the remote executor (SKIP without a Wine)
-D3DPT_EXEC=wine tools/xp-driver-test.sh ~/vms/winxp.qcow2 d3dgame8   # the reference scene in the guest, on Wine
+build/qemu/qemu-img create -f qcow2 -b ~/vms/winxp-m7.qcow2 -F qcow2 build/xp.qcow2   # an overlay, never the image
+tools/xp-driver-test.sh build/xp.qcow2 install    # once: the image's driver must accept this adapter (a driver older than
+                                                  # 2026-09-12 refuses a newer one and XP falls back to VGA, silently)
+EXEC=wine D3DPT_WINE=<wine> tools/xp-driver-test.sh build/xp.qcow2 d3dgame8   # the reference scene in the guest, on Wine
+EXEC=dxvk tools/xp-driver-test.sh build/xp.qcow2 d3dgame8                     # the control, in process
 ```
+
+On this Mac, which has Vulkan, `exec=wine` is the A/B; `auto` takes Wine
+only where DXVK's probe finds no device — and on such a host QEMU must
+survive the probe: it did not at first (DXVK with no Vulkan loader calls
+through a null pointer in `Direct3DCreate9`, and unloading the library
+after a failed probe crashed too), so the executor now asks for
+`libvulkan` before it tries DXVK and no probed library is ever closed.
 
 Until the remote executor exists, **the spike is one command on a host
 that has Wine and a GL** (the Linux rig, or this Mac after
@@ -363,17 +374,37 @@ links dynamically where the Fedora cross image's does not):
    byte-identical to DXVK's, no executor change, no WineD3D refusal.
    Left: the same two commands on the rig (Linux Wine, a real GL),
    which is a run and not a question.
-2. **The transport**: `d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, the
-   file-backed regions, `exec=` / `D3DPT_EXEC`. The dp2 test and the
-   exec test through it become the `exec-wine` check; measure the
-   round trip per submit and the frames/s of the dp2 scene against the
-   in-process DXVK run on the same host, and only then decide the
-   spin (above).
-3. **The guest**: D3DGAME9 / D3DGAME8 in the XP guest on
-   `-global d3dpt-vga.exec=wine`, frame diffed against the rig golden
-   with the guest stage's mask, tolerance and budget; then the same on
-   the Win98 machine (`tools/win98-game-test.sh` with `EXTRA=`). The
-   DDI probes (`xp-driver-test.sh probes`) all ten in one boot.
+2. **The transport** — **landed 2026-09-22 on the host tests**:
+   `d3dpt/exec/d3dpt_remote.h` (the wire), `d3dpt_exec_host.c` (the
+   child), `d3dpt_exec_remote.c` (QEMU's side, `libd3dpt_exec_remote`),
+   `d3dpt_exec_probe` in the executor, the loader's two-library choice
+   (`D3DPT_EXEC`, the adapter's `exec=`), the shared file behind the
+   adapter's VRAM (QEMU patch 73) and the SysBus window, the `exec-wine`
+   check. Both host tests through the child draw frames byte-identical
+   to DXVK's; the exec test's 120 frames at 553 fps through the pipe in
+   copy mode against 929 in process, so the spin is not needed for the
+   host tests — measure again with a guest before deciding. Left: the
+   guest (step 3) is the first run of the shared-file path, since the
+   host tests copy.
+3. **The guest** — **XP landed 2026-09-22 on the Air**: `EXEC=wine
+   tools/xp-driver-test.sh <overlay> d3dgame8` (the knob added to the
+   harness) boots XP on the adapter with VRAM as a 128 MiB region of
+   the shared file, the display driver draws D3DGAME8 through XP's own
+   d3d8.dll, the DX8 DDI and the executor in the Wine process, and
+   **frame 300 is within the rig budget** (max channel difference 8
+   against the native frame, as the in-process run's is; the two guest
+   frames differ from each other by at most 8 per channel, a GL against
+   a Vulkan rasteriser). 600 frames in 3.4 s on Wine under Rosetta
+   against 2.1 s in process on KosmicKrisp, the first second at 6 fps
+   while wined3d compiles its shaders. The first two runs said nothing
+   of the kind: the image's driver (`winxp-m7.qcow2`, 2026-09-08) was
+   older than the version-acceptance change and refused the adapter, XP
+   ran on its VGA fallback, D3DGAME8 died in a modal box and the killed
+   guest lost its unflushed files — **run `install` on the overlay
+   first** (its proof is the mode-set line after the restart), which
+   is in the test loop above now. Left: the same on the Win98 machine
+   (`tools/win98-game-test.sh` with `EXTRA=-global d3dpt-vga.exec=wine`)
+   and the DDI probes (`xp-driver-test.sh probes`) in one boot.
 4. **The launcher and the packages**: the probe's third verdict, the
    graphics note, `--host-check`, `companions.rs`, the three packagers
    staging the PE pair and finding Wine, the `no-exec` paragraphs in

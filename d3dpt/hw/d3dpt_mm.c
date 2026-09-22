@@ -33,6 +33,8 @@ struct D3dptState {
     SysBusDevice parent_obj;
     MemoryRegion iomem;
     MemoryRegion shm;
+    MemoryRegion shm_file;      /* the window as a region of the remote executor's shared file (M15) */
+    bool shm_shared;
     uint8_t *shm_ptr;
 
     const D3dptExecLib *lib;
@@ -86,6 +88,30 @@ static bool exec_load(D3dptState *s)
     s->lib = d3dpt_exec_lib();
     if (!s->lib) {
         return false;
+    }
+    if (s->lib->shared_alloc && !s->shm_shared) {
+        /* The executor lives in another process (M15) and reads the window
+         * out of its shared file: the window becomes a region of that file
+         * now, at the first load, because this device is made before the
+         * adapter whose properties pick the library, and a window that has
+         * been probed but never written holds nothing worth keeping. The
+         * plain region it replaces was never touched and cost no memory. */
+        uint64_t off;
+        int fd = s->lib->shared_alloc("d3dpt-shm", D3DPT_SHM_SIZE, &off);
+        Error *err = NULL;
+        if (fd >= 0 && memory_region_init_ram_from_fd(&s->shm_file, OBJECT(s), "d3dpt-shm-shared",
+                                                      D3DPT_SHM_SIZE, RAM_SHARED, fd, off, &err)) {
+            memory_region_del_subregion(get_system_memory(), &s->shm);
+            memory_region_add_subregion(get_system_memory(), D3DPT_SHM_BASE, &s->shm_file);
+            s->shm_ptr = memory_region_get_ram_ptr(&s->shm_file);
+            s->lib->shared_map(off, s->shm_ptr);
+            s->shm_shared = true;
+        } else {
+            warn_report("d3dpt: the window could not be shared with the executor process%s%s",
+                        err ? ": " : "", err ? error_get_pretty(err) : "");
+            error_free(err);
+            return false;
+        }
     }
     s->exec = s->lib->create(&ops);
     if (!s->exec) {

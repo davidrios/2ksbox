@@ -3,7 +3,10 @@
 # + DXVK executor, doc 14) into build/d3dpt. Needs build/dxvk (headers only:
 # the library dlopens libdxvk_d3d9 at runtime). Linux: .so, macOS: .dylib.
 #
-#   scripts/build-d3dpt-exec.sh             this host
+#   scripts/build-d3dpt-exec.sh             this host: the in-process library, the
+#                                           out-of-process one (libd3dpt_exec_remote,
+#                                           M15), and with mingw the PE pair it runs
+#   scripts/build-d3dpt-exec.sh --wine      the PE pair only
 #   scripts/build-d3dpt-exec.sh --windows   cross to build/win/d3dpt/d3dpt_exec.dll
 #
 # --windows compiles the same two files against mingw's own <windows.h> and
@@ -33,10 +36,43 @@ if [ "${1:-}" = "--windows" ]; then
   exit 0
 fi
 
+# --wine: only the PE pair below (the Windows build of the executor and
+# d3dpt-exec-host.exe), for a host that has mingw and wants just those.
+WINE_ONLY=0; [ "${1:-}" = "--wine" ] && WINE_ONLY=1
+
 OUT="$ROOT/build/d3dpt"; mkdir -p "$OUT"
 DX="$ROOT/third_party/dxvk/include/native"
-if [ "$(uname -s)" = Darwin ]; then LIB="$OUT/libd3dpt_exec.dylib"; SHARED=(-dynamiclib -install_name "$LIB"); else LIB="$OUT/libd3dpt_exec.so"; SHARED=(-shared); fi
+if [ "$(uname -s)" = Darwin ]; then LIB="$OUT/libd3dpt_exec.dylib"; RLIB="$OUT/libd3dpt_exec_remote.dylib"; SHARED=(-dynamiclib -install_name "$LIB"); RSHARED=(-dynamiclib -install_name "$RLIB"); else LIB="$OUT/libd3dpt_exec.so"; RLIB="$OUT/libd3dpt_exec_remote.so"; SHARED=(-shared); RSHARED=(-shared); fi
 CXX="${CXX:-c++}"
-"$CXX" -std=c++17 -O2 -fPIC -fvisibility=hidden -Wall -Wno-unused-function "${SHARED[@]}" -o "$LIB" \
-  "$ROOT/d3dpt/exec/d3dpt_exec.cpp" "$ROOT/d3dpt/exec/d3dpt_exec_ddi.cpp" -I"$DX" -I"$DX/windows" -I"$DX/directx" -ldl
-echo "==> $LIB"
+CC="${CC:-cc}"
+if [ $WINE_ONLY = 0 ]; then
+  "$CXX" -std=c++17 -O2 -fPIC -fvisibility=hidden -Wall -Wno-unused-function "${SHARED[@]}" -o "$LIB" \
+    "$ROOT/d3dpt/exec/d3dpt_exec.cpp" "$ROOT/d3dpt/exec/d3dpt_exec_ddi.cpp" -I"$DX" -I"$DX/windows" -I"$DX/directx" -ldl
+  echo "==> $LIB"
+  # The same API over a child process on Wine (docs/tracks/m15-wine-executor.md,
+  # ADR-018): what a host below DXVK's Vulkan 1.3 floor runs Direct3D on.
+  # Plain C over POSIX, no DXVK headers; QEMU opens it after the in-process
+  # library found no device (d3dpt_exec_load.c).
+  "$CC" -O2 -fPIC -fvisibility=hidden -Wall "${RSHARED[@]}" -o "$RLIB" \
+    "$ROOT/d3dpt/exec/d3dpt_exec_remote.c" -I"$ROOT/d3dpt/exec" -I"$ROOT/d3dpt" -ldl
+  echo "==> $RLIB"
+fi
+
+# The pair that process runs: the Windows build of the executor (as the
+# Windows package's, on Wine's own d3d9 instead of DXVK's) and the host
+# program. mingw-w64 builds them on Linux and macOS alike; a host without it
+# gets the in-process executor only, and says so.
+WCXX="${WCXX:-x86_64-w64-mingw32-g++}"; WCC="${WCC:-x86_64-w64-mingw32-gcc}"
+if command -v "$WCXX" >/dev/null && command -v "$WCC" >/dev/null; then
+  WOUT="$OUT/wine"; mkdir -p "$WOUT"
+  # -static as well: Homebrew's mingw links libwinpthread dynamically where
+  # Fedora's does not, and the DLL must stand alone beside the .exe.
+  "$WCXX" -std=c++17 -O2 -fvisibility=hidden -Wall -Wno-unused-function -shared \
+    -D__USE_MINGW_ANSI_STDIO=1 -static -static-libgcc -static-libstdc++ -o "$WOUT/d3dpt_exec.dll" \
+    "$ROOT/d3dpt/exec/d3dpt_exec.cpp" "$ROOT/d3dpt/exec/d3dpt_exec_ddi.cpp"
+  "$WCC" -O2 -Wall -static -o "$WOUT/d3dpt-exec-host.exe" "$ROOT/d3dpt/exec/d3dpt_exec_host.c" -I"$ROOT/d3dpt/exec"
+  echo "==> $WOUT/d3dpt_exec.dll + d3dpt-exec-host.exe (the executor on Wine)"
+else
+  echo "==> no $WCXX: the executor on Wine (build/d3dpt/wine/) not built; install mingw-w64 for it"
+  [ $WINE_ONLY = 1 ] && exit 1
+fi
