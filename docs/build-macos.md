@@ -597,8 +597,14 @@ carries Homebrew's libraries — glib, pixman, libslirp, zstd, libpng,
 jpeg-turbo, Qt — and Homebrew publishes each version built on every macOS
 it supports and on none older. Following it also means moving with it:
 when Homebrew drops a release, `brew update` changes the value and the next
-`scripts/build.sh` retargets everything. Intel Macs are not a target at all
-(user decision, 2026-09-12).
+`scripts/build.sh` retargets everything. Intel Macs were not a target at all
+(user decision, 2026-09-12); since ADR-019 (2026-09-22) the **community**
+build permits them — the same 14.0 floor, the M15 Wine executor native
+x86_64 there — and the App Store build is macOS 26+ on Apple Silicon only.
+Permitted is not tested: Homebrew moved Intel to tier 3 in 7.0.0
+(2026-09-13, bottles frozen, support ends September 2027 with macOS 27
+dropping Intel), so an Intel build is today's bottles or from source,
+and no doc claims it until an Intel Mac has run the reference scene.
 
 Three pieces make the claim true, and until 2026-09-12 there were none —
 the app measured macOS 26.6, because every build targeted the Mac it ran on:

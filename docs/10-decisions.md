@@ -1097,3 +1097,64 @@ for the PE pair, with a checked-in build as the Flatpak's way out (the
 `firmware/vgabios-*.bin` precedent). The A/B on a host that has both
 back ends is `-global d3dpt-vga.exec=wine`; `no-exec=on` keeps meaning
 "no executor at all", which after this is the host with no Wine.
+
+## ADR-019: two macOS builds — the App Store one is macOS 26+ on Apple Silicon, the community one keeps the 14.0 floor, carries the Wine executor and permits Intel (2026-09-22)
+
+**Decision.** The macOS app is packaged two ways from one
+`scripts/package-macos.sh`:
+
+1. **The App Store build**: macOS 26 and newer, Apple Silicon only. It
+   carries DXVK with the KosmicKrisp ICD and nothing of Wine — no
+   x86_64 helper, no Rosetta prompt — so its Direct3D is ADR-007's
+   executor everywhere it runs and its sandbox story is QEMU's JIT
+   entitlement alone (UTM is the precedent that passes review). Its
+   `LSMinimumSystemVersion` comes out at 26 by measurement, as the
+   packager already measures it.
+2. **The community build**: the 14.0 floor of `scripts/macos-floor.sh`
+   kept, the ICD left out, and the M15 Wine executor (ADR-018) in — a
+   Developer ID-signed, notarized DMG on the GitHub release, rolled by
+   the same packager under a `--community` flag, with the from-source
+   build as the option for whoever wants it. It runs on every Apple
+   Silicon Mac from macOS 14, and it **permits Intel Macs**: the Wine
+   the executor runs on is x86_64 on both architectures — native on
+   Intel, under Rosetta on Apple Silicon — and only this build ever
+   starts it.
+
+The App Store gets no pre-26 version, ever. App Store Connect keeps one
+current version per app; an older-OS user is offered the last version
+they can run, which is a freeze, not a second track, and two listings
+with different minimums are reviewed as duplicates (guideline 4.3).
+The pre-26 path is therefore maintained where it can be, on the
+release page.
+
+**Why.** The Mac hosts split exactly along the executor's line: on 26
+KosmicKrisp gives DXVK its Vulkan 1.3 and Wine is never needed; below
+it there is no Vulkan and the executor runs on Wine, which means an
+x86_64 process under Rosetta — a payload and a prompt the store build
+should not carry, and a sandbox case nobody ships. One build with a
+run-time choice would work (the probe already picks DXVK first and Wine
+second) but would put Wine into every 26 user's download and Rosetta
+into the store review for nothing they use. Splitting by the same line
+the executor splits on costs one packager flag.
+
+**Intel Macs**, out of scope since 2026-09-12 (Apple Silicon only, the
+floor decision), are reopened by the user *for the community build
+only*, with the state said plainly: **the build permits them; nobody
+has run it.** Homebrew 7.0.0 (2026-09-13) moved Intel macOS to tier 3 —
+no new bottles, the existing ones frozen, support ending September
+2027, because macOS 27 drops Intel — and our macOS build is
+Homebrew-based, Qt 6 the heavy part. So Intel is realistic for macOS
+14 through 26 on today's bottles and a from-source build after them,
+and it is the *best* case for the Wine executor (everything native, no
+Rosetta, WineD3D on the machine's own OpenGL). It becomes a state the
+day an Intel Mac builds and runs the reference scene; until then the
+docs say "permitted, untested" and no row claims it.
+
+**What stays.** Doc 07's "signed .app, JIT entitlement, notarized" is
+the community build; the store build adds the sandbox and whatever
+review asks. The store's licensing question (GPL-2 QEMU and 86Box code
+under the store's terms; UTM ships QEMU there, the FSF says it cannot)
+is the user's to weigh and is not decided here. The data directory and
+the disc shelf under the sandbox (security-scoped bookmarks instead of
+paths under `~/.local/share`) are the store build's work, tracked in
+M6, not M15.

@@ -525,6 +525,11 @@ QEMU has open corrupts it.
 ## Platform packaging
 
 - macOS: signed .app, JIT entitlement, notarized; Apple Silicon native.
+  **Two builds since ADR-019 (2026-09-22)**: the App Store build (macOS
+  26+, Apple Silicon, DXVK + KosmicKrisp, no Wine, the sandbox) and the
+  community build (the 14.0 floor, the M15 Wine executor, a Developer ID
+  DMG from the same packager's `--community`, Intel permitted but
+  untested). The store never gets a pre-26 version.
   **Done 2026-09-06** — `scripts/package-macos.sh`, recipe and reasoning in
   `docs/build-macos.md` ("The app"). The bundle *is* an install prefix:
   `Contents` has this document's `lib`/`libexec`/`share` shape and the same

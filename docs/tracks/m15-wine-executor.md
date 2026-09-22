@@ -161,13 +161,16 @@ arm64; a `MAP_SHARED` file is the same pages either way.
   `D3DPT_DXVK_LIB=d3d9.dll` for the DLL's own loader: the name the
   executor deliberately never tries on a real Windows host, spelled out
   here because under Wine it is the right one.
-- The host program creates a **hidden window** and hands it to the
-  executor: wined3d needs an HWND for the swap chain (`d3d9/device.c`
-  takes `hDeviceWindow` when `hFocusWindow` is NULL and wined3d's
-  swapchain needs one of them), where DXVK's headless WSI needed none.
-  That is the one `#ifdef _WIN32` line in `d3dpt_exec.cpp`'s
-  `CreateDevice`, and it is harmless on a Windows host with DXVK.
-  Nothing is ever shown: the executor reads the back buffer back with
+- The executor gets a **hidden window** for the swap chain on `_WIN32`
+  (the one line in `d3dpt_exec.cpp`'s `fill_pp`/`CreateDevice`, harmless
+  under DXVK's headless WSI). Measured 2026-09-22: wined3d *creates* a
+  device on the NULL windows the executor passes today, and the DDI path
+  — which renders into its own VRAM-registered targets — draws the
+  right frame on it; the DLL path renders into the swap chain's back
+  buffer, and there wined3d's GL renderer cannot make a context current
+  on window 0 ("Failed to set pixel format … does not belong to window
+  0000000000000000"), and the frame comes out black. Nothing is ever
+  shown: the executor reads the back buffer back with
   `GetRenderTargetData` after every `Present`, as it does on DXVK.
 - Wine's d3d9 accepts what Windows' own refused (the reason the Windows
   package moved to DXVK on 2026-09-17): a draw outside
@@ -253,6 +256,22 @@ at step 4.
   child's two pipes; Wine's AF_UNIX support is recent and its winsock is
   a dependency for nothing.
 
+### The two macOS builds (ADR-019, 2026-09-22)
+
+Only the **community** build of the Mac app carries this path: the
+14.0 floor, no KosmicKrisp ICD, the Wine executor in, a Developer ID
+DMG from `scripts/package-macos.sh --community`. The **App Store** build
+is macOS 26+ on Apple Silicon and never starts Wine. The Wine the
+executor runs on is x86_64 on both Mac architectures — native on an
+Intel Mac (the best case: no Rosetta, WineD3D on the machine's own GL),
+under Rosetta on Apple Silicon — and Intel is *permitted, untested*
+until an Intel Mac has run step 3. Homebrew's Wine casks are disabled
+since 2026-09-01 (not notarized), so the Wine at hand on a Mac is
+WineHQ's tarball from Gcenx's releases (11.17, x86_64) or CrossOver; a
+native arm64 Wine exists only as CrossOver's preview (macOS 26.5+, FEX,
+unpolished) and has no OpenGL in `winemac.drv`, so it is no help below
+26 and not needed at or above it.
+
 ## Test loop
 
 ```sh
@@ -277,11 +296,25 @@ tools/bmpdiff.py build/test/dp2-test.bmp build/wine-spike/dp2.bmp --tolerance 8
 
 `package-windows.sh` already runs this test under Wine in the cross
 container — against `dxvk_d3d9.dll`, through winevulkan; the spike is
-the same run with the library name changed. The first thing it will hit
-is the hidden window (the executor passes a NULL `hFocusWindow` and a
-NULL `hDeviceWindow`, which wined3d's swap chain refuses); that is the
-`_WIN32` line above, and it is the whole of the executor change this
-track expects.
+the same run with the library name changed.
+
+**Run on the Air, 2026-09-22** (WineHQ 11.17 staging under Rosetta,
+unpacked into `build/wine/` from Gcenx's release tarball — Homebrew's
+casks are disabled; prefix `build/wine-spike/prefix`; the PE pair from
+Homebrew's mingw plus its `libwinpthread-1.dll`, which that toolchain
+links dynamically where the Fedora cross image's does not):
+- `d3dpt-dp2-test.exe` (the display driver's records): **PASSED**, the
+  frame **0 of 307,200 pixels different** from `build/test/dp2-test.bmp`
+  (DXVK on KosmicKrisp) — with wined3d's default renderer, which on
+  WineHQ's Mac build is *Vulkan over the bundled MoltenVK*, and again
+  with `renderer=gl` pinned in the prefix (`HKCU\Software\Wine\Direct3D`),
+  which is the below-floor case. The prefix pins GL; the MoltenVK
+  result is a data point, not a plan.
+- `d3dpt-exec-test.exe` (the DLL path; `tools/d3dpt-exec-test.cpp` got
+  the dp2 test's `_WIN32` shim so it builds with mingw): every batch
+  status equal to the DXVK run's, 120 frames at 372 fps, and the frame
+  **black** under the GL renderer — the hidden window, above. That is
+  step 1's remaining item.
 
 ## Next steps, in order
 

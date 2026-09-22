@@ -93,6 +93,14 @@ backend later.
   era code. Python is uv-managed (3.12; QEMU 9.2 takes 3.14 only
   with the real `distlib` installed, which MSYS2's Windows build uses).
 - Everything open source; Apple Silicon must work (TCG), not just x86 hosts.
+  **Two macOS builds** (ADR-019, 2026-09-22): the **App Store** build is
+  macOS 26+ on Apple Silicon only (DXVK + KosmicKrisp, nothing of Wine,
+  no Rosetta); the **community** build keeps the 14.0 floor, carries the
+  M15 Wine executor, is a Developer ID DMG from the same
+  `scripts/package-macos.sh` (`--community`), and *permits* Intel Macs —
+  permitted, untested: no row claims Intel until an Intel Mac has run the
+  reference scene. Homebrew has had Intel at tier 3 since 7.0.0
+  (2026-09-13). The store never gets a pre-26 version.
 - **Direct3D 8/9 on XP is our own paravirtual device** (doc 14, ADR-006):
   guest serializer DLLs + native host executor (DXVK). Protocol
   `d3dpt/d3dpt_proto.h` is the one header for guest DLL, QEMU device and
