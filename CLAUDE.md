@@ -100,8 +100,19 @@ backend later.
   the fallback/DX7 path only; don't sink more time into wine9x bugs. The
   reference workload is `guest-tools/src/d3dgame9.c` / `d3dgame8.c`,
   golden on the rig first.
-- **A hardware Vulkan 1.3 device is the executor's floor, and WineD3D is
-  never retired** (ADR-013, 2026-09-06). `third_party/dxvk` v3.1 sets
+- **A hardware Vulkan 1.3 device is DXVK's floor; below it the same
+  executor runs on Wine on the host** (ADR-018, 2026-09-22, track M15,
+  `docs/tracks/m15-wine-executor.md`, user decision: "running an old
+  unsupported Wine version in the guest is bad UX and doesn't make
+  sense"): the Windows build of `d3dpt_exec.dll` in a host program under
+  Wine, on Wine's own `d3d9.dll` (WineD3D over GL), VRAM and the command
+  window shared as one file, `d3dpt_exec.h`'s five calls over the child's
+  stdio. **WineD3D-in-guest is retired by that decision** and removed in
+  the track's last step, once the host path has drawn the reference scene
+  and run a game — until then everything below about it stands as the
+  running fallback, and nothing of it is deleted early. Not a second
+  executor: one decoder, three D3D9s (DXVK native, DXVK on Windows,
+  Wine). ADR-013's text, as it stood (2026-09-06): `third_party/dxvk` v3.1 sets
   `DxvkVulkanApiVersion = VK_API_VERSION_1_3` and enforces it both at
   instance creation and per adapter, so pre-Broadwell Intel, Nvidia Kepler
   and older, AMD TeraScale, and macOS before 26 / every Intel Mac are below

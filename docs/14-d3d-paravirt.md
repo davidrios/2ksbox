@@ -118,7 +118,11 @@ guest (XP / Win98)                          host (QEMU process, embed lib)
   everywhere; `third_party/dxvk` + `patches/dxvk/`. **ADR-013 (2026-09-06)**
   keeps this escape hatch open and unbuilt, and settles what a host that
   cannot reach DXVK's Vulkan 1.3 gets instead: the GL pass-through with
-  WineD3D in the guest, and `launcher --host-check` to say so. The off-screen test
+  WineD3D in the guest, and `launcher --host-check` to say so.
+  **ADR-018 (2026-09-22) takes the hatch**: below the floor the same
+  executor runs on Wine's d3d9 *on the host*, out of process
+  (`docs/tracks/m15-wine-executor.md`), and WineD3D-in-guest is retired
+  once that has drawn this scene. The off-screen test
   (`tools/dxvk-d3d9-test.cpp`) and the native build of the reference scene
   (`tools/d3dgame9-native.cpp`, unmodified `d3dgame9.c` over a window-less
   Win32 shim, `tools/d3dgame-native/win32_headless.h`) both run to DXVK's refusal on MoltenVK today and produce BMPs once

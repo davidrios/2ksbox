@@ -310,6 +310,19 @@ and the numbers, on this box and the Air; the command-FIFO window as RAM
 and the region without the BQL if the profile asks; a hardened
 `fatal()`; Windows.
 
+## M15 — The Direct3D executor on Wine, on the host  (Opened 2026-09-22; ADR-018, `docs/tracks/m15-wine-executor.md`)
+
+Opened on the user's decision: a host below DXVK's Vulkan 1.3 floor gets
+the same paravirtual device and the same executor, with the D3D9
+supplied by Wine's d3d9 on the host — the Windows build of
+`d3dpt_exec.dll` in a host program under Wine, VRAM and the command
+window shared as one file, the five calls of `d3dpt_exec.h` over the
+child's stdio — instead of a 2015 Wine copied into the guest per game.
+Steps: the spike (the dp2 frame through the DLL on Wine's d3d9, diffed);
+the transport; the reference scene in the guest; the launcher's third
+verdict and the packages; a real game on a below-floor host; then
+WineD3D-in-guest removed in one commit.
+
 ## Post-v1 candidates
 
 Recording/streaming, CRT bezel packs, VRR pacing,

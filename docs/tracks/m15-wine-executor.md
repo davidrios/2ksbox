@@ -1,0 +1,343 @@
+# Track: M15 — the Direct3D executor on Wine, on the host (ADR-018)
+
+The handoff for a session building the Direct3D fallback for a Linux or
+macOS host below DXVK's Vulkan 1.3 floor: the **same** paravirtual device
+and the **same** executor as everywhere else, running on **Wine's d3d9
+(WineD3D over OpenGL) on the host** — the way the executor ran on
+Windows' own d3d9 on a Windows host before 2026-09-17 — instead of a
+2015 Wine copied into the guest next to every game. Read
+`docs/00-status.md` first for the global picture and the track rules,
+then this file, then ADR-018 in doc 10 (why), doc 14 (the protocol and
+the executor), and `d3dpt/exec/d3dpt_exec.h` (the five calls this track
+has to carry across a process boundary).
+
+Opened 2026-09-22 on the user's decision: "running an old unsupported
+Wine version in the guest is bad UX and doesn't make sense". Nothing is
+built yet; this doc is the design and the ordered steps.
+
+## Scope and files (this track owns them)
+
+- The Wine-side host program: `d3dpt/exec/d3dpt_exec_host.c` (new; a
+  Windows program, cross-built with mingw like `d3dpt_exec.dll`).
+- The QEMU side of the transport: `d3dpt/hw/d3dpt_exec_remote.c` (new)
+  and the back-end choice in `d3dpt/hw/d3dpt_exec_load.[ch]`.
+- The shared-memory plumbing in `d3dpt/hw/d3dpt_vga.c` (VRAM from a
+  file when the remote executor is chosen) and `d3dpt/hw/d3dpt_mm.c`
+  (its window likewise).
+- `scripts/build-d3dpt-exec.sh` (a `--wine` stage: the PE pair for the
+  native package), `scripts/build.sh`, the three packagers, and the
+  Flatpak manifest.
+- `player/src/companions.rs` (finding Wine and the PE pair),
+  `launcher-core/src/host_gpu.rs` (the probe's third answer),
+  `wizard::Form::graphics_note()`'s sentences.
+- Tests: `tools/d3dpt-dp2-test.cpp` and `tools/d3dpt-exec-test.cpp`
+  driven through the remote executor, the `exec-wine` check in
+  `scripts/test.sh`, `tools/xp-driver-test.sh`'s `EXEC=` knob.
+- Docs: this file, ADR-018, doc 14 §"The executor on Wine", doc 04's
+  fallback rows, the M15 rows of `docs/00-status.md` and doc 08.
+- Shared (rebase first, edit minimally, say so in the commit):
+  `d3dpt/exec/d3dpt_exec.cpp` (a hidden window on `_WIN32`, nothing
+  else), `d3dpt/d3dpt_proto.h` (untouched unless a record has to change,
+  which nothing here needs).
+- **Not this track's to touch until its last step:** everything of
+  WineD3D-in-guest — `guest-tools/build-wrappers.sh`'s wine9x build,
+  `patches/wine9x/`, `SETUP /GAME 4`/`5`, `/I 7`, `guest-tools/src/d3dpre.c`,
+  `tools/xp-wined3d-test.sh`, `tools/wined3d-sys-test.sh`, doc 19 §42–44.
+  They keep working for every below-floor host until the replacement
+  has passed the reference scene (step 5), and are removed then, in one
+  commit, with doc 04 and the launcher's advice.
+
+## The design
+
+### What stays the same
+
+Everything the guest sees. The display driver (XP and 98), the per-game
+`D3D8.DLL`/`D3D9.DLL` serializers, the record protocol
+(`d3dpt/d3dpt_proto.h`, no version bump), the DP2 path, VRAM as the
+texture and vertex-buffer store, readbacks into VRAM, the hardware
+cursor, gamma — all of it is a stream of records into a window the host
+reads, and the executor that reads it does not change either:
+`d3dpt/exec/d3dpt_exec.cpp` + `d3dpt_exec_ddi.cpp`, 3,460 lines over the
+`IDirect3D9`/`IDirect3DDevice9` COM interface, already compiled for
+Windows by `scripts/build-d3dpt-exec.sh --windows` (mingw, against
+`<d3d9.h>`, the d3d9 library loaded by name at run time). That DLL on a
+Windows host with DXVK's `dxvk_d3d9.dll` is the shipped Windows package;
+**that same DLL on Wine with Wine's builtin `d3d9.dll` is this track**.
+
+### Why it has to be a second process
+
+Wine's `d3d9.dll` exists only inside a Wine process: it is a PE module
+that needs `ntdll`, `kernel32`, `user32`, `gdi32`, `opengl32` and the
+display driver (`winex11.drv` / `winewayland.drv` / `winemac.drv`)
+underneath it, all of which need Wine's loader to be the process's
+entry point and a `wineserver` behind it. It cannot be `dlopen`ed into
+QEMU, and winelib does not change that (a winelib binary *is* a Wine
+process). So on a below-floor host the executor runs **out of process**:
+
+```
+QEMU (native)                                  wine d3dpt-exec-host.exe (PE, x86_64)
+  d3dpt-vga / d3dpt (SysBus)                     d3dpt_exec_host.c
+    d3dpt_exec_load.c: which back end?             ├─ d3dpt_exec.dll   (the executor, unchanged)
+    d3dpt_exec_remote.c ── pipe (requests) ──────► │    └─ d3d9.dll     (Wine's, WineD3D → opengl32 → host GL)
+                        ◄─ pipe (replies) ─────────┘
+    VRAM + command window: one file, MAP_SHARED on both sides
+```
+
+In-process (DXVK, `libd3dpt_exec.so`) stays the first choice and the
+fast path; the remote executor is taken when DXVK finds no usable Vulkan
+device and a Wine is found; otherwise the device answers
+`D3DPT_STATUS_NO_EXEC` as today. `D3DPT_EXEC=dxvk|wine|none` in the
+environment forces one, and the adapter grows `exec=` beside `no-exec=`
+(`-global d3dpt-vga.exec=wine` from the machine form's extra arguments),
+so a host that has both — this Mac, the rig — runs the A/B.
+
+### The five calls across the boundary
+
+`d3dpt_exec.h` is the whole surface, and it was designed for exactly
+this ("the QEMU device dlopens it, so QEMU stays C and the protocol
+evolves without a QEMU rebuild"):
+
+| Call / callback | In process today | Across the boundary |
+|---|---|---|
+| `version()` | a function | `HELLO`: the host program reports the DLL's protocol version; a mismatch refuses, as `d3dpt_exec_load.c` does today |
+| `create(ops)` | loads d3d9, `Direct3DCreate9` | the host program does it at start-up; `HELLO`'s reply says whether a device exists (adapter name, Wine's version, WineD3D's renderer) |
+| `attach(0/1)` | releases every object on 0 | `ATTACH` request |
+| `submit(shm, size)` | parses the window, runs it, writes `ret_status`/`ret_index` into the header | `SUBMIT` request naming the window's offset in the shared file; the header is in shared memory so the reply is only the return code |
+| `set_vram(ptr, size)` | a pointer | `VRAM` request naming the offset and size in the shared file; sent once at realize |
+| `log(msg)` | callback | the host program's stderr, one line each, read by QEMU and re-emitted as `d3dpt: wine: …` |
+| `active(on)` | callback | a flag in every reply |
+| `frame(px, w, h, stride)` | callback, pixels valid during the call | the host program writes the frame into a **frame slot** in the shared file and the reply names it (`off, w, h, stride`); QEMU calls `present_ops->frame` on the mapped pointer, valid until the next `SUBMIT` — the same contract as today |
+| `vram_dirty(off, bytes)` | callback, many per submit | the reply carries a bounded list of ranges (say 64); more than that collapses to one range covering them all, which is only more scanout work |
+
+The request is a fixed 32-byte record on the child's stdin, the reply a
+fixed record plus the dirty list on its stdout; `submit` is synchronous
+with the BQL held, so the vCPU thread writes the request and blocks on
+the reply, exactly as it blocks in the in-process call today. Wine hands
+inherited Unix fds 0/1/2 to the PE program as its standard handles, so
+the host program needs nothing but `ReadFile`/`WriteFile` on
+`GetStdHandle` — no port, no socket, no Wine-specific API.
+
+**Latency.** A pipe round trip is ~30–100 µs; a DP2 frame can be
+hundreds of submits. Step 2 measures it on the dp2 test (the batch count
+is known); if it shows, the wait becomes a **bounded spin on a sequence
+counter in the shared file** (the host program spins ~1 ms on the
+window's doorbell word before blocking on the pipe; QEMU spins the same
+way on the reply word), which brings a busy stream to a few µs per
+submit and costs an idle host nothing. Design that in only if the
+measurement asks for it.
+
+### The shared memory
+
+Two regions have to be the same bytes in both processes: the command
+window (`D3DPT_SHM_SIZE`; the top of VRAM for `d3dpt-vga`, its own RAM
+region for the SysBus device) and VRAM (the adapter's BAR 0, 128 MB),
+which the executor reads texels and vertices from and writes readbacks
+into. QEMU gets both from a file: `memory_region_init_ram_from_fd()`
+over a temporary file the device creates (`$XDG_RUNTIME_DIR` /
+`$TMPDIR`, unlinked at exit; `memfd` is Linux-only and a Wine program
+cannot map an fd, only a path, so it is a path on both platforms). The
+host program opens the same path through Wine's `Z:` drive
+(`CreateFileA` + `CreateFileMappingA` + `MapViewOfFile`, which Wine
+implements as `mmap(MAP_SHARED)` of the same file), so a guest store
+into VRAM is visible to the executor with no copy and a readback lands
+in VRAM with none. A third, small region in the same file is the frame
+slot (the largest mode's frame, 12 MB at 2048×1536×32). The file is
+created only when the remote executor is the choice; the in-process path
+keeps `memory_region_init_ram` and pays nothing.
+
+On macOS the Wine process is x86_64 under Rosetta and QEMU is
+arm64; a `MAP_SHARED` file is the same pages either way.
+
+### The Wine process
+
+- Started by QEMU at the device's realize (not at the first
+  `CreateDevice`: a Wine start is 1–3 s, a first `wineboot` of a prefix
+  10–20 s), with our own prefix under the data dir
+  (`~/.local/share/2ksbox/wine`), `WINEDEBUG=-all`,
+  `WINEDLLOVERRIDES=d3d9=b` (Wine's builtin d3d9, never a DXVK someone
+  put into a prefix — that one needs the Vulkan this host lacks), the
+  renderer pinned to GL in the prefix's registry
+  (`HKCU\Software\Wine\Direct3D\renderer=gl`), and
+  `D3DPT_DXVK_LIB=d3d9.dll` for the DLL's own loader: the name the
+  executor deliberately never tries on a real Windows host, spelled out
+  here because under Wine it is the right one.
+- The host program creates a **hidden window** and hands it to the
+  executor: wined3d needs an HWND for the swap chain (`d3d9/device.c`
+  takes `hDeviceWindow` when `hFocusWindow` is NULL and wined3d's
+  swapchain needs one of them), where DXVK's headless WSI needed none.
+  That is the one `#ifdef _WIN32` line in `d3dpt_exec.cpp`'s
+  `CreateDevice`, and it is harmless on a Windows host with DXVK.
+  Nothing is ever shown: the executor reads the back buffer back with
+  `GetRenderTargetData` after every `Present`, as it does on DXVK.
+- Wine's d3d9 accepts what Windows' own refused (the reason the Windows
+  package moved to DXVK on 2026-09-17): a draw outside
+  `BeginScene`/`EndScene` is not checked (`in_scene` guards only
+  depth-stencil blits and `EndScene` nesting in current `d3d9/device.c`),
+  and a device on a hidden window is an ordinary device. Whether it
+  *draws the same frame* is step 2's measurement, not an assumption.
+- The pair `d3dpt_exec.dll` + `d3dpt-exec-host.exe` is **cross-built
+  with mingw on the native host** (`scripts/build-d3dpt-exec.sh --wine`,
+  into `build/d3dpt/wine/`): Homebrew's `mingw-w64` builds both on this
+  Mac today (checked 2026-09-22: `d3dpt_exec.dll` 2.5 MB,
+  `d3dpt-dp2-test.exe` 2.6 MB, static), Debian/Fedora have the package,
+  and the Flatpak SDK does not — the two files are the same bytes on
+  every host, so the Flatpak takes them as a checked-in build (the
+  precedent is `firmware/vgabios-*.bin`, built by `scripts/build-vgabios.sh`
+  and committed because nothing that needs them can build them) or as a
+  release asset with a checksum in the manifest. Decide at step 6.
+- **Which Wine.** Linux: the distro's (`wine` / `wine64` on `PATH`; Debian
+  13, Ubuntu 26.04 and Fedora 43 all ship Wine 10), found by
+  `player/src/companions.rs`' rule and printed by `player --companions`
+  and `launcher --paths` like the Glide wrapper is. macOS: Homebrew's
+  `wine-stable` cask (10.0.x, x86_64, needs Rosetta 2 — every Wine on
+  Apple Silicon does today: native arm64 Wine's `winemac.drv` gets no
+  OpenGL, because macOS hands the GL compatibility renderer only to
+  Rosetta-translated processes; CrossOver's own arm64 preview of 2026-07
+  runs x86 code through FEX for the same reason), looked for at
+  `/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine64`,
+  `/opt/homebrew/bin/wine64`, and a Kegworks/Sikarugir engine; WineD3D
+  over macOS's OpenGL 4.1 is the path CrossOver ran D3D9 on for a decade.
+  **The packages bundle no Wine at first**: the launcher finds one or
+  says, in the wizard's graphics note, what to install (one line, with
+  the command). Bundling a trimmed Wine (the ~40 DLLs d3d9 pulls in,
+  ~80 MB, against the cask's 600) is a later step with its own
+  measurement; the Flatpak's is an extension point
+  (`org.winehq.Wine` is on Flathub and ships a wow64 build since
+  its 26.08 branch) or a from-source Wine in the manifest, which Bottles
+  and Heroic both do.
+
+### What the launcher says
+
+`host_gpu.rs` gains a third verdict beside "accelerated" and "software":
+**"Direct3D through Wine on the host"** — after the Vulkan probe says
+below-floor, the probe looks for a Wine by the player's own rule and
+reports its version. `graphics_note()` then reads, on a below-floor host
+with Wine: "3D: Direct3D runs through Wine on this host (Wine 10.0,
+OpenGL). Expect it to be slower than on a Vulkan GPU." — and without
+one: "3D: no Vulkan 1.3 here. Install Wine to get Direct3D (…command…);
+OpenGL and Glide games run either way." `launcher --host-check` exits
+zero in the Wine case (the device is available) and non-zero only when
+neither back end can run. The `host-check` check in `scripts/test.sh`
+holds all three answers to what is true on the host it runs on.
+
+### What `no-exec=on` means afterwards
+
+Today it stands in for a below-floor host (the guest gets no Direct3D
+and takes WineD3D-in-guest). After this track a below-floor host *has*
+Direct3D, so `no-exec=on` becomes plainly "a host with no executor at
+all" — still a valid state (no Wine installed) and still the knob that
+proves the display driver survives it; `exec=wine` is the knob for the
+new state. Doc 15's paragraph on `NO_EXEC` and CLAUDE.md's are updated
+at step 4.
+
+### Rejected alternatives (so they are not re-proposed)
+
+- **Winelib / wined3d in-process.** Not possible: see above. Wine's
+  PE/Unix split moved `opengl32`, `winevulkan` and the display drivers'
+  Unix halves into `.so` unixlibs, but `wined3d.dll` and `d3d9.dll` are
+  PE modules over `opengl32.dll`; there is no `libwined3d.so` to link.
+- **A second executor of our own over OpenGL, Metal or wgpu.** ADR-013
+  named it and refused it: a second implementation of D3D9 semantics.
+  WineD3D *is* that implementation, twenty years in, and this track
+  takes it as a running program rather than as source.
+- **Native arm64 Wine on macOS, an aarch64 PE executor.** No OpenGL in
+  `winemac.drv` under native arm64 (above), and Rosetta translating a
+  Wine process that spends its time inside Apple's GL driver costs
+  little. Revisit when Wine's macOS driver has Metal-backed GL or when
+  the project's floor is a macOS with Vulkan.
+- **Copying VRAM over the pipe instead of sharing it.** The DDI path
+  reads vertex buffers out of VRAM per draw (protocol v9) and the
+  executor writes a readback per frame; a copy per draw is a round trip
+  per draw.
+- **A socket instead of stdio.** Nothing here needs more than the
+  child's two pipes; Wine's AF_UNIX support is recent and its winsock is
+  a dependency for nothing.
+
+## Test loop
+
+```sh
+scripts/build.sh                                  # the native stack; builds the PE pair too once the --wine stage exists
+scripts/test.sh host                              # exec-wine: the two host tests through the remote executor (SKIP without a Wine)
+D3DPT_EXEC=wine tools/xp-driver-test.sh ~/vms/winxp.qcow2 d3dgame8   # the reference scene in the guest, on Wine
+```
+
+Until the remote executor exists, **the spike is one command on a host
+that has Wine and a GL** (the Linux rig, or this Mac after
+`brew install --cask wine-stable`): the Windows build of the executor on
+Wine's own d3d9, drawing the display driver's host-test frame —
+
+```sh
+scripts/build-d3dpt-exec.sh --windows                       # build/win/d3dpt/d3dpt_exec.dll
+x86_64-w64-mingw32-g++ -std=c++17 -O2 -static -o build/win/d3dpt-dp2-test.exe tools/d3dpt-dp2-test.cpp
+export WINEPREFIX=build/wine-spike WINEDEBUG=-all WINEDLLOVERRIDES=d3d9=b
+D3DPT_EXEC_LIB=build/win/d3dpt/d3dpt_exec.dll D3DPT_DXVK_LIB=d3d9.dll \
+  wine build/win/d3dpt-dp2-test.exe build/wine-spike/dp2.bmp           # macOS: arch -x86_64 wine64 …
+tools/bmpdiff.py build/test/dp2-test.bmp build/wine-spike/dp2.bmp --tolerance 8
+```
+
+`package-windows.sh` already runs this test under Wine in the cross
+container — against `dxvk_d3d9.dll`, through winevulkan; the spike is
+the same run with the library name changed. The first thing it will hit
+is the hidden window (the executor passes a NULL `hFocusWindow` and a
+NULL `hDeviceWindow`, which wined3d's swap chain refuses); that is the
+`_WIN32` line above, and it is the whole of the executor change this
+track expects.
+
+## Next steps, in order
+
+1. **The spike** (above), on the rig first: the dp2 frame and the
+   `d3dpt-exec-test` batches through `d3dpt_exec.dll` on Wine's d3d9,
+   diffed against the DXVK frames (`build/test/dp2-test.bmp`; a
+   Windows build of `tools/d3dpt-exec-test.cpp` is one compile line
+   more, like the dp2 one in `scripts/build-windows.sh`). A GL
+   rasteriser and a Vulkan one will not be byte-identical; the
+   question is whether the differences are the rig golden's kind
+   (sub-pixel, a few hundred pixels within tolerance 8) or a wrong
+   frame. Every refusal WineD3D makes that DXVK did not (`hr` in the
+   test's log) is a row in doc 14 §"The executor on Wine", with the
+   executor's answer.
+2. **The transport**: `d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, the
+   file-backed regions, `exec=` / `D3DPT_EXEC`. The dp2 test and the
+   exec test through it become the `exec-wine` check; measure the
+   round trip per submit and the frames/s of the dp2 scene against the
+   in-process DXVK run on the same host, and only then decide the
+   spin (above).
+3. **The guest**: D3DGAME9 / D3DGAME8 in the XP guest on
+   `-global d3dpt-vga.exec=wine`, frame diffed against the rig golden
+   with the guest stage's mask, tolerance and budget; then the same on
+   the Win98 machine (`tools/win98-game-test.sh` with `EXTRA=`). The
+   DDI probes (`xp-driver-test.sh probes`) all ten in one boot.
+4. **The launcher and the packages**: the probe's third verdict, the
+   graphics note, `--host-check`, `companions.rs`, the three packagers
+   staging the PE pair and finding Wine, the `no-exec` paragraphs in
+   doc 15 and CLAUDE.md.
+5. **A real game** on the Wine executor on a below-floor host: the
+   only such machine at hand is a Mac before 26 — the Air's own
+   macOS 26 can run the A/B (`exec=wine` against KosmicKrisp) and
+   measure, but the *user* of this path is on macOS 14/15, so a run
+   on one of those (a VM of macOS 15 on the Air, or a borrowed machine)
+   is the acceptance, with Moto Racer and FIFA 2000 as the titles.
+6. **Retire WineD3D-in-guest**, in one commit, once 3 and 5 pass:
+   the ISO's `WINED3D\` folders and README, `SETUP /GAME 4`/`5`, `/I 7`
+   with `D3DPRE.EXE` and the `DDRAWME`/`DDSYS` switcher,
+   `guest-tools/build-wrappers.sh`'s wine9x build and `patches/wine9x/`,
+   `tools/xp-wined3d-test.sh` and `wined3d-sys-test.sh`, the launcher's
+   advice strings, doc 04's rows, the status doc's open thread of
+   2026-09-20, and CLAUDE.md's "never propose deleting the `WINED3D\`
+   ISO folder" sentence, which ADR-018 supersedes. The Flatpak's Wine
+   (bundle, extension, or "install it") is decided here too, from
+   what step 5 measured.
+
+## Rules
+
+- The executor's decoder is one file set for three back ends (DXVK
+  native, DXVK on Windows, Wine); nothing Wine-specific goes into
+  `d3dpt_exec.cpp` beyond the hidden window. A WineD3D quirk is
+  answered in the host program or documented as a row, never by
+  forking the decoder.
+- Every claim about a frame comes from a BMP in `build/` diffed with
+  `tools/bmpdiff.py`; "WineD3D should accept it" is not a state.
+- The guest-side WineD3D stack is not touched before step 6, and step
+  6 is one commit.
+- One TCG guest at a time on the box; end scripted Win98 runs with the
+  ACPI power button (CLAUDE.md).
