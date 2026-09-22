@@ -319,6 +319,25 @@ static void dxt_block(uint32_t f, const uint8_t *b, uint32_t out[16]) {
  * A8R8G8B8 at upload, like P8 */
 static const D3DFORMAT expandable_fmts[] = { D3DFMT_L8, D3DFMT_A8L8, D3DFMT_A4L4, D3DFMT_A8, D3DFMT_R3G3B2, D3DFMT_A8R3G3B2 };
 static bool host_lacks[256];
+/* the system Direct3D 9 backend (Windows below the Vulkan 1.3 floor): a
+ * real 2020s driver still lists D3DFMT_L6V5U5 -- the 1999 Matrox bump
+ * format -- and no longer draws its luminance. Measured here on NVIDIA's
+ * own d3d9 (RTX 3090, 2026-09-21): CheckDeviceFormat says yes, BUMPENVMAP
+ * over it is right and BUMPENVMAPLUMINANCE comes out black, while
+ * X8L8V8U8 (the same three channels at more precision) is right both
+ * ways. So on that backend it goes up as X8L8V8U8, converted exactly,
+ * rather than trusted. DXVK draws it and keeps it (patches/dxvk/07). */
+static bool bump16_expand;
+
+/* L6V5U5 -> X8L8V8U8: U bits 0..4 and V bits 5..9 are signed, L bits
+ * 10..15 unsigned; the destination has U, V, L, X one byte each. */
+static uint32_t l6v5u5_to_x8l8v8u8(uint32_t raw) {
+    int u = (int)(raw & 0x1f), v = (int)((raw >> 5) & 0x1f), l = (int)((raw >> 10) & 0x3f);
+    if (u & 0x10) u -= 32;
+    if (v & 0x10) v -= 32;
+    return ((uint32_t)(uint8_t)(int8_t)(u * 8)) | ((uint32_t)(uint8_t)(int8_t)(v * 8) << 8) |
+           ((uint32_t)(uint8_t)((l << 2) | (l >> 4)) << 16);
+}
 
 /* the format the host texture is created in: P8 and colour-keyed textures
  * are expanded to A8R8G8B8 at upload (DXVK has no P8; the key becomes alpha
@@ -327,6 +346,7 @@ static bool host_lacks[256];
  * a texture written with it 0 draws transparent (FMTTEST, 2026-09-11) */
 static D3DFORMAT host_format(const VramSurf &s) {
     if (s.d.format == D3DFMT_P8 || s.d.format == D3DFMT_X4R4G4B4) return D3DFMT_A8R8G8B8;
+    if (bump16_expand && s.d.format == D3DFMT_L6V5U5) return D3DFMT_X8L8V8U8;
     if (s.d.format < 256 && host_lacks[s.d.format]) return D3DFMT_A8R8G8B8;
     if (s.ckey && !fmt_dxt(s.d.format) && fmt_row_bytes(s.d.format, 1) && s.d.format != D3DFMT_A8R8G8B8) return D3DFMT_A8R8G8B8;
     return (D3DFORMAT)s.d.format;
@@ -393,15 +413,12 @@ static bool ensure_device(Exec &x, uint32_t w, uint32_t h) {
     pp.Windowed = TRUE;
     pp.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
     IDirect3DDevice9 *dev = nullptr;
-    HRESULT hr;
-    try {
-        hr = x.d3d->CreateDevice(0, D3DDEVTYPE_HAL, nullptr,
-                                 D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_FPU_PRESERVE, &pp, &dev);
-    } catch (...) { hr = E_FAIL; dev = nullptr; }
+    HRESULT hr = exec_create_device(x, 0, D3DCREATE_HARDWARE_VERTEXPROCESSING | D3DCREATE_FPU_PRESERVE, pp, &dev);
     x.log("ddi: device for %ux%u render targets -> 0x%08x", w, h, (unsigned)hr);
     if (FAILED(hr) || !dev) return false;
     x.dev = dev;
     x.dev_handle = 0;
+    bump16_expand = x.native;
     /* the texture formats this adapter lacks, expanded at upload (host_format) */
     char lacks[128] = "";
     for (D3DFORMAT f : expandable_fmts) {
@@ -513,7 +530,8 @@ static bool ensure_stage(Exec &x, Ddi &d, uint32_t w, uint32_t h, D3DFORMAT fmt,
  * alpha 0 for a keyed value */
 static void upload_texture(Exec &x, Ddi &d, VramSurf &s) {
     D3DLOCKED_RECT lr;
-    bool expand = needs_expand(s) && s.host_fmt == D3DFMT_A8R8G8B8;
+    bool bump16 = s.host_fmt == D3DFMT_X8L8V8U8 && s.d.format == D3DFMT_L6V5U5;
+    bool expand = needs_expand(s) && (s.host_fmt == D3DFMT_A8R8G8B8 || bump16);
     const Palette *pal = nullptr;
     if (s.d.format == D3DFMT_P8) {
         auto it = d.palettes.find(s.palette);
@@ -560,8 +578,8 @@ static void upload_texture(Exec &x, Ddi &d, VramSurf &s) {
                     if (bpp == 1) raw = src[xx];
                     else if (bpp == 2) { uint16_t v; memcpy(&v, src + xx * 2, 2); raw = v; }
                     else memcpy(&raw, src + xx * 4, 4);
-                    uint32_t c = texel_argb(s.d.format, raw, pal, s.pal_alpha);
-                    if (s.ckey && raw >= s.ckey_lo && raw <= s.ckey_hi) c &= 0x00ffffffu;
+                    uint32_t c = bump16 ? l6v5u5_to_x8l8v8u8(raw) : texel_argb(s.d.format, raw, pal, s.pal_alpha);
+                    if (!bump16 && s.ckey && raw >= s.ckey_lo && raw <= s.ckey_hi) c &= 0x00ffffffu;
                     dst[xx] = c;
                 }
             }
@@ -594,6 +612,9 @@ static uint32_t shadow_diff(Exec &x, VramSurf &s) {
 
 /* VRAM -> host render target (the guest drew into the target with GDI / the HEL) */
 static void upload_target(Exec &x, Ddi &d, VramSurf &s) {
+    /* the copies below are not made inside a scene: the frame the guest
+     * is building closes here and opens again at its next draw */
+    x.scene_end();
     D3DLOCKED_RECT lr;
     if (s.ms) {
         /* v13: nothing to upload — Direct3D 8 locks no multisampled surface,
@@ -617,6 +638,7 @@ static void upload_target(Exec &x, Ddi &d, VramSurf &s) {
  * target a multisampled one is resolved into first — d3d9 reads no
  * multisampled surface back */
 static IDirect3DSurface9 *resolved(Exec &x, VramSurf &s) {
+    x.scene_end();
     if (!s.ms) return s.rt;
     if (!s.resolve && FAILED(x.dev->CreateRenderTarget(s.d.width, s.d.height, (D3DFORMAT)s.d.format, D3DMULTISAMPLE_NONE, 0, FALSE,
                                                        &s.resolve, nullptr))) return nullptr;
@@ -629,6 +651,7 @@ static IDirect3DSurface9 *resolved(Exec &x, VramSurf &s) {
  * was taken (untracked writes: GDI through GetDC, drawn after the scene
  * as a rule — a title's text and panels) stay over the host's. */
 static HRESULT readback(Exec &x, Ddi &d, VramSurf &s) {
+    x.scene_end();
     if (!s.rt || (s.d.caps & D3DPT_VS_ZBUFFER)) return D3DERR_INVALIDCALL;
     if (!ensure_stage(x, d, s.d.width, s.d.height, (D3DFORMAT)s.d.format, false)) return E_FAIL;
     IDirect3DSurface9 *src = resolved(x, s);
@@ -1466,6 +1489,10 @@ struct Dp2 {
             VramSurf *s = d.stage_tex[st] ? surf(x, d.stage_tex[st]) : nullptr;
             if (s && (s->dirty || s->faces_dirty || !(s->tex || s->cube || s->vol))) bind_texture(st, d.stage_tex[st]);
         }
+        /* last, after the uploads above, which each close the scene: the
+         * DX7/DX8 DDI has no BeginScene of its own and Windows' own
+         * Direct3D 9 draws nothing outside one */
+        x.scene_begin();
     }
 
     /* colour keying (v8): a keyed texture's key texels carry alpha 0, so
@@ -2102,6 +2129,34 @@ void exec_ddi_release(Exec &x)
     x.ddi->drop_stage();
     delete x.ddi;
     x.ddi = nullptr;
+}
+
+/* Windows' own Direct3D 9 can lose a device (a driver reset, another
+ * program taking the display); DXVK's never is, so this is the native
+ * backend's alone. Everything the host holds for the display driver is a
+ * copy of something in guest VRAM, and the guest sends a VRAM_SURFACE
+ * once and never again — so the copies go and the registrations stay,
+ * each surface marked dirty and made again at its next use. The DX8
+ * shaders and state sets go too: the runtime re-creates them on the
+ * device it is handed, and a stale handle draws nothing. */
+void exec_ddi_device_reset(Exec &x)
+{
+    if (!x.ddi) return;
+    for (auto &kv : x.ddi->surfs) {
+        kv.second.release();
+        kv.second.dirty = true;
+        kv.second.rendered = false;
+        kv.second.checked = false;
+        kv.second.shadow.clear();
+    }
+    for (auto &kv : x.ddi->ctxs) kv.second.release_shaders();
+    for (auto &kv : x.ddi->sblocks) if (kv.second) kv.second->Release();
+    x.ddi->sblocks.clear();
+    x.ddi->recording = false;
+    x.ddi->drop_stage();
+    x.ddi->bound_rt = x.ddi->bound_z = 0;
+    memset(x.ddi->stage_tex, 0, sizeof x.ddi->stage_tex);
+    x.log("ddi: %zu surfaces dropped for the device reset; each is re-read from VRAM", x.ddi->surfs.size());
 }
 
 bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)

@@ -442,6 +442,23 @@ EOF
       grep '^FAIL\|^exec: \|^dlopen\|^bad \|mismatch' "$scratch/dp2.log" | head -20 >&2
       fail=1
     fi
+    # ... and the same records on the *other* backend (2026-09-21): the
+    # system Direct3D 9, which on a real Windows host below the Vulkan
+    # 1.3 floor is what the executor runs on. Under wine that name is
+    # wine's own d3d9 over WineD3D, so this is a third implementation
+    # rather than the one the user will have — which is why it is
+    # reported and never fails the package. It needs a display and GL;
+    # both are often absent where a package is rolled.
+    rc=0
+    (cd "$STAGE" && WINEDEBUG=-all D3DPT_EXEC_LIB=d3dpt_exec.dll D3DPT_D3D9=system \
+       timeout 300 wine "$scratch/d3dpt-dp2-test.exe" "$scratch/dp2-system.bmp" > "$scratch/dp2-system.log" 2>&1) || rc=$?
+    sysbad=$(grep -c '^FAIL' "$scratch/dp2-system.log" || true)
+    sysok=$(grep -c '^ok:' "$scratch/dp2-system.log" || true)
+    if [ "$rc" = 0 ] && [ "$sysbad" = 0 ] && [ "$sysok" -gt 0 ]; then
+      echo "direct3d/sys   $sysok checks on wine's own d3d9 (the system-Direct3D-9 backend)"
+    else
+      echo "direct3d/sys   not run here (exit $rc, $sysbad failed): wine's d3d9 needs a display and GL — the real check is on Windows"
+    fi
   fi
 
   # The package has to be able to say why it failed, which is the whole

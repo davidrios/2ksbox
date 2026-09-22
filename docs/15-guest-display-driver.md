@@ -191,6 +191,17 @@ What Microsoft's `ddraw.dll` → `dxg.sys` sees behind the display driver
   primary, 0x10 = add `DDCAPS_GDI`, 0x8000 = no vertical blank (flips
   complete instantly, the M7b behaviour: throughput runs). That is how the caps were bisected
   in one afternoon: one boot per variant, `DDTEST` and the QEMU log tell.
+- **`-device d3dpt-vga,d3d9=auto|dxvk|system`** (2026-09-21) names the
+  Direct3D 9 library the executor runs on: DXVK, or — on a Windows host —
+  that host's own, which is what a host below the Vulkan 1.3 floor gets
+  instead of nothing (ADR-007's second amendment). Like `no-exec` it is
+  the whole host's answer rather than one device's, so the property only
+  hands it to the loader (`d3dpt_exec_prefer`), which passes it to the
+  executor as `D3DPT_D3D9`; an explicit `D3DPT_D3D9` in the environment
+  wins, and that is how the two backends are compared on a host that has
+  both. The machine form's **Direct3D** row writes it, resolving `auto`
+  from the launcher's own Vulkan probe. The log says which library was
+  opened and which adapter answered, on both.
 - **`-device d3dpt-vga,no-exec=on`** (also `-global d3dpt-vga.no-exec=on`,
   which is what the machine form's "Extra QEMU arguments" field takes, and
   `NO_EXEC=1 tools/xp-driver-test.sh`) makes the adapter answer
@@ -204,7 +215,13 @@ What Microsoft's `ddraw.dll` → `dxg.sys` sees behind the display driver
   to it (`SETUP /GAME 4`, doc 04's fallback row). The flag is how one of
   those hosts is met from a host that has Vulkan; it sets the *loader's*
   refusal, so the doc 14 SysBus device answers `NO_EXEC` too — it is one
-  host, not one device. The QEMU log says
+  host, not one device. It refuses **before the executor library is
+  opened**, so it is not a way to reach a backend: `d3d9=` is never read
+  on such a host and neither implementation is tried. Since 2026-09-21
+  the two flags model two different hosts — `no-exec=on` a host with no
+  pass-through at all, which below the floor means a Linux or macOS one,
+  and `d3d9=system` a *Windows* host below the floor, which runs the
+  executor on its own Direct3D 9 (ADR-007's second amendment). The QEMU log says
   `d3dpt: no-exec=on: no Vulkan 1.3 device on this host` and the driver's
   own `d3dptdisp: no Direct3D executor on the host` follows it. **On 9x that
   was only half true until 2026-09-18** (doc 19 §40): the ring-3 HAL

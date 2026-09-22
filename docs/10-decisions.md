@@ -170,6 +170,52 @@ The Windows package carries DXVK's own `d3d9.dll` as `dxvk_d3d9.dll`
 and a Windows host below Vulkan 1.3 is under ADR-013 like any other
 (docs/tracks/m11-windows-host.md, item 5).
 
+**…and Windows' own Direct3D 9 comes back as the fallback, 2026-09-21**
+(user decision). DXVK stays the rasteriser: the default on every host, the
+one the goldens are taken with, the only one a frame is compared against.
+What changes is what a **Windows host below the Vulkan 1.3 floor** gets
+instead of nothing. ADR-013 sends such a host to WineD3D in the guest, and
+that path is a poor one on Windows in particular — the user's words: "the
+wine path is just not very good" — while the machine itself has a Direct3D
+9 driver that its card was sold for. Pre-Broadwell Intel, Kepler and older,
+TeraScale: all of them run D3D9-era games natively at full speed and none
+of them will ever answer Vulkan 1.3.
+
+*Why it drew black in September, and what makes it work now.* Nothing was
+ever built for that backend: it was `LoadLibrary("d3d9.dll")` and the same
+calls DXVK takes. The system implementation refuses four of them, and each
+one is now handled behind `Exec::native` (`d3dpt/exec/d3dpt_exec.cpp`):
+a device created with **no window at all** (it gets a hidden 1x1 popup),
+a **draw outside a scene** — the display driver's DP2 stream has no
+BeginScene anywhere, because the DirectDraw/Direct3D 7 DDI has no such
+call — a **backbuffer read after Present**, which SWAPEFFECT_DISCARD
+leaves undefined on real hardware and which is where the frames went, and
+a **device that can be lost**, which DXVK's never is. Two smaller ones are
+retried rather than refused: hardware vertex processing, and a windowed
+backbuffer format that is not the desktop's.
+
+*What picks it.* The machine form has a **Direct3D** row
+(`bundle::D3d9`), which writes `-device d3dpt-vga,d3d9=…`; `auto` is the
+default and is resolved by the **launcher's** own Vulkan probe, because
+only that side can tell a software Vulkan device from a real one — and on
+Windows a card's own D3D9 driver beats lavapipe every time. The executor
+has its own `auto` behind that (DXVK, then the system library when DXVK
+opens no adapter), so a bare `qemu-system-i386` on such a host still gets
+3D. `D3DPT_D3D9=dxvk|system` forces either, which is how the two are
+compared on a host that has both.
+
+*What it costs, said plainly.* A second rasteriser is still a second
+rasteriser: a frame drawn here is not the frame the rig goldens were taken
+with, and driver-specific gaps are ours to meet — the first one found is
+D3DFMT_L6V5U5, which NVIDIA's d3d9 lists and draws with no luminance, so
+on this backend it goes up as X8L8V8U8. What makes it defensible this time
+is that it has an **oracle**: `d3dpt-dp2-test.exe` (the display driver's
+107 checks) and `d3dpt-exec-test.exe` (the guest DLLs' path, with the
+swapchain and the Present the other one has not got) both run on either
+backend by the environment variable. On the user's PC, 2026-09-21: both
+pass on both, and both frames are **byte-identical** between DXVK and
+NVIDIA's own Direct3D 9.
+
 ## ADR-008: A real guest display driver is the long-term shape; staged after the DLL device (2026-09-04)
 
 **Decision.** The paravirtual Direct3D device keeps ADR-006's shape today
@@ -521,8 +567,18 @@ DLLs stay exactly as they are and remain the path wherever the driver is
 not installed. The adapter itself should need no change for 9x; if it
 does, that is a finding worth writing down rather than a licence to fork
 the register set.
-## ADR-013: hosts without Vulkan 1.3 keep the GL path; no second executor (2026-09-06, amended the same day)
+## ADR-013: hosts without Vulkan 1.3 keep the GL path; no second executor (2026-09-06, amended the same day and on 2026-09-21)
 
+**Amended 2026-09-21:** on **Windows** such a host no longer falls back to
+WineD3D-in-guest as its only answer. It runs the same executor on the
+system's own `d3d9.dll` — ADR-007's second amendment has the shape, the
+four accommodations and the oracle. Point 3 below is untouched in the
+letter that matters: no second *executor* is built, the decoder and the
+protocol are the one set of code, and what changes is which D3D9 library
+that one executor calls. Points 1 and 2 stand as written — WineD3D is not
+retired anywhere, and the launcher still probes and says what this host
+will do, now including "on this PC's own Direct3D 9". On Linux and macOS
+nothing changes at all: there is no second implementation to fall back to.
 
 **Amended 2026-09-06:** software Vulkan is no longer refused. The first
 version of this decision turned lavapipe down on the user's behalf —

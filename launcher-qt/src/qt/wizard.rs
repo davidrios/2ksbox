@@ -75,6 +75,26 @@ pub mod ffi {
         /// Set only while editing a machine whose adapter has been
         /// changed: the guest will find new hardware on its next start.
         #[qproperty(QString, video_warning)]
+        /// Which Direct3D 9 the host runs the pass-through's executor
+        /// on: an index into `d3d9_labels`, a host question rather than
+        /// a guest one (ADR-007's 2026-09-21 amendment). The list never
+        /// changes with the family, but `d3d9_applies` does with the
+        /// adapter: only ours carries an executor.
+        ///
+        /// **Every one of these names its own `cxx_name`**, and they are
+        /// the only properties here that do. `#[auto_cxx_name]` turns
+        /// `d3d9_labels` into `d3D9Labels` — it capitalises the letter
+        /// after a digit — and QML cannot say that a binding names a
+        /// property that does not exist: the row drew with an empty
+        /// combo box and nothing else was wrong (user, 2026-09-21). The
+        /// spelling is the same on both sides now, and `diag.rs`'s
+        /// wizard screen prints what the combo shows so the next such
+        /// slip is a line in a log rather than a report.
+        #[qproperty(i32, d3d9, cxx_name = "d3d9")]
+        #[qproperty(bool, d3d9_applies, cxx_name = "d3d9Applies")]
+        #[qproperty(QStringList, d3d9_labels, cxx_name = "d3d9Labels")]
+        #[qproperty(bool, d3d9_is_default, cxx_name = "d3d9IsDefault")]
+        #[qproperty(QString, d3d9_note, cxx_name = "d3d9Note")]
         /// The sound card and what is on the MIDI port (doc 20 §6), the
         /// same shape as the adapter above and for the same reason:
         /// each family offers a different list. `soundfont` and
@@ -234,6 +254,15 @@ pub mod ffi {
         #[qinvokable]
         fn reset_video(self: Pin<&mut Wizard>);
 
+        /// Which Direct3D 9 the executor runs on, and back to automatic.
+        /// Named explicitly for the reason the properties above are.
+        #[qinvokable]
+        #[cxx_name = "chooseD3d9"]
+        fn choose_d3d9(self: Pin<&mut Wizard>, d3d9: i32);
+        #[qinvokable]
+        #[cxx_name = "resetD3d9"]
+        fn reset_d3d9(self: Pin<&mut Wizard>);
+
         /// The sound card and the MIDI port, as indices into their own
         /// family's list, with the same reset each.
         #[qinvokable]
@@ -359,6 +388,11 @@ pub struct WizardRust {
     video_is_default: bool,
     video_note: QString,
     video_warning: QString,
+    d3d9: i32,
+    d3d9_applies: bool,
+    d3d9_labels: QStringList,
+    d3d9_is_default: bool,
+    d3d9_note: QString,
     sound: i32,
     sound_labels: QStringList,
     sound_is_default: bool,
@@ -534,6 +568,17 @@ impl ffi::Wizard {
         self.edit(Form::reset_video);
     }
 
+    fn choose_d3d9(self: Pin<&mut Self>, d3d9: i32) {
+        self.edit(|form| {
+            let d = at(form.d3d9_choices(), d3d9);
+            form.choose_d3d9(d);
+        });
+    }
+
+    fn reset_d3d9(self: Pin<&mut Self>) {
+        self.edit(Form::reset_d3d9);
+    }
+
     fn choose_sound(self: Pin<&mut Self>, sound: i32) {
         self.edit(|form| {
             let c = at(form.sound_choices(), sound);
@@ -704,6 +749,7 @@ impl ffi::Wizard {
         let (extra_qemu_args, extra_qemu_args_note, extra_qemu_args_warning);
         let (graphics_note, graphics_warning);
         let (video, video_applies, video_labels, video_is_default, video_note, video_warning);
+        let (d3d9, d3d9_applies, d3d9_labels, d3d9_is_default, d3d9_note);
         let (sound, sound_labels, sound_is_default, sound_note, sound_warning);
         let (music, music_labels, music_is_default, music_note);
         let (soundfont, soundfont_applies, mt32_roms, mt32_roms_applies);
@@ -744,6 +790,11 @@ impl ffi::Wizard {
             video_is_default = f.video_is_default();
             video_note = qs(f.video_notes().join("\n"));
             video_warning = qs_opt(f.video_warning());
+            d3d9 = index_of(f.d3d9_choices(), f.d3d9());
+            d3d9_applies = f.d3d9_applies();
+            d3d9_labels = labels(f.d3d9_choices().iter().map(|d| d.label()));
+            d3d9_is_default = f.d3d9_is_default();
+            d3d9_note = qs(f.d3d9_note());
             sound = index_of(f.sound_choices(), f.sound());
             sound_labels = labels(f.sound_choices().iter().map(|c| c.label()));
             sound_is_default = f.sound_is_default();
@@ -823,6 +874,11 @@ impl ffi::Wizard {
         self.as_mut().set_video_is_default(video_is_default);
         self.as_mut().set_video_note(video_note);
         self.as_mut().set_video_warning(video_warning);
+        self.as_mut().set_d3d9_applies(d3d9_applies);
+        self.as_mut().set_d3d9_labels(d3d9_labels);
+        self.as_mut().set_d3d9(d3d9);
+        self.as_mut().set_d3d9_is_default(d3d9_is_default);
+        self.as_mut().set_d3d9_note(d3d9_note);
         // The lists before the indices into them, as everywhere else.
         self.as_mut().set_sound_labels(sound_labels);
         self.as_mut().set_sound(sound);

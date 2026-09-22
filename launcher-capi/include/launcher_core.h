@@ -223,6 +223,24 @@ char *lc_wizard_video_note(const LcWizard *w);
 /* "" unless editing a machine whose adapter has been changed. */
 char *lc_wizard_video_warning(const LcWizard *w);
 
+/* Which Direct3D 9 the host runs the pass-through's executor on: the
+   automatic answer, DXVK, or — on a Windows host — Windows' own, which
+   is what a host below DXVK's Vulkan 1.3 floor has instead of nothing
+   (ADR-007's 2026-09-21 amendment). A host question, so the list is the
+   same three on every family; ask lc_wizard_d3d9_applies before drawing
+   the row, since only a machine with our own adapter has an executor to
+   run anything on. */
+bool lc_wizard_d3d9_applies(const LcWizard *w);
+size_t lc_wizard_d3d9_count(const LcWizard *w);
+char *lc_wizard_d3d9_label(const LcWizard *w, size_t index);
+size_t lc_wizard_d3d9(const LcWizard *w);
+void lc_wizard_set_d3d9(LcWizard *w, size_t d3d9);
+bool lc_wizard_d3d9_is_default(const LcWizard *w);
+void lc_wizard_reset_d3d9(LcWizard *w);
+/* What the entry means, and what this host will do with the automatic
+   one. Newline-separated. */
+char *lc_wizard_d3d9_note(const LcWizard *w);
+
 /* The sound card and what is on the MIDI port (doc 20 §6). Two lists,
    both per family like the adapter's — 98 chooses between a Sound
    Blaster, an AC'97 and a Gravis, XP between the AC'97 and the SB16 —

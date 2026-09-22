@@ -284,6 +284,19 @@ machine simply boots, and the only thing that can be stale is a *game's*
 own setup, which may have written down a video mode the other adapter
 does not offer.
 
+One more field rides on our adapter, and it is about the **host** rather
+than the guest: `d3d9 = "auto" | "dxvk" | "system"` (2026-09-21,
+ADR-007's second amendment), which names the Direct3D 9 library the
+pass-through's executor runs on. `auto` — the default, and what a bundle
+written before the field existed means — is DXVK, and on a Windows host
+below DXVK's Vulkan 1.3 floor that host's own Direct3D 9 instead of
+nothing; the resolution happens in the launcher, because only its Vulkan
+probe can tell a software device from a real one. The field is read only
+where the machine has our adapter (the device that carries the executor),
+it is kept when the machine is moved onto another one, and it reaches
+QEMU as `-device d3dpt-vga,d3d9=…`. The `d3d9` check in `scripts/test.sh`
+holds it.
+
 The `display-adapter` check in `scripts/test.sh` holds the whole table:
 each family's default, the switch away from it and back (a different
 direction on each Windows family), our adapter being *gone* rather than

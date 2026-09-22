@@ -70,6 +70,9 @@ struct D3dptVgaState {
     bool no_exec;               /* property: act as a host with no Vulkan 1.3 device
                                    (ADR-013's floor unmet) — D3D_STATUS then reads
                                    NO_EXEC and the guest driver offers DirectDraw only */
+    char *d3d9;                 /* property: which Direct3D 9 the executor runs on —
+                                   auto (DXVK, then this host's own on Windows),
+                                   dxvk or system (d3dpt_exec_load.h) */
     uint32_t fb_version;        /* property: the VERSION register (D3DPT_FB_VERSION) —
                                    a newer one checks that installed drivers accept it */
 
@@ -947,6 +950,7 @@ static void d3dpt_vga_realize(PCIDevice *dev, Error **errp)
     if (s->no_exec) {
         d3dpt_exec_refuse();
     }
+    d3dpt_exec_prefer(s->d3d9);
 
     /* the command window takes the top 64 MiB when at least as much is
      * left below it for the frame buffer and the DirectDraw heap */
@@ -990,8 +994,17 @@ static Property d3dpt_vga_properties[] = {
      * keeps its DirectDraw half and offers no Direct3D, and a game falls
      * back the way it does on such a host (the runtime's software device,
      * or WineD3D staged next to it). Testing knob only: it is how a host
-     * we cannot borrow is met from one that has Vulkan. */
+     * we cannot borrow is met from one that has Vulkan. It refuses before
+     * the executor library is opened, so `d3d9=` below is not read and no
+     * backend is picked: since 2026-09-21 a *Windows* host below the floor
+     * is `d3d9=system`, and this is a host with no pass-through at all. */
     DEFINE_PROP_BOOL("no-exec", D3dptVgaState, no_exec, false),
+    /* d3d9=auto|dxvk|system: which Direct3D 9 the executor runs on
+     * (d3dpt_exec_load.h). `system` is Windows' own, the fallback for a
+     * host below the Vulkan 1.3 floor and, on a host that has both, the
+     * A/B between the two rasterisers. Nothing here refuses `system` on
+     * Linux or macOS: the executor answers that, and says so. */
+    DEFINE_PROP_STRING("d3d9", D3dptVgaState, d3d9),
     /* the register set version the adapter reports: a newer one than the
      * device implements is the check that an installed driver accepts a
      * QEMU update (d3dpt_fb.h, "Versions only add"). Nothing else reads it. */

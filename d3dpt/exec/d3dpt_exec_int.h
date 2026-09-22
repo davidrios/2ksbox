@@ -33,6 +33,15 @@ struct Exec {
     d3dpt_exec_ops ops;
     void *dxvk = nullptr;
     IDirect3D9 *d3d = nullptr;
+    /* which implementation is behind d3d: DXVK (false) everywhere it runs,
+     * or Windows' own Direct3D 9 (true), the fallback for a host below
+     * DXVK's Vulkan 1.3 floor. Everything the system implementation
+     * refuses and DXVK takes hangs off this flag — d3dpt_exec.cpp's
+     * header has the list. */
+    bool native = false;
+    HWND hwnd = nullptr;            /* native: the window D3D9 will not make a device without */
+    D3DPRESENT_PARAMETERS last_pp{}; /* what the live device was created with (a lost device's Reset) */
+    bool lost = false;              /* native: the device was lost and has not come back */
     IDirect3DDevice9 *dev = nullptr;
     uint32_t dev_handle = 0;
     std::unordered_map<uint32_t, Obj> objs;
@@ -46,6 +55,21 @@ struct Exec {
     uint8_t *vram = nullptr;
     uint32_t vram_size = 0;
     struct Ddi *ddi = nullptr;
+
+    /* A scene, opened by the executor rather than by whatever it is
+     * executing. The display driver's DP2 stream carries no scene at all
+     * (the DirectDraw/Direct3D 7 DDI has no such call), and the guest
+     * DLLs pass on whatever the game does; DXVK draws outside a scene
+     * happily, Windows' own Direct3D 9 answers D3DERR_INVALIDCALL and
+     * draws nothing — which is what "the host drew 60-170 frames/s and
+     * every readback was zero" was, on 2026-09-17. So the executor keeps
+     * the scene itself: opened before a draw, closed before every
+     * transfer that D3D9 will not do inside one (StretchRect,
+     * GetRenderTargetData, Present) and at the end of a batch. Both
+     * backends, because a scene is what a D3D9 frame is. */
+    bool scene = false;
+    void scene_begin() { if (dev && !scene && SUCCEEDED(dev->BeginScene())) scene = true; }
+    void scene_end() { if (dev && scene) { dev->EndScene(); scene = false; } }
 
     void log(const char *fmt, ...) {
         char buf[512];
@@ -63,6 +87,7 @@ struct Exec {
         return true;
     }
     void release_all() {
+        scene_end();
         exec_ddi_release(*this);
         for (auto &kv : objs) if (kv.second.kind != K_DEVICE && kv.second.p) kv.second.p->Release();
         objs.clear();
@@ -101,6 +126,15 @@ template<class T> static const uint8_t *tail(const T *t) { return (const uint8_t
 
 /* the M7c records (d3dpt_exec_ddi.cpp): true if the op was one of theirs */
 bool exec_ddi_op(Batch &b, const d3dpt_cmd *c);
+/* a lost device came back (native only): the display driver's objects in
+ * the default pool are gone with it, so drop them and mark their VRAM
+ * dirty — every one of them is a copy of guest VRAM and is made again on
+ * its next use. The surfaces stay registered: the guest driver sends a
+ * VRAM_SURFACE once and never again. */
+void exec_ddi_device_reset(Exec &x);
+
+/* CreateDevice for both paths and both backends (d3dpt_exec.cpp) */
+HRESULT exec_create_device(Exec &x, UINT adapter, DWORD flags, D3DPRESENT_PARAMETERS &pp, IDirect3DDevice9 **dev);
 
 } // namespace d3dpt
 

@@ -35,7 +35,9 @@
 #                  handed against the range it has at that moment, and a model
 #                  that republishes a form nobody caught up puts a stale name
 #                  back over a typed one, and an optimization box clicked by
-#                  hand stopped following Turn all on / off — all
+#                  hand stopped following Turn all on / off, and a combo box
+#                  bound to a property whose name QML never resolved came up
+#                  empty with no warning anywhere (the Direct3D row) — all
 #                  disagreements between the control and the model that
 #                  nothing which asks the model would ever notice (only if a
 #                  launcher-qt has been built)
@@ -164,6 +166,13 @@
 #                  adapter a family doesn't offer is refused rather than written,
 #                  the cards below it don't move when it changes, and our QEMU
 #                  accepts every one of them
+#   d3d9           the machine form's Direct3D picker (ADR-007's 2026-09-21
+#                  amendment): a new machine says nothing, which is what `auto`
+#                  means on a host DXVK runs on — and on a Windows host below
+#                  the Vulkan 1.3 floor it says `system`, which has to agree
+#                  with `--host-check`; `dxvk` and `system` reach the adapter
+#                  that carries the executor and no other device; and our own
+#                  QEMU shows the property on `d3dpt-vga` in `info qtree`
 #   libsynth       synthx selftest (doc 20 §7): the three music engines through the
 #                  C API the QEMU devices drive them through — the AdLib detection
 #                  sequence a game runs before it will play a note, a 440 Hz FM
@@ -880,6 +889,25 @@ qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
     model="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] model \[\(.*\)\]$/\1/p')"
     [ "$shown" = '-name "typed args"' ] || { echo "$f: the extra-arguments field lost what was typed (shows: $shown)"; rc=1; }
     [ "$model" = '-name "typed args"' ] || { echo "$f: the model lost the typed extra arguments (holds: $model)"; rc=1; }
+    # The Direct3D row (ADR-007's 2026-09-21 amendment), and a third
+    # shape of the same class: a QML binding that names a property the
+    # object has not got is silent — no warning anywhere — and the combo
+    # box simply comes up empty, which is how this row first shipped
+    # (cxx-qt's auto camel-case had made it `d3D9Labels`). So the count
+    # and the text are asked of the *window*: three entries, one of them
+    # showing. Whether the row is there at all is the adapter's answer,
+    # and only the two Windows families start on ours.
+    o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] wizard direct3d: //p')"
+    shown="$(printf '%s' "$o" | sed -n 's/^shown \[\(.*\)\] of .*/\1/p')"
+    n="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] of \([0-9]*\) .*/\1/p')"
+    echo "  $f: direct3d $o"
+    [ "$n" = 3 ] || { echo "$f: the Direct3D combo has $n entries, not the model's three"; rc=1; }
+    [ -n "$shown" ] || { echo "$f: the Direct3D combo shows nothing"; rc=1; }
+    case "$f:$o" in
+      win98:*"applies true"|xp:*"applies true") ;;
+      dos:*"applies false"|other:*"applies false") ;;
+      *) echo "$f: the Direct3D row's visibility does not follow the adapter: $o"; rc=1;;
+    esac
   done
   # The optimization shortcuts beside boxes that were clicked by hand
   # (user, 2026-09-12: "Turn all on / off does nothing" after three boxes
@@ -2033,6 +2061,73 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
   return $rc
 }
 
+d3d9_backend_check() { # the machine form's Direct3D picker, from a combo box to a real QEMU
+  local rc=0 dir="$OUT/d3d9" bundle args host o
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
+  : >"$dir/disk.qcow2"
+  bundle="$(target/release/launcherx --new xp d3d9 "$dir/disk.qcow2")" || { echo "--new xp failed"; return 1; }
+  # A machine nobody has touched is on `auto`, which says nothing at all
+  # — *unless* this host is a Windows one below DXVK's Vulkan 1.3 floor,
+  # where auto is resolved here rather than in the executor, because only
+  # this side has a Vulkan probe that can tell a software device from a
+  # real one. So the absence is required, and the one presence allowed is
+  # required to agree with `--host-check`.
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in
+    *d3d9=dxvk*) echo "a new machine names dxvk, which is what saying nothing already means"; echo "$args"; rc=1;;
+    *d3d9=system*)
+      host="$(target/release/launcherx --host-check || true)"
+      case "$host" in
+        *"own Direct3D 9"*) ;;
+        *) echo "auto resolved to the system Direct3D 9 on a host whose probe says otherwise"; echo "$host"; rc=1;;
+      esac;;
+  esac
+  # The two explicit answers, which mean the same thing on every host: the
+  # property rides on the adapter that carries the executor.
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - - - - - dxvk >/dev/null \
+    || { echo "--wizard-edit dxvk failed"; return 1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *"-device d3dpt-vga,addr=0x02,d3d9=dxvk"*) ;; *) echo "dxvk did not reach the adapter"; echo "$args"; rc=1;; esac
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - - - - - system >/dev/null \
+    || { echo "--wizard-edit system failed"; return 1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *"-device d3dpt-vga,addr=0x02,d3d9=system"*) ;; *) echo "system did not reach the adapter"; echo "$args"; rc=1;; esac
+  # ... and only on that adapter: the Cirrus has no executor behind it, so
+  # a machine moved onto it must not carry the property to a device that
+  # has never heard of it.
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - cirrus >/dev/null \
+    || { echo "--wizard-edit cirrus failed"; return 1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *d3d9=*) echo "the Cirrus machine carries a d3d9 property"; echo "$args"; rc=1;; esac
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - d3dpt >/dev/null || rc=1
+  # Back to automatic, which writes nothing again.
+  target/release/launcherx --wizard-edit "$bundle" - - - - - - - - - - - auto >/dev/null \
+    || { echo "--wizard-edit auto failed"; return 1; }
+  args="$(target/release/launcherx --print-args "$bundle")"
+  case "$args" in *d3d9=dxvk*) echo "auto still names dxvk"; echo "$args"; rc=1;; esac
+  # And the line a real QEMU is given: our own binary has to accept the
+  # property and show it on the device, the same way `extra-args` proves
+  # a typed `-global` reaches it.
+  if [ -x build/qemu/qemu-system-i386 ] && [ -x build/qemu/qemu-img ]; then
+    build/qemu/qemu-img create -f qcow2 "$dir/disk.qcow2" 64M >/dev/null || rc=1
+    target/release/launcherx --wizard-edit "$bundle" - - - - - - - - - - - system >/dev/null || rc=1
+    args="$(target/release/launcherx --print-args "$bundle")"
+    # shellcheck disable=SC2086
+    o="$(printf '%s\n' '{"execute":"qmp_capabilities"}' \
+           '{"execute":"human-monitor-command","arguments":{"command-line":"info qtree"}}' \
+           '{"execute":"quit"}' \
+         | timeout 30 build/qemu/qemu-system-i386 $args \
+             -audiodev none,id=embed0 -display none -S -qmp stdio -serial none 2>&1)" \
+      || { echo "our QEMU refused d3d9=system"; echo "$o" | tail -3; rc=1; }
+    case "$o" in *'d3d9 = "system"'*) ;; *) echo "the property did not reach d3dpt-vga"; echo "$o" | tail -3; rc=1;; esac
+  else
+    echo "  (no build/qemu: the command lines were checked but not run)"
+  fi
+  return $rc
+}
+
 bios_date_check() { # the legacy BIOS date, as a guest reads it out of a real QEMU
   # Windows 98 installs ACPI — and so enumerates the PCI bus at all — only
   # when the date at F000:FFF5 is at least the ACPICheckDate its own
@@ -2414,6 +2509,13 @@ host_stage() {
   # and changing it must not move the cards pinned below it.
   if [ -x target/release/launcherx ]; then
     run_check display-adapter display-adapter.log display_adapter_check || true
+  fi
+
+  # which Direct3D 9 the host runs the executor on (ADR-007's 2026-09-21
+  # amendment): the form's picker, what `auto` resolves to here, and the
+  # property on a real QEMU's device.
+  if [ -x target/release/launcherx ]; then
+    run_check d3d9 d3d9.log d3d9_backend_check || true
   fi
 
   # the firmware's legacy BIOS date, which decides whether a *new* Win98

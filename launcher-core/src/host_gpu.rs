@@ -101,6 +101,81 @@ impl HostGpu {
     }
 }
 
+/// Which Direct3D 9 the executor will run on here — the question behind
+/// the Vulkan probe, which on Windows has a second answer (ADR-007's
+/// 2026-09-21 amendment).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum D3dBackend {
+    /// DXVK: this host has the Vulkan 1.3 device it wants.
+    Dxvk,
+    /// Windows' own `d3d9.dll`. Not a lesser answer on an old card —
+    /// its D3D9 driver is what the card was sold for — but a second
+    /// rasteriser, so a frame here is not the frame the goldens were
+    /// taken with.
+    System,
+    /// Nothing: no Vulkan 1.3, and no system Direct3D 9 either because
+    /// this is not Windows. The guest falls back to WineD3D over the
+    /// OpenGL pass-through, which needs no Vulkan at all (doc 04).
+    None,
+}
+
+impl HostGpu {
+    /// What the pass-through will run on, *on this host*. Windows is the
+    /// only platform with a fallback, and a software Vulkan device loses
+    /// to it there: DXVK does run on lavapipe, but a real card's own
+    /// Direct3D 9 driver is faster than a CPU rasteriser every time, and
+    /// on Windows a host with software Vulkan still has that driver.
+    pub fn backend(self) -> D3dBackend {
+        if self.d3d_available() && !self.is_slow() {
+            D3dBackend::Dxvk
+        } else if cfg!(windows) {
+            D3dBackend::System
+        } else if self.d3d_available() {
+            D3dBackend::Dxvk // software Vulkan, and nothing else here
+        } else {
+            D3dBackend::None
+        }
+    }
+
+    /// The headline for the *pass-through*, which is not the Vulkan
+    /// sentence on a Windows host below the bar: there the answer is
+    /// yes, through another library, and saying "3D goes through
+    /// OpenGL" would be false.
+    pub fn d3d_headline(self) -> &'static str {
+        match self.backend() {
+            D3dBackend::System if self.is_slow() => {
+                "Direct3D pass-through runs on this PC's own Direct3D 9 (the only Vulkan here is software)."
+            }
+            D3dBackend::System => {
+                "Direct3D pass-through runs on this PC's own Direct3D 9 (no Vulkan 1.3 here)."
+            }
+            _ => self.headline(),
+        }
+    }
+
+    /// And the second line, the same way: a Windows host on its own
+    /// Direct3D 9 needs no WineD3D in the guest, and should be told what
+    /// it is trading instead.
+    pub fn d3d_advice(self) -> Option<&'static str> {
+        match self.backend() {
+            D3dBackend::System => Some(
+                "Its own driver, not the tested DXVK path: if a game draws wrong, set Direct3D to DXVK on the machine and compare.",
+            ),
+            _ => self.advice(),
+        }
+    }
+
+    /// The word `--host-check` and the grid print.
+    pub fn verdict_word(self) -> &'static str {
+        match (self.backend(), self.is_slow()) {
+            (D3dBackend::System, _) => "available, on this PC's own Direct3D 9",
+            (D3dBackend::Dxvk, true) => "available, in software (slow)",
+            (D3dBackend::Dxvk, false) => "available",
+            (D3dBackend::None, _) => "unavailable",
+        }
+    }
+}
+
 /// One physical device as the loader reports it.
 #[derive(Debug, Clone)]
 pub struct Device {
@@ -270,9 +345,9 @@ pub fn cached() -> &'static Probe {
 /// loader offered and what it counted for.
 pub fn report_text(p: &Probe) -> String {
     let mut s = String::new();
-    s.push_str(&format!("Direct3D pass-through: {}\n", verdict_word(p.gpu)));
-    s.push_str(&format!("{}\n", p.gpu.headline()));
-    if let Some(a) = p.gpu.advice() {
+    s.push_str(&format!("Direct3D pass-through: {}\n", p.gpu.verdict_word()));
+    s.push_str(&format!("{}\n", p.gpu.d3d_headline()));
+    if let Some(a) = p.gpu.d3d_advice() {
         s.push_str(&format!("{}\n", a));
     }
     s.push('\n');
@@ -302,12 +377,4 @@ pub fn report_text(p: &Probe) -> String {
         }
     }
     s
-}
-
-fn verdict_word(g: HostGpu) -> &'static str {
-    match g {
-        HostGpu::Accelerated => "available",
-        HostGpu::SoftwareOnly => "available, in software (slow)",
-        _ => "unavailable",
-    }
 }

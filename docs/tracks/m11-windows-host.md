@@ -449,6 +449,45 @@ where a guest's 3D actually fails.
    107 checks, the frame byte-identical to the Linux build's. A Windows
    host below Vulkan 1.3 has no Direct3D pass-through, like any other
    host (ADR-013).
+
+   **Amended 2026-09-21 (user decision): such a host runs the executor on
+   the system Direct3D 9 after all** — not a reversal of the line above,
+   which stands for every host that *can* run DXVK, but because the
+   alternative for a Windows host below the floor was WineD3D inside the
+   guest, and "the wine path is just not very good" while the card's own
+   D3D9 driver is right there. The difference from the 2026-09-08 choice
+   this file recorded is that the backend was **built** this time rather
+   than assumed: a hidden window, the executor's own scene, the
+   backbuffer read before Present instead of after (SWAPEFFECT_DISCARD
+   leaves it undefined on real hardware — that is where the black frames
+   went), a lost device that comes back, and two retries for what a real
+   driver refuses. `D3DPT_D3D9=auto|dxvk|system`, the adapter's `d3d9=`
+   property, the machine form's Direct3D row; `auto` is resolved by the
+   launcher's Vulkan probe, the only thing that can tell a software
+   Vulkan device from a real one. The oracle this build never had is now
+   two programs, both cross-built here and both runnable on either
+   backend: `d3dpt-dp2-test.exe` (the display driver's 107 checks) and
+   `d3dpt-exec-test.exe` (the guest DLLs' path — the swapchain, the
+   scene and the Present the other one has not got). On the PC,
+   2026-09-21: both pass on both backends, both frames byte-identical —
+   and `base98-br` itself, on an overlay with `d3d9=system`, runs
+   `D3D7TEST.EXE` through the Win98 display driver with the same 13
+   readbacks the DXVK run makes. ADR-007 and ADR-013 carry the decision;
+   doc 00 has the measurements and the one difference between the two
+   backends (the undefined X byte of an X8R8G8B8 target).
+5b. **The WGL backend's entry points** (2026-09-21, after the first GL
+   guest ever run here). libepoxy resolves lazily and WGL answers
+   `wglGetProcAddress` only with a context current, so the first ARB call
+   after `plat_open`'s `wglMakeCurrent(NULL, NULL)` *faulted* — GLQuake
+   took the player down with `glcntx: ChoosePixelFormat()` as the last
+   line of `player.log`. Every ARB call in the backend borrows the
+   bootstrap context now (doc 12 "The WGL rule"), and with that the chain
+   runs: `GLPROBE.EXE` in `base98-br` reads this host's own
+   `NVIDIA GeForce RTX 3090/PCIe/SSE2` and `4.6.0 NVIDIA 616.64` through
+   the pass-through. `tools/wgl-probe.exe` passes either way and always
+   would — it resolves its pointers by hand — so it answers a different
+   question than it looked like it did.
+
 6. **The package layout.** A Unix prefix's `bin`/`lib`/`libexec`/`share`
    split is wrong on Windows, where the loader wants the DLLs beside the
    exe and the user wants one folder. `paths.rs` now knows both shapes;

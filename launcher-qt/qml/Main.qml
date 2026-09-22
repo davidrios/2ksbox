@@ -507,6 +507,12 @@ ApplicationWindow {
                           + "] model [" + wizard.name + "]")
                 diag.note("wizard extra args: shown [" + wizardWindow.shownExtraQemuArgs
                           + "] model [" + wizard.extraQemuArgs + "]")
+                // The Direct3D row, for the reason WizardWindow.qml gives
+                // beside `shownD3d9`: a binding to a property that does
+                // not exist leaves the combo box empty and says nothing.
+                diag.note("wizard direct3d: shown [" + wizardWindow.shownD3d9
+                          + "] of " + wizardWindow.shownD3d9Count
+                          + " model " + wizard.d3d9 + " applies " + wizard.d3d9Applies)
                 Qt.callLater(wizardWindow.revealExtraQemuArgs)
                 break
             case "optall":

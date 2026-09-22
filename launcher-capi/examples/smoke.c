@@ -181,6 +181,36 @@ int main(int argc, char **argv) {
     lc_wizard_choose_family(w, (size_t)xp);
     check("...and it follows the family again", lc_wizard_video_is_default(w), NULL);
 
+    /* Which Direct3D 9 the *host* runs the executor on (ADR-007's
+     * 2026-09-21 amendment). A host question, not a guest one: the same
+     * three entries on every family, no default that follows the family
+     * — and a row only where there is an executor to run anything on,
+     * which is our own adapter. */
+    lc_wizard_open_new(w, (size_t)xp);
+    check("a machine on our adapter has a Direct3D picker",
+          lc_wizard_d3d9_applies(w) && lc_wizard_d3d9_count(w) == 3, NULL);
+    check("...starting on the automatic answer", lc_wizard_d3d9_is_default(w), NULL);
+    char *d3d9 = lc_wizard_d3d9_label(w, lc_wizard_d3d9(w));
+    check("which says so", d3d9 && strstr(d3d9, "Automatic") != NULL, d3d9);
+    lc_string_free(d3d9);
+    lc_wizard_set_video(w, (size_t)video_index(w, "Cirrus"));
+    check("on the Cirrus there is no such row", !lc_wizard_d3d9_applies(w), NULL);
+    lc_wizard_set_video(w, (size_t)video_index(w, "d3dpt-vga"));
+    lc_wizard_set_d3d9(w, 2);
+    d3d9 = lc_wizard_d3d9_label(w, lc_wizard_d3d9(w));
+    check("the third entry is this PC's own Direct3D 9",
+          d3d9 && strstr(d3d9, "own Direct3D 9") != NULL, d3d9);
+    lc_string_free(d3d9);
+    check("...and it is not the default", !lc_wizard_d3d9_is_default(w), NULL);
+    char *d3d9_note = lc_wizard_d3d9_note(w);
+    check("whose note says which hosts have one",
+          d3d9_note && strstr(d3d9_note, "Windows") != NULL, d3d9_note);
+    lc_string_free(d3d9_note);
+    lc_wizard_choose_family(w, (size_t)win98);
+    check("a picked one survives a family switch", !lc_wizard_d3d9_is_default(w), NULL);
+    lc_wizard_reset_d3d9(w);
+    check("\"Default\" puts it back to automatic", lc_wizard_d3d9_is_default(w), NULL);
+
     /* The disk size follows the family the same way, and a size someone
      * typed stays put. */
     lc_wizard_open_new(w, (size_t)win98);

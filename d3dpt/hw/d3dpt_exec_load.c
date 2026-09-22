@@ -38,6 +38,28 @@ void d3dpt_exec_refuse(void)
     refused = true;
 }
 
+void d3dpt_exec_prefer(const char *which)
+{
+    if (!which || !*which) {
+        return;
+    }
+    if (strcmp(which, "auto") && strcmp(which, "dxvk") && strcmp(which, "system")) {
+        warn_report("d3dpt: d3d9=%s is not auto, dxvk or system; ignored", which);
+        return;
+    }
+    g_setenv("D3DPT_D3D9", which, false);
+#ifdef _WIN32
+    /*
+     * The executor is another module with another C runtime, and reads
+     * the process environment; g_setenv reaches glib's own copy of it.
+     * An explicit D3DPT_D3D9 in the environment still wins, as above.
+     */
+    if (!GetEnvironmentVariableA("D3DPT_D3D9", NULL, 0)) {
+        SetEnvironmentVariableA("D3DPT_D3D9", which);
+    }
+#endif
+}
+
 const D3dptExecLib *d3dpt_exec_lib(void)
 {
     const char *env = getenv("D3DPT_EXEC_LIB");

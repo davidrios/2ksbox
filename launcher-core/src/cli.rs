@@ -160,7 +160,7 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // a bundle, change the fields given, save it back in place.
             // `-` keeps a field as it is.
             let usage =
-                "usage: --wizard-edit <machine.toml> <new-name|-> [ram-mb|-] [auto|kvm|tcg|-] [net|nonet] [cpu-speed|-] [boot|-] [seamless|noseamless] [d3dpt|std|cirrus|-] [none|usb|keys|-] [voodoo|voodoo-undither|novoodoo|-] [extra-qemu-args|-]";
+                "usage: --wizard-edit <machine.toml> <new-name|-> [ram-mb|-] [auto|kvm|tcg|-] [net|nonet] [cpu-speed|-] [boot|-] [seamless|noseamless] [d3dpt|std|cirrus|-] [none|usb|keys|-] [voodoo|voodoo-undither|novoodoo|-] [extra-qemu-args|-] [auto|dxvk|system|-]";
             let path: PathBuf = args.next().expect(usage).into();
             let new_name = args.next().expect(usage);
             let mut form = wizard::Form::default();
@@ -270,6 +270,18 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             match args.next().as_deref() {
                 None | Some("-") => {}
                 Some(line) => form.extra_qemu_args = line.to_string(),
+            }
+            // Which Direct3D 9 the host runs the executor on (ADR-007's
+            // 2026-09-21 amendment). Last, so every existing caller of
+            // this verb keeps the arguments it passes.
+            match args.next().as_deref() {
+                None | Some("-") => {}
+                Some("auto") => form.choose_d3d9(bundle::D3d9::Auto),
+                Some("dxvk") => form.choose_d3d9(bundle::D3d9::Dxvk),
+                Some("system") => form.choose_d3d9(bundle::D3d9::System),
+                Some(other) => {
+                    panic!("the Direct3D 9 is auto, dxvk or system, not {other:?}; {usage}")
+                }
             }
             match form.submit(&library::default_dir()) {
                 Some(saved) => println!("{}", saved.display()),

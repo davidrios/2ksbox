@@ -915,6 +915,83 @@ pub unsafe extern "C" fn lc_wizard_video_note(w: *const LcWizard) -> *mut c_char
     out(handle!(w, std::ptr::null_mut()).0.video_notes().join("\n"))
 }
 
+/// Which Direct3D 9 the *host* runs the pass-through's executor on
+/// (ADR-007's 2026-09-21 amendment): automatic, DXVK, or — on a Windows
+/// host — Windows' own. A host question rather than a guest one, so
+/// there is no family dimension and the list is the same three
+/// everywhere; the row belongs only to a machine that has our adapter,
+/// which is what `lc_wizard_d3d9_applies` answers.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_d3d9_applies(w: *const LcWizard) -> bool {
+    handle!(w, false).0.d3d9_applies()
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_d3d9_count(w: *const LcWizard) -> usize {
+    handle!(w, 0).0.d3d9_choices().len()
+}
+
+/// The label for one of them, or NULL past the end.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_d3d9_label(w: *const LcWizard, index: usize) -> *mut c_char {
+    match handle!(w, std::ptr::null_mut()).0.d3d9_choices().get(index) {
+        Some(d) => out(d.label()),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_d3d9(w: *const LcWizard) -> usize {
+    let form = &handle!(w, 0).0;
+    index_of(form.d3d9_choices(), form.d3d9())
+}
+
+/// Pick one, by the same index. One past the end is ignored.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_set_d3d9(w: *mut LcWizard, d3d9: usize) {
+    let form = &mut handle_mut!(w, ()).0;
+    if let Some(d) = form.d3d9_choices().get(d3d9).copied() {
+        form.choose_d3d9(d);
+    }
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_d3d9_is_default(w: *const LcWizard) -> bool {
+    handle!(w, false).0.d3d9_is_default()
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_reset_d3d9(w: *mut LcWizard) {
+    handle_mut!(w, ()).0.reset_d3d9();
+}
+
+/// What the entry in the field means, and — for the automatic one —
+/// what this host will do with it.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_d3d9_note(w: *const LcWizard) -> *mut c_char {
+    out(handle!(w, std::ptr::null_mut()).0.d3d9_note())
+}
+
 /// "Changing this machine's adapter is a hardware change", or "" — set
 /// only while editing a machine whose adapter has been changed.
 ///

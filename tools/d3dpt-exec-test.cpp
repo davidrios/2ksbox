@@ -12,10 +12,23 @@
  *          -Ithird_party/dxvk/include/native/directx -ldl
  * Run:   build/d3dpt-exec-test [out.bmp] [frames] [dump_frame]   (from the repo root,
  *        so build/d3dpt and build/dxvk are found; or D3DPT_EXEC_LIB / D3DPT_DXVK_LIB)
+ *
+ * Windows (built by scripts/build-windows.sh's exec stage): it is the
+ * guest DLLs' path — a device with a swapchain, a scene, a Present —
+ * which is what `D3DPT_D3D9=system` (the fallback backend for a host
+ * below the Vulkan 1.3 floor) has to answer as DXVK does:
+ *        D3DPT_EXEC_LIB=build\win\d3dpt\d3dpt_exec.dll D3DPT_D3D9=system \
+ *          build\win\d3dpt-exec-test.exe out.bmp
  */
 #include <windows.h>
 #include <d3d9.h>
+#ifdef _WIN32
+#define dlopen(p, f)  ((void *)LoadLibraryA(p))
+#define dlsym(h, s)   ((void *)GetProcAddress((HMODULE)(h), (s)))
+#define dlerror()     "LoadLibrary failed"
+#else
 #include <dlfcn.h>
+#endif
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>

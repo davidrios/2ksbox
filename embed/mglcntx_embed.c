@@ -2549,6 +2549,45 @@ static int plat_open(void)
     return 1;
 }
 
+/*
+ * WGL answers `wglGetProcAddress` only while a context is current on the
+ * calling thread, and libepoxy resolves an entry point lazily at its
+ * first call. So an ARB call made with nothing current does not fail —
+ * it *faults*: ACCESS_VIOLATION, the whole process, and the log ends at
+ * whatever was printed before it. That is how GLQuake took the player
+ * down on the user's PC (2026-09-21): `glcntx: ChoosePixelFormat()` was
+ * the last line, and the first `wglChoosePixelFormatARB` below was the
+ * faulting call. A 40-line repro of the same three steps (bootstrap
+ * context, `wglMakeCurrent(NULL, NULL)`, one ARB call through epoxy)
+ * dies the same way on this driver.
+ *
+ * `plat_open` leaves nothing current on purpose: a WGL context may be
+ * current on one thread at a time, and the thread that opened the
+ * backend is not always the one that draws. So instead of holding the
+ * bootstrap context, every ARB call below *borrows* it for the duration
+ * when the caller has no context of its own, and puts back exactly what
+ * it found — including "nothing", which is a state the rest of this file
+ * relies on.
+ */
+struct wgl_borrow { HDC dc; HGLRC rc; int taken; };
+
+static void wgl_borrow_ctx(struct wgl_borrow *b)
+{
+    b->rc = wglGetCurrentContext();
+    b->dc = wglGetCurrentDC();
+    b->taken = 0;
+    if (!b->rc && boot_rc && wglMakeCurrent(wnd_dc, boot_rc)) {
+        b->taken = 1;
+    }
+}
+
+static void wgl_return_ctx(struct wgl_borrow *b)
+{
+    if (b->taken) {
+        wglMakeCurrent(b->dc, b->rc);   /* both NULL: unbound, as it was */
+    }
+}
+
 static int plat_choose(int msaa)
 {
     /* the shared iAttribs, plus the pbuffer this backend draws into and
@@ -2569,7 +2608,11 @@ static int plat_choose(int msaa)
 
     UINT count = 0;
     int fmt = 0;
-    if (!wglChoosePixelFormatARB(wnd_dc, a, NULL, 1, &fmt, &count) || count < 1) {
+    struct wgl_borrow b;
+    wgl_borrow_ctx(&b);
+    int chosen = wglChoosePixelFormatARB(wnd_dc, a, NULL, 1, &fmt, &count);
+    if (!chosen || count < 1) {
+        wgl_return_ctx(&b);
         DPRINTF("wglChoosePixelFormatARB(msaa %d) found nothing", msaa);
         return 0;
     }
@@ -2580,6 +2623,7 @@ static int plat_choose(int msaa)
     };
     int v[ARRAY_SIZE(q)] = { 0 };
     wglGetPixelFormatAttribivARB(wnd_dc, pixfmt, 0, ARRAY_SIZE(q), q, v);
+    wgl_return_ctx(&b);
     cAlphaBits = v[0];
     cDepthBits = v[1];
     cStencilBits = v[2];
@@ -2603,13 +2647,17 @@ static void *plat_ctx_create(void *share, const int *wgl)
     HGLRC c;
     /* The attribute list is already WGL's own (the guest sent it), so on
      * the one platform whose API it belongs to it needs no translation. */
+    struct wgl_borrow b;
+    wgl_borrow_ctx(&b);
     if (wgl && epoxy_has_wgl_extension(wnd_dc, "WGL_ARB_create_context")) {
         c = wglCreateContextAttribsARB(draw_dc(), (HGLRC)share, wgl);
+        wgl_return_ctx(&b);
         if (!c) {
             WERR("wglCreateContextAttribsARB");
         }
         return c;
     }
+    wgl_return_ctx(&b);
     c = wglCreateContext(draw_dc());
     if (!c) {
         WERR("wglCreateContext");
@@ -2653,8 +2701,11 @@ static void *plat_get_current(void)
 static int plat_drawable(int w, int h)
 {
     const int a[] = { 0 };
+    struct wgl_borrow b;
+    wgl_borrow_ctx(&b);
     HPBUFFERARB p = wglCreatePbufferARB(wnd_dc, pixfmt, w, h, a);
     if (!p) {
+        wgl_return_ctx(&b);
         WERR("wglCreatePbufferARB");
         return 0;
     }
@@ -2662,6 +2713,7 @@ static int plat_drawable(int w, int h)
     if (!dc) {
         WERR("wglGetPbufferDCARB");
         wglDestroyPbufferARB(p);
+        wgl_return_ctx(&b);
         return 0;
     }
     HPBUFFERARB old = drawable;
@@ -2676,15 +2728,19 @@ static int plat_drawable(int w, int h)
         wglReleasePbufferDCARB(old, old_dc);
         wglDestroyPbufferARB(old);
     }
+    wgl_return_ctx(&b);
     return 1;
 }
 
 static void plat_drawable_release(void)
 {
     if (drawable) {
+        struct wgl_borrow b;
         wglMakeCurrent(NULL, NULL);
+        wgl_borrow_ctx(&b);
         wglReleasePbufferDCARB(drawable, drawable_dc);
         wglDestroyPbufferARB(drawable);
+        wgl_return_ctx(&b);
         drawable = NULL;
         drawable_dc = NULL;
     }
@@ -2725,12 +2781,16 @@ static int plat_pbuffer_create(int i, int w, int h)
         a[n++] = WGL_TEXTURE_TARGET_ARB; a[n++] = hPbuffer[i].target;
     }
     a[n] = 0;
+    struct wgl_borrow b;
+    wgl_borrow_ctx(&b);
     pb[i] = wglCreatePbufferARB(wnd_dc, pixfmt, w, h, a);
     if (!pb[i]) {
+        wgl_return_ctx(&b);
         WERR("wglCreatePbufferARB (guest)");
         return 0;
     }
     PBDC[i] = wglGetPbufferDCARB(pb[i]);
+    wgl_return_ctx(&b);
     PBRC[i] = PBDC[i] ? wglCreateContext(PBDC[i]) : NULL;
     if (PBRC[i]) {
         HGLRC cur = wglGetCurrentContext();
@@ -2745,10 +2805,12 @@ static int plat_pbuffer_create(int i, int w, int h)
 
 static void plat_pbuffer_destroy(int i)
 {
+    struct wgl_borrow b;
     if (PBRC[i]) {
         wglDeleteContext(PBRC[i]);
         PBRC[i] = NULL;
     }
+    wgl_borrow_ctx(&b);
     if (PBDC[i]) {
         wglReleasePbufferDCARB(pb[i], PBDC[i]);
         PBDC[i] = NULL;
@@ -2757,6 +2819,7 @@ static void plat_pbuffer_destroy(int i)
         wglDestroyPbufferARB(pb[i]);
         pb[i] = NULL;
     }
+    wgl_return_ctx(&b);
 }
 
 static void plat_pbuffer_current(int i)

@@ -24,7 +24,16 @@ backend later.
   `target/x86_64-pc-windows-gnu/`, never over the native ones. The Windows
   QEMU is built with **clang**, not mingw GCC (patch 68, 2026-09-17: GCC's
   emulated TLS made every device access 2.3x Linux's), and the executor
-  runs on DXVK there too (`dxvk_d3d9.dll`, never Windows' own d3d9).
+  runs on DXVK there too (`dxvk_d3d9.dll`, never the *system's* d3d9 by
+  that name). **Windows' own Direct3D 9 is the fallback backend since
+  2026-09-21** (ADR-007's second amendment): DXVK stays the default and
+  the only rasteriser a frame is compared against, and a Windows host
+  below the Vulkan 1.3 floor runs the same executor on
+  `system32\d3d9.dll` instead of falling back to WineD3D in the guest.
+  `D3DPT_D3D9=auto|dxvk|system` picks (the machine form's **Direct3D**
+  row writes `-device d3dpt-vga,d3d9=…`, and the launcher resolves `auto`
+  from its own Vulkan probe); `build/win/d3dpt-dp2-test.exe` and
+  `build/win/d3dpt-exec-test.exe` are the oracle and must pass on both.
   For debugging on a Windows PC the same `scripts/build-windows.sh`
   builds **natively in MSYS2's MINGW64 shell** (the cross image's ABI:
   msvcrt, libstdc++, `x86_64-pc-windows-gnu`) and `scripts/win-run.sh`
@@ -99,7 +108,14 @@ backend later.
   it — all of them otherwise fine 2ksbox hosts, which is why they keep the
   OpenGL pass-through with WineD3D *in the guest*, which needs no Vulkan at
   all. Never propose deleting the `WINED3D\` ISO folder, `SETUP /GAME`'s
-  renames or doc 04/08's fallback rows. **Software Vulkan is used, not
+  renames or doc 04/08's fallback rows. **On a Windows host that floor is
+  met by the system's own Direct3D 9 instead** (2026-09-21, ADR-007's
+  second amendment, user decision: "the wine path is just not very good"):
+  the same executor, the same protocol, a second D3D9 library — a card's
+  own driver rather than WineD3D in the guest. It is *not* the default
+  anywhere and never becomes one: DXVK is what the goldens are taken with,
+  and a Windows host with Vulkan 1.3 never sees this path. Linux and macOS
+  have no second implementation and are unchanged. **Software Vulkan is used, not
   refused**: DXVK ranks a CPU device last but never excludes it, so
   lavapipe works — the launcher reports "available, in software (slow)" and
   says WineD3D may beat it. Deciding for the user which of two working
@@ -115,7 +131,12 @@ backend later.
   doc 15, not `ddflags=0x20`, which has the *driver* decide. It leaves the
   launcher's own probe seeing this host's Vulkan; `tools/xp-wined3d-test.sh`
   empties the loader variables when the probe and its note are the
-  question.
+  question. **`no-exec=on` refuses before the executor library is opened
+  at all**, so it is never a way to reach a backend — `d3d9=` is not read
+  on such a host and neither DXVK nor the system Direct3D 9 is tried. The
+  two flags now model two hosts: `no-exec=on` one with no pass-through
+  (below the floor, that is a Linux or macOS host), `d3d9=system` a
+  *Windows* host below the floor.
 - **The host-side Glide wrapper is our own build of OpenGLide** (doc 12 §5,
   2026-09-06). qemu-3dfx's `hw/3dfx` only *dispatches* -- it `dlopen`s a
   `libglide2x` and looks up 183 entry points -- and upstream ships that
@@ -415,13 +436,13 @@ GPU); don't propose wiring it in.
 | `tools/rep-guest-test.py` | `rep movs`/`stos` under TCG (patch 17): 536 DOS cases (widths, a16/a32, DF, page crossings, straddling elements, overlaps, fill values), `rep-fast` on/off identical and equal to a Python model of the instruction; the `rep-guest` check |
 | `tools/string-bench.py` | rep movs/stos/scas throughput under TCG, side-by-side for two QEMU binaries (the number behind patch 09) |
 | `guest-tools/src/d3dfeat9.c` (+ `tools/d3dfeat9-native.cpp`) | the D3D9 feature test (shaders without D3DX, declarations, state blocks, queries, cube maps, surfaces; since 2026-09-13 a row E of one quad per guest-DLL bug doc 14's review fixed, and a "getters 2" line): the XP guest's frame must be byte-identical to the native DXVK build's, and its "getters" lines equal |
-| `tools/d3dpt-exec-test.cpp` | the paravirtual D3D decoder + DXVK executor without a guest: D3D9TEST's batches through the guest encoder → BMP; hostile batch refused |
+| `tools/d3dpt-exec-test.cpp` | the paravirtual D3D decoder + DXVK executor without a guest: D3D9TEST's batches through the guest encoder → BMP; hostile batch refused. Cross-built for Windows too since 2026-09-21 (`build/win/d3dpt-exec-test.exe`), where it is the half of the executor the DP2 test has not got — a swapchain, a scene and a Present — and so the check that `D3DPT_D3D9=system` (Windows' own Direct3D 9, the fallback backend) behaves as DXVK does: both must PASS and their frames were byte-identical on the PC |
 | `tools/sse-guest-test.py` | same for the SSE inline path (patch 11, doc 16): every SSE/SSE2 float op over edge-value pairs, `sse-fast=on/off` identical; also runs the SSEBENCH.COM ratio |
 | `tools/hvf-el1/` (`build.sh`, then `build/hvf-el1/hvf-el1 build/hvf-el1/payload.bin`) | the Hypervisor.framework EL1 probe (M9): a bare-metal Rust guest with the x86 page tables mirrored in stage 1 measures exits vs in-VM traps/calls, page-fault fill, #PF, dirty upgrade, CR3/ASID switch, JIT, kick latency, and the mirrored load vs the exact softmmu sequence, with the native baseline; macOS only, not in `test.sh` |
 | `guest-tools/src/ssebench.c` | `SSEBENCH.EXE`: SSE and x87 math throughput in ns/op, for the rig and the guests (with and without `sse-fast=off` / `x87-fast=off`) |
 | `tools/xp-ssebench.sh` | runs `SSEBENCH.EXE` in an XP image headlessly (QMP typing, output via a floppy image), once per `-cpu` config |
 | `tools/specbench/` (`build-guest.sh`, `run.sh <image> all`, `report.py --md`) | **the CPU-benchmark evaluation of the patch queue, doc 22**: a reproducible tier — nbench (BYTEmark, cross-built with the guest-tools flags), 7-Zip's built-in benchmark (`7zr b 2 -mmt1 -md=22`, public domain), Super PI 1M (on the image, keyed from the host, timed by its job's CPU time) and our own SSEBENCH — run headlessly in the XP guest by `SPECRUN.EXE`, one XP boot per emulator configuration (pristine 9.2.4 from a worktree in `build/qemu-stock`, ours with every switch off, the default, each switch removed, the two opt-ins, and `stock-pic`, pristine with our -fPIC flags), timings and CRCs off a floppy. `run.sh` is resumable (`--status`, skips finished configurations, `PAUSE=1` asks before each): ~10 min per configuration, and **never beside other work on the machine** (a run taken beside another load was discarded). `SPEC=1` also builds the open-source ancestors of five SPEC CINT2006 benchmarks, measured once and parked in doc 22's appendix (1.07x geomean: the patches do not target compiled integer code). Local only, never in `scripts/test.sh` |
-| `tools/d3dpt-dp2-test.cpp` | the display driver's records (doc 15 M7c) without a guest: VRAM surfaces, a context, the D3D7TEST scene as DX7 DP2 tokens, readback pixels checked, hostile records refused; its BMP is the oracle for the guest's `D3D7TEST` |
+| `tools/d3dpt-dp2-test.cpp` | the display driver's records (doc 15 M7c) without a guest: VRAM surfaces, a context, the D3D7TEST scene as DX7 DP2 tokens, readback pixels checked, hostile records refused; its BMP is the oracle for the guest's `D3D7TEST`. Run it on both backends whenever the executor changes (`D3DPT_D3D9=dxvk`, then `system` on Windows): 107 checks each |
 | `tools/qtmin/` (`scripts/win-cross.sh sh -c 'cd tools/qtmin && cargo build --release --target x86_64-pc-windows-gnu'`) | the smallest cxx-qt binary that cross-builds for Windows, in three rungs (no bridge / one bridge / a QML module), for the M11 question "which layer faults before `main`" — rung 1 already did, and its README has the answer that came out of it and the eleven-line fix (`std::call_once` across a libstdc++ DLL boundary, with two emutls registries; `launcher-qt/src/once_proxy.cpp`). Local only, not in `scripts/test.sh` |
 | `tools/embed-3d-test.c` | drives the window-less Mesa backend without a guest: context, frame, orientation, dma-buf ring (Linux). Several frames per slot, each slot's own memory required to follow them: one blit per slot only proves the ring was wired up, and the slot that froze in doc 12 §4 passed that for months |
 | `tools/zc-vulkan-test.c` | the same ring with the **frontend's Vulkan import** and nothing else — no guest, no player, no wgpu (doc 12 §4). `--stage=` picks how much of `player/src/dmabuf.rs` to do (`none` the control, through `mem`, `image`, `nodedicated`, `linear` to `full`), `--use=copy` reads every frame back through Vulkan as well, `--use=shader` leaves the image in the layout wgpu leaves a sampled texture in, `--threaded` puts every Vulkan call on its own thread, and `--draw=scene|front|all|alloc|load` renders instead of clearing (`all` is every GL call GLQuake makes and wglgears does not, `load` the shape of the frame it goes bad on); each slot's memory is checked with the CPU after every frame. Every combination is clean, which is what rules out the frontend, the import and the guest's API usage alike — a ring buffer going bad is real (doc 12 §4) and the ring now repairs it, but nothing here reproduces it. Local only (Linux, Vulkan), not in `scripts/test.sh` |
@@ -555,6 +576,18 @@ which is frozen while 3D is active; use the headless dump for 3D frames.
   build used to link XQuartz's Mesa libGL and the symbol bound there (a GLX
   library that sees no CGL context and silently no-ops). `dlsym` from the
   OpenGL.framework handle, the same one the guest dispatch table uses.
+- **Windows embed backend: a `wgl*ARB` call with no context current
+  faults, it does not fail** (2026-09-21, doc 12 "The WGL rule").
+  libepoxy resolves each entry point at its first call and WGL answers
+  `wglGetProcAddress` only while a context is current on the calling
+  thread, so an ARB call made after `plat_open`'s deliberate
+  `wglMakeCurrent(NULL, NULL)` takes the whole process down with
+  ACCESS_VIOLATION and a log that ends one line earlier — which is how
+  the first GL guest on Windows (GLQuake) "crashed the whole qemu". Every
+  ARB call in `embed/mglcntx_embed.c`'s Windows section borrows the
+  bootstrap context (`wgl_borrow_ctx`) and restores what it found; a new
+  one must too. `tools/wgl-probe.exe` cannot catch it — it resolves its
+  own pointers by hand with a context current.
 - The native Mesa backend (`mglcntx_linux.c`) is linked **weak** (patch 31)
   so `embed/mglcntx_embed.c` overrides it inside the embed library only. It
   is GLX on Linux; on macOS it is a backend that only refuses the context

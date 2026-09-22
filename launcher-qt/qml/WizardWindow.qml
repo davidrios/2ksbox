@@ -63,6 +63,19 @@ Window {
     /// user sees.
     readonly property alias shownName: nameField.text
     function typeName(text) { nameField.insert(nameField.length, text) }
+    /// What the Direct3D combo box is showing, and how many entries it
+    /// has. A binding that names a property the object has not got is
+    /// **silent** in QML — no warning, no error, the control simply
+    /// takes no model — and that is how this row first shipped: the Rust
+    /// side spelled the property `d3d9_labels`, cxx-qt's auto camel-case
+    /// made it `d3D9Labels`, this file asked for `d3d9Labels`, and the
+    /// user got an empty combo box (2026-09-21). Both sides say `d3d9`
+    /// now (`src/qt/wizard.rs` names each `cxx_name`), and the count
+    /// below is what the `qt-wizard` check looks at so the next such
+    /// slip is a failing check.
+    readonly property alias shownD3d9: d3d9Combo.currentText
+    readonly property alias shownD3d9Count: d3d9Combo.count
+
     /// The same for the extra QEMU arguments, which is bound the same way,
     /// plus a scroll to it so a screenshot shows it.
     readonly property alias shownExtraQemuArgs: extraQemuArgsField.text
@@ -317,6 +330,39 @@ Window {
                     Layout.fillWidth: true
                     visible: root.wizard.videoApplies
                     text: root.wizard.videoNote
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    opacity: 0.75
+                }
+
+                // --- which Direct3D 9 the host runs the executor on ----------
+                // A host question under the adapter that carries it: DXVK
+                // everywhere, and on Windows this PC's own Direct3D 9 for a
+                // host below DXVK's Vulkan 1.3 floor. `d3d9Applies` is the
+                // model's answer about the adapter, not this file's.
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.wizard.d3d9Applies
+                    spacing: 8
+                    Label { text: qsTr("Direct3D"); Layout.minimumWidth: 150 }
+                    ComboBox {
+                        id: d3d9Combo
+                        Layout.preferredWidth: 260
+                        model: root.wizard.d3d9Labels
+                        currentIndex: root.wizard.d3d9
+                        onActivated: root.wizard.chooseD3d9(currentIndex)
+                    }
+                    Button {
+                        text: qsTr("Default")
+                        enabled: !root.wizard.d3d9IsDefault
+                        onClicked: root.wizard.resetD3d9()
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.wizard.d3d9Applies
+                    text: root.wizard.d3d9Note
                     wrapMode: Text.Wrap
                     font.pixelSize: 11
                     opacity: 0.75

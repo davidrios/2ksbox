@@ -128,7 +128,34 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   the pass-through is a set of Windows DLLs. The sentence is the shared form's (`graphics_note()`), like every
   other note under a row, so the Qt build and the C ABI cannot drift; `launcher --host-check` is the same answer in full, for a
   support question or a script (`launcher-core/src/host_gpu.rs`; the
-  `host-check` check in `scripts/test.sh`).
+  `host-check` check in `scripts/test.sh`). **On Windows that line has a
+  third answer since 2026-09-21** (ADR-007's second amendment): a host
+  below the bar there runs the same executor on the system's own
+  Direct3D 9, so the note says "runs on this PC's own Direct3D 9" rather
+  than sending the user to WineD3D, and `--host-check` says the same
+  (`HostGpu::backend`, `d3d_headline`, `d3d_advice` — the platform
+  question lives in the model, never in a front end).
+- **Which Direct3D 9 the host runs it on** is the one picker under the
+  adapter that is about the *host* rather than the guest
+  (`bundle::D3d9`, the same 2026-09-21 amendment): Automatic, DXVK, or
+  this PC's own Direct3D 9. The same three entries on every family — a
+  host question has no family dimension — and the row appears only on a
+  machine with our own adapter, which is the device that carries the
+  executor (`d3d9_applies()`). It is a picker and not a statement, unlike
+  the line above, because a host can have *both* and the user is the one
+  who can see whether a game draws right: Automatic is what everyone
+  should be on, and the other two are an A/B. `d3d9_note()` says what the
+  entry in the field means and, for Automatic, what this host will do
+  with it; the machine keeps the setting when it is moved onto another
+  adapter (the command line simply stops saying it), because a bundle is
+  portable and a setting made once should survive the move back. On the
+  Qt side this row is the one whose properties name their own
+  `cxx_name`: `#[auto_cxx_name]` turns `d3d9_labels` into `d3D9Labels`,
+  QML cannot say that a binding names a property that does not exist,
+  and the row shipped for an afternoon as a "Direct3D" label with an
+  empty combo box (user, 2026-09-21). The `qt-wizard` check asks the
+  window for the combo's count and text now, like it already did for the
+  memory field and the name.
 - **The processor** is a combo of named machines, not a number
   (`cpu_speed` in the bundle, `bundle::CpuSpeed`): *Unthrottled* down
   through *Pentium 133*, *486DX2-66*, *386DX-33*, *286-12*. Nobody knows

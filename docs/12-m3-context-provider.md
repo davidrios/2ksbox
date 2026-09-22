@@ -348,6 +348,45 @@ one part that differs per OS: macOS's FBO stand-in answers
 `GL_FRONT`, if the config came out single-buffered). Only the guest's own
 calls take the hooks — ours go straight to GL, so nothing here recurses.
 
+## The WGL rule, and the crash that taught it (2026-09-21)
+
+On Windows the backend's entry points come from **libepoxy**, which
+resolves each one *lazily at its first call* — and WGL answers
+`wglGetProcAddress` only while a context is current on the calling
+thread. An ARB call made with nothing current therefore does not fail:
+it **faults**. ACCESS_VIOLATION, the whole process, and the log ends at
+whatever line was printed before it.
+
+`plat_open()` deliberately ends with `wglMakeCurrent(NULL, NULL)` — a WGL
+context may be current on one thread at a time, and the thread that opens
+the backend is not always the one that draws — so the very next ARB call,
+`wglChoosePixelFormatARB` in `plat_choose`, was the first one made with
+nothing current. That is how the **first GL guest ever run on Windows**
+took the player down: GLQuake on the user's PC, `glcntx:
+ChoosePixelFormat()` the last line in `player.log` (2026-09-21). A
+40-line repro of the three steps — bootstrap context, un-current, one ARB
+call through epoxy — dies identically, which is what separated it from
+anything about the guest or the game.
+
+Two things follow, and they are the rule for this file:
+
+1. **Every ARB call in the Windows backend borrows a context** when the
+   caller has none (`wgl_borrow_ctx` / `wgl_return_ctx` in
+   `embed/mglcntx_embed.c`), and puts back exactly what it found —
+   including "nothing", which the rest of the file relies on.
+2. **`tools/wgl-probe.exe` cannot catch this**, and that is worth knowing
+   before trusting it: it resolves the ARB entry points by hand while its
+   own bootstrap context is current, so it passes on a host where the
+   backend faults. It answers "will this driver give me an offscreen
+   pbuffer at all", not "does our dispatch survive".
+
+With the borrow in place the chain works, verified on that PC the same
+day with `TESTS\GLPROBE.EXE` in the `base98-br` guest: `glcntx: pixel
+format 12: alpha 8 depth 24 stencil 8` → `MESAGL drawable ready` →
+`drawable 800x600`, then the guest's own strings through the
+pass-through — `mesapt: NVIDIA GeForce RTX 3090/PCIe/SSE2`, `4.6.0
+NVIDIA 616.64` — and a clean `DLL unloaded`.
+
 ## Order
 
 vtable patch -> embed provider on Linux with readback -> dma-buf import ->

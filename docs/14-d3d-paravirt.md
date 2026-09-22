@@ -56,9 +56,29 @@ guest (XP / Win98)                          host (QEMU process, embed lib)
   an off-screen swapchain whose backbuffer we read/blit into the existing
   frame path (IOSurface ring on macOS, dma-buf on Linux). KosmicKrisp on macOS
   provides the required Vulkan 1.3 environment (ADR-007).
+- **Which D3D9 library the executor calls** (2026-09-21, ADR-007's second
+  amendment): DXVK on every host, and on **Windows** the system's own
+  `d3d9.dll` when DXVK cannot run — no Vulkan 1.3, or only a software
+  Vulkan device, where a real card's D3D9 driver is the faster of the
+  two. One executor, one decoder, one protocol; only the `IDirect3D9`
+  behind it changes. `D3DPT_D3D9=auto|dxvk|system` picks it, the adapter
+  carries it as `d3d9=` and the machine form has the row; `auto` is
+  resolved by the launcher's Vulkan probe (`host_gpu.rs`), which is the
+  only part of the system that can tell a software Vulkan device from a
+  hardware one. What the system implementation refuses and DXVK takes is
+  all in `Exec::native`: a device with no window, a draw outside a scene
+  (the display driver's DP2 stream has none), the backbuffer read after a
+  DISCARD Present, a device that can be lost, and two retries — hardware
+  vertex processing, and a windowed backbuffer format that is not the
+  desktop's. It is a **second rasteriser**, so the goldens stay DXVK's
+  and `d3dpt-dp2-test` / `d3dpt-exec-test` are run on both backends
+  whenever either changes.
 - **Present:** the device presents explicitly at `Present`, once per frame,
   into `embed_fx_frame` / the zero-copy ring — none of the front-buffer
-  flush heuristics the GL path needed.
+  flush heuristics the GL path needed. On the system-Direct3D-9 backend
+  the frame is read back *before* the flip: `D3DSWAPEFFECT_DISCARD`
+  leaves the backbuffer undefined afterwards on real hardware, while
+  DXVK keeps it (and keeps the order the goldens were taken in).
 - **Fallback:** the `-device d3dpt` off, the guest DLLs absent → the game
   loads Microsoft's d3d9 (software/no HAL) or WineD3D from the game folder,
   as today. Both stacks can coexist on one machine.

@@ -60,7 +60,7 @@ base.
 | `qemu` | `build/win/qemu/{qemu-system-i386,qemu-img,qemu-io}.exe`, `libqemu-embed-i386.dll` | `configure-qemu.sh --windows`; **WHPX detected and built in**; **built with clang** since 2026-09-17 (patch 68: mingw GCC has only emulated TLS, a device access cost 2.3x Linux's; `WIN_QEMU_CC=gcc` for the old build) |
 | `rust` | `target/x86_64-pc-windows-gnu/release/{launcher,player,discx}.exe` | the embed DLL is found in `build/win/qemu` by `qemu-embed/build.rs` |
 | `qt` | `launcher-qt/target/x86_64-pc-windows-gnu/release/launcher-qt.exe` | **the package's `2ksbox.exe`** (ADR-015); its own cargo workspace, so its own stage |
-| `exec` | `build/win/dxvk/src/d3d9/d3d9.dll`, `build/win/d3dpt/d3dpt_exec.dll`, `build/win/d3dpt-dp2-test.exe`, `build/win/wgl-probe.exe` | DXVK's d3d9 (`configure-dxvk.sh --windows`, patch 08's headless WSI), the Direct3D decoder + executor (doc 14) that runs on it, the display driver's host test, and the offscreen-GL diagnostic |
+| `exec` | `build/win/dxvk/src/d3d9/d3d9.dll`, `build/win/d3dpt/d3dpt_exec.dll`, `build/win/d3dpt-dp2-test.exe`, `build/win/d3dpt-exec-test.exe`, `build/win/wgl-probe.exe` | DXVK's d3d9 (`configure-dxvk.sh --windows`, patch 08's headless WSI), the Direct3D decoder + executor (doc 14) that runs on it, its two host tests — the display driver's records and the guest DLLs' path, each runnable on either backend (`D3DPT_D3D9`, below) — and the offscreen-GL diagnostic |
 | `guest` | `guest-tools/out/guest-tools-*.iso` | guest code: host-independent, so only built if absent |
 
 ## The package
@@ -187,6 +187,46 @@ it cannot start with one missing. Wine is not the
 target and a failure there is investigated rather than believed, but a
 package that fails these has not been built correctly for any Windows.
 
+## Which Direct3D 9 the executor runs on
+
+DXVK, as everywhere (ADR-007) — and since 2026-09-21 the **system's own
+Direct3D 9** as the fallback, on Windows only, for a host below DXVK's
+Vulkan 1.3 floor (ADR-007's second amendment). Pre-Broadwell Intel,
+Kepler and older, TeraScale: all of them have a good D3D9 driver and none
+of them will ever answer Vulkan 1.3, and the alternative for them was
+WineD3D inside the guest.
+
+```sh
+D3DPT_D3D9=auto      # DXVK, then the system library if DXVK opens no adapter
+D3DPT_D3D9=dxvk      # DXVK or nothing
+D3DPT_D3D9=system    # this PC's own d3d9.dll (%SystemRoot%\system32, by full path)
+```
+
+A machine says it as `-device d3dpt-vga,d3d9=<which>` — the launcher's
+**Direct3D** row on the machine form writes that, and resolves `auto`
+itself from its Vulkan probe, since only that side can tell a software
+Vulkan device from a real one. The environment variable wins over the
+property, which is how the two are compared on a host that has both.
+
+**Both host tests run on either backend, and that is the check** — the
+2026-09-08 version of this backend had no oracle at all, which is how it
+reached a user's PC drawing black:
+
+```sh
+export D3DPT_EXEC_LIB=build/win/d3dpt/d3dpt_exec.dll
+export D3DPT_DXVK_LIB="$PWD/build/win/d3dpt/dxvk_d3d9.dll"
+for b in dxvk system; do
+  D3DPT_D3D9=$b build/win/d3dpt-dp2-test.exe  out-dp2-$b.bmp    # the display driver's 107 checks
+  D3DPT_D3D9=$b build/win/d3dpt-exec-test.exe out-exec-$b.bmp   # the guest DLLs': swapchain, scene, Present
+done
+```
+
+Both must print PASS, and the two BMPs of each pair are expected to be
+**byte-identical** (they were on the PC on 2026-09-21, RTX 3090). They
+are not the same test: the display driver's records never present, so the
+swapchain, the scene and the Present — the three things the system
+implementation is strictest about — are only exercised by the second.
+
 ## OpenGL for a Win98 guest
 
 A Win98 guest's 3D is qemu-3dfx's Mesa pass-through, and it needs a GL
@@ -196,6 +236,17 @@ Windows it uses WGL with a `WGL_ARB_pbuffer` standing in for the window,
 which makes it the closest of the three to the Linux backend — macOS has
 to fake a default framebuffer with an FBO because CGL pbuffers are gone,
 while Windows has a real offscreen drawable.
+
+**It runs, as of 2026-09-21** — `TESTS\GLPROBE.EXE` in a Win98 guest on
+the user's PC reads the host's own `NVIDIA GeForce RTX 3090/PCIe/SSE2`
+and `4.6.0 NVIDIA 616.64` through the pass-through. Before that day no GL
+guest had ever run on a Windows host, and the first one crashed the
+player in a single call: an ARB entry point resolved through libepoxy
+with no context current **faults** rather than failing, which is doc 12's
+"The WGL rule" and the reason every ARB call in that backend now borrows
+a context. Note that `tools\wgl-probe.exe` passes either way — it
+resolves its own pointers by hand — so it answers "will this driver give
+me an offscreen pbuffer", not "does our dispatch survive".
 
 There is still one window: a 1×1 popup, created and never shown. WGL has
 no way to reach a device's pixel formats or its extension entry points

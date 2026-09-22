@@ -29,8 +29,8 @@
 
 use crate::browse::Filter;
 use crate::bundle::{
-    self, Accel, Boot, CpuSpeed, Family, Machine, Music, Optimization, Optimizations, Pad, Sound,
-    Video,
+    self, Accel, Boot, CpuSpeed, D3d9, Family, Machine, Music, Optimization, Optimizations, Pad,
+    Sound, Video,
 };
 use crate::disc_library::DISC_FILTER;
 use crate::{host_gpu, library, player};
@@ -87,6 +87,11 @@ pub struct Form {
     /// be one the new family does not offer, and `choose_family` has to
     /// put it back.
     video: Video,
+    /// Which Direct3D 9 the host runs the executor on (`D3d9`). No
+    /// family dimension and so no `_chosen` flag beside it: it is a
+    /// property of the host, and the same three entries on every
+    /// machine that has our adapter.
+    d3d9: D3d9,
     /// Whether the adapter in the field is one somebody picked, the way
     /// `ram_chosen` works for the memory. Until it is, switching family
     /// moves it to the new family's default; once it is, it survives the
@@ -208,6 +213,7 @@ impl Default for Form {
             boot: Boot::default(),
             video: bundle::default_video(Family::Win98).unwrap_or(Video::Std),
             video_chosen: false,
+            d3d9: D3d9::Auto,
             sound: bundle::default_sound(Family::Win98),
             sound_chosen: false,
             music: bundle::default_music(Family::Win98),
@@ -292,6 +298,7 @@ impl Form {
             // they came from, switching family must not rewrite them.
             video: machine.effective_video().unwrap_or(Video::Std),
             video_chosen: true,
+            d3d9: machine.d3d9.unwrap_or(D3d9::Auto),
             sound: machine.effective_sound(),
             sound_chosen: true,
             music: machine.effective_music(),
@@ -572,11 +579,11 @@ impl Form {
         if matches!(self.family, Family::Dos | Family::Other) {
             return None;
         }
-        let mut text = format!("3D: {}", self.host_gpu.headline());
-        if !self.host_gpu.d3d_available() && self.video == Video::D3dpt {
+        let mut text = format!("3D: {}", self.host_gpu.d3d_headline());
+        if self.host_gpu.backend() == host_gpu::D3dBackend::None && self.video == Video::D3dpt {
             text.push_str("\nKeep the 2ksbox adapter anyway. Only its Direct3D needs Vulkan.");
         }
-        if let Some(advice) = self.host_gpu.advice() {
+        if let Some(advice) = self.host_gpu.d3d_advice() {
             text.push('\n');
             text.push_str(advice);
         }
@@ -833,6 +840,51 @@ impl Form {
 
     pub fn video_is_default(&self) -> bool {
         Some(self.video) == bundle::default_video(self.family)
+    }
+
+    pub fn d3d9(&self) -> D3d9 {
+        self.d3d9
+    }
+
+    /// The three entries, in the order a picker shows them (`Auto`
+    /// first, because it is what every machine starts on).
+    pub fn d3d9_choices(&self) -> &'static [D3d9] {
+        bundle::d3d9_choices()
+    }
+
+    /// Whether there is anything to pick here: only our own adapter
+    /// carries the executor, so on a Cirrus or a standard VGA machine
+    /// the row is not a question at all and a front end hides it.
+    pub fn d3d9_applies(&self) -> bool {
+        self.video == Video::D3dpt
+    }
+
+    pub fn d3d9_is_default(&self) -> bool {
+        self.d3d9 == D3d9::Auto
+    }
+
+    pub fn choose_d3d9(&mut self, d3d9: D3d9) {
+        self.d3d9 = d3d9;
+    }
+
+    pub fn reset_d3d9(&mut self) {
+        self.d3d9 = D3d9::Auto;
+    }
+
+    /// The line under the picker: what the entry in the field means
+    /// here, and — for `Auto`, the only one that asks the host anything
+    /// — what this host will actually do with it.
+    pub fn d3d9_note(&self) -> String {
+        let mut note = self.d3d9.note().to_string();
+        if self.d3d9 == D3d9::Auto && cfg!(windows) {
+            note.push('\n');
+            note.push_str(if self.host_gpu.d3d_available() && !self.host_gpu.is_slow() {
+                "On this PC that is DXVK: it has a Vulkan 1.3 GPU."
+            } else {
+                "On this PC that is its own Direct3D 9: DXVK has no Vulkan 1.3 GPU to run on here."
+            });
+        }
+        note
     }
 
     /// An adapter this family does not offer is refused rather than
@@ -1198,6 +1250,7 @@ impl Form {
                 boot: None,
                 cpu_speed: None,
                 video: None,
+                d3d9: None,
                 sound: None,
                 music: None,
                 soundfont: None,
@@ -1238,6 +1291,7 @@ impl Form {
         // machine to DOS cannot leave a `video` behind that the family
         // ignores and the next reader has to wonder about.
         machine.video = bundle::video_choices(self.family).contains(&self.video).then_some(self.video);
+        machine.d3d9 = Some(self.d3d9);
         // Written out explicitly, like the accelerator: what the form
         // showed is what the machine gets, even when it is the family's
         // default — a bundle that names its card cannot be changed

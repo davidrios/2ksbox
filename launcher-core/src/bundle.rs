@@ -236,6 +236,66 @@ pub fn video_choices(family: Family) -> &'static [Video] {
     }
 }
 
+/// Which Direct3D 9 implementation the *host* runs the paravirtual
+/// device's executor on (ADR-007 and its 2026-09-21 amendment). It is a
+/// property of the host and not of the guest — every guest sees the same
+/// device either way — and it is on the machine form because a host can
+/// have both and a user with a game that draws wrong on one wants the
+/// other, without a rebuild or an environment variable.
+///
+/// Only Windows has two: DXVK everywhere, and there also the system's own
+/// `d3d9.dll`, which is what a host below DXVK's Vulkan 1.3 floor
+/// (ADR-013 — pre-Broadwell Intel, Kepler and older, TeraScale) has
+/// instead of nothing. On Linux and macOS `system` is refused by the
+/// executor with a line in the log, which is why the picker says so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum D3d9 {
+    /// DXVK, and on Windows the system's own Direct3D 9 when this host
+    /// cannot run DXVK: no Vulkan 1.3, or only a software Vulkan device,
+    /// where a real card's D3D9 driver is the faster of the two.
+    Auto,
+    /// DXVK or no pass-through at all. The frames every golden in
+    /// `reference/d3d` was taken with.
+    Dxvk,
+    /// Windows' own Direct3D 9. On a host that has both, this is the A/B
+    /// between the two rasterisers.
+    System,
+}
+
+impl D3d9 {
+    pub const ALL: [D3d9; 3] = [D3d9::Auto, D3d9::Dxvk, D3d9::System];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            D3d9::Auto => "Automatic",
+            D3d9::Dxvk => "DXVK (needs Vulkan 1.3)",
+            D3d9::System => "This PC's own Direct3D 9 (Windows hosts only)",
+        }
+    }
+
+    /// The one line under the picker: what this entry is for. Not a
+    /// front end's to write (ADR-014).
+    pub fn note(self) -> &'static str {
+        match self {
+            D3d9::Auto => {
+                "DXVK, and on a Windows host below Vulkan 1.3 this PC's own Direct3D 9 instead."
+            }
+            D3d9::Dxvk => "The tested path. A host below Vulkan 1.3 then has no Direct3D at all.",
+            D3d9::System => {
+                "Windows hosts only. Older cards draw well here; on Linux and macOS there is no such library and the machine falls back to DXVK."
+            }
+        }
+    }
+}
+
+/// Everything the picker offers, on every host: a machine file is
+/// portable and a setting made on one host must survive a move to
+/// another (`effective_video`'s rule, one level up).
+pub fn d3d9_choices() -> &'static [D3d9] {
+    &D3d9::ALL
+}
+
 /// What a host gamepad does for this machine (M13,
 /// `docs/tracks/m13-gamepads.md`).
 ///
@@ -1101,6 +1161,13 @@ pub struct Machine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<Video>,
 
+    /// Which Direct3D 9 the host runs the executor on (`D3d9`). Absent =
+    /// `Auto`, so a bundle written before this field existed keeps the
+    /// command line it had. Read only where the machine has our own
+    /// adapter, which is the device that carries the executor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub d3d9: Option<D3d9>,
+
     /// What a host gamepad does for this machine (`Pad`). Absent = that
     /// family's default, which is `Pad::None` everywhere — so a bundle
     /// written before this field existed keeps behaving exactly as it
@@ -1326,6 +1393,7 @@ impl Machine {
             boot: None,
             cpu_speed: Some(default_cpu_speed(family)),
             video: default_video(family),
+            d3d9: Some(D3d9::Auto),
             sound: Some(default_sound(family)),
             music: Some(default_music(family)),
             soundfont: None,
@@ -1479,10 +1547,41 @@ impl Machine {
             if flag == "-vga" {
                 args = vec![flag.to_string(), value.to_string()];
             } else {
-                args.extend([flag.to_string(), value.to_string()]);
+                let mut dev = value.to_string();
+                // Which Direct3D 9 the executor runs on, on the one
+                // adapter that carries it. Said only when it is not
+                // `auto`, so a machine nobody has touched writes the
+                // command line it always did.
+                if let Some(which) = self.d3d9_arg() {
+                    dev.push_str(",d3d9=");
+                    dev.push_str(which);
+                }
+                args.extend([flag.to_string(), dev]);
             }
         }
         args
+    }
+
+    /// The value of the adapter's `d3d9=` property, or `None` for "say
+    /// nothing" — which is what a machine on [`D3d9::Auto`] writes on a
+    /// host where auto means what the executor's own auto means.
+    ///
+    /// `Auto` is resolved **here**, by the host's Vulkan probe, and only
+    /// on Windows: the executor can tell a DXVK that opens no adapter
+    /// from one that opens a real one, but not a software Vulkan device
+    /// from a hardware one, and on a Windows host a real card's own
+    /// Direct3D 9 beats a software Vulkan rasteriser every time
+    /// (ADR-007's 2026-09-21 amendment, ADR-013's floor).
+    fn d3d9_arg(&self) -> Option<&'static str> {
+        match self.d3d9.unwrap_or(D3d9::Auto) {
+            D3d9::Dxvk => Some("dxvk"),
+            D3d9::System => Some("system"),
+            D3d9::Auto if cfg!(windows) => {
+                let gpu = crate::host_gpu::cached().gpu;
+                (!gpu.d3d_available() || gpu.is_slow()).then_some("system")
+            }
+            D3d9::Auto => None,
+        }
     }
 
     /// The card this machine has. One the family does not offer falls
