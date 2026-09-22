@@ -17,8 +17,8 @@ acceleration on all our platforms, including Apple Silicon.
 |---|---|---|
 | Glide (2x/3x) | qemu-3dfx stubs → OpenGLide / host GL translation | same (fewer titles care) |
 | OpenGL | qemu-3dfx MESA GL pass-through | same |
-| Direct3D 5–7 | `d3dpt-vga` D3D5–7 DDI (M7/M10); SoftGPU fallback | `d3dpt-vga` D3D5–7 DDI (M7); WineD3D fallback |
-| Direct3D 8/9 | `d3dpt-vga` paravirtual D3D (doc 14, ADR-006); WineD3D fallback | `d3dpt-vga` paravirtual D3D (doc 14, ADR-006); WineD3D fallback on hosts below Vulkan 1.3 (ADR-013) |
+| Direct3D 5–7 | `d3dpt-vga` D3D5–7 DDI (M7/M10); the same on Wine on the host below Vulkan 1.3 (ADR-018, M15; WineD3D-in-guest until M15 lands) | `d3dpt-vga` D3D5–7 DDI (M7); the same on Wine on the host below Vulkan 1.3 (ADR-018) |
+| Direct3D 8/9 | `d3dpt-vga` paravirtual D3D (doc 14, ADR-006); the executor on Wine on the host below Vulkan 1.3 (ADR-018, M15; WineD3D-in-guest until then) | `d3dpt-vga` paravirtual D3D (doc 14, ADR-006); the executor on Wine on the host below Vulkan 1.3 (ADR-018, M15; WineD3D-in-guest until then) |
 | 2D/desktop | `d3dpt-vga` display driver (PnP INF install, M10); SoftGPU fallback | `d3dpt-vga` display driver; Cirrus GD5446 inbox driver (`-vga cirrus`) fallback |
 
 Known qemu-3dfx / 3D constraints we design around:
@@ -46,8 +46,12 @@ Known qemu-3dfx / 3D constraints we design around:
 - **86Box** for titles that demand a *real* emulated Voodoo (early Glide
   titles with driver-level tricks): out of scope for us; we document the
   recommendation.
-- **WineD3D fallback**: Wine 1.7.55 fork (wine9x) built for guests when
-  host lacks Vulkan 1.3 or for legacy D3D compatibility testing.
+- **WineD3D fallback** — *being retired* (ADR-018, 2026-09-22): a host
+  below Vulkan 1.3 gets the paravirtual device with its executor on
+  Wine's d3d9 *on the host* (`docs/tracks/m15-wine-executor.md`), and the
+  guest-side set below goes in that track's last step, once the host
+  path has drawn the reference scene. Until then: Wine 1.7.55 fork
+  (wine9x) built for guests when the host lacks Vulkan 1.3.
   A host with Vulkan tests this row with **`-global d3dpt-vga.no-exec=on`**
   (doc 15): the adapter then reports no executor, exactly as a below-floor
   host's does, so the guest driver offers no Direct3D and the machine has

@@ -924,3 +924,103 @@ is there for it alone. `Cargo.lock`, `packaging/flatpak/cargo-sources.json`
 and `THIRD-PARTY-NOTICES.md` were regenerated without the egui crates.
 If a second native front end is ever wanted it goes over
 `launcher-capi` or `launcher-core`, not a revived `launcher/`.
+
+## ADR-018: below the Vulkan floor, the executor runs on Wine on the host; WineD3D-in-guest is retired (2026-09-22)
+
+**Decision.** On a Linux or macOS host that fails DXVK's Vulkan 1.3
+bar (ADR-013's table: pre-Broadwell Intel, Kepler and older, TeraScale,
+macOS before 26 on Apple Silicon), the paravirtual Direct3D device
+(ADR-006) keeps running — the **same** guest driver, the **same**
+protocol, the **same** executor — with the executor's D3D9 supplied by
+**Wine's `d3d9.dll` (WineD3D over OpenGL) on the host**, the way the
+executor ran on Windows' own d3d9 on a Windows host before 2026-09-17.
+Because Wine's d3d9 exists only inside a Wine process, the executor
+runs there out of process: the Windows build of `d3dpt_exec.dll` inside
+a small host program under Wine, the command window and VRAM shared
+with QEMU as one file-backed mapping, the five calls of
+`d3dpt_exec.h` carried over the child's stdio. In-process DXVK stays
+the first choice wherever a Vulkan 1.3 device exists; Wine is the
+second; `D3DPT_STATUS_NO_EXEC` is what a host with neither still gets.
+Track `docs/tracks/m15-wine-executor.md` holds the design and the
+steps; this ADR holds the decision and its reasons.
+
+**WineD3D-in-guest is retired** as the fallback: the `WINED3D\` folders
+on the guest-tools ISO, `SETUP /GAME 4`/`5`, `/I 7` with `D3DPRE.EXE`
+and the `DDRAWME`/`DDSYS` switcher, the wine9x build, and the launcher's
+advice pointing at them. The removal is sequenced, not immediate: it is
+the track's last step, taken in one commit once the host-side path has
+drawn the reference scene within the rig budget and run a real game
+(the rule M10 used — measure the replacement, then delete). Until then
+a below-floor host keeps what it has.
+
+**Why.** The user's reason is UX, and it is the whole of it: the
+fallback asked the user to copy a 2015 Wine (wine9x, Wine 1.7.55) next
+to every game, out of a folder on a CD, with a README saying which of
+two folders that game wanted — a per-game install of an unsupported
+version of the very thing the host runs current, packaged, maintained
+copies of. Every part of that was a workaround for the executor
+needing Vulkan: doc 19 §42's "a per-game WineD3D folder only reaches
+the session's first DirectDraw program" and §43's system-wide switcher
+with a login helper exist only because the DLLs were in the guest.
+Putting WineD3D on the host removes the install, the README, the
+switcher, the helper and the version — the guest sees the display
+driver it always sees, and whether the host renders through Vulkan or
+GL is the host's business, as it should have been.
+
+Three things made it cheap enough to decide now rather than "when the
+number of users behind the bar is measured" (ADR-013's condition):
+- **The executor already runs on a foreign d3d9.** It is written to the
+  `IDirect3D9` interface and loads its library by name; on Windows it
+  ran on Microsoft's d3d9, then on DXVK's `dxvk_d3d9.dll`;
+  `package-windows.sh` already runs its host test under Wine in the
+  cross container. The Wine back end is a library name and a hidden
+  window, not a port.
+- **Its API was built for a process boundary.** Five calls and four
+  callbacks over a shared window (`d3dpt_exec.h`: "the QEMU device
+  dlopens it, so QEMU stays C and the protocol evolves without a QEMU
+  rebuild"), with every pointer either the window or VRAM. Sharing
+  those two regions as a file and carrying the calls over a pipe is a
+  few hundred lines on each side and touches no record.
+- **Wine's d3d9 accepts what Windows' refused.** The two reasons the
+  Windows package left Microsoft's d3d9 — draws outside a scene and a
+  device with no window — are not WineD3D's rules: current
+  `dlls/d3d9/device.c` checks `in_scene` only for depth-stencil blits
+  and `EndScene` nesting, and a hidden window is an ordinary window.
+
+**What this supersedes.** ADR-013's point 3 ("no second executor is
+built") — this is not a second executor, it is the one executor on a
+second D3D9, but the escape hatch doc 14 P0b left open ("the executor
+becomes host WineD3D-over-GL") is exactly what is being taken, and
+ADR-013's reason for leaving it shut (a second implementation of D3D9
+semantics) does not apply to running Wine's. ADR-013's point 1
+("WineD3D is not retired") is superseded by the sequenced retirement
+above. Its point 2 (the launcher probes and says so) stands, with a
+third answer: "Direct3D through Wine on the host", and "install Wine"
+where there is none. The Vulkan 1.3 floor stands as the floor of the
+*DXVK* back end, which is what it always was; ADR-007's choice of DXVK
+as the executor stands where DXVK runs. The OpenGL pass-through and
+the Glide paths (docs 12 and 21) are untouched: they were never
+Direct3D and never needed Vulkan.
+
+**Alternatives rejected** (with the track's longer list): a native
+port of wined3d as a Unix library — there is none, `wined3d.dll` is a
+PE module over `opengl32.dll` and Wine's PE/Unix split does not give
+it a `.so`; an executor of our own over GL/Metal/wgpu — ADR-013's
+"second implementation of D3D9 semantics", which WineD3D is, twenty
+years in; native arm64 Wine on macOS — its `winemac.drv` gets no
+OpenGL under native arm64 today (macOS hands the GL compatibility
+renderer only to Rosetta-translated processes), so the Wine process is
+x86_64 under Rosetta, and the executor PE is the x86_64 cross build
+that already exists.
+
+**Consequences.** Wine becomes a *runtime* companion of the native
+packages, found (like the Glide wrapper and the executor) by the
+player's own rule and reported by `player --companions` and `launcher
+--paths`; the packages bundle none at first and the wizard says what
+to install, with the bundling of a trimmed Wine and the Flatpak's shape
+(extension or from-source) decided by the track's step 6 from what step
+5 measured. mingw-w64 becomes a build dependency of the native stack
+for the PE pair, with a checked-in build as the Flatpak's way out (the
+`firmware/vgabios-*.bin` precedent). The A/B on a host that has both
+back ends is `-global d3dpt-vga.exec=wine`; `no-exec=on` keeps meaning
+"no executor at all", which after this is the host with no Wine.
