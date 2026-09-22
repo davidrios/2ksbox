@@ -575,10 +575,19 @@ system's own `d3d9.dll` — ADR-007's second amendment has the shape, the
 four accommodations and the oracle. Point 3 below is untouched in the
 letter that matters: no second *executor* is built, the decoder and the
 protocol are the one set of code, and what changes is which D3D9 library
-that one executor calls. Points 1 and 2 stand as written — WineD3D is not
-retired anywhere, and the launcher still probes and says what this host
-will do, now including "on this PC's own Direct3D 9". On Linux and macOS
-nothing changes at all: there is no second implementation to fall back to.
+that one executor calls. Point 2 stands: the launcher still probes and
+says what this host will do, now including "on this PC's own Direct3D 9".
+
+**And point 1 fell the next day.** ADR-018 (2026-09-22) does for a Linux
+or macOS host below the floor what this did for a Windows one — the same
+executor on Wine's `d3d9.dll`, out of process because that is where Wine's
+lives — and **retires WineD3D-in-guest** with it, in M15's last step,
+after the host path is measured. The two amendments were written a day
+apart without knowledge of each other and are one answer for two
+platforms: below the floor the executor gets a real D3D9 from wherever the
+host keeps one, in process on Windows and under Wine elsewhere. Until that
+last step, everything this ADR says about the guest-side stack is still
+what a below-floor host runs.
 
 **Amended 2026-09-06:** software Vulkan is no longer refused. The first
 version of this decision turned lavapipe down on the user's behalf —
@@ -997,6 +1006,14 @@ with QEMU as one file-backed mapping, the five calls of
 `d3dpt_exec.h` carried over the child's stdio. In-process DXVK stays
 the first choice wherever a Vulkan 1.3 device exists; Wine is the
 second; `D3DPT_STATUS_NO_EXEC` is what a host with neither still gets.
+
+**On a Windows host the second choice is not Wine** but that host's own
+`system32\d3d9.dll`, in process, which ADR-007's second amendment
+(2026-09-21 — written a day before this one and without knowledge of it)
+already implements, tests on both backends and wires to a picker. This
+ADR is the same idea for the two platforms that have no system Direct3D 9
+to borrow, and the order below the floor is therefore: the system's own
+on Windows, Wine's under a child process on Linux and macOS.
 Track `docs/tracks/m15-wine-executor.md` holds the design and the
 steps; this ADR holds the decision and its reasons.
 

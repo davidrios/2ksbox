@@ -111,22 +111,29 @@ backend later.
   the track's last step, once the host path has drawn the reference scene
   and run a game — until then everything below about it stands as the
   running fallback, and nothing of it is deleted early. Not a second
-  executor: one decoder, three D3D9s (DXVK native, DXVK on Windows,
-  Wine). ADR-013's text, as it stood (2026-09-06): `third_party/dxvk` v3.1 sets
+  executor: one decoder, four D3D9s (DXVK native, DXVK on Windows, the
+  system's own on a Windows host below the floor, and Wine's on a Linux
+  or macOS one — the last two decided a day apart and covering different
+  hosts). ADR-013's text, as it stood (2026-09-06): `third_party/dxvk` v3.1 sets
   `DxvkVulkanApiVersion = VK_API_VERSION_1_3` and enforces it both at
   instance creation and per adapter, so pre-Broadwell Intel, Nvidia Kepler
   and older, AMD TeraScale, and macOS before 26 / every Intel Mac are below
   it — all of them otherwise fine 2ksbox hosts, which is why they keep the
   OpenGL pass-through with WineD3D *in the guest*, which needs no Vulkan at
   all. Never propose deleting the `WINED3D\` ISO folder, `SETUP /GAME`'s
-  renames or doc 04/08's fallback rows. **On a Windows host that floor is
+  renames or doc 04/08's fallback rows **on your own account** — ADR-018
+  retires them, in M15's last step and in one commit, after the host path
+  is measured; that is the one route by which they go. **On a Windows host that floor is
   met by the system's own Direct3D 9 instead** (2026-09-21, ADR-007's
   second amendment, user decision: "the wine path is just not very good"):
   the same executor, the same protocol, a second D3D9 library — a card's
   own driver rather than WineD3D in the guest. It is *not* the default
   anywhere and never becomes one: DXVK is what the goldens are taken with,
-  and a Windows host with Vulkan 1.3 never sees this path. Linux and macOS
-  have no second implementation and are unchanged. **Software Vulkan is used, not
+  and a Windows host with Vulkan 1.3 never sees this path. On Linux and
+  macOS there is no system Direct3D 9 to fall back to, which is the gap
+  ADR-018 fills with Wine's own on the host: the two amendments are one
+  answer for two platforms, in process on Windows and out of process
+  under Wine elsewhere. **Software Vulkan is used, not
   refused**: DXVK ranks a CPU device last but never excludes it, so
   lavapipe works — the launcher reports "available, in software (slow)" and
   says WineD3D may beat it. Deciding for the user which of two working

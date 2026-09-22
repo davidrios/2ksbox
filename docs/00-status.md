@@ -210,6 +210,16 @@ mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
   with. So the executor takes a second D3D9 library — and this time it was
   built rather than assumed, which is the difference from 2026-09-08.
 
+  **It is half of an answer ADR-018 finished the next day.** That decision
+  (2026-09-22, track M15) does the same thing for a Linux or macOS host
+  below the floor — the same executor on **Wine's** d3d9, out of process
+  because that is where Wine's lives — and retires WineD3D-in-guest with
+  it. The two were written a day apart without knowledge of each other and
+  say one thing: below the floor the executor gets a real D3D9 from
+  wherever the host keeps one, in process on Windows and under Wine
+  elsewhere. Nothing here is superseded; M15 covers the platforms this
+  cannot.
+
   **What it is.** `D3DPT_D3D9=auto|dxvk|system` in the executor
   (`d3dpt/exec/d3dpt_exec.cpp`'s header is the reference), the adapter's
   `d3d9=` property (`-device d3dpt-vga,d3d9=system`, `-global` spelling
@@ -1601,7 +1611,13 @@ the five calls of `d3dpt_exec.h` over the child's stdio
 retired by decision and removed in the track's last step, after the
 host path has drawn the reference scene and run a game; nothing of it
 is deleted before. First step: the spike in the track doc — one command
-on a host with Wine and a GL.
+on a host with Wine and a GL. **A Windows host below the floor is already
+served** and is not part of this track: it runs the same executor on its
+own `system32\d3d9.dll`, in process, since 2026-09-21 (ADR-007's second
+amendment, decided a day earlier and independently — "Windows' own
+Direct3D 9 is a backend again" under Known issues). M15 is for the two
+platforms with no system Direct3D 9 to borrow, and what it retires — the
+guest-side WineD3D — is the fallback on those platforms alone.
 
 **A QEMU launch on the Mac is a coin toss (2026-09-15, doc 22 §5.0) — fix
 it first.** In about a third of launches `mmap(NULL)` puts TCG's 1 GiB code
