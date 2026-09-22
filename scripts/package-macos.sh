@@ -12,6 +12,9 @@
 #   scripts/package-macos.sh --identity NAME      # default: the one Developer ID Application
 #   scripts/package-macos.sh --keychain-profile P # notarytool credentials (default: 2ksbox-notary)
 #   scripts/package-macos.sh --out DIR            # default build/macos
+#   scripts/package-macos.sh --community          # ADR-019's community build: carries the
+#                                                 # Direct3D executor for Wine (M15) — the App
+#                                                 # Store build never starts Wine
 #
 # Notarization needs credentials stored once, and they are not this
 # script's to invent:
@@ -66,6 +69,7 @@ cd "$ROOT"
 [ "$(uname -s)" = Darwin ] || { echo "package-macos.sh: macOS only" >&2; exit 1; }
 
 BUILD=1 SIGN=1 NOTARIZE=1 DMG=1 OUT="$ROOT/build/macos"
+COMMUNITY=0
 IDENTITY="" PROFILE="2ksbox-notary"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -76,10 +80,14 @@ while [ $# -gt 0 ]; do
     --identity) IDENTITY=$2; shift 2 ;;
     --keychain-profile) PROFILE=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
+    --community) COMMUNITY=1; shift ;;
     -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
     *) echo "package-macos.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+# Absolute, whatever was typed: the checks below `cd /` before they run the
+# staged binaries, and a relative --out broke there (2026-09-22).
+case "$OUT" in /*) ;; *) OUT="$PWD/$OUT" ;; esac
 
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 APP="$OUT/2ksbox.app"
@@ -148,6 +156,21 @@ if [ -f build/d3dpt/libd3dpt_exec.dylib ] && [ -f build/dxvk/src/d3d9/libdxvk_d3
 else
   warn "no Direct3D executor (scripts/build-d3dpt-exec.sh); XP Direct3D will fall back"
   D3D=0
+fi
+# The community build only (ADR-019): the same executor in another
+# process, on a Wine the user has (M15, ADR-018) — the library QEMU opens
+# when DXVK finds no Vulkan device, and the Windows build of the executor
+# with its host program, PE files the Mach-O closure below never touches.
+# The App Store build is macOS 26+ with KosmicKrisp and never starts Wine,
+# so it carries none of this.
+if [ "$COMMUNITY" = 1 ]; then
+  if [ -f build/d3dpt/libd3dpt_exec_remote.dylib ] && [ -f build/d3dpt/wine/d3dpt_exec.dll ] && [ -f build/d3dpt/wine/d3dpt-exec-host.exe ]; then
+    install -m755 build/d3dpt/libd3dpt_exec_remote.dylib "$C/lib/2ksbox/"
+    mkdir -p "$C/lib/2ksbox/wine"
+    install -m644 build/d3dpt/wine/d3dpt_exec.dll build/d3dpt/wine/d3dpt-exec-host.exe "$C/lib/2ksbox/wine/"
+  else
+    warn "no executor for Wine (scripts/build-d3dpt-exec.sh --wine, mingw-w64); a Mac below Vulkan 1.3 gets WineD3D in the guest only"
+  fi
 fi
 
 # Vulkan: stock macOS has none, so the executor's driver travels with us.
@@ -368,7 +391,7 @@ for f in "$LIBDIR"/*.dylib "$C/libexec/2ksbox/qemu-img" "$C/MacOS/2ksbox" "$C/Ma
 done
 # Our own libraries kept an absolute or build-tree id; @rpath is what the
 # things loading them ask for.
-for leaf in libqemu-embed-i386.dylib libglide2x.dylib libd3dpt_exec.dylib libdxvk_d3d9.0.dylib libvulkan.1.dylib libvulkan_kosmickrisp.dylib; do
+for leaf in libqemu-embed-i386.dylib libglide2x.dylib libd3dpt_exec.dylib libd3dpt_exec_remote.dylib libdxvk_d3d9.0.dylib libvulkan.1.dylib libvulkan_kosmickrisp.dylib; do
   [ -f "$LIBDIR/$leaf" ] || continue
   install_name_tool -id "@rpath/$leaf" "$LIBDIR/$leaf" 2>/dev/null || true
   install_name_tool -add_rpath "@loader_path" "$LIBDIR/$leaf" 2>/dev/null || true

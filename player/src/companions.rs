@@ -11,6 +11,13 @@
 //! * `D3DPT_EXEC_LIB`  — the Direct3D executor (doc 14).
 //! * `D3DPT_DXVK_LIB`  — the DXVK `d3d9` the executor runs on, which it
 //!   `dlopen`s in turn and which is not named like the others.
+//! * `D3DPT_EXEC_REMOTE_LIB` — the executor in another process, on Wine
+//!   (ADR-018, M15): what QEMU's loader opens when DXVK finds no Vulkan
+//!   device, and `D3DPT_EXEC_HOST` the Windows program that process runs
+//!   (`lib/2ksbox/wine/d3dpt-exec-host.exe`, the executor's Windows
+//!   build beside it). The Wine itself is not shipped: the library finds
+//!   one by its own rule (`D3DPT_WINE`, `PATH`, a Wine app) and the
+//!   launcher's probe follows the same rule for its verdict.
 //! * `VK_DRIVER_FILES` — the Vulkan driver the executor needs. Stock macOS
 //!   has no Vulkan at all, so a redistributable app carries a loader and
 //!   an ICD of its own; on Linux the system's driver is the right one and
@@ -79,10 +86,12 @@ fn set_if_unset_and_present(var: &str, path: PathBuf) {
 }
 
 /// The names `--companions` prints, in the order this module sets them.
-const VARS: [(&str, &str); 5] = [
+const VARS: [(&str, &str); 7] = [
     ("glide", "QEMU_GLIDE_LIB"),
     ("d3dpt-exec", "D3DPT_EXEC_LIB"),
     ("dxvk", "D3DPT_DXVK_LIB"),
+    ("d3dpt-remote", "D3DPT_EXEC_REMOTE_LIB"),
+    ("wine-host", "D3DPT_EXEC_HOST"),
     ("vulkan-icd", "VK_DRIVER_FILES"),
     ("soundfont", "LIBSYNTH_SF2"),
 ];
@@ -137,6 +146,12 @@ pub fn announce() {
     };
     set_if_unset_and_present("QEMU_GLIDE_LIB", dylib("glide2x"));
     set_if_unset_and_present("D3DPT_EXEC_LIB", dylib("d3dpt_exec"));
+    // The other process's library and program (never on Windows, whose
+    // fallback is its own Direct3D 9 in process).
+    if !cfg!(windows) {
+        set_if_unset_and_present("D3DPT_EXEC_REMOTE_LIB", dylib("d3dpt_exec_remote"));
+        set_if_unset_and_present("D3DPT_EXEC_HOST", in_prefix(&prefix, "lib/2ksbox/wine/d3dpt-exec-host.exe"));
+    }
     // DXVK's own soname, which carries its major version rather than the
     // plain name the other three have. On Windows it is renamed in the
     // package, so that nothing can mistake it for the system's d3d9.dll.

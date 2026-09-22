@@ -569,12 +569,32 @@ host_check_probe() { # `launcher --host-check` (ADR-013), on any host
   case "$o" in *"Required: a 1.3 device"*) ;; *) echo "the report names no bar"; echo "$o"; rc=1;; esac
   # A host with no Vulkan driver at all, which every host can be made
   # into: both loader variables, since which one is read depends on how
-  # old the loader is.
-  o="$(VK_DRIVER_FILES=/nonexistent.json VK_ICD_FILENAMES=/nonexistent.json \
+  # old the loader is — and no Wine either (D3DPT_WINE naming a path that
+  # does not exist means none, by the probe's rule), which is the host
+  # with no executor at all: unavailable, pointed at WineD3D in the guest
+  # and at installing Wine.
+  o="$(VK_DRIVER_FILES=/nonexistent.json VK_ICD_FILENAMES=/nonexistent.json D3DPT_WINE=/nonexistent \
        target/release/launcherx --host-check 2>&1)" \
-    && { echo "exit 0 with no Vulkan driver"; rc=1; }
-  case "$o" in *unavailable*) ;; *) echo "no Vulkan driver, yet not reported unavailable"; echo "$o"; rc=1;; esac
-  case "$o" in *WineD3D*) ;; *) echo "no Vulkan driver, yet not pointed at WineD3D"; echo "$o"; rc=1;; esac
+    && { echo "exit 0 with no Vulkan driver and no Wine"; rc=1; }
+  case "$o" in *unavailable*) ;; *) echo "no Vulkan driver, no Wine, yet not reported unavailable"; echo "$o"; rc=1;; esac
+  case "$o" in *WineD3D*) ;; *) echo "no Vulkan driver, no Wine, yet not pointed at WineD3D"; echo "$o"; rc=1;; esac
+  case "$o" in *"Install Wine"*) ;; *) echo "no Vulkan driver, no Wine, yet not told to install Wine"; echo "$o"; rc=1;; esac
+  case "$o" in *"Wine: none found"*) ;; *) echo "the report does not say no Wine was found"; echo "$o"; rc=1;; esac
+  # The same host with a Wine and the executor's Windows build (ADR-018,
+  # M15): the device is available, through the executor in another
+  # process, and a script asking "can this host do 3D" hears yes. Needs
+  # both halves on this box; without them the case is not testable here.
+  local wine_bin
+  if wine_bin=$(exec_wine_bin) && [ -f build/d3dpt/wine/d3dpt-exec-host.exe ]; then
+    o="$(VK_DRIVER_FILES=/nonexistent.json VK_ICD_FILENAMES=/nonexistent.json D3DPT_WINE="$wine_bin" \
+         target/release/launcherx --host-check 2>&1)" \
+      || { echo "exit non-zero with no Vulkan driver but a Wine at hand"; echo "$o"; rc=1; }
+    case "$o" in *"through Wine on this host"*) ;; *) echo "no Vulkan driver, a Wine at hand, yet not reported as through Wine"; echo "$o"; rc=1;; esac
+    case "$o" in *"Wine: $wine_bin"*) ;; *) echo "the report does not name the Wine it was given"; echo "$o"; rc=1;; esac
+    case "$o" in *"Executor for Wine: "*d3dpt-exec-host.exe*) ;; *) echo "the report does not name the executor's Windows build"; echo "$o"; rc=1;; esac
+  else
+    echo "  (no Wine or no build/d3dpt/wine/ here: the through-Wine answer not exercised)"
+  fi
   # Where lavapipe is installed, the other half is testable for real: a
   # software driver is *usable* (DXVK ranks a CPU device last but never
   # excludes it), so the verdict is available and the warning is that it
@@ -2629,7 +2649,7 @@ host_stage() {
       # No Vulkan driver, as `host_check_probe` makes one: the 3D line
       # then has to tell the user to keep our adapter, on every host.
       run_check capi capi.log env \
-        VK_DRIVER_FILES=/nonexistent.json VK_ICD_FILENAMES=/nonexistent.json \
+        VK_DRIVER_FILES=/nonexistent.json VK_ICD_FILENAMES=/nonexistent.json D3DPT_WINE=/nonexistent \
         LAUNCHER_LIBRARY_DIR="$OUT/capi/library" \
         LAUNCHER_DISC_LIBRARY="$OUT/capi/discs.toml" \
         LAUNCHER_SHADER_PROFILES_DIR="$OUT/capi/profiles" \

@@ -37,6 +37,11 @@
 #   lib/2ksbox/libglide2x.so          the Glide wrapper, when one is built
 #   lib/2ksbox/libd3dpt_exec.so       the Direct3D executor, and the DXVK
 #   lib/2ksbox/libdxvk_d3d9.so.0        it runs on — both or neither
+#   lib/2ksbox/libd3dpt_exec_remote.so  the same executor in another process, on
+#   lib/2ksbox/wine/d3dpt_exec.dll        Wine (ADR-018): the library QEMU opens
+#   lib/2ksbox/wine/d3dpt-exec-host.exe   below the Vulkan floor and the pair it
+#                                         runs there — all three or none; no Wine
+#                                         travels with the package
 #   libexec/2ksbox/qemu-img           ours, patched — kept off PATH
 #   share/2ksbox/pc-bios/             QEMU firmware (the player's -L)
 #   share/2ksbox/guest-tools/         the guest-tools ISO
@@ -124,6 +129,19 @@ if [ -f build/d3dpt/libd3dpt_exec.so ] && [ -f build/dxvk/src/d3d9/libdxvk_d3d9.
   install -m755 build/dxvk/src/d3d9/libdxvk_d3d9.so.0 "$STAGE/lib/2ksbox/libdxvk_d3d9.so.0"
 else
   echo "package-linux.sh: no Direct3D executor (scripts/build.sh dxvk exec); packaging without it — XP Direct3D will fall back to WineD3D"
+fi
+# The same executor for a host below the Vulkan floor (ADR-018, track
+# M15): the library QEMU's loader opens when DXVK finds no device, and the
+# Windows build of the executor with the program that hosts it, which that
+# library runs under a Wine it finds on the host. The pair is mingw's work
+# (scripts/build-d3dpt-exec.sh --wine) and stands alone; the Wine is the
+# user's — the launcher's graphics note says which to install.
+if [ -f build/d3dpt/libd3dpt_exec_remote.so ] && [ -f build/d3dpt/wine/d3dpt_exec.dll ] && [ -f build/d3dpt/wine/d3dpt-exec-host.exe ]; then
+  install -m755 build/d3dpt/libd3dpt_exec_remote.so "$STAGE/lib/2ksbox/"
+  mkdir -p "$STAGE/lib/2ksbox/wine"
+  install -m644 build/d3dpt/wine/d3dpt_exec.dll build/d3dpt/wine/d3dpt-exec-host.exe "$STAGE/lib/2ksbox/wine/"
+else
+  echo "package-linux.sh: no executor for Wine (scripts/build-d3dpt-exec.sh --wine, mingw-w64); a host below Vulkan 1.3 gets WineD3D in the guest only"
 fi
 rm -rf "$STAGE/share/2ksbox/pc-bios"   # a re-run must replace it, not nest inside it
 cp -a qemu/pc-bios "$STAGE/share/2ksbox/pc-bios"
@@ -255,7 +273,8 @@ while read -r what file; do
   # Each of these links the system's own GL / Vulkan stack, like every
   # other such program on the host; an unresolvable one fails deep inside
   # QEMU ("Glide pass-through off", "Direct3D pass-through off") and
-  # nowhere a user would look.
+  # nowhere a user would look. The PE program is Wine's to load, not ldd's.
+  case "$file" in *.exe) continue ;; esac
   missing=$(ldd "$STAGE/lib/2ksbox/$file" | grep 'not found' || true)
   if [ -n "$missing" ]; then
     printf '%s\n' "$missing" | sed 's/^/  /' >&2
@@ -266,6 +285,8 @@ done <<EOF
 glide       libglide2x.so
 d3dpt-exec  libd3dpt_exec.so
 dxvk        libdxvk_d3d9.so.0
+d3dpt-remote libd3dpt_exec_remote.so
+wine-host   wine/d3dpt-exec-host.exe
 EOF
 # The window itself, which is the half `--paths` cannot reach. Qt resolves
 # its platform plugin and every QML module the views import at run time,

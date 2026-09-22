@@ -107,9 +107,12 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // in the guest. Exits non-zero only when the device is
             // unavailable: a software driver is slow, not absent, and a
             // script asking "can this host do 3D" should hear yes.
+            // Since ADR-018 a Linux or macOS host below the bar with a
+            // Wine has the device too, through the executor in another
+            // process, and exits zero as well.
             let probe = crate::host_gpu::probe();
             print!("{}", crate::host_gpu::report_text(&probe));
-            return Some(if probe.gpu.d3d_available() { 0 } else { 1 });
+            return Some(if probe.gpu.pass_through_available() { 0 } else { 1 });
         }
         "--paths" => {
             // Every companion a launcher would reach for, and where it
@@ -778,6 +781,21 @@ fn paths_text() -> String {
         ),
     }
     .ok();
+    // The executor's other process (ADR-018, M15): the Wine it would run
+    // on and the PE pair it would run there — the two halves of a
+    // below-floor host's Direct3D, each missing for a different reason.
+    if !cfg!(windows) {
+        match crate::host_gpu::wine() {
+            Some(w) => writeln!(s, "wine         {} ({})", w.path.display(), w.version),
+            None => writeln!(s, "wine         (none found)"),
+        }
+        .ok();
+        match crate::host_gpu::exec_host() {
+            Some(exe) => writeln!(s, "wine-host    {}", exe.display()),
+            None => writeln!(s, "wine-host    (not built or shipped)"),
+        }
+        .ok();
+    }
     writeln!(s, "machines     {}", library::default_dir().display()).ok();
     writeln!(s, "discs        {}", disc_library::default_path().display()).ok();
     writeln!(s, "profiles     {}", shader_library::default_dir().display()).ok();

@@ -585,7 +585,7 @@ impl Form {
         }
         if let Some(advice) = self.host_gpu.d3d_advice() {
             text.push('\n');
-            text.push_str(advice);
+            text.push_str(&advice);
         }
         Some(AccelNote { text, warning: self.host_gpu.is_slow() })
     }

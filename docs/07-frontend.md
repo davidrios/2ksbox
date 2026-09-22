@@ -132,7 +132,20 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   third answer since 2026-09-21** (ADR-007's second amendment): a host
   below the bar there runs the same executor on the system's own
   Direct3D 9, so the note says "runs on this PC's own Direct3D 9" rather
-  than sending the user to WineD3D, and `--host-check` says the same
+  than sending the user to WineD3D, and `--host-check` says the same.
+  **And on Linux and macOS a third since 2026-09-22** (ADR-018, track
+  M15's step 4): below the bar with a Wine installed — found by the same
+  rule the executor's remote library follows, `D3DPT_WINE`, the Mac apps,
+  `PATH` — and the executor's Windows build shipped
+  (`lib/2ksbox/wine/d3dpt-exec-host.exe`), the note says "runs through
+  Wine on this host (Wine 10.0, OpenGL)" and to expect it slower than a
+  Vulkan GPU, `--host-check` exits zero, and its report names the Wine
+  and the pair. Without a Wine the old sentences stay (WineD3D in the
+  guest, until M15's last step) plus one saying which Wine to install;
+  with a software Vulkan driver *and* a Wine the advice is to try
+  `-global d3dpt-vga.exec=wine` in the machine's extra arguments as well,
+  since which of two working stacks is faster is the box's to answer.
+  `--paths` prints the Wine and the pair as `wine` and `wine-host`
   (`HostGpu::backend`, `d3d_headline`, `d3d_advice` — the platform
   question lives in the model, never in a front end).
 - **Which Direct3D 9 the host runs it on** is the one picker under the

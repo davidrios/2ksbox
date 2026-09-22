@@ -484,10 +484,31 @@ links dynamically where the Fedora cross image's does not):
    mode 13h (`tools/vga-dirty-guest-test.py d3dpt 13h`, PASS) render
    fine. Who programs that mode and what it draws is the question; it
    blinds every headless look at a guest on the fallback.
-4. **The launcher and the packages**: the probe's third verdict, the
-   graphics note, `--host-check`, `companions.rs`, the three packagers
-   staging the PE pair and finding Wine, the `no-exec` paragraphs in
-   doc 15 and CLAUDE.md.
+4. **The launcher and the packages** — **done 2026-09-22**: `host_gpu.rs`
+   finds a Wine by the remote library's rule (`D3DPT_WINE` — a missing
+   path meaning *none*, so a test can take it away — the Mac apps, the
+   spike's tarball in a checkout, `PATH`), asks it `--version`, and
+   looks for the PE pair (`lib/2ksbox/wine/d3dpt-exec-host.exe`,
+   `build/d3dpt/wine/` in a checkout); `D3dBackend::Wine` is the third
+   verdict, taken in the loader's own order (DXVK for any Vulkan device,
+   software included; Wine when there is none), with its headline,
+   advice and `verdict_word`, and `--host-check` exits zero through it
+   (`pass_through_available`). Without a Wine the WineD3D sentences stay
+   until step 6, plus the one that says which Wine to install; software
+   Vulkan beside a Wine advises trying `exec=wine` too. `--paths` and
+   `player --companions` print the Wine and the pair (`wine`,
+   `wine-host`, `d3dpt-remote`); `companions.rs` sets
+   `D3DPT_EXEC_REMOTE_LIB` and `D3DPT_EXEC_HOST` in a package. The Linux
+   package stages the library and the pair (all three or none, the .exe
+   kept from `ldd`), the macOS one only with `--community` (ADR-019; the
+   flag is new and gates just this until the rest of the split lands),
+   the Flatpak's pair waits for step 6 with the Wine question. The remote
+   library's default prefix follows the data directory on macOS
+   (`~/Library/Application Support/2ksbox/wine`). Doc 15's and CLAUDE.md's
+   `no-exec` paragraphs read "no executor at all" now; the `host-check`
+   check holds the no-Vulkan-no-Wine and the no-Vulkan-with-Wine answers
+   (the second when the box has both halves), and the `capi` smoke runs
+   with no Wine so the "keep the adapter" line is the one it sees.
 5. **A real game** on the Wine executor on a below-floor host: the
    only such machine at hand is a Mac before 26 — the Air's own
    macOS 26 can run the A/B (`exec=wine` against KosmicKrisp) and

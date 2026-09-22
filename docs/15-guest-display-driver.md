@@ -212,15 +212,22 @@ What Microsoft's `ddraw.dll` → `dxg.sys` sees behind the display driver
   cursor, gamma, the palette — and offers no Direct3D at all, so a game
   falls back exactly as it does on a pre-Broadwell Intel, a Kepler, an
   Intel Mac: to the runtime's software device, or to WineD3D staged next
-  to it (`SETUP /GAME 4`, doc 04's fallback row). The flag is how one of
+  to it (`SETUP /GAME 4`, doc 04's fallback row) — or, since 2026-09-22
+  (ADR-018, track M15), a Linux or macOS host below the floor that has a
+  Wine runs this very executor in a Wine process on the host and the guest
+  sees `READY` as on any other, so `no-exec=on` now stands for the host
+  with **no executor at all**: below the floor *and* no Wine installed.
+  The flag is how one of
   those hosts is met from a host that has Vulkan; it sets the *loader's*
   refusal, so the doc 14 SysBus device answers `NO_EXEC` too — it is one
   host, not one device. It refuses **before the executor library is
   opened**, so it is not a way to reach a backend: `d3d9=` is never read
   on such a host and neither implementation is tried. Since 2026-09-21
-  the two flags model two different hosts — `no-exec=on` a host with no
-  pass-through at all, which below the floor means a Linux or macOS one,
-  and `d3d9=system` a *Windows* host below the floor, which runs the
+  the three knobs model three hosts — `no-exec=on` a host with no
+  pass-through at all (below the floor with no Wine, on Linux or macOS),
+  `exec=wine` a Linux or macOS host below the floor with a Wine (the
+  executor in another process, M15; on a host that has Vulkan it is the
+  A/B), and `d3d9=system` a *Windows* host below the floor, which runs the
   executor on its own Direct3D 9 (ADR-007's second amendment). The QEMU log says
   `d3dpt: no-exec=on: no Vulkan 1.3 device on this host` and the driver's
   own `d3dptdisp: no Direct3D executor on the host` follows it. **On 9x that

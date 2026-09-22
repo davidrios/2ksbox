@@ -35,6 +35,8 @@
 //! stack.
 
 use ash::vk;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::OnceLock;
 
 /// What the host can offer the D3D device, worst to best.
@@ -103,7 +105,8 @@ impl HostGpu {
 
 /// Which Direct3D 9 the executor will run on here — the question behind
 /// the Vulkan probe, which on Windows has a second answer (ADR-007's
-/// 2026-09-21 amendment).
+/// 2026-09-21 amendment) and on Linux and macOS a third (ADR-018, track
+/// M15: the same executor in another process, on Wine's own d3d9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum D3dBackend {
     /// DXVK: this host has the Vulkan 1.3 device it wants.
@@ -113,10 +116,112 @@ pub enum D3dBackend {
     /// rasteriser, so a frame here is not the frame the goldens were
     /// taken with.
     System,
-    /// Nothing: no Vulkan 1.3, and no system Direct3D 9 either because
-    /// this is not Windows. The guest falls back to WineD3D over the
-    /// OpenGL pass-through, which needs no Vulkan at all (doc 04).
+    /// Wine's own `d3d9.dll` (WineD3D over OpenGL), in a Wine process
+    /// beside QEMU: a Linux or macOS host below the floor that has a
+    /// Wine installed and the executor's Windows build to run on it
+    /// (`d3dpt-exec-host.exe`, `scripts/build-d3dpt-exec.sh --wine`).
+    Wine,
+    /// Nothing: no Vulkan 1.3, no system Direct3D 9 because this is not
+    /// Windows, and no Wine to run the executor on. The guest falls back
+    /// to WineD3D over the OpenGL pass-through, which needs no Vulkan at
+    /// all (doc 04) — until track M15's last step retires that.
     None,
+}
+
+/// A Wine on this host, for the executor in another process.
+#[derive(Debug, Clone)]
+pub struct Wine {
+    pub path: PathBuf,
+    /// What `wine --version` said, without the `wine-` it starts with.
+    pub version: String,
+}
+
+/// The rule `d3dpt/exec/d3dpt_exec_remote.c`'s `find_wine` follows,
+/// kept in step by hand (the library is C inside QEMU, this is the
+/// launcher): `D3DPT_WINE` first — set to a path that does not exist it
+/// means *none*, deliberately, so a test can take Wine away on a host
+/// that has one — then the Mac apps by their fixed paths, the spike's
+/// tarball in a checkout, then `wine64` and `wine` on `PATH`. Never on
+/// Windows, where the host's own Direct3D 9 is the fallback.
+fn find_wine() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return None;
+    }
+    if let Some(env) = std::env::var_os("D3DPT_WINE") {
+        let p = PathBuf::from(env);
+        return p.is_file().then_some(p);
+    }
+    let mut fixed: Vec<PathBuf> = [
+        "/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine",
+        "/Applications/Wine Staging.app/Contents/Resources/wine/bin/wine",
+        "/Applications/Wine Devel.app/Contents/Resources/wine/bin/wine",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .collect();
+    if crate::paths::install_prefix().is_none() {
+        fixed.push(crate::paths::checkout("build/wine/Wine Staging.app/Contents/Resources/wine/bin/wine"));
+        fixed.push(crate::paths::checkout("build/wine/Wine Stable.app/Contents/Resources/wine/bin/wine"));
+    }
+    if let Some(p) = fixed.into_iter().find(|p| p.is_file()) {
+        return Some(p);
+    }
+    let path = std::env::var_os("PATH")?;
+    for name in ["wine64", "wine"] {
+        for dir in std::env::split_paths(&path) {
+            let p = dir.join(name);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// `wine --version` prints `wine-10.0` (or `wine-11.17 (Staging)`) and
+/// exits; it starts no server and makes no prefix. A Wine that cannot
+/// even do that is no Wine.
+fn wine_version(path: &Path) -> Option<String> {
+    let out = Command::new(path).arg("--version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().next()?.trim();
+    Some(line.strip_prefix("wine-").unwrap_or(line).to_string())
+}
+
+/// The Wine the executor's other process would run on, probed once per
+/// process like the GPU.
+pub fn wine() -> Option<&'static Wine> {
+    static ONCE: OnceLock<Option<Wine>> = OnceLock::new();
+    ONCE.get_or_init(|| {
+        let path = find_wine()?;
+        let version = wine_version(&path)?;
+        Some(Wine { path, version })
+    })
+    .as_ref()
+}
+
+/// The host program that process runs, with the executor's Windows
+/// build beside it: `lib/2ksbox/wine/` in a package, `build/d3dpt/wine/`
+/// in a checkout (`scripts/build-d3dpt-exec.sh --wine`, mingw-w64). Its
+/// absence is a build without mingw, not a host without Wine.
+pub fn exec_host() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return None;
+    }
+    let p = crate::paths::resource("lib/2ksbox/wine/d3dpt-exec-host.exe", "build/d3dpt/wine/d3dpt-exec-host.exe");
+    p.is_file().then_some(p)
+}
+
+/// One line saying how to get a Wine here, for the note and the report.
+fn wine_install_hint() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Install Wine (WineHQ's macOS build, or CrossOver) for Direct3D through it on this Mac."
+    } else {
+        "Install Wine (your distribution's wine package) for Direct3D through it on this host."
+    }
 }
 
 impl HostGpu {
@@ -125,43 +230,77 @@ impl HostGpu {
     /// to it there: DXVK does run on lavapipe, but a real card's own
     /// Direct3D 9 driver is faster than a CPU rasteriser every time, and
     /// on Windows a host with software Vulkan still has that driver.
+    ///
+    /// On Linux and macOS the answer below the bar is Wine on the host
+    /// (ADR-018), when there is one and the executor's Windows build to
+    /// run on it — the order QEMU's own loader takes (`d3dpt_exec_load.c`:
+    /// DXVK when it finds any device, the software one included, Wine
+    /// when it finds none), so what this says is what the machine gets.
     pub fn backend(self) -> D3dBackend {
         if self.d3d_available() && !self.is_slow() {
             D3dBackend::Dxvk
         } else if cfg!(windows) {
             D3dBackend::System
         } else if self.d3d_available() {
-            D3dBackend::Dxvk // software Vulkan, and nothing else here
+            D3dBackend::Dxvk // software Vulkan, and DXVK takes it before Wine
+        } else if wine().is_some() && exec_host().is_some() {
+            D3dBackend::Wine
         } else {
             D3dBackend::None
         }
+    }
+
+    /// Whether the guest gets Direct3D at all on this host, on whichever
+    /// back end: what `--host-check`'s exit code answers. Not
+    /// [`d3d_available`](Self::d3d_available), which is the Vulkan
+    /// question alone and stays the one the Windows fallback is decided
+    /// on.
+    pub fn pass_through_available(self) -> bool {
+        self.backend() != D3dBackend::None
     }
 
     /// The headline for the *pass-through*, which is not the Vulkan
     /// sentence on a Windows host below the bar: there the answer is
     /// yes, through another library, and saying "3D goes through
     /// OpenGL" would be false.
-    pub fn d3d_headline(self) -> &'static str {
+    pub fn d3d_headline(self) -> String {
         match self.backend() {
             D3dBackend::System if self.is_slow() => {
-                "Direct3D pass-through runs on this PC's own Direct3D 9 (the only Vulkan here is software)."
+                "Direct3D pass-through runs on this PC's own Direct3D 9 (the only Vulkan here is software).".into()
             }
             D3dBackend::System => {
-                "Direct3D pass-through runs on this PC's own Direct3D 9 (no Vulkan 1.3 here)."
+                "Direct3D pass-through runs on this PC's own Direct3D 9 (no Vulkan 1.3 here).".into()
             }
-            _ => self.headline(),
+            D3dBackend::Wine => {
+                let v = wine().map(|w| w.version.as_str()).unwrap_or("?");
+                format!(
+                    "Direct3D pass-through runs through Wine on this host (Wine {v}, OpenGL; no Vulkan 1.3 here). Expect it to be slower than on a Vulkan GPU."
+                )
+            }
+            _ => self.headline().into(),
         }
     }
 
     /// And the second line, the same way: a Windows host on its own
     /// Direct3D 9 needs no WineD3D in the guest, and should be told what
     /// it is trading instead.
-    pub fn d3d_advice(self) -> Option<&'static str> {
+    pub fn d3d_advice(self) -> Option<String> {
         match self.backend() {
             D3dBackend::System => Some(
-                "Its own driver, not the tested DXVK path: if a game draws wrong, set Direct3D to DXVK on the machine and compare.",
+                "Its own driver, not the tested DXVK path: if a game draws wrong, set Direct3D to DXVK on the machine and compare.".into(),
             ),
-            _ => self.advice(),
+            D3dBackend::Wine => Some(
+                "Wine's Direct3D 9 over OpenGL, not the tested DXVK path: a game that draws wrong here may be right on a Vulkan 1.3 host.".into(),
+            ),
+            // Software Vulkan with a Wine at hand: two working stacks, and
+            // which is faster is the box's to answer (ADR-013's lesson).
+            D3dBackend::Dxvk if self.is_slow() && wine().is_some() && exec_host().is_some() => Some(
+                "Direct3D through Wine on this host may be faster: add -global d3dpt-vga.exec=wine to the machine's extra QEMU arguments. Try both.".into(),
+            ),
+            D3dBackend::None if !cfg!(windows) => {
+                Some(format!("{} {}", self.advice().unwrap_or(""), wine_install_hint()).trim().to_string())
+            }
+            _ => self.advice().map(str::to_string),
         }
     }
 
@@ -169,6 +308,7 @@ impl HostGpu {
     pub fn verdict_word(self) -> &'static str {
         match (self.backend(), self.is_slow()) {
             (D3dBackend::System, _) => "available, on this PC's own Direct3D 9",
+            (D3dBackend::Wine, _) => "available, through Wine on this host (OpenGL)",
             (D3dBackend::Dxvk, true) => "available, in software (slow)",
             (D3dBackend::Dxvk, false) => "available",
             (D3dBackend::None, _) => "unavailable",
@@ -354,6 +494,19 @@ pub fn report_text(p: &Probe) -> String {
     match p.loader {
         Some((a, b, c)) => s.push_str(&format!("Vulkan loader: {a}.{b}.{c}\n")),
         None => s.push_str("Vulkan loader: not present\n"),
+    }
+    if !cfg!(windows) {
+        // The other process's two halves, for a host below the bar
+        // (ADR-018): which Wine, and whether this build brought the
+        // executor's Windows build to run on it.
+        match wine() {
+            Some(w) => s.push_str(&format!("Wine: {} ({})\n", w.path.display(), w.version)),
+            None => s.push_str("Wine: none found (D3DPT_WINE, wine64/wine on PATH, a Wine app in /Applications)\n"),
+        }
+        match exec_host() {
+            Some(exe) => s.push_str(&format!("Executor for Wine: {}\n", exe.display())),
+            None => s.push_str("Executor for Wine: not built (scripts/build-d3dpt-exec.sh --wine needs mingw-w64)\n"),
+        }
     }
     s.push_str("Required: a 1.3 device (DXVK 3.1's own bar, ADR-013)\n");
     if p.devices.is_empty() {

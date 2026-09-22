@@ -27,7 +27,8 @@
  * Environment: D3DPT_WINE (the wine binary; else wine64/wine on PATH and
  * the Mac app locations), D3DPT_EXEC_HOST (the .exe; else wine/ beside
  * this library, or beside it), D3DPT_WINEPREFIX (else
- * $XDG_DATA_HOME/2ksbox/wine), D3DPT_WINE_RENDERER (passed on: gl unless
+ * the data directory's 2ksbox/wine: $XDG_DATA_HOME, ~/.local/share, or
+ * ~/Library/Application Support on macOS), D3DPT_WINE_RENDERER (passed on: gl unless
  * told), D3DPT_REMOTE_DIR (where the shared file goes: else
  * $XDG_RUNTIME_DIR, $TMPDIR, /tmp). WINEDEBUG and WINEDLLOVERRIDES are set
  * for the child unless already in the environment.
@@ -308,9 +309,15 @@ static int ensure_child(void)
     if (pfx && *pfx) {
         snprintf(prefix, sizeof prefix, "%s", pfx);
     } else {
+        /* under the user's data directory, where launcher_core::paths::data_dir() puts everything else */
         const char *xdg = getenv("XDG_DATA_HOME");
+        const char *home = getenv("HOME") ? getenv("HOME") : ".";
         if (xdg && *xdg) snprintf(prefix, sizeof prefix, "%s/2ksbox/wine", xdg);
-        else snprintf(prefix, sizeof prefix, "%s/.local/share/2ksbox/wine", getenv("HOME") ? getenv("HOME") : ".");
+#ifdef __APPLE__
+        else snprintf(prefix, sizeof prefix, "%s/Library/Application Support/2ksbox/wine", home);
+#else
+        else snprintf(prefix, sizeof prefix, "%s/.local/share/2ksbox/wine", home);
+#endif
     }
     /* the prefix's parents: Wine makes the prefix itself, not the path to it */
     for (char *q = prefix + 1; *q; q++) {

@@ -160,9 +160,21 @@ backend later.
   question. **`no-exec=on` refuses before the executor library is opened
   at all**, so it is never a way to reach a backend — `d3d9=` is not read
   on such a host and neither DXVK nor the system Direct3D 9 is tried. The
-  two flags now model two hosts: `no-exec=on` one with no pass-through
-  (below the floor, that is a Linux or macOS host), `d3d9=system` a
-  *Windows* host below the floor.
+  three knobs model three hosts (2026-09-22, M15 step 4): `no-exec=on` one
+  with **no executor at all** — below the floor *and* no Wine, on Linux or
+  macOS; `-global d3dpt-vga.exec=wine` a Linux or macOS host below the
+  floor that has a Wine, which runs the same executor in a Wine process
+  on the host (ADR-018; on a host with Vulkan the A/B, `EXEC=wine
+  tools/xp-driver-test.sh`); `d3d9=system` a *Windows* host below the
+  floor. The launcher's probe answers in the same three ways
+  (`host_gpu::D3dBackend`, `launcher --host-check`: exit 0 through Wine),
+  finding the Wine by the remote library's own rule (`D3DPT_WINE`, the Mac
+  apps, `PATH`) and the executor's Windows build beside the library
+  (`lib/2ksbox/wine/d3dpt-exec-host.exe`; `build/d3dpt/wine/` in a
+  checkout); `player --companions` prints both as `d3dpt-remote` and
+  `wine-host`. **The packages ship no Wine**: the note says which to
+  install, and only the macOS *community* build (`package-macos.sh
+  --community`) carries the pair at all.
 - **The host-side Glide wrapper is our own build of OpenGLide** (doc 12 §5,
   2026-09-06). qemu-3dfx's `hw/3dfx` only *dispatches* -- it `dlopen`s a
   `libglide2x` and looks up 183 entry points -- and upstream ships that

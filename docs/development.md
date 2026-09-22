@@ -291,6 +291,20 @@ The `d3dpt` device is always present; it loads
 (`D3DPT_DXVK_LIB`) on the guest's first use. Guest side: `D3DPT\` on the
 guest-tools ISO.
 
+The executor in another process, on Wine (ADR-018, M15), has its own
+knobs, read by `libd3dpt_exec_remote` inside QEMU: `D3DPT_EXEC_REMOTE_LIB`
+(the library; `build/d3dpt/` or `lib/2ksbox/`), `D3DPT_EXEC_HOST`
+(`d3dpt-exec-host.exe`; else `wine/` beside the library), `D3DPT_WINE`
+(the wine binary; else the Mac apps, then `wine64`/`wine` on `PATH` — a
+path that does not exist means *no Wine*, which is how a test takes it
+away), `D3DPT_WINEPREFIX` (else `<data dir>/2ksbox/wine`: `$XDG_DATA_HOME`,
+`~/.local/share`, `~/Library/Application Support`), `D3DPT_WINE_RENDERER`
+(`gl`; `vulkan` is a data point only), `D3DPT_REMOTE_DIR` (the shared
+file's directory). `D3DPT_EXEC=auto|dxvk|wine|none` picks the back end, as
+does the adapter's `exec=` (`-global d3dpt-vga.exec=wine` from the machine
+form's extra arguments); `launcher --host-check` says which one this host
+would get, `player --companions` where the packaged pair is.
+
 - `D3DPT_DUMP_DIR=dir D3DPT_DUMP_EVERY=60` makes the executor write every
   60th presented frame as `dir/frame-NNNNNN.ppm` (works with bare
   `qemu-system-i386` too).
