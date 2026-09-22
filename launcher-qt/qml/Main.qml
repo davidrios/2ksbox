@@ -9,8 +9,9 @@ ApplicationWindow {
     id: root
 
     // Wide enough for a row's five buttons with room to spare: at 900
-    // "Clone…" sat flush against the edge, one longer label from clipped.
-    width: 980
+    // "Clone…" sat flush against the edge, one longer label from clipped;
+    // at 980 the Fluent style's wider buttons clipped it again (2026-09-22).
+    width: 1060
     height: 560
     visible: true
     title: qsTr("2ksbox")
@@ -147,158 +148,135 @@ ApplicationWindow {
             readonly property int shader: 170
         }
 
-        // A list's box, drawn by hand rather than a `Frame` with its
-        // `background` replaced: the native styles (macOS, Windows) refuse
-        // that customization and say so on every start, and Basic's Frame
-        // paints only a border, which let the area below the last row show
-        // whatever was behind the window — black in a grab. The content is
-        // inset a pixel so the border stays visible.
-        Rectangle {
+        // A stock list and nothing drawn by hand (user decision, 2026-09-22:
+        // no list box, no zebra rows, no colours of ours -- the style's own
+        // look, whichever style it is): a `ListView` of `ItemDelegate`s under
+        // a header row of labels, whose margins are a delegate's own padding,
+        // read off an invisible one, so the columns line up under every style.
+        ItemDelegate { id: rowMetrics; visible: false }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: rowMetrics.leftPadding
+            Layout.rightMargin: rowMetrics.rightPadding
+            spacing: 10
+
+            Label {
+                text: qsTr("Name"); font.bold: true
+                Layout.minimumWidth: cols.name; Layout.preferredWidth: cols.name; Layout.maximumWidth: cols.name
+            }
+            Label {
+                text: qsTr("Family"); font.bold: true
+                Layout.minimumWidth: cols.family; Layout.preferredWidth: cols.family; Layout.maximumWidth: cols.family
+            }
+            Label {
+                text: qsTr("Shader"); font.bold: true
+                Layout.minimumWidth: cols.shader; Layout.preferredWidth: cols.shader; Layout.maximumWidth: cols.shader
+            }
+            Item { Layout.fillWidth: true }
+        }
+
+        MenuSeparator { Layout.fillWidth: true }
+
+        ListView {
+            id: list
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: palette.base
-            border.color: palette.mid
+            clip: true
+            model: machines
+            ScrollBar.vertical: ScrollBar {}
 
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 1
-                spacing: 0
+            delegate: ItemDelegate {
+                id: machineRow
 
-                // Header row
-                Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: 32
-                    color: palette.alternateBase
+                // Declared `required`, so the roles arrive as
+                // real properties of this item rather than out of
+                // a context object nothing can see.
+                required property int index
+                required property string name
+                required property string family
+                required property string shader
+                required property bool running
+
+                width: list.width
+
+                contentItem: RowLayout {
+                    spacing: 10
+
+                    Label {
+                        text: machineRow.name
+                        elide: Text.ElideRight
+                        Layout.minimumWidth: cols.name; Layout.preferredWidth: cols.name; Layout.maximumWidth: cols.name
+                    }
+                    Label {
+                        text: machineRow.family
+                        elide: Text.ElideRight
+                        Layout.minimumWidth: cols.family; Layout.preferredWidth: cols.family; Layout.maximumWidth: cols.family
+                    }
+                    Label {
+                        text: machineRow.shader
+                        elide: Text.ElideRight
+                        Layout.minimumWidth: cols.shader; Layout.preferredWidth: cols.shader; Layout.maximumWidth: cols.shader
+                    }
 
                     RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 10
-                        anchors.rightMargin: 10
-                        spacing: 10
+                        spacing: 6
+                        Layout.fillWidth: true
 
                         Label {
-                            text: qsTr("Name"); font.bold: true
-                            Layout.minimumWidth: cols.name; Layout.preferredWidth: cols.name; Layout.maximumWidth: cols.name
+                            text: qsTr("Running")
+                            visible: machineRow.running
+                            Layout.preferredWidth: 60
                         }
-                        Label {
-                            text: qsTr("Family"); font.bold: true
-                            Layout.minimumWidth: cols.family; Layout.preferredWidth: cols.family; Layout.maximumWidth: cols.family
+                        Button {
+                            text: qsTr("Play")
+                            visible: !machineRow.running
+                            Layout.preferredWidth: 60
+                            onClicked: machines.play(machineRow.index)
                         }
-                        Label {
-                            text: qsTr("Shader"); font.bold: true
-                            Layout.minimumWidth: cols.shader; Layout.preferredWidth: cols.shader; Layout.maximumWidth: cols.shader
+                        Button {
+                            text: qsTr("Edit…")
+                            onClicked: {
+                                profiles.refresh()
+                                wizard.openEdit(machines.bundlePath(machineRow.index))
+                            }
+                        }
+                        Button {
+                            text: qsTr("Discs…")
+                            onClicked: {
+                                discs.openFor(machines.bundlePath(machineRow.index),
+                                              machines.discLibraryPath(),
+                                              machines.isRunning(machineRow.index))
+                                discShelfWindow.show()
+                            }
+                        }
+                        Button {
+                            text: qsTr("Snapshots…")
+                            onClicked: {
+                                snapshots.openFor(machines.bundlePath(machineRow.index),
+                                                  machines.isRunning(machineRow.index))
+                                snapshotsWindow.show()
+                            }
+                        }
+                        Button {
+                            text: qsTr("Clone…")
+                            // One copy at a time: the window
+                            // shows the one that is running.
+                            enabled: !cloner.busy
+                            onClicked: cloner.openFor(machines.bundlePath(machineRow.index),
+                                                      machines.isRunning(machineRow.index))
                         }
                         Item { Layout.fillWidth: true }
                     }
                 }
+            }
 
-                ListView {
-                    id: list
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    model: machines
-                    ScrollBar.vertical: ScrollBar {}
-
-                    delegate: Rectangle {
-                        id: machineRow
-
-                        // Declared `required`, so the roles arrive as
-                        // real properties of this item rather than out of
-                        // a context object nothing can see.
-                        required property int index
-                        required property string name
-                        required property string family
-                        required property string shader
-                        required property bool running
-
-                        width: list.width
-                        implicitHeight: 40
-                        color: index % 2 ? palette.base : palette.alternateBase
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 10
-                            spacing: 10
-
-                            Label {
-                                text: machineRow.name
-                                elide: Text.ElideRight
-                                Layout.minimumWidth: cols.name; Layout.preferredWidth: cols.name; Layout.maximumWidth: cols.name
-                            }
-                            Label {
-                                text: machineRow.family
-                                elide: Text.ElideRight
-                                Layout.minimumWidth: cols.family; Layout.preferredWidth: cols.family; Layout.maximumWidth: cols.family
-                            }
-                            Label {
-                                text: machineRow.shader
-                                elide: Text.ElideRight
-                                Layout.minimumWidth: cols.shader; Layout.preferredWidth: cols.shader; Layout.maximumWidth: cols.shader
-                            }
-
-                            RowLayout {
-                                spacing: 6
-                                Layout.fillWidth: true
-
-                                Label {
-                                    text: qsTr("Running")
-                                    visible: machineRow.running
-                                    color: palette.highlight
-                                    Layout.preferredWidth: 60
-                                }
-                                Button {
-                                    text: qsTr("Play")
-                                    visible: !machineRow.running
-                                    Layout.preferredWidth: 60
-                                    onClicked: machines.play(machineRow.index)
-                                }
-                                Button {
-                                    text: qsTr("Edit…")
-                                    onClicked: {
-                                        profiles.refresh()
-                                        wizard.openEdit(machines.bundlePath(machineRow.index))
-                                    }
-                                }
-                                Button {
-                                    text: qsTr("Discs…")
-                                    onClicked: {
-                                        discs.openFor(machines.bundlePath(machineRow.index),
-                                                      machines.discLibraryPath(),
-                                                      machines.isRunning(machineRow.index))
-                                        discShelfWindow.show()
-                                    }
-                                }
-                                Button {
-                                    text: qsTr("Snapshots…")
-                                    onClicked: {
-                                        snapshots.openFor(machines.bundlePath(machineRow.index),
-                                                          machines.isRunning(machineRow.index))
-                                        snapshotsWindow.show()
-                                    }
-                                }
-                                Button {
-                                    text: qsTr("Clone…")
-                                    // One copy at a time: the window
-                                    // shows the one that is running.
-                                    enabled: !cloner.busy
-                                    onClicked: cloner.openFor(machines.bundlePath(machineRow.index),
-                                                              machines.isRunning(machineRow.index))
-                                }
-                                Item { Layout.fillWidth: true }
-                            }
-                        }
-                    }
-
-                    Label {
-                        anchors.centerIn: parent
-                        visible: machines.count === 0
-                        horizontalAlignment: Text.AlignHCenter
-                        opacity: 0.7
-                        text: qsTr("No machines yet.\n%1").arg(machines.libraryDir)
-                    }
-                }
+            Label {
+                anchors.centerIn: parent
+                visible: machines.count === 0
+                horizontalAlignment: Text.AlignHCenter
+                opacity: 0.7
+                text: qsTr("No machines yet.\n%1").arg(machines.libraryDir)
             }
         }
 

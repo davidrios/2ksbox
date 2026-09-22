@@ -77,61 +77,51 @@ Window {
             anchors.margins: 14
             spacing: 8
 
-            // See `Main.qml`: a list's box, not a restyled `Frame`.
-            Rectangle {
+            // A stock list and nothing drawn by hand (user decision, 2026-09-22:
+            // no list box, no zebra rows, no colours of ours -- the style's own
+            // look, whichever style it is): a `ListView` of `ItemDelegate`s.
+            ListView {
+                id: profileList
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: palette.base
-                border.color: palette.mid
+                clip: true
+                model: root.profiles
+                ScrollBar.vertical: ScrollBar {}
 
-                ListView {
-                    id: profileList
-                    anchors.fill: parent
-                    anchors.margins: 1
-                    clip: true
-                    model: root.profiles
-                    ScrollBar.vertical: ScrollBar {}
+                delegate: ItemDelegate {
+                    id: profileRow
+                    required property int index
+                    required property string name
+                    required property string preset
 
-                    delegate: Rectangle {
-                        id: profileRow
-                        required property int index
-                        required property string name
-                        required property string preset
+                    width: profileList.width
 
-                        width: profileList.width
-                        implicitHeight: 40
-                        color: index % 2 ? palette.base : palette.alternateBase
+                    contentItem: RowLayout {
+                        spacing: 10
 
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 10
-                            spacing: 10
-
-                            Label { text: profileRow.name; Layout.preferredWidth: 170; elide: Text.ElideRight }
-                            Label {
-                                text: profileRow.preset
-                                Layout.fillWidth: true
-                                elide: Text.ElideLeft
-                                opacity: 0.7
-                            }
-                            Button {
-                                text: qsTr("Edit…")
-                                onClicked: root.editor.edit(root.profiles.pathAt(profileRow.index))
-                            }
-                            Button {
-                                text: qsTr("Delete")
-                                onClicked: { root.profiles.deleteAt(profileRow.index); root.changed() }
-                            }
+                        Label { text: profileRow.name; Layout.preferredWidth: 170; elide: Text.ElideRight }
+                        Label {
+                            text: profileRow.preset
+                            Layout.fillWidth: true
+                            elide: Text.ElideLeft
+                            opacity: 0.7
+                        }
+                        Button {
+                            text: qsTr("Edit…")
+                            onClicked: root.editor.edit(root.profiles.pathAt(profileRow.index))
+                        }
+                        Button {
+                            text: qsTr("Delete")
+                            onClicked: { root.profiles.deleteAt(profileRow.index); root.changed() }
                         }
                     }
+                }
 
-                    Label {
-                        anchors.centerIn: parent
-                        visible: root.profiles.count === 0
-                        opacity: 0.7
-                        text: qsTr("No shader profiles yet.")
-                    }
+                Label {
+                    anchors.centerIn: parent
+                    visible: root.profiles.count === 0
+                    opacity: 0.7
+                    text: qsTr("No shader profiles yet.")
                 }
             }
 

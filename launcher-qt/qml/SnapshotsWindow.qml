@@ -48,7 +48,7 @@ Window {
     function layoutReport() {
         return "window " + width + "x" + height
             + ", column h=" + bodyLayout.height
-            + ", list y=" + listBox.y + " h=" + listBox.height
+            + ", list y=" + list.y + " h=" + list.height
             + ", new-row y=" + newRow.y + " h=" + newRow.height
     }
 
@@ -80,101 +80,85 @@ Window {
                 text: qsTr("The machine is running, so a snapshot also saves its RAM and CPU state.")
             }
 
-            // See `Main.qml`: a list's box, not a restyled `Frame`.
-            Rectangle {
-                id: listBox
+            // A stock list and nothing drawn by hand (user decision, 2026-09-22:
+            // no list box, no zebra rows, no colours of ours -- the style's own
+            // look, whichever style it is): a `ListView` of `ItemDelegate`s under
+            // a header row of labels, whose margins are a delegate's own padding,
+            // read off an invisible one, so the columns line up under every style.
+            ItemDelegate { id: rowMetrics; visible: false }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: rowMetrics.leftPadding
+                Layout.rightMargin: rowMetrics.rightPadding
+                spacing: 10
+                Label { text: qsTr("Name"); font.bold: true; Layout.preferredWidth: 180 }
+                Label { text: qsTr("Taken"); font.bold: true; Layout.preferredWidth: 160 }
+                Label { text: qsTr("VM state"); font.bold: true; Layout.preferredWidth: 90 }
+                Item { Layout.fillWidth: true }
+            }
+
+            MenuSeparator { Layout.fillWidth: true }
+
+            ListView {
+                id: list
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: palette.base
-                border.color: palette.mid
+                clip: true
+                model: root.snapshots
+                ScrollBar.vertical: ScrollBar {}
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 1
-                    spacing: 0
+                delegate: ItemDelegate {
+                    id: snapRow
 
-                    Rectangle {
-                        Layout.fillWidth: true
-                        implicitHeight: 30
-                        color: palette.alternateBase
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 10
-                            spacing: 10
-                            Label { text: qsTr("Name"); font.bold: true; Layout.preferredWidth: 180 }
-                            Label { text: qsTr("Taken"); font.bold: true; Layout.preferredWidth: 160 }
-                            Label { text: qsTr("VM state"); font.bold: true; Layout.preferredWidth: 90 }
-                            Item { Layout.fillWidth: true }
-                        }
-                    }
+                    required property int index
+                    required property string name
+                    required property string taken
+                    required property string vmState
 
-                    ListView {
-                        id: list
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
-                        model: root.snapshots
-                        ScrollBar.vertical: ScrollBar {}
+                    width: list.width
 
-                        delegate: Rectangle {
-                            id: snapRow
+                    contentItem: RowLayout {
+                        spacing: 10
 
-                            required property int index
-                            required property string name
-                            required property string taken
-                            required property string vmState
+                        Label { text: snapRow.name; elide: Text.ElideRight; Layout.preferredWidth: 180 }
+                        Label { text: snapRow.taken; Layout.preferredWidth: 160; opacity: 0.75 }
+                        Label { text: snapRow.vmState; Layout.preferredWidth: 90; opacity: 0.75 }
+                        Item { Layout.fillWidth: true }
 
-                            width: list.width
-                            implicitHeight: 40
-                            color: index % 2 ? palette.base : palette.alternateBase
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 10
-                                anchors.rightMargin: 10
-                                spacing: 10
-
-                                Label { text: snapRow.name; elide: Text.ElideRight; Layout.preferredWidth: 180 }
-                                Label { text: snapRow.taken; Layout.preferredWidth: 160; opacity: 0.75 }
-                                Label { text: snapRow.vmState; Layout.preferredWidth: 90; opacity: 0.75 }
-                                Item { Layout.fillWidth: true }
-
-                                Button {
-                                    // A job in flight owns the guest's state;
-                                    // a second one on top of it is refused by
-                                    // QEMU anyway.
-                                    enabled: !root.snapshots.busy
-                                    text: root.confirmRestore === snapRow.name
-                                        ? qsTr("Discard current state?")
-                                        : qsTr("Restore")
-                                    onClicked: {
-                                        if (root.confirmRestore === snapRow.name) {
-                                            root.confirmRestore = ""
-                                            root.snapshots.revert(snapRow.name)
-                                        } else {
-                                            root.confirmRestore = snapRow.name
-                                        }
-                                    }
-                                }
-                                Button {
-                                    text: qsTr("Delete")
-                                    enabled: !root.snapshots.busy
-                                    onClicked: {
-                                        root.confirmRestore = ""
-                                        root.snapshots.dropSnapshot(snapRow.name)
-                                    }
+                        Button {
+                            // A job in flight owns the guest's state;
+                            // a second one on top of it is refused by
+                            // QEMU anyway.
+                            enabled: !root.snapshots.busy
+                            text: root.confirmRestore === snapRow.name
+                                ? qsTr("Discard current state?")
+                                : qsTr("Restore")
+                            onClicked: {
+                                if (root.confirmRestore === snapRow.name) {
+                                    root.confirmRestore = ""
+                                    root.snapshots.revert(snapRow.name)
+                                } else {
+                                    root.confirmRestore = snapRow.name
                                 }
                             }
                         }
-
-                        Label {
-                            anchors.centerIn: parent
-                            visible: root.snapshots.count === 0
-                            opacity: 0.7
-                            text: qsTr("No snapshots yet.")
+                        Button {
+                            text: qsTr("Delete")
+                            enabled: !root.snapshots.busy
+                            onClicked: {
+                                root.confirmRestore = ""
+                                root.snapshots.dropSnapshot(snapRow.name)
+                            }
                         }
                     }
+                }
+
+                Label {
+                    anchors.centerIn: parent
+                    visible: root.snapshots.count === 0
+                    opacity: 0.7
+                    text: qsTr("No snapshots yet.")
                 }
             }
 

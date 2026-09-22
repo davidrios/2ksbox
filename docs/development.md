@@ -522,12 +522,14 @@ which is what to send when the launcher itself did not come up. On
 Windows, where the launcher is a windowed program with no stdout at all,
 `2ksbox-debug.bat` in the package does that for you.
 
-The Qt front end draws in **light colours whatever the desktop is set
-to** — its Quick Controls style paints controls light and takes only the
-surfaces around them from the palette, so a dark system palette gets you
-half a theme. `LAUNCHER_QT_SCHEME=system` hands the desktop's own palette
-back and `=dark` forces the other one; `launcher.log` records the style
-and the colours a run actually got.
+On Windows the Qt front end draws in **Qt's Windows 11 style
+(FluentWinUI3) and follows the desktop's light or dark mode** (2026-09-22);
+`QT_QUICK_CONTROLS_STYLE=Windows` is the look it had before. On Linux and
+macOS it draws in **light colours whatever the desktop is set to** — those
+Quick Controls styles paint controls light and take only the surfaces
+around them from the palette, so a dark system palette gets you half a
+theme. `LAUNCHER_QT_SCHEME=system|light|dark` overrides either default;
+`launcher.log` records the style and the colours a run actually got.
 
 ## Licensing, for packagers
 

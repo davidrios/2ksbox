@@ -364,6 +364,45 @@ undefined when the linker walks past it, so `build.rs` names
 `-lQt6QuickControls2` again as a `rustc-link-arg`. On ELF the same code
 links either way, which is why it built here and not there.
 
+### Windows 11's own look, and the desktop's dark mode back (2026-09-22)
+
+What the "Windows" style above draws is Vista-era common controls, and
+on the user's Windows 11 PC the launcher looked its age: flat grey
+buttons with one-pixel borders, black-bordered fields, and — a real
+defect, not taste — the wizard's fields overflowing the 660-wide window
+under that style, every Browse button cut off with the scrollbar drawn
+over the text fields. Grabbed on the PC through `scripts/win-run.sh
+launcher` with `LAUNCHER_QT_SHOT`, beside the same windows with
+`QT_QUICK_CONTROLS_STYLE=FluentWinUI3`: Qt's own Windows 11 style, in Qt
+since 6.8 and in both the cross image's 6.10 and MSYS2's 6.11, pure QML
+(so the offscreen grabs the packagers take still work, and nothing new
+is staged — it lives in the `QtQuick/Controls` tree already copied),
+and a whole theme in each mode: its `Config.qml` picks the light or dark
+control set from `Application.styleHints.colorScheme`, the very thing
+`launcher_qt_set_scheme` sets. So the half-theme reason for the
+light-only rule is gone on Windows, and both halves changed (user
+decision): `appearance.cpp` names FluentWinUI3 on Windows unless
+`QT_QUICK_CONTROLS_STYLE` does, and `main.rs` defaults the scheme to
+the desktop's there (`LAUNCHER_QT_SCHEME=light` is the old behaviour;
+Linux and macOS stay light, their styles being the ones with the
+problem). The log line is now
+
+    [start] style FluentWinUI3, scheme dark, window #202020, base #1e1e1e
+
+or `scheme light` on a light desktop. Two things the switch showed.
+Under the system's dark palette the machine grid's hand-drawn zebra rows
+came out navy: Windows' dark palette derives `AlternateBase` from the
+accent colour. The answer was not a better colour but none at all (user
+decision, the same day: "everything uses just stock styles") — every
+list is now a stock `ListView` of `ItemDelegate`s with no box, no zebra
+and no palette role read anywhere in the QML, the header rows take
+their margins from an invisible delegate's own padding so the columns
+line up under any style, and `Disclosure.qml` is a stock `ToolButton`
+whose `expanded` is its own flag rather than `checked` (a checked tool
+button is drawn filled, which reads as a toggle). And Fluent's buttons
+are wider, so the grid's row of five clipped "Clone…" at 980; the
+window is 1060 wide now.
+
 ### OpenGL in the embed library
 
 Written the same day: `embed/mglcntx_embed.c` grew a Windows branch using

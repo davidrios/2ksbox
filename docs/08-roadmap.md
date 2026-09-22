@@ -210,7 +210,8 @@ Done, all through the in-process embed path:
 - Portable zip packaging (`scripts/package-windows.sh`).
 - Windows-specific fixes: C-runtime descriptor translation (`qemu_embed_socket_to_fd`, embed API v7),
   debug logging (`launcher.log`, panic hook, `2ksbox-debug.bat`), cxx-qt emutls proxy fix (`once_proxy.cpp`),
-  light-mode default appearance, WGL backend for OpenGL.
+  the Windows 11 style (FluentWinUI3) following the desktop's light/dark mode
+  (2026-09-22; light-only on the "Windows" style before), WGL backend for OpenGL.
 
 ## M12 — Music  (Active; doc 20, `docs/tracks/m12-music.md`)
 

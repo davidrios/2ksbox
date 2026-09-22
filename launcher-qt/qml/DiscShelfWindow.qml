@@ -118,99 +118,89 @@ Window {
 
             MenuSeparator { Layout.fillWidth: true }
 
-            // See `Main.qml`: a list's box, not a restyled `Frame`.
-            Rectangle {
+            // A stock list and nothing drawn by hand (user decision, 2026-09-22:
+            // no list box, no zebra rows, no colours of ours -- the style's own
+            // look, whichever style it is): a `ListView` of `ItemDelegate`s.
+            ListView {
+                id: shelf
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: palette.base
-                border.color: palette.mid
+                clip: true
+                model: root.discs
+                ScrollBar.vertical: ScrollBar {}
 
-                ListView {
-                    id: shelf
-                    anchors.fill: parent
-                    anchors.margins: 1
-                    clip: true
-                    model: root.discs
-                    ScrollBar.vertical: ScrollBar {}
+                delegate: ItemDelegate {
+                    id: discRow
 
-                    delegate: Rectangle {
-                        id: discRow
+                    required property int index
+                    required property string label
+                    required property string name
+                    required property string dir
+                    required property string path
+                    required property bool isBoot
 
-                        required property int index
-                        required property string label
-                        required property string name
-                        required property string dir
-                        required property string path
-                        required property bool isBoot
+                    width: shelf.width
 
-                        width: shelf.width
-                        implicitHeight: 44
-                        color: index % 2 ? palette.base : palette.alternateBase
+                    contentItem: RowLayout {
+                        spacing: 8
 
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 8
+                        // Buttons come *before* the path: a disc image's
+                        // path is routinely long enough to widen a column
+                        // past the screen, and anything after it would go
+                        // with it.
+                        Button {
+                            text: qsTr("Insert")
+                            visible: root.discs.running
+                            onClicked: root.discs.insertLive(discRow.index)
+                        }
+                        Button {
+                            text: qsTr("Boot")
+                            visible: root.discs.forMachine
+                            checkable: true
+                            checked: discRow.isBoot
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Put this disc in the drive when the machine starts")
+                            onClicked: { root.discs.setBoot(discRow.index); root.changed() }
+                        }
+                        Button {
+                            text: qsTr("Remove")
+                            onClicked: root.discs.remove(discRow.index)
+                        }
 
-                            // Buttons come *before* the path: a disc image's
-                            // path is routinely long enough to widen a column
-                            // past the screen, and anything after it would go
-                            // with it.
-                            Button {
-                                text: qsTr("Insert")
-                                visible: root.discs.running
-                                onClicked: root.discs.insertLive(discRow.index)
-                            }
-                            Button {
-                                text: qsTr("Boot")
-                                visible: root.discs.forMachine
-                                checkable: true
-                                checked: discRow.isBoot
-                                ToolTip.visible: hovered
-                                ToolTip.text: qsTr("Put this disc in the drive when the machine starts")
-                                onClicked: { root.discs.setBoot(discRow.index); root.changed() }
-                            }
-                            Button {
-                                text: qsTr("Remove")
-                                onClicked: root.discs.remove(discRow.index)
-                            }
-
-                            // Editable label, committed when editing
-                            // finishes rather than on every keystroke.
-                            TextField {
-                                Layout.preferredWidth: 190
-                                text: discRow.label
-                                selectByMouse: true
-                                onEditingFinished: root.discs.setLabel(discRow.index, text)
-                            }
-                            Label {
-                                Layout.preferredWidth: 170
-                                text: discRow.name
-                                elide: Text.ElideRight
-                            }
-                            Label {
-                                // The directory alone, elided: truncating a
-                                // full path leaves every row reading
-                                // `/home/…/…/…` identically. Whole path on
-                                // hover.
-                                Layout.fillWidth: true
-                                text: discRow.dir
-                                elide: Text.ElideLeft
-                                opacity: 0.6
-                                ToolTip.visible: discHover.hovered
-                                ToolTip.text: discRow.path
-                                HoverHandler { id: discHover }
-                            }
+                        // Editable label, committed when editing
+                        // finishes rather than on every keystroke.
+                        TextField {
+                            Layout.preferredWidth: 190
+                            text: discRow.label
+                            selectByMouse: true
+                            onEditingFinished: root.discs.setLabel(discRow.index, text)
+                        }
+                        Label {
+                            Layout.preferredWidth: 170
+                            text: discRow.name
+                            elide: Text.ElideRight
+                        }
+                        Label {
+                            // The directory alone, elided: truncating a
+                            // full path leaves every row reading
+                            // `/home/…/…/…` identically. Whole path on
+                            // hover.
+                            Layout.fillWidth: true
+                            text: discRow.dir
+                            elide: Text.ElideLeft
+                            opacity: 0.6
+                            ToolTip.visible: discHover.hovered
+                            ToolTip.text: discRow.path
+                            HoverHandler { id: discHover }
                         }
                     }
+                }
 
-                    Label {
-                        anchors.centerIn: parent
-                        visible: root.discs.count === 0
-                        opacity: 0.7
-                        text: qsTr("No discs yet.")
-                    }
+                Label {
+                    anchors.centerIn: parent
+                    visible: root.discs.count === 0
+                    opacity: 0.7
+                    text: qsTr("No discs yet.")
                 }
             }
 

@@ -8,18 +8,29 @@
 // fields and combo boxes from its own colours and only the surfaces
 // around them come from the palette. Half a theme is worse than either.
 //
-// So the launcher is a **light-mode application**, on every platform and
-// whatever the desktop is set to: the colour scheme is requested and the
-// palette is handed over to match the controls, rather than accepted
-// from a system that may be dark. It is not the fashionable answer; it
-// is the one that is the same everywhere, and a launcher is a window
-// someone opens to press Play.
+// So the launcher was made a **light-mode application**, on every
+// platform and whatever the desktop is set to: the colour scheme is
+// requested and the palette is handed over to match the controls, rather
+// than accepted from a system that may be dark. That is still the rule
+// on Linux and macOS.
 //
-// `LAUNCHER_QT_SCHEME=system` gives the desktop's own palette back for
-// anyone who wants to see it (and `=dark` forces the other one), which
-// is also how the screenshot above was taken. The start-up log says
-// which style and which colours a run actually got, because a report of
-// "it came up the wrong colour" is otherwise unanswerable.
+// **Windows follows the desktop since 2026-09-22** (user decision), on
+// Qt's own Windows 11 style. The style Qt resolves there by itself is
+// "Windows", which draws Vista-era common controls, and it is the one
+// with the half-theme problem. FluentWinUI3 (Qt 6.8+, and both the cross
+// image's 6.10 and MSYS2's 6.11 carry it) is a whole theme either way:
+// its `Config.qml` picks its light or dark control set from
+// `Application.styleHints.colorScheme`, the same thing `setColorScheme`
+// below sets, so the controls and the palette cannot disagree. The
+// hand-drawn lists in the QML take their zebra shade from `palette.base`
+// rather than `alternateBase` for the same reason: Windows' dark palette
+// derives that role from the accent colour.
+//
+// `LAUNCHER_QT_SCHEME=light|dark|system` overrides the default on any
+// platform, and `QT_QUICK_CONTROLS_STYLE` still names any style — which
+// is how the old look is compared against the new one. The start-up log
+// says which style and which colours a run actually got, because a
+// report of "it came up the wrong colour" is otherwise unanswerable.
 #include <QtCore/QByteArray>
 #include <QtCore/QString>
 #include <QtGui/QColor>
@@ -28,14 +39,21 @@
 #include <QtGui/QStyleHints>
 #include <QtQuickControls2/QQuickStyle>
 
-// A fallback, and only that. Asking for the name is what makes Qt
+// Windows gets FluentWinUI3 unless the environment names a style, and
+// the rest a fallback only. Asking for the name is what makes Qt
 // resolve one -- `QT_QUICK_CONTROLS_STYLE`, then a `qtquickcontrols2.conf`,
 // then the platform's own -- so a platform that has a native style has
-// already named it by the time this runs and keeps it: Windows answers
-// "Windows" here and macOS "macOS", which is what a user of either
-// should be looking at. What is left is the platforms whose default is
-// "Basic", a style with no system colours at all, and those get Fusion.
+// already named it by the time this runs: macOS answers "macOS", which
+// is what its user should be looking at, and Windows "Windows", which
+// is not (the header above). What is left is the platforms whose default
+// is "Basic", a style with no system colours at all, and those get Fusion.
 extern "C" void launcher_qt_choose_style() {
+#ifdef Q_OS_WIN
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) {
+        QQuickStyle::setStyle(QStringLiteral("FluentWinUI3"));
+        return;
+    }
+#endif
     if (QQuickStyle::name().isEmpty())
         QQuickStyle::setStyle(QStringLiteral("Fusion"));
 }

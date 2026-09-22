@@ -126,15 +126,19 @@ fn main() {
     // SAFETY: a pointer and a length into a `'static` slice, read and
     // copied into a QImage before the call returns.
     unsafe { twoksbox_set_window_icon(png.as_ptr(), png.len() as i32) };
-    // Light, whatever the desktop is set to: the Quick Controls style
-    // paints its controls light and only the surfaces around them come
-    // from the palette, so a dark system palette gets you half a theme
-    // (`src/appearance.cpp`). `LAUNCHER_QT_SCHEME=system` hands the
-    // desktop's own palette back, `=dark` forces the other one.
+    // Windows follows the desktop's light or dark mode, on Qt's Windows
+    // 11 style, which has a whole theme for each. Everywhere else it is
+    // light whatever the desktop is set to: those styles paint their
+    // controls light and take only the surfaces around them from the
+    // palette, so a dark system palette gets you half a theme
+    // (`src/appearance.cpp`). `LAUNCHER_QT_SCHEME=system|light|dark`
+    // overrides either default.
     unsafe {
         launcher_qt_set_scheme(match std::env::var("LAUNCHER_QT_SCHEME").as_deref() {
             Ok("system") => 0,
+            Ok("light") => 1,
             Ok("dark") => 2,
+            _ if cfg!(windows) => 0,
             _ => 1,
         })
     };
