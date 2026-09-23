@@ -283,23 +283,27 @@ itself and each upload must be higher than the last accepted one.
 **A sideload**, to run the package as the Store would install it. The
 Store signs its own uploads, so an upload stays unsigned; a sideload is
 signed with a certificate whose subject equals the manifest's publisher
-and which the PC trusts. Once, in an administrator PowerShell:
+and which the PC trusts. `scripts/win-sideload.ps1` does all of it:
 
 ```powershell
-$c = New-SelfSignedCertificate -Type Custom -Subject "CN=2ksbox-dev" -KeyUsage DigitalSignature `
-  -FriendlyName "2ksbox dev" -CertStoreLocation Cert:\CurrentUser\My `
-  -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
-Export-PfxCertificate -Cert $c -FilePath dev.pfx -Password (ConvertTo-SecureString dev -AsPlainText -Force)
-Export-Certificate -Cert $c -FilePath dev.cer
-Import-Certificate -FilePath dev.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
+powershell -ExecutionPolicy Bypass -File scripts/win-sideload.ps1            # newest build/win/package/*.msix
+powershell -ExecutionPolicy Bypass -File scripts/win-sideload.ps1 -NoInstall # sign only, no administrator
+powershell -ExecutionPolicy Bypass -File scripts/win-sideload.ps1 -Remove    # uninstall; the library stays
 ```
 
-Then `scripts/package-msix.sh <staged> --pfx dev.pfx --pfx-password
-dev` and `Add-AppxPackage <the .msix>`. `Get-AppxPackage 2ksbox.dev |
-Remove-AppxPackage` removes it. The Windows App Certification Kit runs
-against the installed package (`appcert.exe test -appxpackagepath
-<msix> -reportoutputpath report.xml`), and certification runs the same
-checks, so run it before an upload.
+It reads the identity out of the package, makes (once) a certificate in
+the user's store with that publisher as its subject, trusts it in
+`LocalMachine\TrustedPeople` through one UAC prompt (the only step that
+needs an administrator), signs a copy (`*-sideload.msix`), installs it,
+and then runs the installed launcher's `--diagnose` **with package
+identity** (`Invoke-CommandInDesktopPackage`) and reads the `library`
+line back out of the `launcher.log` it wrote: the line must end in
+`(packaged)` and the log must be under `%USERPROFILE%\2ksbox`, or the
+script fails. `package-msix.sh --pfx` is the same signing for a PFX of
+your own. The Windows App Certification Kit runs against the installed
+package (`appcert.exe test -appxpackagepath <msix> -reportoutputpath
+report.xml`), and certification runs the same checks, so run it before
+an upload.
 
 **What differs from the zip: the library is `%USERPROFILE%\2ksbox`.**
 A packaged app's writes to `%APPDATA%` are **virtualised**: they land
@@ -316,7 +320,8 @@ VirtualBox keeps `VirtualBox VMs` there: not virtualised, not synced by
 OneDrive as `Documents` is, and untouched by an uninstall. `2ksbox.exe
 --paths` (and `--diagnose`'s copy in `launcher.log`) prints it as
 `library … (packaged)`; `LAUNCHER_PACKAGED=1` makes a plain build answer
-the same, for a check without an install. `launcher.log` and
+the same, for a check without an install, and `scripts/win-sideload.ps1`
+checks the real thing from an installed package. `launcher.log` and
 `player.log` move with it. A library the zip build made in
 `%APPDATA%\2ksbox\data` is not adopted (a rename out of a virtualised
 directory is not a rename): copy its `machines`, `discs.toml` and
@@ -365,8 +370,9 @@ emulated regardless.
   wants one; QEMU's `mingw32-nsis` recipe is within the image's reach).
   The MSIX is one, but only through the Store or a trusted certificate.
 - **The Store package has not been uploaded**, and its packaged library
-  location has only been checked with `LAUNCHER_PACKAGED=1`, not from an
-  installed package ("The Store package").
+  location has been checked with `LAUNCHER_PACKAGED=1` and the sideload
+  script's sign-only mode, not yet from an installed package
+  (`scripts/win-sideload.ps1` does that; it needs one UAC prompt).
 - **No Windows check that boots a guest**, in the shape of
   `tools/xp-driver-test.sh`.
 
