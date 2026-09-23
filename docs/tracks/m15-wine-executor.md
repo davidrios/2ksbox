@@ -204,10 +204,36 @@ Numbered as ADR-018, doc 07 and CLAUDE.md cite them.
    and `patches/wine9x/`, `tools/xp-wined3d-test.sh` and
    `wined3d-sys-test.sh`, the launcher's WineD3D advice, doc 04's rows,
    doc 19 §42–44's status, and CLAUDE.md's sentence about never deleting
-   the `WINED3D\` ISO folder. It also decides the Flatpak's Wine (bundle a
-   trimmed one, the `org.winehq.Wine` extension, or "install it") and its
-   PE pair (the SDK has no mingw, so a checked-in build as
-   `firmware/vgabios-*.bin` is, or a release asset).
+   the `WINED3D\` ISO folder.
+7. **The Flatpak's Wine add-on** (user decision, 2026-09-23: "go with
+   the extension"). Flathub refuses a second listing of the same app, so
+   there is no DXVK app beside a Wine app; and inside the sandbox the app
+   cannot run the host's Wine (`flatpak-spawn --host` is a sandbox escape
+   reviewers refuse), so the manifest's "the host's own Wine" never held
+   there. The Wine is an **extension** of the app, listed on Flathub as
+   its add-on:
+   - `com._2ksbox.Launcher.Wine`, declared in the app manifest under
+     `add-extensions` at `lib/2ksbox/wine` (`no-autodownload`,
+     `autodelete`, `version` = the app's branch), the directory the
+     tarball already uses for the PE pair. The app's Flatpak ships that
+     directory empty.
+   - Its own manifest, `build-extension: true` on `org.kde.Sdk` 6.10,
+     builds a 64-bit Wine from source, modelled on Flathub's
+     `org.winehq.Wine` (`stable-25.08`, the same freedesktop base; no
+     gecko, no mono, the executor needs neither), plus the PE pair
+     through `org.freedesktop.Sdk.Extension.mingw-w64` (branch 25.08
+     exists) with `scripts/build-d3dpt-exec.sh --wine`. Nothing is
+     checked in as a binary.
+   - The launcher and the C loader find it by one more fixed path in
+     their `find_wine` (`host_gpu.rs`, `d3dpt_exec_remote.c`):
+     `<prefix>/lib/2ksbox/wine/bin/wine`, after `D3DPT_WINE`. The pair
+     is where `lib/2ksbox/wine/d3dpt-exec-host.exe` is looked for today.
+   - `wine_install_hint()` in a sandbox (`/.flatpak-info` exists) says
+     "Install the Wine add-on" and names it; doc 07's third verdict gets
+     the sentence. `package-flatpak.sh` builds the extension too and its
+     smoke check lists `wine` and `wine-host` in `--companions`.
+   - Flathub: the extension is its own repo, submitted after the app,
+     and shows on the app's page as an add-on.
 
 ## Rules
 

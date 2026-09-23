@@ -486,7 +486,9 @@ Built from source against `org.kde.Sdk` 6.10 (Qt from KDE's runtime,
 the root filesystem. The build is offline, as Flathub requires: every
 crate is declared with a checksum in `packaging/flatpak/cargo-sources.json`.
 Run `scripts/gen-flatpak-cargo-sources.sh` and commit the result
-whenever a dependency changes.
+whenever a dependency changes. The Flatpak ships no Wine and no PE
+pair; below the Vulkan floor they come from the app's add-on extension,
+`com._2ksbox.Launcher.Wine` (M15 step 7, not built yet).
 
 ### macOS (`2ksbox.app` / `.dmg`)
 

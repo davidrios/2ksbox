@@ -553,8 +553,10 @@ under Rosetta.
 
 **Consequences.** Wine is a *runtime* companion, reported by `player
 --companions` and `launcher --paths`. No package ships a Wine, the
-form's note says which to install, and the Flatpak's shape is decided
-in M15's last step. `-global d3dpt-vga.exec=wine` is the A/B on a host
+form's note says which to install. The Flatpak is the exception: the
+sandbox cannot run the host's Wine, and Flathub lists no second app, so
+its Wine is an add-on extension of the app, `com._2ksbox.Launcher.Wine`
+(user decision, 2026-09-23; M15 step 7). `-global d3dpt-vga.exec=wine` is the A/B on a host
 with both back ends, and `no-exec=on` still means no executor at all.
 
 ## ADR-019: Two macOS builds, App Store on macOS 26+ Apple Silicon and community at Homebrew's floor with the Wine executor, Intel permitted (2026-09-22)

@@ -157,8 +157,10 @@ modules:
       # against DXVK patch 04's headless WSI, because the executor never
       # presents. No Vulkan driver is packaged; the runtime's GL/Vulkan
       # extension supplies the host's. A host below Vulkan 1.3 runs the
-      # executor under the host's own Wine (ADR-018), which this package
-      # does not ship.
+      # executor on Wine (ADR-018). The sandbox cannot run the host's, so
+      # the Wine and the executor's PE pair come from the app's add-on
+      # extension, `com._2ksbox.Launcher.Wine` at `lib/2ksbox/wine` (M15
+      # step 7, not written yet); this build ships neither.
       - scripts/configure-dxvk.sh
       - ninja -C build/dxvk
       - scripts/build-d3dpt-exec.sh
