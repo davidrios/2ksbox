@@ -4,23 +4,22 @@
 //! The form is the shared one: which defaults follow the family until
 //! someone chooses otherwise, the per-family memory clamp, what
 //! `build_machine` writes, what `submit` does differently when editing,
-//! and the sentences under each row. None of that is here. What is here
-//! is the projection onto Q_PROPERTYs, in both directions:
+//! and the sentences under each row. This file is the projection onto
+//! Q_PROPERTYs, in both directions:
 //!
 //! * **`publish`** reads the form and writes every property through its
-//!   generated setter. Never a direct field assignment — see the header
-//!   of `main.rs` for the trap that closes.
+//!   generated setter, never by direct field assignment (the header of
+//!   `main.rs` has the trap).
 //! * **`pull`** copies the plain, two-way-bound text fields back into
 //!   the form. A QML `TextField` writes its property and nothing else,
-//!   so the form is caught up before anything reads it (`submit`). The fields with a *consequence* never go this
-//!   way: they have no writable property at all, only `choose_*`, which
-//!   is what makes the "…_chosen" rule impossible to forget in a new
-//!   widget.
+//!   so the form is caught up before anything reads it (`submit`). The
+//!   fields with a consequence never go this way: they have no writable
+//!   property, only `choose_*`, so a new widget cannot forget the
+//!   "…_chosen" rule.
 //!
 //! The combo boxes' labels come from the form's own enums
 //! (`family_labels`, `accel_labels`, …) rather than being retyped in
-//! QML, and so do the file dialog's name filters — the egui build gets
-//! the same strings from the same constants.
+//! QML, and so do the file dialog's name filters.
 
 #[cxx_qt::bridge]
 pub mod ffi {
@@ -64,10 +63,10 @@ pub mod ffi {
         #[qproperty(bool, accel_warning)]
         #[qproperty(bool, accel_is_default)]
         /// The display adapter: an index into `video_labels`, which is
-        /// a *property* and not an invokable like the other label lists
-        /// because this one changes with the family — Windows chooses
+        /// a property and not an invokable like the other label lists,
+        /// because this one changes with the family (Windows chooses
         /// between our adapter and the Cirrus, an `Other` machine
-        /// between the two standard ones — and a combo box bound to an
+        /// between the two standard ones) and a combo box bound to an
         /// invokable would keep the list it was built with. Whether
         /// there is a choice at all is the model's answer too, so the
         /// row appears on whichever family has one.
@@ -81,19 +80,18 @@ pub mod ffi {
         #[qproperty(QString, video_warning)]
         /// Which Direct3D 9 the host runs the pass-through's executor
         /// on: an index into `d3d9_labels`, a host question rather than
-        /// a guest one (ADR-007's 2026-09-21 amendment). The list never
+        /// a guest one (ADR-007's second amendment). The list never
         /// changes with the family, but `d3d9_applies` does with the
         /// adapter: only ours carries an executor.
         ///
         /// **Every one of these names its own `cxx_name`**, and they are
         /// the only properties here that do. `#[auto_cxx_name]` turns
-        /// `d3d9_labels` into `d3D9Labels` — it capitalises the letter
-        /// after a digit — and QML cannot say that a binding names a
+        /// `d3d9_labels` into `d3D9Labels` (it capitalises the letter
+        /// after a digit), and QML does not report a binding to a
         /// property that does not exist: the row drew with an empty
-        /// combo box and nothing else was wrong (user, 2026-09-21). The
-        /// spelling is the same on both sides now, and `diag.rs`'s
-        /// wizard screen prints what the combo shows so the next such
-        /// slip is a line in a log rather than a report.
+        /// combo box and nothing else wrong. The `wizard` diag screen
+        /// prints what the combo shows, so the next such slip is a line
+        /// in a log.
         #[qproperty(i32, d3d9, cxx_name = "d3d9")]
         #[qproperty(bool, d3d9_applies, cxx_name = "d3d9Applies")]
         #[qproperty(QStringList, d3d9_labels, cxx_name = "d3d9Labels")]
@@ -121,8 +119,8 @@ pub mod ffi {
         #[qproperty(bool, mt32_roms_applies)]
         /// What a host gamepad does for this machine (M13): an index
         /// into `pad_labels`, a property for the same reason
-        /// `video_labels` is — DOS is offered no USB controller, having
-        /// no USB stack, so the list changes with the family.
+        /// `video_labels` is: DOS has no USB stack and is offered no USB
+        /// controller, so the list changes with the family.
         #[qproperty(i32, pad)]
         #[qproperty(bool, pad_applies)]
         #[qproperty(QStringList, pad_labels)]
@@ -137,7 +135,7 @@ pub mod ffi {
         #[qproperty(QString, seamless_mouse_note)]
         /// The 3dfx Voodoo 2 (doc 21) and the sentences under it, and
         /// beside it the card's own dither undone at scanout (doc 21
-        /// §12) — answerable only with the card, which the form says.
+        /// §12), which applies only with the card.
         #[qproperty(bool, voodoo2)]
         #[qproperty(QString, voodoo2_note)]
         #[qproperty(bool, voodoo2_undither)]
@@ -150,9 +148,9 @@ pub mod ffi {
         #[qproperty(QString, extra_qemu_args_note)]
         #[qproperty(bool, extra_qemu_args_warning)]
         /// Our own emulator fast paths, as a bit per `Optimization::ALL`
-        /// entry — set means on. A bitmask rather than a list because a
-        /// QML `CheckBox` needs a *property* to bind `checked` to (a
-        /// `Q_INVOKABLE` would never re-evaluate), and seven bits in an
+        /// entry, set meaning on. A bitmask rather than a list because a
+        /// QML `CheckBox` needs a property to bind `checked` to (a
+        /// `Q_INVOKABLE` would never re-evaluate), and fourteen bits in an
         /// `i32` is a property the generated setter already notifies on.
         #[qproperty(i32, optimizations_mask)]
         #[qproperty(QString, optimizations_summary)]
@@ -247,9 +245,9 @@ pub mod ffi {
         fn reset_optimizations(self: Pin<&mut Wizard>);
         /// Every optimization off, and every one on: the control run and
         /// the way back, which are fourteen clicks each without them.
-        /// `#[qinvokable]` on each: without it the method exists in Rust
-        /// and QML's call to it is a TypeError, so both buttons did nothing
-        /// (user, 2026-09-12; the `qt-wizard` check's `optall` probe).
+        /// Each needs `#[qinvokable]`: without it the method exists in
+        /// Rust and QML's call to it is a TypeError, so both buttons did
+        /// nothing (the `qt-wizard` check's `optall` probe covers it).
         #[qinvokable]
         fn disable_all_optimizations(self: Pin<&mut Wizard>);
         #[qinvokable]
@@ -260,7 +258,7 @@ pub mod ffi {
         #[qinvokable]
         fn choose_boot(self: Pin<&mut Wizard>, boot: i32);
 
-        /// The display adapter, the same way — an index into
+        /// The display adapter, the same way: an index into
         /// `video_labels`, this machine's family's own list.
         #[qinvokable]
         fn choose_video(self: Pin<&mut Wizard>, video: i32);
@@ -307,7 +305,7 @@ pub mod ffi {
         fn set_soundfont_path(self: Pin<&mut Wizard>, soundfont: &QString);
         #[qinvokable]
         fn set_mt32_roms_path(self: Pin<&mut Wizard>, romdir: &QString);
-        /// The gamepad, the same way — an index into `pad_labels`.
+        /// The gamepad, the same way: an index into `pad_labels`.
         #[qinvokable]
         fn choose_pad(self: Pin<&mut Wizard>, pad: i32);
 
@@ -335,7 +333,7 @@ pub mod ffi {
         /// than retyped in QML.
         #[qinvokable]
         fn family_labels(self: &Wizard) -> QStringList;
-        /// The form's pages, in order — the sidebar's entries.
+        /// The form's pages, in order: the sidebar's entries.
         #[qinvokable]
         fn section_labels(self: &Wizard) -> QStringList;
 
@@ -349,8 +347,8 @@ pub mod ffi {
         fn boot_labels(self: &Wizard) -> QStringList;
 
         /// The fast paths' checkbox labels and the sentence under each,
-        /// in `Optimization::ALL` order — the same order the bits of
-        /// `optimizations_mask` are in. Fixed lists, so QML can call
+        /// in `Optimization::ALL` order, the same order as the bits of
+        /// `optimizations_mask`. Fixed lists, so QML can call
         /// them once as a `Repeater` model.
         #[qinvokable]
         fn optimization_labels(self: &Wizard) -> QStringList;
@@ -358,8 +356,8 @@ pub mod ffi {
         #[qinvokable]
         fn optimization_notes(self: &Wizard) -> QStringList;
 
-        /// The file dialog's name filters, from the same constants the
-        /// egui build hands `rfd`.
+        /// The file dialog's name filters, from the bundle's own
+        /// constants.
         #[qinvokable]
         fn disk_filter(self: &Wizard) -> QString;
 
@@ -537,11 +535,10 @@ impl ffi::Wizard {
     }
 
     /// Through `edit` like every other verb, although the page is not a
-    /// field of the machine: it republishes the form, and a republish
+    /// field of the machine. It republishes the form, and a republish
     /// that has not caught up with the text fields writes the form's
-    /// stale, empty name back over what was typed (user, 2026-09-23:
-    /// "machine name is not preserved when switching categories" — this
-    /// was the one verb that went around `pull`).
+    /// stale, empty name back over what was typed. Going around `pull`
+    /// here lost the machine name on every page switch.
     fn choose_section(self: Pin<&mut Self>, section: i32) {
         let s = *Section::ALL.get(section.max(0) as usize).unwrap_or(&Section::General);
         self.edit(|form| form.choose_section(s));
@@ -753,11 +750,11 @@ impl ffi::Wizard {
 impl ffi::Wizard {
     /// Every verb that changes the form does the same three things, in
     /// this order. **The `pull` is not optional**: QML's text fields and
-    /// check boxes write the *property* and nothing else, so a form that
-    /// has not been caught up still holds what it was opened with — and
+    /// check boxes write the property and nothing else, so a form that
+    /// has not been caught up still holds what it was opened with, and
     /// the `publish` at the end writes that back over what the user
-    /// typed. A machine name entered and then followed by any combo box
-    /// disappeared exactly that way (user, 2026-09-08).
+    /// typed. A machine name followed by any combo box change
+    /// disappeared that way.
     fn edit(mut self: Pin<&mut Self>, change: impl FnOnce(&mut Form)) {
         self.as_mut().pull();
         change(&mut self.as_mut().rust_mut().form);
@@ -797,19 +794,18 @@ impl ffi::Wizard {
         form.disk_size_gb = disk_size_gb.max(1) as u32;
     }
 
-    /// The form, onto the properties — every one through its own setter,
-    /// so each notify fires for the values that actually moved. Read
-    /// out first, written after: the setters take `&mut self`.
+    /// The form, onto the properties, each through its own setter, so
+    /// each notify fires for the values that moved. Read out first,
+    /// written after: the setters take `&mut self`.
     ///
-    /// **Order matters here, twice.** A control that clamps — the memory
-    /// `SpinBox` — must be given its *range* before its value, because
-    /// Qt bounds the value it is handed against the range it has at that
-    /// moment and does not revisit it when the range widens later: the
-    /// memory field showed a fresh Win98 machine as 32 MB, the bottom of
-    /// its range, because 256 arrived while the range was still the
-    /// model's initial 0..0 (user, 2026-09-06). And `open` goes **last**,
-    /// because it is what `Main.qml` shows the window on — everything the
-    /// first frame draws should already be current when it does.
+    /// **Order matters here, twice.** A control that clamps (the memory
+    /// `SpinBox`) must get its range before its value, because Qt bounds
+    /// the value against the range it has at that moment and does not
+    /// revisit it when the range widens later. The memory field showed a
+    /// fresh Win98 machine as 32 MB, the bottom of its range, because 256
+    /// arrived while the range was still the model's initial 0..0. And
+    /// `open` goes **last**, because `Main.qml` shows the window on it,
+    /// so everything the first frame draws must already be current.
     fn publish(mut self: Pin<&mut Self>) {
         let (
             open,

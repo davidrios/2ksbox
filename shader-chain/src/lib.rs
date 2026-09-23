@@ -1,9 +1,9 @@
 //! librashader (RetroArch slang) filter chain on wgpu. Shared by the
 //! player (doc 03's CRT pass: guest framebuffer -> letterboxed viewport)
 //! and the launcher's shader profile preview (doc 07: a still image ->
-//! an egui-displayed texture, re-run live as parameter sliders move) —
-//! both just need "load a preset, tweak its parameters, run a frame",
-//! so the two shouldn't drift on how librashader is driven.
+//! a frame the front end shows, re-run as parameter sliders move). Both
+//! load a preset, set its parameters and run a frame, so one crate keeps
+//! them from driving librashader differently.
 
 use librashader::preprocess::ShaderSource;
 use librashader::presets::{ShaderFeatures, ShaderPreset};
@@ -11,24 +11,24 @@ use librashader::runtime::wgpu::{FilterChain, FilterChainOptions, WgpuOutputView
 use librashader::runtime::{FilterChainParameters, Size, Viewport};
 use std::path::Path;
 
-/// The device features a filter chain needs, of those this adapter has —
-/// **request these when opening the device the chain will run on.**
+/// The device features a filter chain needs, of those this adapter has.
+/// **Request these when opening the device the chain will run on.**
 ///
-/// There is one, and it is not an optimization. A slang preset's default
-/// wrap mode is `clamp_to_border` (RetroArch's own default, and what
-/// `WrapMode::default()` is in librashader), with the border transparent
-/// black; librashader's wgpu runtime silently *downgrades* every such
-/// sampler to `clamp_to_edge` on a device opened without
+/// There is one, and it is needed for correctness. A slang preset's
+/// default wrap mode is `clamp_to_border` (RetroArch's own default, and
+/// librashader's `WrapMode::default()`), with a transparent black border.
+/// librashader's wgpu runtime silently downgrades every such sampler to
+/// `clamp_to_edge` on a device opened without
 /// `ADDRESS_MODE_CLAMP_TO_BORDER` (`samplers.rs`: "if the device doesn't
 /// have clamp to border support, approximate it with clamp to edge").
 /// A preset that curves the picture samples outside it at the corners
-/// and along the edges, and what it gets back then is the outermost row
-/// of pixels smeared outwards forever instead of black — the reported
-/// "outside the curve is glitched, it repeats the last colour".
+/// and along the edges, and then gets the outermost row of pixels
+/// smeared outwards instead of black. The user saw that as "outside the
+/// curve is glitched, it repeats the last colour".
 ///
-/// Masked by what the adapter actually has, so this is always safe to
-/// pass: a device that cannot do it is opened without it, and presets
-/// look the way they did before rather than failing to open.
+/// Masked by what the adapter has, so this is always safe to pass. A
+/// device that cannot do it is opened without it, and presets fall back
+/// to the smeared edges rather than failing to open.
 pub fn required_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     adapter.features() & wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER
 }
@@ -67,10 +67,9 @@ impl Chain {
     }
 
     /// The preset's current value for a parameter, or `None` when it does
-    /// not declare one by that name. Mode analysis (doc 03 rule 3) can only
-    /// tell a preset the scanline count through parameters the preset
-    /// actually has, and most presets have none — so `None` is a normal
-    /// outcome, not an error.
+    /// not declare one by that name. Mode analysis (doc 03 rule 3) can
+    /// only tell a preset the scanline count through parameters the preset
+    /// has, and most presets have none, so `None` is a normal outcome.
     pub fn parameter(&self, name: &str) -> Option<f32> {
         self.chain.parameters().parameter_value(name)
     }
@@ -80,12 +79,11 @@ impl Chain {
     }
 
     /// Override parameter values by name (the launcher's shader profiles,
-    /// doc 07) without reloading the chain — cheap enough to call on
-    /// every slider tick in the profile preview, unlike `load` (which
-    /// recompiles shaders). A name the preset doesn't declare is silently
-    /// ignored — a profile saved against an older preset version, or a
-    /// stale slider from a preset that was just swapped out, shouldn't
-    /// fail the whole load over one parameter that no longer exists.
+    /// doc 07) without reloading the chain. Cheap enough to call on every
+    /// slider tick in the profile preview, unlike `load`, which recompiles
+    /// shaders. A name the preset doesn't declare is skipped with a stderr
+    /// line, so a profile saved against an older preset version, or a
+    /// stale slider from a preset just swapped out, doesn't fail the load.
     pub fn set_parameters(&self, params: &[(String, f32)]) {
         if params.is_empty() {
             return;
@@ -144,15 +142,13 @@ impl Chain {
 
     /// The same, with the frame number said outright rather than counted.
     ///
-    /// It is the frame number, not the number of renders, that a preset
-    /// animates against (`FrameCount`, and the pass's own
-    /// `frame_count_mod`), and the two are only the same thing for a
-    /// consumer that renders every frame — which the player does and the
-    /// launcher's preview does not: the preview renders a still image on
-    /// a timer that a busy UI or a slow readback can miss ticks of, and
-    /// drives this from the clock instead, so a preset flickers at the
-    /// rate it really would in the player however many frames the
-    /// launcher managed to draw.
+    /// A preset animates against the frame number (`FrameCount`, and the
+    /// pass's own `frame_count_mod`), not the number of renders. The two
+    /// match only for a consumer that renders every frame, as the player
+    /// does. The launcher's preview renders a still image on a timer that
+    /// a busy UI or a slow readback can miss ticks of, so it drives this
+    /// from the clock, and a preset flickers at the rate it would in the
+    /// player however many frames the launcher drew.
     pub fn run_at(
         &mut self,
         device: &wgpu::Device,
@@ -198,17 +194,16 @@ impl Chain {
     }
 
     /// Whether this preset's picture can change from one frame to the
-    /// next even though nothing else does — an interlaced or flickering
-    /// CRT, a phosphor afterglow, a shimmering NTSC signal. See
-    /// `preset_is_animated`: a consumer that renders on demand rather
-    /// than continuously (the launcher's preview) has to keep rendering
-    /// while this is true, or it shows one frozen frame of an effect
-    /// that is supposed to move.
+    /// next even though nothing else does: an interlaced or flickering
+    /// CRT, a phosphor afterglow, a shimmering NTSC signal (see
+    /// `preset_is_animated`). A consumer that renders on demand (the
+    /// launcher's preview) has to keep rendering while this is true, or
+    /// it shows one frozen frame of an effect that should move.
     pub fn animated(&self) -> bool {
         self.animated
     }
 
-    /// The texture the last `run` wrote, if `run` has ever succeeded — for
+    /// The texture the last `run` wrote, if `run` has ever succeeded, for
     /// a consumer that needs to read it back itself (the player's
     /// `PLAYER_DUMP_OUT` and its mode sweep, the launcher's shader-preview
     /// debug verb) via `dump_texture` / `read_texture`.
@@ -217,20 +212,18 @@ impl Chain {
     }
 
     /// The view onto it. `run` returns this too, but only borrowed for
-    /// the length of that call; a consumer that hands the frame to a
-    /// toolkit *after* rendering (the launcher's shader preview, which
-    /// registers it with `egui_wgpu`) needs to ask for it separately.
+    /// the length of that call. A consumer that hands the frame to a
+    /// toolkit after rendering needs to ask for it separately.
     pub fn output_view(&self) -> Option<&wgpu::TextureView> {
         self.out.as_ref().map(|(_, view, _, _)| view)
     }
 }
 
 /// The uniforms whose value changes from frame to frame while the input
-/// stands still. `FrameCount` is the one presets actually animate
-/// against (`mod(FrameCount, 2.0)` is how a preset draws alternating
-/// fields, a flickering phosphor, a rolling NTSC phase); librashader
-/// hands the rest through too, and a preset reading one of them is no
-/// less animated for it.
+/// stands still. Presets mostly animate against `FrameCount`
+/// (`mod(FrameCount, 2.0)` draws alternating fields, a flickering
+/// phosphor, a rolling NTSC phase). librashader passes the rest through
+/// too, and a preset reading one of them is animated as well.
 const FRAME_VARYING_UNIFORMS: [&str; 4] = [
     "FrameCount",
     "FrameDirection",
@@ -239,34 +232,31 @@ const FRAME_VARYING_UNIFORMS: [&str; 4] = [
 ];
 
 /// A texture bound to an earlier frame: the previous frames of the input
-/// (`OriginalHistory1`…) or a pass's own last output — which is
+/// (`OriginalHistory1`…) or a pass's own last output, which is
 /// `PassFeedback2` by number and `<alias>Feedback` when the preset named
 /// the pass, so the bare suffix catches both. A pass sampling one of
-/// these settles over several frames rather than being right at once —
-/// an afterglow, a motion blur, a running average — so it too is only
-/// itself in motion.
+/// these settles over several frames (an afterglow, a motion blur, a
+/// running average), so it is animated too.
 const FEEDBACK_TEXTURES: [&str; 2] = ["OriginalHistory", "Feedback"];
 
 /// Whether a preset's picture can change from one frame to the next on a
 /// still input.
 ///
 /// This reads the preset's shader sources rather than reflecting the
-/// compiled SPIR-V: reflection would answer exactly, but only by
-/// compiling every pass a second time, and the whole point of asking is
-/// to avoid work. It is a *conservative* reading — when in doubt it says
-/// animated, because the cost of being wrong that way is a preview that
-/// redraws a picture that never changes, and the cost of being wrong the
-/// other way is the bug this exists to fix: a flicker effect frozen on
-/// one frame.
+/// compiled SPIR-V. Reflection would answer exactly, but only by
+/// compiling every pass a second time, and the point of asking is to
+/// avoid work. The reading is conservative: when in doubt it says
+/// animated. Wrong that way, a preview redraws a picture that never
+/// changes; wrong the other way, a flicker effect freezes on one frame.
 ///
-/// Nearly every CRT shader *declares* `FrameCount` in its uniform block
+/// Nearly every CRT shader declares `FrameCount` in its uniform block
 /// and most never read it (1131 of the slang-shaders tree declare it,
-/// 271 use it), so the declaration alone means nothing. What is looked
-/// for is a use: the member access `params.FrameCount` / `global.FrameCount`
-/// that GLSL requires to read a named uniform block's member. The sources
-/// are the *preprocessed* ones, so an `#include`d `#define FrameCount
-/// params.FrameCount` — how the shaders that seem to use it bare actually
-/// do it — is already expanded here.
+/// 271 use it), so the declaration alone means nothing. This looks for a
+/// use: the member access `params.FrameCount` / `global.FrameCount` that
+/// GLSL requires to read a named uniform block's member. The sources are
+/// the preprocessed ones, so an `#include`d `#define FrameCount
+/// params.FrameCount` (how the shaders that seem to use it bare do it)
+/// is already expanded here.
 pub fn preset_is_animated(path: &Path) -> bool {
     let Ok(preset) = ShaderPreset::try_parse(path, ShaderFeatures::NONE) else {
         return true; // unreadable: `Chain::load` will have its own say
@@ -289,7 +279,7 @@ fn source_is_animated(src: &str) -> bool {
             .any(|name| reads_member(src, name))
 }
 
-/// Whether `src` reads `<block>.<name>` anywhere — a use of the uniform,
+/// Whether `src` reads `<block>.<name>` anywhere: a use of the uniform,
 /// as opposed to the `uint FrameCount;` that declares it.
 fn reads_member(src: &str, name: &str) -> bool {
     let mut rest = src;

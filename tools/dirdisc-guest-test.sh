@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# dirdisc-guest-test.sh — a host folder in a guest's CD-ROM drive (M5g,
+# A host folder in a guest's CD-ROM drive (M5g,
 # docs/tracks/m5-dirdisc.md), on the families xp-cdimage-test.sh does not
 # cover:
 #
 #   tools/dirdisc-guest-test.sh ~/vms/win98.qcow2 win98
 #   tools/dirdisc-guest-test.sh ~/vms/winxp.qcow2 xp
 #
-# The machine boots with `-cdrom isodir:<dir>` — no image anywhere — and a
+# The machine boots with `-cdrom isodir:<dir>` (no image anywhere) and a
 # floppy carrying RUN.BAT, which lists the disc and reads files off it
 # through the guest's own file system driver, over COM1. That is the
 # proof: the names in the listing and the bytes of the files are what
@@ -23,9 +23,9 @@
 #
 # BIG=1 asks a different question: where does *this guest's* file system
 # stop? The folder is then sparse filler with a small marker file after
-# each interesting offset — an 80-minute CD (703 MiB, where the drive
+# each interesting offset: an 80-minute CD (703 MiB, where the drive
 # starts reporting a DVD-ROM profile), a 99-minute one (878 MiB, past
-# every MSF address), 2 GiB, 4 GiB and a nearly full DVD-9 — and each
+# every MSF address), 2 GiB, 4 GiB and a nearly full DVD-9. Each
 # marker the guest can `type` back is proof its driver reached that
 # offset. Costs no host disk: the filler is never written.
 #
@@ -77,8 +77,8 @@ fi
 # One batch for both families: COMMAND.COM (98) and CMD.EXE (XP) both take
 # it, and every line goes to COM1, which needs no writable disk in the
 # guest. The CD's letter differs per image, so both D: and E: are tried
-# and one of them prints a "not found" — cheaper than teaching this script
-# every image's drive letters.
+# and one of them prints a "not found", which is cheaper than teaching
+# this script every image's drive letters.
 {
   echo '@echo off'
   echo 'echo ==== the folder as a disc > COM1'

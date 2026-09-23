@@ -1,14 +1,15 @@
 /*
- * voltest.c — volume textures through XP's own d3d8.dll on our driver's DX8
- * DDI. A probe (d3d8probe.h): with no D3DPTEXTURECAPS_VOLUMEMAP in the caps
- * it says "not offered" and stops; once the driver claims volumes, every
- * case below is their check:
+ * voltest.c: volume textures through XP's own d3d8.dll on our driver's DX8
+ * DDI (doc 15 "Volume textures", protocol v12). A probe (d3d8probe.h).
+ * With no D3DPTEXTURECAPS_VOLUMEMAP in the caps it says "not offered" and
+ * stops; once the driver claims volumes, every case below checks them:
  *   a MANAGED A8R8G8B8 16x16x4 volume, every slice its own colour, a quad
  *   at each slice (a 3D coordinate whose w picks the slice);
  *   a two-level volume minified onto a small quad (level 1);
  *   one slice rewritten through LockBox (the host must read it again);
- *   a DEFAULT volume filled by UpdateTexture from a SYSTEMMEM one (the DDI's
- *   VOLUMEBLT, which the executor drops today);
+ *   a DEFAULT volume filled by UpdateTexture from a SYSTEMMEM one (the
+ *   runtime locks the whole level; a VOLUMEBLT, if one came, the driver
+ *   handles like a TEXBLT);
  *   a DXT1 volume when the format list offers one.
  * Every HRESULT and pixel is in voltest.log.
  *
@@ -40,7 +41,7 @@ static WORD rgb565(DWORD c)
     return (WORD)((((c >> 19) & 0x1f) << 11) | (((c >> 10) & 0x3f) << 5) | ((c >> 3) & 0x1f));
 }
 
-/* every texel of one slice of one level one colour (32-bit, or DXT1 blocks) */
+/* fills one slice of one level with one colour (32-bit, or DXT1 blocks) */
 static HRESULT fill_slice(IDirect3DVolumeTexture8 *t, UINT level, UINT slice, D3DFORMAT fmt, DWORD col)
 {
     D3DVOLUME_DESC vd;

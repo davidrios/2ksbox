@@ -3,14 +3,14 @@
 # (HOMEBREW_MACOS_OLDEST_SUPPORTED in its brew.sh), in the form
 # MACOSX_DEPLOYMENT_TARGET takes:
 #
-#   scripts/macos-floor.sh                 14.0
-#   scripts/macos-floor.sh --tag [14.0]    arm64_sonoma, Homebrew's bottle tag
+#   scripts/macos-floor.sh                 15.0
+#   scripts/macos-floor.sh --tag [15.0]    arm64_sequoia, Homebrew's bottle tag
 #
 # Why Homebrew's (docs/build-macos.md, "The floor"): the app carries
 # Homebrew's libraries, and Homebrew publishes a bottle of each for every
 # macOS it supports and for none before that. So its floor is the lowest
 # the app can have, and `scripts/build.sh` builds everything of ours for
-# that same version so that nothing we build raises it.
+# that same version so nothing we build raises it.
 # `scripts/package-macos.sh` then swaps the libraries it copied, which are
 # this Mac's bottles, for the floor's (`scripts/macos-bottles.py`).
 set -euo pipefail

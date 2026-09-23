@@ -1,6 +1,6 @@
 # Spike A: qemu-3dfx GL output → wgpu texture (macOS first)
 
-**What became of it:** answered by M3 (doc 12). qemu-3dfx's SDL window
+**What became of it.** M3 answered it (doc 12). qemu-3dfx's SDL window
 was replaced by a window-less context provider in the embed library, and
 guest 3D reaches the shader chain zero-copy through an IOSurface ring on
 macOS and a dma-buf ring on Linux (doc 12 §4). QEMU is built
@@ -15,8 +15,8 @@ the M1 MacBook Air (Metal) and the Arch box (Vulkan).
 ## Question
 
 qemu-3dfx renders guest Glide/GL with host OpenGL on QEMU's threads. Can
-that output land in a **wgpu texture** on the player's render thread — no
-CPU readback — so it goes through librashader like the 2D framebuffer?
+that output land in a **wgpu texture** on the player's render thread, with
+no CPU readback, so it goes through librashader like the 2D framebuffer?
 
 ## Findings
 
@@ -49,8 +49,8 @@ CPU readback — so it goes through librashader like the 2D framebuffer?
 
 1. Does qemu-3dfx run on the M1 at all (startergo's `qemu-3dfx-macos`
    arm64 build, then ours)? Confirm accelerated GL by renderer string.
-2. Where does the output live — own window/context, an FBO, or a blit to
-   the VGA surface?
+2. Where does the output live: its own window/context, an FBO, or a blit
+   to the VGA surface?
 3. Interop per platform: macOS IOSurface-backed GL texture → `MTLTexture`
    → wgpu via `wgpu-hal` Metal; Linux dma-buf ↔ Vulkan external memory;
    Windows `WGL_NV_DX_interop2` or a shared handle ↔ D3D12.

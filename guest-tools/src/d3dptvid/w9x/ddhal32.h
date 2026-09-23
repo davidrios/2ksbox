@@ -1,19 +1,18 @@
 /*
- * ddhal32.h — the 32-bit DirectDraw HAL call structures the ring-3 half
+ * ddhal32.h: the 32-bit DirectDraw HAL call structures the ring-3 half
  * of the 9x driver implements (doc 19 §1).
  *
- * mingw-w64 ships `ddrawi.h`, but only with the *pointer* typedefs for
- * the callback data — the bodies are DDK material it does not carry. Our
- * rule is the XP driver's (doc 15): no Microsoft DDK, so the handful we
- * actually implement are spelled out here from the published interface
- * documentation, exactly as `ddk/d3dnthal.h` does for NT. Layouts are the
- * DDI's; the file grows one structure at a time as callbacks are added,
- * and nothing that is not implemented is declared.
+ * mingw-w64 ships `ddrawi.h` with only the pointer typedefs for the
+ * callback data, not the bodies. The rule is the XP driver's (doc 15): no
+ * Microsoft DDK. So the structures we implement are spelled out here from
+ * the published interface documentation, as `ddk/d3dnthal.h` does for NT.
+ * Layouts are the DDI's. A structure is added with its callback, and
+ * nothing unimplemented is declared.
  *
- * `lpDD` is the runtime's own DirectDraw object. The HAL here never
- * dereferences it — everything it needs is in the shared block
- * (`d3dpt9hal.h`) — so it stays a `void *` rather than dragging in the
- * whole `DDRAWI_DIRECTDRAW_GBL` chain.
+ * `lpDD` is the runtime's own DirectDraw object. The HAL never
+ * dereferences it (everything it needs is in the shared block,
+ * `d3dpt9hal.h`), so it stays a `void *` rather than pulling in the
+ * `DDRAWI_DIRECTDRAW_GBL` chain.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -28,8 +27,8 @@
 #define DDHAL_DRIVER_NOCKEYHW   2
 #endif
 
-/* Return if the vertical blank is in progress. Not in ddraw.h with the
- * other DDWAITVB_*: it is the DDI-only value the runtime sends a driver. */
+/* Return whether the vertical blank is in progress. Not in ddraw.h with
+ * the other DDWAITVB_* because only the runtime sends it, to a driver. */
 #ifndef DDWAITVB_I_TESTVB
 #define DDWAITVB_I_TESTVB   0x80000006ul
 #endif
@@ -47,13 +46,12 @@ typedef struct d3dpt_ddhal_waitvb {
     void *WaitForVerticalBlank; /* the runtime's own pointer back to us */
 } d3dpt_ddhal_waitvb;
 
-/* The two DirectDraw-object callbacks that stand between an application
- * asking for a surface and the runtime allocating one. `CanCreateSurface`
- * is the veto — the driver says whether it could back this description at
- * all — and `CreateSurface` is where a driver that wants to place the
- * surface itself does so, by writing `fpVidMem` into the surface objects
- * the runtime passes in. Declining either is legal on 9x and leaves the
- * work to the runtime, which is what both do for now. */
+/* The two DirectDraw-object callbacks between an application asking for
+ * a surface and the runtime allocating one. `CanCreateSurface` is the
+ * veto, where the driver says whether it can back this description at all.
+ * `CreateSurface` is where a driver that places the surface itself writes
+ * `fpVidMem` into the surface objects the runtime passes in. Declining
+ * either is legal on 9x and leaves the work to the runtime. */
 typedef struct d3dpt_ddhal_cancreatesurface {
     void *lpDD;
     LPDDSURFACEDESC lpDDSurfaceDesc;
@@ -213,9 +211,9 @@ typedef struct _DDHAL_CREATESURFACEEXDATA {
 } DDHAL_CREATESURFACEEXDATA, *LPDDHAL_CREATESURFACEEXDATA;
 
 /* The DDK's layout, the same as NT's DD_GETDRIVERSTATEDATA (ddk/ddrawint.h):
- * 20 bytes, ddRVal at +16. This used to carry four fields of its own after
- * the union, so GetDriverState32 wrote its ddRVal 12 bytes past the end of
- * the runtime's structure and left the real one unset. */
+ * 20 bytes, ddRVal at +16. Extra fields after the union once made
+ * GetDriverState32 write its ddRVal 12 bytes past the end of the runtime's
+ * structure and leave the real one unset. */
 typedef struct _DDHAL_GETDRIVERSTATEDATA {
     DWORD dwFlags;
     union {

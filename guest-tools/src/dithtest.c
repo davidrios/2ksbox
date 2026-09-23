@@ -1,5 +1,5 @@
 /*
- * DITHTEST.EXE — what repeated alpha blending does to a 16-bit frame
+ * DITHTEST.EXE: what repeated alpha blending does to a 16-bit frame
  * buffer, from inside the guest (doc 21 §9).
  *
  * A Voodoo writes 16-bit pixels with an ordered dither, so a pixel read
@@ -7,16 +7,16 @@
  * plus this position's dither offset. The chip therefore *subtracts* the
  * dither on the way in (86Box calls it "dither subtraction",
  * `-device voodoo2,dither-sub=on|off`). 86Box's plain interpreter does
- * that; **neither of its recompilers does** — `dithersub` appears in
- * neither codegen — and the recompiler is the default
+ * that; neither of its recompilers does (`dithersub` appears in neither
+ * codegen), and the recompiler is the default
  * (`-device voodoo2,recompiler=on|off`). One blend hides the difference;
  * this is what makes it visible.
  *
  * The scene: a grey that lies between representable levels in every
- * channel (130,130,130 — 5 bits for red and blue, 6 for green, so every
+ * channel (130,130,130: 5 bits for red and blue, 6 for green, so every
  * one of them has to dither), drawn as a full-screen quad through the
  * pixel pipeline so that it really is dithered. Then eight columns blend
- * **that same grey onto itself** at alpha 0.5, 1, 2, 4 ... 128 times. The
+ * that same grey onto itself at alpha 0.5, 1, 2, 4 ... 128 times. The
  * ideal result of blending a colour onto itself is that colour, so every
  * column should stay the background's grey and the strip across the top,
  * which nothing blends over, is the reference. Per-pass error accumulates
@@ -30,6 +30,7 @@
  *   DITHTEST -alpha 64   another blend weight
  *   DITHTEST -hold 30    hold the frame longer (a screendump wants it up)
  *   DITHTEST -res 8      another resolution (0-15, glidewnd.c's table)
+ *   DITHTEST -close      close Glide at the end (3dfx's can wedge there)
  *
  * Built by guest-tools/build-wrappers.sh into TESTS\ on the guest ISO.
  * It is a Glide 2.x program like GLIDETEST.EXE, so it runs on whatever

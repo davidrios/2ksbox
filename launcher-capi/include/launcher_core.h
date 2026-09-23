@@ -1,11 +1,10 @@
 /* The 2ksbox launcher, as a C library (doc 07).
  *
  * Everything the launcher does that is not drawing lives in one Rust
- * crate (`launcher-core`), and the project's front end — the Qt/QML
- * one — is a view over it. This header is the same
- * thing for a front end that is not Rust: a native macOS app in Swift is
- * the case it was shaped for (Swift imports a C header directly, with no
- * bridge), but anything that speaks C works.
+ * crate (`launcher-core`), and the project's Qt/QML front end is a view
+ * over it. This header offers the same to a front end that is not Rust.
+ * It was shaped for a native macOS app in Swift (Swift imports a C header
+ * directly, with no bridge), but anything that speaks C works.
  *
  * Link `liblauncher_capi.a` (or the .so/.dylib) from
  * `cargo build -p launcher-capi`.
@@ -13,8 +12,8 @@
  *   Every window is an opaque handle: lc_*_new / lc_*_free.
  *   Rows are addressed by index and read one field at a time.
  *   Every char * returned here is yours: free it with lc_string_free.
- *     A getter never returns NULL for "empty" — it returns "" — so NULL
- *     means only "no such row" (or, for lc_path, "no such name").
+ *     A getter returns "" for empty, never NULL, so NULL means only
+ *     "no such row" (or, for lc_path, "no such name").
  *   Every char * passed in is borrowed, must be UTF-8, and is copied
  *     before the call returns.
  *   A handle is not thread-safe: use one from one thread at a time.
@@ -22,9 +21,9 @@
  *     lc_snapshots_poll while lc_snapshots_job_pending, and
  *     lc_editor_preset_state while a download runs.
  *
- * What a front end still owes, because it is genuinely the toolkit's:
- * a file dialog, when to redraw, how to confirm a destructive restore,
- * and how to show a preview frame (lc_editor_read_frame hands you RGB8).
+ * What a front end still owns, because it is the toolkit's: a file
+ * dialog, when to redraw, how to confirm a destructive restore, and how
+ * to show a preview frame (lc_editor_read_frame hands you RGB8).
  */
 #ifndef LAUNCHER_CORE_H
 #define LAUNCHER_CORE_H
@@ -41,7 +40,7 @@ void lc_string_free(char *s);
 
 /* Where a companion lives, by name: "player", "qemu_img", "pc_bios",
  * "machines", "discs", "profiles", "shaders", "guest_tools". Everything
- * resolves relative to the *running executable*, so these answer about
+ * resolves relative to the running executable, so these answer about
  * your binary, not about a checkout. NULL for an unknown name. */
 char *lc_path(const char *what);
 bool lc_kvm_available(void);
@@ -82,7 +81,7 @@ size_t lc_machines_reap(LcMachines *m, size_t *rows, size_t cap);
  * show in its own in-guest CDSHELF listing without a restart. */
 void lc_machines_republish_shelf(const LcMachines *m);
 /* "Clone…": the name offered for a row ("<name> (copy)", numbered when
- * taken), and the clone itself — the same settings and its own copy of
+ * taken), and the clone itself: the same settings and its own copy of
  * the disk, snapshots included, under `name` (NULL = the offered one).
  * Refused for a running machine or a name already in the library.
  * Blocks until the copy is done; *status (if given) is the new
@@ -99,7 +98,7 @@ typedef struct LcWizard LcWizard;
 
 /* The combo boxes' labels, in the order every index below uses. Fill a
  * picker by walking `index` until this returns NULL, rather than
- * retyping the strings — both Rust front ends do exactly this. */
+ * retyping the strings, as the Qt front end does. */
 #define LC_LABEL_FAMILY    0u
 #define LC_LABEL_ACCEL     1u
 #define LC_LABEL_CPU_SPEED 2u
@@ -122,11 +121,10 @@ bool lc_wizard_is_open(const LcWizard *w);
 bool lc_wizard_is_editing(const LcWizard *w);
 char *lc_wizard_title(const LcWizard *w);
 
-/* The fields with a consequence. There is deliberately no plain setter
- * for any of them: choose_* is what applies the rule that memory, the
- * accelerator, the processor and the network card follow the family
- * until someone picks one — and having no other way in is what makes
- * that rule impossible to forget in a new widget. */
+/* The fields with a consequence. None of them has a plain setter:
+ * choose_* applies the rule that memory, the accelerator, the processor
+ * and the network card follow the family until someone picks one, and
+ * with no other way in, a new widget cannot skip that rule. */
 size_t lc_wizard_family(const LcWizard *w);
 void lc_wizard_choose_family(LcWizard *w, size_t family);
 /* "" for every family but Other, which is the one whose hardware isn't a
@@ -175,7 +173,7 @@ void lc_wizard_enable_all_optimizations(LcWizard *w);
 bool lc_wizard_optimizations_all_off(const LcWizard *w);
 bool lc_wizard_optimizations_all_on(const LcWizard *w);
 bool lc_wizard_optimizations_are_default(const LcWizard *w);
-/* "6 of 7 on" — what a collapsed section says about itself. */
+/* "6 of 7 on": what a collapsed section says about itself. */
 char *lc_wizard_optimizations_summary(const LcWizard *w);
 /* The line above the switches: on a machine headed for KVM it says they
  * do nothing there. */
@@ -186,7 +184,7 @@ void lc_wizard_choose_network(LcWizard *w, bool network);
 /* Newline-separated. */
 char *lc_wizard_network_note(const LcWizard *w);
 
-/* The pointer: the USB tablet (absolute — the host pointer is the guest
+/* The pointer: the USB tablet (absolute: the host pointer is the guest
  * cursor, nothing is grabbed) or the PS/2 mouse alone (relative, grabbed
  * on a click, Ctrl+Alt+G to release). Off for a new DOS machine, whose
  * mouse drivers cannot read a tablet. */
@@ -217,9 +215,9 @@ char *lc_wizard_boot_note(const LcWizard *w);
 size_t lc_wizard_section(const LcWizard *w);
 void lc_wizard_choose_section(LcWizard *w, size_t section);
 
-/* The display adapter. Its list is per family — Windows chooses between
+/* The display adapter. Its list is per family (Windows chooses between
    our own adapter and the one Windows has an in-box driver for, an
-   "Other" machine between the two standard ones, a DOS machine nothing —
+   "Other" machine between the two standard ones, a DOS machine nothing),
    so it is asked of the wizard rather than through lc_wizard_label. Ask
    lc_wizard_video_applies before drawing the row and fill it from
    lc_wizard_video_label; every index below is into that list. */
@@ -236,13 +234,12 @@ char *lc_wizard_video_note(const LcWizard *w);
 char *lc_wizard_video_warning(const LcWizard *w);
 
 /* Which Direct3D 9 the host runs the pass-through's executor on: the
-   automatic answer, DXVK, or — on a Windows host — Windows' own, which
-   is what a host below DXVK's Vulkan 1.3 floor has instead of nothing
-   (ADR-007's 2026-09-21 amendment). A host question, so the list is the
-   the entries this host can run (three on Windows, two elsewhere), the
-   same on every family; ask lc_wizard_d3d9_applies before drawing
-   the row, since only a machine with our own adapter has an executor to
-   run anything on. */
+   automatic answer, DXVK, or, on a Windows host, Windows' own, which is
+   what a host below DXVK's Vulkan 1.3 floor uses instead of nothing
+   (ADR-007's second amendment). A host question, so the list holds the
+   entries this host can run (three on Windows, two elsewhere), the same
+   on every family. Ask lc_wizard_d3d9_applies before drawing the row,
+   since only a machine with our own adapter has an executor. */
 bool lc_wizard_d3d9_applies(const LcWizard *w);
 size_t lc_wizard_d3d9_count(const LcWizard *w);
 char *lc_wizard_d3d9_label(const LcWizard *w, size_t index);
@@ -255,11 +252,11 @@ void lc_wizard_reset_d3d9(LcWizard *w);
 char *lc_wizard_d3d9_note(const LcWizard *w);
 
 /* The sound card and what is on the MIDI port (doc 20 §6). Two lists,
-   both per family like the adapter's — 98 chooses between a Sound
-   Blaster, an AC'97 and a Gravis, XP between the AC'97 and the SB16 —
-   and neither is ever empty ("no sound card" and "no MIDI port" are
+   both per family like the adapter's (98 chooses between a Sound
+   Blaster, an AC'97 and a Gravis, XP between the AC'97 and the SB16).
+   Neither is ever empty ("no sound card" and "no MIDI port" are
    entries), so there is no _applies to ask first. The FM chip is in
-   neither list: it comes with the card that carried one, which is what
+   neither list: it comes with the card that carried one, as
    lc_wizard_sound_note says. */
 size_t lc_wizard_sound_count(const LcWizard *w);
 char *lc_wizard_sound_label(const LcWizard *w, size_t index);
@@ -285,7 +282,7 @@ char *lc_wizard_music_note(const LcWizard *w);
 bool lc_wizard_soundfont_applies(const LcWizard *w);
 bool lc_wizard_mt32_roms_applies(const LcWizard *w);
 
-/* The plain fields, by name — one pair of accessors rather than a dozen,
+/* The plain fields, by name: one pair of accessors rather than a dozen,
  * because there is no behaviour behind them.
  *   text:  "name" "disk_path" "install_media" "floppy" "soundfont"
  *          "mt32_roms" "extra_qemu_args" "shader_profile"
@@ -305,8 +302,8 @@ char *lc_wizard_error(const LcWizard *w);
 
 /* --- the disc shelf -------------------------------------------------
  *
- * The rows are in the shelf's own order — by label, numbers in a label
- * compared as numbers — so a row index is only good until the next edit:
+ * The rows are in the shelf's own order (by label, numbers in a label
+ * compared as numbers), so a row index is only good until the next edit:
  * an add lands where the name belongs and a rename moves the row. Look a
  * disc up by lc_shelf_path() rather than remembering an index across one.
  */
@@ -364,7 +361,7 @@ void lc_snapshots_take(LcSnapshots *s, const char *name);
 /* Destructive, with no undo: confirm it. */
 void lc_snapshots_revert(LcSnapshots *s, const char *name);
 void lc_snapshots_delete(LcSnapshots *s, const char *name);
-/* A live save/load/delete is a QMP *job*: it returns as soon as the job
+/* A live save/load/delete is a QMP job: it returns as soon as the job
  * exists and finishes later. Disable the buttons while pending and call
  * poll from a timer; poll throttles itself, so calling it often is free. */
 bool lc_snapshots_job_pending(const LcSnapshots *s);
@@ -393,30 +390,30 @@ char *lc_editor_param_description(const LcEditor *e, size_t row);
 bool lc_editor_param_range(const LcEditor *e, size_t row, float *minimum, float *maximum,
                            float *step, float *default_value, float *value, bool *overridden);
 void lc_editor_set_override(LcEditor *e, size_t row, bool enabled);
-/* Ignored for a row that isn't overridden — the guard that stops a
- * disabled slider's step-snapped value from becoming an override, which
- * several presets' own defaults would otherwise trigger just by being
- * opened (crt-lottes: warpX 0.031, step 0.01). */
+/* Ignored for a row that isn't overridden. The guard stops a disabled
+ * slider's step-snapped value from becoming an override, which several
+ * presets' own defaults would otherwise trigger just by being opened
+ * (crt-lottes: warpX 0.031, step 0.01). */
 void lc_editor_set_value(LcEditor *e, size_t row, float value);
 
 bool lc_editor_renderable(const LcEditor *e);
 /* Renders into an area and reports the size the frame actually came out
- * at: the image's own size times the largest *integer* scale that fits,
- * never a fraction. Centre that on black — that is how the player shows
- * it. The first call opens a windowless GPU device of its own. */
+ * at: the image's own size times the largest integer scale that fits,
+ * never a fraction. Centre that on black, as the player shows it. The
+ * first call opens a windowless GPU device of its own. */
 bool lc_editor_render(LcEditor *e, uint32_t area_w, uint32_t area_h,
                       uint32_t *out_w, uint32_t *out_h);
 /* Milliseconds until the preview wants rendering again, or 0 when it
- * never does. Some presets' picture depends on the frame number — an
+ * never does. Some presets' picture depends on the frame number (an
  * interlaced CRT's alternate fields, a TV's flicker, a phosphor
- * afterglow — and a front end that renders only on a click shows one
- * frozen frame of the effect: call lc_editor_render again on this
+ * afterglow), and a front end that renders only on a click shows one
+ * frozen frame of the effect. Call lc_editor_render again on this
  * interval while it is non-zero. 0 before the first render. */
 uint32_t lc_editor_frame_interval_ms(const LcEditor *e);
 /* The last frame as RGB8, row-major, top-down. Returns the bytes needed,
  * so NULL/0 sizes your buffer; nothing is written if cap is short. */
 size_t lc_editor_read_frame(const LcEditor *e, uint8_t *buf, size_t cap);
-/* profiles_dir may be NULL or "" for the user's own. A *new* profile
+/* profiles_dir may be NULL or "" for the user's own. A new profile
  * keeps the overrides the editor collected. */
 bool lc_editor_save(LcEditor *e, const char *profiles_dir);
 char *lc_editor_parse_error(const LcEditor *e);

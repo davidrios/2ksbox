@@ -56,12 +56,12 @@ KEYMAP = {" ": "spc", "\\": "backslash", ":": ("shift", "semicolon"), ".": "dot"
           "{": ("shift", "bracket_left"), "}": ("shift", "bracket_right"), "?": ("shift", "slash")}
 # US-International guests (the Brazilian XP images): " ' ^ ~ ` are dead keys
 # there; a following space yields the character itself, so type '~ 1' for
-# '~1' only on a US layout -- prefer 8.3 names with ~ (dead key + digit = both).
+# '~1' only on a US layout. Prefer 8.3 names with ~ (dead key + digit = both).
 
 def send(f, names, hold=None):
     # QMPC_HOLD=<ms> lengthens the press: a DOS game polling the keyboard
     # once a frame under TCG misses a 60 ms tap (Blood's demo ignored Esc
-    # at 60 ms and took it at 300, 2026-09-09); Windows' queue does not care
+    # at 60 ms and took it at 300); Windows' queue does not care
     if hold is None:
         hold = int(os.environ.get("QMPC_HOLD", "60"))
     keys = [{"type": "qcode", "data": n} for n in names]
@@ -108,7 +108,7 @@ def main():
         # step past its acceleration threshold (6 px by default), and QEMU's
         # PS/2 mouse *accumulates* deltas the guest has not read yet into one
         # packet, so a burst of small steps reaches a slow TCG guest as a few
-        # big ones — and a burst long enough overflows the queue and the
+        # big ones, and a burst long enough overflows the queue and the
         # guest's mouse stream desyncs for good. So: 3-px steps, paced, and
         # on our own adapter the pointer is read back from the CURSOR_X / Y
         # registers after every step (the sprite is the driver's, so what
@@ -149,7 +149,7 @@ def main():
             # the Windows pointer and draws its own (Total Annihilation's
             # menu) stops them moving: after a few steps with no change the
             # walk goes blind rather than correcting against a stale value
-            # for 400 steps (2026-09-09).
+            # for 400 steps.
             rel(1, 1); time.sleep(0.3)         # the sprite follows the first move
             first = cur(); moved = False
             for i in range(400):

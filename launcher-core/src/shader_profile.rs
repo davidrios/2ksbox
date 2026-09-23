@@ -1,12 +1,13 @@
 //! Shader profiles (doc 07 settings taxonomy): a named, reusable shader
 //! preset selection plus the parameter overrides tweaked on top of it,
-//! independent of any one machine. A machine references a profile by name
-//! (`bundle::Machine::shader_profile`); `player.rs` resolves that into the
-//! `--shader`/`--shader-params` the player binary actually takes.
+//! independent of any one machine. A machine references a profile by its
+//! id, the file stem (`bundle::Machine::shader_profile`), and `player.rs`
+//! resolves that into the `--shader`/`--shader-params` the player binary
+//! takes.
 //!
-//! Only overridden parameters are stored — everything else stays at the
-//! preset's own default, so a profile survives the preset gaining new
-//! parameters later instead of going stale.
+//! Only overridden parameters are stored. Everything else stays at the
+//! preset's own default, so a profile stays valid when the preset gains
+//! new parameters.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -41,9 +42,7 @@ impl ShaderProfile {
     }
 
     /// The player's `--shader-params` value (`name=value,name=value`,
-    /// sorted by name), or `None` if nothing is overridden — matching the
-    /// compact `key:value,key:value` style of the player's other list-ish
-    /// env knobs (`PLAYER_KEYS`).
+    /// sorted by name), or `None` if nothing is overridden.
     pub fn params_arg(&self) -> Option<String> {
         if self.params.is_empty() {
             return None;
@@ -59,10 +58,10 @@ impl ShaderProfile {
 }
 
 /// A preset's parameters, as declared by the shader source (`#pragma
-/// parameter`) with any value the preset file itself already overrides —
-/// the metadata the profile manager needs to draw a slider per parameter
-/// (id, description, default, range, step). Used for introspection only;
-/// building an actual filter chain is the player's job.
+/// parameter`) with any value the preset file itself already overrides.
+/// This is what the profile manager needs to draw a slider per parameter
+/// (id, description, default, range, step). Introspection only; the
+/// filter chain itself is built elsewhere.
 pub struct ParamMeta {
     pub id: String,
     pub description: String,
@@ -74,8 +73,8 @@ pub struct ParamMeta {
 
 /// Parse `preset` and list its parameters, sorted by id. `Err` covers a
 /// bad path or a preset librashader can't parse (e.g. one of upstream's
-/// documented `BROKEN_SHADERS.md` entries) — the manager shows this
-/// inline rather than letting a bad preset choice crash the picker.
+/// `BROKEN_SHADERS.md` entries). The manager shows the error inline
+/// rather than letting a bad preset crash the picker.
 pub fn parameter_meta(preset: &Path) -> Result<Vec<ParamMeta>, String> {
     let parsed = librashader::presets::ShaderPreset::try_parse(
         preset,
@@ -97,11 +96,10 @@ pub fn parameter_meta(preset: &Path) -> Result<Vec<ParamMeta>, String> {
     Ok(params)
 }
 
-/// Parse a `--preview-shader`-style `name=value,name=value` list — the
-/// same compact format `ShaderProfile::params_arg` produces and the
-/// player's `--shader-params` consumes. A malformed entry is skipped
-/// with a stderr line, not a hard error, matching the player's own
-/// `parse_shader_params`.
+/// Parse a `--preview-shader`-style `name=value,name=value` list, the
+/// format `ShaderProfile::params_arg` produces and the player's
+/// `--shader-params` consumes. A malformed entry is skipped with a
+/// stderr line, as in the player's own `parse_shader_params`.
 pub fn parse_params(s: &str) -> Vec<(String, f32)> {
     s.split(',')
         .filter(|entry| !entry.trim().is_empty())

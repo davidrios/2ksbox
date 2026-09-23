@@ -1,35 +1,32 @@
 //! What a windowed program says when it dies.
 //!
 //! On Windows the launcher is `windows_subsystem = "windows"`
-//! (`console.rs` says why), and a windowed process has no stderr: a
-//! panic, or a QML engine that fails to load, prints into
-//! nothing and the process disappears with no window and no message.
-//! That is exactly the report a first run on someone else's machine
-//! comes back as — "it didn't start, no error, nothing" — and it names
-//! no cause at all.
+//! (`console.rs` says why), and a windowed process has no stderr. A
+//! panic, or a QML engine that fails to load, prints into nothing and the
+//! process disappears with no window and no message. The report that
+//! comes back is "it didn't start, no error", which names no cause.
 //!
-//! So this module gives the launcher two mouths it can use without a
-//! toolkit:
+//! So this module gives the launcher two outputs that need no toolkit:
 //!
-//! * a **log** beside the machine library (`launcher.log`, next to the
+//! * A **log** beside the machine library (`launcher.log`, next to the
 //!   `player.log` a windowless launcher already writes), appended to,
-//!   with a header and a milestone per start-up step — a log that stops
-//!   after "data dir" names the step that died;
-//! * a **message box** on Windows for the last words, because a user who
-//!   double-clicked an icon is not going to find a log file on their own.
+//!   with a header and a milestone per start-up step. A log that stops
+//!   after "data dir" names the step that died.
+//! * A **message box** on Windows for the last words, because a user who
+//!   double-clicked an icon will not find a log file on their own.
 //!
-//! Both front ends call [`install`] as the first thing in `main`, so a
-//! panic anywhere after it is reported the same way in either build. On
-//! Unix the log is written too (it costs nothing and a Flatpak's stderr
-//! is just as invisible) and the message box is not compiled.
+//! The front end calls [`install`] first thing in `main`, so any panic
+//! after it is reported. On Unix the log is written too (it costs
+//! nothing, and a Flatpak's stderr is just as invisible) and the message
+//! box is not compiled.
 
 use std::io::Write;
 use std::path::PathBuf;
 
 /// Where the launcher's own start-up log goes: beside the library, like
 /// `player.log`. Falls back to the temporary directory when the data
-/// directory is the very thing that could not be worked out — the log
-/// has to survive that case, since it is one of the ones worth naming.
+/// directory itself could not be worked out, since that failure is one
+/// worth logging.
 pub fn log_path() -> PathBuf {
     match crate::paths::data_dir() {
         Some(dir) => dir.join("launcher.log"),
@@ -47,24 +44,21 @@ fn append(line: &str) {
     }
 }
 
-/// One start-up milestone. The point is the *last* one in the file: a
-/// run that ends after `[start] library` died loading the library, and
-/// nothing else has to be instrumented to know that.
+/// One start-up milestone. The last one in the file is what matters: a
+/// run that ends after `[start] library` died loading the library.
 pub fn note(what: &str) {
     append(&format!("[start] {what}"));
 }
 
 /// One line for the log that is neither a start-up milestone nor a
-/// death: something worth having in the file when a report comes back.
-/// The player's command line is the one that matters — see
-/// [`crate::player::spawn`].
+/// death, but worth having in the file when a report comes back. The
+/// player's command line is the main one ([`crate::player::spawn`]).
 pub fn entry(line: &str) {
     append(line);
 }
 
 /// Say the last words: into the log always, and into a message box on
-/// Windows, where there is no console to print to and the user is
-/// looking at an empty desktop wondering what happened.
+/// Windows, where there is no console and the user sees nothing else.
 pub fn fatal(what: &str) {
     append(&format!("[fatal] {what}"));
     box_up("2ksbox could not start", what);
@@ -73,8 +67,8 @@ pub fn fatal(what: &str) {
 /// Install the panic hook and open the log with a header. Call it first
 /// in `main`, before anything that can fail.
 ///
-/// `front_end` is which of doc 07's two this binary is, because both
-/// write to the same file and a report is otherwise ambiguous.
+/// `front_end` names the binary in the header, because every front end
+/// writes to the same file.
 pub fn install(front_end: &str) {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -92,7 +86,7 @@ pub fn install(front_end: &str) {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // The default hook first: it is what a developer running from a
-        // terminal is used to reading, and on Unix it is the whole story.
+        // terminal reads, and on Unix it is the whole report.
         previous(info);
         let what = format!(
             "{}\n\nat {}",
@@ -131,9 +125,9 @@ fn box_up(title: &str, body: &str) {
 #[cfg(not(windows))]
 fn box_up(_title: &str, _body: &str) {}
 
-/// File a whole block of text in the log — what `--diagnose` answers
-/// with, since a windowed program cannot answer on stdout and the point
-/// of the verb is to leave one file behind that says everything.
+/// File a whole block of text in the log. `--diagnose` answers this way,
+/// because a windowed program cannot answer on stdout and the verb's job
+/// is to leave one file behind that says everything.
 pub fn record(what: &str, block: &str) {
     append(&format!("--- {what} ---\n{}", block.trim_end()));
 }

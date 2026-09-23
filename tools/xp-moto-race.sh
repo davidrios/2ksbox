@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# xp-moto-race.sh — Moto Racer 1997 into a practice race, headless, and its
+# Moto Racer 1997 into a practice race, headless, and its
 # frame rate from outside (M9 track: the before/after number for the
 # software renderer under TCG that the vCPU's % split cannot give).
 #
@@ -15,16 +15,16 @@
 # Screendumps of every step and `fps.txt` land in build/tcg-profile/<name>/.
 # Env: MOTO (the .mds), FIFA (the .iso), FPS, FPS_RATE (dumps per second, 25),
 # RACE_SAMPLE=<s> (macOS: sample the process for that long *in the race* before the
-# fps probe, report in <out>/race/ — the runner's own sample is of the demo;
+# fps probe, report in <out>/race/; the runner's own sample is of the demo;
 # DFILTER= on the runner still applies, tcg-hot.py <out>/race --dlog <out>/qemu-d.log),
 # RACE_MEMSAVE=<addr:size,...> (guest-virtual ranges saved twice, 1 s apart, to
 # <out>/race/mem-<addr>-{a,b}.bin: which bytes the game patches),
-# RACE_BRAKE=1 (throttle and brake alternated and *measured apart* -- braking
+# RACE_BRAKE=1 (throttle and brake alternated and *measured apart*: braking
 # emits tyre smoke, which is where the game nearly stops, and an average over a
 # lap hides it: per phase the guest's frames and QEMU's TB invalidations and
 # translated bytes, to phases.txt; RACE_ACCEL=<s> throttle per cycle (6),
 # RACE_BRAKE_HOLD=<s> brake per cycle (4), RACE_CYCLES=<n> (3), brake1.png),
-# RACE_WATCH=<s> (one row per second of that many seconds -- TB invalidations,
+# RACE_WATCH=<s> (one row per second of that many seconds: TB invalidations,
 # bytes translated, a screendump kept for the worst of them: which *frame* costs,
 # which an average over a lap hides; RACE_CYCLE=4:3 cycles throttle and brake
 # under it, RACE_SAMPLE=<s> then samples one brake phase and RACE_TRACE=1 traces

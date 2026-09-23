@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""motoracer-state.py <screendump.ppm> — which Moto Racer 1997 screen a
+"""motoracer-state.py <screendump.ppm>: which Moto Racer 1997 screen a
 640x480 screendump shows (tools/xp-motoracer.sh drives the menus by it).
 
 Prints one of: title, name, menu, mode, race-select, showroom, demo-menu,
 other. The game's screens are told apart by a few pixels each (the yellow
 header band of the 2D menus, the showroom's spotlights, the title's flames);
-anything else — a race, the attract demo, a loading screen — is "other".
+anything else (a race, the attract demo, a loading screen) is "other".
 """
 import sys
 

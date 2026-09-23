@@ -116,7 +116,7 @@ pub fn has_sync_header(raw: &[u8; 2352], kind: SectorKind) -> bool {
 pub fn verify_or_correct(raw: &mut [u8; 2352], kind: SectorKind) -> crate::Result<()> {
     // The EDC decides. It is a CRC-32 over exactly the bytes a cooked read
     // delivers, so when it comes out those bytes are intact and any
-    // disagreement is in parity fields the guest never sees — a drive hands
+    // disagreement is in parity fields the guest never sees. A drive hands
     // the sector over, and recomputing 276 parity bytes to disagree with it
     // would only be slower. The sync pattern is checked because an all-zero
     // sector's EDC is zero and would otherwise verify (the zero filler a
@@ -134,8 +134,8 @@ pub fn verify_or_correct(raw: &mut [u8; 2352], kind: SectorKind) -> crate::Resul
     Err(crate::Error::Medium)
 }
 
-/// `LIBDISC_NO_CORRECT=1` turns the decoder off — every L-EC failure a
-/// medium error, the behaviour before 2026-09-08 — as the A/B for a disc
+/// `LIBDISC_NO_CORRECT=1` turns the decoder off (every L-EC failure a
+/// medium error) as the A/B for a disc
 /// whose protection check is being watched to fail.
 fn correction_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

@@ -2,7 +2,7 @@
 Type=Application
 Name=2ksbox
 GenericName=Vintage Windows machines
-Comment=Run Windows 98 and XP as native vintage boxes, with a CRT shader chain
+Comment=Run Windows 98, XP and DOS machines with period 3D and a CRT shader
 # Rewritten to an absolute path by packaging/linux/install.sh, so the entry
 # works whether or not the install prefix's bin/ is on PATH.
 Exec=2ksbox

@@ -1,25 +1,24 @@
 #!/usr/bin/env bash
-# w98-3dmark2001.sh -- 3DMark2001 SE's Benchmark on a Win98 machine, headless,
-# end to end (docs/22 §6, the x87 PC=64 question of patch 47): boot a raw copy
+# 3DMark2001 SE's Benchmark on a Win98 machine, headless, end to end (docs/22 §6, the x87 PC=64 question of patch 47): boot a raw copy
 # of the image through tools/win98-game-test.sh (the user's image is never
 # written), start 3DMark from RUN.BAT, wait for its project window by pixels,
 # click Benchmark over the PS/2 mouse, screendump every 5 s until the Overall
-# Score dialog shows, click Show Details and screendump the per-test list --
-# 3DMark's own fps for every game test, low and high detail -- then power off.
+# Score dialog shows, click Show Details and screendump the per-test list
+# (3DMark's own fps for every game test, low and high detail), then power off.
 #
 #   tools/w98-3dmark2001.sh <name>
 #     env: IMG= (default: the base98-us machine, 3DMark2001 SE installed in
 #     C:\PROGRA~1\MADONION.COM\3DMARK~1), CPU= (-cpu, e.g.
 #     pentium3,x87-pc64-as-53=on), QEMU_TCG_OPTS=, DDFLAGS=, EXTRA=, TABLET=1
 #     (a USB tablet and absolute clicks; off by default, see w98-3dmark.sh),
-#     CAP= (seconds to wait for the score, 3000) -- passed through to
+#     CAP= (seconds to wait for the score, 3000), passed through to
 #     win98-game-test.sh where it takes them.
-# Output: build/w98game/<name>/ -- score.png (the Overall Score dialog),
+# Output: build/w98game/<name>/: score.png (the Overall Score dialog),
 # details-NN.png (Show Details, a screendump per page: the list of tests
-# with 3DMark's own fps -- read the numbers off it), tests/t<secs>.png (a screendump every 5 s after
-# the Benchmark click: what was on screen, so a rate line in qemu.log can be
-# placed by test -- the "Now Testing" splash names the test that is about to
-# run), rates.txt (the executor's `ddi:` lines), qemu.log. Settings are the
+# with 3DMark's own fps; read the numbers off it), tests/t<secs>.png (a
+# screendump every 5 s after the Benchmark click, so a rate line in
+# qemu.log can be placed by test; the "Now Testing" splash names the test
+# that is about to run), rates.txt (the executor's `ddi:` lines), qemu.log. Settings are the
 # image's own (base98-us: 1024x768x32, compressed textures, pure hardware
 # T&L). Local only: needs the image.
 set -u
@@ -89,8 +88,8 @@ done
 if [ $seen -ge 2 ]; then
   c 501 285; sleep 4             # Show Details
   # the list is pages long (user, project, display, the results, the
-  # system) and its keyboard focus is not the list's (PgDn did nothing,
-  # 2026-09-16): a click on the scrollbar's track below the thumb pages it
+  # system) and its keyboard focus is not the list's (PgDn does nothing).
+  # A click on the scrollbar's track below the thumb pages it
   # down, a screendump per page, until the last two pages are the same
   q screendump "$O/details-00.png" >/dev/null
   prev=$(md5 -q "$O/details-00.png.ppm")

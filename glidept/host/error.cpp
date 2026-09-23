@@ -3,7 +3,7 @@
 //* wrapper's log, never onto the process's stdout.
 //*
 //* Upstream's Unix platform prints to stdout, which here is the player's
-//* (or QEMU's) own stdout — a "Warning: ..." line from a library loaded
+//* (or QEMU's) own stdout. A "Warning: ..." line from a library loaded
 //* three levels down is noise at best and confuses a script that parses
 //* our output at worst.
 //*

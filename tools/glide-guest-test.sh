@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# glide-guest-test.sh — GLIDETEST.EXE in a real Win98 guest, in the player,
-# headless. The whole Glide chain end to end (doc 12 §5):
+# GLIDETEST.EXE in a real Win98 guest, in the player, headless. The whole Glide chain end to end (doc 12 §5):
 #
 #   the guest's GLIDE2X.DLL -> the MMIO FIFO -> hw/3dfx's dispatcher ->
 #   our libglide2x on the host -> the embed backend's window-less context
@@ -11,12 +10,12 @@
 # **It must be the player, not qemu-system-i386.** A bare QEMU registers no
 # 3D UI provider, so `glide_host_ops` returns NULL, the wrapper is left with
 # its own windowing and finds no context: grSstWinOpen fails and the guest
-# falls back to software. That is the design (patch 33), not a bug — the
+# falls back to software. That is the design (patch 33), not a bug. The
 # provider is the embed library's, and only the player has one.
 #
 # The proof is the guest's own line, `glidetest: N cases, 0 failed`, on
-# COM1: GLIDETEST reads its pixels back through grLfbLock rather than
-# trusting the host to look at them — a host that never drew the scene
+# COM1. GLIDETEST reads its pixels back through grLfbLock rather than
+# trusting the host to look at them, and a host that never drew the scene
 # cannot make those pixels up.
 #
 # Needs a guest image, so it is run by hand and never from scripts/test.sh.
@@ -28,13 +27,13 @@
 # (tools/guestwait.sh), and BOOT_WAIT / WARMUP_WAIT are only the caps.
 #
 # Env: PACKAGE=<staged tree|prefix> (run it out of a package instead of the
-# checkout, with nothing pointed at the wrapper by hand — the packaged
+# checkout, with nothing pointed at the wrapper by hand, so the packaged
 # player's own rule has to find it), OUT=dir,
 # BOOT_WAIT=s (cap, 300), WARMUP_WAIT=s (cap, 300), NO_WARMUP=1, RES=7 (the Glide
 # resolution, glidewnd.c's table), REUSE=1 (keep the last overlay, which
 # already has the wrapper installed and Win98 settled: halves the run),
 # DUMP_SEQ=n (the player writes its own shaded frame #n to frame.png and
-# **ends the run there** — the dump exits the player; the guest's own
+# **ends the run there**, since the dump exits the player; the guest's own
 # readback is the evidence, this is only for eyes).
 set -euo pipefail
 
@@ -53,13 +52,13 @@ QEMU="$ROOT/build/qemu/qemu-system-i386"
 EXE="$OUT/GLIDETEST.EXE"
 # PACKAGE=<staged tree or install prefix> runs the whole thing out of a
 # package rather than the checkout: its player, its firmware, its
-# guest-tools ISO — and, the point of it, **no `QEMU_GLIDE_LIB`**, so the
+# guest-tools ISO and, the point of it, **no `QEMU_GLIDE_LIB`**, so the
 # only thing that can find the wrapper is the packaged player's own rule
 # (`player/src/companions.rs`). That is the half `scripts/package-linux.sh`
 # cannot check: it can watch the player resolve a path, not a guest draw
-# through it. The warm-up boot below stays the checkout's QEMU either way —
-# a package ships no `qemu-system-i386` (the player embeds it), and nothing
-# 3D happens in that boot.
+# through it. The warm-up boot below stays the checkout's QEMU either way,
+# since a package ships no `qemu-system-i386` (the player embeds it) and
+# nothing 3D happens in that boot.
 PKG="${PACKAGE:-}"
 if [ -n "$PKG" ]; then
   PLAYER="$PKG/bin/2ksbox-player"
@@ -117,7 +116,7 @@ mkfs.fat -C -F 12 "$FLOPPY" 1440 >/dev/null
 mcopy -o -i "$FLOPPY" "$OUT/RUN.BAT" ::/RUN.BAT
 mcopy -o -i "$FLOPPY" "$EXE" ::/GLIDETEST.EXE
 
-# REUSE=1 keeps the overlay from the last run — the Glide wrapper is already
+# REUSE=1 keeps the overlay from the last run. The Glide wrapper is already
 # installed in it and Win98 has already settled, which halves the run
 # while iterating.
 if [ -z "${REUSE:-}" ] || [ ! -f "$OVL" ]; then
@@ -134,7 +133,7 @@ HW=(-cpu pentium3 -machine pc -m 256 -vga cirrus
     -audiodev none,id=a0 -device sb16,audiodev=a0)
 
 # Win98 re-detects its hardware on the first boot of a fresh overlay and
-# that boot regularly takes Explorer down with it — no taskbar, no Start
+# that boot regularly takes Explorer down with it: no taskbar, no Start
 # menu, no way in. Burn one boot first and shut it down over ACPI, which
 # needs no shell; the second boot comes up settled. Bare QEMU is fine for
 # this one: nothing 3D happens.
@@ -144,8 +143,8 @@ if [ -z "${NO_WARMUP:-}" ]; then
     -display none -qmp "unix:$SOCK,server,nowait" -monitor none \
     > "$OUT/warmup.log" 2>&1 &
   WPID=$!
-  # The shell is the one thing this boot cannot be asked about — Explorer
-  # dying is what it exists to absorb — so it waits on the disks: the
+  # The shell is the one thing this boot cannot be asked about (Explorer
+  # dying is what it exists to absorb), so it waits on the disks. The
   # re-detection reads from end to end, and when the reads stop it is over.
   GW_PID=$WPID
   gw_wait_sock "$SOCK" && gw_wait_quiet "$SOCK" "${WARMUP_WAIT:-300}" 10 || true

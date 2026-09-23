@@ -9,7 +9,7 @@
 //! (see `pair`). The handle is then turned into a descriptor by the embed
 //! library itself (`qemu_embed::socket_to_fd`): `fd=` is a plain integer on
 //! both platforms, but on Windows it is a C-runtime descriptor QEMU resolves
-//! with `_get_osfhandle`, not a `SOCKET` — a raw handle is refused as
+//! with `_get_osfhandle`, not a `SOCKET`. QEMU refuses a raw handle with
 //! "File descriptor 'N' is not a socket".
 //!
 //! `execute` is synchronous (id-matched, 10 s timeout). Events accumulate in
@@ -195,7 +195,7 @@ fn into_raw(s: Stream) -> std::io::Result<i32> {
 /// A connected pair on the loopback interface, Windows' stand-in for
 /// `socketpair()`. Anything else on the machine can also connect to a
 /// listening port, so the accepted connection is only kept when its peer
-/// address is the exact address our own connecting socket was given —
+/// address is the exact address our own connecting socket was given,
 /// which no other process can be using at the same time. A stranger that
 /// wins the race is dropped and the whole thing is tried again, so the
 /// monitor is never handed to it.

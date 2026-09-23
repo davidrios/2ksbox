@@ -3,11 +3,11 @@
 How x87 floating point runs under TCG without softfloat for the common
 case: patch 05 (helpers on the host FPU), patch 06 (the stack kept as
 host values inside generated code), and the patches that extended it to
-every precision a Windows program uses — 37 (sticky inexact), 45
-(binary32 at PC=24), 47–49 and 67 (PC=64). SSE and MMX are doc 16; the
-queue's measured effect on benchmarks and games is doc 22; the track
-record is `docs/tracks/m8-tcg-fastpaths.md`. Each patch's row is in
-`patches/qemu/README.md`.
+every precision a Windows program uses: 37 (sticky inexact), 45
+(binary32 at PC=24), 47–49 and 67 (PC=64). SSE and MMX are in doc 16.
+Doc 22 measures the queue on benchmarks and games, and
+`docs/tracks/m8-tcg-fastpaths.md` holds the track record. Each patch's
+row is in `patches/qemu/README.md`.
 
 ## The modes
 
@@ -175,8 +175,8 @@ Mode 2 is exact for 24-bit precision in two shapes:
   (`cpu_x87_ss[]`) and an operation is the host's `addss` / `mulss` /
   `divss` / `sqrtss` plus one range check: the correctly rounded 24-bit
   result is exactly the x87's PC=24 result while it has a binary32
-  exponent. What would not have one takes the slow path — overflow,
-  underflow, and the lowest binade, where a value just under 2^-126
+  exponent. What would not have one takes the slow path: overflow,
+  underflow and the lowest binade, where a value just under 2^-126
   rounds up into binary32's normal range but not with the x87's wider
   exponent. `fld m32` is the operand's bits after the zero-or-normal
   check, `fst m32` the shadow's bits with no check and no flag;
@@ -199,11 +199,10 @@ an `fild m32` whose value needs more than 24 bits takes a slow block
 
 Patch 47, the one inexact switch: `x87-pc64-as-53=on` makes
 `update_fp_status` map PC=11b to `floatx80_precision_d`. Everything
-downstream follows from that one value — softfloat rounds at 53 bits,
-`x87_fast_prec` returns the double path, `x87_fast_mode` becomes 1 —
-while `fnstcw` still returns the guest's own word. What changes is the
-result: the low 11 bits of a 64-bit mantissa, which a real x87 would
-compute. Sampling a program's operands cannot tell which of its
+downstream follows from that one value. Softfloat rounds at 53 bits,
+`x87_fast_prec` returns the double path and `x87_fast_mode` becomes 1,
+while `fnstcw` still returns the guest's own word. The result loses the
+low 11 bits of a 64-bit mantissa, which a real x87 would compute. Sampling a program's operands cannot tell which of its
 operations would survive that (two 53-bit operands make a 106-bit
 product, and whether its last bits matter is decided later, by a
 comparison or an accumulation). Hence off by default, and "not exact" in
@@ -238,7 +237,7 @@ negated for a negative, so −0 is +0).
 
 - `fmul` is inline (patch 49): the mantissas' 128-bit product
   (`mulu2_i64`; `mul` + `umulh` on aarch64), normalized by its top bit,
-  then `x87s_pack_x80` — `x87f_pack_x` as TCG ops: the pre-rounding
+  then `x87s_pack_x80`, which is `x87f_pack_x` as TCG ops: the pre-rounding
   exponent checked to 1..0x7ffd, nearest-even on the 64 bits below, the
   carry out of 2^64, PE, a zero operand's signed zero. `fst m32` is
   inline too: the top 24 mantissa bits rounded by the 40 below, one
@@ -246,8 +245,8 @@ negated for a negative, so −0 is +0).
   branch.
 - `+ − /` call `helper_x87x_arith`, declared `TCG_CALL_NO_RWG_SE`: it
   reads and writes no guest state, so the shadows stay in host registers
-  across the call and it needs no boundary. It returns an i128 — the
-  result mantissa, and its sign | exponent with an "inexact" bit (PE,
+  across the call and it needs no boundary. It returns an i128 holding
+  the result mantissa and its sign | exponent with an "inexact" bit (PE,
   unless the TB is PE-sticky) and an "ok" bit, clear when softfloat must
   decide (a pre-rounding exponent outside 1..0x7ffd, i.e. overflow or
   tininess; a zero divisor; an operand that is not zero or normal),
@@ -265,8 +264,8 @@ negated for a negative, so −0 is +0).
 
 The ordinary helpers' PC=64 arithmetic takes the same integer path
 (`x87f_binop_x`; `x87_fast_prec` returns `X87F_PREC_X`), so a PC=64
-block that is not inlined — single-stepped, past the instruction limit,
-or a slow block's helper — is faster too. The unwinder copies
+block that is not inlined (single-stepped, past the instruction limit,
+or a slow block's helper) is faster too. The unwinder copies
 `x87_xl/xh[]` back for a mode 3 TB.
 
 ## Verification
@@ -275,9 +274,9 @@ or a slow block's helper — is faster too. The unwinder copies
   instruction sequences (multi-instruction chains, `fcmov`, compares,
   integer and float conversions) over 44² operand pairs and seven
   control words (PC=53/24/64 nearest, the helper cases truncate, down
-  and up, and PE unmasked, where the inline path must stay off) — twice:
-  once after `fninit`, once with PE set before each case, so the sticky
-  variants run too (`fninit` before every case had hidden them). PC=64
+  and up, and PE unmasked, where the inline path must stay off). Each
+  case runs twice, once after `fninit` and once with PE set first, so the
+  sticky variants run too (`fninit` before every case had hidden them). PC=64
   adds operands for exact 64-bit ties, a cancellation and full
   mantissas. Result: **906,713 lines identical** with `x87-fast` on and
   off, on aarch64, x86-64 and the Windows build under Wine. A
@@ -316,7 +315,7 @@ narrows every load, 0.44 s and 0.71 s.
 Guest workloads:
 
 - **Super PI 1M in XP on the Air**: 9:49 on softfloat, 6:33 with patch
-  05, 1:57 with patch 06 — faster than the reference rig's real
+  05, 1:57 with patch 06. That beats the reference rig's real
   Pentium 4 1.7 GHz (2:02; `reference/benchmarks/README.md`).
 - **3DMark 99** (patches 37 and 45 on the Win98 machine): CPU 3DMarks
   13549 → 14690 → 16899. The per-test numbers are the M9 track's and

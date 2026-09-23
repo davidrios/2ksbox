@@ -1,6 +1,6 @@
-# qtmin — the smallest cxx-qt binary, in three rungs
+# qtmin, the smallest cxx-qt binary in three rungs
 
-A reproducer for the Windows build (M11, `docs/tracks/m11-windows-host.md`):
+A reproducer for the Windows build (M11, `docs/tracks/m11-windows-host.md`).
 `launcher-qt.exe` cross-built for Windows used to fault on a call to
 address 0 **before `main`**, under Wine and on a real PC alike. Nothing of
 the launcher's own had run, so the question was which of cxx-qt's layers
@@ -42,8 +42,8 @@ winedbg` and `objdump`:
 3. emutls keys its storage per libgcc, and there are two: rustc links
    libgcc statically into the exe for `x86_64-pc-windows-gnu`, while
    `libstdc++-6.dll` uses `libgcc_s_seh-1.dll`'s. The proxy reads a slot
-   the exe never wrote, finds `NULL` and calls it — the `rip=0` with a
-   return address inside `pthread_once` in every crash dump.
+   the exe never wrote, finds `NULL` and calls it. That is the `rip=0`
+   with a return address inside `pthread_once` in every crash dump.
 
 ## The fix
 
@@ -61,9 +61,10 @@ runs reads `__once_call` through *this* module's emutls, the registry
 (`src/c++11/mutex.cc`). With it all three rungs reach `main`, and the Qt
 launcher passes every check of `package-windows.sh`.
 
-What does **not** work: `-C link-arg=-static-libstdc++` (something on the
-link line still asks for the DLL and the exe keeps importing
-`__once_proxy`), `-C link-self-contained=no` and `-C
-link-arg=-shared-libgcc` (rustc links libgcc statically for this target
-regardless, so there are still two registries — the fix makes that
-harmless instead of fighting it).
+What does **not** work:
+
+- `-C link-arg=-static-libstdc++`. Something on the link line still asks
+  for the DLL, and the exe keeps importing `__once_proxy`.
+- `-C link-self-contained=no` and `-C link-arg=-shared-libgcc`. rustc
+  links libgcc statically for this target regardless, so there are still
+  two registries. The fix makes that harmless instead of fighting it.

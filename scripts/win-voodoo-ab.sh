@@ -19,10 +19,10 @@
 #
 # The machine is the launcher's own (its bundle's disk, its guest-tools
 # ISO); close the launcher's window for that machine first, or the disk's
-# write lock will refuse this one. The player started from a shell prints
-# to that shell -- only the launcher redirects it -- so this tees the run
-# into build/win-voodoo-ab.log, which is what to read afterwards
-# (%APPDATA%\2ksbox\data\player.log has nothing from these runs).
+# write lock will refuse this one. A player started from a shell prints to
+# that shell (only the launcher redirects it), so this tees the run into
+# build/win-voodoo-ab.log. %APPDATA%\2ksbox\data\player.log has nothing
+# from these runs.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

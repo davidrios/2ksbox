@@ -1,18 +1,18 @@
-# hwmmu — pricing the hardware-MMU design on real workloads (M9)
+# hwmmu: pricing the hardware-MMU design on real workloads (M9)
 
 `tools/hvf-el1/` priced each primitive of running TCG's output in a
-Hypervisor.framework VM with the guest's page tables mirrored; this
+Hypervisor.framework VM with the guest's page tables mirrored. This
 directory prices the design on real workloads, as two halves that
-multiply. The reading — a projected 1.05–1.20x, and the decision to park
-the design — is in `docs/tracks/m9-tcg-aarch64.md`, "Gauging the gain",
+multiply. The reading (a projected 1.05–1.20x) and the decision to park
+the design are in `docs/tracks/m9-tcg-aarch64.md`, "Gauging the gain",
 with the tables in doc 22 §8.2 and the raw data in `docs/22-data/hwmmu/`.
 
 **`census.c`, a TCG plugin**, counts what a workload does to memory:
 instructions, loads, stores, distinct 4 KiB pages per second and per
 window of 65,536 accesses (the nested TLB holds 3072 entries; a window
 beyond that misses), and pages touched and written for the first time
-(a mirror fill and a dirty upgrade each). One `census` line per second
-on the plugin log, plus a `reuse` line of page reuse distances in
+(a mirror fill and a dirty upgrade each). It writes one `census` line per
+second to the plugin log, plus a `reuse` line of page reuse distances in
 power-of-two buckets.
 
 ```sh
@@ -34,9 +34,9 @@ paid where an out-of-order core would hide them. Run the probe alone on
 the machine (`tools/hvf-el1/README.md`).
 
 **`project.py <probe results> name:Ginsn:Mld:Mst:wall_s …`** multiplies
-the two: each load and store charged the probe's softmmu-minus-direct
+the two. It charges each load and store the probe's softmmu-minus-direct
 difference at the 64 KiB, 4 MiB and 8 MiB working sets. `project.py
 <probe> --reuse <census log> <shell_after_s>
 name:Ginsn:Mld:Mst:wall_s:start:end …` instead charges each access the
-row its own reuse distance puts it on. It counts nothing else —
-not TLB refills, CR3 flushes or the helpers' own accesses.
+row its own reuse distance puts it on. It counts nothing else: not TLB
+refills, CR3 flushes or the helpers' own accesses.

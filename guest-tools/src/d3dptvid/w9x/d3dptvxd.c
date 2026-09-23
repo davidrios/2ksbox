@@ -1,13 +1,12 @@
 /*
- * d3dptvxd.c — the Win98/Me mini-VDD for the d3dpt-vga adapter (doc 19,
- * ADR-012 / M10). Ring 0, a dynamically loadable VxD, built with Open
- * Watcom's 32-bit compiler.
+ * d3dptvxd.c: the Win98/Me mini-VDD for the d3dpt-vga adapter (doc 19,
+ * ADR-012). Ring 0, a dynamically loadable VxD, built with Open Watcom's
+ * 32-bit compiler.
  *
- * Why this exists, and why before the display driver: on 9x the ring-0
- * half owns the adapter. Windows unmaps a PCI device's base addresses
- * within half a minute of boot when nothing claims them, so a 16-bit
- * display driver that maps the BARs itself finds zeros and GDI falls back
- * to VGA — measured, doc 19 §11. This VxD is what claims the device:
+ * On 9x the ring-0 half owns the adapter. Windows unmaps a PCI device's
+ * base addresses within half a minute of boot when nothing claims them, so
+ * a 16-bit display driver that maps the BARs itself finds zeros and GDI
+ * falls back to VGA (doc 19 §11). This VxD claims the device:
  *
  *   - it finds the adapter on the bus and, if Windows has already taken
  *     the base addresses away, programs them back and re-enables memory
@@ -15,13 +14,12 @@
  *   - it maps VRAM and the register page into ring-0 linear space;
  *   - it registers itself in the main VDD's mini-VDD dispatch table, so
  *     the display driver's VDD_REGISTER_DISPLAY_DRIVER_INFO call reaches
- *     us and we can hand back 16-bit selectors onto both — the display
- *     driver never touches PCI configuration space again.
+ *     us and we hand back 16-bit selectors onto both. The display driver
+ *     never touches PCI configuration space.
  *
  * Debug output goes to port 0xE9 (QEMU's `-debugcon`) and, once the
  * register page is mapped, to the adapter's DEBUG register and so into the
- * QEMU log — the same two channels the .drv uses, and in ring 0 both
- * actually work.
+ * QEMU log. These are the same two channels the .drv uses.
  *
  * Build: guest-tools/build-driver9x.sh
  *
@@ -32,13 +30,13 @@
 #include "d3dpt9v.h"
 #include "../../../../d3dpt/d3dpt_fb.h"
 
-/* Everything — code, data and constants — goes into one segment of class
- * CODE, so the module links to a single LE object and the DDB below lands
- * at its offset 0. That is where the VMM's loader expects a VxD's
- * descriptor block: a real driver's entry table names object 1 offset 0
- * (checked against the guest's own FXMEMMAP.VXD), while letting the DDB
- * fall into _DATA gives a 16-bit entry into the second object and the VxD
- * silently does not load. vmdisp9x's source carries the same warning. */
+/* Code, data and constants all go into one segment of class CODE, so the
+ * module links to a single LE object and the DDB below lands at its
+ * offset 0. The VMM's loader expects a VxD's descriptor block there: a
+ * real driver's entry table names object 1 offset 0 (checked against the
+ * guest's own FXMEMMAP.VXD). A DDB in _DATA gives a 16-bit entry into the
+ * second object and the VxD silently does not load. vmdisp9x's source
+ * carries the same warning. */
 #pragma data_seg("_LTEXT", "CODE")
 #pragma code_seg("_LTEXT", "CODE")
 #pragma const_seg("_LTEXT", "CODE")
@@ -102,15 +100,14 @@ static void __declspec(naked) __cdecl AllocGDT_(ULONG hi, ULONG lo, ULONG flags)
 void dbg_str(const char *s);
 void dbg_val(const char *tag, DWORD v);
 
-/* Map a physical range of the adapter where **ring 3 can also reach it**.
+/* Map a physical range of the adapter where ring 3 can also reach it.
  *
- * `_MapPhysToLinear` is the obvious call and it is the wrong one here: it
- * maps into the system arena, whose pages are supervisor-only, so a 16-bit
- * display driver holding a selector onto one reads zeros and its writes go
- * nowhere — no fault, no diagnostic, just a register set that looks like a
- * different device (doc 19 Section 14). The shared arena with PC_USER is
- * the mapping both halves can use, and one mapping serves both: ring 0 may
- * read a user page.
+ * `_MapPhysToLinear` is the wrong call here. It maps into the system
+ * arena, whose pages are supervisor-only, so a 16-bit display driver
+ * holding a selector onto one reads zeros and its writes go nowhere. There
+ * is no fault and no diagnostic, only a register set that looks like a
+ * different device (doc 19 §14). The shared arena with PC_USER works for
+ * both halves with one mapping, since ring 0 may read a user page.
  *
  * PR_FIXED / PC_FIXED because the adapter's memory is not swappable, and
  * PC_INCR because the physical pages are consecutive. */
@@ -132,24 +129,24 @@ static DWORD MapDevicePhys(DWORD phys, DWORD bytes)
     lin = _PageReserve(PR_SHARED, pages, PR_FIXED);
     if (!lin || lin == 0xffffffffuL) { dbg_str("d3dptvxd: no shared arena"); return 0; }
 
-    /* PC_USER is the whole point of the shared-arena mapping, PC_WRITEABLE
-     * goes with it, and PC_INCR is what makes the physical pages advance —
-     * without it the whole 128 MB of VRAM aliases onto one page and the
-     * desktop is drawn 4 KB at a time on top of itself.
+    /* PC_USER is why this mapping is in the shared arena, PC_WRITEABLE
+     * goes with it, and PC_INCR makes the physical pages advance. Without
+     * PC_INCR all 128 MB of VRAM aliases onto one page and the desktop is
+     * drawn 4 KB at a time on top of itself.
      *
-     * **This VMM refuses PC_PRESENT here**, silently, returning zero with
-     * everything else correct; it refuses PC_FIXED and PC_STATIC the same
-     * way. There is no fallback on purpose: a commit without PC_INCR would
-     * succeed and give an aliased mapping, which is worse than no mapping
-     * because it looks like it worked (doc 19 Section 14). */
+     * This VMM silently refuses PC_PRESENT here, returning zero with
+     * everything else correct. It refuses PC_FIXED and PC_STATIC the same
+     * way. There is no fallback on purpose. A commit without PC_INCR would
+     * succeed with an aliased mapping, which is worse than no mapping
+     * because it looks like it worked (doc 19 §14). */
     if (!_PageCommitPhys(lin >> 12, pages, phys >> 12,
                          PC_USER | PC_WRITEABLE | PC_INCR)) {
         dbg_val("d3dptvxd: cannot commit phys", phys);
         return 0;
     }
 
-    /* First and last page, because an aliased mapping is invisible from
-     * anywhere else: the same value twice means PC_INCR did not take. */
+    /* First and last page, because nothing else shows an aliased mapping.
+     * The same value twice means PC_INCR did not take. */
     dbg_pte("d3dptvxd: pte 0", lin);
     dbg_pte("d3dptvxd: pte last", lin + ((pages - 1) << 12));
     return lin;
@@ -161,7 +158,7 @@ static WORD MakeSelector(DWORD linear, DWORD bytes)
 {
     DWORD hi = 0, lo = 0, sel = 0;
 
-    /* The limit is the last page, not the page count: with the granularity
+    /* The limit is the last page, not the page count. With the granularity
      * bit set a limit of N reaches N + 1 pages, and a selector a page longer
      * than its mapping lets a stray access land on whatever the shared arena
      * put next instead of faulting. */
@@ -228,9 +225,9 @@ static void PciWrite(DWORD addr, DWORD val);
 #define CFG(dev, off) (0x80000000uL | ((DWORD)(dev) << 11) | ((off) & 0xfc))
 
 /* Find the adapter and make sure it is decoding memory. Windows may have
- * stripped the base addresses already (doc 19 §11), in which case we put
- * back what we were told at the first sighting — the BIOS's assignment,
- * which nothing else is using. */
+ * stripped the base addresses already (doc 19 §11). Then we put back what
+ * we saw at the first sighting, the BIOS's assignment, which nothing else
+ * uses. */
 static BOOL AdapterClaim(void)
 {
     DWORD dev, id, cmd;
@@ -308,8 +305,8 @@ static WORD wVramSel = 0, wRegsSel = 0;
 
 /*
  * REGISTER_DISPLAY_DRIVER (mini-VDD function 0), reached from the display
- * driver's VDD_REGISTER_DISPLAY_DRIVER_INFO. We answer with what the
- * driver cannot get for itself:
+ * driver's VDD_REGISTER_DISPLAY_DRIVER_INFO. The answer is what the driver
+ * cannot get for itself:
  *   EAX = the register page's selector
  *   EDX = VRAM's selector
  *   ECX = VRAM's size in bytes
@@ -347,25 +344,24 @@ static void __stdcall register_display_driver_proc(DWORD vm, PCRS_32 state)
 
 /* ------------------------------------------------- the screen switch
  *
- * **A DOS box takes the screen away, and somebody has to give it back.**
+ * A DOS box takes the screen away, and something has to give it back.
  * When a VM goes full-screen the main VDD switches the adapter from the
  * display driver's hi-res mode to VGA and lets the DOS program program the
- * VGA registers itself. Our adapter is a VGA *and* a linear frame buffer,
+ * VGA registers itself. Our adapter is a VGA and a linear frame buffer,
  * and while `D3DPT_FB_REG_ENABLE` is set the device scans out the linear
- * one — so the DOS program writes VGA memory at A0000 and nothing of it
- * reaches the screen, which goes on showing the frozen desktop. Every
- * full-screen DOS game "glitches out", whatever mode it asks for.
+ * one. The DOS program writes VGA memory at A0000 and none of it reaches
+ * the screen, which goes on showing the frozen desktop.
  *
  * The main VDD tells the mini-VDD when this is about to happen and when it
- * is over; nothing else in the system knows about the register. The way
+ * is over. Nothing else in the system knows about the register. The way
  * back is the display driver's `RestoreDesktopMode`, which the VDD calls
  * through the callback registered with `VDD_DRIVER_REGISTER` and which
- * writes every mode register including ENABLE — so `POST_VGA_TO_HIRES`
- * only has to make sure, and the device keeps width/height/bpp/pitch across
- * an ENABLE of 0 anyway.
+ * writes every mode register including ENABLE. So `POST_VGA_TO_HIRES`
+ * only makes sure, and the device keeps width/height/bpp/pitch across an
+ * ENABLE of 0 anyway.
  *
- * **Measured 2026-09-09**, Alt+Enter on a DOS box and back: all four are
- * called, in order, with the display driver's callback in the middle —
+ * Alt+Enter on a DOS box and back calls all four in order, with the
+ * display driver's callback in the middle:
  *
  *     d3dptvxd: hi-res -> VGA
  *     d3dptvxd: hi-res -> VGA done
@@ -373,23 +369,21 @@ static void __stdcall register_display_driver_proc(DWORD vm, PCRS_32 state)
  *     d3dpt9x: RestoreDesktopMode
  *     d3dptvxd: VGA -> hi-res done
  *
- * — and with the ENABLE write in `PRE_HIRES_TO_VGA`, Blood renders
- * full-screen at 640x480 through the device's VGA core for the whole of its
- * attract demo, then the desktop comes back. Which of these the VDD calls
- * for a given kind of switch is not something the DDK headers say, so they
- * all log; that log is what the round trip above was read off.
+ * With the ENABLE write in `PRE_HIRES_TO_VGA`, Blood renders full-screen
+ * at 640x480 through the device's VGA core for its whole attract demo, then
+ * the desktop comes back. The DDK headers do not say which of these the
+ * VDD calls for a given kind of switch, so they all log.
  *
- * One thing to know if this ever looks wrong again: judging it from an
- * *interim* read of the log is how it gets misread. Half way through that
- * run only the first two lines existed and the screen was still the frozen
- * desktop — the DOS box had not left its prompt yet — which reads exactly
- * like a one-way switch into a black screen. Wait for the run to end. */
-/* The linear mode was on when a switch to VGA turned it off. The way back
- * turns it on again only then: this mini-VDD also runs under the 16-colour
+ * Judge a run from the finished log, not an interim read. Halfway through,
+ * only the first two lines exist and the screen still shows the frozen
+ * desktop (the DOS box has not left its prompt yet), which reads exactly
+ * like a one-way switch into a black screen. */
+/* Set when a switch to VGA turned the linear mode off. The way back turns
+ * it on again only then. This mini-VDD also runs under the 16-colour
  * drivers the INF hands low-colour modes to, and after our driver's
  * PhysicalDisable, and there an unconditional ENABLE put a stale linear
- * frame (or none) over the VGA the display actually uses. Cleared only by
- * the way back, so a second switch on top of the first cannot lose it. */
+ * frame (or none) over the VGA the display actually uses. Only the way
+ * back clears it, so a second switch on top of the first cannot lose it. */
 static BOOL bLinearWasOn = FALSE;
 
 static void LinearOff(void)
@@ -424,45 +418,42 @@ static void __stdcall vga_to_hires_proc(void)
 
 /* ------------------------------------------------- the blue screen
  *
- * **A blue screen is a message screen, and the VDD draws it itself.** A
- * fatal exception, a "Windows protection error", the Ctrl+Alt+Del screen,
- * "It is now safe to turn off your computer": the VMM enters *message
- * mode* and the main VDD programs VGA text mode directly — no int 10h, no
- * display driver drawing. With ENABLE left on the device went on scanning
- * out the frozen desktop, and every blue screen this driver produced in its
- * first three days was invisible: doc 19 §15 is the archaeology of reading
- * them out of VRAM afterwards, and the user's report that "BSODs don't
- * show up" (2026-09-09) is the same thing seen from the chair.
+ * A blue screen is a message screen, and the VDD draws it itself. For a
+ * fatal exception, a "Windows protection error", the Ctrl+Alt+Del screen or
+ * "It is now safe to turn off your computer", the VMM enters message mode
+ * and the main VDD programs VGA text mode directly, with no int 10h and no
+ * display driver drawing. With ENABLE left on, the device goes on scanning
+ * out the frozen desktop and the blue screen is invisible (doc 19 §15
+ * reads such screens out of VRAM afterwards).
  *
- * Measured with tools/win98-bsod-test.sh (a VxD of ours faulting at load):
- * a fatal exception in the Windows VM takes the ordinary road — the INT 2Fh
- * notification to the display driver, then PRE_HIRES_TO_VGA above — so the
- * hook above is what puts that one on the screen. SAVE_MESSAGE_MODE_STATE
- * is the DDK's other door, for message screens the VDD puts up without a VM
- * switch; this VMM calls it once at boot, before the mode is set, and would
- * call it for those. ENABLE off here too: harmless at boot, right whenever
- * it is used for what its name says. The way back after "press any key to
- * continue" is RestoreDesktopMode, as after any switch. */
+ * tools/win98-bsod-test.sh (a VxD of ours faulting at load) shows that a
+ * fatal exception in the Windows VM takes the ordinary road: the INT 2Fh
+ * notification to the display driver, then PRE_HIRES_TO_VGA above. So the
+ * hook above puts that one on the screen. SAVE_MESSAGE_MODE_STATE is the
+ * DDK's other door, for message screens the VDD puts up without a VM
+ * switch. This VMM calls it once at boot, before the mode is set. ENABLE
+ * goes off here too, which is harmless at boot and right for any other
+ * call. The way back after "press any key to continue" is
+ * RestoreDesktopMode, as after any switch. */
 static void __stdcall save_message_mode_proc(void)
 {
     dbg_str("d3dptvxd: message mode: VGA text");
     LinearOff();
 }
 
-/* **Not every blue screen takes the screen switch.** A fault in a VxD's own
+/* Not every blue screen takes the screen switch. A fault in a VxD's own
  * init comes through PRE_HIRES_TO_VGA above, but one in an event or a timer
- * callback does not: 2026-09-12, the patch-44 corruption put up exception
- * 0E/05 screens from VTDAPI's timer event, the VDD drew them in VGA text
- * mode, and this VxD was told nothing at all — no mini-VDD call, no INT 2Fh
- * — so the adapter kept scanning out the frozen desktop with the message in
- * the first 32 KB of VRAM behind it. What every message screen *does* send,
- * to every VxD, is the VMM's own control message: Begin_Message_Mode before
- * the VDD programs text mode and End_Message_Mode after "press any key".
- * So ENABLE goes off on the first and comes back on the second, and only if
- * this was what turned it off: after the screen switch the linear mode is
- * already off here and the way back is the VDD's VGA_TO_HIRES, as before;
- * at boot, and for "it is now safe to turn off your computer", there is
- * nothing to put back. */
+ * callback does not. Patch 44's TLB corruption put up exception 0E/05
+ * screens from VTDAPI's timer event, the VDD drew them in VGA text mode,
+ * and this VxD got no mini-VDD call and no INT 2Fh. The adapter kept
+ * scanning out the frozen desktop with the message in the first 32 KB of
+ * VRAM behind it. What every message screen does send, to every VxD, is
+ * the VMM's control message: Begin_Message_Mode before the VDD programs
+ * text mode and End_Message_Mode after "press any key". So ENABLE goes off
+ * on the first and comes back on the second, and only if this turned it
+ * off. After a screen switch the linear mode is already off here and the
+ * way back is the VDD's VGA_TO_HIRES. At boot, and for "it is now safe to
+ * turn off your computer", there is nothing to put back. */
 static DWORD dwMsgEnable = 0;           /* ENABLE as message mode found it */
 
 static void __stdcall begin_message_mode_proc(void)
@@ -481,18 +472,18 @@ static void __stdcall end_message_mode_proc(void)
     dwMsgEnable = 0;
 }
 
-/* **The display driver is going away: the linear mode goes first.** The
- * main VDD sends DISPLAY_DRIVER_DISABLING when GDI disables the driver — at
- * shutdown, at a restart, before DirectDraw's own Mode X — and goes on to
- * put the VGA back, writing its planes from VRAM offset 0, which is the top
- * of the linear frame. The display driver used to turn ENABLE off only
- * after that, and a display refresh in between put the VGA's bytes into the
- * last linear frame, which the adapter holds for a moment after ENABLE goes
- * 0: Windows' shutdown screen came up as the desktop with a green band
- * across its top, whenever a refresh landed in those 12 ms (2026-09-14, doc
- * 19 §35). Nothing is kept to come back to — the way back from a disable is
- * the driver's own Enable — and a switch or a message screen in flight
- * forgets its own, so neither puts a stale linear frame over the VGA. */
+/* The display driver is going away, so the linear mode goes first. The
+ * main VDD sends DISPLAY_DRIVER_DISABLING when GDI disables the driver (at
+ * shutdown, at a restart, before DirectDraw's own Mode X) and then puts
+ * the VGA back, writing its planes from VRAM offset 0, the top of the
+ * linear frame. With ENABLE turned off only after that, a display refresh
+ * in between put the VGA's bytes into the last linear frame, which the
+ * adapter holds for a moment after ENABLE goes 0. Windows' shutdown screen
+ * then came up as the desktop with a green band across its top whenever a
+ * refresh landed in those 12 ms (doc 19 §35). Nothing is kept to come back
+ * to, since the way back from a disable is the driver's own Enable. A
+ * switch or a message screen in flight forgets its own state, so neither
+ * puts a stale linear frame over the VGA. */
 static void __stdcall driver_disabling_proc(void)
 {
     dbg_str("d3dptvxd: display driver disabling");
@@ -501,15 +492,15 @@ static void __stdcall driver_disabling_proc(void)
     if (dwRegsLin) *(volatile DWORD *)(dwRegsLin + D3DPT_FB_REG_ENABLE) = 0;
 }
 
-/* The notifications that are only logged, the first four of each — enough
- * to read a sequence off, not enough to fill the log on a machine that
+/* The notifications that are only logged, the first four of each. That is
+ * enough to read a sequence off without filling the log on a machine that
  * switches VMs all day (SAVE/RESTORE_REGISTERS run at every VM switch). */
 static BYTE seen[64] = {0};
 
 static void __stdcall note_proc(DWORD fn)
 {
-    /* counted only up to the limit: a byte counted on wraps at 256 and
-     * logged four more every 256 calls, for ever */
+    /* counted only up to the limit, because a byte counter wraps at 256
+     * and would log four more every 256 calls */
     if (fn < 64 && seen[fn] < 4) {
         seen[fn]++;
         dbg_val("d3dptvxd: vdd fn", fn);
@@ -520,10 +511,10 @@ static void __stdcall note_proc(DWORD fn)
  * These want neither, so each thunk is a register-preserving call with
  * carry clear on the way out ("handled, no objection").
  *
- * Written out four times rather than from a macro: Open Watcom's inline
- * assembler does not take the callee's name through a macro parameter — it
- * assembles a call to nothing and the compiler then warns that the function
- * is "defined, but not referenced", which is the only sign you get. */
+ * Written out four times rather than from a macro. Open Watcom's inline
+ * assembler does not take the callee's name through a macro parameter. It
+ * assembles a call to nothing, and the only sign is the compiler's warning
+ * that the function is "defined, but not referenced". */
 static void __declspec(naked) hires_to_vga_entry(void)
 {
     _asm {
@@ -581,8 +572,8 @@ static void __declspec(naked) save_message_mode_entry(void)
 
 /* One logging thunk per entry, each pushing its own number (note_proc is
  * __stdcall, so it pops it). Twelve copies rather than a macro, for the
- * reason above: the inline assembler takes no macro parameter, not even a
- * literal — `push n` through one is "Invalid instruction operands". */
+ * reason above. The inline assembler takes no macro parameter, not even a
+ * literal: `push n` through one is "Invalid instruction operands". */
 static void __declspec(naked) note_8_entry(void)
 {
     _asm {
@@ -739,8 +730,8 @@ static void __declspec(naked) note_46_entry(void)
 }
 
 /* The main VDD calls a dispatch entry with EBX = VM, EBP = client
- * registers, and expects the flags left alone; this is the thunk that
- * turns that into a C call. */
+ * registers, and expects the flags left alone. This thunk turns that into
+ * a C call. */
 static void __declspec(naked) register_display_driver_entry(void)
 {
     _asm {

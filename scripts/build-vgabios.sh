@@ -2,7 +2,7 @@
 # Build the VGA BIOSes 2ksbox ships in place of QEMU's prebuilt ones:
 # SeaBIOS's VGA BIOS (qemu/roms/seabios, the version QEMU 9.2.4 pins) with
 # our patch queue in patches/seabios/, for the two variants a 2ksbox
-# machine loads -- `stdvga` (-vga std, and d3dpt-vga, whose romfile it is)
+# machine loads, `stdvga` (-vga std, and d3dpt-vga, whose romfile it is)
 # and `cirrus`. Output: firmware/vgabios-<variant>.bin, which is checked
 # in, because SeaBIOS needs gcc and GNU ld for x86 and neither the Mac
 # nor the Flatpak SDK is asked to have them. prepare-qemu.sh copies these
@@ -27,9 +27,9 @@ VARIANTS="stdvga cirrus"
 # A fresh copy of the pinned tree every run, so the submodule itself is
 # never patched and a removed patch cannot linger. With no .git in it,
 # SeaBIOS takes its version from .version, and with EXTRAVERSION set it
-# calls the build clean -- no build time or host name in the string, which
-# a guest can read (INT 10h 4F00h's OEM product revision does not carry
-# it, but the ROM's banner does).
+# calls the build clean, with no build time or host name in the version
+# string. A guest can read that string in the ROM's banner (INT 10h
+# 4F00h's OEM product revision does not carry it).
 rm -rf "$WORK"
 mkdir -p "$WORK/src"
 git -C "$SEABIOS" archive --format=tar HEAD | tar -x -C "$WORK/src"

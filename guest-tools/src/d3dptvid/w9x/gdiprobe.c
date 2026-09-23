@@ -1,30 +1,28 @@
 /*
- * gdiprobe.c — which GDI drawing operation does this driver get wrong?
+ * gdiprobe.c: which GDI drawing operation does this driver get wrong?
  * (doc 19 §27)
  *
- * Crimson Skies draws its title screen with **no Direct3D and no DirectDraw
- * blit** — the HAL's `Blt32`, `Lock32` and `SetColorKey32` are never called
- * — and every foreground element lands in VRAM as `0xffff`, every bit set,
- * in the correct silhouette. That leaves GDI through the DIB Engine, which
- * is a large surface with no test of its own: every drawing export this
- * driver has jumps straight to the Engine (dibthunk.asm), so a fault is in
- * what the Engine was *told* about the surface rather than in code we run
- * per pixel, and the desktop exercises only a fraction of it.
+ * Written for Crimson Skies' white menu silhouettes, which turned out to be
+ * the executor's legacy blend (doc 19 §28), not GDI. It stays as the GDI
+ * test. Every drawing export this driver has jumps straight to the DIB
+ * Engine (dibthunk.asm), so a GDI fault is in what the Engine was told
+ * about the surface rather than in code we run per pixel, and the desktop
+ * exercises only a fraction of it.
  *
- * So this walks the operations a 2D game of the era composites with, one at
- * a time, and checks each one's pixels itself with `GetPixel` rather than
- * trusting a screenshot. An all-ones result is the signature of a raster op
- * or a fill going wrong rather than a copy, so the raster ops come first.
+ * This walks the operations a 2D game of the era composites with, one at a
+ * time, and checks each one's pixels with `GetPixel` rather than trusting
+ * a screenshot. An all-ones result is the signature of a raster op or a
+ * fill going wrong rather than a copy, so the raster ops come first.
  *
- * It draws onto the **screen DC** on purpose: a memory DC would exercise the
- * Engine's own bitmaps and not this driver's PDEVICE, which is the thing
+ * It draws onto the screen DC on purpose. A memory DC would exercise the
+ * Engine's own bitmaps and not this driver's PDEVICE, which is what is
  * under test. Every case restores what it painted over.
  *
- * `gdiprobe: N cases, M failed` is the verdict, and C:\GDIPROBE.LOG has one
- * line per case with the colour asked for and the colour read back. Run it
- * with tools/win98-game-test.sh:
+ * `gdiprobe: N cases, M failed` is the verdict, and C:\2KSBOX\GDIPROBE.LOG
+ * has one line per case with the colour asked for and the colour read
+ * back. Run it with tools/win98-game-test.sh:
  *
- *   GUEST_CMD='C:\GDIPROBE.EXE' PULL=GDIPROBE.LOG \
+ *   GUEST_CMD='C:\GDIPROBE.EXE' PULL='2KSBOX\GDIPROBE.LOG' \
  *     tools/win98-game-test.sh <image> gdi
  *
  * Build: guest-tools/build-driver9x.sh (mingw-w64, i686, msvcrt).
@@ -53,9 +51,8 @@ static void logf_(const char *fmt, ...)
     va_end(ap);
 }
 
-/* GetPixel returns a COLORREF (0x00bbggrr); the driver's surface is 16 bpp
- * in the interesting case, so a value is compared with the tolerance one
- * 5-6-5 step costs rather than for equality. */
+/* GetPixel returns a COLORREF (0x00bbggrr). At 16 bpp a value can be one
+ * 5-6-5 step off, so compare with that tolerance rather than for equality. */
 static int near_(COLORREF got, COLORREF want)
 {
     int dr = (int)(got & 0xff) - (int)(want & 0xff);
@@ -100,7 +97,7 @@ static HBITMAP solid_bitmap(HDC dc, int w, int h, COLORREF c)
     return bm;
 }
 
-/* Half black, half white, 1 bpp — an AND mask's shape. */
+/* Half black, half white, 1 bpp: an AND mask's shape. */
 static HBITMAP mask_bitmap(int w, int h)
 {
     HBITMAP bm = CreateBitmap(w, h, 1, 1, NULL);
@@ -161,7 +158,7 @@ static void battery(void)
     PatBlt(dc, X, Y, W, H, WHITENESS);
     check("PatBlt(WHITENESS)", dc, X + 10, Y + 10, RGB(255, 255, 255));
 
-    /* 3. SRCCOPY from a compatible bitmap — the plain copy */
+    /* 3. SRCCOPY from a compatible bitmap, the plain copy */
     bm = solid_bitmap(dc, W, H, RGB(255, 128, 0));
     mem = CreateCompatibleDC(dc);
     old = SelectObject(mem, bm);
@@ -170,8 +167,8 @@ static void battery(void)
     check("BitBlt(SRCCOPY, orange)", dc, X + 10, Y + 10, RGB(255, 128, 0));
 
     /* 4. the raster ops a masked sprite is composited with. AND with white
-     * leaves the destination; OR with black leaves it; that is the whole
-     * idiom, and each half is checked on its own so a failure names itself. */
+     * leaves the destination, and so does OR with black. Each half is
+     * checked on its own so a failure names itself. */
     fill(dc, RGB(0, 0, 255));
     SelectObject(mem, old);
     DeleteObject(bm);
@@ -200,11 +197,10 @@ static void battery(void)
     DeleteObject(bm);
     DeleteDC(mem);
 
-    /* 5. the two-pass transparent sprite, the thing Crimson Skies' title
-     * screen is made of: AND a monochrome mask, then OR the image. The left
-     * half of the mask is black (opaque) and the right half white
-     * (transparent), so the left half must end up green and the right half
-     * must still be the blue underneath. */
+    /* 5. the two-pass transparent sprite: AND a monochrome mask, then OR
+     * the image. The left half of the mask is black (opaque) and the right
+     * half white (transparent), so the left half must end up green and the
+     * right half must still be the blue underneath. */
     {
         HDC maskdc = CreateCompatibleDC(dc), imgdc = CreateCompatibleDC(dc);
         HBITMAP img = solid_bitmap(dc, W, H, RGB(0, 255, 0));
@@ -220,7 +216,7 @@ static void battery(void)
         check("sprite pass 1: mask AND, clear half kept", dc, X + W - 10, Y + 10, RGB(0, 0, 255));
 
         /* the image is green everywhere here, so the transparent half is
-         * deliberately blacked out first, exactly as a real sprite sheet is */
+         * blacked out first, as a real sprite sheet is */
         BitBlt(imgdc, W / 2, 0, W / 2, H, imgdc, W / 2, 0, BLACKNESS);
         BitBlt(dc, X, Y, W, H, imgdc, 0, 0, SRCPAINT);
         check("sprite pass 2: image OR, opaque half green", dc, X + 10, Y + 10, RGB(0, 255, 0));
@@ -295,12 +291,11 @@ static void battery(void)
         }
     }
 
-    /* 8. **Reading the screen back**, which is the half of compositing the
-     * cases above never touch. Anything that blends — msimg32's AlphaBlend,
-     * a TransparentBlt emulation, a game's own "read the background, mix,
-     * write it back" — reads the destination first, and a read that returns
-     * all-ones turns every blend white while leaving plain copies perfect.
-     * That is the shape of the bug this probe was written for. */
+    /* 8. Reading the screen back, the half of compositing the cases above
+     * never touch. Anything that blends (msimg32's AlphaBlend, a
+     * TransparentBlt emulation, a game's own "read the background, mix,
+     * write it back") reads the destination first, and a read that returns
+     * all-ones turns every blend white while plain copies stay perfect. */
     {
         BITMAPINFO *bi = (BITMAPINFO *)calloc(1, sizeof(BITMAPINFOHEADER) + 16);
         int stride = ((W * 24 + 31) / 32) * 4;
@@ -321,8 +316,8 @@ static void battery(void)
         got = GetDIBits(dc, GetCurrentObject(dc, OBJ_BITMAP), 0, H, bits, bi, DIB_RGB_COLORS);
         logf_("GetDIBits(screen, 24 bpp) -> %d rows\n", got);
 
-        /* BitBlt the screen into a memory bitmap and read *that* back, which
-         * is what every compositor actually does. */
+        /* BitBlt the screen into a memory bitmap and read that back, as
+         * every compositor does. */
         BitBlt(mdc, 0, 0, W, H, dc, X, Y, SRCCOPY);
         memset(bits, 0, (size_t)stride * H);
         got = GetDIBits(mdc, mb, 0, H, bits, bi, DIB_RGB_COLORS);
@@ -340,7 +335,7 @@ static void battery(void)
                   back == 0x00ffffffUL ? "  (all ones)" : "");
         }
 
-        /* and straight back out again — a full read/modify/write round trip */
+        /* and straight back out again, a full read/modify/write round trip */
         fill(dc, RGB(0, 0, 0));
         BitBlt(dc, X, Y, W, H, mdc, 0, 0, SRCCOPY);
         check("round trip: screen -> mem -> screen", dc, X + 10, Y + 10, RGB(0, 128, 255));
@@ -393,17 +388,15 @@ static void battery(void)
     ReleaseDC(NULL, dc);
 }
 
-/* **The depth is the variable that has to be controlled, not assumed.** The
- * first A/B of this bug compared our driver against the in-box Cirrus and
- * never established that both were at the same colour depth — two variables
- * in a two-column table. So the probe changes the depth itself and runs the
- * whole battery again, which also answers "is this specific to 16 bpp" in
- * one boot instead of two.
+/* The depth has to be controlled, not assumed. An A/B against the in-box
+ * Cirrus means nothing unless both run at the same colour depth. So the
+ * probe sets the depth itself and runs the whole battery at each, which
+ * also answers "is this specific to 16 bpp" in one boot.
  *
- * `ChangeDisplaySettings` is the only way to do this from outside the
- * guest's UI: the display driver's INF resets the mode only when PnP
- * actually reinstalls the device, and on a machine already bound to the
- * driver a reinstall changes nothing (doc 19 §27). */
+ * `ChangeDisplaySettings` is the only way to do this without the guest's
+ * UI. The display driver's INF resets the mode only when PnP reinstalls
+ * the device, and on a machine already bound to the driver a reinstall
+ * changes nothing (doc 19 §27). */
 static void at_depth(int bpp)
 {
     DEVMODE dm;

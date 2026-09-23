@@ -47,9 +47,9 @@ while [ $# -gt 0 ]; do
 done
 
 smoke() {
-  # The app answering from inside its own sandbox: every companion has to
-  # resolve under /app, which is the same property the tarball's check
-  # makes, against a completely different prefix.
+  # The app answering from inside its own sandbox. Every companion has to
+  # resolve under /app, the same property the tarball's check tests
+  # against a different prefix.
   echo "==> flatpak run $APPID --paths"
   local out
   out=$(flatpak run --user --command=2ksbox "$APPID" --paths) || return 1
@@ -61,13 +61,13 @@ smoke() {
       echo "package-flatpak.sh: $what resolved outside /app: $path" >&2; fail=1 ;;
     esac
   done <<< "$out"
-  # The three companions QEMU dlopens by name — the Glide wrapper, the
-  # Direct3D executor, the DXVK it runs on. They are in no import table, so
-  # nothing above would notice their absence; the packaged *player* is what
+  # The three companions QEMU dlopens by name: the Glide wrapper, the
+  # Direct3D executor and the DXVK it runs on. They are in no import table,
+  # so nothing above would notice their absence. The packaged *player*
   # knows where they should be (`player/src/companions.rs`), and
-  # `--companions` prints what that rule resolved. Inside the sandbox the
-  # answer has to be under /app, and "(not shipped)" means the build made
-  # one and did not stage it — or did not make it at all.
+  # `--companions` prints what it resolved. Inside the sandbox the answer
+  # has to be under /app. "(not shipped)" means the build made one and did
+  # not stage it, or did not make it at all.
   echo "==> flatpak run $APPID --companions"
   local comp
   comp=$(flatpak run --user --command=2ksbox-player "$APPID" --companions) || return 1
@@ -85,16 +85,16 @@ smoke() {
   case "$out" in *"/.var/app/$APPID/"*) ;; *)
     echo "package-flatpak.sh: the library is not under ~/.var/app/$APPID" >&2; fail=1 ;;
   esac
-  # And the window, which `--paths` never reaches: the launcher is Qt 6 /
-  # QML (ADR-015) and Qt resolves its platform plugin and every QtQuick
-  # module by name at run time, out of the runtime rather than out of
-  # /app. That is exactly the thing a wrong `runtime:` line would break
-  # while every check above stayed green, so ask for a real window: the
-  # launcher's own headless grab (doc 07), offscreen, and a PNG out of it.
-  # Under $HOME, not /tmp: the sandbox has a /tmp of its own, so a grab
-  # written there lands nowhere this shell can see it and the check fails
-  # on a package that is perfectly fine (it did, first time). `$HOME` is
-  # the same path on both sides, and this app has `--filesystem=host`.
+  # And the window, which `--paths` never reaches. The launcher is Qt 6 /
+  # QML (ADR-015), and Qt resolves its platform plugin and every QtQuick
+  # module by name at run time, out of the runtime rather than /app. A
+  # wrong `runtime:` line would break that while every check above stayed
+  # green, so ask for a real window: the launcher's own headless grab
+  # (doc 07), offscreen, and a PNG out of it.
+  # Under $HOME, not /tmp. The sandbox has a /tmp of its own, so a grab
+  # written there is invisible to this shell and the check fails on a good
+  # package. `$HOME` is the same path on both sides, and this app has
+  # `--filesystem=host`.
   local shot="$HOME/.2ksbox-flatpak-window.png"
   rm -f "$shot"
   echo "==> flatpak run $APPID (offscreen window grab)"

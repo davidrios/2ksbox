@@ -1,10 +1,9 @@
 /*
- * The display driver's `config.bin` resource (oembin 1). Every Windows 9x
- * display driver carries it: GDI and USER read the machine-dependent
- * metrics and the default system colours out of the driver itself, and a
- * driver without it is not usable as a display driver at all (doc 19).
- * The layout is the Windows 3.1 DDK's; the colours are the standard
- * Windows scheme, which is what a modern desktop overrides anyway.
+ * The display driver's `config.bin` resource (oembin 1). GDI and USER read
+ * the machine-dependent metrics and the default system colours out of the
+ * driver itself, so every Windows 9x display driver needs it (doc 19 §11).
+ * The layout is the Windows 3.1 DDK's. The colours are the standard
+ * Windows scheme, which a modern desktop overrides anyway.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -44,7 +43,7 @@ typedef struct {
     RGBQUAD clrInactiveCaptionText;
 } CONFIG_BIN;
 
-/* blue, green, red, reserved — RGBQUAD's order */
+/* blue, green, red, reserved (RGBQUAD's order) */
 CONFIG_BIN Config = {
     17, 17, 2, 2, 1, 1, 0, 1, 1,
 

@@ -98,10 +98,10 @@ def report(run):
         k = "fp" if c == "fp" else ("game" if c == "game" else None)
         if k is None:
             continue
-        # shots are ~5 s apart; a screendump that failed (one did, at 32 s
-        # on 2026-09-12, and split the first-person test into two runs, of
-        # which the shorter was reported) must not end a run, so a gap of
-        # one missing shot still joins
+        # shots are ~5 s apart; a screendump that failed (one once split
+        # the first-person test into two runs, and the shorter was
+        # reported) must not end a run, so a gap of one missing shot
+        # still joins
         if runs and runs[-1][0] == k and s - runs[-1][2] <= 12:
             runs[-1][2] = s
         else:

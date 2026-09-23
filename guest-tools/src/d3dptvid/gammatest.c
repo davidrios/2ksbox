@@ -1,20 +1,20 @@
 /*
- * gammatest.c — a gamma ramp through XP's own d3d8.dll on our driver: the
+ * gammatest.c: a gamma ramp through XP's own d3d8.dll on our driver. The
  * DX8 face claims D3DCAPS2_FULLSCREENGAMMA, and SetGammaRamp reaches the
  * adapter's GAMMA block through GDI's DrvIcmSetDeviceGammaRamp (register
- * set v5). A probe over d3d8probe.h: without the cap the last line says
- * "not offered". Otherwise a full-screen 640 x 480 device (32 bpp when it
- * can be had: the mode the adapter otherwise shows straight from VRAM)
- * clears to mid grey and holds two ramps, 20 s each: blue at three
- * quarters (red and green unchanged: XP refuses a ramp too far from a
- * straight line), then the identity.
+ * set v5). A probe over d3d8probe.h; without the cap the last line says
+ * "not offered". Otherwise a full-screen 640 x 480 device clears to mid
+ * grey and holds two ramps for 20 s each, blue at three quarters, then the
+ * identity. It asks for 32 bpp when it can, the mode the adapter otherwise
+ * shows straight from VRAM. Red and green stay unchanged because XP refuses
+ * a ramp too far from a straight line.
  *
- * The probe cannot see the result itself: a ramp is applied where the
- * adapter makes the picture, as a RAMDAC is, not in VRAM, so GetFrontBuffer
- * reads the pixels as drawn. `tools/xp-driver-test.sh <image> gamma` takes a
- * screendump while each ramp is held (waiting for the adapter's own `gamma
- * ramp on` / `off` lines) and checks the centre pixel: 80 80 60, then
- * 80 80 80. What the probe checks is the runtime's side: GetGammaRamp
+ * The probe cannot see the result itself. The adapter applies a ramp where
+ * it makes the picture, as a RAMDAC does, not in VRAM, so GetFrontBuffer
+ * reads the pixels as drawn. `tools/xp-driver-test.sh <image> gamma` takes
+ * a screendump while each ramp is held (waiting for the adapter's own
+ * `gamma ramp on` / `off` lines) and checks the centre pixel, 80 80 60 and
+ * then 80 80 80. The probe checks the runtime's side, that GetGammaRamp
  * returns the ramp set.
  *
  *   GAMMATEST

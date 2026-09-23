@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# cdaudio-guest-test.sh — CD-DA through a guest's own MCI, on both Windows
-# families (doc 17 §5.4, §6.3):
+# CD-DA through a guest's own MCI, on both Windows families (doc 17 §5.4,
+# §6.3):
 #
 #   tools/cdaudio-guest-test.sh ~/vms/win98.qcow2 win98
 #   tools/cdaudio-guest-test.sh ~/vms/winxp.qcow2 xp
@@ -10,7 +10,7 @@
 # one: *how* a family's `mcicda` stops a drive is not the same command on 9x
 # and NT, and a drive that answers one of them and not the other plays on
 # after the Stop button. So the run is always traced (`CDIMAGE_TRACE=1`) and
-# prints the packets around the stop — the guest's own words, rather than an
+# prints the packets around the stop: the guest's own words, rather than an
 # assumption about them.
 #
 # The drive's audiodev is a wav file, so what the guest played is on the host
@@ -39,7 +39,7 @@ CDTEST="${CDTEST:-$ROOT/guest-tools/out/iso/TESTS/CDTEST.EXE}"
 
 # The disc: the selftest's mixed-mode one, which is where the 1 kHz tone in
 # track 2 comes from. `discx selftest` writes it as a side effect of running,
-# so its own verdict is reported and then ignored — this tool is not it.
+# so its own verdict is reported and then ignored.
 DISC="${DISC:-}"
 if [ -z "$DISC" ]; then
   "$ROOT/target/release/discx" selftest "$OUT/discs" > "$OUT/discx.log" 2>&1 ||

@@ -21,7 +21,7 @@ const GlideHostOps *GlideHost_Ops(void);
  * nothing is written without it, and OpenGLide's own GlideMsg/Error go to
  * the same file (patches/openglide/02). Upstream instead writes
  * OpenGLid.log and OpenGLid.err into the working directory from a static
- * constructor, and exits the process when it cannot — inside QEMU that is
+ * constructor, and exits the process when it cannot. Inside QEMU that is
  * neither wanted nor survivable.
  */
 FILE *GlideHost_LogFile(void);

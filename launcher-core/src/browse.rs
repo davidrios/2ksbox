@@ -1,31 +1,29 @@
 //! The part of "Browse…" that is not a dialog.
 //!
-//! The file dialog itself is not here: it is the toolkit's (Qt ships
-//! `QtQuick.Dialogs`' `FileDialog`, onto the XDG portal on Linux,
-//! `NSOpenPanel` on macOS and `IFileDialog` on Windows). What *is* here
-//! is the decision any front end has to get right: which extensions a
-//! field offers, and which
+//! The file dialog itself is the toolkit's (Qt ships `QtQuick.Dialogs`'
+//! `FileDialog`, onto the XDG portal on Linux, `NSOpenPanel` on macOS and
+//! `IFileDialog` on Windows). This module holds the decision any front
+//! end has to get right: which extensions a field offers, and which
 //! directory the dialog opens in. A `.slangp` lives somewhere nobody
-//! would navigate to by hand, so getting that wrong is the difference
-//! between a working button and a dialog on the user's home directory.
+//! would navigate to by hand, so a wrong start directory leaves the user
+//! in their home directory with no idea where to go.
 
 use std::path::{Path, PathBuf};
 
 /// One extension filter for a dialog (e.g. `("Disk images", &["qcow2"])`).
-/// A plain pair rather than a toolkit type: each front end turns it into
-/// whatever its own dialog wants — `rfd::FileDialog::add_filter` here,
-/// a `"Disk images (*.qcow2)"` string for Qt's `nameFilters` there.
+/// A plain pair rather than a toolkit type, so each front end turns it
+/// into whatever its own dialog wants (for Qt's `nameFilters`, a
+/// `"Disk images (*.qcow2)"` string from [`name_filter`]).
 pub type Filter<'a> = (&'a str, &'a [&'a str]);
 
-/// The extensions a dialog is actually handed: every one in lower *and*
-/// upper case. The constants are written lower case, and on Linux every
-/// backend matches the glob case-sensitively — the XDG portal, GTK and
-/// Qt's own dialog alike — so a `GAME.CUE` burnt by a DOS-era tool was
-/// hidden from the disc shelf's "Browse…" (2026-09-11, user-reported).
-/// Both spellings rather than a `*.[cC][uU][eE]` class, because Windows'
-/// and macOS's dialogs take no classes, and a backend that case-folds
-/// the globs itself would mangle one; a mixed-case `.Cue` is the one
-/// spelling this misses.
+/// The extensions a dialog is handed: each one in lower and upper case.
+/// The constants are lower case, and on Linux every backend (the XDG
+/// portal, GTK, Qt's own dialog) matches the glob case-sensitively, so a
+/// `GAME.CUE` written by a DOS-era tool was hidden from the disc shelf's
+/// "Browse…". Both spellings rather than a `*.[cC][uU][eE]` class,
+/// because Windows' and macOS's dialogs take no classes and a backend
+/// that case-folds the globs itself would mangle one. A mixed-case
+/// `.Cue` is the one spelling this misses.
 pub fn extensions(filter: Filter) -> Vec<String> {
     let mut out = Vec::new();
     for e in filter.1 {
@@ -39,8 +37,8 @@ pub fn extensions(filter: Filter) -> Vec<String> {
 }
 
 /// A Qt-style `"Disk images (*.qcow2 *.QCOW2 *.img *.IMG)"` name filter.
-/// Qt's `FileDialog` takes those, so the same constants drive both
-/// dialogs instead of the QML repeating the extension lists by hand.
+/// Qt's `FileDialog` takes those, so the QML uses these constants instead
+/// of repeating the extension lists by hand.
 pub fn name_filter(filter: Filter) -> String {
     let globs: Vec<String> = extensions(filter).iter().map(|e| format!("*.{e}")).collect();
     format!("{} ({})", filter.0, globs.join(" "))
@@ -48,11 +46,8 @@ pub fn name_filter(filter: Filter) -> String {
 
 /// The directory a path field's "Browse…" should open in: the value's own
 /// directory if it names one (a file inside it, or the directory itself),
-/// `None` (the OS default — the platform picker's own last-used location,
-/// or an initial default) if the field is empty or names a bare filename.
-///
-/// A first attempt handed the dialog the *file* path instead of the
-/// directory containing it, which breaks it.
+/// `None` if the field is empty or names a bare filename. Hand the dialog
+/// this directory, never the file path, which breaks it.
 pub fn start_dir(value: &str) -> Option<PathBuf> {
     if value.is_empty() {
         return None;
@@ -64,30 +59,27 @@ pub fn start_dir(value: &str) -> Option<PathBuf> {
     path.parent().filter(|p| !p.as_os_str().is_empty()).map(|p| p.to_path_buf())
 }
 
-/// Where "Browse…" actually opens: the field's own value if it points
-/// somewhere (`start_dir`), else the caller's suggestion for an empty
-/// field (the preset collection, for the shader editor's preset field),
-/// else the directory the last dialog was browsing (`last_dir`), else
-/// the OS default. Its own function so `cli`'s `--browse-start` verb can
-/// check the choice without popping a modal dialog only a human could
-/// answer.
+/// Where "Browse…" opens: the field's own value if it points somewhere
+/// (`start_dir`), else the caller's suggestion for an empty field (the
+/// preset collection, for the shader editor's preset field), else the
+/// directory the last dialog was browsing (`last_dir`), else the OS
+/// default. It is its own function so `cli`'s `--browse-start` verb can
+/// check the choice without a modal dialog only a human could answer.
 ///
-/// **Only the shader editor's preset field passes an `empty_dir`**, and
-/// deliberately: a `.slangp` lives in a checkout's `third_party/` or a
-/// downloaded copy under the platform data directory, and neither is
-/// somewhere a person would navigate to by hand. A disk image, an
-/// install ISO, a floppy, a disc or a screenshot are all files the user
-/// already knows where they put, so those fields open where the user
-/// last browsed to. The asymmetry looks like a bug from the outside —
-/// two "Browse…" buttons in one window opening in different places
-/// (2026-09-06, user-reported) — so it is written down here rather than
-/// inferred from call sites.
+/// **Only the shader editor's preset field passes an `empty_dir`.** A
+/// `.slangp` lives in a checkout's `third_party/` or a downloaded copy
+/// under the platform data directory, and nobody navigates there by
+/// hand. The user already knows where their disk images, install ISOs,
+/// floppies, discs and screenshots are, so those fields open where the
+/// user last browsed. Two "Browse…" buttons in one window opening in
+/// different places looks like a bug, which is why the rule is written
+/// here.
 ///
-/// The last-used location used to be left to the platform picker, and
-/// no picker kept one: Qt's `FileDialog` handed an empty folder opens in
-/// the working directory, so every empty field — a new machine's, and
-/// the disc shelf's adder, which empties itself after every disc —
-/// started over from there (2026-09-12, user-reported).
+/// The launcher keeps the last-used location itself because no platform
+/// picker did. Qt's `FileDialog` handed an empty folder opens in the
+/// working directory, so every empty field (a new machine's, and the
+/// disc shelf's adder, which empties itself after every disc) started
+/// over from there.
 pub fn browse_start(value: &str, empty_dir: Option<&Path>) -> Option<PathBuf> {
     start_dir(value).or_else(|| empty_dir.map(|d| d.to_path_buf())).or_else(last_dir)
 }
@@ -113,10 +105,10 @@ pub fn last_dir() -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
-/// A dialog handed back `picked` — a file, or a folder from a folder
-/// dialog: remember the directory it was picked *in*, which is where the
-/// dialog was browsing. A failure to write is a warning and nothing else;
-/// the next dialog then opens where it would have anyway.
+/// A dialog handed back `picked` (a file, or a folder from a folder
+/// dialog). Remember the directory it was picked in, which is where the
+/// dialog was browsing. A failure to write is only a warning; the next
+/// dialog then opens where it would have anyway.
 pub fn remember(picked: &Path) {
     let Some(dir) = picked.parent().filter(|p| !p.as_os_str().is_empty()) else {
         return;

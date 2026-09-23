@@ -1,11 +1,11 @@
-# Track: M4 — the paravirtual Direct3D device (doc 14, ADR-006/007)
+# Track M4: the paravirtual Direct3D device (doc 14, ADR-006/007)
 
 The DLL path for Direct3D 8/9 is the SysBus `d3dpt` device, the decoder and
 executor over DXVK, and the guest `d3d9.dll` / `d3d8.dll`. The milestone
-closed on 2026-09-04 (P0–P4, `docs/08-roadmap.md`). This record keeps the
+closed on 2026-09-04 (P0–P4, `docs/08-roadmap.md`). This doc keeps the
 track's scope, its test loop and what stayed open. The design, the protocol
-and the per-milestone numbers are in **doc 14**. On XP the M7 display driver
-(doc 15, ADR-008) replaced the per-game DLLs. The DLLs remain the Win98 path
+and the per-milestone numbers are in doc 14. On XP the M7 display driver
+(doc 15, ADR-008) replaced the per-game DLLs; the DLLs remain the Win98 path
 and the executor's harness.
 
 ## Scope and files
@@ -49,9 +49,9 @@ scripts/test.sh all   # + the guest stage: XP on the device
     and getter lines.
 - **After a protocol bump,** rebuild the executor and the ISO. Otherwise
   the suite fails with `protocol mismatch` or a guest that never attaches.
-- **Tool detail** is in `docs/testing.md`.
-- **Env knobs** (`D3DPT_DUMP_DIR`/`D3DPT_DUMP_EVERY`, the guest's
-  `d3dpt_trace.on`) are in `docs/development.md`.
+- Tool detail is in `docs/testing.md`; the env knobs
+  (`D3DPT_DUMP_DIR`/`D3DPT_DUMP_EVERY`, the guest's `d3dpt_trace.on`) in
+  `docs/development.md`.
 
 ### A game on the device
 
@@ -66,11 +66,9 @@ slots (`CDS=`). `FRESH_DLLS=1` puts the ISO's DLLs next to the EXE.
 | `PAGEHEAP=1` | heap overruns, faulting where they happen |
 | `TRACE=1` | the DLL's call trace |
 
-Two traps, both in CLAUDE.md's gotchas:
-
-- A game that "freezes" has so far always been a message box behind its
-  full-screen window.
-- KVM `-cpu host` breaks Max Payne's level loading. Use `-cpu pentium3`.
+A game that "freezes" has so far always been a message box behind its
+full-screen window, and KVM `-cpu host` breaks Max Payne's level loading;
+both are in `docs/00-status.md` "Gotchas".
 
 ## What stayed open
 

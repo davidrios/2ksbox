@@ -1,5 +1,5 @@
 /*
- * d3d9_p3.h — vertex declarations, queries, state blocks, cube textures,
+ * d3d9_p3.h: vertex declarations, queries, state blocks, cube textures,
  * surface/texture updates, colour fill, clip planes and the shader
  * constant getters of the paravirtual d3d9.dll (doc 14 P3). Included by
  * d3d9.c after d3d9_res.h.

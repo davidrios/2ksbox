@@ -1,9 +1,9 @@
 /*
- * setmode.c — switch the XP desktop mode from a script (doc 15 tests).
+ * setmode.c: switches the XP desktop mode from a script (doc 15 tests).
  *
  *   SETMODE.EXE                      lists the modes the driver offers
- *   SETMODE.EXE <w> <h> <bpp> [hz]   switches (CDS_UPDATEREGISTRY: sticks
- *                                    across reboots) and prints the result
+ *   SETMODE.EXE <w> <h> <bpp> [hz]   switches (CDS_UPDATEREGISTRY, so it
+ *                                    sticks across reboots) and prints the result
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */

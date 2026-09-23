@@ -1,5 +1,5 @@
 /*
- * mpu401 — the MIDI port of the era, and a synthesizer behind it
+ * mpu401: the MIDI port of the era, and a synthesizer behind it
  * (doc 20 §5). QEMU has no MPU-401 of any kind, so a game offering
  * "General MIDI" or "Roland MT-32" in its setup program has had nothing
  * to talk to here.
@@ -12,7 +12,7 @@
  * answering 0xFE, is what DOS games, Windows 9x's own "MPU-401
  * Compatible" driver and XP's alike use, and it is the whole of the
  * hardware most cards ever implemented. The intelligent mode's
- * conductor — tracks, timing, its own metronome — is answered with an
+ * conductor (tracks, timing, its own metronome) is answered with an
  * ACK and nothing else; no software of the period this project is for
  * depends on it.
  *
@@ -20,7 +20,7 @@
  * read except the ACKs, so the status register only ever reports one
  * waiting when an ACK is, and the IRQ follows that. A real module's
  * replies would arrive the same way (doc 20 §8.2). Which is why the
- * port has **no interrupt line at all** unless one is asked for — see
+ * port has **no interrupt line at all** unless one is asked for. See
  * the `irq` property below, and doc 20 §5.1: on IRQ 9 that ACK is what
  * reboots an ACPI Windows 98.
  *
@@ -103,7 +103,7 @@ static void mpu401_irq(Mpu401State *s)
 }
 
 /* Queue a byte for the guest to read. The queue only ever holds ACKs,
- * so overflowing it means the guest stopped reading — drop rather than
+ * so overflowing it means the guest stopped reading. Drop rather than
  * grow, exactly as the hardware's own eight bytes do. */
 static void mpu401_queue(Mpu401State *s, uint8_t byte)
 {
@@ -153,7 +153,7 @@ static void mpu401_write(void *opaque, uint32_t nport, uint32_t val)
         switch (val & 0xFF) {
         case MPU_CMD_RESET:
             /* Answered in both modes, and it leaves UART mode: this is
-             * how a driver finds the port at all — write 0xFF, read
+             * how a driver finds the port at all: write 0xFF, read
              * 0xFE back. */
             mpu401_reset_port(s);
             mpu401_queue(s, MPU_ACK);
@@ -190,7 +190,7 @@ static void mpu401_write(void *opaque, uint32_t nport, uint32_t val)
 /* A note-on with a non-zero velocity is what "the guest is playing
  * music" looks like from here. Running status is why this counts a
  * status byte's channel rather than pairing bytes: the count is a sign
- * of life, not a transcript — libsynth's parser is the transcript. */
+ * of life, not a transcript. libsynth's parser is the transcript. */
 static void mpu401_count(Mpu401State *s, uint8_t byte)
 {
     int64_t now;
@@ -256,7 +256,7 @@ static void mpu401_callback(void *opaque, int free)
     }
 }
 
-/* The General MIDI bank we ship, relative to a source tree — the last
+/* The General MIDI bank we ship, relative to a source tree: the last
  * candidate below, and the same shape as the Glide wrapper's
  * `build/glide/libglide2x.so` (patch 33): a build tree needs no
  * environment at all, and a package's player sets the variable. */
@@ -265,8 +265,8 @@ static void mpu401_callback(void *opaque, int free)
 /* `synth=` and the file or directory it needs.
  *
  * The bank is searched for the way QEMU searches for every other
- * companion of ours: the property, then LIBSYNTH_SF2 — which is what a
- * packaged player sets (player/src/companions.rs) — then the copy in a
+ * companion of ours: the property, then LIBSYNTH_SF2 (which a
+ * packaged player sets, player/src/companions.rs), then the copy in a
  * checkout. So a machine that simply says `synth=gm` starts everywhere
  * this project is run from, and a bundle never has to carry an absolute
  * path into someone else's install. */
@@ -388,7 +388,7 @@ static Property mpu401_properties[] = {
     /* The MPU-401's own line is IRQ 2/9, and this device has none by
      * default: anything above 15 is "no interrupt".
      *
-     * Not caution — a measurement (2026-09-09, doc 20 §5.1). QEMU's
+     * This is measured, not caution (doc 20 §5.1). QEMU's
      * PIIX4 puts the ACPI SCI on IRQ 9 (hw/acpi/piix4.c), and every
      * Windows 98 this launcher installs is an ACPI install (doc 06's
      * BIOS-date stamp), so IRQ 9 is the operating system's own line and
@@ -397,13 +397,13 @@ static Property mpu401_properties[] = {
      * line is held until someone reads the data port, the guest's
      * handler is re-entered on every IRET, and its ring-0 stack runs
      * out. Duke Nukem 3D's SETUP does that from a DOS box the moment
-     * its General MIDI test resets the port — 234 nested INT 0x59, a
+     * its General MIDI test resets the port: 234 nested INT 0x59, a
      * page fault at the end of the stack, #DF, triple fault, and the
      * machine reboots in front of the user.
      *
      * Nothing is given up by leaving the line off. The interrupt is for
      * MIDI *in*, which this device does not have, so the only thing
-     * that ever raises it is an ACK — and a driver of the period reads
+     * that ever raises it is an ACK, and a driver of the period reads
      * that by polling the status register, which is why the port works
      * with no line at all (and why a real card's IRQ was a jumper most
      * people left alone). `irq=<0-15>` asks for one back. */

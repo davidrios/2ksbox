@@ -1,5 +1,5 @@
 /*
- * embedfx.h — glue between the window-less GL backend (mglcntx_embed.c),
+ * embedfx.h: glue between the window-less GL backend (mglcntx_embed.c),
  * the qemu-3dfx UI provider (embedfx.c) and the embed API (libqemu_embed.c).
  * Internal to libqemu-embed.
  *

@@ -1,10 +1,10 @@
 // The shader profile editor (doc 07): a slider per preset parameter and
 // the live preview beside them.
 //
-// Its own top-level window, and a big one: the preview is the whole
-// point, and a window the user can drag out to their screen's width
-// beats an in-window "Fullscreen" toggle.
-// The preview itself is rendered by `shader-chain` on this process's own
+// Its own top-level window, and a big one: the preview is the point, and
+// a window the user can drag out to their screen's width beats an
+// in-window "Fullscreen" toggle. The preview is rendered by
+// `shader-chain` on this process's own
 // windowless wgpu device and arrives through a file; `src/preview.rs`
 // explains why.
 import QtQuick
@@ -15,13 +15,13 @@ import com._2ksbox.launcher
 Window {
     id: root
 
-    // Typed, not `var` — see `ShaderProfilesWindow.qml`.
+    // Typed, not `var` (see `ShaderProfilesWindow.qml`).
     required property ShaderEditor editor
     required property string profilesDir
 
     signal changed()
 
-    /// The item the headless screenshot path grabs — see `Main.qml`.
+    /// The item the headless screenshot path grabs (see `Main.qml`).
     property Item grabItem: editorBody
 
     title: qsTr("Shader profile")
@@ -31,7 +31,7 @@ Window {
     minimumHeight: 420
     flags: Qt.Dialog
     // One at a time (`WizardWindow.qml`): a secondary window blocks the
-    // grid behind it, so there is never a second one to wonder about.
+    // grid behind it, so there is never a second one.
     modality: Qt.ApplicationModal
     color: palette.window
 
@@ -39,11 +39,11 @@ Window {
     // window in both directions from `Main.qml`.
     onVisibleChanged: if (!visible && editor.open) editor.open = false
 
-    // Esc is Cancel, the way every other dialog on the desktop behaves.
-    // It goes through `close()` rather than hiding the window, because
-    // that is what runs `onVisibleChanged` above — the one place a
-    // model's own `open` flag is put back. Not while a file dialog is up:
-    // that Esc is the dialog's (`PathField.browsing`).
+    // Esc is Cancel, as in every other dialog on the desktop. It goes
+    // through `close()` rather than hiding the window, because that runs
+    // `onVisibleChanged` above, the one place a model's own `open` flag
+    // is put back. Not while a file dialog is up: that Esc is the
+    // dialog's (`PathField.browsing`).
     Shortcut {
         id: escShortcut
         sequences: [StandardKey.Cancel]
@@ -51,25 +51,25 @@ Window {
         onActivated: root.close()
     }
 
-    /// Whether Esc would close this window right now — for the `escfocus`
+    /// Whether Esc would close this window right now, for the `escfocus`
     /// probe in `Main.qml`, beside the window's own `active`.
     readonly property bool escArmed: escShortcut.enabled
 
-    /// What the preset field is *showing* — not what the model holds.
+    /// What the preset field is showing, not what the model holds.
     /// The two can disagree (a field that has lost its binding keeps the
     /// last path it was handed), and only a probe that asks the control
     /// can tell: `src/qt/diag.rs`'s `saveprofile` screen.
     readonly property string shownPreset: presetField.shownText
 
-    /// Put a path into the preset field the way typing into it does —
+    /// Put a path into the preset field the way typing into it does,
     /// through the field's own `edited`, so the probe takes the user's
     /// path through this window's handler and not a shortcut past it.
     function typePreset(preset) { presetField.edited(preset) }
 
-    /// Click Save, handler and all — the headless probe again.
+    /// Click Save, handler and all, for the headless probe.
     function clickSave() { saveButton.clicked() }
 
-    /// Open on a given preset and preview image — the headless
+    /// Open on a given preset and preview image, for the headless
     /// screenshot path (`src/qt/diag.rs`).
     function editPreset(preset, image) {
         editor.newProfile()
@@ -81,15 +81,14 @@ Window {
 
     // Re-render whenever anything the picture depends on moves. A
     // binding, not a call after every slider: QML already knows what the
-    // preview depends on, which is the one place this port needs less
-    // bookkeeping than the immediate-mode version.
+    // preview depends on.
     function rerender() {
         if (editor.open && editor.presetPath !== "" && editor.previewImage !== "")
             editor.render(previewArea.width, previewArea.height)
     }
 
     Timer {
-        // Coalesces a slider drag into one render per frame-ish rather
+        // Coalesces a slider drag into about one render per frame rather
         // than one per pixel of travel.
         id: renderDebounce
         interval: 16
@@ -97,12 +96,12 @@ Window {
     }
 
     Timer {
-        // A preset whose picture depends on the frame number — an
+        // A preset whose picture depends on the frame number (an
         // interlaced CRT drawing alternate fields, a phosphor afterglow
-        // decaying, an NTSC signal shimmering — is only itself in
-        // motion, so it has to be re-rendered on a clock and not only
-        // when something is clicked. How often, and whether at all, is
-        // the core's answer (`previewInterval`, 0 for a still preset).
+        // decaying, an NTSC signal shimmering) only looks right in
+        // motion, so it is re-rendered on a clock, not only when
+        // something is clicked. How often, and whether at all, is the
+        // core's answer (`previewInterval`, 0 for a still preset).
         id: animate
         interval: Math.max(root.editor.previewInterval, 1)
         repeat: true
@@ -121,8 +120,8 @@ Window {
     // The grab target for the headless screenshot path: a QML-declared
     // item (Qt refuses `grabToImage` on anything the engine did not
     // create) that is opaque (a bare layout grabs with a transparent
-    // background and dark-on-nothing text). On screen it is just the
-    // window's own colour.
+    // background and dark text on nothing). On screen it is the window's
+    // own colour.
     Rectangle {
         id: editorBody
         anchors.fill: parent
@@ -152,10 +151,8 @@ Window {
                 label: qsTr("Preset (.slangp)")
                 nameFilter: root.editor.presetFilter
                 // "Browse…" on an empty field opens in the preset collection
-                // rather than the OS default: a `.slangp` lives in a
-                // checkout's `third_party/` or in a downloaded copy under a
-                // data directory, and neither is anywhere a person would
-                // navigate to by hand.
+                // rather than the OS default (`browse::browse_start` says
+                // why).
                 emptyDir: root.editor.presetsDir
                 value: root.editor.presetPath
                 onEdited: (path) => {
@@ -183,8 +180,8 @@ Window {
                 spacing: 10
 
                 // A fixed-width controls column; the rest of the window goes
-                // to the preview, so making the window wider makes the
-                // *picture* bigger, which is the point of a preview.
+                // to the preview, so widening the window makes the picture
+                // bigger.
                 ColumnLayout {
                     Layout.preferredWidth: 320
                     Layout.fillHeight: true
@@ -248,12 +245,12 @@ Window {
                                         from: paramRow.minimum
                                         to: paramRow.maximum
                                         // Step only where the user is
-                                        // actually editing: several presets
-                                        // have defaults off their own step
-                                        // grid (crt-lottes: warpX 0.031, step
+                                        // editing: several presets have
+                                        // defaults off their own step grid
+                                        // (crt-lottes: warpX 0.031, step
                                         // 0.01), and snapping an
-                                        // un-overridden one would silently
-                                        // change what the preview shows.
+                                        // un-overridden one would change
+                                        // what the preview shows.
                                         stepSize: paramRow.overridden ? paramRow.step : 0
                                         value: paramRow.value
                                         onMoved: {
@@ -294,8 +291,8 @@ Window {
                     }
 
                     // Black behind, the frame centred at exactly the size it
-                    // rendered at — "how it'll really look in the player",
-                    // not an image stretched to fit.
+                    // rendered at, as the player shows it, not stretched to
+                    // fit.
                     Rectangle {
                         id: previewArea
                         Layout.fillWidth: true
@@ -341,13 +338,12 @@ Window {
                     text: qsTr("Save")
                     onClicked: {
                         // Only `changed()`: this window has no profile
-                        // list of its own to refresh, and reaching for
-                        // one (`root.profiles`, which is the *other*
-                        // window's property) threw a TypeError right
-                        // here — which took the `changed()` below with
-                        // it, so a saved profile never reached the list
-                        // (user-reported, 2026-09-07). `Main.qml` is
-                        // where the models that have to be told live.
+                        // list of its own to refresh. Reaching for one
+                        // (`root.profiles`, the other window's property)
+                        // threw a TypeError here, which skipped the
+                        // `changed()` below, so a saved profile never
+                        // reached the list. The models that have to be
+                        // told live in `Main.qml`.
                         if (root.editor.save(root.profilesDir))
                             root.changed()
                     }
@@ -361,8 +357,6 @@ Window {
         }
     }
 
-    // The preset-collection row, shown on both screens because that is
-    // where each question is asked: the list is where someone discovers
-    // they have no shaders at all, the editor is where an empty preset
-    // field stops them mid-profile.
+    // The preset-collection row (`PresetCollection.qml` says why it is on
+    // both screens).
 }

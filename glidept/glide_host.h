@@ -1,22 +1,22 @@
 /*
- * glide_host.h — the ABI between QEMU's Glide pass-through device
+ * glide_host.h: the ABI between QEMU's Glide pass-through device
  * (hw/3dfx) and the host-side Glide wrapper (libglide2x), for a host that
  * has no window.
  *
  * Upstream qemu-3dfx expects the wrapper to own its drawable: it hands
  * `grSstWinOpen` a native window handle (or an SDL_Window*, if the wrapper
  * signed itself 'SDL2') and the wrapper creates a GL context on it. The
- * player has no window to give — QEMU is a library inside it and the frame
- * has to arrive as a texture, not as pixels on screen — so the direction is
- * reversed here: *we* own the context, and the wrapper renders into it.
+ * player has no window to give (QEMU is a library inside it and the frame
+ * has to arrive as a texture, not as pixels on screen), so the direction is
+ * reversed here. *We* own the context, and the wrapper renders into it.
  *
  * hw/3dfx passes this table to the wrapper's optional `setHostOps` export
  * right after loading it (patch 33). A wrapper that doesn't export the
  * symbol keeps its own windowing and works exactly as upstream; a frontend
  * that registers no `glide_host_ops` passes NULL and gets the same.
  *
- * The one header three builds share — QEMU device, embed library and the
- * wrapper — like d3dpt_proto.h for Direct3D. Bump the version on any
+ * The one header three builds share (QEMU device, embed library and the
+ * wrapper), like d3dpt_proto.h for Direct3D. Bump the version on any
  * change; `setHostOps` refuses a table it doesn't recognise.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
@@ -30,7 +30,7 @@
 
 /* the wrapper's optional export; dlsym'ed by name, so it must not be
  * mangled or decorated (the wrapper defines it extern "C" and, on Win32,
- * cdecl — hw/3dfx looks it up undecorated on every platform) */
+ * cdecl, because hw/3dfx looks it up undecorated on every platform) */
 #define GLIDE_HOST_SETOPS_SYM "setHostOps"
 
 #ifdef __cplusplus
@@ -45,7 +45,7 @@ typedef struct GlideHostOps {
      * grSstWinOpen: bind the host's GL context on the calling thread with a
      * drawable of at least w x h, and leave it current. Returns 0 if the
      * host has no context, which the wrapper must report as a failed
-     * grSstWinOpen — the guest then falls back to software rendering
+     * grSstWinOpen. The guest then falls back to software rendering
      * instead of drawing into nothing.
      */
     int (*begin)(int w, int h);

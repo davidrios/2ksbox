@@ -4,7 +4,7 @@
 fn main() {
     #[cfg(not(feature = "bridge"))]
     {
-        // Rung 1: link Qt and cxx-qt-lib, no bridge at all -- so no moc,
+        // Rung 1: link Qt and cxx-qt-lib, no bridge at all, so no moc,
         // no generated C++, no static initialisers of cxx-qt's own.
         cxx_qt_build::CxxQtBuilder::new().cpp_file("src/once_proxy.cpp").build();
     }
@@ -19,7 +19,7 @@ fn main() {
     }
     #[cfg(feature = "qml")]
     {
-        // Rung 3: what launcher-qt does -- a QML module, so
+        // Rung 3: what launcher-qt does, a QML module, so
         // qmltyperegistrar, a compiled-in resource, and the type
         // registration that runs from a static initialiser.
         cxx_qt_build::CxxQtBuilder::new_qml_module(

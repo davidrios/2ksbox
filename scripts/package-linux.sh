@@ -53,10 +53,10 @@
 #
 # `2ksbox` is the product (2ksbox.com); `com._2ksbox.Launcher` is the
 # application ID the desktop entry, the icon and the Wayland app_id carry
-# (a name segment may not start with a digit — flatpak rejects
-# `com.2ksbox.…` — so the leading digit is escaped, as `7-zip.org` gets
-# `org._7zip.…`). Everything else carries the same name since 2026-09-06:
-# the repository, the docs and the user's data directory (moved once by
+# (a name segment may not start with a digit, and flatpak rejects
+# `com.2ksbox...`, so the leading digit is escaped, as `7-zip.org` gets
+# `org._7zip...`). Everything else carries the product name: the
+# repository, the docs and the user's data directory (moved once by
 # `launcher-core/src/paths.rs::data_dir`).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -86,9 +86,8 @@ need qemu/pc-bios "scripts/prepare-qemu.sh"
 
 if [ "$BUILD" = 1 ]; then
   cargo build --release -p player
-  # Its own cargo workspace, so its own build command (scripts/build.sh's
-  # `qt` stage does the same thing): that boundary is what keeps Qt 6 off
-  # the root `cargo build`.
+  # Its own cargo workspace, so its own build command (as scripts/build.sh's
+  # `qt` stage). That boundary keeps Qt 6 off the root `cargo build`.
   ( cd launcher-qt && cargo build --release )
 fi
 need launcher-qt/target/release/launcher-qt "scripts/build.sh qt"
@@ -103,27 +102,26 @@ install -m755 launcher-qt/target/release/launcher-qt "$STAGE/bin/2ksbox"
 install -m755 target/release/player "$STAGE/bin/2ksbox-player"
 install -m755 build/qemu/libqemu-embed-i386.so "$STAGE/lib/2ksbox/"
 install -m755 build/qemu/qemu-img "$STAGE/libexec/2ksbox/"
-# The Glide wrapper (doc 12 §5). qemu-3dfx's `hw/3dfx` only *dispatches*:
-# at `grGlideInit` it dlopens a `libglide2x` and looks up 183 entry points,
+# The Glide wrapper (doc 12 §5). qemu-3dfx's `hw/3dfx` only *dispatches*.
+# At `grGlideInit` it dlopens a `libglide2x` and looks up 183 entry points,
 # and the search that finds `build/glide` in a checkout finds nothing in a
-# package — so without this file an installed guest has no Glide at all,
-# silently, and `grSstWinOpen` fails. `player/src/companions.rs` names the
-# packaged copy to QEMU through `QEMU_GLIDE_LIB`; the check below asks the
-# staged player whether it really found this one.
+# package. Without this file an installed guest silently has no Glide and
+# `grSstWinOpen` fails. `player/src/companions.rs` names the packaged copy
+# to QEMU through `QEMU_GLIDE_LIB`; the check below asks the staged player
+# whether it found this one.
 if [ -f build/glide/libglide2x.so ]; then
   install -m755 build/glide/libglide2x.so "$STAGE/lib/2ksbox/"
 else
   echo "package-linux.sh: no build/glide/libglide2x.so (scripts/build.sh glide); packaging without Glide — 3dfx titles will not run"
 fi
 # The Direct3D executor and the DXVK it runs on (doc 14), found the same
-# way and staged together: the executor `dlopen`s DXVK by the name
+# way and staged together. The executor `dlopen`s DXVK by the name
 # `companions.rs` puts in `D3DPT_DXVK_LIB`, so one without the other is a
 # package whose XP guests fall back to WineD3D anyway. DXVK's real file
 # carries its full version; it is installed under the soname the executor
-# asks for, since nothing here links it and only that name is looked up.
-# No Vulkan travels with the package: on Linux the system's driver is the
-# right one, and a host below Vulkan 1.3 keeps the GL + WineD3D path by
-# decision (ADR-013).
+# asks for, since nothing links it and only that name is looked up. No
+# Vulkan travels with the package; on Linux the system's driver is the
+# right one. A host below Vulkan 1.3 gets the Wine executor below.
 if [ -f build/d3dpt/libd3dpt_exec.so ] && [ -f build/dxvk/src/d3d9/libdxvk_d3d9.so.0 ]; then
   install -m755 build/d3dpt/libd3dpt_exec.so "$STAGE/lib/2ksbox/"
   install -m755 build/dxvk/src/d3d9/libdxvk_d3d9.so.0 "$STAGE/lib/2ksbox/libdxvk_d3d9.so.0"
@@ -133,9 +131,9 @@ fi
 # The same executor for a host below the Vulkan floor (ADR-018, track
 # M15): the library QEMU's loader opens when DXVK finds no device, and the
 # Windows build of the executor with the program that hosts it, which that
-# library runs under a Wine it finds on the host. The pair is mingw's work
-# (scripts/build-d3dpt-exec.sh --wine) and stands alone; the Wine is the
-# user's — the launcher's graphics note says which to install.
+# library runs under a Wine it finds on the host. mingw builds the pair
+# (scripts/build-d3dpt-exec.sh --wine) and it stands alone. The Wine is
+# the user's; the launcher's Direct3D note says which to install.
 if [ -f build/d3dpt/libd3dpt_exec_remote.so ] && [ -f build/d3dpt/wine/d3dpt_exec.dll ] && [ -f build/d3dpt/wine/d3dpt-exec-host.exe ]; then
   install -m755 build/d3dpt/libd3dpt_exec_remote.so "$STAGE/lib/2ksbox/"
   mkdir -p "$STAGE/lib/2ksbox/wine"
@@ -147,11 +145,10 @@ rm -rf "$STAGE/share/2ksbox/pc-bios"   # a re-run must replace it, not nest insi
 cp -a qemu/pc-bios "$STAGE/share/2ksbox/pc-bios"
 
 # The General MIDI bank the machine form's MIDI port plays through
-# (doc 20 §4). Not optional like the shader presets: a machine whose
-# music picker is on its default has nothing to play through without it,
-# and 5.7 MB is not a size worth making anyone think about. The *player*
-# names it to QEMU (LIBSYNTH_SF2, companions.rs), which is what the check
-# below asks it.
+# (doc 20 §4). Not optional like the shader presets: a machine whose music
+# picker is on its default has nothing to play through without it, and it
+# is only 5.7 MB. The *player* names it to QEMU (LIBSYNTH_SF2,
+# companions.rs), which is what the check below asks it.
 install -Dm644 soundfonts/TimGM6mb.sf2 "$STAGE/share/2ksbox/soundfonts/TimGM6mb.sf2"
 
 # The guest-tools ISO: the newest one, the same choice the launcher's
@@ -175,12 +172,11 @@ fi
 
 install -m644 packaging/linux/com._2ksbox.Launcher.desktop "$STAGE/share/2ksbox/desktop/"
 install -m644 packaging/linux/com._2ksbox.Launcher.metainfo.xml "$STAGE/share/2ksbox/desktop/"
-# The icon goes in at its final path rather than beside the desktop entry:
-# `share/icons/hicolor/<n>x<n>/apps/<app id>.png` is where a desktop looks
-# for it, `install.sh` copies `share/` wholesale, and so the same tree is
-# right for a distro package that unpacks the tarball into /usr as it is
-# for a prefix install. Every size `scripts/gen-icons.sh` writes is
-# shipped: 16 for a task switcher, 512 for a software centre's banner.
+# The icon goes in at its final path,
+# `share/icons/hicolor/<n>x<n>/apps/<app id>.png`, where a desktop looks
+# for it. `install.sh` copies `share/` wholesale, so the same tree works
+# for a distro package unpacked into /usr and for a prefix install. Every
+# size `scripts/gen-icons.sh` writes ships.
 for icon in packaging/icon/2ksbox-*.png; do
   size=${icon##*-}; size=${size%.png}
   install -Dm644 "$icon" "$STAGE/share/icons/hicolor/${size}x${size}/apps/com._2ksbox.Launcher.png"
@@ -189,12 +185,12 @@ install -m755 packaging/linux/install.sh "$STAGE/install.sh"
 install -m644 COPYING THIRD-PARTY-NOTICES.md README.md "$STAGE/share/doc/2ksbox/"
 
 # --- the check -------------------------------------------------------
-# Qt is the one thing this package does not carry, so it is the one thing
-# whose absence would be found by a user rather than here: a launcher with
-# an unresolved `libQt6Quick.so.6` says "No such file or directory" and
-# nothing else. `ldd` answers for the import tables; the QML modules and
-# the platform plugin are not in them and come from the same packages, so
-# what is listed here is also what the tarball's README has to name.
+# Qt is the one thing this package does not carry, so a user would find
+# its absence before any check here did. A launcher with an unresolved
+# `libQt6Quick.so.6` says "No such file or directory" and nothing else.
+# `ldd` answers for the import tables. The QML modules and the platform
+# plugin are not in them but come from the same packages, so what is
+# listed here is also what the tarball's README has to name.
 fail=0
 missing=$(ldd "$STAGE/bin/2ksbox" | grep 'not found' || true)
 if [ -n "$missing" ]; then
@@ -205,10 +201,10 @@ else
   echo "qt             $(ldd "$STAGE/bin/2ksbox" | grep -c 'libQt6') Qt 6 libraries, all from the system"
 fi
 
-# A package whose launcher still answers with the checkout it was built
-# from is not a package. Ask the staged binary itself, with `env -i` so
-# not one LAUNCHER_*/PLAYER_* knob from this shell can be what makes it
-# work, and from `/` so nothing is found by a relative path either.
+# A launcher that still answers with the checkout it was built from is not
+# packaged. Ask the staged binary itself, with `env -i` so no
+# LAUNCHER_*/PLAYER_* knob from this shell can make it work, and from `/`
+# so nothing is found by a relative path.
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 resolved=$(cd / && env -i HOME="$scratch" LAUNCHER_LIBRARY_DIR="$scratch/machines" \
@@ -220,8 +216,8 @@ while read -r what path; do
     *) continue ;;
   esac
   # `--paths` says "(none built or shipped)" where there is nothing to
-  # name — a package rolled without a guest-tools ISO, which is allowed
-  # and already warned about above.
+  # name, such as a package rolled without a guest-tools ISO (allowed, and
+  # warned about above).
   case "$path" in "("*) continue ;; esac
   case "$path" in
     "$STAGE"|"$STAGE"/*) ;;
@@ -237,29 +233,29 @@ case "$embed" in
   "$STAGE"/lib/2ksbox/*) echo "libqemu-embed  $embed" ;;
   *) echo "package-linux.sh: the player's libqemu-embed came from $embed, not the package" >&2; fail=1 ;;
 esac
-# The one companion that is not a library: the General MIDI bank. Same
-# question, same answer — the staged player's own rule has to find the
-# copy this package staged, not one left in a checkout.
+# The one companion that is not a library, the General MIDI bank. The
+# staged player's own rule has to find the copy this package staged, not
+# one left in a checkout.
 sf2=$(cd / && env -i "$STAGE/bin/2ksbox-player" --companions | awk '$1 == "soundfont" { print $2 }')
 case "$sf2" in
   "$STAGE"/*) printf '%-15s%s\n' soundfont "$sf2" ;;
   *) echo "package-linux.sh: the bank is staged but the player answered ${sf2:-nothing}" >&2; fail=1 ;;
 esac
 
-# The companions QEMU dlopens late by name — the Glide wrapper here, the
-# Direct3D executor and its DXVK on the packages that carry them. They are
-# in no import table, so `ldd` above says nothing about them; the staged
+# The companions QEMU dlopens late by name: the Glide wrapper, the
+# Direct3D executor, its DXVK and the Wine executor, where built. They are
+# in no import table, so `ldd` above says nothing about them. The staged
 # player's own rule (`player/src/companions.rs`) does, and `--companions`
-# prints what that rule resolved. Asking the binary rather than restating
-# the layout here is the point: a package that stages a file the player
-# looks for somewhere else passes every other check in this script.
+# prints what it resolved. Ask the binary rather than restate the layout:
+# a package that stages a file the player looks for somewhere else passes
+# every other check in this script.
 companions=$(cd / && env -i "$STAGE/bin/2ksbox-player" --companions)
 while read -r what file; do
   got=$(printf '%s\n' "$companions" | awk -v w="$what" '$1 == w { print $2 }')
   if [ ! -f "$STAGE/lib/2ksbox/$file" ]; then
-    # Not built on this host — the staging step above already said which
-    # guests lose what. All that is left to check is that the player is not
-    # about to hand QEMU somebody else's copy instead.
+    # Not built on this host; the staging step above already said which
+    # guests lose what. Only check that the player is not about to hand
+    # QEMU somebody else's copy instead.
     case "$got" in
       "(not"|"") ;;
       *) echo "package-linux.sh: $what is not in the package, but the player found $got" >&2; fail=1 ;;
@@ -288,14 +284,14 @@ dxvk        libdxvk_d3d9.so.0
 d3dpt-remote libd3dpt_exec_remote.so
 wine-host   wine/d3dpt-exec-host.exe
 EOF
-# The window itself, which is the half `--paths` cannot reach. Qt resolves
-# its platform plugin and every QML module the views import at run time,
-# by name, from directories no import table mentions — so a package that
-# has passed every check above still opens nothing on a host whose Qt is
-# half installed, and says so in one line on a stderr a double-click has
-# nowhere to show. The launcher's own headless grab (doc 07) is the check:
-# `QT_QPA_PLATFORM=offscreen` plus `LAUNCHER_QT_SHOT`, and a PNG out the
-# other end means a real window with real QML in it.
+# The window itself, which `--paths` cannot reach. Qt resolves its
+# platform plugin and every QML module the views import at run time, by
+# name, from directories no import table mentions. A package that passed
+# every check above still opens nothing on a host whose Qt is half
+# installed, and says so in one stderr line a double-click never shows.
+# The launcher's own headless grab (doc 07) is the check:
+# `QT_QPA_PLATFORM=offscreen` plus `LAUNCHER_QT_SHOT`. A PNG out the other
+# end means a real window with real QML in it.
 shot="$scratch/window.png"
 if (cd / && env -i HOME="$scratch" LAUNCHER_LIBRARY_DIR="$scratch/machines" \
       QT_QPA_PLATFORM=offscreen LAUNCHER_QT_SHOT="$shot" LAUNCHER_QT_DELAY=1500 \
@@ -321,11 +317,11 @@ esac
   || { echo "package-linux.sh: the packaged qemu-img did not create a disk" >&2; fail=1; }
 desktop-file-validate "$STAGE/share/2ksbox/desktop/com._2ksbox.Launcher.desktop" \
   || { echo "package-linux.sh: the desktop entry is not valid" >&2; fail=1; }
-# The AppStream metadata, which the Flatpak (6b) will require and GNOME
-# Software / KDE Discover read. `--no-net` because a package build must
-# not depend on the network; only `E:` lines fail the build — a warning
-# about a missing screenshot is a real gap (they need somewhere to be
-# hosted) but not a reason to refuse to package.
+# The AppStream metadata, which Flathub requires and GNOME Software / KDE
+# Discover read. `--no-net` because a package build must not depend on the
+# network. Only `E:` lines fail the build. A warning about a missing
+# screenshot is a real gap (they need hosting) but no reason to refuse to
+# package.
 if command -v appstreamcli >/dev/null; then
   metainfo_out=$(appstreamcli validate --no-net "$STAGE/share/2ksbox/desktop/com._2ksbox.Launcher.metainfo.xml" 2>&1) || true
   if printf '%s\n' "$metainfo_out" | grep -q '^E:'; then

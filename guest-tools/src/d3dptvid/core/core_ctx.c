@@ -1,16 +1,16 @@
 /*
- * core_ctx.c — Direct3D contexts (doc 19, "The split"): the table of
- * render-target / Z pairs the host keeps for us, the render target a
- * context draws into, Clear2, and the readback at EndScene that puts the
- * frame where Flip / Blt / Lock expect it.
+ * core_ctx.c: Direct3D contexts (doc 19, "The split"). This holds the
+ * table of render-target / Z pairs the host keeps for us, the render
+ * target a context draws into, Clear2, and the readback at EndScene that
+ * puts the frame where Flip / Blt / Lock expect it.
  *
- * The table is global rather than per-device on purpose: a game's
+ * The table is global rather than per-device on purpose. A game's
  * exclusive mode switch gives GDI a new device object (the context is
- * created on that one), and its switch back at exit another, before the
- * runtime's ContextDestroyAll for the process arrives; a table in the
- * device object was empty by then, the host kept the context, and the
- * game's next run had its CTX_CREATE of the same handle refused — E_FAIL
- * from CreateDevice, a crash (GTA 2, 2026-09-05).
+ * created on that one), and its switch back at exit gives another, before
+ * the runtime's ContextDestroyAll for the process arrives. A table in the
+ * device object was empty by then and the host kept the context, so the
+ * game's next run had its CTX_CREATE of the same handle refused. That was
+ * E_FAIL from CreateDevice and a crash in GTA 2.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -181,7 +181,7 @@ HRESULT ctx_clear2(d3dpt_core *p, ULONG_PTR h, ULONG flags, ULONG colour, float 
 }
 
 /* A value in a Z buffer's own bits (v & mask, shifted down) as the IEEE
- * float the host clears to, q / m in [0, 1], with integers only: on NT
+ * float the host clears to, q / m in [0, 1], with integers only. On NT
  * this runs in a kernel-mode display driver, which may not touch the FPU
  * without saving its state. 25 bits of quotient by long division, then
  * the top 24 of them as the mantissa (truncated). */
@@ -217,15 +217,14 @@ static ULONG z_unit_bits(ULONG q, ULONG m)
 
 /* A Z buffer the title wrote through a Lock (doc 19 §34). The host's depth
  * buffer is never read back from VRAM, so a Z buffer written to one value
- * -- a clear done by hand (Crimson Skies writes 0 every frame), or the
- * runtime's own depth fill, which it also does through a Lock -- becomes a
- * Z-only clear on every context whose Z buffer it is. Not every pixel is
- * read: every 7th row, whole, and the last (about 15% of the buffer, top to
- * bottom) is plenty to tell a clear from a depth image or a fill of part
- * of the screen -- more than that much of a screen at one depth is not a
- * frame anyone draws -- and it is the guest's CPU that pays for the scan,
- * every frame. bits / mask are the surface's own Z format. Returns the
- * contexts cleared. */
+ * becomes a Z-only clear on every context whose Z buffer it is. That value
+ * comes from a clear done by hand (Crimson Skies writes 0 every frame) or
+ * from the runtime's own depth fill, which also goes through a Lock. The
+ * scan reads every 7th row, whole, and the last, about 15% of the buffer
+ * top to bottom. That tells a clear from a depth image or a partial fill,
+ * since no frame has that much of the screen at one depth, and the guest's
+ * CPU pays for the scan every frame. bits / mask are the surface's own Z
+ * format. Returns the contexts cleared. */
 ULONG d3d_z_written(d3dpt_core *p, ULONG handle, ULONG bits, ULONG mask)
 {
     SURF *s = surf_slot(handle, FALSE);

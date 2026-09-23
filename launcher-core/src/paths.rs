@@ -1,49 +1,45 @@
 //! Where the launcher's companions are: the `player` binary, our
 //! `qemu-img`, QEMU's `pc-bios` firmware, the guest-tools ISO, a shipped
-//! shader collection. Every one of them lived in the checkout this binary
-//! was *built* from until packaging (M6 step 6) had to exist; an
-//! installed launcher has no checkout at all.
+//! shader collection. An installed launcher has no checkout to find them
+//! in.
 //!
-//! So there are two layouts, asked in this order (an explicit
-//! `LAUNCHER_*` environment variable still wins over both — each caller
-//! checks its own first, as it always did):
+//! So there are two layouts, asked in this order. An explicit
+//! `LAUNCHER_*` environment variable wins over both; each caller checks
+//! its own first.
 //!
-//! 1. **Installed** — the layout `scripts/package-linux.sh` stages and
-//!    doc 07 documents, found *relative to the running executable*
+//! 1. **Installed.** The layout `scripts/package-linux.sh` stages and
+//!    doc 07 documents, found relative to the running executable
 //!    (`<exe dir>/..`), so the whole tree can be moved or extracted
-//!    anywhere and still work. `share/2ksbox` is the marker: a
-//!    launcher that merely happens to sit in some `bin/` is not
-//!    installed.
-//! 2. **A source checkout** — `CARGO_MANIFEST_DIR`, baked in at compile
-//!    time (like `qemu-embed/build.rs`'s own default). Not the process's
-//!    current working directory, which a bare relative path would be and
-//!    which isn't guaranteed to be the workspace root — a real "No such
-//!    file or directory" the user hit running the launcher from
-//!    elsewhere.
+//!    anywhere and still work. `share/2ksbox` is the marker: a launcher
+//!    that merely sits in some `bin/` is not installed.
+//! 2. **A source checkout.** `CARGO_MANIFEST_DIR`, baked in at compile
+//!    time (like `qemu-embed/build.rs`'s own default). Not the current
+//!    working directory, which a bare relative path would use and which
+//!    isn't always the workspace root; running the launcher from
+//!    elsewhere gave "No such file or directory".
 //!
-//! It is one or the other, never a mixture: an installed launcher answers
-//! only with its own prefix, even for a file the package left out. The
-//! alternative — falling through to the checkout — would mean a package
-//! tested on a developer's machine silently works there and fails
-//! everywhere else, which is exactly the bug packaging exists to catch.
-//! A missing file inside the prefix is reported as missing, by whichever
-//! window wanted it.
+//! It is one or the other, never a mixture. An installed launcher answers
+//! only with its own prefix, even for a file the package left out.
+//! Falling through to the checkout would let a package tested on a
+//! developer's machine work there and fail everywhere else, which is the
+//! bug packaging exists to catch. A missing file inside the prefix is
+//! reported as missing by whichever window wanted it.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// The product name: the resource directories inside a prefix
 /// (`share/2ksbox`, `lib/2ksbox`, …), the launcher's installed executable
-/// and the user's own data directory. `win98-xp-virt` was the working
-/// name until 2026-09-06 and survives only in `migrate_data_dir` below.
+/// and the user's own data directory. The old working name,
+/// `win98-xp-virt`, survives only in `migrate_data_dir` below.
 pub const NAME: &str = "2ksbox";
 
 /// The application ID: the desktop entry's filename, the icon's name, the
 /// Wayland `app_id` the compositor matches between the two, and the
-/// Flatpak/AppStream ID. Reverse-DNS of `2ksbox.com` — with the leading
-/// digit escaped as `_2ksbox`, because a name segment may not start with
-/// one (`flatpak build-init` rejects `com.2ksbox.…` outright; the same
-/// convention gives `7-zip.org` `org._7zip.…`).
+/// Flatpak/AppStream ID. Reverse-DNS of `2ksbox.com`, with the leading
+/// digit escaped as `_2ksbox` because a name segment may not start with
+/// one (`flatpak build-init` rejects `com.2ksbox.…`; the same convention
+/// gives `7-zip.org` `org._7zip.…`).
 pub const APP_ID: &str = "com._2ksbox.Launcher";
 
 /// The prefix this launcher is installed under, or `None` when it is a
@@ -58,11 +54,11 @@ fn detect_prefix() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     if cfg!(windows) {
         // A Windows package is one folder the user unzips and opens: the
-        // executables at the top, the DLLs beside them (which is where
-        // the loader looks), the data directories under it. So the prefix
-        // is the executable's own directory, and `pc-bios` is the marker
-        // — the one directory every package has and nothing else would
-        // put next to a stray copy of the launcher.
+        // executables at the top, the DLLs beside them (where the loader
+        // looks), the data directories under it. So the prefix is the
+        // executable's own directory, and `pc-bios` is the marker. Every
+        // package has it, and nothing else would put it next to a stray
+        // copy of the launcher.
         let dir = exe.parent()?;
         return dir.join("pc-bios").is_dir().then(|| dir.to_path_buf());
     }
@@ -71,19 +67,18 @@ fn detect_prefix() -> Option<PathBuf> {
 }
 
 /// The directory inside the prefix that holds executables: `bin` under a
-/// Unix prefix, the flat prefix itself on Windows — and `MacOS` inside a
-/// macOS `.app`, which is the one directory Launch Services will start a
-/// program from, so a bundle spends it on `bin`'s job
+/// Unix prefix, the flat prefix itself on Windows, and `MacOS` inside a
+/// macOS `.app`, the one directory Launch Services starts a program from
 /// (`scripts/package-macos.sh`). Detected from the running executable
 /// rather than from the prefix's shape, because a plain tarball extracted
 /// on a Mac is still an ordinary Unix prefix with a `bin`.
 pub fn bin_dir() -> PathBuf {
     let exe = std::env::current_exe().ok();
     let Some(prefix) = install_prefix() else {
-        // A checkout: the workspace's binaries share one directory, so
-        // the running executable's own is it — and it is right for a
-        // debug build as much as a release one, which a baked-in
-        // `target/release` would not be.
+        // A checkout: the workspace's binaries share one directory, the
+        // running executable's own. That is right for a debug build as
+        // well as a release one, which a baked-in `target/release` would
+        // not be.
         return exe.and_then(|e| e.parent().map(Path::to_path_buf)).unwrap_or_else(|| checkout("."));
     };
     if cfg!(windows) {
@@ -98,9 +93,9 @@ pub fn bin_dir() -> PathBuf {
 /// A companion's place inside the prefix. Unix keeps the
 /// `bin`/`lib`/`libexec`/`share` split doc 07 documents; a Windows
 /// package is flat, so the same name loses the directory that only
-/// existed to keep a Unix prefix tidy (`share/2ksbox/pc-bios` →
-/// `pc-bios`). Written once here rather than at every call site, so both
-/// layouts are described by the same string.
+/// keeps a Unix prefix tidy (`share/2ksbox/pc-bios` → `pc-bios`). Done
+/// once here rather than at every call site, so one string describes
+/// both layouts.
 fn in_prefix(installed: &str) -> &str {
     if !cfg!(windows) {
         return installed;
@@ -114,8 +109,8 @@ fn in_prefix(installed: &str) -> &str {
 }
 
 /// A companion at `installed` under the install prefix, or at `checkout`
-/// in the source tree — whichever layout this binary is running in.
-/// Always returns a path; whether it exists is the caller's problem,
+/// in the source tree, whichever layout this binary is running in.
+/// Always returns a path. Whether it exists is the caller's concern,
 /// since for most of these "missing" is a state the UI already reports
 /// (no guest-tools ISO built, no preset collection yet).
 pub fn resource(installed: &str, checkout_rel: &str) -> PathBuf {
@@ -125,10 +120,10 @@ pub fn resource(installed: &str, checkout_rel: &str) -> PathBuf {
     }
 }
 
-/// A file the package shipped, or `None` — in a checkout, or in a
-/// package rolled without it. For the companions that exist only as a
-/// package's own copy (the macOS app's Vulkan loader and driver, which
-/// stock macOS lacks), where a checkout's answer is "the system's".
+/// A file the package shipped, or `None` in a checkout or a package
+/// built without it. For the companions that exist only as a package's
+/// own copy (the macOS app's Vulkan loader and driver, which stock macOS
+/// lacks), where a checkout uses the system's.
 pub fn shipped(installed: &str) -> Option<PathBuf> {
     let path = install_prefix()?.join(in_prefix(installed));
     path.is_file().then_some(path)
@@ -155,13 +150,12 @@ pub fn checkout(rel: &str) -> PathBuf {
 /// which every caller answers with a bare relative path.
 ///
 /// It was `win98-xp-virt` until the repository took the product's name
-/// (ADR-011, amended 2026-09-06), so an existing library is **moved once**
-/// here, the first time anything asks: a plain rename inside the same
-/// parent directory, atomic, and only when the new name does not exist
-/// yet. A user who upgrades finds their machines where they left them
-/// without knowing any of this happened; one who has both directories
-/// (two versions run side by side) keeps them both, and is told which one
-/// is now being used rather than having them merged behind their back.
+/// (ADR-011), so an existing library is **moved once** here, the first
+/// time anything asks: a plain rename inside the same parent directory,
+/// atomic, and only when the new name does not exist yet. A user who
+/// upgrades finds their machines where they left them. One who has both
+/// directories (two versions run side by side) keeps both and is told
+/// which one is in use; nothing is merged.
 pub fn data_dir() -> Option<&'static Path> {
     static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
     DIR.get_or_init(|| {
@@ -172,9 +166,9 @@ pub fn data_dir() -> Option<&'static Path> {
     .as_deref()
 }
 
-/// The `win98-xp-virt` → `2ksbox` move, done once. Every failure is a
-/// warning and nothing else: the launcher still starts, on an empty
-/// library, which is recoverable by hand — refusing to run would not be.
+/// The `win98-xp-virt` → `2ksbox` move, done once. Every failure is only
+/// a warning: the launcher still starts, on an empty library, which is
+/// recoverable by hand. Refusing to run would not be.
 fn migrate_data_dir(new: &Path) {
     let Some(old) = directories::ProjectDirs::from("", "", "win98-xp-virt").map(|d| d.data_dir().to_path_buf()) else {
         return;

@@ -1,23 +1,21 @@
 //! Snapshots (doc 07: "QEMU internal snapshots via in-proc QMP, surfaced
 //! in the overlay and the launcher").
 //!
-//! This is the *offline* half — a machine that isn't running has no
-//! monitor to ask, so the launcher goes at the qcow2 directly with
-//! `qemu-img`, which is what QEMU's own `savevm`/`loadvm` write into.
-//! Listing goes through `qemu-img info --output=json` rather than
-//! `snapshot -l`'s column layout: the JSON is a stable interface, the
-//! table is formatted for humans and has no escaping for a tag with a
-//! space in it.
+//! This is the offline half. A machine that isn't running has no monitor
+//! to ask, so the launcher works on the qcow2 directly with `qemu-img`,
+//! the same snapshot table QEMU's own `savevm`/`loadvm` use. Listing goes
+//! through `qemu-img info --output=json` rather than `snapshot -l`'s
+//! column layout: the JSON is a stable interface, while the table is
+//! formatted for humans and has no escaping for a tag with a space in it.
 //!
-//! Restoring is `qemu-img snapshot -a`, which rolls the *disk* back and
-//! leaves the saved CPU/RAM state in the image for a later `loadvm` — the
-//! same thing a cold boot into a snapshot means. Reverting a running
-//! machine is the live half (`control.rs`).
+//! Restoring is `qemu-img snapshot -a`, which rolls the disk back and
+//! leaves the saved CPU/RAM state in the image for a later `loadvm`, the
+//! same as a cold boot into a snapshot. Reverting a running machine is
+//! the live half (`control.rs`).
 //!
 //! **Nothing here knows about a toolkit.** The window's model is
-//! `snaps.rs`; the two used to be one file with the egui window in it,
-//! which left `control.rs` — otherwise toolkit-free — importing a module
-//! that pulled in `egui::Context`. Split 2026-09-06.
+//! `snaps.rs`, kept separate so `control.rs` imports nothing that pulls
+//! in a toolkit.
 
 use crate::player;
 use std::path::Path;
@@ -34,14 +32,12 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// `2026-09-05 14:03` in local time, or the raw seconds if that can't
-    /// be formed — this is a label in a list, never a parsed value.
+    /// `2026-09-05 14:03 UTC`: a label in a list, never a parsed value.
     pub fn date_label(&self) -> String {
         let secs = self.date_sec as i64;
         // No chrono/time dependency for one label: civil-from-days
-        // (Howard Hinnant's algorithm), UTC. A snapshot list sorted by a
-        // timestamp that's an hour off in the user's head is not worth a
-        // timezone database.
+        // (Howard Hinnant's algorithm), in UTC. A label a few hours off
+        // local time is not worth a timezone database.
         let days = secs.div_euclid(86_400);
         let rem = secs.rem_euclid(86_400);
         let z = days + 719_468;
@@ -80,9 +76,9 @@ fn qemu_img(args: &[&str], disk: &Path) -> std::io::Result<std::process::Output>
         .map_err(|e| std::io::Error::other(format!("running {}: {e}", bin.display())))
 }
 
-/// Fail with `qemu-img`'s own stderr rather than a bare exit code — its
+/// Fail with `qemu-img`'s own stderr rather than a bare exit code. Its
 /// messages ("Could not find snapshot 'x'", "Permission denied") are
-/// exactly what the window should show.
+/// what the window should show.
 fn check(what: &str, out: &std::process::Output) -> std::io::Result<()> {
     if out.status.success() {
         return Ok(());
@@ -97,7 +93,7 @@ fn check(what: &str, out: &std::process::Output) -> std::io::Result<()> {
 }
 
 /// Every internal snapshot in `disk`, newest last (qcow2 order). An image
-/// with no snapshot table has none — not an error.
+/// with no snapshot table has none, which is not an error.
 pub fn list(disk: &Path) -> std::io::Result<Vec<Snapshot>> {
     let out = qemu_img(&["info", "--output=json"], disk)?;
     check("info", &out)?;

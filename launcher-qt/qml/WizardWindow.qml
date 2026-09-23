@@ -3,15 +3,13 @@
 // machine" for an existing bundle. A sidebar of sections and a page
 // each, like a virtual machine's settings window anywhere else.
 //
-// Every field with a *consequence* goes through an invokable
+// Every field with a consequence goes through an invokable
 // (`chooseFamily`, `chooseRam`, …) rather than assigning the property:
 // see the header of `src/qt/wizard.rs` for why.
 //
 // The combo boxes' labels and the file dialogs' name filters come from
 // the model too (`familyLabels()`, `diskFilter()`, …) rather than being
-// retyped here, so the two front ends cannot end up offering differently
-// worded choices — which they did, for the family combo, until the form
-// became shared.
+// retyped here, so no front end can word a choice differently.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -22,61 +20,57 @@ import com._2ksbox.launcher
 
 // A real top-level window, not an in-window popup: the launcher's
 // secondary screens are separate windows the user can move and resize,
-// which is what the platform already knows how to do. `Qt.Dialog` keeps
-// it transient for the launcher window — the compositor stacks it above
-// and gives it a dialog frame.
+// which the platform already handles. `Qt.Dialog` keeps it transient for
+// the launcher window: the compositor stacks it above and gives it a
+// dialog frame.
 //
-// **Modal**, and every other secondary window with it (user, 2026-09-06,
-// on the first Windows build anyone else drove): they used to be
-// modeless, on the theory that someone might want one open beside the
-// grid, and what that actually bought was a launcher where the wizard,
-// the disc shelf, the snapshots list and the profile editor can all be
-// on screen at once with nothing saying which one you are answering. One
-// at a time, and Esc closes it, is what every other dialog on the
-// desktop does.
+// **Modal**, like every other secondary window (user decision). Modeless
+// windows let the wizard, the disc shelf, the snapshots list and the
+// profile editor all be on screen at once with nothing saying which one
+// you are answering. One at a time, closed by Esc, is what every other
+// dialog on the desktop does.
 Window {
     id: root
 
-    // Typed, not `var` — see `ShaderProfilesWindow.qml`.
+    // Typed, not `var` (see `ShaderProfilesWindow.qml`).
     required property Wizard wizard
 
     signal saved()
 
-    /// The item the headless screenshot path grabs — see `Main.qml`.
+    /// The item the headless screenshot path grabs (see `Main.qml`).
     property Item grabItem: form
 
-    /// What the memory spin box is *showing*, which is not always what
-    /// the model says: a control that clamps holds the value it was
-    /// given against the range it had at that moment, so a publish in
-    /// the wrong order leaves the two disagreeing and only a screenshot
-    /// would ever notice. The headless path prints it (`Main.qml`), and
+    /// What the memory spin box is showing, which is not always what the
+    /// model says: a control that clamps holds the value it was given
+    /// against the range it had at that moment, so a publish in the
+    /// wrong order leaves the two disagreeing where only a screenshot
+    /// would notice. The headless path prints it (`Main.qml`), and
     /// the `qt-wizard` check in `scripts/test.sh` compares it with the
     /// model's own number.
     readonly property int shownRamMb: ram.value
 
-    /// What the name field is showing, and a way to *type* into it. A JS
+    /// What the name field is showing, and a way to type into it. A JS
     /// assignment would not do: writing the field's `text` from QML
-    /// destroys the `text:` binding, and it is precisely the binding
-    /// surviving a keystroke that makes the model able to wipe the name
-    /// out from under the user (`src/qt/wizard.rs`'s `edit`). `insert`
+    /// destroys the `text:` binding, and the binding surviving a
+    /// keystroke is what lets the model wipe the name out from under the
+    /// user (`src/qt/wizard.rs`'s `edit`). `insert`
     /// is what a key press does, so the `qt-wizard` check sees what the
     /// user sees.
     readonly property alias shownName: nameField.text
     function typeName(text) { nameField.insert(nameField.length, text) }
     /// What the Direct3D combo box is showing, and how many entries it
-    /// has. A binding that names a property the object has not got is
-    /// **silent** in QML — no warning, no error, the control simply
-    /// takes no model — and that is how this row first shipped: the Rust
-    /// side spelled the property `d3d9_labels`, cxx-qt's auto camel-case
-    /// made it `d3D9Labels`, this file asked for `d3d9Labels`, and the
-    /// user got an empty combo box (2026-09-21). Both sides say `d3d9`
-    /// now (`src/qt/wizard.rs` names each `cxx_name`), and the count
-    /// below is what the `qt-wizard` check looks at so the next such
-    /// slip is a failing check.
+    /// has. A binding that names a property the object lacks is
+    /// **silent** in QML: no warning, no error, the control takes no
+    /// model. This row first shipped that way: the Rust side spelled the
+    /// property `d3d9_labels`, cxx-qt's auto camel-case made it
+    /// `d3D9Labels`, this file asked for `d3d9Labels`, and the combo box
+    /// was empty. Both sides say `d3d9` now (`src/qt/wizard.rs` names
+    /// each `cxx_name`), and the `qt-wizard` check reads the count below
+    /// so the next such slip fails a check.
     readonly property alias shownD3d9: d3d9Combo.currentText
     readonly property alias shownD3d9Count: d3d9Combo.count
     /// The shader profile combo, the same way: its rows come from the
-    /// model since 2026-09-23, so a misspelt property empties it too.
+    /// model, so a misspelt property empties it too.
     readonly property alias shownShaderProfile: profileBox.currentText
     readonly property alias shownShaderProfileCount: profileBox.count
 
@@ -93,7 +87,7 @@ Window {
 
     /// The page on show, where it is scrolled to and a way to scroll it,
     /// and a way to open the optimizations (the one thing that makes a
-    /// page taller than the window) — the `wizardscroll` probe's
+    /// page taller than the window), for the `wizardscroll` probe
     /// (`Main.qml`): whether opening another machine starts on the first
     /// page at the top and reopening the same one does not.
     function currentPage() { return pages.children[pages.currentIndex] }
@@ -114,10 +108,10 @@ Window {
     function scrollTo(y) { currentPage().contentItem.contentY = y }
     function expandOptimizations() { optimizationsExpander.expanded = true }
 
-    /// What the emulation-optimization boxes are *showing*, as a mask in
+    /// What the emulation-optimization boxes are showing, as a mask in
     /// the model's own bit order (`optimizationsMask`), and a way to click
     /// one box and each of the three shortcuts beside them. `click()` is
-    /// what a mouse click does — the toggle, `toggled` and its handler —
+    /// what a mouse click does (the toggle, `toggled` and its handler),
     /// so the `qt-wizard` check sees what the user sees, as `typeName`
     /// does for the name field.
     readonly property int optimizationBoxes: optimizations.count
@@ -136,10 +130,10 @@ Window {
     title: wizard.title
     // Sized to the tallest page, not guessed: `pageReport()` measured the
     // pages at 293 (System with its optimizations closed, Display) with 70
-    // of chrome around them on the PC (2026-09-22, user: 600 was too
-    // tall even for the longest page); the `qt-wizard` check keeps every
-    // page inside the room this leaves. The System page open scrolls,
-    // by design.
+    // of chrome around them on the Windows PC (600 was too tall even for
+    // the longest page). The `qt-wizard` check keeps every page inside
+    // the room this leaves. The System page with the optimizations open
+    // scrolls, by design.
     width: 820
     height: 440
     minimumWidth: 640
@@ -148,15 +142,15 @@ Window {
     modality: Qt.ApplicationModal
     color: palette.window
 
-    // Closing the window *is* cancelling the form: the flag drives the
+    // Closing the window is cancelling the form: the flag drives the
     // window in both directions (`Main.qml`), so clearing it here keeps
     // the two from disagreeing after a close from the title bar.
     //
     // Opening it starts on the first page, at the top, unless it is the
     // same machine as last time: a ScrollView keeps its position across a
-    // hide and show, so editing one machine after another used to open
-    // the second wherever the first was left (user, 2026-09-22). A new
-    // machine is never "the same", so creating always starts at the top.
+    // hide and show, so editing one machine after another would open the
+    // second wherever the first was left. A new machine is never "the
+    // same", so creating always starts at the top.
     // The form itself opens on the first page every time (the core
     // resets it); putting the same machine back on its page is this
     // window's own memory.
@@ -178,11 +172,11 @@ Window {
         lastOpened = opened
     }
 
-    // Esc is Cancel, the way every other dialog on the desktop behaves.
-    // It goes through `close()` rather than hiding the window, because
-    // that is what runs `onVisibleChanged` above — the one place a
-    // model's own `open` flag is put back. Not while a file dialog is up:
-    // that Esc is the dialog's (`PathField.browsing`).
+    // Esc is Cancel, as in every other dialog on the desktop. It goes
+    // through `close()` rather than hiding the window, because that runs
+    // `onVisibleChanged` above, the one place a model's own `open` flag
+    // is put back. Not while a file dialog is up: that Esc is the
+    // dialog's (`PathField.browsing`).
     Shortcut {
         sequences: [StandardKey.Cancel]
         enabled: !soundfontField.browsing && !diskField.browsing
@@ -222,8 +216,8 @@ Window {
             spacing: 10
 
             // The pages: a sidebar of sections and one page each, the way
-            // VirtualBox's and UTM's settings are laid out (user request,
-            // 2026-09-22 — one long scrolling form had outgrown its window).
+            // VirtualBox's and UTM's settings are laid out (user request:
+            // one long scrolling form had outgrown its window).
             // The sections, their names and their order are the shared
             // form's (`Form::section_labels`, `wizard.section`); which
             // field goes on which page is this file's. Every page scrolls
@@ -331,12 +325,10 @@ Window {
                             }
 
                             // --- processor ----------------------------------------------
-                            // Named machines rather than a number: "how many instructions
-                            // per second" is not something anyone knows about their DOS
-                            // game, while "it wants a 486" is written on the box. This is
-                            // the field that decides whether an era game is playable at
-                            // all (doc 06), and the Qt port had no widget for it until the
-                            // form became shared.
+                            // Named machines rather than a number: nobody knows how many
+                            // instructions per second their DOS game wants, while "it
+                            // wants a 486" is written on the box. This field decides
+                            // whether an era game is playable at all (doc 06).
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 8
@@ -395,21 +387,19 @@ Window {
 
                             // --- emulation optimizations ---------------------------------
                             // Our own QEMU fast paths (patches/qemu/README.md), one
-                            // checkbox each, behind a disclosure: seven switches nobody
-                            // needs to touch would push the fields that matter off the
-                            // bottom of the window. The header carries the count, so a
-                            // machine with one turned off says so while closed. The
-                            // labels, the sentences and the count all come from the
-                            // shared form.
+                            // checkbox each, behind a disclosure: fourteen switches
+                            // nobody needs to touch would push the fields that matter
+                            // off the bottom of the window. The header carries the
+                            // count, so a machine with one turned off says so while
+                            // closed. The labels, the sentences and the count all come
+                            // from the shared form.
                             //
-                            // The header is a `Disclosure`, not a checkbox: a tick in
-                            // front of "Emulation optimizations" reads as the switch
-                            // that turns them all off, which is not what closing a
-                            // section does (user, 2026-09-06).
+                            // The header is a `Disclosure`, not a checkbox
+                            // (`Disclosure.qml` says why).
                             Disclosure {
                                 id: optimizationsExpander
                                 Layout.fillWidth: true
-                                text: qsTr("Emulation optimizations — %1").arg(root.wizard.optimizationsSummary)
+                                text: qsTr("Emulation optimizations (%1)").arg(root.wizard.optimizationsSummary)
                             }
                             ColumnLayout {
                                 Layout.fillWidth: true
@@ -457,7 +447,7 @@ Window {
                                     }
                                 }
                                 // The two shortcuts sit beside "All defaults" rather
-                                // than replacing it: eleven switches is too many to
+                                // than replacing it: fourteen switches is too many to
                                 // walk through to build a control run, and the way
                                 // back is not "all on" (x87-pc64-as-53 ships off) but
                                 // the defaults.
@@ -584,10 +574,10 @@ Window {
                                 Item { Layout.fillWidth: true }
                             }
                             // The host's own answer is in this note (ADR-013): what
-                            // this host runs the pass-through on, and orange only for
-                            // the software Vulkan driver, the case that runs and
-                            // disappoints. It was a line of its own under the adapter
-                            // until 2026-09-22 (user: out of place beside the picker).
+                            // this host runs the pass-through on, orange only for the
+                            // software Vulkan driver, the case that runs but slowly.
+                            // It sits under this picker, not the adapter (user
+                            // decision).
                             Label {
                                 Layout.fillWidth: true
                                 visible: root.wizard.d3d9Applies
@@ -643,9 +633,8 @@ Window {
                             // The same shape as every picker above: the rows are the
                             // model's (the app default first, then the library by
                             // name), the choice is a row, and the style draws the
-                            // list. It had a delegate and a row-to-id translation of
-                            // its own until 2026-09-23, and was the one combo box in
-                            // the form that looked unlike the rest.
+                            // list, so it looks like every other combo box in the
+                            // form.
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 8
@@ -671,11 +660,11 @@ Window {
 
                             // --- the sound card and the MIDI port (doc 20 §6) -----------
                             // Two pickers rather than one: the card is what the guest
-                            // plays sound *effects* on and what it needs a driver for,
-                            // the port is what its *music* is played by, and a machine
-                            // of the era had both. The FM chip is in neither list — it
-                            // comes with the card that carried one, as it did on the
-                            // hardware, which is what the card's note says.
+                            // plays sound effects on and needs a driver for, the port
+                            // is what plays its music, and a machine of the era had
+                            // both. The FM chip is in neither list: it comes with the
+                            // card that carried one, as on the hardware, and the
+                            // card's note says so.
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 8
@@ -732,7 +721,7 @@ Window {
                                 font.pixelSize: 11
                                 opacity: 0.75
                             }
-                            // The bank is optional — empty means the one we ship — and
+                            // The bank is optional (empty means the one we ship) and
                             // the ROMs are not: an MT-32 machine without them is refused
                             // when the form is saved, because nothing of Roland's can be
                             // shipped with this program.
@@ -786,8 +775,8 @@ Window {
 
                             // --- the gamepad (M13) --------------------------------------
                             // Same shape as the adapter above, and a property list for the
-                            // same reason: DOS is offered no USB controller, having no USB
-                            // stack at all, so the list changes with the family.
+                            // same reason: DOS has no USB stack and is offered no USB
+                            // controller, so the list changes with the family.
                             RowLayout {
                                 Layout.fillWidth: true
                                 visible: root.wizard.padApplies
@@ -903,10 +892,9 @@ Window {
                                 value: root.wizard.installMedia
                                 onEdited: (path) => root.wizard.installMedia = path
                             }
-                            // A floppy in A:, and what the machine boots from — doc 06
+                            // A floppy in A:, and what the machine boots from. Doc 06
                             // lists a floppy on the Win98 machine and doc 07 lists floppy
-                            // images among the media the launcher handles. Two more
-                            // fields this port did not have.
+                            // images among the media the launcher handles.
                             PathField {
                                 id: floppyField
                                 Layout.fillWidth: true

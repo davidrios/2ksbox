@@ -1,5 +1,5 @@
 /*
- * mem.h -- 2ksbox's stand-in for 86Box's <86box/mem.h>. 86Box maps a device
+ * mem.h: 2ksbox's stand-in for 86Box's <86box/mem.h>. 86Box maps a device
  * into the guest's physical address space by registering handlers in a
  * mem_mapping_t; here the mapping only *records* the handlers, and the QEMU
  * device (voodoo2.c) calls them from its own MemoryRegion, which the PCI

@@ -14,7 +14,7 @@
  *        so build/d3dpt and build/dxvk are found; or D3DPT_EXEC_LIB / D3DPT_DXVK_LIB)
  *
  * Windows (built by scripts/build-windows.sh's exec stage): it is the
- * guest DLLs' path — a device with a swapchain, a scene, a Present —
+ * guest DLLs' path (a device with a swapchain, a scene, a Present),
  * which is what `D3DPT_D3D9=system` (the fallback backend for a host
  * below the Vulkan 1.3 floor) has to answer as DXVK does:
  *        D3DPT_EXEC_LIB=build\win\d3dpt\d3dpt_exec.dll D3DPT_D3D9=system \
@@ -144,10 +144,10 @@ int main(int argc, char **argv) {
     ang += 0.02f;
     d3dpt_clear *cl = (d3dpt_clear *)d3dpt_enc_cmd(&enc, D3DPT_OP_CLEAR, sizeof(d3dpt_clear), 0);
     /* Z too: the device has an auto depth buffer and z-test on, and a depth
-     * buffer nobody has cleared is undefined -- DXVK over RADV and wined3d
-     * happened to start it at 1.0 and drew the triangle, DXVK over
+     * buffer nobody has cleared is undefined. DXVK over RADV and wined3d
+     * happened to start it at 1.0 and drew the triangle; DXVK over
      * KosmicKrisp starts it at 0.0 and drew nothing, every frame, and this
-     * test checks no pixels so nobody saw (2026-09-22, the Air). */
+     * test checks no pixels so nobody saw. */
     cl->count = 0; cl->flags = D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER; cl->color = 0xff202040; cl->z = 1.0f; cl->stencil = 0; cl->pad = 0;
     d3dpt_enc_nobody(&enc, D3DPT_OP_BEGIN_SCENE);
     d3dpt_enc_u32x2(&enc, D3DPT_OP_SET_RENDER_STATE, D3DRS_LIGHTING, FALSE);
@@ -173,7 +173,7 @@ int main(int argc, char **argv) {
   }
   /* a DrawIndexedPrimitiveUP far along its application's array: the record
    * carries vertices min_index.. only, and DXVK reads (MinVertexIndex +
-   * NumVertices) * stride bytes from what it is handed as vertex 0 -- here 16
+   * NumVertices) * stride bytes from what it is handed as vertex 0: here 16
    * GiB past a 64 MiB window, unless the executor rebases the indices */
   {
     const uint32_t min = 0xfff000, stride = 1024, idx[3] = { min, min + 1, min + 2 };

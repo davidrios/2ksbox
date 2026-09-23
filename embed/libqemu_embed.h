@@ -1,5 +1,5 @@
 /*
- * libqemu_embed.h — minimal C API to run QEMU in-process.
+ * libqemu_embed.h: minimal C API to run QEMU in-process.
  *
  * Thread contract:
  *   - qemu_embed_new(), qemu_embed_run(), qemu_embed_destroy(): one dedicated
@@ -45,7 +45,7 @@ typedef struct qemu_embed_display_cb {
     void (*on_update)(void *ud, int x, int y, int w, int h);
     /* One refresh tick finished (all updates of this tick delivered). */
     void (*on_refresh_done)(void *ud);
-    /* Hardware cursor image (0xAARRGGBB per pixel, hot spot) — NULL to clear. */
+    /* Hardware cursor image (0xAARRGGBB per pixel, hot spot); NULL to clear. */
     void (*on_cursor)(void *ud, const uint32_t *argb, int w, int h,
                       int hot_x, int hot_y);
     /* Guest-driven cursor position / visibility. */
@@ -76,7 +76,7 @@ typedef struct qemu_embed_display_cb {
 
 /* Create + initialize QEMU. argv is a plain qemu-system command line
  * (argv[0] ignored); "-S" and "-display none" are appended. Fatal config
- * errors exit the process (QEMU semantics) — validate before calling.
+ * errors exit the process (QEMU semantics), so validate before calling.
  * Returns NULL only on argument errors. */
 QEMU_EMBED_API qemu_embed_t *qemu_embed_new(int argc, char **argv,
                              const qemu_embed_display_cb *cb, void *ud);
@@ -109,8 +109,8 @@ QEMU_EMBED_API void qemu_embed_mouse_btn(qemu_embed_t *e, uint32_t button, bool 
 /* Whether the active guest pointer device wants absolute coordinates. */
 QEMU_EMBED_API bool qemu_embed_mouse_is_absolute(qemu_embed_t *e);
 /* v8: the gamepad (M13 path A, `-device usb-gamepad`). One call carries
- * the *whole* pad, not one control: `axes` is four bytes — X, Y, Z, Rz,
- * two sticks, 0..255 with 0x80 centred — `hat` is 0..7 clockwise from
+ * the *whole* pad, not one control. `axes` is four bytes (X, Y, Z, Rz,
+ * two sticks, 0..255 with 0x80 centred), `hat` is 0..7 clockwise from
  * north or 8 for released, and `buttons` is a bitmap of twelve. Absolute
  * state rather than events, so a dropped update is corrected by the next
  * one instead of leaving the guest holding a button. Enqueued like the
@@ -119,7 +119,7 @@ QEMU_EMBED_API bool qemu_embed_mouse_is_absolute(qemu_embed_t *e);
  *
  * The same call also feeds path B's `gameport` (0x201, `-device
  * gameport`), which takes the first two axes, the first four buttons and
- * the hat folded onto its own X/Y — the port has no room for the rest.
+ * the hat folded onto its own X/Y. The port has no room for the rest.
  * No version bump for that: one more consumer of the same bytes, and a
  * machine has one device or the other. */
 QEMU_EMBED_API void qemu_embed_pad_state(qemu_embed_t *e, const uint8_t *axes,
@@ -145,7 +145,7 @@ QEMU_EMBED_API void qemu_embed_set_refresh_ms(qemu_embed_t *e, uint32_t ms);
 /* v7: a socket the caller made, as the `fd=` of `-chardev socket,fd=N`
  * (doc 11 QMP). On Windows that N is a C-runtime descriptor, not a SOCKET:
  * QEMU resolves it with _get_osfhandle(), and the descriptor table belongs
- * to whichever CRT a module links — so the conversion has to happen on this
+ * to whichever CRT a module links, so the conversion has to happen on this
  * side of the library boundary, not in the caller. Pass the raw SOCKET;
  * the returned descriptor owns it. Elsewhere an fd is already an fd and the
  * value comes back unchanged. Returns -1 if it cannot be converted. */

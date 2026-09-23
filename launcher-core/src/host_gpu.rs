@@ -6,33 +6,29 @@
 //! pre-1.3 loader answers with `ERROR_INCOMPATIBLE_DRIVER`, and every
 //! adapter whose `properties.apiVersion` is below it returns early out of
 //! `DxvkDeviceCapabilities` with no capabilities at all. A host that
-//! fails either check boots machines normally and just has no 3D —
-//! QEMU's `d3dpt_exec_load.c` says "no executor" into a log nobody reads.
-//! This is the launcher asking the same question first, so the answer can
-//! be a sentence in a window instead of an absence.
+//! fails either check boots machines normally with no 3D, and QEMU's
+//! `d3dpt_exec_load.c` writes "no executor" into a log nobody reads. The
+//! launcher asks the same question first, so the answer can be a
+//! sentence in a window.
 //!
 //! **A software Vulkan driver counts.** lavapipe answers 1.3 on any CPU,
 //! and DXVK ranks a `CPU` device last but never excludes it, so the
-//! executor does run there — badly, since a software rasteriser competes
-//! for the host CPU that TCG is already using for the guest. That is a
-//! thing to warn about, not a thing to refuse on the user's behalf: the
-//! verdict is "available", and [`HostGpu::is_slow`] is what puts the
-//! warning next to it.
+//! executor runs there, slowly, because a software rasteriser competes
+//! for the host CPU that TCG is already using for the guest. The verdict
+//! is "available", and [`HostGpu::is_slow`] puts a warning next to it.
 //!
-//! Two other details, both deliberate:
+//! Two other details:
 //!
 //! * The loader is opened **dynamically** (`Entry::load`). A box with no
-//!   `libvulkan` at all is a report, not a failed start — and the
-//!   launcher must run on exactly those boxes to explain itself.
-//! * `VK_KHR_portability_enumeration` is opted into when the loader
-//!   offers it, the same opt-in DXVK makes. Without it a Vulkan-on-Metal
-//!   driver (KosmicKrisp, MoltenVK) is invisible and a Mac would be told
-//!   it has no Vulkan when it has one.
+//!   `libvulkan` gets a report, not a failed start, and the launcher has
+//!   to run on exactly those boxes to explain itself.
+//! * `VK_KHR_portability_enumeration` is enabled when the loader offers
+//!   it, as DXVK does. Without it a Vulkan-on-Metal driver (KosmicKrisp,
+//!   MoltenVK) is invisible and a Mac would be told it has no Vulkan.
 //!
-//! What we do *not* do is decide anything for the machine: a host below
-//! the bar still runs every guest, through the OpenGL pass-through with
-//! WineD3D in the guest (doc 04). The probe picks the sentence, not the
-//! stack.
+//! The probe decides nothing for the machine. A host below the bar still
+//! runs every guest (see [`D3dBackend`] for which Direct3D 9 it gets).
+//! The probe picks the sentence, not the stack.
 
 use ash::vk;
 use std::path::{Path, PathBuf};
@@ -44,8 +40,8 @@ use std::sync::OnceLock;
 pub enum HostGpu {
     /// No Vulkan loader on the box (no `libvulkan`, or it would not load).
     NoLoader,
-    /// A loader, but it answers below 1.3 — DXVK's `vkCreateInstance`
-    /// would fail outright with `ERROR_INCOMPATIBLE_DRIVER`.
+    /// A loader, but it answers below 1.3, so DXVK's `vkCreateInstance`
+    /// would fail with `ERROR_INCOMPATIBLE_DRIVER`.
     LoaderTooOld,
     /// A 1.3 loader that enumerates nothing: no ICD, or every driver
     /// filtered out.
@@ -62,8 +58,8 @@ pub enum HostGpu {
 
 impl HostGpu {
     /// Whether the paravirtual Direct3D device will work at all. True for
-    /// a software driver too — see [`is_slow`](Self::is_slow), which is
-    /// the difference the caller should show.
+    /// a software driver too; [`is_slow`](Self::is_slow) is the
+    /// difference the caller should show.
     pub fn d3d_available(self) -> bool {
         matches!(self, HostGpu::Accelerated | HostGpu::SoftwareOnly)
     }
@@ -103,18 +99,17 @@ impl HostGpu {
     }
 }
 
-/// Which Direct3D 9 the executor will run on here — the question behind
-/// the Vulkan probe, which on Windows has a second answer (ADR-007's
-/// 2026-09-21 amendment) and on Linux and macOS a third (ADR-018, track
-/// M15: the same executor in another process, on Wine's own d3d9).
+/// Which Direct3D 9 the executor will run on here. On Windows there is a
+/// second answer (ADR-007's second amendment), and on Linux and macOS a
+/// third (ADR-018, track M15: the same executor in another process, on
+/// Wine's own d3d9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum D3dBackend {
     /// DXVK: this host has the Vulkan 1.3 device it wants.
     Dxvk,
-    /// Windows' own `d3d9.dll`. Not a lesser answer on an old card —
-    /// its D3D9 driver is what the card was sold for — but a second
-    /// rasteriser, so a frame here is not the frame the goldens were
-    /// taken with.
+    /// Windows' own `d3d9.dll`. On an old card its D3D9 driver is what
+    /// the card was sold for, but it is a second rasteriser, so a frame
+    /// here is not the frame the goldens were taken with.
     System,
     /// Wine's own `d3d9.dll` (WineD3D over OpenGL), in a Wine process
     /// beside QEMU: a Linux or macOS host below the floor that has a
@@ -123,8 +118,8 @@ pub enum D3dBackend {
     Wine,
     /// Nothing: no Vulkan 1.3, no system Direct3D 9 because this is not
     /// Windows, and no Wine to run the executor on. The guest falls back
-    /// to WineD3D over the OpenGL pass-through, which needs no Vulkan at
-    /// all (doc 04) — until track M15's last step retires that.
+    /// to WineD3D over the OpenGL pass-through, which needs no Vulkan
+    /// (doc 04), until track M15's last step retires it.
     None,
 }
 
@@ -136,13 +131,13 @@ pub struct Wine {
     pub version: String,
 }
 
-/// The rule `d3dpt/exec/d3dpt_exec_remote.c`'s `find_wine` follows,
-/// kept in step by hand (the library is C inside QEMU, this is the
-/// launcher): `D3DPT_WINE` first — set to a path that does not exist it
-/// means *none*, deliberately, so a test can take Wine away on a host
-/// that has one — then the Mac apps by their fixed paths, the spike's
-/// tarball in a checkout, then `wine64` and `wine` on `PATH`. Never on
-/// Windows, where the host's own Direct3D 9 is the fallback.
+/// The rule `d3dpt/exec/d3dpt_exec_remote.c`'s `find_wine` follows, kept
+/// in step by hand (that library is C inside QEMU). `D3DPT_WINE` first;
+/// set to a path that does not exist it means none, so a test can take
+/// Wine away on a host that has one. Then the Mac apps by their fixed
+/// paths, the spike's tarball in a checkout, then `wine64` and `wine` on
+/// `PATH`. Never on Windows, where the host's own Direct3D 9 is the
+/// fallback.
 fn find_wine() -> Option<PathBuf> {
     if cfg!(windows) {
         return None;
@@ -180,7 +175,7 @@ fn find_wine() -> Option<PathBuf> {
 
 /// `wine --version` prints `wine-10.0` (or `wine-11.17 (Staging)`) and
 /// exits; it starts no server and makes no prefix. A Wine that cannot
-/// even do that is no Wine.
+/// do that counts as no Wine.
 fn wine_version(path: &Path) -> Option<String> {
     let out = Command::new(path).arg("--version").output().ok()?;
     if !out.status.success() {
@@ -225,17 +220,18 @@ fn wine_install_hint() -> &'static str {
 }
 
 impl HostGpu {
-    /// What the pass-through will run on, *on this host*. Windows is the
-    /// only platform with a fallback, and a software Vulkan device loses
-    /// to it there: DXVK does run on lavapipe, but a real card's own
-    /// Direct3D 9 driver is faster than a CPU rasteriser every time, and
-    /// on Windows a host with software Vulkan still has that driver.
+    /// What the pass-through will run on, on this host. On Windows a
+    /// software Vulkan device loses to the system's Direct3D 9: DXVK does
+    /// run on lavapipe, but a real card's own Direct3D 9 driver is faster
+    /// than a CPU rasteriser, and a Windows host with software Vulkan
+    /// still has that driver.
     ///
     /// On Linux and macOS the answer below the bar is Wine on the host
     /// (ADR-018), when there is one and the executor's Windows build to
-    /// run on it — the order QEMU's own loader takes (`d3dpt_exec_load.c`:
-    /// DXVK when it finds any device, the software one included, Wine
-    /// when it finds none), so what this says is what the machine gets.
+    /// run on it. This is the order QEMU's own loader takes
+    /// (`d3dpt_exec_load.c`: DXVK when it finds any device, the software
+    /// one included, Wine when it finds none), so what this says is what
+    /// the machine gets.
     pub fn backend(self) -> D3dBackend {
         if self.d3d_available() && !self.is_slow() {
             D3dBackend::Dxvk
@@ -251,18 +247,16 @@ impl HostGpu {
     }
 
     /// Whether the guest gets Direct3D at all on this host, on whichever
-    /// back end: what `--host-check`'s exit code answers. Not
+    /// back end; `--host-check`'s exit code answers it. Not
     /// [`d3d_available`](Self::d3d_available), which is the Vulkan
-    /// question alone and stays the one the Windows fallback is decided
-    /// on.
+    /// question alone and decides the Windows fallback.
     pub fn pass_through_available(self) -> bool {
         self.backend() != D3dBackend::None
     }
 
-    /// The headline for the *pass-through*, which is not the Vulkan
-    /// sentence on a Windows host below the bar: there the answer is
-    /// yes, through another library, and saying "3D goes through
-    /// OpenGL" would be false.
+    /// The headline for the pass-through. On a Windows host below the bar
+    /// it is not the Vulkan sentence: the answer there is yes, through
+    /// another library, and "3D goes through OpenGL" would be false.
     pub fn d3d_headline(self) -> String {
         match self.backend() {
             D3dBackend::System if self.is_slow() => {
@@ -281,21 +275,21 @@ impl HostGpu {
         }
     }
 
-    /// And the second line, the same way: a Windows host on its own
-    /// Direct3D 9 needs no WineD3D in the guest, and should be told what
-    /// it is trading instead.
+    /// The second line, the same way. A Windows host on its own
+    /// Direct3D 9 needs no WineD3D in the guest and is told what it
+    /// trades instead.
     pub fn d3d_advice(self) -> Option<String> {
         match self.backend() {
             D3dBackend::System => Some(
-                "Its own driver, not the tested DXVK path: if a game draws wrong, set Direct3D to DXVK on the machine and compare.".into(),
+                "That is the card's own driver, not the tested DXVK path. If a game draws wrong, set Direct3D to DXVK and compare.".into(),
             ),
             D3dBackend::Wine => Some(
-                "Wine's Direct3D 9 over OpenGL, not the tested DXVK path: a game that draws wrong here may be right on a Vulkan 1.3 host.".into(),
+                "That is Wine's Direct3D 9 over OpenGL, not the tested DXVK path. A game that draws wrong here may be right on a Vulkan 1.3 host.".into(),
             ),
             // Software Vulkan with a Wine at hand: two working stacks, and
-            // which is faster is the box's to answer (ADR-013's lesson).
+            // only the box can say which is faster (ADR-013).
             D3dBackend::Dxvk if self.is_slow() && wine().is_some() && exec_host().is_some() => Some(
-                "Direct3D through Wine on this host may be faster: add -global d3dpt-vga.exec=wine to the machine's extra QEMU arguments. Try both.".into(),
+                "Direct3D through Wine may be faster here. To try it, add -global d3dpt-vga.exec=wine to the machine's extra QEMU arguments.".into(),
             ),
             D3dBackend::None if !cfg!(windows) => {
                 Some(format!("{} {}", self.advice().unwrap_or(""), wine_install_hint()).trim().to_string())
@@ -360,8 +354,8 @@ pub struct Probe {
 
 /// The Vulkan loader this package carries, when it carries one. Stock
 /// macOS has no Vulkan, so the app ships the LunarG loader beside the
-/// executor's KosmicKrisp (`scripts/package-macos.sh`); a Linux package
-/// ships none, the distribution's is the right one. `None` in a checkout.
+/// executor's KosmicKrisp (`scripts/package-macos.sh`). A Linux package
+/// ships none and uses the distribution's. `None` in a checkout.
 pub fn shipped_loader() -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
         crate::paths::shipped("lib/2ksbox/libvulkan.1.dylib")
@@ -383,21 +377,21 @@ pub fn shipped_icd() -> Option<PathBuf> {
 
 /// Point the loader at the driver the package ships, the way the player
 /// does for QEMU's process: `VK_DRIVER_FILES` when the caller left both
-/// loader variables unset. The loader has no other door — it reads its
-/// driver list from the environment and a handful of system directories
-/// none of which an app bundle owns — so without this the app's own
-/// loader, opened by [`probe`], enumerates no device on a Mac that has
-/// nothing of Vulkan installed and the launcher says Direct3D is
-/// unavailable while the player runs DXVK (2026-09-23, the community app
-/// on macOS 15). **Every front end calls this first thing in `main`**,
-/// before a thread exists: writing the environment beside another
-/// thread's `getenv` is the one race Rust's `set_var` cannot lock out.
+/// loader variables unset. The loader reads its driver list only from
+/// the environment and a few system directories, none of which an app
+/// bundle owns. Without this the app's own loader, opened by [`probe`],
+/// enumerates no device on a Mac with no Vulkan installed, and the
+/// launcher says Direct3D is unavailable while the player runs DXVK (seen
+/// with the community app on macOS 15). **Every front end calls this
+/// first thing in `main`**, before a thread exists: writing the
+/// environment beside another thread's `getenv` is the one race Rust's
+/// `set_var` cannot lock out.
 pub fn announce_driver() {
     if std::env::var_os("VK_DRIVER_FILES").is_some() || std::env::var_os("VK_ICD_FILENAMES").is_some() {
         return;
     }
     let Some(icd) = shipped_icd() else { return };
-    // SAFETY: the caller's contract above — main, before any thread.
+    // SAFETY: the caller's contract above: main, before any thread.
     unsafe { std::env::set_var("VK_DRIVER_FILES", icd) };
 }
 
@@ -405,9 +399,8 @@ pub fn announce_driver() {
 /// one, the system's `libvulkan` otherwise. `Entry::load()` alone asks
 /// dyld for `libvulkan.dylib` by leaf name, which reaches the app's copy
 /// only through an rpath of the calling image and under a name the app
-/// does not use — measured 2026-09-23 on macOS 15: the packaged launcher
-/// reported "Vulkan loader: not present" beside the copy the executor
-/// was running on.
+/// does not use. On macOS 15 the packaged launcher reported "Vulkan
+/// loader: not present" beside the copy the executor was running on.
 ///
 /// # Safety
 /// As `Entry::load`: a library on the search path runs its initialisers.
@@ -427,7 +420,7 @@ fn split(v: u32) -> (u32, u32, u32) {
 }
 
 /// Ask the host, now. Costs one throwaway `VkInstance` (a few ms), so
-/// anything that draws should hold the answer instead — [`cached`], or
+/// anything that draws should hold the answer instead: [`cached`], or
 /// the copy a window's model took when it opened.
 pub fn probe() -> Probe {
     let none = |gpu| Probe {
@@ -575,7 +568,7 @@ pub fn report_text(p: &Probe) -> String {
             None => s.push_str("Executor for Wine: not built (scripts/build-d3dpt-exec.sh --wine needs mingw-w64)\n"),
         }
     }
-    s.push_str("Required: a 1.3 device (DXVK 3.1's own bar, ADR-013)\n");
+    s.push_str("Required: a 1.3 device (DXVK 3.1's minimum)\n");
     if p.devices.is_empty() {
         s.push_str("Devices: none\n");
     } else {
@@ -590,7 +583,7 @@ pub fn report_text(p: &Probe) -> String {
                 "meets the bar"
             };
             s.push_str(&format!(
-                "  {} — {}, Vulkan {a}.{b}.{c} ({why})\n",
+                "  {}: {}, Vulkan {a}.{b}.{c} ({why})\n",
                 d.name,
                 d.kind_name()
             ));

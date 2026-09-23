@@ -17,7 +17,7 @@
  *          -Ithird_party/dxvk/include/native/directx -ldl
  * Run:   build/d3dpt-dp2-test [out.bmp]   (from the repo root, or D3DPT_EXEC_LIB / D3DPT_DXVK_LIB)
  *
- * Windows (the Windows executor on DXVK's d3d9.dll, 2026-09-17), inside
+ * Windows (the Windows executor on DXVK's d3d9.dll), inside
  * scripts/win-cross.sh, then under wine or on the PC:
  *        x86_64-w64-mingw32-g++ -std=c++17 -O2 -static -o build/win/d3dpt-dp2-test.exe tools/d3dpt-dp2-test.cpp
  *        D3DPT_EXEC_LIB=build/win/d3dpt/d3dpt_exec.dll D3DPT_DXVK_LIB=<dxvk_d3d9.dll> wine build/win/d3dpt-dp2-test.exe
@@ -427,7 +427,7 @@ int main(int argc, char **argv) {
         CHECK(hr == 0 && near_(px(104, 84), CLEAR_COLOR & 0xffffff, 2) && near_(px(404, 84), 0x404040, 2),
               "DRAW8 after the guest rewrote the VRAM buffer: the quad moved (0x%06x at the old place, 0x%06x at the new)", px(104, 84), px(404, 84));
         /* hostile: a range beyond the buffer, an unknown buffer, a texture
-         * named as a buffer, a flag the host does not know — the first three
+         * named as a buffer, a flag the host does not know. The first three
          * skip the draw, the last refuses the record */
         Dp2Buf h8;
         h8.draw8x(4, 2, FVF_TLVERTEX, quad, H_VB, VB_SIZE - 32, { 10, 11, 12, 13, 14, 15 }, H_IB, 32, 10);
@@ -548,7 +548,7 @@ int main(int argc, char **argv) {
         s8.draw8(4, 2, 0x107, sq);
         /* garbage with a proper END: an unknown opcode, an instruction without
          * its operands, a register off the file (DXVK's compiler asserts on
-         * the first two — the process would die — so the executor's own
+         * the first two and the process would die, so the executor's own
          * validator must refuse them first) */
         s8.create_vs(0x10f, decl_pc, { VS11, 0xDEADBEEFu, 0xDEADBEEFu, 0xDEADBEEFu, END });
         s8.create_ps(0x20f, { PS11, 0xDEADBEEFu, 0xDEADBEEFu, END });
@@ -1165,7 +1165,7 @@ int main(int argc, char **argv) {
         CHECK(hr == 0 && near_(px(104, 84), 0xff0000, 2) && near_(px(124, 84), 0xff0000, 2),
               "TEXTUREHANDLE 0: the vertex colour 0x%06x 0x%06x", px(104, 84), px(124, 84));
         /* a DirectX 6 title: the blend chosen while no texture is bound, the texture then bound as a
-         * stage state per draw (GTA 2's menu text, 2026-09-05): the blend must follow the texture */
+         * stage state per draw (GTA 2's menu text): the blend must follow the texture */
         Dp2Buf e5;
         e5.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
         e5.rs(21, 2 /* MODULATE */); e5.tss(0, 0, H_TEX16);
@@ -1174,10 +1174,10 @@ int main(int argc, char **argv) {
         hr |= readback(&enc, H_RT);
         CHECK(hr == 0 && near_(px(104, 84), 0x000000, 2) && near_(px(124, 84), 0xff0000, 2),
               "TEXTUREMAPBLEND before the texture, bound as a stage state: blue cell x red = 0x%06x, white cell x red = 0x%06x", px(104, 84), px(124, 84));
-        /* Crimson Skies' menu (2026-09-09): the runtime's context dump has set the ops, the
+        /* Crimson Skies' menu: the runtime's context dump has set the ops, the
          * title then picks MODULATE with no texture bound, sets its own COLORARG2 / ALPHAARG2
          * (its arguments, not its ops) and binds a texture per draw: the blend must still
-         * follow the texture — an argument does not end it (the logo drew as a white silhouette) */
+         * follow the texture; an argument does not end it (the logo drew as a white silhouette) */
         Dp2Buf e6;
         e6.clear(D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, CLEAR_COLOR, 1.0f);
         e6.tss(0, 1, D3DTOP_MODULATE); e6.tss(0, 4, D3DTOP_SELECTARG1); e6.tss(0, 0, 0);
@@ -1298,7 +1298,7 @@ int main(int argc, char **argv) {
           "a target moved to another offset reads back whole (0x%08x, frames %s)", hr,
           memcmp(vram + RT_OFF, vram + RT2_OFF, (size_t)RT_PITCH * H) ? "differ" : "equal");
     /* --- the context again under its open handle: a guest that never destroyed it (the display
-     * driver lost its table with the PDEV until 2026-09-05, GTA 2) gets a fresh one, not BAD_HANDLE --- */
+     * driver once lost its table with the PDEV, GTA 2) gets a fresh one, not BAD_HANDLE --- */
     {
         uint32_t off = d3dpt_enc_ret(&enc, 0);
         d3dpt_ctx_create *c = (d3dpt_ctx_create *)d3dpt_enc_cmd(&enc, D3DPT_OP_CTX_CREATE, sizeof *c, 0);

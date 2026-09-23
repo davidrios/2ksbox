@@ -1,7 +1,7 @@
 //! The smallest cxx-qt program, in three rungs (M11).
 //!
-//! `launcher-qt.exe` faults at address 0 before `main` on Windows -- on
-//! wine and on a real machine alike -- so the question is which of
+//! `launcher-qt.exe` faulted at address 0 before `main` on Windows (on
+//! wine and on a real machine alike), so the question is which of
 //! cxx-qt's layers puts a static initialiser there. Each feature adds
 //! exactly one, and the rung that stops printing `qtmin: main` is the
 //! answer:
@@ -12,8 +12,8 @@
 //!            registration that runs *before* main
 //!
 //! It says `qtmin: main` on stdout and again in `qtmin.log` beside the
-//! executable, because a windows-subsystem program has no stdout -- and
-//! this one is a console program precisely so that it does.
+//! executable, because a windows-subsystem program has no stdout (this
+//! one is a console program precisely so that it does).
 
 #[cfg(feature = "bridge")]
 mod obj;

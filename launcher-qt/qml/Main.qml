@@ -9,8 +9,8 @@ ApplicationWindow {
     id: root
 
     // Wide enough for a row's five buttons with room to spare: at 900
-    // "Clone…" sat flush against the edge, one longer label from clipped;
-    // at 980 the Fluent style's wider buttons clipped it again (2026-09-22).
+    // "Clone…" sat flush against the edge, and at 980 the Fluent style's
+    // wider buttons clipped it.
     width: 1060
     height: 560
     visible: true
@@ -23,8 +23,8 @@ ApplicationWindow {
         Component.onCompleted: refresh()
     }
 
-    // A child process has no way to push the news that it exited, so
-    // this polls for it, at an interval stated out loud.
+    // A child process cannot push the news that it exited, so this polls
+    // for it.
     Timer {
         interval: 500
         running: true
@@ -43,8 +43,8 @@ ApplicationWindow {
         id: offer
         // Each step that has something to answer opens its own dialog;
         // neither is ever closed from here (`FirstRunDialog.qml` says
-        // why at length — a MessageDialog closed programmatically emits
-        // `rejected()`, and would answer its own question).
+        // why: a MessageDialog closed programmatically emits
+        // `rejected()` and would answer its own question).
         onStepChanged: {
             if (step === "asking") {
                 firstRunDialog.open()
@@ -99,11 +99,11 @@ ApplicationWindow {
                 font.bold: true
                 Layout.fillWidth: true
             }
-            // The preset download, while it runs. Here and not in the
+            // The preset download, while it runs. Here and not in a
             // dialog: it needs no answer, and a modal window with a
-            // spinner in it would lock the launcher for a minute over a
-            // job the user has already agreed to. Both strings are the
-            // model's (`firstrun::Message`).
+            // spinner would lock the launcher for a minute over a job the
+            // user already agreed to. Both strings are the model's
+            // (`firstrun::Message`).
             RowLayout {
                 spacing: 6
                 visible: offer.busy
@@ -115,9 +115,9 @@ ApplicationWindow {
             }
             Label {
                 // A failure to start a player is a whole sentence with
-                // a path in it, and this label is 320px wide: without
-                // the tooltip the elided head reads as nothing having
-                // happened at all.
+                // a path in it, and this label is 320px wide. Without
+                // the tooltip the elided text reads as nothing having
+                // happened.
                 text: machines.status
                 opacity: 0.7
                 elide: Text.ElideRight
@@ -136,13 +136,12 @@ ApplicationWindow {
         spacing: 8
 
         // Column widths shared by the header and every row, so the two
-        // cannot drift the way two separate layouts would. Each fixed
-        // column is pinned (minimum = preferred = maximum): a preferred
-        // width alone lets the RowLayout shrink or grow a column by its
-        // text, which put every row's buttons somewhere else (user-
-        // reported, 2026-09-12). The shader column takes whatever width
-        // is left, so the buttons sit against the right edge whatever the
-        // window's width (user, 2026-09-22), and `shader` is its minimum.
+        // cannot drift. Each fixed column is pinned (minimum = preferred
+        // = maximum): a preferred width alone lets the RowLayout size a
+        // column by its text, which put every row's buttons somewhere
+        // else. The shader column takes whatever width is left, so the
+        // buttons sit against the right edge at any window width, and
+        // `shader` is its minimum.
         QtObject {
             id: cols
             readonly property int name: 190
@@ -150,11 +149,11 @@ ApplicationWindow {
             readonly property int shader: 170
         }
 
-        // A stock list and nothing drawn by hand (user decision, 2026-09-22:
-        // no list box, no zebra rows, no colours of ours -- the style's own
-        // look, whichever style it is): a `ListView` of `ItemDelegate`s under
-        // a header row of labels, whose margins are a delegate's own padding,
-        // read off an invisible one, so the columns line up under every style.
+        // A stock list with nothing drawn by hand (user decision: no list
+        // box, no zebra rows, no colours of ours, only the style's own
+        // look). A `ListView` of `ItemDelegate`s under a header row of
+        // labels whose margins are a delegate's own padding, read off an
+        // invisible one, so the columns line up under every style.
         ItemDelegate { id: rowMetrics; visible: false }
 
         RowLayout {
@@ -321,9 +320,8 @@ ApplicationWindow {
         // and the window goes away wherever it was.
         onOpenChanged: open ? cloneWindow.show() : closeIfShown(cloneWindow)
     }
-    // A copy runs on its own thread; this asks after it, at an interval
-    // stated out loud, only while there is one. When it lands the grid
-    // rescans, which is where the new machine appears.
+    // A copy runs on its own thread; this polls it only while there is
+    // one. When it lands the grid rescans, which shows the new machine.
     Timer {
         interval: 300
         repeat: true
@@ -351,17 +349,17 @@ ApplicationWindow {
     ///
     /// The flag is cleared from two directions: by a button (Cancel, a
     /// successful save), and by the window's own `onVisibleChanged` when
-    /// the title bar's close button hid it. The second one is already
-    /// inside Qt's close — `destroy()` flips `visible` and emits the
-    /// signal *before* it unregisters the modal window and hides the
-    /// platform window — so calling `close()` back from there delivers a
-    /// second close event to a window that is half gone: it deletes the
-    /// platform window from inside the first event, and the first one,
-    /// finding it null, skips the platform `setVisible(false)`. On macOS
-    /// that skipped call is `endModalSession`, so the dialog was gone
-    /// and the main window stayed locked behind it (user-reported,
-    /// 2026-09-07). `visible` is already false at that moment, which is
-    /// the tell. The `closebox` probe below counts the close events the
+    /// the title bar's close button hid it. The second is already inside
+    /// Qt's close: `destroy()` flips `visible` and emits the signal
+    /// before it unregisters the modal window and hides the platform
+    /// window. Calling `close()` back from there delivers a second close
+    /// event to a window that is half gone. It deletes the platform
+    /// window from inside the first event, and the first one, finding it
+    /// null, skips the platform `setVisible(false)`. On macOS that
+    /// skipped call is `endModalSession`, so the dialog was gone and the
+    /// main window stayed locked behind it. `visible` is already false at
+    /// that moment, which is the tell. The `closebox` probe below
+    /// counts the close events the
     /// window receives; the `qt-close` check in `scripts/test.sh` wants
     /// exactly one.
     function closeIfShown(w) {
@@ -387,7 +385,7 @@ ApplicationWindow {
             machines.refresh()
             // A disc added or renamed should show up in the guest's own
             // CDSHELF listing without restarting the machine, so every
-            // *running* drive gets the new shelf file — here, where the
+            // running drive gets the new shelf file, here, where the
             // running set lives.
             if (discs.takeSaved())
                 machines.republishShelf()
@@ -437,7 +435,7 @@ ApplicationWindow {
         return null
     }
 
-    /// Close events the wizard window has received — the `closebox`
+    /// Close events the wizard window has received, the `closebox`
     /// probe's count.
     property int closeEvents: 0
     Connections {
@@ -446,9 +444,9 @@ ApplicationWindow {
     }
 
     Timer {
-        // A screen with no shot path is a run that only *drives* the
-        // window and prints what it shows — which is the half of this
-        // that needs no GPU, and the only half that works on a busy one.
+        // A screen with no shot path is a run that only drives the
+        // window and prints what it shows, which needs no GPU and works
+        // on a busy one.
         running: diag.shotPath !== "" || diag.screen !== ""
         interval: diag.delayMs
         onTriggered: {
@@ -457,7 +455,7 @@ ApplicationWindow {
             case "wizard":
                 wizard.openFresh(); profiles.refresh(); wizardWindow.show()
                 // `LAUNCHER_QT_ARG=<win98|xp|dos|other>[:<page>]` exercises the one piece
-                // of form behaviour a screenshot can actually prove:
+                // of form behaviour a screenshot can prove:
                 // switching family moves the memory, processor,
                 // acceleration and networking defaults with it, but only
                 // while nobody has chosen them. The order is the shared
@@ -470,27 +468,27 @@ ApplicationWindow {
                 // row of the form rather than always its first page.
                 const wizardArg = diag.arg.split(":")
                 diag.arg = wizardArg[0]
-                // Typed *before* the family moves, because the order is
+                // Typed before the family moves, because the order is
                 // the bug: a text field writes the model property and
                 // nothing else, so a verb that republishes the form
                 // without catching it up first writes the form's stale,
-                // empty name back over what was typed (user, 2026-09-08).
+                // empty name back over what was typed.
                 wizardWindow.typeName("Typed name")
                 wizardWindow.typeExtraQemuArgs('-name "typed args"')
                 // A page away and back first, the way the sidebar does
-                // it: the page switch is a verb too, and it was the one
-                // that republished the form without catching it up (user,
-                // 2026-09-23: the name vanished on a click on "System" and
-                // back). It has to come *before* the family, whose own
-                // verb catches the form up and would hide it.
+                // it: the page switch is a verb too, and it once
+                // republished the form without catching it up (the name
+                // vanished on a click on "System" and back). It comes
+                // before the family, whose own verb catches the form up
+                // and would hide the bug.
                 wizard.chooseSection(1); wizard.chooseSection(0)
                 if (families.indexOf(diag.arg) >= 0)
                     wizard.chooseFamily(families.indexOf(diag.arg))
                 // What the memory field ended up showing, beside what the
                 // model says it should: a spin box bounds the value it is
                 // handed against the range it has at that moment, so the
-                // two can disagree and nothing but a picture would say so
-                // (they did: a fresh Win98 machine showed 32 MB).
+                // two can disagree unseen by the model (a fresh Win98
+                // machine once showed 32 MB).
                 diag.note("wizard memory: shown " + wizardWindow.shownRamMb
                           + ", model " + wizard.ramMb
                           + ", range " + wizard.ramMin + ".." + wizard.ramMax)
@@ -504,20 +502,20 @@ ApplicationWindow {
                 diag.note("wizard direct3d: shown [" + wizardWindow.shownD3d9
                           + "] of " + wizardWindow.shownD3d9Count
                           + " model " + wizard.d3d9 + " applies " + wizard.d3d9Applies)
-                // ...and the sentence under it, which since 2026-09-22 carries
-                // the host's own answer (it was a line of its own before).
+                // ...and the sentence under it, which carries the host's
+                // own answer.
                 diag.note("wizard direct3d note: [" + wizard.d3d9Note.replace(/\n/g, " | ")
                           + "] warning " + wizard.d3d9Warning)
                 // The shader profile combo, whose rows come from the model
-                // the same way since 2026-09-23: the app default and then
-                // the library, one of them showing.
+                // the same way: the app default and then the library, one
+                // of them showing.
                 diag.note("wizard shader: shown [" + wizardWindow.shownShaderProfile
                           + "] of " + wizardWindow.shownShaderProfileCount
                           + " model " + wizard.shaderProfileIndex
                           + " default " + wizard.shaderProfileIsDefault)
                 // What the window's height has to hold: each page's content
-                // against the room a page gets (user, 2026-09-22: the
-                // default was too tall even for the longest page).
+                // against the room a page gets, since the default was once
+                // too tall even for the longest page.
                 diag.note("wizard pages: " + wizardWindow.pageReport())
                 if (wizardArg.length > 1)
                     wizard.chooseSection(parseInt(wizardArg[1]))
@@ -526,18 +524,18 @@ ApplicationWindow {
                 break
             case "optall":
                 // The optimization shortcuts beside boxes somebody already
-                // clicked (user, 2026-09-12: "Turn all on / off does
-                // nothing" on a machine with three boxes unticked by hand).
-                // The model moves every time; the question is whether the
-                // *boxes* still follow it once a click has been through
-                // them, so every step prints what they show beside the
-                // model's mask.
+                // clicked ("Turn all on / off does nothing" was reported on
+                // a machine with three boxes unticked by hand). The model
+                // moves every time; the question is whether the boxes
+                // still follow it once a click has been through them, so
+                // every step prints what they show beside the model's
+                // mask.
                 wizard.openFresh(); profiles.refresh(); wizardWindow.show()
                 const optReport = step => diag.note("optall " + step + ": shown "
                     + wizardWindow.shownOptimizationsMask() + " model " + wizard.optimizationsMask)
                 diag.note("optall boxes " + wizardWindow.optimizationBoxes)
-                // tb-invalidate-fast, tlb-floor, tls-hot-paths — the user's
-                // three, by their place in `Optimization::ALL`
+                // tb-invalidate-fast, tlb-floor, tls-hot-paths: the
+                // reported three, by their place in `Optimization::ALL`
                 for (const i of [7, 8, 9])
                     wizardWindow.clickOptimization(i)
                 optReport("clicked")
@@ -547,7 +545,7 @@ ApplicationWindow {
                 break
             case "closebox":
                 // The title bar's close button on the wizard, the way the
-                // window system delivers it — a close *event*, not
+                // window system delivers it: a close event, not
                 // `close()`, which is the path a button takes and which
                 // Qt guards against re-entry. Counts the close events the
                 // window sees (`closeIfShown` says why two is the bug)
@@ -562,7 +560,7 @@ ApplicationWindow {
             case "wizardscroll":
                 // Where the form opens: its first page at the top for a
                 // new machine and for a different one than last time,
-                // where it was left — page and scroll — for the same one
+                // where it was left (page and scroll) for the same one
                 // again (`WizardWindow.onVisibleChanged`).
                 // A machine to edit comes first, through the create path
                 // below; `LAUNCHER_QT_ARG=<disk>` names an existing disk
@@ -580,13 +578,12 @@ ApplicationWindow {
                 wizardScroll.start()
                 return   // `wizardScroll` ends the run
             case "create":
-                // `LAUNCHER_QT_ARG=[<family>:]<name>` — the whole create
-                // path, ending on the refreshed grid, so the run is only a
-                // pass if the bundle really landed in the library. The
-                // family is worth naming: a bundle written through this
-                // window has to come out the same as one written by
-                // `--wizard-new`, and DOS is the family
-                // where that used to be false.
+                // `LAUNCHER_QT_ARG=[<family>:]<name>`: the whole create
+                // path, ending on the refreshed grid, so the run passes
+                // only if the bundle landed in the library. The family is
+                // worth naming: a bundle written through this window has
+                // to match one written by `--wizard-new`, and DOS once
+                // didn't.
                 wizard.openFresh()
                 const spec = diag.arg.split(":")
                 const named = spec.length > 1
@@ -599,13 +596,13 @@ ApplicationWindow {
                 machines.refresh()
                 break
             case "clone":
-                // `LAUNCHER_QT_ARG=<machine.toml>` — a row's Clone… the
-                // way a person does it: the window up with the name the
-                // model offers, a new name typed over it, Clone pressed,
-                // and then the copy waited out (`cloneSettle`), ending
-                // on the rescanned grid — so it only passes if the new
-                // machine really landed in the library. `<path>;show`
-                // stops at the open window, for a picture of it.
+                // `LAUNCHER_QT_ARG=<machine.toml>`: a row's Clone… the
+                // way a person does it. The window comes up with the name
+                // the model offers, a new name is typed over it, Clone is
+                // pressed, and the copy is waited out (`cloneSettle`),
+                // ending on the rescanned grid, so it passes only if the
+                // new machine landed in the library. `<path>;show` stops
+                // at the open window, for a picture of it.
                 const cloneSpec = diag.arg.split(";")
                 cloner.openFor(cloneSpec[0], false)
                 diag.note("clone offered [" + cloneWindow.shownName + "] model [" + cloner.name
@@ -627,10 +624,10 @@ ApplicationWindow {
                 break
             case "pickdisc":
                 // `LAUNCHER_QT_ARG=<path>` through the "Add disc"
-                // field's *dialog*, not the model: a picked disc goes on
+                // field's dialog, not the model: a picked disc goes on
                 // the shelf on its own, and the field it came through is
-                // left empty (2026-09-09). Nothing that asks the model
-                // can see either half.
+                // left empty. Nothing that asks the model can see either
+                // half.
                 discs.openLibrary(machines.discLibraryPath())
                 discShelfWindow.show()
                 const pickedUrl = discShelfWindow.pickDisc(diag.arg)
@@ -650,17 +647,17 @@ ApplicationWindow {
             case "profiles":
                 profiles.refresh(); shaderWindow.show(); break
             case "saveprofile":
-                // `LAUNCHER_QT_ARG=<preset path>` — the flow a person
-                // does: the profile list open, New profile…, a name, a
+                // `LAUNCHER_QT_ARG=<preset path>`: the flow a person
+                // does. The profile list open, New profile…, a name, a
                 // preset typed into the real field, Save, and then New
                 // profile… again. Three things only a probe that drives
-                // the *windows* can see, because the model is right in
-                // all of them (doc 07, 2026-09-07): the list behind the
-                // editor has to gain the profile that was just saved,
-                // the fresh editor's preset field has to come up empty
-                // rather than still showing the last one, and the name
-                // typed before the preset has to survive picking it —
-                // `save()` failing on `a name is required` is that one.
+                // the windows can see, because the model is right in all
+                // of them (doc 07): the list behind the editor has to
+                // gain the profile just saved, the fresh editor's preset
+                // field has to come up empty rather than showing the
+                // last one, and the name typed before the preset has to
+                // survive picking it (`save()` failing on `a name is
+                // required` is that one).
                 profiles.refresh()
                 shaderWindow.show()
                 const before = profiles.count
@@ -682,7 +679,7 @@ ApplicationWindow {
                 // than through the model behind it: that the real
                 // `MessageDialog` is up, that it is showing the model's
                 // words, and that its reject button (No) both closes it
-                // and is remembered — the marker the check looks for.
+                // and is remembered (the marker the check looks for).
                 // `LAUNCHER_QT_ARG=decline` presses it; anything else
                 // leaves the question standing.
                 diag.note("firstrun: open=" + offer.open + ", dialog=" + firstRunDialog.visible
@@ -690,12 +687,12 @@ ApplicationWindow {
                           + ", buttons=" + firstRunDialog.buttons)
                 diag.note("firstrun text: " + firstRunDialog.text + " | "
                           + firstRunDialog.informativeText.replace(/\n/g, " "))
-                // The answers go in through the *dialog's* own signals —
-                // what its standard buttons deliver — so the wiring from
-                // a button to a verb is checked, not bypassed. (Not
-                // `reject()` / `accept()`: those are the methods that
-                // both emit `rejected()`, which is the whole reason
-                // these dialogs are never driven programmatically.)
+                // The answers go in through the dialog's own signals,
+                // what its standard buttons deliver, so the wiring from a
+                // button to a verb is checked, not bypassed. Not
+                // `reject()` / `accept()`: those both emit `rejected()`,
+                // which is why these dialogs are never driven
+                // programmatically.
                 if (diag.arg === "decline") {
                     firstRunDialog.rejected()
                     // Not the dialog's own visibility: only a real press
@@ -704,10 +701,10 @@ ApplicationWindow {
                     diag.note("firstrun declined: open=" + offer.open + ", step=" + offer.step)
                 }
                 if (diag.arg === "accept") {
-                    // Yes, and then wait for the download to end — point
+                    // Yes, and then wait for the download to end. Point
                     // `LAUNCHER_SHADERS_DIR` somewhere unwritable and it
-                    // ends at once, which is the cheap way to reach the
-                    // step after it without fetching 50 MB.
+                    // ends at once, the cheap way to reach the step after
+                    // it without fetching 50 MB.
                     firstRunDialog.accepted()
                     diag.note("firstrun accepted: dialog=" + firstRunDialog.visible
                               + ", step=" + offer.step + ", busy=" + offer.busy)
@@ -718,8 +715,8 @@ ApplicationWindow {
             case "escfocus":
                 // New profile… from the profile list, and whether Esc can
                 // close the editor it opens: the editor has to have the
-                // keyboard, its Esc armed, and be the *only* armed Esc that
-                // matches — two is an ambiguous shortcut, which Qt fires in
+                // keyboard, its Esc armed, and be the only armed Esc that
+                // matches: two is an ambiguous shortcut, which Qt fires in
                 // neither window. The steps are `escFocusSettle`, because
                 // activation is asynchronous.
                 profiles.refresh()
@@ -740,10 +737,10 @@ ApplicationWindow {
 
     // The `firstrun accept` probe's wait: poll the download until it is
     // no longer running, then report what came up in the question's
-    // place. What it proves is the half of the flow a still picture
-    // cannot — that the question really closes on Yes, that the header
-    // (not a modal) carries the download, and that the *result* dialog
-    // then arrives with its own words and its own buttons.
+    // place. It proves what a still picture cannot: that the question
+    // closes on Yes, that the header (not a modal) shows the download,
+    // and that the result dialog then arrives with its own words and
+    // buttons.
     Timer {
         id: firstRunSettle
         interval: 200
@@ -799,7 +796,7 @@ ApplicationWindow {
 
     // The `clone` probe's wait: the copy is polled by the timer beside
     // `cloner` above, exactly as for a person; this only waits for it to
-    // end and reports what it left — the window, the model and the grid.
+    // end and reports what it left: the window, the model and the grid.
     Timer {
         id: cloneSettle
         interval: 200
@@ -833,9 +830,9 @@ ApplicationWindow {
             stop()
             // How many Esc shortcuts would claim the key, counted the way
             // Quick Controls' matcher decides it: armed, in a window that
-            // is `active` — which a transient window reports whenever its
+            // is `active`, which a transient window reports whenever its
             // parent is, so both windows here count. Two is ambiguous, and
-            // Qt fires *neither*.
+            // Qt fires neither.
             const matches = [shaderWindow, shaderEditorWindow]
                 .filter(w => w.visible && w.active && w.escArmed).length
             diag.note("escfocus editor: visible=" + shaderEditorWindow.visible
@@ -865,11 +862,10 @@ ApplicationWindow {
             // `grabToImage` only works on an item the QML engine created:
             // it starts with `qmlEngine(this)` and a window's own
             // `contentItem` (and `Overlay.overlay`) are made in C++, so
-            // both refuse with no warning. Hence the grab targets below
-            // are always items declared in QML — and hence a *whole
-            // window* headless shot, dialog frame and all, would need a
-            // small C++ shim calling `QQuickWindow::grabWindow()`.
-            // Documented in doc 07.
+            // both refuse with no warning. So the grab targets below are
+            // always items declared in QML, and a whole-window headless
+            // shot, dialog frame and all, would need a small C++ shim
+            // calling `QQuickWindow::grabWindow()` (doc 07).
             const target = openWindowItem() || body
             diag.note("grabbing " + target.width + "x" + target.height
                       + " -> " + target.grabToImage(cb))

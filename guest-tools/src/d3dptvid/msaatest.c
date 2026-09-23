@@ -1,17 +1,18 @@
 /*
- * msaatest.c — multisampling (full-scene antialiasing) through XP's own
- * d3d8.dll on our driver's DX8 DDI. A probe (d3d8probe.h): first the
- * multisample types CheckDeviceMultiSampleType reports for the display
+ * msaatest.c: multisampling (full-scene antialiasing) through XP's own
+ * d3d8.dll on our driver's DX8 DDI. A probe (d3d8probe.h). It first logs
+ * the multisample types CheckDeviceMultiSampleType reports for the display
  * format and for D16, windowed and full screen, 2..16 samples each (which
- * is also how the format list's MultiSampleCaps bits read back); with none
+ * is also how the format list's MultiSampleCaps bits read back). With none
  * for a full-screen device the last line says "not offered". Otherwise a
  * full-screen 640 x 480 device with 4 samples (else 2) draws a white
  * triangle with a slanted edge on black, presents (a flip), and reads the
- * screen back from the *front* buffer — a multisampled back buffer can be
- * neither locked nor copied. With D3DRS_MULTISAMPLEANTIALIAS on, pixels
- * along the edge come out between black and white; with it off, none do.
+ * screen back from the *front* buffer, because a multisampled back buffer
+ * can be neither locked nor copied. With D3DRS_MULTISAMPLEANTIALIAS on,
+ * pixels along the edge come out between black and white; with it off,
+ * none do.
  *
- * Full screen because the driver offers multisampling only there: a
+ * Full screen because the driver offers multisampling only there. A
  * windowed Present of a multisampled back buffer is a driver blt, and the
  * driver has no blitter (doc 15, "Multisampling").
  *
@@ -50,11 +51,11 @@ static void draw(void)
     Sleep(300);
 }
 
-/* the screen from the front buffer: how many pixels on rows 30..190 (every
- * 10th, x 0..319) are neither black nor white (red channel 0x20..0xe0), how
- * many of those rows have one, and whether a point inside the triangle is
- * white and one outside black (so the frame read is the one drawn); -1 when
- * the front buffer could not be read */
+/* reads the screen from the front buffer. Counts the pixels on rows 30..190
+ * (every 10th, x 0..319) that are neither black nor white (red channel
+ * 0x20..0xe0) and the rows that have one, and checks that a point inside
+ * the triangle is white and one outside black (so the frame read is the
+ * one drawn); -1 when the front buffer could not be read */
 static int edge_pixels(int *rows_with, int *rows_read, int *frame_ok)
 {
     IDirect3DSurface8 *img = NULL;

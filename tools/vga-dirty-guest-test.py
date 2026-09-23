@@ -5,7 +5,7 @@ A DOS program sets a VGA mode and fills video memory **one 4 KiB page at
 a time, each page with its own pixel value**, so a screendump answers the
 question page by page: which of them reached the display and which are
 still showing something else.  Nothing here is a game, a driver or the
-player -- it is `qemu-system-i386`, a floppy, and QMP -- so a failure is
+player (it is `qemu-system-i386`, a floppy, and QMP), so a failure is
 QEMU's and a pass sends the question elsewhere.
 
 Why this shape.  A guest reaches video memory two ways, and only one of
@@ -13,16 +13,15 @@ them is what a game uses:
 
   * through the VGA **MMIO ops** (`vga_mem_write`), which mark the region
     dirty themselves.  Planar and odd/even modes go here.
-  * as **plain RAM** -- the Cirrus maps its 0xA0000 window as a RAM alias
-    whenever the mode allows (`map_linear_vram`), and every VESA linear
-    frame buffer is RAM -- where the *only* thing that marks it dirty is
+  * as **plain RAM** (the Cirrus maps its 0xA0000 window as a RAM alias
+    whenever the mode allows, `map_linear_vram`, and every VESA linear
+    frame buffer is RAM), where the *only* thing that marks it dirty is
     the softmmu's `TLB_NOTDIRTY` -> `notdirty_write` path.
 
-Reported 2026-09-09: Duke Nukem 3D is clean at 320x200 on `-vga std` and
-wrong at 320x200 on `-vga cirrus`, and wrong in its VESA modes on both.
-That is exactly the split above -- the one working case is the one that
-never touches `notdirty_write` -- so this asks the question with no game
-in the way.
+Duke Nukem 3D was clean at 320x200 on `-vga std` and wrong at 320x200 on
+`-vga cirrus`, and wrong in its VESA modes on both. That is exactly the
+split above (the one working case is the one that never touches
+`notdirty_write`), so this asks the question with no game in the way.
 
 Two fills, and the gap between them is half the point:
 
@@ -31,7 +30,7 @@ Two fills, and the gap between them is half the point:
     and `tlb_reset_dirty_range_all` is supposed to put `TLB_NOTDIRTY`
     back on every TLB entry for that memory.
   * fill 2 writes page p with value p+32.  **If fill 2 is invisible and
-    fill 1 is not, the tracking works once and then stops** -- which is
+    fill 1 is not, the tracking works once and then stops**, which is
     what "only the first 15 % of the screen updates" looks like from the
     inside.
 
@@ -712,8 +711,7 @@ def run(tag, adapter, img, extra):
         # Then keep asking for the surface until fill 2 is done. This is
         # the part that matters: every screendump snapshots and *clears*
         # the VGA dirty bitmap, which is what any real display listener
-        # does on its refresh timer -- the player's, a VNC client's, a
-        # GTK window's. With `-display none` and nobody asking, the bits
+        # does on its refresh timer (the player's, a VNC client's). With `-display none` and nobody asking, the bits
         # simply pile up until the one dump at the end consumes them all
         # and everything looks fine, which is why this has to poll.
         scratch = os.path.join(d, "poll.ppm")

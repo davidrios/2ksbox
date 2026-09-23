@@ -1,5 +1,5 @@
 /*
- * CDTEST.EXE — CD audio through MCI (doc 17 §6.3): opens the cdaudio
+ * CDTEST.EXE: CD audio through MCI (doc 17 §6.3). Opens the cdaudio
  * device, lists the tracks, plays track 2 for a few seconds while polling
  * the position, then track 3, and logs everything to CDTEST.LOG in
  * C:\2KSBOX (guestlog.h). Under the player the tone is heard; headless, `-audiodev

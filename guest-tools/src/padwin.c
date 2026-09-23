@@ -1,31 +1,30 @@
 /*
- * padwin.c — the USB HID gamepad as a Windows game finds it (M13 path A,
+ * padwin.c: the USB HID gamepad as a Windows game finds it (M13 path A,
  * docs/tracks/m13-gamepads.md).
  *
  *   PADWIN [samples]      XP, 2000, 98 SE / Me. Default 200 samples,
  *                         ~4 a second.
  *
- * Named PADWIN and not PADTEST because `PADTEST.COM` — the DOS gameport
- * probe — is in the same folder of the guest-tools ISO, and both DOS and
+ * Named PADWIN and not PADTEST because `PADTEST.COM`, the DOS gameport
+ * probe, is in the same folder of the guest-tools ISO, and both DOS and
  * cmd resolve a bare name to the `.COM` first. Typing PADTEST on XP would
  * run a DOS program that reads port 0x201 under NTVDM and report nothing
  * about the device this file is for.
  *
- * What it is for: path A was confirmed by hand (a real controller in the
- * Game Controllers panel on XP and 98 SE) and nothing re-checked it after
- * a change. This is that check, and it asks the questions a game asks
- * rather than what the control panel shows.
+ * Path A was first confirmed by hand (a real controller in the Game
+ * Controllers panel on XP and 98 SE). This is the automated check, and it
+ * asks the questions a game asks rather than what the control panel shows.
  *
- * Two of them, because a title of the era can call either API and the pad
- * has to arrive through both. **DirectInput** is the one a 1998-and-later
- * game uses; **winmm** — `joyGetDevCaps` / `joyGetPosEx`, the multimedia
- * joystick API on top of 9x's VJOYD — is what a great many mid-90s
- * Windows titles call, and it is the one that decides whether Windows 98
- * needs the gameport's driver half at all (M13 step 7): if a USB HID pad
- * reaches winmm there, a Windows game on 98 already has a joystick and
- * nobody has to install "Standard Game Port" for one. It does, which is
- * why that step was dropped — so this is the check that claim rests on,
- * and both halves are read every sample rather than counted once.
+ * It asks through two APIs, because a title of the era can call either
+ * and the pad has to arrive through both. DirectInput is the one a
+ * 1998-and-later game uses. winmm (`joyGetDevCaps` / `joyGetPosEx`, the
+ * multimedia joystick API on top of 9x's VJOYD) is what many mid-90s
+ * Windows titles call, and it decides whether Windows 98 needs the
+ * gameport's driver half at all (M13 step 7). A USB HID pad does reach
+ * winmm there, so a Windows game on 98 already has a joystick without
+ * "Standard Game Port", and that step was dropped. This is the check that
+ * claim rests on, so both halves are read every sample rather than
+ * counted once.
  *
  * The DirectInput half:
  *
@@ -35,7 +34,7 @@
  *   * put every axis on a 0..255 range, which is the *same* range the
  *     report carries, so a printed X is the byte gamepad::hid_axis() made
  *     and the numbers can be compared to what the host sent;
- *   * read the POV hat, which is where a missing null state shows up — a
+ *   * read the POV hat, which is where a missing null state shows up: a
  *     released hat reads as north rather than as centred;
  *   * read the buttons, in the order gamepad::HID_BUTTONS fixes.
  *
@@ -50,7 +49,7 @@
  * Output goes three ways, because the harness, a person at the machine
  * and a post-mortem all want it: COM1 (opened directly, so the Run dialog
  * can start this with no shell to redirect), stdout, and
- * C:\2KSBOX\PADWIN.LOG (guestlog.h) — the ISO it runs from is read-only,
+ * C:\2KSBOX\PADWIN.LOG (guestlog.h). The ISO it runs from is read-only,
  * so the log cannot live beside it.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
@@ -101,8 +100,8 @@ static void say(const char *fmt, ...)
 }
 
 /*
- * COM1 as a plain file handle. No shell is involved in starting this —
- * the harness types it into the Run dialog — so the program has to reach
+ * COM1 as a plain file handle. No shell is involved in starting this (the
+ * harness types it into the Run dialog), so the program has to reach
  * the serial line itself. A machine without one just logs to the file.
  */
 static void open_com1(void)
@@ -144,7 +143,7 @@ static HWND make_window(void)
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wc.lpszClassName = "padwin";
     RegisterClassA(&wc);
-    hwnd = CreateWindowExA(0, "padwin", "padwin — gamepad probe",
+    hwnd = CreateWindowExA(0, "padwin", "padwin: gamepad probe",
                            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                            CW_USEDEFAULT, CW_USEDEFAULT, 380, 140,
                            NULL, NULL, wc.hInstance, NULL);
@@ -196,7 +195,7 @@ static BOOL CALLBACK enum_joy(LPCDIDEVICEINSTANCEA inst, LPVOID ctx)
 }
 
 /*
- * Every axis on 0..255, which is what the report itself carries — so a
+ * Every axis on 0..255, which is what the report itself carries, so a
  * number printed below is the byte the host put in the report, and the
  * two ends of the range are 0x00 and 0xff exactly. DirectInput's own
  * default is device-dependent and would make every reading a fraction of
@@ -230,10 +229,10 @@ static void report_winmm(void)
     UINT i;
 
     /* joyGetNumDevs() is how many the driver *supports*, not how many are
-     * there — 16 on a machine with none plugged in — so the count that
-     * means anything is of the ones that answer joyGetDevCaps. Said
-     * plainly either way: a run where nothing enumerates used to leave no
-     * winmm line at all, which reads like the probe skipping the check. */
+     * there (16 on a machine with none plugged in), so the count that
+     * means anything is of the ones that answer joyGetDevCaps. The summary
+     * line prints even when nothing enumerates; without it the log reads
+     * as if the probe skipped the check. */
     for (i = 0; i < n && i < 16; i++) {
         if (joyGetDevCapsA(i, &caps, sizeof caps) != JOYERR_NOERROR) {
             continue;
@@ -254,8 +253,8 @@ static void report_winmm(void)
 }
 
 /* One axis of winmm's reading, on 0..255. The driver's own range is what
- * JOYCAPS says it is — 0..65535 on the HID mapper here, but nothing
- * guarantees that — so it is rescaled rather than assumed, and an axis
+ * JOYCAPS says it is (0..65535 on the HID mapper here, but nothing
+ * guarantees that), so it is rescaled rather than assumed, and an axis
  * whose caps are degenerate reads -1 instead of dividing by zero. */
 static long wnorm(DWORD pos, DWORD lo, DWORD hi)
 {
@@ -401,12 +400,12 @@ int main(int argc, char **argv)
         /* POV as DirectInput reports it: hundredths of a degree clockwise
          * from north, or -1 (0xffffffff) centred. The centred value is
          * the null state in the report descriptor; without it this reads
-         * 0 — north — with nothing pressed. */
+         * 0 (north) with nothing pressed. */
         /* Read winmm immediately after, so the two columns are as close
          * to the same instant as this can make them. */
         read_winmm(w, &wpov, &wb);
         /* A button mask is hex like the DirectInput one, but "no winmm
-         * joystick" has to stay -1 rather than becoming ffffffff — the
+         * joystick" has to stay -1 rather than becoming ffffffff: the
          * two are different findings and the check reads this field. */
         if (wb < 0) {
             strcpy(wbs, "-1");

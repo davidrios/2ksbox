@@ -1,19 +1,19 @@
 /*
- * dxttest.c — which texture formats does XP's d3d8.dll actually create on
- * our driver, and in which pool?  Written for the DXT question of doc 15
- * (M7c, DX8 DDI): CreateTexture(DXT1) succeeds at the API and no DXT
- * surface ever reaches the driver.
+ * dxttest.c: which texture formats does XP's d3d8.dll create on our driver,
+ * and in which pool? Written for the DXT question of doc 15 (M7c, DX8 DDI),
+ * where CreateTexture(DXT1) succeeded at the API and no DXT surface reached
+ * the driver.
  *
  *   DXTTEST [-fullscreen]
  *
- * A windowed 320x240 device (hardware vertex processing when offered), then
- * for every format in the table and every pool (DEFAULT, MANAGED,
- * SYSTEMMEM): CheckDeviceFormat, CreateTexture 64x64 with one level,
- * LockRect / UnlockRect, GetLevelDesc (pitch, size), then SetTexture and one
- * textured quad drawn and presented, so the driver's surface / TEXBLT /
- * draw lines in the QEMU log show what arrived for each case. Also
- * CreateImageSurface for the same formats. Every HRESULT is logged with the
- * case's name; the log is dxttest.log in the current directory.
+ * Opens a windowed 320x240 device (hardware vertex processing when
+ * offered). Then for every format in the table and every pool (DEFAULT,
+ * MANAGED, SYSTEMMEM) it runs CheckDeviceFormat, CreateTexture 64x64 with
+ * one level, LockRect / UnlockRect and GetLevelDesc (pitch, size), then
+ * SetTexture and one textured quad drawn and presented, so the driver's
+ * surface / TEXBLT / draw lines in the QEMU log show what arrived for each
+ * case. It also calls CreateImageSurface for the same formats. Every
+ * HRESULT is logged with the case's name to dxttest.log.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */

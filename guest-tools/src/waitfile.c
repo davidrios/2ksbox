@@ -1,8 +1,8 @@
 /*
- * waitfile.c — WAITFILE.EXE: wait for a file to appear, then start something.
+ * waitfile.c: WAITFILE.EXE, wait for a file to appear, then start something.
  *
- * Why this exists. A harness that starts a game at login has to let whatever
- * else runs at login finish first — on a machine with the emulated Voodoo 2,
+ * A harness that starts a game at login has to let whatever else runs at
+ * login finish first. On a machine with the emulated Voodoo 2 that is
  * 3dfx's `rundll32 3dfxv2ps.dll,UpdateRegSettings`, which the guest tools'
  * guard runs and marks done by writing WINDOWS\V2START.LOG (doc 21 §11). The
  * only wait COMMAND.COM can write is a CHOICE loop, and CHOICE *polls*: the
@@ -12,8 +12,8 @@
  * an idle login, 3,625 ms behind a DOS box, and 12,646 ms behind the CHOICE
  * loop. The wait was making the thing it waited for twelve times slower.
  *
- * A Win32 program sleeping costs nothing — the scheduler simply does not run
- * it — so the wait belongs here rather than in a batch file. With `then=` it
+ * A Win32 program sleeping costs nothing (the scheduler does not run it),
+ * so the wait belongs here rather than in a batch file. With `then=` it
  * also *starts* the batch afterwards, so there is no DOS box open during the
  * wait at all: WIN.INI's `run=` names this, and this names RUN.BAT.
  *
@@ -124,7 +124,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR args, int show)
     ok = wait_for(file, secs);
 
     /* Start it whether or not the file turned up: a run that waited the
-     * whole time should still go ahead, slowly, rather than not at all --
+     * whole time should still go ahead, slowly, rather than not at all,
      * and the log this waited for says which happened. */
     if (then[0]) {
         WinExec(then, SW_SHOWNORMAL);

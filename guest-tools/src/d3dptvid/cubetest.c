@@ -1,18 +1,18 @@
 /*
- * cubetest.c — cube textures through XP's own d3d8.dll on our driver's DX8
- * DDI (doc 15 "Cube textures", protocol v11): the runtime creates a cube as
+ * cubetest.c: cube textures through XP's own d3d8.dll on our driver's DX8
+ * DDI (doc 15 "Cube textures", protocol v11). The runtime creates a cube as
  * six DirectDraw faces hanging off +X, the driver mirrors them as one host
  * cube, and a draw samples it with a 3D texture coordinate. A probe
- * (d3d8probe.h): with no D3DPTEXTURECAPS_CUBEMAP it says "not offered"
- * (what ddflags=0x400000 turns it back into).
+ * (d3d8probe.h). With no D3DPTEXTURECAPS_CUBEMAP it says "not offered",
+ * which is what ddflags=0x400000 turns it back into.
  *
  *   CUBETEST
  *
- * The caps and CheckDeviceFormat answers for cube textures first, then
- * one case after the other, each a draw read back at a few pixels:
+ * The caps and CheckDeviceFormat answers for cube textures come first,
+ * then one case after the other, each a draw read back at a few pixels:
  *   a MANAGED A8R8G8B8 cube of two levels, every face and level its own
- *   colour: a quad at each face's direction (XYZRHW + a 3D texture
- *   coordinate), and a small quad +Z is minified onto (level 1);
+ *   colour, drawn as a quad at each face's direction (XYZRHW + a 3D texture
+ *   coordinate) and as a small quad +Z is minified onto (level 1);
  *   one of its faces locked and rewritten (the host must read it again);
  *   a DEFAULT cube filled by UpdateTexture from a SYSTEMMEM one (TEXBLT);
  *   a DXT1 cube (the driver sizes compressed faces for dxg's heap);
@@ -83,7 +83,7 @@ static void quad_dir(float x0, float y0, float sz, const float *d)
     IDirect3DDevice8_DrawPrimitiveUP(dev, D3DPT_TRIANGLESTRIP, 2, v, sizeof v[0]);
 }
 
-/* the cube bound, a quad at each face's direction (inside a scene) */
+/* with the cube bound, a quad at each face's direction (inside a scene) */
 static void draw_faces(IDirect3DCubeTexture8 *c)
 {
     int f;
@@ -99,7 +99,7 @@ static WORD rgb565(DWORD c)
     return (WORD)((((c >> 19) & 0x1f) << 11) | (((c >> 10) & 0x3f) << 5) | ((c >> 3) & 0x1f));
 }
 
-/* every texel of one face level one colour (32-bit formats, and DXT1 as
+/* fills one level of one face with one colour (32-bit formats, and DXT1 as
  * blocks whose two colours are both it) */
 static HRESULT fill_level(IDirect3DCubeTexture8 *c, int face, int level, D3DFORMAT fmt, DWORD col)
 {
@@ -171,9 +171,9 @@ int main(void)
         fail_case("the device");
         return probe_close(NULL);
     }
-    /* LINEAR, not POINT: every level-1 texel is one colour, so the two agree,
-     * and the executor maps the DX7 and DX8 encodings of this state
-     * differently (doc 15: a lead on D3DGAME8's filtering difference) */
+    /* every level-1 texel is one colour, so LINEAR and POINT agree; LINEAR
+     * also exercises the driver's rewrite of d3d8.dll's filter numbering
+     * (doc 15 "Filter numbering", tss_dx8_filter) */
     IDirect3DDevice8_SetTextureStageState(dev, 0, D3DTSS_MIPFILTER, D3DTEXF_LINEAR);
 
     /* --- a managed cube of two levels --- */

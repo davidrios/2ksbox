@@ -1,5 +1,5 @@
 /*
- * video.h -- 2ksbox's stand-in for 86Box's <86box/video.h>. The Voodoo's
+ * video.h: 2ksbox's stand-in for 86Box's <86box/video.h>. The Voodoo's
  * display timer converts each dirty scanline of the front buffer into the
  * monitor's 32-bit target bitmap (0xXXRRGGBB); voodoo2.c copies that bitmap
  * into the guest console's surface when the frame is done (svga_doblit).

@@ -3,7 +3,7 @@
 //! A game writes a byte at a time and leaves out everything it can:
 //! running status (a status byte stands until another one comes), a
 //! System Exclusive dump split across as many writes as it likes, and
-//! real-time bytes (`F8`–`FF`) dropped in the middle of *either* — the
+//! real-time bytes (`F8`–`FF`) dropped in the middle of *either*. The
 //! clock does not wait for a sysex to finish. So this is a state machine
 //! over single bytes rather than a message reader, and its output is
 //! whole messages the engines can take.
@@ -145,13 +145,13 @@ impl Parser {
     /// Bytes this parser could attach to nothing: a data byte with no
     /// status byte in force, or a status byte that means nothing here.
     /// A stream that makes sense has none, so a non-zero count is the
-    /// parser and the guest disagreeing about where a message starts —
+    /// parser and the guest disagreeing about where a message starts,
     /// which is the first thing to look for in a captured log.
     pub fn dropped(&self) -> u64 {
         self.dropped
     }
 
-    /// Forget everything in flight — an MPU-401 reset, or a machine
+    /// Forget everything in flight: an MPU-401 reset, or a machine
     /// reset. A half-written note-on must not complete against the next
     /// byte the guest writes.
     pub fn reset(&mut self) {

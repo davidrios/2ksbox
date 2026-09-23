@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# win98-game-test.sh — a real game on the Win98 display driver, headless
-# (doc 19, M10). The 9x counterpart of tools/xp-game-test.sh.
+# A real game on the Win98 display driver, headless (doc 19, M10). The 9x counterpart of tools/xp-game-test.sh.
 #
 #   GUEST_CMD='C:\CAVEDOG\TOTALA\TOTALA.EXE' \
 #     tools/win98-game-test.sh ~/.local/share/2ksbox/machines/claude98/disk.qcow2 ta
 #
 # Why this is not tools/win98-driver-test.sh with more flags: that script's
-# job is the *install* — it stages three driver binaries and an INF and asks
+# job is the *install*. It stages three driver binaries and an INF and asks
 # whether the desktop comes up. This one starts from an image where all that
 # already happened and the user has installed games into it, attaches the
 # discs the games want, lets one run for minutes rather than seconds, and
@@ -20,14 +19,14 @@
 #
 # How a game is started: WIN.INI's `[windows] run=` names `C:\RUN.BAT`, and
 # GUEST_CMD is its body. `run=` itself takes a program and drops every
-# argument after it (measured 2026-09-08, doc 19), which is why the batch
+# argument after it (doc 19), which is why the batch
 # exists at all; it is also what lets a run start a game that is *installed*
 # rather than staged, since an installed game needs its own directory.
 # COMMAND.COM has no use for long file names, so write 8.3 (`ARQUIV~1`).
 #
 # Env:
-#   GUEST_CMD="lines"   the batch body (required). `&` separates nothing here
-#                       — one command per line, embedded \n if you need two.
+#   GUEST_CMD="lines"   the batch body (required). `&` separates nothing here;
+#                       one command per line, embedded \n if you need two.
 #   CDS="a.cue:b.mds"   discs after the disk, colon-separated. .cue/.mds/.ccd
 #                       go through our own cdimage driver (doc 17).
 #   RUN_SECS=n          how long to let it run after the desktop is up (180)
@@ -54,8 +53,8 @@
 #                       Without TABLET=1 it is done with the PS/2 mouse,
 #                       walked there in paced steps with the position read
 #                       back from the adapter's cursor registers (qmpc.py
-#                       relclick) — the machine the user plays on has no
-#                       tablet either
+#                       relclick), because the machine the user plays on has
+#                       no tablet either
 #   TEXT_AT=n           read the VGA text page out of VRAM at t seconds too
 #                       (always done at the end): a blue screen a key will
 #                       continue from has gone by then
@@ -71,28 +70,28 @@
 #                       as given; a probe RUN.BAT then starts by name)
 #   PULL="A.LOG B.TXT"  files to fetch off C:\ afterwards (deleted first, so
 #                       what comes back is this run's or nothing). A path
-#                       with \ in it is read from that directory — which is
-#                       what a log of ours wants: every guest program here
-#                       writes to C:\2KSBOX (guest-tools/src/guestlog.h), so
+#                       with \ in it is read from that directory. Every guest
+#                       program of ours writes to C:\2KSBOX
+#                       (guest-tools/src/guestlog.h), so
 #                       PULL='2KSBOX\DDPROBE.LOG', not DDPROBE.LOG.
 #   DUMP_EVERY=n        the executor writes every n-th presented frame to
-#                       frames/ — what the *game* draws, which a screendump
+#                       frames/: what the *game* draws, which a screendump
 #                       cannot see while 3D is presenting
 #   TRACE=1             D3DPT_DP2_TRACE: one whole frame of DP2 tokens per
 #                       touch of frames/trace.on
 #   DDFLAGS=n           -device d3dpt-vga,ddflags=N (the bisection knob)
 #   FBVER=n             -device d3dpt-vga,fb-version=N: the adapter reports
-#                       another register set version — a newer one is how a
-#                       QEMU update is checked against an installed driver
+#                       another register set version. A newer one checks a
+#                       QEMU update against an installed driver
 #   MUSIC=gm|mt32|none  the MPU-401's synth (gm, the launcher's default for
 #                       a Win98 machine), or no MPU-401 at all
 #   QEMU_TCG_OPTS=a=off,b=on  accelerator switches for an A/B (the convention of
 #                       the Python guest tools): -accel tcg,<them>
 #   EXTRA="args"        more QEMU arguments, word-split (-perfmap, say, for
-#                       `perf report` to name the vCPU's generated code —
-#                       but the map is /tmp/perf-<pid>.map, a line per
+#                       `perf report` to name the vCPU's generated code.
+#                       The map is /tmp/perf-<pid>.map, a line per
 #                       translated guest instruction, never trimmed and never
-#                       deleted: a game that retranslates all the time wrote
+#                       deleted. A game that retranslates all the time wrote
 #                       7.8 GB of it in five minutes into a tmpfs, i.e. RAM,
 #                       and the next job was killed for memory. Delete it
 #                       after the `perf report`)
@@ -103,12 +102,12 @@
 #                       (doc 12, patches 30/33): a bare qemu-system-i386
 #                       registers none, so a Glide or OpenGL title's
 #                       grSstWinOpen fails by design and the guest falls back
-#                       to software — a Glide run under the plain harness
+#                       to software. A Glide run under the plain harness
 #                       tests nothing (tools/glide-guest-test.sh has the same
 #                       rule). The player opens a real window on this desktop;
 #                       the wrapper's own log goes to OUT/wrapper.log and the
 #                       player shoots the guest's frame every PLAYER_SHOT_EVERY
-#                       guest frames (300) into shots/2ksbox-NNNN.png — the
+#                       guest frames (300) into shots/2ksbox-NNNN.png, the
 #                       only way to see a 3D frame headless, since a QMP
 #                       screendump shows the VGA surface, frozen while the 3D
 #                       device presents. The sound devices go on the
@@ -116,7 +115,7 @@
 #                       them, drained by a simulated DAC (PLAYER_AUDIO_NULL),
 #                       so a run makes no noise on the host.
 #   AUDIO=none          with PLAYER=1: the sound devices on the `none`
-#                       audiodev instead of the player's — the A/B that
+#                       audiodev instead of the player's, the A/B that
 #                       separates the host audio path from the device
 #   RAW=path            the raw working copy (default build/w98game/guest.raw)
 #   FRESH=1             re-convert it from the image before staging
@@ -125,7 +124,7 @@
 #                       socket lives (qmp.sock), for driving a run by hand
 #
 # Output: OUT/qemu.log (the device and the driver's own lines), OUT/dbg.log
-# (port 0xE9 — the .drv and the VxD, which speak before the register page is
+# (port 0xE9: the .drv and the VxD, which speak before the register page is
 # mapped), shots/*.png, frames/, and whatever PULL named. The summary counts
 # the mode programmes, the page flips and the `ddi:` frame lines, because a
 # game that renders nothing and a game that renders wrongly look identical
@@ -143,19 +142,19 @@ RAW="${RAW:-$ROOT/build/w98game/guest.raw}"
 QEMU="${QEMU_BIN:-$ROOT/build/qemu/qemu-system-i386}"
 QIMG="${QEMU_IMG:-$ROOT/build/qemu/qemu-img}"
 DRV="$ROOT/guest-tools/out/driver9x"
-# In OUT, not a fixed path: two checkouts running this at once shared one
+# In OUT, not a fixed path. Two checkouts running this at once shared one
 # socket name, and when the other's QEMU exited it unlinked *this* run's
-# socket (2026-09-09 — every later QMP verb failed silently, the run could
-# not even be powered off). Keep OUT short: AF_UNIX paths are 108 bytes.
+# socket, so every later QMP verb failed silently and the run could not
+# even be powered off. Keep OUT short: AF_UNIX paths are 108 bytes.
 SOCK="$OUT/qmp.sock"
 BOOT_WAIT="${BOOT_WAIT:-150}"
 RUN_SECS="${RUN_SECS:-180}"
 SHOTS="${SHOTS:-10}"
 export MTOOLS_SKIP_CHECK=1
-# The executor and its DXVK, and on macOS the run environment DXVK needs --
-# the same block as scripts/test.sh (see the reasons there: a DYLD_* variable
-# given to this script is stripped by SIP at the #!/usr/bin/env exec, and
-# never all of /opt/homebrew/lib).
+# The executor and its DXVK, and on macOS the run environment DXVK needs.
+# The same block as scripts/test.sh, for the reasons given there (a DYLD_*
+# variable given to this script is stripped by SIP at the #!/usr/bin/env
+# exec, and never all of /opt/homebrew/lib).
 case "$(uname -s)" in Darwin) SO=dylib;; *) SO=so;; esac
 export D3DPT_EXEC_LIB="${D3DPT_EXEC_LIB:-$ROOT/build/d3dpt/libd3dpt_exec.$SO}"
 export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)}"
@@ -207,10 +206,10 @@ fi
 # RUN.BAT, and WIN.INI naming it. `exit` closes the DOS box the batch runs
 # in: without it COMMAND.COM sits there after the game is launched and the
 # machine will not power off, which leaves the FAT dirty and makes the *next*
-# boot a ScanDisk — i.e. it looks exactly like the thing under test failing.
+# boot a ScanDisk, which looks exactly like the thing under test failing.
 # One CRLF line per line of GUEST_CMD: a batch file with bare LF endings is
 # read by COMMAND.COM as one long line. A game that lives in its own
-# directory usually needs two lines — `cd` and then the EXE — because a DOS
+# directory usually needs two lines, `cd` and then the EXE, because a DOS
 # program's own loader looks for its parts in the *current* directory
 # (Blood's `blood.exe` is a DOS/4GW stub, and from C:\ it says
 # "Stub exec failed: dos4gw.exe").
@@ -218,17 +217,16 @@ fi
 # initialising the card (VOODOO_WAIT above). With the guard in the image its
 # log is the end of the helper, deleted here so only this login's counts.
 #
-# **The wait is not a batch file's.** It used to be FORs of one CHOICE second
-# an iteration, which is the only bounded loop COMMAND.COM can write -- and
-# CHOICE polls, so the DOS box never idled, a host core sat at 100 %, and the
-# initialisation being waited for was competing with the wait for the same
-# guest CPU. Measured on base98-br, all else equal: 3dfx's helper takes
+# **The wait is not a batch file's.** The only bounded loop COMMAND.COM can
+# write is FORs of one CHOICE second an iteration, and CHOICE polls, so the
+# DOS box never idled, a host core sat at 100 %, and the initialisation
+# being waited for competed with the wait for the same guest CPU. Measured on base98-br, all else equal: 3dfx's helper takes
 # 1,047 ms at an idle login, 3,625 ms behind a DOS box, and 12,646 ms behind
 # the CHOICE loop. So WIN.INI's `run=` names WAITFILE.EXE instead, which
 # sleeps until the log appears and then starts RUN.BAT: no DOS box is open
 # until the card is ready. (`run=` drops arguments, hence WAITFILE.CFG.)
 # Without the guard nothing marks the other process's end, so that case is
-# still a flat wait -- one CHOICE of VOODOO_WAIT seconds, in the batch.
+# still a flat wait, one CHOICE of VOODOO_WAIT seconds, in the batch.
 V2GUARD=
 case " ${EXTRA:-} " in
   *voodoo2*)
@@ -287,7 +285,7 @@ open(p, 'wb').write(b)
 PYWIN
 mcopy -i "$M" -o "$OUT/win.ini" ::/WINDOWS/WIN.INI
 
-# Programs and data a run wants on C:\ — a probe of ours, a game's config.
+# Programs and data a run wants on C:\: a probe of ours, a game's config.
 for f in ${STAGE:-}; do
   [ -f "$f" ] || { echo "STAGE: no such file $f"; exit 1; }
   mattrib -i "$M" -r "::/$(basename "$f")" 2>/dev/null || true
@@ -302,7 +300,7 @@ for f in ${PULL:-}; do mdel -i "$M" "::/${f//\\//}" 2>/dev/null || true; done
 # difference in what the run is testing: `launcherx --print-args` on the
 # user's own claude98 gives -cpu pentium3, an SB16 on the embed audiodev and
 # the disc as an ide-cd on ide.1 with that audiodev on it too. A run with no
-# sound card is not a quieter run — Total Annihilation put up "Sound system
+# sound card is not a quieter run. Total Annihilation put up "Sound system
 # initialization failed" and quit before it drew a frame, which read exactly
 # like the display driver failing. The audiodev is `none` here (there is no
 # player to play into) but the *device* has to be there.
@@ -312,10 +310,10 @@ for f in ${PULL:-}; do mdel -i "$M" "::/${f//\\//}" 2>/dev/null || true; done
 # does not have waits on it or plays to nobody. MUSIC=none drops the MPU-401,
 # MUSIC=mt32 asks for the other synth.
 # In the player the devices go on the player's own `embed` audiodev
-# (AUDIO=embed, the default there), exactly as the launcher wires them:
-# DirectSound on Linux crashed in the guest while the same machine on `none`
-# did not (docs/00-status.md, 2026-09-12). The player drains it with its
-# simulated DAC (PLAYER_AUDIO_NULL), so a run still makes no noise.
+# (AUDIO=embed, the default there), exactly as the launcher wires them,
+# because a guest DirectSound crash once showed up on the player's audiodev
+# and not on `none`. The player drains it with its simulated DAC
+# (PLAYER_AUDIO_NULL), so a run still makes no noise.
 AD=snd0
 [ "${PLAYER:-0}" = 1 ] && [ "${AUDIO:-embed}" = embed ] && AD=embed0
 DRIVES=(-cpu "${CPU:-pentium3}" -audiodev "none,id=snd0" -device "sb16,audiodev=$AD"
@@ -380,7 +378,7 @@ while [ $t -lt "$BOOT_WAIT" ]; do
   elif [ $t -ge 40 ]; then break; fi
 done
 # `linear mode on` is the driver programming the mode, which is minutes
-# before the shell is up under TCG — the desktop still has to paint, and
+# before the shell is up under TCG. The desktop still has to paint, and
 # SETTLE is the only part of this that is a guess. KEYS and CLICKS are timed
 # from the end of it, so a run that types at the desktop instead of at the
 # game is a SETTLE that was too short.
@@ -440,8 +438,8 @@ for line in rows:
     if line: print("          | " + line)
 PYTXT
 }
-# TEXT_AT=<s> reads it during the run as well — a blue screen that a key
-# will continue from is gone by the end.
+# TEXT_AT=<s> reads it during the run as well, since a blue screen that a
+# key will continue from is gone by the end.
 
 # The run: one tick a second, so KEYS and CLICKS land near their times and
 # JIGGLE looks like a hand on the mouse rather than one teleport.
@@ -480,11 +478,12 @@ text_screen final
 
 # **End with the ACPI power button, never a kill.** A machine that does not
 # power off leaves the FAT dirty and the next boot comes up in safe mode with
-# no driver — which reads exactly like the driver having failed. A machine
+# no driver, which reads exactly like the driver having failed. A machine
 # that does not answer it is asked, before it is killed, whether its vCPU is
 # moving at all: `info registers` twice (the same EIP = it is not), and the
 # PIC and APIC (an unmasked irr bit with isr=00 = an interrupt pending and
-# never taken) — the CLAUDE.md recipe for a frozen guest, in OUT/hang.txt.
+# never taken). That is the CLAUDE.md recipe for a frozen guest, written
+# to OUT/hang.txt.
 echo "==> power button ($(ts) UTC)"
 qmp json '{"execute":"system_powerdown"}'
 gw_wait_exit "$VM" 90 || {

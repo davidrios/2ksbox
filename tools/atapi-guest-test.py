@@ -2,8 +2,8 @@
 """In-guest test of the ATAPI drive on a cdimage disc (patch 51, doc 17 §6.2).
 
 Builds a DOS program (NASM, .COM) that talks to the secondary IDE channel
-(0x170/0x376: -cdrom is its master) directly by PIO — PACKET commands, the
-DRQ/byte-count loop, REQUEST SENSE on CHECK CONDITION — and hex-dumps every
+(0x170/0x376: -cdrom is its master) directly by PIO (PACKET commands, the
+DRQ/byte-count loop, REQUEST SENSE on CHECK CONDITION) and hex-dumps every
 reply on COM1. Boots it on the FreeDOS test floppy under our
 qemu-system-i386 with the selftest's damaged image (lec.cue: sector 1000
 unreadable, sector 1010 one wrong byte the drive's P/Q decoder repairs) as
@@ -15,7 +15,7 @@ audio position replies around PLAY / PAUSE / RESUME / STOP, both stops
 
 The same run covers the disc shelf (patch 52, cdshelf/cdshelf_proto.h): the
 drive is given a `shelf=` file, and the vendor opcode 0xD0 is driven through
-the same PIO program — LIST at several allocation lengths, a bad subcommand,
+the same PIO program: LIST at several allocation lengths, a bad subcommand,
 a slot that isn't there, then LOAD / EJECT with the medium actually read
 before and after, so "the tray changed" is proven by the sectors the guest
 sees and not just by a good status.
@@ -34,11 +34,11 @@ same battery with four sectors of track 2 (2152..2155) unreadable on the
 host: tools/read-error-inject.c fails every pread64 of lec.bin there with
 EIO, in QEMU alone, so `discx dump` still answers for the whole disc. A
 CD player reads through an unreadable audio sector as a dropout, so every
-audio check must still pass -- the play through 2150..2300 advancing, the
-ten-sector play completing at 2160 -- and QEMU's log must say the sectors
+audio check must still pass (the play through 2150..2300 advancing, the
+ten-sector play completing at 2160), and QEMU's log must say the sectors
 were played as silence. Without patch 55 the play stopped at 2152 with
-status 0x14 and the music was off for good (a disc on a Samba share,
-2026-09-17). The shelf stage is skipped in this mode.
+status 0x14 and the music was off for good (a disc on a Samba share).
+The shelf stage is skipped in this mode.
 
 The FreeDOS 1.3 boot floppy (build/images/144m/x86BOOT.img, git-ignored)
 is fetched by tools/x87-guest-test.py (same harness).
@@ -123,7 +123,7 @@ def read10(lba, n):
 
 # cdshelf/cdshelf_proto.h. The shelf the drive is given below: slot 0 is the
 # disc the machine boots with (lec.cue, sector 1000 deliberately unreadable), slot
-# 1 the same layout without the corruption — which is how a LOAD is proven to
+# 1 the same layout without the corruption, which is how a LOAD is proven to
 # have actually changed the medium and not just returned a good status. Slot 2's
 # label is longer than the protocol's 64 bytes (it must come back truncated, not
 # split across the next entry) and slot 3's file does not exist (it must be
@@ -181,7 +181,7 @@ TESTS = [
     ("read cd past the end", read_cd(LEADOUT, 1, 0, 0xF8, 0), ("err", 5, 0x21, 0)),
     ("read cd nothing", read_cd(16, 1, 0, 0x00, 0), ("len", 0)),
     # Sector 1000's damage is past what the decoder can repair, so *every* read
-    # of it is a MEDIUM ERROR, the raw one included — a drive does not hand over
+    # of it is a MEDIUM ERROR, the raw one included. A drive does not hand over
     # an unreadable sector just because the CDB asked for its EDC/ECC. That was
     # the bug Crimson Skies' SafeDisc 1.x found (doc 17 §2.6c): it reads its
     # protection band with exactly this CDB and it is the error it is looking
@@ -246,7 +246,7 @@ TESTS = [
     ("subq playing track 3", read_sub(1), ("pos", "track3")),
     ("stop", pkt(0x4E), ("len", 0)),
     # A guest's Stop button is START STOP UNIT, not STOP PLAY/SCAN: XP's
-    # mcicda sends 0x1b and never 0x4e (traced 2026-09-07), so a drive that
+    # mcicda sends 0x1b and never 0x4e (traced), so a drive that
     # ends playback on 0x4e alone plays the track out after the button.
     ("play track 3 again", pkt(0x48, 0, 0, 0, 3, 1, 0, 3, 1), ("len", 0)),
     ("subq playing track 3 again", read_sub(1), ("pos", "track3again")),
@@ -259,7 +259,7 @@ TESTS = [
     ("mode sense 0e restored", pkt(0x5A, 0, 0x0E, 0, 0, 0, 0, 0, 64), ("page0e",)),
     ("mode select short list", (pkt(0x55, 0x10, 0, 0, 0, 0, 0, 0, 4), [0, 0, 0, 0]), ("err", 5, 0x1a, 0)),
     # the disc shelf (patch 52). Listing first, then a real medium change and
-    # back again — the sequence has to end on slot 0 (the disc every test above
+    # back again. The sequence has to end on slot 0 (the disc every test above
     # expects), because the whole table runs a second time at the other BCL.
     ("cdshelf header only", cdshelf(0, alloc=SHELF_HDR), ("shelf", 0, None)),
     ("cdshelf list", cdshelf(0, alloc=SHELF_HDR + 4 * SHELF_ENTRY), ("shelf", 4, None)),
@@ -687,7 +687,7 @@ def write_fdconfig():
 
 
 def write_shelf():
-    """The flat shelf file the drive answers CDSHELF from — the same format
+    """The flat shelf file the drive answers CDSHELF from, the same format
     the launcher writes beside a machine's monitor socket (disc_library.rs,
     cdshelf/cdshelf_proto.h)."""
     with open(SHELF, "w") as f:
@@ -938,7 +938,7 @@ def check(bcl, entries):
     st, z = pos("stopped")
     # Where the head is after a stop, which patch 54 changed on purpose: it
     # stays where playback ended, and no longer falls back to the last sector
-    # *read* (a data address that has nothing to do with the head — XP asked
+    # *read* (a data address that has nothing to do with the head; XP asked
     # for track 3 after a stop and was told "track 01, 00:00:17", its own
     # volume descriptor). So: no audio status, and the head inside track 2
     # at or past where it was last seen playing.

@@ -1,16 +1,16 @@
 /*
- * core_surf.c — the surface table and everything the driver knows about
- * a surface (doc 19, "The split"): handles, mip levels, formats and
- * their row / pitch arithmetic (DXT included), VRAM offsets, the
+ * core_surf.c: the surface table and everything the driver knows about
+ * a surface (doc 19, "The split"). That is handles, mip levels, formats
+ * and their row / pitch arithmetic (DXT included), VRAM offsets, the
  * registrations the host is told about, the colour-key bookkeeping, the
  * dirty ranges of a video-memory buffer, and readback.
  *
  * The OS's own surface object never appears here. The layer fills a
  * d3dpt_surf_desc (d3dpt_os_surf) and walks the attachment lists
- * (d3dpt_os_attached, d3dpt_os_next_mip); NT's DD_SURFACE_LOCAL and 9x's
- * DDRAWI_DDRAWSURFACE_LCL hold the same facts at different offsets, and
- * that hook is where they meet. The core never keeps the object past the
- * call that handed it over: the runtime frees it without always saying
+ * (d3dpt_os_attached, d3dpt_os_next_mip), so NT's DD_SURFACE_LOCAL and
+ * 9x's DDRAWI_DDRAWSURFACE_LCL, which hold the same facts at different
+ * offsets, stay in the layer. The core never keeps the object past the
+ * call that handed it over. The runtime frees it without always saying
  * so, and a pointer kept for the colour key once outlived its surface
  * (doc 19 §36).
  *
@@ -122,9 +122,9 @@ BOOL surf_is_target(ULONG caps)
                     DDSCAPS_FRONTBUFFER | DDSCAPS_BACKBUFFER)) != 0;
 }
 
-/* A Lock on a video-memory buffer: what the runtime locked — the byte
- * range it gave, or the whole buffer when it gave none — kept until the
- * Unlock reports it dirty. DISCARD / NOOVERWRITE need nothing: every draw
+/* A Lock on a video-memory buffer. The byte range the runtime gave, or
+ * the whole buffer when it gave none, is kept until the Unlock reports it
+ * dirty. DISCARD / NOOVERWRITE need nothing: every draw
  * before the Lock has run, because a DP2 record executes in the doorbell
  * write. */
 void surf_lock_range(ULONG handle, BOOL has_rect, LONG left, LONG right)
@@ -282,10 +282,10 @@ static ULONG cube_faces(d3dpt_core *p, void *root, void **face)
 }
 
 /* A cube texture (v11). The table gets one entry per face under the face's
- * own handle — the root's carries SURF_CUBE, every face's levels, for a
- * TEXBLT between two cubes; the others are ordinary entries a face-sized
- * TEXBLT or a Lock can name — and a video-memory cube goes to the host as
- * one VRAM_SURFACE with D3DPT_VS_CUBE and every face's levels, then a
+ * own handle. The root's entry carries SURF_CUBE, every face's levels, for
+ * a TEXBLT between two cubes; the others are ordinary entries a face-sized
+ * TEXBLT or a Lock can name. A video-memory cube goes to the host as one
+ * VRAM_SURFACE with D3DPT_VS_CUBE and every face's levels, then a
  * VRAM_CUBE_FACE for each face that has a handle of its own */
 static void d3d_register_cube(d3dpt_core *p, const d3dpt_surf_desc *s, ULONG fmt, ULONG caps, BOOL sysmem)
 {
@@ -583,21 +583,21 @@ void d3d_register(d3dpt_core *p, const d3dpt_surf_desc *s)
     d3d_register_at(p, s, s->vidmem, FALSE);
 }
 
-/* A texture a TEXTURESTAGESTATE binds: the first time, the host hears the
- * source colour key the surface was registered with, if it had one — a
- * key set before the surface was mirrored, or on a surface re-created
- * under the same handle (surf_key_snapshot). A key set later reaches
+/* A texture a TEXTURESTAGESTATE binds. The first time, the host hears the
+ * source colour key the surface was registered with, if it had one: a key
+ * set before the surface was mirrored, or on a surface re-created under
+ * the same handle (surf_key_snapshot). A key set later reaches
  * surf_colorkey_set through the layer's SetColorKey, which the runtime
  * calls because both layers claim the colour-key DirectDraw caps.
  *
- * **Only the table is read here, never the OS's surface.** This used to
- * keep the surface object and read the key off it at every bind, and
- * nothing cleared that pointer when the runtime freed the surface.
- * 3DMark2001 SE's demo bound a texture whose slot pointed at an object the
- * runtime had freed and reused: the read faulted inside DrawPrimitives2 with
- * the command-window lock held, a handler in the faulting thread caught
- * it, and the next thread to want the lock waited for ever (doc 19 §36). What that
- * read also saw — a key taken off with no SetColorKey call — is lost. */
+ * Only the table is read here, never the OS's surface. Keeping the
+ * surface object and reading the key off it at every bind left a pointer
+ * nothing cleared when the runtime freed the surface. 3DMark2001 SE's
+ * demo bound a texture whose slot pointed at a freed and reused object.
+ * The read faulted inside DrawPrimitives2 with the command-window lock
+ * held, a handler in the faulting thread caught it, and the next thread
+ * to want the lock waited for ever (doc 19 §36). The cost is that a key
+ * taken off with no SetColorKey call is no longer seen. */
 void surf_colorkey_check(d3dpt_core *p, ULONG handle)
 {
     SURF *t = surf_slot(handle, FALSE);
@@ -626,12 +626,12 @@ void surf_colorkey_check(d3dpt_core *p, ULONG handle)
     d3d_colorkey_op(p, handle, t->ck_lo, t->ck_hi, 1);
 }
 
-/* s and what is attached to it — a flip chain's other buffers, a Z buffer
- * — each under its own handle, the ones the host does not know yet or
- * knows at another offset. The runtime's CreateSurfaceEx comes for the
- * root of a complex surface; a DirectX 7 interface's flip chain gets one
- * call per member as well, a DirectX 6 title's arrives as its primary
- * alone (GTA 2, 2026-09-05): the back buffer, handle 2, was never
+/* s and what is attached to it (a flip chain's other buffers, a Z
+ * buffer), each under its own handle, the ones the host does not know yet
+ * or knows at another offset. The runtime's CreateSurfaceEx comes for the
+ * root of a complex surface. A DirectX 7 interface's flip chain gets one
+ * call per member as well, but a DirectX 6 title's arrives as its primary
+ * alone (GTA 2). Without this walk the back buffer, handle 2, was never
  * registered, the runtime's SETRENDERTARGET 2 was unknown to the host,
  * every frame went into the front buffer's VRAM while the flips
  * alternated the scanout, and half the frames showed the buffer nobody
@@ -672,7 +672,7 @@ void d3d_register_chain(d3dpt_core *p, void *os)
     }
 }
 
-/* a video-memory surface the host knows at another offset: registered
+/* a video-memory surface the host knows at another offset, registered
  * again where it is now, silently. Under the runtime's flip model nothing
  * moves (DdFlip); a runtime that swaps two buffers' memory instead is
  * caught here at the next flip or lock */

@@ -12,10 +12,9 @@
 # --windows compiles the same two files against mingw's own <windows.h> and
 # <d3d9.h> instead of DXVK's native stand-ins for them, and loads DXVK's
 # d3d9.dll at run time under the name the package gives it,
-# `dxvk_d3d9.dll` (build/win/dxvk, scripts/configure-dxvk.sh --windows) —
-# never Windows' own Direct3D 9 (2026-09-17). Run it inside
-# scripts/win-cross.sh, or natively in MSYS2's MINGW64 shell —
-# docs/build-windows.md.
+# `dxvk_d3d9.dll` (build/win/dxvk, scripts/configure-dxvk.sh --windows),
+# never as Windows' own d3d9.dll. Run it inside scripts/win-cross.sh, or
+# natively in MSYS2's MINGW64 shell (docs/build-windows.md).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 

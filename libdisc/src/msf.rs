@@ -13,7 +13,7 @@ pub const MSF_OFFSET: i32 = 150;
 /// The last sector an MSF can name: 99:59:74, one frame short of 100
 /// minutes. Three BCD bytes have no room past it, so on a disc longer
 /// than this the TOC's lead-out, the subchannel and every raw sector
-/// header have no address for what is beyond — which is a CD's limit,
+/// header have no address for what is beyond. That is a CD's limit,
 /// not a disc's: past an 80-minute CD the drive reports a DVD-ROM
 /// profile (`atapi_disc_get_configuration`) and nothing asks for MSF at
 /// all. That is why `from_lba` saturates here instead of failing.
@@ -37,8 +37,8 @@ impl Msf {
     /// range rather than failing: this runs inside QEMU behind a C ABI
     /// (`capi.rs` turns a panic into `LIBDISC_EIO`), so an out-of-range
     /// address would surface as an I/O error on whatever command
-    /// happened to convert one — the lead-out of a TOC, a sector header
-    /// — long after the disc that cannot be addressed was accepted. A
+    /// happened to convert one (the lead-out of a TOC, a sector header)
+    /// long after the disc that cannot be addressed was accepted. A
     /// guest reads a DVD by LBA and never asks for these fields; the
     /// openers refuse a disc past any real medium up front ([`MAX_LBA`],
     /// `isodir`'s `MAX_SECTORS`), and what is left here is arithmetic

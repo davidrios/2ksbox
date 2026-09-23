@@ -1,14 +1,14 @@
 /*
- * d3dpt9dd.c — the DirectDraw half of the Win98/Me display driver (doc 19
- * §2, M10 step 3): the `DCICOMMAND` escapes through which a 16-bit `.drv`
- * publishes a 32-bit HAL, and the `DDHALINFO_t` it builds.
+ * d3dpt9dd.c: the DirectDraw half of the Win98/Me display driver (doc 19
+ * §2). It answers the `DCICOMMAND` escapes through which a 16-bit `.drv`
+ * publishes a 32-bit HAL, and builds the `DDHALINFO_t`.
  *
- * None of the actual HAL is here. On 9x the DirectDraw/Direct3D HAL is a
+ * None of the HAL itself is here. On 9x the DirectDraw/Direct3D HAL is a
  * ring-3 Win32 DLL loaded into the game's own process (`d3dpt9hl.dll`,
- * the half that links our OS-independent core); this file's whole job is
- * to tell DirectDraw that the DLL exists, hand it the linear address of
- * the block the two halves share, and then copy back the callbacks the
- * DLL published into the tables DirectDraw wants.
+ * which links our OS-independent core). This file tells DirectDraw that
+ * the DLL exists, hands it the linear address of the block the two halves
+ * share, and copies the callbacks the DLL published into the tables
+ * DirectDraw wants.
  *
  * The four escapes, in the order they arrive:
  *
@@ -33,12 +33,11 @@
 
 /* ------------------------------------------------------------------ DPMI */
 
-/* Allocating the shared block is the one thing this file needs that the
- * rest of the driver does not: memory at a *linear* address, because the
- * 32-bit DLL has no idea what a selector is. DPMI gives both halves of
- * that — a block and a selector we point at it — and on 9x a block this
- * size comes out of the shared arena above 2 GiB, which is mapped into
- * every process, so the one address is valid wherever the DLL is loaded. */
+/* The shared block needs a linear address, because the 32-bit DLL cannot
+ * use a selector. DPMI gives a block and a selector we point at it. On 9x
+ * a block this size comes out of the shared arena above 2 GiB, which is
+ * mapped into every process, so the one address is valid wherever the DLL
+ * is loaded. */
 
 extern WORD DPMI_AllocLDTDesc(WORD count);
 #pragma aux DPMI_AllocLDTDesc = \
@@ -83,11 +82,10 @@ static LPDDHAL_SETINFO lpSetInfo;       /* DirectDraw's, from DDNEWCALLBACKFNS *
 static void HalMode(void);
 static WORD wHalUnreachable;            /* said once, not once per call */
 
-/* `lar` on a selector: ZF comes back set when the descriptor is there and
- * this ring may read it. It is the only question that can be asked about
- * `lpSetInfo` before calling it — a far call into a module that has been
- * unloaded faults with nothing to say and takes the caller's program with
- * it (doc 19 §40). */
+/* `lar` on a selector sets ZF when the descriptor exists and this ring may
+ * read it. It is the only check possible on `lpSetInfo` before calling it.
+ * A far call into an unloaded module faults silently and takes the
+ * caller's program with it (doc 19 §40). */
 extern WORD SelOk(WORD sel);
 #pragma aux SelOk =     \
     "lar   ax, ax"      \
@@ -100,13 +98,13 @@ extern WORD SelOk(WORD sel);
 /* the selector half of the far pointer (offset first, selector second) */
 #define SEL_OF(fp) (*((WORD *)&(fp) + 1))
 
-/* the bisection knob, read off the adapter (see D9F_* in d3dpt9x.h). Read
- * on every use rather than cached: the escapes arrive from more than one
- * place and there is no init this file owns that runs before all of them. */
+/* The bisection knob, read off the adapter (see D9F_* in d3dpt9x.h). Read
+ * on every use rather than cached, because the escapes arrive from more
+ * than one place and no init this file owns runs before all of them. */
 #define DDF() RegGet(D3DPT_FB_REG_DDFLAGS)
 
-/* The tables live in the shared block (see d3dpt9hal.h): these are just
- * the far pointers at them, and the linear addresses DDHALINFO carries. */
+/* The tables live in the shared block (see d3dpt9hal.h). These are the
+ * far pointers to them and the linear addresses DDHALINFO carries. */
 #define HALFIELD(type, field) ((type __far *)&pHal->field[0])
 #define HALLINEAR(field)      (dwHalLinear + (DWORD)((BYTE __far *)&pHal->field[0] - (BYTE __far *)pHal))
 
@@ -119,7 +117,7 @@ typedef char d3dpt_fits[
      sizeof(DDHALMODEINFO_t) * D3DPT_HAL9_MAX_MODES <= sizeof(((d3dpt_hal9 *)0)->modeinfo) &&
      sizeof(VIDMEM_t) <= sizeof(((d3dpt_hal9 *)0)->heap)) ? 1 : -1];
 
-/* The block is allocated once and never freed: DirectDraw hands its
+/* The block is allocated once and never freed. DirectDraw hands its
  * linear address to every process that loads the DLL, and the display
  * driver outlives all of them. */
 static BOOL HalBlock(void)
@@ -147,11 +145,10 @@ static BOOL HalBlock(void)
     pHal->magic = D3DPT_HAL9_MAGIC;
     pHal->version = D3DPT_HAL9_VERSION;
     pHal->size = sizeof(d3dpt_hal9);
-    /* The adapter, as the mini-VDD mapped it. Straight from the VxD, not
-     * from DPMI: these selectors are GDT ones the mini-VDD built, and
-     * DPMI's "get segment base" only knows the LDT — it answered with
-     * junk and the DLL was handed a register page at 0x28d7
-     * (2026-09-07). */
+    /* The adapter as the mini-VDD mapped it, straight from the VxD. DPMI
+     * cannot answer this, because these are GDT selectors the mini-VDD
+     * built and DPMI's "get segment base" only knows the LDT (it returns
+     * junk, such as a register page at 0x28d7). */
     pHal->regs_linear = dwRegsLin;
     pHal->vram_linear = dwVramLin;
     pHal->vram_size = dwVramSize;
@@ -162,9 +159,9 @@ static BOOL HalBlock(void)
     return TRUE;
 }
 
-/* the mode, filled when the block is made and refreshed at every
- * DDCREATEDRIVEROBJECT: DirectDraw asks again after every mode change,
- * and the DLL reads it from here */
+/* The mode, filled when the block is made and refreshed at every
+ * DDCREATEDRIVEROBJECT, which DirectDraw sends again after every mode
+ * change. The DLL reads it from here. */
 static void HalMode(void)
 {
     pHal->width = wScrX;
@@ -193,28 +190,26 @@ static void BuildPixelFormat(DDPIXELFORMAT_t __far *pf)
 }
 
 /* Copy the callbacks the DLL published into the tables DirectDraw reads,
- * and set the matching flag for each. A zero in cb32 simply means the
- * DLL does not implement that one and DirectDraw's own HEL does it. */
+ * and set the matching flag for each. A zero in cb32 means the DLL does
+ * not implement that one and DirectDraw's own HEL does it. */
 /* Whether a callback the DLL published is worth handing to DirectDraw.
  *
- * **The addresses are DDHELP.EXE's, and the runtime checks them in the
- * game's process** (doc 19 §22). DirectDraw loads the 32-bit HAL and
- * calls `DriverInit` in `DDHELP.EXE`, once for the machine; every
- * application then validates the stored HALINFO in *its own* address
- * space, `IsBadCodePtr` on every entry a flag claims, and refuses the
- * whole driver object if one fails. A module in the private arena is
- * mapped only where it was loaded and gets a different address in each
- * process (measured 2026-09-08: DDHELP had it at 0x00b50000 and the
- * probe's own LoadLibrary at 0x00ca0000), so those entries are bad
- * pointers everywhere else and the HAL is thrown away — losing the video
- * memory heap and the mode list with it, which do work.
+ * The addresses are DDHELP.EXE's, and the runtime checks them in the
+ * game's process (doc 19 §22). DirectDraw loads the 32-bit HAL and calls
+ * `DriverInit` in `DDHELP.EXE`, once for the machine. Every application
+ * then validates the stored HALINFO in its own address space,
+ * `IsBadCodePtr` on every entry a flag claims, and refuses the whole
+ * driver object if one fails. A module in the private arena gets a
+ * different address in each process (DDHELP had it at 0x00b50000 and
+ * ddprobe's own LoadLibrary at 0x00ca0000), so its entries are bad
+ * pointers everywhere else and the HAL is thrown away, video memory heap
+ * and mode list included.
  *
- * Until the DLL can be got into the shared arena above 2 GiB, where one
- * address means the same thing in every process, publishing a callback
- * costs the whole HAL and buys nothing. So they are withheld, and said
- * to be withheld: a DirectDraw that does its own drawing out of our
- * video memory is worth more than one that does its own drawing out of
- * its own. */
+ * The DLL is based in the shared arena above 2 GiB (doc 19 §23), where one
+ * address means the same thing in every process. This is the safety net
+ * if it ever lands below: the callbacks are withheld and the log says so,
+ * because a DirectDraw that draws by itself into our video memory is
+ * worth more than one that draws into its own. */
 static BOOL HalReachable(DWORD fn)
 {
     if (fn == 0) {
@@ -249,25 +244,21 @@ static void BuildCallbacks(void)
     cbSurf.dwSize = sizeof(cbSurf);
     cbPal.dwSize = sizeof(cbPal);
 
-/* **`DWORD __far *`, and the `__far` is the whole thing.** The tables
- * live in the shared block, so `&(tab).member` is a far pointer; this
- * file is compiled in the small model, where a plain `DWORD *` is a
- * *near* pointer, so `*(DWORD *)&…` silently truncates it to its offset
- * and stores through DS — into the driver's own data segment, at
- * whatever offset the block's field happens to have. The slot itself
- * stays zero.
+/* `DWORD __far *`, and the `__far` matters. The tables live in the shared
+ * block, so `&(tab).member` is a far pointer. This file is compiled in the
+ * small model, where a plain `DWORD *` is near, so `*(DWORD *)&...`
+ * silently truncates it to its offset and stores through DS into the
+ * driver's own data segment. The slot itself stays zero.
  *
- * What that looks like from outside is the reason it is worth a comment
- * (2026-09-08): the flags land, because `(tab).dwFlags |= flag` goes
- * through the far struct properly, so the driver's log and DirectDraw
- * both say the callbacks are published — and DirectDraw's HALINFO
- * validator agrees, because it only `IsBadCodePtr`s entries that are
- * non-zero. The HAL is accepted with a table of nulls and every call
- * goes to the runtime's own HEL. The cast is needed at all because the
- * member is a 16-bit far function pointer and what goes in it is a
- * 32-bit flat address. */
-/* And a callback is only published if it can be *reached*: see
- * `HalReachable` below. */
+ * From outside that is invisible. The flags land, because
+ * `(tab).dwFlags |= flag` goes through the far struct, so the driver's log
+ * and DirectDraw both say the callbacks are published. DirectDraw's
+ * HALINFO validator agrees, because it only `IsBadCodePtr`s non-zero
+ * entries. The HAL is accepted with a table of nulls and every call goes
+ * to the runtime's own HEL. The cast is needed because the member is a
+ * 16-bit far function pointer and the value is a 32-bit flat address. */
+/* A callback is published only if it can be reached (`HalReachable`
+ * above). */
 #define CB(tab, member, field, flag)                                    \
     if (HalReachable(pHal->cb32.field)) {                               \
         *(DWORD __far *)&(tab).member = pHal->cb32.field;               \
@@ -308,10 +299,10 @@ static void BuildCallbacks(void)
     dbg_val(" surface callbacks", cbSurf.dwFlags);
     dbg_val(" exebuf callbacks", pcbExeBuf->dwFlags);
     dbg_str("");
-    /* Read the table back through the far pointer rather than trusting
-     * the store: the runtime `IsBadCodePtr`s every entry a flag claims
-     * and refuses the whole HALINFO if one is bad, so what is actually
-     * in the slots is the thing to know. */
+    /* Read the table back through the far pointer rather than trust the
+     * store. The runtime `IsBadCodePtr`s every entry a flag claims and
+     * refuses the whole HALINFO if one is bad, so what is in the slots is
+     * what matters. */
     dbg_val("d3dpt9dd:   cbDD size", (DWORD)sizeof(cbDD));
     dbg_val(" destroy", *(DWORD __far *)&cbDD.DestroyDriver);
     dbg_val(" cansurf", *(DWORD __far *)&cbDD.CanCreateSurface);
@@ -335,15 +326,15 @@ static BOOL BuildHalInfo(void)
         { 1280, 1024 },
         { 400,  300 },
         { 512,  384 },
-        /* No 320x200 and no 320x240 (2026-09-10, doc 19 §30). Those two
-         * are DirectDraw's own: with DDSCL_ALLOWMODEX a 320x200 request
-         * is answered by the runtime's Mode X / VGA mode 13h on the VGA
-         * core, where it programs the DAC and copies the flip chain into
-         * VGA memory itself — which is the only way a *system-memory*
-         * flipping primary (Carmageddon's, the SDK's Mode X recipe) is
-         * ever displayed. Listed as a driver mode, the same request got
-         * a real 320x200 linear mode with a system-memory primary that
-         * nothing presents: a black screen with the palette right. */
+        /* No 320x200 and no 320x240 (doc 19 §30). Those two are
+         * DirectDraw's own. With DDSCL_ALLOWMODEX the runtime answers a
+         * 320x200 request with Mode X / VGA mode 13h on the VGA core,
+         * programs the DAC and copies the flip chain into VGA memory
+         * itself. That is the only way a system-memory flipping primary
+         * (Carmageddon's, the SDK's Mode X recipe) is ever displayed. As a
+         * driver mode the same request got a real 320x200 linear mode with
+         * a system-memory primary that nothing presents: a black screen
+         * with the right palette. */
     };
     static const WORD s_bpp[] = { 16, 32, 8 };
 
@@ -414,13 +405,12 @@ static BOOL BuildHalInfo(void)
     }
 
     hi->dwSize = sizeof(*hi);
-    /* Far pointers, not linear addresses: DDHALINFO is handed to the
-     * *16-bit* runtime and it is the one that walks these. What the
-     * 32-bit half needs is the cb32 entries, which reach it another way.
-     * (Passing linear addresses here instead made DDHAL_SetInfo refuse
-     * the HALINFO outright, 2026-09-07.) The structures still live in the
-     * shared block so that the DLL can read them too, by offset from the
-     * block's linear base. */
+    /* Far pointers, not linear addresses. DDHALINFO is handed to the
+     * 16-bit runtime, which walks these, and DDHAL_SetInfo refuses a
+     * HALINFO with linear addresses here. The 32-bit half gets the cb32
+     * entries another way. The structures still live in the shared block
+     * so the DLL can read them too, by offset from the block's linear
+     * base. */
     hi->lpDDCallbacks = (LPDDHAL_DDCALLBACKS)HALFIELD(DDHAL_DDCALLBACKS_t, cb_dd);
     hi->lpDDSurfaceCallbacks = (LPDDHAL_DDSURFACECALLBACKS)HALFIELD(DDHAL_DDSURFACECALLBACKS_t, cb_surf);
     hi->lpDDPaletteCallbacks = (LPDDHAL_DDPALETTECALLBACKS)HALFIELD(DDHAL_DDPALETTECALLBACKS_t, cb_pal);
@@ -443,33 +433,30 @@ static BOOL BuildHalInfo(void)
     hi->vmiData.dwTextureAlign = 64;
 
     /* One linear heap: everything behind the visible frame, up to where
-     * the hardware cursor's image and the command window begin. A HAL
-     * with no heap is a HAL DirectDraw has nowhere to allocate from.
-     * `ddsCaps` here is what the memory *cannot* be used for, which is
-     * why it is left empty.
+     * the hardware cursor's image and the command window begin. Without a
+     * heap DirectDraw has nowhere to allocate from. `ddsCaps` here is what
+     * the memory cannot be used for, so it stays empty.
      *
-     * MulW, not `*`: no CRT here, so a 32-bit multiply has no helper. The
+     * MulW, not `*`, because with no CRT a 32-bit multiply has no helper. The
      * pitch of every mode the adapter offers fits a WORD (1600x32bpp is
      * 6400 bytes). */
     start = (MulW((WORD)dwPitch, wScrY) + 4095ul) & ~4095ul;
     min_start = 8ul * 1024ul * 1024ul;
     if (start < min_start) start = min_start;
 
-    /* **Where the heap ends is the adapter's answer, not arithmetic.** The
-     * top of VRAM is not free: the command window the Direct3D half encodes
+    /* Where the heap ends is the adapter's answer, not arithmetic. The top
+     * of VRAM is not free. The command window the Direct3D half encodes
      * batches into sits at `D3DPT_FB_REG_CMD_OFFSET` (64 MB of a 128 MB
      * aperture), and the cursor sprite's image sits immediately below it.
-     * Ending the heap at `vram_size - CURSOR_BYTES` published a heap 64 MB
-     * too long, running the whole length of the command window — a
-     * DirectDraw surface allocated up there and the batch ring would have
-     * been the same memory. `core/`'s `dd_heap_end()` is the same
-     * calculation on NT; this layer cannot call it (it is 16-bit and that is
-     * flat 32-bit code), so it reads the same register.
+     * Ending the heap at `vram_size - CURSOR_BYTES` made it 64 MB too long,
+     * overlapping the command window, so a DirectDraw surface and the batch
+     * ring could share memory. `core/`'s `dd_heap_end()` is the same
+     * calculation on NT. This layer is 16-bit and cannot call that flat
+     * 32-bit code, so it reads the same register.
      *
-     * This is the third time a value re-derived here instead of read from
-     * the one authority has cost this track a day: `DDSCAPS_EXECUTEBUFFER`
-     * in step 1, the command window itself in step 4 (doc 19 §25), and now
-     * the end of the heap. */
+     * Read values like this from the one authority. Re-deriving them here
+     * went wrong three times: `DDSCAPS_EXECUTEBUFFER`, the command window
+     * (doc 19 §25) and the end of the heap. */
     end = RegGet(D3DPT_FB_REG_CMD_OFFSET);
     if (!end || end > pHal->vram_size) end = pHal->vram_size;
     end -= D3DPT_FB_CURSOR_BYTES;
@@ -480,45 +467,41 @@ static BOOL BuildHalInfo(void)
     hi->vmiData.pvmList = (LPVIDMEM)HALFIELD(VIDMEM_t, heap);
 
     hi->ddCaps.dwSize = sizeof(DDCORECAPS_t);
-    /* DDCAPS_GDI is normal on 9x and fatal on NT (doc 19 §5): here it
-     * says the primary is the same memory GDI draws into, which it is. */
-    /* No DDCAPS_BLTDEPTHFILL: claimed alone it does not route a depth fill
-     * to Blt32 — the runtime still does it itself, through a Lock of the Z
-     * buffer, which is where the HAL sees it (Unlock32, doc 19 §34) — and
-     * DDCAPS_BLT, which would, needs SRCCOPY and a real blitter behind it
-     * (the validator rules above). */
+    /* DDCAPS_GDI is normal on 9x and fatal on NT (doc 19 §5). Here it says
+     * the primary is the same memory GDI draws into, which it is. */
+    /* No DDCAPS_BLTDEPTHFILL. Claimed alone it does not route a depth fill
+     * to Blt32. The runtime still does it itself through a Lock of the Z
+     * buffer, which is where the HAL sees it (Unlock32, doc 19 §34).
+     * DDCAPS_BLT would route it, but needs SRCCOPY and a real blitter
+     * behind it (doc 19 §21). */
     hi->ddCaps.dwCaps = DDCAPS_GDI | DDCAPS_BLTQUEUE;
-    /* **Never DDCAPS2_CERTIFIED**, which is what this step cost
-     * (2026-09-08, doc 19 §21). "Certified" is something the runtime
-     * grants, not something a driver claims, and DirectDraw's HALINFO
-     * validator refuses a driver that claims it — `testb $1,0x68(%ebx);
-     * jne fail` on `ddCaps.dwCaps2`. The refusal is invisible from here:
-     * the *16-bit* `DDHAL_SetInfo` stores the HALINFO and returns TRUE,
-     * and the 32-bit half throws the whole driver object away
-     * afterwards, so the driver sees "DirectDraw took the HAL" and every
-     * application sees a HAL with dwCaps DDCAPS_NOHARDWARE, no video
-     * memory and not one callback ever entered. `D9F_CERTIFIED` puts it
-     * back, for when that has to be seen again.
+    /* Never DDCAPS2_CERTIFIED (doc 19 §21). "Certified" is something the
+     * runtime grants, not something a driver claims, and DirectDraw's
+     * HALINFO validator refuses a driver that claims it (`testb
+     * $1,0x68(%ebx); jne fail` on `ddCaps.dwCaps2`). The refusal is
+     * invisible from here. The 16-bit `DDHAL_SetInfo` stores the HALINFO
+     * and returns TRUE, and the 32-bit half throws the driver object away
+     * afterwards. The driver sees "DirectDraw took the HAL" and every
+     * application sees dwCaps DDCAPS_NOHARDWARE, no video memory and no
+     * callback ever entered. `D9F_CERTIFIED` puts it back as a repro.
      *
-     * **DDCAPS2_WIDESURFACES**, as on NT: without it 9x DirectDraw puts no
+     * DDCAPS2_WIDESURFACES, as on NT. Without it 9x DirectDraw puts no
      * surface wider than the primary in video memory, so at 640x480 every
      * 1024-wide texture stayed in system memory and d3d8.dll bound nothing
-     * in its place — 3DMark2001 SE's Nature sky drawn white (doc 19 §37). */
+     * in its place: 3DMark2001 SE's Nature sky drawn white (doc 19 §37). */
     hi->ddCaps.dwCaps2 = DDCAPS2_WIDESURFACES | ((DDF() & D9F_CERTIFIED) ? DDCAPS2_CERTIFIED : 0);
     hi->ddCaps.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | DDSCAPS_PRIMARYSURFACE |
                                 DDSCAPS_FLIP | DDSCAPS_VIDEOMEMORY;
-    /* The size of the heap above, not of the aperture: a total that counts
-     * the command window is a promise the driver cannot keep. */
+    /* The size of the heap above, not of the aperture. A total that counts
+     * the command window is memory the driver cannot hand out. */
     hi->ddCaps.dwVidMemTotal = end - start;
     hi->ddCaps.dwVidMemFree = end - start;
 
     hi->dwMonitorFrequency = 0;
-    /* DDHALINFO_ISPRIMARYDISPLAY is what the reference driver sets and
-     * what we are — it becomes DDRAWI_DISPLAYDRV on the runtime's side.
-     * It was missing until 2026-09-08 and it is *not* what was wrong
-     * then (a boot with it removed again behaves identically, doc 19
-     * §21); it is here because it is true. */
-    /* Not DDHALINFO_MODEXILLEGAL: the runtime's Mode X and VGA mode 13h
+    /* DDHALINFO_ISPRIMARYDISPLAY, as the reference driver sets. It becomes
+     * DDRAWI_DISPLAYDRV on the runtime's side. It is set because it is
+     * true. Removing it changes nothing (doc 19 §21). */
+    /* Not DDHALINFO_MODEXILLEGAL. The runtime's Mode X and VGA mode 13h
      * run on the adapter's VGA core after GDI disables this driver
      * (VDD_DISPLAY_DRIVER_DISABLING, then the runtime programs the VGA
      * registers itself), and they are what a 320x200 game gets (see the
@@ -535,13 +518,12 @@ static BOOL BuildHalInfo(void)
     }
     hi->lpDDExeBufCallbacks = (LPDDHAL_DDEXEBUFCALLBACKS)HALFIELD(DDHAL_DDEXEBUFCALLBACKS_t, cb_exebuf);
 
-    /* The Direct3D half, all of it together — and none of it when the DLL
-     * published no D3D (a host with no executor: doc 15's `no-exec=on`,
-     * where this driver is DirectDraw and the guest's own WineD3D does
-     * Direct3D). The FourCC list is part of it: those are the texture
-     * formats the executor decodes, and a HAL that offers them with no
-     * Direct3D behind them is the NT driver's `p->core.d3d ? 6 : 0`
-     * answered wrongly. */
+    /* The Direct3D half, all of it or none. None when the DLL published no
+     * D3D (a host with no executor, `no-exec=on`, doc 19 §40), where this
+     * driver is DirectDraw only and the guest's WineD3D does Direct3D. The
+     * FourCC list belongs to it: those are the texture formats the
+     * executor decodes, and the NT driver offers them only with Direct3D
+     * too (`p->core.d3d ? 6 : 0`). */
     if (HalReachable(pHal->d3dhal_global) && HalReachable(pHal->d3dhal_callbacks)) {
         pHal->fourcc[0] = 0x31545844;      /* 'DXT1' */
         pHal->fourcc[1] = 0x33545844;      /* 'DXT3' */
@@ -581,7 +563,7 @@ static BOOL BuildHalInfo(void)
 
 /* DDGET32BITDRIVERNAME: the DLL DirectDraw should load into the calling
  * process, the entry point to call in it, and the context value that
- * entry point is given — our shared block's linear address. */
+ * entry point is given (our shared block's linear address). */
 BOOL DDGet32BitDriverName(DD32BITDRIVERDATA_t __far *dd32)
 {
     static const char szDll[] = D3DPT_HAL_DLL;
@@ -598,18 +580,18 @@ BOOL DDGet32BitDriverName(DD32BITDRIVERDATA_t __far *dd32)
     return TRUE;
 }
 
-/* DDNEWCALLBACKFNS: DirectDraw's own function table; the only thing we
- * keep out of it is lpSetInfo, which is how a HAL is handed over. */
+/* DDNEWCALLBACKFNS: DirectDraw's own function table. We keep only
+ * lpSetInfo, which is how a HAL is handed over. */
 BOOL DDNewCallbackFns(DCICMD_t __far *lpCmd)
 {
     LPDDHALDDRAWFNS pfns = (LPDDHALDDRAWFNS)lpCmd->dwParam1;
 
-    /* **An empty table means DirectDraw is taking its entry point back.**
-     * What we keep is a far pointer into DDRAW16, and that module is only
-     * loaded while some process has DirectDraw open; the next mode set
-     * calls it again from `Enable` (DDCreateDriverObject(1)), so keeping a
-     * pointer past the escape that withdrew it is a general protection
-     * fault in whatever program happened to change the mode. */
+    /* An empty table means DirectDraw is taking its entry point back. We
+     * keep a far pointer into DDRAW16, which is loaded only while some
+     * process has DirectDraw open. The next mode set calls it again from
+     * `Enable` (DDCreateDriverObject(1)), so a pointer kept past the escape
+     * that withdrew it is a general protection fault in whatever program
+     * changed the mode. */
     if (pfns == 0) {
         dbg_str("d3dpt9dd: DirectDraw withdrew its callbacks");
         lpSetInfo = 0;
@@ -623,16 +605,15 @@ BOOL DDNewCallbackFns(DCICMD_t __far *lpCmd)
 void DDGetVersion(DDVERSIONDATA_t __far *lpVer)
 {
     ZeroFar(lpVer, sizeof(DDVERSIONDATA_t));
-    /* The reference driver's answer, and the runtime does not mind:
-     * DirectX 6.1 in the test guest takes 0x700 as happily as 0x100
-     * (measured 2026-09-08, both ways). */
+    /* The reference driver's answer. DirectX 6.1 takes 0x700 as well as
+     * 0x100 (both measured). */
     lpVer->dwHALVersion = DD_RUNTIME_VERSION;
 }
 
-/* DDCREATEDRIVEROBJECT: build the HALINFO and hand it over. By now the
- * DLL has been loaded and its DriverInit has filled cb32 — that is the
- * order DirectDraw uses, and the reason the callbacks are copied here
- * rather than when the name was asked for. */
+/* DDCREATEDRIVEROBJECT: build the HALINFO and hand it over. DirectDraw
+ * loads the DLL and runs its DriverInit, which fills cb32, before this
+ * escape, so the callbacks are copied here rather than when the name was
+ * asked for. */
 BOOL DDCreateDriverObject(BOOL bReset)
 {
     if (lpSetInfo != 0 && !SelOk(SEL_OF(lpSetInfo))) {
@@ -653,9 +634,9 @@ BOOL DDCreateDriverObject(BOOL bReset)
     }
     HalMode();
     if (!pHal->dll_ready) {
-        /* Not fatal: DirectDraw still gets a HAL, it just has no
-         * callbacks and does everything in its own HEL. Worth a line,
-         * because it means the DLL was not found or refused the block. */
+        /* Not fatal. DirectDraw still gets a HAL with no callbacks and
+         * does everything in its own HEL. Logged, because it means the
+         * DLL was not found or refused the block. */
         dbg_str("d3dpt9dd: the 32-bit HAL did not report in");
     }
     BuildCallbacks();
@@ -668,9 +649,9 @@ BOOL DDCreateDriverObject(BOOL bReset)
     dbg_str("");
     dbg_val("d3dpt9dd:   hinstance", pHal->dll_hinstance);
     dbg_str("");
-    /* The runtime's answer matters: it is the only place it says whether
-     * it took the HAL, and a HAL it did not take looks exactly like one
-     * that was never offered. */
+    /* Log the runtime's answer. It is the only place it says whether it
+     * took the HAL, and a HAL it did not take looks exactly like one that
+     * was never offered. */
     if (!lpSetInfo(HALFIELD(DDHALINFO_t, halinfo), bReset)) {
         dbg_str("d3dpt9dd: DirectDraw refused the HALINFO");
         return FALSE;

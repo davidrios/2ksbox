@@ -1,5 +1,5 @@
 /*
- * d3dpt_exec_load.c — dlopen libd3dpt_exec once for every d3dpt device
+ * d3dpt_exec_load.c: dlopen libd3dpt_exec once for every d3dpt device
  * (see d3dpt_exec_load.h). A machine without the library (or without a
  * Vulkan device) boots normally; the devices report "no executor".
  *
@@ -102,7 +102,7 @@ static bool try_lib(const char *path, const char *kind)
         /* Left mapped, never closed: the probe ran DXVK, which keeps
          * worker threads and its own statics, and unloading it under
          * them took QEMU down with a segfault at realize on every host
-         * without Vulkan (2026-09-22). A library that found no device is
+         * without Vulkan. A library that found no device is
          * a few megabytes of address space, not a problem. */
         memset(&lib, 0, sizeof(lib));
         return false;

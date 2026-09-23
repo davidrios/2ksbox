@@ -1,11 +1,8 @@
 //! Headless screenshots of the real windows.
 //!
-//! Qt Quick already knows how to render off-screen — `QT_QPA_PLATFORM=
-//! offscreen` with the software backend, and `Item.grabToImage()` — so
-//! this is a handful of environment variables read into properties and
-//! four lines of QML. (The retired egui build had to *simulate* a frame
-//! for the same thing: ~150 lines of synthetic input and an off-screen
-//! paint, because egui does not separate "render" from "have a window".)
+//! Qt Quick already renders off-screen (`QT_QPA_PLATFORM=offscreen` with
+//! the software backend, and `Item.grabToImage()`), so this is a handful
+//! of environment variables read into properties and a few lines of QML.
 //!
 //! `LAUNCHER_QT_SHOT=<file.png>` arms it, `LAUNCHER_QT_SCREEN=<name>`
 //! picks which window to open first, `LAUNCHER_QT_ARG=<value>` is that
@@ -23,11 +20,13 @@ pub mod ffi {
     extern "RustQt" {
         #[qobject]
         #[qml_element]
-        /// Empty unless `LAUNCHER_QT_SHOT` is set, which is what QML
-        /// checks to decide whether any of this is happening at all.
+        /// Empty unless `LAUNCHER_QT_SHOT` is set. QML checks it to
+        /// decide whether a grab is armed.
         #[qproperty(QString, shot_path)]
-        /// "", "wizard", "wizardscroll", "create", "closebox", "adddisc",
-        /// "pickdisc", "discs", "snapshots", "profiles", "editor" (`Main.qml`).
+        /// "", "wizard", "optall", "closebox", "wizardscroll", "create",
+        /// "clone", "adddisc", "pickdisc", "discs", "snapshots",
+        /// "profiles", "saveprofile", "firstrun", "escfocus", "editor"
+        /// (`Main.qml`).
         #[qproperty(QString, screen)]
         #[qproperty(QString, arg)]
         #[qproperty(i32, delay_ms)]
@@ -40,22 +39,22 @@ pub mod ffi {
 
         /// Deliver a close event to the current modal window the way
         /// the window system does when its title bar's close button is
-        /// clicked — `src/close_event.cpp`. Returns 1 if a modal window
+        /// clicked (`src/close_event.cpp`). Returns 1 if a modal window
         /// is still registered afterwards, 0 if none, -1 if there was
         /// none to close.
         #[qinvokable]
         fn close_modal_from_window_system(self: &Diag) -> i32;
 
         /// The title of the window that has the keyboard, "(none)" if
-        /// none does — `src/focus_window.cpp` says why QML's own
+        /// none does. `src/focus_window.cpp` says why QML's own
         /// `Window.active` is no use for this.
         #[qinvokable]
         fn focus_window(self: &Diag) -> QString;
 
         /// A trace line from QML. Not `console.log`: that goes through
         /// Qt's categorised logging, which drops the `qml` category's
-        /// debug output unless `QT_LOGGING_RULES` says otherwise — a
-        /// good half hour went into noticing that. This always prints.
+        /// debug output unless `QT_LOGGING_RULES` says otherwise. This
+        /// always prints.
         #[qinvokable]
         fn note(self: &Diag, message: &QString);
     }

@@ -1,26 +1,21 @@
 // The application icon, inside the .exe.
 //
 // `include!`d by the build script of every crate that produces a Windows
-// binary someone sees in Explorer (`launcher`, `launcher-qt`, `player`).
-// A shared file rather than three copies, and an `include!` rather than a
-// crate, deliberately: a build-dependency would land in `Cargo.lock`, and
-// the Flatpak's offline build declares every crate in that file with a
-// checksum (`packaging/flatpak/cargo-sources.json`) — a dependency added
-// for Windows would have to be vendored for a Linux build that never uses
-// it.
+// binary someone sees in Explorer (`launcher-qt`, `player`).
+// An `include!` rather than a crate on purpose. A build-dependency would
+// land in `Cargo.lock`, and the Flatpak's offline build declares every
+// crate there with a checksum (`packaging/flatpak/cargo-sources.json`), so
+// a Windows-only dependency would have to be vendored for a Linux build
+// that never uses it.
 //
-// Windows takes the *lowest-numbered* icon resource in a binary as the
-// one Explorer, the taskbar and Alt-Tab draw, so the .rc names it `1`.
-// Nothing else is in the resource script: a VERSIONINFO block would be
-// worth having one day, but it is a different question (a version string
-// nobody is currently maintaining) and this one is only about the picture.
+// Explorer, the taskbar and Alt-Tab draw the *lowest-numbered* icon
+// resource, so the .rc names it `1`. The resource script holds nothing
+// else (no VERSIONINFO block; nobody maintains a version string yet).
 //
-// Cross-built from Linux, so the compiler is mingw's `windres`, which
-// turns the .rc into a COFF object; `rustc-link-arg-bins` hands that
-// object to the linker for every binary of the crate. On a host that has
-// no windres this prints a warning and links a binary with no icon rather
-// than failing the build: a missing picture is not a reason a Windows
-// build cannot happen at all.
+// Cross-built from Linux, so mingw's `windres` turns the .rc into a COFF
+// object and `rustc-link-arg-bins` hands it to the linker for every binary
+// of the crate. A host with no windres gets a warning and a binary with no
+// icon, not a failed build.
 #[allow(dead_code)]
 fn embed_windows_icon() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
@@ -35,7 +30,7 @@ fn embed_windows_icon() {
     let rc = out.join("icon.rc");
     let obj = out.join("icon.o");
     // The path goes into the .rc quoted, and a backslash there is an
-    // escape — so forward slashes, which windres accepts everywhere.
+    // escape, so use forward slashes, which windres accepts everywhere.
     let path = ico.display().to_string().replace('\\', "/");
     if std::fs::write(&rc, format!("1 ICON \"{path}\"\n")).is_err() {
         println!("cargo:warning=could not write {}: the .exe gets no icon", rc.display());

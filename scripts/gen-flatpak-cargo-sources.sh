@@ -6,21 +6,20 @@
 # what this file is (every crate + its .cargo-checksum.json + the cargo
 # config that redirects crates-io at the vendor directory).
 #
-# **Two lock files, one vendor directory.** `launcher-qt/` declares its own
-# cargo workspace (ADR-015) and it is the launcher the Flatpak installs, so
-# its crates have to be declared too. The generator takes one lock file at
-# a time, so it is run once per lock and the results are merged on their
-# `dest`: the two share most of their crates at identical versions, and one
-# `cargo/config` covers both because `CARGO_HOME` is the same for both
-# builds.
+# Two lock files, one vendor directory. `launcher-qt/` is its own cargo
+# workspace (ADR-015) and the launcher the Flatpak installs, so its crates
+# are declared too. The generator takes one lock file at a time, so it
+# runs once per lock and the results are merged on their `dest`. The two
+# share most crates at identical versions, and one `cargo/config` covers
+# both because `CARGO_HOME` is the same for both builds.
 #
 # Run it after any dependency change in either workspace, and commit the
 # result:
 #   scripts/gen-flatpak-cargo-sources.sh
 #
 # The generator is upstream's (flatpak/flatpak-builder-tools, MIT), pinned
-# to a commit and checked against its hash rather than trusted from a
-# moving branch — it is a script this repo executes. It needs aiohttp and
+# to a commit and checked against its hash, since this repo executes it.
+# It needs aiohttp and
 # tomlkit, supplied by uv so nothing is installed on the host.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

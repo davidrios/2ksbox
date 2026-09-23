@@ -1,5 +1,5 @@
 /*
- * device.h -- 2ksbox's stand-in for 86Box's <86box/device.h>. The vendored
+ * device.h: 2ksbox's stand-in for 86Box's <86box/device.h>. The vendored
  * vid_voodoo.c defines its configuration table with these types (designated
  * initialisers, so the field names and the constants must match upstream)
  * and reads it back through device_get_config_*; here the answers come from

@@ -5,28 +5,28 @@ for people who *use* 2ksbox. This covers building stage by stage, the
 player's command line and environment, the launcher's front ends,
 packaging, logs and licensing. Neighbours:
 
-- `docs/00-status.md` — current state, open threads, next steps,
+- `docs/00-status.md`: current state, open threads, next steps,
   cross-cutting gotchas. Read it first.
-- `docs/testing.md` — the testing policy and every test tool.
-- `CLAUDE.md` — the locked decisions and conventions in brief.
-- `docs/tracks/` — one document per work track.
-- `patches/qemu/README.md` — every QEMU patch.
-- [build-macos.md](build-macos.md) and [build-windows.md](build-windows.md)
-  — the platform specifics.
+- `docs/testing.md`: the testing policy and every test tool.
+- `CLAUDE.md`: the locked decisions and conventions in brief.
+- `docs/tracks/`: one document per work track.
+- `patches/qemu/README.md`: every QEMU patch.
+- [build-macos.md](build-macos.md) and [build-windows.md](build-windows.md):
+  the platform specifics.
 
 ## What exists vs. what we build
 
 | Piece | Status |
 |---|---|
-| x86 emulation | Exists — a QEMU fork, trimmed to what we use, with our own TCG fast paths (x87, SSE, SIMD, REP strings, same-value SMC, inline TB lookup); KVM / WHPX on x86 hosts |
-| Guest 3D | **We build** — the paravirtual Direct3D device (`d3dpt`, a host executor on DXVK), qemu-3dfx's GL pass-through, OpenGLide as the host Glide wrapper, and an emulated Voodoo 2 (doc 21) |
-| Guest display drivers | **We build** — `d3dpt-vga` drivers for XP (miniport + DX8 DDI, doc 15) and Win98 (mini-VDD + 16-bit driver, doc 19); WineD3D in the guest as the fallback |
-| Guest music | **We build** — OPL3 and MPU-401 devices over `libsynth` (doc 20) |
-| CRT shaders | Exists — libretro slang presets through librashader (a library, not RetroArch) |
-| Player | **We build** — in-process QEMU, wgpu + librashader, mode analysis, low-latency audio (Rust) |
-| Launcher | **We build** — `launcher-core`, shipped as `launcher-qt` (Qt 6 / QML via cxx-qt); `launcher-capi` for other languages |
-| CD-ROM backend | **We build** — `libdisc` (cue/bin, subchannel, CD-DA, `isodir:` folders), the ATAPI patches, the disc shelf |
-| Machine families | **We build** — Win98, XP, DOS (throttled CPU rates) and Other |
+| x86 emulation | Exists: a QEMU fork, trimmed to what we use, with our own TCG fast paths (x87, SSE, SIMD, REP strings, same-value SMC, inline TB lookup); KVM / WHPX on x86 hosts |
+| Guest 3D | We build the paravirtual Direct3D device (`d3dpt`, a host executor on DXVK), qemu-3dfx's GL pass-through, OpenGLide as the host Glide wrapper, and an emulated Voodoo 2 (doc 21) |
+| Guest display drivers | We build `d3dpt-vga` drivers for XP (miniport + DX8 DDI, doc 15) and Win98 (mini-VDD + 16-bit driver, doc 19); WineD3D in the guest is the fallback |
+| Guest music | We build OPL3 and MPU-401 devices over `libsynth` (doc 20) |
+| CRT shaders | Exists: libretro slang presets through librashader (a library, not RetroArch) |
+| Player | We build it: in-process QEMU, wgpu + librashader, mode analysis, low-latency audio (Rust) |
+| Launcher | We build `launcher-core`, shipped as `launcher-qt` (Qt 6 / QML via cxx-qt), and `launcher-capi` for other languages |
+| CD-ROM backend | We build `libdisc` (cue/bin, subchannel, CD-DA, `isodir:` folders), the ATAPI patches, the disc shelf |
+| Machine families | We build Win98, XP, DOS (throttled CPU rates) and Other |
 
 Authentic-hardware emulation (a real S3, cycle-accurate chipsets) is
 86Box's territory and out of scope. The one exception is the Voodoo 2,
@@ -35,7 +35,7 @@ chip runs Glide 3 and statically linked Glide titles (ADR-016).
 
 ## Design docs
 
-0. [**Status and how to resume**](00-status.md) — read first
+0. [**Status and how to resume**](00-status.md) (read first)
 1. [Goals and non-goals](01-goals.md)
 2. [Architecture: in-process QEMU, process model, threading](02-architecture.md)
 3. [Display pipeline: pixel accuracy, CRT shaders, latency](03-display-pipeline.md)
@@ -66,8 +66,8 @@ Also: [testing](testing.md), [macOS](build-macos.md),
 ## The build, stage by stage
 
 `scripts/build.sh` is the one command, and the one to run after every
-`git pull`: it works out what has to be redone. `--help` lists the
-stages (`qemu rust qt dxvk exec glide guest`), naming stages builds only
+`git pull`. It works out what has to be redone. `--help` lists the
+stages (`qemu rust qt dxvk exec glide guest`). Naming stages builds only
 those, `--test` follows with `scripts/test.sh host`, and a stage whose
 tools are missing is skipped with the reason in the closing summary.
 What it runs, for when one stage has to be driven by hand:
@@ -90,39 +90,40 @@ guest-tools/build-wrappers.sh
 What each stage needs to know:
 
 - **Prepare steps are stamped.** A prepare re-applies its patch queue
-  and so hands the build system a few thousand fresh mtimes: running it
-  every time costs a full QEMU rebuild, never running it costs a stale
-  tree. `build.sh` hashes each prepare's inputs into `build/.stamp-*`
-  and skips it when they are unchanged; `-f` re-runs them all (after a
-  tree was edited by hand, or a checkout moved). An overlay directory
-  missing from a stamp's input list rebuilds the *old* file silently.
+  and so hands the build system a few thousand fresh mtimes. Running it
+  every time costs a full QEMU rebuild, and never running it leaves a
+  stale tree. `build.sh` hashes each prepare's inputs into
+  `build/.stamp-*` and skips it when they are unchanged. `-f` re-runs
+  them all (after a tree was edited by hand, or a checkout moved). An
+  overlay missing from a stamp's inputs is a trap (00-status,
+  "Building").
 - **`qemu/embed/` is an rsync copy of `embed/`** made by
   `prepare-qemu.sh`. A stale copy links the player against an old
   library: `undefined symbol _qemu_embed_…` (on macOS `Undefined
   symbols for architecture arm64: _qemu_embed_…`). `qemu-embed/build.rs`
   warns when the copy is stale. Bumping the embed API moves the header's
   `QEMU_EMBED_API_VERSION` and the crate's `API_VERSION` together.
-- **Re-run `configure-qemu.sh` whenever meson files change**, and after a
-  prepare, before `ninja`: a refreshed overlay can make ninja regenerate
-  the build with default options, `werror` back on among them.
-  `configure-qemu.sh` also builds `libdisc` (the CD-ROM model) and
+- **Re-run `configure-qemu.sh` whenever meson files change**, and after
+  a prepare, before `ninja`. A refreshed overlay can make ninja
+  regenerate the build with default options, `werror` back on among
+  them. `configure-qemu.sh` also builds `libdisc` (the CD-ROM model) and
   `libsynth` (the music engines) and links both into QEMU (patches 50
   and 60).
 - **`QEMU_PYTHON=<interpreter>`** makes `configure-qemu.sh` use that
-  interpreter and never consult uv (3.8–3.13 enforced; 3.14 only with the
-  real `distlib`) — for a sandbox that has a Python and cannot fetch one,
-  i.e. the Flatpak.
+  interpreter and never consult uv (3.8–3.13 enforced; 3.14 only with
+  the real `distlib`). It is for a sandbox that has a Python and cannot
+  fetch one, such as the Flatpak.
 - **A `D3DPT_PROTO_VERSION` bump makes the executor and the guest-tools
-  ISO stale, and neither says so**: the suite fails as `d3dpt-dp2:
+  ISO stale, and neither says so.** The suite fails as `d3dpt-dp2:
   protocol mismatch` and as a guest that never attaches. `build.sh`
-  rebuilds both; on a host that cannot (no mingw) its summary names the
+  rebuilds both. On a host that cannot (no mingw), its summary names the
   artefacts left behind.
 - **On macOS every stage targets Homebrew's floor**
-  (`scripts/macos-floor.sh`): `build.sh` and `test.sh` export
-  `MACOSX_DEPLOYMENT_TARGET`, QEMU and DXVK take it as a flag, and a cargo
-  workspace linked for a newer macOS is cleaned first
+  (`scripts/macos-floor.sh`). `build.sh` and `test.sh` export
+  `MACOSX_DEPLOYMENT_TARGET`, QEMU and DXVK take it as a flag, and a
+  cargo workspace linked for a newer macOS is cleaned first
   ([build-macos.md](build-macos.md), "The floor").
-- A build belongs to one checkout; never borrow another's `build/`,
+- A build belongs to one checkout. Never borrow another's `build/`,
   `target/` or `*_BIN` (00-status, "Building").
 
 The player with no launcher at all:
@@ -134,7 +135,7 @@ target/release/player -- -L $PWD/qemu/pc-bios -machine pc -m 32 \
 ```
 
 Everything after `--` is a `qemu-system-i386` command line. The player
-adds `-display none` and `-audiodev embed,id=embed0` itself; attach the
+adds `-display none` and `-audiodev embed,id=embed0` itself. Attach the
 audio with e.g. `-machine pc,pcspk-audiodev=embed0` or
 `-device sb16,audiodev=embed0`. `launcherx --print-args <machine.toml>`
 gives the exact line a launcher machine runs.
@@ -151,7 +152,7 @@ player [--shader <preset.slangp>] [--shader-params <k=v,...>]
 ### Shaders
 
 - `--shader <preset.slangp>` (or `PLAYER_SHADER=`) runs a libretro slang
-  preset, e.g. `third_party/slang-shaders/crt/crt-lottes.slangp`;
+  preset, e.g. `third_party/slang-shaders/crt/crt-lottes.slangp`.
   `shaders/README.md` has the curated ones.
 - `--shader-params <name=value,...>` (or `PLAYER_SHADER_PARAMS=`)
   overrides the preset's parameter defaults by name
@@ -168,18 +169,18 @@ player [--shader <preset.slangp>] [--shader-params <k=v,...>]
 - `PLAYER_DUMP=frame.png PLAYER_DUMP_SEQ=150` dumps guest frame 150 and
   exits.
 - `PLAYER_DUMP_OUT=out.png` dumps the *shaded* frame (GPU readback) at
-  `PLAYER_DUMP_SEQ` and exits; works while the window is occluded.
-- `Ctrl+Alt+S` writes the guest's own frame — native size, no geometry
-  stage, no CRT chain — as `PLAYER_SHOT_DIR/2ksbox-NNNN.png` (the
-  working directory when unset).
+  `PLAYER_DUMP_SEQ` and exits. It works while the window is occluded.
+- `Ctrl+Alt+S` writes the guest's own frame (native size, no geometry
+  stage, no CRT chain) as `PLAYER_SHOT_DIR/2ksbox-NNNN.png`, or in the
+  working directory when that is unset.
 - `PLAYER_SHOT_EVERY=300` takes that shot every 300 presented guest
-  frames, driven from the wake path so a window behind a terminal still
-  shoots. It is how a headless run sees a 3D frame: a QMP screendump
-  shows the VGA surface, frozen while the 3D device presents.
+  frames. It is driven from the wake path, so a window behind a terminal
+  still shoots. This is how a headless run sees a 3D frame, since a QMP
+  screendump shows the VGA surface, frozen while the 3D device presents.
 - `PLAYER_REFRESH_MS=16` (default) is the guest frame pull interval
   (QEMU's own default is 30).
-- `PLAYER_REFRESH_LOG=1` prints a frame counter every 100 guest frames —
-  whether the guest is drawing at all.
+- `PLAYER_REFRESH_LOG=1` prints a frame counter every 100 guest frames,
+  which tells whether the guest is drawing at all.
 - `PLAYER_LATENCY=1` prints publish→present latency percentiles every
   240 guest frames.
 - `PLAYER_ZERO_COPY=0` refuses every dma-buf the backend offers, so 3D
@@ -187,55 +188,55 @@ player [--shader <preset.slangp>] [--shader-params <k=v,...>]
   readback copies under a lock, so a wrong picture that survives it is
   not the ring's.
 - `PLAYER_PUBLISH_LOG=1` prints a line per published frame naming its
-  source — a ring slot and which one, the readback path, the VGA
-  surface, the cursor's republish — and a line per presented frame. Two
-  sources taking turns is a flicker, invisible in the picture; pair the
-  presented slot with `PLAYER_SHOT_EVERY=1`'s shots.
+  source (a ring slot and which one, the readback path, the VGA surface,
+  the cursor's republish) and a line per presented frame. Two sources
+  taking turns is a flicker that the picture alone does not show. Pair
+  the presented slot with `PLAYER_SHOT_EVERY=1`'s shots.
 - `PLAYER_CURSOR_LOG=1` prints each change of the host cursor: default,
   hidden, or the guest's shape.
 
 ### Keys, pointer and window
 
 - `PLAYER_KEYS="120:enter,360:ctrl+g"` presses keys or chords at guest
-  frames; each is held `PLAYER_KEYS_HOLD` frames (default 6, ~100 ms),
+  frames. Each is held `PLAYER_KEYS_HOLD` frames (default 6, ~100 ms),
   because a down+up in one flush is a zero-length press that a game
   polling the keyboard state never sees.
 - `Ctrl+Alt+G` releases the grab. `Ctrl+Alt+Shift+D` is Ctrl+Alt+Del in
   the guest. `Ctrl+Alt+Shift+F` toggles borderless full screen on the
   window's monitor.
 - A close with Alt held (Alt+F4 while the host has its shortcuts) asks
-  first, in the window: Enter, Close or a second Alt+F4 stops the
-  machine, Esc or Back returns to it. The title bar's close button does
-  not ask.
+  first, in the window. Enter, Close or a second Alt+F4 stops the
+  machine, and Esc or Back returns to it. The title bar's close button
+  does not ask.
 - While the window has focus the host's shortcuts go to the guest, so
-  the Windows key opens the guest's Start menu: Wayland's shortcut
-  inhibitor, an X11 keyboard grab, raw input with `RIDEV_NOHOTKEYS` on
-  Windows (the two Windows keys, every Win+ shortcut and Ctrl+Esc;
-  Alt+Tab, Alt+F4, Ctrl+Alt+Del and Win+L are system hotkeys no program
-  gets), nothing on macOS. `Ctrl+Alt+K` toggles them between host and
-  guest (the title says when they are the host's).
-  `PLAYER_KEYBOARD_CAPTURE=0` starts a run with them the host's —
-  `scripts/test.sh` sets it. `PLAYER_KEYBOARD_LOG=1` prints what the
-  Windows side did: whether the raw-input registration was accepted, and
-  what winit and Windows each thought about focus at every change (a
-  shortcut that still reaches the host is nearly always a window that
-  was not in front). Design and measurements: doc 03 §"Input path",
-  `player/src/kbcapture.rs`.
+  the Windows key opens the guest's Start menu. The mechanism is
+  Wayland's shortcut inhibitor, an X11 keyboard grab, or raw input with
+  `RIDEV_NOHOTKEYS` on Windows (the two Windows keys, every Win+
+  shortcut and Ctrl+Esc; Alt+Tab, Alt+F4, Ctrl+Alt+Del and Win+L are
+  system hotkeys no program gets). macOS has none. `Ctrl+Alt+K` toggles
+  them between host and guest (the title says when they are the
+  host's). `PLAYER_KEYBOARD_CAPTURE=0` starts a run with them the
+  host's, and `scripts/test.sh` sets it. `PLAYER_KEYBOARD_LOG=1` prints
+  what the Windows side did: whether the raw-input registration was
+  accepted, and what winit and Windows each thought about focus at every
+  change. A shortcut that still reaches the host is nearly always a
+  window that was not in front. Design and measurements: doc 03 §"Input
+  path", `player/src/kbcapture.rs`.
 - `qemu-embed: input:` lines on stderr report the embed input queue's
-  drain latency, zero-length presses and drops — only when something is
+  drain latency, zero-length presses and drops, only when something is
   off.
 
 ### Audio and music
 
 - `PLAYER_AUDIO_MS=40` (default) is the cushion QEMU keeps in the ring
-  under the host device's pull: latency on top of the device's period,
-  and how late QEMU's main loop may run before a gap is heard. Raise it
-  if gaps are counted, lower it under KVM. The stderr lines to read:
-  `qemu-embed: audio:` and `[audio] … underruns` (gaps), `[audio] device
-  asks for N frames` (how chunky the device is), and `[audio] the
-  guest's mix went past full scale` (voices summed past full scale —
-  QEMU applies no mixer volume there — and how far the limiter turned it
-  down). Pacing design: doc 11.
+  under the host device's pull. It is latency on top of the device's
+  period, and how late QEMU's main loop may run before a gap is heard.
+  Raise it if gaps are counted, lower it under KVM. The stderr lines to
+  read are `qemu-embed: audio:` and `[audio] … underruns` (gaps),
+  `[audio] device asks for N frames` (how chunky the device is), and
+  `[audio] the guest's mix went past full scale` (voices summed past
+  full scale, since QEMU applies no mixer volume there, and how far the
+  limiter turned it down). Pacing design: doc 11.
 - `QEMU_EMBED_AUDIO_TRACE=1` prints the embed audiodev's pacing, a line
   per call.
 - `PLAYER_AUDIO_NULL=<frames>` drains the ring with no device, like a
@@ -244,24 +245,24 @@ player [--shader <preset.slangp>] [--shader-params <k=v,...>]
 - `PLAYER_AUDIO_TAP=out.wav` records exactly what the player handed the
   device, padded silence included (`tools/audio-glitch-test.py` counts
   clicks in it).
-- `LIBSYNTH_SF2=<file.sf2>` is the General MIDI bank (doc 20). The player
-  sets it itself — the packaged bank, or `soundfonts/` in a checkout —
-  so this is for trying another; a machine that names its own wins.
-  `LIBSYNTH_MT32_ROMS=<dir>` is the same for the CM-32L's ROMs, which are
-  the user's own.
+- `LIBSYNTH_SF2=<file.sf2>` is the General MIDI bank (doc 20). The
+  player sets it itself (the packaged bank, or `soundfonts/` in a
+  checkout), so this is for trying another. A machine that names its own
+  wins. `LIBSYNTH_MT32_ROMS=<dir>` is the same for the CM-32L's ROMs,
+  which are the user's own.
 - `LIBSYNTH_MIDI_LOG=<file>` / `LIBSYNTH_OPL_LOG=<file>` capture what a
   guest wrote to a music device, for `synthx midilog` / `opllog` /
   `play` (doc 20 §7.2).
 
 ### Gamepads
 
-The track is `docs/tracks/m13-gamepads.md`; the launcher writes `--pad`
+The track is `docs/tracks/m13-gamepads.md`. The launcher writes `--pad`
 from the machine's `pad` setting (`launcherx --print-player-args
 <machine.toml>` shows it).
 
-- `player --pads` says what this host can read — the one place a build
-  without the `gilrs` feature, or a sandbox with no `/dev/input`, reports
-  itself.
+- `player --pads` says what this host can read. It is the one place a
+  build without the `gilrs` feature, or a sandbox with no `/dev/input`,
+  reports itself.
 - `--pad usb` (or `PLAYER_PAD=usb`) drives the machine's `usb-gamepad`
   (patch 26): two sticks, an 8-way hat and twelve buttons, bound by the
   HID driver of XP, 98 SE and Me with nothing installed (98 SE asks for
@@ -270,11 +271,11 @@ from the machine's `pad` setting (`launcherx --print-player-args
 - `--pad gameport` drives the gameport at 0x201 (patch 27) with the
   same pad state: two axes and four buttons, the face buttons as 1–4,
   the d-pad folded onto the first stick's axes. DOS and Win98 are
-  offered it; on 9x the port wants Add New Hardware and a calibration.
-- `--pad keys` (or `PLAYER_PAD=keys`) maps the pad onto keys: d-pad and
-  left stick are the arrows, the face buttons Ctrl, Alt, Space and Enter,
-  Start is Esc. Works on every guest; a game asking DirectInput for a
-  joystick still finds none.
+  offered it. On 9x the port wants Add New Hardware and a calibration.
+- `--pad keys` (or `PLAYER_PAD=keys`) maps the pad onto keys. The d-pad
+  and left stick are the arrows, the face buttons Ctrl, Alt, Space and
+  Enter, and Start is Esc. It works on every guest, but a game asking
+  DirectInput for a joystick still finds none.
 - `PLAYER_PAD_SCRIPT="30:lx=1.0,45:south=1,51:south=0"` is a synthetic
   pad that wins over real hardware: a control set to a value at a guest
   frame (frames, not milliseconds, so a run lands in the same place
@@ -284,16 +285,16 @@ from the machine's `pad` setting (`launcherx --print-player-args
   `select`/`start` (0 or 1).
 - `PLAYER_PAD_LOG=1` prints every shaped reading and its transitions.
 - `PLAYER_PAD_SHAPING="0.30,0.55,0.40"` overrides deadzone, press and
-  release. Release must be below press: with one threshold a stick held
-  at it chatters at the poll rate.
+  release. Release must be below press, because with one threshold a
+  stick held at it chatters at the poll rate.
 - `player --pad-sweep <frames>` replays `PLAYER_PAD_SCRIPT` with no
   window, QEMU or guest and prints what came out (with `--pad keys`, the
-  key presses too) — the `pad` check.
+  key presses too). It is the `pad` check.
 
 ### QMP
 
 The player always attaches a control monitor over a socketpair (no
-socket file); a script adds its own `-qmp unix:…,server,nowait`.
+socket file). A script adds its own `-qmp unix:…,server,nowait`.
 
 - `PLAYER_QMP=1` logs every QMP event (SHUTDOWN, RESET, STOP… are
   logged regardless).
@@ -307,10 +308,10 @@ The `d3dpt` device loads the executor (`D3DPT_EXEC_LIB`, else
 `build/d3dpt/libd3dpt_exec.so`) and DXVK (`D3DPT_DXVK_LIB`) on the
 guest's first use. `D3DPT_EXEC=auto|dxvk|wine|none` picks the back end,
 as does the adapter's `exec=` (`-global d3dpt-vga.exec=wine` in the
-machine form's extra arguments); `-global d3dpt-vga.no-exec=on` models a
+machine form's extra arguments). `-global d3dpt-vga.no-exec=on` models a
 host with no executor at all. On Windows `D3DPT_D3D9=auto|dxvk|system`
 picks the Direct3D 9 underneath ([build-windows.md](build-windows.md)).
-`launcher --host-check` says which back end this host gets.
+`launcherx --host-check` says which back end this host gets.
 
 The executor on Wine (ADR-018) is loaded through
 `libd3dpt_exec_remote` inside QEMU, whose knobs are:
@@ -330,37 +331,38 @@ Diagnostics:
   frame as `dir/frame-NNNNNN.ppm` (bare `qemu-system-i386` too).
 - `D3DPT_DP2_TRACE`, `D3DPT_DDI_REREAD`, `D3DPT_DDI_NOFOG` trace the
   display driver's DP2 stream (doc 15; `docs/testing.md`).
-- Guest side: `D3DPT_TRACE=1` or a file `d3dpt_trace.on` next to the
+- Guest side, `D3DPT_TRACE=1` or a file `d3dpt_trace.on` next to the
   DLL writes the creation / lock / upload / present calls to
-  `d3d8_trace.log` / `d3d9_trace.log`; a DLL that cannot open the device
+  `d3d8_trace.log` / `d3d9_trace.log`. A DLL that cannot open the device
   forwards `Direct3DCreateN` to the system DLL.
-- While a 3D device is active the player shows the VGA surface again
+- While a 3D device is active, the player shows the VGA surface again
   after 1 s without a presented frame if the guest drew on it (an error
   box, a movie, a crashed game): `[display] no 3D frame for …`.
 - `player --companions` prints what `player/src/companions.rs` resolved
-  for the Glide wrapper, the executor, DXVK and the Wine pair — the
+  for the Glide wrapper, the executor, DXVK and the Wine pair. It is the
   packagers' check.
 
 ### Glide pass-through (doc 12 §5)
 
 The guest's `GLIDE2X.DLL` reaches a host wrapper QEMU dlopens at
-`grGlideInit`; qemu-3dfx ships none, so ours is OpenGLide. It is found at
-`QEMU_GLIDE_LIB`, else `build/glide/libglide2x.so`, else the loader's
-path — the line `glidept: wrapper <path>` says which — and renders into
-the same window-less context as the GL pass-through, so Glide frames go
-through the shader chain. `GLIDE_HOST_LOG=<path|->` turns on its log.
-Guest side: `GLIDE\` on the ISO (`SETUP.EXE` installs it).
+`grGlideInit`. qemu-3dfx ships none, so ours is OpenGLide. QEMU finds it
+at `QEMU_GLIDE_LIB`, else `build/glide/libglide2x.so`, else on the
+loader's path, and the line `glidept: wrapper <path>` says which. It
+renders into the same window-less context as the GL pass-through, so
+Glide frames go through the shader chain. `GLIDE_HOST_LOG=<path|->`
+turns on its log. Guest side: `GLIDE\` on the ISO (`SETUP.EXE` installs
+it).
 
 ### OpenGL pass-through (doc 12)
 
 The guest's `OPENGL32.DLL` (`OPENGL\` on the ISO, `SETUP /GAME 3`) is
-qemu-3dfx's wrapper; it reaches the device through the mapper the Glide
+qemu-3dfx's wrapper. It reaches the device through the mapper the Glide
 component installs. It reads **`WRAPGL32.EXT` from the game's own
-folder**, shipped beside it with `ExtensionsYear,1997`: a modern host's
-extension string runs to thousands of characters and a 1990s title
+folder**, shipped beside it with `ExtensionsYear,1997`. A modern host's
+extension string runs to thousands of characters, and a 1990s title
 copies it into a fixed buffer (GLQuake's is 4096 bytes; it returns into
 the text of the list). Raise the year for a later game or delete the
-file; `SETUP /GAME` never overwrites one.
+file. `SETUP /GAME` never overwrites one.
 
 qemu-3dfx's host-side knobs are in `mesagl.cfg`, read from QEMU's
 *current working directory* at start-up, one `Key,value` per line:
@@ -368,49 +370,50 @@ qemu-3dfx's host-side knobs are in `mesagl.cfg`, read from QEMU's
 `BufOAccelEN`, `ContextMSAA`, `ContextSRGB`, `ContextVsyncOff`,
 `RenderScalerOff`, `FpsLimit`, `DumpShader`, `CheckError`, `FifoTrace`,
 `FuncTrace`. On macOS `DispTimerMS` also picks the GL profile (0, the
-default, core; non-zero compatibility). Presentation that looks janky
-unless the mouse moves is the first thing to try `DispTimerMS,16`,
-`ContextVsyncOff,1` or `FpsLimit,60` on.
+default, is core; non-zero is compatibility). If presentation stutters
+unless the mouse moves, try `DispTimerMS,16`, `ContextVsyncOff,1` or
+`FpsLimit,60` first.
 
 Host side, on Linux, frames go through the embed backend's dma-buf ring
 (doc 12 §4):
 
 - `EMBED_ZC_PROBE=<n>` sets how often a slot is checked for still being
   the memory it was made over (a known colour written through GL, read
-  back with `gbm_bo_map`). A slot that fails is freed and made again —
-  the repair, not a diagnostic. Dense while the ring is young, then one
-  present in 512; `=0` turns it off, and `EMBED_ZC_HEAL=0` leaves a bad
-  slot alone to study.
+  back with `gbm_bo_map`). A slot that fails is freed and made again.
+  This is the repair, not a diagnostic. Checks are dense while the ring
+  is young, then one present in 512. `=0` turns it off, and
+  `EMBED_ZC_HEAL=0` leaves a bad slot alone to study.
 - `EMBED_ZC_SLOTS=<n>` uses the first n buffers (default all).
 - `EMBED_ZC_CHECK=<n>` reads four pixels of the buffer just blitted,
-  every n-th present, through GL and from the buffer's memory. Weaker
-  than the probe: while the picture does not change the two agree
-  whether or not the buffer is written. `EMBED_ZC_MARK=1` adds a line
-  per present, for cutting a `FuncTrace,2` log.
+  every n-th present, through GL and from the buffer's memory. It is
+  weaker than the probe: while the picture does not change, the two
+  agree whether or not the buffer is written. `EMBED_ZC_MARK=1` adds a
+  line per present, for cutting a `FuncTrace,2` log.
 - `PLAYER_ZC_IMPORT=0` accepts every dma-buf and imports none (declining
-  one turns the ring off), so the ring runs with no Vulkan behind it; the
-  picture is wrong while set. It is for reading `EMBED_ZC_CHECK` lines.
+  one turns the ring off), so the ring runs with no Vulkan behind it.
+  The picture is wrong while set. It is for reading `EMBED_ZC_CHECK`
+  lines.
 - `EMBED_ZC_SETTLE=<ms>` waits that long after offering a buffer before
-  using it — accepting an offer only queues the import. It rules the
-  import race out; it is not the cause.
+  using it, since accepting an offer only queues the import. It rules
+  the import race out. It is not the cause.
 - `tools/zc-vulkan-test.c` drives the ring with the frontend's Vulkan
   import alone (`docs/testing.md`).
 
 ## The launcher's front ends
 
-Everything the launcher *decides* — the `machine.toml` format, the
-library, the disc shelf, snapshots, shader profiles, the preview's
-render path, every window's state machine and the sentences it shows —
-lives in **`launcher-core`**. A front end draws and forwards events
-(doc 07). **`launcher-qt` is the one every package installs** as
-`2ksbox` (ADR-015); the egui front end was deleted (ADR-017).
+Everything the launcher *decides* lives in **`launcher-core`**: the
+`machine.toml` format, the library, the disc shelf, snapshots, shader
+profiles, the preview's render path, every window's state machine and
+the sentences it shows. A front end draws and forwards events (doc 07).
+**`launcher-qt` is the one every package installs** as `2ksbox`
+(ADR-015). The egui front end was deleted (ADR-017).
 
 `launcher-qt` is its own cargo workspace, so a root `cargo build` never
-needs Qt 6; `build.sh`'s `qt` stage builds it, and a host with no Qt 6
-skips that stage and can roll no package. There is no CMake:
+needs Qt 6. `build.sh`'s `qt` stage builds it, and a host with no Qt 6
+skips that stage and can roll no package. There is no CMake;
 `cxx-qt-build` finds Qt through `qmake6`. In a checkout the binary is
-`launcher-qt/target/release/launcher-qt` and finds the player in the root
-`target/release` (`LAUNCHER_PLAYER_BIN` overrides).
+`launcher-qt/target/release/launcher-qt`, and it finds the player in the
+root `target/release` (`LAUNCHER_PLAYER_BIN` overrides).
 
 The toolkit-free debug verbs (`launcher_core::cli`: `--print-args`,
 `--print-player-args`, `--new`, `--discs`, `--host-check`, `--paths`,
@@ -423,11 +426,11 @@ cargo build --release -p launcher-core --bin launcherx
 target/release/launcherx --print-args ~/.local/share/2ksbox/machines/xp/machine.toml
 ```
 
-Real windows are grabbed headless by `launcher-qt` itself
+`launcher-qt` grabs its real windows headless itself
 (`QT_QPA_PLATFORM=offscreen` with `LAUNCHER_QT_SHOT`, doc 07).
 
-**`launcher-capi`** is a C ABI over the same models — opaque handles,
-index-addressed rows, caller-owned strings — for a front end in Swift or
+**`launcher-capi`** is a C ABI over the same models (opaque handles,
+index-addressed rows, caller-owned strings) for a front end in Swift or
 anything that speaks C:
 
 ```sh
@@ -435,14 +438,14 @@ cargo build -p launcher-capi            # liblauncher_capi.{a,so}; not a default
 cc -Ilauncher-capi/include my_frontend.c target/debug/liblauncher_capi.a -lstdc++ -lm -ldl -lpthread
 ```
 
-`launcher-capi/include/launcher_core.h` is the header;
+`launcher-capi/include/launcher_core.h` is the header.
 `launcher-capi/examples/smoke.c` is a working miniature front end and
 the `capi` check.
 
 ## Testing
 
 Integration and end-to-end tests only, run locally by
-`scripts/test.sh host|all`; policy and every tool are in
+`scripts/test.sh host|all`. The policy and every tool are in
 [testing.md](testing.md). CI (`.github/workflows/ci.yml`) is
 manual-trigger only (`workflow_dispatch`) and never runs the suite.
 
@@ -463,16 +466,16 @@ scripts/package-linux.sh --with-shaders   # + the ~80 MB preset collection
 It stages the launcher, the player, the embed library, our `qemu-img`,
 the firmware, the guest-tools ISO and the libraries QEMU `dlopen`s
 (Glide wrapper, executor + DXVK, the Wine pair) into one relocatable
-prefix, checks that everything resolves inside the package from a
-scrubbed environment (`docs/testing.md`), and rolls a tarball. **Qt 6 is
-not in it**: it needs the distribution's `qt6-base` and
+prefix. It checks that everything resolves inside the package from a
+scrubbed environment (`docs/testing.md`) and rolls a tarball. **Qt 6 is
+not in it.** It needs the distribution's `qt6-base` and
 `qt6-declarative` (Debian/Ubuntu: `libqt6quick6` plus the
 `qml6-module-qtquick-*` packages), and `install.sh` names them when the
-loader cannot find them. The extracted tree runs in place (`bin/2ksbox`);
+loader cannot find them. The extracted tree runs in place (`bin/2ksbox`).
 `install.sh` copies it into a prefix (`~/.local` by default) with a
 desktop entry, `com._2ksbox.Launcher.desktop` (the window's `app_id`).
 The tarball ships no system libraries, so it wants a host much like the
-one that built it; the Flatpak is the portable answer.
+one that built it. The Flatpak is the portable answer.
 
 ### Flatpak
 
@@ -485,19 +488,19 @@ Everything is built from source against `org.kde.Sdk` 6.10 (Qt comes
 from KDE's runtime, `org.freedesktop.Platform` 25.08 underneath). Set
 `FLATPAK_BUILD_DIR` (and flatpak's own `FLATPAK_USER_DIR`) to keep the
 ~12 GB build tree off the root filesystem. The build is offline, as
-Flathub requires: every crate is declared with a checksum in
-`packaging/flatpak/cargo-sources.json` — run
+Flathub requires. Every crate is declared with a checksum in
+`packaging/flatpak/cargo-sources.json`. Run
 `scripts/gen-flatpak-cargo-sources.sh` and commit the result whenever a
 dependency changes.
 
 ### macOS (`2ksbox.app` / `.dmg`)
 
-`scripts/package-macos.sh` on Apple Silicon: the whole non-system dylib
-closure, Qt through `macdeployqt`, the Glide wrapper, the executor with
-the LunarG loader and KosmicKrisp, signed with the hardened runtime and
-the JIT entitlement, notarized, stapled. `--community` is ADR-019's
-community build, which adds the Wine pair. Details in
-[build-macos.md](build-macos.md), "The app".
+`scripts/package-macos.sh` on Apple Silicon bundles the whole non-system
+dylib closure, Qt through `macdeployqt`, the Glide wrapper, and the
+executor with the LunarG loader and KosmicKrisp. It signs with the
+hardened runtime and the JIT entitlement, notarizes and staples.
+`--community` is ADR-019's community build, which adds the Wine pair.
+Details in [build-macos.md](build-macos.md), "The app".
 
 ### Windows (`.zip`)
 
@@ -510,8 +513,8 @@ in [build-windows.md](build-windows.md).
 
 ## Diagnostics and logs
 
-- `launcher --paths` prints where this build looks for each companion —
-  the first question when something says a file is missing.
+- `launcher --paths` prints where this build looks for each companion.
+  Ask for it first when something says a file is missing.
   `launcher --diagnose` prints the same plus this host's 3D and files it
   in `launcher.log` (beside the machine library), which is what to send
   when the launcher did not come up. On Windows, where the launcher has
@@ -519,49 +522,51 @@ in [build-windows.md](build-windows.md).
 - Every Play writes the full player command line to `launcher.log` as
   `[player] …`, quoted for pasting back into a shell.
 - The Qt front end follows the desktop's light or dark mode on every
-  platform (Qt's Windows 11 style, FluentWinUI3, on Windows —
-  `QT_QUICK_CONTROLS_STYLE=Windows` is the older look; Fusion and the
-  macOS style elsewhere). Forcing light colours is what made a mixed
-  look: a Quick Controls style draws its controls in the *platform
+  platform. On Windows it uses Qt's Windows 11 style, FluentWinUI3
+  (`QT_QUICK_CONTROLS_STYLE=Windows` is the older look), and Fusion or
+  the macOS style elsewhere. Forcing light colours is what made a mixed
+  look. A Quick Controls style draws its controls in the *platform
   theme's* palette, and a palette handed to the application reaches only
   the surfaces around them. `LAUNCHER_QT_SCHEME=light|dark` forces a
-  scheme for a comparison; `launcher.log` records the style and colours
-  a run got.
+  scheme for a comparison, and `launcher.log` records the style and
+  colours a run got.
 - On Linux the launcher asks for the **XDG desktop portal platform
-  theme** (`QT_QPA_PLATFORMTHEME=xdgdesktopportal`, set in `main.rs` when
-  the variable is empty). Qt picks a theme by `XDG_CURRENT_DESKTOP`, and
-  a session it matches nothing to (sway, a plain window manager) gets one
-  with no file dialog and no colour scheme, so `FileDialog` drew Qt's own
-  picker and a light window on a dark desktop. The portal theme wraps the
-  theme Qt would have picked and defers to it when the bus has no file
-  chooser, so KDE and GNOME lose nothing. Set the variable yourself to
-  compare (`gtk3`, `kde`, or empty for Qt's choice).
+  theme** (`QT_QPA_PLATFORMTHEME=xdgdesktopportal`, set in `main.rs`
+  when the variable is empty). Qt picks a theme by
+  `XDG_CURRENT_DESKTOP`, and a session it matches nothing to (sway, a
+  plain window manager) gets one with no file dialog and no colour
+  scheme. `FileDialog` then drew Qt's own picker and a light window on a
+  dark desktop. The portal theme wraps the theme Qt would have picked
+  and defers to it when the bus has no file chooser, so KDE and GNOME
+  lose nothing. Set the variable yourself to compare (`gtk3`, `kde`, or
+  empty for Qt's choice).
 
 ## Licensing, for packagers
 
 Everything that links QEMU in-process is GPL-2.0: the `player`,
 `qemu-embed`, and `libdisc` and `libsynth`, which are compiled into QEMU.
 
-The **launcher** — `launcher-core`, `launcher-qt`, `launcher-capi` — and
+The **launcher** (`launcher-core`, `launcher-qt`, `launcher-capi`) and
 the `shader-chain` crate it shares with the player are
 **GPL-2.0-or-later** (ADR-009). None links QEMU (the launcher spawns the
 player as a separate process), and they link Apache-2.0 crates (`ring`
 under `ureq`'s rustls, among others) that GPLv2 cannot take and GPLv3
-can; `launcher-qt` links Qt 6 under the LGPLv3 for the same reason.
+can. `launcher-qt` links Qt 6 under the LGPLv3 for the same reason.
 
-Original code is Rust wherever possible (ADR-004); C only inside
+Original code is Rust wherever possible (ADR-004). C appears only inside
 QEMU / qemu-3dfx and in guest-side era code. The GPLv2 text is in
-`COPYING`; every third-party component is in `THIRD-PARTY-NOTICES.md`.
+`COPYING`, and every third-party component is in
+`THIRD-PARTY-NOTICES.md`.
 
 **If you package or redistribute the player, read this.** Its
-dependency tree contains **Apache-2.0-only** crates — `winit`, `cpal`,
-`ab_glyph`, `codespan-reporting`, `rspirv` among them — and Apache-2.0
+dependency tree contains **Apache-2.0-only** crates (`winit`, `cpal`,
+`ab_glyph`, `codespan-reporting`, `rspirv` among them), and Apache-2.0
 is incompatible with GPLv2, which the player is pinned to because it
-links QEMU. It is a property of the modern Rust GUI stack (`winit` alone
-settles it): being clean means dropping wgpu and librashader, i.e. the
-CRT shader chain the project exists for. **We ship player binaries
-anyway**, with complete source and build scripts; the reasoning and the
-alternatives measured and rejected are ADR-010. If your distribution's
-policy cannot accept that, please open an issue rather than patching
-around it: the clean fix (QEMU in its own process) is designed and
-costed.
+links QEMU. It comes with the modern Rust GUI stack (`winit` alone
+settles it). Being clean would mean dropping wgpu and librashader, which
+is the CRT shader chain the project exists for. **We ship player
+binaries anyway**, with complete source and build scripts. The
+reasoning and the alternatives measured and rejected are ADR-010. If
+your distribution's policy cannot accept that, please open an issue
+rather than patching around it. The clean fix (QEMU in its own process)
+is designed and costed.

@@ -1,5 +1,5 @@
 /*
- * wgl-probe — the exact WGL sequence embed/mglcntx_embed.c's Windows
+ * The exact WGL sequence embed/mglcntx_embed.c's Windows
  * backend performs, without QEMU: an invisible window for a device
  * handle, a bootstrap context to reach the ARB entry points, an
  * ARB-chosen pixel format, a WGL_ARB_pbuffer standing in for the window,
@@ -8,7 +8,7 @@
  * It exists because that sequence is the one part of the Windows port
  * that cannot be checked by building it: whether a given driver will
  * hand out an offscreen pbuffer and render into it. Run it first on any
- * Windows machine that is going to run a Win98 guest with 3D — if this
+ * Windows machine that is going to run a Win98 guest with 3D. If this
  * fails there, `mesapt: no GL on this host` is what the guest will see,
  * and the reason is in this program's output rather than in a VM.
  *

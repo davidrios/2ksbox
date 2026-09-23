@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Template: scripts/package-macos.sh substitutes @VERSION@ and @MINOS@.
-     @MINOS@ is not a wish — it is the highest LC_BUILD_VERSION minos of
-     everything the bundle actually carries, computed at packaging time,
-     because a bundled Homebrew or Vulkan SDK dylib built on a newer
-     system is what really sets the floor. -->
+     @MINOS@ is the highest LC_BUILD_VERSION minos of everything the
+     bundle carries, computed at packaging time. A bundled Homebrew or
+     Vulkan SDK dylib built on a newer system is what sets the floor. -->
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>              <string>2ksbox</string>

@@ -57,8 +57,8 @@ int main(int argc, char **argv)
     hr = IDirectDraw7_GetCaps(dd, &hal, &hel);
     out("ddvmtest: GetCaps -> 0x%08lx dwVidMemTotal %lu MB dwVidMemFree %lu MB",
         (unsigned long)hr, (unsigned long)(hal.dwVidMemTotal >> 20), (unsigned long)(hal.dwVidMemFree >> 20));
-    {   /* a QueryInterface'd reference released again must leave the object alive (the
-         * shim's QI once took no reference on the real object: this Release freed it) */
+    {   /* a QueryInterface'd reference released again must leave the object alive (a
+         * shim QI that takes no reference on the real object lets this Release free it) */
         IDirectDraw7 *dd2 = NULL;
         DWORD t2 = 0, a2 = 0;
         hr = IDirectDraw7_QueryInterface(dd, &IID_IDirectDraw7, (void **)&dd2);

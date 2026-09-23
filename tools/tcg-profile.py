@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""tcg-profile.py <dir> — the report behind tools/tcg-profile.sh (M9 track).
+"""tcg-profile.py <dir>: the report behind tools/tcg-profile.sh (M9 track).
 
 Reads <dir>/sample.txt (macOS `sample` call graph, 1 ms) and <dir>/perf.map
 (QEMU -perfmap: `hostpc size guest-0x<pc>` per translated guest instruction)
@@ -12,7 +12,7 @@ and prints where the QEMU process spent its samples:
     other QEMU (top symbols listed);
   * generated code by guest region (XP kernel / hal / win32k / drivers /
     the EXE / user DLLs), the hottest 4 KiB guest pages and the hottest guest
-    instructions — the input for a `-d in_asm,op_opt,out_asm -dfilter` run
+    instructions, the input for a `-d in_asm,op_opt,out_asm -dfilter` run
     on those addresses (`--hot` prints a ready -dfilter list).
 
 Self time = a node's count minus its children's. `sample` cannot unwind

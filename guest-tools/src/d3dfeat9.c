@@ -9,8 +9,8 @@
  * into a render-target texture, UpdateSurface from system memory into a
  * DEFAULT texture, a clip plane, DrawIndexedPrimitiveUP, scissor.
  *
- * Row E (bottom middle, 2026-09-13) is one small quad per case the guest
- * DLL once got wrong: UpdateTexture into a DEFAULT texture, a
+ * Row E (bottom middle) is one small quad per case the guest DLL once got
+ * wrong: UpdateTexture into a DEFAULT texture, a
  * DrawIndexedPrimitiveUP whose vertices start at MinVertexIndex, a vertex
  * buffer Lock(offset, 0) and two nested Locks. Around it: a Clear of more
  * than 64 rects (the strip at the top), a state block recorded and never
@@ -122,11 +122,11 @@ static void quad_at(struct vtx_pct *q, float cx, DWORD color)
  *
  * Paced to two rounds a frame. DXVK frees a released resource only once the
  * frames that could have used it are done, so a loader that never waits
- * outruns the frees whenever the main thread stops presenting -- the
- * occlusion-query wait at the dump frame is up to half a second of that --
- * and natively on an M1 the run reached a 17.8 GB footprint in five seconds
- * and swapped the machine to a standstill (2026-09-13). Two a frame still
- * races the lock on every frame. */
+ * outruns the frees whenever the main thread stops presenting (the
+ * occlusion-query wait at the dump frame is up to half a second of that).
+ * Natively on an M1 an unpaced run reached a 17.8 GB footprint in five
+ * seconds and swapped the machine to a standstill. Two a frame still races
+ * the lock on every frame. */
 static DWORD WINAPI loader_main(LPVOID unused)
 {
     (void)unused;
@@ -444,7 +444,7 @@ static int render(void)
          * thread of the runtime, and a tight spin can starve it on a busy
          * machine: on a cold DXVK pipeline cache (16 compiler threads) the
          * native run spun 100000 times in 48 ms without the End ever being
-         * reached, and reported the frame as 0 pixels (2026-09-07). */
+         * reached, and reported the frame as 0 pixels. */
         while ((hr = IDirect3DQuery9_GetData(X.occ, &pixels, sizeof(pixels), D3DGETDATA_FLUSH)) == S_FALSE && spins++ < 500)
             Sleep(1);
         game_log("d3dfeat9: occlusion query at frame %u: %s, %lu pixels (quad C is 2 triangles at 640x480: expect ~13000)", G.frame, hr_str(hr), (unsigned long)pixels);

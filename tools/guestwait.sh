@@ -1,22 +1,18 @@
-# guestwait.sh — the guest test tools' waits, event-driven. Source it:
+# The guest test tools' waits, event-driven. Source it:
 #
 #   . "$ROOT/tools/guestwait.sh"
 #
-# These tools used to open with a fixed `sleep $BOOT_WAIT` of 45 to 180
-# seconds, sized by hand for the slowest machine anyone had run them on. A
-# fixed sleep is wrong in both directions: it burns the difference on every
-# faster host (measured 2026-09-07 on the Air under TCG, fresh overlays:
-# XP's Run dialog took the first command at ~26 s against sleeps of 45, 60
-# and 120; Win98's at ~23 s against 150 and 180 — and both are far quicker
-# under KVM on the rig, where the sleeps did not change), and it fails
-# outright on a host that is slower that day, which is exactly when a test
-# should still pass. Everything here waits for something the guest actually
-# did instead, and takes its old BOOT_WAIT as a *cap* — the number now only
-# decides when to give up.
+# A fixed `sleep $BOOT_WAIT` is wrong in both directions. It burns the
+# difference on every faster host (on the Air under TCG, XP's Run dialog
+# took the first command at ~26 s against sleeps of 45, 60 and 120, and
+# Win98's at ~23 s against 150 and 180), and it fails outright on a host
+# that is slower that day, which is exactly when a test should still pass.
+# Everything here waits for something the guest actually did, and takes
+# the old BOOT_WAIT as a *cap* that only decides when to give up.
 #
-# No screendumps anywhere: a screendump proves a surface was drawn, not
-# that a guest is alive (docs 19 §15 and the blinking-caret gotcha in
-# CLAUDE.md — `vga_draw_text` keeps drawing over a dead machine). The
+# No screendumps anywhere. A screendump proves a surface was drawn, not
+# that a guest is alive (doc 19 §15 and the blinking-caret gotcha in
+# CLAUDE.md: `vga_draw_text` keeps drawing over a dead machine). The
 # signals, weakest to strongest:
 #
 #   gw_wait_log    (and gw_wait_count) a line our own device wrote (`d3dpt-vga: linear mode
@@ -25,17 +21,17 @@
 #                  the machines that have our adapter.
 #   gw_wait_quiet  the guest stopped reading its disk (QMP query-blockstats).
 #                  Adapter-agnostic, for the cirrus machines that have no
-#                  serial line — an approximation, not proof.
+#                  serial line. An approximation, not proof.
 #   gw_poke_until  the guest ran a command and said so on COM1 (or wherever
 #                  the caller looks). The only one that proves the shell can
 #                  take a command, and the tools have to do the poke anyway.
 #
-# What this actually buys, measured 2026-09-07 on the Air (TCG, fresh
-# overlays, against sleeps of 45 to 180): XP from QEMU's start to a guest
-# that has run a command, 36-46 s; Win98, ~118 s — the guest itself is
-# there at ~23 s, but QMP is starved of the lock while the vCPU translates
-# a boot, so the knocking is slower than the guest. Both numbers are of a
-# machine that answered, which no sleep can tell you.
+# Measured on the Air (TCG, fresh overlays, against sleeps of 45 to 180):
+# XP from QEMU's start to a guest that has run a command, 36-46 s; Win98,
+# ~118 s. The Win98 guest itself is there at ~23 s, but QMP is starved of
+# the lock while the vCPU translates a boot, so the knocking is slower than
+# the guest. Both numbers are of a machine that answered, which no sleep
+# can tell you.
 #
 # Every verb prints what it waited for, and for how long, on stderr, so a
 # run's log says where its time went. Set GW_PID=<qemu pid> after launching
@@ -52,7 +48,7 @@ gw_qmp() { python3 "$GW_ROOT/tools/qmpc.py" "$@" >/dev/null 2>&1; }
 # the guest is gone: nothing is ever going to answer, stop waiting
 gw_dead() { [ -n "$GW_PID" ] && ! kill -0 "$GW_PID" 2>/dev/null; }
 
-gw_wait_sock() {  # <sock> [cap=60] — QEMU is up far enough to talk to
+gw_wait_sock() {  # <sock> [cap=60]: QEMU is up far enough to talk to
   local sock=$1 cap=${2:-60} t0 t
   t0=$(date +%s)
   while [ ! -S "$sock" ]; do
@@ -64,7 +60,7 @@ gw_wait_sock() {  # <sock> [cap=60] — QEMU is up far enough to talk to
   return 0
 }
 
-gw_wait_log() {  # <file> <pattern> [cap=300] — a line in a log the guest or QEMU writes
+gw_wait_log() {  # <file> <pattern> [cap=300]: a line in a log the guest or QEMU writes
   local log=$1 pat=$2 cap=${3:-300} t0 t
   t0=$(date +%s)
   while :; do
@@ -79,7 +75,7 @@ gw_wait_log() {  # <file> <pattern> [cap=300] — a line in a log the guest or Q
   done
 }
 
-gw_wait_count() {  # <file> <pattern> <n> [cap=300] — the pattern's nth occurrence
+gw_wait_count() {  # <file> <pattern> <n> [cap=300]: the pattern's nth occurrence
   # A reboot is two of the same line: the display driver programs the mode
   # once on the way up and once more after the restart, and the second one
   # is the only proof the machine really came back (a screendump of the
@@ -99,7 +95,7 @@ gw_wait_count() {  # <file> <pattern> <n> [cap=300] — the pattern's nth occurr
   done
 }
 
-gw_wait_quiet() {  # <sock> [cap=300] [still=8] — the disks stop being read
+gw_wait_quiet() {  # <sock> [cap=300] [still=8]: the disks stop being read
   # For a guest with neither our adapter nor a serial line. Boot reads are
   # bursty right to the end (XP here: a last 354-operation burst at 33 s,
   # then nothing), so "quiet" means no read for `still` seconds running,
@@ -144,15 +140,15 @@ sys.exit(1)
 PY
 }
 
-gw_run_dialog() {  # <sock> <family> — dismiss whatever is up, open Run, clear it
+gw_run_dialog() {  # <sock> <family>: dismiss whatever is up, open Run, clear it
   local sock=$1 family=$2
   gw_qmp "$sock" keys ret; sleep 1          # a message box, if any
   gw_qmp "$sock" keys esc; sleep 1          # and whatever it left focused
-  # Win+R on both families: Ctrl+Esc then R is the English Start menu's
-  # mnemonic, and a Portuguese 98 calls the item "Executar..." — the knocks
-  # opened the Start menu and typed into it (2026-09-13, base98-br). 98 has
-  # the Windows-key shortcuts too; tools/pad-guest-test.py opens Run on 98
-  # this way already. `family` is kept for the callers.
+  # Win+R on both families. Ctrl+Esc then R is the English Start menu's
+  # mnemonic, and a Portuguese 98 calls the item "Executar...", so the
+  # knocks opened the Start menu and typed into it. 98 has the Windows-key
+  # shortcuts too (tools/pad-guest-test.py opens Run on 98 this way).
+  # `family` is kept for the callers.
   : "$family"
   gw_qmp "$sock" keys meta_l+r
   sleep 3
@@ -162,7 +158,7 @@ gw_run_dialog() {  # <sock> <family> — dismiss whatever is up, open Run, clear
   gw_qmp "$sock" type ' '; gw_qmp "$sock" keys backspace
 }
 
-gw_poke_until() {  # <sock> <family> <cmd> <cap> <ready...> — until the guest answers
+gw_poke_until() {  # <sock> <family> <cmd> <cap> <ready...>: until the guest answers
   # Opens the Run dialog, types the command, and waits to see whether the
   # guest did anything about it; on a boot that is not there yet nothing
   # was typed anywhere, so it costs a keystroke and is tried again. This is
@@ -202,7 +198,7 @@ gw_poke_until() {  # <sock> <family> <cmd> <cap> <ready...> — until the guest 
   done
 }
 
-gw_wait_exit() {  # [pid=$GW_PID] [cap=120] — the guest finished shutting down
+gw_wait_exit() {  # [pid=$GW_PID] [cap=120]: the guest finished shutting down
   local pid=${1:-$GW_PID} cap=${2:-120} t0 t
   [ -n "$pid" ] || return 0
   t0=$(date +%s)

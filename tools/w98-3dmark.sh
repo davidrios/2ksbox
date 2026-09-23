@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# w98-3dmark.sh -- 3DMark 99 Max on a Win98 machine, headless, end to end
+# 3DMark 99 Max on a Win98 machine, headless, end to end
 # (docs/tracks/m9-tcg-aarch64.md, "Win98 3D"): boot a raw copy of the image
 # through tools/win98-game-test.sh (the user's image is never written), wait
 # for 3DMark's welcome dialog by its pixels (a fixed sleep missed it once the
@@ -10,9 +10,9 @@
 #     env: IMG= (default: the claude98 machine, 3DMark installed in
 #     C:\ARQUIV~1\3DMARK~1), SHOTS=, DDFLAGS= (32768: vertical blank off),
 #     EXTRA= (-perfmap, -d out_asm ...), QEMU_BIN= (a wrapper, e.g. the
-#     memtrace preload) -- all passed through to win98-game-test.sh
+#     memtrace preload), all passed through to win98-game-test.sh
 #     TABLET=0: no USB tablet; the clicks walk the PS/2 pointer instead
-#            (qmpc.py relclick) -- for a machine that has never bound a
+#            (qmpc.py relclick), for a machine that has never bound a
 #            tablet and would stop in the New Hardware wizard (base98-us)
 #     perf:  a --call-graph dwarf profile for PERF_SECS from PERF_AT s after
 #            the Benchmark click (the first-person test is ~40-56 s)
@@ -26,12 +26,12 @@
 #            + 5 s into pages/<page>.bin, for tools/tcg-form-weights.py
 #     QEMU_TCG_OPTS=tlb-retire=off: an accelerator switch for the A/B,
 #            through win98-game-test.sh
-# Output: build/w98game/<name>/ -- score.png (the score dialog; read the
+# Output: build/w98game/<name>/: score.png (the score dialog; read the
 # two scores off it), **tests.txt** (every `ddi:` and page-flip rate line
-# placed by test, from a screendump every 5 s in tests/: that is where a
+# placed by test, from a screendump every 5 s in tests/; that is where a
 # game test's frame rate is read, never off a bare rate line, whose window
-# can be a loading screen or the CPU 3D Speed test -- the 2026-09-12
-# correction in the track doc), qemu.log, click.txt (the click's epoch, to
+# can be a loading screen or the CPU 3D Speed test, see the track doc),
+# qemu.log, click.txt (the click's epoch, to
 # place profile windows: take a test's seconds from tests.txt), perf.data.
 # Settings are the image's own (the user's: 800x600x16, triple buffer,
 # Pentium III optimizations). Local only: needs the image.
@@ -42,7 +42,7 @@ O=$ROOT/build/w98game/$NAME
 LOG=$ROOT/build/w98game/$NAME.run.log
 mkdir -p "$ROOT/build/w98game"   # the log's directory, on a checkout's first run
 cd "$ROOT"
-# TDM_DIR=: 3DMark's 8.3 folder -- claude98 is a Portuguese Windows
+# TDM_DIR=: 3DMark's 8.3 folder. claude98 is a Portuguese Windows
 # ("Arquivos de programas"); an English one is \PROGRA~1\3DMARK~1.
 TDM_DIR=${TDM_DIR:-'\ARQUIV~1\3DMARK~1'}
 TABLET=${TABLET:-1}

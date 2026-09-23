@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A gamepad as a *guest* meets it (M13, docs/tracks/m13-gamepads.md) —
+"""A gamepad as a *guest* meets it (M13, docs/tracks/m13-gamepads.md):
 both devices, each in the family it is for.
 
     tools/pad-guest-test.py                 # path B: the gameport, FreeDOS
@@ -9,17 +9,17 @@ both devices, each in the family it is for.
     tools/pad-guest-test.py --verbose ...   # ...and every sample line
     UNTHROTTLED=1 tools/pad-guest-test.py   # the DOS control: no -icount
 
-Both paths were confirmed by hand with a real controller (a DualSense, on
-2026-09-09/10) and neither was guarded by anything afterwards. This is
-what re-checks them: seen to work once is not the same as kept working,
-and the two guest ends are exactly the parts no host-side check can reach.
+Both paths were confirmed by hand with a real controller (a DualSense).
+This re-checks them, because seen to work once is not the same as kept
+working, and the two guest ends are exactly the parts no host-side check
+can reach.
 
 **It must be the player, not `qemu-system-i386`.** The pad reaches a guest
 through the embed library (`qemu_embed_pad_state` -> the input bottom half
 -> `usb_gamepad_set_state` / `gameport_set_state`), and only the player
 drives that; a bare QEMU has pad devices that nothing ever moves.
 `PLAYER_PAD_SCRIPT` stands in for the controller, so this runs on a
-machine with nothing plugged in — which is the whole reason that source
+machine with nothing plugged in, which is the whole reason that source
 exists.
 
 The poses are the same on both paths, and each moves **one** control, so
@@ -41,14 +41,13 @@ a stick the guest cannot centre. The same host state has to produce both.
 
 On the Windows paths every sample is read through **two** APIs, because a
 title of the era can call either: DirectInput, and winmm's `joyGetPosEx`
-on top of 9x's VJOYD. That second column is not a curiosity — it is what
-closed M13's last item. A Windows game on 98 was going to need the
-gameport's driver half ("Standard Game Port" through Add New Hardware) to
-see a joystick at all; it does not, because the USB pad arrives through
-winmm as well, which `check_winmm` now asserts with the same force as the
-DirectInput half rather than leaving in a log for someone to read once.
+on top of 9x's VJOYD. That second column closed M13's last item. A
+Windows game on 98 would otherwise need the gameport's driver half
+("Standard Game Port" through Add New Hardware) to see a joystick at all.
+It does not, because the USB pad arrives through winmm as well, which
+`check_winmm` asserts with the same force as the DirectInput half.
 
-Outputs in build/pad-guest/. Local only — the DOS run fetches the FreeDOS
+Outputs in build/pad-guest/. Local only: the DOS run fetches the FreeDOS
 floppy `tools/x87-guest-test.py` uses, the Windows runs want one of the
 user's own images, and all of them want a display for the player's window.
 All three are in `scripts/test.sh`'s guest stage as `pad-guest`,
@@ -77,7 +76,7 @@ spec.loader.exec_module(x87gt)
 
 ASM = os.path.join(ROOT, "guest-tools/src/padtest.asm")
 
-# The pad, in frames of the player's own publish loop — which is what the
+# The pad, in frames of the player's own publish loop, which is what the
 # scripted source counts, so these are *not* seconds. The player publishes
 # on QEMU's refresh tick (`on_refresh_done`, ~60 a second) whether or not
 # the guest drew anything, so the script advances at the same rate on a
@@ -108,10 +107,10 @@ def script(offset, cycles):
     on DOS: FreeDOS is at the prompt in about four seconds but the script
     starts at frame 1, so the first poses played to a machine that was
     still booting and one end of the stick was never sampled. **It
-    repeats**, which is what makes a Windows guest possible at all — that
+    repeats**, which is what makes a Windows guest possible at all. That
     one takes a minute to boot and log in, and no offset would be a
-    reliable guess, so the poses simply keep coming round until the guest
-    has seen them all and the run stops itself.
+    reliable guess, so the poses keep coming round until the guest has
+    seen them all and the run stops itself.
     """
     steps = []
     frame = offset
@@ -132,8 +131,8 @@ def watch(p, log, done, satisfied, timeout=600):
 
     `satisfied` is the run's own checks, asked quietly of the log so far:
     a pass ends the run instead of sitting through the rest of the guest's
-    sampling. `done` is the guest's own last word, which is the other end
-    — a run that never satisfies the checks plays out in full and then
+    sampling. `done` is the guest's own last word, which is the other end:
+    a run that never satisfies the checks plays out in full and then
     fails with the numbers in front of it.
     """
     t0 = time.time()
@@ -166,7 +165,7 @@ def samples(text, keys):
             continue
         try:
             f = dict(p.split("=", 1) for p in line.split(" ") if "=" in p)
-            # Button masks are hex in both columns — `B` from DirectInput
+            # Button masks are hex in both columns, `B` from DirectInput
             # and `WB` from winmm. Reading one of them as decimal does not
             # fail loudly: `int("00a")` raises, the line is skipped as a
             # half-written sample, and a run quietly loses every sample
@@ -260,7 +259,7 @@ def check_dos(text, quiet=False):
     say("button nibbles seen: %s" % " ".join(sorted({"%02x" % r["B"] for r in rows})))
 
     # The fourth axis is the one nothing in the script touches, so its own
-    # spread is this guest's measurement noise — and every other axis is
+    # spread is this guest's measurement noise, and every other axis is
     # judged against *that* rather than against a number chosen here.
     #
     # It has to be, because the noise is a property of the machine and not
@@ -277,7 +276,7 @@ def check_dos(text, quiet=False):
         ok = False
     # The stick, on X. Its two extremes are a 24 us pulse and a 1124 us
     # one, so the true ratio is about 46; ten is slack, and it must also
-    # stand well clear of the noise floor above — a model that drove all
+    # stand well clear of the noise floor above, since a model that drove all
     # four one-shots off one axis would move X and R together and pass a
     # fixed threshold.
     if xhi < max(10, 4 * jitter) * max(xlo, 1):
@@ -288,7 +287,7 @@ def check_dos(text, quiet=False):
     if not any(0.35 * xhi <= r["X"] <= 0.7 * xhi for r in rows):
         say("FAIL no sample had X near the middle of its range: a centred stick did not read centred")
         ok = False
-    # The d-pad, on Y — nothing in the script moves `ly`, so this is the
+    # The d-pad, on Y. Nothing in the script moves `ly`, so this is the
     # fold in gameport_set_state and nothing else.
     if yhi < max(10, 4 * jitter) * max(ylo, 1):
         say("FAIL Y barely moved (%d..%d): the d-pad is not reaching the axes" % (ylo, yhi))
@@ -353,8 +352,8 @@ def vga_args(video):
 def drive_arg(image):
     """The image, never written to.
 
-    `snapshot=on` rather than an overlay of our own — the same thing
-    `scripts/test.sh`'s guest stage does with the same files — and an
+    `snapshot=on` rather than an overlay of our own (the same thing
+    `scripts/test.sh`'s guest stage does with the same files), and an
     explicit format, because a raw image with no header to probe is
     otherwise a warning and a guess.
     """
@@ -384,11 +383,10 @@ def run_win(mode, image, video, log, plog):
     sockdir = tempfile.mkdtemp(prefix="padq")     # short: AF_UNIX has 108 bytes
     sock = os.path.join(sockdir, "q")
     # Enough cycles that the poses are still coming round long after the
-    # guest is up, and then some. Measured the first time this ran: twelve
-    # cycles is about four and a half minutes of frames, XP took about
-    # four and a half minutes to boot and start the program, and every
-    # sample came back at the device's reset state — a pad at rest,
-    # because the script had just finished. Sixty cycles is twenty-odd
+    # guest is up, and then some. Twelve cycles is about four and a half
+    # minutes of frames, XP can take about as long to boot and start the
+    # program, and then every sample comes back at the device's reset
+    # state (a pad at rest, because the script has just finished). Sixty cycles is twenty-odd
     # minutes and costs nothing (540 steps in a list), and the run stops
     # the moment every pose has been seen.
     env = dict(os.environ, PLAYER_PAD="usb",
@@ -405,14 +403,12 @@ def run_win(mode, image, video, log, plog):
             "-audiodev", "none,id=a0",
             # The controller and the pad, and **nothing else on the bus**.
             #
-            # A `-device usb-tablet` was here at first, copied from the
-            # machines the rest of the suite boots. Measured on Windows 98
-            # (2026-09-10), same image, same everything else: with the
-            # tablet, DirectInput enumerated *no* joystick at all; without
-            # it, the pad came up and every check passed. XP did not care
-            # either way.
+            # Measured on Windows 98, same image, same everything else:
+            # with a `-device usb-tablet` beside it, DirectInput enumerated
+            # *no* joystick at all; without it, the pad came up and every
+            # check passed. XP did not care either way.
             #
-            # The mechanism is not established — the obvious guess, that a
+            # The mechanism is not established. The obvious guess, that a
             # second HID device the image had never seen leaves the guest
             # in a modal New Hardware wizard, does not survive the owner
             # saying that machine has had a tablet before. What is
@@ -436,16 +432,16 @@ def run_win(mode, image, video, log, plog):
                 break
             time.sleep(0.2)
         # Knock on the Run dialog until the guest says it started the
-        # program. Nothing else proves a shell is there — a screendump
-        # cannot tell a desktop from a dead machine — and the drive letter
+        # program. Nothing else proves a shell is there (a screendump
+        # cannot tell a desktop from a dead machine), and the drive letter
         # is a property of the image, so both likely ones are tried.
         deadline = time.time() + 420
         started = False
         while time.time() < deadline and p.poll() is None and not started:
             for drive in ("D:", "E:"):
                 # Esc first, twice: the previous attempt may have left a
-                # "Windows cannot find" dialog up — the CD's letter is a
-                # property of the image and not something this can know —
+                # "Windows cannot find" dialog up (the CD's letter is a
+                # property of the image and not something this can know),
                 # and one Esc goes to whatever had focus before it.
                 qmp("keys", "esc")
                 qmp("keys", "esc")
@@ -467,9 +463,9 @@ def run_win(mode, image, video, log, plog):
                              % (log, os.path.join(OUT, "%s-screen.png" % mode)))
         text = watch(p, log, "DONE", lambda t: check_win(t, quiet=True), timeout=300)
         # A failing run leaves a picture of the desktop behind. What goes
-        # wrong here is usually a *dialog* — Windows found new hardware and
-        # is asking for its source files, and no amount of log-reading says
-        # so — and the screen is the one place that shows it.
+        # wrong here is usually a *dialog* (Windows found new hardware and
+        # is asking for its source files, and no log says so), and the
+        # screen is the one place that shows it.
         if not check_win(text, quiet=True):
             qmp("screendump", os.path.join(OUT, "%s-screen.png" % mode))
         return text
@@ -520,7 +516,7 @@ def check_win(text, quiet=False):
     say("button masks seen: %s" % " ".join("%03x" % b for b in sorted(buttons)))
 
     # The axes are on 0..255 because the probe puts them there, which is
-    # the range the report itself carries — so these are the bytes
+    # the range the report itself carries, so these are the bytes
     # gamepad::hid_axis() made, not a fraction of something unknown.
     if xlo > 16 or xhi < 239:
         say("FAIL X reached %d..%d, not both ends of its range" % (xlo, xhi))
@@ -533,8 +529,8 @@ def check_win(text, quiet=False):
         ok = False
     # The two axes nothing drives. Y is the interesting one: on this path
     # the d-pad is the *hat*, and a device that drove the axes from it as
-    # well — which is exactly what the gameport must do — would leave a
-    # stick the guest cannot centre.
+    # well (exactly what the gameport must do) would leave a stick the
+    # guest cannot centre.
     for name, lo, hi in (("Y", ylo, yhi), ("Rz", rzlo, rzhi)):
         if hi - lo > 32:
             say("FAIL %s moved (%d..%d) with nothing driving it" % (name, lo, hi))
@@ -556,15 +552,14 @@ def check_win(text, quiet=False):
 
 
 def check_winmm(rows, quiet=False):
-    """The same pad through winmm — and the reason M13 has no step 7.
+    """The same pad through winmm, and the reason M13 has no step 7.
 
     `joyGetPosEx` on top of 9x's VJOYD is what a great many mid-90s Windows
-    titles call, and whether a USB HID pad arrives through it is what
-    decides whether Windows 98 needs the gameport's *driver* half at all.
-    It does arrive — so "Standard Game Port" through Add New Hardware was
-    dropped by decision (2026-09-10, the track doc's next steps), and this
-    is the check that decision rests on. It was a printed line before, read
-    by a person once; a claim that closes a milestone item has to be a
+    titles call, and whether a USB HID pad arrives through it decides
+    whether Windows 98 needs the gameport's *driver* half at all. It does
+    arrive, so "Standard Game Port" through Add New Hardware was dropped by
+    decision (the track doc's next steps), and this is the check that
+    decision rests on. A claim that closes a milestone item has to be a
     check that can fail.
 
     Deliberately the same shape as the DirectInput assertions above rather
@@ -613,7 +608,7 @@ def check_winmm(rows, quiet=False):
         if hi - lo > 32:
             say("FAIL winmm %s moved (%d..%d) with nothing driving it" % (name, lo, hi))
             ok = False
-    # winmm keeps the hat in its own units — hundredths of a degree, and
+    # winmm keeps the hat in its own units: hundredths of a degree, and
     # 65535 rather than -1 for centred. Left as the driver reports it: a
     # value this harness did not invent is the one worth asserting.
     for want, name in ((0, "north"), (18000, "south"), (65535, "centred")):

@@ -1,28 +1,26 @@
 //! The shader profile editor's model, and the preset collection behind
-//! it: pick a `.slangp`, expose its parameters
-//! (`shader_profile::parameter_meta`) with each one optionally
-//! overridden and the rest left at the preset's own default, save it as
-//! a profile.
+//! it: pick a `.slangp`, list its parameters
+//! (`shader_profile::parameter_meta`), override any of them and leave
+//! the rest at the preset's own default, and save the result as a
+//! profile.
 //!
-//! Leaving a parameter alone rather than writing its current value is
-//! the whole design: a profile that only names what the user actually
-//! moved still means the right thing after the preset gains parameters
-//! or changes a default.
+//! A parameter the user didn't touch is left out rather than written at
+//! its current value. A profile that names only what the user moved
+//! still means the right thing after the preset gains parameters or
+//! changes a default.
 //!
-//! Two rules that were previously written twice and each got one of them
-//! wrong:
+//! Two rules that two front ends each once got one of wrong:
 //!
 //! * **Only an overridden row can move.** A greyed-out slider still
 //!   reports a value, and several presets have defaults off their own
-//!   step grid (crt-lottes: `warpX` 0.031, step 0.01), so without the
-//!   guard in `set_value` merely *opening* such a preset silently
-//!   overrode those parameters with the snapped value.
+//!   step grid (crt-lottes: `warpX` 0.031, step 0.01). Without the guard
+//!   in `set_value`, opening such a preset overrode those parameters with
+//!   the snapped value.
 //! * **Saving a new profile keeps the overrides.** `shader_library::create`
-//!   reserves the `<slug>.toml` and writes a bare profile; the overrides
-//!   the editor collected have to go into the same file straight after.
-//!   The egui build (retired 2026-09-13) dropped them
-//!   (`create(…).map(|_| ())`) and the Qt build didn't, which is exactly
-//!   the kind of divergence one implementation makes impossible.
+//!   reserves the `<slug>.toml` and writes a bare profile, so the
+//!   overrides the editor collected have to go into the same file
+//!   straight after. The retired egui build dropped them
+//!   (`create(…).map(|_| ())`).
 
 use crate::browse::Filter;
 use crate::shader_library;
@@ -33,9 +31,9 @@ use std::path::{Path, PathBuf};
 pub const PRESET_FILTER: Filter<'static> = ("Shader presets", &["slangp"]);
 pub const IMAGE_FILTER: Filter<'static> = ("Images", &["png", "jpg", "jpeg", "bmp"]);
 
-/// What the preset-collection row has to say, on both screens — the
-/// profile list is where someone discovers they have no shaders at all,
-/// the editor is where an empty preset field stops them mid-profile.
+/// What the preset-collection row says, on both screens. The profile
+/// list is where someone discovers they have no shaders at all, and the
+/// editor is where an empty preset field stops them mid-profile.
 pub enum PresetState {
     /// A collection is on disk: nothing to say, the picker just works.
     Ready(PathBuf),
@@ -47,9 +45,9 @@ pub enum PresetState {
 }
 
 /// The preset collection this launcher can offer, and a download of it
-/// if one is running. The directory is *cached*: finding it walks the
-/// collection's top two levels (`shader_source::has_presets`), which is
-/// nothing once but not something to repeat sixty times a second.
+/// if one is running. The directory is cached, because finding it walks
+/// the collection's top two levels (`shader_source::has_presets`), which
+/// is cheap once but not sixty times a second.
 #[derive(Default)]
 pub struct Presets {
     dir: Option<PathBuf>,
@@ -58,9 +56,9 @@ pub struct Presets {
 }
 
 impl Presets {
-    /// Where the collection is, or `None`. Also what an empty preset
-    /// field's "Browse…" opens on, since a `.slangp` is never somewhere
-    /// a person would navigate to by hand.
+    /// Where the collection is, or `None`. An empty preset field's
+    /// "Browse…" also opens here, since nobody navigates to a `.slangp`
+    /// by hand.
     pub fn dir(&mut self) -> Option<PathBuf> {
         if !self.looked {
             self.dir = shader_source::presets_dir();
@@ -75,11 +73,10 @@ impl Presets {
 
     /// Drop the cached answer, so the next `dir`/`state` looks again.
     ///
-    /// The cache is otherwise permanent — "there is no collection" is
-    /// remembered for the life of the process — and the first-run offer
-    /// (`firstrun.rs`) is a *second* thing that can put one on disk while
-    /// this model is alive. Without this, accepting the offer left the
-    /// profile manager still showing "No shader presets on this machine"
+    /// The cache is otherwise kept for the life of the process, and the
+    /// first-run offer (`firstrun.rs`) can also put a collection on disk
+    /// while this model is alive. Without this, accepting the offer left
+    /// the profile manager showing "No shader presets on this machine"
     /// over a collection that had just been downloaded.
     pub fn forget(&mut self) {
         self.dir = None;
@@ -88,7 +85,7 @@ impl Presets {
 
     /// The row's current state, advancing a finished download into the
     /// cached directory on the way past. Safe to call as often as a
-    /// front end likes — once per frame, or from a timer.
+    /// front end likes, once per frame or from a timer.
     pub fn state(&mut self) -> PresetState {
         if let Some(download) = &self.download {
             match download.status() {
@@ -116,7 +113,7 @@ impl Presets {
     }
 
     /// Whether a download is running or has failed without being
-    /// retried — the cue for a front end to keep a timer going.
+    /// retried. While it is, a front end keeps its timer going.
     pub fn download_active(&self) -> bool {
         self.download.is_some()
     }
@@ -135,9 +132,9 @@ pub struct Editor {
 
     /// `None` for a new profile; `Some(path)` to save back in place.
     path: Option<PathBuf>,
-    /// The last preset path successfully parsed, so parameters are only
-    /// re-read (and slider state re-derived) when it actually changes —
-    /// not on every frame the field is drawn.
+    /// The last preset path successfully parsed, so parameters are
+    /// re-read (and slider state re-derived) only when it changes, not on
+    /// every frame the field is drawn.
     parsed_preset: Option<PathBuf>,
     params: Vec<ParamMeta>,
     /// One entry per `params`, in the same order: `Some(value)` when
@@ -163,9 +160,9 @@ impl Editor {
             ..Default::default()
         };
         self.reparse();
-        // Line the overrides up with the freshly parsed parameters
-        // *after* `reparse`, so a preset that dropped one since the
-        // profile was saved doesn't leave a dangling override.
+        // Line the overrides up with the freshly parsed parameters after
+        // `reparse`, so a preset that dropped one since the profile was
+        // saved doesn't leave a dangling override.
         for (meta, over) in self.params.iter().zip(self.overrides.iter_mut()) {
             if let Some(&v) = profile.params.get(&meta.id) {
                 *over = Some(v);
@@ -173,7 +170,7 @@ impl Editor {
         }
     }
 
-    /// The same, from a path alone — for a front end that addresses its
+    /// The same, from a path alone, for a front end that addresses its
     /// windows by path rather than by a profile it already holds.
     pub fn edit_path(&mut self, path: PathBuf) {
         match ShaderProfile::load(&path) {
@@ -185,9 +182,9 @@ impl Editor {
         }
     }
 
-    /// Open the editor pre-filled with a preset and preview image
-    /// without a saved profile behind it — the debug hook both front
-    /// ends use to screenshot the real editor with no GUI click.
+    /// Open the editor pre-filled with a preset and preview image, with
+    /// no saved profile behind it. The front end's debug hook uses it to
+    /// screenshot the real editor with no GUI click.
     pub fn open_with(&mut self, preset_path: String, preview_image_path: String) {
         *self = Editor { open: true, preset_path, preview_image_path, ..Default::default() };
         self.reparse();
@@ -261,7 +258,7 @@ impl Editor {
     }
 
     /// Move an overridden parameter. Ignored for a row that isn't
-    /// overridden — see this module's header for what that guard is for.
+    /// overridden; this module's header says why.
     pub fn set_value(&mut self, row: usize, value: f32) {
         if let Some(over @ Some(_)) = self.overrides.get_mut(row) {
             *over = Some(value);

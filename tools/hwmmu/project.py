@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""project.py -- the hardware-MMU design's projected gain on a workload.
+"""The hardware-MMU design's projected gain on a workload.
 
     tools/hwmmu/project.py <probe results> name:Ginsn:Mld:Mst:wall_s [...]
 
@@ -10,7 +10,7 @@ speed. Each load is charged the difference between the probe's softmmu
 and direct kernels (`mix4`: an independent load with four ALU ops behind
 it, the throughput case translated code is closest to), each store the
 `copy` pair's difference less the load's (`indep`), at the 64 KiB, 4 MiB
-and 8 MiB working sets -- the optimistic, middle and pessimistic rows for
+and 8 MiB working sets: the optimistic, middle and pessimistic rows for
 a workload whose 64K-access windows hold under 2000 distinct pages. The
 projection is the fraction of each second those differences add up to,
 and the speed-up that removing it would be. It counts nothing else: not

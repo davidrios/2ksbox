@@ -2,17 +2,16 @@
 //! them are running, and what "Play" does.
 //!
 //! The rows are `library::scan`'s entries and the running set is a
-//! `bundle directory -> Child` map, where absence means "not running" —
-//! never tracked as ended-but-kept, because `reap` removes an entry the
-//! moment its child exits. A player process has no way to push that
-//! news, so the front end asks: the Qt build from a `Timer` that says
-//! its interval out loud.
+//! `bundle directory -> Child` map, where absence means "not running".
+//! `reap` removes an entry the moment its child exits. A player process
+//! cannot push that news, so the front end polls (the Qt build from a
+//! `Timer`).
 //!
 //! `play` publishes the shared shelf to the machine's drive before
-//! spawning, so a disc added since the last run is on it, and derives
-//! the monitor socket from the bundle directory rather than carrying it
-//! around — which is how every other window finds it again (doc 07,
-//! "How the launcher reaches a running machine").
+//! spawning, so a disc added since the last run is on it. It derives the
+//! monitor socket from the bundle directory rather than storing it,
+//! which is how every other window finds it again (doc 07, "How the
+//! launcher reaches a running machine").
 
 use crate::bundle::Machine;
 use crate::{control, disc_library, library, player, shader_library};
@@ -60,8 +59,8 @@ impl Machines {
         import_legacy_discs(&self.entries, &self.disc_library_path);
     }
 
-    /// Rescan only the profile library — after the profile manager saved
-    /// or deleted one, which changes the grid's "Shader" column but not
+    /// Rescan only the profile library, after the profile manager saved
+    /// or deleted one. That changes the grid's "Shader" column but not
     /// its rows.
     pub fn refresh_profiles(&mut self) {
         self.profiles = shader_library::scan(&self.profiles_dir);
@@ -119,8 +118,8 @@ impl Machines {
         self.entries.get(row).map(|e| self.running.contains_key(&e.dir)).unwrap_or(false)
     }
 
-    /// Whether the machine in a given bundle directory is up — how a
-    /// per-machine window (which knows its bundle, not its row) asks.
+    /// Whether the machine in a given bundle directory is up, for a
+    /// per-machine window that knows its bundle, not its row.
     pub fn is_running_dir(&self, dir: &Path) -> bool {
         self.running.contains_key(dir)
     }
@@ -137,9 +136,9 @@ impl Machines {
         let machine = entry.machine.clone();
         // The monitor socket is derived from the bundle directory, so
         // every window that wants live control finds it again without
-        // the app carrying it around. The shelf is the one the guest's
-        // own CDSHELF program will read, refreshed here so a disc added
-        // since the last run is on it.
+        // the app storing it. The shelf is the file the guest's CDSHELF
+        // program reads, refreshed here so a disc added since the last
+        // run is on it.
         let socket = control::socket_path(&dir);
         let shelf = control::shelf_path(&dir);
         publish_shelf(&self.disc_library_path, &shelf);
@@ -176,9 +175,9 @@ impl Machines {
             .collect()
     }
 
-    /// Republish the shared shelf to every running machine's drive — the
-    /// answer to "a disc was added or renamed while a machine is up",
-    /// so the guest's own CDSHELF listing sees it without a restart.
+    /// Republish the shared shelf to every running machine's drive, so a
+    /// disc added or renamed while a machine is up shows in the guest's
+    /// CDSHELF listing without a restart.
     pub fn republish_shelf(&self) {
         for dir in self.running.keys() {
             publish_shelf(&self.disc_library_path, &control::shelf_path(dir));
@@ -189,7 +188,7 @@ impl Machines {
 /// Write the shared shelf out in the flat form a machine's ATAPI drive
 /// reads (`cdshelf/cdshelf_proto.h`), so the in-guest CDSHELF program
 /// sees the same discs the launcher does. Failing to publish is not
-/// fatal: the machine still runs, its drive just reports an empty shelf.
+/// fatal: the machine still runs and its drive reports an empty shelf.
 pub fn publish_shelf(library_path: &Path, shelf_path: &Path) {
     match disc_library::DiscLibrary::load(library_path) {
         Ok(library) => {
@@ -203,10 +202,10 @@ pub fn publish_shelf(library_path: &Path, shelf_path: &Path) {
 
 /// Bundles written before the disc shelf became shared carry their own
 /// per-machine `discs` list. Fold those onto the shared shelf so nothing
-/// the user added is lost — `DiscLibrary::add` deduplicates by path, so
-/// this is idempotent and can simply run on every rescan. The bundles
-/// themselves migrate the next time anything saves them (`Machine::save`
-/// writes `disc` and drops `discs`).
+/// the user added is lost. `DiscLibrary::add` deduplicates by path, so
+/// this is idempotent and runs on every rescan. The bundles themselves
+/// migrate the next time anything saves them (`Machine::save` writes
+/// `disc` and drops `discs`).
 pub fn import_legacy_discs(entries: &[library::LibraryEntry], library_path: &Path) {
     match disc_library::DiscLibrary::load(library_path) {
         Ok(mut discs) => {

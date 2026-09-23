@@ -9,7 +9,7 @@ description = "The music engines behind the OPL3 and MPU-401 devices: FM, SoundF
 crate-type = ["rlib", "staticlib"]
 
 # Three engines, all pure Rust and all computation: no host device, no
-# system library, nothing to add to a package's dylib closure — the same
+# system library, nothing to add to a package's dylib closure. It is the same
 # reason libdisc can be linked into QEMU (doc 20 §2). A host MIDI *port*
 # is deliberately not here: that is a host device and belongs on the
 # player's side of the embed API, beside the audio output.

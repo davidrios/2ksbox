@@ -4,7 +4,7 @@
 //! Its own crate, shared the way `shader-chain` is, because the two
 //! crates that need it cannot depend on each other: `player` reads the
 //! hardware, `launcher-core` decides what the controls mean for a
-//! machine, and the player must not depend on the launcher — the player
+//! machine, and the player must not depend on the launcher. The player
 //! is the runtime and the launcher the manager that spawns it.
 //!
 //! What is *here* is the model both must agree on. What stays in
@@ -15,12 +15,12 @@
 //!
 //! Two halves:
 //!
-//! * `Control` — the *abstract* pad. Every physical pad the host can see
+//! * `Control`, the *abstract* pad. Every physical pad the host can see
 //!   is reported in these terms, so nothing downstream of the player's
 //!   `pad.rs` knows what a gilrs button id is, and the same binding
 //!   works on an Xbox pad, a DualShock and a 1998 Sidewinder.
-//! * `Shaping` and `Binding` — what turns a raw axis into a decision:
-//!   the deadzone, the hysteresis that stops an axis held near the
+//! * `Shaping` and `Binding`, which turn a raw axis into a decision.
+//!   They hold the deadzone, the hysteresis that stops an axis held near the
 //!   threshold from chattering, and (for `Pad::Keys`) which key each
 //!   control presses.
 
@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 /// has: two sticks, a d-pad, four face buttons, two shoulders, two
 /// triggers and two menu buttons. A pad with more (paddles, a touchpad
 /// click) reports nothing for them; a pad with fewer (a period 2-button
-/// stick on the gameport, once path B lands) simply never sends them.
+/// stick on the gameport) never sends them.
 ///
 /// Face buttons are named by *position*, not by letter, because the
 /// letters move: A is the bottom button on an Xbox pad and the right one
@@ -63,8 +63,8 @@ pub enum Control {
     Start,
     LeftStickPress,
     RightStickPress,
-    /// Axes. Negative is left / up, positive is right / down — the screen
-    /// convention, not the joystick one, so a stick pushed *up* gives a
+    /// Axes. Negative is left / up, positive is right / down. That is the
+    /// screen convention, not the joystick one, so a stick pushed *up* gives a
     /// negative Y the way a mouse moved up does.
     LeftStickX,
     LeftStickY,
@@ -172,8 +172,8 @@ impl Control {
 /// Three numbers, and the third is the one that matters most. A stick is
 /// never still: it rests a percent or two off centre and jitters there,
 /// so `deadzone` is what stops a resting stick from meaning anything.
-/// `threshold` is how far it has to go before a *digital* consumer — a
-/// key, a d-pad direction, the gameport's button bits — calls it pressed.
+/// `threshold` is how far it has to go before a *digital* consumer (a
+/// key, a d-pad direction, the gameport's button bits) calls it pressed.
 /// And `release` is the value it must fall back below before that
 /// consumer calls it let go, which must be **lower** than `threshold`:
 /// with one number, a stick held right at it chatters press/release at
@@ -193,7 +193,7 @@ pub struct Shaping {
 impl Default for Shaping {
     /// Measured against a worn Xbox 360 pad, which is the pessimistic
     /// case: 0.30 clears its resting jitter with room to spare, and the
-    /// 0.55/0.40 pair gives a 0.15 gap — wide enough that no stick this
+    /// 0.55/0.40 pair gives a 0.15 gap. That is wide enough that no stick this
     /// side of a fault chatters across it, narrow enough that a
     /// deliberate half-push still registers.
     fn default() -> Self {
@@ -210,10 +210,10 @@ impl Shaping {
     /// stretched back over the full range, so the first movement past
     /// the deadzone is a small output rather than a jump to 0.30.
     ///
-    /// A plain `if v.abs() < deadzone { 0 }` — the obvious version —
+    /// The obvious version, a plain `if v.abs() < deadzone { 0 }`,
     /// leaves a step at the edge that an analog consumer feels as the
     /// stick snapping. This is the same rescale every controller driver
-    /// does, and it matters once path B makes an axis mean a position
+    /// does, and it matters because path B makes an axis mean a position
     /// rather than a direction.
     pub fn shape(self, raw: f32) -> f32 {
         let v = raw.clamp(-1.0, 1.0);
@@ -238,7 +238,7 @@ impl Shaping {
     /// things to everything downstream: stick-left and stick-right are
     /// two keys, and an axis swung straight through centre from one to
     /// the other has to release the first before pressing the second.
-    /// A magnitude test cannot express that — it says "pressed" the whole
+    /// A magnitude test cannot express that. It says "pressed" the whole
     /// way across, and the guest would hold both arrow keys at once.
     ///
     /// `positive` picks the half: `true` is right / down, `false` is left
@@ -280,7 +280,7 @@ impl Shaping {
 
 // --- the USB HID report (M13 path A) --------------------------------
 
-/// The buttons of the HID report, in bit order — button 1 is bit 0.
+/// The buttons of the HID report, in bit order. Button 1 is bit 0.
 ///
 /// This *is* the contract with `gamepad/qemu/dev-gamepad.c`'s report
 /// descriptor: the guest sees "button 5" and means whatever is fifth
@@ -331,7 +331,7 @@ pub fn hid_axis(shaped: f32) -> u8 {
 /// The four d-pad directions as a HID hat position: 0..7 clockwise from
 /// north, or [`HID_HAT_NULL`] for released.
 ///
-/// Opposite directions held together cancel — a real d-pad cannot do it
+/// Opposite directions held together cancel. A real d-pad cannot do it
 /// and a guest handed "north and south" would have to invent an answer.
 pub fn hid_hat(up: bool, right: bool, down: bool, left: bool) -> u8 {
     let (up, down) = if up && down { (false, false) } else { (up, down) };
@@ -351,7 +351,7 @@ pub fn hid_hat(up: bool, right: bool, down: bool, left: bool) -> u8 {
 
 /// What one control does, for a machine whose pad is `Pad::Keys`.
 ///
-/// An axis binds *twice* — once per direction — because a key has no
+/// An axis binds *twice*, once per direction, because a key has no
 /// sign. `Binding::key` holds the AT set-1 scancode the player hands to
 /// `qemu_embed_key`, which is the same currency `PLAYER_KEYS` already
 /// speaks (`player/src/qemu_vm.rs`), so the two scripted input paths
@@ -372,15 +372,15 @@ pub struct Binding {
 /// The default `Pad::Keys` map: the arrow keys, and the four buttons a
 /// DOS or early-Windows action game actually reads.
 ///
-/// The choice of Ctrl / Alt / Space / Enter is not arbitrary — it is the
-/// era's own convention, the one Doom, Duke Nukem, Commander Keen and
+/// Ctrl / Alt / Space / Enter is the era's own convention, the one Doom,
+/// Duke Nukem, Commander Keen and
 /// most of what a DOS machine exists to run already default to. Both the
 /// d-pad and the left stick drive the arrows so a pad works whichever
 /// the person reaches for, and Start is Escape because that is the menu
 /// key in the same games.
 ///
 /// The right stick is deliberately unbound: it means mouselook, and a
-/// mouselook binding is a *rate*, not a key — that is path C's second
+/// mouselook binding is a *rate*, not a key. That is path C's second
 /// half, once there is something to feel it against.
 pub fn default_key_bindings() -> Vec<Binding> {
     const ESC: u32 = 0x01;

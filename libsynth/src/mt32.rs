@@ -42,7 +42,7 @@ impl Mt32 {
     }
 }
 
-/// The PCM ROM of an *original* MT-32 — half the CM-32L's. Not a size we
+/// The PCM ROM of an *original* MT-32, half the CM-32L's. Not a size we
 /// can use (the engine is a CM-32L), but much the likeliest thing to
 /// find in a directory someone points at this, so it is worth saying so
 /// rather than reporting that nothing was found.
@@ -84,8 +84,8 @@ fn find_roms(dir: &Path) -> Result<(Vec<u8>, Vec<u8>), String> {
             );
             // The one wrong answer worth naming: an original MT-32's PCM
             // ROM is half the size, and this engine is a CM-32L. A game
-            // written for an MT-32 plays on a CM-32L — the module is a
-            // superset — but the ROMs are not interchangeable.
+            // written for an MT-32 plays on a CM-32L (the module is a
+            // superset), but the ROMs are not interchangeable.
             if mt32_pcm && want == cm32l::PCM_SIZE {
                 msg.push_str(concat!(
                     ". There is a 524288 byte one here, which is an original ",
@@ -119,7 +119,7 @@ impl Voice for Mt32 {
     }
 
     fn sysex(&mut self, data: &[u8]) {
-        // Whole message, F0 … F7 included — this is where a game uploads
+        // Whole message, F0 … F7 included. This is where a game uploads
         // the timbres its music is written for, so dropping these is
         // dropping the instruments.
         self.dev.play_sysex(data);

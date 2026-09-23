@@ -4,15 +4,13 @@
 #   scripts/gen-icons.sh            # regenerate packaging/icon/ from the master
 #   scripts/gen-icons.sh --check    # fail if anything is out of date (no writes)
 #
-# The master is `packaging/icon/2ksbox.png` — the artwork itself, a
-# transparent RGBA render of the beige CRT the whole stack is pretending
-# to be, on a 500x500 canvas it does not fill (the drawing is 431x436,
-# with transparent margins around it). It is the only file to replace
-# when the icon changes; everything below is derived from it and checked
-# in, because the places that consume an icon cannot run ImageMagick when
-# they need one:
+# The master is `packaging/icon/2ksbox.png`, a transparent RGBA render of
+# a beige CRT on a 500x500 canvas it does not fill (the drawing is
+# 431x436). It is the only file to replace when the icon changes.
+# Everything below is derived from it and checked in, because the places
+# that consume an icon cannot run ImageMagick:
 #
-#   * `launcher` embeds one with `include_bytes!` at compile time,
+#   * `launcher-qt` embeds one with `include_bytes!` at compile time,
 #   * the Flatpak build is offline and installs files, it does not draw them,
 #   * the Windows package is cross-built in a container without ImageMagick,
 #   * a user running `packaging/linux/install.sh` from a tarball has no
@@ -27,12 +25,10 @@
 #   2ksbox.ico       Windows: 16/32/48/256 in one file, which is what a
 #                    shortcut and an .exe resource both want
 #
-# Nothing is ever scaled *up*: the master is first padded with
-# transparency to 512x512, centred, which costs no pixels because the
-# margin is already transparent, and every size is then a downscale of
-# that. Padding rather than resizing to 512 also keeps the drawing at its
-# own native size in the largest icon, where it is looked at closest. If
-# the artwork is ever redrawn larger, nothing here changes.
+# Nothing is ever scaled *up*. The master is first padded with
+# transparency to 512x512, centred, and every size is a downscale of that.
+# Padding rather than resizing keeps the drawing at its native size in the
+# largest icon. If the artwork is redrawn larger, nothing here changes.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

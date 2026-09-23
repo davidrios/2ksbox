@@ -1,25 +1,27 @@
 /*
- * bumptest.c — bump mapping through XP's own d3d8.dll on our driver's DX8
- * DDI: environment-mapped bump mapping (a bump map at stage 0 under
- * D3DTOP_BUMPENVMAP perturbing stage 1's lookup) on every bump format the
- * format list offers — V8U8 and Q8W8V8U8 under BUMPENVMAP, L6V5U5 and
- * X8L8V8U8 under BUMPENVMAPLUMINANCE, whose luminance scales the result —
- * and DOT3 (D3DTOP_DOTPRODUCT3 of a normal map against the texture factor).
- * A probe (d3d8probe.h): an EMBM case needs its op in TextureOpCaps *and*
- * its format in the format list, DOT3 the op alone; what is missing is
- * logged and skipped, and with nothing to run the last line says "not
+ * bumptest.c: bump mapping through XP's own d3d8.dll on our driver's DX8
+ * DDI. It covers environment-mapped bump mapping (a bump map at stage 0
+ * under D3DTOP_BUMPENVMAP perturbing stage 1's lookup) on every bump format
+ * the format list offers, and DOT3 (D3DTOP_DOTPRODUCT3 of a normal map
+ * against the texture factor). V8U8 and Q8W8V8U8 run under BUMPENVMAP,
+ * L6V5U5 and X8L8V8U8 under BUMPENVMAPLUMINANCE, whose luminance scales
+ * the result.
+ *
+ * A probe (d3d8probe.h). An EMBM case needs its op in TextureOpCaps *and*
+ * its format in the format list; DOT3 needs the op alone. What is missing
+ * is logged and skipped, and with nothing to run the last line says "not
  * offered".
  *
  *   BUMPTEST
  *
- * The EMBM draw: stage 1's environment map is red for u < 0.5 and green
+ * In the EMBM draw, stage 1's environment map is red for u < 0.5 and green
  * above, the quad's environment coordinates span u 0.30..0.40 (red), and
- * every bump texel is du = +0.5; a bump matrix of 0.5 moves the lookup by
+ * every bump texel is du = +0.5. A bump matrix of 0.5 moves the lookup by
  * 0.25 (green), a zero matrix not at all (red). A luminance format's texels
  * carry a luminance of one half under a scale of 1 and an offset of 0, so
- * the same draws come out at half intensity. The DOT3 draw: a flat normal
- * map (0, 0, 1) against the light (0, 0, 1) is white, against (1, 0, 0)
- * black.
+ * the same draws come out at half intensity. In the DOT3 draw a flat normal
+ * map (0, 0, 1) is white against the light (0, 0, 1) and black against
+ * (1, 0, 0).
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */

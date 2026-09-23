@@ -1,19 +1,19 @@
 /*
- * d3dptvid.c — the XP video miniport for the d3dpt-vga adapter (doc 15,
- * ADR-008 / M7a). Kernel mode, loaded by videoprt.sys; no CRT.
+ * d3dptvid.c: the XP video miniport for the d3dpt-vga adapter (doc 15,
+ * ADR-008 / M7a). Kernel mode, loaded by videoprt.sys, no CRT.
  *
- * The miniport is the part of an NT display driver that owns the hardware:
- * it finds the PCI device, maps its BARs, enumerates the modes and switches
+ * The miniport is the part of an NT display driver that owns the hardware.
+ * It finds the PCI device, maps its BARs, enumerates the modes and switches
  * them. Everything that draws lives in the display driver DLL
- * (d3dptdisp.c), which talks to us through the IOCTL_VIDEO_* requests
- * videoprt hands to HwStartIO.
+ * (d3dptdisp.c), which reaches the miniport through the IOCTL_VIDEO_*
+ * requests videoprt hands to HwStartIO.
  *
- * Hardware side: d3dpt/d3dpt_fb.h. The mode list is the host's table read
- * from the register BAR (so the player, not the driver, decides what XP
- * can pick); a mode switch programs WIDTH/HEIGHT/BPP/PITCH/OFFSET and
- * ENABLE, a reset clears ENABLE so the VGA core takes over again (the BIOS'
- * int10 mode 3 for BSODs and reboots is done by videoprt because
- * HwResetHw returns FALSE).
+ * The register set is d3dpt/d3dpt_fb.h. The mode list is the host's table
+ * read from the register BAR, so the player, not the driver, decides what
+ * XP can pick. A mode switch programs WIDTH/HEIGHT/BPP/PITCH/OFFSET and
+ * ENABLE. A reset clears ENABLE so the VGA core takes over again, and
+ * videoprt does the BIOS int10 mode 3 for BSODs and reboots because
+ * HwResetHw returns FALSE.
  *
  * Build: guest-tools/build-driver.sh (mingw-w64 i686, -nostdlib, native
  * subsystem, entry DriverEntry, libvideoprt + the few ntoskrnl imports of
@@ -35,15 +35,15 @@
 
 /*
  * VRAM mappings. videoprt's VideoPortMapMemory maps frame buffers uncached
- * or write-combined (VIDEO_MEMORY_SPACE_P6CACHE), which is right for a
- * PCI aperture and wrong for us: BAR 0 is plain guest RAM that QEMU reads
- * coherently, and uncached reads (GDI scrolling, DirectDraw's HEL copying
- * from a VRAM surface) crawl at tens of MB/s. So the miniport maps VRAM
- * itself, cached: MmMapIoSpace(MmCached) for the kernel view the display
- * driver draws through, and a view of \Device\PhysicalMemory into the
- * process for DirectDraw's user-mode Lock (what videoprt does inside
+ * or write-combined (VIDEO_MEMORY_SPACE_P6CACHE). That suits a PCI
+ * aperture, but BAR 0 here is plain guest RAM that QEMU reads coherently,
+ * and uncached reads (GDI scrolling, DirectDraw's HEL copying from a VRAM
+ * surface) run at tens of MB/s. So the miniport maps VRAM itself, cached.
+ * MmMapIoSpace(MmCached) gives the kernel view the display driver draws
+ * through. A view of \Device\PhysicalMemory into the process serves
+ * DirectDraw's user-mode Lock (what videoprt does inside
  * VideoPortMapMemory, minus PAGE_NOCACHE). These are the only ntoskrnl
- * imports; the register BAR stays a videoprt (uncached) mapping.
+ * imports. The register BAR stays a videoprt (uncached) mapping.
  */
 typedef enum _MEMORY_CACHING_TYPE { MmNonCached = 0, MmCached = 1, MmWriteCombined = 2 } MEMORY_CACHING_TYPE;
 typedef enum _SECTION_INHERIT { ViewShare = 1, ViewUnmap = 2 } SECTION_INHERIT;
@@ -199,8 +199,8 @@ static VP_STATUS build_mode_table(PDEVICE_EXTENSION d)
             m->RedMask = 0xf800; m->GreenMask = 0x07e0; m->BlueMask = 0x001f;
         } else {
             /* 8 bpp: indices into the device's PALETTE block (8 bits per
-             * gun), GDI manages the palette and sets it through
-             * IOCTL_VIDEO_SET_COLOR_REGISTERS / the display driver */
+             * gun). GDI manages the palette and sets it through
+             * IOCTL_VIDEO_SET_COLOR_REGISTERS / the display driver. */
             m->NumberRedBits = m->NumberGreenBits = m->NumberBlueBits = 8;
             m->RedMask = m->GreenMask = m->BlueMask = 0;
             m->AttributeFlags |= VIDEO_MODE_PALETTE_DRIVEN | VIDEO_MODE_MANAGED_PALETTE;
@@ -225,8 +225,8 @@ static VP_STATUS set_mode(PDEVICE_EXTENSION d, ULONG index, BOOLEAN zero)
     }
     m = &d->modes[index];
     reg_write(d, D3DPT_FB_REG_ENABLE, 0);
-    /* what real adapters do: the new mode comes up black, not with the old
-     * desktop bytes reinterpreted at the new pitch */
+    /* As on real adapters, the new mode comes up black, not with the old
+     * desktop bytes reinterpreted at the new pitch. */
     if (zero && d->vram) {
         VideoPortZeroMemory(d->vram, m->ScreenStride * m->VisScreenHeight);
     }
@@ -286,9 +286,9 @@ static VP_STATUS NTAPI HwFindAdapter(PVOID ext, PVOID ctx, PWSTR args,
         return ERROR_DEV_NOT_EXIST;
     }
     magic = reg_read(d, D3DPT_FB_REG_MAGIC);
-    /* at least our version: a newer register set is ours plus registers we
-     * never touch (d3dpt_fb.h: versions only add), so an installed driver
-     * keeps working when QEMU moves on. Only an older one is refused. */
+    /* Accept our version or newer. A newer register set only adds
+     * registers (d3dpt_fb.h), so an installed driver keeps working when
+     * QEMU moves on. Only an older one is refused. */
     if (magic != D3DPT_FB_MAGIC || reg_read(d, D3DPT_FB_REG_VERSION) < D3DPT_FB_VERSION) {
         VideoPortDebugPrint(Error, "d3dptvid: bad magic %x or register set %u older than %u\n",
                             magic, reg_read(d, D3DPT_FB_REG_VERSION), D3DPT_FB_VERSION);
@@ -296,8 +296,8 @@ static VP_STATUS NTAPI HwFindAdapter(PVOID ext, PVOID ctx, PWSTR args,
         d->regs = NULL;
         return ERROR_DEV_NOT_EXIST;
     }
-    /* the whole of VRAM in kernel space: mode-set clearing now, the
-     * DirectDraw heap later. 32 MiB of system PTEs is what any real
+    /* All of VRAM in kernel space, for mode-set clearing and the display
+     * driver's DirectDraw heap. 32 MiB of system PTEs is what any real
      * adapter's miniport takes. */
     d->vram = MmMapIoSpace(d->vram_phys, d->vram_len, MmCached);
     dbg_puts(d, "d3dptvid: adapter found\n");
@@ -312,8 +312,8 @@ static VP_STATUS NTAPI HwFindAdapter(PVOID ext, PVOID ctx, PWSTR args,
     }
     d->cur_mode = ~0u;
 
-    /* what the display driver sees in the registry; the chip strings are
-     * cosmetic (Display Properties' Adapter tab) */
+    /* What the display driver sees in the registry. The chip strings only
+     * show in Display Properties' Adapter tab. */
     {
         static WCHAR chip[] = L"2ksbox d3dpt-vga";
         static WCHAR dac[] = L"paravirtual";
@@ -342,7 +342,7 @@ static BOOLEAN NTAPI HwInitialize(PVOID ext)
 
 static BOOLEAN NTAPI HwResetHw(PVOID ext, ULONG columns, ULONG rows)
 {
-    /* back to the VGA core; FALSE = videoprt does the int10 mode 3 */
+    /* Back to the VGA core. FALSE makes videoprt do the int10 mode 3. */
     reset_to_vga(ext);
     return FALSE;
 }
@@ -361,7 +361,8 @@ static VP_STATUS NTAPI HwGetVideoChildDescriptor(PVOID ext, PVIDEO_CHILD_ENUM_IN
                                              PVIDEO_CHILD_TYPE type, PUCHAR desc,
                                              PULONG uid, PULONG unused)
 {
-    /* no children: XP attaches its default monitor, mode picker uses our list */
+    /* No children. XP attaches its default monitor and the mode picker
+     * uses our list. */
     return VIDEO_ENUM_NO_MORE_DEVICES;
 }
 
@@ -447,12 +448,12 @@ static BOOLEAN NTAPI HwStartIO(PVOID ext, PVIDEO_REQUEST_PACKET rp)
         /* the kernel view lives as long as the adapter */
         break;
     case IOCTL_VIDEO_QUERY_PUBLIC_ACCESS_RANGES: {
-        /* the register page for the display driver (debug log now, the
-         * DirectDraw/Direct3D DDI records later) */
+        /* The register page for the display driver (debug log, the
+         * DirectDraw/Direct3D DDI registers). */
         PVIDEO_PUBLIC_ACCESS_RANGES out = rp->OutputBuffer;
-        /* a kernel mapping: the display driver runs in kernel mode in any
-         * process context (a user-mode mapping would only be valid in the
-         * process that created the PDEV) */
+        /* A kernel mapping, because the display driver runs in kernel mode
+         * in any process context. A user-mode mapping would only be valid
+         * in the process that created the PDEV. */
         ULONG len = d->regs_len, space = VIDEO_MEMORY_SPACE_MEMORY;
         if (rp->OutputBufferLength < sizeof(*out)) {
             st = ERROR_INSUFFICIENT_BUFFER;
@@ -477,9 +478,10 @@ static BOOLEAN NTAPI HwStartIO(PVOID ext, PVIDEO_REQUEST_PACKET rp)
         break;
     }
     case IOCTL_VIDEO_SHARE_VIDEO_MEMORY: {
-        /* DirectDraw (DdMapMemory): VRAM into a user process. The port
-         * driver's convention: the process handle goes in as the virtual
-         * address, the user-mode pointer comes back in its place. */
+        /* DirectDraw (DdMapMemory) maps VRAM into a user process. By the
+         * port driver's convention the process handle goes in as the
+         * virtual address and the user-mode pointer comes back in its
+         * place. */
         PVIDEO_SHARE_MEMORY in = rp->InputBuffer;
         PVIDEO_SHARE_MEMORY_INFORMATION out = rp->OutputBuffer;
         PVOID va;
@@ -512,9 +514,9 @@ static BOOLEAN NTAPI HwStartIO(PVOID ext, PVIDEO_REQUEST_PACKET rp)
         break;
     }
     case IOCTL_VIDEO_SET_COLOR_REGISTERS: {
-        /* 8 bpp modes: the CLUT goes into the device's PALETTE block (one
-         * x8r8g8b8 register per entry; the host applies it at its next
-         * refresh) */
+        /* 8 bpp modes. The CLUT goes into the device's PALETTE block, one
+         * x8r8g8b8 register per entry, and the host applies it at its next
+         * refresh. */
         PVIDEO_CLUT clut = rp->InputBuffer;
         ULONG i;
         if (rp->InputBufferLength < sizeof(VIDEO_CLUT) ||

@@ -4,7 +4,7 @@
  * DirectDrawCreateEx hands out so that GetAvailableVidMem / GetCaps report
  * a card with plenty of video memory.
  *
- * Why: GTA Vice City (and other RenderWare titles) decide whether to run
+ * GTA Vice City (and other RenderWare titles) decide whether to run
  * from DirectDraw 7's GetAvailableVidMem, not from Direct3D:
  * psInitialize() refuses below 12 MB ("cannot find enough available video
  * memory") and _psGetVideoModeList() drops every mode that leaves less than
@@ -37,7 +37,7 @@ static HRESULT (WINAPI *p_DllGetClassObject)(REFCLSID, REFIID, LPVOID *);
 static HRESULT (WINAPI *p_DllCanUnloadNow)(void);
 
 /* OutputDebugString is invisible without a debugger, and the one game this
- * shim exists for (Vice City) can die without a word — so every line also
+ * shim exists for (Vice City) can die without a word, so every line also
  * goes to d3dpt_ddraw.log next to the EXE. The last line before silence says
  * where the game got to. */
 static char logpath[MAX_PATH];
@@ -93,7 +93,7 @@ static HRESULT WINAPI w7_QueryInterface(IDirectDraw7 *This, REFIID riid, void **
          * real object under an application still holding it */
         *pp = This; w7_AddRef(This); return S_OK;
     }
-    dlog("d3dpt-ddraw: QueryInterface(%08lx…) forwarded unwrapped", riid ? (unsigned long)riid->Data1 : 0ul);
+    dlog("d3dpt-ddraw: QueryInterface(%08lx...) forwarded unwrapped", riid ? (unsigned long)riid->Data1 : 0ul);
     return IDirectDraw7_QueryInterface(INNER(This), riid, pp);
 }
 static ULONG WINAPI w7_AddRef(IDirectDraw7 *This)
@@ -219,7 +219,7 @@ HRESULT WINAPI DirectDrawCreate(GUID *guid, LPDIRECTDRAW *dd, IUnknown *outer)
     if (!load_real() || !p_DirectDrawCreate) return DDERR_GENERIC;
     hr = p_DirectDrawCreate(guid, dd, outer);
     /* unwrapped: a caller on this path that QIs to IDirectDraw7 sees the
-     * real vidmem — the log line is how we'd find that out */
+     * real vidmem; the log line is how we'd find that out */
     dlog("d3dpt-ddraw: DirectDrawCreate (non-Ex, vidmem NOT shimmed) -> 0x%08lx", (unsigned long)hr);
     return hr;
 }

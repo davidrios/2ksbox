@@ -1,25 +1,26 @@
-; CDSHELF.COM — the host's disc shelf, from inside a DOS box.
+; CDSHELF.COM: the host's disc shelf, from inside a DOS box.
 ;
 ; The DOS half of the in-guest disc shelf (doc 07; the Win98/XP half is
 ; guest-tools/src/cdshelf.c, the protocol cdshelf/cdshelf_proto.h, the
 ; device side patch 52). Lists the discs the host has on the shelf and
 ; puts one of them in the drive:
 ;
-;   CDSHELF        list the shelf
+;   CDSHELF        list the shelf, then a digit key loads that slot
+;   CDSHELF LIST   list the shelf and exit
 ;   CDSHELF 3      load slot 3
 ;   CDSHELF E      empty the tray
 ;
-; WHY ASSEMBLY, AND WHY PIO. DOS has no networking worth the name and no
+; Why assembly, and why PIO. DOS has no networking worth the name and no
 ; way to reach any of our other devices, but it can talk to its own
-; optical drive directly — the same ATAPI PACKET-over-PIO that
-; tools/atapi-guest-test.py drives — and the shelf lives on that drive as
+; optical drive directly (the same ATAPI PACKET-over-PIO that
+; tools/atapi-guest-test.py drives), and the shelf lives on that drive as
 ; a vendor opcode. There is no DOS C toolchain in this repo's build
 ; (guest-tools/build-wrappers.sh is a mingw cross build; Open Watcom and
 ; DJGPP pieces are skipped), so NASM it is. That also settles the reply
 ; format: fixed-stride entries this program walks with an index register.
 ;
 ; The constants below are the DOS copy of cdshelf/cdshelf_proto.h. Keep
-; them in step with it — the header is the single source of truth and
+; them in step with it. The header is the single source of truth, and
 ; CDSHELF_PROTO_VERSION is checked at run time, so a mismatch says so
 ; instead of printing nonsense.
 ;
@@ -96,8 +97,7 @@ done:
 ; ---------------------------------------------------------------- the modes
 ; With no arguments the program is a menu rather than a command: the shelf
 ; is on screen, a digit key puts that disc in the drive, and the listing is
-; reprinted with the new one marked. Typing "CDSHELF 3" for every disc swap
-; is the kind of thing you only do once.
+; reprinted with the new one marked, so a disc swap needs no typing.
 do_menu:
                 mov     si, str_menu
                 call    puts
@@ -192,7 +192,7 @@ load_slot:
                 mov     ax, [cmdslot]
                 call    print_slot_label
                 call    newline
-                ; EMPTY THE DRIVE FIRST, and wait for it. Two reasons: DOS
+                ; Empty the drive first, and wait for it. Two reasons: DOS
                 ; (and Windows) cache what they last saw in the drive, so a
                 ; swap they never saw as a removal leaves the old disc's
                 ; directory on screen; and the device runs the medium change
@@ -280,8 +280,8 @@ list_shelf:
 ; The version is the one thing worth refusing on: a reply laid out by a
 ; different version of the protocol would be walked wrongly and print
 ; garbage. The entry stride is then taken from the reply rather than from
-; this program's own constant — that is what the field is for, and the
-; fields inside an entry are at fixed offsets by design — with an upper
+; this program's own constant (that is what the field is for, and the
+; fields inside an entry are at fixed offsets by design), with an upper
 ; bound, because the whole listing has to stay inside one 64 KB segment.
 check_version:
                 mov     es, [bufseg]
@@ -404,7 +404,7 @@ print_slot_label:
 
 ; Wait for the tray to actually be empty after an eject: TEST UNIT READY
 ; failing with 02/3A (not ready, medium not present) is what that looks
-; like. Bounded, and silent — a stuck eject shows up as the load that
+; like. Bounded, and silent: a stuck eject shows up as the load that
 ; follows failing, which says more than a message here would.
 wait_empty:
                 push    cx
@@ -438,7 +438,7 @@ test_unit_ready:
 
 ; After a LOAD the medium change happens behind the command (the device
 ; runs it from a bottom half, patch 52), and the drive then reports the
-; ATAPI medium-change dance — "no medium", then UNIT ATTENTION — before
+; ATAPI medium-change dance ("no medium", then UNIT ATTENTION) before
 ; the new disc can be read. Poll TEST UNIT READY through it so the user
 ; is told when the disc is actually there, and DOS sees a settled drive.
 wait_medium:
@@ -565,7 +565,7 @@ print_sense:
 ; signature is only there until something issues a command, and by the time
 ; a DOS program runs, the BIOS has long since detected the drive and left
 ; those registers at zero (checked under SeaBIOS: status 50h, cylinders
-; 00/00). A1h is the question itself — an ATAPI device answers it with a
+; 00/00). A1h is the question itself: an ATAPI device answers it with a
 ; data block, everything else aborts it.
 find_drive:
                 mov     bx, drv_tab
@@ -658,8 +658,8 @@ print_drive:
 ; A CHECK CONDITION is always followed by REQUEST SENSE, exactly as a real
 ; driver does it: the drive keeps reporting the same condition to every
 ; command until something asks for the sense data, so skipping this turns
-; one failure into an endless one (which is precisely what the medium-change
-; poll below did before this).
+; one failure into an endless one (the medium-change poll below would
+; spin until its timeout).
 send_packet:
                 mov     si, pkt
                 call    send_packet_raw
@@ -896,13 +896,12 @@ parse_args:
 
 ; ---------------------------------------------------------------- output
 ; Everything goes through DOS function 02h, so `CDSHELF > FILE` and
-; `CDSHELF > COM1` work — which is how tools/atapi-guest-test.py reads
+; `CDSHELF > COM1` work, which is how tools/atapi-guest-test.py reads
 ; this program's output back out of the guest.
 ; DOS is documented to preserve the registers a call does not return in,
 ; but not every DOS does, and this one is called from loops that keep the
 ; reply buffer in ES and the entry index in SI. Saving everything costs
-; nothing here and has been the difference between a listing and a hang
-; in enough era code to be worth it.
+; nothing here.
 putc:
                 push    ax
                 push    bx

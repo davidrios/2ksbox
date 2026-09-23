@@ -1,10 +1,10 @@
 /*
- * gameport — the PC analog joystick port at 0x201 (M13 path B,
+ * gameport: the PC analog joystick port at 0x201 (M13 path B,
  * docs/tracks/m13-gamepads.md).
  *
  * Overlaid into hw/input/ by scripts/prepare-qemu.sh and built by
  * patch 27. QEMU has never had this port: nothing in hw/ answers 0x201,
- * and sb16.c models the DSP and mixer only — the gameport that sits at
+ * and sb16.c models the DSP and mixer only. The gameport that sits at
  * 0x200-0x207 on a real Sound Blaster is not there. So a DOS game, which
  * reads the port itself and has no other way to find a joystick, found
  * nothing at all before this.
@@ -51,7 +51,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(GameportState, GAMEPORT)
  *
  * The polarity is the hardware's and needs no flip: a low byte is a short
  * pulse and a small count, which is what every game and every calibration
- * routine reads as left / up — and a low byte is what gamepad::hid_axis()
+ * routine reads as left / up. A low byte is also what gamepad::hid_axis()
  * already gives for a stick pushed left or up.
  */
 #define GAMEPORT_BASE_NS 24200
@@ -81,7 +81,7 @@ struct GameportState {
     /*
      * What the guest is doing with the port, reported every 5 s while it
      * is doing anything. The first question about a joystick that does not
-     * work is whether the guest is polling at all — a DOS game with its
+     * work is whether the guest is polling at all. A DOS game with its
      * joystick support switched off, and a 9x guest with no driver
      * installed, both touch this port exactly never, and that is not
      * visible from inside the guest either.
@@ -115,9 +115,9 @@ void gameport_set_state(const uint8_t axes[GAMEPORT_AXES], uint8_t hat,
     /*
      * The d-pad drives the first stick's own axes to their ends.
      *
-     * Not a convenience mapping bolted on: it is what a digital pad *is*
-     * on this port. A Gravis GamePad has no pots at all — its directions
-     * switch the one-shots between the two extremes — so a DOS game has
+     * This is what a digital pad *is* on this port. A Gravis GamePad has
+     * no pots at all. Its directions switch the one-shots between the two
+     * extremes, so a DOS game has
      * no idea whether it is reading a stick or a d-pad, and no way to
      * read a d-pad any other way. Without this, the control every era
      * game is played with would do nothing on the only path that reaches
@@ -182,8 +182,8 @@ static uint32_t gameport_read(void *opaque, uint32_t addr)
         }
     }
     /* A held button pulls its line low, so the bit is *clear* while it is
-     * pressed. An idle port with nothing pressed therefore reads 0xf0 —
-     * and 0xff, which is what an absent port reads off the open bus, is
+     * pressed. An idle port with nothing pressed therefore reads 0xf0.
+     * And 0xff, which is what an absent port reads off the open bus, is
      * also what this one reads in the first microseconds after a write,
      * while all four one-shots are still charging. Both are correct. */
     v |= (uint32_t)(~s->buttons & 0x0f) << 4;

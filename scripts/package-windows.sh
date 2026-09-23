@@ -41,8 +41,8 @@
 #   2ksbox.ico                  the application icon, for a shortcut
 #                               (the .exes carry it as a resource too)
 #   2ksbox-debug.bat            runs the launcher from a console and
-#                               keeps its exit code -- the one thing
-#                               a silent start-up failure still has
+#                               keeps its exit code, the one thing a
+#                               silent start-up failure still has
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -82,14 +82,14 @@ install -m755 "$Q/libqemu-embed-i386.dll" "$STAGE/"
 cp -a qemu/pc-bios "$STAGE/pc-bios"
 
 # The Direct3D executor is optional at run time (the device says "no
-# executor" and the guest falls back), so a package without it is a
-# package, not a failure — but say so, because "3D does nothing" is not a
-# symptom anyone enjoys tracing back to a packaging step.
+# executor" and the guest falls back), so a package without it is not a
+# failure. Say so anyway, because "3D does nothing" is hard to trace back
+# to a packaging step.
 #
-# Both or neither, as on Linux: the executor runs on DXVK's d3d9 and on
-# nothing else (2026-09-17 — Windows' own Direct3D 9 drew black frames on
-# its first real run). DXVK's release build keeps its symbols, 21 MB of
-# them, so the staged copy is stripped.
+# Both or neither, as on Linux. DXVK's d3d9 is the executor's default;
+# Windows' own system32 d3d9 is only the fallback below the Vulkan floor
+# (D3DPT_D3D9). DXVK's release build keeps its symbols, 21 MB of them, so
+# the staged copy is stripped.
 if [ -f build/win/d3dpt/d3dpt_exec.dll ] && [ -f build/win/dxvk/src/d3d9/d3d9.dll ]; then
   install -m755 build/win/d3dpt/d3dpt_exec.dll "$STAGE/"
   install -m755 build/win/dxvk/src/d3d9/d3d9.dll "$STAGE/dxvk_d3d9.dll"
@@ -129,20 +129,19 @@ fi
 install -m644 COPYING THIRD-PARTY-NOTICES.md README.md "$STAGE/doc/"
 # The application icon (`scripts/gen-icons.sh`), the same artwork the
 # Linux and macOS packages install. Every staged .exe already carries it
-# as a resource (`packaging/windows/win-icon.rs`, from each crate's build
-# script) -- this loose copy is for the things that take a path instead:
-# a shortcut someone pins, an installer, a folder's own icon.
+# as a resource (`packaging/windows/win-icon.rs`). This loose copy is for
+# what takes a path instead: a pinned shortcut, an installer, a folder's
+# own icon.
 install -m644 packaging/icon/2ksbox.ico "$STAGE/2ksbox.ico"
 
 # --- what to double-click when nothing happens ------------------------
-# A windowed program that dies before `main` -- a DLL the loader cannot
-# find, a static initialiser that faults -- says nothing anywhere: no
-# window, no console, and not even the launcher's own log, because no
-# code of ours has run yet (launcher-core/src/fatal.rs writes that log
-# from the first line of `main` onwards). The one thing that still
-# distinguishes those cases is the **exit code**, and only a console has
-# it, so the package carries a console to run the launcher from. It is
-# the first thing to ask for when a report is "it didn't start".
+# A windowed program that dies before `main` (a DLL the loader cannot
+# find, a static initialiser that faults) says nothing anywhere. There is
+# no window, no console and no launcher log, because no code of ours has
+# run yet (launcher-core/src/fatal.rs writes that log from the first line
+# of `main`). Only the **exit code** tells those cases apart, and only a
+# console shows it, so the package carries a console to run the launcher
+# from. Ask for its log first when a report is "it didn't start".
 cat > "$STAGE/2ksbox-debug.bat" <<'BAT'
 @echo off
 rem  Run the launcher from a console and keep what it says.  Send the
@@ -197,9 +196,9 @@ chmod 644 "$STAGE/2ksbox-debug.bat"
 # --- the Qt runtime ---------------------------------------------------
 # Qt needs more than its DLLs: a platform plugin (there is no window
 # without `platforms/qwindows.dll`) and the QML modules the views import,
-# neither of which is in any import table. There is no cross
-# `windeployqt` in Fedora's mingw packages, so this is that step, written
-# out: the plugin directories, the three QML module trees `qml/*.qml`
+# neither of which is in any import table. Fedora's mingw packages have no
+# cross `windeployqt`, so this is that step written out: the plugin
+# directories, the three QML module trees `qml/*.qml`
 # imports (QtQuick pulls Controls, Layouts, Dialogs, Templates and
 # Effects with it), and a `qt.conf` so Qt resolves both relative to the
 # executable instead of to the build machine's absolute paths.
@@ -235,21 +234,20 @@ EOF
 # Everything our four binaries import, transitively, that is not a
 # Windows system DLL. A missing one of these is the classic Windows
 # failure: a dialog naming a DLL, before a single line of ours runs. The
-# import tables are the source of truth, walked with objdump — no guessing
-# from a package list, which is how such a closure goes stale.
+# import tables, walked with objdump, are the source of truth. A closure
+# guessed from a package list goes stale.
 #
-# The system set is matched by name: anything under the mingw sysroot is
-# ours to ship, anything else (kernel32, d3d9, opengl32, the api-ms-win-*
-# API sets) is Windows' own and must NOT be shipped — copying a system
-# DLL into the folder is how you get an app that only runs on the machine
-# that built it.
+# The system set is matched by name. Anything under the mingw sysroot is
+# ours to ship. Anything else (kernel32, d3d9, opengl32, the api-ms-win-*
+# API sets) is Windows' own and must NOT be shipped; a system DLL copied
+# into the folder makes an app that only runs on the machine that built
+# it.
 SYSROOT=${WIN_SYSROOT:-/usr/x86_64-w64-mingw32/sys-root/mingw/bin}
 OBJDUMP=${WIN_OBJDUMP:-x86_64-w64-mingw32-objdump}
 if [ ! -d "$SYSROOT" ]; then
-  # The sysroot lives in the cross container, so ask it for a copy — every
-  # time, not once: a kept copy is a snapshot of an older image, and the
-  # first `--qt` run found exactly that, a cache from before Qt was in
-  # there, and quietly packaged a launcher with no Qt6Core.dll beside it.
+  # The sysroot lives in the cross container, so ask it for a copy every
+  # time. A kept copy is a snapshot of an older image; one from before Qt
+  # was in the image once quietly packaged a launcher with no Qt6Core.dll.
   SYSROOT="$ROOT/build/win/sysroot-bin"
   echo "==> copying the mingw runtime out of the cross image"
   rm -rf "$SYSROOT"
@@ -261,11 +259,11 @@ command -v "$OBJDUMP" >/dev/null || { echo "package-windows.sh: no $OBJDUMP (WIN
 
 imports() { "$OBJDUMP" -p "$1" | sed -n 's/^\tDLL Name: //p'; }
 
-# Every binary in the package is a root, not just the ones at the top: a
+# Every binary in the package is a root, not just the ones at the top. A
 # Qt platform plugin or a QML module's DLL sits in a subdirectory, imports
-# half of Qt, and is loaded by name at run time — so nothing above it
-# names what it needs. They are resolved from the executable's own
-# directory, which is where the closure puts everything.
+# half of Qt, and is loaded by name at run time, so nothing above it names
+# what it needs. Its imports resolve from the executable's own directory,
+# which is where the closure puts everything.
 staged_binaries() { find "$STAGE" \( -name '*.dll' -o -name '*.exe' \) -type f; }
 
 declare -A seen=()
@@ -290,18 +288,16 @@ while [ "$again" = 1 ]; do
 done
 
 # A DLL that is *loaded* rather than imported is invisible to the walk
-# above. The case that taught us was Fedora's mingw64-SDL2 — sdl2-compat,
-# an SDL2.dll that LoadLibrary's SDL3.dll at run time: shipping only what
-# the import tables named gave a package whose player died with "Failed
-# loading SDL3 library" on a machine that had no SDL of its own (found on
-# a real Windows PC, 2026-09-06). QEMU is built --disable-sdl since
-# 2026-09-07 and neither DLL is staged any more, but the pass stays: it is
-# the net, not the fix for one library.
+# above. Fedora's mingw64-SDL2 is sdl2-compat, an SDL2.dll that
+# LoadLibrary's SDL3.dll at run time, and a package with only the imported
+# DLLs had a player that died with "Failed loading SDL3 library" on a PC
+# with no SDL of its own. QEMU is now built --disable-sdl and neither DLL
+# is staged, but the pass stays as the net for the next such library.
 #
-# So: every staged binary is searched for names of DLLs that exist in the
-# mingw sysroot and are not staged yet, and those are shipped too. It is
-# broader than reading an import table and that is the point — the next
-# runtime load will be caught by the same pass instead of by a user.
+# Every staged binary is searched for names of DLLs that exist in the
+# mingw sysroot and are not staged yet, and those ship too. It is broader
+# than an import table on purpose, so the next run-time load is caught
+# here instead of by a user.
 runtime_deps() { strings -a "$1" | grep -oiE '[A-Za-z0-9_.+-]+\.dll' | sort -u; }
 if command -v strings >/dev/null; then
   again=1
@@ -330,26 +326,23 @@ echo "runtime DLLs   $copied copied from $(basename "$SYSROOT")"
 
 # --- the check --------------------------------------------------------
 # The staged binaries, run as Windows binaries, from outside the checkout,
-# with an empty environment: not one LAUNCHER_*/PLAYER_* knob from this
-# shell can be what makes them work, and nothing may resolve back into the
-# build tree. Wine is the only Windows available on a Linux build host —
-# it is not the target, so a failure here is investigated rather than
-# trusted, but "the launcher starts and answers about itself" and "the
-# packaged qemu-img writes a qcow2" are exactly the things a broken
-# package fails at.
+# with an empty environment, so no LAUNCHER_*/PLAYER_* knob from this
+# shell can make them work and nothing may resolve back into the build
+# tree. Wine is the only Windows on a Linux build host. It is not the
+# target, so a failure here is investigated rather than trusted, but "the
+# launcher starts and answers about itself" and "the packaged qemu-img
+# writes a qcow2" are what a broken package fails at.
 fail=0
 # The network backend every machine the launcher writes asks for
 # (`-netdev user`, bundle.rs) must exist in the QEMU beside it. It is a
-# *compiled-in* backend, through libslirp, which Fedora does not
-# package for mingw -- so the first machine ever started on a real
-# Windows PC died on "network backend 'user' is not compiled into this
-# binary" (2026-09-06), with every check here green, because none of
-# them had asked our QEMU for anything the launcher actually writes.
-# The question is put to the import table rather than to a running QEMU
-# because the package holds no qemu-system-*.exe at all -- QEMU is
-# in-process, inside libqemu-embed-i386.dll -- and the player that would
-# load it is the binary wine hangs in. net/slirp.c is libslirp's only
-# consumer, so the import is the backend.
+# *compiled-in* backend, through libslirp, which Fedora does not package
+# for mingw. Without it the first machine started on a real PC died on
+# "network backend 'user' is not compiled into this binary" with every
+# check here green. The import table answers rather than a running QEMU,
+# because the package holds no qemu-system-*.exe (QEMU is in-process,
+# inside libqemu-embed-i386.dll) and wine hangs in the player that would
+# load it. net/slirp.c is libslirp's only consumer, so the import is the
+# backend.
 if imports "$STAGE/libqemu-embed-i386.dll" | grep -qi '^libslirp'; then
   echo "qemu           -netdev user is compiled in (libslirp)"
 else
@@ -371,10 +364,8 @@ if command -v wine >/dev/null; then
 
   resolved=$(runw 2ksbox.exe --paths || true)
   if [ -z "$resolved" ]; then
-    # Both front ends answer this now. The Qt one could not, for as long
-    # as its `std::call_once` died before `main` (M11): that excuse is
-    # gone with the bug, so a Qt package that cannot answer fails here
-    # like any other.
+    # The Qt launcher once could not answer, while its `std::call_once`
+    # died before `main` (M11). That bug is fixed, so silence fails.
     echo "package-windows.sh: the staged launcher printed nothing for --paths" >&2
     fail=1
   else
@@ -392,12 +383,10 @@ if command -v wine >/dev/null; then
     done <<< "$resolved"
   fi
 
-  # The libraries QEMU `dlopen`s (`LoadLibrary`s) by name rather than
-  # through an import table — here that is the Direct3D executor and
-  # the DXVK `d3d9` it runs on. Nothing above can see
-  # them: they are in no import table, and the Linux packages shipped
-  # without them for months for exactly that reason (2026-09-07). The
-  # staged *player* knows where they should be
+  # The libraries QEMU `LoadLibrary`s by name rather than through an
+  # import table: here, the Direct3D executor and the DXVK `d3d9` it runs
+  # on. Nothing above can see them, which is how the Linux packages once
+  # shipped without them. The staged *player* knows where they should be
   # (`player/src/companions.rs`), so ask it.
   companions=$(runw 2ksbox-player.exe --companions || true)
   if [ -n "$companions" ]; then
@@ -423,10 +412,10 @@ EOF
   # A frame through the staged pair: the display driver's host test
   # (tools/d3dpt-dp2-test.cpp, built by `build-windows.sh exec`) loads the
   # package's own d3dpt_exec.dll and dxvk_d3d9.dll and checks the pixels
-  # it reads back. The Windows executor's first real run drew black on
-  # Windows' own d3d9 (2026-09-17) with every check here green, because
-  # nothing had ever put a batch through it. Under wine this reaches the
-  # host GPU through winevulkan; a host with no Vulkan device skips (77).
+  # it reads back. The Windows executor's first real run drew black with
+  # every check here green, because nothing had put a batch through it.
+  # Under wine this reaches the host GPU through winevulkan; a host with no
+  # Vulkan device skips (77).
   if [ -f "$STAGE/dxvk_d3d9.dll" ] && [ -f build/win/d3dpt-dp2-test.exe ]; then
     cp build/win/d3dpt-dp2-test.exe "$scratch/"
     rc=0
@@ -442,13 +431,12 @@ EOF
       grep '^FAIL\|^exec: \|^dlopen\|^bad \|mismatch' "$scratch/dp2.log" | head -20 >&2
       fail=1
     fi
-    # ... and the same records on the *other* backend (2026-09-21): the
-    # system Direct3D 9, which on a real Windows host below the Vulkan
-    # 1.3 floor is what the executor runs on. Under wine that name is
-    # wine's own d3d9 over WineD3D, so this is a third implementation
-    # rather than the one the user will have — which is why it is
-    # reported and never fails the package. It needs a display and GL;
-    # both are often absent where a package is rolled.
+    # ... and the same records on the *other* backend, the system
+    # Direct3D 9 the executor runs on on a real Windows host below the
+    # Vulkan 1.3 floor. Under wine that name is wine's own d3d9 over
+    # WineD3D, a third implementation rather than the user's, so it is
+    # reported and never fails the package. It needs a display and GL,
+    # which are often absent where a package is rolled.
     rc=0
     (cd "$STAGE" && WINEDEBUG=-all D3DPT_EXEC_LIB=d3dpt_exec.dll D3DPT_D3D9=system \
        timeout 300 wine "$scratch/d3dpt-dp2-test.exe" "$scratch/dp2-system.bmp" > "$scratch/dp2-system.log" 2>&1) || rc=$?
@@ -461,12 +449,12 @@ EOF
     fi
   fi
 
-  # The package has to be able to say why it failed, which is the whole
-  # of `launcher-core/src/fatal.rs`: a windowed program's start-up
-  # failure has no stdout, so it goes into a log instead. Here that log
-  # is written by the staged binary in its own prefix -- the one file a
-  # user is asked for when nothing at all appeared on screen -- and it
-  # must hold both the start-up milestones and `--diagnose`'s answers.
+  # The package has to be able to say why it failed
+  # (`launcher-core/src/fatal.rs`). A windowed program's start-up failure
+  # has no stdout, so it goes into a log. Here the staged binary writes
+  # that log in its own prefix. It is the one file a user is asked for when
+  # nothing appeared on screen, and it must hold both the start-up
+  # milestones and `--diagnose`'s answers.
   runw 2ksbox.exe --diagnose >/dev/null 2>&1 || true
   llog=$(find "$WINEPREFIX/drive_c/users" -name launcher.log 2>/dev/null | head -1)
   if [ -n "$llog" ] && grep -q -- '--- --diagnose ---' "$llog" && grep -q '\[start\] exe = ' "$llog"; then
@@ -478,12 +466,11 @@ EOF
 
   # A window, which `--paths` never opens. Qt finds its platform plugin
   # and its QML modules by name at run time, out of `plugins\` and
-  # `qml\` beside the executable, and nothing in an import table says so
-  # -- so a package that answers every question above can still be one
-  # that shows nothing at all on a real PC. Under wine this is a report
-  # and not a verdict (wine's Qt is not the target's), but the staged
-  # files below are: `qwindows.dll` missing is a package that cannot
-  # open a window anywhere.
+  # `qml\` beside the executable, and no import table says so. A package
+  # that answers every question above can still show nothing on a real PC.
+  # Under wine the grab is a report, not a verdict (wine's Qt is not the
+  # target's), but the staged files below are a verdict: without
+  # `qwindows.dll` the package cannot open a window anywhere.
   if [ -f "$STAGE/plugins/platforms/qwindows.dll" ] && [ -f "$STAGE/qml/QtQuick/qmldir" ]; then
     echo "qt runtime     platforms\\qwindows.dll and the QtQuick modules are staged"
   else
@@ -495,11 +482,9 @@ EOF
   shot="$scratch/window.png"
   winshot="Z:$(printf '%s' "$scratch" | tr '/' '\\')\\window.png"
   # `timeout`: the grab is the one call here that opens a Qt window, and a
-  # Qt window under wine can simply never come back — it does today, on
-  # this box (2026-09-07), with the offscreen platform plugin and no
-  # display. Without the bound the script hangs here forever instead of
-  # taking the "no offscreen grab" branch below, which is exactly what
-  # this call's own comment says should happen.
+  # Qt window under wine with the offscreen plugin and no display can
+  # never come back. Without the bound the script hangs here instead of
+  # taking the "no offscreen grab" branch below.
   (cd "$STAGE" && env -i HOME="$scratch" WINEPREFIX="$WINEPREFIX" WINEDEBUG=-all \
       PATH="$PATH" QT_QPA_PLATFORM=offscreen LAUNCHER_QT_SHOT="$winshot" \
       LAUNCHER_QT_DELAY=2000 timeout 90 wine 2ksbox.exe >/dev/null 2>&1) || true
@@ -523,12 +508,11 @@ EOF
     fail=1
   fi
   # Offscreen GL, which is what a Win98 guest's 3D needs (the embed
-  # library's WGL backend). Reported, never fatal: it is a property of
-  # the machine that runs the package, and wine's GL is not the target's
-  # — a Windows user runs tools\wgl-probe.exe there for the real answer.
-  # ... and unlike the checks above, this one needs a display: it opens a
-  # window (an invisible one, but a real one), which the `env -i` the
-  # others deliberately run under makes impossible.
+  # library's WGL backend). Reported, never fatal. It is a property of the
+  # machine that runs the package, and wine's GL is not the target's; a
+  # Windows user runs tools\wgl-probe.exe there for the real answer.
+  # Unlike the checks above, this one needs a display. It opens a real,
+  # invisible window, which the others' `env -i` makes impossible.
   runw_display() { (cd "$STAGE" && env -i HOME="$scratch" WINEPREFIX="$WINEPREFIX" \
         WINEDEBUG=-all PATH="$PATH" DISPLAY="${DISPLAY:-}" \
         WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
@@ -549,9 +533,8 @@ echo "checks passed"
 du -sh "$STAGE" | sed 's/^/staged  /'
 if [ "$ZIP" = 1 ]; then
   # A zip, because that is what a Windows user is handed. `zip` is not on
-  # every Linux (this project's own host has none), and Python's zipfile
-  # is: it produces the same archive and is always there, so it is the
-  # fallback rather than another package to install.
+  # every Linux (this project's own host has none); Python's zipfile makes
+  # the same archive and is always there, so it is the fallback.
   archive="$OUT/$NAME.zip"
   rm -f "$archive"
   if command -v zip >/dev/null; then

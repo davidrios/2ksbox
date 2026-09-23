@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# xp-diablo.sh — Diablo (1996, DirectDraw 640x480x8 with palette animation)
-# on the d3dpt-vga driver: the 8 bpp palettized-mode title (doc 15 "8 bpp
+# Diablo (1996, DirectDraw 640x480x8 with palette animation) on the
+# d3dpt-vga driver: the 8 bpp palettized-mode title (doc 15 "8 bpp
 # palettized modes").
 #
 #   tools/xp-diablo.sh install <image.qcow2> [outdir]   # D:\SETUP.EXE -> C:\Diablo (three clicks), then the game as below

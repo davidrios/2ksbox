@@ -2,7 +2,7 @@
 """Self-modifying code under TCG with the same-value store skip and the
 run-time reading of patched operands on and off (patches 18 and 24, M9 track):
 a DOS program patches its own instructions the ways the software-rendered
-games do — an immediate rewritten with new values from
+games do: an immediate rewritten with new values from
 another block and from the block being executed (precise SMC), rewritten
 with the value already there, an opcode byte flipped, 16- and 8-bit partial
 patches of an imm32, a routine overwritten by `rep movsd` (the probe path)
@@ -13,7 +13,7 @@ immediate are both patched, one store that covers the tail of an
 immediate *and* the opcode bytes after it, an imm8 shift count and an imm8
 rotate count patched per call over every byte value (Build's column loops;
 a zero count must leave the carry alone), imul's imm32, and a 16-bit rcr
-whose count is reduced modulo 17 and so keeps its constant — and prints a
+whose count is reduced modulo 17 and so keeps its constant. It prints a
 checksum of what the patched code computed. Boots it on the FreeDOS test floppy (fetched by
 tools/x87-guest-test.py on first use) under all four combinations of
 `-accel tcg,smc-same-value=on|off,soft-imm=on|off`; every checksum must equal

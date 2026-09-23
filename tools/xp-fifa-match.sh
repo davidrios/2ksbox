@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# xp-fifa-match.sh — FIFA 2000 into a real match on the d3dpt-vga HAL,
-# headless, and a keyboard test there (doc 15 "FIFA 2000 on the HAL").
+# FIFA 2000 into a real match on the d3dpt-vga HAL, headless, and a keyboard test there (doc 15 "FIFA 2000 on the HAL").
 #
 #   tools/xp-fifa-match.sh kvm|tcg <image.qcow2> [outdir]
 #
@@ -11,7 +10,7 @@
 # arrows are long-held mouse clicks (the menus ignore 100 ms clicks), Left
 # picks the side, Avançar starts the match, which kicks off by itself. In the
 # match: F2 (tower camera), F1, Right held 2 s, Esc (pause menu), Esc, F12
-# (exit dialog) as 100 ms taps, a screendump after each — without the DINPUT
+# (exit dialog) as 100 ms taps, a screendump after each. Without the DINPUT
 # shim the match ignores all of them; with it every one shows. Outputs in
 # outdir (default build/xp-driver-test/fifa-match-<mode>): the screendumps,
 # qemu.log (the executor's frames/s lines), and dinput_log.txt pulled from
@@ -90,8 +89,8 @@ if [ "$MODE" = kvm ]; then ACCEL=(-accel kvm -cpu host); SLOW=1; else ACCEL=(-cp
 case "$(uname -s)" in Darwin) SO=dylib; DXVK_SO=0.dylib;; *) SO=so; DXVK_SO=so.0;; esac
 export D3DPT_EXEC_LIB="${D3DPT_EXEC_LIB:-$ROOT/build/d3dpt/libd3dpt_exec.$SO}"
 export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.$DXVK_SO}"
-# EXEC=wine: the executor in another process on Wine (M15, ADR-018) -- on a
-# host with Vulkan the A/B, on one below the floor what the user gets
+# EXEC=wine: the executor in another process on Wine (M15, ADR-018). On a
+# host with Vulkan it is the A/B, on one below the floor what the user gets
 VGA_ARGS=(-vga none -device "d3dpt-vga${EXEC:+,exec=$EXEC}")
 "$ROOT/build/qemu/qemu-system-i386" -L "$ROOT/qemu/pc-bios" "${ACCEL[@]}" -machine pc -m 512 \
   -hda "$IMG" -hdb "$SCRATCH" -cdrom "$FIFA_ISO" -drive "file=$ISO,media=cdrom,if=ide,index=3,readonly=on" \

@@ -1,13 +1,13 @@
 /*
- * undither.c -- the Voodoo's ordered dither, undone at scanout (doc 21 §12).
+ * undither.c: the Voodoo's ordered dither, undone at scanout (doc 21 §12).
  *
  * The chip renders colour at more than 16 bits and stores it as RGB565
  * through an ordered dither; 3dfx's RAMDAC then put a box filter on the
  * scanout that partly undid it, which is where the "22-bit" of the marketing
  * came from. 86Box has leilei's approximation of that filter (`scrfilter`,
- * our `filter=on`), and on a Voodoo 2 it is a *single scanline* pass --
+ * our `filter=on`), and on a Voodoo 2 it is a *single scanline* pass.
  * voodoo_filterline_v2() takes one row pointer and ignores its `line`
- * argument -- so it softens the dither along a line, leaves the vertical half
+ * argument, so it softens the dither along a line, leaves the vertical half
  * of every pattern, and decides what is dither with a threshold the guest has
  * to program into maxRgbDelta first.
  *
@@ -15,7 +15,7 @@
  * not something to approximate: it is the table the rasterizer dithered
  * *with*. 86box/vid_voodoo_dither.h holds it, vid_voodoo_render.c:1329
  * applies it indexed by (real_y & 3, x & 3), and for a linear, non-SLI buffer
- * the row that was dithered as row r is scanned out as row r -- so at scanout
+ * the row that was dithered as row r is scanned out as row r, so at scanout
  * the phase is just (y & 3, x & 3). Inverting the table gives, for each phase
  * and each stored code, the interval of 8-bit values that dither to it.
  *
@@ -25,8 +25,8 @@
  *
  *   4x4, centred.  The interval comes out exactly one value wide for every
  *                  value and every phase of both 4x4 tables, so the output is
- *                  the colour the rasterizer had, exactly, and -- what a 2x2
- *                  cannot do -- the *same* value at all sixteen phases. A
+ *                  the colour the rasterizer had, exactly, and (what a 2x2
+ *                  cannot do) the *same* value at all sixteen phases. A
  *                  2x2 alone is within 2/255 but its midpoint moves with the
  *                  phase: measured, 255 of 256 flat colours come back out of
  *                  a 2x2 with more than one level in them, which is a
@@ -41,7 +41,7 @@
  * colour could have dithered into those pixels, so the window straddles an
  * edge, and the pixel is written exactly as the unfiltered path would have
  * written it. That is why this needs no threshold and never blurs across an
- * edge -- an edge here is not "a difference bigger than N", it is an
+ * edge. An edge here is not "a difference bigger than N", it is an
  * arithmetic impossibility.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
@@ -75,7 +75,7 @@
 typedef uint8_t row_t[3][UNDITHER_MAX_W]; /* one scanline, 0 = b, 1 = g, 2 = r */
 
 /* (lo << 8) | hi: the 8-bit values that dither to this code at this phase.
- * lo > hi means no value does -- a code the table never produces. */
+ * lo > hi means no value does, a code the table never produces. */
 static uint16_t inv_rb4[4][4][32];
 static uint16_t inv_g4[4][4][64];
 static uint16_t inv_rb2[2][2][32];
@@ -148,8 +148,8 @@ decode_row(const uint16_t *src, int w, int y, int two, row_t lo, row_t hi)
 /* the 2x2 windows anchored along one row: rows y and y + 1, columns x and
  * x + 1. lo > hi in the result means that 2x2 holds no single colour.
  *
- * Plane at a time with no clamp in the loop -- the last column is fixed up
- * afterwards -- because this is where the frame's time goes and a byte-wide
+ * Plane at a time with no clamp in the loop (the last column is fixed up
+ * afterwards), because this is where the frame's time goes and a byte-wide
  * max/min over contiguous arrays is what the vectorizer wants. */
 static void
 quad_row(const row_t alo, const row_t ahi, const row_t blo, const row_t bhi,
@@ -199,7 +199,7 @@ combine_span(const uint8_t *restrict tl, const uint8_t *restrict th,
      * 640x480 before it was vectorized, 0.86 after. Three things were needed
      * and the third is the one that matters. `restrict` on every pointer and
      * x - 1 / x + 1 as literals (the offset was a variable, for the clamped
-     * edge columns, which combine_at() does instead now) -- and then clang
+     * edge columns, which combine_at() does instead now). Even then clang
      * *still* left it scalar, because its cost model says vectorising is not
      * worth it here. It is: 2.2x, measured. Hoisting the two fallback loads
      * out of the selects, so nothing is speculative, does not change its
@@ -253,7 +253,7 @@ own_span(const uint16_t *src, int w, int shift, int mask, int up, uint8_t *own)
 }
 
 /* the CLUT is a plain ramp unless the guest loaded one, and the lookup is
- * three dependent byte loads a pixel -- worth the 256 compares to skip */
+ * three dependent byte loads a pixel, worth the 256 compares to skip */
 static int
 clut_is_identity(const voodoo_t *v)
 {
@@ -311,7 +311,7 @@ fb_row(const voodoo_t *v, int y)
 }
 
 /* VOODOO2_UNDITHER_PATTERN=4x4|2x2 overrides what fbzMode says the
- * rasterizer used -- the A/B when a frame looks wrong */
+ * rasterizer used. It is the A/B when a frame looks wrong */
 static int
 forced_pattern(void)
 {

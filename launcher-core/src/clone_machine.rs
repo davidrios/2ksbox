@@ -1,26 +1,26 @@
 //! "Clone…" on a grid row: a new machine that is a complete copy of an
-//! existing one under a name the user picks — its settings, its own copy
-//! of the disk (internal snapshots included, because they live inside
-//! the qcow2), and whatever else sits in its bundle directory.
+//! existing one under a name the user picks. It gets the settings, its
+//! own copy of the disk (internal snapshots included, because they live
+//! inside the qcow2), and whatever else sits in the bundle directory.
 //!
-//! The rules, all of which are why this is one implementation:
+//! The rules, which are why this is one implementation:
 //!
 //! * **The disk is always copied**, wherever it is. A bundle made by the
 //!   wizard keeps `disk.qcow2` in its own directory, but "Use an existing
 //!   disk" can point anywhere (`~/vms/win98.qcow2`), and two machines on
-//!   one image are one machine that corrupts itself the day both run.
-//!   A disk outside the bundle lands in the clone's directory under its
-//!   own file name. Anything else the bundle names *inside* its own
-//!   directory (a floppy image, say) is copied with the tree and renamed
-//!   into the clone; what it names outside it — discs on the shared
-//!   shelf, a shader, a SoundFont — is shared media and stays shared.
+//!   one image corrupt it the day both run. A disk outside the bundle
+//!   lands in the clone's directory under its own file name. Anything
+//!   else the bundle names inside its own directory (a floppy image, say)
+//!   is copied with the tree and renamed into the clone. What it names
+//!   outside it (discs on the shared shelf, a shader, a SoundFont) is
+//!   shared media and stays shared.
 //! * **A running machine is refused.** Its disk is being written, and a
 //!   copy taken under QEMU is not a disk that boots. "Running" is the
-//!   grid's own player map *or* a monitor socket something is listening
+//!   grid's own player map or a monitor socket something is listening
 //!   on, which also catches a player started by `--play` or by another
 //!   launcher.
-//! * **The copy runs on a thread** — a Windows disk is gigabytes — and
-//!   the front end polls it like a snapshot job. Progress is what has
+//! * **The copy runs on a thread**, since a Windows disk is gigabytes,
+//!   and the front end polls it like a snapshot job. Progress is what has
 //!   arrived in the new directory against what the old one holds.
 //! * **The new `machine.toml` is written last**, so a clone that is
 //!   still copying, or that failed, is never in the grid (`library::scan`
@@ -42,7 +42,7 @@ pub struct CloneMachine {
     pub name: String,
     library_dir: PathBuf,
     source: Option<Source>,
-    /// Whether the machine is up — the one thing that makes the window
+    /// Whether the machine is up, the one thing that makes the window
     /// refuse outright.
     running: bool,
     error: Option<String>,
@@ -114,7 +114,7 @@ impl CloneMachine {
         }
     }
 
-    /// The library the clone goes into — `library::default_dir()` unless
+    /// The library the clone goes into: `library::default_dir()` unless
     /// a caller holds another one.
     pub fn set_library_dir(&mut self, dir: PathBuf) {
         self.library_dir = dir;
@@ -298,8 +298,8 @@ fn plan(dir: &Path, machine: &Machine) -> Result<Source, String> {
     let mut files = Vec::new();
     walk(dir, Path::new(""), &mut files).map_err(|e| format!("{}: {e}", dir.display()))?;
     files.retain(|(_, rel)| rel != Path::new(library::BUNDLE_FILE));
-    // The disk is found among the files by what it *is*, not by how the
-    // bundle spells it.
+    // The disk is found among the files by canonical path, not by how
+    // the bundle spells it.
     let disk_canon = std::fs::canonicalize(&machine.disk).ok();
     let inside = files.iter().position(|(from, _)| std::fs::canonicalize(from).ok() == disk_canon);
     let (disk, disk_outside) = match inside {
@@ -335,9 +335,9 @@ fn walk(dir: &Path, rel: &Path, out: &mut Vec<(PathBuf, PathBuf)>) -> std::io::R
     Ok(())
 }
 
-/// Point every path the bundle names inside its own directory — other
-/// than the disk, which `start` places itself — at the same file in the
-/// clone's.
+/// Point every path the bundle names inside its own directory at the
+/// same file in the clone's. The disk is the exception; `start` places
+/// it itself.
 fn remap(machine: &mut Machine, from: &Path, to: &Path) {
     for path in [
         &mut machine.floppy,
@@ -368,9 +368,9 @@ fn copy_all(files: &[(PathBuf, PathBuf)], disk: usize, machine: &Machine, dest_d
     Ok(bundle_path)
 }
 
-/// The backing file named in a qcow2 header, if any — read straight out
-/// of the header (magic, version, then the name's offset and length),
-/// so a disk with none needs no `qemu-img` at all.
+/// The backing file named in a qcow2 header, if any. Read straight out
+/// of the header (magic, version, then the name's offset and length), so
+/// a disk with none needs no `qemu-img` at all.
 fn qcow2_backing(disk: &Path) -> std::io::Result<Option<String>> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(disk)?;
@@ -426,8 +426,8 @@ fn absolute_backing(original: &Path, copy: &Path) -> Result<(), String> {
     }
 }
 
-/// Whether something is listening on the bundle's monitor socket — a
-/// player that is up, whoever started it.
+/// Whether something is listening on the bundle's monitor socket, which
+/// means a player is up, whoever started it.
 fn monitor_listening(dir: &Path) -> bool {
     crate::control::listening(&crate::control::socket_path(dir))
 }

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# setup-guest-test.sh — SETUP.EXE from the guest-tools ISO, in a real
-# Windows guest, headless. The installer decides what to do from the
+# SETUP.EXE from the guest-tools ISO, in a real Windows guest, headless. The installer decides what to do from the
 # Windows it finds itself on, so the only honest test is to run it on both
 # families and look at what ended up on the disk:
 #
@@ -9,15 +8,15 @@
 #
 # `SETUP /LIST` (the component list for this family), `SETUP /ALL` (install
 # every one of them) and `SETUP /GAME 3 C:\2KSBOX` (a per-game file set),
-# then Windows' own `dir` on each thing that should now exist — that, and
+# then Windows' own `dir` on each thing that should now exist. That, and
 # the MAPMEM service on NT, are the proof, not SETUP's own exit code.
 # Output comes back over COM1; PASS/FAIL per check at the end.
 #
 # The XP machine boots on the paravirtual adapter (-vga none -device
 # d3dpt-vga) because its display-driver component binds to the device as it
 # installs; Win98's stages four files for PnP to pick up on the next boot
-# and so needs nothing (doc 19 §16), and stays on doc 06's cirrus machine
-# — where SETUP must now offer that component, and land its four files.
+# and so needs nothing (doc 19 §16). It stays on doc 06's cirrus machine,
+# where SETUP must still offer that component and land its four files.
 #
 # Needs a guest image, so it is run by hand and never from scripts/test.sh.
 # The image is never written: everything goes to a qcow2 overlay under
@@ -29,15 +28,15 @@
 #
 # On Win98 `SETUP /ALL` runs twice. The second time every display-driver
 # file is already there, and SETUP must not overwrite a file of a driver
-# Windows may be drawing with (2026-09-12: a reinstall over the running
-# driver blue-screened at the restart prompt): it stages each one beside
+# Windows may be drawing with (a reinstall over the running driver
+# blue-screened at the restart prompt). It stages each one beside
 # its target and schedules the swap in WININIT.INI's [rename] section, so
 # the run `type`s that file and `dir`s the staged copies. On cirrus the
 # driver is not running, but the mechanism is the same.
 #
 # REBOOT=1 runs the other half of the installer instead: `SETUP /ALL`, then
 # `SETUP /ALL /REBOOT`, and the proof is a second SeaBIOS banner on the
-# debugcon — the machine really reset. It is its own mode because the
+# debugcon, which means the machine really reset. It is its own mode because the
 # restart lands in the middle of the `dir`s the normal run ends with, and
 # because the 9x restart is a thing that has silently not worked (see
 # below). On Win98 a second batch runs after the restart and asks Windows
@@ -224,9 +223,9 @@ DISK=(-hda "$OVL")
 RAWV=
 if [ -n "${VOODOO:-}" ] && [ "$FAMILY" = win98 ]; then
   # Win98 meets a card it has no driver for with "Add New Hardware" before
-  # the shell starts — no taskbar, no Run dialog, and every knock's keys
-  # work the wizard's buttons by their mnemonics; cancelling it only opens
-  # the next one (2026-09-13, three runs). So the card gets a null driver
+  # the shell starts. There is no taskbar or Run dialog, every knock's keys
+  # work the wizard's buttons by their mnemonics, and cancelling it only
+  # opens the next one. So the card gets a null driver
   # before the first boot: an INF of ours in WINDOWS\INF, which PnP matches
   # and installs with no clicks. The devnode is as present as ever, which
   # is all SETUP asks. mtools cannot write a qcow2, so the machine boots a
@@ -251,7 +250,7 @@ fi
 
 # Win98 re-detects its hardware on the first boot of a fresh overlay (the
 # device set is not the one the image was last shut down with), and that
-# boot regularly takes Explorer down with it — no taskbar, so no Start
+# boot regularly takes Explorer down with it: no taskbar, so no Start
 # menu, so no Run dialog and no way in. So burn one boot first and shut it
 # down over ACPI, which needs no shell; the second boot comes up settled.
 warmup() {
@@ -260,9 +259,9 @@ warmup() {
     "${DISK[@]}" -boot c -display none -qmp "unix:$SOCK,server,nowait" -monitor none \
     > "$OUT/warmup-$FAMILY.log" 2>&1 &
   pid=$!
-  # The shell is the one thing this boot cannot be asked about — Explorer
-  # dying is the very thing it exists to absorb — so it waits on the disks
-  # instead: the re-detection is disk-heavy from end to end, and when the
+  # The shell is the one thing this boot cannot be asked about (Explorer
+  # dying is what it exists to absorb), so it waits on the disks instead.
+  # The re-detection is disk-heavy from end to end, and when the
   # reads stop it is over, one way or the other (tools/guestwait.sh).
   GW_PID=$pid
   gw_wait_sock "$SOCK" && gw_wait_quiet "$SOCK" "${WARMUP_WAIT:-300}" 10 || true
@@ -283,8 +282,8 @@ warmup() {
 ACCEL=(-cpu pentium3)
 # Win98 as the launcher builds it: no HPET, which 98 has no driver for.
 # An image installed that way meets one here as an "Unknown Device" and a
-# new-hardware wizard that holds the boot before the shell (2026-09-13,
-# base98-br; the launcher's `hpet` check).
+# new-hardware wizard that holds the boot before the shell (the
+# launcher's `hpet` check).
 MACHINE=pc
 [ "$FAMILY" = win98 ] && MACHINE=pc,hpet=off
 # NO_USB=1: an image that has never had a USB controller (a launcher machine
@@ -303,9 +302,8 @@ if [ "$FAMILY" = win98 ]; then
   # NO_NET=1: an image installed with no network card (a launcher machine
   # with `network = false`, which the launcher boots `-nic none`: without
   # that QEMU adds a NIC of its own). Given one, its first boot installs
-  # networking whose files are not on the disk — "vnetsup.vxd ... press any
-  # key" in text mode, or a new-hardware wizard, before any shell
-  # (2026-09-13, base98-br).
+  # networking whose files are not on the disk: "vnetsup.vxd ... press any
+  # key" in text mode, or a new-hardware wizard, before any shell.
   [ -n "${NO_NET:-}" ] && HW=(-m 256 -vga cirrus -nic none -audiodev none,id=a0 -device sb16,audiodev=a0)
   SHELL_CMD='command /c A:\RUN.BAT'
 else
@@ -337,7 +335,7 @@ GW_PID=$QPID
 gw_wait_sock "$SOCK" || exit 1
 # Typing into the Run dialog is the only way in and it can miss (the shell
 # may still be starting, or a message box may be in front of it), so keep
-# knocking until the guest's own output turns up on COM1 — that, and not a
+# knocking until the guest's own output turns up on COM1. That, and not a
 # sleep, is what says the shell is there.
 # before the install, not after: SETUP returns as soon as it has handed the
 # restart off, so by the time SETUPDONE is on the wire the POST may already
@@ -369,7 +367,7 @@ Q screendump "$OUT/$FAMILY-end.png" || true
 if [ "$FAMILY" = win98 ]; then
   # a Win98 run ends with the ACPI power button, never a kill (CLAUDE.md);
   # the Start menu's keys were the English menu's (`u`), which a Portuguese
-  # 98 ignores, and the run was killed after 90 s (2026-09-13)
+  # 98 ignores, and the run was killed after 90 s
   Q json '{"execute":"system_powerdown"}' >/dev/null || true
   gw_wait_exit "$QPID" 90 || true
 else
@@ -446,8 +444,8 @@ want "OPENGL32.DLL" "the per-game set landed in C:\\2KSBOX (Windows' own dir)"
 if [ "$FAMILY" = win98 ]; then
   want "Windows 98" "the family was detected"
   [ -z "${VOODOO:-}" ] && want "FXMEMMAP.VXD ->" "the 9x device mapper was installed"
-  # The 9x display driver is four files dropped where PnP will find them —
-  # there is no installer to run and nothing to bind to until the next boot,
+  # The 9x display driver is four files dropped where PnP will find them.
+  # There is no installer to run and nothing to bind to until the next boot,
   # which is why this checks the copies and not the adapter. That the driver
   # then comes up is tools/win98-driver-test.sh's job, on a machine that has
   # the device; this one is doc 06's Win98 reference machine and keeps its
@@ -456,7 +454,7 @@ if [ "$FAMILY" = win98 ]; then
   want "D3DPT9X.DRV ->" "the 9x display driver was staged"
   want "D3DPT9V.VXD ->" "the 9x mini-VDD was staged"
   # Named by the INF's CopyFiles: without it PnP stops and asks for the
-  # disc (2026-09-11, the ISO had never carried it).
+  # disc.
   want "D3DPT9HL.DLL ->" "the 9x DirectDraw HAL was staged"
   # The second install: nothing overwritten in place, every file scheduled
   # for the restart in WININIT.INI, the staged copies beside the targets.

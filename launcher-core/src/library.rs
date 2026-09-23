@@ -1,7 +1,7 @@
 //! The machine library (doc 07): a directory of bundle subdirectories,
 //! each holding one `machine.toml`. "A plain, documented directory layout
-//! the user can back up" (doc 07's settings taxonomy) — no database, no
-//! hidden index; the grid is just a scan.
+//! the user can back up" (doc 07's settings taxonomy). No database, no
+//! hidden index; the grid is a scan.
 
 use crate::bundle::{Family, Machine};
 use std::path::{Path, PathBuf};
@@ -10,8 +10,8 @@ pub const BUNDLE_FILE: &str = "machine.toml";
 
 /// The default library directory: the platform data dir (`~/.local/share`
 /// on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on
-/// Windows) plus `machines`. `LAUNCHER_LIBRARY_DIR` overrides it (dev/test
-/// convenience, matching the project's `PLAYER_*` env-knob convention).
+/// Windows) plus `machines`. `LAUNCHER_LIBRARY_DIR` overrides it for
+/// development and tests, like the player's `PLAYER_*` knobs.
 pub fn default_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("LAUNCHER_LIBRARY_DIR") {
         return dir.into();
@@ -47,9 +47,9 @@ fn slug(dir: &Path, name: &str) -> String {
 }
 
 /// Reserve a fresh bundle subdirectory for `name` under `dir` (creating
-/// both), without writing a `machine.toml` yet — for a caller (the
-/// wizard) that needs the directory first, e.g. to create a disk image
-/// inside it before the bundle referencing that disk can be written.
+/// both) without writing a `machine.toml` yet. The wizard needs the
+/// directory first, to create a disk image inside it before the bundle
+/// that references that disk can be written.
 pub fn reserve_dir(dir: &Path, name: &str) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let machine_dir = dir.join(slug(dir, name));
@@ -67,8 +67,8 @@ pub fn create(dir: &Path, family: Family, name: String, disk: PathBuf) -> std::i
 }
 
 /// Every bundle directly under `dir` (one level, not recursive). A
-/// subdirectory without a readable `machine.toml` is skipped, not fatal —
-/// one corrupt bundle shouldn't take down the whole grid.
+/// subdirectory without a readable `machine.toml` is skipped, so one
+/// corrupt bundle doesn't take down the whole grid.
 pub fn scan(dir: &Path) -> Vec<LibraryEntry> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();

@@ -2,7 +2,7 @@
 """The music devices as a *guest* meets them (doc 20 §7, M12): a DOS
 program detects the OPL3 the way an AdLib driver does, plays a 440 Hz
 note on it, then resets an MPU-401, puts it in UART mode and plays A4
-through it — and the evidence is the **wav QEMU's own audio backend
+through it. The evidence is the **wav QEMU's own audio backend
 recorded**, not the program's own opinion.
 
 Two boots, one per device, because each is checked by the same question
@@ -15,10 +15,11 @@ ports; `synthx wavtone` says whether anything came out.
     tools/midi-guest-test.py mpu
 
 Outputs in build/midi-guest/. Local only (it fetches the FreeDOS floppy
-`tools/x87-guest-test.py` uses), not wired into scripts/test.sh — the
-`music` check there proves the same devices from the monitor in seconds,
-and this proves the half that check cannot: that a *guest* driving them
-through its own I/O instructions finds them.
+`tools/x87-guest-test.py` uses). It is also the `midi-guest` check in
+scripts/test.sh's guest stage. The host stage's `music` check proves the
+same devices from the monitor in seconds; this proves the half that check
+cannot, that a *guest* driving them through its own I/O instructions
+finds them.
 """
 import importlib.util
 import os
@@ -402,7 +403,7 @@ def build(mode):
 
 def device_args(mode, wav):
     """The machine under test: one device, and QEMU's own wav backend as
-    the only listener — the same `-audiodev wav` the CD-DA tools record
+    the only listener, the same `-audiodev wav` the CD-DA tools record
     through."""
     args = ["-audiodev", "wav,id=w,path=" + wav]
     if mode == "opl":

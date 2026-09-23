@@ -1,36 +1,37 @@
 #!/usr/bin/env python3
 """The PIT as a DOS game's clock meets it (patch 34): guest-tools'
-QCLOCK.COM — DOS Quake's Sys_FloatTime, the BIOS tick word plus PIT
-counter 0 in mode 2, read in a tight loop beside the TSC — under FreeDOS,
+QCLOCK.COM (DOS Quake's Sys_FloatTime, the BIOS tick word plus PIT
+counter 0 in mode 2, read in a tight loop beside the TSC) under FreeDOS,
 twice: on this QEMU as built, and with `-global isa-pit.overdue-irq=off`,
 upstream's behaviour, as the control.
 
 What it guards: QEMU computes the counter from the clock at every read,
 but raises the IRQ 0 edge at the counter's wrap from a timer the main loop
 runs a wakeup late. A read in that gap sees the counter wrapped and the
-tick not yet counted — time going backward — and Quake counts a backward
+tick not yet counted (time going backward), and Quake counts a backward
 step as nothing while taking it as its new reference, so the whole period
-is counted again when the tick lands. Measured 2026-09-10 before the
-patch: one full 55 ms backward step on every tick, 540 of 540, Quake's
+is counted again when the tick lands. Measured without the patch: one
+full 55 ms backward step on every tick, 540 of 540, Quake's
 clock at exactly 200 % in every window. With it, a port access delivers
 the overdue edge first, and that must read as no backward step at all and
 every window at 100 %.
 
 The control is reported, not required: whether the gap is ever hit
 depends on how late this host's main loop wakes, so a host where it is not
-is one where this check cannot fail — said out loud, not failed.
+is one where this check cannot fail, and the run says so instead of
+failing.
 
-**The rate phase** (patch 65, 2026-09-17) asks a different question of the
-same timer: does every IRQ 0 of a 1 kHz PIT arrive? guest-tools'
-PITRATE.COM programs counter 0 to 1 ms — what Windows 9x's multimedia
-timer does for a MIDI sequencer — counts IRQ 0 itself and prints a line
+**The rate phase** (patch 65) asks a different question of the same
+timer: does every IRQ 0 of a 1 kHz PIT arrive? guest-tools' PITRATE.COM
+programs counter 0 to 1 ms (what Windows 9x's multimedia timer does for a
+MIDI sequencer), counts IRQ 0 itself and prints a line
 per 1000 ticks; the host timestamps the lines, so 1.000 s apart is a
 guest clock at 100 %. It runs as built, then with QEMU's waits rounded
 to Windows' 15.6 ms timer tick (tools/wait-granularity.c, Linux only),
-spinning and halted, and all three must be 97–103 %. The control,
-`-global isa-pit.reinject=off` under the same waits, is reported: it
-was 6 % — every transition that came due while the main loop slept
-raised back to back, one interrupt on the edge-triggered 8259.
+spinning and halted, and all three must be 97-103 %. The control,
+`-global isa-pit.reinject=off` under the same waits, is reported. It
+measured 6 %: every transition that came due while the main loop slept
+was raised back to back, one interrupt on the edge-triggered 8259.
 
     tools/pit-guest-test.py        # needs nasm, mtools, build/qemu
     PIT_SECS=30 tools/pit-guest-test.py

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cdshelf-guest-test.sh — CDSHELF.EXE against a real Windows guest (doc 07's
+# CDSHELF.EXE against a real Windows guest (doc 07's
 # disc shelf, patch 52, protocol cdshelf/cdshelf_proto.h). The DOS build is
 # covered by tools/atapi-guest-test.py, which needs no guest image; this is
 # the Windows half, and it needs one, so it is run by hand rather than from
@@ -11,8 +11,8 @@
 # The machine boots with an EMPTY tray and a shelf of two discs: a generated
 # ISO with two files on it, and a path that does not exist. The guest then
 # lists the shelf, loads the ISO, reads its files through Windows' own file
-# system driver (`dir` and `type` — that is the proof the tray really
-# changed, not a status byte), refuses the missing one, ejects, and lists
+# system driver (`dir` and `type`, the proof the tray really changed, not
+# a status byte), refuses the missing one, ejects, and lists
 # again. Output comes back over COM1; PASS/FAIL per check at the end.
 #
 # The image is never written: everything goes to a qcow2 overlay under
@@ -55,8 +55,8 @@ fi
 # ...and a *folder*, which is a disc too: `isodir:` makes the drive
 # generate an ISO 9660 + Joliet volume over the tree as the guest reads it
 # (M5g). This is the prefix the launcher writes into the shelf file
-# (`disc_library::qemu_medium`), so loading slot 2 is the whole path —
-# the shelf line, patch 52's medium change, and Windows' own file system
+# (`disc_library::qemu_medium`), so loading slot 2 is the whole path: the
+# shelf line, patch 52's medium change, and Windows' own file system
 # driver reading what libdisc generated.
 rm -rf "$OUT/folderdisc" && mkdir -p "$OUT/folderdisc/Patch Notes"
 printf 'a folder is a disc\r\n' > "$OUT/folderdisc/FOLDER.TXT"
@@ -76,7 +76,7 @@ i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
 # One batch for both families: COMMAND.COM (98) and CMD.EXE (XP) both take
 # it, and every line's output goes to COM1, which needs no writable disk in
 # the guest. The CD-ROM's own letter differs per image, so the disc is read
-# from both D: and E: and one of the two prints a "path not found" — that
+# from both D: and E: and one of the two prints a "path not found". That
 # noise is cheaper than teaching this script every image's letters.
 cat > "$OUT/RUN.BAT" <<'BAT'
 @echo off
@@ -161,9 +161,9 @@ gw_wait_sock "$SOCK" || exit 1
 # Typing into the Run dialog is the only way in, and it can miss: the shell
 # may still be starting, or (Win98, first boot of a fresh overlay) an
 # "illegal operation" box may be in front of it. So keep knocking until the
-# guest's own output turns up on COM1 — that is what says the shell is
-# there, and it says it the second it is true rather than after a sleep
-# long enough for the slowest machine anyone has run this on.
+# guest's own output turns up on COM1. That says the shell is there the
+# second it is true, rather than after a sleep long enough for the
+# slowest machine anyone has run this on.
 gw_poke_until "$SOCK" "$FAMILY" "$SHELL_CMD" "${BOOT_WAIT:-300}" test -s "$LOG" || {
   Q screendump "$OUT/$FAMILY-noshell.png" || true
   echo "the guest never ran anything: see $OUT/$FAMILY-noshell.png and $QLOG"
@@ -190,7 +190,7 @@ want() {  # a line that must be in the output
   if grep -qF "$1" "$LOG"; then echo "PASS  $2"; else echo "FAIL  $2 (missing: $1)"; fails=$((fails + 1)); fi
 }
 after() { sed -n "/$1/,\$p" "$LOG"; }
-want_after() {  # marker, needle, name — only what came after the marker counts
+want_after() {  # marker, needle, name: only what came after the marker counts
   if after "$1" | grep -qF "$2"; then echo "PASS  $3"; else echo "FAIL  $3 (missing after $1: $2)"; fails=$((fails + 1)); fi
 }
 unwanted_after() {

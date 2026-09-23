@@ -1,5 +1,5 @@
 /*
- * d3dpt_exec.h — C API of the host-side decoder/executor of the
+ * d3dpt_exec.h: C API of the host-side decoder/executor of the
  * paravirtual Direct3D device (libd3dpt_exec, C++ over DXVK's d3d9).
  * The QEMU device (hw/d3dpt) dlopens it, so QEMU stays C and the
  * protocol evolves without a QEMU rebuild.
@@ -54,12 +54,12 @@ D3DPT_EXEC_API uint32_t d3dpt_exec_submit(d3dpt_exec_t *x, void *shm, uint32_t s
 D3DPT_EXEC_API void d3dpt_exec_set_vram(d3dpt_exec_t *x, void *vram, uint32_t size);
 
 /* Optional entry points (the loader takes their absence as "no"):
- *   probe: 1 if a device can be made on this host at all — the loader
+ *   probe: 1 if a device can be made on this host at all. The loader
  *     asks it before it settles on a library, so the in-process executor
  *     (DXVK) gives way to the out-of-process one (libd3dpt_exec_remote,
  *     Wine on the host, docs/tracks/m15-wine-executor.md) below the
  *     Vulkan 1.3 floor;
- *   shared_alloc / shared_map: only the remote library has them — an fd
+ *   shared_alloc / shared_map: only the remote library has them. They give an fd
  *     and offset of its shared file for a region of `size`, which the
  *     device maps as guest RAM (memory_region_init_ram_from_fd) and then
  *     registers the mapping of, so the executor's other process reads and

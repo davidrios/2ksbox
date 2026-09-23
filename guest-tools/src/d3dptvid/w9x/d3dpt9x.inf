@@ -1,9 +1,7 @@
 ; d3dpt9x.inf - the 2ksbox d3dpt-vga display driver for Windows 98/Me
-; (doc 19, ADR-012 / M10). The XP driver's INF is d3dptvid.inf; this is
-; the same adapter under the other operating system's rules, which
-; includes the mode list: on 9x it lives in the registry, put there from
-; here, not enumerated from the device (doc 19, "Modes come from the
-; registry").
+; (doc 19, ADR-012 / M10). The XP driver's INF is d3dptvid.inf. On 9x the
+; mode list lives in the registry, written from here rather than
+; enumerated from the device (doc 19 §6).
 ;
 ; SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -43,12 +41,11 @@ d3dpt9v.vxd,,,0x00000004
 ; game's own process, named by the .drv rather than by any registry key
 d3dpt9hl.dll,,,0x00000004
 
-; **Clear the old keys before writing the new ones.** A display adapter
-; that has been running on the inbox VGA already has a `CURRENT` key
-; naming that driver and a `MODES` tree describing its modes, and an
-; AddReg does not remove what it does not mention: the leftovers then
-; decide which driver GDI loads, and it is not this one. Deleting these
-; five is what the reference driver does and it is not optional.
+; Clear the old keys before writing the new ones. An adapter that ran on
+; the inbox VGA already has a `CURRENT` key naming that driver and a
+; `MODES` tree of its modes. AddReg does not remove what it does not
+; mention, so the leftovers would decide which driver GDI loads. The
+; reference driver deletes these five too (doc 19 §16).
 [D3dpt.DelReg]
 HKR,,Ver
 HKR,,DevLoader
@@ -67,15 +64,14 @@ HKR,DEFAULT,ExtModeSwitch,,0
 HKR,DEFAULT,DDC,,1
 HKR,DEFAULT,Mode,,"32,640,480"
 
-; The mini-VDD is what claims the adapter's PCI resources; without it
-; Windows takes the base addresses away and the display driver has
-; nothing to map (doc 19 §11).
+; The mini-VDD claims the adapter's PCI resources. Without it Windows
+; takes the base addresses away and the display driver has nothing to
+; map (doc 19 §11).
 
-; The mode list. 4 bpp is not ours — the driver refuses anything but 16
-; and 32 (8 bpp is a later step) — so those two rows hand the era's two
-; low-colour modes back to the inbox drivers by name, which is what a 9x
-; display INF is expected to do and what keeps a machine that is *in* one
-; of them able to boot at all.
+; The mode list. The driver runs 8, 16 and 32 bpp only, so the two 4 bpp
+; rows hand the era's low-colour modes back to the inbox drivers by name.
+; A 9x display INF is expected to do this, and it keeps a machine that is
+; in one of those modes able to boot.
 [Modes.AddReg]
 HKR,"MODES\4\640,480",drv,,vga.drv
 HKR,"MODES\4\640,480",vdd,,*vdd

@@ -2,14 +2,14 @@
 //* The exports hw/3dfx looks for in a host-side Glide wrapper
 //* (2ksbox, doc 12 §5), plus the log that replaces OpenGLide's own.
 //*
-//*   setConfig(flags, magic)  — glidewnd.c's WRAPPER_FLAG_* word, and a
+//*   setConfig(flags, magic):   glidewnd.c's WRAPPER_FLAG_* word, and a
 //*                              signature written back into *magic.
 //*                              Upstream OpenGLide's setConfig takes the
 //*                              flags alone (_setConfig@4); qemu-3dfx
 //*                              calls _setConfig@8, so the one-argument
 //*                              form is patched out and this replaces it.
-//*   setConfigRes(res, swap)  — the scaled width glidewnd.c computed, or 0.
-//*   setHostOps(ops)          — glide_host.h: our context, our present.
+//*   setConfigRes(res, swap):   the scaled width glidewnd.c computed, or 0.
+//*   setHostOps(ops):           glide_host.h, our context, our present.
 //*
 //* SPDX-License-Identifier: LGPL-2.1-or-later (matches OpenGLide)
 //**************************************************************
@@ -29,7 +29,7 @@
 
 /* qemu-3dfx sends '$g2X' and reads back what the wrapper is. 'SDL2' means
  * "hand me the SDL_Window*"; ours means "the host holds the context", which
- * hw/3dfx does not have to understand — it passes the same pointer as both
+ * hw/3dfx does not have to understand. It passes the same pointer as both
  * the SDL and the native window handle (embedfx.c). The word is here so a
  * QEMU log, or a later protocol step, can name the wrapper it loaded. */
 #define GLIDE_HOST_SIGN 0x42534b32 /* '2KSB' */

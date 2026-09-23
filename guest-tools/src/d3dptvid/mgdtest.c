@@ -1,14 +1,14 @@
 /*
- * mgdtest.c — a managed resource changed between two draws of one frame,
+ * mgdtest.c: a managed resource changed between two draws of one frame,
  * through XP's own d3d8.dll on our driver's DX8 DDI. A probe (d3d8probe.h).
  *
  * The runtime keeps a managed vertex buffer's or texture's copy in system
- * memory and, before a draw that reads a changed one, puts a BUFFERBLT or a
- * TEXBLT into the DrawPrimitives2 stream — so one call can carry fill, draw,
+ * memory. Before a draw that reads a changed one it puts a BUFFERBLT or a
+ * TEXBLT into the DrawPrimitives2 stream, so one call can carry fill, draw,
  * fill, draw. The driver makes each copy as it walks the stream, and the
- * host reads the memory when it runs the draw; until the driver cut the
- * stream before a blit that follows a draw (doc 19 §32), every draw of the
- * call saw the last fill.
+ * host reads the memory when it runs the draw. So the driver cuts the
+ * stream before a blit that follows a draw (doc 19 §32); without the cut,
+ * every draw of the call sees the last fill.
  *
  *   UpdateTexture: a default-pool texture updated from a red system-memory
  *   texture, a quad on the left; updated from a green one, a quad on the

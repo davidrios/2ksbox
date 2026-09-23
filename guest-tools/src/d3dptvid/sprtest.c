@@ -1,14 +1,14 @@
 /*
- * sprtest.c — point sprites through XP's own d3d8.dll on our driver's DX8
- * DDI. A probe (d3d8probe.h): with MaxPointSize 1 it says "not offered";
- * the caps claim 64, which nothing had exercised before this. The texture
- * is red on its left half and blue on its right; the point is at
- * (100, 100) with the texture coordinate (0.25, 0.5):
- *   sprites on, POINTSIZE 32: a 32-pixel square whose texture runs across
+ * sprtest.c: point sprites through XP's own d3d8.dll on our driver's DX8
+ * DDI. A probe (d3d8probe.h). With MaxPointSize 1 it says "not offered";
+ * the caps claim 64. The texture is red on its left half and blue on its
+ * right; the point is at (100, 100) with the texture coordinate
+ * (0.25, 0.5). The cases:
+ *   sprites on, POINTSIZE 32, a 32-pixel square whose texture runs across
  *   it (red left of centre, blue right of it, nothing 40 pixels up);
- *   POINTSIZE 8: an 8-pixel square (drawn at 98, empty at 110);
+ *   POINTSIZE 8, an 8-pixel square (drawn at 98, empty at 110);
  *   a per-vertex size of 24 (D3DFVF_PSIZE) over a POINTSIZE of 4;
- *   sprites off, POINTSIZE 32: the point's own coordinate everywhere (red
+ *   sprites off, POINTSIZE 32, the point's own coordinate everywhere (red
  *   right of centre too).
  *
  *   SPRTEST

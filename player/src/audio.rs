@@ -9,23 +9,23 @@
 //! again, so a start or a stall costs one clean gap instead of a sputter.
 //!
 //! **Why f32, and the limiter.** QEMU's mixer adds every voice of the
-//! machine — the sound card, the FM chip, the MIDI synth, the CD drive's
-//! audio — at full scale: its `sb16` stores the mixer's volume registers
+//! machine (the sound card, the FM chip, the MIDI synth, the CD drive's
+//! audio) at full scale. Its `sb16` stores the mixer's volume registers
 //! and applies none of them, and the CD plays at the drive's own full
 //! volume. A real card scaled those by the Volume Control sliders and left
 //! headroom. So a race's engine over its CD music sums past full scale, and
-//! in s16 QEMU saturates it: a crackle on every peak. QEMU's float output
+//! in s16 QEMU saturates it, a crackle on every peak. QEMU's float output
 //! does not saturate, so the sum arrives here intact, and a look-ahead
-//! limiter turns it down for as long as it does not fit — a gain that
-//! moves over milliseconds, where a clip moves within a sample.
+//! limiter turns it down for as long as it does not fit. That gain moves
+//! over milliseconds, where a clip moves within a sample.
 //!
 //! Two knobs make what the host hears inspectable without a speaker:
 //! `PLAYER_AUDIO_NULL=<frames>` replaces the device by a thread that drains
 //! the ring like a DAC with that period (`1` = 1024 frames, what PipeWire
 //! hands a client by default) at 48 kHz, and `PLAYER_AUDIO_TAP=<file.wav>`
 //! records exactly what the consumer handed the device (16-bit, after the
-//! limiter), silence it padded included — the file
-//! `tools/audio-glitch-test.py` counts clicks in.
+//! limiter), padded silence included. `tools/audio-glitch-test.py`
+//! counts clicks in that file.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::VecDeque;
@@ -96,7 +96,7 @@ impl Ring {
 
 /// A look-ahead peak limiter. The gain for output frame t is the mean,
 /// over a window of `D + 1` frames, of forward-window minima of the gain
-/// each frame needs — every term of that mean has seen frame t's own need,
+/// each frame needs. Every term of that mean has seen frame t's own need,
 /// so the output never exceeds the ceiling, and a gain change is a ramp
 /// `D` frames long instead of a step. Release is a slow exponential back
 /// to unity. Below the ceiling it is the identity, delayed by `D` frames.

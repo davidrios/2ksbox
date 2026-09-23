@@ -8,11 +8,11 @@ fn main() {
     // An installed player is `<prefix>/bin/2ksbox-player` with the
     // embed library in `<prefix>/lib/2ksbox` (M6 step 6, doc 07's
     // install layout). Origin-relative, so the packaged tree can be
-    // extracted anywhere — and *first*, so the same binary copied out of a
-    // developer's `target/` is genuinely self-contained once packaged
-    // rather than quietly loading the library out of their build
-    // directory. In a checkout that directory doesn't exist and the
-    // loader simply moves on to the absolute one below.
+    // extracted anywhere. And *first*, so the same binary copied out of a
+    // developer's `target/` is self-contained once packaged rather than
+    // loading the library out of their build directory. In a checkout
+    // that directory doesn't exist and the loader moves on to the
+    // absolute one below.
     if unix {
         let relative = if target.contains("apple") {
             "@loader_path/../lib/2ksbox"

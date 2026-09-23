@@ -1,20 +1,20 @@
 /*
- * anistest.c — anisotropic filtering through XP's own d3d8.dll on our
- * driver's DX8 DDI. A probe (d3d8probe.h): with MaxAnisotropy 1 or no
+ * anistest.c: anisotropic filtering through XP's own d3d8.dll on our
+ * driver's DX8 DDI. A probe (d3d8probe.h). With MaxAnisotropy 1 or no
  * D3DPTFILTERCAPS_MINFANISOTROPIC it says "not offered"; once the driver
  * claims it, this is the check.
  *
  *   ANISTEST
  *
- * A floor recedes from the bottom of the window to a narrow far edge, a
- * texture of vertical stripes 32 texels apart on it (every mip level the
- * same stripes, until a level whose texel is a whole period: grey). Near
- * the far edge a pixel covers ~3 texels across and dozens along the floor;
- * trilinear filtering takes its level from the larger of the two and draws
- * grey there, anisotropic filtering from the smaller and keeps the
- * stripes. The case measures the stripes' contrast along one far row under
- * both and passes when the anisotropic one is clearly higher; both
- * numbers are in the log.
+ * A floor recedes from the bottom of the window to a narrow far edge. Its
+ * texture has vertical stripes 32 texels apart, the same on every mip level
+ * until a level whose texel is a whole period, which is grey. Near the far
+ * edge a pixel covers ~3 texels across and dozens along the floor.
+ * Trilinear filtering takes its level from the larger of the two and draws
+ * grey there; anisotropic filtering takes it from the smaller and keeps
+ * the stripes. The case measures the stripes' contrast along one far row
+ * under both and passes when the anisotropic one is clearly higher. Both
+ * numbers go to the log.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */

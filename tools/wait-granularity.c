@@ -1,5 +1,5 @@
 /*
- * wait-granularity.c — an LD_PRELOAD that makes QEMU's main loop wait the
+ * An LD_PRELOAD that makes QEMU's main loop wait the
  * way it waits on a Windows host: every ppoll() with a timeout sleeps to
  * the next multiple of WAIT_GRANULARITY_NS (15.625 ms, Windows' default
  * timer tick, when unset).
@@ -7,7 +7,7 @@
  * QEMU on Windows waits in WaitForMultipleObjects with a millisecond
  * timeout, and Windows rounds that to its timer tick unless the process
  * has asked for a finer one (timeBeginPeriod). Anything paced by a QEMU
- * timer then fires a tick late — which is how a Windows host lost 15 of
+ * timer then fires a tick late, which is how a Windows host lost 15 of
  * every 16 of a Win98 guest's 1 kHz timer interrupts (patch 65). This is
  * that host, on Linux, for tools/pit-guest-test.py.
  *

@@ -1,5 +1,5 @@
 /*
- * d3d9_res.h — resources of the paravirtual d3d9.dll (included by d3d9.c):
+ * d3d9_res.h: resources of the paravirtual d3d9.dll (included by d3d9.c):
  * vertex/index buffers, textures, surfaces, shaders, and the device
  * methods that create, bind and draw with them (doc 14 P2).
  *
@@ -142,9 +142,9 @@ static void res_free(struct res_hdr *r)
     HeapFree(GetProcessHeap(), 0, r);
     if (!owned) IDirect3DDevice9_Release((IDirect3DDevice9 *)dev);
 }
-/* Reference model (real D3D's): an object owned by another — the implicit
- * back buffer / depth surface (device), a texture's level surfaces (texture)
- * — survives the application's last Release at ref 0 while its owner lives
+/* Reference model (real D3D's): an object owned by another (the implicit
+ * back buffer / depth surface by the device, a texture's level surfaces by
+ * the texture) survives the application's last Release at ref 0 while its owner lives
  * (Vice City fetches the render target once, releases it and keeps using
  * the pointer), and is destroyed with the owner. A level surface holds a
  * reference on its texture only while the application holds it. */

@@ -1,5 +1,5 @@
 /*
- * dinput.c — the DINPUT.DLL shim (D3DPT\DINPUT.DLL next to a game's EXE):
+ * dinput.c: the DINPUT.DLL shim (D3DPT\DINPUT.DLL next to a game's EXE):
  * forwards DirectInputCreate{A,W,Ex} to the system dinput.dll, logs what
  * the game does with its devices, and fixes the keyboard state.
  *
@@ -16,10 +16,9 @@
  *
  * Two modes. By default the shim is the fix and nothing else: silent, no
  * log file, no sampler thread. That is the build that ships next to a game.
- * Setting D3DPT_DINPUT_LOG=1 in the environment before launching turns it
- * back into the diagnostic tool the fix came out of, described next; the
- * merge is always on, only the observation is optional, and under TCG the
- * observation is not cheap (the sampler polls 248 virtual keys every 5 ms
+ * Setting D3DPT_DINPUT_LOG=1 in the environment before launching adds the
+ * diagnostics described next. The merge is always on; only the observation
+ * is optional, and under TCG it is not cheap (the sampler polls 248 virtual keys every 5 ms
  * and every log line is flushed).
  *
  * The log (dinput_log.txt next to the EXE): which device is created

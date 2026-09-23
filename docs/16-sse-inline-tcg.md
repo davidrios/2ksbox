@@ -4,13 +4,13 @@ How SSE float, MMX and SSE integer instructions run as inline host code
 under TCG instead of helper calls: patch 11 (SSE/SSE2 float), patch 12
 (MMX / SSE integer and permutes), and the later patches 36 and 39 that
 removed two stalls. Doc 13 is the x87 counterpart, whose slow-block
-machinery this shares; doc 22 has the queue's measured effect; the
-track record is `docs/tracks/m8-tcg-fastpaths.md`.
+machinery this shares. Doc 22 measures the queue, and
+`docs/tracks/m8-tcg-fastpaths.md` holds the track record.
 
 Stock QEMU runs nearly every SSE instruction as a helper:
-`helper_addps_xmm` loops over four lanes of `float32_add`, which (once
-the inexact flag is sticky) is softfloat's hardfloat path — a host
-operation wrapped in classification checks, inside a call frame with
+`helper_addps_xmm` loops over four lanes of `float32_add`. Once the
+inexact flag is sticky that is softfloat's hardfloat path, a host
+operation wrapped in classification checks inside a call frame with
 three pointer arguments. Direct3D-era game code uses SSE for exactly
 the work that runs every frame: D3DX vector and matrix routines are
 packed SSE, compiled scalar math and float-to-int conversions are `ss`
@@ -32,7 +32,7 @@ A TB is translated with `TB_FLAG_SSE_FAST` (bit 31) when
 - the precision (inexact) flag is already set in `env->sse_status`.
 
 The second condition keeps the inline code flag-exact without computing
-a residual per lane, as the x87 path has to while PE is clear: with the
+a residual per lane, as the x87 path has to while PE is clear. With the
 inexact flag sticky, an admissible operation on the host can only raise
 PE, which is invisible, so the only thing to verify is that nothing else
 would have been raised. That is a classification of the result (or, for
@@ -115,10 +115,10 @@ vector registers, as doc 13's `add_f64` on i64), `cvt_i32_f32/f64`,
 scalars and lost to the memory round trips it needs for lane 0.
 
 **Memory operands (patch 36).** A 16-byte operand used to be loaded with
-`qemu_ld_i128` — on a guest without AVX (every era CPU model) two 8-byte
-loads — and written into `env` with two 8-byte stores; the inline op's
-16-byte vector load of it then could not be store-forwarded and waited
-for both. The pair is now assembled in the vector unit (each half
+`qemu_ld_i128`, which is two 8-byte loads on a guest without AVX (every
+era CPU model), and written into `env` with two 8-byte stores. The
+inline op's 16-byte vector load of it then could not be store-forwarded
+and waited for both. The pair is now assembled in the vector unit (each half
 dup'ed, merged with `SIMD_TBL_MASK64LO`) and written with one `st_vec`;
 same guest access, alignment check and fault. It is behind `sse-fast`.
 
@@ -194,8 +194,8 @@ portable code stays):
   register and narrowed against itself, keeping the low half. The
   concatenation is `dup_i64_vec` + `bitsel_vec` against a lane mask
   (`SIMD_TBL_MASK64LO` in `env->simd_tbl`); a first version went through
-  `env->sses_scratch` (two GP stores reloaded as one vector load — the
-  forwarding stall again).
+  `env->sses_scratch`, two GP stores reloaded as one vector load, which
+  is the forwarding stall again.
 - **`psadbw`** uses the register-only `umax_vec`/`umin_vec`/`sub_vec`.
   The memory-based `tcg_gen_gvec_*` forms are built for long vectors;
   with them `psadbw` was slower than the helper it replaced.
@@ -207,15 +207,15 @@ Effect on the DOS bench (below): packed chain 8.1× → 10.0×, MMX chain
 ## Verification
 
 `tools/sse-guest-test.py` (the `sse-guest` check): a DOS program enables
-SSE in real mode (CR4.OSFXSR) and runs its instruction sequences — all
-of the table above, memory-operand forms, `cmpps` with every predicate,
+SSE in real mode (CR4.OSFXSR) and runs its instruction sequences. They
+cover all of the table above, memory-operand forms, `cmpps` with every predicate,
 a 4-op packed chain, a 7-op scalar chain with a conversion round trip, a
 mixed x87/SSE block that exercises dirty x87 shadows across an SSE
 slow-block exit, a 120-instruction block that overflows the slow-block
 array, the SSE2 double forms under `-cpu pentium3,+sse2`, and patch 12's
 integer battery (MMX and XMM forms, memory operands, self-operands,
-chains, a mixed x87/MMX sequence) — over every pair of 47 single and 33
-double edge-case values (zeros, denormals, min/max, 2^31 boundaries,
+chains, a mixed x87/MMX sequence). Each runs over every pair of 47
+single and 33 double edge-case values (zeros, denormals, min/max, 2^31 boundaries,
 infinities, quiet and signalling NaNs), under MXCSR 1FA0 (inline mode),
 1F80 (flags clear: the hand-over path) and 3FA0 (round down: helpers).
 Every lane and MXCSR are printed. **546,425 result lines identical**
@@ -250,7 +250,7 @@ Register-only ratios over the helpers with both patches, per host:
 `guest-tools/src/ssebench.c` (`SSEBENCH.EXE` on the guest-tools ISO) is
 the Win32 counterpart for the reference rig and the guests: D3DX-shaped
 kernels (packed transform, packed normalize with `rsqrtps`, a scalar
-chain with `comiss`, clamp + `cmpps` — the "clamp+cmp" kernel — and
+chain with `comiss`, clamp + `cmpps` (the "clamp+cmp" kernel) and
 `cvttss2si`/`cvtsi2ss`), the transform and normalize again in plain C
 pinned to x87 at PC=53 (doc 13's path), an MMX blend, and a
 denormal-decay kernel that shows the slow-path cost; it prints ns per op
@@ -282,9 +282,9 @@ QEMU.
 
 ## Follow-ups
 
-- **The rest of clamp+cmp**: inline `movmskps`/`movmskpd` (a sign-bit
+- **The rest of clamp+cmp.** Inline `movmskps`/`movmskpd` (a sign-bit
   gather), then reduce the per-operand TLB cost of memory operands.
-- **Cheaper packed checks**: the checks re-materialize their vector
+- **Cheaper packed checks.** The checks re-materialize their vector
   constants per instruction (two instructions each on aarch64); a
   constant pool or hoisting in the backend would trim ~6 of the ~25.
   RAPIDO 2025's trimming (doc 23 §4) is bounded: removing every check
@@ -294,11 +294,11 @@ QEMU.
   registers (`fmov`/`ins`/`umov`, ~4 cycles each on Apple cores);
   keeping lane 0 in place would need a vector-to-scalar move opcode in
   TCG.
-- **Still on helpers**: `cvtps2dq`, `cvttps2dq`, `cvtdq2ps`,
+- **Still on helpers.** `cvtps2dq`, `cvttps2dq`, `cvtdq2ps`,
   `cvtpi2ps`/`cvtps2pi`, `pmuludq`; SSE3 `haddps`/`addsubps`, SSSE3 and
   VEX forms have no era relevance. (`movlhps`/`movhlps`/`pshufd`/
   `pshuflw`/`pshufhw` were already inline upstream.)
-- **Barriers**: every guest memory access carries a `dmb` because the
+- **Barriers.** Every guest memory access carries a `dmb` because the
   pc machine's `max_cpus` is above 1 (`-smp 1,maxcpus=1` turns them
   off). The memory-operand bench showed no difference on the M1; 7-Zip
   read 2–10 % faster without them, and dropping them by default needs an

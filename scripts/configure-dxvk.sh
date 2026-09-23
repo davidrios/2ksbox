@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # meson setup for the native DXVK d3d9 library (the D3D executor, doc 14 /
 # ADR-007) into build/dxvk. Only d3d9 is built, and only against patch 04's
-# window-less WSI (DXVK_WSI_DRIVER=Headless): the executor never presents,
-# and neither do the native oracles, so no windowing toolkit is built or
-# linked (2026-09-07). Then: ninja -C build/dxvk
+# window-less WSI (DXVK_WSI_DRIVER=Headless). Neither the executor nor the
+# native oracles present, so no windowing toolkit is built or linked.
+# Then: ninja -C build/dxvk
 #   macOS: brew install vulkan-headers vulkan-loader glslang meson ninja
 #          (+ the LunarG SDK for the KosmicKrisp ICD on macOS 26)
 #   Arch:  pacman -S vulkan-headers vulkan-icd-loader glslang meson ninja
@@ -11,7 +11,7 @@
 #   scripts/configure-dxvk.sh --windows   cross into build/win/dxvk (d3d9.dll),
 #          inside scripts/win-cross.sh: DXVK's own mingw cross file, and
 #          patch 08's headless WSI beside Win32, so the Windows executor
-#          runs the same d3d9 as every other host (2026-09-17). In MSYS2's
+#          runs the same d3d9 as every other host. In MSYS2's
 #          MINGW64 shell on Windows the same flag is a native build: no
 #          cross file, since meson's host is already Windows and DXVK's
 #          meson.build takes its platform flags from that
@@ -31,7 +31,7 @@ darwin=()
 if [ "$(uname -s)" = Darwin ]; then
   export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
   # The macOS every Mac build targets (scripts/macos-floor.sh), as flags
-  # and not only the environment: a changed flag is a changed command
+  # and not only the environment. A changed flag is a changed command
   # line, so ninja recompiles what a changed environment would have kept.
   T="${MACOSX_DEPLOYMENT_TARGET:-$("$ROOT/scripts/macos-floor.sh")}"
   darwin=(-Dc_args="-mmacosx-version-min=$T" -Dcpp_args="-mmacosx-version-min=$T"
@@ -39,13 +39,12 @@ if [ "$(uname -s)" = Darwin ]; then
 fi
 opts=(--buildtype release -Denable_dxgi=false -Denable_d3d8=false -Denable_d3d10=false -Denable_d3d11=false
       -Dnative_sdl2=disabled -Dnative_glfw=disabled -Dnative_sdl3=disabled ${darwin[@]+"${darwin[@]}"} ${cross[@]+"${cross[@]}"})
-# A meson build directory holds absolute paths and cannot be relocated, so
-# a renamed or moved checkout (2ksbox, 2026-09-06) leaves one whose
-# --reconfigure walks into directories that no longer exist: "[Errno 2] No
-# such file or directory: <old checkout>/build/dxvk/meson-private/tmp…".
-# Wipe and configure from scratch when the reconfigure fails, whatever the
-# reason — a real error (a missing Vulkan header, say) simply fails again
-# on the fresh configure, with its own message.
+# A meson build directory holds absolute paths and cannot be relocated. In
+# a renamed or moved checkout its --reconfigure walks into directories that
+# no longer exist ("[Errno 2] No such file or directory: <old
+# checkout>/build/dxvk/meson-private/tmp..."). So when the reconfigure
+# fails, for any reason, wipe and configure from scratch. A real error (a
+# missing Vulkan header, say) fails again there with its own message.
 if [ -f "$BUILD/build.ninja" ]; then
   meson setup --reconfigure "$BUILD" "$ROOT/third_party/dxvk" "${opts[@]}" || {
     echo "==> reconfigure failed; configuring $BUILD from scratch"

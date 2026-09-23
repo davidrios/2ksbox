@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tools/specbench/build-guest.sh — the benchmark programs of
+# The benchmark programs of
 # docs/22-tcg-evaluation.md, cross-built for the XP guest, plus their inputs
 # and the ISO the guest runs them from (build/specbench/sb.iso).
 #
@@ -16,18 +16,18 @@
 #                             (guest-tools ISO, doc 16); ns per op
 #
 # SPEC=1 also builds the open-source ancestors of five SPEC CINT2006
-# benchmarks (bzip2, GNU Go, HMMER, Sjeng, libquantum) with fixed inputs --
-# measured once (2026-09-15: default 1.07x geomean over pristine QEMU) and
-# left out of the paper because none of the patches target compiled
-# integer code; kept for the upstream-interest question.
+# benchmarks (bzip2, GNU Go, HMMER, Sjeng, libquantum) with fixed inputs.
+# Measured once (default 1.07x geomean over pristine QEMU) and left out of
+# the paper because none of the patches target compiled integer code;
+# kept for the upstream-interest question.
 #
 # 7zr.exe (public domain, https://www.7-zip.org/a/7zr.exe) and SSEBENCH.EXE
 # (from the newest guest-tools ISO) are placed in build/specbench/extra by
 # this script. Everything cross-built here uses the guest-tools toolchain
-# flags -- msvcrt (XP has no UCRT, and _USE_32BIT_TIME_T so time_t matches
-# what msvcrt.dll's own ftime()/time() fill), -march=pentium3 (SSE1,
-# doubles on x87, the era's codegen), -O2 -- and gnu89 so 1990s C gets
-# through GCC 16. Tarballs are fetched into build/specbench/src and checked
+# flags (msvcrt, since XP has no UCRT, with _USE_32BIT_TIME_T so time_t
+# matches what msvcrt.dll's own ftime()/time() fill; -march=pentium3 for
+# SSE1, doubles on x87 and the era's codegen; -O2) and gnu89 so 1990s C
+# gets through GCC 16. Tarballs are fetched into build/specbench/src and checked
 # against the hashes below.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -197,10 +197,10 @@ rm -rf "$B/iso"; mkdir -p "$B/iso/SB"
 cp "$OUT"/{specrun,nbench}.exe "$SRC/nbench-byte-2.2.3/NNET.DAT" "$B/iso/SB/"
 cp "$B/extra/7zr.exe" "$B/extra/SSEBENCH.EXE" "$B/iso/SB/"
 # Super PI mod 1.5 XS is on the image (SUPERPI_DIR); the batch file starts it and
-# waits for pi_data.txt, which it writes when the 1M run is done — and then for
+# waits for pi_data.txt, which it writes when the 1M run is done, and then for
 # the file to stop growing, because the digits take a while to write under TCG
-# and a kill mid-write left a truncated file once (a CRC that differed for no
-# computational reason); the keys that pick 1M come from the host driver
+# and a kill mid-write leaves a truncated file (a CRC that differs for no
+# computational reason). The keys that pick 1M come from the host driver
 # (run.sh). Its time is the job's CPU time.
 cat > "$B/iso/SB/SUPERPI.BAT" <<BAT
 @echo off

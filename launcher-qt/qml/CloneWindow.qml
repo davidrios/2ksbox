@@ -6,19 +6,19 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import com._2ksbox.launcher
 
-// A real top-level window, modal — see `WizardWindow.qml`.
+// A real top-level window, modal (see `WizardWindow.qml`).
 Window {
     id: root
 
-    // Typed, not `var` — see `ShaderProfilesWindow.qml`.
+    // Typed, not `var` (see `ShaderProfilesWindow.qml`).
     required property CloneModel cloner
 
-    /// The item the headless screenshot path grabs — see `Main.qml`.
+    /// The item the headless screenshot path grabs (see `Main.qml`).
     property Item grabItem: body
 
     /// What the name field is showing, a way to type a new one over it
     /// the way a person does (select all, type), and the Clone button's
-    /// own click — the `qt-clone` probe drives the window through these,
+    /// own click. The `qt-clone` probe drives the window through these,
     /// so it sees what a person would.
     readonly property alias shownName: nameField.text
     function retypeName(text) {

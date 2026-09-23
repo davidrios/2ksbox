@@ -1,5 +1,5 @@
 /*
- * d3dpt_exec_ddi.cpp — the display driver's records of the paravirtual
+ * d3dpt_exec_ddi.cpp: the display driver's records of the paravirtual
  * Direct3D executor (doc 15, M7c): what the XP display driver
  * (guest-tools/src/d3dptvid/nt/d3dptdisp.c) sends through the d3dpt-vga
  * adapter's command window when dxg.sys drives its Direct3D DDI.
@@ -84,9 +84,9 @@ struct VramSurf {
     bool rendered = false;              /* host render target newer than VRAM */
     /* a render target's VRAM as of the last time the host and VRAM agreed
      * (after an upload or a readback): what differs from it later was
-     * written by the guest without a VRAM_DIRTY — GDI on the surface's DC
-     * (GetDC bypasses DdLock / DdUnlock), a title's own writes through a
-     * cached pointer — and is uploaded before the frame's first draw or
+     * written by the guest without a VRAM_DIRTY (GDI on the surface's DC,
+     * since GetDC bypasses DdLock / DdUnlock, or a title's own writes through
+     * a cached pointer) and is uploaded before the frame's first draw or
      * kept over the host's pixels at the readback (doc 15 "Untracked
      * writes") */
     std::vector<uint8_t> shadow;
@@ -102,7 +102,7 @@ struct VramSurf {
     D3DFORMAT host_fmt = D3DFMT_UNKNOWN;    /* the format tex was created in */
     /* v11: a cube texture (D3DPT_VS_CUBE; its levels vector is face-major,
      * 6 * levels - 1 entries) and a cube face's level 0 (VRAM_CUBE_FACE):
-     * its cube and face 1..5 — on a render-target cube, rt is that face's
+     * its cube and face 1..5. On a render-target cube, rt is that face's
      * surface of the cube's host object */
     IDirect3DCubeTexture9 *cube = nullptr;
     uint32_t cube_root = 0, face = 0;
@@ -320,9 +320,9 @@ static void dxt_block(uint32_t f, const uint8_t *b, uint32_t out[16]) {
 static const D3DFORMAT expandable_fmts[] = { D3DFMT_L8, D3DFMT_A8L8, D3DFMT_A4L4, D3DFMT_A8, D3DFMT_R3G3B2, D3DFMT_A8R3G3B2 };
 static bool host_lacks[256];
 /* the system Direct3D 9 backend (Windows below the Vulkan 1.3 floor): a
- * real 2020s driver still lists D3DFMT_L6V5U5 -- the 1999 Matrox bump
- * format -- and no longer draws its luminance. Measured here on NVIDIA's
- * own d3d9 (RTX 3090, 2026-09-21): CheckDeviceFormat says yes, BUMPENVMAP
+ * real 2020s driver still lists D3DFMT_L6V5U5 (the 1999 Matrox bump
+ * format) and no longer draws its luminance. Measured here on NVIDIA's
+ * own d3d9 (RTX 3090): CheckDeviceFormat says yes, BUMPENVMAP
  * over it is right and BUMPENVMAPLUMINANCE comes out black, while
  * X8L8V8U8 (the same three channels at more precision) is right both
  * ways. So on that backend it goes up as X8L8V8U8, converted exactly,
@@ -343,7 +343,7 @@ static uint32_t l6v5u5_to_x8l8v8u8(uint32_t raw) {
  * are expanded to A8R8G8B8 at upload (DXVK has no P8; the key becomes alpha
  * 0), and so is a format the host lacks. X4R4G4B4 always is: DXVK creates it
  * as VK_FORMAT_A4R4G4B4 with no swizzle, so the X nibble samples as alpha and
- * a texture written with it 0 draws transparent (FMTTEST, 2026-09-11) */
+ * a texture written with it 0 draws transparent (FMTTEST) */
 static D3DFORMAT host_format(const VramSurf &s) {
     if (s.d.format == D3DFMT_P8 || s.d.format == D3DFMT_X4R4G4B4) return D3DFMT_A8R8G8B8;
     if (bump16_expand && s.d.format == D3DFMT_L6V5U5) return D3DFMT_X8L8V8U8;
@@ -617,7 +617,7 @@ static void upload_target(Exec &x, Ddi &d, VramSurf &s) {
     x.scene_end();
     D3DLOCKED_RECT lr;
     if (s.ms) {
-        /* v13: nothing to upload — Direct3D 8 locks no multisampled surface,
+        /* v13: nothing to upload. Direct3D 8 locks no multisampled surface,
          * so the guest cannot have written one (and d3d9 cannot stretch into it) */
         s.dirty = false;
         shadow_take(x, s);
@@ -635,7 +635,7 @@ static void upload_target(Exec &x, Ddi &d, VramSurf &s) {
 }
 
 /* the surface a readback reads: the target itself, or (v13) the plain
- * target a multisampled one is resolved into first — d3d9 reads no
+ * target a multisampled one is resolved into first, since d3d9 reads no
  * multisampled surface back */
 static IDirect3DSurface9 *resolved(Exec &x, VramSurf &s) {
     x.scene_end();
@@ -649,7 +649,7 @@ static IDirect3DSurface9 *resolved(Exec &x, VramSurf &s) {
 
 /* host render target -> VRAM. Pixels the guest changed since the shadow
  * was taken (untracked writes: GDI through GetDC, drawn after the scene
- * as a rule — a title's text and panels) stay over the host's. */
+ * as a rule, like a title's text and panels) stay over the host's. */
 static HRESULT readback(Exec &x, Ddi &d, VramSurf &s) {
     x.scene_end();
     if (!s.rt || (s.d.caps & D3DPT_VS_ZBUFFER)) return D3DERR_INVALIDCALL;
@@ -1221,8 +1221,8 @@ struct Dp2 {
         return x.vram + s->d.offset + off;
     }
     /* v10: a shader's declaration with every stream it reads interleaved
-     * into stream 0 at these strides — each element at its stream's base,
-     * the strides of the streams before it added up — so a multi-stream
+     * into stream 0 at these strides (each element at its stream's base,
+     * the strides of the streams before it added up), so a multi-stream
      * draw is one vertex again and takes the same DrawPrimitiveUP path */
     IDirect3DVertexDeclaration9 *ilv_decl(VShader8 &s, const uint32_t *ss) {
         uint32_t key[D3DPT_DRAW8_MAX_STREAMS] = {}, base[D3DPT_DRAW8_MAX_STREAMS] = {}, total = 0;
@@ -1500,7 +1500,7 @@ struct Dp2 {
      * test is forced on (GREATEREQUAL 1) unless the app runs its own, and
      * stage 0's alpha op is made to pass the texture alpha through when the
      * app's does not (the DX7 runtime's TEXTUREMAPBLEND emulation selects
-     * the diffuse alpha for a texture format without alpha — every keyed
+     * the diffuse alpha for a texture format without alpha, i.e. every keyed
      * R5G6B5 / P8 texture); the app's states come back when the key no
      * longer applies */
     void apply_ckey() {
@@ -1537,7 +1537,7 @@ struct Dp2 {
      * still delivers as render states (the DX6+ runtimes turn them into
      * stage states before the driver sees them; doc 15 "Execute buffers"):
      * TEXTUREHANDLE (1) binds stage 0, TEXTUREMAPBLEND (21) picks stage 0's
-     * colour / alpha ops the way the old fixed function did — no texture:
+     * colour / alpha ops the way the old fixed function did. No texture:
      * the diffuse colour; MODULATE: texture x diffuse, the alpha from the
      * texture when its format has one (the colour-key expansion counts:
      * apply_ckey overrides it for a keyed texture anyway), else from the
@@ -1782,7 +1782,7 @@ struct Dp2 {
                  * DX7 runtime never produced that sequence (D3D7TEST, FIFA);
                  * the DX8 runtime's legacy path does it every frame, and
                  * reading the vertices 2 bytes early drew Max Payne's alley
-                 * with black bands (2026-09-05). */
+                 * with black bands. */
                 size_t pad = align_next(0);
                 need = pad + 4 + (size_t)(count + 2) * stride;
                 if (need > left) return fail("truncated TRIANGLEFAN_IMM");
@@ -1809,9 +1809,9 @@ struct Dp2 {
                     /* a DirectX 6 title picks its blend with TEXTUREMAPBLEND once (no texture bound
                      * yet: the diffuse alone) and binds textures as a stage state per draw; the
                      * DX6 runtime passes both through, so the blend is re-evaluated for the
-                     * texture now bound (GTA 2's menu text drew as white boxes, 2026-09-05). Only
-                     * an op the app set itself ends that — not an ARG (Crimson Skies' menu drew
-                     * white silhouettes, 2026-09-09: COLORARG2 set after the blend had ended it) */
+                     * texture now bound (GTA 2's menu text drew as white boxes without it). Only
+                     * an op the app set itself ends that, not an ARG (Crimson Skies' menu drew
+                     * white silhouettes when COLORARG2, set after the blend, ended it) */
                     if (stg == 0 && st == 0 && (d.legacy_cop || d.legacy_aop)) apply_mapblend(false);
                 }
                 break;
@@ -2135,7 +2135,7 @@ void exec_ddi_release(Exec &x)
  * program taking the display); DXVK's never is, so this is the native
  * backend's alone. Everything the host holds for the display driver is a
  * copy of something in guest VRAM, and the guest sends a VRAM_SURFACE
- * once and never again — so the copies go and the registrations stay,
+ * once and never again, so the copies go and the registrations stay,
  * each surface marked dirty and made again at its next use. The DX8
  * shaders and state sets go too: the runtime re-creates them on the
  * device it is handed, and a stale handle draws nothing. */
@@ -2251,7 +2251,7 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
         break;
     }
     case D3DPT_OP_VRAM_CUBE_FACE: {
-        /* v11: a cube face's level 0 under its own handle — what a
+        /* v11: a cube face's level 0 under its own handle, what a
          * SETRENDERTARGET / READBACK of a render-target cube names, and
          * whose VRAM_DIRTY means the cube */
         auto *a = body<d3dpt_u32x4>(c, 0, b); if (!a) return true;
@@ -2319,7 +2319,7 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
     }
     case D3DPT_OP_VRAM_DIRTY_RANGE: {
         /* v9: a range of a VRAM buffer the guest wrote (Unlock, BUFFERBLT).
-         * Nothing is cached of a buffer yet — a DRAW8 reads it from VRAM —
+         * Nothing is cached of a buffer yet (a DRAW8 reads it from VRAM),
          * so this only keeps the flag honest (and counts, for the log) */
         auto *a = body<d3dpt_u32x3>(c, 0, b); if (!a) return true;
         VramSurf *s = surf(x, a->a);
@@ -2346,7 +2346,7 @@ bool exec_ddi_op(Batch &b, const d3dpt_cmd *c)
         auto stale = d.ctxs.find(a->handle);
         if (stale != d.ctxs.end()) {
             /* the guest never destroyed it (a display driver that lost its context table
-             * with the PDEV, before 2026-09-05): the new one takes its place */
+             * with the PDEV, as old drivers did): the new one takes its place */
             x.log("ddi: context %u still open, replaced", a->handle);
             if (x.dev && (!stale->second.vshaders.empty() || !stale->second.pshaders.empty())) { x.dev->SetVertexShader(nullptr); x.dev->SetPixelShader(nullptr); }
             stale->second.release_shaders();

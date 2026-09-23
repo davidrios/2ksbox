@@ -1,5 +1,5 @@
 /*
- * voodoo_shim.c -- 86Box's platform, as the vendored Voodoo sources see it,
+ * voodoo_shim.c: 86Box's platform, as the vendored Voodoo sources see it,
  * implemented over QEMU: threads and events (qemu-thread), timers
  * (QEMUTimer on the virtual clock, see shim/86box/timer.h for the units),
  * executable memory for the recompiler, the device configuration table, the
@@ -133,7 +133,7 @@ static VoodooShimHooks shim_hooks;
 unsigned               voodoo_shim_fatals;
 
 /* 86Box's fatal() ends 86Box; here it must not end QEMU, because every
- * caller is a guest write the chip would have swallowed -- an intrCtrl the
+ * caller is a guest write the chip would have swallowed: an intrCtrl the
  * emulation has no interrupts for, a command-FIFO packet the decoder does
  * not know, an LFB format it cannot convert. Each site `break`s or falls
  * through after the call, so returning is safe: the write is refused, the

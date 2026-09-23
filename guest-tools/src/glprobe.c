@@ -1,18 +1,18 @@
 /*
- * glprobe.c — GLPROBE.EXE: which OpenGL a program on this machine gets.
+ * glprobe.c: GLPROBE.EXE, which OpenGL a program on this machine gets.
  *
  * The DirectDraw counterpart of this is DDPROBE.EXE, and the question is the
  * same shape: not "does OpenGL work" but *whose* OpenGL answered. On these
  * machines there are two, and they are told apart by one string:
  *
- *   GL_RENDERER "GDI Generic"   Microsoft's software GL 1.1 — every frame
+ *   GL_RENDERER "GDI Generic"   Microsoft's software GL 1.1: every frame
  *                               drawn by the guest CPU, far too slow to play
  *   anything else               qemu-3dfx's pass-through (OPENGL32.DLL),
  *                               which is the host's GL through the player
  *
  * It matters because the pass-through is reached by *name*: the first
  * opengl32.dll the loader finds is the one a program draws through, so a GL
- * title gets the pass-through only if a copy sits next to its EXE — or if the
+ * title gets the pass-through only if a copy sits next to its EXE, or if the
  * one in the system folder is ours, which is what SETUP's "WineD3D as this
  * machine's DirectDraw" arranges (doc 19 §43). WineD3D on 9x needs that too:
  * it draws through whatever opengl32.dll it finds, and on Microsoft's it
@@ -21,12 +21,12 @@
  * The pass-through refuses to load without the device mapper (FXMEMMAP.VXD
  * on 9x, the MAPMEM service on NT): its DllMain returns FALSE, and a program
  * that imports opengl32 then does not start. This probe links GL at run time
- * — LoadLibrary, not an import — so that it is the thing that reports the
- * refusal rather than a program that dies before main().
+ * (LoadLibrary, not an import), so it reports the refusal rather than dying
+ * before main().
  *
  * It draws: a context on an ordinary window, a clear to a known colour read
- * back with glReadPixels (a GL that answers strings but draws nothing is a
- * thing that has happened here), then N frames of a spinning quad with
+ * back with glReadPixels (a GL that answers strings but draws nothing has
+ * happened here), then N frames of a spinning quad with
  * SwapBuffers, and the frame rate. Everything to C:\GLPROBE.LOG, so WIN.INI's
  * `run=` can start it with nothing to type at.
  *
@@ -120,7 +120,7 @@ int main(int argc, char **argv)
      * that says whose it is. */
     gl = LoadLibraryA("opengl32.dll");
     if (!gl) {
-        logp("glprobe: opengl32.dll did not load (error %lu) — on 9x that is"
+        logp("glprobe: opengl32.dll did not load (error %lu); on 9x that is"
              " the pass-through without its device mapper (SETUP /I 2)",
              (unsigned long)GetLastError());
         if (out) fclose(out);
@@ -177,14 +177,14 @@ int main(int argc, char **argv)
     }
     rc = p_wglCreateContext(dc);
     if (!rc || !p_wglMakeCurrent(dc, rc)) {
-        logp("glprobe: no GL context (error %lu) — under a bare qemu-system-i386"
+        logp("glprobe: no GL context (error %lu); under a bare qemu-system-i386"
              " there is no 3D provider and the pass-through refuses one by design",
              (unsigned long)GetLastError());
         if (out) fclose(out);
         return 1;
     }
 
-    /* **Whose GL this is.** "GDI Generic" is Microsoft's software renderer;
+    /* Whose GL this is. "GDI Generic" is Microsoft's software renderer;
      * anything else here is the pass-through answering with the host's. */
     logp("glprobe: GL_VENDOR   %s", (const char *)p_glGetString(GL_VENDOR));
     logp("glprobe: GL_RENDERER %s", (const char *)p_glGetString(GL_RENDERER));

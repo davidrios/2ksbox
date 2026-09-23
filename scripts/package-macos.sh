@@ -86,7 +86,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 # Absolute, whatever was typed: the checks below `cd /` before they run the
-# staged binaries, and a relative --out broke there (2026-09-22).
+# staged binaries, and a relative --out broke there.
 case "$OUT" in /*) ;; *) OUT="$PWD/$OUT" ;; esac
 
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -109,8 +109,8 @@ FLOOR=$MACOSX_DEPLOYMENT_TARGET
 
 if [ "$BUILD" = 1 ]; then
   cargo build --release -p player
-  # Its own cargo workspace (ADR-015), so its own build command — the
-  # boundary that keeps Qt 6 off a plain `cargo build`.
+  # Its own cargo workspace (ADR-015), so its own build command. That
+  # boundary keeps Qt 6 off a plain `cargo build`.
   ( cd launcher-qt && cargo build --release )
 fi
 need launcher-qt/target/release/launcher-qt "scripts/build.sh qt"
@@ -158,11 +158,11 @@ else
   D3D=0
 fi
 # The community build only (ADR-019): the same executor in another
-# process, on a Wine the user has (M15, ADR-018) — the library QEMU opens
-# when DXVK finds no Vulkan device, and the Windows build of the executor
-# with its host program, PE files the Mach-O closure below never touches.
-# The App Store build is macOS 26+ with KosmicKrisp and never starts Wine,
-# so it carries none of this.
+# process, on a Wine the user has (M15, ADR-018). That is the library QEMU
+# opens when DXVK finds no Vulkan device, plus the Windows build of the
+# executor with its host program, PE files the Mach-O closure below never
+# touches. The App Store build is macOS 26+ with KosmicKrisp and never
+# starts Wine, so it carries none of this.
 if [ "$COMMUNITY" = 1 ]; then
   if [ -f build/d3dpt/libd3dpt_exec_remote.dylib ] && [ -f build/d3dpt/wine/d3dpt_exec.dll ] && [ -f build/d3dpt/wine/d3dpt-exec-host.exe ]; then
     install -m755 build/d3dpt/libd3dpt_exec_remote.dylib "$C/lib/2ksbox/"
@@ -175,7 +175,7 @@ fi
 
 # Vulkan: stock macOS has none, so the executor's driver travels with us.
 # The LunarG SDK's own loader and the KosmicKrisp ICD (docs/build-macos.md,
-# patches/dxvk/README.md) — the pair the D3D9 harnesses actually pass on.
+# patches/dxvk/README.md), the pair the D3D9 harnesses pass on.
 if [ "$D3D" = 1 ]; then
   sdk=$(ls -d "$HOME"/VulkanSDK/*/macOS 2>/dev/null | sort -V | tail -1 || true)
   if [ -n "$sdk" ] && [ -f "$sdk/lib/libvulkan_kosmickrisp.dylib" ]; then
@@ -237,17 +237,16 @@ echo "qt             $("$QMAKE" -query QT_VERSION) from $("$QMAKE" -query QT_INS
   END { if (n) printf "macdeployqt    %d unresolved framework references, pruned below\n", n }'
 
 # What macdeployqt left half-rewritten. It copies a plain dependency
-# dylib into Frameworks/ and rewrites the *reference* to it, but when the
-# reference was already `@rpath/libfoo.dylib` — which Homebrew's own
-# dylibs increasingly are, brotli 1.2.0 among them — there is nothing to
-# rewrite, and the copy keeps both its Homebrew install name and
-# Homebrew's `@loader_path/../lib` rpath. From Contents/Frameworks that
-# rpath points at Contents/lib, where nothing of Qt's lives, so the
-# sibling it names resolves nowhere and the first thing to load it (here:
-# QtNetwork → libbrotlidec → libbrotlicommon) dies on a machine that has
-# no Homebrew to fall back on. So give every plain dylib in there the
-# same two things the closure below gives its own: an `@rpath` id, and
-# `@loader_path` to find its siblings with.
+# dylib into Frameworks/ and rewrites the *reference* to it. When the
+# reference was already `@rpath/libfoo.dylib` (more and more Homebrew
+# dylibs, brotli 1.2.0 among them) there is nothing to rewrite, and the
+# copy keeps its Homebrew install name and Homebrew's `@loader_path/../lib`
+# rpath. From Contents/Frameworks that rpath points at Contents/lib, where
+# nothing of Qt's lives, so the sibling resolves nowhere and the first
+# thing to load it (QtNetwork -> libbrotlidec -> libbrotlicommon) dies on a
+# machine with no Homebrew. So give every plain dylib there what the
+# closure below gives its own: an `@rpath` id, and `@loader_path` to find
+# its siblings with.
 for f in "$C/Frameworks"/*.dylib; do
   [ -f "$f" ] || continue
   install_name_tool -id "@rpath/$(basename "$f")" "$f" 2>/dev/null || true
@@ -255,29 +254,27 @@ for f in "$C/Frameworks"/*.dylib; do
 done
 
 # What macdeployqt collected that can never load. Homebrew's Qt is
-# modular — qtbase, qtdeclarative, qtvirtualkeyboard, … each its own
-# prefix — and every installed formula symlinks its plugins and QML
+# modular (qtbase, qtdeclarative, qtvirtualkeyboard... each its own
+# prefix), and every installed formula symlinks its plugins and QML
 # modules into one shared tree, while macdeployqt deploys plugin
 # *categories* and QML module *directories* whole. So a launcher that
-# imports QtQuick, Controls, Dialogs and Layouts comes out carrying
+# imports QtQuick, Controls, Dialogs and Layouts also carries
 # QtQuick.VirtualKeyboard, Scene2D/3D, Pdf, Timeline and
-# QtQml.StateMachine as well, and the frameworks those name live in
-# prefixes macdeployqt never walked into: that is the
-# "ERROR: Cannot resolve rpath @rpath/QtVirtualKeyboard.framework/…" it
-# prints and carries on from. A plugin whose framework is in no copy of
-# the bundle cannot be dlopened on any machine, so drop it rather than
-# sign 25 MB of files that would fail their first import. The point is
-# not the megabytes: it is that a real unresolved dependency then shows
-# up as a missing file in the check below instead of as one more line in
-# that scroll. Pruning too much is caught too — the offscreen window
-# further down opens on the QML modules that survive this.
+# QtQml.StateMachine, whose frameworks live in prefixes macdeployqt never
+# walked into. That is the "ERROR: Cannot resolve rpath
+# @rpath/QtVirtualKeyboard.framework/..." it prints and carries on from. A
+# plugin whose framework is not in the bundle cannot be dlopened on any
+# machine, so drop it rather than sign 25 MB that would fail its first
+# import. A real unresolved dependency then shows up as a missing file in
+# the check below instead of one more line in that scroll. Pruning too
+# much is caught too, because the offscreen window further down opens on
+# the QML modules that survive this.
 #
-# The one thing to know about the shape of what it deployed: a QML
-# module's plugin under Resources/qml is a **symlink** into PlugIns, not
-# a copy. So the binaries are pruned first and the modules left holding a
-# dangling link go after them, which is also what keeps a module from
-# surviving as .qml files with no plugin — an import would then fail as
-# "plugin cannot be loaded" instead of "module is not installed".
+# A QML module's plugin under Resources/qml is a **symlink** into
+# PlugIns, not a copy. So the binaries are pruned first and the modules
+# left holding a dangling link go after them. That also keeps a module
+# from surviving as .qml files with no plugin, where an import would fail
+# as "plugin cannot be loaded" instead of "module is not installed".
 missing_fw() {  # frameworks a Mach-O names that the bundle does not carry
   otool -L "$1" | awk '{print $1}' \
     | sed -n 's|^@rpath/\([^/]*\.framework\)/.*|\1|p' | sort -u \
@@ -293,10 +290,10 @@ while read -r f; do
   rm -f "$f"
 done < <(find "$C/PlugIns" "$C/Resources/qml" -type f -name '*.dylib' 2>/dev/null | sort)
 
-# The modules those plugins belonged to: a dangling link is a plugin
-# that has just gone. Take the whole module directory — but only once
-# nothing under it still resolves, so a module that shares a directory
-# with a plugin we kept is never taken with it.
+# The modules those plugins belonged to (a dangling link is a plugin that
+# just went). Take the whole module directory, but only once nothing
+# under it still resolves, so a module sharing a directory with a plugin
+# we kept is never taken with it.
 while read -r l; do
   [ -L "$l" ] || continue        # its module went with an earlier link
   mod=$(dirname "$l")
@@ -322,28 +319,26 @@ else
   warn "no libqoffscreen.dylib in $QT_PLUGINS/platforms; the window check below will be skipped"
 fi
 
-# Every plugin has to be able to reach the bundle's own Frameworks, and
-# on this Qt not one of them can: they arrive carrying Homebrew's
-# `@loader_path/../../../../lib` and nothing else, which from
-# Contents/PlugIns/<category> points at the *build directory* — that is
-# the path in macdeployqt's own "using QList(…)" complaints. It gets away
-# with it for the plugins whose Qt references it rewrote to
-# @executable_path; the ones Homebrew already built with @rpath
-# references (libqsvg, libqsvgicon, the multimedia plugin here) resolve
-# nowhere and fail their dlopen with the framework sitting right there.
-# So give each of them both ways in: from itself, and from whatever
-# executable loaded it — the second is what covers a QML plugin, which
-# Resources/qml reaches through a symlink and whose @loader_path is
-# therefore not the directory the file is really in.
+# Every plugin has to reach the bundle's own Frameworks, and on this Qt
+# none can. They arrive carrying only Homebrew's
+# `@loader_path/../../../../lib`, which from Contents/PlugIns/<category>
+# points at the *build directory* (the path in macdeployqt's own "using
+# QList(...)" complaints). That works for plugins whose Qt references it
+# rewrote to @executable_path. The ones Homebrew built with @rpath
+# references (libqsvg, libqsvgicon, the multimedia plugin) resolve nowhere
+# and fail their dlopen with the framework sitting right there. So give
+# each both ways in: from itself, and from whatever executable loaded it.
+# The second covers a QML plugin, which Resources/qml reaches through a
+# symlink, so its @loader_path is not the directory the file is in.
 while read -r f; do
   install_name_tool -add_rpath "@loader_path/../../Frameworks" "$f" 2>/dev/null || true
   install_name_tool -add_rpath "@executable_path/../Frameworks" "$f" 2>/dev/null || true
 done < <(find "$C/PlugIns" -type f -name '*.dylib' 2>/dev/null)
 
 # --- the dylib closure ------------------------------------------------
-# Everything outside /usr/lib and /System — Homebrew's glib/pixman/zstd/… —
-# copied into lib/2ksbox and rewritten to @rpath, transitively. (XQuartz's
-# libGL and X11 libraries used to be in it too, linked for nothing; patch 70.)
+# Everything outside /usr/lib and /System (Homebrew's glib/pixman/zstd...)
+# copied into lib/2ksbox and rewritten to @rpath, transitively. XQuartz's
+# libGL and X11 libraries are no longer linked (patch 70).
 LIBDIR="$C/lib/2ksbox"
 # A library's own install name is the first line `otool -L` prints and no
 # dependency: Qt's framework binaries keep Homebrew's, which loads nothing.
@@ -356,15 +351,15 @@ external() {
   otool -L "$1" | tail -n +2 | awk -v id="$id" '$1 != id {print $1}' | grep -E '^(/opt/|/usr/local/)' || true
 }
 
-# Every Mach-O in the bundle, which since Qt arrived is no longer the same
-# thing as every executable file in it: a QML module's plugin can be mode
-# 644 and it still carries a signature that a rewritten load command
-# invalidates — and on arm64 a broken signature is SIGKILL, not a warning.
-# So are the framework binaries (Frameworks/QtQuick.framework/Versions/A/
-# QtQuick, no extension, mode 644): macdeployqt signs what it rewrites, so
-# leaving them out went unnoticed until macos-bottles.py replaced them, and
-# then the ad-hoc pass below skipped every one and the launcher died of
-# "Code Signature Invalid" mapping its first framework (2026-09-12).
+# Every Mach-O in the bundle, which is not the same as every executable
+# file in it. A QML module's plugin can be mode 644 and still carry a
+# signature that a rewritten load command invalidates, and on arm64 a
+# broken signature is SIGKILL, not a warning. The framework binaries
+# (Frameworks/QtQuick.framework/Versions/A/QtQuick, no extension, mode
+# 644) are the same. macdeployqt signs what it rewrites, so leaving them
+# out went unnoticed until macos-bottles.py replaced them; then the ad-hoc
+# pass below skipped every one and the launcher died of "Code Signature
+# Invalid" mapping its first framework.
 machos() {
   find "$C" -type f \( -perm +111 -o -name '*.dylib' -o -path '*.framework/Versions/*' \) \
     -exec sh -c 'file -b "$1" | grep -q Mach-O && echo "$1"' _ {} \;
@@ -405,11 +400,11 @@ done
 install_name_tool -add_rpath "@loader_path/../lib/2ksbox" "$C/MacOS/2ksbox-player" 2>/dev/null || true
 install_name_tool -add_rpath "@loader_path/../../lib/2ksbox" "$C/libexec/2ksbox/qemu-img" 2>/dev/null || true
 # Every rpath that points out of the app has to go, from libraries as
-# much as from executables: meson gives libqemu-embed one LC_RPATH per
-# Homebrew prefix it linked against, they are searched before the
-# @loader_path added above, and a bundle that keeps them loads this
-# machine's Homebrew instead of its own copies — passing every check
-# here and failing on the first machine that has no Homebrew at all.
+# well as executables. meson gives libqemu-embed one LC_RPATH per Homebrew
+# prefix it linked against, searched before the @loader_path added above.
+# A bundle that keeps them loads this machine's Homebrew instead of its
+# own copies, passing every check here and failing on the first machine
+# with no Homebrew.
 while read -r f; do
   while read -r rp; do
     case "$rp" in "$ROOT"/*|/opt/*|/usr/local/*)
@@ -420,8 +415,8 @@ done < <(machos)
 
 # --- the floor's bottles ----------------------------------------------
 # Everything copied out of Homebrew above is the bottle built for *this*
-# Mac's macOS — on a macOS 26 Mac, libslirp, libpng, jpeg-turbo and
-# QtQml/QtQuick are macOS 26 builds — and one of them is enough to keep the
+# Mac's macOS (on a macOS 26 Mac, libslirp, libpng, jpeg-turbo and
+# QtQml/QtQuick are macOS 26 builds), and one of them is enough to keep the
 # whole app off every older Mac. Homebrew publishes the same versions built
 # on each macOS it supports, so every file above the floor is swapped for
 # the floor's build of itself, keeping the install name, dependencies and
@@ -432,8 +427,8 @@ TAG=$(scripts/macos-floor.sh --tag "$FLOOR")
 python3 scripts/macos-bottles.py "$C" "$FLOOR" "$TAG" "$ROOT/build/macos-bottles"
 
 # Rewriting a load command breaks the signature every arm64 binary must
-# have, and the kernel answers a broken one with SIGKILL and nothing else
-# — which is what the checks below would run into. So re-sign ad hoc now.
+# have, and the kernel answers a broken one with SIGKILL and nothing else,
+# which the checks below would run into. So re-sign ad hoc now.
 # The real Developer ID signature replaces this further down; here it only
 # has to make the staged app runnable.
 while read -r f; do codesign --force --sign - "$f" >/dev/null 2>&1 || true; done \
@@ -442,8 +437,8 @@ while read -r f; do codesign --force --sign - "$f" >/dev/null 2>&1 || true; done
 # --- icon -------------------------------------------------------------
 # The same PNGs the Linux package installs (`scripts/gen-icons.sh`), so
 # the three platforms draw one icon from one master. Nothing is
-# rasterized here: an .icns is a container, and iconutil is happy with a
-# partial set — 512@2x would need a 1024 the artwork does not have.
+# rasterized here. An .icns is a container, and iconutil accepts a
+# partial set; 512@2x would need a 1024 the artwork does not have.
 set=$(mktemp -d)/2ksbox.iconset; mkdir -p "$set"
 for s in 16 32 64 128 256 512; do
   cp "packaging/icon/2ksbox-$s.png" "$set/icon_${s}x${s}.png"
@@ -488,17 +483,15 @@ done < <(machos)
 
 # And every @rpath dependency must resolve through the binary's own
 # rpaths, inside the bundle. A file that fails this cannot load on any
-# machine — but on *this* one it is invisible, because the Homebrew copy
-# it was built against is still on disk for the parts of the loader that
-# would otherwise complain. It is what the prune above leaves behind if
-# it missed something, and what a half-rewritten install name (see the
-# Frameworks pass) looks like from here.
-# dyld expands @rpath with the rpaths of every image in the chain that
-# led to the load, not only the one holding the reference — which is why
-# a Qt plugin whose own rpath is Homebrew's stale
-# `@loader_path/../../../../lib` still finds QtSvg: the executable that
-# dlopened it has `@executable_path/../Frameworks`. So the check has to
-# know the same thing, or it fails files that demonstrably work.
+# machine, but on *this* one it is invisible, because the Homebrew copy it
+# was built against is still on disk. This catches what the prune above
+# missed and a half-rewritten install name (see the Frameworks pass).
+# dyld expands @rpath with the rpaths of every image in the chain that led
+# to the load, not only the one holding the reference. That is why a Qt
+# plugin whose own rpath is Homebrew's stale `@loader_path/../../../../lib`
+# still finds QtSvg: the executable that dlopened it has
+# `@executable_path/../Frameworks`. The check has to do the same, or it
+# fails files that work.
 exe_rpaths=""
 for x in "$C/MacOS/2ksbox" "$C/MacOS/2ksbox-player"; do
   [ -f "$x" ] || continue
@@ -542,17 +535,17 @@ while read -r what path; do
   case "$path" in "$APP"|"$APP"/*) ;; *) echo "package-macos.sh: $what resolved outside the app: $path" >&2; fail=1 ;; esac
 done <<< "$resolved"
 
-# The launcher's own Vulkan, which the closure above never loaded: the
-# probe behind the Direct3D picker opens the app's loader by its full
-# path and names the app's driver to it (launcher-core/src/host_gpu.rs,
-# 2026-09-23), where a leaf-name dlopen found nothing in an app that ships
-# `libvulkan.1.dylib` only — the community app on macOS 15 said "Vulkan
+# The launcher's own Vulkan, which the closure above never loaded. The
+# probe behind the Direct3D picker opens the app's loader by its full path
+# and names the app's driver to it (launcher-core/src/host_gpu.rs). A
+# leaf-name dlopen found nothing in an app that ships only
+# `libvulkan.1.dylib`, so the community app on macOS 15 said "Vulkan
 # loader: not present" beside the copy its executor was running on. So
-# ask the staged launcher, from `/` with nothing in the environment, and
-# require its report to say the loader is the app's, the loader to have
-# been the app's file, and nothing loaded from outside the app for it.
-# The verdict itself is this Mac's (a Mac below 26 has a loader and no
-# GPU behind it), so it is printed, not required.
+# ask the staged launcher, from `/` with an empty environment, and require
+# its report to name the app's loader, the loaded file to be the app's,
+# and nothing to load from outside the app. The verdict itself is this
+# Mac's (a Mac below 26 has a loader and no GPU behind it), so it is
+# printed, not required.
 if [ -f "$C/lib/2ksbox/libvulkan.1.dylib" ]; then
   hc=$(cd / && env -i HOME="$scratch" LAUNCHER_LIBRARY_DIR="$scratch/machines" \
     DYLD_PRINT_LIBRARIES=1 "$C/MacOS/2ksbox" --host-check 2>&1 || true)
@@ -576,13 +569,13 @@ if [ -f "$C/lib/2ksbox/libvulkan.1.dylib" ]; then
   echo "host-check     $(printf '%s\n' "$report" | sed -n 's/^Direct3D pass-through: //p' | head -1)"
 fi
 
-# What the *loader* actually did, which is the question a friend's Mac
-# will ask. Not one image outside the app and the system may be loaded:
-# an installed app has no build/qemu, so the @loader_path rpath
-# (player/build.rs) is all there is to find libqemu-embed with, and every
-# Homebrew or XQuartz library reached from here would be one this machine
-# has and theirs does not. `--mode-sweep` is the display path end to end
-# without a guest, and it is enough to pull the embed library in.
+# What the *loader* did, which is what another Mac will test. No image
+# outside the app and the system may load. An installed app has no
+# build/qemu, so the @loader_path rpath (player/build.rs) is all there is
+# to find libqemu-embed with, and every Homebrew library reached from here
+# is one this machine has and another may not. `--mode-sweep` is the
+# display path end to end without a guest, enough to pull the embed
+# library in.
 loaded=$(cd / && env -i DYLD_PRINT_LIBRARIES=1 \
   "$C/MacOS/2ksbox-player" --mode-sweep "$scratch/sweep" 2>&1 \
   | sed -n 's|^dyld\[[0-9]*\]: <[^>]*> ||p')
@@ -599,14 +592,13 @@ else
   echo "loader         $(printf '%s\n' "$loaded" | grep -c "^$APP/") images from the app, the rest from the system"
 fi
 
-# The window, which `--paths` never opens and the closure could never
-# have checked: Qt loads its platform plugin and every QtQuick module by
-# name at run time, out of PlugIns/ and Resources/qml, and nothing names
-# them in a load command. So open one — offscreen, so it does not appear
-# on the packager's screen — and ask the loader the same question again
-# while it happens. A PNG out of `LAUNCHER_QT_SHOT` (doc 07) means the
-# QML engine really ran; the image list means it ran on our copy of Qt
-# and not on the Homebrew one this Mac happens to have.
+# The window, which `--paths` never opens and the closure cannot check.
+# Qt loads its platform plugin and every QtQuick module by name at run
+# time, out of PlugIns/ and Resources/qml, and no load command names them.
+# So open one offscreen, off the packager's screen, and ask the loader the
+# same question while it runs. A PNG out of `LAUNCHER_QT_SHOT` (doc 07)
+# means the QML engine ran; the image list shows it ran on our copy of Qt
+# and not this Mac's Homebrew one.
 if [ -f "$C/PlugIns/platforms/libqoffscreen.dylib" ]; then
   shot="$scratch/window.png"
   qtloaded=$(cd / && env -i HOME="$scratch" LAUNCHER_LIBRARY_DIR="$scratch/machines" \
@@ -653,10 +645,9 @@ if [ "$SIGN" = 1 ]; then
   # the entitlement beside it is what lets TCG keep its JIT under it.
   #
   # --timestamp is not optional either (notarization rejects a signature
-  # without one), and Apple's timestamp service goes away for a few
-  # seconds often enough that a bundle with this many Mach-O files will
-  # hit it: "The timestamp service is not available". That is worth
-  # retrying and nothing else here is, so the retry is narrow.
+  # without one). Apple's timestamp service drops out for a few seconds
+  # often enough that a bundle with this many Mach-O files hits it ("The
+  # timestamp service is not available"). Only that failure is retried.
   sign_one() {
     local i out
     for i in 1 2 3 4 5; do
@@ -677,8 +668,8 @@ if [ "$SIGN" = 1 ]; then
   }
   # Inside-out: every nested Mach-O before the thing that seals it, and a
   # framework signed as the bundle it is rather than as the file inside
-  # it — `codesign` seals a framework by its directory, and one sealed
-  # only at Versions/A/QtCore is what `--verify --deep --strict` rejects.
+  # it. `codesign` seals a framework by its directory, and
+  # `--verify --deep --strict` rejects one sealed only at Versions/A/QtCore.
   while read -r f; do
     case "$f" in
       "$C"/Frameworks/*.framework/*) continue ;;   # signed as a bundle below
@@ -692,9 +683,9 @@ if [ "$SIGN" = 1 ]; then
   sign_one "$C/MacOS/2ksbox"
   sign_one "$APP"
   codesign --verify --deep --strict --verbose=2 "$APP"
-  # The question Gatekeeper will actually ask on the other Mac. Before
-  # notarization it answers "not notarized", which is not a failure here
-  # — it is the one remaining step — but any other rejection is.
+  # The question Gatekeeper will ask on the other Mac. Before notarization
+  # it answers "not notarized", which is the one remaining step, not a
+  # failure. Any other rejection is.
   spctl --assess --type execute --verbose=4 "$APP" 2>&1 | sed 's/^/  /' || true
 fi
 

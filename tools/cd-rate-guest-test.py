@@ -13,7 +13,7 @@ pass reads that range with one combination of
 
   * transfer path: PIO (the 0x170 register file, the byte-count-limit loop)
     or **bus-master DMA** (the PIIX3 BMIDE engine found through PCI config
-    space) -- DMA is the path Windows takes, and on a cdimage disc it is our
+    space). DMA is the path Windows takes, and on a cdimage disc it is our
     own code (`ide_atapi_disc_read_dma_cb`, patch 51), not stock QEMU's,
   * request size: 1, 8 or ~31 sectors per command,
   * byte-count limit (PIO): 2048, 8192, 65534,
@@ -29,7 +29,7 @@ that:
 
   * **every pass over the same range must produce the same checksum.** A
     difference means the data the guest gets depends on the rate, the
-    request size or the transfer path -- an emulator bug, and exactly the
+    request size or the transfer path: an emulator bug, and exactly the
     shape that corrupts one JPEG in a hundred.
   * **the 2048-byte passes must equal the host's own checksum** of the same
     range (the cooked image), so "all passes agree" cannot be all passes
@@ -48,15 +48,15 @@ corrects it and hands the bytes over.
     tools/cd-rate-guest-test.py <image>         # a real disc image
     SCAN=1 tools/cd-rate-guest-test.py <image>  # every sector of it, once
 
-By default it builds its own 16 MB disc twice -- as an `.iso` (which QEMU
+By default it builds its own 16 MB disc twice, as an `.iso` (which QEMU
 serves from the raw file driver, stock code) and as a MODE1/2352 `.cue`
-(which goes through libdisc and our ATAPI model) -- and runs the sweep on
+(which goes through libdisc and our ATAPI model), and runs the sweep on
 both. The two discs hold the same user data, so the cue's 2048-byte
 checksums must equal the iso's: that A/B is the whole cdimage path against
 stock QEMU, at every rate.
 
 THROTTLE=<bytes/s> holds the drive itself to a speed through QEMU's block
-throttle -- the only speed knob that exists today, and it reaches a `.iso`
+throttle, the only speed knob there is, and it reaches a `.iso`
 but not a `.cue` / `.ccd` / `.mds` (those reads bypass the block layer).
 
 Knobs: LBA= start sector, WINDOW= sectors per pass (default 512 = 1 MB),
@@ -93,8 +93,8 @@ SCAN = os.environ.get("SCAN") == "1"
 # Bytes per second to hold the *drive* to, through QEMU's block-layer
 # throttle (1x CD = 153600). It reaches a .iso, which QEMU serves from the
 # raw file driver; it does not reach a .cue / .ccd / .mds, whose reads go
-# straight from hw/ide/atapi.c into libdisc and never touch a BlockBackend
-# -- which the A/B between the two generated discs shows directly.
+# straight from hw/ide/atapi.c into libdisc and never touch a BlockBackend,
+# which the A/B between the two generated discs shows directly.
 THROTTLE = int(os.environ.get("THROTTLE", "0"))
 
 

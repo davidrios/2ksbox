@@ -6,7 +6,7 @@
 //! `correct` is the other direction, and it is what a real drive does
 //! before it hands user data over: single-symbol Reed-Solomon correction
 //! over the P and Q codewords, iterated, with the **EDC as the verdict**.
-//! Only what the decoder cannot fix is an L-EC failure — which is still
+//! Only what the decoder cannot fix is an L-EC failure, which is still
 //! the SafeDisc signal, because a protection band's sectors are corrupted
 //! far past the one symbol per codeword the two parity bytes can locate.
 
@@ -159,7 +159,7 @@ const ROUNDS: usize = 4;
 
 /// The sector byte an RSPC symbol index addresses: 0..4 is the header the
 /// pass runs over, then bytes 16..2076 (data, EDC, the reserved zeros),
-/// then — for Q, whose data includes P — the P parity at 2076..2248.
+/// then (for Q, whose data includes P) the P parity at 2076..2248.
 fn symbol_offset(index: usize) -> usize {
     if index < 4 {
         12 + index
@@ -177,8 +177,8 @@ fn symbol_offset(index: usize) -> usize {
 /// bytes, and the encoder above leaves it satisfying two syndromes: the
 /// XOR of every symbol is zero, and so is the XOR weighted by alpha^(m+1-i).
 /// A single error of magnitude `s0` at position `i` therefore shows up as
-/// `s1/s0 = alpha^(m+1-i)`, which locates it. Anything else — no error,
-/// two errors, a position off the end of the codeword — is left alone: the
+/// `s1/s0 = alpha^(m+1-i)`, which locates it. Anything else (no error,
+/// two errors, a position off the end of the codeword) is left alone: the
 /// other pass or the EDC decides, never a guess.
 fn correct_pass(sector: &mut [u8; 2352], pass: &Pass, zero_header: bool) -> u32 {
     let t = tables();
@@ -228,7 +228,7 @@ fn correct_pass(sector: &mut [u8; 2352], pass: &Pass, zero_header: bool) -> u32 
 
 /// Run the drive's L-EC decoder over a data sector: `Some(n)` if `n`
 /// symbols were corrected and the sector's own EDC then comes out, `None`
-/// if it cannot be repaired — which is the medium error a drive reports,
+/// if it cannot be repaired, which is the medium error a drive reports,
 /// and what a protection band's weak sectors must keep producing.
 ///
 /// The sector is only written back on success, so a failed attempt leaves
@@ -279,8 +279,8 @@ impl Lec {
 }
 
 /// Does the sector's own EDC come out? That CRC-32 covers exactly the bytes
-/// a cooked read delivers — the header and the 2048 user data bytes for
-/// Mode 1, the subheader and data for Mode 2 form 1 — so it, and not the
+/// a cooked read delivers (the header and the 2048 user data bytes for
+/// Mode 1, the subheader and data for Mode 2 form 1), so it, and not the
 /// parity, is what says whether those bytes are intact. False for the kinds
 /// that carry no EDC of that shape.
 pub fn edc_ok(raw: &[u8; 2352], kind: crate::SectorKind) -> bool {

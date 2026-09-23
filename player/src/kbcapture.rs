@@ -5,7 +5,7 @@
 //! winit has no keyboard grab, so this is one piece per windowing system:
 //!
 //! - **Wayland**: `zwp_keyboard_shortcuts_inhibit_manager_v1`. One
-//!   inhibitor for the window's whole life — the compositor applies it only
+//!   inhibitor for the window's whole life. The compositor applies it only
 //!   while the surface has keyboard focus, which is exactly the rule wanted,
 //!   so focus changes need nothing from us. The compositor may still keep a
 //!   binding of its own (sway's `bindsym --inhibited`, GNOME asks the user
@@ -14,37 +14,37 @@
 //!   the window manager's passive ones on Super.
 //! - **Windows**: the keyboard registered for raw input with
 //!   `RIDEV_NOHOTKEYS`, which stops the shell acting on the two Windows keys
-//!   — and so on every Win+ shortcut — while a window of this process is the
+//!   (and so on every Win+ shortcut) while a window of this process is the
 //!   foreground one. The key still arrives at the window as an ordinary
 //!   `WM_KEYDOWN`, so winit delivers it and the guest gets it down the same
-//!   path as every other key: this takes the key from the shell without
+//!   path as every other key. This takes the key from the shell without
 //!   taking it from us, and it needs no hook, no thread and no injection.
-//!   **Ctrl+Esc comes with them** (user-confirmed 2026-09-19): it is a
-//!   keyboard hotkey the shell acts on, so it stops with the rest and opens
-//!   the *guest's* Start menu. What it does not cover is what Windows calls
-//!   a *system* hotkey — Alt+Tab, Alt+Esc, Alt+F4, Alt+Space, Ctrl+Alt+Del,
-//!   Win+L — which no program gets; hence the player's Ctrl+Alt+Shift+D for
-//!   Ctrl+Alt+Del, and Alt+F4 asking before it stops the machine.
+//!   **Ctrl+Esc comes with them.** It is a keyboard hotkey the shell acts
+//!   on, so it stops with the rest and opens the *guest's* Start menu. It
+//!   does not cover what Windows calls a *system* hotkey (Alt+Tab, Alt+Esc,
+//!   Alt+F4, Alt+Space, Ctrl+Alt+Del, Win+L), which no program gets. Hence
+//!   the player's Ctrl+Alt+Shift+D for Ctrl+Alt+Del, and Alt+F4 asking
+//!   before it stops the machine.
 //!
-//!   **This was a `WH_KEYBOARD_LL` hook until 2026-09-18**, and the hook
-//!   never worked: measured on the user's PC, a low-level keyboard hook in
-//!   the player is called for every key on the machine *except* while the
-//!   player's own window is the foreground one, which is the only time it
-//!   is wanted — zero calls, not late ones, with the hook installed and its
+//!   **This used to be a `WH_KEYBOARD_LL` hook, and the hook never
+//!   worked.** Measured on the user's PC, a low-level keyboard hook in the
+//!   player is called for every key on the machine *except* while the
+//!   player's own window is the foreground one, the only time it is
+//!   wanted: zero calls, not late ones, with the hook installed and its
 //!   thread answering. A hook in a third process saw those same keys, and a
 //!   minimal program with a window and a hook of its own saw its own
-//!   window's keys, so it is neither a Windows rule nor that window; what in
+//!   window's keys, so it is neither a Windows rule nor that window. What in
 //!   this process does it was never found, and `RIDEV_NOHOTKEYS` makes the
 //!   question moot. docs/03-display-pipeline.md, "Input path".
 //! - **macOS**: nothing. Cmd reaches the app already; Cmd+Tab would need an
 //!   event tap and the Accessibility permission.
 //!
 //! **Ctrl+Alt+K** hands them back to the host and, pressed again, to the
-//! guest again — the player drops the `Capture` and builds a new one, so
+//! guest again. The player drops the `Capture` and builds a new one, so
 //! "off" is exactly the state before it was made. `PLAYER_KEYBOARD_CAPTURE=0`
 //! starts a run with them the host's, and **`PLAYER_KEYBOARD_LOG=1`** makes
 //! the Windows side say what it did: that the registration was accepted, and
-//! what winit and Windows each thought about focus at every change — a
+//! what winit and Windows each thought about focus at every change. A
 //! shortcut that still reaches the host is nearly always a window that was
 //! not in front when it was pressed.
 
@@ -285,7 +285,7 @@ mod win {
     /// foreground window*, which is the rule this wants, applied by the
     /// window manager rather than by us. The key still arrives at the
     /// window as an ordinary `WM_KEYDOWN`, so winit delivers it and the
-    /// guest gets it down the same path as every other key — this takes
+    /// guest gets it down the same path as every other key. This takes
     /// the key away from the shell without taking it away from us.
     pub struct NoHotkeys {
         trace: bool,

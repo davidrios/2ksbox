@@ -1,5 +1,5 @@
 /*
- * timer.h -- 2ksbox's stand-in for 86Box's <86box/timer.h>.
+ * timer.h: 2ksbox's stand-in for 86Box's <86box/timer.h>.
  *
  * 86Box timers carry a 32.32 fixed-point timestamp in TSC ticks. Here a
  * *delay* is nanoseconds of QEMU_CLOCK_VIRTUAL in that same 32.32 form
@@ -7,10 +7,10 @@
  * voodoo_pixelclock_update's clock_const is ns per pixel and its
  * `* (1ULL << 32)` makes a line time in these units), while the *expiry*
  * a timer holds is ns << 16: 48 bits of nanoseconds (78 hours) rather
- * than the 32 (4.3 s -- a wrapped expiry re-arms in the past and the main
+ * than the 32 (4.3 s; a wrapped expiry re-arms in the past and the main
  * loop never leaves the timer) and a fraction fine enough not to drift.
  * `tsc` is the virtual clock in ns. Every timer is a QEMUTimer underneath and
- * fires on the main loop with the BQL held -- the same lock the guest's MMIO
+ * fires on the main loop with the BQL held, the same lock the guest's MMIO
  * writes run under, which is what makes 86Box's "the timer and the CPU are
  * one thread" assumptions hold.
  *

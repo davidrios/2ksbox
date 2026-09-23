@@ -1,5 +1,5 @@
 /*
- * census.c -- a TCG plugin that counts what the hardware-MMU design of
+ * A TCG plugin that counts what the hardware-MMU design of
  * docs/tracks/m9-tcg-aarch64.md would pay for, on a real workload:
  * guest instructions, loads and stores, the distinct 4 KiB virtual pages
  * touched per second and per window of 65,536 accesses (the nested
@@ -37,7 +37,7 @@ static uint64_t ever_pages, written_pages;
  * [2^b, 2^(b+1)) for b = 0..29, bucket 30 the first touch. The probe's
  * kernels touch R pages uniformly at random, so a kernel row corresponds
  * to a mean distance of R accesses: the 64 KiB row to ~16, 4 MiB to ~1K,
- * 8 MiB to ~2K, 16 MiB to ~4K, 32 MiB to ~8K -- with one word per page
+ * 8 MiB to ~2K, 16 MiB to ~4K, 32 MiB to ~8K, with one word per page
  * per access; real code touches many words per page between reuses, so
  * a distance here counts accesses, and the mixture in project.py maps
  * it through the window's own pages-per-access density.

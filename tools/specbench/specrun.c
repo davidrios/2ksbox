@@ -1,4 +1,4 @@
-/* specrun.c — the guest half of tools/specbench: runs a list of commands
+/* The guest half of tools/specbench: runs a list of commands
  * one after another, times each with QueryPerformanceCounter, CRC-32s
  * what it wrote to stdout, and reports one line per run to a results file
  * (a floppy the host reads from outside) and to COM1.

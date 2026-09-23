@@ -2,23 +2,20 @@
 #
 #   scripts/package-flatpak.sh          build + install + a smoke check
 #
-# Why a Flatpak at all: our QEMU is a patch queue, so no distro's `qemu`
-# can ever be linked, and `libqemu-embed-i386.so` pulls ~191 shared
-# libraries that the plain tarball ships none of. A runtime supplies
-# exactly that set on every distro. The sandbox is a secondary benefit
-# here and a fairly nominal one — see `finish-args` below.
+# Why a Flatpak: our QEMU is a patch queue, so no distro's `qemu` can be
+# linked, and `libqemu-embed-i386.so` pulls ~191 shared libraries that the
+# plain tarball ships none of. A runtime supplies that set on every
+# distro. The sandbox is nominal (see `finish-args` below).
 #
 # The binaries MUST be built inside the SDK: the host's glibc is newer
 # than the runtime's (2.44 vs 2.42 as of writing) and our embed library
 # already references GLIBC_2.43, so host-built binaries will not run here.
 #
-# The runtime is KDE's, not freedesktop's, and that is the whole of what
-# ADR-015 costs this package: the launcher is Qt 6 / QML (`launcher-qt`),
-# `org.kde.Platform` ships Qt and `org.freedesktop.Platform` does not, and
-# the alternative — building Qt as a module of this manifest — is hours of
-# build for a copy of what a runtime already has. 6.10 is a thin layer on
-# `org.freedesktop.Platform` 25.08, the base this manifest used directly
-# before, so nothing else about the build changes: same glibc, same
+# The runtime is KDE's, not freedesktop's, because the launcher is Qt 6 /
+# QML (`launcher-qt`, ADR-015). `org.kde.Platform` ships Qt;
+# `org.freedesktop.Platform` does not, and building Qt as a module here
+# costs hours. 6.10 is a thin layer on `org.freedesktop.Platform` 25.08,
+# so the rest of the build is unchanged: same glibc, same
 # `org.freedesktop.Sdk.Extension.rust-stable//25.08`, same Python 3.13 for
 # QEMU's configure.
 app-id: com._2ksbox.Launcher
@@ -34,10 +31,10 @@ finish-args:
   # for the shader chain and the guest's 3D.
   - --device=kvm
   - --device=dri
-  # A gamepad (M13). `--device=dri` does not cover /dev/input, and
-  # without this the player's gilrs source comes up seeing no controller
-  # at all — silently, since a host with nothing plugged in looks the
-  # same. `player --pads` inside the sandbox is what tells the two apart.
+  # A gamepad (M13). `--device=dri` does not cover /dev/input. Without
+  # this the player's gilrs source silently sees no controller, which
+  # looks the same as a host with nothing plugged in. `player --pads`
+  # inside the sandbox tells the two apart.
   - --device=input
   # Wayland first, X11 as the fallback the player's winit build expects.
   - --socket=wayland
@@ -49,10 +46,9 @@ finish-args:
   - --share=network
   # Disc images and qcow2s live wherever the user keeps them (an external
   # drive, a NAS mount), and a machine bundle stores absolute paths, so
-  # they must resolve without a portal round-trip. This is why the
-  # sandbox is nominal for this app — an honest `--filesystem=host` is
-  # better than pretending otherwise with a narrower list that fails on
-  # someone's second disk.
+  # they must resolve without a portal round-trip. That makes the
+  # sandbox nominal. An honest `--filesystem=host` beats a narrower list
+  # that fails on someone's second disk.
   - --filesystem=host
 
 build-options:
@@ -77,14 +73,14 @@ modules:
         url: https://gitlab.freedesktop.org/slirp/libslirp/-/archive/v4.9.4/libslirp-v4.9.4.tar.gz
         sha256: 3998863b020aeda34bddc567097c6efba55a78cdf6eeee6bcd42c11ef23967da
 
-  # QEMU 9.2's mkvenv wants distlib, and takes pip's vendored copy as a
-  # substitute — but pip 26 (what the SDK ships) has trimmed that copy:
-  # `pip._vendor.distlib.scripts` is still there, `…distlib.version` is
-  # gone, so mkvenv's import fails and configure dies with "found no
-  # usable distlib". The real package satisfies its first choice. Build
-  # dependency only, hence the cleanup — /app/lib/python3.13/site-packages
-  # is on the venv's path (it inherits system site packages), which is
-  # what makes this visible to QEMU's configure at all.
+  # QEMU 9.2's mkvenv wants distlib and falls back to pip's vendored
+  # copy. pip 26 (what the SDK ships) trimmed that copy
+  # (`pip._vendor.distlib.scripts` is there, `...distlib.version` is
+  # gone), so configure dies with "found no usable distlib". The real
+  # package satisfies mkvenv's first choice. It is a build dependency
+  # only, hence the cleanup. QEMU's configure sees it because the venv
+  # inherits system site packages, /app/lib/python3.13/site-packages
+  # included.
   - name: python3-distlib
     buildsystem: simple
     cleanup: ['*']
@@ -110,22 +106,21 @@ modules:
           # Build products and everything only a developer needs. The
           # QEMU submodule comes along *already patched*: the patch queue
           # (scripts/prepare-qemu.sh) needs git and rsync, neither of
-          # which applies to a copied tree, so it runs on the host first
-          # — and QEMU's own configure treats a tree with no .git as a
-          # tarball build, which is exactly what we want here.
+          # which applies to a copied tree, so it runs on the host first.
+          # QEMU's configure treats a tree with no .git as a tarball
+          # build, which is what we want here.
           - target
-          # `launcher-qt` is its own cargo workspace, so it has its own
-          # target/ — 3+ GB, and `target` above is a path from the source
+          # `launcher-qt` is its own cargo workspace with its own
+          # target/ (3+ GB). `target` above is a path from the source
           # root, not a name matched at every level.
           - launcher-qt/target
           - build
           - .git
-          # `third_party/dxvk` used to be skipped here, when nothing in the
-          # sandbox built it. It comes along now (63 MB, its subprojects
-          # vendored and no meson wraps, so the build stays offline): the
-          # Direct3D executor needs its `include/native` headers even to
-          # compile, and the runtime's own libraries are what its d3d9 has
-          # to link. Patched on the host, like the QEMU tree above.
+          # `third_party/dxvk` is not skipped (63 MB, subprojects
+          # vendored, no meson wraps, so the build stays offline). The
+          # Direct3D executor needs its `include/native` headers to
+          # compile, and its d3d9 has to link the runtime's libraries.
+          # Patched on the host, like the QEMU tree above.
           - third_party/slang-shaders
           - .claude
       # Every crate of both lock files (the workspace's and
@@ -134,9 +129,9 @@ modules:
       # them; `CARGO_HOME` above points at that directory.
       - cargo-sources.json
     build-commands:
-      # The same three steps a developer runs, then the same staging
-      # script the tarball uses — `<prefix>` is `/app`, so the install
-      # layout needs no Flatpak-specific variant.
+      # The steps a developer runs, then the tarball's staging script
+      # with `<prefix>` = `/app`, so the install layout needs no
+      # Flatpak-specific variant.
       - scripts/configure-qemu.sh --disable-download
       - ninja -C build/qemu qemu-img libqemu-embed-i386.so
       - cargo build --release --locked --offline -p player
@@ -144,24 +139,26 @@ modules:
       # own build command; `CARGO_HOME` above points both at the one
       # vendored directory, which cargo-sources.json fills from both lock
       # files. cxx-qt-build finds Qt through `qmake6` in the SDK and
-      # drives moc and qmltyperegistrar itself — there is no CMake step.
+      # drives moc and qmltyperegistrar itself. There is no CMake step.
       - cd launcher-qt && cargo build --release --locked --offline
       # The Glide wrapper (doc 12 §5), built here for the same reason the
       # binaries above are: it links the runtime's libGL, not the host's.
-      # Only the *compile* runs here — `third_party/openglide` arrives
-      # already patched, exactly as the QEMU submodule does, because
-      # `scripts/prepare-openglide.sh` needs the git checkout that this
-      # copied tree is not. The SDK has GL/gl.h and libGL.so, which is all
-      # it wants. Without this the sandbox's guests get no Glide at all:
-      # `hw/3dfx` dlopens the library by name and finds nothing.
+      # Only the compile runs here. `third_party/openglide` arrives
+      # already patched, like the QEMU submodule, because
+      # `scripts/prepare-openglide.sh` needs a git checkout. The SDK has
+      # GL/gl.h and libGL.so, which is all it wants. Without this the
+      # sandbox's guests get no Glide, since `hw/3dfx` dlopens the library
+      # by name and finds nothing.
       - scripts/build-glide.sh
       # DXVK and the Direct3D executor (doc 14), for the same reason and
       # with the same constraint: the SDK has meson, ninja, glslang and
       # the Vulkan headers, DXVK's subprojects are vendored and it declares
-      # no meson wrap, so this builds offline. Only `d3d9` and only against
-      # patch 04's headless WSI — the executor never presents. No Vulkan
-      # driver is packaged: the runtime's GL/Vulkan extension supplies the
-      # host's, and a host below Vulkan 1.3 keeps GL + WineD3D (ADR-013).
+      # no meson wrap, so this builds offline. Only `d3d9`, and only
+      # against DXVK patch 04's headless WSI, because the executor never
+      # presents. No Vulkan driver is packaged; the runtime's GL/Vulkan
+      # extension supplies the host's. A host below Vulkan 1.3 runs the
+      # executor under the host's own Wine (ADR-018), which this package
+      # does not ship.
       - scripts/configure-dxvk.sh
       - ninja -C build/dxvk
       - scripts/build-d3dpt-exec.sh

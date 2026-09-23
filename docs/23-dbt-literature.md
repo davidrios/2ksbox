@@ -1,11 +1,11 @@
 # 23. The parked optimizations against the literature
 
 What the dynamic-binary-translation literature has on the TCG work this
-project parked or could not do (the queue itself: `patches/qemu/README.md`,
-docs 13, 16 and 18, the M8/M9 track docs), searched arXiv first on
-2026-09-15, and — in the last section — each ranked candidate built as a
-spike and measured on doc 22's tier. The next session on TCG performance
-starts here rather than searching again. Doc 22 §7 is the short form.
+project parked or could not do, searched arXiv first. The last section
+builds each ranked candidate as a spike and measures it on doc 22's
+tier. The queue itself is in `patches/qemu/README.md`, docs 13, 16 and
+18 and the M8/M9 track docs. The next session on TCG performance starts
+here rather than searching again. Doc 22 §7 is the short form.
 
 None of this was read before the patches were written: the queue was
 built from profiles of the workloads by Claude, the AI assistant that did
@@ -24,14 +24,14 @@ venue papers. The arXiv-native ones are marked.
 
 Our profile puts the four-load TLB lookup at ~43 % of generated-code
 samples on integer code (7-Zip). The M9 track designed and probed the
-structural fix — run TCG's output inside a Hypervisor.framework VM at EL1
+structural fix: run TCG's output inside a Hypervisor.framework VM at EL1
 with the guest's x86 page tables mirrored into stage 1, so a guest load
-is a host load — measured every primitive on the Air (1.4–2.6x per load,
-helpers must run inside the VM, one risk: the nested-TLB penalty on
-working sets beyond ~12 MiB) and parked it at "4–8 weeks". The
-literature has built that design four times:
+is a host load. It measured every primitive on the Air (1.4–2.6x per
+load; helpers must run inside the VM; the one risk is the nested-TLB
+penalty on working sets beyond ~12 MiB) and parked it at "4–8 weeks".
+The literature has built that design four times:
 
-- **Captive** — Spink, Wagstaff, Franke, *Hardware-Accelerated
+- **Captive.** Spink, Wagstaff, Franke, *Hardware-Accelerated
   Cross-Architecture Full-System Virtualization*, [TACO 2016](https://dl.acm.org/doi/10.1145/2996798);
   the retargetable version *A Retargetable System-Level DBT Hypervisor*,
   [USENIX ATC 2019](https://www.usenix.org/system/files/atc19-spink.pdf).
@@ -51,9 +51,9 @@ literature has built that design four times:
   inside QEMU, an extra mmap view of the guest virtual address space so
   translated loads use a fixed offset instead of the TLB lookup; the
   abstract's speedup figure is truncated at "271" (read: up to ~2.7x).
-- **ESPT** — Chang, Wu et al., *Efficient Memory Virtualization for
+- **ESPT.** Chang, Wu et al., *Efficient Memory Virtualization for
   Cross-ISA System Mode Emulation*, [VEE 2014](https://dl.acm.org/doi/10.1145/2576195.2576201)
-  (a kernel module); **HSPT** — Wang et al., *Practical Implementation
+  (a kernel module). **HSPT.** Wang et al., *Practical Implementation
   and Efficient Management of Embedded Shadow Page Tables for Cross-ISA
   System Virtual Machines*, [VEE 2015](https://www.semanticscholar.org/paper/HSPT:-Practical-Implementation-and-Efficient-of-for-Wang-Li/fa8e9614381ed39e6b978c691aa81e5365984a20)
   (mmap only, 1.98x average on QEMU, ARM on x86-64).
@@ -62,18 +62,18 @@ Their numbers agree with our probe's per-load gain, which is the
 strongest confirmation the design gets. The user-space mmap variants are
 closed to us on the Air: macOS maps at 16 KiB and the guest's pages are
 4 KiB; only the VM has the 4 KiB granule (the probe measured `TGran4=0`).
-But the per-load gain does not become a workload gain here: a memory
+But the per-load gain does not become a workload gain here. A memory
 census of each workload times the probe's workload-shaped kernels
 projects 1.1–1.2x (7-Zip 1.2x, Super PI and Quake II 1.16x, Blood 1.1x,
 the FP kernels 1.05x), and the nested-TLB risk does not occur on any of
 them (doc 22 §8.2; the M9 track's "Gauging the gain"). **Abandoned for
-the time being (user decision, 2026-09-16)**: not worth the port's
-complexity. Read Captive and the 2024 ISPRAS paper before reopening it.
+now** (user decision): not worth the port's complexity. Read Captive and
+the 2024 ISPRAS paper before reopening it.
 
 Cheaper cuts at the same cost that we did take: patch 16 (TLB floor) and
 patch 44 (retire instead of flush). Also relevant: Tong, Koju, Kawahito,
 Moshovos, *Optimizing Memory Translation Emulation in Full System
-Emulators*, [TACO 2015](https://dl.acm.org/doi/10.1145/2686034) — SoftTLB
+Emulators*, [TACO 2015](https://dl.acm.org/doi/10.1145/2686034): SoftTLB
 resizing, a victim TLB (which QEMU adopted), helper threads to flush.
 
 ### 2. Indirect branches past patch 20
@@ -83,7 +83,7 @@ compare and conflict misses (11.7 M hash-table lookups per 10 s in
 3DMark 99 with the stock 4096 entries, 2.5 M after patch 42 grew the
 cache to 65,536).
 
-- **Tiaozhuan** — Li, Guo, Lan, Xue, Han, Niu, Zhang, *A General and
+- **Tiaozhuan.** Li, Guo, Lan, Xue, Han, Niu, Zhang, *A General and
   Efficient Indirect Branch Optimization for Binary Translation*,
   [TACO 2024](https://dl.acm.org/doi/10.1145/3703355): a table indexed
   directly by guest PC in a large reserved address space ("full address
@@ -92,13 +92,13 @@ cache to 65,536).
   In LATX (x86 guest on LoongArch): +3.9 % average, +19.4 % peak on SPEC
   CPU2006. For a 32-bit guest the table is 32 GiB of lazily populated
   virtual address space.
-- **MAMBO-X64** — D'Antras, Gorgovan, Garside, Luján, *Low Overhead
+- **MAMBO-X64.** D'Antras, Gorgovan, Garside, Luján, *Low Overhead
   Dynamic Binary Translation on ARM*, [PLDI 2017](https://research.manchester.ac.uk/en/publications/low-overhead-dynamic-binary-translation-on-arm/),
   and *Optimizing Indirect Branches in Dynamic Binary Translators*,
   [TACO 2016](https://dl.acm.org/doi/10.1145/2866573): translated
   call/ret pairs that push host addresses so the hardware return-address
   predictor works; `ret` is most of our indirect branches.
-- **SPIRE** — Jia et al., *SPC-Indexed Indirect Branch Redirecting*,
+- **SPIRE.** Jia et al., *SPC-Indexed Indirect Branch Redirecting*,
   [VEE 2013](https://dl.acm.org/doi/10.1145/2517326.2451516): trampolines
   in the source code space.
 
@@ -121,8 +121,8 @@ Generic, exact, and on top of patch 20: the cheapest candidate here.
 ### 4. Cheap IEEE flag checks (the deferred `fp-relaxed` mode)
 
 - **Cota**, hardfloat, [QEMU 2018](https://patchew.org/QEMU/20181124235553.17371-1-cota@braap.org/):
-  use the host FPU when the inexact flag is already sticky — the rule
-  patches 06 and 11 apply and extend.
+  use the host FPU when the inexact flag is already sticky. Patches 06
+  and 11 apply and extend that rule.
 - **Zurstraßen, Bosbach, Jünger, Leupers**, *Rapid RISC-V Floating Point
   Vector Simulation*, [RAPIDO 2025](https://dl.acm.org/doi/10.1145/3721848.3721853):
   the same corner cases as patch 11's per-op checks; add and sub cannot
@@ -163,7 +163,7 @@ and the M9 track's open items want two-page blocks linkable.
 
 ### 8. Memory barriers on the Arm host
 
-- **Risotto** — Gouicem et al., *A Dynamic Binary Translator for Weak
+- **Risotto.** Gouicem et al., *A Dynamic Binary Translator for Weak
   Memory Model Architectures*, [ASPLOS 2023](https://dl.acm.org/doi/10.1145/3567955.3567962):
   verified fence placement for x86 on Arm, +6.7 %. On the M1 doc 16's
   memory-operand bench saw no cost from the barriers and 7-Zip 2–10 %
@@ -172,25 +172,25 @@ and the M9 track's open items want two-page blocks linkable.
 
 ## The arXiv-native papers
 
-- [2402.09688](https://arxiv.org/abs/2402.09688) — *A System-Level
+- [2402.09688](https://arxiv.org/abs/2402.09688), *A System-Level
   Dynamic Binary Translator using Automatically-Learned Translation
   Rules* (2024): learned rules inside system-mode QEMU, 1.36x over QEMU
   6.1 on SPEC CINT2006. The only arXiv paper about speeding up
   full-system QEMU. Rules learned from a modern compiler's patterns may
   not fit MSVC-6-era code.
-- [2512.00487](https://arxiv.org/abs/2512.00487) — *Partial
+- [2512.00487](https://arxiv.org/abs/2512.00487), *Partial
   Cross-Compilation and Mixed Execution for Accelerating DBT* (2025):
   offloading whole functions to native host code, up to 13x. User-mode,
   and what our guest DLLs already do for Direct3D and Glide.
-- [2501.03427](https://arxiv.org/abs/2501.03427) — *Boosting
+- [2501.03427](https://arxiv.org/abs/2501.03427), *Boosting
   Cross-Architectural Emulation Performance by Foregoing the
   Intermediate Representation Model* (2025): a 35x claim from a proof of
   concept. Not credible for full-system work.
-- [2605.08419](https://arxiv.org/abs/2605.08419) — Elevator, static
+- [2605.08419](https://arxiv.org/abs/2605.08419), Elevator: static
   x86-64 → AArch64 translation (2026). Wrong shape for us.
-- [2009.03846](https://arxiv.org/abs/2009.03846) — x86 ↔ ARM
-  concurrency mappings (2020); [1905.06825](https://arxiv.org/abs/1905.06825)
-  — TLB simulation on QEMU (2019).
+- [2009.03846](https://arxiv.org/abs/2009.03846), x86 ↔ ARM
+  concurrency mappings (2020); [1905.06825](https://arxiv.org/abs/1905.06825),
+  TLB simulation on QEMU (2019).
 
 Nothing, on arXiv or elsewhere, addresses the Voodoo 2's per-dword MMIO
 trap; doc 21 §9's RAM-backed FIFO window is our answer to it.
@@ -208,16 +208,15 @@ trap; doc 21 §9's RAM-backed FIFO window is our answer to it.
 
 ## Spikes: each candidate tried, one at a time
 
-Each ranked item was implemented as a spike (user request, 2026-09-16)
-and measured on doc 22's reproducible tier (`tools/specbench/run.sh`,
+Each ranked item was implemented as a spike (user request) and measured on doc 22's reproducible tier (`tools/specbench/run.sh`,
 the XP image, every launch through `noaslr`): one build of the tree with
 every spike behind its own `-accel tcg` switch, a fresh `default` run of
 the unchanged binary the same morning as the control, and the guest
 stage of `scripts/test.sh` on every build (the DOS x87 / rep / SMC / SSE
 batteries, the PIT clock, MIDI, ATAPI, the pad; the Voodoo checks were
-out of scope). Super PI's digits are identical in every row. The diff, the scripts that produce it
-and every run's result lines are under `docs/22-data/spikes/`; nothing
-from it is in the patch queue. Run-to-run noise on this tier is about
+out of scope). Super PI's digits are identical in every row. The diff,
+the scripts that produce it and every run's result lines are under
+`docs/22-data/spikes/`; nothing from it is in the patch queue. Run-to-run noise on this tier is about
 ±2 % (doc 22 §5.2), and the control itself came out 1–2 % under doc 22's
 row, so a difference under 3 % is nothing.
 
@@ -246,16 +245,16 @@ What each one is, and what the number says:
   indirect-branch working set already fit the 65,536-entry cache after
   patch 42, and the hash was not on the critical path of a chain that
   ends in five dependent loads anyway. Its case, if it has one, is a
-  Windows 98 game with thousands of virtual-call targets — which §6 of
+  Windows 98 game with thousands of virtual-call targets, which §6 of
   doc 22 would have to measure; not done here.
 - **B, the check at back edges** (§7). A TB not under icount and not in
   an interrupt shadow skips the `icount_decr` test at its start; the
   target emits it before every backward direct jump and every indirect
-  branch (every cycle in the block graph contains one), and — found by the
-  PIT check, which failed on the first build — before the jump that ends
-  a TB an I/O instruction ended, because patch 34 delivers the PIT's
-  overdue edge on the `in` itself and counts on the next block start to
-  take it. Exact, and the interrupt latency in straight-line code goes
+  branch (every cycle in the block graph contains one). It also emits it
+  before the jump that ends a TB an I/O instruction ended (the PIT check
+  found this by failing on the first build), because patch 34 delivers
+  the PIT's overdue edge on the `in` itself and counts on the next block
+  start to take it. Exact, and the interrupt latency in straight-line code goes
   from "next block" to "next back edge or return". Two host
   instructions per block, an L1 load that was never on the critical path
   of an out-of-order core: nothing to measure. The paper's gains were on
@@ -278,8 +277,8 @@ What each one is, and what the number says:
   rate, which a counter would give and which decides whether a second
   iteration (the ring in the CPU's negative-offset state, no push for
   leaf calls) is worth having. Parked with that note.
-- **C, cheaper IEEE checks** (§4). The paper's own point — an add or sub
-  cannot underflow, so that check is dead — was already true of patch 11:
+- **C, cheaper IEEE checks** (§4). The paper's own point, that an add or
+  sub cannot underflow so that check is dead, was already true of patch 11:
   add and sub check only "exponent field not all ones", two operations.
   The experiment removes every check (inexact, an experiment knob only)
   and bounds what any trimming could buy: 6 % of the SSE score, all of it
@@ -295,9 +294,9 @@ What each one is, and what the number says:
 - **Not spiked.** §1, the hardware MMU: weeks, by the probe's own
   estimate, and its user-space variants are closed on macOS (16 KiB
   pages). §5, SC '25 double-word arithmetic for x87 at 64 bits: its
-  ceiling is already measured — `x87-pc64-as-53` is the same kernels with
-  the 64-bit rounding removed, LU 3.0x → 5.3x and neural net 2.7x → 4.9x
-  (doc 22 §5.3) — but the final rounding of a 106-bit double-double to a
+  ceiling is already measured (`x87-pc64-as-53` is the same kernels with
+  the 64-bit rounding removed, LU 3.0x → 5.3x and neural net 2.7x → 4.9x,
+  doc 22 §5.3), but the final rounding of a 106-bit double-double to a
   64-bit mantissa has the double-rounding problem on halfway cases and
   the argument that makes it exact is the whole work; not a spike. §6,
   Transmeta's self-checking translations: only a Windows 98 renderer
@@ -307,7 +306,7 @@ What each one is, and what the number says:
 **The conclusion.** On this tier the queue is at the point where the
 literature's remaining generic ideas buy nothing measurable: the
 control-flow patches already took the part of each that mattered on an
-out-of-order host, and the remaining large lever — the softmmu TLB chain,
-§1 — is the one that costs weeks. The two numbers that would change this
+out-of-order host, and the remaining large lever, the softmmu TLB chain
+(§1), is the one that costs weeks. The two numbers that would change this
 are the games (a Windows 98 title's virtual-call working set for A) and
 the ring's hit rate (for D); both are cheap to take next.

@@ -1,5 +1,5 @@
 /*
- * d3dpt_exec.cpp — decoder + executor of the paravirtual Direct3D device
+ * d3dpt_exec.cpp: decoder + executor of the paravirtual Direct3D device
  * over DXVK's native d3d9 (doc 14, ADR-006/007). Parses the batch the
  * guest left in the shared window (d3dpt_proto.h), validates every
  * record against the object mirror, and calls IDirect3DDevice9. Present
@@ -20,11 +20,11 @@
  * The one dynamic load in here is the D3D9 implementation itself. DXVK is
  * the rasteriser (ADR-007) and the only one whose frames are held against
  * the rig goldens: its native library on Linux and macOS, its own d3d9.dll
- * shipped as dxvk_d3d9.dll on Windows (2026-09-17).
+ * shipped as dxvk_d3d9.dll on Windows.
  *
- * Since 2026-09-21 there is a second backend, on Windows only: the
- * system's own Direct3D 9, for a host below DXVK's Vulkan 1.3 floor
- * (ADR-013) -- pre-Broadwell Intel, Kepler and older, TeraScale. There the
+ * There is a second backend, on Windows only: the system's own
+ * Direct3D 9, for a host below DXVK's Vulkan 1.3 floor (ADR-013:
+ * pre-Broadwell Intel, Kepler and older, TeraScale). There the
  * card's own D3D9 driver is the best thing on the machine and the only
  * other answer is WineD3D inside the guest. `D3DPT_D3D9` picks:
  *
@@ -35,10 +35,10 @@
  *                   below the bar or has only a software Vulkan device,
  *                   which this cannot tell from a good one.
  *   dxvk            DXVK or no pass-through.
- *   system          Windows' own d3d9 -- the A/B on a host that has both.
+ *   system          Windows' own d3d9, the A/B on a host that has both.
  *
  * What the system implementation refuses and DXVK takes is why the first
- * attempt at this drew black on 2026-09-17 (dxdiag and 3DMark 99 on an
+ * attempt at this drew black (dxdiag and 3DMark 99 on an
  * RTX 3090: host draws at 60-170 frames/s, every readback zero). All of it
  * hangs off Exec::native:
  *
@@ -164,8 +164,8 @@ static void present_frame(Exec &x) {
 /* Depth formats real 2001 cards offered but DXVK's D3D9 refuses outright
  * (d3d9_format.cpp: D32 / D15S1 / D24X4S4 "Unsupported (everywhere)").
  * The guest DLL advertises them in CheckDeviceFormat / CheckDepthStencilMatch
- * — Max Payne picks D32 for 32-bit modes and got D3DERR_NOTAVAILABLE from
- * CreateDevice — so keep the promise with the closest layout DXVK has. The
+ * (Max Payne picks D32 for 32-bit modes and got D3DERR_NOTAVAILABLE from
+ * CreateDevice), so keep the promise with the closest layout DXVK has. The
  * guest keeps answering GetDesc with the format the game asked for. */
 static D3DFORMAT depth_norm(uint32_t f) {
     switch (f) {
@@ -822,8 +822,8 @@ namespace d3dpt {
 /* The window Windows' own Direct3D 9 will not make a device without:
  * hFocusWindow may only be NULL when hDeviceWindow is not, and a
  * swapchain needs a real HWND either way. It is never shown and never
- * pumped -- nothing of the guest's frame goes through it, the pixels
- * leave through GetRenderTargetData -- so a 1x1 WS_POPUP off-screen is
+ * pumped (nothing of the guest's frame goes through it, the pixels
+ * leave through GetRenderTargetData), so a 1x1 WS_POPUP off-screen is
  * the whole of it. DXVK's headless WSI needs none and is given none. */
 static HWND host_window(Exec &x)
 {
@@ -936,10 +936,10 @@ static bool open_d3d9(Exec *x, const char *path, bool dxvk)
 #ifndef _WIN32
     /* DXVK's own precondition, asked here first: with no Vulkan loader on
      * the host at all its Direct3DCreate9 logs "vkGetInstanceProcAddr not
-     * found" and then calls through a null pointer (2026-09-22, the Air with
+     * found" and then calls through a null pointer (seen on the Air with
      * DYLD_LIBRARY_PATH unset: a segfault, in the host test and in QEMU's
      * realize alike). A host with the loader and no working device is
-     * DXVK's to refuse, and it does — by a C++ exception out of
+     * DXVK's to refuse, and it does, by a C++ exception out of
      * Direct3DCreate9 (its DxvkInstance constructor throws when the ICD
      * gives no GPU: vkEnumeratePhysicalDevices failing, or no ICD at all),
      * which the catch below takes; see the once-per-library rule after
@@ -960,17 +960,17 @@ static bool open_d3d9(Exec *x, const char *path, bool dxvk)
     void *h = D3DPT_DLOPEN(path);
     if (!h) return false;
     /* One failed Direct3DCreate9 per library, ever. The candidate list
-     * names the same DXVK more than once — a full path from the player,
+     * names the same DXVK more than once (a full path from the player,
      * then the bare leaf name, which dlopen / LoadLibrary answer with the
-     * image already loaded under that name, the same handle — and DXVK's
+     * image already loaded under that name, the same handle). DXVK's
      * d3d9 keeps its Vulkan instance in a process-wide Singleton whose
-     * acquire() counts a user *before* constructing the instance: a
+     * acquire() counts a user *before* constructing the instance. A
      * constructor that threw leaves the count at one and the object null,
      * and the next Direct3DCreate9 in the process hands the interface that
-     * null instance and faults in D3D9Options (2026-09-23: the community
-     * app on macOS 15, where KosmicKrisp loads and reports no GPU — the
-     * player died at the adapter's realize, on the *second* candidate, and
-     * the Wine executor it should have moved on to was never reached).
+     * null instance and faults in D3D9Options. The community app on
+     * macOS 15 hit this: KosmicKrisp loads and reports no GPU, the player
+     * died at the adapter's realize on the *second* candidate, and the
+     * Wine executor it should have moved on to was never reached.
      * Our DXVK patch 09 fixes the count; this keeps every other d3d9 with
      * the same shape, and the same DXVK unpatched, from being asked twice. */
     static std::vector<void *> refused;

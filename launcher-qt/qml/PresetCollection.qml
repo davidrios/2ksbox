@@ -1,7 +1,7 @@
-// The preset-collection row, shown on both shader windows because that
-// is where each question is asked: the list is where someone discovers
-// they have no shaders at all, the editor is where an empty preset field
-// stops them mid-profile. Nothing at all once a collection is on disk.
+// The preset-collection row, shown on both shader windows: the list is
+// where someone discovers they have no shaders at all, and the editor is
+// where an empty preset field stops them mid-profile. It shows nothing
+// once a collection is on disk.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

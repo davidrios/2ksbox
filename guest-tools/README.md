@@ -1,24 +1,25 @@
 # guest-tools
 
-The guest-tools ISO: everything a guest needs from us — the display
+The guest-tools ISO holds everything a guest needs from us: the display
 drivers, the Glide / OpenGL / Direct3D wrappers, the installer that puts
 them in place, the disc-shelf program and the test programs. This file
 covers how the disc is built, what is on it and what `SETUP.EXE` does.
 The end-user text on the disc is `README-ISO.txt` (the root
-`README.TXT`), `README-WINED3D.txt` and `README-DRIVER.txt`; every test
-program's use is in `docs/testing.md`; the drivers' designs are docs 15
-(XP) and 19 (9x). Era binaries are built at build time and never
+`README.TXT`), `README-WINED3D.txt` and `README-DRIVER.txt`. Every test
+program's use is in `docs/testing.md`, and the drivers' designs are in
+docs 15 (XP) and 19 (9x). Era binaries are built at build time and never
 committed (`out/` is git-ignored).
 
 ## Building
 
-`scripts/build.sh` runs the `guest` stage; by hand it is
+`scripts/build.sh` runs the `guest` stage. By hand it is
 `guest-tools/build-wrappers.sh`, which builds everything below and rolls
 `out/guest-tools-3dfx-<rev>.iso`. `<rev>` is the `third_party/qemu-3dfx`
-commit the host QEMU is signed with: the wrappers are built from that same
-commit, and the host checks the stamp — a mismatch means no acceleration.
+commit the host QEMU is signed with. The wrappers are built from that
+same commit and the host checks the stamp; a mismatch means no
+acceleration.
 
-- **Toolchain:** i686 mingw-w64, nasm, gendef, xxd, shasum and an ISO
+- **Toolchain.** i686 mingw-w64, nasm, gendef, xxd, shasum and an ISO
   tool (xorriso, or genisoimage/mkisofs). Arch: `mingw-w64-gcc
   mingw-w64-tools nasm xorriso`; macOS: `brew install mingw-w64 nasm
   xorriso`. Homebrew's mingw-w64 has no `gendef`, so the script builds it
@@ -26,30 +27,30 @@ commit, and the host checks the stamp — a mismatch means no acceleration.
   (`GENDEF_FORCE_BUILD=1` forces that path).
 - **Open Watcom v2** for the two formats mingw cannot make: the Win98
   display driver (a 16-bit NE `.drv` and a ring-0 LE `.vxd`,
-  `build-driver9x.sh`) and the DOS Glide overlay `GLIDE2X.OVL`. `WATCOM=`
-  or `~/.local/opt/open-watcom` (the CI release's `ow-snapshot.tar.xz`,
-  which carries every host's binaries). Without it the ISO is still
+  `build-driver9x.sh`) and the DOS Glide overlay `GLIDE2X.OVL`. The build
+  looks in `WATCOM=`, then `~/.local/opt/open-watcom` (the CI release's
+  `ow-snapshot.tar.xz`, which carries every host's binaries). Without it the ISO is still
   built, minus those files, and the build says so.
-- The XP driver is `build-driver.sh` (doc 15); its failure stops the ISO
-  build.
+- **The XP driver** is `build-driver.sh` (doc 15). Its failure stops the
+  ISO build.
 - **On Windows**, `scripts/build-windows.sh guest` builds the disc in
   MSYS2 through `msys2-i686.sh` (MSYS2's i686 toolchain as MINGW32,
   which qemu-3dfx's wrapper build requires).
 
 Every binary on the disc passes two checks before it is packaged:
 
-- **CRT:** Win9x has no UCRT, and modern mingw-w64 links it by default
+- **CRT.** Win9x has no UCRT, and modern mingw-w64 links it by default
   (`api-ms-win-crt-*.dll` imports, "required DLL not found" on Win98). A
   compiler shim forces classic `msvcrt.dll` (`-D__MSVCRT_VERSION__=0x700
   -mcrtdll=msvcrt-os`), and the script refuses anything that still
   imports the UCRT api-sets.
-- **ISA:** upstream builds the wrappers `-march=x86-64-v2` for `-cpu
-  host`; our reference guests are `pentium3`, so the shim appends
+- **ISA.** Upstream builds the wrappers `-march=x86-64-v2` for `-cpu
+  host`. Our reference guests are `pentium3`, so the shim appends
   `-march=pentium3` and the script rejects SSE2+ or POPCNT instructions
   ("invalid instruction in module opengl32.dll" otherwise).
 
-Every text file on the disc is converted to CRLF: Win9x Notepad shows
-LF-only text as one line.
+Every text file on the disc is converted to CRLF, because Win9x Notepad
+shows LF-only text as one line.
 
 ## The disc
 
@@ -80,12 +81,11 @@ TESTS\      every test, benchmark and calibration program
 
 **One folder per role, one copy of every file.** Which stack a game gets
 is decided by which folder it is copied from, so no name on the disc
-means two things: `D3D9.DLL` is ours in `D3DPT\` and Wine's in
+means two things. `D3D9.DLL` is ours in `D3DPT\` and Wine's in
 `WINED3D\D3D8-9\`, and the two never share a folder. The one deliberate
-duplicate is WineD3D's: each of its folders carries the DLLs under the
+duplicate is WineD3D's. Each of its folders carries the DLLs under the
 names a game loads plus `WINED3D.DLL` and our `OPENGL32.DLL`, so a user
-copies one folder from Explorer and renames nothing (user request,
-2026-09-12). Without our `OPENGL32.DLL` beside it, WineD3D draws through
+copies one folder from Explorer and renames nothing (user request). Without our `OPENGL32.DLL` beside it, WineD3D draws through
 Windows' software GL 1.1. The files are the same for 98 and XP.
 
 **The mapper is not optional.** `OPENGL32.DLL` and the `D3DPT\` DLLs reach
@@ -94,15 +94,15 @@ the device through it and refuse to load without it (`0xc0000142` on NT).
 service points at, registered by `INSTDRV.EXE`.
 
 **`WRAPGL32.EXT`** (`guest-tools/wrapgl32.ext`, `ExtensionsYear,1997`)
-caps the extension list a game is shown: a 1990s game reads the host's
-several thousand characters into a fixed buffer (GLQuake's is 4096
-bytes). It is the one file a user edits per title, so `SETUP /GAME 3`
-never overwrites one already next to a game; the rest of the reasoning is
-in `docs/development.md`, "OpenGL pass-through".
+caps the extension list a game is shown, because a 1990s game reads the
+host's several thousand characters into a fixed buffer (GLQuake's is
+4096 bytes). It is the one file a user edits per title, so `SETUP /GAME
+3` never overwrites one already next to a game. The rest of the
+reasoning is in `docs/development.md`, "OpenGL pass-through".
 
 ## SETUP.EXE
 
-A console program on purpose: it is the one interface Windows 98, XP and
+A console program on purpose. It is the one interface Windows 98, XP and
 a rescue command prompt all have, and every step is scriptable. It
 installs from the folder it is in, so it works from the CD, a copy on
 disk or a share.
@@ -127,13 +127,13 @@ no existing `/I` number moves:
 | 2 | 2 | Glide and the device mapper | `GLIDE*.DLL` into the system folder; 9x: `FXMEMMAP.VXD`, and `GLIDE2X.OVL` into `WINDOWS` for DOS-box games; NT: `FXPTL.SYS` and the `MAPMEM` service, checked running afterwards |
 | 3 | 3 | Disc shelf tool | `CDSHELF.EXE` into `WINDOWS`, on both families' search path |
 | 4 | 4 | Test programs | `TESTS\` into `C:\2KSBOX`; off in the menu, on with `/ALL` |
-| 5 | — | Sound Blaster 16 device names | only where a translation made an SB16 wave name too long for DirectX 9: a shorter one in the override `SB16.VXD` reads (doc 20 §5.3) |
-| 6 | — | Voodoo 2 start-up guard | only with a 3dfx card: 3dfx's `Voodoo2` Run entry moves to `HKLM\SOFTWARE\2ksbox\Voodoo2` and `V2START.EXE` takes its place (doc 21 §11) |
-| 7 | — | WineD3D as this machine's DirectDraw | wine9x's switcher as `DDRAWME.DLL`, the machine's own DirectDraw kept as `DDSYS.DLL`, the GL pass-through as the system `OPENGL32.DLL`, and `D3DPRE.EXE` in the Run key, which points `KnownDLLs\DDRAW` at WineD3D only on a host with no executor (doc 19 §43) |
+| 5 | | Sound Blaster 16 device names | only where a translation made an SB16 wave name too long for DirectX 9: a shorter one in the override `SB16.VXD` reads (doc 20 §5.3) |
+| 6 | | Voodoo 2 start-up guard | only with a 3dfx card. 3dfx's `Voodoo2` Run entry moves to `HKLM\SOFTWARE\2ksbox\Voodoo2` and `V2START.EXE` takes its place (doc 21 §11) |
+| 7 | | WineD3D as this machine's DirectDraw | wine9x's switcher as `DDRAWME.DLL`, the machine's own DirectDraw kept as `DDSYS.DLL`, the GL pass-through as the system `OPENGL32.DLL`, and `D3DPRE.EXE` in the Run key, which points `KnownDLLs\DDRAW` at WineD3D only on a host with no executor (doc 19 §43) |
 
-**File sets** (`/GAME <n> <dir>`, copied next to one game, never into the
-system folder; each set is self-contained so two stacks never share a
-folder):
+**File sets** (`/GAME <n> <dir>`) are copied next to one game, never into
+the system folder. Each set is self-contained, so two stacks never share
+a folder.
 
 | n | Set | From |
 |---|---|---|
@@ -152,34 +152,35 @@ non-exclusive keyboard's state, for a game whose loop stops pumping
 messages (FIFA 2000's match, doc 15); `D3DPT_DINPUT_LOG=1` adds its log.
 Both are per game by decision, never system-wide.
 
-**A machine with a 3dfx card** (the emulated Voodoo 2, doc 21, found in
-the live devnode tree — `HKEY_DYN_DATA` on 9x, `CM_Locate_DevNode` on NT
-— not the registry's history) gets its Glide from 3dfx's driver under the
-same names. Component 2 then leaves `GLIDE*.DLL`, an `FXMEMMAP.VXD`
-already there (3dfx's own binary, same IOCTLs) and `GLIDE2X.OVL` alone,
-because whichever copy came last used to decide silently whether every
-Glide game drew on the card or the pass-through. Sets 6 and 7 put ours
+**A machine with a 3dfx card** (the emulated Voodoo 2, doc 21) gets its
+Glide from 3dfx's driver under the same names. SETUP finds the card in
+the live devnode tree (`HKEY_DYN_DATA` on 9x, `CM_Locate_DevNode` on NT),
+not the registry's history. Component 2 then leaves `GLIDE*.DLL`, an
+`FXMEMMAP.VXD` already there (3dfx's own binary, same IOCTLs) and
+`GLIDE2X.OVL` alone. Before, whichever copy came last decided, without a
+word, whether every Glide game drew on the card or the pass-through. Sets 6 and 7 put ours
 next to one game.
 
 ### On Windows 98/Me
 
 - **An installed driver file is never overwritten in place.** A module
   whose file is replaced under it runs the new build's bytes at the old
-  build's addresses: KERNEL reloads a 16-bit `.DRV`'s discarded code
-  segments from disk, and a ring-3 DLL is demand-paged from its file — a
-  fault in the display driver, which on 9x is a blue screen. The `.DRV`
+  build's addresses. KERNEL reloads a 16-bit `.DRV`'s discarded code
+  segments from disk, and a ring-3 DLL is demand-paged from its file. The
+  result is a fault in the display driver, which on 9x is a blue screen. The `.DRV`
   and VxD are held open and refuse the copy, but the HAL DLL is not held
   while an application has it loaded. So when a driver file already
   exists, all seven (four in `WINDOWS\INF`, three in `SYSTEM`) are staged
   beside their targets with the extension's last character made `_`
-  (`D3DPT9X.DR_`, `D3DPT9X.IN_` — the INF and `.DRV` share a base name)
+  (`D3DPT9X.DR_`, `D3DPT9X.IN_`, since the INF and `.DRV` share a base
+  name)
   and listed in `WININIT.INI [rename]`, which WININIT applies before the
   GUI on the restart the step asks for anyway. A first install copies
   outright. (NT uses `MoveFileEx(MOVEFILE_DELAY_UNTIL_REBOOT)` for a
   locked file.)
 - **The restart comes from a detached copy of SETUP.** `ExitWindowsEx`
   from a console process on Windows 98 never returns and starts no
-  shutdown: a console program has no message queue of its own, and the
+  shutdown. A console program has no message queue of its own, and the
   stuck call holds the Win16Mutex, so a second thread pumping messages
   goes down with it. SETUP therefore re-runs itself as `SETUP /REBOOTNOW`
   with `DETACHED_PROCESS`, and that copy restarts the machine (~20 s).
@@ -198,38 +199,43 @@ Direct3D 8/9 and DirectDraw → OpenGL → the pass-through, from
 with 9x/XP fixes, LGPL), pinned by commit in `build-wrappers.sh`. It is
 the guest-side fallback for a host with no Direct3D executor (ADR-013),
 retired in M15's last step and not before (ADR-018). `wined3d.dll`
-renders through the first `opengl32.dll` the loader finds — ours, in the
-game folder; XP needs OpenGL 2.1 with BGRA from the host. Wine's d3d8/d3d9
+renders through the first `opengl32.dll` the loader finds, which is ours
+in the game folder. XP needs OpenGL 2.1 with BGRA from the host. Wine's d3d8/d3d9
 set the x87 to 24-bit precision on `CreateDevice`, as native Direct3D
 does, which doc 13's PC=24 path covers.
 
 The disc offers the per-game install (sets 4 and 5) and, on 9x, the
-machine-wide DirectDraw (component 7) — on 9x a per-game folder reaches
-only the session's first DirectDraw program. wine9x's other system-wide
-switchers (`*_98` / `*_XP`, routing each EXE by
-`HKLM\Software\DDSwitcher`) left the disc on 2026-09-18 (user decision:
-a third way to install the same thing); they are still built in
+machine-wide DirectDraw (component 7), because on 9x a per-game folder
+reaches only the session's first DirectDraw program. wine9x's other
+system-wide switchers (`*_98` / `*_XP`, routing each EXE by
+`HKLM\Software\DDSwitcher`) left the disc by user decision, as a third
+way to install the same thing; they are still built in
 `out/wine9x/`, whose README has their steps.
 
-Build notes: wine9x links the CRT through the same shim; its `pthread9x`
-sub-build hardcodes `ar` (overridden with the mingw one — BSD `ar` on
-macOS); wine9x keeps its own `-march=pentium2` rather than the shim's
-`pentium3`, with which GCC emits a `memset` call into the CRT-less
-switcher DLLs (the ISA check still covers every file on the disc). Our queue,
-`patches/wine9x/*.patch` (git-format diffs against the pinned commit):
+Build notes:
 
-- `01-24bit-desktop-mode`: wined3d maps 24- and 32-bit desktops alike to
-  `B8G8R8X8` and so asks for 32 bpp on a 24-bit desktop; a driver without
+- wine9x links the CRT through the same shim.
+- Its `pthread9x` sub-build hardcodes `ar`, which the script overrides
+  with the mingw one (macOS has BSD `ar`).
+- wine9x keeps its own `-march=pentium2` rather than the shim's
+  `pentium3`, with which GCC emits a `memset` call into the CRT-less
+  switcher DLLs. The ISA check still covers every file on the disc.
+
+Our queue is `patches/wine9x/*.patch`, git-format diffs against the
+pinned commit:
+
+- `01-24bit-desktop-mode`. wined3d maps 24- and 32-bit desktops alike to
+  `B8G8R8X8` and so asks for 32 bpp on a 24-bit desktop. A driver without
   32-bit modes (QEMU's Cirrus on XP at 800×600) refuses, and Wine 1.7.55
   crashes in its own error path (`glsl_fragment_pipe_free` on a NULL
   priv). Now a 24-bit desktop stays at 24 when the size matches, and a
   failed 32-bpp switch retries at 24 (found with FIFA 2000; worth sending
   upstream).
-- `02-debug-log-flush`: flush Wine's log per line, so a crash keeps the
+- `02-debug-log-flush` flushes Wine's log per line, so a crash keeps the
   tail (release builds compile logging out).
 
-**A debug build** (logs that survive a crash): a second wine9x checkout
-with the same patches, built with `SPEED= WINED3D_SILENT=` and the
+**A debug build** keeps logs that survive a crash. It is a second wine9x
+checkout with the same patches, built with `SPEED= WINED3D_SILENT=` and the
 overrides in `build_wined3d`. Its `wined3d.dll` / `winedd.dll` /
 `ddraw_xp.dll` write `proc_<pid>_dwine.log` and `proc_<pid>_wined3d.log`
 into the game folder (`set WINEDEBUG=+ddraw,+d3d` for traces). Read them
@@ -240,19 +246,19 @@ diskimage-class=CRawDiskImage`, `diskutil mount readOnly`); Dr Watson's
 
 ## CDSHELF: the disc shelf from inside the machine
 
-The launcher's shelf (doc 07) from a guest that may be mid-game:
+The launcher's shelf (doc 07) from a guest that may be mid-game.
 `CDSHELF` lists it, `CDSHELF <n>` puts a disc in the drive, `CDSHELF E`
 empties it. Both builds talk to the machine's *own CD-ROM drive*, which
 answers a vendor ATAPI opcode with the shelf (patch 52,
-`cdshelf/cdshelf_proto.h`): the one channel DOS, Win98 and XP can all
-reach, so there is no new device and nothing to install.
+`cdshelf/cdshelf_proto.h`). It is the one channel DOS, Win98 and XP can
+all reach, so there is no new device and nothing to install.
 
 - **`CDSHELF.EXE`** (`src/cdshelf.c`), one binary for both Windows
   families. XP/2000 use SPTI (`IOCTL_SCSI_PASS_THROUGH_DIRECT` on
   `\\.\<letter>:`); 98/Me use ASPI, with `WNASPI32.DLL` loaded at run time
   (it does not exist on XP; a stock 98 has it with `APIX.VXD`).
   `SendASPI32Command` is **`__cdecl`**, not stdcall, and its exports carry
-  no `@n` to say so: declared `WINAPI` it links and leaves the stack four
+  no `@n` to say so. Declared `WINAPI`, it links and leaves the stack four
   bytes out on the first call, and Windows kills the program a moment
   later. Every CD-ROM drive is asked and the one that answers is used;
   `-d E:` overrides on XP, `-v` shows each CDB. Log:
@@ -261,10 +267,10 @@ reach, so there is no new device and nothing to install.
   With no arguments it opens a window (plain USER32 controls, nothing
   newer than Windows 95, the insert on a worker thread so it keeps
   painting). **Insert is grey while a disc is in the drive** (user
-  decision, 2026-09-19): the tray is emptied with Eject, deliberately; the
-  command line still swaps in one step. It is a `-mwindows` program whose
-  verbs print to a redirected stdout — XP's `cmd` passes that on; under
-  Win98's `COMMAND.COM` read the log instead.
+  decision), so the tray is emptied with Eject on purpose; the command
+  line still swaps in one step. It is a `-mwindows` program whose verbs
+  print to a redirected stdout. XP's `cmd` passes that on; under Win98's
+  `COMMAND.COM`, read the log instead.
 - **`CDSHELF.COM`** (`src/cdshelf.asm`, NASM), driving the drive by PIO
   as `tools/atapi-guest-test.py` does. It finds the drive with IDENTIFY
   PACKET DEVICE, because by the time a DOS program runs the BIOS has left
@@ -273,14 +279,14 @@ reach, so there is no new device and nothing to install.
   re-reads, Esc quits. `CDSHELF LIST` is the non-interactive form.
 
 Both **empty the drive and wait for it to report the tray empty before
-loading**: Windows and MSCDEX cache the last disc, so a swap they never
+loading**. Windows and MSCDEX cache the last disc, so a swap they never
 saw as a removal leaves the old files on screen, and the device runs a
 medium change from one bottom half, so an eject and a load sent back to
 back collapse into one. The Windows build then dismounts the volume
 (`FSCTL_DISMOUNT_VOLUME`), because its own TEST UNIT READY polling
 consumes the one media-change sense the drive raises.
 
-Tested: `tools/atapi-guest-test.py` runs the opcode and then
+`tools/atapi-guest-test.py` runs the opcode and then
 `CDSHELF.COM` on a FreeDOS floppy every time (`atapi-guest`);
 `tools/cdshelf-guest-test.sh <image> xp` runs `CDSHELF.EXE` in XP (list,
 load, `dir`/`type` off the loaded disc, the missing entry refused,
@@ -290,27 +296,28 @@ pass is not recorded.
 ## Other programs on the disc
 
 - **`D3DGAME9.EXE` / `D3DGAME8.EXE`** (`src/d3dgame9.c`, `d3dgame8.c`,
-  scene in `d3dgame.h`): the Direct3D reference workload (doc 14) — the
-  same deterministic scene on both APIs (mipmapped ground, lit indexed
+  scene in `d3dgame.h`), the Direct3D reference workload (doc 14). It is
+  the same deterministic scene on both APIs (mipmapped ground, lit indexed
   cubes, a per-frame dynamic vertex buffer, DXT1 particles through
-  `DrawPrimitiveUP`, render-to-texture, a frame-time graph). Windowed or
-  `-fs` (`-w -h -bpp16 -novsync`); `-frames N` runs a fixed-step
+  `DrawPrimitiveUP`, render-to-texture, a frame-time graph), windowed or
+  `-fs` (`-w -h -bpp16 -novsync`). `-frames N` runs a fixed-step
   sequence and exits, `-dump N file.bmp` writes frame N; `-shader` adds a
   vs_1_1/ps_1_1 path when a d3dx9 DLL is present (the pixel shader is
-  assembled: d3dx9_33+ HLSL refuses ps_1_x). Keys: WASD/arrows/Q/E, F1
+  assembled, because d3dx9_33+ HLSL refuses ps_1_x). Keys: WASD/arrows/Q/E, F1
   wireframe, Space pause, Esc. Everything printed also goes to
   `d3dgame9.log` / `d3dgame8.log` (`-log file`). The rig (P4 + GeForce
-  6200) runs it first and its BMPs are the goldens in `reference/d3d/`;
-  every emulated path is diffed against them with `tools/bmpdiff.py`.
-- **`D3D9TEST.EXE`**: the D3D9 counterpart of wglgears — adapter name
+  6200) runs it first and its BMPs are the goldens in `reference/d3d/`.
+  Every emulated path is diffed against them with `tools/bmpdiff.py`.
+- **`D3D9TEST.EXE`**, the D3D9 counterpart of wglgears, prints the adapter
+  name
   (WineD3D reports a GL-derived one), HAL caps, the x87 control word after
   `CreateDevice` (`PC=24` expected), a spinning triangle's fps; an
   optional frame count.
-- **`MODETEST.EXE`**: the current desktop mode, the driver's mode list
-  and the result of the `ChangeDisplaySettingsEx` calls ddraw/wined3d
-  make — run it when a full-screen game dies at start-up.
-- **`WGLGEARS.EXE`**: Mesa's wglgears from qemu-3dfx's demos, next to
-  `OPENGL32.DLL` the zero-dependency GL pass-through check.
+- **`MODETEST.EXE`** prints the current desktop mode, the driver's mode
+  list and the result of the `ChangeDisplaySettingsEx` calls ddraw/wined3d
+  make. Run it when a full-screen game dies at start-up.
+- **`WGLGEARS.EXE`** is Mesa's wglgears from qemu-3dfx's demos. Next to
+  `OPENGL32.DLL` it is the zero-dependency GL pass-through check.
 
 Every program of ours writes its log (and any BMP it dumps) to
 `C:\2KSBOX` through `src/guestlog.h` (`guest_log_open()`,

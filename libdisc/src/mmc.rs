@@ -306,7 +306,7 @@ fn field_ranges(kind: SectorKind) -> [(usize, usize); 5] {
 /// without EDC/ECC is a cooked read: L-EC is verified, what the P/Q decoder
 /// can fix is corrected and only the rest is `Err(Medium)`. A raw request
 /// delivers the stored bytes, uncorrected, but a sector whose L-EC does not
-/// hold is still `Err(Medium)` unless C2 error flags were asked for — a drive
+/// hold is still `Err(Medium)` unless C2 error flags were asked for. A drive
 /// hands over an unreadable sector's bytes only alongside the C2 field that
 /// says which of them it could not trust, and a protection band is read raw
 /// precisely to watch the read fail (doc 17 §2.6c).
@@ -326,15 +326,15 @@ pub fn read_cd_sector(disc: &Disc, lba: i32, expected_type: u8, byte9: u8, byte1
     // A request for user data without the EDC/ECC field is a cooked read: L-EC is
     // verified and a mismatch is a MEDIUM ERROR, as READ(10) on a drive.
     //
-    // A *raw* request — EDC/ECC selected — is the one a dumping tool makes, and
+    // A *raw* request (EDC/ECC selected) is the one a dumping tool makes, and
     // it used to deliver the bytes as dumped whatever their parity said. That was
-    // wrong, and Crimson Skies (SafeDisc 1.50.020) is what showed it, 2026-09-09:
+    // wrong, and Crimson Skies (SafeDisc 1.50.020) is what showed it:
     // its check reads single sectors of its own protection band raw (`READ CD`,
     // byte 9 = 0xf8) and it is the *read failing* that it is looking for. A drive
     // fails it; we answered with the 2352 bytes the dumper had stored, and the
     // game said "Cannot locate the CD-ROM". With the error delivered, it launches.
-    // So a raw read of a sector whose L-EC does not hold is a MEDIUM ERROR too —
-    // unless the CDB asked for **C2 error flags**, which is precisely how a real
+    // So a raw read of a sector whose L-EC does not hold is a MEDIUM ERROR too,
+    // unless the CDB asked for **C2 error flags**, which is how a real
     // dumping tool gets an unreadable sector's bytes out of a real drive: the
     // drive hands over what it read and says in the C2 field which bytes it could
     // not trust. That keeps the dumping case (doc 17 §2.5) working and stops us

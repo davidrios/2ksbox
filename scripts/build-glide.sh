@@ -5,7 +5,7 @@
 # grGlideInit it dlopens libglide2x and looks up the 183 gr*/gu* entry
 # points in it. Upstream ships that library to donors only, so we build our
 # own from OpenGLide (LGPL, third_party/openglide) with the window-less
-# platform layer in glidept/host/ — doc 12 §5, patches/openglide/README.md.
+# platform layer in glidept/host/ (doc 12 §5, patches/openglide/README.md).
 #
 #   scripts/build-glide.sh            this host
 #
@@ -21,11 +21,10 @@ OG="$ROOT/third_party/openglide"
 OUT="$ROOT/build/glide"; mkdir -p "$OUT"
 # platform/linux is the platform layer on both hosts: what we take from it
 # (clock.cpp, library.cpp) is POSIX, and __unix__ is what sdk2_3dfx.h looks
-# for. macOS has no GL/ headers -- the framework keeps its own under
-# OpenGL/, and the only GL/ a Mac may have is XQuartz's Mesa, the one
-# implementation this must not bind to -- so glidept/host/macos puts a
-# forwarding <GL/gl.h> and <GL/glext.h> on the include path there, and only
-# there.
+# for. macOS has no GL/ headers. The framework keeps its own under
+# OpenGL/, and the only GL/ a Mac may have is XQuartz's Mesa, which this
+# must not bind to. So on macOS only, glidept/host/macos puts a forwarding
+# <GL/gl.h> and <GL/glext.h> on the include path.
 INC=()
 if [ "$(uname -s)" = Darwin ]; then
   LIB="$OUT/libglide2x.dylib"; SHARED=(-dynamiclib -install_name "$LIB")

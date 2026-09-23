@@ -1,5 +1,5 @@
 /*
- * d3dpt_fb.h — the paravirtual framebuffer register set of the d3dpt-vga
+ * d3dpt_fb.h: the paravirtual framebuffer register set of the d3dpt-vga
  * display adapter (doc 15, ADR-008 / M7a).
  *
  * ONE header for both sides: the QEMU device model (d3dpt/hw/d3dpt_vga.c)
@@ -53,15 +53,15 @@
  * DrvMovePointer writes CURSOR_X / Y and CURSOR_ENABLE. The device hands
  * the shape and the position to QEMU's console (dpy_cursor_define /
  * dpy_mouse_set), the embed library to the player, which shows the
- * guest's shape as the host window's cursor — nothing is composited into
+ * guest's shape as the host window's cursor. Nothing is composited into
  * the frame, and headless screendumps show no cursor, as with a real
  * sprite. Without it GDI paints a software pointer into the primary,
  * which flickers under a flip chain (it is in one buffer of the two).
  *
  * Version 5: gamma ramps (GAMMA_ENABLE and the GAMMA block).
  *
- * **Versions only add.** Every driver — the XP miniport, the 9x display
- * driver and mini-VDD — accepts any VERSION at or above the one it was
+ * **Versions only add.** Every driver (the XP miniport, the 9x display
+ * driver and mini-VDD) accepts any VERSION at or above the one it was
  * built with and refuses only an older one, because a newer register set is
  * its own plus registers it never touches (a feature is found by its CAP bit
  * or its version, never by a register changing meaning). That is what lets
@@ -111,7 +111,7 @@
 #define D3DPT_FB_REG_OFFSET      0x54u   /* RW: byte offset of the first line in VRAM */
 #define D3DPT_FB_REG_HZ          0x58u   /* RW: refresh the guest picked (informational) */
 
-#define D3DPT_FB_REG_FRAMES      0x60u   /* R: vertical blanks since ENABLE — periods of the
+#define D3DPT_FB_REG_FRAMES      0x60u   /* R: vertical blanks since ENABLE, periods of the
                                             mode's HZ off the host clock, not the display
                                             client's pull, so the guest's frame pacing is the
                                             same headless and under the player */
@@ -121,7 +121,7 @@
 
 #define D3DPT_FB_REG_CMD_OFFSET  0x80u   /* R: byte offset of the command window in BAR 0 (0 = none) */
 #define D3DPT_FB_REG_DOORBELL    0x84u   /* W: 1 = execute the batch in the window; R: last D3DPT_ERR_* */
-#define D3DPT_FB_REG_D3D_STATUS  0x88u   /* R: D3DPT_STATUS_* (0 = no executor on the host — no library,
+#define D3DPT_FB_REG_D3D_STATUS  0x88u   /* R: D3DPT_STATUS_* (0 = no executor on the host: no library,
                                             no Vulkan 1.3 device, or no-exec=on; 1 = ready) */
 
 /* the hardware cursor (version 4) */
@@ -143,7 +143,7 @@
 #define D3DPT_FB_REG_PALETTE     0x400u  /* RW: 256 x8r8g8b8 entries (version 3), 0x400..0x7fc */
 #define D3DPT_FB_PALETTE_SIZE    256u
 #define D3DPT_FB_REG_GAMMA       0x800u  /* RW: 256 x8r8g8b8 entries (version 5), 0x800..0xbfc: entry i is what
-                                          * a channel value i becomes on screen, per channel — the high bytes of
+                                          * a channel value i becomes on screen, per channel: the high bytes of
                                           * GDI's 3 x 256-word ramp (DrvIcmSetDeviceGammaRamp) */
 #define D3DPT_FB_GAMMA_SIZE      256u
 

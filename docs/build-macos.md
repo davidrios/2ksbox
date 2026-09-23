@@ -1,9 +1,9 @@
 # Building and testing on macOS (Apple Silicon)
 
-Everything here runs natively on arm64; the test machine is an M1
+Everything here runs natively on arm64. The test machine is an M1
 MacBook Air. This covers setting a Mac up, building, running a guest,
 the app and its two builds (ADR-019), and the floor they target. The
-stages themselves are `docs/development.md`'s; the Mac-side traps that
+stages themselves are in `docs/development.md`, and the Mac-side traps that
 cut across subsystems are in `docs/00-status.md` ("Running on a Mac").
 
 ## One-time setup
@@ -17,12 +17,12 @@ brew install mingw-w64 xorriso nasm mtools   # guest-tools ISO, the Wine pair, t
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-- **Qt 6** — the launcher is `launcher-qt` (ADR-015), and the formula
+- **Qt 6.** The launcher is `launcher-qt` (ADR-015), and the formula
   brings `macdeployqt`, which puts Qt inside the `.app`. Without it
   `scripts/build.sh` skips its `qt` stage and the Mac can build
   everything but a package.
-- **gnu-sed** — `sign_commit` uses GNU `sed -i`; `prepare-qemu.sh` puts
-  `gsed` first on `PATH`.
+- **gnu-sed.** qemu-3dfx's `sign_commit` uses GNU `sed -i`, so
+  `prepare-qemu.sh` puts gnu-sed's `gnubin` first on `PATH`.
 - **No XQuartz and no SDL2.** QEMU is built with no display of its own
   (`--disable-sdl --disable-cocoa …`; patch 02 drops qemu-3dfx's SDL
   requirement), and patch 70 replaced qemu-3dfx's GLX-on-XQuartz backend
@@ -53,13 +53,13 @@ vulkaninfo --summary | grep -E "driverName|apiVersion"   # KosmicKrisp, 1.4.x
 The installer refuses to add a component to an existing root, hence the
 maintenance tool for the second step; the SDK stays under
 `~/VulkanSDK`. `scripts/test.sh` sets the Vulkan environment itself on
-Darwin — Homebrew's loader on `DYLD_LIBRARY_PATH`, the SDK's KosmicKrisp
-ICD unless `VK_ICD_FILENAMES` is set — because SIP strips a `DYLD_*`
-variable exported to a `#!/usr/bin/env bash` script (the symptom was
+Darwin (Homebrew's loader on `DYLD_LIBRARY_PATH`, the SDK's KosmicKrisp
+ICD unless `VK_ICD_FILENAMES` is set), because SIP strips a `DYLD_*`
+variable exported to a `#!/usr/bin/env bash` script (the symptom is
 `Direct3DCreate9 failed`). Put **only**
 `/opt/homebrew/opt/vulkan-loader/lib` on `DYLD_LIBRARY_PATH`, never all
 of `/opt/homebrew/lib`, and check the shell a launcher is started from
-for the same export: that directory answers ImageIO's codec names and
+for the same export. That directory answers ImageIO's codec names and
 kills every image decode with `SIGBUS` (00-status, "Running on a Mac").
 
 ### Open Watcom, for the Win98 display driver
@@ -88,12 +88,12 @@ target/release/player       # the test pattern, through wgpu on Metal
 ```
 
 The test pattern is colour bars with a 1-px white border and a white line
-sweeping down (a pass ≈ 8 s): sharp edges, integer-scaled 4:3, no
-tearing, still 4:3 and pixel-aligned after a resize.
+sweeping down (a pass ≈ 8 s). Look for sharp edges, integer-scaled 4:3,
+no tearing, and still 4:3 and pixel-aligned after a resize.
 
 Mac specifics of the stages:
 
-- **Everything targets the floor** (below): `build.sh` exports
+- **Everything targets the floor** (below). `build.sh` exports
   `MACOSX_DEPLOYMENT_TARGET=$(scripts/macos-floor.sh)`, and a hand-run
   cargo must do the same. rustc otherwise links for 11.0, and cargo does
   not rebuild when the value changes (it is not in its fingerprint), so
@@ -103,31 +103,31 @@ Mac specifics of the stages:
   would link for 11.0 and the next `build.sh` would clean it away.
 - ld still warns `building for macOS-15.0, but linking with dylib
   '/opt/homebrew/…' which was built for newer version` about this Mac's
-  own Homebrew bottles. Warnings only: the app carries the floor's
-  builds of them instead.
+  own Homebrew bottles. These are warnings only, since the app carries the
+  floor's builds of them instead.
 - `configure-qemu.sh` passes the target as `-mmacosx-version-min` with
   `-Werror=unguarded-availability-new`, so an API newer than the floor
   used without an `@available` check fails the build instead of making a
   binary that dies on the floor's macOS (`strchrnul`, declared from 15.4
   and found by meson anyway, is patch 46).
-- `configure-qemu.sh` uses uv's Python only; a Python complaint means uv
-  is not on `PATH`.
+- `configure-qemu.sh` uses uv's Python only, so a Python complaint means
+  uv is not on `PATH`.
 - Homebrew's mingw is symlinked into `/opt/homebrew/bin`, so
   `build-driver.sh` asks the compiler for its sysroot to find the DDK
-  headers. `build-wrappers.sh` is `set -e` and writes the ISO last: an
+  headers. `build-wrappers.sh` is `set -e` and writes the ISO last, so an
   ISO older than its sources means a stage died.
 
 ### The Glide wrapper
 
 `scripts/prepare-openglide.sh && scripts/build-glide.sh` builds
 `build/glide/libglide2x.dylib` (doc 12 §5). OpenGLide includes
-`<GL/gl.h>` and `<GL/glext.h>`, and macOS has no `GL/` directory — the
+`<GL/gl.h>` and `<GL/glext.h>`, and macOS has no `GL/` directory. The
 one a Mac may have is XQuartz's Mesa, which would bind the wrapper to a
 GLX library that never sees a CGL context. So `glidept/host/macos/GL/`
 holds a forwarding `gl.h` and a `glext.h` supplying what Apple's 2003
 header lacks (the seventeen `PFNGL…PROC` typedefs OpenGLide names,
 `APIENTRY`, and four paletted-texture / packed-pixel enums that only have
-to compile). Check the binding:
+to compile). To check the binding:
 
 ```sh
 otool -L build/glide/libglide2x.dylib                      # OpenGL.framework and libSystem only
@@ -140,12 +140,12 @@ backend through EGL).
 ## Running a guest
 
 **A bare `qemu-system-i386` has no display, no audio backend and no
-3D**: the player is the front end, the embed library appends `-display
-none`, and it brings the 3D provider (patch 30) and the audiodev (patch
-20). Given no `-display`, QEMU starts a VNC server on `localhost:5900`
-(`open vnc://localhost:5900` in Screen Sharing); pass `-display vnc=:0`
-and `-audiodev none,id=snd` explicitly. A guest asking for 3D on a bare
-QEMU is refused and keeps running.
+3D.** The player is the front end. The embed library appends `-display
+none` and brings the 3D provider (patch 30) and the audiodev (patch 20).
+Given no `-display`, QEMU starts a VNC server on `localhost:5900` (`open
+vnc://localhost:5900` in Screen Sharing), so pass `-display vnc=:0` and
+`-audiodev none,id=snd` explicitly. A guest asking for 3D on a bare QEMU
+is refused and keeps running.
 
 ```sh
 build/qemu/qemu-system-i386 --version        # 9.2.4
@@ -166,8 +166,8 @@ PLAYER_LATENCY=1 target/release/player --shader third_party/slang-shaders/crt/cr
 
 On the Air, Win98 with crt-lottes measures p50 6–10 ms, p95 15–17 ms
 publish→present (the vsync-phase floor). `-cpu pentium3` is the guest
-tools' floor (SSE1, msvcrt) — qemu-3dfx's `-cpu max` advice is for
-*its* x86-64-v2 wrappers — and Win9x wants at most 512 MB (VCache).
+tools' floor (SSE1, msvcrt). qemu-3dfx's `-cpu max` advice is for *its*
+x86-64-v2 wrappers. Win9x wants at most 512 MB (VCache).
 
 ### 3D in the player
 
@@ -194,7 +194,7 @@ player, means the readback path is carrying the frames instead.
 ### A Win98 guest by hand
 
 The install must come out **ACPI**, or QEMU's PCI hot-adds (USB tablet,
-AC'97, NIC) are never seen; a plain `SETUP` does that because
+AC'97, NIC) are never seen. A plain `SETUP` comes out ACPI because
 `prepare-qemu.sh` stamps the BIOS date (doc 06). Install on the Cirrus
 (Windows' in-box driver), then `D:\SETUP.EXE /ALL` from the guest-tools
 ISO installs the rest, our display driver included:
@@ -206,25 +206,25 @@ build/qemu/qemu-system-i386 -machine pc,hpet=off -cpu pentium3 -m 256 \
   -vga cirrus -display vnc=:0 -net none -audiodev none,id=snd -device sb16,audiodev=snd
 ```
 
-**Repairing a PnP-BIOS image** (installed before the BIOS stamp: `info
-usb` shows the tablet, Windows shows nothing, Device Manager has "Plug
-and Play BIOS" with a yellow !) without reinstalling: copy the CD's
-`WIN98` folder to `C:\` first (the CD driver goes away mid-way), then
-Device Manager → System devices → "Plug and Play BIOS" → Update Driver
-→ "Display a list…" → Show all hardware → "PCI Bus". Windows then
-re-detects every device.
+**Repairing a PnP-BIOS image** without reinstalling. Such an image was
+installed before the BIOS stamp: `info usb` shows the tablet, Windows
+shows nothing, and Device Manager has "Plug and Play BIOS" with a yellow
+!. Copy the CD's `WIN98` folder to `C:\` first (the CD driver goes away
+mid-way), then Device Manager → System devices → "Plug and Play BIOS" →
+Update Driver → "Display a list…" → Show all hardware → "PCI Bus".
+Windows then re-detects every device.
 
-**The OpenGL check**: `SETUP /ALL` copies `TESTS\` (`WGLGEARS.EXE`
+**The OpenGL check.** `SETUP /ALL` copies `TESTS\` (`WGLGEARS.EXE`
 among them) into `C:\2KSBOX`, and `SETUP /GAME 3 C:\2KSBOX` puts
-qemu-3dfx's `OPENGL32.DLL` beside it; in
-the player a smooth gears window and a host renderer string (not "GDI
-Generic") is the pass, with `mesapt: DLL loaded` on stderr.
+qemu-3dfx's `OPENGL32.DLL` beside it. In the player, a smooth gears
+window and a host renderer string (not "GDI Generic") is the pass, with
+`mesapt: DLL loaded` on stderr.
 `TESTS\GLPROBE.EXE` answers the same question in a log.
 
-The guest half of the Win98 display driver runs here as well:
+The guest half of the Win98 display driver runs here as well.
 `tools/win98-driver-test.sh` needs only `mtools` from outside the tree
 (`identify`, from ImageMagick, is optional; without it the colour count
-reads `?`). It needs an ACPI image: on a PnP-BIOS one nothing matches
+reads `?`). It needs an ACPI image. On a PnP-BIOS one nothing matches
 the INF and the run ends on the in-box VGA.
 
 ## The app
@@ -251,7 +251,7 @@ xcrun notarytool store-credentials 2ksbox-notary \
 `share` shape of doc 07's install layout, so `launcher_core::paths`
 finds it by the same `share/2ksbox` marker. The one difference is
 `MacOS/`, which does `bin/`'s job because Launch Services starts
-programs only from there; `paths::bin_dir()` decides it from the running
+programs only from there. `paths::bin_dir()` decides it from the running
 executable's directory, so a plain tarball on a Mac is still a Unix
 prefix.
 
@@ -259,14 +259,15 @@ prefix.
 no Homebrew and no Vulkan, so the whole non-system dylib closure (20-odd
 libraries, ~14 MB) is copied into `Contents/lib/2ksbox`, every install
 name rewritten to `@rpath`, and **every `LC_RPATH` pointing out of the
-app deleted** — meson gives `libqemu-embed` one per Homebrew prefix,
+app deleted**. Meson gives `libqemu-embed` one per Homebrew prefix,
 searched before the app's own, so a bundle that keeps them loads *this*
 Mac's Homebrew and fails only on a Mac without it.
 
 **Qt comes through `macdeployqt`**, which runs first, on a bundle that
 already has its `Info.plist` (it reads `CFBundleExecutable`), and copies
 the frameworks, the cocoa platform plugin and the QML tree into
-`Frameworks`, `PlugIns` and `Resources/qml`. What it needs help with:
+`Frameworks`, `PlugIns` and `Resources/qml`. It needs help with the
+following:
 
 - **`-qmldir=launcher-qt/qml` is required.** Our QML is compiled in as a
   Qt resource, so the import scanner (which reads source) finds nothing
@@ -277,7 +278,7 @@ the frameworks, the cocoa platform plugin and the QML tree into
   deploys whole plugin categories and module directories: VirtualKeyboard,
   Scene2D/3D, Pdf and the like arrive with frameworks it never collected
   (34 `ERROR: Cannot resolve rpath` pairs, folded into one line). None of
-  them can load, so the staging prunes them — the plugin under `PlugIns`,
+  them can load, so the staging prunes them: the plugin under `PlugIns`,
   then the QML module left dangling (a module's plugin under
   `Resources/qml` is a **symlink** into `PlugIns`).
 - **It leaves what it keeps half-wired.** Homebrew's Qt already
@@ -290,13 +291,13 @@ the frameworks, the cocoa platform plugin and the QML tree into
   `@loader_path` that is not its real directory), and every plain dylib
   in `Frameworks` an `@rpath` id and `@loader_path`.
 - **The ad-hoc re-sign covers every Mach-O**, found by file type, not
-  mode: `macdeployqt` rewrites load commands, an arm64 binary whose
+  mode. `macdeployqt` rewrites load commands, an arm64 binary whose
   signature no longer matches is killed without a message, and a QML
   plugin or a Qt framework binary can arrive mode 644.
 - The offscreen platform plugin is copied beside the cocoa one for the
   window check.
 
-**The Vulkan driver** is the one companion no load command names: the
+**The Vulkan driver** is the one companion no load command names. The
 app carries the LunarG loader and KosmicKrisp with an ICD manifest of
 its own, found through DXVK patch 06 (`@loader_path` ahead of bare leaf
 names). `player/src/companions.rs` sets `QEMU_GLIDE_LIB`,
@@ -304,16 +305,15 @@ names). `player/src/companions.rs` sets `QEMU_GLIDE_LIB`,
 installed player finds them unset, since each `dlopen` search otherwise
 starts in a `build/` directory a package does not have. The launcher's
 own probe (the sentence under the Direct3D picker, `--host-check`) is
-the third consumer: since 2026-09-23 it opens the app's
-`lib/2ksbox/libvulkan.1.dylib` by full path
-(`launcher_core::host_gpu::shipped_loader`) and names the app's ICD to
-it at `main` (`host_gpu::announce_driver`), because a leaf-name
-`dlopen("libvulkan.dylib")` finds nothing in this app and the loader
-reads its driver list from the environment and system directories only
-— the community app on macOS 15 said "Vulkan loader: not present"
-beside the copy its executor was running on. The packager requires the
-staged launcher's `--host-check` to load the app's loader and say "the
-app's own".
+the third consumer. It opens the app's `lib/2ksbox/libvulkan.1.dylib` by
+full path (`launcher_core::host_gpu::shipped_loader`) and names the
+app's ICD to it at `main` (`host_gpu::announce_driver`). A leaf-name
+`dlopen("libvulkan.dylib")` finds nothing in this app, and the loader
+reads its driver list from the environment and system directories only,
+so without both the community app on macOS 15 said "Vulkan loader: not
+present" beside the copy its executor was running on. The packager
+requires the staged launcher's `--host-check` to load the app's loader
+and say "the app's own".
 
 **The checks are the point of the script:**
 
@@ -328,9 +328,9 @@ app's own".
   `/System`;
 - the staged launcher **opens a real window**
   (`QT_QPA_PLATFORM=offscreen` with `LAUNCHER_QT_SHOT=<png>`, under the
-  same loader watch): Qt finds its platform plugin and QML modules by name
-  at run time, so without this a bundle with no QtQuick passes everything
-  and opens nothing.
+  same loader watch). Qt finds its platform plugin and QML modules by name
+  at run time, so without this check a bundle with no QtQuick passes
+  everything and opens nothing.
 
 Signing is inside-out, every nested Mach-O before the bundle that seals
 it, with `--options runtime` and `packaging/macos/2ksbox.entitlements`
@@ -347,7 +347,7 @@ retries.
 | Direct3D | DXVK on KosmicKrisp | the same, plus the executor on Wine below Vulkan 1.3 |
 | Distribution | App Store | Developer ID DMG (`--community`) |
 
-Both come from the same script; `--community` adds
+Both come from the same script. `--community` adds
 `libd3dpt_exec_remote.dylib` and `wine/d3dpt_exec.dll` +
 `d3dpt-exec-host.exe`, built by `scripts/build-d3dpt-exec.sh --wine`
 with mingw-w64 (ADR-018, doc 14). The App Store build carries nothing
@@ -356,47 +356,47 @@ of Wine and never gets a pre-26 version.
 Below macOS 26 KosmicKrisp loads but reports no GPU (it needs Metal on
 26; `vkEnumeratePhysicalDevices` fails), so DXVK finds no device. The
 community build then runs the same executor on the user's Wine
-(`launcher --host-check`: "runs through Wine on this host", exit 0); a
-Mac with no Wine falls back to WineD3D in the guest, until M15's last
+(the app's `2ksbox --host-check` says "runs through Wine on this host", exit 0).
+A Mac with no Wine falls back to WineD3D in the guest, until M15's last
 step retires that path. **No package ships a Wine**, and the launcher's
 note says which to install:
 
-- Homebrew's Wine casks are disabled (not notarized), so it is WineHQ's
-  tarball from Gcenx's releases — x86_64, under Rosetta on Apple Silicon
-  — or CrossOver. A packaged app finds it in
+- Homebrew's Wine casks are disabled (not notarized), so the options are
+  WineHQ's tarball from Gcenx's releases (x86_64, under Rosetta on Apple
+  Silicon) or CrossOver. A packaged app finds it in
   `/Applications/Wine {Stable,Staging,Devel}.app`, on `PATH` or through
   `D3DPT_WINE`; a checkout also looks in `build/wine/`.
 - Native arm64 Wine has no OpenGL in `winemac.drv` (macOS gives the GL
   compatibility renderer only to Rosetta processes).
-- **A macOS VM cannot test this path**: Apple's paravirtual GPU has no
+- **A macOS VM cannot test this path.** Apple's paravirtual GPU has no
   accelerated OpenGL and Wine's Mac driver requires
   `kCGLPFAAccelerated`. A real pre-26 macOS on a second APFS volume can
   (`tools/macos-wine-spike-local.sh`; M15's track doc has the loop).
-- The `exec-wine` check skips over ssh: Wine's Mac driver needs the
-  window server.
+- The `exec-wine` check skips over ssh, because Wine's Mac driver needs
+  the window server.
 
-Intel is permitted by the community build because its Wine is x86_64 on
-both architectures, and untested: Homebrew moved Intel to tier 3 in
+The community build permits Intel because its Wine is x86_64 on both
+architectures. Intel is untested. Homebrew moved Intel to tier 3 in
 7.0.0 (bottles frozen, support ending with macOS 27), and no doc claims
 it until an Intel Mac has run the reference scene.
 
 ### The floor
 
 The app runs down to **the oldest macOS Homebrew supports** (user
-decision, 2026-09-12): `HOMEBREW_MACOS_OLDEST_SUPPORTED` in Homebrew's
-`brew.sh`, which `scripts/macos-floor.sh` reads — **15.0 (Sequoia)**
-since Homebrew raised it on 2026-09-10 (it was 14.0 when ADR-019 was
-written; the rule is the same). It cannot go lower, because the app
+decision), `HOMEBREW_MACOS_OLDEST_SUPPORTED` in Homebrew's `brew.sh`,
+which `scripts/macos-floor.sh` reads. That is **15.0 (Sequoia)** now (it
+was 14.0 when ADR-019 was written; the rule is the same). It cannot go
+lower, because the app
 carries Homebrew's libraries (glib, pixman, libslirp, zstd, libpng,
 jpeg-turbo, Qt) and Homebrew builds each for the macOS versions it
-supports and none older. It moves with Homebrew: a `brew update` that
+supports and none older. It moves with Homebrew. A `brew update` that
 drops a release changes the value, and the next `scripts/build.sh`
 retargets everything.
 
 Three pieces make the claim true:
 
-- **Everything of ours is built for the floor** — the deployment target
-  and the availability error flag above; QEMU and DXVK take it as a
+- **Everything of ours is built for the floor**, through the deployment
+  target and the availability error flag above. QEMU and DXVK take it as a
   compiler flag, so a new floor recompiles them rather than relinking.
 - **The Homebrew libraries are the floor's builds.** Homebrew pours the
   bottle for the macOS it runs on, so on a macOS 26 Mac several libraries
@@ -409,14 +409,14 @@ Three pieces make the claim true:
   keg's symlinks, and the older build is given the staged file's install
   name, dependencies and rpaths. It wants the version Homebrew has
   bottles of installed (`brew upgrade` otherwise). `brew fetch
-  --bottle-tag=…` does not work for this: on a newer Mac it answers
+  --bottle-tag=…` does not work for this. On a newer Mac it answers
   "Bottle for tag … is unavailable", though the registry has them all.
-- **The package fails above it.** `LSMinimumSystemVersion` is measured,
-  the highest `LC_BUILD_VERSION` `minos` in the bundle, and any Mach-O
-  above the floor fails `package-macos.sh` by name. The ad-hoc signing
-  pass must see the swapped Qt framework binaries (mode 644, no
-  extension): one left unsigned kills the launcher at its first framework
-  (`SIGKILL (Code Signature Invalid)`). The "still links" check skips a
-  file's own install name, the first line `otool -L` prints — a framework
-  keeps Homebrew's absolute one. The LunarG loader and KosmicKrisp are
-  11.0 builds and never set the minimum.
+- **The package fails above it.** `LSMinimumSystemVersion` is measured
+  as the highest `LC_BUILD_VERSION` `minos` in the bundle, and any
+  Mach-O above the floor fails `package-macos.sh` by name. The ad-hoc
+  signing pass must see the swapped Qt framework binaries (mode 644, no
+  extension). One left unsigned kills the launcher at its first
+  framework (`SIGKILL (Code Signature Invalid)`). The "still links"
+  check skips a file's own install name, the first line `otool -L`
+  prints, because a framework keeps Homebrew's absolute one. The LunarG
+  loader and KosmicKrisp are 11.0 builds and never set the minimum.

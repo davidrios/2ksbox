@@ -1,13 +1,13 @@
 # Third-party notices
 
 The binaries this project ships are built from its own source plus the
-crates listed below and, for the player, QEMU itself. This file exists to
-satisfy the attribution terms of those licences (Apache-2.0 §4 in
-particular) and to let anyone packaging or redistributing a build see what
-is in it without resolving the dependency graph themselves.
+crates listed below and, for the player, QEMU itself. This file meets
+the attribution terms of those licences (Apache-2.0 §4 in particular)
+and lets anyone packaging or redistributing a build see what is in it
+without resolving the dependency graph.
 
-Regenerate the listings with `cargo metadata` — they are derived, not
-hand-maintained:
+The crate listings are derived, not hand-maintained. Regenerate them
+with `cargo metadata`:
 
 ```sh
 cargo metadata --format-version 1 > /tmp/meta.json
@@ -18,16 +18,17 @@ python3 tools/third-party-notices.py /tmp/meta-qt.json launcher-qt
 
 ## QEMU
 
-The **player** links `libqemu-embed-<target>` — QEMU (https://www.qemu.org),
-**GPL-2.0-only** as a whole, plus this project's patch queue in
+The **player** links `libqemu-embed-<target>`, which is QEMU
+(https://www.qemu.org), **GPL-2.0-only** as a whole, plus this project's patch queue in
 `patches/qemu/` and the qemu-3dfx overlay
 (https://github.com/kjliew/qemu-3dfx). QEMU's own licence text is in
 `qemu/LICENSE`, and the GPLv2 text this project distributes under is
 `COPYING`. The **launcher** does not link QEMU.
 
 The firmware in the packages' `pc-bios/` is QEMU's own, except the two
-VGA BIOSes `vgabios-stdvga.bin` and `vgabios-cirrus.bin`: **SeaBIOS**
-(https://www.seabios.org, **LGPL-3.0-only**) at the commit QEMU pins
+VGA BIOSes `vgabios-stdvga.bin` and `vgabios-cirrus.bin`. Those are
+**SeaBIOS** (https://www.seabios.org, **LGPL-3.0-only**) at the commit QEMU
+pins
 (`qemu/roms/seabios`), modified by `patches/seabios/` and built by
 `scripts/build-vgabios.sh`. That tree plus those patches is the
 corresponding source.
@@ -37,41 +38,42 @@ corresponding source.
 The **OPL3, General MIDI and MT-32 engines** are crates linked into QEMU
 through `libsynth/` (doc 20): `nuked-opl3` (**LGPL-2.1-or-later**, a Rust
 port of Nuked-OPL3), `moont` (**LGPL-2.1-or-later**, a Rust port of Munt's
-CM-32L) and `rustysynth` (**MIT**). The two LGPL crates are used unmodified
-and their sources are the published crates; a recipient may relink against
-their own copies, which is what the LGPL's §6 asks of a static link, and
-everything they are linked into is GPL-2.0 source in this repository.
+CM-32L) and `rustysynth` (**MIT**). The two LGPL crates are used
+unmodified, and their sources are the published crates. A recipient may
+relink against their own copies, which is what the LGPL's §6 asks of a
+static link, and everything they are linked into is GPL-2.0 source in
+this repository.
 
 ## Host-side libraries built from `third_party/`
 
 Two libraries are built from vendored source and shipped beside the player.
-Neither is linked into anything: QEMU `dlopen`s them at run time.
+Neither is linked into anything; QEMU `dlopen`s them at run time.
 
 - **OpenGLide** (https://github.com/voyageur/openglide, the CVS mirror),
   **LGPL-2.1-or-later**, built as `libglide2x` by `scripts/build-glide.sh`
   with the patch queue in `patches/openglide/` and the window-less platform
   layer in `glidept/host/`. It is the host side of qemu-3dfx's Glide
   pass-through, which ships no implementation of its own. Its licence text
-  is `third_party/openglide/LICENSE`; the modified sources are the pinned
-  submodule plus that patch queue, both in this repository, which is how the
-  LGPL's "distribute the modifications" term is met.
+  is `third_party/openglide/LICENSE`. The modified sources are the pinned
+  submodule plus that patch queue, both in this repository, which meets
+  the LGPL's "distribute the modifications" term.
 - **DXVK** (https://github.com/doitsujin/dxvk), **zlib/libpng**, built as
   `libdxvk_d3d9` by `scripts/configure-dxvk.sh` with the patch queue in
   `patches/dxvk/`. It is the host executor of the paravirtual Direct3D
-  device (doc 14). Licence text in `third_party/dxvk/LICENSE`.
+  device (doc 14). Its licence text is `third_party/dxvk/LICENSE`.
 
 ## The General MIDI bank
 
 `soundfonts/TimGM6mb.sf2`, **GPL-2**, by Tim Brechbill (2004) with later
-work by David Bolton (2010) — the bank MuseScore 0.9.6–1.3 shipped, which
-Debian packages as `timgm6mb-soundfont`. This copy is byte for byte
+work by David Bolton (2010). MuseScore 0.9.6–1.3 shipped it, and Debian
+packages it as `timgm6mb-soundfont`. This copy is byte for byte
 Debian's `timgm6mb-soundfont_1.3.orig.tar.gz` one (sha256
 `c5378b62028c920cb11e4803327983fee2f2cdff5dc89c708e39da417e51c854`). It is
 what the General MIDI synthesizer plays through unless the user names
 another bank, and it is redistributed under the same GPLv2 as the rest of
-this package (`COPYING`); `soundfonts/README.md` records why this bank.
+this package (`COPYING`). `soundfonts/README.md` says why this bank.
 
-Nothing of Roland's is in this repository: the MT-32 / CM-32L option needs
+Nothing of Roland's is in this repository. The MT-32 / CM-32L option needs
 the user's own ROM images (doc 20 §4).
 
 ## Shader presets
@@ -82,19 +84,15 @@ The launcher can download libretro's `slang-shaders`
 carry their own per-file licences and are neither modified nor redistributed
 by this project.
 
-## Fonts
-
-`epaint_default_fonts` (in the launcher) carries **OFL-1.1** and
-**Ubuntu-font-1.0** typefaces in addition to its `MIT OR Apache-2.0` code.
-
 ## Apache-2.0 components
 
-Several crates are **Apache-2.0 with no alternative licence**: in the
-player `winit`, `cpal`, `ab_glyph`, `ab_glyph_rasterizer`,
+Several crates are **Apache-2.0 with no alternative licence**. In the
+player they are `winit`, `cpal`, `ab_glyph`, `ab_glyph_rasterizer`,
 `owned_ttf_parser`, `codespan-reporting`, `rspirv`, `spirv`, `gethostname`,
 `glutin_wgl_sys`, `gl_generator`, `khronos_api`; the launcher adds
-`ring` (`Apache-2.0 AND ISC`). `dpi` is `Apache-2.0 AND MIT` — both apply. None of them ships a
-`NOTICE` file, so attribution here is the whole of the obligation.
+`ring` (`Apache-2.0 AND ISC`). `dpi` is `Apache-2.0 AND MIT`, and both
+apply. None of them ships a `NOTICE` file, so attribution here is the
+whole of the obligation.
 
 For how those interact with the player's GPL-2.0-only status, see
 **ADR-010** in `docs/10-decisions.md`. The launcher and `shader-chain` are

@@ -1,17 +1,16 @@
 # 5. CD-ROM backend: raw images and copy protection
 
 The problem the CD-ROM backend solves, the shape of the answer and the
-acceptance table, one row per protection scheme. How it is built — the
-disc model, the formats, the C API, the MMC byte layouts, the QEMU
-driver and patches, CD-DA and the tests — is doc 17; the track record is
-`docs/tracks/m5-cdrom-backend.md`, and a host folder as a disc is doc 17
-§8.
+acceptance table, one row per protection scheme. Doc 17 covers how it
+is built: the disc model, the formats, the C API, the MMC byte layouts,
+the QEMU driver and patches, CD-DA, the tests, and a host folder as a
+disc (§8). The track record is `docs/tracks/m5-cdrom-backend.md`.
 
 ## Problem
 
 QEMU's CD-ROM emulation is ISO-shaped: one data track of cooked
-2048-byte sectors. Everything a 1996–2005 game disc relies on beyond that
-is thrown away:
+2048-byte sectors. It throws away everything else a 1996–2005 game disc
+relies on:
 
 - **Multi-track layouts and CD-DA**: Red Book audio played through ATAPI
   audio commands, the in-game music of a large share of Win9x titles.
@@ -24,7 +23,7 @@ is thrown away:
 - **Data position measurement (DPM)**: StarForce-class checks time
   sector positions; images that carry DPM data (MDS) can satisfy them.
 
-The goal: mount a raw dump of a disc you own and have the *unmodified*
+The goal is to mount a raw dump of a disc you own and have the *unmodified*
 protection code in the guest pass, because the virtual drive is
 indistinguishable from a period drive with that disc in it. The DRM runs
 and succeeds; nothing is patched, stripped or bypassed, and no-CD or
@@ -33,11 +32,11 @@ crack functionality is out of scope.
 ## Prior art
 
 - **CDEmu / libmirage** (Linux, GPL-2.0+) proves the approach against
-  real protection drivers: every relevant format, a disc modelled as
-  tracks, sectors and subchannel, and whatever a format lacks generated
-  on the fly.
+  real protection drivers. It reads every relevant format, models a disc
+  as tracks, sectors and subchannel, and generates on the fly whatever a
+  format lacks.
 - **86Box and DOSBox-X** implement cue/bin, CD-DA and some raw commands
-  in their own drives: a reference for ATAPI behaviour under real Win9x
+  in their own drives, a reference for ATAPI behaviour under real Win9x
   drivers.
 - QEMU has none of it.
 
@@ -58,11 +57,11 @@ image (cue/bin, ccd/img/sub, mds/mdf, iso; chd later; or a host folder)
   probes to it and a medium swap stays QMP `blockdev-change-medium`. A
   plain `.iso` stays on QEMU's `raw` driver, byte for byte as before.
 - **Protection fidelity comes from modelling the drive**, not from lists
-  of bad sectors: every data sector is checked against its EDC/ECC and
+  of bad sectors. Every data sector is checked against its EDC/ECC and
   what a drive could not correct fails as it would (doc 17 §2.5, §2.6c).
 - **Missing data is synthesized** as hardware would produce it:
   subchannel Q from the TOC when there is no `.sub`, EDC/ECC for a
-  cooked image. Protection data is only as good as the dump: SafeDisc
+  cooked image. Protection data is only as good as the dump. SafeDisc
   needs one that recorded the bad sectors, SecuROM one with subchannel,
   StarForce DPM.
 - Format priority: cue/bin, CCD (img + sub), MDS/MDF (landed early,
@@ -76,7 +75,7 @@ subchannel and C2 error pointers; `READ SUB-CHANNEL`; `READ TOC` formats
 page 0x0E routing, played into QEMU's audio as the drive's analogue
 output; the right sense codes for unreadable sectors; `GET
 CONFIGURATION` and mode page 0x2A describing a period drive. There is
-no seek or read timing model: data arrives as fast as the host reads it
+no seek or read timing model. Data arrives as fast as the host reads it
 (doc 17 §5.3), and one waits for a check that needs it.
 
 ### What the guest sees
@@ -87,16 +86,16 @@ no seek or read timing model: data arrives as fast as the host reads it
 - Discs are mounted, ejected and swapped at run time from a per-machine
   disc shelf, in the launcher and from inside the guest (`CDSHELF`,
   patch 52; doc 07).
-- A **host folder** can go in the drive too (`isodir:/path`, doc 17 §8):
-  a read-only ISO 9660 + Joliet volume generated lazily and snapshotted
-  when the tray closes, a CD while it fits on one and a DVD-ROM up to a
-  dual-layer DVD-9 above that. It hands a guest a pile of files with no
-  image to burn and no network stack.
+- A **host folder** can go in the drive too (`isodir:/path`, doc 17 §8).
+  The guest sees a read-only ISO 9660 + Joliet volume, generated lazily
+  and snapshotted when the tray closes: a CD while it fits on one, a
+  DVD-ROM up to a dual-layer DVD-9 above that. It hands a guest a pile of
+  files with no image to burn and no network stack.
 
 ## Acceptance tests (M5 exit criteria)
 
 Dumps of discs we own, one title per scheme. A check only counts once it
-has been seen to fail: the `discx repair` copy of a dump (its bad
+has been seen to fail. The `discx repair` copy of a dump (its bad
 sectors made good, nothing else changed) is the negative control (doc 17
 §2.6b).
 

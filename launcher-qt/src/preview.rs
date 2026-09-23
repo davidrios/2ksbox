@@ -1,28 +1,26 @@
 //! The shader profile editor's live preview, on Qt.
 //!
-//! The render itself is `launcher_core::preview::Preview` — the same
+//! The render itself is `launcher_core::preview::Preview`: the same
 //! decode, the same `shader-chain`, the same "integer scale, then
-//! letterbox" viewport math as `player::Gpu::viewport`. What is here is
-//! the two things Qt makes awkward:
+//! letterbox" viewport math as the player's `Gpu::viewport`. This file
+//! handles the two things Qt makes awkward:
 //!
 //! 1. **Whose GPU.** Qt Quick renders through its own abstraction (QRhi)
 //!    on Vulkan, and cxx-qt exposes no handle to it, so this calls
-//!    `Preview::headless` and gets a *second*, windowless wgpu device. On
-//!    this box that is a second Vulkan logical device on the same
-//!    physical GPU: about 40 MB of extra VRAM and one more driver
-//!    context, invisible in use, but a real cost.
+//!    `Preview::headless` and gets a second, windowless wgpu device. On
+//!    Linux that is a second Vulkan logical device on the same physical
+//!    GPU: about 40 MB of extra VRAM and one more driver context.
 //!
 //! 2. **How the frame reaches the widget.** Nothing in cxx-qt can hand a
-//!    foreign texture to a
-//!    `QQuickItem`; doing it properly needs a `QQuickRhiItem` subclass
-//!    in C++ importing the Vulkan image, which is a real project. So the
-//!    frame is read back to the CPU (`Preview::read_frame`, which is
-//!    `shader_chain::read_texture` under it, so row strides and BGRA
-//!    handling stay in one place) and written as a BMP into a temp file
-//!    that QML's `Image` reloads. BMP, not PNG: no compression pass, and
-//!    this happens on every slider drag — measured at ~4 ms for a
-//!    1280x960 frame against ~90 ms for PNG. The readback itself is
-//!    ~3 ms. See doc 07: it is fixable, in C++.
+//!    foreign texture to a `QQuickItem`; that needs a `QQuickRhiItem`
+//!    subclass in C++ importing the Vulkan image. So the frame is read
+//!    back to the CPU (`Preview::read_frame`, over
+//!    `shader_chain::read_texture`, so row strides and BGRA handling stay
+//!    in one place) and written as a BMP into a temp file that QML's
+//!    `Image` reloads. BMP, not PNG, because it has no compression pass
+//!    and this runs on every slider drag: ~4 ms for a 1280x960 frame
+//!    against ~90 ms for PNG. The readback itself is ~3 ms. Doc 07 has
+//!    the C++ fix.
 
 use launcher_core::preview::Preview as Core;
 use std::path::{Path, PathBuf};
@@ -30,7 +28,7 @@ use std::path::{Path, PathBuf};
 pub struct Preview {
     core: Core,
     /// The file QML's `Image` reads, and a counter appended to its URL as
-    /// a query string — QML caches by URL, so the same path with the same
+    /// a query string. QML caches by URL, so the same path with the same
     /// query would never be re-read.
     out_path: PathBuf,
     generation: u64,
@@ -58,10 +56,8 @@ impl Preview {
 
     /// How often QML must ask for another frame to keep an animated
     /// preset moving, in milliseconds, or 0 when the picture stands
-    /// still and the timer should stop. Which of the two it is, and how
-    /// often, is `launcher_core::preview::Preview::frame_interval`'s
-    /// decision — the same one the egui build turns into a repaint
-    /// request.
+    /// still and the timer should stop. The decision is
+    /// `launcher_core::preview::Preview::frame_interval`'s.
     pub fn frame_interval_ms(&self) -> i32 {
         self.core.frame_interval().map_or(0, |d| d.as_millis() as i32)
     }

@@ -1,5 +1,5 @@
 /*
- * crtcal-render.c — write the calibration patterns (doc 09) as BMPs.
+ * Write the calibration patterns (doc 09) as BMPs.
  *
  *   crtcal-render <outdir> [WxH ...]      (default: the era mode set)
  *
@@ -56,10 +56,10 @@ static int write_bmp(const char *path, int w, int h, const uint32_t *fb)
 
 /*
  * The one thing about these patterns that can be wrong without anyone
- * noticing: the circle in `grid` is drawn squeezed by the mode's pixel
- * aspect so that it comes out round *on the tube*. Measure the ring we just
- * drew and check that it does — the photographs are useless if the circle
- * was never a circle.
+ * noticing is the circle in `grid`, drawn squeezed by the mode's pixel
+ * aspect so that it comes out round *on the tube*. Measure the ring we
+ * just drew and check that it does, since the photographs are useless if
+ * the circle was never a circle.
  */
 static int check_grid(int w, int h, const uint32_t *fb)
 {

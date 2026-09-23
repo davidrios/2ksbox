@@ -1,15 +1,14 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
-; dibthunk.asm - the drawing half of the Win98/Me display driver (doc 19,
-; M10). Every GDI drawing entry this driver exports is the DIB Engine's,
-; reached by a jump: the driver accelerates nothing on purpose, exactly as
-; the XP driver's M7a step did, and the frame buffer the Engine draws into
-; is guest VRAM itself.
+; dibthunk.asm: the drawing half of the Win98/Me display driver (doc 19).
+; Every GDI drawing entry this driver exports is a jump to the DIB Engine's.
+; The driver accelerates no 2D drawing on purpose, as the XP driver does
+; not, and the Engine draws straight into guest VRAM.
 ;
 ; Two shapes of entry. The plain ones take the same arguments the Engine
-; does and are a bare jump. The Ext ones take one extra argument - this
-; device's PDEVICE - so the thunk pops the 16:16 return address into ECX,
-; pushes the extra argument, pushes the return address back and jumps;
+; does and are a bare jump. The Ext ones take one extra argument, this
+; device's PDEVICE, so the thunk pops the 16:16 return address into ECX,
+; pushes the extra argument, pushes the return address back and jumps.
 ; AX, ECX and ES are free because the Pascal convention passes nothing in
 ; them.
 ;
@@ -57,23 +56,21 @@ DIBTHK  SetPaletteTranslate,  _lpDriverPDevice
 DIBTHK  GetPaletteTranslate,  _lpDriverPDevice
 DIBTHK  UpdateColors,         _lpDriverPDevice
 
-; SetCursor, MoveCursor and CheckCursor (ordinals 102-104) are **not** here
-; any more: this driver draws the pointer with the adapter's cursor sprite
-; instead of the Engine's software one, so those three are C functions in
-; d3dpt9x.c. They still fall back to `DIB_…CursorExt` on an adapter with no
-; sprite, which is why the Engine's entries stay imported.
+; SetCursor, MoveCursor and CheckCursor (ordinals 102-104) are not here.
+; This driver draws the pointer with the adapter's cursor sprite instead of
+; the Engine's software one, so those three are C functions in d3dpt9x.c.
+; They fall back to `DIB_...CursorExt` on an adapter with no sprite, which
+; is why the Engine's entries stay imported.
 
-; ExtTextOut is **not** one of the thunked ones, and the reason is worth
-; keeping: `DIB_ExtTextOutExt` (ordinal 403) does not take this device as
-; its extra argument the way every other `…Ext` entry does — it takes *two*
-; more pointers, `lpDrawTextBitmap` and `lpDrawRect`. Thunking it with one
-; dword leaves the whole argument list four bytes low, and the Engine's very
-; first instruction, `lds si,[bp+0x32]`, then loads a garbage selector: a
-; fatal exception 0D the moment anything draws text, which on this adapter
-; is a message written in VGA text mode that nothing on screen shows
-; (doc 19 Section 15). The plain entry (ordinal 14) pushes the two nulls
-; itself, so forwarding to it is both correct and what the reference driver
-; does.
+; ExtTextOut is not thunked either. `DIB_ExtTextOutExt` (ordinal 403) does
+; not take this device as its extra argument like every other `...Ext`
+; entry. It takes two more pointers, `lpDrawTextBitmap` and `lpDrawRect`.
+; Thunking it with one dword leaves the argument list four bytes low, and
+; the Engine's first instruction, `lds si,[bp+0x32]`, loads a garbage
+; selector. The result is a fatal exception 0D the moment anything draws
+; text, written in VGA text mode that nothing on screen shows (doc 19 section 15).
+; The plain entry (ordinal 14) pushes the two nulls itself, so forwarding
+; to it is correct and is what the reference driver does.
 ;
 ; and the ones that are the Engine's unchanged
 DIBFWD  ExtTextOut
@@ -98,17 +95,17 @@ DIBFWD  BitmapBits
 DIBFWD  Inquire
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; The screen-switch hook (doc 19 section 29). The main VDD announces a
-; screen switch to the Windows VM with INT 2Fh AX=4001h (the screen is being
-; taken away: a DOS box is going full-screen) and AX=4002h (it is back), and
-; a 9x display driver is expected to hook the vector and act on both -
-; nothing else tells GDI to stop drawing while a DOS program owns the VGA,
-; and nothing else repaints the desktop when it comes back. The C side is
-; SwitchToBgnd / SwitchToFgnd in d3dpt9x.c; this is the interrupt handler,
-; which chains everything else to the previous owner.
+; The screen-switch hook (doc 19 section 29). The main VDD announces a screen
+; switch to the Windows VM with INT 2Fh AX=4001h (the screen is being taken
+; away because a DOS box is going full-screen) and AX=4002h (it is back).
+; A 9x display driver has to hook the vector and act on both. Nothing else
+; tells GDI to stop drawing while a DOS program owns the VGA, and nothing
+; else repaints the desktop when it comes back. The C side is SwitchToBgnd
+; / SwitchToFgnd in d3dpt9x.c. This is the interrupt handler, and it chains
+; everything else to the previous owner.
 ;
-; The saved vector lives in the *code* segment, so that the chain needs no
-; DS; code segments are read-only, so SetOldInt2Fh takes a writable alias
+; The saved vector lives in the code segment, so the chain needs no DS.
+; Code segments are read-only, so SetOldInt2Fh takes a writable alias
 ; selector of this segment from the caller (KERNEL's AllocCStoDSAlias).
 
 SCREEN_SWITCH_OUT equ 4001h

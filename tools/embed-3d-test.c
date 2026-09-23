@@ -39,7 +39,7 @@ void MGLWndRelease(void);
 int glwnd_ready(void);
 void *MesaGLSetFunc(int fenum, void *fn);
 
-/* what the guest's call to <fenum> reaches -- the backend's hook, if it
+/* what the guest's call to <fenum> reaches: the backend's hook, if it
  * installed one */
 static void *dispatch_of(int fenum)
 {
@@ -232,6 +232,6 @@ int main(int argc, char **argv)
            actives, frames, dmabufs, readies, last_slot, ok ? "OK" : "FAIL",
            dmabufs ? "zero-copy" : "readback");
     fflush(stdout);
-    /* one VM per process; cleanup is partial — exit without it */
+    /* one VM per process; cleanup is partial, so exit without it */
     _exit(ok ? 0 : 1);
 }

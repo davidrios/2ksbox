@@ -1,10 +1,10 @@
 # 2ksbox
 
-Run Windows 98, Windows XP and DOS the way the machines of the era did:
-period 3D games accelerated on your GPU, the picture on a CRT-shaded
-display instead of a blurry stretched rectangle, and a CD-ROM drive
-faithful enough to run raw dumps of the discs you own, copy protection
-included.
+Run Windows 98, Windows XP and DOS the way the machines of the era did.
+Period 3D games run accelerated on your GPU, the picture goes through a
+CRT shader instead of being a blurry stretched rectangle, and the CD-ROM
+drive is faithful enough to run raw dumps of the discs you own, copy
+protection included.
 
 Built on a patched QEMU. Runs on Linux, Windows and macOS (Apple Silicon).
 Free software, GPL-2.0.
@@ -22,11 +22,12 @@ Free software, GPL-2.0.
   Vice City, Max Payne and Need for Speed: Porsche Unleashed all run.
 - **A CRT on your monitor.** The guest's own framebuffer, at its native
   resolution and aspect (320×200 included), through a libretro slang
-  shader chain. Shader profiles are managed in the launcher with a live
+  shader chain. You manage shader profiles in the launcher with a live
   preview.
 - **Your discs.** cue/bin, CloneCD, Alcohol, ISO, and any folder on your
-  disk served as a CD. A shared disc shelf: swap discs while a machine
-  runs, from the launcher or from inside the guest. CD audio plays.
+  disk served as a CD. Every machine shares one disc shelf, and you can
+  swap discs while a machine runs, from the launcher or from inside the
+  guest. CD audio plays.
 - **Music.** A Sound Blaster 16 with a real OPL3, and an MPU-401 with
   General MIDI (a bank is included) or a Roland MT-32 (bring your own
   ROMs).
@@ -48,7 +49,7 @@ media, licences and disc dumps.
 | Host | Requirements |
 |---|---|
 | Linux | An x86-64 machine. KVM for near-native XP (optional; Windows 98 is emulated on purpose). A GPU with Vulkan 1.3 for the fast Direct3D path. Without it, Direct3D runs through Wine on the host if Wine is installed, and otherwise through WineD3D inside the guest. |
-| macOS | Apple Silicon, macOS 15 or newer. Guests are emulated (there is no x86 virtualization on these Macs) and still run comfortably faster than a period PC. The fast Direct3D path needs macOS 26; on older releases Direct3D runs through Wine if it is installed, and otherwise through WineD3D inside the guest. |
+| macOS | Apple Silicon, macOS 15 or newer. Guests are emulated (these Macs have no x86 virtualization) and still run faster than a period PC. The fast Direct3D path needs macOS 26. On older releases Direct3D runs through Wine if it is installed, and otherwise through WineD3D inside the guest. |
 | Windows | 64-bit Windows 10 or 11. WHPX (the Windows Hypervisor Platform) accelerates XP when it is enabled. Without Vulkan 1.3, Direct3D runs on Windows' own Direct3D 9. |
 
 You also need install media for the guest operating system (your own
@@ -57,18 +58,17 @@ your own discs.
 
 ## Getting 2ksbox
 
-There are no downloadable packages, so the way to get 2ksbox today is
-to build it from source. The build is one command once the tools are
-installed, and it produces the same launcher, player and guest-tools disc
-that are in the packaged releases.
+There are no downloadable packages yet, so today you build 2ksbox from
+source. The build is one command once the tools are installed, and it
+produces the same launcher, player and guest-tools disc as a packaged
+release.
 
 ## Building from source
 
 ### 1. Install the tools
 
-**Linux** (Arch is what the project is developed on; the Debian/Ubuntu
-column was checked to install on Debian 12 and 13 and on Ubuntu 24.04 and
-26.04):
+**Linux.** The project is developed on Arch. The Debian/Ubuntu column
+was checked on Debian 12 and 13 and on Ubuntu 24.04 and 26.04.
 
 | Purpose | Arch | Debian / Ubuntu |
 |---|---|---|
@@ -79,17 +79,17 @@ column was checked to install on Debian 12 and 13 and on Ubuntu 24.04 and
 | Direct3D through Wine, for a GPU without Vulkan 1.3 (optional) | `mingw-w64-gcc wine` | `g++-mingw-w64-x86-64 wine` |
 | Guest tools disc (optional) | `mingw-w64-gcc nasm xorriso` | `gcc-mingw-w64-i686 nasm xorriso` |
 
-The guest tools disc also wants **Open Watcom v2** for the Windows 98
-display driver and the DOS Glide overlay: unpack the `ow-snapshot.tar.xz`
+The guest tools disc also needs **Open Watcom v2** for the Windows 98
+display driver and the DOS Glide overlay. Unpack the `ow-snapshot.tar.xz`
 of its [latest CI release](https://github.com/open-watcom/open-watcom-v2)
-into `~/.local/opt/open-watcom` (or point `WATCOM` at it). Without it the
-disc is built anyway, minus those two, and a Windows 98 machine then has
-no display driver.
+into `~/.local/opt/open-watcom`, or point `WATCOM` at it. Without it the
+disc is built minus those two, and a Windows 98 machine then has no
+display driver.
 
-Then Rust and uv, from their own installers (uv provides the Python
-version QEMU's build wants; any system Python 3.8 to 3.13 works too if
-you set `QEMU_PYTHON` to it, but Ubuntu 26.04's system Python is 3.14,
-which QEMU's build refuses, so there uv is not optional):
+Then install Rust and uv from their own installers. uv provides the
+Python version QEMU's build wants. Any system Python 3.8 to 3.13 works
+too if you set `QEMU_PYTHON` to it. Ubuntu 26.04's system Python is
+3.14, which QEMU's build refuses, so there uv is required.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -111,7 +111,7 @@ Optional on macOS: `brew install mingw-w64 nasm xorriso` and Open Watcom
 for the Direct3D executor on macOS 26 (the recipe is in
 [docs/build-macos.md](docs/build-macos.md)).
 
-**Windows:** the Windows build is made *on a Linux machine* with podman
+**Windows.** The Windows build is made *on a Linux machine* with podman
 or docker installed, and copied over as a zip. See step 5.
 
 ### 2. Get the source
@@ -121,7 +121,7 @@ git clone --recurse-submodules --shallow-submodules https://github.com/davidrios
 cd 2ksbox
 ```
 
-Already cloned without submodules? Run
+If you cloned without submodules, run
 `git submodule update --init --depth 1`.
 
 ### 3. Build
@@ -133,16 +133,16 @@ scripts/build.sh
 That builds everything this machine has the tools for, in order: QEMU,
 the Rust programs, the launcher, the Direct3D executor, the Glide wrapper
 and the guest-tools disc. The first build takes about fifteen minutes and
-several gigabytes; later ones redo only what changed. The summary at the
+several gigabytes. Later ones redo only what changed. The summary at the
 end lists every stage as built or skipped and, for a skipped one, which
 tool was missing. A skipped optional stage means a missing feature (no
-Direct3D executor, no guest tools disc), not a broken build; install the
+Direct3D executor, no guest tools disc), not a broken build. Install the
 tool and run the command again.
 
-Two things to check in the summary:
+Check two lines in the summary:
 
 - `qt` must be built, or there is no launcher.
-- `guest` should be built: without the guest-tools disc there are no
+- `guest` should be built. Without the guest-tools disc there are no
   guest drivers, and a machine has plain VGA and no 3D.
 
 After every `git pull`, run `scripts/build.sh` again.
@@ -153,7 +153,7 @@ After every `git pull`, run `scripts/build.sh` again.
 launcher-qt/target/release/launcher-qt
 ```
 
-Nothing has to be installed: the launcher finds the player, QEMU, the
+Nothing has to be installed. The launcher finds the player, QEMU, the
 firmware and the guest-tools disc in the checkout it was built from.
 Machines, discs and profiles go under your user data directory
 (`~/.local/share/2ksbox` on Linux, `~/Library/Application Support/2ksbox`
@@ -170,21 +170,21 @@ scripts/build-windows.sh
 scripts/package-windows.sh
 ```
 
-The result is `build/win/package/2ksbox-<version>-windows-x86_64.zip`:
-unzip it anywhere on the Windows machine and run `2ksbox.exe`. The
+The result is `build/win/package/2ksbox-<version>-windows-x86_64.zip`.
+Unzip it anywhere on the Windows machine and run `2ksbox.exe`. The
 details, and a native build in MSYS2 for debugging, are in
 [docs/build-windows.md](docs/build-windows.md).
 
 ## First run
 
-1. **Shader presets.** The launcher offers to download the libretro
-   shader collection the first time it starts with none. Say yes: the
-   CRT look is the point, and the starter profiles are made from it. (A
-   source checkout already has the collection, so it will not ask.)
+1. **Shader presets.** The first time the launcher starts with no
+   shader collection, it offers to download libretro's. Say yes. The
+   CRT look is the point, and the starter profiles are made from it. A
+   source checkout already has the collection, so it will not ask.
 2. **Create a machine.** *New machine* walks through family (Windows 98,
    Windows XP, DOS, Other), name, memory, processor, acceleration,
    networking, pointer, disk size and install media. The defaults are
-   what the family wants; you can change everything later from the
+   what the family wants, and you can change everything later from the
    machine's settings.
 3. **Install the operating system.** Point the install media at your
    Windows CD image and start the machine. Windows installs as it would
@@ -193,22 +193,22 @@ details, and a native build in MSYS2 for debugging, are in
    guest-tools ISO*, and put it in the machine's CD drive. Inside the
    guest, run `SETUP.EXE` from that drive (`D:\SETUP.EXE /ALL` from the
    Run box installs everything this Windows can use), then restart. This
-   brings the display driver, the Glide wrapper, the OpenGL pass-through
-   and the disc-shelf program into the machine. `SETUP /LIST` shows what
-   is on the disc; the disc's `README.TXT` explains every folder.
-5. **Take a snapshot.** *Snapshots…* on the machine: "fresh install" is
+   installs the display driver, the Glide wrapper, the OpenGL
+   pass-through and the disc-shelf program. `SETUP /LIST` shows what is
+   on the disc, and the disc's `README.TXT` explains every folder.
+5. **Take a snapshot.** *Snapshots…* on the machine. "Fresh install" is
    the one you will keep coming back to, especially on Windows 98.
 
 ## Playing games
 
 - **Install from your dumps.** Add the disc image (or a folder) to the
-  disc shelf, put it in the drive, install in the guest. Multi-disc
-  installs swap discs from the launcher, or from inside the guest with
+  disc shelf, put it in the drive, install in the guest. For multi-disc
+  installs, swap discs from the launcher or from inside the guest with
   `CDSHELF.EXE` (a DOS box has `CDSHELF.COM`), which the guest tools
   install.
 - **DirectX 1 up to 8 games** run through the display driver once it is
-  installed; there is nothing to copy per game. On Windows 98, install
-  DirectX 7 or later in the guest first (9.0c is the one to use): the
+  installed. There is nothing to copy per game. On Windows 98, install
+  DirectX 7 or later in the guest first (9.0c is the one to use). The
   DirectX 6.1 that comes with 98 SE gets the desktop and DirectDraw but
   no Direct3D.
 - **DirectX 9 games** want our `D3D9.DLL` next to the game's EXE:
@@ -225,12 +225,12 @@ details, and a native build in MSYS2 for debugging, are in
 - **OpenGL games** (Quake II and friends) get `OPENGL32.DLL` next to the
   game's EXE: `SETUP /GAME 3 <game folder>`, or copy the disc's
   `OPENGL\` folder.
-- **Speed.** On an M1 Mac or Ryzen 5700X the emulated machine is roughly
-  equivalent to a 1.7 GHz Pentium 4 (circa 2001). The graphics were
-  tested on the M1 and on an RX 9060 XT with the Ryzen, both running era
-  games at comfortable frame rates. The launcher's *Emulation
-  optimizations* switches ship at the settings that measured best and
-  exist for troubleshooting, not tuning.
+- **Speed.** On an M1 Mac or a Ryzen 5700X the emulated machine is
+  roughly a 1.7 GHz Pentium 4 (circa 2001). The graphics were tested on
+  the M1 and on an RX 9060 XT with the Ryzen, and both ran era games at
+  comfortable frame rates. The launcher's *Emulation optimizations*
+  switches ship at the settings that measured best. They are there for
+  troubleshooting, not tuning.
 - **Too fast, too slow, or wrong colours** usually means the game wants
   something the machine's settings offer: a slower processor on a DOS
   machine, a different display adapter, a sound card the game knows. The
@@ -249,8 +249,8 @@ Keys in the player window:
 | Ctrl+Alt+S | save the guest's own frame as a PNG |
 | Alt+F4 | asks before stopping the machine; the window's close button does not |
 
-Windows machines use a "seamless" mouse by default (the host pointer is
-the guest's cursor and the window never grabs); turn it off in the
+Windows machines use a "seamless" mouse by default: the host pointer is
+the guest's cursor and the window never grabs. Turn it off in the
 machine's settings for games that want a real PS/2 mouse.
 
 - **Shader profiles…** names a preset plus your parameter overrides, with
@@ -261,54 +261,52 @@ machine's settings for games that want a real PS/2 mouse.
   guest as a USB controller (Windows 98 SE, Me and XP see it with no
   driver) or a DOS gamepad.
 - **Music.** A machine's settings choose its sound card and its MIDI
-  port: General MIDI plays through the included bank or one of your own;
-  the MT-32 needs your own ROMs, which you point the launcher at.
+  port. General MIDI plays through the included bank or one of your own.
+  The MT-32 needs your own ROMs, which you point the launcher at.
 
 ## When something goes wrong
 
 - **"Something is missing."** `2ksbox --paths` (`launcher-qt --paths` in
   a checkout) prints where this build looks for each companion program
-  and file. `2ksbox --diagnose` prints
-  the same plus what it found of this host's 3D, and writes it to
-  `launcher.log` beside the machine library. That log is what to attach
-  to a bug report. On Windows, `2ksbox-debug.bat` in the package does
-  both from a console window.
+  and file. `2ksbox --diagnose` prints the same plus what it found of
+  this host's 3D, and writes it to `launcher.log` beside the machine
+  library. Attach that log to a bug report. On Windows,
+  `2ksbox-debug.bat` in the package does both from a console window.
 - **The Direct3D note in the machine's settings.** It says what this
   host gives the guest's Direct3D. Without Vulkan 1.3 it is Wine on the
-  host (slower, and it names the Wine package to install if there is
-  none) or, failing that, WineD3D inside the guest (see Playing games).
-  None of these is an error. Keep the 2ksbox adapter anyway: only its
-  Direct3D needs the host, and everything else it does still works,
-  which the Cirrus cannot match. "In software (slow)" means a software
-  Vulkan driver was found; a game may be faster the other way, so try
-  both.
+  host (slower, and the note names the Wine package to install if there
+  is none) or, failing that, WineD3D inside the guest (see Playing
+  games). None of these is an error. Keep the 2ksbox adapter anyway.
+  Only its Direct3D needs the host, and everything else it does still
+  works, which the Cirrus cannot match. "In software (slow)" means a
+  software Vulkan driver was found. A game may be faster the other way,
+  so try both.
 - **The guest shows a black desktop or stops after a display-adapter
   change.** Windows wants a driver for the new adapter. If the guest
   tools were installed before the change, Windows finds it on the next
-  boot; otherwise switch back, run `SETUP /ALL` in the guest, and switch
+  boot. Otherwise switch back, run `SETUP /ALL` in the guest, and switch
   again.
 
 ## Documentation
 
-- [docs/06-guest-machines.md](docs/06-guest-machines.md) — what each
+- [docs/06-guest-machines.md](docs/06-guest-machines.md): what each
   machine family is, its defaults, and what to expect from it.
-- [docs/07-frontend.md](docs/07-frontend.md) — the launcher and the
-  player in detail: the library, the wizard, snapshots, the disc shelf.
-- [docs/development.md](docs/development.md) — the developer guide: the
-  architecture and design documents, the build stage by stage, every
-  player option and environment variable, the launcher's front ends,
-  packaging and diagnostics.
+- [docs/07-frontend.md](docs/07-frontend.md): the launcher and the
+  player in detail (the library, the wizard, snapshots, the disc shelf).
+- [docs/development.md](docs/development.md): the developer guide, with
+  the design documents, the build stage by stage, every player option
+  and environment variable, packaging and diagnostics.
 - [docs/build-macos.md](docs/build-macos.md) and
-  [docs/build-windows.md](docs/build-windows.md) — the platform
+  [docs/build-windows.md](docs/build-windows.md): the platform
   specifics.
 
 ## License
 
-GPL-2.0. The player links QEMU in-process and is GPL-2.0-only; the
+GPL-2.0. The player links QEMU in-process and is GPL-2.0-only. The
 launcher is GPL-2.0-or-later. The licence text is in [COPYING](COPYING)
 and every third-party component is listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 If you package or redistribute the player, read the licensing section of
-[docs/development.md](docs/development.md) first: its dependency tree
+[docs/development.md](docs/development.md) first. Its dependency tree
 contains Apache-2.0 crates that GPLv2 cannot formally combine with.

@@ -4,26 +4,26 @@
 //!
 //! **No new protocol and no player change.** The launcher adds
 //! `-qmp unix:<path>,server,nowait` to the arguments it spawns the
-//! player with and talks QMP to that socket itself — exactly what
-//! `tools/qmpc.py` already does to drive a guest. QEMU allows several
-//! monitors, so the player's own in-process one (`player/src/qmp.rs`, on
-//! a socketpair with no filesystem path at all) is untouched and neither
-//! binary grows an IPC surface of its own. A hand-written bundle run
-//! straight through `player` simply has no launcher socket, which is the
-//! documented "the launcher is optional" path (doc 07).
+//! player with and talks QMP to that socket itself, as `tools/qmpc.py`
+//! does to drive a guest. QEMU allows several monitors, so the player's
+//! own in-process one (`player/src/qmp.rs`, on a socketpair with no
+//! filesystem path) is untouched and neither binary needs IPC of its
+//! own. A hand-written bundle run straight through `player` has no
+//! launcher socket, which is the documented "the launcher is optional"
+//! path (doc 07).
 //!
 //! The monitor is a Unix-domain socket on **every** host, Windows
-//! included: QEMU's Windows build binds `unix:` addresses (Windows 10
+//! included. QEMU's Windows build binds `unix:` addresses (Windows 10
 //! has had AF_UNIX since 1803, and QEMU 9.2 requires newer), so the
-//! argument is the same string everywhere and only this end differs —
+//! argument is the same string everywhere and only this end differs:
 //! std has no `UnixStream` on Windows, so `imp` there makes the socket
-//! through Winsock. Not a loopback port: any local process can reach
-//! one, and a QMP monitor is complete control of the machine, where a
-//! socket file in the user's own runtime or temp directory is guarded
-//! by that directory's permissions on both kinds of host. Not a named
-//! pipe either: QEMU's `pipe` chardev on Windows waits for its one
-//! client inside machine start-up, so the player would not come up
-//! until the launcher connected, and it takes no second connection.
+//! through Winsock. Not a loopback port, because any local process can
+//! reach one and a QMP monitor is complete control of the machine; a
+//! socket file in the user's own runtime or temp directory is guarded by
+//! that directory's permissions on both kinds of host. Not a named pipe
+//! either: QEMU's `pipe` chardev on Windows waits for its one client
+//! inside machine start-up, so the player would not come up until the
+//! launcher connected, and it takes no second connection.
 
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
@@ -34,8 +34,8 @@ use std::time::Duration;
 /// (`/run/user/<uid>/2ksbox` on Linux) or the temp dir, plus a
 /// name derived from the bundle directory. Unix socket paths are capped
 /// around 108 bytes, so the name is the bundle's own directory name cut
-/// short plus a hash of its full path — short, readable, and still
-/// unique across two libraries holding a same-named bundle.
+/// short plus a hash of its full path. That stays short and readable and
+/// is unique across two libraries holding a same-named bundle.
 pub fn socket_path(bundle_dir: &Path) -> PathBuf {
     let dir = crate::paths::runtime_dir();
     // FNV-1a over the full path: not security, just collision avoidance.
@@ -64,13 +64,13 @@ pub fn shelf_path(bundle_dir: &Path) -> PathBuf {
 /// A QMP monitor is complete control of the machine, so the directory
 /// holding these sockets is owner-only. The platform runtime dir already
 /// is (`/run/user/<uid>` is 0700, macOS's per-user `$TMPDIR` likewise),
-/// but our own subdirectory under it is created here, so it says so
-/// rather than inheriting whatever the umask happens to be.
+/// but our own subdirectory under it is created here, so it sets 0700
+/// itself rather than inheriting the umask.
 pub fn qmp_args(path: &Path) -> Option<Vec<String>> {
     // `sun_path` is 108 bytes with its NUL on Linux and Windows (104 on
-    // macOS), and QEMU refuses a longer path — which would stop the
-    // machine from starting at all. A long temp directory (Windows puts
-    // the user name in it) costs live control, never the machine.
+    // macOS), and QEMU refuses a longer path, which would stop the
+    // machine from starting. A long temp directory (Windows puts the
+    // user name in it) costs live control, never the machine.
     let max = if cfg!(target_os = "macos") { 103 } else { 107 };
     if path.as_os_str().len() > max {
         eprintln!("live control off: the monitor socket path is too long for a Unix socket: {}", path.display());
@@ -90,8 +90,8 @@ pub fn qmp_args(path: &Path) -> Option<Vec<String>> {
     // QEMU refuses to start a machine whose monitor it cannot bind, and a
     // Windows PC can fail that where a Unix host never does (a build
     // before AF_UNIX, a temp directory on a filesystem that cannot hold a
-    // socket file — and wine, which has no AF_UNIX at all). Bound here
-    // first, so such a host loses live control and keeps the machine.
+    // socket file, or Wine, which has no AF_UNIX). Bound here first, so
+    // such a host loses live control and keeps the machine.
     #[cfg(windows)]
     if let Err(e) = imp::bind_probe(path) {
         eprintln!("live control off: this host cannot bind a Unix socket at {}: {e}", path.display());
@@ -100,8 +100,8 @@ pub fn qmp_args(path: &Path) -> Option<Vec<String>> {
     Some(vec!["-qmp".into(), format!("unix:{},server,nowait", path.display())])
 }
 
-/// Whether something is listening on `path` — a player that is up,
-/// whoever started it. A connection and nothing more: no greeting read.
+/// Whether something is listening on `path`, meaning a player is up,
+/// whoever started it. It connects and reads no greeting.
 pub fn listening(path: &Path) -> bool {
     imp::connect(path).is_ok()
 }
@@ -137,8 +137,9 @@ mod imp {
     pub type Stream = TcpStream;
 
     /// A stream socket in the Unix family and the address of `path`.
-    /// WSAStartup is counted, and std may not have made its own call yet —
-    /// it does so lazily, on its first std::net use — so this one is ours.
+    /// WSAStartup is reference-counted, and std calls it lazily on its
+    /// first std::net use, which may not have happened yet, so this call
+    /// is ours.
     fn unix_socket(path: &Path) -> std::io::Result<(SOCKET, SOCKADDR_UN)> {
         let bytes = path.as_os_str().as_encoded_bytes();
         let mut addr = SOCKADDR_UN { sun_family: AF_UNIX, sun_path: [0; 108] };
@@ -195,9 +196,9 @@ mod imp {
 
 /// A connected QMP session. Synchronous and single-threaded: the launcher
 /// is the only client of this socket and issues one command at a time, so
-/// replies are read inline (events in between are dropped — nothing here
-/// subscribes to any). One stream for both directions, written through
-/// the reader: a `BufReader` only buffers what it has read.
+/// replies are read inline (events in between are dropped, since nothing
+/// here subscribes to any). One stream for both directions, written
+/// through the reader: a `BufReader` only buffers what it has read.
 pub struct Control {
     stream: BufReader<imp::Stream>,
     next_id: u64,
@@ -243,7 +244,7 @@ impl Control {
     }
 
     /// Run one command and return its `return` payload, or QEMU's own error
-    /// description — which is what a window should show ("Device
+    /// description, which is what a window should show ("Device
     /// 'ide1-cd0' is not removable" says more than a code).
     pub fn execute(&mut self, cmd: &str, args: Value) -> Result<Value, String> {
         let id = self.next_id;
@@ -279,20 +280,18 @@ impl Control {
     /// `blockdev-change-medium` does open/eject/insert/close as one
     /// command, which is what a guest expects to see from a disc swap.
     ///
-    /// `force` is the tray lock, and it is not optional here. A guest
+    /// `force` overrides the tray lock, and it is required here. A guest
     /// with a volume mounted holds the medium locked (PREVENT ALLOW
-    /// MEDIUM REMOVAL — XP does it for every open handle on the disc),
-    /// and QEMU's tray only *asks* an unforced swap to wait: it sends
-    /// the guest an eject request, refuses the command and leaves the
-    /// old disc in the drive, so the new one appears whenever the guest
-    /// happens to release the lock — when the program holding it is
-    /// closed — rather than when the user clicked Insert. The user asked
-    /// for this disc; `eject_disc` below has always forced, and the two
-    /// halves of one gesture cannot disagree about it.
+    /// MEDIUM REMOVAL; XP does it for every open handle on the disc).
+    /// For an unforced swap QEMU sends the guest an eject request,
+    /// refuses the command and leaves the old disc in the drive, so the
+    /// new one appears when the guest releases the lock (when the
+    /// program holding it closes) rather than when the user clicked
+    /// Insert. `eject_disc` below forces too, so the two halves of one
+    /// gesture agree.
     pub fn insert_disc(&mut self, disc: &Path) -> Result<(), String> {
-        // No `format` argument: QEMU probes, so a `.cue`/`.ccd` still
-        // lands on the `cdimage` driver (doc 17) exactly as it does on
-        // the command line.
+        // No `format` argument: QEMU probes, so a `.cue`/`.ccd` lands on
+        // the `cdimage` driver (doc 17) as it does on the command line.
         self.execute(
             "blockdev-change-medium",
             // A folder goes in the drive the same way an image does, under
@@ -310,10 +309,10 @@ impl Control {
     }
 
     /// The block node holding `disk`, and the snapshots already in it.
-    /// Snapshot commands address *node names*, which QEMU generates for
-    /// a `-drive` (`#block123`) — so they're looked up rather than
-    /// baked into `qemu_args`, which would pin an implementation detail
-    /// of the command line into the bundle format.
+    /// Snapshot commands address node names, which QEMU generates for a
+    /// `-drive` (`#block123`). They are looked up rather than set in
+    /// `qemu_args`, which would pin an implementation detail of the
+    /// command line into the bundle format.
     ///
     /// The match is on the filename QEMU reports; if that fails (a
     /// relative path in the bundle, a symlink resolved on the way in)
@@ -323,10 +322,10 @@ impl Control {
         let nodes = self.execute("query-named-block-nodes", serde_json::Value::Null)?;
         let nodes = nodes.as_array().ok_or("query-named-block-nodes: not an array")?;
         let wanted = disk.display().to_string();
-        // A qcow2 file shows up as *two* nodes — the qcow2 format node
-        // and the `file` protocol node under it, both reporting the same
+        // A qcow2 file shows up as two nodes, the qcow2 format node and
+        // the `file` protocol node under it, both reporting the same
         // filename. Only the format node can hold a snapshot, so the
-        // driver is part of the match, not just the name.
+        // driver is part of the match.
         let is_qcow2 = |n: &&Value| n["drv"].as_str() == Some("qcow2");
         let pick = nodes
             .iter()
@@ -337,17 +336,17 @@ impl Control {
         Ok((name, crate::snapshots::parse(pick["image"].get("snapshots"))))
     }
 
-    /// Start a snapshot job. `snapshot-save`/`-load`/`-delete` are
-    /// *jobs*, not synchronous commands: they return as soon as the job
-    /// is created and finish later (saving a 512 MB guest's RAM takes a
-    /// visible moment), so the caller polls `job` below instead of the
-    /// UI thread blocking on QEMU's main loop.
+    /// Start a snapshot job. `snapshot-save`/`-load`/`-delete` are jobs,
+    /// not synchronous commands: they return as soon as the job is
+    /// created and finish later (saving a 512 MB guest's RAM takes a
+    /// visible moment), so the caller polls `job` below instead of
+    /// blocking the UI thread on QEMU's main loop.
     pub fn start_snapshot_job(&mut self, command: &str, job_id: &str, tag: &str, node: &str) -> Result<(), String> {
         let mut args = serde_json::json!({"job-id": job_id, "tag": tag, "devices": [node]});
         if command != "snapshot-delete" {
-            // The VM state goes in the same qcow2 as the disk, which is
-            // what `savevm` does and what `qemu-img snapshot -a` (the
-            // offline path) can then roll back to.
+            // The VM state goes in the same qcow2 as the disk, as with
+            // `savevm`, so `qemu-img snapshot -a` (the offline path) can
+            // roll back to it.
             args["vmstate"] = serde_json::Value::String(node.to_string());
         }
         self.execute(command, args).map(|_| ())
@@ -380,9 +379,9 @@ impl Control {
         self.execute(if run { "cont" } else { "stop" }, serde_json::Value::Null).map(|_| ())
     }
 
-    /// Whether the guest's CPUs are running — asked before a snapshot
-    /// load stops them, so a machine the user had already paused isn't
-    /// silently resumed afterwards.
+    /// Whether the guest's CPUs are running. Asked before a snapshot load
+    /// stops them, so a machine the user had already paused isn't resumed
+    /// afterwards.
     pub fn is_running(&mut self) -> Result<bool, String> {
         Ok(self.execute("query-status", serde_json::Value::Null)?["running"].as_bool().unwrap_or(false))
     }

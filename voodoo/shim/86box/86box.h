@@ -1,5 +1,5 @@
 /*
- * 86box.h -- 2ksbox's stand-in for 86Box's <86box/86box.h>, as seen by the
+ * 86box.h: 2ksbox's stand-in for 86Box's <86box/86box.h>, as seen by the
  * vendored Voodoo sources (voodoo/86box/). Only what those files use: the
  * MIN/MAX/ABS helpers, the atomics (verbatim from upstream, because the
  * FIFO and render threads' contract is written in them) and the two log
@@ -70,7 +70,7 @@
  * display timer and texture fetch index them by guest-programmed geometry
  * with no bound (front_offset + line * row_width, off videoDimensions and
  * fbiInit1 a guest can set to anything: 3dfx's Glide put 6.8 MB into a 4 MB
- * frame buffer on a reopen, 2026-09-12). The vendored files stay verbatim,
+ * frame buffer on a reopen). The vendored files stay verbatim,
  * so the shim takes over their large allocations and maps 64 MB of lazily
  * committed zero pages after each: an overrun reads zeros. Small ones
  * (texture caches, the device itself) stay libc's. */
@@ -85,9 +85,8 @@ extern void  voodoo_shim_free(void *p);
  * a write it does not model, a QEMU guest must not be able to. Every
  * caller falls off the end of a switch after it, so the write is refused
  * and the stream goes on; it is counted and the first is dumped. Not
- * noreturn -- declaring it so made the compiler drop the code after the
- * call and the return landed in the middle of the next case (SIGSEGV,
- * 2026-09-12). */
+ * noreturn. Declaring it so made the compiler drop the code after the
+ * call and the return landed in the middle of the next case (SIGSEGV). */
 extern void pclog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 extern void pclog_ex(const char *fmt, va_list ap) __attribute__((format(printf, 1, 0)));
 extern void fatal(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

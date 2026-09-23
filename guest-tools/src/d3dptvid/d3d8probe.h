@@ -1,15 +1,15 @@
 /*
- * d3d8probe.h — what the DirectX 8 feature probes of DRIVER\ share
- * (CUBETEST, VOLTEST, FMTTEST, BUMPTEST, SPRTEST, ANISTEST, PATCHTST): a
- * windowed 320x240 device on XP's own d3d8.dll, the log, the back buffer
- * read back at a pixel or along a row, and the case bookkeeping whose last
- * line the harness reads — "<name>: N cases, M failed", with "(not
- * offered: …)" after it when the driver's caps say it has no such feature
- * at all. That is what the probe of a feature not built yet prints; once
- * the driver claims the feature, the same program is its check (doc 15;
+ * d3d8probe.h: the code the DirectX 8 feature probes of DRIVER\ share
+ * (CUBETEST, VOLTEST, FMTTEST, BUMPTEST, SPRTEST, ANISTEST, PATCHTST). It
+ * opens a windowed 320x240 device on XP's own d3d8.dll and the log, reads
+ * the back buffer at a pixel or along a row, and counts cases. The harness
+ * reads the last line, "<name>: N cases, M failed", followed by "(not
+ * offered: ...)" when the driver's caps have no such feature at all. A
+ * probe for a feature not built yet prints that; once the driver claims
+ * the feature, the same program checks it (doc 15;
  * `tools/xp-driver-test.sh <image> probe <NAME>` / `probes`).
  *
- * One program per feature and one include each: everything is static.
+ * One program per feature, each including this once, so everything is static.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -78,8 +78,8 @@ static DWORD fbits(float f)
     return v;
 }
 
-/* <name>.log, the window, Direct3D, the caps and the display mode; FALSE
- * when there is no d3d8 at all */
+/* opens <name>.LOG, the window and Direct3D, and reads the caps and the
+ * display mode; FALSE when there is no d3d8 at all */
 static BOOL probe_open(const char *name)
 {
     WNDCLASSA wc;
@@ -240,7 +240,7 @@ static void verdict(const char *name, int ok)
 }
 
 /* one case: n pixels of the frame against what they must be (within 12 of
- * 255: a 16-bit desktop rounds), then Present */
+ * 255, because a 16-bit desktop rounds), then Present */
 static void check(const char *name, int n, const int *xs, const int *ys, const DWORD *want)
 {
     DWORD got[16];
@@ -288,7 +288,7 @@ static void quad_uv(float x0, float y0, float sz, float u0, float u1, float v0, 
     IDirect3DDevice8_DrawPrimitiveUP(dev, D3DPT_TRIANGLESTRIP, 2, q, sizeof q[0]);
 }
 
-/* every texel of a 32-bit 2D texture's level one colour */
+/* fills one level of a 32-bit 2D texture with one colour */
 static HRESULT fill_texture32(IDirect3DTexture8 *t, UINT level, DWORD col)
 {
     D3DSURFACE_DESC sd;
@@ -306,8 +306,8 @@ static HRESULT fill_texture32(IDirect3DTexture8 *t, UINT level, DWORD col)
     return IDirect3DTexture8_UnlockRect(t, level);
 }
 
-/* the last line and the exit code; not_offered: why the feature is absent
- * from the caps altogether (NULL when it is there) */
+/* prints the last line and returns the exit code; not_offered says why the
+ * feature is absent from the caps altogether (NULL when it is there) */
 static int probe_close(const char *not_offered)
 {
     if (dev) {

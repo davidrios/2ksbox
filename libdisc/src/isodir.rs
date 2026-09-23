@@ -357,7 +357,7 @@ impl Builder {
         // How big the disc will be, before anything is laid out or
         // allocated: the sector numbers below are 32 bits and would wrap
         // on a tree of terabytes, and a folder nobody meant to share
-        // whole — a downloads directory, a shelf of disc dumps — is
+        // whole (a downloads directory, a shelf of disc dumps) is
         // the ordinary way to arrive here.
         let data: u64 = self.nodes.iter().filter(|n| n.payload.is_some()).map(|n| sectors_for_len(n.len) as u64).sum();
         let want = meta_sectors as u64 + data + TAIL_PAD as u64;
@@ -373,7 +373,7 @@ impl Builder {
         // Files, in the primary tree's order: a directory's own files
         // land next to each other, which is the order a guest reads them.
         // An empty file owns no sectors but still needs a plausible
-        // extent — readers that meet one addressed at LBA 0, inside the
+        // extent. Readers that meet one addressed at LBA 0, inside the
         // system area, have been known to drop the entry.
         let mut files: Vec<usize> = Vec::new();
         for &d in &iso.order {

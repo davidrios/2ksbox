@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""report.py — tables out of tools/specbench/run.sh's runs.
+"""Tables out of tools/specbench/run.sh's runs.
 
     tools/specbench/report.py build/specbench/runs [--md]
 
@@ -17,8 +17,8 @@ superpi.txt), and prints the tables docs/22-tcg-evaluation.md carries:
   - nbench per kernel, 7-Zip compress / decompress, SSEBENCH per kernel
   - the CRC check: a benchmark whose stdout differs between configurations
     computed a different answer (nbench, 7-Zip and SSEBENCH print their own
-    timings, so only superpi's digits — and the SPEC-lineage programs, when
-    SPEC=1 built them — are checked)
+    timings, so only superpi's digits, and the SPEC-lineage programs when
+    SPEC=1 built them, are checked)
 """
 import os, re, sys, statistics
 

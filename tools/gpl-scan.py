@@ -5,7 +5,7 @@
         audio net block ui io util qom migration
 
 Run it after a QEMU bump: ADR-010 turns on whether *any* file compiled into
-`libqemu-embed-<target>` is v2-only (2026-09-05: 35 of them, `util/bitmap.c`
+`libqemu-embed-<target>` is v2-only (35 of them at the last scan, `util/bitmap.c`
 and `hw/audio/ac97.c` among them), because a single one pins the player to
 GPL-2.0-only and rules out the `-or-later` move ADR-009 made for the
 launcher. The scan is deliberately crude and over-reports rather than

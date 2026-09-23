@@ -4,8 +4,8 @@
 //* backend, CGL symbol lookup on macOS, wglGetProcAddress on Windows),
 //* so an extension is resolved against the context that will use it.
 //*
-//* Upstream resolves through glXGetProcAddress, which needs GLX — and the
-//* whole point of this build is a host with no X connection.
+//* Upstream resolves through glXGetProcAddress, which needs GLX, and this
+//* build exists for a host with no X connection.
 //*
 //* SPDX-License-Identifier: LGPL-2.1-or-later (matches OpenGLide)
 //**************************************************************
@@ -35,7 +35,7 @@ ExtFn OGLGetProcAddress(const char *x)
     /*
      * No host resolver (tools/glide-host-test drives us directly): ask
      * whichever of GLX / EGL the process already has, then fall back to the
-     * plain symbol — a GL 1.1 name is in libGL itself, and libglide2x links
+     * plain symbol. A GL 1.1 name is in libGL itself, and libglide2x links
      * against it. dlsym'ing the resolvers rather than linking them keeps
      * this build free of both GLX and EGL.
      */

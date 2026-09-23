@@ -1,5 +1,5 @@
 /*
- * read-error-inject.c — an LD_PRELOAD that fails pread64() with EIO on one
+ * An LD_PRELOAD that fails pread64() with EIO on one
  * file, over one range of bytes: a network share's bad moment, on demand.
  *
  *   READ_ERROR_MATCH=<substring of the file's path>

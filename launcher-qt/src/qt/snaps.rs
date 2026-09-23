@@ -1,18 +1,9 @@
 //! Snapshots (doc 07), as a QML model over
 //! `launcher_core::snaps::Snapshots`.
 //!
-//! Every rule that matters is in the model and shared with the egui
-//! build: a running machine is driven through its monitor because
-//! `qemu-img` writing to an image QEMU has open corrupts it, a stopped
-//! one through `qemu-img`, starting or stopping re-reads the list from
-//! the other source, live save/load/delete are *jobs* that have to be
-//! polled, a load runs on a stopped VM and only resumes if the guest was
-//! actually running, and a re-read never clears an error.
-//!
-//! The poll timer is the one thing Qt does better here: egui polls at
-//! most twice a second from inside `show`, which only runs because the
-//! window is repainting anyway. A QML `Timer` says the interval out loud
-//! and stops when there is no job.
+//! Every rule that matters is in the model (`launcher_core::snaps` lists
+//! them). This file adds the rows as a list model and the QML `Timer`
+//! that polls a live job and stops when there is none.
 
 #[cxx_qt::bridge]
 pub mod ffi {
@@ -195,8 +186,8 @@ impl ffi::SnapshotModel {
         unsafe { self.as_mut().end_reset_model() };
     }
 
-    /// The model, onto the properties — every one through its own
-    /// setter (see the header of `main.rs`).
+    /// The model, onto the properties, each through its own setter (see
+    /// the header of `main.rs`).
     fn publish(mut self: Pin<&mut Self>) {
         let (count, open, title, running, busy, status, error);
         {

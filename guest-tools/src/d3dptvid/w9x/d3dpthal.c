@@ -1,30 +1,29 @@
 /*
- * d3dpthal.c — the ring-3 DirectDraw/Direct3D HAL for Windows 98/Me
+ * d3dpthal.c: the ring-3 DirectDraw/Direct3D HAL for Windows 98/Me
  * (doc 19 §1, §2, §8; M10 step 3). Built as `d3dpt9hl.dll`.
  *
- * This is the third of the driver's three 9x binaries, and the only one
- * that is an ordinary user-mode Win32 DLL: DirectDraw loads it into
- * *the game's own process*, because on 9x the HAL runs in ring 3 rather
- * than behind a kernel-mode dxg the way it does on NT. It is therefore
- * also the only one that links our OS-independent core (doc 19 §19) —
- * the 16-bit `.drv` and the ring-0 `.vxd` never see it.
+ * The third of the driver's three 9x binaries, and the only ordinary
+ * user-mode Win32 DLL. DirectDraw loads it into the game's own process,
+ * because on 9x the HAL runs in ring 3 rather than behind NT's kernel-mode
+ * dxg. So it is also the only one that links our OS-independent core
+ * (doc 19 §19). The 16-bit `.drv` and the ring-0 `.vxd` never see it.
  *
- * How it is reached: the `.drv` answers the `DCICOMMAND` escape
- * `DDGET32BITDRIVERNAME` with this DLL's name, the entry point
- * `DriverInit`, and a context value that is the linear address of the
- * `d3dpt_hal9` block the two halves share (`d3dpt9dd.c`). `DriverInit`
- * fills that block's `cb32` table; the `.drv` copies the entries into
- * the tables DirectDraw wants and calls `lpSetInfo`.
+ * The `.drv` answers the `DCICOMMAND` escape `DDGET32BITDRIVERNAME` with
+ * this DLL's name, the entry point `DriverInit`, and a context value that
+ * is the linear address of the `d3dpt_hal9` block the two halves share
+ * (`d3dpt9dd.c`). `DriverInit` fills that block's `cb32` table, and the
+ * `.drv` copies the entries into the tables DirectDraw wants and calls
+ * `lpSetInfo`.
  *
- * The adapter is reached with no ioctl and no ring transition: the
+ * The adapter is reached with no ioctl and no ring transition. The
  * mini-VDD committed the register page and VRAM `PC_USER` in the shared
  * arena above 2 GiB, which 9x maps into every process, so the linear
- * addresses in the block are ordinary pointers here. That is what lets
- * this write the DOORBELL register directly, exactly as the XP driver
- * does from kernel mode (doc 19 §8, the first of the two options).
+ * addresses in the block are ordinary pointers here. This DLL writes the
+ * DOORBELL register directly, as the XP driver does from kernel mode
+ * (doc 19 §8, the first of the two options).
  *
- * Freestanding, no CRT — like the XP driver and like `vmhal9x`, so that
- * nothing drags a runtime into a DLL that is loaded into every game.
+ * Freestanding with no CRT, like the XP driver and `vmhal9x`, so no runtime
+ * gets loaded into every game.
  *
  * Build: guest-tools/build-driver9x.sh (mingw-w64, i686).
  *
@@ -47,20 +46,20 @@ static HINSTANCE dll_instance;          /* ours, from DllMain */
 static volatile ULONG *regs;            /* the adapter's register page */
 static d3dpt_core core;
 
-/* memcpy / memset: ../kcrt.c, the same string-instruction pair the NT
- * drivers link — every batch is copied through it (build-driver9x.sh) */
+/* memcpy / memset come from ../kcrt.c, the same string-instruction pair the
+ * NT drivers link. Every batch is copied through it (build-driver9x.sh). */
 
 /* ------------------------------------------------------------ OS hooks for core */
 
-/* **The core's memory has to be as shared as the core.** Every section of
- * this DLL is shared (build-driver9x.sh marks them, doc 19 §23), so the
- * core's globals — the surface table above all — are one copy for the whole
- * machine, reached from DDHELP and from every game. A process heap lives in
- * the private arena: the table one game grew stayed named by the shared
- * pointer after that game exited, and the next Direct3D process read, wrote
- * and finally freed a block in its own address space that its own heap
- * never gave out. HEAP_SHARED (9x kernel32 only, not in the SDK headers)
- * puts the heap in the shared arena, at one address in every process. */
+/* The core's memory has to be as shared as the core. Every section of this
+ * DLL is shared (build-driver9x.sh marks them, doc 19 §23), so the core's
+ * globals, the surface table above all, are one copy for the whole machine,
+ * reached from DDHELP and from every game. A process heap lives in the
+ * private arena. A table one game grew stayed named by the shared pointer
+ * after that game exited, and the next Direct3D process read, wrote and
+ * freed a block its own heap never gave out. HEAP_SHARED (9x kernel32 only,
+ * not in the SDK headers) puts the heap in the shared arena, at one address
+ * in every process. */
 #define HEAP_SHARED_ 0x04000000ul
 
 static HANDLE core_heap;
@@ -72,7 +71,7 @@ void *d3dpt_os_alloc(ULONG bytes)
     if (!core_heap) {
         core_heap = HeapCreate(HEAP_SHARED_, 0x10000, 0);
         dbg_hex(&core, "d3dpthal: shared heap ", (ULONG)(ULONG_PTR)core_heap);
-        dbg_puts(&core, core_heap ? "\n" : " — none, falling back to the process heap\n");
+        dbg_puts(&core, core_heap ? "\n" : ": none, falling back to the process heap\n");
         if (!core_heap) {
             core_heap = GetProcessHeap();
         }
@@ -83,7 +82,7 @@ void *d3dpt_os_alloc(ULONG bytes)
         if (!said) {
             said = 1;
             dbg_hex(&core, "d3dpthal: core block in the private arena at ", (ULONG)(ULONG_PTR)p);
-            dbg_puts(&core, " — another process cannot see it\n");
+            dbg_puts(&core, ": another process cannot see it\n");
         }
     }
     return p;
@@ -106,14 +105,11 @@ void d3dpt_os_ticks(LONGLONG *now, LONGLONG *freq)
 
 /*
  * DirectDraw hands the 9x HAL a DDRAWI_DDRAWSURFACE_LCL, the same object the
- * NT layer casts directly. This used to sniff the pointer first, because a
- * DirectX 6 runtime passes an interface (DDRAWI_DDRAWSURFACE_INT) in
- * D3DHAL_CONTEXTCREATEDATA / D3DHAL_SETRENDERTARGETDATA instead. That branch
- * was never taken once the guest ran DirectX 9 — checked with a log in it
- * across a full ebtest (the DirectX 3 path, which is where an interface
- * pointer would have shown up) and a d3d7test — and a 2ksbox Win98 machine
- * runs the last DirectX by decision, so the guess is gone rather than kept
- * unexercised.
+ * NT layer casts directly. A DirectX 6 runtime passes an interface
+ * (DDRAWI_DDRAWSURFACE_INT) in D3DHAL_CONTEXTCREATEDATA /
+ * D3DHAL_SETRENDERTARGETDATA instead, but a 2ksbox Win98 machine runs
+ * DirectX 9, and a logged check across a full ebtest (the DirectX 3 path)
+ * and a d3d7test never saw one. So there is no pointer sniffing.
  */
 static inline LPDDRAWI_DDRAWSURFACE_LCL surf_lcl(void *p)
 {
@@ -131,12 +127,11 @@ static inline ULONG surf_handle(void *p)
     return s->lpSurfMore->dwSurfaceHandle;
 }
 
-/* The handle a surface already has, or 0 — for the two destroy callbacks,
+/* The handle a surface already has, or 0. For the two destroy callbacks,
  * which must not make one up. surf_handle's invented handles count up from
- * 101 in the range the runtime numbers its own surfaces in, so one invented
- * for a surface nobody had registered — only to be released on the host
- * straight away — could name a live texture of the game's, and the host
- * dropped it. */
+ * 101, in the range the runtime numbers its own surfaces in. One invented
+ * for an unregistered surface and then released on the host could name a
+ * live texture of the game's, and the host dropped it. */
 static inline ULONG surf_handle_known(void *p)
 {
     LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl(p);
@@ -404,9 +399,9 @@ static DWORD __stdcall CreateSurface32(d3dpt_ddhal_createsurface *d)
 
 /* ----------------------------------------------- command window serialisation */
 
-/* Re-entrant per **thread**: keyed on the process, two threads of one game
- * both passed as the owner and raced the depth count. The owning process is
- * kept too (in the DLL's data, which is shared like the block), for
+/* Re-entrant per thread. Keyed on the process, two threads of one game both
+ * passed as the owner and raced the depth count. The owning process is kept
+ * too (in the DLL's data, which is shared like the block) for
  * cmd_lock_break below. */
 static DWORD cmd_lock_pid;
 
@@ -439,11 +434,11 @@ static void cmd_lock_release(void)
     }
 }
 
-/* A game that died inside a callback died holding the lock — dp2_run reads
+/* A game that died inside a callback died holding the lock. dp2_run reads
  * the application's own command and vertex pointers, so a bad one faults in
- * the game's process with the lock taken — and the runtime then calls
+ * the game's process with the lock taken, and the runtime then calls
  * ContextDestroyAll for that process. Waiting for the lock there would hang
- * the caller, and every Direct3D process of the session after it. */
+ * the caller and every later Direct3D process of the session. */
 static void cmd_lock_break(DWORD pid)
 {
     if (hal && hal->cmd_lock && pid && cmd_lock_pid == pid && hal->cmd_lock_owner != GetCurrentThreadId()) {
@@ -589,12 +584,12 @@ static DWORD __stdcall GetBltStatus32(d3dpt_ddhal_getbltstatus *d)
     return DDHAL_DRIVER_HANDLED;
 }
 
-/* A Z buffer written behind the host's back (doc 19 §34): by the title
- * itself through a Lock, or by the runtime's own depth fill, which also
- * goes through a Lock. The core looks at it on the Unlock (d3d_z_written);
- * this layer only keeps which Z buffer is locked for writing. A read-only
- * lock is left alone: a title reading its depth, for the sun's occlusion
- * say, must not wipe the frame's. */
+/* A Z buffer written behind the host's back (doc 19 §34), by the title
+ * through a Lock or by the runtime's own depth fill, which also goes through
+ * a Lock. The core handles it on the Unlock (d3d_z_written). This layer only
+ * tracks which Z buffer is locked for writing. A read-only lock is left
+ * alone, so a title reading its depth (for the sun's occlusion, say) does
+ * not wipe the frame's. */
 static ULONG zlocks, zlocks_said;
 static LPDDRAWI_DDRAWSURFACE_LCL zlock_surf;
 
@@ -675,12 +670,11 @@ static DWORD __stdcall Unlock32(d3dpt_ddhal_unlock *d)
     return DDHAL_DRIVER_NOTHANDLED;
 }
 
-/* Declined, always — this driver has no blitter and DirectDraw's own is
- * what draws. It logs, because "which blits does the runtime hand us, and
- * with what" is not answerable any other way and is the question behind a
- * 2D title that comes out wrong. First 64 only. (A depth fill never comes
- * here: without DDCAPS_BLT the runtime does it itself, through a Lock, and
- * Unlock32 is where it is seen — doc 19 §34.) */
+/* Always declined. This driver has no blitter, and DirectDraw's own draws.
+ * It logs the first 64, because nothing else shows which blits the runtime
+ * hands us, and that is the question behind a 2D title that comes out
+ * wrong. A depth fill never comes here. Without DDCAPS_BLT the runtime does
+ * it itself through a Lock, and Unlock32 sees it (doc 19 §34). */
 static ULONG blts_said;
 
 static DWORD __stdcall Blt32(d3dpt_ddhal_blt *d)
@@ -718,12 +712,11 @@ static DWORD __stdcall SetColorKey32(d3dpt_ddhal_setcolorkey *d)
     LPDDRAWI_DDRAWSURFACE_LCL s = surf_lcl((void *)d->lpDDSurface);
     BOOL ours;
 
-    /* **Only a texture's key is ours.** This layer sets a colour key on the
-     * host's copy of a *texture*, for the Direct3D path; it has no blitter,
-     * so a key on any other surface is one DirectDraw's own blitter has to
-     * apply. Saying DDHAL_DRIVER_HANDLED for those told the runtime the
-     * hardware had taken the key when nothing had, and the key was then
-     * applied by nobody. */
+    /* Only a texture's key is ours. This layer sets a colour key on the
+     * host's copy of a texture, for the Direct3D path. It has no blitter, so
+     * DirectDraw's own blitter has to apply a key on any other surface.
+     * Answering DDHAL_DRIVER_HANDLED for those told the runtime the hardware
+     * had taken the key, and then nobody applied it. */
     ours = core.d3d && s && (d->dwFlags & DDCKEY_SRCBLT) &&
            !(s->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY) &&
            (s->ddsCaps.dwCaps & DDSCAPS_TEXTURE);
@@ -890,10 +883,10 @@ static DWORD __stdcall ValidateTextureStageState32(D3DHAL_VALIDATETEXTURESTAGEST
 }
 
 /* The DirectX 5 texture handles TextureCreate32 hands out, and the surface
- * each stands for, for TextureGetSurf32. The layer keeps these pointers
- * itself rather than the core's table (which keeps none, doc 19 §36): the
- * runtime holds a texture handle only while its texture lives, and gives it
- * back in TextureDestroy32. Under the command-window lock. */
+ * each stands for, for TextureGetSurf32. This layer keeps the pointers
+ * itself because the core's table keeps none (doc 19 §36). The runtime
+ * holds a texture handle only while its texture lives and gives it back in
+ * TextureDestroy32. Accessed under the command-window lock. */
 #define TEX_HANDLES 1024
 static struct {
     ULONG handle;
@@ -1215,9 +1208,9 @@ static DWORD __stdcall GetDriverInfo32(DDHAL_GETDRIVERINFODATA *d)
         D3DHAL_CALLBACKS2 cb;
         memset(&cb, 0, sizeof(cb));
         cb.dwSize = sizeof(cb);
-        /* SetRenderTarget only: Clear belongs to CALLBACKS3 as Clear2, and the
-         * CALLBACKS2 Clear was never entered on a DirectX 7+ runtime (the NT
-         * layer has never published it either). */
+        /* SetRenderTarget only. Clear belongs to CALLBACKS3 as Clear2, and a
+         * DirectX 7+ runtime never enters the CALLBACKS2 Clear (the NT layer
+         * does not publish it either). */
         cb.dwFlags = D3DHAL2_CB32_SETRENDERTARGET;
         cb.SetRenderTarget = SetRenderTarget32;
         info_copy(d, &cb, sizeof(cb));
@@ -1229,12 +1222,12 @@ static DWORD __stdcall GetDriverInfo32(DDHAL_GETDRIVERINFODATA *d)
         info_copy(d, &d3d_zformats, sizeof(d3d_zformats));
     } else if (core.d3d && !(ddflags(&core) & DDF_NO_CUBE) && guid_eq(&d->guidInfo, &guid_moresurfacecaps)) {
         /* DDMORESURFACECAPS: dwSize, ddsCapsMore (dwCaps2..4), then one
-         * pair of DDSCAPSEX heap restrictions per heap (ours: one, none).
-         * 9x DirectDraw puts a cube map in video memory only if dwCaps2
-         * claims DDSCAPS2_CUBEMAP: without it every cube stayed a
+         * pair of DDSCAPSEX heap restrictions per heap (ours: one heap, no
+         * restrictions). 9x DirectDraw puts a cube map in video memory only
+         * if dwCaps2 claims DDSCAPS2_CUBEMAP. Without it every cube stayed a
          * system-memory copy, the runtime bound texture handle 0, and
          * 3DMark2001 SE's Pixel Shader ocean (a texm3x3vspec into a cube)
-         * drew black (doc 19 §39). NT's dxg never asked for this */
+         * drew black (doc 19 §39). NT's dxg never asks for this. */
         ULONG more[10];
         memset(more, 0, sizeof(more));
         more[0] = d->dwExpectedSize <= sizeof(more) ? d->dwExpectedSize : sizeof(more);
@@ -1278,7 +1271,7 @@ DWORD __stdcall DriverInit(LPVOID ptr)
     if (h->version != D3DPT_HAL9_VERSION) {
         dbg_hex(&core, "d3dpthal: shared block version ", h->version);
         dbg_hex(&core, " but this DLL speaks ", D3DPT_HAL9_VERSION);
-        dbg_puts(&core, " — install both halves from the same guest-tools ISO\n");
+        dbg_puts(&core, ": install both halves from the same guest-tools ISO\n");
         regs = 0;
         return 0;
     }
@@ -1293,13 +1286,12 @@ DWORD __stdcall DriverInit(LPVOID ptr)
     core.h = h->height;
     core.bpp = h->bpp;
     core.pitch = h->pitch;
-    /* The adapter says where its command window is; deriving it from the
-     * VRAM size is how the two layers drift. This layer did derive it, and
-     * subtracted the cursor as well, so it encoded batches 16 KiB below the
-     * window the device reads — every call then succeeds against an
-     * untouched header and every frame comes back black (ebtest 5/5 failed,
-     * with no `ddi:` line on the host at all). The NT layer has always read
-     * the register; do the same. */
+    /* The adapter says where its command window is, as the NT layer reads
+     * it. Deriving it from the VRAM size makes the layers drift (doc 19
+     * §25). A derived offset that also subtracted the cursor encoded
+     * batches 16 KiB below the window the device reads. Every call then
+     * succeeded against an untouched header and every frame came back black
+     * (ebtest 5/5 failed, with no `ddi:` line on the host). */
     core.cmd_offset = (regs[D3DPT_FB_REG_CAPS / 4] & D3DPT_FB_CAP_D3D) ?
                       regs[D3DPT_FB_REG_CMD_OFFSET / 4] : 0;
     d3d_init(&core);
@@ -1314,7 +1306,7 @@ DWORD __stdcall DriverInit(LPVOID ptr)
     if ((ULONG)(ULONG_PTR)dll_instance < 0x80000000ul) {
         dbg_hex(&core, "d3dpthal: relocated out of the shared arena, to ",
                 (ULONG)(ULONG_PTR)dll_instance);
-        dbg_puts(&core, " — the callbacks would be bad pointers in every game\n");
+        dbg_puts(&core, ": the callbacks would be bad pointers in every game\n");
     }
     h->dll_hinstance = (unsigned long)(ULONG_PTR)dll_instance;
     h->cb32.WaitForVerticalBlank = (unsigned long)(ULONG_PTR)WaitForVerticalBlank32;
@@ -1332,18 +1324,16 @@ DWORD __stdcall DriverInit(LPVOID ptr)
     h->cb32.SetColorKeySurface   = (unsigned long)(ULONG_PTR)SetColorKey32;
     h->cb32.GetDriverInfo        = (unsigned long)(ULONG_PTR)GetDriverInfo32;
 
-    /* **Direct3D is published only when there is one.** `d3d_init` refuses
-     * on a host with no executor (`no-exec=on`, ADR-013's row: the machine
-     * runs WineD3D in the guest instead), and then every D3D callback in
-     * this file returns a refusal and `d3d_global` is the zero it was
-     * built as — nothing filled it, `d3d_caps_init` runs inside `d3d_init`.
-     * Publishing the pair anyway is what the .drv reads to claim
+    /* Direct3D is published only when there is one (doc 19 §40). `d3d_init`
+     * refuses on a host with no executor (`no-exec=on`, where the machine
+     * falls back to WineD3D in the guest). Every D3D callback in this file
+     * then refuses, and `d3d_global` stays zero because `d3d_caps_init` runs
+     * inside `d3d_init`. The .drv reads the published pair to claim
      * DDCAPS_3D, DDSCAPS_3DDEVICE|TEXTURE|ZBUFFER|MIPMAP and the DXT
-     * FourCCs, so with `no-exec=on` DirectDraw was offered a 3D device
-     * backed by a D3DHAL_GLOBALDRIVERDATA of zeros, and a DirectX 3 title
-     * enumerated and created surfaces against it (2026-09-18, doc 19 §40 —
-     * where this is also *not* the crash that was being chased). The NT
-     * driver has always gated all of this on `core.d3d`; do the same. */
+     * FourCCs, so publishing it anyway offered DirectDraw a 3D device backed
+     * by a D3DHAL_GLOBALDRIVERDATA of zeros, and a DirectX 3 title
+     * enumerated and created surfaces against it. The NT driver gates all of
+     * this on `core.d3d` too. */
     if (core.d3d) {
         h->cb32.CanCreateExecuteBuffer = (unsigned long)(ULONG_PTR)CanCreateExecuteBuffer32;
         h->cb32.CreateExecuteBuffer    = (unsigned long)(ULONG_PTR)CreateExecuteBuffer32;
@@ -1370,7 +1360,7 @@ DWORD __stdcall DriverInit(LPVOID ptr)
         h->cb32.UnlockExecuteBuffer    = 0;
         h->d3dhal_global = 0;
         h->d3dhal_callbacks = 0;
-        dbg_puts(&core, "d3dpthal: no Direct3D on this host — DirectDraw only\n");
+        dbg_puts(&core, "d3dpthal: no Direct3D on this host, DirectDraw only\n");
     }
 
     h->dll_ready = 1;

@@ -2,12 +2,12 @@
 
 The design of patch `21-pinned-regs`, which keeps the eight 32-bit GPRs
 and `eip` in aarch64 callee-saved registers for the life of a chain of
-TBs. **It is parked**: off by default, and since 2026-09-16 not offered
-in the machine form (user decision: too unstable for too little gain) —
-a bundle that still says it is on never reaches the command line. The
+TBs. **It is parked.** It is off by default and the machine form does
+not offer it (user decision: too unstable for too little gain), so a
+bundle that still says it is on never reaches the command line. The
 property stays in the queue. The profiles, results and the open crash
-are the M9 track's (`docs/tracks/m9-tcg-aarch64.md`, "Open"); doc 22 §3.6
-and §8.1 have its measured place in the queue.
+are in the M9 track (`docs/tracks/m9-tcg-aarch64.md`, "Open"); doc 22
+§3.6 and §8.1 place it among the other patches.
 
 ## Why
 
@@ -38,10 +38,10 @@ Where the value crosses the boundary between generated code and C:
 |---|---|
 | prologue (`tcg_qemu_tb_exec` entry) | after `x19 = env`: `ldr` every pinned global from its `env` slot |
 | epilogue (`tb_ret_addr`, reached by `exit_tb` and by `goto_ptr` to the epilogue) | `str` every pinned global to `env`, before the callee-saved registers are restored |
-| `goto_tb`, `goto_ptr` to another TB | nothing: the values stay in their registers — this is the point |
+| `goto_tb`, `goto_ptr` to another TB | nothing: the values stay in their registers, which is the point |
 | helper call that may read globals (no `TCG_CALL_NO_RWG`) | `str` the pinned globals whose slot is not known coherent, before the call |
 | helper call that may write globals (no `TCG_CALL_NO_WG`) | `ldr` every pinned global back after the call (the helper may have written `env->regs[]` or `env->eip` in C: `div`, `iret`, `sysenter`, …), then the call's own outputs are assigned |
-| `qemu_ld` / `qemu_st` slow path (TLB miss, MMIO, watchpoint, a store into a page holding code) | the stub stores every pinned global before calling the memory helper, through one `bl` to a shared thunk after the epilogue (inline stores grew the code buffer 25 %); nothing is reloaded (the helper returns with the registers intact, or never returns — a fault, a TB invalidation of the running TB — and the main loop finds `env` current) |
+| `qemu_ld` / `qemu_st` slow path (TLB miss, MMIO, watchpoint, a store into a page holding code) | the stub stores every pinned global before calling the memory helper, through one `bl` to a shared thunk after the epilogue (inline stores grew the code buffer 25 %); nothing is reloaded (the helper returns with the registers intact, or never returns because of a fault or a TB invalidation of the running TB, and the main loop finds `env` current) |
 | longjmp out of a helper (`cpu_loop_exit`) | covered by the two helper rows: any helper that can raise is not `NO_RWG` by TCG's existing contract, so it was preceded by the store |
 
 The `env` slot is therefore current whenever C code can look at it, and
@@ -65,9 +65,9 @@ never hands it to anything else.
 
 - **Outputs** are produced into R(g) directly (`add eax, ebx` is one
   `add w20, w20, w21`; `deposit eax, eax, t`, a byte or word write, is
-  one `bfi` in place). When the op's constraints forbid it — an output
+  one `bfi` in place). When the op's constraints forbid it (an output
   aliased to an input that is not the same global, a "new register"
-  output whose R(g) is also one of the op's inputs, a paired output —
+  output whose R(g) is also one of the op's inputs, a paired output),
   the op writes a scratch register and one `mov` follows. A `movi` into
   a pinned global materializes the constant in R(g) at once (a
   memory-only global would stay `TEMP_VAL_CONST` until used).
@@ -126,7 +126,7 @@ reading the register is free, and a load's address then needs no copy.
 The prologue and epilogue need the list of pinned globals with their
 `env` offsets, and the target creates its globals in
 `TCGCPUOps::initialize` (i386: `tcg_x86_init`), which runs at the first
-CPU's realize — after `tcg_init_machine` emitted the prologue. The
+CPU's realize, after `tcg_init_machine` emitted the prologue. The
 patch moves the system-mode `tcg_prologue_init()` call from
 `tcg_init_machine` to `tcg_exec_realizefn`, right after `initialize()`
 (user-mode already calls it after `cpu_create`); no code is generated
@@ -178,17 +178,17 @@ Switches:
 7-Zip's benchmark: compress +3 %, decompress +15–16 % over off. Pinning
 removes instructions, not latency: the "41 % of generated-code samples
 on register loads" that motivated it was mostly the sampler's skid off
-the softmmu TLB chain — with the loads gone the samples moved to the ALU
+the softmmu TLB chain. With the loads gone the samples moved to the ALU
 work after them and the chain's share stayed at 42 %.
 
 ## Open
 
 - **The crash.** XP reboots or bugchecks with registers pinned: seen
   with eight pinned, with all nine in doc 22's `pinned` configuration
-  (during Super PI) and with seven in doc 23's spike E — so it is the
+  (during Super PI) and with seven in doc 23's spike E. So it is the
   pinned path, not a particular register. Reproducible with
   `tools/specbench/run.sh <image> pinned`.
-- **A stall at the flags-helper call boundary**: `helper_cc_compute_c`
+- **A stall at the flags-helper call boundary.** `helper_cc_compute_c`
   at 4 % of the vCPU instead of 1 %, most samples on its first
   instruction.
 - The M9 track lists both with the follow-ups (cheaper stores/reloads
@@ -196,9 +196,9 @@ work after them and the chain's share stayed at 42 %.
 
 ## Test and oracle
 
-- `scripts/test.sh all` runs the DOS batteries (x87, rep, SMC, SSE —
-  each comparing its own on/off pair) and the XP guest stage under the
-  default, i.e. unpinned. `QEMU_TCG_OPTS=pinned-regs=on` on the DOS tools
+- `scripts/test.sh all` runs the DOS batteries (x87, rep, SMC, SSE, each
+  comparing its own on/off pair) and the XP guest stage under the
+  default, which is unpinned. `QEMU_TCG_OPTS=pinned-regs=on` on the DOS tools
   runs the same batteries pinned, for an A/B of the pinning alone.
 - 7-Zip's benchmark verifies every decompressed block against a CRC and
   reports an error on mismatch; a run to completion is an integrity

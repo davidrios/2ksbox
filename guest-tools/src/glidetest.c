@@ -1,18 +1,18 @@
 /*
- * GLIDETEST.EXE — Glide 2.x through the pass-through device (doc 12 §5),
+ * GLIDETEST.EXE: Glide 2.x through the pass-through device (doc 12 §5),
  * from inside the guest.
  *
  * The guest half of what tools/glide-host-test.cpp proves on the host: the
  * same scene, drawn by the same wrapper, so the two are comparable. Here
- * the whole chain is under test — GLIDE2X.DLL in the guest, the MMIO FIFO,
+ * the whole chain is under test (GLIDE2X.DLL in the guest, the MMIO FIFO,
  * hw/3dfx's dispatcher, our libglide2x on the host, and the frontend's
- * context — and the guest checks its own pixels rather than trusting the
+ * context), and the guest checks its own pixels rather than trusting the
  * host to look at them, by reading the buffer back through grLfbLock. A
  * Glide game does exactly that for screenshots, so the path is a real one.
  *
  * Cases, each read back and compared:
  *   1. a clear: every sampled pixel is the clear colour
- *   2. a green triangle over the upper-left half at 640x480 — the corners
+ *   2. a green triangle over the upper-left half at 640x480; the corners
  *      are the orientation check, since Glide's origin is upper-left and
  *      the host's framebuffer is not
  *   3. a second clear: nothing of the triangle survives into the new frame
@@ -20,23 +20,21 @@
  *      is where a host that leaked its context fails the second open
  *
  * Prints "glidetest: N cases, M failed" as its last line and writes
- * GLIDETEST.LOG in C:\2KSBOX (guestlog.h), like every guest test
- * here. Console
- * program: a guest script can read the exit code (0 = all passed).
+ * GLIDETEST.LOG in C:\2KSBOX (guestlog.h), like every guest test here.
+ * Console program: a guest script can read the exit code (0 = all passed).
  *
  *   GLIDETEST            640x480, the four cases
  *   GLIDETEST -res 8     another resolution (0-15, glidewnd.c's table)
  *   GLIDETEST -hold 5    keep the last frame up for 5 s, to look at it
- *   GLIDETEST -noreopen  skip the close/reopen case. Added when the
- *                        emulated Voodoo 2 hung there (2026-09-12); the case
- *                        passes on 3dfx's own Glide 2.x since 2026-09-16,
- *                        and that hang was the program colliding with 3dfx's
- *                        login helper initialising the card from another
- *                        process (doc 21 §11) -- run it more than a few
- *                        seconds after the desktop appears
+ *   GLIDETEST -noreopen  skip the close/reopen case. The case passes on
+ *                        3dfx's own Glide 2.x; a hang there is the program
+ *                        colliding with 3dfx's login helper initialising
+ *                        the card from another process (doc 21 §11), so
+ *                        run it more than a few seconds after the desktop
+ *                        appears
  *
  * Built by guest-tools/build-wrappers.sh into TESTS\ on the guest ISO;
- * needs GLIDE2X.DLL installed (SETUP.EXE's Glide component — on 2000/XP
+ * needs GLIDE2X.DLL installed (SETUP.EXE's Glide component; on 2000/XP
  * the device mapper step is required too, or the DLL cannot reach the
  * device and every entry point fails).
  */
@@ -181,7 +179,7 @@ int main(int argc, char **argv)
     say("glidetest: Glide %s, resolution %d = %dx%d\n", version, res, w, h);
 
     if (!grSstQueryHardware(&hw)) {
-        say("glidetest: no Glide hardware — is GLIDE2X.DLL the pass-through "
+        say("glidetest: no Glide hardware. Is GLIDE2X.DLL the pass-through "
             "wrapper, and (on 2000/XP) is the device mapper installed?\n");
         say("glidetest: 0 cases, 1 failed\n");
         return 1;
@@ -191,7 +189,7 @@ int main(int argc, char **argv)
 
     if (!grSstWinOpen(0, res, GR_REFRESH_60Hz, GR_COLORFORMAT_ABGR,
                       GR_ORIGIN_UPPER_LEFT, 2, 1)) {
-        say("glidetest: grSstWinOpen(%d) failed — the host refused a "
+        say("glidetest: grSstWinOpen(%d) failed: the host refused a "
             "drawable\n", res);
         say("glidetest: 0 cases, 1 failed\n");
         return 1;

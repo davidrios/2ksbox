@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# xp-wined3d-test.sh — Direct3D 9 on WineD3D in an XP guest, in the player,
-# on a host with no Vulkan at all: ADR-013's path, the one every host below
-# the Vulkan 1.3 bar takes (a Mac before macOS 26, which has no KosmicKrisp,
-# pre-Broadwell Intel, Kepler, TeraScale). The whole chain:
+# Direct3D 9 on WineD3D in an XP guest, in the player, on a host with no
+# Vulkan at all. This is ADR-013's in-guest path (a Mac before macOS 26,
+# which has no KosmicKrisp, pre-Broadwell Intel, Kepler, TeraScale), which
+# ADR-018 retires in favour of the executor under Wine on the host; it
+# stays the running fallback until M15's last step. The whole chain:
 #
 #   D3DGAME9.EXE -> WineD3D's D3D9.DLL + WINED3D.DLL next to it (SETUP /GAME 4)
 #   -> qemu-3dfx's OPENGL32.DLL next to it (the same set) -> FXPTL.SYS, the
@@ -60,7 +61,7 @@ FRAMES="${FRAMES:-600}" DUMP="${DUMP:-300}"
 [ -f "$IMG" ] || { echo "no image $IMG"; exit 2; }
 
 # The scratch disk: one FAT32 partition at 2048, as the other XP tools make
-# it — GNU tools where there are some, mtools alone on a Mac
+# it, GNU tools where there are some, mtools alone on a Mac
 # (tools/xp-cdimage-test.sh has the why of each flag).
 scratch="$OUT/scratch.img"; fat="$scratch@@1048576"
 rm -f "$scratch"

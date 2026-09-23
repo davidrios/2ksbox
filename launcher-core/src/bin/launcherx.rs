@@ -1,26 +1,24 @@
-//! `launcherx`: the launcher's toolkit-free verbs, with no toolkit
-//! behind them.
+//! `launcherx`: the launcher's toolkit-free verbs with no front end.
 //!
-//! `launcher_core::cli` is where every verb that needs no GUI lives, so
-//! that `launcher-qt` and this binary answer them identically (doc 07,
-//! ADR-014). This is the caller nothing has to be installed to build:
-//! `launcher-qt` needs Qt 6. `scripts/test.sh` drives
-//! the launcher through this binary for exactly that reason — the suite
-//! runs before every commit, on hosts with no Qt, and must not pay for
-//! a front end to answer `--print-args`.
+//! Every verb that needs no GUI lives in `launcher_core::cli`, so
+//! `launcher-qt` and this binary answer them identically (doc 07,
+//! ADR-014). This binary builds with nothing installed, while
+//! `launcher-qt` needs Qt 6. `scripts/test.sh` drives the launcher
+//! through it for that reason. The suite runs before every commit, on
+//! hosts with no Qt, and must not pay for a front end to answer
+//! `--print-args`.
 //!
-//! It is a test and debugging tool, not a product: no packager installs
-//! it (ADR-015 — the shipped command is `2ksbox`, which is
-//! `launcher-qt`). What it deliberately cannot do is what *is* a
-//! toolkit: the headless frame grabs of real windows, which are
-//! `launcher-qt`'s (`QT_QPA_PLATFORM=offscreen`, doc 07).
+//! It is a test and debugging tool. No packager installs it; the shipped
+//! command is `2ksbox`, which is `launcher-qt` (ADR-015). It cannot do
+//! the headless frame grabs of real windows, which need a toolkit and
+//! belong to `launcher-qt` (`QT_QPA_PLATFORM=offscreen`, doc 07).
 
 fn main() {
-    // No `fatal::install` here, unlike the front end: that exists
-    // because a windowed program on Windows has no stderr and a panic on
-    // the way to the window would vanish. This one is a console program
-    // whose every run is somebody watching, and installing it would
-    // append to the launcher's own crash log 60 times per test run.
+    // No `fatal::install` here, unlike the front end. It exists because a
+    // windowed program on Windows has no stderr and a panic on the way to
+    // the window would vanish. This is a console program, and installing
+    // it would append to the launcher's own crash log 60 times per test
+    // run.
     launcher_core::host_gpu::announce_driver();
     let mut args = std::env::args().skip(1);
     let Some(verb) = args.next() else {

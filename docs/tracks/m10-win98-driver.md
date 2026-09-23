@@ -1,43 +1,43 @@
-# Track: M10 — the native Win98 display driver (doc 19, ADR-012)
+# Track M10: the native Win98 display driver (doc 19, ADR-012)
 
-The track that gives Win98/Me the driver XP has: the XP driver split
-into an OS-independent core plus a thin per-OS layer, and a 9x layer on
-that core, on the same `d3dpt-vga` adapter and the same protocol. The
-design and every finding are doc 19; doc 15 is the core's
-specification (everything it says about the adapter, the flip chain, the
-DP2 stream and the DX8 DDI is what the core *is*). Read
-`docs/00-status.md` first for the global picture and the track rules.
-Work happens on `main`.
+This track gives Win98/Me the driver XP has. The XP driver is split
+into an OS-independent core and a thin per-OS layer, and a 9x layer sits
+on that core, on the same `d3dpt-vga` adapter and the same protocol.
+Doc 19 holds the design and every finding. Doc 15 specifies the core:
+what it says about the adapter, the flip chain, the DP2 stream and the
+DX8 DDI is what the core does. Read `docs/00-status.md` first for the
+global picture and the track rules. Work happens on `main`.
 
 ## State
 
 Steps 0–4 are done and step 5, real titles, is where the work is.
 
-- **The split** (doc 19 §19): `core/` holds the DP2 walker, surface
+- **The split** (doc 19 §19). `core/` holds the DP2 walker, surface
   table, caps and flip chain and includes no DDK header of either
-  family; six `d3dpt_os_*` hooks are all it asks of the OS, and
-  `build-driver.sh` proves that with `nm`. XP's driver was rebuilt on it
+  family. It asks the OS for six `d3dpt_os_*` hooks and nothing else;
+  `build-driver.sh` checks that with `nm`. XP's driver was rebuilt on it
   unchanged (pixel-identical frames).
-- **A 9x driver is three binaries** (doc 19 §1): the 16-bit DIB Engine
-  display driver `d3dpt9x.drv`, the ring-0 mini-VDD `d3dpt9v.vxd`, and
-  the ring-3 DirectDraw/Direct3D HAL `d3dpt9hl.dll`, which links the
+- **A 9x driver is three binaries** (doc 19 §1). The 16-bit DIB Engine
+  display driver is `d3dpt9x.drv`, the ring-0 mini-VDD `d3dpt9v.vxd`,
+  and the ring-3 DirectDraw/Direct3D HAL `d3dpt9hl.dll`, which links the
   core and is loaded at one shared address in every process (§23).
-- **Install**: PnP from the INF alone, no clicks (§16); on the ISO as
-  `DRIVER9X\`, installed by `SETUP.EXE`'s display-driver component on
-  98/Me. Win98 machines default to `d3dpt-vga` since 2026-09-16.
+- **Install.** PnP installs it from the INF alone, with no clicks
+  (§16). The ISO carries it as `DRIVER9X\`, and `SETUP.EXE`'s
+  display-driver component installs it on 98/Me. New Win98 machines
+  default to `d3dpt-vga`.
 - **The whole M7c matrix reproduces on 98** with no change to `core/`
-  (§24, §25): DirectDraw with paced flips and 8 bpp palettes; the DX3,
+  (§24, §25). DirectDraw with paced flips and 8 bpp palettes; the DX3,
   DX7 and DX8 faces (`EBTEST` 5/5, `D3D7TEST` byte-identical to
   `d3dpt-dp2-test`'s frame, `SHTEST`, `CKTEST`, `DXTTEST`, `CUBETEST`).
-- **The screen switches**: a full-screen DOS box both ways (§26, §29:
+- **Screen switches.** A full-screen DOS box both ways (§26, §29:
   the INT 2Fh hook and USER's repaint), visible blue screens (§29), the
   monitor power-down (§41), the shutdown screen (§35), DirectDraw's own
-  Mode X for 320×200 titles (§30).
-- **No executor** (`no-exec=on`): the HAL keeps DirectDraw and offers no
-  Direct3D (§40); WineD3D can then be the whole machine's DirectDraw,
-  decided at every login by `D3DPRE.EXE` (§42, §43; retired with the rest
-  of WineD3D-in-guest in M15's last step, not before).
-- **Titles**: Total Annihilation, LEGO Island, Carmageddon, Blood (DOS
+  Mode X for 320×200 titles (§30) all work.
+- **No executor** (`no-exec=on`). The HAL keeps DirectDraw and offers
+  no Direct3D (§40). WineD3D can then be the whole machine's DirectDraw,
+  which `D3DPRE.EXE` decides at every login (§42, §43). This goes with
+  the rest of WineD3D-in-guest in M15's last step, not before.
+- **Titles.** Total Annihilation, LEGO Island, Carmageddon, Blood (DOS
   box), Crimson Skies (menus and flight, §28, §34), Diablo II (§33),
   3DMark 99, 3DMark2001 SE's whole benchmark (§36–§39).
 
@@ -51,17 +51,17 @@ Owned by this track:
   `d3dpt9x.inf`, `res/` (the `oembin` resources GDI requires), and the
   probes `ddprobe.c`, `gdiprobe.c`, `pwrprobe.c`, `devcaps.c`,
   `setbpp.c`, `bsod.c` + `bsodvxd.c`.
-- `guest-tools/src/d3dptvid/ddk9x/` — the vendored 9x interface headers
-  (MIT, from `vmdisp9x`; provenance in its README) —
-  and `guest-tools/build-driver9x.sh`.
+- `guest-tools/src/d3dptvid/ddk9x/`, the vendored 9x interface headers
+  (MIT, from `vmdisp9x`; provenance in its README), and
+  `guest-tools/build-driver9x.sh`.
 - `guest-tools/src/setup.c`'s 98/Me display-driver component and
   `tools/setup-guest-test.sh`'s Win98 expectations.
 - Tests: `tools/win98-driver-test.sh`, `tools/win98-game-test.sh`,
   `tools/win98-bsod-test.sh`.
 
 Shared (rebase first, edit minimally, name the other track): `core/`
-and `nt/` (M7), `d3dpt/d3dpt_fb.h` and `d3dpt/hw/d3dpt_vga.c` (M7 — the
-adapter needed no change for 9x, and a change would be a finding),
+and `nt/` (M7), `d3dpt/d3dpt_fb.h` and `d3dpt/hw/d3dpt_vga.c` (M7; the
+adapter needed no change for 9x, so a change would be a finding),
 `d3dpt/d3dpt_proto.h` and `d3dpt/exec/` (M4/M7), `build-wrappers.sh`,
 `scripts/test.sh`.
 
@@ -111,9 +111,9 @@ PROG=guest-tools/out/driver9x/ddprobe.exe tools/win98-driver-test.sh <image> boo
 - `DDFLAGS=` passes the adapter's knob through (the 9x driver reads the
   high half, `D9F_*` in `w9x/d3dpt9x.h`), `NO_EXEC=1` the no-executor
   host, `SHOTS=`, `BOOT_WAIT=`, `OUT=`.
-- Games: `tools/win98-game-test.sh <image> <name>` (with `PLAYER=1` for
-  Glide/OpenGL titles), blue screens: `tools/win98-bsod-test.sh`. Both,
-  and the rest, in `docs/testing.md`.
+- Games run through `tools/win98-game-test.sh <image> <name>` (`PLAYER=1`
+  for Glide/OpenGL titles), blue screens through
+  `tools/win98-bsod-test.sh`. Both are in `docs/testing.md`.
 - XP's regression oracle after touching `core/`:
   `tools/xp-driver-test.sh <xp image> d3d7` plus `shtest`, `cktest`,
   `ebtest` (the M7 track).
@@ -126,7 +126,7 @@ match, which ends on the inbox VGA with an empty log. The guest runs
 **DirectX 9.0c** by decision (§25): the in-box 6.1 cannot run
 `D3D7TEST`'s DX7 path, so it has no pixel oracle. Installing DirectX on
 an image means booting it on `-vga cirrus`, which rebinds the display
-to the in-box driver and drops `D3DPT9V.VXD` — run `install`, not
+to the in-box driver and drops `D3DPT9V.VXD`. Run `install`, not
 `boot`, after any hand session on the image.
 
 ### The second toolchain
@@ -162,49 +162,48 @@ curl -L -o build/ref/fixlink.c https://raw.githubusercontent.com/JHRobotics/fixl
 Open Watcom's own:
 
 - **Its inline assembler does not resolve a callee through a macro
-  parameter**: `_asm { call p }` inside a `#define` calls nothing, and the
+  parameter.** `_asm { call p }` inside a `#define` calls nothing, and the
   only sign is warning W202 ("defined, but not referenced"). The four
   mini-VDD screen-switch thunks are written out by hand for this.
 - **It takes a function's attributes from the first declaration it
-  sees**: a DDK prototype without `__loadds` strips it (§18), and a Win16
+  sees.** A DDK prototype without `__loadds` strips it (§18), and a Win16
   API of the same name wins outright (`SetCursor` vs the driver's ordinal
   102). Hide both with a `#define` before the headers.
-- **No CRT, so no 32-bit multiply**: `(DWORD)a * b` in 16-bit code links
+- **No CRT, so no 32-bit multiply.** `(DWORD)a * b` in 16-bit code links
   against an undefined `__U4M`; use `MulW`.
 
 The guest's:
 
-- **Win98 runs under TCG**, never KVM (Explorer dies at startup).
-- **End a run with the ACPI power button**; a machine that does not
-  power off leaves the FAT dirty and the next boot is safe mode, which
-  reads exactly like the driver failing (§17).
-- **A VxD the VMM dislikes is simply not loaded**: no `BOOTLOG.TXT`
-  line, nothing anywhere. Suspect the linker first (§12). `BootLog=1`
-  did not refresh `BOOTLOG.TXT` on this image — check the file's date
-  before believing it.
-- **Edit `SYSTEM.INI` in binary or not at all**: a text-mode rewrite
+- Win98 runs under TCG, and every run ends with the ACPI power button,
+  or the next boot is safe mode and reads like the driver failing (§17).
+  Both traps are in `docs/00-status.md` "Gotchas".
+- **A VxD the VMM dislikes is not loaded**, with no `BOOTLOG.TXT`
+  line and nothing anywhere else. Suspect the linker first (§12).
+  `BootLog=1` did not refresh `BOOTLOG.TXT` on one image, so check the
+  file's date before believing it.
+- **Edit `SYSTEM.INI` in binary or not at all.** A text-mode rewrite
   strips CRLFs and eats a section header, which looks like Windows
   rejecting the setting.
 - A value the layer **derives** instead of reading from the adapter
   fails silently (§19's wrong DDK constant, §25's command window 16 KiB
-  low: every call returned success, no `ddi:` line on the host). Read
+  low; every call returned success and the host logged no `ddi:` line). Read
   `D3DPT_FB_REG_CMD_OFFSET` and the other registers, as `nt/` does.
 - A title's DOS half needs `cd` before a DOS/4GW EXE, and an image with
   no `SET BLASTER=` fails every DOS game's sound probe before it draws.
 
 ## Next steps
 
-1. **The doc 04 title matrix**: the same Win98 titles through this driver
-   and through the Glide/WineD3D control — which is faster, which is
-   correct, what the launcher defaults to.
+1. **The doc 04 title matrix.** Run the same Win98 titles through this
+   driver and through the Glide/WineD3D control, to learn which is
+   faster, which is correct and what the launcher should default to.
 2. **Total Annihilation's exit from inside a skirmish** (the user's
    crash report; an exit from the main menu is clean).
 3. **A fault inside a HAL callback leaks `cmd_lock`** and freezes the
    session until the process dies (§36). Accepted for v1 (user
-   decision, 2026-09-16); an unwind that releases it would make the
+   decision); an unwind that releases it would make the
    next such bug one failed call.
-4. **ACPI standby**: on resume nothing reprograms the adapter and the
+4. **ACPI standby.** On resume nothing reprograms the adapter and the
    screen is a blank VGA text page; the player does not report
    `SUSPEND`/`WAKEUP` (§41).
 5. WineD3D-in-guest (§42–§44) goes in M15's last step, once the host
-   Wine executor has been measured on real games — not earlier.
+   Wine executor has been measured on real games, not earlier.

@@ -1,10 +1,10 @@
 /*
- * core_flip.c — the adapter's geometry and its frame counter (doc 19,
- * "The split"): where the DirectDraw heap, the cursor image and the
- * command window sit in VRAM, the ddflags bisection register, the wait
- * for a vertical blank, and whether the last page flip has been scanned
- * out. The debug log lives here too, because it is a register write and
- * nothing else.
+ * core_flip.c: the adapter's geometry and its frame counter (doc 19,
+ * "The split"). It knows where the DirectDraw heap, the cursor image and
+ * the command window sit in VRAM, reads the ddflags bisection register,
+ * waits for a vertical blank and tells whether the last page flip has
+ * been scanned out. The debug log lives here too, because it is a
+ * register write and nothing else.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -110,9 +110,9 @@ void wait_frame(d3dpt_core *p)
 /* Has the last page flip been scanned out?
  *
  * FRAMES counts the mode's vertical blanks, so a flip issued at one count
- * is on the screen once the count has moved. Until then the flip is in the
- * air — which is exactly what a real card does to a double-buffered chain,
- * and the only frame-rate cap a game of the era has. Without it a flip
+ * is on the screen once the count has moved. Until then the flip is
+ * pending. A real card does the same to a double-buffered chain, and it is
+ * the only frame-rate cap a game of the era has. Without it a flip
  * chain runs at thousands of frames a second and every title that paces
  * itself by its own frame loop (Moto Racer, most 1997 racers) plays far
  * too fast.
@@ -140,7 +140,7 @@ BOOL flip_done(d3dpt_core *p)
     return FALSE;
 }
 
-/* A flip has just been issued: it is in the air until the frame counter
+/* A flip has just been issued. It is pending until the frame counter
  * moves (the layer's DdFlip calls this after writing the OFFSET
  * register). */
 void flip_issued(d3dpt_core *p)
@@ -156,11 +156,11 @@ void flip_issued(d3dpt_core *p)
 
 /* DDWAITVB_I_TESTVB: is the display in its vertical blank right now? The
  * device counts frames and has no beam position, so the answer is yes once
- * per frame — the first time anyone asks after the counter moved — and no
+ * per frame (the first time anyone asks after the counter moved) and no
  * otherwise. That keeps both loops a title of the era writes around
  * GetVerticalBlankStatus finite: `while (!in_vb)` ends at the next frame,
- * `while (in_vb)` at the next question. Both layers used to answer no,
- * always, and the first of those loops never ended. */
+ * `while (in_vb)` at the next question. An answer of always no leaves
+ * the first loop spinning forever. */
 BOOL vb_test(d3dpt_core *p)
 {
     ULONG f;
@@ -200,9 +200,9 @@ BOOL d3d_init(d3dpt_core *p)
         return FALSE;
     }
     /* offered at 8 bpp too (no DX7 device can be created on a palettized
-     * primary, the runtime refuses that itself): ddraw.dll fails a mode
-     * switch when the HAL loses its Direct3D between two PDEVs (2026-09-04,
-     * DDTEST 640x480x8 -> DDERR_UNSUPPORTEDMODE until this was consistent) */
+     * primary, the runtime refuses that itself). ddraw.dll fails a mode
+     * switch when the HAL loses its Direct3D between two PDEVs (DDTEST
+     * 640x480x8 got DDERR_UNSUPPORTEDMODE until this was consistent) */
     if (p->regs[D3DPT_FB_REG_D3D_STATUS / 4] != D3DPT_STATUS_READY) {
         dbg_puts(p, "d3dptdisp: no Direct3D executor on the host\n");
         return FALSE;

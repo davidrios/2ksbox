@@ -186,8 +186,8 @@ impl Qemu {
     pub fn mouse_is_absolute(&self) -> bool {
         unsafe { qemu_embed_mouse_is_absolute(self.0) }
     }
-    /// The whole gamepad at once (v8, M13 path A): four axes — X, Y, Z,
-    /// Rz, `0x80` centred — a hat of 0..7 clockwise from north (8 =
+    /// The whole gamepad at once (v8, M13 path A). Four axes (X, Y, Z,
+    /// Rz, `0x80` centred), a hat of 0..7 clockwise from north (8 =
     /// released) and a bitmap of twelve buttons.
     ///
     /// Absolute state, not events, so a dropped update is corrected by
@@ -197,7 +197,7 @@ impl Qemu {
         unsafe { qemu_embed_pad_state(self.0, axes.as_ptr(), hat as u32, buttons as u32) }
     }
     /// Whether the machine has a `usb-gamepad` for [`Self::pad_state`] to
-    /// reach — so the player can say "this machine has no gamepad
+    /// reach, so the player can say "this machine has no gamepad
     /// device" rather than sending into nothing.
     pub fn pad_present(&self) -> bool {
         unsafe { qemu_embed_pad_present(self.0) }
@@ -216,7 +216,7 @@ impl Owner {
     pub fn run(&self) -> i32 {
         unsafe { qemu_embed_run(self.0 .0) }
     }
-    /// Tear down (one VM per process lifetime — QEMU cleanup is partial).
+    /// Tear down (one VM per process lifetime, QEMU cleanup is partial).
     pub fn destroy(self, status: i32) {
         unsafe { qemu_embed_destroy(self.0 .0, status) }
     }

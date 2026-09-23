@@ -1,36 +1,34 @@
 //! A C ABI over `launcher-core`, so a front end that is not Rust can
-//! drive the same models the Qt launcher does — a native macOS app
-//! in Swift is the case this was shaped for (Swift imports a C header
-//! directly, with no bridge crate), but anything that speaks C works.
+//! drive the same models the Qt launcher does. It was shaped for a
+//! native macOS app in Swift (Swift imports a C header directly, with no
+//! bridge crate), but anything that speaks C works.
 //!
 //! **This adds no behaviour.** Every function here is a thin wrapper
-//! over a `launcher-core` model, so a third front end gets the same
-//! machine library, the same wizard rules, the same disc shelf, the same
-//! snapshot state machine and the same shader profile editor the other
-//! two have — including the parts that are easy to get subtly wrong
-//! (which defaults follow the family, when `qemu-img` is safe to use,
-//! keeping only the parameters the user actually overrode). Writing the
-//! views is the work; none of this is.
+//! over a `launcher-core` model, so a C front end gets the same machine
+//! library, wizard rules, disc shelf, snapshot state machine and shader
+//! profile editor the Qt one has, including the parts that are easy to
+//! get subtly wrong (which defaults follow the family, when `qemu-img`
+//! is safe to use, keeping only the parameters the user overrode). Such
+//! a front end only has to write the views.
 //!
 //! ## The shape
 //!
 //! Each window is an **opaque handle** created by `lc_*_new` and
 //! released by `lc_*_free`. Rows are addressed by index and read one
-//! field at a time, because that is what crosses a C boundary cleanly —
-//! and it is also how the Qt build's `QAbstractListModel::data` already
-//! reads them, so nothing was bent to fit.
+//! field at a time, because that crosses a C boundary cleanly. It is
+//! also how the Qt build's `QAbstractListModel::data` reads them.
 //!
 //! ## The rules a caller must follow
 //!
 //! * **Strings out are owned by the caller**: every `char *` returned
 //!   here was allocated by Rust and must be handed back to
-//!   `lc_string_free`. A getter never returns `NULL` for "empty" — it
-//!   returns `""` — so `NULL` means only "no such row".
+//!   `lc_string_free`. A getter returns `""` for empty, never `NULL`, so
+//!   `NULL` means only "no such row".
 //! * **Strings in are borrowed**, must be UTF-8, and are copied before
 //!   the call returns.
 //! * **A handle is not thread-safe** and must be used from one thread at
-//!   a time. That is not a limitation in practice: these models front a
-//!   GUI, and the two Rust front ends drive them from their UI thread.
+//!   a time. These models front a GUI, and the Qt front end drives them
+//!   from its UI thread.
 //! * **Nothing here blocks on a guest.** The long operations are the
 //!   ones that already have a poll: a live snapshot is a QMP job
 //!   (`lc_snapshots_poll` while `lc_snapshots_job_pending`), and the
@@ -198,7 +196,8 @@ pub unsafe extern "C" fn lc_machines_dir(m: *const LcMachines, row: usize) -> *m
     }
 }
 
-/// The row's `machine.toml` — how every other model here is addressed.
+/// The row's `machine.toml`, which is how every other model here is
+/// addressed.
 ///
 /// # Safety
 /// `m` must be a live handle.
@@ -217,8 +216,8 @@ pub unsafe extern "C" fn lc_machines_is_running(m: *const LcMachines, row: usize
     handle!(m, false).0.is_running(row)
 }
 
-/// Whether the machine in a bundle directory is up — how a per-machine
-/// window, which knows its bundle and not its row, asks.
+/// Whether the machine in a bundle directory is up, for a per-machine
+/// window, which knows its bundle and not its row.
 ///
 /// # Safety
 /// `m` must be a live handle; `dir` a NUL-terminated string or NULL.
@@ -275,7 +274,7 @@ pub unsafe extern "C" fn lc_machines_republish_shelf(m: *const LcMachines) {
     handle!(m, ()).0.republish_shelf();
 }
 
-/// The name "Clone…" offers for a row — "<name> (copy)", numbered when
+/// The name "Clone…" offers for a row: "<name> (copy)", numbered when
 /// that is taken. NULL for no such row. Free with `lc_string_free`.
 ///
 /// # Safety
@@ -292,7 +291,7 @@ pub unsafe extern "C" fn lc_machines_clone_name(m: *const LcMachines, row: usize
 
 /// Clone a row: a new machine with the same settings and its own copy of
 /// the disk, under `name` (NULL for the offered one). Blocks until the
-/// copy is done — a front end that wants progress runs this on a thread
+/// copy is done; a front end that wants progress runs this on a thread
 /// of its own. Returns true on success; `*status` (when non-NULL) is the
 /// new `machine.toml` then and the reason otherwise, owned by the
 /// caller. `lc_machines_refresh` shows the new row.
@@ -386,9 +385,9 @@ fn index_of<T: PartialEq + Copy>(all: &[T], value: T) -> usize {
 /// `kind` is 0 family, 1 acceleration, 2 processor, 3 boot order (4 and
 /// 5 are an optimization's label and note). The display adapter is not
 /// here: its list is per family, so it is `lc_wizard_video_label` on a
-/// live wizard instead. Both
-/// Rust front ends fill their pickers this way rather than retyping the
-/// strings, and so should a third.
+/// live wizard instead. 6 is a form section. The Qt front end fills its
+/// pickers this way rather than retyping the strings, and so should a C
+/// one.
 #[no_mangle]
 pub extern "C" fn lc_wizard_label(kind: u32, index: usize) -> *mut c_char {
     let label = match kind {
@@ -458,10 +457,9 @@ pub unsafe extern "C" fn lc_wizard_title(w: *const LcWizard) -> *mut c_char {
     out(handle!(w, std::ptr::null_mut()).0.title())
 }
 
-// The fields with a consequence. There is deliberately no plain setter
-// for any of these: `choose_*` is what applies the rule that memory, the
-// accelerator, the processor and the NIC follow the family until someone
-// picks one.
+// The fields with a consequence. None of them has a plain setter:
+// `choose_*` applies the rule that memory, the accelerator, the processor
+// and the NIC follow the family until someone picks one.
 
 /// # Safety
 /// `w` must be a live handle.
@@ -477,7 +475,7 @@ pub unsafe extern "C" fn lc_wizard_choose_family(w: *mut LcWizard, family: usize
     handle_mut!(w, ()).0.choose_family(family_at(family));
 }
 
-/// The line under the family picker, or "" — only `Other` has one.
+/// The line under the family picker, or "". Only `Other` has one.
 ///
 /// # Safety
 /// `w` must be a live handle.
@@ -607,8 +605,8 @@ pub unsafe extern "C" fn lc_wizard_accel_is_default(w: *const LcWizard) -> bool 
     handle!(w, false).0.accel_is_default()
 }
 
-/// What this host can do for acceleration, said next to the picker —
-/// "Automatic" otherwise means something invisible. `*warning` (when
+/// What this host can do for acceleration, said next to the picker, so
+/// "Automatic" says what it will pick. `*warning` (when
 /// non-NULL) is set when the note is a warning: KVM was demanded and
 /// this host hasn't got it, so the machine will refuse to start.
 ///
@@ -653,7 +651,7 @@ pub unsafe extern "C" fn lc_wizard_have_kvm(w: *const LcWizard) -> bool {
 }
 
 /// Whether one of our own emulator fast paths is on, by its index in
-/// `Optimization::ALL` — the same index `LC_LABEL_OPTIMIZATION` uses.
+/// `Optimization::ALL`, the same index `LC_LABEL_OPTIMIZATION` uses.
 /// An index past the end reads as off rather than trapping, since a
 /// front end built against an older header walks until the label is
 /// NULL.
@@ -860,10 +858,10 @@ pub unsafe extern "C" fn lc_wizard_boot_note(w: *const LcWizard) -> *mut c_char 
     out_opt(handle!(w, std::ptr::null_mut()).0.boot_note())
 }
 
-/// The display adapter. Its list is per family — Windows chooses between
+/// The display adapter. Its list is per family (Windows chooses between
 /// our own adapter and the Cirrus Windows has a driver for, an `Other`
 /// machine between the two standard ones, and a DOS machine chooses
-/// nothing — so it is asked of a live wizard rather than through
+/// nothing), so it is asked of a live wizard rather than through
 /// `lc_wizard_label`. Ask `lc_wizard_video_applies` before drawing the
 /// row, and fill it from `lc_wizard_video_label`.
 ///
@@ -940,11 +938,11 @@ pub unsafe extern "C" fn lc_wizard_video_note(w: *const LcWizard) -> *mut c_char
     out(handle!(w, std::ptr::null_mut()).0.video_notes().join("\n"))
 }
 
-/// Which Direct3D 9 the *host* runs the pass-through's executor on
-/// (ADR-007's 2026-09-21 amendment): automatic, DXVK, or — on a Windows
-/// host — Windows' own. A host question rather than a guest one, so
-/// there is no family dimension and the list is the same three
-/// everywhere; the row belongs only to a machine that has our adapter,
+/// Which Direct3D 9 the host runs the pass-through's executor on
+/// (ADR-007's second amendment): automatic, DXVK, or, on a Windows host,
+/// Windows' own. A host question rather than a guest one, so the list
+/// does not depend on the family: three entries on Windows, two
+/// elsewhere. The row belongs only to a machine that has our adapter,
 /// which is what `lc_wizard_d3d9_applies` answers.
 ///
 /// # Safety
@@ -1007,8 +1005,8 @@ pub unsafe extern "C" fn lc_wizard_reset_d3d9(w: *mut LcWizard) {
     handle_mut!(w, ()).0.reset_d3d9();
 }
 
-/// What the entry in the field means, and — for the automatic one —
-/// what this host will do with it.
+/// What the entry in the field means, and, for the automatic one, what
+/// this host will do with it.
 ///
 /// # Safety
 /// `w` must be a live handle.
@@ -1017,7 +1015,7 @@ pub unsafe extern "C" fn lc_wizard_d3d9_note(w: *const LcWizard) -> *mut c_char 
     out(handle!(w, std::ptr::null_mut()).0.d3d9_note().text)
 }
 
-/// "Changing this machine's adapter is a hardware change", or "" — set
+/// "Changing this machine's adapter is a hardware change", or "". Set
 /// only while editing a machine whose adapter has been changed.
 ///
 /// # Safety
@@ -1028,9 +1026,9 @@ pub unsafe extern "C" fn lc_wizard_video_warning(w: *const LcWizard) -> *mut c_c
 }
 
 /// The sound card, and what is on the machine's MIDI port (doc 20 §6).
-/// Two lists, both per family like the adapter's above — 98 chooses
+/// Two lists, both per family like the adapter's above (98 chooses
 /// between a Sound Blaster, an AC'97 and a Gravis, XP between the AC'97
-/// and the SB16 — so both are asked of a live wizard. Neither list is
+/// and the SB16), so both are asked of a live wizard. Neither list is
 /// ever empty ("no sound card" and "no MIDI port" are entries), so there
 /// is no `_applies` to ask first.
 ///
@@ -1089,8 +1087,8 @@ pub unsafe extern "C" fn lc_wizard_reset_sound(w: *mut LcWizard) {
     handle_mut!(w, ()).0.reset_sound();
 }
 
-/// What the chosen card is and is not — whether it carries an FM chip,
-/// and what the guest needs before it makes a sound — newline-separated.
+/// What the chosen card is and is not (whether it carries an FM chip,
+/// and what the guest needs before it makes a sound), newline-separated.
 ///
 /// # Safety
 /// `w` must be a live handle.
@@ -1174,8 +1172,8 @@ pub unsafe extern "C" fn lc_wizard_music_note(w: *const LcWizard) -> *mut c_char
     out(handle!(w, std::ptr::null_mut()).0.music_notes().join("\n"))
 }
 
-/// Whether this port needs a bank of the user's own to be *offered* —
-/// the two paths themselves are plain text fields, `lc_wizard_get` /
+/// Whether to offer the field for this port's bank or ROMs. The two
+/// paths themselves are plain text fields, `lc_wizard_get` /
 /// `lc_wizard_set`'s "soundfont" and "mt32_roms". The bank is optional
 /// (empty means the one the package ships); the ROM directory is not,
 /// and `lc_wizard_submit` refuses an MT-32 machine without it, since
@@ -1197,10 +1195,10 @@ pub unsafe extern "C" fn lc_wizard_mt32_roms_applies(w: *const LcWizard) -> bool
 
 /// The plain text and flag fields, by name: "name", "disk_path",
 /// "install_media", "floppy", "soundfont", "mt32_roms",
-/// "extra_qemu_args", "shader_profile". One
-/// pair of accessors rather than a dozen, because these have no
-/// behaviour behind them — a field with a consequence has a `choose_*`
-/// above instead, and there is no way to reach one from here.
+/// "extra_qemu_args", "shader_profile". One pair of accessors rather
+/// than a dozen, because these have no behaviour behind them. A field
+/// with a consequence has a `choose_*` above instead and cannot be
+/// reached from here.
 ///
 /// # Safety
 /// `w` must be a live handle; `field` a NUL-terminated string.
@@ -1481,8 +1479,8 @@ pub unsafe extern "C" fn lc_shelf_flush(s: *mut LcShelf) {
     handle_mut!(s, ()).0.flush_reporting();
 }
 
-/// Whether the shelf was written since this was last asked — the cue to
-/// call `lc_machines_republish_shelf`.
+/// Whether the shelf was written since this was last asked. If so, call
+/// `lc_machines_republish_shelf`.
 ///
 /// # Safety
 /// `s` must be a live handle.
@@ -1641,8 +1639,8 @@ pub unsafe extern "C" fn lc_snapshots_delete(s: *mut LcSnapshots, name: *const c
 }
 
 /// Whether a live job is in flight: disable the buttons and keep
-/// polling. Live save/load/delete are QMP *jobs* — saving a 512 MB
-/// guest's RAM takes a visible moment — so nothing here blocks on one.
+/// polling. Live save/load/delete are QMP jobs (saving a 512 MB guest's
+/// RAM takes a visible moment), so nothing here blocks on one.
 ///
 /// # Safety
 /// `s` must be a live handle.
@@ -1652,8 +1650,8 @@ pub unsafe extern "C" fn lc_snapshots_job_pending(s: *const LcSnapshots) -> bool
 }
 
 /// Check an in-flight job, throttled to a couple of times a second
-/// however often it is called — safe from a display link or a 100 ms
-/// timer alike.
+/// however often it is called, so a display link or a 100 ms timer both
+/// work.
 ///
 /// # Safety
 /// `s` must be a live handle.
@@ -1785,8 +1783,8 @@ pub unsafe extern "C" fn lc_editor_param_id(e: *const LcEditor, row: usize) -> *
     }
 }
 
-/// The description worth showing under a row — "" when it merely repeats
-/// the id.
+/// The description worth showing under a row, or "" when it merely
+/// repeats the id.
 ///
 /// # Safety
 /// `e` must be a live handle.
@@ -1872,14 +1870,14 @@ pub unsafe extern "C" fn lc_editor_renderable(e: *const LcEditor) -> bool {
 
 /// Render one preview frame into an `area_w` x `area_h` box, then report
 /// the size it actually came out at (the image's own size times the
-/// largest integer scale that fits — never a fraction, so the shader is
-/// not blurred by a second resample). Centre that on black. False when
+/// largest integer scale that fits, never a fraction, so a second
+/// resample does not blur the shader). Centre that on black. False when
 /// there was nothing to render; `lc_editor_error` says why if anything
 /// failed.
 ///
-/// The first call opens a windowless GPU device of the editor's own,
-/// which is what a front end whose toolkit will not lend one needs. Read
-/// the frame with `lc_editor_read_frame`.
+/// The first call opens a windowless GPU device of the editor's own, for
+/// a front end whose toolkit will not lend one. Read the frame with
+/// `lc_editor_read_frame`.
 ///
 /// # Safety
 /// `e` must be a live handle; `out_w`/`out_h` NULL or writable.
@@ -1928,9 +1926,9 @@ pub unsafe extern "C" fn lc_editor_render(
 }
 
 /// How many milliseconds until this preview wants rendering again, or 0
-/// when it never does: some presets' picture depends on the frame number
-/// — an interlaced CRT's alternate fields, a TV's flicker, a phosphor
-/// afterglow — and a front end that renders only when something is
+/// when it never does. Some presets' picture depends on the frame number
+/// (an interlaced CRT's alternate fields, a TV's flicker, a phosphor
+/// afterglow), and a front end that renders only when something is
 /// clicked shows one frozen frame of the effect. Call `lc_editor_render`
 /// again on this interval for as long as it is non-zero; it is 0 until
 /// the first render, and 0 for a preset that draws the same picture
@@ -1966,7 +1964,7 @@ pub unsafe extern "C" fn lc_editor_read_frame(e: *const LcEditor, buf: *mut u8, 
 }
 
 /// Write the profile into `profiles_dir` (NULL or "" for the user's
-/// own). A *new* profile keeps the overrides it collected.
+/// own). A new profile keeps the overrides it collected.
 ///
 /// # Safety
 /// `e` must be a live handle; `profiles_dir` NULL or NUL-terminated.
@@ -1998,10 +1996,10 @@ pub unsafe extern "C" fn lc_editor_error(e: *const LcEditor) -> *mut c_char {
 /// The preset collection's state, for the row both shader screens show:
 /// 0 ready, 1 missing, 2 downloading, 3 failed. `detail` (when non-NULL)
 /// receives the directory, the install directory, the megabytes so far,
-/// or the failure — owned by the caller.
+/// or the failure, owned by the caller.
 ///
-/// Safe to call as often as you like: it is also what advances a
-/// finished download into the cached directory.
+/// Safe to call as often as you like; it also advances a finished
+/// download into the cached directory.
 ///
 /// # Safety
 /// `e` must be a live handle; `detail` NULL or writable.
@@ -2040,9 +2038,8 @@ pub unsafe extern "C" fn lc_editor_download_presets(e: *mut LcEditor) {
 /// not been downloaded, a guest-tools ISO that has not been built), NULL
 /// for an unknown name.
 ///
-/// The rule behind all of them is that everything is relative to the
-/// running executable — so a front end that links this must expect these
-/// to resolve against *its* binary, not against a checkout.
+/// Everything is relative to the running executable, so these resolve
+/// against the binary that links this library, not against a checkout.
 ///
 /// # Safety
 /// `what` must be NUL-terminated.
@@ -2065,7 +2062,7 @@ pub unsafe extern "C" fn lc_path(what: *const c_char) -> *mut c_char {
     out(path.display().to_string())
 }
 
-/// Whether this host can give a guest hardware acceleration — the same
+/// Whether this host can give a guest hardware acceleration, the same
 /// answer the wizard's acceleration hint reads. Named `kvm` because that
 /// is what it is on the hosts this ABI has front ends for; on Windows it
 /// answers for WHPX (`launcher_core::player::hw_accel_label` is the name

@@ -1,57 +1,52 @@
 /*
- * d3dpt9x.c — the Windows 98/Me display driver for the d3dpt-vga adapter
- * (doc 19, ADR-012 / M10). The 16-bit half: a DIB Engine mini display
- * driver, ring 3, built with Open Watcom.
+ * d3dpt9x.c: the Windows 98/Me display driver for the d3dpt-vga adapter
+ * (doc 19, ADR-012 / M10). The 16-bit half, a DIB Engine mini display
+ * driver running in ring 3, built with Open Watcom.
  *
  * This is the 9x counterpart of the XP driver's "framebuf" shape (doc 15,
- * M7a) and it does the same thing by the other operating system's rules.
- * On NT the miniport enumerates modes and win32k loads a kernel DLL that
- * hands GDI an engine bitmap over VRAM. On 9x this file is a 16-bit NE
- * module GDI loads as DISPLAY, every drawing export jumps straight to the
- * DIB Engine (dibthunk.asm), and the only things the driver itself does
- * are: find the adapter on the PCI bus, map its two BARs, program the mode
- * registers, and describe the frame buffer to the DIB Engine so that GDI
- * draws directly into guest VRAM with no copy anywhere.
+ * M7a). On NT the miniport enumerates modes and win32k loads a kernel DLL
+ * that hands GDI an engine bitmap over VRAM. On 9x this file is a 16-bit
+ * NE module GDI loads as DISPLAY, and every drawing export jumps straight
+ * to the DIB Engine (dibthunk.asm). The driver itself gets the adapter
+ * from the mini-VDD, programs the mode registers and describes the frame
+ * buffer to the DIB Engine, so GDI draws directly into guest VRAM with no
+ * copy.
  *
- * **This half cannot work alone, and the run that proved it is written up
- * in doc 19 §11.** Windows unmaps the adapter's PCI base addresses within
- * half a minute of boot because nothing claimed its resources, so the
- * probe below finds zeros: on 9x the ring-0 mini-VDD claims the device and
- * hands the frame buffer to this driver, and it has to exist first. What
- * is here is correct and stays; what it needs is the VxD.
+ * This half cannot work alone (doc 19 §11). Windows unmaps the adapter's
+ * PCI base addresses within half a minute of boot if nothing claimed its
+ * resources. On 9x the ring-0 mini-VDD claims the device and hands the
+ * frame buffer to this driver.
  *
- * Since 2026-09-09 the pointer is the adapter's own cursor sprite rather
- * than the DIB Engine's software one, for the reason written up under
- * "hardware cursor" below: an Engine pointer lives *in* the frame buffer
- * and every full-screen DirectDraw title writes over it. The mode list
- * still comes from the INF rather than from the adapter (doc 19 §6).
+ * The pointer is the adapter's own cursor sprite rather than the DIB
+ * Engine's software one, because an Engine pointer lives in the frame
+ * buffer and every full-screen DirectDraw title writes over it (see
+ * "hardware cursor" below). The mode list comes from the INF rather than
+ * from the adapter (doc 19 §6).
  *
  * Debug output goes to the adapter's DEBUG register and so into the QEMU
- * log, exactly as the XP driver's does — no COM port, no debugger.
+ * log, as the XP driver's does. There is no COM port and no debugger.
  *
  * Build: guest-tools/build-driver9x.sh
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
-/* `SetCursor` is the name of two different functions: the Win16 *API*
- * (win16.h, takes an HCURSOR and returns the previous one) and the display
- * driver entry this file exports at ordinal 102 (takes a CURSORSHAPE and
- * returns nothing). The driver's is the one GDI calls, so hide the API's
- * declaration while the headers go by — the same trick, and for the same
- * reason, as `ValidateMode` below. */
+/* `SetCursor` names two different functions. The Win16 API (win16.h) takes
+ * an HCURSOR and returns the previous one. The display driver entry this
+ * file exports at ordinal 102 takes a CURSORSHAPE and returns nothing, and
+ * it is the one GDI calls. So the API's declaration is hidden while the
+ * headers go by, the same trick as `ValidateMode` below. */
 #define SetCursor SetCursor_the_win16_api
 #include "winhack.h"
 #include <gdidefs.h>
 #include <dibeng.h>
 #include <minivdd.h>
 /* valmode.h declares ValidateMode without `__loadds`, and Open Watcom takes
- * a function's attributes from its *first* declaration: the definition
- * below then compiles without the DS prologue every other export has, and
- * the first thing it does — reading `wRegsSel` — goes through whatever DS
- * the display applet's thunk left, which is not ours. The garbage it finds
- * there becomes a selector, and Display Settings dies in a GPF the moment
- * its Settings tab asks about the first mode (doc 19 Section 18). Hide the
- * header's prototype from the compiler, so ours is the first. */
+ * a function's attributes from its first declaration. The definition below
+ * would then compile without the DS prologue every other export has, and
+ * its read of `wRegsSel` would go through whatever DS the display applet's
+ * thunk left. That garbage becomes a selector, and Display Settings dies in
+ * a GPF when its Settings tab asks about the first mode (doc 19 §18). Hiding
+ * the header's prototype makes ours the first declaration. */
 #define ValidateMode ValidateMode_as_the_ddk_declares_it
 #include <valmode.h>
 #undef ValidateMode
@@ -92,10 +87,10 @@ static WORD wDIBPdevSize = 0;
 
 /* ------------------------------------------------------- no CRT, no helpers */
 
-/* The driver links no C runtime (the XP one does the same with kcrt.c), so
- * the two things the compiler would otherwise pull in come from here: a
- * 16x16 -> 32 bit multiply, which also keeps __U4M out of the object, and
- * a far memset. */
+/* The driver links no C runtime (the XP one uses kcrt.c for the same), so
+ * the two helpers the compiler would otherwise pull in come from here: a
+ * 16x16 -> 32 bit multiply (MulW in d3dpt9x.h, which keeps __U4M out of
+ * the object) and a far memset. */
 void ZeroFar(void __far *p, WORD n)
 {
     BYTE __far *q = p;
@@ -104,10 +99,10 @@ void ZeroFar(void __far *p, WORD n)
 
 /* ------------------------------------------------------------ DPMI, ports */
 
-/* The adapter is the mini-VDD's, not ours: it claims the device, maps
- * VRAM and the register page, and hands us selectors onto both. Doing it
- * here instead does not work — Windows takes the base addresses away from
- * a device nothing claimed (doc 19 §11). */
+/* The mini-VDD claims the device, maps VRAM and the register page, and
+ * hands us selectors onto both. Doing it here does not work, because
+ * Windows takes the base addresses away from a device nothing claimed
+ * (doc 19 §11). */
 static WORD CallVDD_Register(void);
 #pragma aux CallVDD_Register =      \
     ".386"                          \
@@ -127,10 +122,10 @@ static WORD CallVDD_Register(void);
     "vdd_done:"                     \
     value [ax] modify [bx cx dx si di];
 
-/* The main VDD's own entries, the ones every 9x display driver calls around
- * a mode change. They do not go to our mini-VDD — it hooks only
- * REGISTER_DISPLAY_DRIVER — they go to the VDD itself, which is what has to
- * be told that this VM is no longer showing VGA. */
+/* The main VDD's own entries, which every 9x display driver calls around a
+ * mode change. They go to the VDD itself, not to our mini-VDD (which hooks
+ * only REGISTER_DISPLAY_DRIVER), because the VDD is what has to be told
+ * that this VM is no longer showing VGA. */
 static void CallVDD_Simple(WORD fn);
 #pragma aux CallVDD_Simple =        \
     ".386"                          \
@@ -143,9 +138,9 @@ static void CallVDD_Simple(WORD fn);
     "pop    eax"                    \
     parm [ax] modify [cx dx si di];
 
-/* VDD_DRIVER_REGISTER wants the size of the frame buffer the driver is
- * using — pitch times height, in ECX — and a far pointer to the routine the
- * VDD calls to put the desktop mode back after a full-screen DOS box. */
+/* VDD_DRIVER_REGISTER wants the size of the frame buffer in use (pitch
+ * times height, in ECX) and a far pointer to the routine the VDD calls to
+ * put the desktop mode back after a full-screen DOS box. */
 static DWORD CallVDD_DriverRegister(WORD fn, WORD pitch, WORD height,
                                     void __far *restore);
 #pragma aux CallVDD_DriverRegister =\
@@ -164,14 +159,12 @@ static DWORD CallVDD_DriverRegister(WORD fn, WORD pitch, WORD height,
 
 /* ------------------------------------------------------------ the adapter */
 
-/* The adapter's registers are 32 bits wide and the device accepts **nothing
- * else**: its register BAR is `valid.min_access_size = 4`. A 16-bit compiler
- * turns `*(DWORD __far *)p` into two word accesses, and QEMU answers those
- * with zero and drops the writes without a word anywhere — a register set
- * that reads as a different device, from a driver whose every write is lost
- * (doc 19 Section 14). So both directions are one 32-bit access, written out
- * by hand; the module is .386 throughout. The XP driver never met this: it
- * is 32-bit code and the compiler emitted what the device wanted. */
+/* The adapter's registers are 32 bits wide and the device accepts nothing
+ * else (its register BAR is `valid.min_access_size = 4`). A 16-bit compiler
+ * turns `*(DWORD __far *)p` into two word accesses, which QEMU answers with
+ * zero while silently dropping the writes (doc 19 §14). So both directions
+ * are one 32-bit access, written out by hand, and the module is .386
+ * throughout. The XP driver is 32-bit code and never had this problem. */
 static DWORD RegGetSel(WORD sel, WORD off);
 #pragma aux RegGetSel =     \
     ".386"                  \
@@ -204,12 +197,11 @@ void RegPut(WORD off, DWORD val)
     RegPutSel(wRegsSel, off, val);
 }
 
-/* Two debug channels, and the driver needs both. The adapter's DEBUG
- * register is the real one — its lines reach the QEMU log exactly as the
- * XP driver's do (doc 15) — but nothing can reach it until the register
- * page is mapped, which is where the interesting failures are. So every
- * line also goes to port 0xE9, QEMU's debug console (`-debugcon file:…`,
- * ignored by anything else), which works from the first instruction. */
+/* Two debug channels. The adapter's DEBUG register reaches the QEMU log as
+ * the XP driver's does (doc 15), but only once the register page is mapped,
+ * and the early failures happen before that. So every line also goes to
+ * port 0xE9, QEMU's debug console (`-debugcon file:...`), which works from
+ * the first instruction. */
 static void OutE9(BYTE c);
 #pragma aux OutE9 = "out 0E9h, al" parm [al];
 
@@ -243,9 +235,9 @@ BOOL AdapterFind(void)
     if (wRegsSel) return TRUE;          /* already asked */
     if (!VDDEntryPoint) { dbg_str("d3dpt9x: no VDD"); return FALSE; }
 
-    /* Carry says no, and so does a zero selector: the main VDD answers this
+    /* Carry means no, and so does a zero selector. The main VDD answers this
      * function itself when no mini-VDD claimed it, and then the registers
-     * are whatever its own dispatch left in them. */
+     * hold whatever its own dispatch left in them. */
     if (!CallVDD_Register() || !wRegsSel || !wVramSel || !dwVramSize) {
         dbg_str("d3dpt9x: the mini-VDD has no adapter for us");
         wRegsSel = wVramSel = 0;
@@ -257,11 +249,10 @@ BOOL AdapterFind(void)
     dbg_val("d3dpt9x: regs lin", dwRegsLin);
     dbg_val("d3dpt9x: vram lin", dwVramLin);
 
-    /* A newer register set is ours plus registers we never touch (d3dpt_fb.h:
-     * versions only add), so it is accepted; only an older one, missing
-     * registers this build uses, is refused. Exact matching made every QEMU
-     * update a machine that died at boot with "Windows protection error"
-     * (2026-09-12: a v4 driver against the v5 adapter). */
+    /* A newer register set only adds registers (d3dpt_fb.h), so it is
+     * accepted. Only an older one, missing registers this build uses, is
+     * refused. Exact matching made a v4 driver on a v5 adapter die at boot
+     * with "Windows protection error". */
     if (RegGet(D3DPT_FB_REG_MAGIC) != D3DPT_FB_MAGIC ||
         RegGet(D3DPT_FB_REG_VERSION) < D3DPT_FB_VERSION) {
         dbg_val("d3dpt9x: magic", RegGet(D3DPT_FB_REG_MAGIC));
@@ -270,8 +261,8 @@ BOOL AdapterFind(void)
         wRegsSel = wVramSel = 0;
         return FALSE;
     }
-    /* The v4 cursor sprite, if this adapter has one: with it the pointer
-     * never enters the frame buffer at all (see "hardware cursor" below). */
+    /* The v4 cursor sprite, if this adapter has one. With it the pointer
+     * never enters the frame buffer (see "hardware cursor" below). */
     wCursorHW = (RegGet(D3DPT_FB_REG_CAPS) & D3DPT_FB_CAP_CURSOR) ? 1 : 0;
     dbg_val("d3dpt9x: hardware cursor", wCursorHW);
     dbg_str("d3dpt9x: adapter found");
@@ -295,19 +286,16 @@ static BOOL ModeOk(WORD x, WORD y, WORD bpp)
     return need <= dwVramSize;
 }
 
-/* Paint the visible frame buffer one colour, which for a display driver
- * means black. GDI paints the desktop over this immediately, so what it is
- * really for is that *nothing else* is on the screen at the moment the mode
- * comes up: VRAM at power-on holds whatever the device left in it, and a
- * driver that does not clear shows that as a band of garbage above a desktop
- * that has not arrived yet. Written 32 bits at a time through the VRAM
- * selector, the same hand-written access the registers need. */
-/* Not `rep stosd`: this module is a 16-bit code segment, and there a string
- * instruction indexes with DI and counts with CX no matter what the operand
- * size is — the clear would stop after 64 KB, in the first 25 lines of the
- * screen, which is very nearly the symptom it is here to remove. An explicit
- * 32-bit base register makes the assembler emit the address-size prefix the
- * whole frame buffer needs. */
+/* Paint the visible frame buffer black. GDI paints the desktop over it at
+ * once, but VRAM at power-on holds whatever the device left there, and a
+ * driver that does not clear shows it as a band of garbage above a desktop
+ * that has not arrived yet. Written 32 bits at a time through
+ * the VRAM selector, the same hand-written access the registers need. */
+/* Not `rep stosd`. In a 16-bit code segment a string instruction indexes
+ * with DI and counts with CX whatever the operand size, so the clear would
+ * stop after 64 KB, in the first 25 lines of the screen. An explicit 32-bit
+ * base register makes the assembler emit the address-size prefix the whole
+ * frame buffer needs. */
 static void ClearScreen(WORD sel, DWORD bytes);
 #pragma aux ClearScreen =           \
     ".386"                          \
@@ -363,12 +351,12 @@ int PhysicalEnable(void)
     dbg_val("d3dpt9x: mode h", wScrY);
     dbg_val("d3dpt9x: mode bpp", wBpp);
 
-    /* **The VDD has to know a hi-res driver owns the screen.** Until this
-     * call it believes the VM is still showing the VGA it virtualises, and
-     * it keeps the screen switch, the DOS box and USER's repaint path on
-     * that footing; `RestoreDesktopMode` is how it asks for the mode back
-     * afterwards. A failure here is not fatal on the reference driver's own
-     * account, so it is logged rather than refused. */
+    /* The VDD has to know a hi-res driver owns the screen. Until this call
+     * it believes the VM still shows the VGA it virtualises, and it runs the
+     * screen switch, the DOS box and USER's repaint path on that footing.
+     * `RestoreDesktopMode` is how it asks for the mode back afterwards. The
+     * reference driver does not treat a failure here as fatal, so it is only
+     * logged. */
     if (VDDEntryPoint) {
         DWORD rc = CallVDD_DriverRegister(VDD_DRIVER_REGISTER, (WORD)dwPitch,
                                           wScrY, RestoreDesktopMode);
@@ -383,8 +371,8 @@ int PhysicalEnable(void)
     return 1;
 }
 
-/* The VDD calls this to put the desktop back after a full-screen DOS box:
- * the mode registers again, with none of the one-time work. */
+/* The VDD calls this to put the desktop back after a full-screen DOS box.
+ * It programs the mode registers again, with none of the one-time work. */
 void __far RestoreDesktopMode(void)
 {
     dbg_str("d3dpt9x: RestoreDesktopMode");
@@ -402,28 +390,26 @@ void __far RestoreDesktopMode(void)
 
 /* ------------------------------------------------------- the screen switch
  *
- * **When a DOS box closes, nobody repaints the desktop unless the display
- * driver asks.** The four mini-VDD calls and `RestoreDesktopMode` put the
- * *adapter* back (doc 19 §26); what puts the *desktop* back is a second,
- * older channel the VDD keeps with the display driver: it raises INT 2Fh
- * AX=4001h in the Windows VM when the screen is about to be taken away and
- * AX=4002h when it is back, and the driver is expected to hook that vector
- * — every 9x display driver does, the DDK's sample and vmdisp9x included.
- * On the way out it marks the DIB Engine's PDEVICE BUSY, so GDI stops
- * writing into a frame buffer that is now the DOS program's VGA memory (on
- * this adapter they are the same bytes from offset 0). On the way back it
- * restores the mode if it was lost and calls USER's screen-repaint entry,
- * ordinal 275, which is undocumented and is what every window's WM_PAINT
- * after a full-screen session comes from.
+ * When a DOS box closes, nobody repaints the desktop unless the display
+ * driver asks (doc 19 §29). The four mini-VDD calls and `RestoreDesktopMode`
+ * put the adapter back (doc 19 §26). The desktop comes back through an
+ * older channel. The VDD raises INT 2Fh AX=4001h in the Windows VM when
+ * the screen is about to be taken away and AX=4002h when it is back, and
+ * every 9x display driver hooks that vector (the DDK's sample and vmdisp9x
+ * included). On the way out the hook marks the DIB Engine's PDEVICE BUSY,
+ * so GDI stops writing into a frame buffer that is now the DOS program's
+ * VGA memory (on this adapter they are the same bytes from offset 0). On
+ * the way back it restores the mode if it was lost and calls USER's
+ * undocumented screen-repaint entry, ordinal 275, which is where every
+ * window's WM_PAINT after a full-screen session comes from.
  *
- * Without the hook the return looked like a hang (2026-09-09, Blood): the
- * VDD's calls all arrived, the linear mode came back, and the screen showed
- * Blood's last frame tiled across an 800x600x16 desktop, for as long as
- * anyone cared to wait — Windows idle and healthy behind it, nothing ever
- * asked to redraw. With it, "switched in" is followed by the desktop.
+ * Without the hook the return from Blood looked like a hang. The linear
+ * mode came back, but the screen showed Blood's last frame tiled across an
+ * 800x600x16 desktop indefinitely, with Windows idle behind it and nothing
+ * asking to redraw.
  *
- * The handler is in dibthunk.asm; these are what it calls, with DS already
- * DGROUP, on whatever stack the VDD's notification arrived on. */
+ * The handler is in dibthunk.asm. It calls these with DS already DGROUP,
+ * on whatever stack the VDD's notification arrived on. */
 extern void __far __cdecl SWHook(void);
 extern void __cdecl SetOldInt2Fh(WORD alias, void __far *vec);
 extern void __far * __cdecl GetOldInt2Fh(void);
@@ -460,27 +446,23 @@ static void RepaintScreen(void)
     else            RepaintFunc();
 }
 
-/* **The linear mode goes off here too, for the switch nobody announces.**
- * The mini-VDD turns it off at `PRE_HIRES_TO_VGA` and at
- * `DISPLAY_DRIVER_DISABLING`, which covers a DOS box, a Mode X game and
- * the shutdown — and covered every switch anyone had seen until
- * 2026-09-18, when Windows' own **monitor power-down** arrived with none
- * of them: the user's machine idled, this notification came alone, and
- * nothing else reached the driver at all. With ENABLE still on the
- * adapter went on scanning out the desktop's last frame while the VGA
- * planes underneath it — VRAM offset 0, the top of the frame buffer —
- * took whatever the VDD wrote there: a frozen desktop with a coloured
- * band across the first 20 rows, and no way to tell it from a hang until
- * a keypress brought it back (doc 19 §41). The way back is unchanged:
- * `SwitchToFgnd` calls `RestoreDesktopMode`, which programs the mode and
- * ENABLE again, and in the announced switches the mini-VDD has already
- * turned it off before this runs, so this write is then a no-op.
+/* The linear mode goes off here too, for the switch nobody announces
+ * (doc 19 §41). The mini-VDD turns it off at `PRE_HIRES_TO_VGA` and at
+ * `DISPLAY_DRIVER_DISABLING`, which covers a DOS box, a Mode X game and the
+ * shutdown. Windows' own monitor power-down sends only this notification.
+ * With ENABLE still on, the adapter kept scanning out the desktop's last
+ * frame while the VDD wrote VGA planes at VRAM offset 0, the top of the
+ * frame buffer. The result was a frozen desktop with a coloured band across
+ * the first 20 rows, indistinguishable from a hang until a keypress. The
+ * way back is unchanged: `SwitchToFgnd` calls `RestoreDesktopMode`, which
+ * programs the mode and ENABLE again. In the announced switches the
+ * mini-VDD has already turned the mode off, so this write is a no-op.
  *
- * Measured with `PWRPROBE.EXE`, which asks for the power-down the idle
- * time-out asks for, so neither run waits on a power scheme: without this
- * write the linear mode stays on for the whole blank (`switched out`
- * 13:19:28.83, `linear mode off` only at the restore, 13:19:34.50); with
- * it the mode is gone 69 µs after the notification. */
+ * Measured with `PWRPROBE.EXE`, which requests the same power-down the idle
+ * time-out does. Without this write the linear mode stays on for the whole
+ * blank (`switched out` at 13:19:28.83, `linear mode off` only at the
+ * restore, 13:19:34.50). With it the mode is gone 69 µs after the
+ * notification. */
 void __cdecl SwitchToBgnd(void)
 {
     dbg_str("d3dpt9x: switched out");
@@ -524,18 +506,18 @@ static void UnhookInt2Fh(void)
 
 void PhysicalDisable(void)
 {
-    /* The sprite is composited by the device, not by the frame buffer, so
-     * it would otherwise go on hovering over whatever comes next — a VGA
-     * text screen, a fatal-exception message, a shutdown. */
+    /* The device composites the sprite outside the frame buffer, so it
+     * would otherwise keep hovering over whatever comes next: a VGA text
+     * screen, a fatal-exception message, the shutdown. */
     CursorHide();
-    /* **The linear mode goes before the VDD is told.** Unregistering is when
-     * the VDD starts putting the VGA back — its planes land at VRAM offset
-     * 0, the top of our frame buffer — and with ENABLE still on, a display
-     * refresh in those few ms took them into the last linear frame, which
-     * the adapter then holds: Windows' shutdown came up as the desktop with
-     * a green band across the top (2026-09-14, doc 19 §35). The mini-VDD
-     * turns it off at DISPLAY_DRIVER_DISABLING too; this is the same order
-     * for a VDD that does not say. */
+    /* The linear mode goes off before the VDD is told (doc 19 §35).
+     * Unregistering is when the VDD starts putting the VGA back, with its
+     * planes at VRAM offset 0, the top of our frame buffer. With ENABLE
+     * still on, a display refresh in those few ms took them into the last
+     * linear frame, which the adapter then held, and Windows' shutdown came
+     * up as the desktop with a green band across the top. The mini-VDD turns
+     * the mode off at DISPLAY_DRIVER_DISABLING too; this keeps the same
+     * order for a VDD that does not send it. */
     if (wRegsSel) RegPut(D3DPT_FB_REG_ENABLE, 0);
     if (VDDEntryPoint) CallVDD_Simple(VDD_DRIVER_UNREGISTER);
 }
@@ -587,10 +569,10 @@ void ReadDisplayConfig(void)
  *
  * Windows' own 256-colour palette: the twenty static system colours at the
  * two ends of the table, a 6-6-6 colour cube in the middle and a grey ramp
- * in what is left. It is what an 8 bpp mode shows between coming up and the
- * first palette GDI realises, and `SetPalette` replaces it entry by entry
- * from then on. The point of having one at all is that the alternative is
- * not black — it is whatever bytes were already there. */
+ * in what is left. An 8 bpp mode shows it between coming up and the first
+ * palette GDI realises, and `SetPalette` replaces it entry by entry from
+ * then on. Without it the palette would be whatever bytes were already
+ * there, not black. */
 static const BYTE bSysColours[20][3] = {     /* r, g, b */
     { 0x00, 0x00, 0x00 }, { 0x80, 0x00, 0x00 }, { 0x00, 0x80, 0x00 },
     { 0x80, 0x80, 0x00 }, { 0x00, 0x00, 0x80 }, { 0x80, 0x00, 0x80 },
@@ -638,37 +620,33 @@ static void DefaultColourTable(RGBQUAD FAR *ct)
 
 /* ------------------------------------------------------ hardware cursor
  *
- * **The pointer must not live in the frame buffer.** The DIB Engine draws
- * its cursor into VRAM and keeps the pixels it covered in a save-under, and
- * the `BeginAccess` / `EndAccess` pair above is what lifts it out of the way
- * before anything else writes there. DirectDraw does not go through GDI: a
- * game that locks the primary, blits to it or flips a chain writes the frame
- * buffer with the Engine's cursor still standing in it and its save-under
- * now stale, and the next mouse move stamps that stale block back onto the
- * screen. That is what "the mouse is glitchy in a match" is, and no care
- * inside the DirectDraw HAL can fix it: that half is a flat 32-bit DLL and
- * the Engine's exclusion pair is 16-bit code behind a selector it has no way
- * to call.
+ * The pointer must not live in the frame buffer (doc 19 §26). The DIB
+ * Engine draws its cursor into VRAM and keeps the pixels it covered in a
+ * save-under, and the `BeginAccess` / `EndAccess` pair below lifts it out
+ * of the way before GDI writes there. DirectDraw does not go through GDI.
+ * A game that locks the primary, blits to it or flips a chain writes the
+ * frame buffer with the Engine's cursor still in it, the save-under goes
+ * stale, and the next mouse move stamps that stale block back onto the
+ * screen. The DirectDraw HAL cannot prevent it, because it is a flat 32-bit
+ * DLL and the Engine's exclusion pair is 16-bit code it cannot call.
  *
- * So take the pointer out of the frame buffer altogether, exactly as the XP
- * driver does (doc 15, "The hardware cursor", register set v4): convert the
- * shape to a8r8g8b8 in the VRAM the DirectDraw heap already stops short of
- * and let the device hand it to the host as a cursor sprite. Nothing
- * composites it into the frame, so nothing can corrupt it — not GDI, not
- * DirectDraw, and not a mode change.
+ * So the pointer leaves the frame buffer, as on the XP driver (doc 15, "The
+ * hardware cursor", register set v4). The shape is converted to a8r8g8b8 in
+ * the VRAM the DirectDraw heap stops short of, and the device hands it to
+ * the host as a cursor sprite. Nothing composites it into the frame, so
+ * neither GDI, DirectDraw nor a mode change can corrupt it.
  *
- * Two consequences worth knowing. A screendump shows no pointer any more,
- * because there is none in the frame buffer to dump — the same as on XP.
- * And on an adapter with no v4 cursor (`D3DPT_FB_CAP_CURSOR` clear) every
- * one of these three falls back to the Engine's software pointer, which is
- * why dibeng's `…CursorExt` entries are still imported.
+ * Two consequences. A screendump shows no pointer, as on XP, because there
+ * is none in the frame buffer. And on an adapter with no v4 cursor
+ * (`D3DPT_FB_CAP_CURSOR` clear) all three entries below fall back to the
+ * Engine's software pointer, which is why dibeng's `...CursorExt` entries
+ * are still imported.
  */
 
 /* What GDI hands `SetCursor` on 9x: a header, then `cy` rows of AND mask,
  * then `cy` rows of XOR mask, each row `cbWidth` bytes. Win16 `int` is 16
- * bits, so this is 16 bytes. Declared here rather than taken from a header
- * because the DDK headers this driver builds against (src/d3dptvid/ddk9x)
- * carry only what the DIB Engine needs. */
+ * bits. Declared here because the headers in ../ddk9x carry only what the
+ * DIB Engine needs. */
 typedef struct {
     short xHotSpot, yHotSpot;
     short cx, cy;
@@ -680,11 +658,10 @@ static WORD wCursorSet = 0;     /* the sprite has a shape and is shown */
 static WORD wCursorSoft = 0;    /* this one shape went to the Engine instead */
 
 /* One 32-bit write into VRAM at an offset that does not fit a WORD. The
- * sprite's image sits near the top of a 128 MB aperture and this module is
- * 16-bit code, where a string instruction indexes with DI and a default
- * operand is a word: the offset has to be an explicit 32-bit base register,
- * the same hand-written access the mode registers need and for the same
- * reason (doc 19 gotchas). */
+ * sprite's image sits near the top of a 128 MB aperture, and in 16-bit code
+ * a string instruction indexes with DI and a default operand is a word. So
+ * the offset is an explicit 32-bit base register, the same hand-written
+ * access as RegGetSel and ClearScreen above. */
 static void VramPut(WORD sel, DWORD off, DWORD val);
 #pragma aux VramPut =       \
     ".386"                  \
@@ -699,10 +676,10 @@ static void VramPut(WORD sel, DWORD off, DWORD val);
     parm [si] [cx bx] [dx ax] modify [cx dx];
 
 /* Where the sprite's image goes: immediately below the command window,
- * which is where core/'s `cursor_offset()` puts it on NT and where the
- * DirectDraw heap this driver publishes stops. **Read from the register,
- * never derived** — the adapter is the one authority on its own layout, and
- * deriving this is how the two layers drifted twice already (doc 19 §25). */
+ * where core/'s `cursor_offset()` puts it on NT and where the DirectDraw
+ * heap this driver publishes stops. Read from the register, never derived.
+ * The adapter is the one authority on its own layout, and deriving it made
+ * the two layers drift apart twice (doc 19 §25, §26). */
 static DWORD CursorOffset(void)
 {
     DWORD end = wRegsSel ? RegGet(D3DPT_FB_REG_CMD_OFFSET) : 0;
@@ -717,8 +694,8 @@ void CursorHide(void)
     wCursorSet = 0;
 }
 
-/* Hand this shape to the Engine after all, and take the sprite off the
- * screen first so that only one pointer is ever drawn. */
+/* Hand this shape to the Engine, taking the sprite off the screen first so
+ * that only one pointer is ever drawn. */
 static void CursorToEngine(LPVOID lpCursor)
 {
     CursorHide();
@@ -749,14 +726,13 @@ VOID WINAPI __loadds SetCursor(LPVOID lpCursor)
     w = (WORD)cs->cx;
     h = (WORD)cs->cy;
     stride = (WORD)cs->cbWidth;
-    /* Monochrome only, and that is not a shortcut: `C1_COLORCURSOR` is what
-     * asks Windows for a colour pointer, this driver stops claiming it while
-     * the sprite is in use, and every pointer Windows then hands over is
-     * 1 bpp. Anything else would arrive in the screen's own format and want
-     * a converter per bpp for a pointer no title of the era uses.
+    /* Monochrome only. `C1_COLORCURSOR` asks Windows for a colour pointer,
+     * and this driver stops claiming it while the sprite is in use, so every
+     * pointer Windows hands over is 1 bpp. A colour one would arrive in the
+     * screen's own format and need a converter per bpp.
      *
      * Anything the sprite cannot carry goes to the Engine rather than being
-     * dropped: a pointer that vanishes is worse than one that can be drawn
+     * dropped. A pointer that vanishes is worse than one that can be drawn
      * over, and this way there is always exactly one on the screen. */
     if (!w || !h || w > D3DPT_FB_CURSOR_MAX || h > D3DPT_FB_CURSOR_MAX ||
         cs->Planes != 1 || cs->BitsPixel != 1 || !stride) {
@@ -771,16 +747,17 @@ VOID WINAPI __loadds SetCursor(LPVOID lpCursor)
     bits = (BYTE FAR *)(cs + 1);
     off = CursorOffset();
     for (y = 0; y < h; y++) {
-        /* MulW, not `*`: there is no CRT here, so a 32-bit multiply would
-         * want __U4M and the link fails on it. */
+        /* MulW, not `*`. There is no CRT, so a 32-bit multiply would need
+         * __U4M and the link would fail. */
         BYTE FAR *arow = bits + MulW(y, stride);
         BYTE FAR *xrow = bits + MulW((WORD)(h + y), stride);
         for (x = 0; x < w; x++) {
             WORD a  = (WORD)((arow[x >> 3] >> (7 - (x & 7))) & 1);
             WORD xo = (WORD)((xrow[x >> 3] >> (7 - (x & 7))) & 1);
-            /* AND 1 / XOR 0 is the screen showing through; AND 0 is black or
-             * white by XOR; AND 1 / XOR 1 asks for the screen inverted, which
-             * a sprite cannot do — black, the same approximation as on NT. */
+            /* AND 1 / XOR 0 is the screen showing through. AND 0 is black or
+             * white by XOR. AND 1 / XOR 1 asks for the screen inverted, which
+             * a sprite cannot do, so it is black, the same approximation as
+             * on NT. */
             DWORD c = (a && !xo) ? 0ul : (xo && !a) ? 0xfffffffful : 0xff000000ul;
             VramPut(wVramSel, off + ((MulW(y, w) + x) << 2), c);
         }
@@ -817,8 +794,8 @@ VOID WINAPI __loadds CheckCursor(void)
 
 /* ------------------------------------------------------------ GDI: Enable */
 
-/* GDI's software cursor lives in the DIB Engine; these two are the
- * surface-access callbacks it uses to exclude it while it draws. */
+/* GDI's software cursor lives in the DIB Engine. These are the
+ * surface-access callbacks it uses to exclude the cursor while it draws. */
 static VOID WINAPI __loadds BeginAccess(LPPDEVICE lpDevice, WORD l, WORD t,
                                         WORD r, WORD b, WORD flags)
 {
@@ -837,8 +814,8 @@ DWORD WINAPI __loadds GetDriverResourceID(WORD wResID, LPSTR lpResType)
     return wResID;
 }
 
-/* DISPLAY.500: USER says whether the driver may ask for repaints now; one
- * that arrives while it may not is delivered when it may again. */
+/* DISPLAY.500: USER says whether the driver may ask for repaints now. A
+ * repaint that arrives while it may not is delivered when it may again. */
 BOOL WINAPI __loadds UserRepaintDisable(BOOL bDisable)
 {
     wNoRepaint = bDisable ? 1 : 0;
@@ -849,8 +826,8 @@ BOOL WINAPI __loadds UserRepaintDisable(BOOL bDisable)
     return TRUE;
 }
 
-/* GDI calls Enable twice: once (odd style) to fill GDIINFO, once to bring
- * the hardware up and build the PDEVICE. */
+/* GDI calls Enable twice: once with an odd style to fill GDIINFO, once to
+ * bring the hardware up and build the PDEVICE. */
 UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
                             LPSTR lpOutputFile, LPVOID lpStuff)
 {
@@ -877,13 +854,12 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
         lpInfo->bmiHeader.biPlanes   = 1;
         lpInfo->bmiHeader.biBitCount = wBpp;
 
-        /* Describe guest VRAM to the DIB Engine and let it draw there.
-         * This is the whole of the "no copy anywhere" claim on 9x: the
-         * bits GDI writes are the bits the device scans out. */
+        /* Describe guest VRAM to the DIB Engine and let it draw there, so
+         * the bits GDI writes are the bits the device scans out. */
         lpEng->deType         = TYPE_DIBENG;
         /* OFFSCREEN says the surface is a window on a larger VRAM the
-         * driver manages, which is what it is; FIVE6FIVE is what tells the
-         * Engine a 16 bpp mode is 5-6-5 rather than 5-5-5. */
+         * driver manages. FIVE6FIVE tells the Engine a 16 bpp mode is 5-6-5
+         * rather than 5-5-5. */
         lpEng->deFlags        = MINIDRIVER | VRAM | OFFSCREEN |
                                 (wBpp == 16 ? FIVE6FIVE : 0) |
                                 (wBpp == 8 ? PALETTIZED : 0);
@@ -906,17 +882,14 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
             WORD i;
             RGBQUAD FAR *ct = (RGBQUAD FAR *)((LPBYTE)lpInfo + sizeof(BITMAPINFOHEADER));
 
-            /* **Fill the table before reading it.** This colour table is
-             * *ours* — it sits past the DIB Engine's PDEVICE, in the bytes
-             * `dpDEVICEsize` was grown by, and the Engine has only just been
-             * told where it is. Nothing has written it at this point, so
-             * programming the adapter's palette from it programmed 256
-             * entries of whatever the PDEVICE allocation happened to
-             * contain: an 8 bpp mode came up in arbitrary colours and only
-             * corrected itself when something realised a palette. Anything
-             * that set the mode and drew without one stayed wrong — which is
-             * what a Windows message box in the middle of a full-screen
-             * 8 bpp game looks like when its greys come out red. */
+            /* Fill the table before reading it. This colour table is ours.
+             * It sits past the DIB Engine's PDEVICE, in the bytes
+             * `dpDEVICEsize` was grown by, and nothing has written it yet.
+             * Programming the adapter's palette from it unfilled gave 256
+             * entries of whatever the allocation held, so an 8 bpp mode came
+             * up in arbitrary colours until something realised a palette.
+             * Anything that drew without one stayed wrong, like a Windows
+             * message box over a full-screen 8 bpp game with red greys. */
             DefaultColourTable(ct);
             for (i = 0; i < 256; i++) {
                 DWORD c = ((DWORD)ct[i].rgbRed << 16) | ((DWORD)ct[i].rgbGreen << 8) | (DWORD)ct[i].rgbBlue;
@@ -973,10 +946,10 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
         lpInfo->dpLogPixelsY = wDpi;
         lpInfo->dpBitsPixel  = (wBpp + 7) & 0xfff8;
         lpInfo->dpDCManage   = DC_IgnoreDFNP;
-        /* `C1_COLORCURSOR` is what asks Windows for a colour pointer, and
-         * the cursor sprite carries monochrome shapes only — claim it only
-         * on an adapter that has no sprite and so is still using the
-         * Engine's software pointer, which does handle colour. */
+        /* `C1_COLORCURSOR` asks Windows for a colour pointer, and the cursor
+         * sprite carries monochrome shapes only. Claim it only on an adapter
+         * with no sprite, where the Engine's software pointer (which handles
+         * colour) is in use. */
         lpInfo->dpCaps1     |= C1_REINIT_ABLE | C1_BYTE_PACKED | C1_GLYPH_INDEX;
         if (!wCursorHW) lpInfo->dpCaps1 |= C1_COLORCURSOR;
         lpInfo->dpText      |= TC_CP_STROKE | TC_RA_ABLE;
@@ -997,18 +970,16 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
             lpInfo->dpColorRes    = 0;
         }
         lpInfo->dpRaster     |= RC_DIBTODEV;
-        /* **Always room for the colour table, whatever this mode's depth.**
-         * GDI allocates the display's PDEVICE once, from the size given
-         * here at boot, and `ReEnable` reuses that block for every mode
-         * change afterwards — hardware half first, GDIINFO half second. A
-         * desktop enabled at 16 bpp that a game switches to 320x200x8
-         * therefore had its 256 RGBQUADs written 1 KB past the end of a
-         * PDEVICE sized without them: a GDI-heap overrun that showed up
-         * nowhere near here — a fatal exception in KERNEL32 as
-         * Carmageddon set its mode, and once the same run was repeated
-         * with a probe, page faults in the VMM called from VTDAPI, from
-         * VSB16, and a System VM left spinning in V86 mode (2026-09-10,
-         * doc 19 §30). Sized for 8 bpp always, the block fits every mode. */
+        /* Always room for the colour table, whatever this mode's depth
+         * (doc 19 §30). GDI allocates the display's PDEVICE once, from the
+         * size given here at boot, and `ReEnable` reuses that block for
+         * every later mode change. A desktop enabled at 16 bpp that a game
+         * switched to 320x200x8 had its 256 RGBQUADs written 1 KB past the
+         * end of the block. The GDI-heap overrun surfaced far from here: a
+         * fatal exception in KERNEL32 as Carmageddon set its mode, or page
+         * faults in the VMM called from VTDAPI and VSB16, or a System VM
+         * spinning in V86 mode. Sized for 8 bpp always, the block fits
+         * every mode. */
         lpInfo->dpDEVICEsize += sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD);
 
         return sizeof(GDIINFO);
@@ -1019,9 +990,9 @@ UINT WINAPI __loadds Enable(LPVOID lpDevice, UINT style, LPSTR lpDeviceType,
 UINT WINAPI __loadds ReEnable(LPVOID lpDevice, LPGDIINFO lpInfo)
 {
     /* The mode in force, put back when the hardware half refuses the new
-     * one: the desktop stays where it was, and the next DOS box's
-     * RestoreDesktopMode would otherwise program the refused mode at the
-     * old pitch. */
+     * one. The desktop stays where it was, and the next DOS box's
+     * RestoreDesktopMode does not program the refused mode at the old
+     * pitch. */
     WORD x = wScrX, y = wScrY, bpp = wBpp, pal = wPalettized;
     UINT rc;
 
@@ -1066,7 +1037,7 @@ VOID WINAPI __loadds SetPalette(WORD nStartIndex, WORD nNumEntries,
     }
 }
 
-/* ValidateMode (ordinal 700) — GDI asks before it switches. */
+/* ValidateMode (ordinal 700). GDI asks before it switches. */
 UINT WINAPI __loadds ValidateMode(DISPVALMODE FAR *lpMode)
 {
     UINT rc;
@@ -1086,16 +1057,13 @@ UINT WINAPI __loadds ValidateMode(DISPVALMODE FAR *lpMode)
 #define QUERYESCSUPPORT 8
 /* DCICOMMAND itself comes from gdidefs.h */
 
-/* **Which escapes this driver is asked about, each one once.** The
- * monitor power-down (doc 19 §41) was read the wrong way round for want
- * of this: a display driver *can* be asked for DPMS through
- * `SETPOWERMANAGEMENT` (6148), the way the NT miniport is asked through
- * `HwSetPowerState`, and the guess was that answering it would stop
- * Windows taking the screen away for a blank. `PWRPROBE.EXE` says
- * otherwise — on a monitor power-down this Windows asks about escape
- * 0xc01 and escape 0x27 and nothing else, never 0x1804, and takes the
- * screen away regardless. So the answer was dropped and this stayed:
- * two log lines are what turned a guess into a measurement. */
+/* Which escapes this driver is asked about, each logged once (doc 19 §41).
+ * A display driver can be asked for DPMS through `SETPOWERMANAGEMENT`
+ * (6148, 0x1804), as the NT miniport is through `HwSetPowerState`, and
+ * answering it looked like a way to stop Windows taking the screen away
+ * for a blank. `PWRPROBE.EXE` showed that on a monitor power-down Windows
+ * asks about escapes 0xc01 and 0x27 only, never 0x1804, and takes the
+ * screen away regardless. */
 static WORD wEscAsked[16];
 static WORD wEscSeen = 0;
 
@@ -1115,36 +1083,33 @@ static int EscNoted(WORD code)
 LONG WINAPI __loadds Control(LPVOID lpDevice, UINT function,
                              LPVOID lpInput, LPVOID lpOutput)
 {
-    /* Only the escapes: GDI sends a handful of others at startup and
-     * they are not what this counter is for. */
+    /* Only the escapes. GDI sends a handful of other functions at startup
+     * and this counter is not for them. */
     if (function == DCICOMMAND && wDDLines < 24) {
         dbg_val("d3dpt9x: Control fn", function);
         dbg_str("");
     }
     if (function == QUERYESCSUPPORT) {
         WORD code = *(WORD FAR *)lpInput;
-        /* Which escapes Windows asks this driver about, each one once:
-         * the answer to that question is what took a day of the monitor
-         * power-down (doc 19 §41), and GDI asks them all at start-up. */
+        /* Log each escape Windows asks about once (see wEscAsked above).
+         * GDI asks them all at start-up. */
         if (wEscSeen < 16 && !EscNoted(code)) {
             wEscAsked[wEscSeen++] = code;
             dbg_val("d3dpt9x: QUERYESCSUPPORT", code);
             dbg_str("");
         }
         if (code == QUERYESCSUPPORT) return 1;
-        /* ours (doc 19 §43): the one question a ring-3 program cannot ask
-         * any other way, since the register page is not its to map and
-         * DirectDraw is what the asker is deciding about. */
+        /* Ours (doc 19 §43). A ring-3 program cannot ask this any other
+         * way, since the register page is not its to map and DirectDraw is
+         * what it is deciding about. */
         if (code == D3DPT_ESC_HOSTINFO) return 1;
         if (code == DCICOMMAND) {
-            /* **The answer is the HAL version, not "yes".** DirectDraw
-             * reads this return value to decide what the driver is: a
-             * plain 1 means DCI and nothing more, and it then sends one
-             * DCI DCICREATEPRIMARYSURFACE and never asks a DirectDraw
-             * question again — no DDVERSIONINFO, no
-             * DDGET32BITDRIVERNAME, no HAL (2026-09-07, and the only
-             * symptom was a HAL with dwCaps 0x02000000 and no video
-             * memory). */
+            /* The answer is the HAL version, not "yes". DirectDraw reads
+             * this return value to decide what the driver is. A plain 1
+             * means DCI only, and DirectDraw then sends one
+             * DCICREATEPRIMARYSURFACE and never asks for DDVERSIONINFO or
+             * DDGET32BITDRIVERNAME. The only symptom is a HAL with dwCaps
+             * 0x02000000 and no video memory. */
             if (wDDLines < 24) {
                 wDDLines++;
                 dbg_val("d3dpt9x: QUERYESCSUPPORT(DCICOMMAND) ->", DD_HAL_VERSION);
@@ -1155,10 +1120,10 @@ LONG WINAPI __loadds Control(LPVOID lpDevice, UINT function,
         /* everything else the DIB Engine answers for us */
     }
     /* What the host can do, for a program that has to decide before it
-     * loads DirectDraw: the adapter's own `D3D_STATUS`, which is
-     * `D3DPT_STATUS_NO_EXEC` on a host below ADR-013's Vulkan floor and on
-     * one started with `no-exec=on`. `D3DPRE.EXE` asks this at login and
-     * switches the machine's DirectDraw to WineD3D's, or back (doc 19 §43). */
+     * loads DirectDraw. It returns the adapter's own `D3D_STATUS`, which is
+     * `D3DPT_STATUS_NO_EXEC` on a host with no executor or one started with
+     * `no-exec=on`. `D3DPRE.EXE` asks this at login and switches the
+     * machine's DirectDraw to WineD3D's, or back (doc 19 §43). */
     if (function == D3DPT_ESC_HOSTINFO && lpOutput != 0) {
         D3DPT_ESC_HOSTINFO_T FAR *hi = (D3DPT_ESC_HOSTINFO_T FAR *)lpOutput;
 
@@ -1173,10 +1138,9 @@ LONG WINAPI __loadds Control(LPVOID lpDevice, UINT function,
     if (function == DCICOMMAND && lpInput != 0) {
         DCICMD_t FAR *cmd = (DCICMD_t FAR *)lpInput;
 
-        /* The first few, always: whether this escape arrives at all is
-         * the question the DirectDraw half stands or falls on, and a
-         * driver that simply never hears it looks exactly like one whose
-         * answers were wrong (2026-09-07). */
+        /* Always log the first few. A driver that never hears this escape
+         * looks exactly like one whose answers were wrong, and the whole
+         * DirectDraw half depends on it arriving. */
         if (wDDLines < 24) {
             wDDLines++;
             dbg_val("d3dpt9x: DCICOMMAND version", cmd->dwVersion);
@@ -1184,12 +1148,11 @@ LONG WINAPI __loadds Control(LPVOID lpDevice, UINT function,
             dbg_str("");
         }
 
-        /* Only the DirectDraw version of this escape is ours. The DCI
-         * one (dwVersion == DCI_VERSION) belongs to the DIB Engine, and
-         * so does anything from a runtime newer than we know: handing
-         * those back rather than failing them is what keeps DirectDraw
-         * working under an emulator at all (the reference driver found
-         * this the hard way). */
+        /* Only the DirectDraw version of this escape is ours. The DCI one
+         * (dwVersion == DCI_VERSION) belongs to the DIB Engine, and so does
+         * anything from a newer runtime. Handing those back rather than
+         * failing them keeps DirectDraw working (the reference driver
+         * learned this). */
         if (cmd->dwVersion != DD_VERSION) {
             return DIB_Control(lpDevice, function, lpInput, lpOutput);
         }
@@ -1229,16 +1192,15 @@ static WORD int2F_GetVMID(WORD ax);
 
 UINT WINAPI GlobalSmartPageLock(HGLOBAL hglb);
 
-/* The code segment's selector, for the page lock below. `extern char
- * __based(__segname("_TEXT")) *pText` — the idiom every 9x driver uses —
- * is a trap here: it puts the reference in a *second* segment also called
- * `_TEXT`, of class FAR_DATA, which stays empty in a driver this small.
- * wlink then drops the empty segment from the NE segment table and leaves
- * the relocation pointing at it, and KERNEL refuses to load a module whose
- * relocation names a segment that is not there — silently, which cost this
- * track several boots (doc 19 Section 13). CS is the same selector and needs
- * no relocation at all; build-driver9x.sh now fails the build if any
- * relocation ever points past the segment table again. */
+/* The code segment's selector, for the page lock below (doc 19 §13). The
+ * idiom every 9x driver uses, `extern char __based(__segname("_TEXT"))
+ * *pText`, puts the reference in a second segment also called `_TEXT`, of
+ * class FAR_DATA, which stays empty in a driver this small. wlink drops the
+ * empty segment from the NE segment table but keeps the relocation, and
+ * KERNEL silently refuses to load a module whose relocation names a missing
+ * segment. CS is the same selector and needs no relocation.
+ * build-driver9x.sh fails the build if a relocation points past the
+ * segment table. */
 static WORD GetCS(void);
 #pragma aux GetCS = "mov ax, cs" value [ax];
 
@@ -1249,17 +1211,17 @@ UINT FAR DriverInit(UINT cbHeap, UINT hModule, LPSTR lpCmdLine)
     /* The code segment must not move while we are on the hardware. */
     dbg_str("d3dpt9x: DriverInit entered");
 
-    /* Nothing here may fail: GDI treats a zero from DriverInit as "no
-     * driver" and silently falls back to VGA, which is indistinguishable
-     * from the module never loading. The adapter is found on the first
-     * Enable instead, where a failure is at least visible. */
+    /* Nothing here may fail. GDI treats a zero from DriverInit as "no
+     * driver" and silently falls back to VGA, which looks the same as the
+     * module never loading. The adapter is found on the first Enable
+     * instead, where a failure is visible. */
     GlobalSmartPageLock((HGLOBAL)GetCS());
     VDDEntryPoint = (DWORD)int2F_GetEP(0x1684, VDD_ID);
     OurVMHandle   = int2F_GetVMID(0x1683);
 
-    /* Ask the mini-VDD for the adapter here as well as in Enable: this is
-     * the earliest point at which anything of ours can be *seen* from
-     * outside, because the answer is logged in ring 0 where port 0xE9 and
+    /* Ask the mini-VDD for the adapter here as well as in Enable. This is
+     * the earliest point at which the driver's state can be seen from
+     * outside, because the answer is logged in ring 0, where port 0xE9 and
      * the DEBUG register both work. */
     AdapterFind();
     dbg_val("d3dpt9x: cs", GetCS());

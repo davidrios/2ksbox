@@ -16,38 +16,42 @@ slow on exactly the code these guests run: x87 floating point goes through
 an 80-bit software float library, every guest memory access walks a
 software TLB, every `ret` leaves generated code, and the era's software
 renderers rewrite their own inner loops so often that translation
-dominates. We describe a queue of sixty patches over QEMU 9.2.4, of which
-about twenty are performance work, every one behind its own switch and
-every one bit-exact (the guest computes the same bits with the switch on
-and off), and measure them in two tiers. The first is **reproducible
-benchmarks** — nbench (BYTEmark), 7-Zip's built-in benchmark, Super PI and
-our own SSE/x87 kernel set, run headlessly inside the XP guest with their
-output checked — against pristine QEMU 9.2.4, against our tree with every
-switch off, and with each switch removed from the default: 2.34x geometric
-mean, 5.3x on x87 code, 3.4x on SSE, 1.1x on plain integer code, with
-identical outputs everywhere. The second is the **games** the patches were
-written for — 3DMark 99 Max, 3DMark2001 SE, Blood, Moto Racer and Quake II
-— on one Windows 98 machine with the same A/B, every number checked
-against a screendump of what was on screen: 2.2x to 30x, because the
-patches for self-modifying code and for Windows 98's memory manager are
-invisible to a benchmark program and decisive under a game. A
-SPEC-CPU2006-derived integer suite, measured once, gains 1.07x, which says
-the patches do not target compiled integer code. We then asked what the
-literature's remaining ideas are worth on this tree: each candidate was
-implemented behind a switch and measured — a pc-indexed jump table and a
-back-edge-only interrupt check within noise, return prediction through a
-host call/return pair a loss — and the largest parked design, running the
-translator inside a hardware VM with the guest's page tables mirrored so
-that a guest access is a host access, was priced without building it: a
-memory census of every workload times microbenchmarks of the access
-sequences projects 1.1–1.2x, with the design's one risk (a working set
-beyond the nested TLB) absent from every workload measured. The tree is,
-on these programs, at the point where the remaining generic ideas buy a
-fifth at most. The evaluation's first finding was about its own method: on
-macOS/arm64 a third of QEMU launches place TCG's code buffer 8 GiB from
-the helpers and run helper-heavy code 35–45 % slower, pristine QEMU
-included; a load-time reservation (patch 63) makes every launch the near
-one.
+dominates. We describe a queue of sixty patches over QEMU 9.2.4. About
+twenty are performance work, each behind its own switch and each
+bit-exact (the guest computes the same bits with the switch on and off).
+We measure them in two tiers.
+
+The first is **reproducible benchmarks**: nbench (BYTEmark), 7-Zip's
+built-in benchmark, Super PI and our own SSE/x87 kernel set, run
+headlessly inside the XP guest with their output checked. They run on
+pristine QEMU 9.2.4, on our tree with every switch off, and with each
+switch removed from the default. The default gains 2.34x geometric mean,
+5.3x on x87 code, 3.4x on SSE and 1.1x on plain integer code, with
+identical outputs everywhere.
+
+The second is the **games** the patches were written for: 3DMark 99 Max,
+3DMark2001 SE, Blood, Moto Racer and Quake II, on one Windows 98 machine
+with the same A/B, every number checked against a screendump. They gain
+2.2x to 30x, because the patches for self-modifying code and for Windows
+98's memory manager do nothing to a benchmark program and decide a game.
+A SPEC-CPU2006-derived integer suite, measured once, gains 1.07x; the
+patches do not target compiled integer code.
+
+We then tried the literature's remaining ideas, each behind a switch. A
+pc-indexed jump table and a back-edge-only interrupt check land within
+noise, and return prediction through a host call/return pair is a loss.
+The largest parked design runs the translator inside a hardware VM with
+the guest's page tables mirrored, so that a guest access is a host
+access. We priced it without building it: a memory census of every
+workload times microbenchmarks of the access sequences projects
+1.1–1.2x, and the design's one risk (a working set beyond the nested
+TLB) appears in no workload measured. On these programs the remaining
+generic ideas buy a fifth at most.
+
+The evaluation's first finding was about its own method. On macOS/arm64
+a third of QEMU launches place TCG's code buffer 8 GiB from the helpers
+and run helper-heavy code 35–45 % slower, pristine QEMU included. A
+load-time reservation (patch 63) makes every launch the near one.
 
 ## 1. Introduction
 
@@ -72,7 +76,7 @@ back to guest instructions, and fix the largest thing the profile named.
 The fixes are patches on the pinned QEMU submodule (`patches/qemu/`,
 applied by `scripts/prepare-qemu.sh`; the README there has each patch's
 full story). Two rules shaped them: **only optimizations that could help
-any guest** (nothing title-specific), and **exact before fast** — a fast
+any guest** (nothing title-specific), and **exact before fast**. A fast
 path is taken only when the answer it computes is the bit pattern the
 slow path would have computed, and the one inexact mode that exists
 (`x87-pc64-as-53`, §3.1) is opt-in and labelled as inexact in the
@@ -102,7 +106,7 @@ translator decodes guest instructions until a branch and emits host code
 for them. Direct branches between TBs are *chained* (the host jump is
 patched to point at the target TB, so no lookup happens again); indirect
 branches (`ret`, `call *`, `jmp *`) cannot be chained and go through a
-lookup — a small direct-mapped *jump cache* first, then a hash table.
+lookup: a small direct-mapped *jump cache* first, then a hash table.
 When a lookup fails or an interrupt is pending, execution returns to the
 C main loop, which is a few hundred host instructions each way.
 
@@ -145,7 +149,7 @@ to that precision, with IEEE flags. QEMU implements all of it in
 `softfloat` on an 80-bit representation. SSE is inlined only for a few
 instructions; the rest are helpers. The host FPU computes binary64 and
 binary32 natively, with the same rounding, so for the common modes the
-same bits can be produced by one host instruction — *if* the mode and the
+same bits can come from one host instruction, *if* the mode and the
 operands are checked.
 
 ## 3. The optimizations
@@ -157,8 +161,8 @@ accelerator properties (`-accel tcg,<name>=off`): `smc-same-value`,
 `soft-imm`, `inline-lookup`, `tb-invalidate-fast`, `tlb-floor`,
 `tls-hot-paths`, `jump-cache-keep`, `eob-chain`, `tlb-retire`, plus the
 opt-in `pinned-regs`. The launcher exposes all of them but `pinned-regs`
-("Emulation optimizations" in the machine form; the pinning was withdrawn
-from it on 2026-09-16, §3.6), and `scripts/test.sh`'s `optimizations`
+("Emulation optimizations" in the machine form; §3.6 says why the
+pinning is not there), and `scripts/test.sh`'s `optimizations`
 check proves the wiring from the checkbox to the QEMU command line. A
 switch is the oracle: a guest that misbehaves is diagnosed by turning
 switches off, not by bisecting patches. Each subsection names the profile
@@ -173,7 +177,7 @@ Windows and Direct3D set; the result is bit-exact against softfloat
 because a binary64 (or binary32) operation on operands that are
 themselves representable at that precision *is* the correctly rounded
 result. Patch 06 goes further and keeps the x87 stack as host doubles
-*inside* generated code across instructions — the "shadow" stack — with
+*inside* generated code across instructions (the "shadow" stack), with
 the conversion back to the 80-bit format only at TB exits, before
 helpers and on faults. Patch 37 removed the per-operation inexact-flag
 computation when the flag was already sticky (the state every program is
@@ -192,16 +196,16 @@ default: it runs 64-bit code at 53 bits, which drops the low 11 bits of
 every mantissa, and no sampling of a program's operands can prove that
 harmless. What runs at 64-bit precision in 3DMark2001 SE is its physics:
 the *high detail* variants of the Lobby and the Car Chase simulate their
-debris dynamically, the low-detail ones do not. So the pair — high
-detail, switch off and on — measures what the inexact mode buys on a
+debris dynamically, the low-detail ones do not. So the pair (high
+detail, switch off and on) measures what the inexact mode buys on a
 physics-style workload, and the low-detail scene beside it is the control
 that should not move (§6.2).
 
 **SSE and MMX inline (patches 11, 12, 36, 39; doc 16).** SSE float
 operations are inlined on the host vector unit when MXCSR is
 round-to-nearest with no flush-to-zero or denormals-are-zero, all
-exceptions masked, and the inexact flag already sticky — the state a game
-is in a microsecond after starting. Each operation checks its operands
+exceptions masked, and the inexact flag already sticky. A game is in that
+state a microsecond after starting. Each operation checks its operands
 and result for the cases where host and softfloat could differ (NaNs,
 denormals, the flags) with a vector compare and one branch; the slow
 path is the old helper. Patch 12 inlines the MMX and SSE integer and
@@ -219,8 +223,8 @@ the Air, results identical over 546,425 lines.
 flush from the number of entries used since the previous one. Windows XP
 flushes at every context switch (450 a second on an idle desktop), the
 measured working set was a few hundred pages, and the table sat at 64–256
-entries — where two live pages share an index all the time and every
-access to either is a miss. The minimum is now 4096 entries.
+entries. At that size two live pages share an index all the time and
+every access to either is a miss. The minimum is now 4096 entries.
 
 **Retiring instead of flushing (patch 44).** Windows 98's memory manager
 writes CR3 with the *same value* 2,400 times a second while 3DMark 99
@@ -246,7 +250,8 @@ vAPIC sat below a data structure the APIC writes at every interrupt, and
 a range rounded down to the page start retranslated them every time; the
 per-page byte range of translated code was wrong for a Win9x module
 (code at both ends, data between), so every data write walked the page's
-whole TB list — 57 % of QEMU's time in 3DMark 99, invalidating nothing.
+whole TB list. That was 57 % of QEMU's time in 3DMark 99, and it
+invalidated nothing.
 
 **Same-value stores (patch 18).** 94 % of the era's self-patching stores
 write the value that is already there (a renderer re-patching the same
@@ -256,7 +261,7 @@ invalidates nothing.
 **Soft immediates (patch 24).** For the other 6 %, a block that has been
 thrown away by writes into its own immediates is retranslated with those
 immediates and displacements emitted as *loads from the guest's code
-bytes* rather than constants — the field lives where the guest writes
+bytes* rather than constants. The field lives where the guest writes
 it, so the guest's store *is* the update and the block survives. A block
 that still gets invalidated four times goes back to constants. In Blood's
 starting room the translations in a 3 s window went from 117,254 to 34.
@@ -266,7 +271,7 @@ starting room the translations in a 3 s window went from 117,254 to 34.
 **The jump-cache probe inline (patches 20, 38).** Every `ret`, `call *`,
 `jmp *` and every jump leaving its page ended its TB with a call to
 `helper_lookup_tb_ptr`: a register sync, the CPU state's flags recomputed,
-the breakpoint check, then the jump-cache compare — ~70 host
+the breakpoint check, then the jump-cache compare. That is ~70 host
 instructions plus the call, 13.9 % of the vCPU's self time on 7-Zip. The
 probe is now TCG ops in the block, and patch 38 made the mode-flag half
 of it constants known at translation.
@@ -288,8 +293,8 @@ an interrupt was pending while IF was clear; everything else now chains.
 **JIT write-protect toggles (patch 14).** macOS flips the MAP_JIT code
 buffer between writable and executable per thread; QEMU toggled it before
 every TB run from the main loop and around every patch without
-remembering the state — 12 % of Super PI's vCPU thread. Tracked per
-thread now.
+remembering the state, which cost 12 % of Super PI's vCPU thread. The
+state is tracked per thread now.
 
 **Thread-local storage (patch 19).** On macOS every `__thread` access is a
 call into dyld; the store slow path took five nested RCU read locks per
@@ -308,8 +313,7 @@ x20–x28 for the life of a chain of TBs: loaded by the prologue, stored by
 the epilogue, stored before a helper that may read them and reloaded
 after one that may write them. It removes the loads and stores at block
 boundaries. It is off by default and not offered in the machine form
-(user decision, 2026-09-16: too unstable for too little gain): XP
-crashes with seven or more registers pinned (§5.2, §8.1), and there is a
+(user decision: too unstable for too little gain). XP crashes with seven or more registers pinned (§5.2, §8.1), and there is a
 stall at the flags-helper call boundary; both are open.
 
 ## 4. Methodology
@@ -333,9 +337,9 @@ touches, each with a fixed workload:
 | Benchmark | What it exercises | Workload | Number |
 |---|---|---|---|
 | **nbench 2.2.3** (BYTEmark, `tools/specbench/build-guest.sh`) | ten self-timed kernels: seven integer (sort, bitfield, IDEA, Huffman, assignment, an FP *emulation* in integer code) and three x87 double (Fourier, neural net, LU decomposition) | each kernel runs until its rate is statistically stable | iterations/s per kernel; the headline is the geometric mean of the ten ratios to stock |
-| **7-Zip 26.03**, `7zr b 2 -mmt1 -md=22` (public domain, [7-zip.org](https://www.7-zip.org/a/7zr.exe)) | LZMA compress and decompress, one thread, two passes at dictionary 22 (4 MB): integer, `ret`-heavy, memory-bound — the 7-Zip the control-flow patches were profiled on | its built-in benchmark | MIPS ratings (compress, decompress, total) |
+| **7-Zip 26.03**, `7zr b 2 -mmt1 -md=22` (public domain, [7-zip.org](https://www.7-zip.org/a/7zr.exe)) | LZMA compress and decompress, one thread, two passes at dictionary 22 (4 MB): integer, `ret`-heavy, memory-bound; the 7-Zip the control-flow patches were profiled on | its built-in benchmark | MIPS ratings (compress, decompress, total) |
 | **Super PI mod 1.5 XS**, 1M digits (on the image) | x87 at 53-bit precision, the Windows default: the classic x87 workload, and the one patch 14 was profiled on | the 1M run, started by keys sent from the host | CPU seconds of the run, from the job object that contains the process, so the seconds spent waiting for its keys do not count |
-| **SSEBENCH.EXE** (ours, guest-tools ISO, doc 16) | the handful of SSE and x87 kernels every Direct3D-era game does — vector transform, normalise, dot products, clamps and compares, int↔float conversions — with a checksum per kernel | `-iter 20` | ns per op per kernel; the SSE score is the mean of the SSE kernels |
+| **SSEBENCH.EXE** (ours, guest-tools ISO, doc 16) | the handful of SSE and x87 kernels every Direct3D-era game does (vector transform, normalise, dot products, clamps and compares, int↔float conversions), with a checksum per kernel | `-iter 20` | ns per op per kernel; the SSE score is the mean of the SSE kernels |
 
 nbench is cross-compiled for the guest with the guest tools' toolchain
 flags (`-O2 -march=pentium3`, msvcrt, `-std=gnu89`): `-march=pentium3`
@@ -365,9 +369,9 @@ milliseconds.
 **Every emulator launch goes through `tools/specbench/noaslr.c`**, a
 20-line launcher that spawns the process with address-space layout
 randomisation off. Without it a third of launches run helper-heavy code
-35–45 % slower (§5.0); with it the layout is the same every launch and,
-on this machine, the near one, so the tables compare like with like —
-for pristine QEMU too, which has no reservation of its own.
+35–45 % slower (§5.0). With it the layout is the same every launch and,
+on this machine, the near one, so the tables compare like with like.
+That holds for pristine QEMU too, which has no reservation of its own.
 
 Super PI's digits are CRC-checked across configurations (its output is a
 computation); the other three print their own timings, so their CRCs are
@@ -402,11 +406,10 @@ taken beside other work on the machine was discarded and redone.
 
 Before the matrix could be run, the same binary had to give the same
 number twice, and it did not. The same configuration came out at 0.65x to
-0.73x of itself between launches — with byte-identical code, on an idle
-machine that was not throttled (7-Zip's own host-speed calibration read
-the same ~3100 MHz in fast and slow runs), not on an efficiency core and
-not thermal — while both repetitions inside a launch always agreed to
-0.5 %. The regime is decided at launch, and sampled launches lined up on
+0.73x of itself between launches, while both repetitions inside a launch
+always agreed to 0.5 %. The code was byte-identical and the machine idle,
+not throttled (7-Zip's own host-speed calibration read the same ~3100 MHz
+in fast and slow runs), not on an efficiency core and not thermal. The regime is decided at launch, and sampled launches lined up on
 one variable: **where `mmap(NULL)` put TCG's 1 GiB code buffer**.
 
 | launch | SSEBENCH SSE score (ns/op) | x87 kernel | code buffer | distance from the text |
@@ -419,8 +422,8 @@ one variable: **where `mmap(NULL)` put TCG's 1 GiB code buffer**.
 Every slow launch had the code buffer 8 GiB from the executable; every
 fast one had it within 1.1 GiB. The AArch64 backend emits a helper call
 as one `bl` within ±128 MiB of the target, as `adrp+add+blr` within
-±4 GiB, and beyond that as four `movz/movk` instructions and a `blr` —
-and the same holds for every host address a translation block
+±4 GiB, and beyond that as four `movz/movk` instructions and a `blr`.
+The same holds for every host address a translation block
 materialises (the helper for an indirect jump, the exit constants). At
 8 GiB every helper call in every TB is the long form, which is why the
 slow launch's profile is the fast launch's profile scaled: the extra
@@ -432,8 +435,8 @@ time TCG initialises; with ASLR off the fragmentation happens to leave
 the near gap free every time on this machine.
 
 For the tables, every launch is pinned to slide 0 (`noaslr`). For the
-product — and for upstream QEMU on Apple Silicon, which has the same
-lottery — the fix is to reserve the buffer's address space next to the
+product, and for upstream QEMU on Apple Silicon, which has the same
+lottery, the fix is to reserve the buffer's address space next to the
 helpers at load time, before anything else fragments it: a constructor in
 `tcg/region.c` takes a `PROT_NONE` `MAP_JIT` reservation within 2 GiB of
 its own image and `alloc_code_gen_buffer_anon` uses it (a hint to `mmap`
@@ -472,7 +475,7 @@ and relocating helpers into `bl` reach, or a two-tier buffer, is not
 worth building.
 
 The patch is `patches/qemu/63-jit-buffer-near-helpers`. It has no
-switch — it runs before the command line exists — so it is the one
+switch, because it runs before the command line exists, so it is the one
 performance patch in the queue whose A/B is a pristine build rather than
 a property; its effect on a user's machine is the *removal* of a 35–45 %
 loss on a third of launches, not a speedup of the median launch.
@@ -531,7 +534,7 @@ Six switches show nothing here, and that is expected: `smc-same-value`
 and `soft-imm` exist for self-patching renderers, `tlb-floor`,
 `tlb-retire` and `jump-cache-keep` for Windows 98's 2,400 CR3 writes a
 second under a game, `tls-hot-paths` for the store slow path those
-renderers hit — none of which a benchmark program does. Their evidence
+renderers hit. A benchmark program does none of that. Their evidence
 is §6.
 
 ### 5.3 Per benchmark
@@ -577,8 +580,8 @@ without `tb-invalidate-fast` 1305 / 1650, without `eob-chain` 1354 / 1716.
 One row is a finding rather than a result: on the **denormal slow path**
 the default is 22 % *slower* than pristine (59 vs 46 ns per op). That is
 patch 11's inline path detecting a denormal result, undoing its work and
-calling the helper pristine would have called directly — the price of the
-check, paid on every operation of a kernel that is denormal on every
+calling the helper pristine would have called directly. That is the
+price of the check, paid on every operation of a kernel that is denormal on every
 operation. Real code meets denormals in decays and fades, briefly; a
 program that lived there would be better off with `sse-fast=off`. The
 scalar-chain row (1.19x) is the other modest one: a dependent chain of
@@ -595,9 +598,9 @@ latency-bound either way.
   its three float kernels are the first measurement of patches 48/49's
   exact 64-bit path: LU 3.0x, neural net 2.7x, Fourier 1.44x over
   pristine. The opt-in inexact mode (`x87-pc64-as-53`) takes the same
-  kernels to 5.3x and 4.9x — the same shape as 3DMark2001's high-detail
-  physics (§3.1, §6.2), and the same bargain: faster, and a different low
-  mantissa.
+  kernels to 5.3x and 4.9x. That is the same shape as 3DMark2001's
+  high-detail physics (§3.1, §6.2), and the same bargain: faster, and a
+  different low mantissa.
 - **SSE inlining is worth 3.4x on the SSE kernels** and its two halves
   separate cleanly: `sse-fast` carries the float ops, `simd-fast` the MMX
   and packed permutes (MMX blend 4.7x vs 2.45x without it).
@@ -618,7 +621,7 @@ latency-bound either way.
 ## 6. The games
 
 The patches were written against games, and that is where the largest
-gains are — because a Windows 98 game is not a benchmark program: it
+gains are, because a Windows 98 game is not a benchmark program. It
 patches its own code, it spends a quarter of its frame in x87 at 24-bit
 precision, it flips the TLB 2,400 times a second through the VMM, and it
 enters ring 0 five times per VxD call.
@@ -631,14 +634,14 @@ a fresh raw copy of the image under a bare `qemu-system-i386`, one guest
 at a time, driven headless by a runner per game (`tools/w98-3dmark.sh`,
 `w98-3dmark2001.sh`, `w98-blood.sh`, `w98-moto.sh`, `w98-quake2.sh`;
 `docs/testing.md`, "Games and benchmarks", has each one's protocol). The
-A/B is the matrix's own: **every switch off** against **the default** —
-pristine QEMU cannot be the baseline here, since none of these runs
+A/B is the matrix's own: **every switch off** against **the default**.
+Pristine QEMU cannot be the baseline here, since none of these runs
 without the paravirtual adapter. What each runner measures:
 
 - **3DMark 99 Max** (800×600×16, triple buffer, Pentium III
   optimizations): the Benchmark clicked, a screendump every 5 s, and the
-  executor's 5 s frame-rate windows placed by test from the screendumps —
-  a window counts for a test only when it lies wholly inside that test's
+  executor's 5 s frame-rate windows placed by test from the screendumps.
+  A window counts for a test only when it lies wholly inside that test's
   shots, because a window that spans a loading screen reads as a frame
   rate that is not one. The two game tests run at a 60 Hz flip cap, so
   they are taken with the vertical blank off as well.
@@ -660,11 +663,11 @@ without the paravirtual adapter. What each runner measures:
   read from the driver's flip chain, vertical blank off.
 - **Quake II 3.20** (640×480, `ref_soft`): `timedemo 1` on demo1, the
   game's own `frames, seconds: fps` line. A compiled software renderer
-  that patches nothing — the control for the claim that the large game
+  that patches nothing, so it is the control for the claim that the large game
   gains come from the self-modifying-code and VMM patches.
 
 Every number was checked against a screendump of what was on screen when
-its window was taken — the 3DMark 99 game tests by their own in-frame
+its window was taken: the 3DMark 99 game tests by their own in-frame
 counters, 3DMark2001's by its "Now Testing" splash and in-frame counter,
 Blood and Moto Racer by the frame itself. The screendumps and the raw
 rate lines are under `docs/22-data/games/`.
@@ -687,22 +690,22 @@ rate lines are under `docs/22-data/games/`.
 | **Quake II** 3.20, software renderer, `timedemo 1` demo1 | 34.8 fps | **50.0 fps** | — | 640×480 (`ref_soft`, mode 3); the game's own `689 frames, 13.8 seconds: 50.0 fps` line; a compiled software renderer with no self-modifying code, so the CPU tier's kind of gain (1.4x) |
 
 The switches are worth 2.3x on the CPU tier and **2.2x to 30x on the
-games** — 3DMark 99's game tests 2.3x, 3DMark2001's high-detail scenes
-1.9–13x, Blood 30x, Moto Racer's software renderer 29x — because the
+games** (3DMark 99's game tests 2.3x, 3DMark2001's high-detail scenes
+1.9–13x, Blood 30x, Moto Racer's software renderer 29x), because the
 game-only patches (§6.3) are exactly what the "all off" column loses.
 The two game tests of 3DMark 99 and every low-detail scene of 3DMark2001
 sit at the 60 Hz flip cap on the default build, which is the number a
 user sees; the uncapped figures are what is left in hand. **The inexact
 PC=64 switch** (patch 47) is worth +47 % in the scene that is all debris
 physics (the Car Chase, high detail), +15 % in the Lobby and +6 % in
-Dragothic, and nothing where there is none — the low-detail controls are
+Dragothic, and nothing where there is none. The low-detail controls are
 at the cap with it off and on, as they should be.
 
 ### 6.3 What the two tiers say together
 
-Where the tiers agree is direction: the same tree gains on both, and Quake
-II — compiled code, no self-patching, the one game whose renderer is a
-program of the benchmarks' kind — gains the benchmarks' 1.4x. Where they
+The tiers agree on direction. The same tree gains on both, and Quake II
+(compiled code, no self-patching, the one game whose renderer is a
+program of the benchmarks' kind) gains the benchmarks' 1.4x. Where they
 disagree is scale, and the reason is structural. Three of the largest
 patches are invisible to any fixed-workload CPU benchmark by construction:
 self-modifying code (§3.3) never happens in a compiled benchmark; the CR3
@@ -712,8 +715,8 @@ at 24-bit precision (patch 45) is a Direct3D device's state. So
 `smc-same-value`, `soft-imm`, `tlb-floor`, `tlb-retire`, `jump-cache-keep`
 and `tls-hot-paths` show nothing in §5.2 and are the difference between 4
 fps and 128 in Blood, between 3 fps and 84 in Moto Racer. A benchmark
-number for this tree is therefore a lower bound on what a 2ksbox user sees
-— and the literature's SPEC numbers for hardware-MMU designs (§7) are,
+number for this tree is therefore a lower bound on what a 2ksbox user sees.
+The literature's SPEC numbers for hardware-MMU designs (§7) are,
 symmetrically, taken on workloads that never touch the paths those designs
 make slower (page-table churn).
 
@@ -766,7 +769,7 @@ prior art the parked items have (`docs/23-dbt-literature.md` has the full
 list with links and the ranking). Where a patch and a paper coincide,
 that is convergence, not citation:
 
-- **Hardware-MMU-backed guest memory** — ESPT (Chang et al., VEE 2014) and
+- **Hardware-MMU-backed guest memory.** ESPT (Chang et al., VEE 2014) and
   HSPT (Wang et al., VEE 2015, 1.98x on QEMU) embed a shadow page table in
   the translator's address space so a guest access is a host load at a
   fixed offset; Captive (Spink, Wagstaff, Franke; TACO 2016, ATC 2019)
@@ -777,29 +780,29 @@ that is convergence, not citation:
   QEMU with an mmap view. We measured the same design on
   Hypervisor.framework (1.4–2.6x per load, `tools/hvf-el1/`) and parked
   it as weeks of work; patches 16 and 44 are the cheaper cuts at the same
-  cost — and §8.2 prices the design on our workloads at 1.1–1.2x.
-- **Indirect branches** — SPIRE (Jia et al., VEE 2013), MAMBO-X64's
+  cost, and §8.2 prices the design on our workloads at 1.1–1.2x.
+- **Indirect branches.** SPIRE (Jia et al., VEE 2013), MAMBO-X64's
   hardware return-address prediction (D'Antras et al., PLDI 2017) and
   Tiaozhuan's full address mapping (Li et al., TACO 2024; +3.9 % average,
   19.4 % peak on SPEC with an x86 guest). Patch 20 inlines QEMU's own
   jump-cache probe; those go further, and §8.1 tried them: the table
   within noise, the return prediction a loss.
-- **Global register allocation** — Zurstraßen et al. (DATE 2025, static
+- **Global register allocation.** Zurstraßen et al. (DATE 2025, static
   guest-to-host mappings, up to 1.4x over block-local) and Batuzov (ISP
   RAS) in QEMU. Patch 21 is the same idea on AArch64's callee-saved set.
-- **Floating point on the host** — Cota's hardfloat (QEMU, 2018: use the
+- **Floating point on the host.** Cota's hardfloat (QEMU, 2018: use the
   host when the inexact flag is already sticky) is the rule patches 06
   and 11 apply, extended to x87 and to keeping values in host format
   across instructions; Zurstraßen et al. (RAPIDO 2025) vectorise the
   same checks for RISC-V.
-- **Self-modifying code** — Transmeta's Code Morphing Software (Dehnert et
+- **Self-modifying code.** Transmeta's Code Morphing Software (Dehnert et
   al., CGO 2003) kept translations that verify their own source bytes on
   entry; patch 24's soft immediates make the block read the bytes
   instead.
-- **Interrupt checks** — Niu, Zhang and Li (SYSTOR 2022) remove the per-block
+- **Interrupt checks.** Niu, Zhang and Li (SYSTOR 2022) remove the per-block
   pending-interrupt test; patch 43 removes the block ends that forced the
   main loop.
-- **On arXiv**: learned translation rules in system-mode QEMU (2402.09688,
+- **On arXiv.** Learned translation rules in system-mode QEMU (2402.09688,
   1.36x), function offload to native code (2512.00487), IR-less
   translation (2501.03427).
 
@@ -807,7 +810,7 @@ that is convergence, not citation:
 
 The related work of §7 leaves two kinds of candidate: techniques the queue
 has not tried, and the one design it parked for size. Both were priced on
-the same tier on 2026-09-16 (the full account is doc 23's last section and
+the same tier (the full account is doc 23's last section and
 the M9 track doc's "Gauging the gain"; the diffs, scripts and runs are
 under `docs/22-data/spikes/` and `docs/22-data/hwmmu/`).
 
@@ -824,7 +827,7 @@ taken the same morning. Noise on this tier is ±2 %.
 | jump cache indexed by the pc itself (Tiaozhuan's full address mapping: 32 GiB reserved, populated on demand) | 73.5 | 1588 | 2.30 | within noise |
 | the exit-request check at back edges and indirect branches only (Niu et al.) | 74.3 | 1583 | 2.29 | within noise |
 | return prediction: a return-address ring, `call` through a host `bl`, `ret` through a host `ret` (MAMBO-X64), on top of both | 75.5 | 1574 | 2.45 | a loss, 2–6 % |
-| every SSE result check removed — inexact, the ceiling of any cheaper check (RAPIDO) | | | 2.17 | ≤ 6 % of the SSE score, none of it in the packed kernels |
+| every SSE result check removed (inexact; the ceiling of any cheaper check, RAPIDO) | | | 2.17 | ≤ 6 % of the SSE score, none of it in the packed kernels |
 | pinned registers capped at seven (the DATE 2025 cross-check of patch 21) | XP rebooted in Super PI | | | the crash is the pinned path, not the eighth register |
 
 The two structural ones show nothing because the control-flow patches
@@ -833,8 +836,8 @@ jump table removes was not on the critical path of a probe that ends in
 five dependent loads, and the per-block interrupt check is an L1 load
 the core never waits for. Return prediction loses because the ring push
 at every call and the compare at every `ret` cost more than the
-hardware's prediction of a `ret` saves — which says the M1's indirect
-predictor was already right about most `br` targets. The back-edge check
+hardware's prediction of a `ret` saves. The M1's indirect predictor was
+already right about most `br` targets. The back-edge check
 also taught something about the tree: patch 34 delivers the PIT's overdue
 interrupt on the `in` instruction and relied on the next block's check to
 take it before the next guest instruction; a block ended by an I/O
@@ -844,8 +847,8 @@ instruction therefore keeps the check.
 
 The design (the M9 track doc): run TCG's output inside a
 Hypervisor.framework VM whose stage-1 page tables mirror the x86 guest's,
-so a guest load is one host load instead of the softmmu chain — the
-Captive / ESPT / HSPT family of §7, 2–2.5x in their SPEC numbers. A probe
+so a guest load is one host load instead of the softmmu chain. It is
+the Captive / ESPT / HSPT family of §7, 2–2.5x in their SPEC numbers. A probe
 had priced its primitives (1.4–2.6x per load); what a workload would gain
 was inferred from the profile's 43 % of samples on the chain. Two
 measurements replaced the inference:
@@ -882,8 +885,8 @@ its own reuse distance puts it on:
 | Blood | 257 | 1.10x |
 | nbench, SSEBENCH | 146–188 | 1.05–1.07x |
 
-The design's one risk — random working sets beyond the nested TLB's
-12 MiB, where the probe measured ~21 ns per miss — does not occur: over
+The design's one risk, random working sets beyond the nested TLB's
+12 MiB where the probe measured ~21 ns per miss, does not occur. Over
 2.3 million windows of 65,536 accesses on six workloads, none touched
 more than 1,600 distinct pages. The projection leaves out what would also
 change under the mirror (TLB refills at 40 k/s and flushes at 500/s on
@@ -896,12 +899,12 @@ transfer to these programs, and the reason is visible in the census: a
 accesses, so the softmmu chain it pays is the throughput of nine
 overlapped instructions, not the latency of a dependent walk.
 
-**Decision (2026-09-16).** A fifth, for a freestanding build of the
-vCPU core, a rewrite of `cputlb.c` as a fault-driven mirror and a mailbox
-protocol between the VM and the device model, is not worth it at the
-speed the tree already reaches: the design is abandoned for the time
-being, with the census, the kernels and the projection kept in the tree
-for the day a workload changes the number.
+**Decision.** A fifth is not worth a freestanding build of the vCPU
+core, a rewrite of `cputlb.c` as a fault-driven mirror and a mailbox
+protocol between the VM and the device model, at the speed the tree
+already reaches. The design is abandoned for now. The census, the
+kernels and the projection stay in the tree for the day a workload
+changes the number.
 
 ## 9. Conclusion
 
@@ -910,7 +913,7 @@ on the programs the literature would measure: 2.3x geometric mean over
 pristine QEMU 9.2.4 on the Air, 5.3x on x87 code, 3.4x on SSE, 1.1x on
 plain integer code, with identical outputs. The ablation attributes it:
 the floating-point patches carry the bulk, the three control-flow patches
-10–20 % on integer code, `rep-fast` one kernel — and six switches show
+10–20 % on integer code, `rep-fast` one kernel. Six switches show
 nothing there because their workloads are Windows 98 games, where the
 same tree is 2.2x to 30x over itself with every switch off: 3DMark 99's
 game tests 2.3x, 3DMark2001's high-detail scenes 1.9–13x, Blood 30x, Moto
@@ -948,8 +951,8 @@ benchmarks (bzip2 1.0.8 ← 401.bzip2, GNU Go 3.8 ← 445.gobmk, HMMER 2.3.2
 ← 456.hmmer, Sjeng Free 11.2 ← 458.sjeng, libquantum 1.1.1 ←
 462.libquantum), cross-compiled with the same flags, with fixed inputs and
 the same small fixes SPEC made (a pinned seed, no learning file, no stdin
-polling), every output CRC-checked. Measured on 2026-09-15 on the Air,
-seconds, best of two:
+polling), every output CRC-checked. Measured on the Air, seconds, best
+of two:
 
 | config | bzip2 -9 | bzip2 -d ×3 | shor | hmmer | gnugo | sjeng | geomean vs stock |
 |---|---|---|---|---|---|---|---|
@@ -964,8 +967,8 @@ integer code gains a uniform few percent (the TLB floor, the inline
 lookup, the chained block ends), GNU Go 1.30x because it uses floating
 point in its influence functions, and the rest of the queue never runs.
 These numbers say little about the patches, which is why they are an
-appendix; they are kept for the one question they do answer — what an
-upstream reviewer would see on their own benchmark — and for the `off`
+appendix. They are kept for the one question they do answer (what an
+upstream reviewer would see on their own benchmark) and for the `off`
 row, the first evidence that the switched patches' off paths are slower
 than upstream's code (0.88x; GNU Go 0.73x, the x87 path at
 `x87-fast=off` slower than stock's, §5).
@@ -992,9 +995,9 @@ tools/w98-blood.sh blood-def; SOFT=1 DDFLAGS=32768 tools/w98-moto.sh moto-soft-n
 
 ## Appendix C. Raw result lines
 
-The raw lines of every configuration — `RESULT` lines with wall and CPU
+The raw lines of every configuration (`RESULT` lines with wall and CPU
 milliseconds, CRC and exit code per repetition, and each program's own
-output — are committed under `docs/22-data/<configuration>/`, with the
+output) are committed under `docs/22-data/<configuration>/`, with the
 report as `docs/22-data/report.md`; the A/B of patch 63 under
 `docs/22-data/runs-ab3/` and the 120 MiB experiment under
 `docs/22-data/runs-exp120/`. The `pinned` directory has the screendump of

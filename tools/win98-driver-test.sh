@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The Win98/Me display driver in a real guest, headless (doc 19, M10) —
-# the 9x counterpart of tools/xp-driver-test.sh, at the stage the driver
-# is at: install it, boot the machine on `-vga none -device d3dpt-vga`,
-# and report what the adapter and the screen say.
+# The Win98/Me display driver in a real guest, headless (doc 19, M10).
+# The 9x counterpart of tools/xp-driver-test.sh: install the driver, boot
+# the machine on `-vga none -device d3dpt-vga`, and report what the
+# adapter and the screen say.
 #
 #   tools/win98-driver-test.sh ~/vms/win98.qcow2 [boot|install]
 #
@@ -12,26 +12,26 @@
 #
 # **Never touches the user's image**: it converts a copy to raw once
 # (build/w98/win98-m10.raw) and works on that, because mtools cannot write
-# into a qcow2 and the driver has to be staged from outside — there is no
+# into a qcow2 and the driver has to be staged from outside. There is no
 # in-guest shell to drive before the display works.
 #
 # What it prints, and what each line means:
 #   BARs        the adapter's PCI base addresses over the boot. The BIOS
 #               maps them; if Windows unmaps them, nothing claimed the
-#               resources — that is the mini-VDD's job (doc 19), and the
-#               16-bit driver then has nothing to map.
+#               resources (the mini-VDD's job, doc 19), and the 16-bit
+#               driver then has nothing to map.
 #   guest:      the driver's own debug output, through the adapter's DEBUG
 #               register into the QEMU log, exactly as on XP.
 #   0xE9        the same lines through QEMU's debug console, which works
-#               before the register page is mapped — when this is empty
+#               before the register page is mapped. When this is empty
 #               too, no code of ours ran at all.
 #   colours     the screendump's colour count: 16 or fewer means Windows
 #               fell back to VGA and the driver is not driving the screen.
 #
 # `PROG=<file.exe>` stages a program and names it in WIN.INI's `run=`, so
-# Windows starts it once the shell is up — this harness has nothing to
+# Windows starts it once the shell is up. This harness has nothing to
 # type at, so that is how anything gets exercised. The DirectDraw half of
-# the driver needs it: nothing on a Win98 desktop calls DirectDrawCreate
+# the driver needs it, since nothing on a Win98 desktop calls DirectDrawCreate
 # on its own, and until something does, the DCICOMMAND escapes and the
 # ring-3 HAL are never reached (doc 19 §2). The probe built for exactly
 # that is `guest-tools/out/driver9x/ddprobe.exe`:
@@ -42,22 +42,21 @@
 # and the evidence is `d3dpt9dd:` / `d3dpthal:` lines in the guest log
 # plus the DDPROBE.LOG it leaves in C:\2KSBOX.
 #
-# The boot is not slept out: the adapter says `linear mode on` the moment the
-# driver programs the desktop mode, so the run waits for that and then lets
-# the desktop paint for SETTLE seconds. A driver that never loads never says
-# it, and then — and only then — the whole BOOT_WAIT is spent before the run
-# reports what it found.
+# The boot is not slept out. The adapter says `linear mode on` the moment
+# the driver programs the desktop mode, so the run waits for that and then
+# lets the desktop paint for SETTLE seconds. Only a driver that never loads
+# spends the whole BOOT_WAIT before the run reports what it found.
 #
 # `DDFLAGS=<n>` passes the adapter's bisection knob through
 # (`-device d3dpt-vga,ddflags=N`); the 9x driver reads the high half of it
 # (`D9F_*` in `w9x/d3dpt9x.h`), the NT one the low half.
 #
-# `NO_EXEC=1` adds `no-exec=on`: the adapter answers `D3D_STATUS` with
-# `NO_EXEC`, as a host below ADR-013's Vulkan 1.3 floor does, and the run then
-# shows what such a user gets — `d3dpthal: no Direct3D on this host —
-# DirectDraw only`, no `d3dpt9dd:   d3d global=`, and DDPROBE's log with the
-# DirectDraw half intact. A HAL that still claims `DDCAPS_3D` there is the
-# 2026-09-18 bug (doc 19 §40).
+# `NO_EXEC=1` adds `no-exec=on`. The adapter answers `D3D_STATUS` with
+# `NO_EXEC`, as a host with no executor does, and the run shows what such
+# a user gets: `d3dpthal: no Direct3D on this host, DirectDraw only`, no
+# `d3dpt9dd:   d3d global=`, and DDPROBE's log with the DirectDraw half
+# intact. A HAL that still claims `DDCAPS_3D` there is the bug in doc 19
+# §40.
 #
 # `BOOT_WAIT=<s>` is that cap (it buys more time on a slow run), `SETTLE=<s>`
 # is the paint time after the mode switch, `SHOTS=<s>` adds a screendump
@@ -79,9 +78,9 @@ RAW="$OUT/win98-m10.raw"
 SOCK="/tmp/claude-$(id -u)/w98m10.sock"
 BOOT_WAIT="${BOOT_WAIT:-150}"
 
-# What a PROG may leave behind — deleted before the run and read back after,
+# What a PROG may leave behind, deleted before the run and read back after,
 # so what comes out at the end is this run's or nothing. One list, because
-# three copies of it is how a new test's log silently never gets collected.
+# with three copies a new test's log silently never gets collected.
 # Guest paths: every program of ours writes its log and its BMPs to
 # C:\2KSBOX (guest-tools/src/guestlog.h) rather than to whatever directory
 # it was started from; the two at the end are named by the run batch itself.
@@ -94,14 +93,14 @@ PROG_OUTPUTS="2KSBOX/DDPROBE.LOG 2KSBOX/D3D7TEST.LOG 2KSBOX/D3D7TEST.BMP 2KSBOX/
 # it and two copies is how they drift.
 stage_prog() {
   # **`run=` takes a program, never arguments.** Windows 9x drops anything
-  # after the path — measured 2026-09-08: d3dgame8 logged `arg[0]` alone, so
-  # its `-frames 600 -dump 300` never arrived, it rendered without end and was
-  # still running when the shutdown came (which is why the machine would not
-  # power off). So `run=` names a batch file and the batch carries the command
-  # line. That is also what lets a run drive a program that is *installed* in
-  # the guest rather than staged, which cannot be copied to C:\ because it
-  # needs its own directory: give GUEST_CMD the lines to run, in 8.3 names
-  # (COMMAND.COM has no use for long ones).
+  # after the path. d3dgame8 logged `arg[0]` alone, so its `-frames 600
+  # -dump 300` never arrived, it rendered without end and was still running
+  # when the shutdown came (so the machine would not power off). So `run=`
+  # names a batch file and the batch carries the command line. That also
+  # lets a run drive a program that is *installed* in the guest rather than
+  # staged, which cannot be copied to C:\ because it needs its own
+  # directory. Give GUEST_CMD the lines to run, in 8.3 names (COMMAND.COM
+  # has no use for long ones).
   : > "$OUT/run.bat"
   printf '@echo off\r\n' >> "$OUT/run.bat"
   if [ -n "${GUEST_CMD:-}" ]; then
@@ -116,8 +115,8 @@ stage_prog() {
   fi
   # Close the DOS box the batch runs in. Without this COMMAND.COM sits there
   # after the program is launched, and a run then ends with "the machine did
-  # not power off" — which leaves the FAT dirty and makes the *next* boot a
-  # ScanDisk (or safe mode), i.e. it looks exactly like the thing under test
+  # not power off". That leaves the FAT dirty and makes the *next* boot a
+  # ScanDisk (or safe mode), which looks exactly like the thing under test
   # having failed. Launching a Windows program from a batch returns at once,
   # so exiting here does not cut the program short.
   printf 'exit\r\n' >> "$OUT/run.bat"
@@ -179,26 +178,18 @@ if [ "$WHAT" = install ]; then
   # **`NAME_IN_INI=1` names the driver in SYSTEM.INI instead of letting PnP
   # pick it, and it is off by default because it is no longer needed.** PnP
   # writes both halves into the adapter's registry key and
-  # `display.drv=pnpdrvr.drv` resolves through it — that is how every 9x
+  # `display.drv=pnpdrvr.drv` resolves through it. That is how every 9x
   # display driver loads, the inbox Cirrus in this same image included, and
-  # there is no PNPDRVR.DRV file because there is not meant to be one.
-  # Proven 2026-09-07 on a pristine image: install, restart, and the second
-  # boot brings up the mini-VDD from the registry's `minivdd` value and the
-  # driver from its `drv` value with nothing anywhere naming either. What
-  # had been missing was the `DelReg` (doc 19 Section 16).
+  # there is no PNPDRVR.DRV file because there is not meant to be one. On a
+  # pristine image, install and restart bring up the mini-VDD from the
+  # registry's `minivdd` value and the driver from its `drv` value with
+  # nothing anywhere naming either, once the INF has its `DelReg` (doc 19
+  # §16).
   #
-  # Keep it for the question it answers: naming the driver here bypasses the
-  # selection Windows would do, which is what you want when the question is
-  # "does this build of the driver work" and not what you want when the
-  # question is "does it install".
-  # both halves into the adapter's registry key and `display.drv=pnpdrvr.drv`
-  # resolves through it — that is how every 9x display driver loads, the
-  # inbox Cirrus in this same image included, and there is no PNPDRVR.DRV
-  # file because there is not meant to be one. Naming the driver in
-  # SYSTEM.INI instead bypasses the selection Windows would do, which is
-  # exactly what you want when the question is "does the driver work" and
-  # exactly what you do not want when the question is "does it install".
-  #
+  # Keep it for the question it answers. Naming the driver here bypasses
+  # the selection Windows would do, which is what you want when the
+  # question is "does this build of the driver work" and not when it is
+  # "does it install".
   #
   # **In binary, or not at all.** SYSTEM.INI has CRLF line endings and
   # Python's text mode eats them on the way through, which has already cost
@@ -234,10 +225,10 @@ PYINI
   fi
 
   # **PROG=<file.exe> runs a program once the shell is up.** This harness
-  # has no way to drive the guest — no serial line, no shell, nothing to
-  # type at until the display works — so the way to exercise anything is
+  # has no way to drive the guest (no serial line, no shell, nothing to
+  # type at until the display works), so the way to exercise anything is
   # to have Windows start it for us. WIN.INI's `[windows] run=` is that
-  # hook: it is a full command line, it runs after the shell, and it
+  # hook. It runs after the shell, and it
   # needs no shortcut in a Start menu whose folder names are in whatever
   # language the image was installed in. The program's own evidence is
   # whatever it leaves on C:; the driver's is in the QEMU log.
@@ -249,7 +240,7 @@ PYINI
   fi
 
   # **Turn the logo off and the boot log on.** A boot that stalls behind the
-  # splash screen tells you nothing at all — it is a 640x400 bitmap over
+  # splash screen tells you nothing at all. It is a 640x400 bitmap over
   # whatever Windows is actually doing, and the post-install boot is exactly
   # where this track needs to see that. Without the logo the same stall is a
   # text screen with a name on it, and `BOOTLOG.TXT` says which driver was
@@ -279,7 +270,7 @@ PYMS
 else
   # A `boot` re-stages every binary the run is testing, and nothing else.
   # The three that change while this track is being worked on are the two
-  # Watcom ones and the ring-3 HAL DLL — and `PROG`, which is the only way
+  # Watcom ones and the ring-3 HAL DLL, plus `PROG`, which is the only way
   # anything on this desktop calls DirectDraw at all. Re-staging them here
   # is what makes an edit-build-test cycle on the DirectDraw half cost one
   # boot rather than a whole `install` (which re-converts the image).
@@ -298,8 +289,8 @@ else
 fi
 
 # A stale log read back after a run that never wrote one is a whole session
-# spent on the wrong evidence: delete what the last run left before this one
-# starts, so what comes out at the end is this run's or nothing.
+# spent on the wrong evidence. Delete what the last run left before this
+# one starts, so what comes out at the end is this run's or nothing.
 for f in $PROG_OUTPUTS; do
   mdel -i "$RAW@@$OFF" "::/$f" 2>/dev/null || true
 done
@@ -323,9 +314,9 @@ for i,l in enumerate(o):
     if '1234:3d00' in l:
         print('BARs  %-6s %s' % ('$1', ' '.join(x.strip() for x in o[i+1:i+4]))); break"; }
 
-# A screendump every SHOTS seconds, because the interesting question through
-# most of this track is not what the screen ends on but *when* it stopped
-# changing: a desktop that is merely slow under TCG fills in over the run,
+# A screendump every SHOTS seconds, because the interesting question is
+# often not what the screen ends on but *when* it stopped changing. A
+# desktop that is merely slow under TCG fills in over the run,
 # and one that is never painted does not. Off by default (a dump is a
 # millisecond of the guest's time, but a hundred files is noise).
 shots() {
@@ -363,15 +354,15 @@ bars boot
 # asks to restart, and until that restart happens the switch-over is not
 # done: the device still has the devnode the generic VGA driver was on, and
 # the boot after a run that answered No comes up on the VGA. So `install`
-# answers Yes and watches the second boot — which is the one that shows
-# whether the registry alone is enough, with `display.drv=pnpdrvr.drv` (the
-# magic name Windows writes for every PnP display driver, Cirrus included —
-# there is no such file, and there is not meant to be).
+# answers Yes and watches the second boot, which shows whether the
+# registry alone is enough with `display.drv=pnpdrvr.drv` (the name
+# Windows writes for every PnP display driver, Cirrus included; there is
+# no such file, and there is not meant to be).
 if [ "$WHAT" = install ]; then
   echo "==> restarting to finish the install"
   python3 "$ROOT/tools/qmpc.py" "$SOCK" keys ret >/dev/null 2>&1 || true
-  # The post-install boot is much slower than an ordinary one — PnP
-  # re-enumerates and the registry is rebuilt — so it gets its own, longer
+  # The post-install boot is much slower than an ordinary one (PnP
+  # re-enumerates and the registry is rebuilt), so it gets its own, longer
   # budget. A run that cuts it short reports "the driver did not load" about
   # a machine that is still showing the boot logo. It waits for the mode to
   # be programmed a second time (the first was this boot's), and only a
@@ -388,13 +379,13 @@ python3 "$ROOT/tools/qmpc.py" "$SOCK" screendump "$OUT/out/screen.png" >/dev/nul
 echo "colours   $(identify -format '%wx%h %k' "$OUT/out/screen.png" 2>/dev/null || echo '?')  ($OUT/out/screen.png)"
 
 # **What the screen shows is not all Windows is saying.** When the guest
-# faults, Windows puts its message up in VGA *text* mode — and the adapter is
-# scanning out a linear frame buffer, so nobody sees it: the screendump is a
+# faults, Windows puts its message up in VGA *text* mode, and the adapter is
+# scanning out a linear frame buffer, so nobody sees it. The screendump is a
 # black desktop with a wait cursor, which reads exactly like a driver that is
 # merely slow. The text is still in VRAM, because QEMU's VGA core keeps its
 # planes interleaved four bytes to a character cell from offset 0, which is
-# also the top of our frame buffer — the band of coloured noise across the
-# first 32 KB of every one of these screendumps *is* the message. So read it.
+# also the top of our frame buffer. The band of coloured noise across the
+# first 32 KB of these screendumps *is* the message. So read it.
 text_screen() {
   local bar0
   bar0=$(hmp "info pci" | python3 -c "
@@ -465,23 +456,20 @@ echo "guest:    $(grep -c 'd3dpt-vga: guest' "$OUT/out/stderr.log" || true) line
 grep 'd3dpt-vga' "$OUT/out/stderr.log" | sed 's/^/          /' | head -20 || true
 
 # A killed Win98 leaves the FAT dirty, and the boot after that comes up in
-# **safe mode** with no driver and no VxD — which looks exactly like the
-# driver having failed, and costs a whole run to work out. The ACPI power
-# button is the reliable way to end a run: this is an ACPI install (it has
-# to be, or the adapter is never seen), and Windows shuts down and powers
-# the machine off by itself, with no dependence on what is on screen. The
-# Start menu is the fallback for when it does not, and it starts by
-# dismissing whatever modal dialog may be swallowing the keys.
-echo "==> shutdown"
-# The order matters and each step is here for a run it cost. `alt+n` answers
-# the one dialog this harness *knows* is up at the end of an `install` ("to
-# finish setting up your new hardware, you must restart your computer" — No,
-# because the restart is the next run's job, and Escape alone has been seen
-# not to reach it). Escape then clears anything else modal, because a dialog
-# swallows the power button as surely as it swallows keys. Only then the ACPI
-# button, which is the reliable one: this is an ACPI install (it has to be, or
-# the adapter is never seen) and Windows powers the machine off by itself with
+# **safe mode** with no driver and no VxD, which looks exactly like the
+# driver having failed. The ACPI power button is the reliable way to end a
+# run. This is an ACPI install (it has to be, or the adapter is never
+# seen), and Windows shuts down and powers the machine off by itself, with
 # no dependence on what is on screen.
+echo "==> shutdown"
+# The order matters and each step is here for a run it cost. `alt+n`
+# answers the one dialog this harness *knows* is up at the end of an
+# `install` ("to finish setting up your new hardware, you must restart
+# your computer"). The answer is No because the restart is the next run's
+# job, and Escape alone does not always reach it. Escape then clears
+# anything else modal, because a dialog swallows the power button as
+# surely as it swallows keys. Only then the ACPI button. The Start menu is
+# the fallback for when that does not work.
 for k in alt+n esc; do
   python3 "$ROOT/tools/qmpc.py" "$SOCK" keys $k >/dev/null 2>&1 || true
   sleep 3

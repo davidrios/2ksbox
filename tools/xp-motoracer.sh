@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# xp-motoracer.sh — Moto Racer (Delphine, 1997; a DirectX 3 title: execute
-# buffers, palettized and colour-keyed textures — the two caps that made it
-# run its software rasterizer on the driver before protocol v8, doc 15
+# Moto Racer (Delphine, 1997; a DirectX 3 title: execute buffers,
+# palettized and colour-keyed textures, the two caps that made it run its
+# software rasterizer on the driver before protocol v8, doc 15
 # "When a title falls back to its software renderer" and "Execute buffers")
 # on the d3dpt-vga driver, headless.
 #
 #   tools/xp-motoracer.sh install <image.qcow2> [outdir]   # D:\SETUP.EXE (InstallShield: Install, Next x3, no DirectX 3) into
 #                                                          #   C:\Arquivos de programas\MotoRacer; then the game as below
 #   tools/xp-motoracer.sh play <image.qcow2> [outdir]      # the desktop at 800x600x16 (the game insists on 16 bpp), MOTO.EXE, the
-#                                                          #   title, a name, Play Solo / Practice / Continue / Start into a race — each
+#                                                          #   title, a name, Play Solo / Practice / Continue / Start into a race; each
 #                                                          #   menu recognised by tools/motoracer-state.py from a screendump and retried;
 #                                                          #   screendumps title.png / name.png / menu.png / bike*.png / race*.png; alt+F4, power-down
 #   tools/xp-motoracer.sh vm <image.qcow2> [outdir]        # just boot with the disc as D:, QMP at /tmp/xp-moto.sock, detached

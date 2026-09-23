@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
-# w98-moto.sh -- Moto Racer 1997 into a practice race on a Win98 machine,
+# Moto Racer 1997 into a practice race on a Win98 machine,
 # headless, and its frame rate (docs/22 §6; the 9x counterpart of
 # tools/xp-moto-race.sh): a raw copy of the image through
 # tools/win98-game-test.sh, MOTO.EXE from RUN.BAT with the disc on ide.1,
-# the menus walked state by state -- every 6 s the screen is classified by
+# the menus walked state by state (every 6 s the screen is classified by
 # tools/motoracer-state.py and the one action for that screen taken (Start
 # on the title, the name accepted, Play Solo, Practice, Time Attack off,
 # Continue (Speed Bay, 3 laps), Start in the showroom; Esc leaves the intro
 # and anything unknown), because a fresh install and base98-us show the
-# screens in different orders -- the throttle held, and the rate read from the adapter: the
+# screens in different orders), the throttle held, and the rate read from the adapter: the
 # `N page flips in 5.0 s` and `ddi: N frames/s` lines whose windows lie
 # inside the throttle window (both are Moto Racer's own frames, presented
 # through the driver's flip chain; the game has no frame cap of its own).
 # The clicks walk the PS/2 pointer (no tablet on this machine); inside the
 # game the pointer sprite is the game's, so the walk is blind from the
-# top-left corner -- which is why every step is checked.
+# top-left corner, which is why every step is checked.
 #
 #   tools/w98-moto.sh <name>
 #     env: IMG= (base98-us), MOTO= (the .mds), CPU=, QEMU_TCG_OPTS=, EXTRA=,
-#     SOFT=1 (Options: D3D off -- the game's software renderer instead of
+#     SOFT=1 (Options: D3D off, the game's software renderer instead of
 #     our Direct3D HAL, which is the workload docs/22 §6 has for it; the
 #     rate then comes from tools/tcg-fps.py's distinct VGA frames, since the
 #     software renderer flips nothing), RACE_DELAY= (seconds into the race before the window, 5), FPS= (window
 #     seconds, 20), FRESH= (1), MOTO_DIR= (the game's folder, 8.3:
 #     \PROGRA~1\MOTORA~1; a Portuguese Windows says \ARQUIV~1\MOTORA~1)
-# Output: build/w98game/<name>/ -- fps.txt, step screendumps (demo, title,
+# Output: build/w98game/<name>/: fps.txt, step screendumps (demo, title,
 # name, menu, mode, race, bike, loaded, racing), shots/, qemu.log.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -51,10 +51,10 @@ xs = [x for y in range(182, 199) for x in range(296, 440) if sum(px[(y * w + x) 
 print(max(xs) if xs else 0)
 PY
 }
-# SOFT=1: from the main menu, Options, the D3D row clicked once -- every
-# run starts from the image's saved FILTERED, and one click is OFF (a third
-# click on the row did not register on 2026-09-16, so the cycle is not
-# walked; the width check says whether OFF was reached) -- then Accept:
+# SOFT=1: from the main menu, Options, the D3D row clicked once (every
+# run starts from the image's saved FILTERED, and one click is OFF; a
+# third click on the row does not always register, so the cycle is not
+# walked, and the width check says whether OFF was reached), then Accept:
 # the software renderer, which is the workload docs/22 §6 measured on XP
 soft_off() {
   q relclick 315 440 >/dev/null; sleep 6; shot opt0

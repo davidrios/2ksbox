@@ -1,4 +1,4 @@
-//! libsynth — the music engines behind the OPL3 and MPU-401 devices
+//! libsynth: the music engines behind the OPL3 and MPU-401 devices
 //! (doc 20).
 //!
 //! Three of them, and the difference between them is the whole point:
@@ -6,7 +6,7 @@
 //! register from the guest's own port writes; `gm` and `mt32` sit behind
 //! an MPU-401 port and are handed a MIDI byte stream instead, which
 //! `midi` turns back into messages. All three are computation over guest
-//! bytes — no host device, no system library, no thread of their own — so
+//! bytes (no host device, no system library, no thread of their own), so
 //! they link into QEMU the way libdisc does (doc 20 §2) and render into
 //! the same audiodev as the sound card, on the same clock.
 //!
@@ -51,15 +51,15 @@ pub trait Voice {
 ///
 /// It exists because the engines cannot be argued with from the outside:
 /// music that goes wrong part-way through is either a stream that already
-/// said so — a channel driven to silence, a note nothing ever released,
-/// a byte the parser could attach to nothing — or it is ours, and the
+/// said so (a channel driven to silence, a note nothing ever released,
+/// a byte the parser could attach to nothing) or it is ours, and the
 /// only way to tell is to take the guest's own writes away and play them
 /// again without a guest (`synthx midilog` / `opllog`, `synthx play`).
 ///
 /// One line per write, `<microseconds since the device opened> <what>`.
 /// The clock is the host's, deliberately: the engines render on the
 /// host's audio callback, so this is the timeline the music was heard on
-/// rather than the one the guest believes in. Flushed every line — a
+/// rather than the one the guest believes in. Flushed every line, because a
 /// guest is very often stopped by having its power cut, and a buffered
 /// tail is exactly the part worth reading.
 pub(crate) struct Log {
@@ -85,7 +85,7 @@ impl Log {
         let path = std::env::var_os(var)?;
         // The first device of the process truncates and the rest append,
         // so a machine with two of them writes one file rather than each
-        // erasing the other's — and a second run still starts empty.
+        // erasing the other's, and a second run still starts empty.
         let first = !STARTED.swap(true, Ordering::Relaxed);
         let mut out = std::fs::OpenOptions::new()
             .write(true)
@@ -119,8 +119,8 @@ impl Log {
 }
 
 /// Clip a rendered float sample to the int16 the audiodev takes. The
-/// engines are free to overshoot — a SoundFont bank with 24 voices on
-/// does — and wrapping there is the loudest possible artefact.
+/// engines are free to overshoot (a SoundFont bank with 24 voices on
+/// does), and wrapping there is the loudest possible artefact.
 #[inline]
 pub(crate) fn clip(v: f32) -> i16 {
     // 32767.0, not 32768.0: the positive full scale is what a converter

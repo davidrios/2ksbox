@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""tcg-form-weights.py <run dir> <pages dir> -- the per-instruction sample
+"""tcg-form-weights.py <run dir> <pages dir>: the per-instruction sample
 counts (pcs.txt, from tools/tcg-perf-cut.py) joined with a memsave of the hot
 guest pages (w98-3dmark.sh PAGES=, taken while the guest is in the test, since
 a user page is only there in its own process) and disassembled with capstone
-(build/venv-capstone/bin/python): samples by instruction form -- unit (x87,
-sse, mmx, int, branch) by operand kind (memory, register, immediate) -- the
+(build/venv-capstone/bin/python): samples by instruction form (unit: x87,
+sse, mmx, int, branch; by operand kind: memory, register, immediate), the
 samples per instruction of each form, which is where an uneven form shows
 (a memory-operand addps at 10 against 2.7 for the register form was patch
 36), the mnemonics, and the hottest instructions with their text."""

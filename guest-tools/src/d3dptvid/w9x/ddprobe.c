@@ -1,40 +1,40 @@
 /*
- * ddprobe.c — the smallest thing that makes DirectDraw initialise, so
- * that the 9x driver's DirectDraw half is exercised at all (doc 19 §2).
+ * ddprobe.c: the smallest thing that makes DirectDraw initialise, so the
+ * 9x driver's DirectDraw half runs at all (doc 19 §2).
  *
- * The `DCICOMMAND` escapes a 16-bit display driver publishes its HAL
- * through — and therefore the ring-3 HAL DLL itself — are reached only
- * when something calls `DirectDrawCreate`. A Win98 desktop on its own
- * never does, so `tools/win98-driver-test.sh` stages this and names it
- * in WIN.INI's `run=`, which starts it once the shell is up.
+ * The `DCICOMMAND` escapes through which a 16-bit display driver publishes
+ * its HAL, and so the ring-3 HAL DLL itself, run only when something calls
+ * `DirectDrawCreate`. A Win98 desktop on its own never does, so
+ * `tools/win98-driver-test.sh` stages this and names it in WIN.INI's
+ * `run=`, which starts it once the shell is up.
  *
- * It draws nothing and shows nothing. The evidence it produces is in the
- * QEMU log, written by the driver's two halves through the adapter's
- * DEBUG register while this runs: `d3dpt9dd:` lines from the 16-bit side
- * as it answers the escapes, and `d3dpthal:` lines from the DLL once
- * DirectDraw has loaded it into *this* process. Its own findings go to
- * C:\DDPROBE.LOG for the harness to read back with mtools.
+ * It draws nothing and shows nothing. The evidence is in the QEMU log,
+ * written by the driver's two halves through the adapter's DEBUG register
+ * while this runs: `d3dpt9dd:` lines from the 16-bit side as it answers
+ * the escapes, and `d3dpthal:` lines from the DLL once DirectDraw has
+ * loaded it into this process. Its own findings go to
+ * C:\2KSBOX\DDPROBE.LOG (guestlog.h) for the harness to read back with
+ * mtools.
  *
- * What it asks, and why each question is here: caps say whether the
- * runtime associated our HAL with this device at all (a HAL it did not
- * take reads back as DDCAPS_NOHARDWARE and nothing else); the primary
- * surface says whether the runtime believes the display is ours (a
- * locked primary whose address is inside the adapter's VRAM is the
- * proof); and an explicitly video-memory offscreen surface says whether
- * the heap in DDHALINFO is being allocated from — it is the one request
- * the HEL cannot satisfy at all, so its HRESULT is a yes/no answer with
- * nothing in between.
+ * What it asks:
+ * - caps, which say whether the runtime took our HAL for this device at all
+ *   (a HAL it did not take reads back as DDCAPS_NOHARDWARE alone);
+ * - the primary surface, which says whether the runtime believes the
+ *   display is ours (a locked primary whose address is inside the
+ *   adapter's VRAM);
+ * - an explicitly video-memory offscreen surface, which says whether the
+ *   heap in DDHALINFO is allocated from. The HEL cannot satisfy that
+ *   request at all, so its HRESULT is a plain yes or no.
  *
- * `DDPROBE <w> <h> <bpp> [sys]` adds a mode test after all that (2026-09-10):
- * an exclusive SetDisplayMode to the given mode, a flipping primary — with
- * DDSCAPS_SYSTEMMEMORY on it when `sys` is given, which is how Carmageddon
- * asks and which keeps the whole chain in the runtime's emulation layer
- * where the HAL never sees it — a palette at 8 bpp, five frames drawn and
- * flipped, RestoreDisplayMode; every HRESULT in the log. It is what found
- * the PDEVICE overrun of doc 19 §30 once the game had pointed at it.
+ * `DDPROBE <w> <h> <bpp> [sys]` then adds a mode test: an exclusive
+ * SetDisplayMode to the given mode, a flipping primary, a palette at 8 bpp,
+ * five frames drawn and flipped, RestoreDisplayMode, and every HRESULT in
+ * the log. `sys` puts DDSCAPS_SYSTEMMEMORY on the primary, as Carmageddon
+ * does, which keeps the whole chain in the runtime's emulation layer where
+ * the HAL never sees it. This found the PDEVICE overrun of doc 19 §30.
  * Its `pitch check:` line compares the primary's pitch with the back
- * buffer's, which must be the same number: `DDPROBE 800 600 8` said 800
- * against 832 before doc 19 §33, and every flip showed a sheared frame.
+ * buffer's, which must match. Before doc 19 §33's fix `DDPROBE 800 600 8`
+ * said 800 against 832 and every flip showed a sheared frame.
  *
  * Build: guest-tools/build-driver9x.sh (mingw-w64, i686, msvcrt).
  *
@@ -49,11 +49,11 @@
 
 static FILE *log_file;
 
-/* One open-append-close per line, not an fflush: a flush hands the bytes to
- * the FAT driver, but the directory entry's size is written when the file
- * is closed — and a blue screen a few calls later leaves a 0-byte
- * DDPROBE.LOG on the disk (twice, 2026-09-10). Closing every time is what
- * makes the last line before the crash the one the harness reads back. */
+/* One open-append-close per line, not an fflush. A flush hands the bytes
+ * to the FAT driver, but the directory entry's size is written only on
+ * close, so a blue screen a few calls later leaves a 0-byte DDPROBE.LOG.
+ * Closing every time makes the last line before the crash the one the
+ * harness reads back. */
 static void logf_(const char *fmt, ...)
 {
     va_list ap;
@@ -70,9 +70,9 @@ static void logf_(const char *fmt, ...)
 }
 
 /* Everything a surface can say about where it lives. The pointer matters
- * as much as the caps: the runtime will happily report VIDEOMEMORY for a
- * surface it put in its own emulated heap, and the address is what tells
- * the two apart — a real one is inside the adapter's frame buffer. */
+ * as much as the caps. The runtime reports VIDEOMEMORY for a surface it put
+ * in its own emulated heap too, and only the address tells the two apart:
+ * a real one is inside the adapter's frame buffer. */
 static void describe(const char *what, LPDIRECTDRAWSURFACE s)
 {
     DDSURFACEDESC sd;
@@ -108,13 +108,13 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     log_file = guest_log_open("DDPROBE.LOG", "w");
     logf_("ddprobe: start");
 
-    /* **The runtime's own test, run here.** DirectDraw loads the 32-bit
-     * HAL and calls DriverInit in DDHELP.EXE, and then validates the
-     * callbacks it published with `IsBadCodePtr` — in *this* process. So
-     * the question that decides everything is whether this process has
-     * the DLL at all, and at which address; `GetModuleHandle` answers it
-     * without loading anything, and `LoadLibrary` says where the system
-     * put it (on 9x a module has one base for the whole machine). */
+    /* The runtime's own test, run here. DirectDraw loads the 32-bit HAL
+     * and calls DriverInit in DDHELP.EXE, then validates the published
+     * callbacks with `IsBadCodePtr` in this process. So what decides
+     * everything is whether this process has the DLL, and at which
+     * address. `GetModuleHandle` answers without loading anything, and
+     * `LoadLibrary` says where the system put it (on 9x a module has one
+     * base for the whole machine). */
     {
         HMODULE m = GetModuleHandleA("d3dpt9hl.dll");
         HMODULE l;
@@ -137,12 +137,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         return 1;
     }
 
-    /* The question this whole probe exists to answer: did the runtime
-     * take our HAL, or is it doing everything in its own HEL? A HAL with
-     * no callbacks still reports caps here — what says the 32-bit DLL is
-     * in play is dwCaps having the bits its callbacks imply, and what
-     * says the runtime never took the HAL at all is DDCAPS_NOHARDWARE
-     * (0x02000000) standing alone. */
+    /* Did the runtime take our HAL, or is it doing everything in its own
+     * HEL? A HAL with no callbacks still reports caps here. dwCaps having
+     * the bits the callbacks imply says the 32-bit DLL is in play, and
+     * DDCAPS_NOHARDWARE (0x02000000) alone says the runtime never took the
+     * HAL. */
     memset(&hal, 0, sizeof(hal)); hal.dwSize = sizeof(hal);
     memset(&hel, 0, sizeof(hel)); hel.dwSize = sizeof(hel);
     hr = IDirectDraw_GetCaps(dd, &hal, &hel);
@@ -160,18 +159,17 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
           (unsigned long)sd.dwWidth, (unsigned long)sd.dwHeight,
           (unsigned long)sd.ddpfPixelFormat.dwRGBBitCount, (long)sd.lPitch);
 
-    /* The one callback the DLL publishes so far. A HAL that is really
-     * being called returns from this after a frame rather than at once,
-     * and the adapter's frame counter is what it waited on. Asked twice,
-     * before and after the cooperative level is set: the runtime answers
-     * some calls out of its own state before a driver ever sees them,
-     * and which side of that line this one falls on is the question. */
+    /* A HAL that is really being called returns from this after a frame
+     * rather than at once, having waited on the adapter's frame counter.
+     * Asked twice, before and after the cooperative level is set, because
+     * the runtime answers some calls from its own state before a driver
+     * sees them. */
     hr = IDirectDraw_WaitForVerticalBlank(dd, DDWAITVB_BLOCKBEGIN, NULL);
     logf_("WaitForVerticalBlank (no coop level) -> 0x%08lx", (unsigned long)hr);
 
-    /* DDSCL_NORMAL on the desktop window: enough to own a primary
-     * surface, and it changes no mode and shows no window, which is what
-     * a probe that runs from WIN.INI's `run=` has to promise. */
+    /* DDSCL_NORMAL on the desktop window is enough to own a primary
+     * surface, and it changes no mode and shows no window, as a probe run
+     * from WIN.INI's `run=` must. */
     hr = IDirectDraw_SetCooperativeLevel(dd, GetDesktopWindow(), DDSCL_NORMAL);
     logf_("SetCooperativeLevel -> 0x%08lx", (unsigned long)hr);
 
@@ -180,10 +178,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     hr = IDirectDraw_WaitForVerticalBlank(dd, DDWAITVB_BLOCKEND, NULL);
     logf_("WaitForVerticalBlank (end) -> 0x%08lx", (unsigned long)hr);
 
-    /* GetVerticalBlankStatus, in the loop a title of the era writes around
-     * it: how many "in blank" answers in 500 ms. The adapter has no beam
-     * position, so the HAL says yes once a frame (about 30 here at 60 Hz);
-     * it used to say no always, and `while (!in_vb)` never ended. */
+    /* GetVerticalBlankStatus in the loop a title of the era writes around
+     * it, counting "in blank" answers in 500 ms. The adapter has no beam
+     * position, so the HAL says yes once a frame (about 30 here at 60 Hz).
+     * A HAL that always says no makes `while (!in_vb)` spin forever. */
     {
         DWORD t0 = GetTickCount(), polls = 0, yes = 0;
         BOOL in_vb;
@@ -229,8 +227,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         surf = NULL;
     }
 
-    /* Flip chain test: exclusive fullscreen mode allows creating a complex
-     * flipping primary surface and exercising Flip32 and its vblank pacing. */
+    /* Flip chain test. Exclusive fullscreen mode allows a complex flipping
+     * primary, which exercises Flip32 and its vblank pacing. */
     {
         HWND hwnd = CreateWindowA("STATIC", "ddprobe", WS_POPUP, 0, 0, 100, 100, NULL, NULL, inst, NULL);
         hr = IDirectDraw_SetCooperativeLevel(dd, hwnd, DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN);
@@ -274,39 +272,38 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         }
     }
 
-    /* **A mode of the caller's choosing, the way a game asks for one.**
-     * `DDPROBE <w> <h> <bpp>` is Carmageddon's opening (2026-09-10): an
-     * exclusive full-screen SetDisplayMode to 320x200x8, a flipping
-     * primary, a palette on it, a frame drawn and flipped, then
-     * RestoreDisplayMode — each HRESULT logged, and the run paused with
-     * the frame up so a screendump can see what the adapter scans out.
-     * On this driver the game's request ended in a fatal exception in
-     * KERNEL32 and no surface was ever created; this asks the same
-     * questions without the game's own code in the way, and a step that
-     * fails here names the driver's half of it. */
+    /* A mode of the caller's choosing, the way a game asks for one.
+     * `DDPROBE 320 200 8` is Carmageddon's opening: an exclusive
+     * full-screen SetDisplayMode, a flipping primary with a palette, a
+     * frame drawn and flipped, then RestoreDisplayMode, each HRESULT
+     * logged and the run paused with the frame up for a screendump. It
+     * asks the game's questions without the game's code in the way, so a
+     * step that fails here names the driver's half (doc 19 §30). */
     if (cmd && cmd[0]) {
         unsigned w = 0, h = 0, bpp = 0;
         char extra[16] = "";
 
-        /* A fourth word, `sys`, asks for the flip chain the way Carmageddon
-         * does: DDSCAPS_SYSTEMMEMORY on a flipping primary. The runtime
-         * keeps such a chain in its own emulation layer and the HAL never
-         * hears of the surfaces, so a fault on that path is one the driver
-         * log cannot show. */
+        /* `sys` asks for the flip chain the way Carmageddon does, with
+         * DDSCAPS_SYSTEMMEMORY on a flipping primary. The runtime keeps
+         * such a chain in its own emulation layer and the HAL never hears
+         * of the surfaces, so the driver log cannot show a fault there. */
         if (sscanf(cmd, "%u %u %u", &w, &h, &bpp) == 3 && w && h && bpp) {
             HWND hwnd = CreateWindowA("STATIC", "ddprobe mode", WS_POPUP | WS_VISIBLE,
                                       0, 0, 100, 100, NULL, NULL, inst, NULL);
             LPDIRECTDRAWSURFACE prim = NULL;
             LPDIRECTDRAWSURFACE back = NULL;
             LPDIRECTDRAWPALETTE pal = NULL;
-            /* The words after the mode (2026-09-10, the Carmageddon black
-             * screen): `sys` (above), `modex` = the game's own cooperative
-             * level, DDSCL_ALLOWMODEX | DDSCL_ALLOWREBOOT on top of exclusive
-             * full-screen — with it DirectDraw may answer a 320x200 request
-             * with its *own* Mode X or VGA mode 13h, switching the display
-             * driver out entirely; `vga` asks for that outright
-             * (IDirectDraw2::SetDisplayMode with DDSDM_STANDARDVGAMODE);
-             * `hold<N>` keeps the last frame up N seconds for screendumps. */
+            /* The words after the mode:
+             * - `sys` (above);
+             * - `modex`, the game's own cooperative level,
+             *   DDSCL_ALLOWMODEX | DDSCL_ALLOWREBOOT on top of exclusive
+             *   full-screen. With it DirectDraw may answer a 320x200
+             *   request with its own Mode X or VGA mode 13h, switching the
+             *   display driver out entirely;
+             * - `vga`, which asks for that outright
+             *   (IDirectDraw2::SetDisplayMode with DDSDM_STANDARDVGAMODE);
+             * - `hold<N>`, which keeps the last frame up N seconds for
+             *   screendumps. */
             DWORD coop = DDSCL_EXCLUSIVE | DDSCL_FULLSCREEN;
             int want_sys = 0, want_vga = 0, hold = 4;
             char args[128], *tok;
@@ -387,10 +384,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                     describe("  back buffer", back);
                     {
                         /* doc 19 §33: DirectDraw sizes a flip chain's back
-                         * buffers by the HAL's alignment, the primary by the
-                         * mode's pitch; if they differ, every flip scans a
-                         * buffer out at the wrong pitch (Diablo II at
-                         * 800x600x8: 832 against 800, a sheared frame) */
+                         * buffers by the HAL's alignment and the primary by
+                         * the mode's pitch. If they differ, every flip scans
+                         * a buffer out at the wrong pitch (Diablo II at
+                         * 800x600x8: 832 against 800, a sheared frame). */
                         DDSURFACEDESC pd, bd;
 
                         memset(&pd, 0, sizeof(pd));

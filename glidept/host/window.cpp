@@ -13,7 +13,7 @@
 //* wglSwapBuffers, dma-buf ring included.
 //*
 //* Without host ops (an ordinary process that loaded libglide2x on its
-//* own — tools/glide-host-test) the context has to be current already;
+//* own, like tools/glide-host-test) the context has to be current already;
 //* we check for one and refuse if there is none, rather than drawing
 //* into nothing.
 //*

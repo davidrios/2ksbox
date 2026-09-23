@@ -9,26 +9,24 @@
 # --windows cross-compiles for Windows x86_64 with mingw-w64 into
 # build/win/qemu instead of build/qemu, against the Rust staticlib built
 # for x86_64-pc-windows-gnu. Run it inside the cross container
-# (scripts/win-cross.sh), which is where the mingw glib/pixman/epoxy the
-# build needs actually exist — docs/build-windows.md. The two build
+# (scripts/win-cross.sh), which has the mingw glib/pixman/epoxy the build
+# needs (docs/build-windows.md). The two build
 # directories are independent, so one checkout holds a Linux build and a
 # Windows build at once.
 #
 # On Windows itself, in MSYS2's MINGW64 shell, the same build is native
 # (docs/build-windows.md, "Building on Windows"): --windows is implied, no
-# cross prefix, and MSYS2's own Python rather than uv's — a python.org
+# cross prefix, and MSYS2's own Python rather than uv's. A python.org
 # interpreter makes a venv with `Scripts\` where QEMU's configure looks for
 # `bin/`.
 #
-# QEMU_PYTHON=<interpreter> uses that one and never consults uv — for a
-# build inside a sandbox that has a suitable Python already and cannot
-# fetch one (the Flatpak, M6 step 6b: no uv in org.freedesktop.Sdk, and no
-# network during the build). It is checked for version rather than
-# trusted, because the failure it prevents is obscure at the point it
-# bites: QEMU 9.2's mkvenv supports 3.8–3.13, and 3.14 works only with the
-# real `distlib` installed, since pip >= 26 trimmed the vendored copy
-# mkvenv falls back to (a 3.14 configure and build with distlib passed on
-# 2026-09-17; MSYS2 has no older Python).
+# QEMU_PYTHON=<interpreter> uses that one and never consults uv. It is for
+# a sandbox that has a suitable Python and cannot fetch one (the Flatpak:
+# no uv in the SDK, no network during the build). Its version is checked,
+# because the failure is obscure where it bites. QEMU 9.2's mkvenv
+# supports 3.8-3.13, and 3.14 works only with the real `distlib`
+# installed, since pip >= 26 trimmed the vendored copy mkvenv falls back
+# to (3.14 with distlib configures and builds; MSYS2 has no older Python).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -56,9 +54,9 @@ fi
 MROOT="$ROOT"
 [ -n "$NATIVE" ] && MROOT="$(cygpath -m "$ROOT")"
 LIBDISC_DIR="$MROOT/target${CARGO_TARGET:+/$CARGO_TARGET}/release"
-# libsynth's staticlib is built by the same cargo invocation family and
-# lands in the same directory; named separately because the two meson
-# options are separate and either can be pointed elsewhere.
+# libsynth's staticlib lands in the same directory. It has its own variable
+# because the two meson options are separate and either can point
+# elsewhere.
 LIBSYNTH_DIR="$LIBDISC_DIR"
 
 PYVER="$(cat "$ROOT/.python-version")"
@@ -98,7 +96,7 @@ echo "==> cargo build --release -p libdisc${CARGO_TARGET:+ --target $CARGO_TARGE
 (cd "$ROOT" && cargo build --release -p libdisc ${CARGO_TARGET:+--target "$CARGO_TARGET"})
 
 # libsynth (the music engines, libsynth/): the same arrangement for
-# hw/audio/opl3.c and hw/audio/mpu401.c (patch 25, doc 20). Also no QEMU
+# hw/audio/opl3.c and hw/audio/mpu401.c (patch 60, doc 20). Also no QEMU
 # dependency, so no cycle with the player.
 echo "==> cargo build --release -p libsynth${CARGO_TARGET:+ --target $CARGO_TARGET}"
 (cd "$ROOT" && cargo build --release -p libsynth ${CARGO_TARGET:+--target "$CARGO_TARGET"})
@@ -111,8 +109,8 @@ cd "$BUILD"
 EXTRA_CFLAGS="-I$ROOT/third_party/khronos -fPIC"
 CFG=(-Db_staticpic=true)
 if [ -n "$NATIVE" ]; then
-  # On Windows, in MSYS2's MINGW64 shell: the cross build below without the
-  # cross. Same compiler (clang against GCC's mingw runtime), same linker
+  # On Windows, in MSYS2's MINGW64 shell, this is the cross build below
+  # without the cross. Same compiler (clang against GCC's mingw runtime), same linker
   # (lld, named through meson's CC_LD rather than a wrapper script, which a
   # native meson cannot execute), same flags.
   EXTRA_CFLAGS="-I$MROOT/third_party/khronos"
@@ -137,10 +135,10 @@ elif [ -n "$WINDOWS" ]; then
   CFG=(--cross-prefix=x86_64-w64-mingw32-)
   command -v x86_64-w64-mingw32-gcc >/dev/null || {
     echo "no x86_64-w64-mingw32-gcc — run this inside scripts/win-cross.sh"; exit 1; }
-  # clang, not GCC (2026-09-17, patch 68): mingw GCC 15 has only emulated
-  # TLS, a call on every __thread access, and QEMU makes several on every
-  # device access -- 121.6 ns against clang's 64.3 for one VGA register
-  # read (Linux: 52.7). The cross prefix still names the binutils and the
+  # clang, not GCC (patch 68). mingw GCC 15 has only emulated TLS, a call
+  # on every __thread access, and QEMU makes several on every device
+  # access. One VGA register read took 121.6 ns against clang's 64.3
+  # (Linux: 52.7). The cross prefix still names the binutils and the
   # mingw sysroot. WIN_QEMU_CC=gcc builds the old way. No TCG plugins:
   # lld has no --dynamic-list, and nothing here loads a plugin.
   if [ "${WIN_QEMU_CC:-clang}" = clang ]; then
@@ -153,63 +151,63 @@ elif [ "$(uname -s)" = Darwin ]; then
   # Every Mac build targets Homebrew's floor, the oldest macOS the app's
   # Homebrew libraries exist for (scripts/macos-floor.sh; build.sh exports
   # the same value, and a preset one wins). It goes in as a flag as well as
-  # the environment: a changed flag changes every command line, so a
+  # the environment. A changed flag changes every command line, so a
   # reconfigure recompiles the tree, where a changed environment alone
-  # would keep the objects built for the old target. And
-  # -Werror=unguarded-availability-new with it, because an API newer than
-  # the target used without an @available check makes a binary that dies
-  # on the floor's macOS — and, since the flag reaches meson's own checks,
-  # a function detected through its real declaration is only found when
-  # the target has it (patch 46: strchrnul, 15.4).
+  # would keep the objects built for the old target.
+  # -Werror=unguarded-availability-new goes with it, because an API newer
+  # than the target used without an @available check makes a binary that
+  # dies on the floor's macOS. Since the flag reaches meson's own checks, a
+  # function detected through its real declaration is only found when the
+  # target has it (patch 46: strchrnul, 15.4).
   if [ -z "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
     export MACOSX_DEPLOYMENT_TARGET="$("$ROOT/scripts/macos-floor.sh")"
   fi
   EXTRA_CFLAGS="$EXTRA_CFLAGS -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET -Werror=unguarded-availability-new"
   echo "==> MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
 fi
-# No QEMU user interface at all (2026-09-07). The player is the front end:
-# it embeds QEMU, the embed library appends `-display none` itself
+# No QEMU user interface at all. The player is the front end. It embeds
+# QEMU, the embed library appends `-display none` itself
 # (embed/libqemu_embed.c), and it brings its own 3D context provider
 # (patch 30) and audio backend (patch 20). Every display QEMU can build was
-# therefore dead code that each packager still had to carry — SDL2 (and,
-# through sdl2-compat, SDL3) beside the player on Windows and macOS, GTK
-# and its whole pango/cairo/gdk chain in libqemu-embed on Linux, spice's
-# server, curses. Turning them off costs nothing we use and takes ~40
-# libraries off the Linux embed library alone.
+# dead code each packager still had to carry: SDL2 (and, through
+# sdl2-compat, SDL3) beside the player on Windows and macOS, GTK and its
+# pango/cairo/gdk chain in libqemu-embed on Linux, spice's server, curses.
+# Turning them off costs nothing we use and takes ~40 libraries off the
+# Linux embed library alone.
 #
-# VNC is deliberately kept. It needs no toolkit, and it is the only way
-# left to *look at* a guest under a hand-run `qemu-system-i386` — which
-# QEMU makes automatic: with no local display compiled in and no
-# `-display` given, `qemu_setup_display()` starts a VNC server on
-# localhost:5900 instead (system/vl.c). Anything scripted passes
+# VNC stays. It needs no toolkit, and it is the only way left to *look at*
+# a guest under a hand-run `qemu-system-i386`. With no local display
+# compiled in and no `-display` given, `qemu_setup_display()` starts a VNC
+# server on localhost:5900 (system/vl.c). Anything scripted passes
 # `-display none` and gets neither.
 #
-# The host audio backends go for the same reason: the player's audio is
+# The host audio backends go for the same reason. The player's audio is
 # patch 20's `embed` audiodev, an SPSC ring the embedding application owns
-# (docs/11), every machine the launcher writes says `audiodev=embed0`, and
+# (docs/11); every machine the launcher writes says `audiodev=embed0`, and
 # every headless tool says `audiodev=none`. ALSA, PulseAudio, PipeWire,
-# JACK, OSS, sndio, CoreAudio and DirectSound were all compiled in and
-# linked and none of them was ever opened. `none` and `wav` are built
-# unconditionally (audio/meson.build) and `embed` is ours, so what the
-# tree actually uses is untouched — `tools/xp-cdimage-test.sh` still
-# captures CD-DA through `-audiodev wav`.
+# JACK, OSS, sndio, CoreAudio and DirectSound were compiled in and linked,
+# and none was ever opened. `none` and `wav` are built unconditionally
+# (audio/meson.build) and `embed` is ours, so what the tree uses is
+# untouched. `tools/xp-cdimage-test.sh` still captures CD-DA through
+# `-audiodev wav`.
 #
-# Note this is *not* `--audio-drv-list=`: that list only picks the default
-# priority order, while the libraries are pulled in by the per-driver
-# feature options below being auto-detected.
+# This is *not* `--audio-drv-list=`. That list only sets the default
+# priority order; the per-driver feature options below, auto-detected,
+# are what pull the libraries in.
 #
-# And the same for the rest of QEMU's optional surface that no machine the
-# launcher writes can reach. Networking: every bundle says `-netdev user`
-# and nothing else, so slirp stays and AF_XDP and vde go — and so does
-# libbpf, whose one consumer is `hw/net/virtio-net.c`'s eBPF RSS steering
-# and whose device the launcher never writes (pcnet on 98, rtl8139 on XP). Block: every drive is a local file — a qcow2, a raw floppy
-# or one of doc 17's disc images through our own `cdimage` driver — so the
-# network-storage drivers go, curl and libssh because this host has them
-# and iscsi/nfs/rbd/gluster/blkio *pinned off* because another host might.
-# Auto-detection is the thing to remove here: it makes the build depend on
-# which libraries the machine happened to have, which is how the Flatpak
-# and the Mac end up with a different libqemu-embed from this box's.
-# brlapi is a braille chardev; nothing here has ever opened one.
+# The same goes for the rest of QEMU's optional features that no machine
+# the launcher writes can reach. Networking: every bundle says `-netdev
+# user` and nothing else, so slirp stays and AF_XDP and vde go. So does
+# libbpf, whose one consumer is `hw/net/virtio-net.c`'s eBPF RSS steering,
+# a device the launcher never writes (pcnet on 98, rtl8139 on XP). Block:
+# every drive is a local file (a qcow2, a raw floppy or one of doc 17's
+# disc images through our own `cdimage` driver), so the network-storage
+# drivers go. curl and libssh go because this host has them, and
+# iscsi/nfs/rbd/gluster/blkio are *pinned off* because another host might.
+# Auto-detection makes the build depend on which libraries the machine
+# happened to have, which is how the Flatpak and the Mac would end up with
+# a different libqemu-embed from this box's. brlapi is a braille chardev
+# nothing here opens.
 "$ROOT/qemu/configure" \
   --python="$PYTHON" \
   --disable-werror \

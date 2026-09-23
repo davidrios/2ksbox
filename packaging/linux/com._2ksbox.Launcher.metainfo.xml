@@ -6,7 +6,7 @@
   <id>com._2ksbox.Launcher</id>
 
   <name>2ksbox</name>
-  <summary>Run Windows 98 and XP as native vintage boxes</summary>
+  <summary>Run Windows 98, XP and DOS machines</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
   <!-- The launcher is GPL-2.0-or-later (ADR-009); the player it ships
@@ -20,17 +20,17 @@
 
   <description>
     <p>
-      2ksbox runs Windows 98 and Windows XP the way the machines of the
-      era did: hardware-accelerated period 3D, a CRT shader chain over
-      the guest's own output, and a CD-ROM drive faithful enough for raw
-      dumps of discs you own — copy protection included.
+      2ksbox runs Windows 98, Windows XP and DOS the way the machines of
+      the era did. Period 3D games run accelerated on your GPU, the
+      picture goes through a CRT shader, and the CD-ROM drive runs raw
+      dumps of the discs you own, copy protection included.
     </p>
     <p>
-      The launcher keeps a library of machines, creates them from
-      reference configurations rather than a QEMU command line, manages a
-      shared shelf of disc images that can be swapped while a guest runs,
-      and takes snapshots. Each machine opens in its own player window,
-      which embeds a patched QEMU in-process for latency.
+      The launcher keeps a library of machines and creates each one from
+      a short form with defaults for its family. Every machine shares one
+      shelf of disc images, discs can be swapped while a machine runs, and
+      the launcher takes snapshots. Each machine opens in its own player
+      window.
     </p>
   </description>
 
@@ -42,10 +42,9 @@
 
   <url type="homepage">https://2ksbox.com</url>
 
-  <!-- Deliberately empty: this rates 2ksbox itself, which has no content
-       of its own to rate — no chat, no purchasing, nothing user-to-user.
-       Whatever a person runs inside a guest is their own software, the
-       same reading RetroArch and other emulators apply. -->
+  <!-- Deliberately empty. This rates 2ksbox itself, which has no chat, no
+       purchasing and nothing user-to-user. Whatever runs inside a guest is
+       the user's own software, the same reading other emulators apply. -->
   <content_rating type="oars-1.1"/>
 
   <releases>

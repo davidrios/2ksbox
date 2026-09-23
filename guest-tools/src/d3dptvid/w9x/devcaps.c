@@ -1,16 +1,16 @@
 /*
- * devcaps.c — every DirectDraw device on the machine and what each one's
+ * devcaps.c: every DirectDraw device on the machine and what each one's
  * Direct3D says it can do, for diffing ours against another driver's
- * (doc 19 §34). A title that decides a feature from caps decides it before
- * it makes a single call a driver can log, so the only way to find the value
- * it read is to read them all, on the device it is fine on and on ours.
+ * (doc 19 §34). A title that decides a feature from caps does so before
+ * any call a driver can log, so the only way to find the value it read is
+ * to dump them all, on a device where the title works and on ours.
  *
- * Enumerates the primary and every attached secondary (a Voodoo 2 is one),
- * and for each: DDCAPS (HAL), GetAvailableVidMem for video memory and for
- * textures, and every Direct3D device's D3DDEVICEDESC7 — its fields by name
- * and the whole structure in hex, so a field nobody thought of still shows
- * up in a diff. Window-less: WIN.INI's run= starts it, and it writes
- * C:\DEVCAPS.LOG (tools/win98-game-test.sh STAGE= + PULL=).
+ * For the primary and every secondary (a Voodoo 2 is one) it logs DDCAPS
+ * (HAL), GetAvailableVidMem for video memory and for textures, and every
+ * Direct3D device's D3DDEVICEDESC7, by field name and as a hex dump so a
+ * field nobody thought of still shows up in a diff. It has no window, so
+ * WIN.INI's run= starts it. It writes C:\2KSBOX\DEVCAPS.LOG
+ * (tools/win98-game-test.sh STAGE= + PULL=).
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -25,9 +25,9 @@
 
 static FILE *g_log;
 
-/* closed and reopened after every line: a driver that hangs or faults in
- * the middle of the enumeration leaves a FAT file whose directory entry
- * still says 0 bytes if it was never closed (ddprobe learned it first) */
+/* Closed and reopened after every line. If a driver hangs or faults
+ * mid-enumeration, a file never closed keeps a FAT directory entry that
+ * says 0 bytes. */
 static void out(const char *fmt, ...)
 {
     va_list ap;
@@ -141,8 +141,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     g_log = guest_log_open("DEVCAPS.LOG", "wt");
     if (!g_log) return 1;
     out("devcaps: D3DDEVICEDESC7 is %u bytes, DDCAPS %u\n", (unsigned)sizeof(D3DDEVICEDESC7), (unsigned)sizeof(DDCAPS));
-    /* NONDISPLAYDEVICES: a 3D-only card (the Voodoo 2) is none of the other
-     * two, and without it the enumeration stops at the primary */
+    /* NONDISPLAYDEVICES because a 3D-only card (the Voodoo 2) is neither
+     * of the other two, and without it the enumeration stops at the
+     * primary. */
     DirectDrawEnumerateExA(enum_dd, NULL, DDENUM_ATTACHEDSECONDARYDEVICES | DDENUM_DETACHEDSECONDARYDEVICES |
                                               DDENUM_NONDISPLAYDEVICES);
     out("devcaps: done\n");

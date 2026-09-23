@@ -1,6 +1,5 @@
 /*
- * ipc-latency-spike — what a process boundary between QEMU and the player
- * would cost.  cc -O2 -o /tmp/ipcspike tools/ipc-latency-spike.c && /tmp/ipcspike
+ * What a process boundary between QEMU and the player would cost.  cc -O2 -o /tmp/ipcspike tools/ipc-latency-spike.c && /tmp/ipcspike
  *
  * The numbers in ADR-010's table come from this, on the x86-64 rig. Re-run it
  * on the Apple side before anyone acts on them.
@@ -12,8 +11,8 @@
  *
  *   - a SOCK_SEQPACKET socketpair for control/events (message boundaries, no
  *     framing of our own, unlike SOCK_STREAM),
- *   - SCM_RIGHTS to hand the frontend a buffer fd once per ring slot — a
- *     dma-buf is just an fd, and a memfd exercises the identical mechanics,
+ *   - SCM_RIGHTS to hand the frontend a buffer fd once per ring slot (a
+ *     dma-buf is just an fd, and a memfd exercises the identical mechanics),
  *   - one small message per presented frame ("slot N ready"), and the
  *     frontend's "slot N released" going back,
  *   - input events as single writes from the frontend.

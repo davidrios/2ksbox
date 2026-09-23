@@ -1,13 +1,13 @@
-//! Where the shader *presets* come from — the collection itself, not the
+//! Where the shader presets come from: the collection itself, not the
 //! profiles built on top of it (`shader_library.rs`).
 //!
 //! In a source checkout they are the `third_party/slang-shaders`
 //! submodule. Someone who cloned without `--recurse-submodules`, or who
-//! one day installs a packaged launcher, has no such directory — and a
-//! profile manager whose preset picker opens on nothing is a dead end.
-//! So the collection can also be **downloaded**: upstream's tarball,
-//! unpacked into the platform data directory beside `machines/` and
-//! `shader-profiles/`. Never into `third_party/`, which belongs to git.
+//! installs a package without them, has no such directory, and a preset
+//! picker that opens on nothing is a dead end. So the collection can also
+//! be **downloaded**: upstream's tarball, unpacked into the platform data
+//! directory beside `machines/` and `shader-profiles/`. Never into
+//! `third_party/`, which belongs to git.
 
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -15,30 +15,28 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// libretro's own collection, the same repository the `third_party`
-/// submodule points at, as a tarball of the current `master` — codeload
-/// is what a `git clone` would fetch from anyway. Not pinned to the
+/// submodule points at, as a tarball of the current `master` from
+/// codeload, where a `git clone` fetches from anyway. Not pinned to the
 /// submodule's commit: the binary that downloads this may be a packaged
-/// launcher with no repository to read a pin out of, and presets are
+/// launcher with no repository to read a pin from, and presets are
 /// additive (a profile stores parameter overrides by name and tolerates
-/// the preset gaining new ones — see `shader_profile`).
+/// the preset gaining new ones; see `shader_profile`).
 const TARBALL_URL: &str = "https://codeload.github.com/libretro/slang-shaders/tar.gz/refs/heads/master";
 
-/// Roughly what that tarball weighs, for the button to say so before
-/// someone commits to it on a phone tether. Approximate on purpose.
+/// Roughly what that tarball weighs, so the button can say so before
+/// someone starts it on a phone tether. Approximate on purpose.
 pub const DOWNLOAD_SIZE: &str = "~50 MB";
 
-/// The profiles a fresh collection is worth having straight away
-/// (`firstrun.rs`): a display name and the preset's path *within* the
-/// collection, all three at the preset's own defaults — a profile stores
-/// only what someone overrode (`shader_profile`), so "default settings"
-/// is an empty override table and not a snapshot of today's defaults.
+/// The starter profiles written when a collection first lands
+/// (`firstrun.rs`): a display name and the preset's path within the
+/// collection, each at the preset's own defaults. A profile stores only
+/// what someone overrode (`shader_profile`), so "default settings" is an
+/// empty override table, not a snapshot of today's defaults.
 ///
-/// Two CRTs and a monochrome computer monitor, because that is the range
-/// the machines cover: an aperture-grille tube for the Windows era, the
-/// heavier `crt-royale` for a host that can afford it, and the Apple II
-/// monitor for the green-screen end. Anything else is a preset picker
-/// away — these exist so the first machine someone makes has something
-/// to point at.
+/// Two CRTs and a monochrome computer monitor, the range the machines
+/// cover: an aperture-grille tube for the Windows era, the heavier
+/// `crt-royale` for a host that can afford it, and the Apple II monitor
+/// for the green-screen end. Anything else is one preset pick away.
 pub const DEFAULT_PROFILES: &[(&str, &str)] = &[
     ("CRT Aperture", "crt/crt-aperture.slangp"),
     ("CRT Royale", "crt/crt-royale.slangp"),
@@ -56,12 +54,11 @@ pub fn default_profile_names() -> String {
 }
 
 /// The collection that came with this build: the checkout's
-/// `third_party/slang-shaders` submodule, or — for an installed launcher
-/// — whatever the package shipped in `share/2ksbox/shaders`.
+/// `third_party/slang-shaders` submodule, or, for an installed launcher,
+/// whatever the package shipped in `share/2ksbox/shaders`.
 /// `scripts/package-linux.sh` ships none by default (80 MB, and the
 /// manager can fetch them), but `--with-shaders`, a Flatpak or a distro
-/// package would, and then nobody should be asked to download what they
-/// already have.
+/// package would, and then nobody should be asked to download them.
 pub fn repo_dir() -> PathBuf {
     crate::paths::resource("share/2ksbox/shaders", "third_party/slang-shaders")
 }
@@ -76,16 +73,14 @@ pub fn install_dir() -> PathBuf {
     crate::paths::data_dir().map(|d| d.join("shaders")).unwrap_or_else(|| PathBuf::from("shaders"))
 }
 
-/// The preset collection on this machine, or `None` if there isn't one —
-/// which is what puts the "Download presets" button on screen.
+/// The preset collection on this machine, or `None` if there isn't one,
+/// which puts the "Download presets" button on screen.
 ///
-/// `LAUNCHER_SHADERS_DIR` is an explicit statement about where the
-/// presets are, so when it is set nothing else is consulted. Otherwise
-/// the collection this build came with (`repo_dir`) wins over a
-/// downloaded copy: in a checkout it is the submodule a developer's
+/// When `LAUNCHER_SHADERS_DIR` is set nothing else is consulted.
+/// Otherwise the collection this build came with (`repo_dir`) wins over a
+/// downloaded copy. In a checkout it is the submodule that a developer's
 /// `--shader third_party/slang-shaders/…` paths and this repo's docs
-/// already refer to, and in a package it is the one the package can
-/// promise is there.
+/// refer to, and in a package it is the one the package guarantees.
 pub fn presets_dir() -> Option<PathBuf> {
     if std::env::var_os("LAUNCHER_SHADERS_DIR").is_some() {
         let dir = install_dir();
@@ -100,11 +95,11 @@ pub fn presets_dir() -> Option<PathBuf> {
 }
 
 /// Whether `dir` looks like a preset collection: at least one `.slangp`
-/// within two levels (upstream keeps them one directory down —
-/// `crt/crt-lottes.slangp` — with a few at the top). Cheap enough for
-/// the ~50 directories that tree has, and the caller caches the answer
-/// rather than asking per frame. An empty or half-unpacked directory
-/// correctly reads as "no presets".
+/// within two levels (upstream keeps them one directory down, as in
+/// `crt/crt-lottes.slangp`, with a few at the top). Cheap enough for the
+/// ~50 directories that tree has, and the caller caches the answer rather
+/// than asking per frame. An empty or half-unpacked directory reads as
+/// "no presets".
 pub fn has_presets(dir: &Path) -> bool {
     any_preset(dir, 2)
 }
@@ -129,15 +124,15 @@ fn any_preset(dir: &Path, depth: u32) -> bool {
 /// What the UI shows about a download in flight.
 pub enum Status {
     /// Bytes of the tarball read so far. There is no total: codeload
-    /// streams the archive and sends no `Content-Length`, so a
-    /// percentage would have to be invented.
+    /// streams the archive and sends no `Content-Length`, so there is no
+    /// percentage to show.
     Running(u64),
     Done(PathBuf),
     Failed(String),
 }
 
-/// A download running on its own thread. Dropping this doesn't cancel it
-/// — the thread finishes writing and exits; nothing it touches outside
+/// A download running on its own thread. Dropping this doesn't cancel
+/// it: the thread finishes writing and exits. Nothing it writes outside
 /// its staging directory is visible until the final rename.
 pub struct Download {
     bytes: Arc<AtomicU64>,
@@ -167,13 +162,13 @@ impl Download {
     }
 }
 
-/// The whole job, synchronously: used by the thread above and, directly,
-/// by `main.rs`'s `--download-shaders` verb so the real fetch and unpack
+/// The whole job, synchronously: used by the thread above and directly
+/// by `cli.rs`'s `--download-shaders` verb, so the real fetch and unpack
 /// can be exercised without a window.
 pub fn fetch(dest: &Path, bytes: &AtomicU64) -> std::io::Result<()> {
     // Unpack beside the destination and rename only once the whole
-    // archive is out: an interrupted download must not leave a
-    // half-collection that `has_presets` would then call installed.
+    // archive is out, so an interrupted download never leaves a
+    // half-collection that `has_presets` would call installed.
     let staging = staging_dir(dest);
     if staging.exists() {
         std::fs::remove_dir_all(&staging)?;
@@ -217,8 +212,7 @@ fn unpack(reader: impl Read, into: &Path) -> std::io::Result<()> {
         let mut entry = entry?;
         // Only real files and directories. A tar can name a symlink
         // pointing anywhere on the host, and nothing in a shader
-        // collection needs one, so the safe read of an entry we don't
-        // understand is to skip it.
+        // collection needs one, so any other entry is skipped.
         let kind = entry.header().entry_type();
         if !kind.is_file() && !kind.is_dir() {
             continue;

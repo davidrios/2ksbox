@@ -1,18 +1,18 @@
 /*
- * d3dpt_exec_remote.c — libd3dpt_exec_remote: the Direct3D executor's
+ * d3dpt_exec_remote.c, libd3dpt_exec_remote: the Direct3D executor's
  * d3dpt_exec.h API implemented over a child process, for a Linux or macOS
  * host below DXVK's Vulkan 1.3 floor (docs/tracks/m15-wine-executor.md,
  * ADR-018). The child is d3dpt-exec-host.exe under Wine
  * (d3dpt_exec_host.c), running the Windows build of the very same
  * executor on Wine's own d3d9. QEMU's d3dpt_exec_load.c opens this library
- * exactly as it opens the in-process one — same six entry points, same
- * protocol version — after that one found no Vulkan device, so the two
+ * exactly as it opens the in-process one (same six entry points, same
+ * protocol version) after that one found no Vulkan device, so the two
  * d3dpt devices never learn which they got.
  *
  * Two things are added to the API for the devices that can use them:
  *   d3dpt_exec_shared_alloc(name, size, &offset) → an fd of the one shared
  *     file this library owns, with `offset` the region's place in it, for
- *     memory_region_init_ram_from_fd — the guest's VRAM and command window
+ *     memory_region_init_ram_from_fd. The guest's VRAM and command window
  *     then ARE the bytes the child sees, and a batch runs where the guest
  *     wrote it;
  *   d3dpt_exec_shared_map(offset, ptr) → where QEMU mapped that region, so
@@ -383,8 +383,8 @@ D3DPT_EXEC_API uint32_t d3dpt_exec_version(void)
 /* The child's Direct3D device, made ahead of the first create(): under Wine
  * that is Direct3DCreate9 plus a device on wined3d's GL renderer, 3.5 s on
  * the Air under Rosetta, and the device makes it at the guest's first read
- * of the status register -- inside an MMIO access, with the vCPU stopped.
- * XP took that; Windows 98 did not (2026-09-22, D3D7TEST on base98-us: the
+ * of the status register, inside an MMIO access, with the vCPU stopped.
+ * XP took that; Windows 98 did not (D3D7TEST on base98-us: the
  * machine reset at that read and came back to the Startup Menu's "Windows
  * did not finish loading"). So the device is made here, at the probe the
  * adapter's realize runs before the guest boots, and create() collects it;

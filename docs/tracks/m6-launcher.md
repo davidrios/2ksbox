@@ -1,11 +1,11 @@
-# Track: M6 — the launcher
+# Track M6: the launcher
 
-The record of the launcher track: the machine library, the settings
-form, the disc shelf, snapshots, shader profiles and the packages. M6
-itself is done (doc 08); the launcher keeps changing, and this is where a
-session working on it starts. **The design lives in doc 07** (player vs.
+The launcher track covers the machine library, the settings form, the
+disc shelf, snapshots, shader profiles and the packages. M6 itself is
+done (doc 08), but the launcher keeps changing, and this is where a
+session working on it starts. The design is doc 07 (player vs.
 launcher, the core/front-end split, every form field and why, the
-install layout, the Qt traps); the decisions are ADR-009 (licence),
+install layout, the Qt traps). The decisions are ADR-009 (licence),
 ADR-011 (the names), ADR-014 (one core), ADR-015 (Qt ships) and ADR-017
 (egui deleted) in doc 10. Every tool below is described in
 `docs/testing.md`.
@@ -19,15 +19,15 @@ ADR-011 (the names), ADR-014 (one core), ADR-015 (Qt ships) and ADR-017
 | `launcher-capi/` | the same models as a C ABI (`include/launcher_core.h`); `examples/smoke.c` is a test |
 | `packaging/`, `scripts/package-{linux,flatpak,macos,windows}.sh`, `scripts/gen-flatpak-cargo-sources.sh`, `scripts/gen-icons.sh` | the packages and their self-checks |
 
-Shared, edit minimally and say so in the commit: `shader-chain/` (the
-librashader chain, linked into the player *and* the launcher — rebuild
+Shared, so edit minimally and say so in the commit: `shader-chain/` (the
+librashader chain, linked into the player *and* the launcher, so rebuild
 and retest both), `player/build.rs`'s rpath, the root `Cargo.toml`,
 `scripts/test.sh`. `guest-tools/src/cdshelf.{c,asm}` and patch 52 are
 the in-guest half of the shelf (guest-tools README, patch README).
 
-The egui front end `launcher/` was deleted on 2026-09-13 (ADR-017);
-don't bring it back, and don't cite its `--diag-*-frame` or
-`--pick-file` verbs — they went with it.
+The egui front end `launcher/` was deleted on 2026-09-13 (ADR-017).
+Don't bring it back, and don't cite its `--diag-*-frame` or
+`--pick-file` verbs, which went with it.
 
 ## Building
 
@@ -49,7 +49,7 @@ breaks.
 No clicking and no unit tests. Three layers, all in `scripts/test.sh
 host`:
 
-- **The models, without a toolkit**: `launcherx` verbs (`--new`,
+- **The models, without a toolkit.** `launcherx` verbs (`--new`,
   `--wizard-new`, `--wizard-edit <bundle> [fields…]` with `-` keeping a
   field, `--print-args`, `--print-player-args`, `--discs`, `--boot-disc`,
   `--snapshots [--live]`, `--insert-disc`, `--clone`, `--first-run`,
@@ -62,22 +62,22 @@ host`:
   `shader-defaults`, `preview-anim`, and `capi` (the C smoke over the
   same models). Most end with our own `qemu-system-i386` accepting the
   exact line `--print-args` wrote.
-- **The real windows, headless**: `QT_QPA_PLATFORM=offscreen` with
+- **The real windows, headless.** `QT_QPA_PLATFORM=offscreen` with
   `LAUNCHER_QT_SCREEN=<screen>` (`wizard`, `wizardscroll`, `optall`,
   `create`, `closebox`, `clone`, `adddisc`, `pickdisc`, `discs`,
   `snapshots`, `profiles`, `saveprofile`, `firstrun`, `escfocus`,
   `editor`; cases in `launcher-qt/qml/Main.qml`) and
   `LAUNCHER_QT_ARG=<its argument>` (`wizard` takes `<family>[:<page>]`,
-  so `xp:2` photographs the Display page). Without `LAUNCHER_QT_SHOT` the screen
-  runs its script, prints what the window *shows* and quits — no GPU, no
-  session. With `LAUNCHER_QT_SHOT=<png>` (and `LAUNCHER_QT_DELAY=<ms>`) it
-  also grabs a picture; offscreen works (the `package` check depends on
-  it), and a grab that never completes means a GPU something else
-  holds, such as a running player. Checks:
+  so `xp:2` photographs the Display page). Without `LAUNCHER_QT_SHOT` the
+  screen runs its script, prints what the window *shows* and quits, with
+  no GPU and no session. With `LAUNCHER_QT_SHOT=<png>` (and
+  `LAUNCHER_QT_DELAY=<ms>`) it also grabs a picture. Offscreen grabs work
+  (the `package` check depends on them); a grab that never completes means
+  another process holds the GPU, such as a running player. Checks:
   `qt-wizard` (every family's fields as shown vs. the model, every page
   fits the window), `qt-close`, `qt-esc`, `qt-snapshots`, `qt-profile`,
   `qt-shelf`, `qt-firstrun`, `qt-clone`.
-- **The packages**: the `package` check runs `package-linux.sh --no-tar`
+- **The packages.** The `package` check runs `package-linux.sh --no-tar`
   (or `package-macos.sh` on a Mac), which asks the *staged* launcher and
   player with a scrubbed environment where every companion resolves, and
   opens a real window offscreen for a PNG. `icons` is
@@ -90,9 +90,9 @@ in-guest shelf on a real XP.
 
 ## Rules for working on the launcher
 
-- **A decision goes in `launcher-core`, never in QML** — defaults that
-  follow the family, labels, notes, which rows apply. The C smoke and the
-  Qt window must not be able to disagree (ADR-014).
+- **A decision goes in `launcher-core`, never in QML.** That includes
+  defaults that follow the family, labels, notes and which rows apply.
+  The C smoke and the Qt window must not be able to disagree (ADR-014).
 - **Test against a scratch library.** `LAUNCHER_LIBRARY_DIR`,
   `LAUNCHER_DISC_LIBRARY`, `LAUNCHER_SHADER_PROFILES_DIR` (and
   `LAUNCHER_SHADERS_DIR`, `LAUNCHER_BROWSE_MEMORY`) move everything the
@@ -102,40 +102,41 @@ in-guest shelf on a real XP.
   companions.
 - **Ask the window, not the model, for a Qt bug.** Every Qt-only bug so
   far (a spin box clamped to 32 MB, a name wiped by a combo box, a dialog
-  that answered itself, a list nobody published) had a correct model; a
+  that answered itself, a list nobody published) had a correct model, so a
   check that asks the model passes on the broken build. A probe types
   with `insert` (a JS assignment unbinds the field and hides the bug) and
   presses a dialog by emitting its `accepted`/`rejected` signal, never by
   calling the like-named method. The retained-mode rules behind these
   are doc 07's "What is in the core" and "Five Qt traps".
-- **Verify with a real QEMU.** `--print-args` is not the machine: the
+- **Verify with a real QEMU.** `--print-args` is not the machine. The
   NIC that QEMU adds when none is asked for, and a sound card sliding
-  into the NIC's PCI slot, were only visible through `query-pci` on a
-  running binary.
-- **Sentences in a window are short and plain** (user decision
-  2026-09-16, doc 07); the *why* stays in comments and docs.
-- The launcher never stops a running machine: a killed guest leaves a
-  dirty FAT.
+  into the NIC's PCI slot, showed only through `query-pci` on a running
+  binary.
+- **Sentences in a window are short and plain** (user decision, doc 07).
+  The *why* stays in comments and docs.
+- **The launcher never stops a running machine**, because a killed guest
+  leaves a dirty FAT.
 
 ## Open
 
 - **The preview's CPU readback** (doc 07, "What the front end still
-  owns"): a `QQuickRhiItem` importing the Vulkan image instead of a temp
-  BMP per frame. The one place the Qt build is worse than egui was.
+  owns"). A `QQuickRhiItem` should import the Vulkan image instead of a
+  temp BMP per frame. It is the one place the Qt build is worse than egui
+  was.
 - **Grid thumbnails** (a machine's last frame) and **bundle
   import/export**, both in doc 07's launcher list, are not built.
 - **The player's own overlay** (pause, snapshot, disc swap, doc 07's
   Player section); today these live in the launcher only.
-- **Packaging:** Flathub (metainfo screenshots need hosting on
-  2ksbox.com; the manifest's sources as git rather than a local
-  directory), the **AppImage** the user asked for after the Flatpak
-  (2026-09-05, not started), and a Windows installer beside the zip.
-  Windows live control (AF_UNIX) has not run on a real PC — M11's item.
-- **Clone cannot be cancelled** once copying: `std::fs::copy` keeps the
+- **Packaging.** Flathub (metainfo screenshots need hosting on
+  2ksbox.com, and the manifest's sources should be a repository rather
+  than a local directory), the AppImage the user asked for (not started),
+  and a Windows installer beside the zip. Windows live control (AF_UNIX)
+  has not run on a real PC; that is M11's item.
+- **Clone cannot be cancelled once copying.** `std::fs::copy` keeps the
   kernel's fast paths (reflinks, `copy_file_range`) and cannot stop
   mid-file, so Cancel is off while a copy runs.
-- **`CDSHELF.EXE` on Win98**: the user has used it by hand; a scripted
-  `tools/cdshelf-guest-test.sh <image> win98` pass has never been
-  recorded (the first image tried had a broken shell).
+- **`CDSHELF.EXE` on Win98.** The user has used it by hand, but no
+  scripted `tools/cdshelf-guest-test.sh <image> win98` pass is recorded
+  (the first image tried had a broken shell).
 - A shader-pack release and a docs site built from these documents were
   in the original M6 plan; neither needs code, and neither is started.

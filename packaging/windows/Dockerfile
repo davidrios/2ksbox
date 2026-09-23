@@ -1,12 +1,12 @@
 # The Windows cross-build image (docs/build-windows.md, M11).
 #
-# Everything that produces a Windows artefact is built in here, so a
-# Windows package is reproducible from any Linux box and nobody has to
-# grow a mingw sysroot by hand: Arch (this project's Linux host) has
-# mingw-w64-gcc but no mingw glib2/pixman/epoxy, which is exactly what
-# QEMU needs. Fedora packages all of them, and QEMU's own Windows CI
-# uses the same base (qemu/tests/docker/dockerfiles/fedora-win64-cross.docker)
-# -- so a QEMU build failure here is one upstream would see too.
+# Every Windows artefact is built in here, so a Windows package is
+# reproducible from any Linux box and nobody grows a mingw sysroot by
+# hand. Arch (this project's Linux host) has mingw-w64-gcc but no mingw
+# glib2/pixman/epoxy, which QEMU needs. Fedora packages all of them, and
+# QEMU's own Windows CI uses the same base
+# (qemu/tests/docker/dockerfiles/fedora-win64-cross.docker), so a QEMU
+# build failure here is one upstream would see too.
 #
 # What it adds over QEMU's image: rustup with the x86_64-pc-windows-gnu
 # target (the player, the launcher and libdisc are Rust and must match
@@ -25,8 +25,8 @@ RUN dnf install -y --setopt=install_weak_deps=False \
     && dnf clean all -y
 
 # QEMU 9.2's mkvenv supports Python 3.8-3.13 and Fedora's default is newer
-# (3.14 breaks it), so the build gets its own interpreter -- the same
-# constraint scripts/configure-qemu.sh enforces on every host, here met by
+# (3.14 breaks it), so the build gets its own interpreter. It is the
+# constraint scripts/configure-qemu.sh enforces on every host, met here by
 # a package rather than by uv. `distlib` is installed for real because
 # QEMU's fallback to pip's vendored copy is broken on pip >= 26
 # (CLAUDE.md's "found no usable distlib"), and this image has no network
@@ -40,8 +40,8 @@ ENV QEMU_PYTHON=/usr/bin/python3.13
 # Cross side: the mingw64 sysroot QEMU and the executor compile against.
 # libepoxy is the Mesa pass-through's GL loader; gettext/iconv arrive as
 # glib's own dependencies but are named here because the packaging step
-# copies their DLLs. No SDL2: QEMU is configured --disable-sdl (2026-09-07)
-# — nothing we ship opens a QEMU window, and Fedora's mingw64-SDL2 is
+# copies their DLLs. No SDL2. QEMU is configured --disable-sdl because
+# nothing we ship opens a QEMU window, and Fedora's mingw64-SDL2 is
 # sdl2-compat, which dragged SDL3.dll along at run time as well.
 RUN dnf install -y --setopt=install_weak_deps=False \
         mingw-w64-tools \
@@ -52,11 +52,9 @@ RUN dnf install -y --setopt=install_weak_deps=False \
 
 # libslirp, which Fedora does not package for mingw. QEMU's `-netdev
 # user` is a *compiled-in* backend, and every machine the launcher
-# generates asks for one, so without this the Windows build starts a
-# machine and QEMU answers "network backend 'user' is not compiled into
-# this binary" -- which is exactly what the first machine started on the
-# user's PC said (2026-09-06). Same release the Flatpak manifest pins,
-# for the same reason there (the runtime hasn't got it either).
+# generates asks for one. Without it QEMU answers "network backend 'user'
+# is not compiled into this binary". Same release the Flatpak manifest
+# pins, for the same reason (the runtime lacks it too).
 ARG LIBSLIRP=4.9.4
 RUN curl -fsSL -o /tmp/libslirp.tar.gz \
       "https://gitlab.freedesktop.org/slirp/libslirp/-/archive/v${LIBSLIRP}/libslirp-v${LIBSLIRP}.tar.gz" \
@@ -68,24 +66,24 @@ RUN curl -fsSL -o /tmp/libslirp.tar.gz \
     && ninja -C /tmp/libslirp-v${LIBSLIRP}/build install \
     && rm -rf /tmp/libslirp.tar.gz /tmp/libslirp-v${LIBSLIRP}
 
-# Qt 6 for the second front end (launcher-qt, ADR-014), both halves of a
-# cross build: the mingw libraries and headers the binary links against,
-# and the *native* Qt of the same version for the tools that have to run
-# here (moc, rcc, qmltyperegistrar, qmlcachegen). Fedora ships both at
-# 6.10.3 and a native `x86_64-w64-mingw32-qmake-qt6` that answers with the
-# mingw paths for the target and /usr/lib64/qt6 for the host, which is
-# exactly what cxx-qt's cargo-only build asks qmake for.
+# Qt 6 for the launcher (launcher-qt, ADR-015), both halves of a cross
+# build. The mingw libraries and headers are what the binary links
+# against; the *native* Qt of the same version runs the tools here (moc,
+# rcc, qmltyperegistrar, qmlcachegen). Fedora ships both at 6.10.3, plus a
+# native `x86_64-w64-mingw32-qmake-qt6` that answers with the mingw paths
+# for the target and /usr/lib64/qt6 for the host, which is what cxx-qt's
+# cargo-only build asks qmake for.
 RUN dnf install -y --setopt=install_weak_deps=False \
         mingw64-qt6-qtbase mingw64-qt6-qtdeclarative \
         qt6-qtbase-devel qt6-qtdeclarative-devel \
     && dnf clean all -y
-# The cross qmake, and: the host rcc has zstd and the mingw Qt6Core does
+# The cross qmake. Also, the host rcc has zstd and the mingw Qt6Core does
 # not, so a resource compiled with the default algorithm asks the target
 # for `qResourceFeatureZstd()` and does not link. zlib instead.
 ENV QMAKE=/usr/bin/x86_64-w64-mingw32-qmake-qt6 \
     CXX_QT_AUTORCC_OPTIONS=--no-zstd
 
-# Rust, in the image rather than on the host: the same stable channel the
+# Rust, in the image rather than on the host. The same stable channel the
 # native build uses, plus the windows-gnu target. CARGO_HOME/RUSTUP_HOME
 # live under /opt so a bind-mounted checkout never inherits (or writes)
 # the host user's cargo state.
@@ -102,16 +100,16 @@ ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
     PKG_CONFIG=/usr/bin/x86_64-w64-mingw32-pkg-config \
     LANG=C.UTF-8
 
-# DXVK's d3d9 for Windows (ADR-007, 2026-09-17): the executor runs on the
-# same DXVK on every host, so the image builds it too. DXVK compiles its
+# DXVK's d3d9 for Windows (ADR-007). The executor runs on the same DXVK
+# on every host, so the image builds it too. DXVK compiles its
 # GLSL to SPIR-V at build time with a *native* glslang; everything else it
 # needs (the Vulkan headers, dxbc-spirv, libdisplay-info) is a submodule
 # or a meson subproject. Last, so the layers above stay cached.
 RUN dnf install -y --setopt=install_weak_deps=False glslang \
     && dnf clean all -y
 
-# clang + lld: the Windows QEMU is built with them (patch 68,
-# configure-qemu.sh --windows), because mingw GCC 15 has only emulated TLS
-# and every __thread access is a call.
+# clang + lld build the Windows QEMU (patch 68, configure-qemu.sh
+# --windows), because mingw GCC 15 has only emulated TLS and every
+# __thread access is a call.
 RUN dnf install -y --setopt=install_weak_deps=False clang lld \
     && dnf clean all -y

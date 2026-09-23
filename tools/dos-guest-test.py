@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""dos-guest-test.py — the DOS machine family (doc 06) end to end.
+"""The DOS machine family (doc 06) end to end.
 
 A bundle the launcher writes, through `launcher --print-args`, into our
 own qemu-system-i386, booting a real FreeDOS floppy. What it proves:
 
-  1. `Machine::reference(Dos)` is doc 06's DOS machine — 64 MB, emulated,
+  1. `Machine::reference(Dos)` is doc 06's DOS machine: 64 MB, emulated,
      no NIC, and a processor chosen for it rather than "as fast as
      possible";
   2. the machine boots **from its floppy**, which is the `floppy` and

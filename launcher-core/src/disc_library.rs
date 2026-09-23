@@ -1,53 +1,50 @@
 //! The disc shelf (doc 07): the user's collection of disc images, shared
 //! by every machine rather than owned by one.
 //!
-//! It started per-machine (`Machine::discs`) and that was wrong: a rip of
-//! Blood disc 2 is a property of the person, not of the XP box that
-//! happened to install it first. Two machines wanting the same disc had
-//! to list it twice, and a disc added while setting one machine up was
-//! invisible to the next. So the shelf lives here — one flat
-//! `discs.toml` next to the machine and shader-profile libraries — and
-//! all a machine keeps is `Machine::disc`, the one disc in its drive at
-//! boot. Anything else is inserted at runtime (`control.rs`).
+//! It started per machine (`Machine::discs`), which was wrong. A rip of
+//! Blood disc 2 belongs to the person, not to the XP box that installed
+//! it first. Two machines wanting the same disc had to list it twice, and
+//! a disc added while setting one machine up was invisible to the next.
+//! So the shelf is one flat `discs.toml` next to the machine and
+//! shader-profile libraries, and a machine keeps only `Machine::disc`,
+//! the disc in its drive at boot. Anything else is inserted at runtime
+//! (`control.rs`).
 //!
-//! Entries are labelled because that's the other half of the point: a
-//! shelf of `d1.cue`, `disc2.cue`, `cd1.iso` is not a library. The label
-//! defaults to the file name and is editable.
+//! Entries have labels because a shelf of `d1.cue`, `disc2.cue`,
+//! `cd1.iso` is not a library. The label defaults to the file name and is
+//! editable.
 //!
-//! **The shelf is kept in order by label**, not in the order things were
-//! added: a collection is something you look a title up in, and the order
-//! in which discs happened to be ripped is not an order anyone can search.
-//! It is an invariant of `DiscLibrary` rather than a sort each view does
-//! for itself, so every consumer agrees — both GUIs, the C ABI, the
-//! `--discs` verb, and the flat file the in-guest CDSHELF program lists,
-//! which is written straight out of this list and addressed by slot
-//! number (a view that sorted for itself would show a disc under one
-//! number and load another).
+//! **The shelf is kept in order by label**, not in the order discs were
+//! added, because people look a title up. The order is an invariant of
+//! `DiscLibrary` rather than a sort each view does, so every consumer
+//! agrees: the GUI, the C ABI, the `--discs` verb, and the flat file the
+//! in-guest CDSHELF program lists. That file is written straight out of
+//! this list and addressed by slot number, so a view that sorted for
+//! itself would show a disc under one number and load another.
 
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
-/// What a file dialog should offer when picking a disc. A (label,
-/// extensions) pair and nothing more: it is the *shelf's* statement about
-/// what a disc image is, so it lives here rather than in a front end's
-/// file picker — this module is shared, and a picker is not.
+/// What a file dialog should offer when picking a disc, as a (label,
+/// extensions) pair. It is the shelf's definition of a disc image, so it
+/// lives here, shared, rather than in a front end's file picker.
 pub const DISC_FILTER: (&str, &[&str]) = ("Disc images", &["iso", "cue", "ccd", "mds"]);
 
 /// How QEMU is told to open a shelf entry.
 ///
-/// A **directory** is a disc too: `isodir` generates an ISO 9660 + Joliet
+/// A **directory** is a disc too. `isodir` generates an ISO 9660 + Joliet
 /// volume over the tree as the guest reads it (M5g,
 /// `docs/tracks/m5-dirdisc.md`), which is how someone hands a pile of
-/// files to a machine that has no networking worth the name. It is
-/// reached by prefix because a directory can be neither probed nor opened
-/// as a file, so the choice has to be made here, once, by everything that
-/// names a medium to QEMU: the boot drive (`bundle.rs`), a live insert
-/// (`control.rs`) and the flat shelf file the guest's own CDSHELF reads.
+/// files to a machine with no useful networking. It is reached by prefix
+/// because a directory can be neither probed nor opened as a file, so the
+/// choice is made here, once, for everything that names a medium to
+/// QEMU: the boot drive (`bundle.rs`), a live insert (`control.rs`) and
+/// the flat shelf file the guest's own CDSHELF reads.
 ///
-/// Decided from the path each time rather than remembered: a folder that
-/// has since been deleted is then a missing file, which is what it is,
-/// rather than a folder disc QEMU cannot generate.
+/// Decided from the path each time rather than remembered, so a folder
+/// deleted since is reported as a missing file rather than a folder disc
+/// QEMU cannot generate.
 pub fn qemu_medium(path: &Path) -> String {
     if path.is_dir() {
         format!("isodir:{}", path.display())
@@ -72,8 +69,7 @@ pub struct DiscLibrary {
 /// `<platform data dir>/discs.toml`, beside `machines/` and
 /// `shader-profiles/` (doc 07: "bundles live in a plain, documented
 /// directory layout the user can back up"). `LAUNCHER_DISC_LIBRARY`
-/// overrides it, matching the project's `PLAYER_*`/`LAUNCHER_*` env-knob
-/// convention.
+/// overrides it.
 pub fn default_path() -> PathBuf {
     if let Ok(path) = std::env::var("LAUNCHER_DISC_LIBRARY") {
         return path.into();
@@ -82,9 +78,9 @@ pub fn default_path() -> PathBuf {
 }
 
 /// A label for a disc that has none: the file name without its
-/// extension, which is what a rip is usually named after — or, for a
-/// shared folder, the folder's own name, extension and all (`Patch 1.3`
-/// is a name, `Patch 1` is a mangling of one).
+/// extension, which is what a rip is usually named after. A shared folder
+/// keeps its whole name, extension and all (`Patch 1.3` is a name,
+/// `Patch 1` a mangling of one).
 pub fn default_label(path: &Path) -> String {
     let name = if path.is_dir() { path.file_name() } else { path.file_stem() };
     name.map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string())
@@ -144,16 +140,16 @@ fn lower(c: char) -> char {
 
 impl DiscLibrary {
     /// Put the shelf back in order. Called by everything that can
-    /// disturb it — a load, an add, a rename — so a caller never has to
+    /// disturb it (a load, an add, a rename), so a caller never has to
     /// remember to.
     pub fn sort(&mut self) {
         self.discs.sort_by(compare);
     }
 
-    /// Read the shelf. A missing file is an empty shelf, not an error —
-    /// that's just a fresh install. A *corrupt* one is an error, so a
-    /// hand-edit gone wrong is reported instead of silently discarding
-    /// the collection by overwriting it with an empty one.
+    /// Read the shelf. A missing file is an empty shelf (a fresh
+    /// install), not an error. A corrupt one is an error, so a hand-edit
+    /// gone wrong is reported instead of the collection being overwritten
+    /// with an empty one.
     pub fn load(path: &Path) -> std::io::Result<DiscLibrary> {
         match std::fs::read_to_string(path) {
             // Sorted on the way in, so a hand-edited file (or one an
@@ -180,7 +176,7 @@ impl DiscLibrary {
         self.discs.iter().position(|d| d.path == path)
     }
 
-    /// Put a disc on the shelf. Returns false if it was already there —
+    /// Put a disc on the shelf. Returns false if it was already there:
     /// the same image added twice is one entry, not two rows that then
     /// disagree about their labels.
     pub fn add(&mut self, path: PathBuf) -> bool {
@@ -213,12 +209,11 @@ impl DiscLibrary {
 /// (`cdshelf/cdshelf_proto.h`): one `<label>\t<path>` line per disc.
 ///
 /// Not `discs.toml` itself, because QEMU's side of this is C and a
-/// tab-separated line file is a parser you can read in one sitting.
-/// Labels have tabs and newlines replaced rather than being rejected —
-/// the user typed a label, not a record separator, and losing their disc
-/// over a stray tab would be absurd. A *path* containing a newline is
-/// skipped instead: there is no safe way to write it in this format, and
-/// silently truncating it would point the guest at the wrong file.
+/// tab-separated line file needs only a short parser. Tabs and newlines
+/// in a label are replaced with spaces rather than rejected, so a stray
+/// tab never loses a disc. A path containing a newline is skipped
+/// instead: this format cannot hold it, and truncating it would point
+/// the guest at the wrong file.
 pub fn write_shelf_file(library: &DiscLibrary, path: &Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -244,7 +239,7 @@ pub fn write_shelf_file(library: &DiscLibrary, path: &Path) -> std::io::Result<(
 pub const MAX_SHELF_ENTRIES: usize = 256;
 
 /// The newest guest-tools ISO (`guest-tools/build-wrappers.sh` writes
-/// `guest-tools/out/guest-tools-3dfx-<date>.iso`), for doc 07's
+/// `guest-tools/out/guest-tools-3dfx-<rev>.iso`), for doc 07's
 /// "one-click guest-tools ISO attach". Shipped as
 /// `share/2ksbox/guest-tools/` in an installed tree, built into
 /// `guest-tools/out` in a checkout (`paths.rs`, like
@@ -266,8 +261,8 @@ pub fn guest_tools_iso() -> Option<PathBuf> {
         .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
         .collect();
     candidates.sort();
-    // Canonicalized because this one is *stored*: the build-time anchor
+    // Canonicalized because this path is stored. The build-time anchor
     // is `<manifest>/../guest-tools/out`, and a `launcher-core/../guest-tools`
-    // on the shelf would be correct but unreadable.
+    // on the shelf would be correct but hard to read.
     candidates.pop().map(|(_, path)| path.canonicalize().unwrap_or(path))
 }

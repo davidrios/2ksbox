@@ -1,9 +1,9 @@
 /*
- * The display driver's resources. A Windows 9x display driver is not just
- * code: GDI and USER read the machine metrics, the Control Panel's colour
- * table and the three system fonts out of `oembin` resources inside the
- * .drv, and a driver without them is rejected (doc 19). The names and
- * ordinals are fixed by backward compatibility, back to Windows 2.x.
+ * The display driver's resources. GDI and USER read the machine metrics,
+ * the Control Panel's colour table and the three system fonts out of
+ * `oembin` resources inside the .drv, and reject a driver without them
+ * (doc 19 §11). The names and ordinals date back to Windows 2.x and cannot
+ * change.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */

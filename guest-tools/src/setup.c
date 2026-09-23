@@ -1,23 +1,22 @@
 /*
- * setup.c — SETUP.EXE, the guest-tools installer, run inside the machine.
+ * setup.c: SETUP.EXE, the guest-tools installer, run inside the machine.
  *
- * The ISO used to be a pile of folders and a README telling you which
- * files to copy where for your Windows; the copies differ per family and
- * one of them (FXPTL.SYS) needs a service registered before OPENGL32.DLL
- * will even load. This does it: the components that apply to *this*
- * Windows, and a log of what actually happened.
+ * Which files go where differs per Windows family, and one of them
+ * (FXPTL.SYS) needs a service registered before OPENGL32.DLL will load.
+ * SETUP installs the components that apply to *this* Windows and logs
+ * what happened.
  *
  * Guest tools come in two kinds and so does this program:
  *
- *   - things installed into Windows (system files, a driver, a service) —
+ *   - things installed into Windows (system files, a driver, a service),
  *     the numbered list and `I`;
  *   - things copied next to one game's EXE (our D3D DLLs, the GL wrapper,
- *     WineD3D) — `G`. Those are per-game by design, never system-wide, so
+ *     WineD3D), `G`. Those are per-game by design, never system-wide, so
  *     an installer with only an install step would leave out half the ISO.
  *
- * A console program on purpose: it is the one interface Windows 98, XP
+ * A console program on purpose. It is the one interface Windows 98, XP
  * and a rescue command prompt all have, it needs no common controls, and
- * every step is scriptable — `SETUP /ALL` in a batch file is how our own
+ * every step is scriptable. `SETUP /ALL` in a batch file is how our own
  * headless guest tests install the tools.
  *
  * Everything it installs comes from the folder SETUP.EXE is in, so it
@@ -37,11 +36,10 @@
 
 #define MAX_COMPONENTS 8
 
-/* Where the test programs go, and where the log goes with them: one folder
- * that is ours, on the hard disk, and the same one every time — not
- * WINDOWS, where a SETUP.LOG would sit among every other installer's. The
- * same folder every other program here writes its log to (guestlog.h),
- * which is where the one definition of it lives. */
+/* Where the test programs and the log go: one folder of ours on the hard
+ * disk, the same every time, not WINDOWS, where a SETUP.LOG would sit
+ * among every other installer's. Every other program here logs there too;
+ * guestlog.h holds the one definition. */
 #define BOXDIR GUEST_DIR
 
 /* Every path here is <the SETUP.EXE folder> + <folder> + <name>, so the
@@ -84,10 +82,10 @@ static void say(const char *fmt, ...)
 
 /* ------------------------------------------------------------ file steps */
 
-/* A file that must not be overwritten where it is — because it is in use
- * (the mapper .SYS its service has loaded), or because it is a module of a
- * driver Windows may be running right now — is not a failure: stage the new
- * copy beside the target, on the hard disk where a boot-time rename can
+/* A file that must not be overwritten where it is, because it is in use
+ * (the mapper .SYS its service has loaded) or is a module of a driver
+ * Windows may be running right now, is not a failure. Stage the new copy
+ * beside the target, on the hard disk where a boot-time rename can
  * still find it once the CD is gone, and schedule the swap for the next
  * restart. NT has MoveFileEx for exactly this; 9x has no such call and does
  * it through WINDOWS\WININIT.INI, whose [rename] section WININIT.EXE applies
@@ -162,7 +160,7 @@ static int copy_one(const char *src, const char *dstdir, const char *name)
         return 0;
     }
     /* Locked because it is loaded (the running display driver, a started
-     * .SYS): replace it on the next boot instead of failing — but only while
+     * .SYS): replace it on the next boot instead of failing. Only while
      * installing a component, not for a per-game copy, and only when the
      * target is really there to be replaced. */
     err = GetLastError();
@@ -195,13 +193,13 @@ static int copy_set(const char *isodir, const char *dstdir, const char *const *n
  * KERNEL reloads a discarded one from the file on disk, and a ring-3 DLL's
  * pages are demand-paged from its file the same way, so a module whose file
  * has been replaced underneath it executes the new build's bytes at the old
- * build's addresses the next time a segment or page comes back in — a
- * fault inside the display driver, which on 9x is a blue screen (2026-09-12:
- * `SETUP /ALL` over an installed driver died at the restart prompt). The
- * .DRV and the VxD happen to be held open and refuse the copy (doc 19 §28),
+ * build's addresses the next time a segment or page comes back in. That
+ * is a fault inside the display driver, which on 9x is a blue screen
+ * (`SETUP /ALL` over an installed driver died at the restart prompt). The
+ * .DRV and the VxD happen to be held open and refuse the copy (doc 19 §28);
  * the DirectDraw HAL DLL does not while a DirectDraw application has it
- * loaded; treating all of them alike is what makes a reinstall safe rather
- * than lucky. A name not there yet is a first install with nothing loaded,
+ * loaded. Treating all of them alike makes a reinstall safe rather than
+ * lucky. A name not there yet is a first install with nothing loaded,
  * and is copied outright. */
 static int stage_set(const char *isodir, const char *dstdir, const char *const *names)
 {
@@ -304,8 +302,8 @@ static int run_logged(const char *cmdline)
 
 /* ------------------------------------------------------------ components */
 
-/* A 3dfx card on this machine's PCI bus — the emulated Voodoo 2
- * (`-device voodoo2`, doc 21), or any other 3dfx board — as its hardware
+/* A 3dfx card on this machine's PCI bus (the emulated Voodoo 2,
+ * `-device voodoo2`, doc 21, or any other 3dfx board) as its hardware
  * ID ("PCI\VEN_121A&DEV_0002&..."), or empty. Its driver is 3dfx's own and
  * brings a Glide under the very names the pass-through's wrappers have
  * (GLIDE2X.DLL, GLIDE3X.DLL, FXMEMMAP.VXD), so step_glide must know.
@@ -314,8 +312,8 @@ static int run_logged(const char *cmdline)
  * entry of a card that has been taken out, and a machine that lost its
  * Voodoo should get the pass-through's Glide again. 9x has the live
  * devnode tree in HKEY_DYN_DATA; NT has CM_Locate_DevNode, which finds
- * only present devnodes in its normal mode — loaded at run time, as
- * nothing else here needs cfgmgr32. */
+ * only present devnodes in its normal mode. cfgmgr32 is loaded at run
+ * time, as nothing else here needs it. */
 static char g_3dfx[256];
 
 static int is_3dfx(const char *id)
@@ -382,7 +380,7 @@ static void find_3dfx_nt(void)
  * On a machine with a 3dfx card the Glide DLLs are not ours to install:
  * the system folder's GLIDE2X.DLL is what every Glide game loads, and
  * whichever was copied last decided silently whether a game drew on the
- * card or on the pass-through — a SETUP /ALL run to update the display
+ * card or on the pass-through. A SETUP /ALL run to update the display
  * driver took the card away from every Glide game. So they stay out of
  * it, and SETUP /GAME 6 puts the pass-through's next to one game. The 9x
  * mapper is 3dfx's own binary (FXMEMMAP.VXD 4.10.01.0013, the Glide 2.42
@@ -403,8 +401,8 @@ static int step_glide(void)
     say("Glide and the device mapper:");
     if (g_3dfx[0]) {
         say("    a 3dfx card is on this machine (%s)", g_3dfx);
-        say("    GLIDE.DLL, GLIDE2X.DLL, GLIDE3X.DLL: left alone, the card's Glide comes with 3dfx's driver");
-        say("    (SETUP /GAME 6 <dir> puts the pass-through's next to one game)");
+        say("    GLIDE.DLL, GLIDE2X.DLL, GLIDE3X.DLL: left alone, 3dfx's driver brings the card's own");
+        say("    (SETUP /GAME 6 <dir> copies the pass-through Glide next to one game)");
     } else {
         bad = copy_set("GLIDE", g_sys, dlls);
     }
@@ -475,17 +473,17 @@ static int step_driver_nt(void)
  * installs the driver with no clicks and no installer of ours (doc 19 §16).
  * There is nothing to run here, so this step is four file copies: the INF,
  * the display driver, the mini-VDD and the DirectDraw HAL DLL (every file
- * the INF's CopyFiles names — a missing one is a PnP prompt for it).
+ * the INF's CopyFiles names; a missing one is a PnP prompt for it).
  *
  * The binaries go beside the INF because that is where Windows looks for a
  * CopyFiles source, and into SYSTEM as well because that is the arrangement
- * the driver has actually been proven in — the INF's own CopyFiles should
- * make the second set redundant, and it is a few kilobytes to not find out
- * the hard way on somebody's machine.
+ * the driver has been proven in. The INF's own CopyFiles should make the
+ * second set redundant; it costs a few kilobytes not to find out the hard
+ * way on somebody's machine.
  *
- * A restart is not optional here and not merely recommended: nothing of this
- * driver exists to Windows until the boot that enumerates the adapter
- * against the new INF — and on a reinstall, every file that is already
+ * The restart is required. Nothing of this driver exists to Windows until
+ * the boot that enumerates the adapter against the new INF, and on a
+ * reinstall every file that is already
  * there is swapped by that boot rather than overwritten under the driver
  * that is drawing the desktop (stage_set). */
 static int step_driver_9x(void)
@@ -549,16 +547,16 @@ static int step_tests(void)
  * characters, so "Entrada de som wave da SB16 [220]" is 33 and arrives
  * cut to 32 with no terminator. DirectX 9.0c's DSOUND.DLL copies the wave
  * names into a 32-byte stack buffer under a /GS cookie, so whatever
- * enumerates DirectSound — dxdiag, every game — dies with c0000409 inside
+ * enumerates DirectSound (dxdiag, every game) dies with c0000409 inside
  * DSOUND.DLL. Nothing on the host can change that string; the fault is
  * the same on every host, and on a real Portuguese Win98 with a real SB16.
  *
  * The VxD has a door for it: at start it reads WaveInDevName /
  * WaveOutDevName from HKLM\SOFTWARE\Creative Tech\DeviceInfo\<enumerator>
  * \<hardware ID> and uses them instead of its own strings. The key is
- * named the way SB16.VXD names it — the device ID's first component, then
- * the devnode's HardwareID without its '*' and cut at the first ',' — so
- * for the card QEMU's sb16 is detected as it is DeviceInfo\ROOT\PNPB003.
+ * named the way SB16.VXD names it: the device ID's first component, then
+ * the devnode's HardwareID without its '*' and cut at the first ','. For
+ * the card QEMU's sb16 is detected as it is DeviceInfo\ROOT\PNPB003.
  * A name is written only for a device whose name did not end within its
  * 32 bytes, and only on the Creative driver that reads it; the VxD reads
  * it at boot, hence the restart. */
@@ -728,8 +726,8 @@ static int step_sb16_names(void)
  * folder and in the Run key, in place of 3dfx's own `Voodoo2` entry.
  *
  * 3dfx's driver runs `rundll32 3dfxv2ps.dll,UpdateRegSettings` at every
- * login, which initialises the card from another process — about three
- * seconds under TCG — and a Glide game started inside them hangs. The
+ * login, which initialises the card from another process for about three
+ * seconds under TCG, and a Glide game started inside them hangs. The
  * command moves to HKLM\SOFTWARE\2ksbox\Voodoo2 and V2START runs it at
  * login instead, with a notice on the desktop until it has finished (the
  * program's own header has the rest).
@@ -804,8 +802,8 @@ static int step_voodoo2_guard(void)
  * if it is the first program of the session to touch DirectDraw: Windows
  * keeps one module per name for the whole machine and DDHELP.EXE keeps
  * Windows' own ddraw.dll loaded once anything has used it, so the *second*
- * game a user starts is served that one whatever sits in its folder — and on
- * a host with no Direct3D executor its 3D setup then lists no device at all
+ * game a user starts is served that one whatever sits in its folder. On a
+ * host with no Direct3D executor its 3D setup then lists no device at all
  * (doc 19 §42, measured both ways). Replacing the system file is not the
  * answer: System File Protection restores it at the next boot.
  *
@@ -873,7 +871,7 @@ static int make_ddsys(void)
         /* Either this is not a DirectDraw this edit knows, or DDRAW.DLL has
          * already been replaced by something else. Either way, stop: a
          * switcher with nothing to forward to takes DirectDraw away. */
-        say("    %s: the name to patch is not in it — leaving everything alone", src);
+        say("    %s: the name to patch is not in it, so nothing was changed", src);
         free(buf);
         return 1;
     }
@@ -897,8 +895,8 @@ static int step_wined3d_sys(void)
     int bad = 0;
 
     say("WineD3D as this machine's DirectDraw:");
-    /* **The pass-through GL needs the device mapper**, and this component
-     * makes it the machine's OpenGL: without FXMEMMAP.VXD the wrapper's
+    /* The pass-through GL needs the device mapper, and this component
+     * makes it the machine's OpenGL. Without FXMEMMAP.VXD the wrapper's
      * DllMain returns FALSE, and then *every* program that imports opengl32
      * fails to start rather than falling back to Microsoft's software GL.
      * `SETUP /ALL` installs the mapper first (it is component 2); a bare
@@ -921,18 +919,18 @@ static int step_wined3d_sys(void)
     bad |= copy_one(src, g_sys, "WINEDD.DLL");
     snprintf(src, sizeof src, "%sWINED3D\\DDRAW\\WINED3D.DLL", g_root);
     bad |= copy_one(src, g_sys, "WINED3D.DLL");
-    /* **WineD3D draws through the first opengl32.dll the loader finds**, and
-     * the one in the system folder is Microsoft's software GL — far too slow
-     * to play on, and on a machine-wide install there is no game directory to
-     * put ours in front of it. Redirecting the *name* the way DDRAW is
-     * redirected does not work here: WineD3D then comes up with no GL adapter
-     * at all (`tex 1x1..0x0`, doc 19 §43), so the pass-through goes in as the
-     * system OPENGL32.DLL itself — staged and swapped on the restart, because
-     * it may be loaded right now — with Microsoft's kept beside it as
-     * MSOGL32.DLL and a second copy of ours as WGLPT32.DLL, which is what
+    /* WineD3D draws through the first opengl32.dll the loader finds, and
+     * the one in the system folder is Microsoft's software GL, far too slow
+     * to play on. A machine-wide install has no game directory to put ours
+     * in front of it. Redirecting the *name* the way DDRAW is redirected
+     * does not work here: WineD3D then comes up with no GL adapter at all
+     * (`tex 1x1..0x0`, doc 19 §43). So the pass-through goes in as the
+     * system OPENGL32.DLL itself, staged and swapped on the restart because
+     * it may be loaded right now. Microsoft's is kept beside it as
+     * MSOGL32.DLL, and a second copy of ours as WGLPT32.DLL, which is what
      * D3DPRE.EXE puts back if Windows ever restores the original.
      *
-     * It is the right OpenGL for this machine either way: it is the same DLL
+     * It is the right OpenGL for this machine either way. It is the same DLL
      * the per-game "OpenGL pass-through" set copies, and a GL program on a
      * 2ksbox machine wants the pass-through whether or not WineD3D is in
      * play. */
@@ -974,9 +972,9 @@ static int step_wined3d_sys(void)
         return 1;
     }
     RegCloseKey(run);
-    say("    \"%s\" = %s: from the next login it asks the adapter and points", D3DPRE_RUN_NAME, ours);
-    say("    DirectDraw at WineD3D on a host with no Direct3D of its own, or");
-    say("    back at Windows' own on a host that has one. D3DPRE.LOG says which.");
+    say("    \"%s\" = %s: at each login it picks WineD3D's DirectDraw", D3DPRE_RUN_NAME, ours);
+    say("    when the host has no Direct3D, and Windows' own when it has one.");
+    say("    D3DPRE.LOG says which.");
     return 0;
 }
 
@@ -1005,10 +1003,10 @@ static int g_ncomp;
 /* ------------------------------------------------- the per-game file sets */
 
 /* Copied next to one game's EXE, never into the system directory. Each
- * set is self-contained — what a game needs to run on that stack and
- * nothing else — so two stacks can never end up in one folder. The files
+ * set is self-contained (what a game needs to run on that stack and
+ * nothing else), so two stacks can never end up in one folder. The files
  * are pairs, <name on the ISO> then <name it must have next to the EXE>.
- * Since 2026-09-12 no set renames anything: WineD3D's folders carry the
+ * No set renames anything: WineD3D's folders carry the
  * DLLs under the names a game loads, so copying a folder from Explorer
  * and running SETUP /GAME give the same result. They also carry
  * OPENGL32.DLL, because WineD3D draws through the first opengl32.dll the
@@ -1097,7 +1095,7 @@ static int install_selected(void)
     g_installing = 0;
     if (!any) { say("nothing selected"); return 0; }
     say("");
-    if (bad) say("Finished with errors - see the lines above.");
+    if (bad) say("Finished with errors. See the lines above.");
     else if (g_reboot) say("Installed. Restart Windows to finish.");
     else say("Installed.");
     return bad;
@@ -1108,19 +1106,19 @@ static int install_selected(void)
  * On NT this is the whole of it: take SE_SHUTDOWN_NAME and call.
  *
  * On 9x the call must not be made by *this* process. Measured on Windows 98
- * 4.10.2222 (2026-09-07): ExitWindowsEx from a console process never
- * returns and no shutdown begins at all — no dialog, an untouched desktop,
- * the machine still up five minutes later. The thread stuck inside it holds
- * the Win16Mutex, so pumping messages does not rescue it either: a second
- * thread pumping while a first one calls goes down with it, and the whole
- * process is then deaf to USER. What the console costs is the process's own
- * message queue — a console app's window belongs to the DOS box hosting it,
- * not to us — so the same call from a process started with DETACHED_PROCESS,
- * which has no console at all, restarts the machine cleanly. That process is
- * this one again, run as `SETUP /REBOOTNOW`, so the disc carries no second
- * binary for it.
+ * 4.10.2222: ExitWindowsEx from a console process never returns and no
+ * shutdown begins at all. There is no dialog, the desktop is untouched, and
+ * the machine is still up five minutes later. The thread stuck inside it
+ * holds the Win16Mutex, so pumping messages does not rescue it either: a
+ * second thread pumping while a first one calls goes down with it, and the
+ * whole process is then deaf to USER. The console costs the process its
+ * own message queue (a console app's window belongs to the DOS box hosting
+ * it, not to us). The same call from a process started with
+ * DETACHED_PROCESS, which has no console at all, restarts the machine
+ * cleanly. That process is this one again, run as `SETUP /REBOOTNOW`, so
+ * the disc carries no second binary for it.
  *
- * The variants that do not work, so nobody spends the day again:
+ * Variants that do not work:
  * `rundll32 shell32.dll,SHExitWindowsEx 2` does nothing; `rundll32
  * krnl386.exe,exitkernel` does bring Windows down, but as a forced exit that
  * leaves the FAT dirty and the next boot in ScanDisk. */
@@ -1146,7 +1144,7 @@ static void reboot_now(void)
             CloseHandle(pi.hProcess);
             return;
         }
-        say("    could not start the restart (error %lu) - restart Windows yourself",
+        say("    could not restart (error %lu). Restart Windows yourself.",
             GetLastError());
         return;
     }
@@ -1159,7 +1157,7 @@ static void reboot_now(void)
         CloseHandle(tok);
     }
     if (!ExitWindowsEx(EWX_REBOOT | EWX_FORCE, 0))
-        say("    Windows refused the restart (error %lu) - restart it yourself",
+        say("    Windows refused to restart (error %lu). Restart it yourself.",
             GetLastError());
 }
 
@@ -1257,8 +1255,8 @@ static void usage(void)
            "  SETUP /LOG <file>     write the log there (default C:\\2KSBOX\\SETUP.LOG)\n");
 }
 
-/* "Windows 98 SE" / "Windows XP" — what the user should see confirmed,
- * since the whole point is that the component list differs per family. */
+/* "Windows 98 SE" / "Windows XP", shown so the user can confirm it: the
+ * component list differs per family. */
 static void os_name(char *out, OSVERSIONINFOA *v)
 {
     const char *n = "Windows";
@@ -1278,7 +1276,7 @@ static void os_name(char *out, OSVERSIONINFOA *v)
 }
 
 /* Open `path` for the log and remember where it landed, as an absolute
- * path, so the program can tell the user at the end — a Windows 98 console
+ * path, so the program can tell the user at the end. A Windows 98 console
  * has no scrollback, so "here is the whole log" is the one line that has to
  * survive on screen. */
 static int try_log(const char *path)
@@ -1290,11 +1288,9 @@ static int try_log(const char *path)
     return 1;
 }
 
-/* Where the log goes: an explicit /LOG wins; otherwise C:\2KSBOX\SETUP.LOG,
- * the same folder the test programs land in — ours, on the hard disk, and
- * the same place every run, so it does not sit among every other installer's
- * SETUP.LOG in WINDOWS and does not vanish into a read-only CD's directory.
- * TEMP is the last resort if C:\2KSBOX cannot be made. Whichever wins, its
+/* Where the log goes: an explicit /LOG wins, otherwise C:\2KSBOX\SETUP.LOG
+ * (BOXDIR above; a read-only CD's directory would lose it). TEMP is the
+ * last resort if C:\2KSBOX cannot be made. Whichever wins, its
  * absolute path is announced; the log is never left somewhere to guess at. */
 static void open_log(const char *want)
 {

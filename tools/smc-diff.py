@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""smc-diff.py <mem-A.bin> <mem-B.bin> <guest address> — which instructions a
+"""smc-diff.py <mem-A.bin> <mem-B.bin> <guest address>: which instructions a
 guest patches in its own code (M9 track: the self-modifying rasterizers).
 
 Two captures of the same guest-virtual range taken a moment apart
 (`RACE_MEMSAVE=` in tools/xp-moto-race.sh, or QMP `memsave`) are compared
 byte by byte; every run of differing bytes is reported with the x86
 instruction that contains it (capstone, `build/venv-capstone/bin/python`)
-and which of its bytes changed — an immediate, a displacement, an opcode.
+and which of its bytes changed: an immediate, a displacement, an opcode.
 Prints a summary: patched instructions, bytes, and the patch kinds.
 
     build/venv-capstone/bin/python tools/smc-diff.py \\

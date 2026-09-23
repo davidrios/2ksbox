@@ -1,6 +1,6 @@
 // The shader profile list (doc 07): New / Edit / Delete over
 // `shader_library`. The editor it opens is its own window
-// (`ShaderEditorWindow.qml`) rather than a second mode of this one — a
+// (`ShaderEditorWindow.qml`) rather than a second mode of this one: a
 // real window cannot be reliably resized once the window manager has
 // mapped it, and the two want very different sizes.
 import QtQuick
@@ -20,7 +20,7 @@ Window {
 
     signal changed()
 
-    /// The item the headless screenshot path grabs — see `Main.qml`.
+    /// The item the headless screenshot path grabs (see `Main.qml`).
     property Item grabItem: listBody
 
     title: qsTr("Shader profiles")
@@ -30,25 +30,25 @@ Window {
     minimumHeight: 240
     flags: Qt.Dialog
     // One at a time (`WizardWindow.qml`): a secondary window blocks the
-    // grid behind it, so there is never a second one to wonder about.
+    // grid behind it, so there is never a second one.
     modality: Qt.ApplicationModal
     color: palette.window
 
     onVisibleChanged: if (!visible) root.changed()
 
-    // Esc is Cancel, the way every other dialog on the desktop behaves.
-    // It goes through `close()` rather than hiding the window, because
-    // that is what runs `onVisibleChanged` above — the one place a
-    // model's own `open` flag is put back.
+    // Esc is Cancel, as in every other dialog on the desktop. It goes
+    // through `close()` rather than hiding the window, because that runs
+    // `onVisibleChanged` above, the one place a model's own `open` flag
+    // is put back.
     //
     // Not while the editor is open over this window. Quick Controls
     // matches a window's shortcut when the window `isActive()`, which a
-    // transient window reports whenever its parent is — so with both open,
+    // transient window reports whenever its parent is. With both open,
     // this Esc and the editor's matched the same key, Qt called it
-    // ambiguous and fired neither: Esc did nothing in the editor
-    // (user-reported, 2026-09-13). Standing down also keeps an Esc meant
-    // for one of the editor's file dialogs, which disarms the editor's own
-    // Esc, from closing this window behind it.
+    // ambiguous and fired neither, so Esc did nothing in the editor.
+    // Standing down also keeps an Esc meant for one of the editor's file
+    // dialogs (which disarms the editor's own Esc) from closing this
+    // window behind it.
     Shortcut {
         id: escShortcut
         sequences: [StandardKey.Cancel]
@@ -56,7 +56,7 @@ Window {
         onActivated: root.close()
     }
 
-    /// Whether Esc would close this window right now — for the `escfocus`
+    /// Whether Esc would close this window right now, for the `escfocus`
     /// probe in `Main.qml`.
     readonly property bool escArmed: escShortcut.enabled
 
@@ -64,8 +64,8 @@ Window {
     // The grab target for the headless screenshot path: a QML-declared
     // item (Qt refuses `grabToImage` on anything the engine did not
     // create) that is opaque (a bare layout grabs with a transparent
-    // background and dark-on-nothing text). On screen it is just the
-    // window's own colour.
+    // background and dark text on nothing). On screen it is the window's
+    // own colour.
     Rectangle {
         id: listBody
         anchors.fill: parent
@@ -77,9 +77,9 @@ Window {
             anchors.margins: 14
             spacing: 8
 
-            // A stock list and nothing drawn by hand (user decision, 2026-09-22:
-            // no list box, no zebra rows, no colours of ours -- the style's own
-            // look, whichever style it is): a `ListView` of `ItemDelegate`s.
+            // A stock list with nothing drawn by hand (user decision: no
+            // list box, no zebra rows, no colours of ours, only the style's
+            // own look): a `ListView` of `ItemDelegate`s.
             ListView {
                 id: profileList
                 Layout.fillWidth: true

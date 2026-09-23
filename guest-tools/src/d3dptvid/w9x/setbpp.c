@@ -1,22 +1,21 @@
 /*
- * setbpp.c — change the desktop's colour depth (and optionally its size)
+ * setbpp.c: change the desktop's colour depth (and optionally its size)
  * from a batch file, so a headless run can bisect on it.
  *
- * There is no other lever for this on 9x from outside the guest. The
- * display driver's INF resets the mode only when PnP actually reinstalls
- * the device, and on a machine already bound to the driver a reinstall
- * changes nothing — `CURRENT` survives and the desktop comes back at the
- * depth it was (doc 19 §27, measured). The registry lives in SYSTEM.DAT,
- * which nothing here can edit offline. `ChangeDisplaySettings` from inside
- * the guest is what works, and this is the smallest thing that calls it.
+ * Nothing outside the guest can do this on 9x. The display driver's INF
+ * resets the mode only when PnP reinstalls the device. On a machine already
+ * bound to the driver a reinstall changes nothing: `CURRENT` survives and
+ * the desktop comes back at its old depth (doc 19 §27). The registry lives
+ * in SYSTEM.DAT, which nothing here can edit offline. So this calls
+ * `ChangeDisplaySettings` from inside the guest.
  *
- *   SETBPP 32          — 32 bpp, current resolution
- *   SETBPP 16 800 600  — 16 bpp at 800x600
+ *   SETBPP 32            32 bpp, current resolution
+ *   SETBPP 16 800 600    16 bpp at 800x600
  *
- * It writes C:\SETBPP.LOG rather than to the console, because the harness
- * starts it from WIN.INI's `run=` where nothing is watching stdout, and
- * prints the depth before and after so a run that silently did nothing is
- * distinguishable from one that worked.
+ * It writes C:\2KSBOX\SETBPP.LOG (guestlog.h), not the console, because the
+ * harness starts it from WIN.INI's `run=` where nothing reads stdout. The
+ * log has the depth before and after, so a run that silently did nothing
+ * shows up.
  *
  * Build: guest-tools/build-driver9x.sh (mingw-w64, i686, msvcrt).
  *

@@ -4,23 +4,22 @@
 //! plugged in, notice what is unplugged, turn whatever the platform calls
 //! its buttons into the abstract [`Control`]s the `gamepad` crate
 //! defines, and shape the analog readings. What those controls then
-//! *mean* for a machine is not decided here — that is `launcher-core`'s
+//! *mean* for a machine is not decided here. That is `launcher-core`'s
 //! (ADR-014), and reaches the player as arguments.
 //!
 //! Two sources behind one interface:
 //!
-//! * [`Gilrs`] — real hardware, through one crate that covers evdev on
+//! * [`Gilrs`]: real hardware, through one crate that covers evdev on
 //!   Linux, XInput and DirectInput on Windows and IOKit on macOS.
-//! * [`Script`] — `PLAYER_PAD_SCRIPT`, a recorded sequence replayed
+//! * [`Script`]: `PLAYER_PAD_SCRIPT`, a recorded sequence replayed
 //!   against the guest's own frame counter.
 //!
-//! The second is not a convenience. No machine that runs
+//! The second is what the tests run on. No machine that runs
 //! `scripts/test.sh` has a controller plugged into it, so without a
 //! synthetic pad every check in this track would need a person and a
-//! device, and the project's testing policy — integration and end-to-end
-//! only, and wired into the suite so it guards against regressions —
-//! could not be met at all. It is the piece the rest of M13 is built on,
-//! which is why step 0 exists.
+//! device, and the project's testing policy (integration and end-to-end
+//! only, wired into the suite) could not be met at all. The rest of M13
+//! is built on it, which is why step 0 exists.
 
 use gamepad::{Binding, Control, Shaping};
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,7 +33,7 @@ pub struct Event {
 }
 
 /// Where readings come from. Both sources are polled once per published
-/// guest frame from the UI thread — see [`Pads::poll`].
+/// guest frame from the UI thread (see [`Pads::poll`]).
 trait Source {
     /// Everything that changed since the last call. `frame` is the
     /// guest's published frame count, which only the script uses.
@@ -44,7 +43,7 @@ trait Source {
 
 // --- the synthetic pad ----------------------------------------------
 
-/// `PLAYER_PAD_SCRIPT="30:lx=1.0,45:south=1,51:south=0"` — set `control`
+/// `PLAYER_PAD_SCRIPT="30:lx=1.0,45:south=1,51:south=0"` sets `control`
 /// to `value` at guest frame `n`.
 ///
 /// Frame numbers, not milliseconds, for the same reason `PLAYER_KEYS`
@@ -55,7 +54,7 @@ trait Source {
 ///
 /// A button is `0` or `1`; an axis takes any value in -1.0..=1.0 and is
 /// shaped on the way out, so a script says what the stick *is* and the
-/// deadzone still applies — a script can therefore prove the deadzone
+/// deadzone still applies. A script can therefore prove the deadzone
 /// works, which is most of what step 0 has to prove.
 struct Script {
     /// (frame, control, raw value), sorted by frame.
@@ -173,7 +172,7 @@ mod hardware {
                 B::LeftThumb => Control::LeftStickPress,
                 B::RightThumb => Control::RightStickPress,
                 // Mode/C/Z and anything else this pad invents: a control
-                // we have no name for, and silently ignoring it is right —
+                // we have no name for. Ignoring it silently is right, since
                 // a guest of this era has nothing to bind it to.
                 _ => return None,
             })
@@ -217,7 +216,7 @@ mod hardware {
                         if let Some(c) = Self::axis(a) {
                             // gilrs reports a stick pushed up as +1, the
                             // joystick convention. `Control` documents the
-                            // screen convention — up is negative — so the
+                            // screen convention (up is negative), so the
                             // vertical axes are flipped here, once, rather
                             // than in every consumer.
                             let v = if matches!(c, Control::LeftStickY | Control::RightStickY) {
@@ -265,8 +264,8 @@ pub struct Pads {
     /// The shaped value each control last reported, so `poll` can emit a
     /// change rather than a level and a consumer never sees a repeat.
     values: BTreeMap<Control, f32>,
-    /// Which control *halves* a digital consumer currently calls pressed
-    /// — `(control, positive)`. Kept here rather than worked out per
+    /// Which control *halves* a digital consumer currently calls pressed,
+    /// as `(control, positive)`. Kept here rather than worked out per
     /// event because hysteresis needs the previous answer
     /// (`Shaping::half_pressed`), and per half rather than per control
     /// because the two halves of a stick are two different keys.
@@ -307,7 +306,7 @@ impl Pads {
     ///
     /// The UI thread and not QEMU's: on macOS a HID source needs the
     /// process's run loop, which is the main thread's, and the QEMU
-    /// thread has none. It costs nothing — a pad polled at the guest's
+    /// thread has none. It costs nothing, because a pad polled at the guest's
     /// frame rate is polled far faster than a guest of this era reads
     /// one.
     pub fn poll(&mut self, frame: u64) -> Vec<Event> {
@@ -331,7 +330,7 @@ impl Pads {
             // itself the moment the pad is plugged in, that reading
             // shapes to 0.0, and the consumer is handed a "change" to the
             // value the control already had. Harmless for a key, and not
-            // harmless at all once path B makes an axis a position the
+            // harmless at all where path B makes an axis a position the
             // guest polls.
             let previous = self.values.get(&ev.control).copied().unwrap_or(0.0);
             self.values.insert(ev.control, shaped);
@@ -448,8 +447,8 @@ fn half_name(control: Control, positive: bool) -> &'static str {
 /// Turns the pad's pressed halves into key presses (M13 path C).
 ///
 /// The whole of it is one idea: **recompute the wanted set every poll and
-/// diff it against what is held.** The obvious alternative — react to
-/// each transition as it arrives — has to get every one of them right
+/// diff it against what is held.** The obvious alternative, reacting to
+/// each transition as it arrives, has to get every one of them right
 /// forever, and the failure mode is a key stuck down in the guest, which
 /// outlives the mistake and cannot be cleared from the host. A diff
 /// cannot drift: whatever the pad did, one poll later the guest's keys
@@ -526,7 +525,7 @@ pub enum Mode {
     /// sends it state; the guest's own driver does the rest.
     Usb,
     /// The pad is the machine's gameport at 0x201 (path B). Identical
-    /// work on this side — the same state through the same call — because
+    /// work on this side (the same state through the same call), because
     /// the shim feeds whichever device the machine has and the port's own
     /// shape (two axes, four buttons, the d-pad folded onto the axes) is
     /// the device's business, not the player's.
@@ -574,7 +573,7 @@ pub fn report() {
 
 /// `player --pad-sweep <frames>`: run `PLAYER_PAD_SCRIPT` against a
 /// counted sequence of guest frames and print what came out. No window,
-/// no QEMU, no guest — the `pad` check in `scripts/test.sh`.
+/// no QEMU, no guest. This is the `pad` check in `scripts/test.sh`.
 ///
 /// This is the whole host end under test: the script parser, the deadzone
 /// rescale, the change filter and the hysteresis, in the same code the
@@ -606,9 +605,9 @@ pub fn sweep(frames: u64) -> i32 {
         // packing is checked without a guest: this is the same
         // `hid_state()` the player sends through qemu_embed_pad_state.
         // `--pad gameport` prints the very same line and that is not an
-        // oversight: the state the player sends is identical, and what
-        // the gameport makes of it — two of the axes, four of the
-        // buttons, the d-pad folded onto its own X/Y — happens in the
+        // oversight. The state the player sends is identical, and what
+        // the gameport makes of it (two of the axes, four of the
+        // buttons, the d-pad folded onto its own X/Y) happens in the
         // device, where the port's shape belongs. There is deliberately
         // no second copy of that rule on this side to print from.
         if mode.is_device() {
@@ -712,7 +711,7 @@ fn hardware_source() -> Option<Box<dyn Source>> {
         Ok(g) => Some(Box::new(g)),
         // Not fatal and not silent. A host with no input permission (the
         // Flatpak without `--device=input`) fails exactly here, and the
-        // player must still run the machine — a guest is worth more than
+        // player must still run the machine. A guest is worth more than
         // a controller.
         Err(e) => {
             eprintln!("[pad] no gamepad support on this host: {e}");

@@ -1,4 +1,4 @@
-//! synthx — the libsynth exerciser (doc 20 §6).
+//! synthx: the libsynth exerciser (doc 20 §6).
 //!
 //!   synthx selftest <outdir>        the engines through the C API, PASS/FAIL/SKIP per check,
 //!                                   one .wav per case in <outdir> (listen to what failed)
@@ -15,7 +15,7 @@
 //!                                   sounding, and bytes the parser could attach to nothing.
 //!                                   Either verb reads either capture: the file says which
 //!   synthx play <file> <out.wav>    the same capture played again with no guest, at the timing
-//!                                   it was written with — if the music breaks here it is ours,
+//!                                   it was written with. If the music breaks here it is ours,
 //!                                   and if it does not the guest stopped sending it
 //!
 //! `--sf2 <file>` (or `LIBSYNTH_SF2`) is the SoundFont the General MIDI
@@ -171,7 +171,7 @@ impl Report {
 }
 
 /// The bank the packages ship, in the checkout this binary was built
-/// from — `launcher_core::paths::checkout`'s rule, which synthx cannot
+/// from, by `launcher_core::paths::checkout`'s rule, which synthx cannot
 /// call because it links no launcher code.
 fn shipped_bank() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../soundfonts")).join("TimGM6mb.sf2")
@@ -191,8 +191,8 @@ fn selftest(dir: &Path, bank: &Path, roms: Option<&Path>) -> i32 {
     r.case("opl-tone", tone_at(&fm, libsynth::opl::NATIVE_RATE, 440.0));
 
     // The bank the packages ship, not a fixture written for the check:
-    // a bank that stopped loading — a truncated file in the package, a
-    // parser that lost a chunk — is exactly the failure worth catching,
+    // a bank that stopped loading (a truncated file in the package, a
+    // parser that lost a chunk) is exactly the failure worth catching,
     // and a synthetic one would never see it.
     if bank.is_file() {
         r.case("gm-tone", gm_tone(bank, dir));
@@ -280,7 +280,7 @@ fn opl_tone(seconds: f32) -> Vec<i16> {
     pcm
 }
 
-/// A note through the SoundFont engine, byte by byte through the port —
+/// A note through the SoundFont engine, byte by byte through the port,
 /// the same path the guest's MPU-401 writes take.
 fn gm_tone(bank: &Path, dir: &Path) -> Result<String, String> {
     let m = midi_new(capi::LIBSYNTH_MIDI_GM, bank)?;
@@ -356,7 +356,7 @@ fn midi_new(kind: i32, arg: &Path) -> Result<*mut capi::Midi, String> {
 fn render(m: *mut capi::Midi, rate: u32, seconds: f32) -> Vec<i16> {
     let frames = (rate as f32 * seconds) as usize;
     let mut pcm = vec![0i16; frames * 2];
-    // In blocks, the way the audio callback asks for it — a synthesizer
+    // In blocks, the way the audio callback asks for it. A synthesizer
     // that only works when handed the whole note at once is not one.
     let block = 512;
     let mut done = 0;
@@ -396,7 +396,7 @@ fn goertzel(pcm: &[i16], rate: u32, freq: f32) -> f32 {
     ((s1 * s1 + s2 * s2 - coeff * s1 * s2).max(0.0).sqrt() / n as f64) as f32
 }
 
-/// Overall level, peak, and how many seconds of the file are audible —
+/// Overall level, peak, and how many seconds of the file are audible:
 /// the three numbers that say whether a *piece of music* is in there.
 /// "Audible" is measured in 100 ms blocks, so a quiet passage inside a
 /// score does not end the count and a single click does not start one.
@@ -411,7 +411,7 @@ fn level(pcm: &[i16], rate: u32) -> (f32, f32, f32) {
 }
 
 /// The pitch test every tone check shares: the note must be *there*
-/// (audible at all) and must be *that* note — twice the energy of two
+/// (audible at all) and must be *that* note: twice the energy of two
 /// frequencies that are neither its harmonics nor its subharmonics, so
 /// a timbre with a strong overtone still passes and a chip playing the
 /// wrong note does not.
@@ -534,7 +534,7 @@ enum Entry {
 }
 
 /// Read a capture: `<microseconds> <what>` a line, `#` comments. Which
-/// device it came from is not asked for and not remembered — a line's
+/// device it came from is not asked for and not remembered. A line's
 /// own shape says it, so every verb below routes on the content and a
 /// file with both devices in it is read as both.
 fn read_log(path: &Path) -> Result<Vec<(u64, Entry)>, String> {
@@ -599,8 +599,8 @@ struct Chan {
 /// stopped, and what stopped it.
 ///
 /// The one question it exists to answer is where the music went. A
-/// channel whose note-ons stop is the guest's doing — Windows, the
-/// driver, the program — and nothing here can put them back. A channel
+/// channel whose note-ons stop is the guest's doing (Windows, the
+/// driver, the program), and nothing here can put them back. A channel
 /// still being sent notes and not heard is ours, and then the same file
 /// goes through `synthx play` to hear it with no guest in the way.
 fn devlog(path: &Path) -> i32 {
@@ -845,9 +845,9 @@ fn midi_report(path: &Path, entries: &[(u64, Entry)]) -> i32 {
 
 /// The same report for the FM chip, which answers the same question in
 /// the units it has: a row per FM channel, a column per second, and the
-/// key-ons in each. The chip has no instruments and no note-offs — a
+/// key-ons in each. The chip has no instruments and no note-offs (a
 /// note stops when the guest clears the key bit of the register it
-/// started it with — so "an instrument went mute" is a row that stops
+/// started it with), so "an instrument went mute" is a row that stops
 /// keying on, and "the guest ran out of voices" is channels left keyed
 /// on against the eighteen the chip has.
 fn opl_report(path: &Path, entries: &[(u64, Entry)]) -> i32 {
@@ -966,7 +966,7 @@ fn opl_report(path: &Path, entries: &[(u64, Entry)]) -> i32 {
 }
 
 /// Play an FM capture back with no guest, at the timing it was written
-/// with — the register writes go in where they went in, and the chip's
+/// with. The register writes go in where they went in, and the chip's
 /// timers are advanced by the gaps between them.
 fn play_opl(entries: &[(u64, Entry)], out: &Path) -> i32 {
     let chip = capi::libsynth_opl_new(0);

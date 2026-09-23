@@ -1,17 +1,18 @@
 /*
- * d3d7test.c — Direct3D 7 test for the d3dptdisp driver (doc 15, M7c).
+ * d3d7test.c: Direct3D 7 test for the d3dptdisp driver (doc 15, M7c).
  *
  *   D3D7TEST.EXE [w h bpp] [frames] [-noz]
  *
  * Enumerates the Direct3D devices (is there a HAL?), creates an exclusive
  * flip chain with a Z buffer and an IDirect3DDevice7 on the back buffer,
- * then draws the scene of tools/d3dpt-dp2-test.cpp (the host-side test
- * that feeds the executor the same DP2 tokens without a guest): a cyan
- * triangle behind a wrapped checkerboard-textured quad, a Gouraud fan in
- * front, a half-transparent red strip. Frames per second over the run,
- * the last back buffer to d3d7test.bmp (through Lock: the driver reads
- * the host's frame back into VRAM), everything to d3d7test.log. The BMP
- * is diffed against the host test's by tools/xp-driver-test.sh d3d7.
+ * then draws the scene of tools/d3dpt-dp2-test.cpp, the host-side test
+ * that feeds the executor the same DP2 tokens without a guest. The scene
+ * is a cyan triangle behind a wrapped checkerboard-textured quad, a
+ * Gouraud fan in front and a half-transparent red strip. It logs frames
+ * per second over the run and writes the last back buffer to d3d7test.bmp
+ * through Lock (the driver reads the host's frame back into VRAM);
+ * everything goes to d3d7test.log. tools/xp-driver-test.sh d3d7 diffs the
+ * BMP against the host test's.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -189,8 +190,8 @@ static int run_dx7(HWND hwnd, int w, int h, int bpp, int frames, int noz, pfnDir
     d3d->lpVtbl->EnumDevices(d3d, enum_dev_dx7, NULL);
     logp("HAL device %s\n", enum_hal_dx7 ? "present" : "ABSENT");
     if (!enum_hal_dx7) goto out;
-    /* 0 is "no aspect ratio at all" to a title that checks a texture's shape
-     * against it; the driver published 0 until 2026-09-14 (doc 19 §34) */
+    /* a title that checks a texture's shape against this reads 0 as "no
+     * aspect ratio at all" (doc 19 §34) */
     if (hal_aspect_dx7 < 8) {
         logp("HAL device max texture aspect ratio %lu: below 8, refusing to go on\n", hal_aspect_dx7);
         goto out;
@@ -270,10 +271,10 @@ nozbuf:
         if (FAILED(hr)) { logp("Clear failed %08lx at frame %d\n", hr, i); goto out; }
         hr = dev->lpVtbl->BeginScene(dev);
         if (FAILED(hr)) {
-            /* whose fault: the runtime's own verdicts on the surfaces and on
-             * exclusive mode, and who owns the foreground -- a lost surface
-             * on 9x is the runtime's doing (a mode change, another window
-             * taking the activation), never a HAL return code */
+            /* whose fault? Log the runtime's own verdicts on the surfaces
+             * and on exclusive mode, and who owns the foreground. A lost
+             * surface on 9x is the runtime's doing (a mode change, another
+             * window taking the activation), never a HAL return code. */
             HWND fg = GetForegroundWindow();
             char cls[64] = "", title[128] = "";
             if (fg) { GetClassNameA(fg, cls, sizeof cls); GetWindowTextA(fg, title, sizeof title); }
@@ -401,15 +402,15 @@ int main(int argc, char **argv)
     RegisterClassA(&wc);
     hwnd = CreateWindowExA(0, "d3d7test", "d3d7test", WS_POPUP, 0, 0, w, h, NULL, NULL, wc.hInstance, NULL);
     ShowWindow(hwnd, SW_SHOW);
-    /* GDI's software pointer lives in VRAM (no hardware cursor yet): keep
-     * it out of the frame the test dumps and diffs */
+    /* keep the pointer out of the frame the test dumps and diffs; a pointer
+     * the sprite declines is GDI's, painted into VRAM (doc 15 "The hardware
+     * cursor") */
     ShowCursor(FALSE);
     pump();
 
-    /* Both families this driver serves run DirectX 7 or later: XP by
-     * construction, and a 2ksbox Win98 machine by decision (doc 19 §25).
-     * A DirectX 6 path lived here for one image that predated that and was
-     * never exercised again once the guest was updated. */
+    /* Both families this driver serves run DirectX 7 or later, XP by
+     * construction and a 2ksbox Win98 machine by decision (doc 19 §25), so
+     * there is no DirectX 6 path. */
     hDDraw = LoadLibraryA("DDRAW.DLL");
     if (hDDraw) {
         pDirectDrawCreateEx = (pfnDirectDrawCreateEx)GetProcAddress(hDDraw, "DirectDrawCreateEx");

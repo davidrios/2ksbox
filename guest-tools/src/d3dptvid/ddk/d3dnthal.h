@@ -1,13 +1,13 @@
 /*
- * d3dnthal.h — the Direct3D NT driver interface as the d3dptdisp display
- * driver needs it (doc 15, M7c): the DX7 HAL callbacks dxg.sys calls, the
- * caps structures, the DrawPrimitives2 command header.
+ * d3dnthal.h: the Direct3D NT driver interface as the d3dptdisp display
+ * driver needs it (doc 15, M7c). It holds the DX7 HAL callbacks dxg.sys
+ * calls, the caps structures and the DrawPrimitives2 command header.
  *
  * Derived from ReactOS' public-domain d3dnthal.h (Ge van Geldorp) and
- * the DDK documentation, made self-contained for the kernel build: the
- * DDK's version drags in d3dtypes.h / d3dcaps.h and through them the
- * user-mode windows.h, so the handful of Direct3D types the structures
- * use are spelled out here instead. Layouts are the DDK's.
+ * the DDK documentation, made self-contained for the kernel build. The
+ * DDK's version pulls in d3dtypes.h / d3dcaps.h and through them the
+ * user-mode windows.h, so the few Direct3D types the structures use are
+ * spelled out here instead. Layouts are the DDK's.
  *
  * THIS SOFTWARE IS NOT COPYRIGHTED (the ReactOS base); additions
  * SPDX-License-Identifier: GPL-2.0-or-later
@@ -23,8 +23,8 @@ extern "C" {
 
 #include "../core/d3dpt_ddi.h"
 
-/* the DDK spellings of the shared caps structures, for a reader holding
- * the DDK open beside this file; the layouts are d3dpt_ddi.h's */
+/* The DDK names of the shared caps structures, for a reader with the DDK
+ * open beside this file. The layouts are d3dpt_ddi.h's. */
 typedef D3DDEVICEDESC_V1_ D3DNTHALDEVICEDESC_V1;
 typedef D3DHAL_GLOBALDRIVERDATA_ D3DNTHAL_GLOBALDRIVERDATA;
 typedef D3DHAL_D3DEXTENDEDCAPS_ D3DNTHAL_D3DEXTENDEDCAPS;

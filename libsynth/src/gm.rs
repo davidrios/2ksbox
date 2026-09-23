@@ -2,8 +2,8 @@
 //!
 //! What "the game's MIDI music actually plays" means on a machine with
 //! no wavetable daughterboard: the guest's note-ons land on a bank of
-//! recorded instruments and come back as PCM. The bank is a file — ours
-//! by default, the user's when they say so — and which one it is decides
+//! recorded instruments and come back as PCM. The bank is a file (ours
+//! by default, the user's when they say so), and which one it is decides
 //! how the music sounds far more than anything in this file does.
 
 use std::fs::File;
@@ -51,7 +51,7 @@ impl Gm {
         let mut synth = Synthesizer::new(&Arc::new(sf), &settings)
             .map_err(|e| format!("SoundFont {}: {e}", soundfont.display()))?;
         // rustysynth's own default is 0.5, which is 6 dB below a bank
-        // that was mastered to be played at full scale — and against the
+        // that was mastered to be played at full scale, and against the
         // sound card in the same mixer that reads as "the music is too
         // quiet". Full scale here, `gain` for the trim, `clip` for the
         // arrangement that asks for more than there is.
@@ -121,7 +121,7 @@ impl Voice for Gm {
     fn reset(&mut self) {
         self.synth.reset();
         // `reset` puts the master volume back to rustysynth's default,
-        // so the trim has to be re-applied — a GM reset sysex in the
+        // so the trim has to be re-applied. A GM reset sysex in the
         // middle of a game must not change how loud it is.
         self.synth.set_master_volume(self.gain);
     }

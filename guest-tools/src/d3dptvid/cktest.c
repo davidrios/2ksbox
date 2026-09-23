@@ -1,18 +1,19 @@
 /*
- * cktest.c — palettized textures and colour keying through our driver's
- * DX7 HAL (doc 15 "Palettized textures and colour keying", protocol v8):
- * what a 1997 title asks a Voodoo-class card for and what made Moto Racer
- * fall back to its software rasterizer.
+ * cktest.c: palettized textures and colour keying through our driver's
+ * DX7 HAL (doc 15 "Palettized textures and colour keying", protocol v8).
+ * A 1997 title asks a Voodoo-class card for both; missing them made Moto
+ * Racer fall back to its software rasterizer.
  *
  *   CKTEST [w h bpp]
  *
  * Fullscreen, HAL device on the back buffer (as D3D7TEST), then:
  *   an 8-bit palettized texture (DDPF_PALETTEINDEXED8) with its own
- *   DirectDraw palette: index 1 red on the left half, index 2 green on the
- *   right; a textured quad read back at both halves;
- *   IDirectDrawPalette::SetEntries turns entry 1 blue: the left half follows;
- *   a R5G6B5 texture, magenta / white checker, SetColorKey(DDCKEY_SRCBLT,
- *   magenta): with COLORKEYENABLE the magenta cells show the clear colour,
+ *   DirectDraw palette, index 1 red on the left half and index 2 green on
+ *   the right, drawn as a quad and read back at both halves;
+ *   IDirectDrawPalette::SetEntries turns entry 1 blue, and the left half
+ *   must follow;
+ *   a R5G6B5 magenta / white checker with SetColorKey(DDCKEY_SRCBLT,
+ *   magenta). With COLORKEYENABLE the magenta cells show the clear colour,
  *   without it they are magenta again.
  * Every pixel is read back from the back buffer before the flip and
  * compared; cktest.log ends with "cktest: N cases, M failed".

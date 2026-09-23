@@ -21,10 +21,10 @@ We do not write a GPU emulator for the era's APIs. Guest 3D comes from
   native host executor runs on a real Direct3D 9 (docs 14, 15, 19).
 - **One chip is emulated after all**: a Voodoo 2 (`-device voodoo2`,
   86Box's code, ADR-016, doc 21), for the Glide titles the wrapper cannot
-  reach — Glide 3, statically linked Glide, LFB tricks. It runs 3dfx's
-  own driver at a software rasteriser's speed and sits beside the
-  pass-through, not instead of it: the wrapper stays the fast path for
-  what it covers, and OpenGL has no chip equivalent.
+  reach, such as Glide 3, statically linked Glide and LFB tricks. It runs
+  3dfx's own driver at a software rasteriser's speed and sits beside the
+  pass-through. The wrapper stays the fast path for what it covers, and
+  OpenGL has no chip equivalent.
 
 That covers Win98 and XP with host acceleration on every platform we
 ship, Apple Silicon included.
@@ -44,14 +44,14 @@ Which host Direct3D 9 the executor calls (doc 14 has the design, ADRs
 
 | Host | Backend | How it is picked |
 |---|---|---|
-| Vulkan 1.3 (Linux, Windows, macOS 26+ over KosmicKrisp) | DXVK — the default everywhere, and the only one goldens are taken with | automatic |
+| Vulkan 1.3 (Linux, Windows, macOS 26+ over KosmicKrisp) | DXVK, the default everywhere and the only one goldens are taken with | automatic |
 | Windows below the floor | the system's own `d3d9.dll` | `D3DPT_D3D9=auto\|dxvk\|system`, `-device d3dpt-vga,d3d9=…` |
 | Linux / macOS below the floor, with a Wine | the executor's Windows build in a Wine process on the host, on Wine's `d3d9` (M15) | `-global d3dpt-vga.exec=wine` |
 | Linux / macOS below the floor, no Wine | none: the adapter reports no executor | `-global d3dpt-vga.no-exec=on` models it |
 
-A software Vulkan (lavapipe) counts as available: the launcher says it
+A software Vulkan (lavapipe) counts as available. The launcher says it
 will be slow, and the box decides whether it beats the fallback. The
-launcher's probe (`launcher-core/src/host_gpu.rs`, `launcher
+launcher's probe (`launcher-core/src/host_gpu.rs`, `launcherx
 --host-check`) answers in the same terms, and the machine form's
 Direct3D row offers only what this host can run.
 
@@ -63,8 +63,8 @@ Direct3D row offers only what this host can run.
 - **QEMU version coupling.** The 3dfx patches track specific QEMU
   releases; the fork pins the one they support (v9.2.4).
 - **Host GL on macOS** is Apple's OpenGL framework (4.1 core / 2.1
-  compat), a long-term risk. Escape hatches if Apple removes it: ANGLE
-  (GL ES on Metal) or a Zink-style layer.
+  compat), a long-term risk. If Apple removes it, the escape hatches are
+  ANGLE (GL ES on Metal) or a Zink-style layer.
 - **Windowing.** Era games love exclusive full screen and mode changes;
   the player follows them with event-driven geometry changes and CRT
   shader resets (doc 03).
@@ -75,7 +75,7 @@ Direct3D row offers only what this host can run.
 
 ## Fallbacks and alternatives
 
-- **WineD3D in the guest — still shipped, being retired** (ADR-018,
+- **WineD3D in the guest, still shipped, being retired** (ADR-018,
   2026-09-22). Until M15's last step it is what a host below Vulkan 1.3
   without an executor runs: wine9x (Wine 1.7.55 with 9x/XP fixes) over
   the GL pass-through, from the ISO's `WINED3D\` folders (`SETUP /GAME 4`
@@ -83,8 +83,8 @@ Direct3D row offers only what this host can run.
   `/I 7`, WineD3D as the machine's DirectDraw through `D3DPRE.EXE`). M15
   replaces it with the executor on Wine on the host
   (`docs/tracks/m15-wine-executor.md`) and removes these rows, the ISO
-  folder and the SETUP components in one commit, once the host path has
-  drawn the reference scene and run a game — not before.
+  folder and the SETUP components in one commit, but only after the host
+  path has drawn the reference scene and run a game.
   - To test this row on a host that has Vulkan, `-global
     d3dpt-vga.no-exec=on` (doc 15) makes the adapter report no executor,
     so the guest driver offers no Direct3D and the machine carries on as

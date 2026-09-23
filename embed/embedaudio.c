@@ -1,5 +1,5 @@
 /*
- * embedaudio.c — QEMU audio backend that clips the mixed guest output
+ * embedaudio.c: QEMU audio backend that clips the mixed guest output
  * straight into a caller-owned SPSC ring buffer (libqemu_embed.h:
  * qemu_embed_set_audio_ring). Launch with:
  *   -audiodev embed,id=snd0,out.frequency=48000,out.channels=2,out.format=f32
@@ -23,23 +23,23 @@
  * written yet as soon as the cursor jumps further than its margin. That was
  * the crackle (tools/audio-glitch-test.py): this backend used to top the
  * ring up to its target on every tick, so a host device that drains the
- * ring a whole period at a time — 1024 frames from PipeWire, 2048 when
- * another client asks for it, 4096 from plain ALSA hardware — pulled the
+ * ring a whole period at a time (1024 frames from PipeWire, 2048 when
+ * another client asks for it, 4096 from plain ALSA hardware) pulled the
  * guest ahead by up to that much at once, and the surplus that followed was
  * trimmed by dropping whole ticks, each drop a click of its own.
  *
  * So each tick takes what the guest's clock says has played since the last
- * one, times a small correction — and a main loop that was held up (a 3D
+ * one, times a small correction. A main loop that was held up (a 3D
  * title's swap finishing under the big lock, tools/audio-glitch-test.py's
- * STALL=) is paid back over the ticks that follow, never in one: a device
+ * STALL=) is paid back over the ticks that follow, never in one. A device
  * may deliver at most three ticks' worth between two ticks (the player runs
  * this audiodev at timer-period=5000, so 15 ms), and up to 100 ms stays
  * owed meanwhile. Both halves were measured wrong first: handing a 10-14 ms
  * stall's backlog out at once moved the card's cursor ~25 ms past what the
  * guest (held up too) had written, and forgetting a stall instead drained
  * the ring under a loop that is held up every frame. The correction holds
- * the ring's *minimum* over a quarter second at out.buffer-length — the
- * cushion under the consumer's own pull, whatever its period — by draining
+ * the ring's *minimum* over a quarter second at out.buffer-length (the
+ * cushion under the consumer's own pull, whatever its period) by draining
  * the guest up to 25 % fast or 10 % slow. The host DAC's drift against the
  * guest's clock is parts per million, so in steady state the correction is
  * nil; after a stall it refills the cushion within about a second, a
@@ -199,8 +199,8 @@ static size_t embed_buffer_get_free(HWVoiceOut *hw)
     }
     tick(vo, hw);
     /* What a device may deliver now: what is owed, but never more than the
-     * burst. This is asked by every AUD_write, not only by the mixer tick —
-     * a DMA card writes from i8257's bottom half between ticks — so it
+     * burst. This is asked by every AUD_write, not only by the mixer tick
+     * (a DMA card writes from i8257's bottom half between ticks), so it
      * bounds how far a device, and so the guest's play cursor, runs ahead
      * of the ring between two ticks. */
     return MIN((size_t)MIN(vo->owed, vo->burst) * hw->info.bytes_per_frame, max);

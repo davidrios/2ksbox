@@ -1,10 +1,10 @@
 //! The first-run shader offer (`launcher_core::firstrun`), as one
 //! QObject over the shared model.
 //!
-//! Nothing here decides anything: whether to ask at all, the words at
+//! Nothing here decides anything. Whether to ask at all, the words at
 //! every step, when the download is finished and which starter profiles
-//! it earned are all the core model's. This is the projection QML binds
-//! to — a `step` naming which answers are possible, and the two strings
+//! it installed are the core model's. This is the projection QML binds
+//! to: a `step` naming which answers are possible, and the two strings
 //! that go with it, which `FirstRunDialog.qml` hands to a real
 //! `MessageDialog` as its `text` and `informativeText`.
 
@@ -19,10 +19,10 @@ pub mod ffi {
     extern "RustQt" {
         #[qobject]
         #[qml_element]
-        /// Whether the offer is live at all — false for every start
-        /// after the first, and for any launcher that came with a preset
-        /// collection. `busy` is the download specifically, which is the
-        /// one step that is not a dialog.
+        /// Whether the offer is live at all: false for every start after
+        /// the first, and for any launcher that came with a preset
+        /// collection. `busy` is the download specifically, the one step
+        /// that is not a dialog.
         #[qproperty(bool, open)]
         #[qproperty(bool, busy)]
         /// Which answers are possible: "asking", "running", "failed",
@@ -37,11 +37,11 @@ pub mod ffi {
         #[qproperty(QString, detail)]
         type FirstRun = super::FirstRunRust;
 
-        /// Yes — remember the answer and start the download.
+        /// Yes: remember the answer and start the download.
         #[qinvokable]
         fn accept(self: Pin<&mut FirstRun>);
 
-        /// No — remember that too, so this is asked exactly once.
+        /// No: remember that too, so this is asked exactly once.
         #[qinvokable]
         fn decline(self: Pin<&mut FirstRun>);
 
@@ -53,10 +53,7 @@ pub mod ffi {
         #[qinvokable]
         fn dismiss(self: Pin<&mut FirstRun>);
 
-        /// Poll a running download, from a QML `Timer` — the Qt build's
-        /// equivalent of the egui build repainting (`qt/shaders.rs`'s
-        /// `poll_download` says more about why the interval is stated
-        /// out loud here rather than being a frame rate).
+        /// Poll a running download, from a QML `Timer`.
         #[qinvokable]
         fn poll(self: Pin<&mut FirstRun>);
     }
@@ -90,13 +87,12 @@ pub struct FirstRunRust {
 impl cxx_qt::Initialize for ffi::FirstRun {
     fn initialize(mut self: Pin<&mut Self>) {
         self.as_mut().rust_mut().model = if diag_screen_other_than_this() {
-            // A headless probe drives one window and photographs it
-            // (`qt/diag.rs`). A modal question over the top of that
-            // would be in every grab and would swallow the probe's
-            // clicks — on a checkout with no `slang-shaders` submodule,
-            // which is the only place this can happen, it would look
-            // like the window under test having failed. The `firstrun`
-            // screen is the exception: that one is here to drive *this*.
+            // A headless probe drives one window and grabs it
+            // (`qt/diag.rs`). A modal question on top would be in every
+            // grab and would swallow the probe's clicks, which on a
+            // checkout with no `slang-shaders` submodule would look like
+            // the window under test failing. The `firstrun` screen is the
+            // exception, since it exists to drive this dialog.
             firstrun::FirstRun::silent()
         } else {
             firstrun::FirstRun::check(shader_library::default_dir())
@@ -137,8 +133,8 @@ impl ffi::FirstRun {
         self.publish();
     }
 
-    /// The model onto the properties — every one through its own setter,
-    /// which is the rule the whole port is written around (`main.rs`).
+    /// The model onto the properties, each through its own setter, the
+    /// rule the whole port is written around (`main.rs`).
     fn publish(mut self: Pin<&mut Self>) {
         let (open, busy, step, title, headline, detail);
         {

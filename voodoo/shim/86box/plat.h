@@ -1,5 +1,5 @@
 /*
- * plat.h -- 2ksbox's stand-in for 86Box's <86box/plat.h>: the recompiler's
+ * plat.h: 2ksbox's stand-in for 86Box's <86box/plat.h>: the recompiler's
  * executable memory (plat_mmap with MAP_JIT on macOS, VirtualAlloc on
  * Windows), the host tick counter the wait statistics use, and a sleep.
  *

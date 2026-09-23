@@ -1,5 +1,5 @@
 /*
- * thread.h -- 2ksbox's stand-in for 86Box's <86box/thread.h>, the same API
+ * thread.h: 2ksbox's stand-in for 86Box's <86box/thread.h>, the same API
  * (threads, manual-reset events with a millisecond timeout, mutexes) over
  * QEMU's qemu-thread. The semantics that matter, and are kept: an event stays
  * set until reset; thread_wait_event returns 1 on timeout and 0 when the

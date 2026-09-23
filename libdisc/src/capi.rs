@@ -1,6 +1,6 @@
 //! The C API (`libdisc/libdisc.h`, doc 17 §3): `#[no_mangle] extern "C"`
 //! functions over `Disc`. A handle is a `Box<Disc>`; every body runs under
-//! `catch_unwind` and reports a panic as `LIBDISC_EIO` — nothing unwinds
+//! `catch_unwind` and reports a panic as `LIBDISC_EIO`. Nothing unwinds
 //! into QEMU.
 
 use std::ffi::{c_char, CStr};

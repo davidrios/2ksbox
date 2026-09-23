@@ -1,20 +1,20 @@
 /*
- * ditest.c — does a game-style DirectInput keyboard see the keys the guest
- * receives, under load?  Found with FIFA 2000 on the d3dpt-vga HAL
- * (2026-09-04): keys work in the match under KVM and not under TCG.
+ * ditest.c: does a game-style DirectInput keyboard see the keys the guest
+ * receives, under load? FIFA 2000 on the d3dpt-vga HAL takes keys in the
+ * match under KVM and not under TCG.
  *
  *   DITEST [seconds] [busy-ms] [-window] [-nonexcl]
  *
- * A fullscreen 640x480x16 DirectDraw flip chain (or a plain window with
- * -window), a DirectInput keyboard device created the DX5/6 way
+ * Opens a fullscreen 640x480x16 DirectDraw flip chain (or a plain window
+ * with -window) and a DirectInput keyboard device created the DX5/6 way
  * (DirectInputCreateA, DISCL_FOREGROUND | DISCL_EXCLUSIVE, a 32-event
- * buffer), then a loop that burns busy-ms of CPU per iteration (a game's
- * frame), pumps the message queue and polls four sources: DirectInput
- * buffered data (GetDeviceData), DirectInput immediate state
- * (GetDeviceState), GetAsyncKeyState, and WM_KEYDOWN. Every key-down each
- * source sees is logged with its time; the fill colour of the flip chain
- * changes on every buffered DirectInput key, so a screendump shows whether
- * DirectInput got the key. Totals at the end. Log: ditest.log.
+ * buffer). Then a loop burns busy-ms of CPU per iteration (a game's frame),
+ * pumps the message queue and polls four sources: DirectInput buffered data
+ * (GetDeviceData), DirectInput immediate state (GetDeviceState),
+ * GetAsyncKeyState, and WM_KEYDOWN. Every key-down each source sees is
+ * logged with its time. The flip chain's fill colour changes on every
+ * buffered DirectInput key, so a screendump shows whether DirectInput got
+ * the key. Totals at the end, in ditest.log.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */

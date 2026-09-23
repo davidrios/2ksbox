@@ -1,12 +1,12 @@
 /*
- * patchtst.c — higher-order surfaces through XP's own d3d8.dll on our
- * driver's DX8 DDI: RT-patches (DrawRectPatch of a cubic Bezier patch) and
+ * patchtst.c: higher-order surfaces through XP's own d3d8.dll on our
+ * driver's DX8 DDI, RT-patches (DrawRectPatch of a cubic Bezier patch) and
  * N-patches (D3DRS_PATCHSEGMENTS over an ordinary triangle list). A probe
- * (d3d8probe.h): with neither D3DDEVCAPS_RTPATCHES nor
- * D3DDEVCAPS_NPATCHES it says "not offered"; what is offered is checked,
- * the rest logged and skipped. Both surfaces are flat, so tessellated
- * they cover exactly what their control points do: the check is that they
- * are drawn at all, green in the middle and nothing outside.
+ * (d3d8probe.h). With neither D3DDEVCAPS_RTPATCHES nor D3DDEVCAPS_NPATCHES
+ * it says "not offered"; what is offered is checked, the rest logged and
+ * skipped. Both surfaces are flat, so tessellated they cover exactly what
+ * their control points do. The check is that they are drawn at all, green
+ * in the middle and nothing outside.
  *
  *   PATCHTST
  *

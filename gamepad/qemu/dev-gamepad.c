@@ -1,5 +1,5 @@
 /*
- * usb-gamepad — a USB HID gamepad (M13 path A, docs/tracks/m13-gamepads.md)
+ * usb-gamepad: a USB HID gamepad (M13 path A, docs/tracks/m13-gamepads.md)
  *
  * QEMU has no gamepad of any kind: hw/input/hid.h knows HID_MOUSE,
  * HID_TABLET and HID_KEYBOARD and nothing else, and the input core has no
@@ -45,7 +45,7 @@ struct USBGamepadState {
     /*
      * Set when the state changed and the guest has not been told yet.
      * The interrupt endpoint NAKs while it is clear, which is what stops
-     * a motionless pad from waking the guest sixty times a second — the
+     * a motionless pad from waking the guest sixty times a second. It is the
      * same rule dev-hid.c's hid_has_events() enforces for the pointer.
      */
     bool changed;

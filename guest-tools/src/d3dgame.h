@@ -16,7 +16,7 @@
  * -novsync    D3DPRESENT_INTERVAL_IMMEDIATE
  * -shader     (d3d9) SM1.1 vs/ps for the cubes when D3DX is available
  *             (HLSL; d3dx9_33+ refuse ps_1_1, leaving vs_1_1 + the fixed
- *             pixel stage — kept that way on purpose, the golden set has it)
+ *             pixel stage; kept that way on purpose, the golden set has it)
  * -log f      log file (default C:\2KSBOX\D3DGAME9.LOG / D3DGAME8.LOG,
  *             guestlog.h, appended; a name with a path in it goes there
  *             instead); everything printed to the console goes there too
@@ -76,11 +76,9 @@ static int game_path_given(const char *name)
 
 /*
  * Where a bare -log / -dump name goes: the one output folder, C:\2KSBOX
- * (guestlog.h). It used to be the folder the EXE is in, which is the
- * read-only guest-tools CD whenever one of these is run from D:\TESTS —
- * the log was not written at all there, and the harnesses' first step was
- * to copy the EXE somewhere writable. A name with a path in it is still
- * used exactly as given.
+ * (guestlog.h), not the folder the EXE is in, which is the read-only
+ * guest-tools CD whenever one of these is run from D:\TESTS. A name with
+ * a path in it is used exactly as given.
  */
 static void game_out_path(char *out, size_t n, const char *name)
 {

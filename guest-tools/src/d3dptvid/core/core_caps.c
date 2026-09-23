@@ -1,6 +1,6 @@
 /*
- * core_caps.c — what the driver claims (doc 19, "The split"): the DX7
- * HAL's D3DDEVICEDESC_V1 and extended caps, the texture and Z-buffer
+ * core_caps.c: what the driver claims (doc 19, "The split"). This is the
+ * DX7 HAL's D3DDEVICEDESC_V1 and extended caps, the texture and Z-buffer
  * format lists, the DirectX 8 D3DCAPS8 and its format list, and the
  * pixel-format arithmetic that turns a DDPIXELFORMAT into the D3DFORMAT
  * the host knows. Every ddflags bisection knob that changes an answer is
@@ -215,11 +215,11 @@ void d3d_caps_init(d3dpt_core *p)
                      D3DPSHADECAPS_FOGFLAT | D3DPSHADECAPS_FOGGOURAUD;
     t->dwTextureCaps = D3DPTEXTURECAPS_PERSPECTIVE | D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_PROJECTED;
     /* Powers of two, and other sizes only conditionally (clamped, no mip
-     * chain): what a GeForce 2 to 4 or a Radeon claims, and what the era's
-     * titles branch on. Claiming any size at all (no POW2) sent Crimson
-     * Skies down a text path that never makes its strings' textures: every
-     * list entry and name field drew its 8x8 placeholder (doc 19 §34,
-     * 2026-09-14). The host has no such limit; the claim is for the titles. */
+     * chain). A GeForce 2 to 4 or a Radeon claims this, and the era's
+     * titles branch on it. Claiming any size at all (no POW2) sent Crimson
+     * Skies down a text path that never makes its strings' textures, so
+     * every list entry and name field drew its 8x8 placeholder (doc 19
+     * §34). The host has no such limit; the claim is for the titles. */
     if (!(ddflags(p) & DDF_TEX_ANYSIZE)) {
         t->dwTextureCaps |= D3DPTEXTURECAPS_POW2_ | D3DPTEXTURECAPS_NONPOW2CONDITIONAL_;
     }
@@ -244,7 +244,7 @@ void d3d_caps_init(d3dpt_core *p)
     /* The DX3 execute-buffer path (d3dim.dll's IDirect3DDevice::Execute)
      * sizes its vertex buffer as max(the buffer's vertex count, this cap)
      * vertices plus a page, and its vertex-buffer constructor refuses more
-     * than 65535 vertices: with 65535 here every Execute failed with
+     * than 65535 vertices. With 65535 here every Execute failed with
      * E_OUTOFMEMORY before a single token was built (doc 15 "Execute
      * buffers"). 2048 vertices are exactly the 64 KiB DP2 vertex buffer
      * dxg gives every context, so the runtime never has to regrow it at
@@ -294,8 +294,7 @@ void d3d_caps_init(d3dpt_core *p)
     e->dwMaxTextureWidth = e->dwMaxTextureHeight = 4096;
     /* any shape a legal size makes. Left at 0 (the struct is zeroed above),
      * which says no aspect ratio at all to a title that checks one; every
-     * real driver publishes a power of two here (doc 19 §34, 2026-09-14:
-     * found while chasing Crimson Skies' list text, which it did not fix) */
+     * real driver publishes a power of two here (doc 19 §34) */
     e->dwMaxTextureAspectRatio = 4096;
     if (ddflags(p) & DDF_TEX_256) {
         e->dwMaxTextureWidth = e->dwMaxTextureHeight = e->dwMaxTextureAspectRatio = 256;
@@ -336,8 +335,8 @@ void d3d_caps_init(d3dpt_core *p)
     if (!(ddflags(p) & DDF_NO_HWVB)) c8->DevCaps |= D3DDEVCAPS_HWVERTEXBUFFER_ | D3DDEVCAPS_HWINDEXBUFFER_;
     /* no CLIPTLVERTS: with it the runtime stops clipping pre-transformed
      * vertices and hands us polygons crossing the camera plane, which the
-     * host rasterizes as garbage (Max Payne's alley walls, 2026-09-05);
-     * without it the runtime clips them itself, as the DX7 runtime did */
+     * host rasterizes as garbage (Max Payne's alley walls). Without it the
+     * runtime clips them itself, as the DX7 runtime did */
     c8->PrimitiveMiscCaps = t->dwMiscCaps | D3DPMISCCAPS_COLORWRITEENABLE | D3DPMISCCAPS_TSSARGTEMP | D3DPMISCCAPS_BLENDOP;
     c8->RasterCaps = t->dwRasterCaps | D3DPRASTERCAPS_COLORPERSPECTIVE | ((ddflags(p) & DDF_NO_ANISO) ? 0 : D3DPRASTERCAPS_ANISOTROPY_);
     c8->ZCmpCaps = t->dwZCmpCaps;
@@ -356,8 +355,8 @@ void d3d_caps_init(d3dpt_core *p)
     }
     if (!(ddflags(p) & DDF_NO_CUBE)) {
         /* cube textures (v11), mip-mapped too, any edge: the DX8 face only
-         * — a DirectX 7 cube map is created through DirectDraw's own
-         * surface caps, which this driver does not answer */
+         * (a DirectX 7 cube map is created through DirectDraw's own
+         * surface caps, which this driver does not answer) */
         c8->TextureCaps |= D3DPTEXTURECAPS_CUBEMAP_ | D3DPTEXTURECAPS_MIPCUBEMAP_;
         c8->CubeTextureFilterCaps = c8->TextureFilterCaps;
     }
@@ -461,7 +460,7 @@ void d3d_caps_init(d3dpt_core *p)
          * ("device does not support bump normal maps"). It has no
          * DDPIXELFORMAT of its own, so the runtime creates it as a FOURCC
          * surface whose code is the D3DFORMAT: the layers list 63 among
-         * their FOURCC codes and size it in CreateSurface — without that,
+         * their FOURCC codes and size it in CreateSurface. Without that,
          * DirectDraw refused it before CanCreateSurface and the texture had
          * no video-memory copy (doc 15, BUMPTEST on XP) */
         fmt8_add(D3DFMT_Q8W8V8U8_, D3DFORMAT_OP_TEXTURE_ | D3DFORMAT_OP_BUMPMAP_);
@@ -475,7 +474,7 @@ void d3d_caps_init(d3dpt_core *p)
          * slot: wFlipMSTypes the low word, wBltMSTypes the high, bit n - 1 for
          * D3DMULTISAMPLE_n_SAMPLES (MSAATEST: d3d8.dll reports 2 and 4). No blt
          * types: a windowed Present of a multisampled back buffer is a driver
-         * blt, and this driver has no blitter — with them claimed d3d8.dll
+         * blt, and this driver has no blitter. With them claimed, d3d8.dll
          * made the device and Present drew nothing (no DdBlt, no readback).
          * A flip needs nothing new: its readback goes through the host's
          * resolve */

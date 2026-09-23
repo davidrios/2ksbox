@@ -1,5 +1,5 @@
 /*
- * d3d9.c — the guest side of the paravirtual Direct3D 9 device (doc 14,
+ * d3d9.c: the guest side of the paravirtual Direct3D 9 device (doc 14,
  * ADR-006): a d3d9.dll for Windows 98/2000/XP that encodes the app's
  * calls into the device's shared window (d3dpt/d3dpt_enc.h) and rings the
  * doorbell; the host executes them on DXVK. Methods are forward (append a
@@ -8,12 +8,13 @@
  * through FXPTL.SYS (\\.\MAPMEM, 2000/XP) or FXMEMMAP.VXD (9x), the
  * helper the qemu-3dfx GL wrapper already installs.
  *
- * P1 scope: IDirect3D9 + IDirect3DDevice9 with Clear / states / transforms
- * / lights / DrawPrimitiveUP / Present (the D3D9TEST triangle); resources
- * and shaders are P2 (the protocol and the executor already carry them).
+ * This file has IDirect3D9 and IDirect3DDevice9's own state; resources and
+ * shaders are in d3d9_res.h (P2), declarations, queries, state blocks and
+ * the rest in d3d9_p3.h (P3). d3d8.c includes this file for d3d8.dll (P4).
  *
  * Build: guest-tools/build-wrappers.sh (msvcrt, -march=pentium3).
- * Log: d3dpt.log next to the DLL. Env D3DPT_LOG=0 disables it.
+ * Log: d3dpt.log next to the DLL, or C:\d3dpt.log when that folder is
+ * read-only. Env D3DPT_LOG=0 disables it, D3DPT_HOSTLOG=0 its host copy.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -25,15 +26,14 @@
 #include <stdarg.h>
 #include <string.h>
 #include <math.h>
-/* No psapi.h, and nothing links -lpsapi: **Windows 98 has no psapi.dll at
- * all** (PSAPI is NT-only), and a static import makes this DLL unloadable
- * there — "psapi.dll missing" before DllMain, which took the whole M4
- * paravirtual path out on 98 for as long as it has existed. Its one use here
+/* No psapi.h, and nothing links -lpsapi: Windows 98 has no psapi.dll at
+ * all (PSAPI is NT-only), and a static import makes this DLL unloadable
+ * there ("psapi.dll missing" before DllMain). Its one use here
  * is a diagnostic that lists the loaded modules, so it is resolved at run
  * time and skipped when absent. On NT the same trap has a second half: with
  * psapi.h and no PSAPI_VERSION 1, the names map to Windows 7's K32* kernel32
  * exports and XP's loader blocks the process instead (doc 15). Binding by
- * name at run time avoids both. Found on a real Win98 guest, 2026-09-09. */
+ * name at run time avoids both. */
 typedef BOOL  (WINAPI *d3dpt_enum_modules_fn)(HANDLE, HMODULE *, DWORD, LPDWORD);
 typedef DWORD (WINAPI *d3dpt_module_base_fn)(HANDLE, HMODULE, LPSTR, DWORD);
 #include "fxlib.h"
@@ -427,8 +427,8 @@ static int depth_format(D3DFORMAT f)
     return f == D3DFMT_D16 || f == D3DFMT_D24S8 || f == D3DFMT_D24X8 || f == D3DFMT_D32 || f == D3DFMT_D16_LOCKABLE;
 }
 /* No R8G8B8: DXVK's d3d9 has no mapping for it at all ("Unsupported"), so a
- * yes here was a CreateTexture failing later — 3DMark2001 SE asked for an
- * R8G8B8 render-target texture, was told yes and quit on the INVALIDCALL. */
+ * yes here becomes a CreateTexture failing later. 3DMark2001 SE asks for an
+ * R8G8B8 render-target texture and quits on the INVALIDCALL. */
 static int format_ok(D3DFORMAT f)
 {
     switch (f) {

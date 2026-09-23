@@ -1,4 +1,4 @@
-/* noaslr — run a command with address-space randomisation off (macOS).
+/* noaslr: run a command with address-space randomisation off (macOS).
  *   noaslr <program> [args...]
  * For tools/specbench: a QEMU launch is sometimes 35 % slower on helper-heavy
  * code with byte-identical binaries, and the suspects are per-launch

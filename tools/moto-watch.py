@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""moto-watch.py <qmp socket> <seconds> <outdir> — a second-by-second view of
+"""moto-watch.py <qmp socket> <seconds> <outdir>: a second-by-second view of
 what QEMU is doing while a guest plays, with the picture that goes with it
 (M9 track).
 
-A game whose cost is one *effect* — Moto Racer's tyre smoke, which nearly stops
-it — is invisible in an average over a lap: the sample and the fps probe both
+A game whose cost is one *effect* (Moto Racer's tyre smoke, which nearly stops
+it) is invisible in an average over a lap: the sample and the fps probe both
 report the mean.  This walks the second axis instead.  Every 250 ms it reads
 `info jit` (TB invalidations, bytes of code generated) over QMP, every second it
 takes a screendump, and it prints one row per second plus the seconds with the
@@ -12,10 +12,10 @@ most TB invalidations, so the frame that costs can be looked at:
 
     tools/moto-watch.py /tmp/tcgprof-1234.sock 30 build/tcg-profile/x/watch [A:B]
 
-A fourth argument cycles the bike's own controls over the same connection --
-`6:4` is six seconds of throttle then four of brake, repeated (QEMU serves one
+A fourth argument cycles the bike's own controls over the same connection
+(`6:4` is six seconds of throttle then four of brake, repeated; QEMU serves one
 QMP client at a time, so the thing that measures has to be the thing that
-drives) -- and each row is marked with the phase it was in.
+drives), and each row is marked with the phase it was in.
 
 Writes `watch.csv` and `w<NN>.png` (kept only for the rows named `hot`, unless
 KEEP_ALL=1) into <outdir>.
@@ -23,7 +23,7 @@ KEEP_ALL=1) into <outdir>.
 With WATCH_TRACE_LOG=<the run's qemu.log> it turns QEMU's `translate_block`
 trace on for one whole throttle phase and one whole brake phase (`log
 trace:translate_block` / `log none` over QMP, the log sliced by the byte offsets
-it noted) and prints the guest pages retranslated in each -- which names the
+it noted) and prints the guest pages retranslated in each, which names the
 routine a game patches when an effect appears.
 
 With WATCH_MEMSAVE=<addr:size,...> it saves those guest-virtual ranges twice, a
@@ -33,7 +33,7 @@ is what tools/smc-diff.py wants: the bytes an effect's rasterizer patches.
 With WATCH_SAMPLE_PID=<qemu pid> it also takes a macOS `sample` of exactly one
 phase (WATCH_SAMPLE_PHASE, default `brake`, the second time it comes round) for
 WATCH_SAMPLE_SECS seconds, with the perf map and `info jit` on both sides of it
-in <outdir>/sample -- which is the only way to profile an effect that lasts two
+in <outdir>/sample, which is the only way to profile an effect that lasts two
 seconds a lap.  Report it with `tools/tcg-profile.py <outdir>/sample`.
 """
 import collections

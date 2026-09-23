@@ -1,10 +1,10 @@
 /*
- * crtcal.c — the CRT calibration patterns on a real tube (doc 09).
+ * crtcal.c: the CRT calibration patterns on a real tube (doc 09).
  *
  *   CRTCAL.EXE [w h [bpp]]        default 640 480 32
  *
  * Exclusive full-screen DirectDraw at the exact mode, patterns written
- * straight into the primary surface — no blit, no stretch, no scaling
+ * straight into the primary surface. No blit, no stretch, no scaling
  * anywhere, because a scaler is exactly what would be measured otherwise.
  * Runs on the reference rig (doc 09) and, unchanged, in our own guests, so
  * the same binary gives the photograph and the emulated comparison.
@@ -127,7 +127,7 @@ int main(int argc, char **argv)
     for (i = 0; i < NMODES; i++)
         if (MODES[i].w == w && MODES[i].h == h) mode = i;
 
-    logp("CRTCAL — calibration patterns (doc 09), %dx%dx%d\n", w, h, bpp);
+    logp("CRTCAL: calibration patterns, %dx%dx%d\n", w, h, bpp);
     for (i = 0; i < CRTCAL_COUNT; i++)
         logp("  %d %-10s %s\n", i + 1, crtcal_name(i), crtcal_asks(i));
 
@@ -145,7 +145,7 @@ int main(int argc, char **argv)
         if (FAILED(hr)) { logp("SetCooperativeLevel %08lx\n", hr); break; }
         hr = dd->lpVtbl->SetDisplayMode(dd, w, h, bpp, 0, 0);
         if (FAILED(hr)) {
-            logp("SetDisplayMode %dx%dx%d failed %08lx — skipping\n", w, h, bpp, hr);
+            logp("SetDisplayMode %dx%dx%d failed %08lx, skipping\n", w, h, bpp, hr);
             mode = (mode + 1) % NMODES;
             w = MODES[mode].w; h = MODES[mode].h;
             continue;
@@ -176,7 +176,7 @@ int main(int argc, char **argv)
                 if (FAILED(hr)) { logp("Lock %08lx\n", hr); running = 0; break; }
                 blit(fb, w, h, &sd, sd.ddpfPixelFormat.dwRGBBitCount);
                 prim->lpVtbl->Unlock(prim, NULL);
-                logp("  showing %d %s — %s\n", pat + 1, crtcal_name(pat), crtcal_shot(pat));
+                logp("  showing %d %s: %s\n", pat + 1, crtcal_name(pat), crtcal_shot(pat));
                 redraw = 0;
             }
             if (keydown(VK_ESCAPE)) { running = 0; break; }

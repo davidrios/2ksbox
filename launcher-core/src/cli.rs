@@ -1,15 +1,16 @@
 //! Every debug verb that needs no toolkit, in one place, so the Qt
 //! launcher and `launcherx` answer the same ones with the same code
-//! (doc 07, and the README table). They are how the launcher is tested
-//! at all — CLAUDE.md's policy is integration and end-to-end only, and a
-//! verb here drives the real model a button drives, without a GUI click.
+//! (doc 07; the verb table is in `docs/development.md`). They are how
+//! the launcher is tested: the policy is integration and end-to-end
+//! only, and a verb here drives the real model a button drives, without
+//! a GUI click.
 //!
 //! `run` returns `Some(exit code)` when it recognised the verb, `None`
 //! when the caller should keep looking or open a window. Both binaries
 //! call it first thing, before a GUI exists.
 //!
-//! The headless screenshots are deliberately *not* here, because they
-//! are the toolkit: `launcher-qt` renders its real windows under
+//! The headless screenshots are not here, because they need the
+//! toolkit: `launcher-qt` renders its real windows under
 //! `QT_QPA_PLATFORM=offscreen` and `grabToImage` (`qt/diag.rs`).
 
 use crate::bundle::{self, Family, Machine, Music, Optimization, Sound};
@@ -34,8 +35,8 @@ pub fn preview_area_env() -> (u32, u32) {
 /// `PREVIEW_FRAME=<n>`: which frame of the preset to render, for a
 /// preset whose picture depends on the frame number (an interlaced or
 /// flickering CRT, a phosphor afterglow). The real editor takes this
-/// from a clock — the picture has to move — so headlessly there has to
-/// be a way to name one frame and get it twice. Default 0.
+/// from a clock so the picture moves; headlessly one frame has to be
+/// named so it renders the same twice. Default 0.
 pub fn preview_frame_env() -> usize {
     std::env::var("PREVIEW_FRAME").ok().and_then(|s| s.parse().ok()).unwrap_or(0)
 }
@@ -65,8 +66,8 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
         }
         "--print-player-args" => {
             // Everything the launcher puts on the player's own command
-            // line, before the `--` that hands the rest to QEMU. What
-            // `--print-args` is for the guest, this is for the player.
+            // line, before the `--` that hands the rest to QEMU.
+            // `--print-args` shows the QEMU half.
             let path = args.next().expect("usage: --print-player-args <machine.toml>");
             let machine = Machine::load(Path::new(&path)).expect("load bundle");
             let mut argv = player::shader_args(&machine);
@@ -100,38 +101,35 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
         }
         "--host-check" => {
             // The other half of `--kvm`: what this host can do for the
-            // guest's 3D, asked before a machine is created rather than
-            // found as an absence afterwards (ADR-013). The bar is DXVK's
-            // own — a Vulkan 1.3 device — and a host below it still runs
-            // every guest, through the OpenGL pass-through with WineD3D
-            // in the guest. Exits non-zero only when the device is
-            // unavailable: a software driver is slow, not absent, and a
-            // script asking "can this host do 3D" should hear yes.
-            // Since ADR-018 a Linux or macOS host below the bar with a
-            // Wine has the device too, through the executor in another
-            // process, and exits zero as well.
+            // guest's 3D, asked before a machine is created (ADR-013).
+            // The bar is DXVK's own, a Vulkan 1.3 device, and a host
+            // below it still runs every guest. Exits non-zero only when
+            // the pass-through is unavailable on every back end
+            // (`HostGpu::backend`). A software driver is slow, not
+            // absent, so a script asking "can this host do 3D" hears yes,
+            // and so does a Linux or macOS host below the bar that has
+            // Wine and the executor's Windows build (ADR-018).
             let probe = crate::host_gpu::probe();
             print!("{}", crate::host_gpu::report_text(&probe));
             return Some(if probe.gpu.pass_through_available() { 0 } else { 1 });
         }
         "--paths" => {
             // Every companion a launcher would reach for, and where it
-            // found it (`paths.rs`). This is what `scripts/package-linux.sh`
-            // checks a staged package with — a package whose launcher
-            // still answers with the checkout it was built from is not a
-            // package — and the first thing to ask of an installed build
-            // that says a file is missing.
+            // found it (`paths.rs`). `scripts/package-linux.sh` checks a
+            // staged package with it (a launcher that still answers with
+            // the checkout it was built from is not packaged), and it is
+            // the first thing to ask of an installed build that says a
+            // file is missing.
             print!("{}", paths_text());
         }
         "--diagnose" => {
             // The same answers, plus the host's 3D, written **into the
-            // launcher's log** as well as printed — because on Windows
-            // the launcher is a windowed program, and a windowed program
-            // started by double-click has no stdout for anyone to read.
-            // A user who is asked "what does it say?" can send one file
-            // (`fatal::log_path()`), which is also where the start-up
-            // milestones and any panic have gone. `2ksbox-debug.bat` in
-            // the Windows package is a double-click for exactly this.
+            // launcher's log** as well as printed, because on Windows the
+            // launcher is a windowed program with no stdout when started
+            // by double-click. A user can send one file
+            // (`fatal::log_path()`), which also holds the start-up
+            // milestones and any panic. `2ksbox-debug.bat` in the Windows
+            // package runs this on a double-click.
             let probe = crate::host_gpu::probe();
             let text = format!("{}\n{}", paths_text(), crate::host_gpu::report_text(&probe));
             print!("{text}");
@@ -191,9 +189,7 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 Some("nonet") => form.choose_network(false),
                 Some(other) => panic!("networking is net or nonet, not {other:?}; {usage}"),
             }
-            // The processor and the boot order, by label: these are the
-            // two fields the Qt port had no widget for until the form
-            // became shared, so they are worth being able to drive.
+            // The processor and the boot order, by label.
             match args.next().as_deref() {
                 None | Some("-") => {}
                 Some(label) => form.choose_cpu_speed(
@@ -214,8 +210,8 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             }
             // The pointer, the same way: with the tablet there is no
             // grab at all, without it the player takes the pointer on a
-            // click. It is the one field whose effect is a *device* on
-            // the command line, so `--print-args` is the check.
+            // click. Its effect is a device on the command line, so
+            // `--print-args` is the check.
             match args.next().as_deref() {
                 None | Some("-") => {}
                 Some("seamless") => form.choose_seamless_mouse(true),
@@ -223,14 +219,14 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 Some(other) => panic!("the pointer is seamless or noseamless, not {other:?}; {usage}"),
             }
             // The display adapter. Which names a family accepts is the
-            // form's business (`video_choices`); one it does not offer is
+            // form's business (`video_choices`). One it does not offer is
             // a no-op here rather than an error, so a script can set the
             // same field on every machine it walks.
             match args.next().as_deref() {
                 None | Some("-") => {}
                 // `choose_video` refuses one this family does not offer,
-                // which is what makes `std` a no-op on an XP machine
-                // rather than a machine with no driver.
+                // so `std` is a no-op on an XP machine rather than a
+                // machine with no driver.
                 Some("d3dpt") => form.choose_video(bundle::Video::D3dpt),
                 Some("std") => form.choose_video(bundle::Video::Std),
                 Some("cirrus") => form.choose_video(bundle::Video::Cirrus),
@@ -275,8 +271,8 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 Some(line) => form.extra_qemu_args = line.to_string(),
             }
             // Which Direct3D 9 the host runs the executor on (ADR-007's
-            // 2026-09-21 amendment). Last, so every existing caller of
-            // this verb keeps the arguments it passes.
+            // second amendment). Last, so every existing caller of this
+            // verb keeps the arguments it passes.
             match args.next().as_deref() {
                 None | Some("-") => {}
                 Some("auto") => form.choose_d3d9(bundle::D3d9::Auto),
@@ -319,8 +315,8 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // Headless equivalent of the wizard's "Emulation
             // optimizations" section: the real form's checkboxes and its
             // "All defaults" button, then a save. With no changes it
-            // just reports, which is also how a bundle is read back
-            // after one — the state, and whether it is the shipped one.
+            // only reports, which is also how a bundle is read back
+            // after one: the state, and whether it is the shipped one.
             let usage = "usage: --optimizations <machine.toml> [<name> on|off | defaults]...";
             let path: PathBuf = args.next().expect(usage).into();
             let mut form = wizard::Form::default();
@@ -350,9 +346,9 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 eprintln!("[optimizations] {}", form.error.unwrap_or_default());
                 return Some(1);
             }
-            // What the section says above the switches — on a machine
-            // headed for KVM it says they do nothing, which is the one
-            // thing worth seeing from a script too.
+            // What the section says above the switches. On a machine
+            // headed for KVM it says they do nothing, which a script
+            // should see too.
             println!("[optimizations] {}", form.optimizations_note());
             for opt in Optimization::ALL {
                 println!(
@@ -368,7 +364,7 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // (doc 20 §6): the sound card, what is on the MIDI port, and
             // the two files only the user can supply. With no arguments
             // it reports, which is also how a bundle is read back after
-            // a change — the state, and whether it is the family's.
+            // a change: the state, and whether it is the family's.
             let usage = "usage: --music <machine.toml> [card|-] [gm|mt32|none|-] [soundfont|-] [romdir|-]";
             let path: PathBuf = args.next().expect(usage).into();
             let mut form = wizard::Form::default();
@@ -527,7 +523,7 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // operations its buttons run, over a bundle's disk.
             let usage = "usage: --snapshots [--live] <machine.toml> [take|delete|restore <name>]";
             let mut next = args.next();
-            // `--live` drives a *running* machine's monitor instead of
+            // `--live` drives a running machine's monitor instead of
             // qemu-img, the way the window does when its player is up.
             let live = next.as_deref() == Some("--live");
             if live {
@@ -543,17 +539,17 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 (None, _) => {}
                 _ => panic!("{usage}"),
             }
-            // A live operation is a QMP *job*: it returns as soon as the
+            // A live operation is a QMP job: it returns as soon as the
             // job exists and finishes later, so wait for it here the way
-            // the window's repaint tick or timer does.
+            // the window's timer does.
             window.wait_for_job(Duration::from_secs(120));
             print_snapshots(&window);
         }
         "--shaders" => {
             // What the profile manager's preset row reads: where this
-            // machine's `.slangp` collection is, or nothing — which is
-            // what puts the "Download presets" button on screen, and
-            // what "Browse…" opens on when the field is empty.
+            // host's `.slangp` collection is, or nothing, which puts the
+            // "Download presets" button on screen. "Browse…" opens here
+            // when the field is empty.
             match shader_source::presets_dir() {
                 Some(dir) => println!("{}", dir.display()),
                 None => println!("(none; would install into {})", shader_source::install_dir().display()),
@@ -581,9 +577,9 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // The offer a brand-new launcher makes on the way up
             // (`firstrun.rs`), without a window: `status` prints what the
             // dialog would show, `decline` answers it the way "Not now"
-            // does, and `accept` runs the whole thing — the real download
-            // and the starter profiles after it — waiting here for the
-            // thread a front end would poll from its repaint.
+            // does, and `accept` runs the real download and the starter
+            // profiles after it, waiting here for the thread a front end
+            // would poll from a timer.
             let usage = "usage: --first-run [status|accept|decline]";
             let mut model = firstrun::FirstRun::check(shader_library::default_dir());
             match args.next().as_deref() {
@@ -591,11 +587,11 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
                 Some("decline") => model.decline(),
                 Some("accept") => {
                     model.accept();
-                    // The poll a front end's repaint or timer does, at a
-                    // pace a terminal can read. `state` is also what
-                    // turns a finished download into the profiles, so
-                    // the loop ends on the step *after* that happened
-                    // and the line below is the outcome, printed once.
+                    // The poll a front end's timer does, at a pace a
+                    // terminal can read. `state` also turns a finished
+                    // download into the profiles, so the loop ends on the
+                    // step after that and the line below is the outcome,
+                    // printed once.
                     while model.busy() {
                         std::thread::sleep(Duration::from_millis(500));
                         let message = model.state();
@@ -636,8 +632,8 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
         }
         "--browse-start" => {
             // Where a path field's "Browse…" would open: the value's own
-            // directory, or — for an empty preset field — the preset
-            // collection, or where the last dialog was browsing. A second
+            // directory, or the preset collection for an empty preset
+            // field, or where the last dialog was browsing. A second
             // argument `file` asks for any other field, which has no
             // suggestion of its own. The dialog itself is modal and needs
             // a human, so this checks the decision, not the dialog.
@@ -688,8 +684,8 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             // pane: the real `preview::Preview`, on a real (if
             // windowless) adapter and device, proving the image-decode
             // and render path without a GUI click. Both binaries answer
-            // this identically because it *is* the same code now — the
-            // byte-identical PNGs doc 07 checks the two builds against.
+            // it with the same code, so their PNGs are byte-identical
+            // (doc 07).
             let usage = "usage: --preview-shader <preset.slangp> <image> <out.png> [name=value,...]";
             let preset: PathBuf = args.next().expect(usage).into();
             let image: PathBuf = args.next().expect(usage).into();
@@ -697,18 +693,17 @@ pub fn run(verb: &str, args: &mut impl Iterator<Item = String>) -> Option<i32> {
             let params = shader_profile::parse_params(&args.next().unwrap_or_default());
             let (w, h) = preview_area_env();
             let mut preview = preview::Preview::headless().expect("a headless wgpu device");
-            // The editor's preview follows a clock, so that a preset
-            // whose picture depends on the frame number actually moves in
-            // it; here one frame is named instead, so the same command
-            // twice is the same PNG twice.
+            // The editor's preview follows a clock, so a preset whose
+            // picture depends on the frame number moves in it. Here one
+            // frame is named instead, so the same command twice gives
+            // the same PNG.
             preview.pin_frame(preview_frame_env());
             preview.update(&preset, &params, &image, w, h);
             if let Some(err) = preview.error() {
                 eprintln!("[preview] {err}");
             }
-            // Whether the editor would be redrawing this preset at all,
-            // which is as much a part of what the preview does as the
-            // pixels are — and the only way a test can see the decision.
+            // Whether the editor would keep redrawing this preset. This
+            // is the only way a test can see that decision.
             println!("{}", if preview.frame_interval().is_some() { "animated" } else { "still" });
             preview.dump_png(&out).expect("no frame rendered");
         }
@@ -751,7 +746,7 @@ fn print_first_run(model: &mut firstrun::FirstRun) -> firstrun::Step {
     message.step
 }
 
-/// Where every companion resolved, as text — one line each, the format
+/// Where every companion resolved, as text, one line each, in the format
 /// `scripts/package-linux.sh` and `scripts/package-windows.sh` read.
 /// Shared by `--paths`, which prints it, and `--diagnose`, which also
 /// files it where a windowed program's user can find it.
@@ -782,8 +777,8 @@ fn paths_text() -> String {
     }
     .ok();
     // The executor's other process (ADR-018, M15): the Wine it would run
-    // on and the PE pair it would run there — the two halves of a
-    // below-floor host's Direct3D, each missing for a different reason.
+    // on and the Windows build it would run there. A below-floor host
+    // needs both, and each can be missing for a different reason.
     if !cfg!(windows) {
         match crate::host_gpu::wine() {
             Some(w) => writeln!(s, "wine         {} ({})", w.path.display(), w.version),

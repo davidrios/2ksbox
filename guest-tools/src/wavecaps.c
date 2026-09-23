@@ -1,5 +1,5 @@
 /*
- * wavecaps.c — WAVECAPS.EXE: every multimedia device's name as a program
+ * wavecaps.c: WAVECAPS.EXE, every multimedia device's name as a program
  * of the era reads it, raw, into C:\2KSBOX\WAVECAPS.LOG (guestlog.h).
  *
  * The four GetDevCaps calls hand back a fixed 32-byte szPname, and nothing
@@ -7,7 +7,7 @@
  * names into a 32-byte stack buffer with a strcpy under a /GS cookie, so a
  * name that fills all 32 bytes kills the process with c0000409
  * (STATUS_STACK_BUFFER_OVERRUN) the moment anything enumerates DirectSound
- * — dxdiag, and every game. The Portuguese Windows 98's SB16 driver is one:
+ * (dxdiag, and every game). The Portuguese Windows 98's SB16 driver is one:
  * "Entrada de som wave da SB16 [220]" is 33 characters (doc 20 §5.3). So
  * every name is printed with where its NUL is (-1: none in 32 bytes) and
  * all 32 bytes in hex, which is the evidence: a screendump of Control

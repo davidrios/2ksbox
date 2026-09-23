@@ -1,11 +1,11 @@
-# hvf-el1 — the Hypervisor.framework EL1 probe (M9)
+# hvf-el1: the Hypervisor.framework EL1 probe (M9)
 
 Measures whether TCG's Arm output could run inside a Hypervisor.framework
 VM whose stage-1 tables mirror the x86 guest's page tables, so that a
 guest load is one host load. The design, the numbers and the verdict
 (feasible, then abandoned for the time being by user decision) are in
 `docs/tracks/m9-tcg-aarch64.md`, "The HVF EL1 probe" and "Gauging the
-gain"; this file says what the probe does and how to run it.
+gain". This file says what the probe does and how to run it.
 
 It is a bare-metal aarch64 guest (Rust, `aarch64-unknown-none`, 37 KiB,
 `payload/`) plus a host program (`host/`) that creates the VM, shares a
@@ -25,13 +25,14 @@ measures:
   sequence `tcg/aarch64` emits for a softmmu load (with a TLB that always
   hits), 64 KiB to 32 MiB working sets, dependent and independent, plus
   the workload-shaped `mix4` / `mix12` / `copy` kernels `tools/hwmmu/`
-  uses — and the same kernels natively in the host for the baseline;
+  uses, and the same kernels natively in the host for the baseline;
 - running code the host wrote, self-patching without a W^X toggle, and
   the latency of a host-thread kick to the guest's IRQ handler;
-- the `rep movsd` blit loop of a 2D game (`exp_movs` / `native_movs`):
-  TCG's loop transcribed from a `-d out_asm` log, with pinned registers,
-  with direct window accesses, and a per-page-run copy — with `env` both
-  in the identity map and in the window, because a store to block-mapped
+- the `rep movsd` blit loop of a 2D game (`exp_movs` / `native_movs`).
+  It runs TCG's loop transcribed from a `-d out_asm` log, with pinned
+  registers, with direct window accesses, and as a per-page-run copy.
+  Each runs with `env` both in the identity map and in the window,
+  because a store to block-mapped
   memory followed by one through a 4 KiB page costs ~2 ns extra per pair
   in the VM (the `diag3` lines).
 
@@ -41,8 +42,9 @@ build/hvf-el1/hvf-el1 build/hvf-el1/payload.bin
 build/hvf-el1/hvf-el1 x --native-only      # only the host baseline
 ```
 
-macOS on Apple Silicon only (`kern.hv_support`), ~2 s, alone on the
-machine. Output is `key: value` lines; reference runs from the M1 Air are
+It runs on macOS on Apple Silicon only (`kern.hv_support`), takes ~2 s,
+and must be alone on the machine. Output is `key: value` lines. Reference
+runs from the M1 Air are
 `results-m1air-2026-09-05.txt` and `results-movs-m1air-2026-09-05.txt`.
 It is a measurement, not a regression guard, so it is not in
 `scripts/test.sh`. On a guest fault the host prints the vCPU state and

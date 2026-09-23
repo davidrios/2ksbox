@@ -1,23 +1,23 @@
 /*
- * zfilltest.c — a Z buffer reset by a DirectDraw depth fill, not a Direct3D
- * Clear (doc 19 §34).
+ * zfilltest.c: a Z buffer reset by a DirectDraw depth fill or a Lock, not
+ * a Direct3D Clear (doc 19 §34).
  *
  *   ZFILLTEST.EXE
  *
- * Crimson Skies resets its Z buffer every frame with
- * IDirectDrawSurface7::Blt(DDBLT_DEPTHFILL) and depth-tests GREATEREQUAL
- * against it. With no blitter in the driver that fill was the runtime's own
- * write into VRAM, which the host's depth buffer never saw, and the whole
- * world failed the test. Each case here clears or fills, draws one quad
- * and reads the back buffer through Lock (the driver reads the host's
- * frame back into VRAM):
+ * Crimson Skies resets its Z buffer every frame and depth-tests
+ * GREATEREQUAL against it. With no blitter in the driver, an
+ * IDirectDrawSurface7::Blt(DDBLT_DEPTHFILL) is the runtime's own write
+ * into VRAM, which the host's depth buffer never sees, and the whole world
+ * fails the test. Each case here clears or fills, draws one quad and reads
+ * the back buffer through Lock (the driver reads the host's frame back
+ * into VRAM):
  *
  *   A  Direct3D clears Z to 1.0, a depth fill of 0, a red quad at z 0.5,
- *      GREATEREQUAL: red — the host must have taken the fill
- *   B  a depth fill of 0xffff, a green quad at z 0.5: black — and the
- *      fill must not be a no-op that A passed by luck
- *   C  Z at 1.0, a depth fill of 0 over the left half only, a blue quad
- *      over everything: blue on the left, black on the right
+ *      GREATEREQUAL: red, so the host must have taken the fill
+ *   B  a depth fill of 0xffff, a green quad at z 0.5: black, so the fill
+ *      is not a no-op that A passed by luck
+ *   D  Z at 1.0, then Z written to 0 through a Lock (what Crimson Skies
+ *      does), a yellow quad: yellow
  *
  * zfilltest.log ends with "zfilltest: N cases, M failed".
  *
@@ -215,13 +215,13 @@ static void run(HWND hwnd)
     c = pixel(back, W / 2, H / 2);
     check(near_(c, 0), "B: depth fill ffff, the quad fails GREATEREQUAL", c, 0);
 
-    /* No case for a fill of one rectangle: the runtime does a depth fill
-     * itself through a Lock of the whole buffer, the driver sees only a Z
-     * buffer that is no longer one value, and handing the host that would
+    /* No case C, a fill of one rectangle. The runtime does that depth fill
+     * itself through a Lock of the whole buffer, so the driver sees a Z
+     * buffer that is no longer one value, and passing it to the host would
      * take a depth-image upload the executor does not have (doc 19 §34).
-     * Measured 2026-09-14: the left half of such a fill fails here. */
+     * The left half of such a fill fails here. */
 
-    /* D: what Crimson Skies does — Lock the Z buffer, write 0 everywhere,
+    /* D: what Crimson Skies does. Lock the Z buffer, write 0 everywhere,
      * Unlock; the driver finds one value and makes it the host's */
     dev->lpVtbl->Clear(dev, 0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0, 1.0f, 0);
     memset(&sd, 0, sizeof(sd));

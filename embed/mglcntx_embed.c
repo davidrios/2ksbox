@@ -1,5 +1,5 @@
 /*
- * QEMU MESA GL Pass-Through — window-less context backend for the embed
+ * QEMU MESA GL Pass-Through: window-less context backend for the embed
  * library (2ksbox, M3; docs/12-m3-context-provider.md).
  *
  * Port of hw/mesa/mglcntx_linux.c (GLX on an X11 window) to run without a
@@ -8,16 +8,16 @@
  * gamma/swap-interval stubs) is shared; a small platform layer provides
  * the context and the drawable that stands in for the window:
  *
- *   Linux  — EGL on the surfaceless platform, pbuffer surface = FBO 0.
- *   macOS  — CGL context with no drawable; an FBO (renderbuffers) plays the
+ *   Linux: EGL on the surfaceless platform, pbuffer surface = FBO 0.
+ *   macOS: CGL context with no drawable; an FBO (renderbuffers) plays the
  *            default framebuffer and framebuffer binding 0 is redirected to
  *            it in the dispatch table (MesaGLSetFunc, patch 32), since CGL
  *            pbuffers are deprecated and no window exists.
  *
- * All GL runs on the vCPU thread under the BQL exactly as upstream. The
- * presented frame is read back after each swap and handed to the frontend
- * (embedfx.c → libqemu_embed.c on_3d_frame) — the bring-up path; the
- * zero-copy dma-buf / IOSurface export replaces the readback later.
+ * All GL runs on the vCPU thread under the BQL exactly as upstream. Each
+ * swap hands the presented frame to the frontend (embedfx.c →
+ * libqemu_embed.c on_3d_frame), zero-copy as a dma-buf / IOSurface where
+ * the host has one and read back otherwise.
  *
  * The native backends in hw/mesa are linked weak (patch 31) so these
  * definitions take over in libqemu-embed while qemu-system keeps its own.
@@ -44,8 +44,8 @@
 
 /* The guest speaks WGL, so the layer below is written in WGL's own types
  * and constants. Linux and macOS have no windows.h and get them here;
- * Windows has the real ones -- identical by construction, this struct is
- * the ABI the guest passes -- and must not see a second definition. */
+ * Windows has the real ones (identical by construction, this struct is
+ * the ABI the guest passes) and must not see a second definition. */
 #ifndef CONFIG_WIN32
 typedef uint16_t WORD;
 typedef uint32_t DWORD;
@@ -124,7 +124,7 @@ typedef struct tagPIXELFORMATDESCRIPTOR {
 #define WGL_MIPMAP_LEVEL_ARB                    0x207B
 #define WGL_TEXTURE_RECTANGLE_NV                0x20A2
 
-/* What the guest asked for in wglCreatePbufferARB, per slot -- not a
+/* What the guest asked for in wglCreatePbufferARB, per slot. Not a
  * handle: the platform layer below keeps the real object. Named for what
  * it is, because on Windows HPBUFFERARB is wglext.h's own handle type. */
 typedef struct tagFakePBuffer {
@@ -409,7 +409,7 @@ int MGLSwapBuffers(void)
  * here may have only the back (a pbuffer) or be an FBO with a single colour
  * attachment (macOS). A GL_FRONT or GL_BACK variant selected while the
  * guest's framebuffer 0 is bound therefore becomes whatever plays that
- * buffer here -- passing GL_FRONT through is GL_INVALID_OPERATION on both,
+ * buffer here. Passing GL_FRONT through is GL_INVALID_OPERATION on both,
  * which is what WineD3D got. And while the front buffer is the selected draw
  * buffer, glFlush/glFinish present the frame, since that is the moment a real
  * window would show it: ddraw's primary-surface path draws into GL_FRONT and
@@ -418,7 +418,7 @@ int MGLSwapBuffers(void)
  * The hooks sit in the guest's dispatch table (MesaGLSetFunc), so only the
  * guest's own calls take them; ours below go straight to GL. front_selected
  * shadows a per-context piece of GL state with one variable, which at worst
- * publishes a frame for a flush from another context -- a cost, not a wrong
+ * publishes a frame for a flush from another context: a cost, not a wrong
  * picture.
  */
 static void (*real_draw_buffer)(unsigned);
@@ -1066,7 +1066,7 @@ static int zc_slot_ensure(int i, int w, int h)
     /* What the driver actually made of the dma-buf. The frontend imports
      * every slot as one format from the fourcc we sent, so a slot whose
      * texture came back a different shape is a slot the two sides disagree
-     * about -- which shows up as one frozen picture in a turning ring. */
+     * about, which shows up as one frozen picture in a turning ring. */
     {
         GLint ifmt = 0, a = -1, r = -1;
         glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &ifmt);
@@ -1093,7 +1093,7 @@ static int zc_slot_ensure(int i, int w, int h)
      * The frontend gets an fd of its own rather than the one this side keeps.
      * Importing a dma-buf into Vulkan passes ownership: the frontend's
      * vkAllocateMemory closes it with the memory, while zc_slot_free closes
-     * zc[i].fd too -- one description, two owners, and the number goes back
+     * zc[i].fd too. One description, two owners, and the number goes back
      * to the process to hand to the next file it opens. A declined offer is
      * still ours to close.
      */
@@ -1114,7 +1114,7 @@ static int zc_slot_ensure(int i, int w, int h)
      * buffer are the same memory: clear the one through GL and read the
      * other with the CPU. A slot that fails here was never written through
      * at all, and everything later blamed on the guest is the moment its
-     * picture stopped being constant -- which is the only moment the two
+     * picture stopped being constant, which is the only moment the two
      * readings can be told apart.
      */
     if (zc_env("EMBED_ZC_CHECK", 0)) {
@@ -1138,8 +1138,8 @@ static int zc_slot_ensure(int i, int w, int h)
     }
     /*
      * `EMBED_ZC_SETTLE=<ms>`: wait before using a slot just offered. Accepting
-     * an offer only queues it -- the frontend imports on its own thread, later
-     * -- so as it stands the first blits into a slot race whatever importing
+     * an offer only queues it (the frontend imports on its own thread, later),
+     * so as it stands the first blits into a slot race whatever importing
      * it does. This says whether that race is what leaves a slot diverged.
      */
     {
@@ -1169,19 +1169,19 @@ static int zc_slot_ensure(int i, int w, int h)
  *
  * On this host the second buffer the ring allocates stops being written
  * through: GL reads back everything it blitted into it, while the dma-buf's
- * own memory -- what the frontend imported and samples -- keeps the frame it
+ * own memory (what the frontend imported and samples) keeps the frame it
  * held first. One publish in three is then a frozen picture, which on screen
  * is a fast flicker (GLQuake on the Win98 machine, and any other title that
  * presents through the GL pass-through). It needs the frontend to import the
  * buffers into Vulkan: the backend on its own writes through to all three,
  * which `embed-3d` now checks. Ring size, fd ownership and a settling delay
- * before first use all make no difference -- doc 12 §4 has the measurements.
+ * before first use all make no difference (doc 12 §4 has the measurements).
  *
  * With one buffer there is no second slot to go bad. What it gives up is the
  * margin the ring exists for: the frontend samples the buffer the next blit
  * is about to overwrite, and nothing but timing keeps them apart, since the
  * hand-off has no fence coming back. Measured on the reference workload that
- * costs nothing -- 72 fps either way, and a tear detector that catches every
+ * costs nothing: 72 fps either way, and a tear detector that catches every
  * synthetic one-frame tear finds no more torn frames than the tear-free
  * readback path does. It is still a smaller machine, a heavier shader chain
  * or a faster guest away from mattering, so this is a stopgap: put it back to
@@ -1253,9 +1253,9 @@ static void zc_sample(int i)
  * nothing shows on screen.
  */
 /*
- * When to probe. A buffer that goes bad does so early -- on the first frame
- * the guest renders in earnest, which is present 13 of GLQuake's every time
- * -- and never recovers, so the schedule is dense while the ring is young
+ * When to probe. A buffer that goes bad does so early (on the first frame
+ * the guest renders in earnest, which is present 13 of GLQuake's every time)
+ * and never recovers, so the schedule is dense while the ring is young
  * and occasional afterwards. `EMBED_ZC_PROBE=<n>` forces a rate, `=0` turns
  * it off.
  */
@@ -1295,8 +1295,8 @@ static void zc_probe(int i)
      * ARGB8888 in memory: A R G B. Red names the slot, green the present.
      *
      * Every piece of state this touches is put back, and the two that would
-     * quietly make the clear do nothing -- a scissor the guest left on, a
-     * colour mask it left closed -- are taken out of the way first. Leaving
+     * quietly make the clear do nothing (a scissor the guest left on, a
+     * colour mask it left closed) are taken out of the way first. Leaving
      * the clear colour behind cost the `embed-3d` check a frame the moment
      * this was written: a guest that clears without setting the colour each
      * time would have got ours.
@@ -1624,7 +1624,7 @@ static void *plat_get_proc(const char *name)
 }
 
 /*
- * The pbuffer is framebuffer 0 and has one colour buffer -- the back one,
+ * The pbuffer is framebuffer 0 and has one colour buffer, the back one,
  * unless the config came out single-buffered, in which case it is the front
  * (see the shared hooks above).
  */
@@ -2424,7 +2424,7 @@ static void plat_set_func_ptr(void *h)
 
 /*
  * WGL without a visible window. Windows, unlike macOS, has a first-class
- * offscreen drawable — a WGL_ARB_pbuffer — so this backend is shaped like
+ * offscreen drawable, a WGL_ARB_pbuffer, so this backend is shaped like
  * the Linux one (the pbuffer is FBO 0 and the swap is a readback of its
  * back buffer) rather than like the macOS one, which has to fake a
  * default framebuffer with an FBO because CGL pbuffers are gone.
@@ -2486,7 +2486,7 @@ static int make_window(void)
     }
     /* A window's pixel format can be set exactly once, and this one is
      * only ever a device handle, so it gets the plainest format that
-     * supports OpenGL — the ARB-chosen format below is for the pbuffer. */
+     * supports OpenGL. The ARB-chosen format below is for the pbuffer. */
     PIXELFORMATDESCRIPTOR boot;
     memset(&boot, 0, sizeof(boot));
     boot.nSize = sizeof(boot);
@@ -2552,10 +2552,10 @@ static int plat_open(void)
 /*
  * WGL answers `wglGetProcAddress` only while a context is current on the
  * calling thread, and libepoxy resolves an entry point lazily at its
- * first call. So an ARB call made with nothing current does not fail —
- * it *faults*: ACCESS_VIOLATION, the whole process, and the log ends at
+ * first call. So an ARB call made with nothing current does not fail.
+ * It *faults*: ACCESS_VIOLATION, the whole process, and the log ends at
  * whatever was printed before it. That is how GLQuake took the player
- * down on the user's PC (2026-09-21): `glcntx: ChoosePixelFormat()` was
+ * down on the user's PC: `glcntx: ChoosePixelFormat()` was
  * the last line, and the first `wglChoosePixelFormatARB` below was the
  * faulting call. A 40-line repro of the same three steps (bootstrap
  * context, `wglMakeCurrent(NULL, NULL)`, one ARB call through epoxy)
@@ -2566,7 +2566,7 @@ static int plat_open(void)
  * backend is not always the one that draws. So instead of holding the
  * bootstrap context, every ARB call below *borrows* it for the duration
  * when the caller has no context of its own, and puts back exactly what
- * it found — including "nothing", which is a state the rest of this file
+ * it found, including "nothing", which is a state the rest of this file
  * relies on.
  */
 struct wgl_borrow { HDC dc; HGLRC rc; int taken; };
@@ -2750,7 +2750,7 @@ static int plat_present_zero_copy(void)
 {
     /* No shared-surface path yet: a Windows frame is read back (the
      * dma-buf ring is Linux, IOSurface is macOS; DXGI is the one to
-     * write here — docs/tracks/m11-windows-host.md). */
+     * write here, docs/tracks/m11-windows-host.md). */
     return 0;
 }
 
@@ -2858,7 +2858,7 @@ static void *plat_get_proc(const char *name)
 }
 
 /*
- * The pbuffer is framebuffer 0 and has one colour buffer -- the back one,
+ * The pbuffer is framebuffer 0 and has one colour buffer, the back one,
  * unless the config came out single-buffered, in which case it is the front
  * (see the shared hooks above).
  */

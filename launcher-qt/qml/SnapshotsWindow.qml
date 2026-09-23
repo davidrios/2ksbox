@@ -1,19 +1,19 @@
 // Snapshots (doc 07). A running machine goes through its monitor, a
-// stopped one through `qemu-img`; the model decides which, this only
+// stopped one through `qemu-img`. The model decides which; this only
 // draws it.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import com._2ksbox.launcher
 
-// A real top-level window — see `WizardWindow.qml`.
+// A real top-level window (see `WizardWindow.qml`).
 Window {
     id: root
 
-    // Typed, not `var` — see `ShaderProfilesWindow.qml`.
+    // Typed, not `var` (see `ShaderProfilesWindow.qml`).
     required property SnapshotModel snapshots
 
-    /// The item the headless screenshot path grabs — see `Main.qml`.
+    /// The item the headless screenshot path grabs (see `Main.qml`).
     property Item grabItem: body
 
     title: snapshots.title
@@ -23,12 +23,12 @@ Window {
     minimumHeight: 320
     flags: Qt.Dialog
     // One at a time (`WizardWindow.qml`): a secondary window blocks the
-    // grid behind it, so there is never a second one to wonder about.
+    // grid behind it, so there is never a second one.
     modality: Qt.ApplicationModal
     color: palette.window
 
-    // Esc is Cancel, the way every other dialog on the desktop behaves.
-    // Nothing to put back here: this window keeps no flag of its own.
+    // Esc is Cancel, as in every other dialog on the desktop. Nothing to
+    // put back here: this window keeps no flag of its own.
     Shortcut {
         sequences: [StandardKey.Cancel]
         onActivated: root.close()
@@ -37,8 +37,8 @@ Window {
     /// The row whose "Restore" is armed and waiting for its confirming
     /// click. Restoring overwrites the disk's current state with the
     /// snapshot's and there is no undo, so a stray click on a row must
-    /// not do it. Kept in the view because it is a property of *this
-    /// window's* interaction, not of the machine.
+    /// not do it. Kept in the view because it belongs to this window's
+    /// interaction, not to the machine.
     property string confirmRestore: ""
 
     /// Where the layout put things, for the `snapshots` probe and the
@@ -52,8 +52,7 @@ Window {
             + ", new-row y=" + newRow.y + " h=" + newRow.height
     }
 
-    // Only while a live job is in flight: the interval is explicit and
-    // nothing runs when there is no job.
+    // Runs only while a live job is in flight.
     Timer {
         interval: 400
         repeat: true
@@ -80,11 +79,11 @@ Window {
                 text: qsTr("The machine is running, so a snapshot also saves its RAM and CPU state.")
             }
 
-            // A stock list and nothing drawn by hand (user decision, 2026-09-22:
-            // no list box, no zebra rows, no colours of ours -- the style's own
-            // look, whichever style it is): a `ListView` of `ItemDelegate`s under
-            // a header row of labels, whose margins are a delegate's own padding,
-            // read off an invisible one, so the columns line up under every style.
+            // A stock list with nothing drawn by hand (user decision: no
+            // list box, no zebra rows, no colours of ours, only the style's
+            // own look). A `ListView` of `ItemDelegate`s under a header row
+            // of labels whose margins are a delegate's own padding, read off
+            // an invisible one, so the columns line up under every style.
             ItemDelegate { id: rowMetrics; visible: false }
 
             RowLayout {
@@ -186,12 +185,11 @@ Window {
 
             RowLayout {
                 Layout.fillWidth: true
-                // Not a filler, unlike every nested layout's default: both
+                // Not a filler, unlike every nested layout's default. Both
                 // children are hidden until there is a status, and an empty
                 // layout has no maximum, so it took half the spare height
-                // from the list box — which stopped halfway down the window
-                // until a snapshot's status line capped this row
-                // (user-reported, 2026-09-13; the `qt-snapshots` check).
+                // from the list box, which stopped halfway down the window
+                // (the `qt-snapshots` check covers it).
                 Layout.fillHeight: false
                 spacing: 8
                 BusyIndicator {

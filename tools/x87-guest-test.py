@@ -2,10 +2,10 @@
 """In-guest regression test for the x87 fast path (patch 05).
 
 Builds a DOS program (NASM, .COM) that runs a battery of x87 instructions
-over a pool of edge-case operands under several control words -- each of
+over a pool of edge-case operands under several control words (each of
 them twice, the second time with the inexact flag set before every case,
-which is the state the inline path translates differently (patches 37 and
-45) and which fninit before each case would otherwise never let it see --
+which is the state the inline path translates differently, patches 37 and
+45, and which fninit before each case would otherwise never let it see),
 and streams every result (80-bit value + status word) to the serial port.
 Boots it on the FreeDOS test floppy under our qemu-system-i386 twice, with
 `-cpu pentium3,x87-fast=on` and `=off`, and requires the two serial logs to

@@ -4,7 +4,7 @@
 #
 # 86Box's rasterizer (86box/, verbatim) is its own static library so it can
 # be compiled against the shim of 86Box's headers (shim/) and with its own
-# flags, and never sees QEMU's headers -- its "cpu.h" is shim/cpu.h, not
+# flags, and never sees QEMU's headers. Its "cpu.h" is shim/cpu.h, not
 # target/i386's. The QEMU device and the shim's implementation are ordinary
 # sourceset files. link_whole so the sourceset's static library, and the
 # embed shared library built from its objects, carry every 86Box object.

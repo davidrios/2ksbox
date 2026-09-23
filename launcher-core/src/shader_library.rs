@@ -1,8 +1,8 @@
 //! The shader profile library: a directory of `<slug>.toml` files, one per
-//! profile — flat, unlike the machine library's per-bundle subdirectories
-//! (`library.rs`), since a profile has no disk image or disc shelf beside
-//! it to keep together. Same "plain, documented directory, no database"
-//! stance (doc 07).
+//! profile. It is flat, unlike the machine library's per-bundle
+//! subdirectories (`library.rs`), since a profile has no disk image
+//! beside it to keep together. Like the machine library it is a plain,
+//! documented directory with no database (doc 07).
 
 use crate::shader_profile::ShaderProfile;
 use std::path::{Path, PathBuf};
@@ -30,8 +30,8 @@ pub fn id_of(path: &Path) -> String {
 }
 
 /// An id from a profile name: lowercase, non-alphanumerics collapsed to
-/// `-`, deduplicated against what's already in `dir` — same scheme as
-/// `library::slug`, just against `<candidate>.toml` files instead of
+/// `-`, deduplicated against what's already in `dir`. Same scheme as
+/// `library::slug`, checked against `<candidate>.toml` files instead of
 /// bundle subdirectories.
 fn slug(dir: &Path, name: &str) -> String {
     let mut base: String = name
@@ -64,14 +64,12 @@ pub fn create(dir: &Path, name: String, preset: PathBuf) -> std::io::Result<Path
 /// The starter profiles (`shader_source::DEFAULT_PROFILES`) against the
 /// collection at `presets_dir`, returning the names actually written.
 ///
-/// Two things it will not do, both of which would turn a helpful gesture
-/// into a mess someone has to clean up. It never writes a **second**
-/// profile under a name the library already has — `create`'s slug
-/// deduplication would happily make `crt-aperture-2`, so re-running this
-/// (a second download, a `--default-profiles` by hand) has to be a
-/// no-op rather than a slow-motion duplication. And it skips a preset
-/// the collection doesn't actually contain, since a profile naming a
-/// missing `.slangp` is only a parse error deferred to whoever opens it.
+/// It never writes a **second** profile under a name the library already
+/// has. `create`'s slug deduplication would make `crt-aperture-2`, so
+/// re-running this (a second download, a `--default-profiles` by hand)
+/// has to be a no-op. It also skips a preset the collection doesn't
+/// contain, since a profile naming a missing `.slangp` is a parse error
+/// waiting for whoever opens it.
 pub fn create_defaults(dir: &Path, presets_dir: &Path) -> Vec<String> {
     let existing: Vec<String> = scan(dir).into_iter().map(|e| e.profile.name).collect();
     let mut added = Vec::new();
@@ -84,10 +82,10 @@ pub fn create_defaults(dir: &Path, presets_dir: &Path) -> Vec<String> {
             eprintln!("[shader-library] no {} in the collection; skipping the {name} profile", preset.display());
             continue;
         }
-        // Absolute, whatever `presets_dir` was: a profile is read by the
-        // *player*, which is started from wherever the launcher happens
-        // to have been, and a relative preset would resolve against that
-        // instead of against the collection.
+        // Absolute, whatever `presets_dir` was. The player reads the
+        // profile, starting from whatever directory the launcher was
+        // in, and a relative preset would resolve against that instead
+        // of against the collection.
         let preset = std::path::absolute(&preset).unwrap_or(preset);
         match create(dir, (*name).to_string(), preset) {
             Ok(_) => added.push((*name).to_string()),
@@ -98,7 +96,7 @@ pub fn create_defaults(dir: &Path, presets_dir: &Path) -> Vec<String> {
 }
 
 /// Every `*.toml` directly under `dir`. A file that fails to parse is
-/// skipped with a stderr line, not fatal — matches `library::scan`.
+/// skipped with a stderr line, as in `library::scan`.
 pub fn scan(dir: &Path) -> Vec<ProfileEntry> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -120,7 +118,7 @@ pub fn scan(dir: &Path) -> Vec<ProfileEntry> {
 }
 
 /// Look up a profile by id (a machine's `shader_profile` value) under
-/// `dir`. `None` covers both "no such profile" and "unreadable" — a
+/// `dir`. `None` covers both "no such profile" and "unreadable". A
 /// dangling reference (the profile was deleted after a machine picked it)
 /// falls back to no shader override rather than failing the machine.
 pub fn find(dir: &Path, id: &str) -> Option<ShaderProfile> {

@@ -1,12 +1,12 @@
 /*
- * opl3 — the Yamaha YMF262 (OPL3) as a machine of the era had it (doc 20 §5).
+ * opl3: the Yamaha YMF262 (OPL3) as a machine of the era had it (doc 20 §5).
  *
  * Overlaid into hw/audio/ by scripts/prepare-qemu.sh and instantiated by
  * patch 25. The synthesis is libsynth's (Nuked-OPL3); this file is the
  * ports, the clock and the audio voice.
  *
  * Why not QEMU's own `adlib`: that device is an OPL2 (YM3812) on the
- * 1990s MAME core, and a Sound Blaster 16 has an OPL3 — a game that
+ * 1990s MAME core, and a Sound Blaster 16 has an OPL3. A game that
  * writes the second register file gets four-operator instruments there
  * and silence here. It also mirrors the chip at the Sound Blaster's own
  * base (2x0-2x3), which is where an SB-aware driver looks; `sbbase=0`
@@ -147,7 +147,7 @@ static uint32_t opl3_read(void *opaque, uint32_t nport)
 {
     Opl3State *s = opaque;
 
-    /* Every address in the block reads the status register — which is
+    /* Every address in the block reads the status register, which is
      * what the detection sequence reads, and it must reflect the timers
      * as of *now*, not as of the last audio tick. */
     opl3_sync(s);
@@ -169,8 +169,8 @@ static const MemoryRegionPortio opl3_portio_list[] = {
  *
  * It is fidelity, not a fix for anything known: Duke Nukem 3D's *Sound
  * Blaster* music entry still refuses to initialize with it, while its
- * *AdLib* entry — which probes 0x388 — plays (2026-09-09,
- * tools/duke-guest-test.py). What that entry wants beyond an FM chip at
+ * *AdLib* entry, which probes 0x388, plays
+ * (tools/duke-guest-test.py). What that entry wants beyond an FM chip at
  * the card's own base is an open question and may be QEMU's sb16
  * rather than this device. */
 static const MemoryRegionPortio opl3_sb_portio_list[] = {

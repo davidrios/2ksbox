@@ -8,7 +8,7 @@
 # through libdisc, the ATAPI drive and XP's own cdrom.sys, back out again.
 #
 # Boots the XP image read-only (snapshot=on) with the disc as the IDE CD-ROM
-# (-cdrom: the probe path — a .cue/.ccd must reach the cdimage driver by
+# (-cdrom: the probe path, so a .cue/.ccd must reach the cdimage driver by
 # itself) and a fresh FAT32 scratch disk (E:) carrying RUN.BAT, which copies
 # the whole CD (xcopy /S /E, DMA through cdrom.sys) to E:\CD and lists it,
 # then powers XP down over QMP and compares every file with <reference dir>
@@ -16,7 +16,7 @@
 # Prints PASS/FAIL, the copied file count, DIR output head and the QEMU log's
 # cdimage lines. Exit 1 on any difference. Env: TEST_ACCEL=kvm|tcg,
 # BOOT_TIMEOUT (300 s), TEST_KEEP=1 leaves XP running on failure.
-# CDTEST=<path to CDTEST.EXE>: also CD audio (doc 17 §5.4) — the drive gets
+# CDTEST=<path to CDTEST.EXE>: also CD audio (doc 17 §5.4). The drive gets
 # `-device ide-cd,audiodev=` on a `-audiodev wav` so the tone the guest plays
 # through MCI (CDTEST.EXE from the scratch disk after the copy) lands in
 # <outdir>/cd.wav, whose loudest second must be a 1 kHz tone (the selftest
@@ -61,7 +61,7 @@ with open(path, 'r+b') as f:
 MBR
     # -H 2048: the BPB's hidden-sectors field must be the partition's own
     # start LBA. mformat defaults it to 0, and XP then does not mount the
-    # volume at all — no E:, and a test that only says the batch file
+    # volume at all: no E:, and a test that only says the batch file
     # never ran.
     mformat -i "$path@@1048576" -F -H 2048 -T $((mb * 2048 - 2048)) :: || return 1
   fi

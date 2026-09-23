@@ -1,16 +1,16 @@
 /*
- * core_dp2.c — the DrawPrimitives2 token stream (doc 19, "The split"):
- * the walk that turns the runtime's tokens into D3DPT_DP2_* records, the
- * DirectX 8 rewrite (a draw becomes a self-contained DRAW8 naming its
+ * core_dp2.c: the DrawPrimitives2 token stream (doc 19, "The split").
+ * This is the walk that turns the runtime's tokens into D3DPT_DP2_*
+ * records, the DirectX 8 rewrite (a draw becomes a self-contained DRAW8 naming its
  * vertex range and indices), TEXBLT, BUFFERBLT, the vs / ps 1.x
  * validation and the body-sizing table.
  *
- * The single most expensive piece of the driver, and the one that is
- * about the protocol and nothing else: the per-call DDI structures are
- * field-for-field identical on NT and 9x and the opcode values agree, so
- * this walks the same bytes on both. What differs — where the command
- * and vertex buffers live, and how a result is handed back — is the
- * layer's, and arrives in a d3dpt_dp2_call.
+ * It is the most expensive piece of the driver and concerns only the
+ * protocol. The per-call DDI structures are field-for-field identical on
+ * NT and 9x and the opcode values agree, so this walks the same bytes on
+ * both. Where the command and vertex buffers live, and how a result is
+ * handed back, differ; the layer handles those and passes a
+ * d3dpt_dp2_call.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -107,7 +107,7 @@ ULONG fvf_stride(ULONG fvf)
 /* A d3d8.dll context's filter stage state in the DDI's DX7 numbering, which
  * is what the host reads: the DX8 runtime hands a DX8 driver its own
  * D3DTEXF_* values (NONE 0, POINT 1, LINEAR 2, ANISOTROPIC 3, FLATCUBIC 4,
- * GAUSSIANCUBIC 5 — measured: D3DGAME8's LINEAR mip filter arrives as 2)
+ * GAUSSIANCUBIC 5; measured, D3DGAME8's LINEAR mip filter arrives as 2)
  * where the DX7 runtime sent D3DTFG_* for MAGFILTER (POINT 1, LINEAR 2,
  * FLATCUBIC 3, GAUSSIANCUBIC 4, ANISOTROPIC 5) and D3DTFP_* for MIPFILTER
  * (NONE 1, POINT 2, LINEAR 3). MINFILTER's D3DTFN_* (POINT 1, LINEAR 2,
@@ -189,7 +189,7 @@ static void walk_stream_data(DP2WALK *w, const DP2STREAM *s, ULONG off, ULONG by
  * there goes along too: the driver does not know which streams the
  * declaration reads (the host does), and a DX8 draw indexes all its
  * streams with one vertex number, so stream n's range starts at the same
- * vertex as stream 0's — voff / stride — at its own stride */
+ * vertex as stream 0's (voff / stride), at its own stride */
 static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, ULONG voff, ULONG nverts,
                       ULONG ioff, ULONG nindices, ULONG min_index)
 {
@@ -199,12 +199,12 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
     d3dpt_u32x2 ref;
     ULONG stride = vs->stride, vbytes, first = 0, ext[D3D_MAX_STREAMS], next = 0, i;
 
-    /* **A long non-indexed draw goes to the host in pieces.** The host takes
-     * at most 0x10000 vertices a draw while the caps allow 0xffff primitives,
-     * so DrawPrimitive(TRIANGLELIST, 0, 30000) — 90 000 vertices, legal on
-     * every card of the era — used to be skipped whole, with nothing said to
-     * the application. Lists are cut on a primitive boundary; a strip's next
-     * piece starts on the last vertices of the one before, and a triangle
+    /* A long non-indexed draw goes to the host in pieces. The host takes at
+     * most 0x10000 vertices a draw while the caps allow 0xffff primitives.
+     * DrawPrimitive(TRIANGLELIST, 0, 30000) is 90 000 vertices, legal on
+     * every card of the era, and would otherwise be skipped whole with
+     * nothing said to the application. Lists are cut on a primitive
+     * boundary; a strip's next piece starts on the last vertices of the one before, and a triangle
      * strip's pieces start on an even triangle so their winding is kept. A
      * fan has no such cut and still skips. */
     if (!nindices && prim >= 1 && prim <= 5 && stride && prim_verts(prim, count) > 0x10000) {
@@ -254,8 +254,8 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
     }
     /* the other streams: a shader's draw only, and only where stream 0's
      * offset is a whole vertex (it always is for the runtime's own draws; a
-     * stream that is bound but short — a stale binding a stream-0 shader
-     * does not read — is left out, and the host skips the draw if its
+     * stream that is bound but short, a stale binding a stream-0 shader
+     * does not read, is left out, and the host skips the draw if its
      * declaration wanted it) */
     if (w->shader && !w->one_stream && vs == &w->st[0] && voff % stride == 0) {
         first = voff / stride;
@@ -313,12 +313,12 @@ static void walk_draw(DP2WALK *w, ULONG prim, ULONG count, const DP2STREAM *vs, 
  * 0 first, every level both have; DXT in blocks.
  *
  * A level's rectangle is every texel the level-0 one touches: the left / top
- * edge rounded down and the right / bottom edge rounded **up**. Shifting the
- * width instead dropped the last texel of an odd-aligned rectangle — (5,0)-
- * (7,1) is texels 2..3 on level 1 and came out as texel 2 — and a DXT
- * rectangle is whole blocks from the block its left / top edge is in, where
- * rounding the texel offset up to a block had copied the block to the right
- * of it. Only a dirty-rect update of a mipmapped texture reaches either; the
+ * edge rounded down and the right / bottom edge rounded up. Shifting the
+ * width instead drops the last texel of an odd-aligned rectangle: (5,0)-
+ * (7,1) is texels 2..3 on level 1, not texel 2 alone. A DXT rectangle is
+ * whole blocks from the block its left / top edge is in; rounding the
+ * texel offset up to a block would copy the block to the right of it.
+ * Only a dirty-rect update of a mipmapped texture reaches either; the
  * full-surface TEXBLT the probes use is the same both ways. */
 static void blt_levels(ULONG fmt, ULONG src_w, ULONG src_h, const SURF_LEVEL *slv, ULONG dst_w, ULONG dst_h,
                        const SURF_LEVEL *dlv, ULONG levels, const ULONG *b)
@@ -658,15 +658,15 @@ static BOOL walk(DP2WALK *w)
             /* A DX3 execute buffer (IDirect3DDevice::Execute, d3dim.dll's
              * UNCLIPPED path): the stream is the buffer's own D3DINSTRUCTION
              * list from the current instruction on, and the runtime is a
-             * pass-through — it executes nothing here itself. The opcodes
+             * pass-through that executes nothing here itself. The opcodes
              * share the DP2 numbering where the payloads match (POINT /
              * LINE / TRIANGLE / STATERENDER are 1 / 2 / 3 / 8: POINTS,
              * INDEXEDLINELIST, the 8-byte INDEXEDTRIANGLELIST, RENDERSTATE),
              * and those the driver must consume, along with SPAN (13,
-             * skipped) and EXIT (11, the end). Everything else —
-             * PROCESSVERTICES (9) first of all, the matrix / light opcodes
-             * 4..7, TEXTURELOAD, BRANCHFORWARD, SETSTATUS — is the runtime's:
-             * the call ends *before* it with D3DERR_COMMAND_UNPARSED and its
+             * skipped) and EXIT (11, the end). Everything else is the
+             * runtime's: PROCESSVERTICES (9) first of all, the matrix / light
+             * opcodes 4..7, TEXTURELOAD, BRANCHFORWARD, SETSTATUS. The call
+             * ends before it with D3DERR_COMMAND_UNPARSED and its
              * offset in dwErrorOffset, the runtime executes it (a
              * PROCESSVERTICES COPY / TRANSFORM fills the TL vertex buffer
              * we draw from) and calls again from the next instruction.
@@ -729,14 +729,14 @@ static BOOL walk(DP2WALK *w)
             ULONG e = (pos + 4 + size + 3) & ~3u;
             size = e - pos - 4 <= left ? e - pos - 4 : left;
         }
-        /* **A blit after a draw ends the record here.** The copy is done now,
-         * by the guest, while the host reads a buffer or a texture when it
-         * runs the draw — so in one record every draw saw the last blit's
-         * bytes, draws the application issued before that blit included. A
-         * managed vertex buffer locked, drawn, locked again and drawn again
-         * arrives exactly so, BUFFERBLT DRAW BUFFERBLT DRAW in one call, and
-         * both draws came out with the second fill. dp2_run sends what came
-         * before and goes on from here; the blit then starts the next record. */
+        /* A blit after a draw ends the record here. The guest does the copy
+         * now, while the host reads a buffer or a texture when it runs the
+         * draw, so in one record every draw would see the last blit's bytes,
+         * including draws issued before that blit. A managed vertex buffer
+         * locked, drawn, locked again and drawn again arrives exactly so,
+         * BUFFERBLT DRAW BUFFERBLT DRAW in one call, and both draws would get
+         * the second fill. dp2_run sends what came before and goes on from
+         * here; the blit then starts the next record. */
         if ((op == 38 || op == 63 || op == 64) && w->drawn && w->can_split) {
             w->split = TRUE;
             w->stop = pos;
@@ -897,10 +897,10 @@ static BOOL walk(DP2WALK *w)
 
 
 /* One record of a DrawPrimitives2 call: the stream from start to its end or
- * to the next split (a blit after a draw, see walk), in two passes — the
- * first measures the output and does the blits, the second writes into the
- * record — then the record into the command window and the doorbell. The
- * doorbell runs it on the host before this returns, so the next record's
+ * to the next split (a blit after a draw, see walk). The first pass
+ * measures the output and does the blits, the second writes into the
+ * record, then the record goes into the command window and the doorbell
+ * rings. The doorbell runs it on the host before this returns, so the next record's
  * blits land after this one's draws have read what they read. Returns where
  * the next record starts, or ~0 when the stream is done or this one failed. */
 static ULONG dp2_record(d3dpt_core *p, D3DCTX *c, const d3dpt_dp2_call *call, ULONG start, d3dpt_dp2_result *out)

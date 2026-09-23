@@ -1,31 +1,25 @@
-//! The guided creation form (doc 07): family → name → memory →
-//! processor → acceleration → networking → the pointer → disk →
-//! install media → a
+//! The guided creation form (doc 07): family, name, memory, processor,
+//! acceleration, networking, the pointer, disk and install media, then a
 //! bundle written from doc 06's reference defaults. The same form edits
 //! an existing bundle (`open_edit`), where `submit` writes back in place
-//! instead of reserving a new library directory. Never a QEMU command
-//! line.
+//! instead of reserving a new library directory. It never builds a QEMU
+//! command line.
 //!
 //! **Everything except the widgets is here**, including the sentences.
-//! A front end reads `ram_note()`, `accel_note()`, `network_notes()`,
-//! `seamless_mouse_notes()` and prints them; it does not compose its own. The Qt port used to, and
-//! the two builds ended up telling the user different things about the
-//! same checkbox ("Windows won't see a card" against "the guest won't
-//! see a card"), which is a small symptom of the real problem: it also
-//! had no processor, floppy or boot field at all, and its networking
-//! checkbox didn't follow the family the way memory and the accelerator
-//! do.
+//! A front end reads `ram_note()`, `accel_note()`, `network_notes()` and
+//! `seamless_mouse_notes()` and prints them; it never composes its own.
+//! When two front ends each composed them, they told the user different
+//! things about the same checkbox ("Windows won't see a card" against
+//! "the guest won't see a card"), and the Qt one also lacked the
+//! processor, floppy and boot fields.
 //!
-//! The one asymmetry a shared form has to respect: **an immediate-mode
-//! front end reads a widget's new value and compares it to the old one
-//! in the same frame** (`if self.family != was { … }`), while a
-//! retained-mode one has a property setter and no before/after pair. So
-//! a field with a *consequence* — family, memory, acceleration,
-//! networking, the processor — is private, with a `choose_*` that
-//! applies the consequence and a `reset_*` that puts it back on the
-//! family's default. The plain fields (a name, a path, a checkbox with
-//! nothing behind it) are public and either front end writes them
-//! directly.
+//! A retained-mode front end (Qt) has a property setter and no
+//! before/after pair to compare. So a field with a consequence (family,
+//! memory, acceleration, networking, the processor) is private, with a
+//! `choose_*` that applies the consequence and a `reset_*` that puts it
+//! back on the family's default. The plain fields (a name, a path, a
+//! checkbox with nothing behind it) are public and a front end writes
+//! them directly.
 
 use crate::browse::Filter;
 use crate::bundle::{
@@ -51,11 +45,11 @@ pub const SOUNDFONT_FILTER: Filter<'static> = ("SoundFont banks", &["sf2"]);
 /// three file fields; the constant itself belongs to the shelf.
 pub const MEDIA_FILTER: Filter<'static> = DISC_FILTER;
 
-/// The pages the form is shown on — a settings window's sidebar, as
-/// VirtualBox's and UTM's (user request, 2026-09-22: one long form had
-/// outgrown its window). Which field sits on which page is the view's
-/// business; the pages themselves, their names and their order are the
-/// form's, so every front end offers the same ones in the same order.
+/// The pages the form is shown on, as a settings window's sidebar like
+/// VirtualBox's and UTM's (one long form had outgrown its window). Which
+/// field sits on which page is the view's business. The pages, their
+/// names and their order are the form's, so every front end offers the
+/// same ones in the same order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Section {
     #[default]
@@ -126,26 +120,25 @@ pub struct Form {
     pub floppy: String,
     pub boot: Boot,
     /// The display adapter, on a family that has a choice of one
-    /// (`video_applies`). Private, unlike `boot`: it is one of the four
-    /// fields whose *list* changes with the family — Windows chooses
-    /// between our adapter and the Cirrus, `Other` and DOS between the
-    /// two standard ones — so a value carried across a family switch can
-    /// be one the new family does not offer, and `choose_family` has to
-    /// put it back.
+    /// (`video_applies`). Private, unlike `boot`, because it is one of
+    /// the four fields whose list changes with the family. Windows
+    /// chooses between our adapter and the Cirrus, `Other` and DOS
+    /// between the two standard ones, so a value carried across a family
+    /// switch can be one the new family does not offer, and
+    /// `choose_family` has to put it back.
     video: Video,
     /// Which Direct3D 9 the host runs the executor on (`D3d9`). No
-    /// family dimension and so no `_chosen` flag beside it: it is a
-    /// property of the host, and the same three entries on every
+    /// `_chosen` flag, because it does not depend on the family: it is a
+    /// property of the host, with the same three entries on every
     /// machine that has our adapter.
     d3d9: D3d9,
     /// Whether the adapter in the field is one somebody picked, the way
     /// `ram_chosen` works for the memory. Until it is, switching family
-    /// moves it to the new family's default; once it is, it survives the
-    /// switch — unless the new family does not offer it at all, which no
-    /// flag can rescue. It was missing until 2026-09-09, so a new
-    /// machine switched from 98 to XP kept the Cirrus, which was 98's
-    /// default then and XP's *non*-default, and the same for the three
-    /// fields below.
+    /// moves it to the new family's default. Once it is, it survives the
+    /// switch, unless the new family does not offer it at all. Without
+    /// this flag, a new machine switched from 98 to XP kept the Cirrus,
+    /// 98's default at the time and not XP's; the same holds for the
+    /// three fields below.
     video_chosen: bool,
     /// The sound card, and what is on the MIDI port (doc 20 §6).
     /// Private for the same reason `video` is: each family offers a
@@ -163,11 +156,10 @@ pub struct Form {
     /// start, so `submit` says so instead (doc 20 §4).
     pub mt32_roms: String,
     /// What a host gamepad does for this machine (M13). Private for the
-    /// same reason `video` is, and since path A for a concrete one: `Usb`
-    /// is offered on the Windows families and on `Other` but never on
-    /// DOS, which has no USB stack, so a value carried across a family
-    /// switch can be one the new family does not offer and
-    /// `choose_family` has to put it back.
+    /// same reason `video` is: `Usb` is offered on the Windows families
+    /// and on `Other` but never on DOS, which has no USB stack, so a
+    /// value carried across a family switch can be one the new family
+    /// does not offer and `choose_family` has to put it back.
     pad: Pad,
     pad_chosen: bool,
     pub existing_disk: bool,
@@ -200,14 +192,13 @@ pub struct Form {
     accel: Accel,
     /// Same as `ram_chosen`, for the accelerator: until someone picks
     /// one, the family's own default follows the family (Win98 is
-    /// emulated, XP is automatic — `bundle::default_accel`).
+    /// emulated, XP is automatic; `bundle::default_accel`).
     accel_chosen: bool,
     /// Whether the machine gets a network adapter at all. Follows the
     /// family until someone touches it, like memory and the accelerator
-    /// — `bundle::default_network`, which since 2026-09-07 is off for
-    /// every family. The follow is still what keeps the form and
-    /// `Machine::reference` from disagreeing about a new machine, which
-    /// they did, briefly, on 2026-09-06.
+    /// (`bundle::default_network`, currently off for every family). The
+    /// follow keeps the form and `Machine::reference` agreeing about a
+    /// new machine.
     network: bool,
     network_chosen: bool,
     /// Whether the host pointer walks into this machine (the USB tablet)
@@ -220,21 +211,21 @@ pub struct Form {
     /// with and no `_chosen` flag.
     voodoo2: bool,
     /// The card's dither undone at scanout (doc 21 §12). Off unless
-    /// picked, like the card itself, and only meaningful with it — the
+    /// picked, like the card itself, and only meaningful with it. The
     /// form turns it off with the card rather than keeping a setting
     /// that reaches no device.
     voodoo2_undither: bool,
-    /// The CPU the guest should feel like, with the same rule — it is
-    /// the field that makes a DOS machine a DOS machine, so switching
-    /// family to DOS must bring it along.
+    /// The CPU the guest should feel like, with the same rule. It is the
+    /// field that makes a DOS machine a DOS machine, so switching family
+    /// to DOS must bring it along.
     cpu_speed: CpuSpeed,
     cpu_speed_chosen: bool,
     /// Which of our own emulator fast paths this machine runs with.
     /// Private like the fields above, though nothing here follows the
-    /// family: a checkbox that is *off* is a diagnosis someone is in the
-    /// middle of, and `choose_optimization` is the only way to set one,
-    /// which is what keeps the "only the difference is stored" rule
-    /// (`Optimizations::set`) out of two front ends.
+    /// family: a checkbox that is off means someone is in the middle of
+    /// a diagnosis. `choose_optimization` is the only way to set one,
+    /// which keeps the "only the difference is stored" rule
+    /// (`Optimizations::set`) out of the front ends.
     optimizations: Optimizations,
 
     /// Whether this host can give a guest KVM. Read once when the form
@@ -242,10 +233,9 @@ pub struct Form {
     /// bare `exists()` misses the "not in the `kvm` group" case), and
     /// the answer cannot change while a form is on screen.
     have_kvm: bool,
-    /// The same, for the guest's 3D (`host_gpu`, ADR-013), and for the
-    /// same reason twice over: a probe is a whole `VkInstance`, and the
-    /// answer cannot change while a form is on screen. `cached` so that
-    /// every window opened in one session pays for it once.
+    /// The same, for the guest's 3D (`host_gpu`, ADR-013): a probe is a
+    /// whole `VkInstance`, and the answer cannot change while a form is
+    /// on screen. `cached`, so one session pays for it once.
     host_gpu: host_gpu::HostGpu,
     editing: Option<EditTarget>,
     /// The page on show. Every open starts on the first; a front end
@@ -309,9 +299,8 @@ impl Form {
         *self = Form { open: true, ..Default::default() };
     }
 
-    /// The same, starting on a given family — everything that follows
-    /// from it (memory, the accelerator, the processor, the NIC) comes
-    /// with it.
+    /// The same, starting on a given family, with everything that
+    /// follows from it (memory, the accelerator, the processor, the NIC).
     pub fn open_new(&mut self, family: Family) {
         self.open_fresh();
         self.choose_family(family);
@@ -327,7 +316,7 @@ impl Form {
             ram_mb: machine.ram_mb,
             // An existing machine's memory is a chosen value, whatever
             // it came from: changing family must not rewrite it. Same
-            // for the other three.
+            // for the fields below.
             ram_chosen: true,
             accel: machine.effective_accel(),
             accel_chosen: true,
@@ -372,10 +361,10 @@ impl Form {
         };
     }
 
-    /// The same, from a bundle path — what a front end that addresses
-    /// windows by path (the Qt one does; every window there re-reads the
-    /// bundle rather than being handed a copy) needs. The load error, if
-    /// any, lands in `error` and the form does not open.
+    /// The same, from a bundle path, for a front end that addresses
+    /// windows by path (Qt does; every window there re-reads the bundle
+    /// rather than being handed a copy). The load error, if any, lands
+    /// in `error` and the form does not open.
     pub fn open_edit_path(&mut self, bundle_path: PathBuf) {
         match Machine::load(&bundle_path) {
             Ok(machine) => self.open_edit(&machine, bundle_path),
@@ -411,15 +400,15 @@ impl Form {
         self.section = section;
     }
 
-    /// The bundle being edited, `None` for a new machine — the form's
-    /// identity, for a front end that keeps something per machine (the
-    /// Qt window keeps its scroll position while the same machine is
-    /// reopened and starts at the top for another, 2026-09-22).
+    /// The bundle being edited, `None` for a new machine. This is the
+    /// form's identity, for a front end that keeps something per machine
+    /// (the Qt window keeps its scroll position while the same machine is
+    /// reopened and starts at the top for another).
     pub fn bundle_path(&self) -> Option<&Path> {
         self.editing.as_ref().map(|e| e.bundle_path.as_path())
     }
 
-    /// "Edit machine" or "New machine" — the window's own title.
+    /// "Edit machine" or "New machine", the window's own title.
     pub fn title(&self) -> &'static str {
         if self.is_editing() {
             "Edit machine"
@@ -459,15 +448,13 @@ impl Form {
             self.seamless_mouse = bundle::default_seamless_mouse(family);
         }
         // The adapter, the card, the MIDI port and the gamepad take the
-        // new family's default on **either** of two counts, where the
-        // fields above have only the first. Nobody has picked one, so it
-        // is following the family like everything else — a new machine
-        // moved from 98 to XP has to arrive on XP's AC'97, not sit on
-        // the SB16 that was 98's. Or somebody did pick one and the new
-        // family does not offer it at all, which no flag can rescue: our
-        // own adapter is not on offer for BeOS, a Gravis is not on offer
-        // to XP, an ES1370 not to DOS, and a `Usb` pad needs a USB stack
-        // DOS has not got.
+        // new family's default on either of two counts, where the fields
+        // above have only the first. Either nobody picked one, so it
+        // follows the family like everything else (a new machine moved
+        // from 98 to XP has to arrive on XP's AC'97, not keep 98's SB16),
+        // or somebody did and the new family does not offer it at all.
+        // Our own adapter is not offered for BeOS, a Gravis not to XP, an
+        // ES1370 not to DOS, and a `Usb` pad needs a USB stack DOS lacks.
         if !self.sound_chosen || !bundle::sound_choices(family).contains(&self.sound) {
             self.sound = bundle::default_sound(family);
         }
@@ -489,13 +476,11 @@ impl Form {
     }
 
     /// What picking this family means, under the picker. Only `Other`
-    /// has anything to say: the other three *are* the reference machines
-    /// doc 06 describes and everything else on the form explains itself,
-    /// while `Other` is defined by the two things it does not get — our
-    /// display driver and the 3D pass-through, both of which are
-    /// Windows-only — and by hardware chosen for guests we cannot test
-    /// here. Someone finding out afterwards would find out by installing
-    /// an OS onto it.
+    /// has anything to say. The other three are the reference machines
+    /// doc 06 describes. `Other` is defined by what it does not get (our
+    /// display driver and the 3D pass-through, both Windows-only) and by
+    /// hardware chosen for guests we cannot test here, and without the
+    /// note someone would find that out by installing an OS onto it.
     pub fn family_note(&self) -> Option<&'static str> {
         (self.family == Family::Other).then_some(
             "For an era OS other than Windows or DOS: BeOS, a period Linux, OS/2. \
@@ -517,10 +502,10 @@ impl Form {
         self.ram_mb == bundle::default_ram_mb(self.family)
     }
 
-    /// Set the memory, clamped to the family's range — a value outside
-    /// it is corrected here rather than refused at save time, so the
-    /// form cannot produce a Win98 machine with more memory than Win98
-    /// can boot with.
+    /// Set the memory, clamped to the family's range. A value outside it
+    /// is corrected here rather than refused at save time, so the form
+    /// cannot produce a Win98 machine with more memory than Win98 can
+    /// boot with.
     pub fn choose_ram_mb(&mut self, ram_mb: u32) {
         let range = self.ram_range();
         self.ram_mb = ram_mb.clamp(*range.start(), *range.end());
@@ -537,9 +522,9 @@ impl Form {
             Family::Win98 if self.ram_mb >= *self.ram_range().end() => {
                 Some("512 MB is the most Windows 98 can boot with.")
             }
-            // The range cannot enforce this one — it depends on which OS
-            // is going in, and the whole point of the family is that we
-            // don't know. A period Linux is happy with 3 GB.
+            // The range cannot enforce this one: it depends on which OS
+            // is going in, which this family does not know. A period
+            // Linux is happy with 3 GB.
             Family::Other if self.ram_mb > 1024 => {
                 Some("BeOS R5 won't boot with more than 1 GB. Most other systems of the era are fine.")
             }
@@ -596,8 +581,8 @@ impl Form {
         self.accel_chosen = false;
     }
 
-    /// Whether this host has hardware acceleration — the picker alone
-    /// would leave "Automatic" meaning something invisible.
+    /// Whether this host has hardware acceleration, so "Automatic" in
+    /// the picker can say what it means here.
     pub fn have_kvm(&self) -> bool {
         self.have_kvm
     }
@@ -622,25 +607,27 @@ impl Form {
     }
 
     /// What this host will give the guest's 3D, under the acceleration
-    /// row (ADR-013). Not a picker, because there is nothing to pick: the
-    /// host settles it, and the only failure worth preventing is finding
-    /// out after the machine exists. The two families with no Direct3D to
-    /// place get no line: DOS, and `Other` — whose guests cannot reach
-    /// the pass-through at all, since the guest half of it is a set of
-    /// Windows DLLs (`family_note` says so once, where the choice is
-    /// made).
+    /// row (ADR-013). Not a picker, because the host settles it; the note
+    /// exists so nobody finds out after the machine exists. The two
+    /// families with no Direct3D get no line: DOS, and `Other`, whose
+    /// guests cannot reach the pass-through at all because its guest half
+    /// is a set of Windows DLLs (`family_note` says so once, where the
+    /// choice is made).
     ///
-    /// `warning` is true only for a software Vulkan driver — the
-    /// executor does run there, and slowly, which is the one case where
-    /// what the user sees will disappoint them. A host with no Vulkan at
-    /// all is a plain note: it runs every machine, through the OpenGL
-    /// pass-through with WineD3D in the guest, and nothing is wrong.
+    /// `warning` is true only for a software Vulkan driver: the executor
+    /// runs there, slowly, and that is the one case that will disappoint
+    /// the user. A host below Vulkan 1.3 gets a plain note: Windows runs
+    /// the executor on its own Direct3D 9, Linux and macOS on Wine's when
+    /// a Wine and the executor's Windows build are there
+    /// (`host_gpu::D3dBackend`). Only a host with none of these
+    /// (`D3dBackend::None`) has no executor, and its guest falls back to
+    /// WineD3D over the OpenGL pass-through.
     ///
-    /// On such a host with our adapter picked, the note also says to keep
-    /// it: the guest driver asks the host for an executor before it offers
-    /// Direct3D, so only that half goes, and the Cirrus has no Direct3D
-    /// either while losing the flip chain's pacing, 8 bpp palettes and
-    /// the cursor. Switching adapters would cost a driver install for
+    /// On that last host with our adapter picked, the note also says to
+    /// keep it. The guest driver asks the host for an executor before it
+    /// offers Direct3D, so only that half goes. The Cirrus has no
+    /// Direct3D either and loses the flip chain's pacing, 8 bpp palettes
+    /// and the cursor. Switching adapters would cost a driver install for
     /// nothing, and the image may later move to a host that has Vulkan.
     pub fn graphics_note(&self) -> Option<AccelNote> {
         if matches!(self.family, Family::Dos | Family::Other) {
@@ -666,13 +653,13 @@ impl Form {
         self.network_chosen = true;
     }
 
-    /// One checkbox, because there is one question: does this machine
-    /// have a network card. What it gets when it does is QEMU's
-    /// user-mode NAT (doc 06's per-family NIC), which needs no host
-    /// privileges and gives nothing on the network a way in — worth
-    /// saying, since "networking" otherwise sounds like the guest is
-    /// being put on the LAN. And worth saying once, next to the switch,
-    /// that these guests stopped getting security fixes twenty years ago.
+    /// One checkbox for one question: does this machine have a network
+    /// card. When it does, it gets QEMU's user-mode NAT (doc 06's
+    /// per-family NIC), which needs no host privileges and lets nothing
+    /// on the network in. The note says so, since "networking" otherwise
+    /// sounds like the guest is put on the LAN, and says once, next to
+    /// the switch, that these guests stopped getting security fixes
+    /// twenty years ago.
     pub fn network_notes(&self) -> &'static [&'static str] {
         if self.network {
             &[
@@ -697,8 +684,8 @@ impl Form {
         self.voodoo2
     }
 
-    /// Under the "Extra QEMU arguments" field: what it is for, and a
-    /// quote left open said while the form is still there to fix it
+    /// Under the "Extra QEMU arguments" field: what it is for, or a
+    /// quote left open, reported while the form is still there to fix it
     /// (saving refuses it too).
     pub fn extra_qemu_args_note(&self) -> AccelNote {
         match bundle::split_args(&self.extra_qemu_args) {
@@ -715,8 +702,8 @@ impl Form {
     pub fn choose_voodoo2(&mut self, voodoo2: bool) {
         self.voodoo2 = voodoo2;
         if !voodoo2 {
-            // the setting belongs to the card: with no card it would
-            // reach no device, and leaving it ticked would say otherwise
+            // The setting belongs to the card: with no card it would
+            // reach no device, and leaving it ticked would say otherwise.
             self.voodoo2_undither = false;
         }
     }
@@ -735,21 +722,18 @@ impl Form {
         self.voodoo2_undither = undither && self.voodoo2;
     }
 
-    /// The sentence under the pair. What it has to carry is what the
-    /// setting is *not*: not a smoothing filter with a taste to it, but
-    /// the dither arithmetically undone, so nothing that was drawn sharp
-    /// comes back soft — and that it costs main-loop time per frame,
-    /// which is the reason it is not simply always on. Nothing without
-    /// the card: the greyed box beside the card's own says enough, and a
-    /// sentence explaining a setting that cannot be reached was noise
-    /// (user, 2026-09-22).
+    /// The sentence under the pair. It says the setting is not a
+    /// smoothing filter but the dither arithmetically undone, so nothing
+    /// drawn sharp comes back soft, and that it costs main-loop time per
+    /// frame, which is why it is not always on. Without the card there
+    /// is no sentence: the greyed box beside the card's own says enough.
     pub fn voodoo2_undither_notes(&self) -> &'static [&'static str] {
         if !self.voodoo2 {
             &[]
         } else if self.voodoo2_undither {
             &[
-                "The card stores 16-bit colour through a dither pattern. This puts the original colour back by inverting that pattern, so skies, shading and light pools come out smooth instead of speckled.",
-                "Textures and edges are left exactly as they were: where no single colour could have made a group of pixels, nothing is changed. Costs about 1.4 ms per frame on the host.",
+                "Undoes the card's 16-bit dither pattern, so skies and shading come out smooth instead of speckled.",
+                "Textures and edges stay exactly as drawn. Costs about 1.4 ms per frame on the host.",
             ]
         } else {
             &["The card's 16-bit dither pattern is shown as the chip wrote it."]
@@ -757,11 +741,11 @@ impl Form {
     }
 
     /// One checkbox: is there a 3dfx Voodoo 2 in the machine (doc 21).
-    /// What the sentences have to carry is the one thing that is not
-    /// obvious from the name — that the card is a second display device
-    /// the guest needs 3dfx's own driver for, and that a Glide game
-    /// picks the chip or the pass-through by which `glide2x.dll` it
-    /// loads — and, off, that Glide is not gone with it.
+    /// The sentences carry what the name does not say: the card is a
+    /// second display device that needs 3dfx's own driver in the guest,
+    /// and a Glide game picks the chip or the pass-through by which
+    /// `glide2x.dll` it loads. With the box off, they say Glide still
+    /// works.
     pub fn voodoo2_notes(&self) -> &'static [&'static str] {
         if self.voodoo2 {
             &[
@@ -773,20 +757,19 @@ impl Form {
         }
     }
 
-    /// One checkbox again, because there is one question: does the host
-    /// pointer walk into this machine, or does the window take it. Both
-    /// answers are right for something — a desktop wants the first, a
-    /// game that turns the view with the mouse needs the second — so
-    /// what the sentences have to carry is the hotkey (a grabbed pointer
-    /// with no way out is the worst thing this form can produce) and the
+    /// One checkbox for one question: does the host pointer walk into
+    /// this machine, or does the window take it. A desktop wants the
+    /// first, and a game that turns the view with the mouse needs the
+    /// second. So the sentences carry the hotkey (a grabbed pointer with
+    /// no way out is the worst thing this form can produce) and the
     /// symptom that sends someone back here: mouselook against an
-    /// absolute device does not turn, it sticks.
+    /// absolute device sticks instead of turning.
     ///
-    /// DOS is worth catching before the machine exists rather than
-    /// after: its mouse drivers read the PS/2 controller, so a tablet
-    /// leaves such a guest with no pointer at all. `Other` ships with the
-    /// tablet off for the softer version of that (`default_seamless_mouse`)
-    /// and says what to look for if someone turns it on.
+    /// DOS is caught before the machine exists: its mouse drivers read
+    /// the PS/2 controller, so a tablet leaves such a guest with no
+    /// pointer at all. `Other` has the tablet off by default for a milder
+    /// version of that (`default_seamless_mouse`) and says what to look
+    /// for if someone turns it on.
     pub fn seamless_mouse_notes(&self) -> &'static [&'static str] {
         match (self.seamless_mouse, self.family) {
             (true, Family::Dos) => &[
@@ -819,9 +802,8 @@ impl Form {
         self.optimizations.set(opt, on);
     }
 
-    /// Every fast path back on its shipped setting — the way out of a
-    /// diagnosis session, and the only button in that section that
-    /// someone will look for.
+    /// Every fast path back on its shipped setting: the way out of a
+    /// diagnosis session.
     pub fn reset_optimizations(&mut self) {
         self.optimizations.reset();
     }
@@ -830,9 +812,9 @@ impl Form {
         self.optimizations.all_default()
     }
 
-    /// Every switch off at once: the control run for "is one of ours
-    /// what broke this guest", which is otherwise fourteen clicks and easy
-    /// to get half-right.
+    /// Every switch off at once: the control run for "did one of ours
+    /// break this guest", otherwise fourteen clicks and easy to get
+    /// half-right.
     pub fn disable_all_optimizations(&mut self) {
         self.optimizations.disable_all();
     }
@@ -858,10 +840,9 @@ impl Form {
         self.optimizations.summary()
     }
 
-    /// The one thing worth saying above the switches: on a machine that
-    /// is about to run on KVM they are all inert, because the guest's
-    /// instructions are then executed by the host CPU and there is no
-    /// emulator in the path to have a fast path.
+    /// The line above the switches. On a machine that will run on KVM
+    /// they all do nothing, because the host CPU executes the guest's
+    /// instructions and no emulator is in the path.
     pub fn optimizations_note(&self) -> &'static str {
         if self.will_use_kvm() {
             "This machine runs on KVM, where these have no effect: they are speed-ups in the emulator. \
@@ -875,9 +856,9 @@ impl Form {
         }
     }
 
-    /// Whether this machine, as the form currently stands, will actually
-    /// run on KVM: what `effective_accel` decides, plus what this host
-    /// has — `Automatic` on a box without `/dev/kvm` is emulation.
+    /// Whether this machine, as the form stands, will run on KVM: what
+    /// `effective_accel` decides, plus what this host has. `Automatic` on
+    /// a box without `/dev/kvm` is emulation.
     fn will_use_kvm(&self) -> bool {
         self.cpu_speed.icount_shift().is_none()
             && match self.accel {
@@ -891,19 +872,19 @@ impl Form {
         self.video
     }
 
-    /// Which adapters this machine's family offers, first one its
-    /// default — what a picker fills itself from, so no front end has to
-    /// know that Windows is offered a different pair than `Other`.
+    /// Which adapters this machine's family offers, its default first.
+    /// A picker fills itself from this, so no front end has to know that
+    /// Windows is offered a different pair than `Other`.
     pub fn video_choices(&self) -> &'static [Video] {
         bundle::video_choices(self.family)
     }
 
     /// Whether there is an adapter to choose at all, so a front end
     /// shows or hides the row without knowing which family that is.
-    /// Every family offers a pair today — DOS since 2026-09-09 — so this
-    /// is true throughout; it stays because the answer is
-    /// `video_choices`'s to give and a family that gains a fixed adapter
-    /// should not need a front end changed.
+    /// Every family offers a pair today, so this is always true. It
+    /// stays because the answer is `video_choices`'s to give, and a
+    /// family that gains a fixed adapter should not need a front end
+    /// changed.
     pub fn video_applies(&self) -> bool {
         !self.video_choices().is_empty()
     }
@@ -941,15 +922,13 @@ impl Form {
         self.d3d9 = D3d9::Auto;
     }
 
-    /// The line under the picker: what the entry in the field means
-    /// here, and — for `Auto`, the only one that asks the host anything
-    /// — what this host will actually do with it: the host's own
-    /// headline and advice (`host_gpu`), which the Qt form used to show
-    /// as a line of its own under the display adapter until 2026-09-22
-    /// (user: out of place beside this picker, which is the one it
-    /// answers). `graphics_note()` still carries that line for a front
-    /// end with no Direct3D picker. Orange only for the software Vulkan
-    /// driver, the case that runs and disappoints.
+    /// The line under the picker: what the entry in the field means.
+    /// For `Auto`, the only entry that asks the host anything, it adds
+    /// what this host will do with it, the host's own headline and advice
+    /// (`host_gpu`). That line belongs beside this picker, the one it
+    /// answers; `graphics_note()` carries it for a front end with no
+    /// Direct3D picker. A warning only for the software Vulkan driver,
+    /// the case that runs and disappoints.
     pub fn d3d9_note(&self) -> AccelNote {
         let mut text = self.d3d9.note().to_string();
         let mut warning = false;
@@ -978,9 +957,9 @@ impl Form {
         }
     }
 
-    /// Back to this family's default — and back to *following* the
-    /// family, so a later switch moves it again. "Default" means the
-    /// field was never really touched.
+    /// Back to this family's default, and back to following the family,
+    /// so a later switch moves it again. "Default" means the field was
+    /// never really touched.
     pub fn reset_video(&mut self) {
         if let Some(default) = bundle::default_video(self.family) {
             self.video = default;
@@ -988,10 +967,10 @@ impl Form {
         }
     }
 
-    /// What the chosen adapter means *for this family*. The same Cirrus
-    /// is Windows' in-box driver on one machine and a period XFree86
-    /// driver on another, and what it costs is different too: on Windows
-    /// it is the whole display path (docs 15, 19) that goes with it.
+    /// What the chosen adapter means for this family. The same Cirrus is
+    /// Windows' in-box driver on one machine and a period XFree86 driver
+    /// on another, and it costs different things: on Windows, picking it
+    /// gives up our whole display path (docs 15, 19).
     pub fn video_notes(&self) -> &'static [&'static str] {
         match (self.video, self.family) {
             (Video::D3dpt, _) => &[
@@ -1076,11 +1055,10 @@ impl Form {
     /// The shader picker's rows: the app default first, then every
     /// profile of the library by name, in `shader_library::scan`'s
     /// order. A front end hands the same `profiles` to the three verbs
-    /// below, so a row is a profile and nothing has to translate between
-    /// an index and an id in the widget. The Qt front end kept that
-    /// translation in the window until 2026-09-23, with a delegate of
-    /// its own to do it, and that was the one combo box in the form
-    /// that did not look like the others.
+    /// below, so a row is a profile and nothing in the widget translates
+    /// between an index and an id. When the Qt window did that itself it
+    /// needed a delegate of its own, and its combo box looked unlike the
+    /// others in the form.
     pub fn shader_profile_labels(profiles: &[ProfileEntry]) -> Vec<String> {
         std::iter::once(SHADER_DEFAULT_LABEL.to_string())
             .chain(profiles.iter().map(|e| e.profile.name.clone()))
@@ -1126,9 +1104,9 @@ impl Form {
         self.music == Music::Mt32
     }
 
-    /// What the card does for the guest's *music*, which is the half of
-    /// this screen that is not obvious: whether the machine has FM at
-    /// all, and what the guest has to do before it hears anything.
+    /// What the card does for the guest's music, the part of this screen
+    /// that is not obvious: whether the machine has FM at all, and what
+    /// the guest has to do before it hears anything.
     pub fn sound_notes(&self) -> &'static [&'static str] {
         match (self.sound, self.family) {
             (Sound::Sb16, Family::Dos) => &[
@@ -1199,15 +1177,14 @@ impl Form {
         )
     }
 
-    /// The one thing worth saying above the picker rather than under one
-    /// of its entries: changing this on a machine that already has an OS
-    /// installed is a hardware change, and the guest will say so.
+    /// The warning above the picker rather than under one of its entries:
+    /// changing this on a machine that already has an OS installed is a
+    /// hardware change, and the guest will say so.
     ///
-    /// Except on DOS, where it is not: nothing is installed for an
-    /// adapter there, the machine simply boots. What can still be stale
-    /// is a *game's* own setup — a title that has already been through
-    /// its SETUP wrote down a video mode, and the two adapters do not
-    /// offer the same list — so that is what DOS is told instead.
+    /// Except on DOS, where nothing is installed for an adapter and the
+    /// machine simply boots. A game's own setup can still be stale: a
+    /// title that already ran its SETUP wrote down a video mode, and the
+    /// two adapters do not offer the same list. DOS is told that instead.
     pub fn video_warning(&self) -> Option<&'static str> {
         if !self.is_editing() || self.video_is_default_for_machine() {
             return None;
@@ -1236,15 +1213,15 @@ impl Form {
         self.pad
     }
 
-    /// What this family offers a gamepad, first one its default — what a
-    /// picker fills itself from.
+    /// What this family offers a gamepad, its default first. A picker
+    /// fills itself from this.
     pub fn pad_choices(&self) -> &'static [Pad] {
         bundle::pad_choices(self.family)
     }
 
-    /// Whether there is anything to choose. True on every family — even
-    /// DOS has `None` against `Keys` — but written against the model so a
-    /// front end's row does not depend on that staying true.
+    /// Whether there is anything to choose. True on every family (even
+    /// DOS has `None` against `Keys`), but asked of the model so a front
+    /// end's row does not depend on that staying true.
     pub fn pad_applies(&self) -> bool {
         self.pad_choices().len() > 1
     }
@@ -1267,11 +1244,10 @@ impl Form {
         self.pad_chosen = false;
     }
 
-    /// What the chosen setting means. `Keys` needs its limitation said
-    /// plainly and in the picker, not discovered: someone who turns it on
-    /// for a Direct3D game will otherwise conclude the pad is broken,
-    /// when what is actually true is that the game asked DirectInput and
-    /// there is no controller for it to find yet.
+    /// What the chosen setting means. `Keys` states its limitation in the
+    /// picker. Otherwise someone who turns it on for a Direct3D game
+    /// concludes the pad is broken, when the game asked DirectInput and
+    /// found no controller.
     pub fn pad_notes(&self) -> &'static [&'static str] {
         match self.pad {
             Pad::None => &[
@@ -1293,25 +1269,22 @@ impl Form {
         }
     }
 
-    /// The one thing worth saying above the picker: adding or removing a
-    /// controller *device* on a machine that already has an OS installed
-    /// is a hardware change, and the guest will notice on its next start.
-    /// The same sentence the adapter picker earns, for the same reason.
+    /// The warning above the picker: adding or removing a controller
+    /// device on a machine that already has an OS installed is a hardware
+    /// change the guest notices on its next start, as with the adapter.
     ///
-    /// Which sentence depends on which device, and that is the whole
-    /// reason this is not one line: Windows finds a USB pad by itself and
-    /// says so, and does **not** find a gameport at all — the port was
-    /// never Plug and Play, so it is Add New Hardware and then a
-    /// calibration pass. Telling someone Windows would handle it is worse
-    /// than saying nothing.
+    /// The sentence depends on the device. Windows finds a USB pad by
+    /// itself and does **not** find a gameport at all: the port was never
+    /// Plug and Play, so it needs Add New Hardware and then a calibration
+    /// pass. Telling someone Windows would handle it is worse than saying
+    /// nothing.
     ///
-    /// Both sentences point at the USB pad on 98 rather than leaving the
-    /// two devices as equals, because they are not: a USB pad reaches a
-    /// Windows game there through DirectInput *and* winmm's
+    /// Both sentences point at the USB pad on 98, because a USB pad
+    /// reaches a Windows game there through DirectInput and winmm's
     /// `joyGetPosEx` (measured, `pad-guest-98`), so the port's install
     /// steps buy a Windows game nothing. The port is still the right
-    /// answer for DOS, including a DOS box under Windows, and that is
-    /// what the picker's own note says.
+    /// answer for DOS, including a DOS box under Windows, and the
+    /// picker's own note says so.
     pub fn pad_warning(&self) -> Option<&'static str> {
         /// `Keys` and `None` are the same thing to the guest: no device.
         fn device(pad: Pad) -> Option<Pad> {
@@ -1339,8 +1312,8 @@ impl Form {
         })
     }
 
-    /// The one thing the boot picker can say that isn't obvious: a
-    /// machine told to boot from a floppy it hasn't got.
+    /// The boot picker's one non-obvious case: a machine told to boot
+    /// from a floppy it hasn't got.
     pub fn boot_note(&self) -> Option<&'static str> {
         (self.boot == Boot::Floppy && self.floppy.trim().is_empty())
             .then_some("No floppy image, so the machine will boot from the hard disk.")
@@ -1386,11 +1359,10 @@ impl Form {
         };
         // The form owns these for a new machine too, where `reference`
         // has just filled in the family defaults. The `*_chosen` flag
-        // decides, not the field's current contents: a form constructed
-        // without going through the family picker (`with_new_disk`, the
-        // headless verb) never had the chance to move the default along
-        // with it, and silently writing Win98's 256 MB into an XP
-        // machine is exactly the bug that produced.
+        // decides, not the field's current contents: a form built without
+        // the family picker (`with_new_disk`, the headless verb) never
+        // moved the default along, and once wrote Win98's 256 MB into an
+        // XP machine.
         machine.ram_mb = if self.ram_chosen { self.ram_mb } else { bundle::default_ram_mb(self.family) };
         // Written out explicitly either way: what the form showed is
         // what the machine gets, even when it is the family's default.
@@ -1411,20 +1383,18 @@ impl Form {
         // of "nothing" for almost every machine (`Optimizations`).
         machine.optimizations = self.optimizations.clone();
         machine.boot = Some(self.boot);
-        // Written only on a family that has a choice, so switching a
-        // machine to DOS cannot leave a `video` behind that the family
-        // ignores and the next reader has to wonder about.
+        // Written only when the family offers it, so a family switch
+        // cannot leave behind a `video` the new family ignores.
         machine.video = bundle::video_choices(self.family).contains(&self.video).then_some(self.video);
         machine.d3d9 = Some(self.d3d9);
         // Written out explicitly, like the accelerator: what the form
         // showed is what the machine gets, even when it is the family's
-        // default — a bundle that names its card cannot be changed
-        // under the user by a later change to what that default is.
+        // default. A bundle that names its card is not changed under the
+        // user by a later change to that default.
         machine.sound = Some(self.sound);
         machine.music = Some(self.music);
         // Only the user's own files, and only where they mean anything:
-        // a bank left behind on a machine whose port was turned off is a
-        // field the next reader has to wonder about.
+        // no bank is kept on a machine whose port was turned off.
         machine.soundfont = (self.music == Music::Gm)
             .then(|| Some(self.soundfont.trim()).filter(|f| !f.is_empty()).map(PathBuf::from))
             .flatten();
@@ -1432,14 +1402,12 @@ impl Form {
             .then(|| Some(self.mt32_roms.trim()).filter(|d| !d.is_empty()).map(PathBuf::from))
             .flatten();
         // Same rule as `video`: only a setting this family offers is
-        // written. Every family offers both today, so this always
-        // writes; the guard is here for when path A makes `Usb` a
-        // Windows-only entry and a machine switched to DOS must not
-        // keep it.
+        // written. DOS offers no `Usb` and XP/`Other` no `Gameport`
+        // (`bundle::pad_choices`), so a family switch must not keep one.
         machine.pad = bundle::pad_choices(self.family).contains(&self.pad).then_some(self.pad);
         machine.floppy = Some(self.floppy.trim()).filter(|f| !f.is_empty()).map(PathBuf::from);
         machine.shader_profile = self.shader_profile.clone();
-        // The single slot this form has is the machine's *boot* disc;
+        // The single slot this form has is the machine's boot disc;
         // everything else lives on the shared shelf (`disc_library.rs`).
         machine.disc = Some(self.install_media.trim()).filter(|m| !m.is_empty()).map(PathBuf::from);
         machine
@@ -1472,9 +1440,8 @@ impl Form {
             return Err(std::io::Error::other("A name is required."));
         }
         // The one field with no default and no fallback: an MT-32
-        // machine with no ROMs is a machine that fails to start, and
-        // failing here says so while there is still a form to fix it in
-        // (doc 20 §4).
+        // machine with no ROMs fails to start, and failing here says so
+        // while there is still a form to fix it in (doc 20 §4).
         if self.music == Music::Mt32 && self.mt32_roms.trim().is_empty() {
             return Err(std::io::Error::other(
                 "The Roland MT-32 needs a folder with your own CM-32L ROM images.",

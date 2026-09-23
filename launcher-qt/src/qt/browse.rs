@@ -1,13 +1,12 @@
 //! "Browse…" for QML's dialogs (`launcher_core::browse`), as one small
 //! QObject every path field and folder button makes its own copy of.
 //!
-//! Nothing here decides anything: where a dialog opens is
-//! `browse::browse_start`'s answer — the field's value, the caller's
-//! suggestion, the directory the last dialog was browsing — and what it
-//! remembers is `browse::remember`'s. This turns paths into the URLs
-//! Qt's dialogs take and back, with `QUrl`'s own local-file rules rather
-//! than a `file://` prefix glued on, which a Windows drive letter does
-//! not survive.
+//! Nothing here decides anything. Where a dialog opens is
+//! `browse::browse_start`'s answer (the field's value, the caller's
+//! suggestion, the directory the last dialog was browsing), and what it
+//! remembers is `browse::remember`'s. This turns paths into the URLs Qt's
+//! dialogs take and back, with `QUrl`'s own local-file rules rather than
+//! a `file://` prefix glued on, which breaks a Windows drive letter.
 
 #[cxx_qt::bridge]
 pub mod ffi {
@@ -35,8 +34,8 @@ pub mod ffi {
         fn local_path(self: &Browse, url: &QUrl) -> QString;
 
         /// The URL a dialog hands back for the file at `path`
-        /// (`QUrl::fromLocalFile`) — how a probe, which cannot open a
-        /// dialog, still takes the dialog's road into `local_path`.
+        /// (`QUrl::fromLocalFile`), so a probe, which cannot open a
+        /// dialog, still takes the dialog's path into `local_path`.
         #[qinvokable]
         fn file_url(self: &Browse, path: &QString) -> QUrl;
 

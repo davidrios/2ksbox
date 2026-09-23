@@ -4,7 +4,7 @@ device's packer writes (M13 path A, docs/tracks/m13-gamepads.md).
 
 A HID report descriptor is a byte string a guest's driver parses, and a
 wrong one does not fail: Windows enumerates the device, joy.cpl shows it,
-and it has no axes — or it has axes whose values come from the wrong bits.
+and it has no axes, or it has axes whose values come from the wrong bits.
 Nothing on this side notices, because nothing on this side reads it.
 
 So this reads the bytes the device actually ships (out of the C array in
@@ -13,7 +13,7 @@ three things that would each produce a plausible-looking, broken pad:
 
   * the collections balance, and the descriptor ends at depth 0;
   * the input items total exactly GAMEPAD_REPORT_LEN bytes, which is what
-    usb_gamepad_poll() writes — a mismatch means the driver reads fields
+    usb_gamepad_poll() writes. A mismatch means the driver reads fields
     out of a report that does not have them;
   * the usages the guest looks for are declared: four axes, a hat *with a
     null state* (without it a released hat reads as north), and twelve

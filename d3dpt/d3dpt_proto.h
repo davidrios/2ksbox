@@ -1,5 +1,5 @@
 /*
- * d3dpt_proto.h — the paravirtual Direct3D device protocol (doc 14, ADR-006).
+ * d3dpt_proto.h: the paravirtual Direct3D device protocol (doc 14, ADR-006).
  *
  * ONE header for every side: the guest d3d9.dll (32-bit mingw, C), the
  * QEMU device model (hw/d3dpt, C), the host decoder/executor
@@ -313,8 +313,8 @@ typedef struct d3dpt_vram_surface {
 #define D3DPT_VS_CUBE           0x20u    /* v11: a cube texture (with D3DPT_VS_TEXTURE, and D3DPT_VS_RENDER_TARGET for a
                                           * render-target cube): width = height = the edge, levels per face, the
                                           * record's offset / pitch face 0's level 0, and the tail 6 * levels - 1
-                                          * {offset, pitch} pairs, face-major — face 0's levels 1.., then face 1's
-                                          * levels 0.., … — faces in D3DCUBEMAP_FACES order (+X -X +Y -Y +Z -Z) */
+                                          * {offset, pitch} pairs, face-major (face 0's levels 1.., then face 1's
+                                          * levels 0.., …), faces in D3DCUBEMAP_FACES order (+X -X +Y -Y +Z -Z) */
 #define D3DPT_CUBE_FACES        6u
 #define D3DPT_VS_VOLUME         0x40u    /* v12: a volume texture (with D3DPT_VS_TEXTURE, never a render target): width,
                                           * height, pitch and offset are level 0's first slice, the tail the levels - 1
@@ -383,8 +383,8 @@ typedef struct d3dpt_dp2 {
  * its vertices: nverts * stride bytes (padded to 4), or with
  * D3DPT_DRAW8_VRAM_VB in its own flags one d3dpt_u32x2 {buffer handle,
  * byte offset of vertex 0} as for stream 0. Stream numbers are 1..15, in
- * increasing order. Every stream covers the same vertex range — vertex i
- * of the draw is element i of each — because a DX8 draw indexes all its
+ * increasing order. Every stream covers the same vertex range (vertex i
+ * of the draw is element i of each), because a DX8 draw indexes all its
  * streams with one vertex number. Only a draw under a vertex shader handle
  * carries more than stream 0 (an FVF reads stream 0 alone), and the driver
  * sends every stream bound at the time it can resolve: the host takes the

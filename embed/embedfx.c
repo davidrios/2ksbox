@@ -1,5 +1,5 @@
 /*
- * embedfx.c — qemu-3dfx UI provider for the embed library (patch 30's
+ * embedfx.c: qemu-3dfx UI provider for the embed library (patch 30's
  * QemuFxUiOps). No window: the backend's pbuffer is the drawable, so the
  * Mesa entry points just acknowledge, report activation to the frontend
  * and answer size queries.
@@ -195,7 +195,7 @@ static int fx_glide_gui_fullscreen(int *width, int *height)
     }
     /*
      * "Fullscreen" here means the drawable is the Glide resolution and
-     * nothing in QEMU rescales it -- the same bargain mesa_gui_fullscreen
+     * nothing in QEMU rescales it, the same bargain mesa_gui_fullscreen
      * makes by reporting the drawable size as the target size. It also
      * stops glidewnd.c upscaling a 640x480 game to the desktop's width,
      * which would hand the player a frame the CRT presets are not

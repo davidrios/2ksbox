@@ -1,48 +1,48 @@
 # QEMU patch queue
 
 Every change 2ksbox makes to QEMU. The tree is the pinned submodule
-`qemu/` at v9.2.4 — the newest release qemu-3dfx's `00-qemu92x` patch
-supports — plus qemu-3dfx (`third_party/qemu-3dfx`), plus the patches in
-this directory. The design behind the larger patches lives in the design
-docs (x87 doc 13, SSE doc 16, pinned registers doc 18, CD-ROM doc 17,
-music doc 20, Voodoo 2 doc 21); the measured effect of the TCG patches as
-a whole is doc 22. Test tools named here are described in
-`docs/testing.md`.
+`qemu/` at v9.2.4, the newest release qemu-3dfx's `00-qemu92x` patch
+supports, plus qemu-3dfx (`third_party/qemu-3dfx`), plus the patches in
+this directory. The larger patches are designed in the numbered docs
+(x87 doc 13, SSE doc 16, pinned registers doc 18, CD-ROM doc 17, music
+doc 20, Voodoo 2 doc 21), and doc 22 measures the TCG patches as a
+whole. The test tools named here are in `docs/testing.md`.
 
 ## How prepare builds the tree
 
-`scripts/prepare-qemu.sh` is deterministic and re-does everything on each
-run (`scripts/build.sh` skips it while its inputs hash the same, and `-f`
-forces it):
+`scripts/prepare-qemu.sh` is deterministic and redoes everything on each
+run. `scripts/build.sh` skips it while its inputs hash the same, and
+`-f` forces it. The steps:
 
-1. **Overlays** are rsynced in: qemu-3dfx's `hw/3dfx` and `hw/mesa`;
+1. **Overlays.** Prepare rsyncs in qemu-3dfx's `hw/3dfx` and `hw/mesa`;
    `embed/` → `qemu/embed/`; `d3dpt/hw/` → `hw/d3dpt/` with the protocol
    headers; `voodoo/` → `hw/voodoo/`; `libsynth/qemu/` → `hw/audio/`
    (`opl3.c`, `mpu401.c`); `libdisc/qemu/` → `block/cdimage.c` and
    `include/block/`; `gamepad/qemu/` → `hw/usb/dev-gamepad.c` and
    `hw/input/gameport.c`. Our own device code is these overlays, edited
-   in the repo; a patch only wires it into QEMU's build and machines.
-2. **Restore**: every tracked file any patch touches is checked out
+   in the repo. A patch only wires it into QEMU's build and machines.
+2. **Restore.** Every tracked file any patch touches is checked out
    pristine, and every file a patch creates is deleted.
-3. **Apply** qemu-3dfx's `00-qemu92x-mesa-glide.patch`, then this queue in
-   filename order with `git apply` (a patch that does not apply stops the
-   run and prints why). Text before a patch's first diff header is
-   ignored, and most patches use it for a paragraph on what they do and
-   why — read it alongside the entry below.
-4. **Blobs**, which a patch cannot carry: the legacy BIOS date in every
+3. **Apply.** qemu-3dfx's `00-qemu92x-mesa-glide.patch`, then this queue
+   in filename order with `git apply`. A patch that does not apply stops
+   the run and prints why. `git apply` ignores the text before a patch's
+   first diff header, and most patches hold a paragraph there on what
+   they do and why. Read it alongside the entry below.
+4. **Blobs**, which a patch cannot carry. The legacy BIOS date in every
    `pc-bios/bios*.bin` is restored from git and stamped from SeaBIOS's
-   06/23/99 to `12/31/99`, because Windows 98 setup installs ACPI (and so
-   enumerates the PCI bus at all) only when that date is at least its
+   06/23/99 to `12/31/99`. Windows 98 setup installs ACPI, and so
+   enumerates the PCI bus at all, only when that date is at least its
    `ACPICheckDate`, 12/01/99 (doc 06; the `bios-date` check). Then
-   `firmware/vgabios-{stdvga,cirrus}.bin` are copied over QEMU's own —
-   the VGA BIOS built from `patches/seabios/` (VBE 4F09h).
-5. qemu-3dfx's `sign_commit` stamps its commit into `hw/3dfx` and
-   `hw/mesa`; the guest wrappers must be built from the same commit
-   (`guest-tools/build-wrappers.sh` does that).
+   `firmware/vgabios-{stdvga,cirrus}.bin`, the VGA BIOS built from
+   `patches/seabios/` (VBE 4F09h), are copied over QEMU's own.
+5. **Sign.** qemu-3dfx's `sign_commit` stamps its commit into `hw/3dfx`
+   and `hw/mesa`. The guest wrappers must be built from the same commit,
+   which `guest-tools/build-wrappers.sh` does.
 
 **Never `git checkout` files inside `qemu/` by hand between prepare runs**,
-and never rely on "already applied" heuristics: a partial tree once
-silently lost the 3dfx meson hunk (symptom: `unknown type 'glidept'`).
+and never rely on "already applied" heuristics. A partial tree once
+lost the 3dfx meson hunk without a word, and the build failed with
+`unknown type 'glidept'`.
 
 ## Editing or adding a patch
 
@@ -54,17 +54,17 @@ before it produce:
 2. Diff: `git diff --no-prefix --no-index a b` from two copies laid out as
    `a/<path>` and `b/<path>`; a new file needs a `--- /dev/null` header.
    Put a paragraph of what and why above the first header.
-3. Prove it from pristine: `prepare-qemu.sh` twice (both runs must apply
-   everything), then build. A reverse check against an edited tree proves
+3. Prove it from pristine. Run `prepare-qemu.sh` twice (both runs must
+   apply everything), then build. A reverse check against an edited tree proves
    nothing.
 
 **When a later patch touches the same files.** Editing patch N can shift
 the context a later patch M depends on, and `git apply` gives no partial
-credit: M stops applying. (Patch 11 and 12 share their TCG files; every
-change to 11 regenerates 12.) Then:
+credit, so M stops applying. Patches 11 and 12 share their TCG files, so
+every change to 11 regenerates 12. The recipe:
 
-1. Take M out of the queue as well, and save its payload — the files as M
-   leaves them.
+1. Take M out of the queue as well, and save its payload (the files as M
+   leaves them).
 2. Regenerate N against the tree the patches before it produce. Before
    diffing, `git -C qemu checkout --` the files only N touches (prepare
    restores only files some *present* patch lists), and make sure no file
@@ -76,16 +76,16 @@ Files that come from an overlay (`block/cdimage.c`,
 `include/block/cdimage.h`, `include/block/libdisc.h`, `hw/3dfx`,
 `hw/d3dpt`, …) are edited in the repo, never in a patch. The one
 exception is 86Box's vendored Voodoo sources, which stay verbatim in
-`voodoo/86box/`: a fix to them is a patch on the overlay
+`voodoo/86box/`. A fix to them is a patch on the overlay
 (`hw/voodoo/86box/`, patches 64, 71 and 72), which prepare applies after
 the rsync.
 
 ## The switches
 
-Every optimization in the queue can be turned off at run time, so a guest
-that computes a wrong answer is diagnosed with one run, not a bisect. The
+Every optimization in the queue has a run-time off switch, so one run
+diagnoses a guest that computes a wrong answer, with no bisect. The
 launcher's machine form offers fourteen of them as "Emulation
-optimizations" (doc 07; the `optimizations` check); a machine that has
+optimizations" (doc 07; the `optimizations` check). A machine that has
 changed nothing emits no property, so its command line also runs on a
 stock QEMU.
 
@@ -109,10 +109,10 @@ stock QEMU.
 
 The accelerator properties are spelled `-accel tcg,<prop>=off` (not
 `-machine accel=`); `QEMU_TCG_OPTS=<prop>=off` passes them to the DOS
-batteries. `pinned-regs` is not offered by the launcher (2026-09-16, user
-decision: too unstable for too little gain) and a bundle that still says
-it on never reaches the command line. Patches 14, 41, 63 and 67 have no
-switch: they change no behaviour, only cost. Device-level A/Bs:
+batteries. The launcher does not offer `pinned-regs` (user decision: too
+unstable for too little gain), and a bundle that still turns it on never
+reaches the command line. Patches 14, 41, 63 and 67 have no switch
+because they change no behaviour, only cost. Device-level A/Bs:
 `-global isa-pit.overdue-irq=off` (34), `-global isa-pit.reinject=off`
 (65), `-device voodoo2,recompiler=off` (64).
 
@@ -123,11 +123,11 @@ work, doc 17). Two files share the number 20.
 
 ### 00-3dfx-darwin-contextalpha
 qemu-3dfx's shared code uses `GL_CONTEXTALPHA`, defined only under
-`CONFIG_LINUX`: the Darwin build broke. **Drop:** upstream qemu-3dfx
+`CONFIG_LINUX`, so the Darwin build broke. **Drop:** upstream qemu-3dfx
 fixes it.
 
 ### 01-upstream-i386-lss-tb-exit-fix
-Backport of QEMU `0f1d6606c28d` (issue 2987): 9.2.4 carries the LSS /
+Backport of QEMU `0f1d6606c28d` (issue 2987). 9.2.4 carries the LSS /
 interrupt-shadow regression without its fix, and Win98 SE takes
 `exception 0D` on the first boot after setup under TCG. **Drop:** base ≥
 10.1.
@@ -149,17 +149,17 @@ backend refuses before asking). **Drop:** never.
 
 ### 05-x87-fast
 x87 arithmetic on the host FPU when the guest runs at 53- or 24-bit
-precision with round-to-nearest (Windows' default, Direct3D's setting);
-bit-exact against softfloat, falls back for everything else. Super PI 1M
+precision with round-to-nearest (Windows' default, Direct3D's setting).
+Bit-exact against softfloat; everything else falls back. Super PI 1M
 on the M1 Air 9:49 → 6:33. **Switch:** `x87-fast`. **Test:**
 `tools/x87-fast-test.c` (host oracle), `tools/x87-guest-test.py`.
 **Drop:** upstream grows a floatx80 hardfloat path.
 
 ### 06-x87-inline-tcg
 The x87 stack kept as host doubles across instructions inside TCG at
-PC=53 and PC=24 (doc 13): eight scalar binary64 TCG opcodes (x86-64
-VEX+FMA3, aarch64), conversion to x80 only at TB exits, before helpers and
-on faults (unwind repair through a third `insn_start` word); anything
+PC=53 and PC=24 (doc 13). Eight scalar binary64 TCG opcodes (x86-64
+VEX+FMA3, aarch64); conversion to x80 only at TB exits, before helpers
+and on faults (unwind repair through a third `insn_start` word). Anything
 unusual runs the helper out of line and exits the TB. Bit-exact except
 for empty registers after a pop. DOS loop 21.6 (softfloat) / 10.6 (patch
 05) / 2.9 ns per op; XP Super PI 1M on the Air 9:49 → 1:57. **Switch:**
@@ -170,19 +170,20 @@ ops in TCG, or an upstream rewrite of the x87 translator.
 Backports `cf10af6c703d` (pseudo-NaN in FPATAN/FYL2X/FYL2XP1 is Invalid
 with the default NaN) and `0924d9d3db36` (fcomi/fucomi clear OF/SF/AF),
 the latter mirrored in patch 06's inline compare so both paths agree. The
-denormal / flush-to-zero fixes are skipped: they need 10.0's softfloat
-rework. **Drop:** base ≥ 11.1.
+denormal / flush-to-zero fixes are skipped because they need 10.0's
+softfloat rework. **Drop:** base ≥ 11.1.
 
 ### 08-upstream-i386-decoder-fixes
-Backports the 2025–26 decoder fixes era code trips: F6/F7 /1 TEST alias,
+Backports the 2025–26 decoder fixes that era code trips: the F6/F7 /1
+TEST alias,
 RCL/RCR count modulo for 8/16-bit, V86 entry only at CPL 0, real-mode
 interrupt stack size, TSS T bit, mov to CS / segments 6–7 as #UD, invalid
 0F C7 forms. **Drop:** base ≥ 11.1.
 
 ### 09-upstream-i386-rep-string
-Backports 10.0's repeated-string series (14 commits): REP/REPZ run several
-iterations per TB with explicit `cc_op` and RF handling. rep movs/stos
-12–16 % faster per element (`tools/string-bench.py`). **Drop:** base ≥
+Backports 10.0's repeated-string series (14 commits). REP/REPZ run
+several iterations per TB with explicit `cc_op` and RF handling; rep
+movs/stos is 12–16 % faster per element (`tools/string-bench.py`). **Drop:** base ≥
 10.0.
 
 ### 10-embed-api
@@ -197,61 +198,64 @@ alone (patch 31). The API is doc 11. **Drop:** an upstream embed API.
 ### 11-sse-inline-tcg
 SSE/SSE2 float arithmetic inline on the host FPU (doc 16) when MXCSR is
 round-to-nearest, no FTZ/DAZ, all exceptions masked and PE already sticky
-(TB flag bit 31). Packed ops on the vector unit (new TCG `fadd/fsub/fmul/
-fdiv/fsqrt_vec`, `fmin/fmax_vec`, `fcmp_vec` mapping straight to
-`VMINPS`/`VCMPPS` on x86-64), scalar ops in general registers; NaN, inf,
-overflow, underflow and divide-by-zero take the helper out of line;
+(TB flag bit 31). Packed ops run on the vector unit (new TCG `fadd/fsub/
+fmul/fdiv/fsqrt_vec`, `fmin/fmax_vec`, `fcmp_vec` mapping straight to
+`VMINPS`/`VCMPPS` on x86-64), scalar ops in general registers. NaN, inf,
+overflow, underflow and divide-by-zero take the helper out of line, and
 `ldmxcsr`/`fxrstor`/`xrstor` end the TB. Packed 7.5–12×, scalar 3.4–3.9×.
 **Switch:** `sse-fast`. **Test:** `tools/sse-guest-test.py` (546,425
 lines identical on/off). **Drop:** upstream float ops in TCG.
 
 ### 12-simd-inline-tcg
-MMX and SSE integer and permutation instructions inline (doc 16):
-shuffles, unpacks, packs, `pmulhw`, `pmaddwd`, `pavg`, `psadbw`, shifts
+MMX and SSE integer and permutation instructions inline (doc 16).
+Shuffles, unpacks, packs, `pmulhw`, `pmaddwd`, `pavg`, `psadbw`, shifts
 by register, `pshufw`, and the MMX entry as three stores. New TCG vector
 ops `tbl_vec` (byte table lookup), `mulsh/muluh_vec` and
 `ssnarrow/usnarrow_vec` (x86-64 only; aarch64 keeps a SWAR fallback).
 Legacy encodings only. MMX chain 4.0× on aarch64, 2.1× on x86-64.
 **Switch:** `simd-fast`. **Test:** `tools/sse-guest-test.py`. **Drop:**
-upstream gvec permutes and narrowing ops. Shares files with 11: a change
-to 11 regenerates this one.
+upstream gvec permutes and narrowing ops. It shares files with 11, so a
+change to 11 regenerates this one.
 
 ### 13-perfmap-darwin
 `-perfmap` and `tcg/perf.c` on every host, not Linux only (`/tmp/perf-
-<pid>.map`, one line per translated guest instruction), which is what
-`tools/tcg-profile.sh` maps macOS `sample` hits through. `-jitdump` stays
-Linux-only (it needs `mmap` and `flockfile`); on Windows it says it is
-unavailable.
-**Drop:** upstream drops the `CONFIG_LINUX` gate.
+<pid>.map`, one line per translated guest instruction).
+`tools/tcg-profile.sh` maps macOS `sample` hits through it. `-jitdump`
+stays Linux-only (it needs `mmap` and `flockfile`); on Windows it says it
+is unavailable. **Drop:** upstream drops the `CONFIG_LINUX` gate.
 
 ### 14-jit-wx-state
 macOS flips the `MAP_JIT` buffer between writable and executable per
 thread; QEMU made the call before every TB run and around every patch or
-translation without remembering the state — 12 % of Super PI's vCPU
+translation without remembering the state, 12 % of Super PI's vCPU
 thread. A per-thread state makes the call only on a change (Super PI 1M
-1:36 → 1:25). The state starts *unknown* on purpose: the main thread is in
-execute mode when `tcg_prologue_init` asks for write, a vCPU thread is
+1:36 → 1:25). The state starts *unknown* on purpose. The main thread is in
+execute mode when `tcg_prologue_init` asks for write; a vCPU thread is
 not. A wrong initial state skips the first write call, faults on the
 prologue store and spins at 100 % inside `tcg_prologue_init` with QMP
 never answering. **Drop:** upstream tracks the state.
 
 ### 15-tb-invalidate-fast
-TB invalidation on guest writes, four cuts: the DMA path no longer rounds
-the first page's range down to the page start (the vAPIC ROM's TPR stubs
-sat below the state the APIC writes on every interrupt, so every XP guest
-retranslated them thousands of times a second, idle too — upstream
-master still has it); a per-page code map (patch 35) lets a write that
-misses every TB skip the page collection and list walk; a write that
-cannot hit a TB shared with a neighbouring page runs under the page's own
-lock; no whole jump-cache flush per invalidated `CF_PCREL` TB. **Switch:**
-`tb-invalidate-fast` (patch 29). **Test:** `tools/smc-guest-test.py`.
-**Drop:** upstream clamps the first page's range and keeps per-page code
+Four cuts to TB invalidation on guest writes:
+
+- The DMA path no longer rounds the first page's range down to the page
+  start. The vAPIC ROM's TPR stubs sat below the state the APIC writes
+  on every interrupt, so every XP guest retranslated them thousands of
+  times a second, idle too. Upstream master still has it.
+- A per-page code map (patch 35) lets a write that misses every TB skip
+  the page collection and list walk.
+- A write that cannot hit a TB shared with a neighbouring page runs under
+  the page's own lock.
+- No whole jump-cache flush per invalidated `CF_PCREL` TB.
+
+**Switch:** `tb-invalidate-fast` (patch 29). **Test:**
+`tools/smc-guest-test.py`. **Drop:** upstream clamps the first page's range and keeps per-page code
 ranges.
 
 ### 16-tlb-floor
 `CPU_TLB_DYN_MIN_BITS`/`DEFAULT_BITS` 6/8 → 12. The softmmu TLB is
 direct-mapped and resized at every flush from the entries used since the
-last; XP flushes 450 times a second, so it sat at 64–256 entries where
+last. XP flushes 450 times a second, so it sat at 64–256 entries where
 live pages collide constantly (Moto Racer: 6 million victim swaps a
 second, 48 % of the vCPU in the slow path → 1.3 %). Cost: 128 KiB per mmu
 index, cleared per flush. **Switch:** `tlb-floor` (patch 29, read per
@@ -268,12 +272,12 @@ are refused), copy, and return the count done; anything else falls into
 the per-element loop, capped at 15 iterations per entry. The helper
 writes nothing to `env`, so a longjmp out of the probe restarts the
 instruction cleanly. Not emitted under TF, single-step or icount.
-MOVSD/STOSD 2.1 → 0.07 ns per element. **Switch:** `rep-fast`. **Test:**
+MOVSD/STOSD go from 2.1 to 0.07 ns per element. **Switch:** `rep-fast`. **Test:**
 `tools/rep-guest-test.py` (536 cases against a Python model). **Drop:**
 upstream grows a rep fast path.
 
 ### 18-smc-same-value
-A store that leaves a code page's bytes unchanged invalidates no TB: the
+A store that leaves a code page's bytes unchanged invalidates no TB. The
 store slow path compares the bytes with memory before `notdirty_write`
 and skips the invalidation when equal (dirty bits still set; 16-byte,
 probe and atomic stores still invalidate). Exact by construction.
@@ -294,13 +298,13 @@ on purpose, and the remaining 2.5 %: the `tcgv_*_arg` read in each
 `tcg_gen_op*` wrapper (removing it needs a context-taking twin of every
 `tcg_gen_opN`), `cpu_tb_exec`'s per-thread JIT state (a per-CPU one is
 wrong under round-robin with several vCPUs), and `tcg-op-ldst.c`.
-**Switch:** `tls-hot-paths` (patch 29; the RCU half only — the `tcg_ctx`
-half has no reachable behaviour). **Drop:** the RCU part is worth sending
+**Switch:** `tls-hot-paths` (patch 29), the RCU half only; the `tcg_ctx`
+half has no reachable behaviour. **Drop:** the RCU part is worth sending
 upstream; the `tcg_ctx` part matters only where TLS is a call.
 
 ### 20-embed-audio
-Registers the `embed` audiodev the player plays through: the QAPI
-enum/union entry, `audio_template.h`'s per-direction case, and the
+Registers the `embed` audiodev the player plays through. It adds the
+QAPI enum/union entry, `audio_template.h`'s per-direction case, and the
 `audio_create_pdos` case in `audio/audio.c` (without it, a NULL pdo
 segfaults). **Drop:** with 10.
 
@@ -309,11 +313,11 @@ The jump-cache probe of indirect branches (`ret`, `call *`, `jmp *`, a
 jump leaving its page) as TCG ops instead of a call to
 `helper_lookup_tb_ptr` (~70 host instructions: 13.9 % of 7-Zip's vCPU).
 `translator_lookup_and_goto_ptr` computes pc, cs_base and flags the way
-`cpu_get_tb_cpu_state()` does, folds every mismatch — pc, cs_base, flags,
-cflags, breakpoints, single-step — into one word **branch-free** (a
-`brcond` ends a TCG block and spills every temp), and one `goto_ptr` takes
-the TB or the epilogue, where the main loop's lookup fills the cache.
-Kept on the helper: `CF_NO_GOTO_PTR`, exec/nochain logging,
+`cpu_get_tb_cpu_state()` does and folds every mismatch (pc, cs_base,
+flags, cflags, breakpoints, single-step) into one word **branch-free**,
+since a `brcond` ends a TCG block and spills every temp. One `goto_ptr`
+takes the TB or the epilogue, where the main loop's lookup fills the
+cache. These stay on the helper: `CF_NO_GOTO_PTR`, exec/nochain logging,
 `one-insn-per-tb`, 32-bit hosts, the x86-64 target. 7-Zip compress +12 %,
 decompress +7 %. Any new TB flag must be built here too (patch 37).
 **Switch:** `inline-lookup`. **Drop:** upstream grows a generic inline
@@ -326,8 +330,9 @@ stores, helpers get them stored or reloaded as their flags require, the
 allocator and liveness pass keep pinned temps in place, `op T; mov G, T`
 coalesces, and the aarch64 slow path saves live caller-saved registers
 itself. x86-64 lists no registers. 7-Zip compress +3 %, decompress +15 %.
-Parked: a boot crash seen once with 8 pinned and a 3 % stall at the flags
-helper boundary. **Switch:** `pinned-regs=on` (off by default, not
+Parked with two open items (doc 18 "Open"): XP reboots or bugchecks with
+seven, eight or nine registers pinned (`tools/specbench/run.sh <image>
+pinned`), and a 3 % stall at the flags-helper boundary. **Switch:** `pinned-regs=on` (off by default, not
 offered); `QEMU_TCG_PIN_MAX=n` caps the count. **Drop:** never (a backend
 feature); the coalescing and slow-path save are worth proposing upstream
 alone.
@@ -335,7 +340,7 @@ alone.
 ### 22-upstream-apic-reset-cpuid
 **A Win98 guest that restarts freezes on its first frame.** Win98 turns
 its local APIC off through `IA32_APIC_BASE`, which rightly clears
-`CPUID.01H:EDX.APIC`; `apic_reset_common()` restores the enable bit but
+`CPUID.01H:EDX.APIC`. `apic_reset_common()` restores the enable bit but
 not the feature bit, so the next POST finds no APIC, SeaBIOS skips
 `smp_setup()` and never sets LINT0 to ExtINT, and every i8259 interrupt
 is dropped at the masked LVT0. The guest spins on the BIOS tick counter
@@ -347,7 +352,7 @@ reset, leaving `-cpu …,-apic` alone. Reproduces on stock QEMU 11.1.0.
 (worth sending).
 
 ### 23-upstream-dsound-option
-`--disable-dsound` was a no-op: 9.2's guard `if not
+`--disable-dsound` was a no-op. 9.2's guard `if not
 get_option('dsound').auto() or …` is true for *disabled* too, so every
 Windows build compiled `dsoundaudio.c` and linked `-lole32 -ldxguid` for
 a backend nothing reaches. Disabled now skips the block. **Test:** the
@@ -362,11 +367,11 @@ past four, the next translation emits its immediates and displacements as
 host loads of the guest's code bytes, so the guest's store *is* the
 update, and the block lists the byte ranges read that way so a write
 inside them invalidates nothing. A block thrown away four times anyway
-goes back to constants. Covered: the group-1 ALU ops, MOV, IMUL3, memory
+goes back to constants. It covers the group-1 ALU ops, MOV, IMUL3, memory
 displacements, and the imm8 count of every shift and rotate (not RCL/RCR
-on 8/16-bit, not SHLD/SHRD); jump targets, ports and SSE lane selectors
-stay constants. Little-endian hosts with unaligned loads, single-vCPU,
-the block's first page. Moto Racer's race 41 → 58 fps (TB invalidations
+on 8/16-bit, not SHLD/SHRD). Jump targets, ports and SSE lane selectors
+stay constants. It needs a little-endian host with unaligned loads and a
+single vCPU, and covers only the block's first page. Moto Racer's race 41 → 58 fps (TB invalidations
 36,500/s → 1/s); Blood's corridor 9.4 → 131 fps. **Switch:** `soft-imm`.
 **Test:** `tools/smc-guest-test.py`, which also requires four cases'
 fields to have been *absorbed*, since a right answer does not prove the
@@ -378,17 +383,17 @@ guest confirms it.
 ### 25-upstream-sb16-reset-irq
 QEMU's `sb16` raised IRQ 5 in three places no driver could lower it
 again, and on the edge-triggered PIC a held line swallows every later
-interrupt: a DSP reset pulsed the line during auto-init DMA (an interrupt
+interrupt. A DSP reset pulsed the line during auto-init DMA (an interrupt
 no hardware makes, latched unowned in the PIC), and a silence block
 (DSP 0x80) raised it without setting the status bit the driver's read
-clears. A reset also cancels a pending silence block now. Symptom: Duke
-Nukem 3D's SETUP played its sound test once, then "Playback failed,
+clears. A reset also cancels a pending silence block now. The symptom was
+Duke Nukem 3D's SETUP, which played its sound test once, then "Playback failed,
 possibly due to an invalid or conflicting IRQ" (doc 20 §5.2). **Test:**
 the `sb16-irq` check. **Drop:** upstream fixes it.
 
 ### 26-usb-gamepad
-Builds `hw/usb/dev-gamepad.c` (overlay): a USB HID gamepad — two sticks
-as X/Y and Z/Rz, an 8-way hat with a null state, twelve buttons, a
+Builds `hw/usb/dev-gamepad.c` (overlay), a USB HID gamepad with two
+sticks as X/Y and Z/Rz, an 8-way hat with a null state, twelve buttons, a
 six-byte report. QEMU has no gamepad and no axis input event, so it is a
 whole device, in its own file because every machine already has a
 `usb-tablet` on `dev-hid.c`. Built under `CONFIG_USB_HID`. The host drives
@@ -401,7 +406,8 @@ their in-box HID stack (98 SE asks for its source files once). Doc
 
 ### 27-gameport
 Builds `hw/input/gameport.c` (overlay), the analog joystick port at
-0x200–0x207, which QEMU never had — DOS's only way to a controller. A
+0x200–0x207, which QEMU never had. It is DOS's only way to a
+controller. A
 write arms four RC one-shots (`t = 24.2 µs + 0.011 × R µs` over a 0–100
 kΩ pot); a read compares deadlines on `QEMU_CLOCK_VIRTUAL`, so there is
 no timer. Its own `CONFIG_GAMEPORT` and a standalone ISA device, so it
@@ -414,18 +420,18 @@ USB pad through DirectInput and winmm. **Test:** the `pad` and
 
 ### 28-upstream-vga-chain4-dirty
 `vga_mem_writeb`'s chain-4 branch stores at `(addr << 2) | plane` but
-marks `addr` dirty after doubleword-mode shifting, so every write marks
-the first quarter of VRAM and in mode 13h nothing below scanline 51 is
-redrawn. Only adapters that route chain-4 writes through this function
-show it: the Cirrus, not `-vga std` (which maps a RAM alias). Symptom:
-Duke Nukem 3D at 320×200 wrong on `-vga cirrus`, clean on std. **Test:**
+marks `addr` dirty after doubleword-mode shifting. Every write marks the
+first quarter of VRAM, and in mode 13h nothing below scanline 51 is
+redrawn. Only an adapter that routes chain-4 writes through this function
+shows it: the Cirrus, not `-vga std` (which maps a RAM alias). Duke Nukem
+3D at 320×200 was wrong on `-vga cirrus` and clean on std. **Test:**
 `tools/vga-dirty-guest-test.py`. **Drop:** upstream fixes it.
 
 ### 29-optimization-switches
 Gives patches 15, 16 and 19 the switches they lacked (`tb-invalidate-fast`,
-`tlb-floor`, `tls-hot-paths`), so "every optimization off" really is: the
+`tlb-floor`, `tls-hot-paths`), so "every optimization off" really is. The
 three left in had been exactly the ones on TB invalidation, the TLB and
-`notdirty_write`, and once let a fault be blamed away from them. Under
+`notdirty_write`, and they once let a fault be blamed away from them. Under
 `tls-hot-paths=off` both RCU branches must set the same dirty bits, which
 makes the off branch patch 19's oracle. **Test:** the `optimizations`
 check. **Drop:** never; it is what makes the queue bisectable.
@@ -433,8 +439,9 @@ check. **Drop:** never; it is what makes the queue bisectable.
 ### 30-3dfx-ui-vtable
 qemu-3dfx's eleven UI entry points (`mesa_*`, `glide_*`) dispatch through
 a `QemuFxUiOps` table (`ui/fxui.c`) any frontend can register; the embed
-library registers its window-less provider (`embed/embedfx.c`). No
-provider: contexts refused, no Glide window, the VM keeps running. SDL's
+library registers its window-less provider (`embed/embedfx.c`). With no
+provider, contexts are refused, no Glide window opens and the VM keeps
+running. SDL's
 half is gone with `--disable-sdl`. **Drop:** upstream qemu-3dfx grows a
 provider seam.
 
@@ -444,7 +451,7 @@ overrides them inside libqemu-embed while `qemu-system-i386` keeps the
 native backend (on Linux GLX; on macOS patch 70's refusing backend). The
 embed backend is EGL surfaceless + pbuffer on Linux, a drawable-less CGL
 context with an FBO on macOS. A COFF weak external is not an ELF weak
-definition, so on Windows `mglcntx_mingw.c` is split instead — its WGL
+definition, so on Windows `mglcntx_mingw.c` is split instead, its WGL
 backend behind `MESAGL_WGL_BACKEND`, compiled a second time into the
 emulators alone by patch 10. **Drop:** per-consumer backend selection in
 meson.
@@ -461,8 +468,8 @@ Glide renders into the frontend's context instead of a window of its own
 (`glidept/glide_host.h`) and `init_glide2x` hands it to the wrapper's
 optional `setHostOps` before anything can open a window. The library is
 found as `QEMU_GLIDE_LIB`, then `build/glide/libglide2x.so`, then the
-loader's path, then `/usr/local/lib` — the build tree before the loader,
-because a distribution's OpenGLide has no `setHostOps` and would open a
+loader's path, then `/usr/local/lib`. The build tree comes before the
+loader because a distribution's OpenGLide has no `setHostOps` and would open a
 window. The NULL-handle check now precedes the `setConfig` lookups, which
 had `dlsym`ed the whole process. A wrapper or frontend without the hook
 is upstream's behaviour. **Test:** the `glide-host` check. **Drop:**
@@ -472,7 +479,7 @@ upstream qemu-3dfx grows a window-less provider.
 **A DOS game's clock ran at twice real time.** The IRQ 0 edge at counter
 0's wrap is raised by `irq_timer` a main-loop wakeup late, and a guest
 reading the PIT in a tight loop sees the counter wrapped with the tick
-not yet counted — which DOS Quake's `Sys_FloatTime` counts as a whole
+not yet counted. DOS Quake's `Sys_FloatTime` counts that as a whole
 period twice (`QCLOCK.COM`: every tick a 55 ms backward step, 200 %).
 Every PIT port access now first delivers overdue transitions in order,
 and the `IN`/`OUT` ends its TB so the interrupt is taken before the next
@@ -483,8 +490,8 @@ instruction. **Switch:** `-global isa-pit.overdue-irq=off`. **Test:** the
 Patch 15's per-page byte range of code becomes a 64-bit map, one bit per
 64-byte chunk, set for every chunk a TB touches. A Win9x module is code
 at both ends and data between, so the range made every data write walk
-the page's TB list (twice, with patch 24): 57 % of QEMU in 3DMark 99,
-invalidating nothing. With the map a write to a chunk with no bit returns
+the page's TB list (twice, with patch 24), which was 57 % of QEMU in
+3DMark 99 and invalidated nothing. With the map a write to a chunk with no bit returns
 before either walk. 3DMark 99: 3334 → 5894. **Switch:**
 `tb-invalidate-fast`. **Test:** `tools/smc-guest-test.py`, the DOS
 batteries. **Drop:** upstream keeps a per-page code map.
@@ -493,19 +500,19 @@ batteries. **Drop:** upstream keeps a per-page code map.
 A 16-byte SSE memory operand was loaded as two 8-byte halves and stored
 to `env` as two, so the vector load that reads it next could not be
 store-forwarded and stalled. The pair is now assembled in the vector
-unit (patch 12's `SIMD_TBL_MASK64LO`) and written with one `st_vec`; same
-access, alignment check and fault. CPU 3DMarks +16 %. **Switch:**
+unit (patch 12's `SIMD_TBL_MASK64LO`) and written with one `st_vec`, with the
+same access, alignment check and fault. CPU 3DMarks +16 %. **Switch:**
 `sse-fast` (with `TCG_TARGET_HAS_v128`). **Test:**
 `tools/sse-guest-test.py`. **Drop:** upstream assembles an i128 into a
 vector.
 
 ### 37-x87-pe-sticky
-Once the inexact flag is set, patch 06 no longer computes it: a TB
+Once the inexact flag is set, patch 06 no longer computes it. A TB
 translated with PE already sticky (`TB_FLAG_X87_PE`, bit 2) drops the
 residual computation and the `fpus` update per op. The guard re-checks
 PE at run time (a chained TB is not looked up again), and `fclex`,
 `fninit`, `fldenv`, `frstor` and `fnsave` leave sticky mode for the rest
-of their TB. Patch 20's inline lookup must carry the bit: without it,
+of their TB. Patch 20's inline lookup must carry the bit. Without it,
 epilogue exits cost a quarter of the frame rate. **Switch:** `x87-fast`.
 **Test:** `tools/x87-guest-test.py`. **Drop:** upstream has no x87 shadow
 path.
@@ -515,13 +522,13 @@ Patch 20's inline lookup rebuilt the x87 mode, SSE mode and x87 PE bits
 from `env` on every indirect jump (~22 of ~70 host instructions). Each of
 them can only change at an instruction that ends the TB, so the leaving
 TB's own bits are a constant OR; a bit set during the TB is emitted as 0,
-which picks the exact variant until the next full lookup — slower, never
-wrong. hflags and eflags are still loaded. CPU 3DMarks +5 %. **Switch:**
+which picks the exact variant until the next full lookup. That is
+slower, never wrong. hflags and eflags are still loaded. CPU 3DMarks +5 %. **Switch:**
 `inline-lookup`. **Drop:** with 20.
 
 ### 39-vec-allsign
 New TCG op `vec_allsign_i32` (zero iff every byte of a vector has its top
-bit set): `vpmovmskb` + `xor` on x86-64, `cmlt`/`uminv`/`umov`/`eor` on
+bit set). It is `vpmovmskb` + `xor` on x86-64, `cmlt`/`uminv`/`umov`/`eor` on
 aarch64. Patch 11's per-op lane check is that op and a `brcond`, instead
 of a round trip of the mask through `env->sses_scratch`; a backend
 without the op keeps the round trip. **Switch:** `sse-fast`. **Drop:**
@@ -529,8 +536,8 @@ upstream grows a vector-test op.
 
 ### 40-d3dpt-device
 Adds the `hw/d3dpt` meson subdir and puts the paravirtual Direct3D
-device (doc 14) on the pc machine beside the qemu-3dfx devices: SysBus,
-register page at 0xdfffe000, 64 MiB window at 0xd8000000, the executor
+device (doc 14) on the pc machine beside the qemu-3dfx devices. It is a
+SysBus device with a register page at 0xdfffe000, 64 MiB window at 0xd8000000, the executor
 library opened at the first guest attach (`d3dpt_exec_load.c`). The same
 overlay carries `d3dpt_vga.c`, the `d3dpt-vga` PCI adapter of the XP and
 9x display drivers (docs 15 and 19): a stdvga core, a register BAR and
@@ -540,13 +547,13 @@ overlay carries `d3dpt_vga.c`, the `d3dpt-vga` PCI adapter of the XP and
 ### 41-disas-context-uninit
 QEMU builds with `-ftrivial-auto-var-init=zero`, and
 `gen_intermediate_code`'s `DisasContext` is ~13.6 KB since patch 06's
-slow blocks: a memset per translation (8.7 GB in one 3DMark 99 run). It
-opts out (`__attribute__((uninitialized))`); the translator initialises
+slow blocks, so every translation paid a memset (8.7 GB in one 3DMark 99
+run). The patch opts out (`__attribute__((uninitialized))`); the translator initialises
 what it reads and `x87s_new_slow` clears each slow block it hands out.
 Helps retranslation-heavy guests. **Drop:** upstream marks it too.
 
 ### 42-jump-cache-keep
-A TLB flush no longer empties the jump cache: an entry carries the
+A TLB flush no longer empties the jump cache. An entry carries the
 cache's generation in the pc word's high half, a flush bumps the
 generation, and `tb_lookup()` re-validates a stale entry against the pc's
 current mapping and re-stamps it. The cache is 65,536 entries instead of
@@ -557,7 +564,7 @@ physical page.
 ### 43-eob-chain
 A block ending without a jump (`mov ds/es`, `sti`, `mov ss`, `popf`,
 `iret`, `sysenter`, an x87 or MXCSR control-word change) always went back
-to the main loop — five round trips per VxD call on Win98. It now chains
+to the main loop, five round trips per VxD call on Win98. It now chains
 through the inline lookup when `cpu->interrupt_request` is zero, and a
 block ending on a control-word change rebuilds the lookup's mode bits
 from `env` (patch 38's constants are wrong there; MSVC's `_ftol` hit
@@ -569,11 +576,11 @@ A CR3 write no longer forgets every translation. `tlb_flush_retiring()`
 moves the entries filled since the last flush into a per-mmu-index
 retired table and clears only those; a miss probes the retired table and
 reuses an entry when the target
-(`TCGCPUOps.tlb_retired_reusable`; i386: CR3, mode, A20, SMM, PKRU/PKRS,
+(`TCGCPUOps.tlb_retired_reusable`; on i386 CR3, mode, A20, SMM, PKRU/PKRS,
 and every page-table entry the walk read, unchanged) says it still holds.
 Any other flush drops the tables, `invlpg` its page. 95 % of Win98's
 refills are reused; within noise on the Ryzen, kept for hosts where a
-walk is not cheap. The filled-slot list is `uint32_t`: as `uint16_t` it
+walk is not cheap. The filled-slot list is `uint32_t`. As `uint16_t` it
 wrapped past 65,536 entries, cleared the wrong slots and killed Win98 a
 few seconds into `SETUP.EXE` with a different victim each time. `info
 jit` prints refills and reuses. **Switch:** `tlb-retire`. **Drop:**
@@ -582,7 +589,7 @@ upstream's TLB keeps state across CR3 writes.
 ### 45-x87-prec24-f32
 At PC=24 (Direct3D's setting, a 3D game's whole frame) the shadows are
 binary32 in their own globals (`cpu_x87_ss[]`), and with PE sticky an
-op is one `addss`/`mulss`/`divss`/`sqrtss` plus a range check:
+op is one `addss`/`mulss`/`divss`/`sqrtss` plus a range check, because
 correctly rounded binary32 is the x87's PC=24 result while the exponent
 fits. Overflow, underflow and the lowest binade (where binary32 rounds up
 into it and the x87's wider exponent does not) take the slow path; with
@@ -646,10 +653,10 @@ never, or an upstream cdimage.
 stock path byte for byte (doc 17 §5.3–5.4). With a disc model: verified
 READ(10/12), READ CD / READ CD MSF over the full MMC-3 field table, TOC,
 SUB-CHANNEL, DISC INFORMATION, GET CONFIGURATION, mode pages 2A and 0E,
-MODE SELECT(10), and CD-DA — PLAY AUDIO, PAUSE/RESUME, STOP PLAY/SCAN and
-the stop half of START STOP UNIT (how XP's `mcicda` stops) — through
-`-device ide-cd,audiodev=<id>`, or a position at 75 sectors/s without
-one; INQUIRY from `model=`. New IDE fields are not migrated.
+MODE SELECT(10), and CD-DA through `-device ide-cd,audiodev=<id>` (PLAY
+AUDIO, PAUSE/RESUME, STOP PLAY/SCAN and the stop half of START STOP UNIT,
+how XP's `mcicda` stops), or a position at 75 sectors/s without one;
+INQUIRY from `model=`. New IDE fields are not migrated.
 `CDIMAGE_TRACE=1` logs packets, replies and sense. **Test:**
 `tools/atapi-guest-test.py`, `tools/xp-cdimage-test.sh`. **Drop:** never.
 
@@ -669,24 +676,24 @@ returns, as on a real drive. Protocol `cdshelf/cdshelf_proto.h` (bump
 
 ### 53-atapi-dvd-profile
 A cdimage medium longer than an 80-minute CD (`CD_MAX_SECTORS`) reports
-as a DVD-ROM — current profile, feature `0x001f`, mode page 2A's DVD read
-bit — because past 99:59:74 an MSF has no address to give. With a CD in
+as a DVD-ROM (current profile, feature `0x001f`, mode page 2A's DVD read
+bit), because past 99:59:74 an MSF has no address to give. With a CD in
 the tray the bytes are unchanged. Needed by folder discs (doc 17 §2.1).
 **Test:** `BIG=1 tools/dirdisc-guest-test.sh`. **Drop:** never.
 
 ### 54-atapi-audio-seek-stop
-**On Win9x a seek is the stop**: `mcicda` sends one PLAY AUDIO MSF and two
+**On Win9x a seek is the stop.** `mcicda` sends one PLAY AUDIO MSF and two
 SEEKs for a whole play/pause/stop session, so a SEEK now ends playback
 (data reads do not: Win98's CDFS re-reads the volume descriptors
 throughout a play). Also, position replies no longer fall back to the
-last data sector read after a stop. Symptom: "the stop doesn't work on
-Win98" — the disc played on behind a stopped MCI (doc 17 §5.4). **Test:**
+last data sector read after a stop. The symptom was "the stop doesn't
+work on Win98": the disc played on behind a stopped MCI (doc 17 §5.4). **Test:**
 `tools/cdaudio-guest-test.sh`. **Drop:** never.
 
 ### 55-atapi-audio-read-error
 A host I/O error (`LIBDISC_EIO`) on a CD audio sector plays 2352 bytes
 of silence and the next sector is read again, as a real drive reads
-through a bad audio sector; before, one transient failure (an image on a
+through a bad audio sector. Before, one transient failure (an image on a
 network share) stopped the music with status 0x14 until the game asked
 for another track. A data sector in the range or a vanished medium still
 stops, with a warning. **Test:** the `atapi-read-error` check
@@ -716,8 +723,8 @@ the `sb-mixer` check; `CDVOL=` in `tools/audio-glitch-test.py cd`.
 **Drop:** an upstream sb16 mixer.
 
 ### 62-voodoo2-device
-`subdir('hw/voodoo')` and nothing else: `-device voodoo2` (doc 21) is the
-overlay — 86Box's Voodoo emulation verbatim (`voodoo/86box/UPSTREAM`
+`subdir('hw/voodoo')` and nothing else. `-device voodoo2` (doc 21) is the
+overlay: 86Box's Voodoo emulation verbatim (`voodoo/86box/UPSTREAM`
 names the commit), a shim of 86Box's platform headers, and a QEMU PCI
 device. **Test:** the `voodoo-guest*` checks. **Drop:** never, or when
 86Box grows a QEMU device.
@@ -743,42 +750,42 @@ the A/B. **Test:** the `voodoo-guest` check's dither phase. **Drop:**
 upstream 86Box fixes it and `scripts/sync-86box-voodoo.sh` brings it in.
 
 ### 65-pit-reinject
-**A 1 kHz guest clock ran at the rate of the host's wakeups** — 6 % on a
-Windows host's 15.6 ms timer, which played MIDI slow. Transitions that
+**A 1 kHz guest clock ran at the rate of the host's wakeups**, 6 % slow on
+a Windows host's 15.6 ms timer, which played MIDI slow. Transitions that
 came due while the main loop slept were raised back to back, one
 interrupt at the edge-triggered 8259. Now an edge that finds IRQ 0
 already requested is owed, and `pic_intack` raises one owed tick as a
 fresh edge after the ISR is entered, paced to at most one per half period
 (a burst on every acknowledge nests under Win98's timer handler and took
 the VMM down after a long vCPU stall; a pacing timer merges with the
-regular edge). Capped at a quarter second of ticks; a new count drops
-them; IRQ 0 masked at the 8259 owes nothing. **Switch:** `-global
+regular edge). The debt is capped at a quarter second of ticks, a new
+count drops it, and IRQ 0 masked at the 8259 owes nothing. **Switch:** `-global
 isa-pit.reinject=off`. **Test:** the `pit-guest` check's rate phase
 (`tools/wait-granularity.c` rounds waits to 15.6 ms). **Drop:** upstream
 reinjects coalesced PIT ticks.
 
 ### 66-passthrough-hides-cursor
 While another card has the monitor (`graphic_hw_passthrough`: the Voodoo
-2, the 3D frontend), the 2D adapter's hardware cursor is reported hidden:
+2, the 3D frontend), the 2D adapter's hardware cursor is reported hidden.
 `dpy_mouse_set` publishes through `dpy_mouse_publish`, which answers
-hidden in pass-through and publishes again when it changes. Symptom:
-Windows' arrow drawn over a full-screen Glide game. Trace event
+hidden in pass-through and publishes again when it changes. Without it
+Windows' arrow was drawn over a full-screen Glide game. Trace event
 `dpy_mouse_publish`. **Test:** the `voodoo-guest-d3dpt` check. **Drop:**
 upstream has pass-through.
 
 ### 67-x87x-arith-call-shape
 Patch 48's PC=64 helper takes four arguments (the two sign|exponent
-words as one) and divides with `udiv_qrnnd` instead of `__udivti3`:
-under the Windows x64 ABI a fifth argument and 128-bit operands go
+words as one) and divides with `udiv_qrnnd` instead of `__udivti3`.
+Under the Windows x64 ABI a fifth argument and 128-bit operands go
 through memory, and the helper cost 10.8 % of the vCPU there against
 4.6 % on Linux. **Test:** `tools/x87-guest-test.py`. **Drop:** with 48.
 
 ### 68-windows-clang
-QEMU's Windows build accepts clang, which the package uses: mingw GCC's
-`__thread` is emulated TLS (a call per access, 10.5 ns against 1 ns) and
+QEMU's Windows build accepts clang, which the package uses. mingw GCC's
+`__thread` is emulated TLS (a call per access, 10.5 ns against 1 ns), and
 QEMU reads `current_cpu`, the BQL flag and RCU state on every device
-access — a VGA register read loop took 121.6 ns against 52.7 on Linux,
-63.5 with clang. A Windows compiler without `gcc_struct` gets
+access. A VGA register read loop took 121.6 ns against 52.7 on Linux,
+and 63.5 with clang. A Windows compiler without `gcc_struct` gets
 `-mno-ms-bitfields` and `QEMU_PACKED` drops the attribute under clang.
 `configure-qemu.sh --windows` uses `packaging/windows/clang-mingw-cc`
 with `--disable-plugins` (lld has no `--dynamic-list`); `WIN_QEMU_CC=gcc`
@@ -800,31 +807,31 @@ was GLX on XQuartz, and nothing had rendered through it since SDL went.
 On Darwin `hw/mesa/mglcntx_linux.c` is now a weak backend that asks the
 provider hook (so the "no 3D provider" warning still appears), answers
 the window-ready poll and the pixel-format queries, and refuses the
-context; same symbols as the GLX one (checked with `nm`), `dllname`
+context. It has the same symbols as the GLX one (checked with `nm`), `dllname`
 OpenGL.framework's. Linux is unchanged. **Drop:** upstream qemu-3dfx drops
 GLX on Darwin.
 
 ### 71-voodoo2-packet3-packed-color
 A command-FIFO triangle packet's packed colour word (bit 28) is read
 whenever either the RGB or the alpha parameter is named. 86Box took it
-only under the RGB bit, so a vertex with iterated alpha over a constant
-colour — which Glide sends with the packed bit set and RGB clear — left a
-word unread and every later header was read from the middle of the
+only under the RGB bit. Glide sends a vertex with iterated alpha over a
+constant colour with the packed bit set and RGB clear, so that vertex
+left a word unread and every later header was read from the middle of the
 parameters. Fixed in both consumers in `vid_voodoo_fifo.c` and in
 `voodoo/voodoo2.c`'s packet walk, which warns once when it meets one. An
 overlay patch (doc 21). **Drop:** upstream 86Box fixes it.
 
 ### 72-voodoo2-fifo-order
 86Box's FIFO thread runs its memory FIFO (LFB and texture writes) and the
-command ring in the order the guest wrote them: each entry carries the
+command ring in the order the guest wrote them. Each entry carries the
 ring's write pointer at queue time (`cmdfifo_mark`) and runs once the
 ring has been consumed that far, and the ring loop yields when the
-memory FIFO's head is due. It had drained one and then the other, and a
+memory FIFO's head is due. It had drained one and then the other, so a
 game's HUD written through the LFB either flashed (after the swap) or
 vanished under the world geometry (before it) (doc 21 §13). No wait
 anywhere. An overlay patch. **Test:** the ordering phase of
-`tools/voodoo-guest-test.py` exercises it; only a game under TCG, where
-the rasterizer is behind, discriminates. **Drop:** upstream 86Box fixes
+`tools/voodoo-guest-test.py` exercises it, but only a game under TCG,
+where the rasterizer is behind, tells the two orders apart. **Drop:** upstream 86Box fixes
 it.
 
 ### 73-vga-vram-prebacked

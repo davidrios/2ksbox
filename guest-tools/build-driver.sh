@@ -8,7 +8,7 @@
 #
 # Kernel-mode PE files with GCC: no CRT (-nostdlib -ffreestanding), the
 # native subsystem, an explicit entry point, imports only from
-# videoprt.sys (miniport) / win32k.sys (display driver) — mingw-w64 ships
+# videoprt.sys (miniport) / win32k.sys (display driver). mingw-w64 ships
 # the DDK headers and import libraries. Same toolchain as the wrappers;
 # needs i686-w64-mingw32-gcc, xorriso (or genisoimage/mkisofs) for the ISO.
 set -euo pipefail

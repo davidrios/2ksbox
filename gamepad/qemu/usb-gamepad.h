@@ -3,11 +3,11 @@
  * docs/tracks/m13-gamepads.md).
  *
  * The one header shared by the device (hw/usb/dev-gamepad.c) and whoever
- * drives it — today the embed shim (embed/libqemu_embed.c), through
+ * drives it, today the embed shim (embed/libqemu_embed.c), through
  * qemu_embed_pad_*.
  *
  * The interface is deliberately **absolute state, not events**. The host
- * side always knows the whole pad — the player keeps it in `Pads` — so
+ * side always knows the whole pad (the player keeps it in `Pads`), so
  * sending all of it costs six bytes and cannot desync: a dropped update
  * is corrected by the next one, where a dropped *event* would leave the
  * guest holding a button forever. It is also what the HID report is
@@ -19,7 +19,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* X, Y, Z, Rz — the two sticks. 0x00..0xff, centre 0x80. */
+/* X, Y, Z, Rz: the two sticks. 0x00..0xff, centre 0x80. */
 #define USB_GAMEPAD_AXES 4
 #define USB_GAMEPAD_BUTTONS 12
 /* The hat's "not pressed" position. 0..7 are N, NE, E, ... NW. */

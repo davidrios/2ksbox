@@ -3,7 +3,7 @@
  * docs/tracks/m13-gamepads.md).
  *
  * The one header shared by the device (hw/input/gameport.c) and whoever
- * drives it — the embed shim (embed/libqemu_embed.c), which feeds this
+ * drives it, the embed shim (embed/libqemu_embed.c), which feeds this
  * and the usb-gamepad from the same qemu_embed_pad_state call. A machine
  * has one or the other (bundle::Pad is a single choice), and the shim
  * does not have to know which: both entry points are no-ops when their
@@ -20,8 +20,8 @@
 #include <stdint.h>
 
 /*
- * Four one-shots and four buttons — the hardware's own limit, not ours:
- * a connector carries two axes and two buttons, and four of each is what
+ * Four one-shots and four buttons, the hardware's own limit, not ours.
+ * A connector carries two axes and two buttons, and four of each is what
  * a Y-cable or a four-axis card gives. There is nowhere on this port for
  * a hat, a third stick or buttons 5-12, which is why path A exists.
  */
@@ -32,8 +32,8 @@
  * Replace the pad's state. Call with the BQL held (the embed shim's
  * input bottom half does). The arguments are deliberately the *same*
  * ones usb_gamepad_set_state() takes, so one call in the shim feeds
- * either device: `axes` is X, Y, Z, Rz — the two sticks, 0x00..0xff with
- * 0x80 centred — `hat` is 0..7 clockwise from north or 8 for released,
+ * either device. `axes` is X, Y, Z, Rz (the two sticks, 0x00..0xff with
+ * 0x80 centred), `hat` is 0..7 clockwise from north or 8 for released,
  * and `buttons` is the twelve-button bitmap of which this port can carry
  * the first four. A no-op when no gameport is on the machine.
  */

@@ -10,10 +10,10 @@
  * headless WSI (patches/dxvk/04-wsi-headless, DXVK_WSI_DRIVER=Headless)
  * expects. With a NULL device window d3d9 creates no presenter and Present
  * is a no-op, so the scene renders entirely off-screen and the frame comes
- * out through GetRenderTargetData — the same path the paravirtual device's
- * executor takes. That means the oracle runs on a machine with no display,
- * and it is why nothing here needs SDL any more (2026-09-07; the SDL shim
- * this replaced also owned the last libSDL2 dependency in the tree).
+ * out through GetRenderTargetData, the same path the paravirtual device's
+ * executor takes. So the oracle runs on a machine with no display and
+ * needs no SDL (the SDL shim this replaced was the last libSDL2 dependency
+ * in the tree).
  *
  * The trade: no interactive run. The message pump is always empty and no key
  * is ever down, so drive the scene with -frames / -dump, never by hand.
@@ -136,7 +136,7 @@ inline BOOL GetVersionExA(OSVERSIONINFOA *v) {
 }
 inline DWORD GetModuleFileNameA(HMODULE, char *out, DWORD n) {
   /* the scene only splits on '\\' so a POSIX path yields "" and bare
-   * log/dump names land in the current directory — intended */
+   * log/dump names land in the current directory, as intended */
 #ifdef __APPLE__
   uint32_t sz = n; if (_NSGetExecutablePath(out, &sz) != 0) out[0] = 0;
 #else

@@ -1,5 +1,5 @@
 //! In-process QEMU: spawns the QEMU thread, receives display callbacks
-//! (QEMU thread, BQL held — copy and return), publishes frames to the
+//! (QEMU thread, BQL held, so copy and return), publishes frames to the
 //! render thread.
 
 use qemu_embed::{Qemu, RawDisplayCb};
@@ -168,7 +168,7 @@ struct Shared {
     released: bool,
     // the guest's hardware cursor (the d3dpt-vga driver, doc 15): its shape
     // as the guest defined it, a sequence number per define / clear, and
-    // whether the guest shows it — None until the guest ever positioned it
+    // whether the guest shows it. None until the guest ever positioned it
     // (a guest with a software pointer, cirrus / vga.sys, never does)
     cursor: Option<Arc<CursorImage>>,
     cursor_seq: u64,
@@ -225,7 +225,7 @@ impl Display {
     /// Not the same number as the `last_seq` the render path keeps: that
     /// one only moves when a frame is actually presented, and an occluded
     /// window presents nothing. `PLAYER_PAD_SCRIPT` is keyed on this one
-    /// so a headless run — which is every scripted run — advances the
+    /// so a headless run (every scripted run is one) advances the
     /// script at the guest's own rate rather than stopping dead behind a
     /// terminal window.
     pub fn published_seq(&self) -> u64 {
@@ -342,8 +342,8 @@ unsafe extern "C" fn on_mouse_set(ud: *mut c_void, x: c_int, y: c_int, on: bool)
     s.cursor_x = x;
     s.cursor_y = y;
     // a move alone republishes the frame: the UI composites the sprite at
-    // the new place when it has to (no cost when the host cursor is used —
-    // the copy happens only if the UI takes the frame)
+    // the new place when it has to (no cost when the host cursor is used,
+    // since the copy happens only if the UI takes the frame)
     if changed && s.cursor.is_some() && s.front.width != 0 && s.front.ext_slot.is_none() {
         publish_trace(&format_args!("cursor"));
         s.front.seq += 1;
@@ -455,7 +455,7 @@ unsafe extern "C" fn on_3d_dmabuf(
     // `PLAYER_ZC_IMPORT=0`: take the offer and import nothing. Declining one
     // turns the whole ring off (the backend falls back to reading frames
     // back), so this is the only way to have the ring running with no Vulkan
-    // behind it — which is what says whether importing a buffer is what
+    // behind it. That tells whether importing a buffer is what
     // stops it being written through (doc 12 §4). The picture is wrong while
     // it is set: nothing has the slots, so every 3D frame falls back to the
     // VGA surface. It is for reading the backend's own `EMBED_ZC_CHECK`
@@ -504,7 +504,7 @@ unsafe extern "C" fn on_3d_iosurface(
 }
 
 /// `PLAYER_PUBLISH_LOG=1`: one line per published frame naming the source
-/// that made it — a ring slot, the readback path, the VGA surface or the
+/// that made it: a ring slot, the readback path, the VGA surface or the
 /// cursor's republish. Which of them a frame came from is invisible in the
 /// picture, and a flicker is two of them taking turns.
 fn publish_trace(tag: &std::fmt::Arguments) {
@@ -542,13 +542,12 @@ const SWITCH_GRACE: std::time::Duration = std::time::Duration::from_millis(1500)
 
 /// `PLAYER_REFRESH_LOG=1`: a frame counter every hundred guest frames.
 ///
-/// It was on unconditionally, which is bring-up scaffolding — on a
-/// machine left running it is a line or two a second for as long as the
-/// guest is up, and it buries everything the player prints when
-/// something is actually wrong (user, 2026-09-07). It still answers the
-/// one question nothing else does — whether the guest is drawing at all
-/// — so it stays, behind a knob like `PLAYER_CURSOR_LOG` and
-/// `PLAYER_LATENCY`. Read once: this sits in the publish path.
+/// Off by default. On a machine left running it is a line or two a
+/// second for as long as the guest is up, and it buries everything the
+/// player prints when something is actually wrong. It still answers the
+/// one question nothing else does, whether the guest is drawing at all,
+/// so it stays behind a knob like `PLAYER_CURSOR_LOG` and
+/// `PLAYER_LATENCY`. Read once, because this sits in the publish path.
 fn refresh_log() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("PLAYER_REFRESH_LOG").is_some())
@@ -679,7 +678,7 @@ fn copy_rect(s: &mut Shared, x: usize, y: usize, w: usize, h: usize) {
 }
 
 /// Start QEMU on its own thread. Returns once the VM is created and started.
-/// `audio`: (ring, sample rate) — the ring is installed before qemu_init and
+/// `audio`: (ring, sample rate). The ring is installed before qemu_init and
 /// an `-audiodev embed,id=embed0` matching the host rate is appended; attach
 /// devices with `audiodev=embed0`.
 pub fn start(

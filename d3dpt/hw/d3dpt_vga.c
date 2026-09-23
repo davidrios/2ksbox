@@ -1,5 +1,5 @@
 /*
- * d3dpt_vga.c — the d3dpt-vga display adapter (doc 15, ADR-008 / M7a).
+ * d3dpt_vga.c: the d3dpt-vga display adapter (doc 15, ADR-008 / M7a).
  *
  * A PCI VGA (QEMU's standard VGA core: SeaBIOS' stdvga ROM boots it, XP's
  * inbox vga.sys drives it at 640x480x16 until our driver is installed) with
@@ -68,14 +68,14 @@ struct D3dptVgaState {
     int64_t flips_ns;           /* and when it was made */
     uint32_t ddflags;           /* property: test knob read by the guest driver */
     bool no_exec;               /* property: act as a host with no Vulkan 1.3 device
-                                   (ADR-013's floor unmet) — D3D_STATUS then reads
+                                   (ADR-013's floor unmet); D3D_STATUS then reads
                                    NO_EXEC and the guest driver offers DirectDraw only */
-    char *d3d9;                 /* property: which Direct3D 9 the executor runs on —
+    char *d3d9;                 /* property: which Direct3D 9 the executor runs on:
                                    auto (DXVK, then this host's own on Windows),
                                    dxvk or system (d3dpt_exec_load.h) */
-    char *exec_pick;            /* property `exec`: which executor library — auto, dxvk
+    char *exec_pick;            /* property `exec`: which executor library: auto, dxvk
                                    (in process), wine (another process, M15), none */
-    uint32_t fb_version;        /* property: the VERSION register (D3DPT_FB_VERSION) —
+    uint32_t fb_version;        /* property: the VERSION register (D3DPT_FB_VERSION);
                                    a newer one checks that installed drivers accept it */
 
     /* the hardware cursor (version 4): the guest's registers, and what was
@@ -142,11 +142,10 @@ static const uint8_t fb_bpp[] = { 8, 16, 32 };
 #define FB_MODE_COUNT (ARRAY_SIZE(fb_sizes) * ARRAY_SIZE(fb_hz) * ARRAY_SIZE(fb_bpp))
 
 /* how long (ms) the last linear frame stays up after ENABLE goes 0 before
- * the VGA core is shown. Wall clock, not refreshes: it was 15 refreshes,
- * which is 250 ms under the player but 45 s in a headless run, where an
- * idle console refreshes every 3 s — and 45 s of a stale desktop over a
- * DirectDraw Mode X game read as the game drawing nothing (2026-09-10,
- * doc 19 §30). */
+ * the VGA core is shown. Wall clock, not refreshes. 15 refreshes is 250 ms
+ * under the player but 45 s in a headless run, where an idle console
+ * refreshes every 3 s, and 45 s of a stale desktop over a DirectDraw
+ * Mode X game read as the game drawing nothing (doc 19 §30). */
 #define D3DPT_FB_VGA_GRACE_MS 250
 
 static bool fb_mode_entry(uint32_t sel, uint32_t *w, uint32_t *h,
@@ -304,7 +303,7 @@ static void fb_update_span(D3dptVgaState *s, int y0, int y1)
 /* The vertical blank the guest waits on (REG_FRAMES).
  *
  * It counts periods of the mode's refresh rate since the mode was enabled,
- * off the host clock — not the display client's pull. The guest's frame
+ * off the host clock, not the display client's pull. The guest's frame
  * pacing then does not depend on whether anything is looking: the player
  * pulls at its own interval, a headless run pulls not at all, and a game
  * still gets the 60 (or 85) Hz it asked for.
@@ -391,7 +390,7 @@ static void d3dpt_vga_gfx_update(void *opaque)
         /* The VGA core's mode, once per change: which VGA mode a guest
          * programmed after the driver let go (a DirectDraw Mode X, a DOS
          * game's mode 13h, a blue screen's text mode) is otherwise
-         * invisible in a headless run (2026-09-10, doc 19 §30). */
+         * invisible in a headless run (doc 19 §30). */
         {
             VGACommonState *v = &s->vga;
             uint8_t sig[8] = { v->cr[0x01], v->cr[0x07], v->cr[0x09], v->cr[0x12],
@@ -465,11 +464,11 @@ static void d3dpt_vga_invalidate(void *opaque)
     D3dptVgaState *s = opaque;
 
     /* A full frame, and into a surface of our own: another device may have
-     * had the console meanwhile and left its surface there -- a Voodoo 2
-     * giving the monitor back through VGA pass-through does exactly that --
+     * had the console meanwhile and left its surface there (a Voodoo 2
+     * giving the monitor back through VGA pass-through does exactly that),
      * and a linear mode that did not change would otherwise go on updating
      * that stranger's surface for ever, so the picture never came back
-     * (2026-09-12, doc 21 §7). */
+     * (doc 21 §7). */
     s->full_update = true;
     s->resurface = true;
     s->vga.hw_ops->invalidate(&s->vga);
@@ -549,7 +548,7 @@ static void d3d_doorbell(D3dptVgaState *s)
         /* How long the host spends in a batch, against how long the guest
          * takes to bring the next one: a frame rate that halves with the
          * host's share flat is a slow guest, and one that halves with the
-         * share grown is us (2026-09-17, 3DMark slow after some reboots). */
+         * share grown is us (3DMark slow after some reboots). */
         int64_t t0 = qemu_clock_get_ns(QEMU_CLOCK_REALTIME);
 
         s->d3d_err  = s->lib->submit(s->exec, win, D3DPT_SHM_SIZE);
@@ -587,12 +586,12 @@ static void d3d_reset(D3dptVgaState *s)
  * to the console as a QEMUCursor; the position and visibility go through
  * dpy_mouse_set. The display clients composite it (the player: as the host
  * window's cursor); the device draws nothing into the frame. */
-/* No shape: **never `dpy_cursor_define(con, NULL)`** — QEMU's console takes
+/* No shape: **never `dpy_cursor_define(con, NULL)`**. QEMU's console takes
  * a reference on the cursor it is handed and dereferences it (cursor_ref),
- * so a NULL is a SIGSEGV in whatever process the device lives in. That was
- * the player, on the first Win98 restart after the reset below started
- * clearing the shape (2026-09-09). A hidden 1x1 transparent cursor is what
- * "no cursor" is to the console. */
+ * so a NULL is a SIGSEGV in whatever process the device lives in (the
+ * player crashed this way on a Win98 restart once the reset below cleared
+ * the shape). A hidden 1x1 transparent cursor is what "no cursor" is to
+ * the console. */
 static void fb_cursor_clear(D3dptVgaState *s)
 {
     QEMUCursor *c = cursor_alloc(1, 1);
@@ -638,19 +637,19 @@ static void fb_cursor_define(D3dptVgaState *s, bool on)
  * from the first flip until the chain gives the screen back: a mode set
  * (ENABLE written), or the flips stopping on the desktop's own page (see
  * fb_cursor_flip_idle). Windows' pointer stays enabled behind an
- * exclusive-mode game that never hides it -- on a card without a hardware
+ * exclusive-mode game that never hides it (on a card without a hardware
  * cursor GDI's pointer lives in the front buffer and the first flip wipes
- * it, so a page-flipping game draws its own -- and this device's sprite
- * put Windows' arrow beside Moto Racer's in its menus (2026-09-17). No
+ * it, so a page-flipping game draws its own), and this device's sprite
+ * put Windows' arrow beside Moto Racer's in its menus. No
  * guest driver learns of exclusive mode on 9x, so the flip is the signal.
  *
- * A VGA screen has no hardware cursor. While ENABLE is off — a full-screen
- * DOS box, a blue screen, the moments of a mode switch — the sprite stays
- * hidden whatever CURSOR_ENABLE says: the guest's driver is not running the
+ * A VGA screen has no hardware cursor. While ENABLE is off (a full-screen
+ * DOS box, a blue screen, the moments of a mode switch) the sprite stays
+ * hidden whatever CURSOR_ENABLE says. The guest's driver is not running the
  * screen then and nothing of its will turn the sprite off. The player
  * composites the sprite into the frame when the pointer is grabbed, and
  * over Blood's 640x480 VGA frame the desktop's arrow came out at the
- * desktop's coordinates, scaled with the frame (2026-09-09). */
+ * desktop's coordinates, scaled with the frame. */
 /* How long without a page flip before a flip chain counts as gone. Guest
  * time, so a slow TCG frame or a paused VM does not count; long enough that
  * a game at a few frames a second keeps the sprite hidden. */
@@ -659,12 +658,12 @@ static void fb_cursor_define(D3dptVgaState *s, bool on)
 static void fb_cursor_move(D3dptVgaState *s);
 
 /* The other way a flip chain gives the screen back: it stops flipping, on
- * the page the desktop was on before its first flip -- which is where
+ * the page the desktop was on before its first flip, which is where
  * DirectDraw leaves the scanout when the chain is released. A game that
  * plays at the desktop's own mode never sets a mode on the way out (the
  * runtime only calls the driver's SetMode when the mode changes), so "until
- * the next mode set" hid the pointer for good after 3DMark 99 at 800x600x16
- * (2026-09-17). A game still on its other page stays hidden; one idle on
+ * the next mode set" hid the pointer for good after 3DMark 99 at 800x600x16.
+ * A game still on its other page stays hidden; one idle on
  * the desktop's page (a loading screen) gets the pointer until its next
  * flip, which is what a card with no hardware cursor would show too. */
 static void fb_cursor_flip_idle(void *opaque)
@@ -1022,7 +1021,7 @@ static Property d3dpt_vga_properties[] = {
      * or WineD3D staged next to it). Testing knob only: it is how a host
      * we cannot borrow is met from one that has Vulkan. It refuses before
      * the executor library is opened, so `d3d9=` below is not read and no
-     * backend is picked: since 2026-09-21 a *Windows* host below the floor
+     * backend is picked: a *Windows* host below the floor
      * is `d3d9=system`, and this is a host with no pass-through at all. */
     DEFINE_PROP_BOOL("no-exec", D3dptVgaState, no_exec, false),
     /* d3d9=auto|dxvk|system: which Direct3D 9 the executor runs on
@@ -1042,7 +1041,7 @@ static Property d3dpt_vga_properties[] = {
      * QEMU update (d3dpt_fb.h, "Versions only add"). Nothing else reads it. */
     DEFINE_PROP_UINT32("fb-version", D3dptVgaState, fb_version, D3DPT_FB_VERSION),
     /* convert the whole frame every refresh instead of the dirty spans:
-     * the A/B for a picture that comes out in stale bands (2026-09-17, a
+     * the A/B for a picture that comes out in stale bands (a
      * 3DMark 99 loading screen on the PC). On means the pixels in VRAM are
      * right and this device's incremental path is what lost them. */
     DEFINE_PROP_BOOL("full-frames", D3dptVgaState, full_frames, false),

@@ -1,21 +1,17 @@
 //! Shader profiles (doc 07), as two QML models over
 //! `launcher_core::editor`.
 //!
-//! `ProfileModel` is the profile list — New / Edit / Delete over
-//! `shader_library`. `ShaderEditor` wraps `editor::Editor` and is
-//! *itself* the list model for the preset's parameters, which is the one
-//! place this port came out structurally nicer than the egui build:
-//! there, the parameter metadata and the overrides are two vectors a
-//! `for` loop zips into sliders; here they are the model's rows and the
-//! slider is a delegate, so "the checkbox and the slider disagree about
-//! which parameter they belong to" stops being expressible.
+//! `ProfileModel` is the profile list: New / Edit / Delete over
+//! `shader_library`. `ShaderEditor` wraps `editor::Editor` and is itself
+//! the list model for the preset's parameters. The parameters are the
+//! model's rows and the slider is a delegate, so a checkbox and a slider
+//! cannot disagree about which parameter they belong to.
 //!
-//! Everything the editor *does* is the shared model: reading a preset,
-//! keeping only overridden parameters, the "only a drag counts" guard
-//! that stops a preset whose default sits off the step grid from
-//! silently acquiring an override just by being opened, and saving a new
-//! profile *with* its overrides. The preset collection and its download
-//! are `editor::Presets`.
+//! Everything the editor does is the shared model: reading a preset,
+//! keeping only overridden parameters, the guard that stops a preset
+//! whose default sits off the step grid from acquiring an override just
+//! by being opened, and saving a new profile with its overrides. The
+//! preset collection and its download are `editor::Presets`.
 
 #[cxx_qt::bridge]
 pub mod ffi {
@@ -91,31 +87,31 @@ pub mod ffi {
         #[qproperty(QString, parse_error)]
         #[qproperty(QString, error)]
         /// The URL QML's `Image` reads, carrying a generation counter so
-        /// every rendered frame is a new URL — see `src/preview.rs` for
-        /// why the frame goes through a file at all.
+        /// every rendered frame is a new URL. `src/preview.rs` says why
+        /// the frame goes through a file at all.
         #[qproperty(QString, preview_source)]
         /// The size the last frame came out at: the source image's own
-        /// size times the largest integer scale that fits, exactly as
-        /// `player::Gpu::viewport` computes it. QML centres a frame this
+        /// size times the largest integer scale that fits, as the
+        /// player's `Gpu::viewport` computes it. QML centres a frame this
         /// size on black rather than stretching it to fill.
         #[qproperty(i32, preview_width)]
         #[qproperty(i32, preview_height)]
         /// How many milliseconds until the preview wants drawing again,
-        /// or 0 when it never does: a preset whose picture depends on the
+        /// or 0 when it never does. A preset whose picture depends on the
         /// frame number (an interlaced CRT, a phosphor afterglow, a
-        /// shimmering NTSC signal) is only itself in motion, and one that
-        /// does not must not spin a timer. QML runs its render timer at
-        /// this; the egui build asks egui to repaint after it.
+        /// shimmering NTSC signal) only looks right in motion, and one
+        /// that does not must not spin a timer. QML runs its render timer
+        /// at this interval.
         #[qproperty(i32, preview_interval)]
         /// Where the preset collection is, or "" if there is none yet.
         #[qproperty(QString, presets_dir)]
-        /// "", "running:<MB>", "failed:<message>" — the download's state.
+        /// The download's state: "", "running:<MB>" or "failed:<message>".
         #[qproperty(QString, download_state)]
         /// Where the collection would be installed, for the offer.
         #[qproperty(QString, presets_install_dir)]
         #[qproperty(QString, presets_download_size)]
-        /// The file dialogs' name filters, from the same constants the
-        /// egui build hands `rfd`.
+        /// The file dialogs' name filters, from `launcher_core::editor`'s
+        /// constants.
         #[qproperty(QString, preset_filter)]
         #[qproperty(QString, image_filter)]
         type ShaderEditor = super::ShaderEditorRust;
@@ -139,8 +135,7 @@ pub mod ffi {
         fn edit(self: Pin<&mut ShaderEditor>, path: &QString);
 
         /// Re-read the preset's parameters if the path changed. Called
-        /// when the preset field is committed, where the egui build does
-        /// it once per frame.
+        /// when the preset field is committed.
         #[qinvokable]
         fn reparse(self: Pin<&mut ShaderEditor>);
 
@@ -149,7 +144,7 @@ pub mod ffi {
         fn set_override(self: Pin<&mut ShaderEditor>, row: i32, enabled: bool);
 
         /// Move an overridden parameter. Ignored for a row that isn't
-        /// overridden — a disabled slider must not be able to write one.
+        /// overridden, so a disabled slider cannot write one.
         #[qinvokable]
         fn set_value(self: Pin<&mut ShaderEditor>, row: i32, value: f32);
 
@@ -165,10 +160,10 @@ pub mod ffi {
         fn download_presets(self: Pin<&mut ShaderEditor>);
 
         /// Look for the preset collection again. The first-run offer
-        /// (`qt/firstrun.rs`) can put one on disk while this object is
-        /// already alive holding the "there is none" it cached at
-        /// construction, and without this the profile manager goes on
-        /// offering to download what has just been downloaded.
+        /// (`qt/firstrun.rs`) can put one on disk while this object holds
+        /// the "there is none" it cached at construction. Without this
+        /// the profile manager keeps offering to download what has just
+        /// been downloaded.
         #[qinvokable]
         fn rescan_presets(self: Pin<&mut ShaderEditor>);
 
@@ -321,7 +316,7 @@ impl ffi::ShaderEditor {
         match role {
             E_ID => QVariant::from(&qs(&meta.id)),
             // The editor hides a description that just repeats the id;
-            // same rule for both front ends, decided there.
+            // the rule lives in `launcher_core::editor`.
             E_DESCRIPTION => QVariant::from(&qs_opt(editor.description(row))),
             E_MINIMUM => QVariant::from(&meta.minimum),
             E_MAXIMUM => QVariant::from(&meta.maximum),
@@ -438,14 +433,12 @@ impl ffi::ShaderEditor {
 
 /// **Published once at construction**, because two windows read the
 /// preset-collection properties (`PresetCollection.qml`) without ever
-/// opening the editor: the profile list is where someone discovers they
-/// have no shaders at all. Until 2026-09-06 nothing published them until
-/// an editor verb ran, so the list always claimed there were no presets
-/// — with an empty size and an empty destination in the offer, since
-/// those properties were at their defaults rather than at
-/// `PresetState::Missing`'s values — and the button then downloaded 50 MB
-/// of presets over the ones already on disk. The egui build cannot have
-/// this bug: it asks the model while drawing, every frame.
+/// opening the editor; the profile list is where someone discovers they
+/// have no shaders at all. Without this, nothing is published until an
+/// editor verb runs, so the list claims there are no presets (with an
+/// empty size and destination in the offer, the properties' defaults
+/// rather than `PresetState::Missing`'s values), and the button
+/// downloads 50 MB of presets over the ones already on disk.
 impl cxx_qt::Initialize for ffi::ShaderEditor {
     fn initialize(self: core::pin::Pin<&mut Self>) {
         self.publish();
@@ -455,16 +448,16 @@ impl cxx_qt::Initialize for ffi::ShaderEditor {
 impl ffi::ShaderEditor {
     /// Hand the model what the user has been typing.
     ///
-    /// The name and the two paths are edited *in the properties* — a
-    /// text field writes one and nothing else happens until a verb runs
-    /// — while `publish` copies the model's own copy back out over them.
+    /// The name and the two paths are edited in the properties (a text
+    /// field writes one and nothing else happens until a verb runs),
+    /// while `publish` copies the model's own copy back out over them.
     /// So every verb that publishes has to give the model the current
     /// text first, or it publishes the older copy over what is on
-    /// screen: picking a preset (which reparses, and so publishes)
+    /// screen. Picking a preset (which reparses, and so publishes)
     /// emptied the name field of a half-filled profile, and a preset
-    /// download's 300 ms poll did it several times a second
-    /// (2026-09-07). `new_profile` and `edit` are the two that must
-    /// *not* call this: there the model is deliberately the newer one.
+    /// download's 300 ms poll did it several times a second.
+    /// `new_profile` and `edit` must not call this: there the model is
+    /// the newer copy.
     fn catch_up(mut self: Pin<&mut Self>) {
         let name = self.name.to_string();
         let preset = self.preset_path.to_string();
@@ -486,8 +479,8 @@ impl ffi::ShaderEditor {
         self.as_mut().set_count(count);
     }
 
-    /// The editor and the preset collection, onto the properties — every
-    /// one through its own setter (see the header of `main.rs`).
+    /// The editor and the preset collection, onto the properties, each
+    /// through its own setter (see the header of `main.rs`).
     fn publish(mut self: Pin<&mut Self>) {
         let (open, count, name, preset_path, preview_image, parse_error, error);
         let (presets_dir, download_state, install_dir, size, preset_filter, image_filter);

@@ -1,14 +1,14 @@
 /*
- * d3dpt_core.h — the OS-independent half of the display driver (doc 19,
- * "The split"). Everything here is about *our* adapter and *our*
- * protocol: the surface table and its format arithmetic, the caps, the
- * contexts, the flip chain, the DrawPrimitives2 walker.
+ * d3dpt_core.h: the OS-independent half of the display driver (doc 19,
+ * "The split"). Everything here is about our adapter and our protocol.
+ * It holds the surface table and its format arithmetic, the caps, the
+ * contexts, the flip chain and the DrawPrimitives2 walker.
  *
- * The core is linked into a **kernel-mode** DLL on NT and a **user-mode**
- * one on 9x, so it calls no operating-system service at all: the four it
- * needs (allocate, free, read a tick, describe a surface) arrive through
- * the d3dpt_os_* hooks below, which the per-OS layer implements. It also
- * includes no DDK header of either family — NT's DD_SURFACE_LOCAL and
+ * The core is linked into a kernel-mode DLL on NT and a user-mode one on
+ * 9x, so it calls no operating-system service. The four it needs
+ * (allocate, free, read a tick, describe a surface) arrive through the
+ * d3dpt_os_* hooks below, which the per-OS layer implements. It also
+ * includes no DDK header of either family. NT's DD_SURFACE_LOCAL and
  * 9x's DDRAWI_DDRAWSURFACE_LCL never reach it; the layer fills a
  * d3dpt_surf_desc instead and the core works on that.
  *
@@ -23,11 +23,11 @@
 #include "../../../../d3dpt/d3dpt_fb.h"
 #include "../../../../d3dpt/d3dpt_enc.h"
 
-/* -device d3dpt-vga,ddflags=N: bisection knobs while the DDI is brought
- * up. Read off the adapter's DDFLAGS register, so they are the core's:
- * every one of them switches behaviour the core owns. */
+/* -device d3dpt-vga,ddflags=N: bisection and A/B knobs. The core reads
+ * them off the adapter's DDFLAGS register because every one switches
+ * behaviour the core owns. */
 #define DDF_NO_GETDRIVERINFO   0x1    /* no GetDriverInfo / GETDRIVERINFOSET */
-#define DDF_TEX_ANYSIZE        0x2    /* the A/B: textures of any size claimed again (no D3DPTEXTURECAPS_POW2), as before 2026-09-14 */
+#define DDF_TEX_ANYSIZE        0x2    /* the A/B: textures of any size claimed again (no D3DPTEXTURECAPS_POW2) */
 #define DDF_NO_SURFACE_CB      0x4    /* only MapMemory + CanCreateSurface */
 #define DDF_ENGINE_BITMAP      0x8    /* EngCreateBitmap primary instead of a device surface */
 #define DDF_GDI_CAP            0x10   /* add DDCAPS_GDI to dwCaps: dxg then drops the HAL (kept as the repro) */
@@ -50,8 +50,8 @@
                                          * draw's vertices copied into the record, as before protocol v9) */
 #define DDF_ONE_STREAM         0x200000 /* the A/B: MaxStreams 1 and every draw carrying stream 0 alone, as before protocol v10 */
 #define DDF_NO_CUBE            0x400000 /* the A/B: no cube textures (caps, format ops), as before protocol v11 */
-#define DDF_NO_BUMP            0x800000 /* the A/B: no bump-map format in either texture list — V8U8, and in the DX8 one
-                                         * L6V5U5 / X8L8V8U8 too (EMBM's ops stay claimed, as before) */
+#define DDF_NO_BUMP            0x800000 /* the A/B: no bump-map format in either texture list (V8U8, and in the DX8 one
+                                         * L6V5U5 / X8L8V8U8 too; EMBM's ops stay claimed, as before) */
 #define DDF_NO_VOLUME          0x1000000 /* the A/B: no volume textures (caps, format ops) */
 #define DDF_NO_ANISO           0x2000000 /* the A/B: MaxAnisotropy 1, no anisotropic filter caps */
 #define DDF_NO_MORE_FMTS       0x4000000 /* the A/B: none of L8 A8L8 A4L4 A8 X4R4G4B4 R3G3B2 A8R3G3B2 DXT2 DXT4 in the DX8 format list */
@@ -97,14 +97,14 @@
 #define D3D_MAX_STREAMS 16          /* D3DCAPS8.MaxStreams (D3DPT_DRAW8_MAX_STREAMS) */
 
 /* Three DirectDraw-internal bits the core acts on, spelled out because
- * they are in a DDK header on both families and the core includes
- * neither. They are the runtime's, not the OS's — the same values in
- * NT's ddrawint.h and 9x's ddrawi.h — and each per-OS layer checks its
- * copy against the DDK's, because a constant transcribed wrong is the
- * one mistake this arrangement makes silently: EXECUTEBUFFER went in as
- * 0x800 and cost the video-memory vertex buffers a shtest case
- * (2026-09-07). The DDKs spell that one DDSCAPS_RESERVED2, which is what
- * it was renamed to when execute buffers left the public API. */
+ * they live in a DDK header on both families and the core includes
+ * neither. They are the runtime's, with the same values in NT's
+ * ddrawint.h and 9x's ddrawi.h. Each per-OS layer checks its copy
+ * against the DDK's, because a constant transcribed wrong fails
+ * silently. EXECUTEBUFFER once went in as 0x800 and cost the
+ * video-memory vertex buffers a shtest case. The DDKs spell it
+ * DDSCAPS_RESERVED2, its name since execute buffers left the public
+ * API. */
 #define DDRAWISURF_HASCKEYSRCBLT_   0x00000800
 #define DDRAWISURF_HASPIXELFORMAT_  0x00002000
 #define DDSCAPS_EXECUTEBUFFER_      0x00800000
@@ -219,10 +219,9 @@ typedef struct d3dpt_core {
 /* the core whose Direct3D is on (the primary display) */
 extern d3dpt_core *d3d_core;
 
-/* One surface as the layer describes it. Everything the core reads off
- * the OS's surface object is in here — NT's DD_SURFACE_LOCAL and 9x's
- * DDRAWI_DDRAWSURFACE_LCL hold the same facts at different offsets, and
- * this is where they meet. */
+/* One surface as the layer describes it: everything the core reads off
+ * the OS's surface object. NT's DD_SURFACE_LOCAL and 9x's
+ * DDRAWI_DDRAWSURFACE_LCL hold the same facts at different offsets. */
 typedef struct d3dpt_surf_desc {
     void *os;                   /* the OS's own object; the core only stores it and hands it back */
     ULONG handle;
@@ -250,12 +249,12 @@ void d3dpt_os_free(void *p);
 void d3dpt_os_ticks(LONGLONG *now, LONGLONG *freq);
 /* describe one surface; FALSE when it has no global half (nothing to say) */
 BOOL d3dpt_os_surf(d3dpt_core *c, void *os, d3dpt_surf_desc *out);
-/* the surfaces attached to this one that are *not* mip levels — a flip
- * chain's other buffers, a Z buffer — written into out, at most max of
- * them; the count is the return */
+/* the surfaces attached to this one that are not mip levels (a flip
+ * chain's other buffers, a Z buffer), written into out, at most max of
+ * them; returns the count */
 ULONG d3dpt_os_attached(void *os, void **out, ULONG max);
 /* everything attached to this surface, mip levels and cube faces included,
- * at most max of them; the count is the return */
+ * at most max of them; returns the count */
 ULONG d3dpt_os_attached_all(void *os, void **out, ULONG max);
 /* the next (smaller) mip level attached to this surface, or NULL */
 void *d3dpt_os_next_mip(void *os);

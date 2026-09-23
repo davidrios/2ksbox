@@ -1,6 +1,6 @@
 /*
- * drvinst.c — installs the d3dpt-vga display driver into a 2000/XP guest
- * from a script: what `devcon update` does, without the DDK.
+ * drvinst.c: installs the d3dpt-vga display driver into a 2000/XP guest
+ * from a script, as `devcon update` does, without the DDK.
  *
  *   DRVINST.EXE [path\d3dptvid.inf] [-reboot]
  *
@@ -41,8 +41,8 @@ static void set_signing_policy(void)
             RegCloseKey(k);
         }
     }
-    /* the Group Policy setting overrides both when present; XP SP2+ consults
-     * it first, and the Logo dialog still appeared with only the two above */
+    /* the Group Policy setting overrides both when present; XP SP2+ reads
+     * it first, and the Logo dialog still appears with only the two above */
     if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Policies\\Microsoft\\Windows NT\\Driver Signing",
                         0, NULL, 0, KEY_SET_VALUE, NULL, &k, NULL) == 0) {
         RegSetValueExA(k, "BehaviorOnFailedVerify", 0, REG_DWORD, (BYTE *)&dzero, sizeof(dzero));
@@ -55,8 +55,8 @@ static void set_signing_policy(void)
  * Control Panel can change it). setupapi creates that dialog inside our
  * own process, on the thread blocked in UpdateDriverForPlugAndPlayDevices,
  * so a second thread can find it (a #32770 dialog of this process) and
- * press its "Continue Anyway" button, which is the first push button in
- * the template in every language. What commercial installers do. */
+ * press "Continue Anyway", the first push button in the template in every
+ * language. Commercial installers do the same. */
 static DWORD g_pid;
 static HWND g_button;
 static volatile LONG g_install_done;   /* the main thread is out of UpdateDriverForPlugAndPlayDevices */
@@ -90,12 +90,12 @@ static BOOL CALLBACK find_dialog(HWND h, LPARAM lp)
     return TRUE;
 }
 
-/* For as long as the install runs, not for a fixed two minutes: setupapi
- * shows one Logo dialog per unsigned file it copies (the miniport, then
- * the display DLL after the copy), and under TCG the second one came
- * after the watcher had given up -- DRVINST then sat behind it for good,
- * three runs out of four on 2026-09-22, with nothing on the screen a
- * headless run could see. */
+/* Watches for as long as the install runs, not for a fixed two minutes.
+ * setupapi shows one Logo dialog per unsigned file it copies (the miniport,
+ * then the display DLL after the copy). Under TCG the second one can come
+ * after a timed watcher has given up, and DRVINST then waits behind it
+ * forever (three runs out of four), with nothing on the screen a headless
+ * run can see. */
 static DWORD WINAPI logo_watcher(LPVOID arg)
 {
     g_pid = GetCurrentProcessId();

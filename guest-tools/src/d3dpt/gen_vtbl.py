@@ -2,9 +2,10 @@
 """Generate d3d9_vtbl.h for the paravirtual d3d9.dll from mingw's d3d9.h:
 prototypes for every IDirect3D9 / IDirect3DDevice9 method (so the
 implementations are signature-checked), E_NOTIMPL stubs (log once) for
-the ones not implemented, a wrapper per method (the API lock, D3DPT_LOCK in d3d9.c, and the call trace; the vtable
-entry; logs entry/exit to d3dpt_trace.log when tracing is on, see
-d3dpt_trace in d3d9.c) and the vtables in header order.
+the ones not implemented, a wrapper per method that is the vtable entry
+(it takes the API lock, D3DPT_LOCK in d3d9.c, and logs entry/exit to
+d3d9_trace.log when tracing is on, see d3dpt_trace in d3d9.c) and the
+vtables in header order.
 Usage: gen_vtbl.py /usr/i686-w64-mingw32/include/d3d9.h > d3d9_vtbl.h
 Implemented method names are read from the D3DPT_IMPL_* lists below."""
 import re, sys

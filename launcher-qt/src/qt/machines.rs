@@ -1,16 +1,14 @@
 //! The machine library grid, as a QML model over
-//! `launcher_core::machines::Machines` — the scan, the running-player
+//! `launcher_core::machines::Machines`: the scan, the running-player
 //! map, what "Play" does (publish the shelf, derive the monitor socket
 //! from the bundle directory, spawn) and the reap that notices a player
 //! exiting.
 //!
-//! One structural difference worth recording: egui's immediate mode has
-//! no "the list changed" concept, so its grid just redraws from the
-//! model's entries. Qt needs the model to say so, which is the
+//! Qt needs the model to say when the list changed: the
 //! `beginResetModel` bracket in `refresh` and the `dataChanged` in
-//! `poll` — a reset there would drop the view's selection and scroll
-//! position every time a player exited. That is exactly why `reap`
-//! returns the rows that moved.
+//! `poll`. A reset in `poll` would drop the view's selection and scroll
+//! position every time a player exited, which is why `reap` returns the
+//! rows that moved.
 
 #[cxx_qt::bridge]
 pub mod ffi {
@@ -71,9 +69,8 @@ pub mod ffi {
         #[qinvokable]
         fn play(self: Pin<&mut MachineModel>, row: i32);
 
-        /// Reap any player that exited. QML calls this from a `Timer`
-        /// where the egui build does it at the top of every frame — a
-        /// child process still has no way to push the news.
+        /// Reap any player that exited. QML calls this from a `Timer`,
+        /// since a child process cannot push the news.
         #[qinvokable]
         fn poll(self: Pin<&mut MachineModel>);
 
@@ -86,9 +83,8 @@ pub mod ffi {
         #[qinvokable]
         fn is_running(self: &MachineModel, row: i32) -> bool;
 
-        /// Whether the machine in a given bundle directory is up — how a
-        /// per-machine window, which knows its bundle and not its row,
-        /// asks.
+        /// Whether the machine in a given bundle directory is up, for a
+        /// per-machine window that knows its bundle and not its row.
         #[qinvokable]
         fn is_running_dir(self: &MachineModel, dir: &QString) -> bool;
 
@@ -273,8 +269,8 @@ impl ffi::MachineModel {
     }
 }
 
-/// Tell attached views that one row's data moved — the `running` flag
-/// and the shader label are what change without a rescan.
+/// Tell attached views that one row's data moved. The `running` flag
+/// and the shader label change without a rescan.
 fn touch_row(mut model: Pin<&mut ffi::MachineModel>, row: i32) {
     let index = unsafe { model.as_ref().model_index(row, 0, &QModelIndex::default()) };
     let roles = QVector::<i32>::default();

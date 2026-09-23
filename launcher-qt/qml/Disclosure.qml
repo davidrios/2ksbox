@@ -1,14 +1,12 @@
 // A section header that opens and closes what is under it.
 //
-// It exists because the section it was written for used a plain
-// `CheckBox` as its expander, and a checkbox in front of "Emulation
-// optimizations" says the wrong thing entirely: unticking it reads as
-// *turning the optimizations off*, not as folding seven switches out of
-// sight (user, 2026-09-06). Nothing in Quick Controls ships a
-// disclosure, so this is the smallest honest one: a stock `ToolButton`
-// (its background and hover are the style's own) whose content is a
-// triangle that turns to point down when the section is open, a label,
-// and no tick anywhere.
+// A plain `CheckBox` as an expander says the wrong thing: in front of
+// "Emulation optimizations", unticking it reads as turning the
+// optimizations off, not as folding the switches out of sight. Quick
+// Controls ships no disclosure, so this is the smallest one: a stock
+// `ToolButton` (its background and hover are the style's own) whose
+// content is a triangle that points down when the section is open, a
+// label, and no tick anywhere.
 //
 // The caller keeps the body: `visible: <id>.expanded` on whatever
 // follows. One header, one binding, and the body stays where it reads.
@@ -21,9 +19,9 @@ ToolButton {
 
     /// Whether the section under this header is showing. Not the
     /// button's own `checked`: a checked tool button is drawn filled
-    /// under most styles, and a filled header is what a toggle looks
-    /// like. The open state is said by the triangle and by the section
-    /// being there, so this stays a plain button that flips a flag.
+    /// under most styles, which looks like a toggle. The triangle and
+    /// the section itself show the open state, so this stays a plain
+    /// button that flips a flag.
     property bool expanded: false
 
     onClicked: expanded = !expanded
@@ -36,8 +34,8 @@ ToolButton {
     contentItem: RowLayout {
         spacing: 6
 
-        // Drawn, not typed: "▸" and "▾" are a font's problem on some
-        // desktop and a box on the one that hasn't got them.
+        // Drawn, not typed: "▸" and "▾" render as a box on a desktop
+        // whose font lacks them.
         Canvas {
             id: arrow
             implicitWidth: 10

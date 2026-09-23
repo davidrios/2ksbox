@@ -1,5 +1,5 @@
 /*
- * libsynth — the C API of the music engines (doc 20 §3).
+ * libsynth: the C API of the music engines (doc 20 §3).
  *
  * The one header for the Rust crate (libsynth/src/capi.rs implements it),
  * QEMU's OPL3 device (libsynth/qemu/opl3.c) and its MPU-401 device
@@ -8,8 +8,8 @@
  * device refuses a mismatch at realize time rather than at the first note.
  *
  * Threading: a handle is *not* internally locked. Both devices are driven
- * from QEMU with the BQL held — port writes from the vCPU thread, render
- * from the audio timer in the main loop — which is the serialization.
+ * from QEMU with the BQL held (port writes from the vCPU thread, render
+ * from the audio timer in the main loop), which is the serialization.
  * Nothing here blocks, allocates on the render path, or unwinds into C:
  * every entry point catches a panic and degrades to silence.
  */
@@ -40,7 +40,7 @@ void libsynth_opl_address(libsynth_opl *o, int bank, uint8_t addr);
 void libsynth_opl_data(libsynth_opl *o, int bank, uint8_t val);
 
 /* The status register: the two timer flags and the IRQ bit. Detection
- * routines write the timer registers, wait, and read this twice — so the
+ * routines write the timer registers, wait, and read this twice, so the
  * device must have called libsynth_opl_advance() for the wait to pass. */
 uint8_t libsynth_opl_status(libsynth_opl *o);
 
@@ -78,14 +78,14 @@ uint32_t libsynth_midi_rate(libsynth_midi *m);
  * parser's problem, not the device's. */
 void libsynth_midi_write(libsynth_midi *m, uint8_t byte);
 
-/* All notes off, controllers reset, parser back to no running status —
+/* All notes off, controllers reset, parser back to no running status:
  * what an MPU-401 reset command means downstream of the port. */
 void libsynth_midi_reset(libsynth_midi *m);
 
 /* Output level, per cent of the engine's own full scale (100 = as the
  * bank or the module was mastered). Music and the sound card meet in
- * QEMU's mixer and only this side has a trim. The CM-32L caps at 100 —
- * that is its own master volume, the front-panel knob. */
+ * QEMU's mixer and only this side has a trim. The CM-32L caps at 100,
+ * its own master volume, the front-panel knob. */
 void libsynth_midi_gain(libsynth_midi *m, uint32_t percent);
 
 /* Render `frames` stereo frames, interleaved L,R. */

@@ -1,5 +1,5 @@
 /*
- * libqemu_embed.c — run QEMU in-process behind a small C API.
+ * libqemu_embed.c: run QEMU in-process behind a small C API.
  * See libqemu_embed.h for the thread contract. Design: docs/11-m1-embed-api.md
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
@@ -370,7 +370,7 @@ static void enqueue(qemu_embed_t *e, in_event ev)
     if (e->in_n < IN_QUEUE_LEN) {
         e->in_q[e->in_n++] = ev;
     } else {
-        /* drop — a stalled main loop should not grow memory unbounded */
+        /* drop: a stalled main loop should not grow memory unbounded */
         if (e->in_st.dropped++ == 0) {
             fprintf(stderr, "qemu-embed: input: queue full (%u events), dropping\n", IN_QUEUE_LEN);
         }
@@ -419,7 +419,7 @@ bool qemu_embed_mouse_is_absolute(qemu_embed_t *e)
  * `c` the buttons.
  *
  * Whole state rather than per-control events, for the reason
- * usb-gamepad.h gives — a dropped update is corrected by the next one,
+ * usb-gamepad.h gives. A dropped update is corrected by the next one,
  * where a dropped event would leave the guest holding a button. It also
  * means the queue can never fill with pad traffic the way it could with
  * one event per axis per frame.
@@ -515,7 +515,7 @@ static void bh_input_drain(void *opaque)
             };
             /* No qemu_input_event_sync(): neither pad device is on a
              * console and they do not ride the input core at all.
-             * Both are called unconditionally — a machine has one or
+             * Both are called unconditionally. A machine has one or
              * the other and the absent one returns immediately, which
              * is cheaper than asking twice and keeps this file out of
              * the business of knowing which path the bundle chose. */

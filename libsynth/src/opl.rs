@@ -1,6 +1,6 @@
 //! The FM chip: a YMF262 (OPL3) behind the ports a game writes to.
 //!
-//! This is not a MIDI engine — nothing above it parses anything. The
+//! This is not a MIDI engine. Nothing above it parses anything. The
 //! guest writes a register address and a value, exactly as it would to
 //! the chip on a Sound Blaster 16, and the sound is whatever those
 //! registers make. It is the one music path of the era that needs no

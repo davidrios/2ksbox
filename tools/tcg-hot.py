@@ -9,14 +9,14 @@ plus a `-d in_asm,op_opt,out_asm -dfilter ...` log of the same workload
 prints, weighted by samples:
 
   * host instructions per guest instruction, and their class mix (loads /
-    stores / branches / ALU / SIMD / barriers — decoded from the aarch64
+    stores / branches / ALU / SIMD / barriers, decoded from the aarch64
     opcode fields, no disassembler needed);
   * the TCG op mix per guest instruction: guest memory accesses (qemu_ld /
     qemu_st = a softmmu TLB lookup each), condition-code traffic (cc_dst /
     cc_src / cc_op reads and writes), helper calls, barriers, the rest;
-  * the guest instruction mix (mnemonics; needs the `capstone` module —
+  * the guest instruction mix (mnemonics; needs the `capstone` module:
     `uv venv v && uv pip install --python v/bin/python capstone`, run with
-    v/bin/python — else the bytes are printed);
+    v/bin/python; else the bytes are printed);
   * the N hottest guest instructions with all of the above.
 
 Guest instruction = one `---- pc cs_base flags` section of the op dump and

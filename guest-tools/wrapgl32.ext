@@ -12,6 +12,6 @@
 ; the text of the extension list itself.
 ;
 ; Raise the year for a later game, or delete the file to pass everything
-; through. SETUP never overwrites a copy you have changed.
+; through. SETUP /GAME never overwrites a copy that is already there.
 
 ExtensionsYear,1997

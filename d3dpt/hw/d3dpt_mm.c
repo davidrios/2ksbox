@@ -1,5 +1,5 @@
 /*
- * d3dpt_mm.c — the paravirtual Direct3D device model (doc 14, ADR-006).
+ * d3dpt_mm.c: the paravirtual Direct3D device model (doc 14, ADR-006).
  *
  * The qemu-3dfx transport shape: a SysBus device with a 4 KiB register
  * page at D3DPT_MM_BASE and a RAM window at D3DPT_SHM_BASE, both at fixed
@@ -91,7 +91,7 @@ static bool exec_load(D3dptState *s)
     }
 #ifdef CONFIG_POSIX
     /* The out-of-process executor is Wine on a Linux or macOS host
-     * (ADR-018), so its shared file is a POSIX fd — and so is QEMU's own
+     * (ADR-018), so its shared file is a POSIX fd, and so is QEMU's own
      * memory_region_init_ram_from_fd, which exists on no other host. A
      * Windows host below the Vulkan floor runs the same executor in
      * process on the system's own Direct3D 9 (ADR-007's second

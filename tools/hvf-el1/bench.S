@@ -142,7 +142,7 @@ _bench_touch:
 // ---------------------------------------------------------------- rep movsd
 // The blit loop Moto Racer 1997 spends half its vCPU in (`rep movsd`, one
 // per 640-byte row; docs/tracks/m9-tcg-aarch64.md): the shape of
-// do_gen_rep + gen_movs (target/i386/tcg/translate.c) — per iteration a
+// do_gen_rep + gen_movs (target/i386/tcg/translate.c): per iteration a
 // load, a store, esi/edi += 4, ecx = cx_next, the cc_op store to env,
 // cx_next -= 1 and the REP_MAX test; the last iteration outside the loop.
 // x0 = window base (direct/fast) or unused, x1 = src offset, x2 = dst
@@ -288,7 +288,7 @@ _bench_movs_fast:                    // source and of the destination, one softm
     ret
 
 // "today": the loop tcg/aarch64 actually emits for this `rep movsd` under
-// patch 09 (moto-blit-d/qemu-d.log, 2026-09-05), transcribed: x19 -> x5, the
+// patch 09 (moto-blit-d/qemu-d.log), transcribed: x19 -> x5, the
 // same env offsets (ecx @4, esi @0x18, edi @0x1c, eip @0x20, cc_op @0x34,
 // df @0x38, mask/table @-0xf0), the same stack spills. The guest registers
 // go through env at every iteration because the loop's back edge is a TCG
@@ -542,14 +542,14 @@ _bench_diag_stenv_ldstbase:
     ret
 
 // ---------------------------------------------------------------- mixes
-// (track/m9-hwmmu, 2026-09-16) Workload-shaped kernels: the chase and sum
+// (track/m9-hwmmu) Workload-shaped kernels: the chase and sum
 // kernels above are the two extremes (a dependent address chain, a pure
 // load stream); translated code sits between them, with ALU work per
 // access that an out-of-order core overlaps with the softmmu chain. Each
 // iteration here loads through a random index, runs K dependent ALU ops
 // on the value (K = 4: 7-Zip's match finder, one access per ~3 guest
 // instructions; K = 12: ALU-heavy code) and accumulates, so iterations are
-// independent and the loop is throughput-bound -- which is where the
+// independent and the loop is throughput-bound, which is where the
 // chain's nine extra instructions per access are paid or hidden.
 // Sum:  x0 = base or env, x1 = u32 offsets, x2 = count -> x0 = accumulator
 // Copy: x0 = base or env, x1 = source offsets, x2 = count, x3 = destination

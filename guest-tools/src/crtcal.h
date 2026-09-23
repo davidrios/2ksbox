@@ -1,5 +1,5 @@
 /*
- * crtcal.h — the CRT calibration patterns (doc 09).
+ * crtcal.h: the CRT calibration patterns (doc 09).
  *
  * One definition, compiled into both sides of the comparison: CRTCAL.EXE
  * puts them on a real tube to be photographed, tools/crtcal-render.c writes
@@ -9,7 +9,7 @@
  *
  * Every pattern answers one question about the tube; crtcal_asks() says
  * which, and doc 09 says how to photograph it. Patterns are drawn in
- * XRGB8888 at the mode's exact size — never scaled, or the thing being
+ * XRGB8888 at the mode's exact size, never scaled, or the thing being
  * measured is the scaler.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
@@ -199,7 +199,7 @@ static void crtcal__grid(uint32_t *fb, int w, int h)
  * Bands of horizontal line patterns. Band 0 is every other line: on a
  * double-scanned mode the tube draws each of those twice, and the macro
  * shot settles whether 320x200 really is 400 scanlines. The wider spacings
- * show one beam on its own — its thickness against the pitch is the beam
+ * show one beam on its own: its thickness against the pitch is the beam
  * profile the shader's scanline parameters stand for.
  */
 static void crtcal__scanlines(uint32_t *fb, int w, int h)

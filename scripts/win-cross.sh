@@ -13,12 +13,11 @@
 # --userns=keep-id means those files come out owned by you.
 #
 # Everything Windows goes under build/win/ and target/x86_64-pc-windows-gnu/,
-# never over the native build/qemu or target/release: a checkout can hold a
-# Linux build and a Windows build at once, which is the whole point of
-# cross-building rather than switching a tree back and forth.
+# never over the native build/qemu or target/release, so a checkout holds a
+# Linux build and a Windows build at once.
 #
-# CONTAINER=docker uses docker instead of podman (then the files come out
-# owned by root unless the daemon is rootless -- podman is the tested path).
+# CONTAINER=docker uses docker instead of podman. The files then come out
+# owned by root unless the daemon is rootless; podman is the tested path.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

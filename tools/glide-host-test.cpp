@@ -7,18 +7,18 @@
  *
  * What each stage proves:
  *
- *   1. init_glide2x()  — the wrapper is found (QEMU_GLIDE_LIB), its 121
+ *   1. init_glide2x(): the wrapper is found (QEMU_GLIDE_LIB), its 121
  *      Glide entry points resolve undecorated, and patch 33 hands it the
  *      GlideHostOps table the embed provider returns.
- *   2. init_window() + stat_window() — glidewnd.c's resolution encoding
+ *   2. init_window() + stat_window(): glidewnd.c's resolution encoding
  *      and the provider's window_stat run the wrapper's real
  *      grSstWinOpen through cwnd_glide2x, on a context nobody has a
  *      window for. This is the exact sequence glidept_mm.c performs when
  *      a guest calls grSstWinOpen; only the MMIO decode is missing.
- *   3. a clear and a triangle through the wrapper, then grBufferSwap —
+ *   3. a clear and a triangle through the wrapper, then grBufferSwap:
  *      on_3d_frame arrives at the frontend with the drawn pixels, so the
  *      whole path from a Glide call to the player's texture is closed.
- *   4. fini_window()/fini_glide2x() — the context is given back and the
+ *   4. fini_window()/fini_glide2x(): the context is given back and the
  *      frontend is told 3D is over.
  *
  * C++ because the Glide SDK header is (sdk2_3dfx.h includes <cstdint>).
@@ -256,7 +256,7 @@ int main(int argc, char **argv)
      *     locks the back buffer once and treats it as its frame buffer for
      *     the whole front end; upstream OpenGLide drew a write buffer only
      *     on the unlock, which never comes, and every frame was black
-     *     (patches/openglide/05-lfb-locked-swap, 2026-09-10). Fill the
+     *     (patches/openglide/05-lfb-locked-swap). Fill the
      *     locked buffer with 565 blue, swap without unlocking: blue. */
     auto grLfbLock_ = (FxBool (*)(GrLock_t, GrBuffer_t, GrLfbWriteMode_t,
                                   GrOriginLocation_t, FxBool, GrLfbInfo_t *))sym("grLfbLock");
@@ -297,6 +297,6 @@ int main(int argc, char **argv)
 
     printf("actives %d frames %d -> %s\n", actives, frames, ok ? "OK" : "FAIL");
     fflush(stdout);
-    /* one VM per process; cleanup is partial — exit without it */
+    /* one VM per process; cleanup is partial, so exit without it */
     _exit(ok ? 0 : 1);
 }

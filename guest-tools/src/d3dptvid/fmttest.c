@@ -1,13 +1,13 @@
 /*
- * fmttest.c — the Direct3D 8 texture formats our driver's DX8 DDI does not
- * list yet: L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2, DXT4
- * (the bump-map formats are BUMPTEST's). A probe (d3d8probe.h): each format
- * the format list offers is created (MANAGED, 8x8), filled with one known
- * texel and drawn twice — its colour, and its alpha replicated into the
- * colour (D3DTA_ALPHAREPLICATE) — and both read back against what the
- * format means; a format not offered is logged and skipped. With none of
- * them offered the last line says "not offered". DXTTEST remains the
- * check of the formats that are listed.
+ * fmttest.c: the rarer Direct3D 8 texture formats on our driver's DX8 DDI,
+ * L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2 and DXT4 (the
+ * bump-map formats are BUMPTEST's). A probe (d3d8probe.h). Each format the
+ * format list offers is created (MANAGED, 8x8), filled with one known texel
+ * and drawn twice, once for its colour and once with its alpha replicated
+ * into the colour (D3DTA_ALPHAREPLICATE). Both are read back against what
+ * the format means. A format not offered is logged and skipped; with none
+ * offered the last line says "not offered". DXTTEST checks the common
+ * formats.
  *
  *   FMTTEST
  *

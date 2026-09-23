@@ -1,11 +1,11 @@
 /*
- * strmtest.c — more than one vertex stream through XP's own d3d8.dll on our
+ * strmtest.c: more than one vertex stream through XP's own d3d8.dll on our
  * driver's DX8 DDI (doc 15 "More than one vertex stream", protocol v10). A
- * probe (d3d8probe.h): with MaxStreams 1 it says "not offered" (what
- * ddflags=0x200000 turns it back into); otherwise every case below is a
- * check. SHTEST's two-stream cases are the shader half; this is the rest:
- *   three streams — position, colour, texture coordinate, each its own
- *   buffer at its own stride — under a vs 1.1, from a StartVertex;
+ * probe (d3d8probe.h). With MaxStreams 1 it says "not offered", which is
+ * what ddflags=0x200000 turns it back into; otherwise every case below is
+ * a check. SHTEST's two-stream cases are the shader half; this is the rest:
+ *   three streams (position, colour, texture coordinate, each its own
+ *   buffer at its own stride) under a vs 1.1, from a StartVertex;
  *   the fixed function on a three-stream declaration (no function);
  *   streams 0 and 3, nothing bound at 1 and 2;
  *   DrawIndexedPrimitive with a BaseVertexIndex and a MinIndex over three
@@ -13,8 +13,8 @@
  *   the colour stream in a SYSTEMMEM buffer (copied into the record rather
  *   than named in VRAM);
  *   a stream-0 FVF draw with stale streams still bound at 1 and 2.
- * Every buffer starts with decoy vertices — red, and off to the right — so
- * a stream read from the wrong vertex shows as the wrong colour or place.
+ * Every buffer starts with decoy vertices, red and off to the right, so a
+ * stream read from the wrong vertex shows as the wrong colour or place.
  *
  *   STRMTEST
  *

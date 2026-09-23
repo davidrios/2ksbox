@@ -2,17 +2,16 @@
  * drives the same models the Qt launcher does, through
  * `include/launcher_core.h`.
  *
- * It is a *test*, not a demo — `scripts/test.sh host` builds and runs it
- * against a scratch library — and what it tests is that the C ABI is
- * still whole and still means the same thing as the Rust one. It creates
- * a DOS machine through the wizard and checks the answers the shared
- * form gives: 64 MB, a period processor, emulated because a throttle
- * needs TCG, no network card and no USB tablet. Then a disc onto the
- * shelf, the machine seen from the library, and the shelf read back.
+ * It is a test, not a demo: `scripts/test.sh host` builds and runs it
+ * against a scratch library. It checks that the C ABI is still whole and
+ * still means the same thing as the Rust one. It creates a DOS machine
+ * through the wizard and checks the answers the shared form gives:
+ * 64 MB, a period processor, emulated because a throttle needs TCG, no
+ * network card and no USB tablet. Then it puts a disc on the shelf, finds
+ * the machine in the library, and reads the shelf back.
  *
- * Everything it prints is checked by the caller, so a change that
- * silently alters one of those defaults fails here as well as in the two
- * GUIs.
+ * The caller checks everything it prints, so a change that silently
+ * alters one of those defaults fails here as well as in the GUI.
  *
  * Build:
  *   cargo build -p launcher-capi
@@ -32,15 +31,14 @@ static void check(const char *what, int ok, const char *saw) {
     if (!ok) failures++;
 }
 
-/* Every getter hands over a string the caller owns; this checks one and
- * frees it in the same breath, which is also the usage pattern a real
- * front end wants. */
+/* Every getter hands over a string the caller owns. This checks one and
+ * frees it at once, the same pattern a real front end uses. */
 static void check_str(const char *what, char *got, const char *want) {
     check(what, got && strcmp(got, want) == 0, got);
     lc_string_free(got);
 }
 
-/* The index of an adapter in *this machine's* list, by a fragment of its
+/* The index of an adapter in this machine's list, by a fragment of its
  * label, or -1. The list is per family, so the same adapter is at a
  * different index on Win98 than on XP and a front end never remembers
  * one across a family switch. */
@@ -72,7 +70,7 @@ static long label_index(uint32_t kind, const char *want) {
 }
 
 /* Which row a disc is on, by path. The shelf is ordered by label, so a
- * disc that was just added is not necessarily the last row — and a
+ * disc that was just added is not necessarily the last row, and a
  * renamed one moves. Every front end looks a row up like this rather
  * than remembering an index across an edit. */
 static size_t shelf_row(LcShelf *s, const char *path) {
@@ -103,16 +101,15 @@ int main(int argc, char **argv) {
     check("the form is open", lc_wizard_is_open(w), NULL);
     check_str("as \"New machine\"", lc_wizard_title(w), "New machine");
 
-    /* Switching family on a *new* machine moves every field nobody has
-     * touched to the new family's own default. That is what picking "XP"
-     * after "Win98" means, and it was broken for the four fields whose
-     * list is per family — the adapter, the card, the MIDI port and the
-     * pad — until 2026-09-09: they only moved when the new family did
-     * not offer what was in the field at all, so a machine switched from
-     * 98 to XP sat on the Cirrus, which is XP's *non*-default.
+    /* Switching family on a new machine moves every field nobody has
+     * touched to the new family's own default. That once failed for the
+     * four fields whose list is per family (the adapter, the card, the
+     * MIDI port and the pad): they moved only when the new family did not
+     * offer the current value at all, so a machine switched from 98 to XP
+     * stayed on the Cirrus, which is not XP's default.
      *
-     * A field somebody has picked is the other half of the rule and must
-     * survive the switch, so both directions are checked here. */
+     * A field somebody has picked must survive the switch, so both
+     * directions are checked here. */
     long win98 = label_index(LC_LABEL_FAMILY, "Win98");
     long xp = label_index(LC_LABEL_FAMILY, "XP");
     check("the family picker offers Win98 and XP", win98 >= 0 && xp >= 0, NULL);
@@ -135,7 +132,7 @@ int main(int argc, char **argv) {
     /* The pad follows the same rule in the form, but this API has no pad
      * row yet (M13 is newer than the C ABI), so it is unchecked here. */
     /* A host with no Vulkan 1.3 loses only our adapter's Direct3D, so the
-     * 3D line tells the user to keep the adapter — and says it only while
+     * 3D line tells the user to keep the adapter, and says it only while
      * that adapter is the one picked. `scripts/test.sh` runs this with no
      * Vulkan driver; on a host with one the line must be absent. */
     bool gfx_warning = false;
@@ -170,7 +167,7 @@ int main(int argc, char **argv) {
           adapter && strstr(adapter, "Standard VGA") != NULL, adapter);
     lc_string_free(adapter);
     check("...which is what DOS starts on", lc_wizard_video_is_default(w), NULL);
-    /* And "Default" puts the field back to *following* the family, so a
+    /* And "Default" puts the field back to following the family, so a
      * later switch moves it again rather than pinning what it reset to. */
     lc_wizard_choose_family(w, (size_t)win98);
     lc_wizard_set_video(w, (size_t)video_index(w, "Cirrus"));
@@ -182,11 +179,10 @@ int main(int argc, char **argv) {
     lc_wizard_choose_family(w, (size_t)xp);
     check("...and it follows the family again", lc_wizard_video_is_default(w), NULL);
 
-    /* Which Direct3D 9 the *host* runs the executor on (ADR-007's
-     * 2026-09-21 amendment). A host question, not a guest one: the same
-     * entries on every family, no default that follows the family — and
-     * a row only where there is an executor to run anything on, which
-     * is our own adapter. */
+    /* Which Direct3D 9 the host runs the executor on (ADR-007's second
+     * amendment). A host question, not a guest one: the same entries on
+     * every family, no default that follows the family, and a row only
+     * where there is an executor, which is on our own adapter. */
     lc_wizard_open_new(w, (size_t)xp);
     check("a machine on our adapter has a Direct3D picker",
           lc_wizard_d3d9_applies(w) && lc_wizard_d3d9_count(w) >= 2, NULL);
@@ -197,9 +193,8 @@ int main(int argc, char **argv) {
     lc_wizard_set_video(w, (size_t)video_index(w, "Cirrus"));
     check("on the Cirrus there is no such row", !lc_wizard_d3d9_applies(w), NULL);
     lc_wizard_set_video(w, (size_t)video_index(w, "d3dpt-vga"));
-    /* Only what this host can run is offered (2026-09-22): the system
-     * Direct3D 9 on Windows alone, so a note or a label here names no
-     * other OS. */
+    /* Only what this host can run is offered: the system Direct3D 9 on
+     * Windows alone, so a note or a label here names no other OS. */
 #ifdef _WIN32
     check("three entries on Windows", lc_wizard_d3d9_count(w) == 3, NULL);
     lc_wizard_set_d3d9(w, 2);
@@ -242,8 +237,8 @@ int main(int argc, char **argv) {
 
     lc_wizard_open_new(w, (size_t)dos);
 
-    /* The whole point of a shared form: these are the same answers the
-     * two GUIs get, because it is the same code. */
+    /* A shared form gives the GUI these same answers, because it is the
+     * same code. */
     check("DOS opens on 64 MB", lc_wizard_ram_mb(w) == 64, NULL);
     check("...which is the family's default", lc_wizard_ram_is_default(w), NULL);
 
@@ -269,7 +264,7 @@ int main(int argc, char **argv) {
 
     /* And no USB tablet: a DOS mouse driver reads the PS/2 controller,
      * so an absolute device would leave the guest with no pointer. The
-     * checkbox is the same one the two GUIs draw. */
+     * checkbox is the same one the GUI draws. */
     check("no USB tablet either", !lc_wizard_seamless_mouse(w), NULL);
     char *pointer = lc_wizard_seamless_mouse_note(w);
     check("...and it names the hotkey", pointer && strstr(pointer, "Ctrl+Alt+G") != NULL, pointer);
@@ -298,10 +293,10 @@ int main(int argc, char **argv) {
     lc_wizard_choose_voodoo2(w, false);
 
     /* The sound card and the MIDI port (doc 20 §6). A DOS machine starts
-     * on the Sound Blaster — the card its games know how to find — and
-     * on a General MIDI port, because a DOS machine has no synthesizer
-     * of its own otherwise. The FM chip is in neither list: it comes
-     * with the card that carried one, which is what the note says. */
+     * on the Sound Blaster, the card its games know how to find, and on a
+     * General MIDI port, because a DOS machine has no synthesizer of its
+     * own otherwise. The FM chip is in neither list: it comes with the
+     * card that carried one, as the note says. */
     char *card = lc_wizard_sound_label(w, lc_wizard_sound(w));
     check("a DOS machine starts on the Sound Blaster",
           card && strstr(card, "Sound Blaster 16") != NULL, card);
@@ -316,14 +311,14 @@ int main(int argc, char **argv) {
     lc_string_free(port);
     check("the bank field is offered with it", lc_wizard_soundfont_applies(w), NULL);
     check("...and the ROM one is not", !lc_wizard_mt32_roms_applies(w), NULL);
-    /* The Ensoniq is not on offer here — it is the `Other` family's card
-     * — so asking for it must leave the machine as it was. */
+    /* The Ensoniq is not on offer here (it is the `Other` family's card),
+     * so asking for it must leave the machine as it was. */
     size_t cards = lc_wizard_sound_count(w);
     lc_wizard_set_sound(w, cards + 4);
     check("a card past the end of the list is ignored", lc_wizard_sound_is_default(w), NULL);
     /* An MT-32 asks for ROMs this program will never ship, so picking it
-     * turns the ROM field on — and saving without one is refused, which
-     * `lc_wizard_submit` reports below in the machine this builds. */
+     * turns the ROM field on, and `lc_wizard_submit` refuses to save
+     * without one. */
     for (size_t i = 0; i < lc_wizard_music_count(w); i++) {
         char *label = lc_wizard_music_label(w, i);
         if (label && strstr(label, "MT-32") != NULL) {
@@ -347,8 +342,8 @@ int main(int argc, char **argv) {
 
     /* Our own emulator fast paths: everything on except the one that
      * ships off, a checkbox that changes the count, and "All defaults"
-     * that puts it back — the section of the form a third front end has
-     * to be able to draw as well as the two Rust ones. */
+     * that puts it back. A C front end has to be able to draw this
+     * section of the form too. */
     size_t opt_count = 0;
     for (char *l; (l = lc_wizard_label(LC_LABEL_OPTIMIZATION, opt_count)); opt_count++) {
         lc_string_free(l);
@@ -370,11 +365,11 @@ int main(int argc, char **argv) {
     lc_string_free(after_summary);
     lc_wizard_reset_optimizations(w);
     check("\"All defaults\" puts every one back", lc_wizard_optimizations_are_default(w), NULL);
-    /* The two shortcuts. "All off" is the control run -- every one of our
-     * additions out of the guest's path in one click, which is what
-     * answers "is one of ours what broke this" -- and it must really be
-     * every one, so this asks each switch rather than trusting the flag.
-     * "All on" is not the same as the defaults: x87-pc64-as-53 ships off. */
+    /* The two shortcuts. "All off" is the control run: every one of our
+     * additions out of the guest's path in one click, to answer "is one of
+     * ours what broke this". It must really be every one, so this asks
+     * each switch rather than trusting the flag. "All on" is not the same
+     * as the defaults: x87-pc64-as-53 ships off. */
     lc_wizard_disable_all_optimizations(w);
     check("\"Turn all off\" says so", lc_wizard_optimizations_all_off(w), NULL);
     int still_on = 0;
@@ -476,13 +471,13 @@ int main(int argc, char **argv) {
     lc_shelf_flush(s);
     row = shelf_row(s, disc);
     check_str("a label is editable", lc_shelf_label(s, row), "a renamed disc");
-    /* The shelf is ordered by label, not by the order discs were added:
-     * one list, which every front end shows and which the in-guest
-     * CDSHELF program reads by slot number off the flat file written
-     * from it. Numbers in a label sort as numbers, because disc sets are
-     * numbered and `disc 10` does not come between `disc 1` and `disc 2`
-     * on anybody's shelf. (Paths that don't exist are still discs — the
-     * shelf records what it was given.) */
+    /* The shelf is ordered by label, not by the order discs were added.
+     * It is one list, which every front end shows and which the in-guest
+     * CDSHELF program reads by slot number off the flat file written from
+     * it. Numbers in a label sort as numbers, because disc sets are
+     * numbered and `disc 10` does not belong between `disc 1` and
+     * `disc 2`. Paths that don't exist are still discs; the shelf records
+     * what it was given. */
     lc_shelf_add(s, "zulu.iso");
     lc_shelf_add(s, "disc 10.iso");
     lc_shelf_add(s, "disc 2.iso");
@@ -501,15 +496,15 @@ int main(int argc, char **argv) {
     LcSnapshots *snaps = lc_snapshots_new();
     lc_snapshots_open_for(snaps, bundle, false);
     /* Not running, so this went at the disk with qemu-img rather than
-     * through a monitor. An image with no snapshot table has none — that
+     * through a monitor. An image with no snapshot table has none, which
      * is not an error, and a front end must not show one. */
     char *err = lc_snapshots_error(snaps);
     check("a machine with no snapshots is not an error", err && strlen(err) == 0, err);
     lc_string_free(err);
     check("...and lists nothing", lc_snapshots_count(snaps) == 0, NULL);
     check("...with no job in flight", !lc_snapshots_job_pending(snaps), NULL);
-    /* A bundle that isn't there is: a failure has to arrive as a message,
-     * which is the part worth checking across a C boundary. */
+    /* A bundle that isn't there is an error, and it has to arrive as a
+     * message, which is the part worth checking across a C boundary. */
     lc_snapshots_open_for(snaps, "/nonexistent/machine.toml", false);
     err = lc_snapshots_error(snaps);
     check("a bundle that isn't there reports why", err && strlen(err) > 0, err);

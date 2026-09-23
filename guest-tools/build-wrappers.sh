@@ -112,10 +112,10 @@ crlf() { awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }'; }
 
 # WineD3D for the guests: wine9x builds wined3d.dll (Wine 1.7.55 with the
 # 9x/XP fixes) plus the DX interfaces wined8/wined9/winedd and per-OS
-# "switcher" ddraw/d3d8/d3d9 DLLs for a system-wide install. The switchers
-# are not staged on the disc any more (see WINED3D\ below) but are still
-# built, because they are what wine9x's own README walks through and they
-# are one `make` target away. wined3d links the CRT, so it gets the msvcrt
+# "switcher" ddraw/d3d8/d3d9 DLLs for a system-wide install. Only
+# ddraw_98.dll is staged on the disc (see WINED3D\ below); the rest are
+# built because wine9x's own README walks through them and they are one
+# `make` target away. wined3d links the CRT, so it gets the msvcrt
 # flags; not the shim's -march=pentium3 though, with which GCC emits a
 # memset call inside the CRT-less switcher DLLs (wine9x's own
 # -march=pentium2 is below our floor anyway, and the ISA check below covers
@@ -158,13 +158,11 @@ build_wrapper 3dfx
 build_wrapper mesa
 build_wined3d
 
-# The ISO: one folder per role. What used to be GAMEDIR\ was three
-# different stacks in one folder — the WineD3D DLLs under the same names
-# ours use, next to the test EXEs — so a "copy this next to the game"
-# instruction could silently give you the wrong D3D. Now each stack owns a
-# folder and every test program lives in TESTS\. One copy of every file,
-# except WineD3D's: its folders are meant to be copied whole from Explorer,
-# so each carries what it needs (see WINED3D\ below).
+# The ISO: one folder per role. Each stack owns a folder, so "copy this
+# next to the game" can never pick up the wrong D3D (the WineD3D DLLs carry
+# the same names ours do), and every test program lives in TESTS\. One
+# copy of every file, except WineD3D's: its folders are meant to be copied
+# whole from Explorer, so each carries what it needs (see WINED3D\ below).
 rm -rf "$OUT/iso"
 mkdir -p "$OUT/iso"/{GLIDE,OPENGL,D3DPT,TESTS,CDSHELF,VOODOO2} "$OUT/iso/WINED3D"/{D3D8-9,DDRAW}
 G="$FX/wrappers/3dfx/build"; M="$FX/wrappers/mesa/build"
@@ -176,18 +174,18 @@ T="$OUT/iso/TESTS"
 # SETUP.EXE knows which is which.
 cp "$G"/glide.dll "$G"/glide2x.dll "$G"/glide3x.dll "$G"/fxmemmap.vxd \
    "$G"/fxptl.sys "$G"/instdrv.exe "$OUT/iso/GLIDE/"
-# GLIDE2X.OVL, the DOS binding of the same device (doc 12 §5, 2026-09-10).
-# A DOS/4GW game's Glide stub loads this overlay by name and resolves its
-# 126 upper-case entry points from it (Carmageddon's 3DFX.EXE carries
-# exactly that import table), and the overlay maps the pass-through device
-# itself through DPMI 0x800 — so it serves a pure DOS machine and a Win9x
-# DOS box alike; upstream installs it in C:\WINDOWS, SETUP.EXE does the
-# same on 9x, and a DOS machine copies it next to the game or onto its
-# PATH. It is an LE overlay only Open Watcom can build — the toolchain the
-# 98 display driver already needs, found the same way build-driver9x.sh
-# finds it — so a host without it still gets an ISO, minus this file, said
-# out loud. Built in a copy: the upstream Makefile writes into the
-# submodule's own source directory.
+# GLIDE2X.OVL, the DOS binding of the same device (doc 12 §5). A DOS/4GW
+# game's Glide stub loads this overlay by name and resolves its 126
+# upper-case entry points from it (Carmageddon's 3DFX.EXE carries exactly
+# that import table). The overlay maps the pass-through device itself
+# through DPMI 0x800, so it serves a pure DOS machine and a Win9x DOS box
+# alike. Upstream installs it in C:\WINDOWS, SETUP.EXE does the same on 9x,
+# and a DOS machine copies it next to the game or onto its PATH. It is an
+# LE overlay only Open Watcom can build (the toolchain the 98 display
+# driver already needs, found the same way build-driver9x.sh finds it), so
+# a host without Watcom still gets an ISO, minus this file, with a note.
+# Built in a copy: the upstream Makefile writes into the submodule's own
+# source directory.
 build_ovl() {
   local w="${WATCOM:-$HOME/.local/opt/open-watcom}" bin bins d
   # The snapshot holds every host's binaries side by side, so the directory
@@ -204,7 +202,7 @@ build_ovl() {
     return 0
   fi
   # The overlay's device header, which only scripts/prepare-qemu.sh puts in
-  # qemu/ -- the qemu stage of build.sh / build-windows.sh runs it first.
+  # qemu/. The qemu stage of build.sh / build-windows.sh runs it first.
   [ -f "$ROOT/qemu/hw/3dfx/g2xfuncs.h" ] || {
     echo "GLIDE2X.OVL needs the prepared QEMU tree (qemu/hw/3dfx): run scripts/prepare-qemu.sh first" >&2
     exit 1; }
@@ -230,20 +228,19 @@ build_ovl
 cp "$M"/opengl32.dll "$OUT/iso/OPENGL/"
 cp "$ROOT/guest-tools/wrapgl32.ext" "$OUT/iso/OPENGL/WRAPGL32.EXT"
 # WINED3D\: one folder per kind of game, each copied whole next to the
-# game's EXE (2026-09-12, user request: the renames were what a user
-# would get wrong, and copying a folder in Explorer needs no terminal).
-# The DLLs carry the names a game loads — wine9x's wined8/wined9/winedd
-# *are* the D3D8/D3D9/DDRAW interfaces, and the same files serve 98 and
-# XP (only the system-wide switchers differ per family) — plus
-# OPENGL32.DLL, because wined3d draws through the first opengl32.dll the
-# loader finds and without ours that is Windows' own software GL 1.1.
-# SETUP /GAME 4 and 5 copy the same two folders. The disc carries the two
-# per-game folders and nothing else (2026-09-18, user decision): wine9x's
-# system-wide install — the *_98 / *_XP switcher DLLs, which replace files
-# in the Windows system folder — was a third way to do the same thing on
-# the same disc, and only made the folder confusing. The switchers are
-# still built, in out/wine9x, for anyone who wants that install by hand.
-# README.TXT says which folder a game wants and when to reach for either.
+# game's EXE (user decision: renames were what a user would get wrong, and
+# copying a folder in Explorer needs no terminal). The DLLs carry the names
+# a game loads. wine9x's wined8/wined9/winedd *are* the D3D8/D3D9/DDRAW
+# interfaces, and the same files serve 98 and XP; only the system-wide
+# switchers differ per family. Each folder also has OPENGL32.DLL, because
+# wined3d draws through the first opengl32.dll the loader finds and
+# without ours that is Windows' own software GL 1.1. SETUP /GAME 4 and 5
+# copy the same two folders. wine9x's own system-wide install (the *_98 /
+# *_XP switcher DLLs, which replace files in the Windows system folder) is
+# left off the disc by user decision: it was a third way to do the same
+# thing and only made the folder confusing. The switchers are still built,
+# in out/wine9x, for anyone who wants that install by hand. README.TXT
+# says which folder a game wants and when to reach for either.
 W="$OUT/wine9x"; WD="$OUT/iso/WINED3D"
 cp "$W"/wined8.dll "$WD/D3D8-9/D3D8.DLL"
 cp "$W"/wined9.dll "$WD/D3D8-9/D3D9.DLL"
@@ -258,8 +255,8 @@ done
 # copied out of DDRAW\ above, so the disc still carries one of each file.
 # The switcher is wine9x's `ddraw_98.dll`: a DDRAW.DLL that decides per
 # caller between WineD3D and the real DirectDraw (which SETUP leaves in
-# place under the name DDSYS.DLL). It is not a "third way to install the
-# same thing" — on 9x a per-game folder reaches only the first DirectDraw
+# place under the name DDSYS.DLL). It is not a third way to install the
+# same thing: on 9x a per-game folder reaches only the first DirectDraw
 # program of a session, so for the second game it is the only way.
 mkdir -p "$WD/SYSTEM9X"
 cp "$W"/ddraw_98.dll "$WD/SYSTEM9X/DDRAWME.DLL"
@@ -289,8 +286,8 @@ i686-w64-mingw32-gcc -O2 -Wall -shared -o "$OUT/iso/D3DPT/d3d8.dll" "$ROOT/guest
 i686-w64-mingw32-gcc -O2 -Wall -shared -o "$OUT/iso/D3DPT/ddraw.dll" "$ROOT/guest-tools/src/d3dpt/ddraw.c" \
   "$ROOT/guest-tools/src/d3dpt/ddraw.def" -static-libgcc -Wl,--kill-at -Wl,--enable-stdcall-fixup
 # DirectInput shim (d3dpt/dinput.c): forwards to the system dinput.dll and
-# merges GetAsyncKeyState into a non-exclusive keyboard's state — the fix for
-# a game whose loop stops pumping messages (FIFA 2000's match, doc 15).
+# merges GetAsyncKeyState into a non-exclusive keyboard's state, for a game
+# whose loop stops pumping messages (FIFA 2000's match, doc 15).
 # Silent by default; D3DPT_DINPUT_LOG=1 in the environment adds the log of
 # what the game asks of its keyboard / mouse devices and what it gets back.
 i686-w64-mingw32-gcc -O2 -Wall -shared -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
@@ -300,8 +297,8 @@ i686-w64-mingw32-gcc -O2 -Wall -shared -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcr
 # GLIDETEST and DITHTEST below include OpenGLide's copy of the Glide SDK
 # header, which is C++ until patches/openglide/03-sdk-header-in-c.patch
 # (upstream `#include <cstdint>`). scripts/build.sh prepares that tree before
-# this script ever runs, so nothing here used to check; a checkout that
-# builds only the ISO (Windows, docs/build-windows.md) has a pristine one.
+# this script runs, but a checkout that builds only the ISO (Windows,
+# docs/build-windows.md) has a pristine one.
 # Prepared only when unpatched: a re-prepare hands the Glide wrapper's build
 # fresh mtimes.
 if ! grep -q '2ksbox' "$ROOT/third_party/openglide/sdk2_3dfx.h" 2>/dev/null; then
@@ -312,13 +309,13 @@ fi
 
 # TESTS\: every test, benchmark and calibration program, one copy each.
 # Which stack a test runs on is decided by what is copied next to it, not
-# by which folder it came from — SETUP.EXE's /GAME does that.
+# by which folder it came from. SETUP.EXE's /GAME does that.
 # Reference workloads (doc 14 P0a): the same deterministic game-like scene on
 # Direct3D 9 and Direct3D 8; -frames N -dump N x.bmp for golden images.
 # msvcrt, never the UCRT: modern mingw defaults to api-ms-win-crt-*.dll, which
-# no era Windows has — a UCRT-linked build runs only on an image that happens
-# to carry the redistributable, and dies before main() everywhere else (it did
-# on Win98, silently: the process never reached DirectDraw). M10, 2026-09-08.
+# no era Windows has. A UCRT-linked build runs only on an image that happens
+# to carry the redistributable and dies before main() everywhere else (on
+# Win98, silently: the process never reached DirectDraw).
 i686-w64-mingw32-gcc -O2 -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 \
   -o "$T/d3dgame9.exe" "$ROOT/guest-tools/src/d3dgame9.c" -ld3d9 -lgdi32 -luser32
 i686-w64-mingw32-gcc -O2 -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os -march=pentium3 \
@@ -336,7 +333,7 @@ i686-w64-mingw32-gcc -O2 -o "$T/ddvmtest.exe" "$ROOT/guest-tools/src/ddvmtest.c"
 # ChangeDisplaySettingsEx results for the switches ddraw/wined3d make.
 i686-w64-mingw32-gcc -O2 -o "$T/modetest.exe" "$ROOT/guest-tools/src/modetest.c" -luser32
 # GLIDETEST.EXE: Glide 2.x through the pass-through device (doc 12 §5) from
-# inside the guest — the guest half of tools/glide-host-test.cpp, drawing the
+# inside the guest. The guest half of tools/glide-host-test.cpp, drawing the
 # same scene and checking its own pixels back through grLfbLock. Links
 # against qemu-3dfx's own GLIDE2X import library; the SDK header is
 # OpenGLide's copy of the 3Dfx Glide 2.4 one, which is what both wrappers
@@ -344,10 +341,10 @@ i686-w64-mingw32-gcc -O2 -o "$T/modetest.exe" "$ROOT/guest-tools/src/modetest.c"
 i686-w64-mingw32-gcc -O2 -o "$T/glidetest.exe" "$ROOT/guest-tools/src/glidetest.c" \
   -I"$ROOT/third_party/openglide" -L"$G" -lglide2x -luser32
 # DITHTEST.EXE: what repeated alpha blending does to a 16-bit frame buffer
-# (doc 21 §9) — a grey that dithers in every channel, blended onto itself
+# (doc 21 §9): a grey that dithers in every channel, blended onto itself
 # 1 to 128 times per column, so the dither the chip should subtract on a
 # blend read-back accumulates where it is not subtracted. 86Box's
-# interpreter subtracts it, neither of its recompilers does: run it with
+# interpreter subtracts it and neither of its recompilers does, so run it with
 # `-device voodoo2,recompiler=on` and `=off` and compare. Same Glide 2.x
 # link as GLIDETEST, so it runs on 3dfx's own DLL on a machine with the card.
 i686-w64-mingw32-gcc -O2 -o "$T/dithtest.exe" "$ROOT/guest-tools/src/dithtest.c" \
@@ -372,9 +369,9 @@ i686-w64-mingw32-gcc -O2 -o "$T/crtcal.exe" "$ROOT/guest-tools/src/crtcal.c" \
 # screen and nowhere else.
 nasm -f bin -o "$T/textcal.com" "$ROOT/guest-tools/src/textcal.asm"
 # PADTEST.COM: the gameport at 0x201 as a DOS game reads it (M13 path B,
-# guest-tools/src/padtest.asm) — one write arms four one-shots and the axes
-# are how long the loop counted before each bit fell. DOS only, and DOS is
-# the point: it is the only family the USB pad cannot reach. Prints to COM1
+# guest-tools/src/padtest.asm). One write arms four one-shots and the axes
+# are how long the loop counted before each bit fell. DOS only, on purpose:
+# DOS is the one family the USB pad cannot reach. Prints to COM1
 # and to the screen, so it is both the harness's evidence
 # (tools/pad-guest-test.py) and something to run by hand in a DOS box.
 nasm -f bin -o "$T/padtest.com" "$ROOT/guest-tools/src/padtest.asm"
@@ -393,7 +390,7 @@ nasm -f bin -o "$T/qclock.com" "$ROOT/guest-tools/src/qclock.asm"
 # put every axis on the report's own 0..255 range in both columns, read the
 # POV hat (where a missing null state shows up) and the buttons. Writes
 # to COM1 itself, so the harness can start it from the Run dialog with no
-# shell to redirect. **PADWIN and not PADTEST**: the DOS probe above is
+# shell to redirect. The name is PADWIN, not PADTEST, because the DOS probe above is
 # PADTEST.COM in this same folder, and both DOS and cmd resolve a bare name
 # to the .COM first.
 i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
@@ -407,12 +404,11 @@ i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
   -march=pentium3 -mtune=generic -mwindows -o "$T/wavecaps.exe" \
   "$ROOT/guest-tools/src/wavecaps.c" -lwinmm
 
-# WAITFILE.EXE: wait for a file, then start something. The harness's own
-# login wait used to be a CHOICE loop in a DOS box, which polls: it pegged
-# the guest and made 3dfx's card initialisation twelve times slower than at
-# an idle login (1,047 ms against 12,646 ms on base98-br). A sleeping Win32
-# program costs nothing, and with `then=` there is no DOS box open during
-# the wait at all. A loose copy beside the ISO too: tools/win98-game-test.sh
+# WAITFILE.EXE: wait for a file, then start something. A CHOICE loop in a
+# DOS box polls: it pegged the guest and made 3dfx's card initialisation
+# twelve times slower than at an idle login (12,646 ms against 1,047 ms on
+# base98-br). A sleeping Win32 program costs nothing, and with `then=` no
+# DOS box is open during the wait at all. A loose copy beside the ISO too: tools/win98-game-test.sh
 # stages it into the image rather than mounting the disc.
 i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
   -march=pentium3 -mtune=generic -mwindows -o "$OUT/iso/TESTS/waitfile.exe" \
@@ -429,8 +425,8 @@ i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
 cp "$OUT/iso/TESTS/glprobe.exe" "$OUT/glprobe.exe"
 
 # CDSHELF: the host's disc shelf from inside the machine (doc 07, patch 52;
-# protocol cdshelf/cdshelf_proto.h). One EXE for both Windows families — SPTI
-# on XP, WNASPI32 loaded at run time on Win98 — plus a DOS .COM that drives
+# protocol cdshelf/cdshelf_proto.h). One EXE for both Windows families (SPTI
+# on XP, WNASPI32 loaded at run time on Win98) plus a DOS .COM that drives
 # the drive by PIO, for a DOS box that has neither. -mwindows: run with no
 # arguments it is a window (a disc swap is a thing you do, not a command line
 # you retype); its verbs still write to a redirected stdout.
@@ -449,9 +445,9 @@ i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
 
 # XP display driver for the d3dpt-vga adapter (doc 15, M7a): built and
 # checked by its own script (kernel-mode PE rules differ), staged as DRIVER\.
-# Its progress is not wanted here, its failure is: the script reports a
+# Its progress is not wanted here, its failure is. The script reports a
 # failed check on stdout and exits, which under >/dev/null ended this whole
-# ISO build without a word (MSYS2, 2026-09-17).
+# ISO build without a word.
 if ! drv_log="$("$ROOT/guest-tools/build-driver.sh" 2>&1)"; then
   echo "the XP display driver did not build (guest-tools/build-driver.sh):" >&2
   printf '%s\n' "$drv_log" | tail -15 | sed 's/^/    /' >&2
@@ -461,27 +457,26 @@ mkdir -p "$OUT/iso/DRIVER" && cp "$ROOT"/guest-tools/out/driver/* "$OUT/iso/DRIV
 
 # The Win98/Me display driver for the same adapter (doc 19, M10), staged as
 # DRIVER9X\. A separate folder and not a second copy in DRIVER\: the ISO's
-# rule is one folder per role, and "the display driver" is two roles here —
-# nothing on this disc is wanted by both families, and SETUP picks the folder
-# from the Windows it is running on.
+# rule is one folder per role, and "the display driver" is two roles here.
+# Nothing in either folder is wanted by both families, and SETUP picks the
+# folder from the Windows it is running on.
 #
-# It needs a **second toolchain**, Open Watcom, because a 16-bit NE `.drv`
-# and a ring-0 LE `.vxd` are formats mingw cannot make. That is a
-# prerequisite this script will not install, so a host without it still
-# builds a usable ISO — with the 98 driver missing from it, said out loud,
-# because a silently smaller ISO is how a guest ends up being told a
-# component is "not on this disc".
+# It needs a second toolchain, Open Watcom, because a 16-bit NE `.drv` and
+# a ring-0 LE `.vxd` are formats mingw cannot make. This script will not
+# install it, so a host without it still builds a usable ISO with the 98
+# driver missing and a note saying so. A silently smaller ISO is how a
+# guest ends up being told a component is "not on this disc".
 if drv9x_log="$("$ROOT/guest-tools/build-driver9x.sh" 2>&1)"; then
   # The HAL DLL too: the INF's CopyFiles names it, so a disc without it
-  # is a Update Driver wizard asking for d3dpt9hl.dll (2026-09-11). The
-  # headless tools copy it into the image themselves and never noticed.
+  # gets an Update Driver wizard asking for d3dpt9hl.dll. The headless
+  # tools copy it into the image themselves, so they do not catch this.
   mkdir -p "$OUT/iso/DRIVER9X" && cp "$ROOT"/guest-tools/out/driver9x/*.drv \
     "$ROOT"/guest-tools/out/driver9x/*.vxd "$ROOT"/guest-tools/out/driver9x/*.inf \
     "$ROOT"/guest-tools/out/driver9x/d3dpt9hl.dll "$OUT/iso/DRIVER9X/"
 else
-  # Say *why*, not just "no Watcom": the driver build fails for other
+  # Say *why*, not just "no Watcom". The driver build fails for other
   # reasons too (a HAL that will not link, a bad export), and blaming
-  # Watcom for those sends the next person looking in the wrong place.
+  # Watcom for those sends the reader looking in the wrong place.
   # build-driver9x.sh's own first line is "need Open Watcom …" when that
   # is the cause; otherwise its last lines are the real error.
   echo "note: the Win98 display driver is NOT on this ISO — build-driver9x.sh failed:" >&2

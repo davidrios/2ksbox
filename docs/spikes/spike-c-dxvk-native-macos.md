@@ -1,6 +1,6 @@
-# Spike C — DXVK d3d9 native on macOS (doc 14 P0b), 2026-09-03
+# Spike C: DXVK d3d9 native on macOS (doc 14 P0b), 2026-09-03
 
-**What became of it:** option 2 below. ADR-007 made DXVK the executor on
+**What became of it.** Option 2 below. ADR-007 made DXVK the executor on
 every platform, on KosmicKrisp on macOS 26+; the patches it started are
 `patches/dxvk/01`–`05` (the SDL2 WSI it used was replaced by the headless
 one, patch 04, and `scripts/configure-dxvk.sh` is the build). Hosts below
@@ -37,8 +37,8 @@ occlusion queries) is present on both. 139 extensions on MoltenVK.
 Vulkan 1.4 conformant on Apple Silicon, prebuilt in the [LunarG macOS SDK
 1.4.357](https://www.lunarg.com/lunarg-releases-vulkan-sdk-1-4-357-0/))
 advertises four of the five, and transform feedback too. It **requires
-macOS 26** (Metal 4; the Air runs 15.7.9, so it needs the OS upgrade —
-every Apple Silicon Mac can take it). With it, DXVK d3d9 needs one patch:
+macOS 26** (Metal 4; the Air runs 15.7.9, so it needs the OS upgrade,
+which every Apple Silicon Mac can take). With it, DXVK d3d9 needs one patch:
 `geometryShader` required → optional (DXVK only uses the flag to add the
 GS pipeline stage bit; d3d9 never creates one).
 
@@ -60,7 +60,7 @@ So "DXVK C++ next to the QEMU tree" is buildable on macOS; the 6 failing
 objects are portability, not architecture. Our use never touches DXVK's
 presenter/swapchain: the device renders to an off-screen target the
 player imports (IOSurface/dma-buf, as the GL path does today), so a tiny
-"embed" WSI (no window) replaces SDL2 — needed on Linux too.
+"embed" WSI (no window) replaces SDL2. Linux needs it too.
 
 ## Verified end to end (same day)
 
@@ -77,7 +77,7 @@ info:    Skipping: Device does not support required feature 'shaderCullDistance'
 
 (the first missing feature in DXVK's list order; the robustness pair
 follows). The same binary is the acceptance test for KosmicKrisp after
-the macOS 26 upgrade — and so is `tools/d3dgame9-native.cpp`, which
+the macOS 26 upgrade, and so is `tools/d3dgame9-native.cpp`, which
 compiles the unmodified reference scene against DXVK through a small
 Win32 shim (then over SDL2, now the window-less
 `tools/d3dgame-native/win32_headless.h`): it ran to the same refusal, to
@@ -112,25 +112,25 @@ needed.
    couple of weeks; the dummy-resource patch is the only real code and
    it fights DXVK's descriptor-heap era design on every rebase. Works on
    today's macOS 15.
-2. **DXVK + KosmicKrisp** — one-line requirement patch, needs macOS 26
+2. **DXVK + KosmicKrisp.** A one-line requirement patch; needs macOS 26
    on every Mac that runs the player; driver is young (Metal 4 bugs on
    M1/M2 under macOS 26 with in-driver workarounds, "fixed in macOS 27")
    but built by Mesa people specifically to run DXVK/Proton. Same patch
    queue discipline as our QEMU fork, ~zero maintenance.
-3. **Implement the features in MoltenVK**: geometry shaders and cull
+3. **Implement the features in MoltenVK.** Geometry shaders and cull
    distance are impossible without a compute-emulation pass MoltenVK's
    SPIRV-Cross pipeline has no place for (and d3d9 does not need them);
    `robustBufferAccess2`/`nullDescriptor` need shader-side bounds checks
    Metal does not provide (issue open 19 months). Only depth-clip is
    cheap. Worse than option 1 for the same result.
-4. **Own "DXMetal" D3D9-on-Metal inspired by DXVK**: rewrite of DXVK's
+4. **Own "DXMetal" D3D9-on-Metal inspired by DXVK.** A rewrite of DXVK's
    d3d9 (~40 k lines: fixed-function T&L and texture-stage emulation,
    SM1–3 translation, state, resources, lost-device protocol) plus the
    6 years of game-specific fidelity work; and Linux still needs DXVK,
    so two executors to keep bug-for-bug equal against the rig goldens.
    Months to a year before the first commercial title; last resort.
 
-**Recommendation:** DXVK is the executor everywhere. On macOS start with
+**Recommendation.** DXVK is the executor everywhere. On macOS start with
 option 1 (works now, evidence in days), plan to move to option 2 as the
 production path; the P1 transport, the guest DLLs and the D3DGAME9
 golden diff are identical under both. Do not write a native Metal

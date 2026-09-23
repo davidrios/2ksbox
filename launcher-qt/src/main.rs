@@ -1,25 +1,19 @@
-//! The companion launcher (doc 07) on Qt 6 / QML through cxx-qt, one of
-//! the project's two maintained front ends — the other is `launcher/`
-//! (egui). Both are views over the **same crate**: `launcher-core` holds
+//! The launcher (doc 07) on Qt 6 / QML through cxx-qt, the front end
+//! that ships (ADR-015). It is a view over `launcher-core`, which holds
 //! the bundle format, the machine library, the disc shelf, the snapshot
 //! state machine, the wizard's form, the shader profile editor, the
 //! preview's render path and every debug verb that needs no toolkit.
 //!
-//! So what is in this crate is Qt, and only Qt: a `QObject` per window
-//! whose properties are a *projection* of a core model, a
-//! `QAbstractListModel` wherever a core model has rows, and the views in
-//! `qml/`. Nothing here decides anything about machines, discs or
-//! shaders. When the two builds used to disagree — the wizard's
-//! networking checkbox, the words under it, whether a new shader profile
-//! kept its parameter overrides — it was always because a rule had been
-//! written twice, and there is nowhere left to write one twice.
+//! So this crate is only Qt: a `QObject` per window whose properties are
+//! a projection of a core model, a `QAbstractListModel` wherever a core
+//! model has rows, and the views in `qml/`. Nothing here decides anything
+//! about machines, discs or shaders (ADR-014).
 //!
-//! It is deliberately **not** in the root workspace: `Cargo.toml`
-//! declares its own, so `cargo build` at the repository root never
-//! starts needing Qt 6 development files on the Mac, in CI or in the
-//! Flatpak. Build it from this directory; that is the whole build
-//! command, no CMake (`cxx-qt-build` finds Qt through `qmake6` and
-//! drives `moc`/`qmltyperegistrar` itself).
+//! It is **not** in the root workspace. `Cargo.toml` declares its own,
+//! so `cargo build` at the repository root never needs Qt 6 development
+//! files on the Mac, in CI or in the Flatpak. Build it from this
+//! directory with plain `cargo build`, no CMake (`cxx-qt-build` finds Qt
+//! through `qmake6` and drives `moc`/`qmltyperegistrar` itself).
 //!
 //! **The trap every bridge here is written around:** cxx-qt stores a
 //! Q_PROPERTY *in* the Rust struct, and the generated setter is
@@ -31,17 +25,17 @@
 //! ```
 //!
 //! so writing a property's field directly and then "publishing" it with
-//! its setter emits **nothing** — the setter sees the value already
-//! there. Every window in the port opened once and then stopped
-//! reacting because of exactly that. Keeping the state in a core model
-//! *beside* the properties is what makes this safe by construction: a
-//! `publish` reads the model and writes every property through its
-//! setter, and the property fields are never assigned anywhere else.
+//! its setter emits **nothing**: the setter sees the value already there.
+//! Every window in the port opened once and then stopped reacting because
+//! of that. Keeping the state in a core model beside the properties makes
+//! this safe by construction: a `publish` reads the model and writes
+//! every property through its setter, and the property fields are never
+//! assigned anywhere else.
 
-// A windowed program on Windows, like the egui build: a console-subsystem
-// binary opens a black terminal on every double-click. The debug verbs
-// below still print — `main` borrows the console it was launched from
-// when there is one (`launcher_core::console`).
+// A windowed program on Windows, because a console-subsystem binary opens
+// a black terminal on every double-click. The debug verbs below still
+// print: `main` borrows the console it was launched from when there is
+// one (`launcher_core::console`).
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod preview;
@@ -79,11 +73,10 @@ unsafe extern "C" {
 }
 
 fn main() {
-    // First of all: a windowed program on Windows has no stderr, so
-    // anything that goes wrong on the way to the first window would
-    // otherwise be a process that vanishes without a word. The log's
-    // milestones say how far this got — and *no* log at all says it
-    // never reached `main`, which is its own answer
+    // First: a windowed program on Windows has no stderr, so anything
+    // that goes wrong on the way to the first window would otherwise be a
+    // process that vanishes silently. The log's milestones say how far
+    // this got, and no log at all says it never reached `main`
     // (`launcher_core::fatal`).
     launcher_core::fatal::install("qt");
     // The package's own Vulkan driver, named to the loader before a
@@ -91,7 +84,7 @@ fn main() {
     launcher_core::host_gpu::announce_driver();
     // Debug verbs first, before a GUI exists. They are
     // `launcher_core::cli`'s, so this binary answers every one `launcherx`
-    // does, identically — `--paths`, `--discs`, `--snapshots`,
+    // does, identically: `--paths`, `--discs`, `--snapshots`,
     // `--wizard-new`, `--preview-shader` and the rest.
     let mut args = std::env::args().skip(1);
     let verb = args.next();
@@ -113,16 +106,16 @@ fn main() {
     }
 
     // The desktop's own file dialogs and colour scheme on Linux come
-    // through a *platform theme*, and Qt picks one by `XDG_CURRENT_DESKTOP`:
+    // through a platform theme, and Qt picks one by `XDG_CURRENT_DESKTOP`:
     // KDE gets its own, the GNOME family gtk3, and the XDG desktop portal
-    // only inside a Flatpak or a Snap. A session that matches nothing —
-    // sway, or any other plain window manager — gets a theme with no
+    // only inside a Flatpak or a Snap. A session that matches nothing
+    // (sway, or any other plain window manager) gets a theme with no
     // dialog and no scheme, so `FileDialog` drew Qt's own picker and the
-    // window came up light on a dark desktop (2026-09-23). Asking for the
-    // portal theme by name is safe on every desktop: it wraps the theme
-    // Qt would have picked (KDE's, GTK's) for everything else, and it
-    // defers to that one when the bus has no file chooser. Set before the
-    // application exists, which is when Qt reads it.
+    // window came up light on a dark desktop. Asking for the portal theme
+    // by name is safe on every desktop: it wraps the theme Qt would have
+    // picked (KDE's, GTK's) for everything else, and defers to that one
+    // when the bus has no file chooser. Set before the application
+    // exists, which is when Qt reads it.
     #[cfg(target_os = "linux")]
     if std::env::var_os("QT_QPA_PLATFORMTHEME").map_or(true, |v| v.is_empty()) {
         std::env::set_var("QT_QPA_PLATFORMTHEME", "xdgdesktopportal");
@@ -133,24 +126,23 @@ fn main() {
     unsafe { launcher_qt_choose_style() };
     launcher_core::fatal::note("QGuiApplication");
     let mut app = QGuiApplication::new();
-    // The window's own identity, in two halves: the desktop-entry name a Wayland
-    // compositor matches a window to its launcher (and its icon) by, and
-    // the picture itself for every window system that takes one instead.
-    // The PNG is one of the sizes `scripts/gen-icons.sh` derives from the
-    // icon the packages install, so a window and the applications menu
-    // cannot show different pictures.
+    // The window's identity, in two halves: the desktop-entry name a
+    // Wayland compositor uses to match a window to its launcher (and its
+    // icon), and the picture itself for every window system that takes
+    // one instead. The PNG is one of the sizes `scripts/gen-icons.sh`
+    // derives from the icon the packages install, so a window and the
+    // applications menu always show the same picture.
     QGuiApplication::set_desktop_file_name(&QString::from(launcher_core::paths::APP_ID));
     let png = include_bytes!("../../packaging/icon/2ksbox-256.png");
     // SAFETY: a pointer and a length into a `'static` slice, read and
     // copied into a QImage before the call returns.
     unsafe { twoksbox_set_window_icon(png.as_ptr(), png.len() as i32) };
-    // The desktop's light or dark mode, on every platform (2026-09-23,
-    // user decision; it was light-only off Windows before). What the
-    // controls are drawn in is the *platform theme's* palette, which a
-    // palette handed to the application never reaches — so the one way
-    // the windows and the controls agree is to hand over nothing and let
-    // both read the theme (`src/appearance.cpp`). `LAUNCHER_QT_SCHEME=
-    // light|dark` forces one, for a comparison.
+    // The desktop's light or dark mode, on every platform (user
+    // decision). The controls are drawn in the platform theme's palette,
+    // which a palette handed to the application never reaches, so the
+    // only way the windows and the controls agree is to hand over nothing
+    // and let both read the theme (`src/appearance.cpp`).
+    // `LAUNCHER_QT_SCHEME=light|dark` forces one, for a comparison.
     unsafe {
         launcher_qt_set_scheme(match std::env::var("LAUNCHER_QT_SCHEME").as_deref() {
             Ok("light") => 1,
@@ -158,8 +150,8 @@ fn main() {
             _ => 0,
         })
     };
-    // What actually took, not what was asked for: the style a report
-    // came from is the first thing to know when a window is the wrong
+    // Log the style that took effect, not the one asked for: it is the
+    // first thing to know when a report says a window is the wrong
     // colour.
     launcher_core::fatal::note(&unsafe {
         std::ffi::CStr::from_ptr(launcher_qt_appearance())
@@ -168,8 +160,8 @@ fn main() {
     let mut engine = QQmlApplicationEngine::new();
     if let Some(mut engine) = engine.as_mut() {
         // A QML error otherwise leaves the engine with no root object and
-        // the process sitting in an event loop with no window at all —
-        // which looks exactly like a hang.
+        // the process in an event loop with no window, which looks
+        // exactly like a hang.
         engine
             .as_mut()
             .on_object_creation_failed(|_, url| {
@@ -192,8 +184,8 @@ pub fn qs(s: impl std::fmt::Display) -> QString {
     QString::from(&s.to_string())
 }
 
-/// A `QString` from an `Option<&str>`, empty for `None` — how a model's
-/// `status()`/`error()` reaches a property.
+/// A `QString` from an `Option<&str>`, empty for `None`. This is how a
+/// model's `status()`/`error()` reaches a property.
 pub fn qs_opt(s: Option<&str>) -> QString {
     s.map(QString::from).unwrap_or_default()
 }

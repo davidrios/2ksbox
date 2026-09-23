@@ -8,17 +8,17 @@ Homebrew pours the bottle built for the macOS it runs on, so every library
 `package-macos.sh` copied out of it on a macOS 26 Mac is a macOS 26 build,
 and the app would refuse to start anywhere older. Homebrew also publishes
 the same version built on each older macOS it supports (the tag names
-it: `arm64_sonoma` is macOS 14), and those are what this puts in its
-place -- only for the files that need it, since a bottle whose own build
+it: `arm64_sonoma` is macOS 14), and this puts those in its place. Only
+the files that need it are replaced, since a bottle whose own build
 system chose a lower target (Qt's base, glib) is already fine.
 
 A staged file is matched to the Homebrew file it was copied from by its
 LC_UUID, which the install-name rewrites and ad-hoc signatures of the
 staging do not touch. The older build of that same file is then fetched
 from Homebrew's registry (ghcr.io, cached under <cache dir>), copied over
-it, and given the staged file's install name, dependencies and rpaths --
-what the staging had done to the file it replaces, carried across. It
-does not sign: the packager's own pass does that next.
+it, and given the staged file's install name, dependencies and rpaths,
+so what the staging did to the file it replaces carries across. It does
+not sign; the packager's own pass does that next.
 
 Exits non-zero when a bottle for the tag does not exist, when the
 installed version is not the one Homebrew has bottles of (brew upgrade),
@@ -249,7 +249,7 @@ def main():
 
     # The bottles of the installed versions. Homebrew builds every tag of
     # a version at once, so the version installed here is the one to ask
-    # for -- as long as it is Homebrew's current one, whose rebuild number
+    # for, as long as it is Homebrew's current one, whose rebuild number
     # `brew info` knows.
     info = json.loads(out("brew", "info", "--json=v2", *sorted({n for n, _ in plan})))
     formulae = {}

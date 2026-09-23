@@ -29,24 +29,22 @@
 #   guest   guest-tools/build-wrappers.sh: the guest-tools ISO (which
 #           calls build-driver.sh for the XP display driver too)
 #
-# A stage whose tools are missing is SKIPped with the reason, unless it
-# was named on the command line -- then it is an error. The summary at
-# the end is the honest account of what this host actually has.
+# A stage whose tools are missing is SKIPped with the reason, or fails if
+# it was named on the command line. The summary at the end lists what
+# this host built and what it could not.
 #
-# This exists because a partial rebuild is the project's most expensive
-# mistake: a stale libd3dpt_exec or guest-tools ISO after a
-# D3DPT_PROTO_VERSION bump reads as "the guest will not boot", not as
-# "you forgot a command" (docs/00-status.md's cheat sheet).
+# A partial rebuild is the project's most expensive mistake. A stale
+# libd3dpt_exec or guest-tools ISO after a D3DPT_PROTO_VERSION bump reads
+# as "the guest will not boot", not as "you forgot a command".
 #
-# Running it when everything is up to date costs a couple of seconds
-# thanks to the stamps below, and needs no network -- which a bare
-# `guest` stage does, since it fetches wine9x.
+# With everything up to date a run takes a couple of seconds thanks to the
+# stamps below, and needs no network (a `guest` stage that runs fetches
+# wine9x).
 #
-# `launcher-qt/` is its own cargo workspace and stays that way (ADR-015):
-# a plain `cargo build` at the root must never start needing Qt 6, which
-# is what lets the `rust` stage, the test suite and a Mac or CI checkout
-# work on a host with no Qt at all. The `qt` stage is the one thing that
-# does need it, and it is the front end the packages install.
+# `launcher-qt/` stays its own cargo workspace (ADR-015), so a plain
+# `cargo build` at the root never needs Qt 6. That lets the `rust` stage,
+# the test suite and a Mac or CI checkout work on a host with no Qt. Only
+# the `qt` stage needs it.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -109,12 +107,12 @@ skip() { # stage, reason
 # --- stamps -----------------------------------------------------------
 # Every "prepare" step here restores its tree and re-applies a patch
 # queue, which hands the build system a few thousand fresh mtimes and a
-# from-scratch rebuild EVERY run -- four minutes for a tree with nothing
-# to do. So each is guarded by a hash of what actually feeds it: the patch
-# queue, the overlaid sources, the submodule commits, the prepare script
-# itself. Skipping a prepare leaves the tree exactly as the last one left
-# it, which is the state the "never git checkout inside qemu/ by hand"
-# rule already protects; -f is the escape hatch for when it was broken.
+# from-scratch rebuild every run (four minutes for a tree with nothing to
+# do). So each is guarded by a hash of what feeds it: the patch queue, the
+# overlaid sources, the submodule commits and the prepare script. Skipping
+# a prepare leaves the tree as the last one left it, which the "never git
+# checkout inside qemu/ by hand" rule already protects. -f is the escape
+# hatch for when that rule was broken.
 if have sha256sum; then SHA=(sha256sum); else SHA=(shasum -a 256); fi
 
 stamp_value() { # $STAMP_GITS holds git repos to pin; arguments are paths
@@ -138,22 +136,21 @@ stamp_save() { printf '%s\n' "$STAMP_VALUE" > "$STAMP_FILE"; }
 # macOS: everything is built for the oldest macOS Homebrew still supports
 # (scripts/macos-floor.sh), because the app carries Homebrew's libraries
 # and runs nowhere older than they do (docs/build-macos.md, "The floor").
-# One value for every stage — configure-qemu.sh, cargo, DXVK, the executor,
-# the wrapper — or ld warns "built for newer macOS version" on every link
-# (CLAUDE.md's macOS note). A preset MACOSX_DEPLOYMENT_TARGET wins.
+# Every stage (configure-qemu.sh, cargo, DXVK, the executor, the wrapper)
+# gets the same value, or ld warns "built for newer macOS version" on every
+# link. A preset MACOSX_DEPLOYMENT_TARGET wins.
 if [ "$(uname -s)" = Darwin ]; then
   MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-$(scripts/macos-floor.sh)}"
   case "$MACOSX_DEPLOYMENT_TARGET" in *.*) ;; *) MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET.0" ;; esac
   export MACOSX_DEPLOYMENT_TARGET
   echo "==> MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET (every stage alike)"
-  # cargo does not rebuild when the target changes — it is not part of its
-  # fingerprint — so a tree built for a newer macOS keeps objects that may
-  # call what the floor lacks. A binary says what it was linked for; when
-  # that is *newer* than the target, its workspace starts over. Older is
-  # fine (a cargo run without this variable links for rustc's default,
-  # 11.0), and a workspace this run will not rebuild is left alone: cleaning
-  # it would leave no binary at all (2026-09-12, `build.sh guest` took the
-  # player with it).
+  # The target is not part of cargo's fingerprint, so a tree built for a
+  # newer macOS keeps objects that may call what the floor lacks. When a
+  # binary was linked for a *newer* macOS than the target, its workspace
+  # starts over. Older is fine (without this variable cargo links for
+  # rustc's default, 11.0). A workspace this run will not rebuild is left
+  # alone, since cleaning it would leave no binary at all (`build.sh guest`
+  # once took the player with it).
   for spec in rust:target/release/player qt:launcher-qt/target/release/launcher-qt; do
     bin=${spec#*:}
     want "${spec%%:*}" && [ -f "$bin" ] || continue
@@ -189,11 +186,11 @@ if want qemu; then
       echo "    patch queue, overlays and submodules unchanged - skipping prepare"
     fi
 
-    # QEMU 9.2 carries no slirp of its own, so `-netdev user` — the
-    # networking every machine this project makes is configured with —
-    # exists only if libslirp was there at configure time. Meson's
-    # `slirp` option is `auto`, so its absence is silent until a guest
-    # has no network and the launcher's own command line is refused.
+    # QEMU 9.2 carries no slirp of its own, so `-netdev user`, which every
+    # machine this project makes uses, exists only if libslirp was there at
+    # configure time. Meson's `slirp` option is `auto`, so its absence is
+    # silent until a guest has no network and QEMU refuses the launcher's
+    # command line.
     slirp_pkg=""; have pkg-config && pkg-config --exists slirp && slirp_pkg=1
     slirp_built=""
     grep -q '^#define CONFIG_SLIRP' build/qemu/config-host.h 2>/dev/null && slirp_built=1
@@ -237,15 +234,14 @@ if want qemu; then
     fi
 
     if [ -f build/qemu/build.ninja ]; then
-      # block/cdimage.c links libdisc's Rust staticlib (patch 50) and meson
-      # takes it from target/release — which the rust stage below writes,
-      # too late for this link. So build that one crate here: a pull that
-      # only touched libdisc/src would otherwise leave qemu-system-i386 on
-      # the previous staticlib until the *next* build.sh, and it fails at
-      # run time rather than at the link ("isodir: I/O error: Is a
-      # directory" is what an old libdisc says about a folder disc).
-      # libsynth's (patch 60) for the same reason, and because a
-      # `cargo clean` above for a new macOS target removed both.
+      # block/cdimage.c links libdisc's Rust staticlib (patch 50), and meson
+      # takes it from target/release, which the rust stage below writes too
+      # late for this link. So build that crate here. Otherwise a pull that
+      # only touched libdisc/src leaves qemu-system-i386 on the previous
+      # staticlib until the *next* build.sh, and it fails at run time, not
+      # at the link ("isodir: I/O error: Is a directory" is what an old
+      # libdisc says about a folder disc). libsynth (patch 60) likewise, and
+      # a `cargo clean` above for a new macOS target removed both.
       if have cargo; then
         say "qemu: cargo build --release -p libdisc -p libsynth (linked into qemu)"
         cargo build --release -p libdisc -p libsynth ${JOBS[@]+"${JOBS[@]}"}
@@ -278,10 +274,10 @@ fi
 
 # --- qt ---------------------------------------------------------------
 # The launcher every package ships (ADR-015). Its own cargo workspace, so
-# it is a stage of its own rather than a member of the one above: that
-# boundary is what keeps Qt 6 off the default build path. There is no
-# CMake step -- cxx-qt-build finds Qt through `qmake6` and drives moc and
-# qmltyperegistrar itself -- so the tool to look for is qmake6.
+# it is a stage of its own rather than a member of the one above, which
+# keeps Qt 6 off the default build path. There is no CMake step.
+# cxx-qt-build finds Qt through `qmake6` and drives moc and
+# qmltyperegistrar itself, so the tool to look for is qmake6.
 if want qt; then
   if ! have cargo; then skip qt "no cargo" || true
   elif ! have qmake6 && [ -z "${QMAKE:-}" ]; then
@@ -367,8 +363,8 @@ fi
 # --- guest ------------------------------------------------------------
 # The guest-tools ISO carries the D3DPT guest DLLs, so a protocol bump
 # makes it stale exactly as it does the executor. build-wrappers.sh also
-# calls build-driver.sh, so the XP display driver rides along -- and it
-# fetches wine9x, which is why the stamp is what keeps this offline-able.
+# calls build-driver.sh, so the XP display driver rides along. It fetches
+# wine9x, so the stamp is what lets an unchanged tree build offline.
 GUEST_STALE=""
 if want guest; then
   # the stamp is computed before the tool check, so a host that cannot
@@ -408,11 +404,10 @@ if [ ${#SKIPPED[@]} -gt 0 ]; then
   printf '      %s\n' "${SKIPPED[@]}"
 fi
 
-# The failure this script exists to prevent: an artifact left behind by a
-# stage this host could not run. A stage that ran refreshed its own output;
-# a stage that was skipped for a missing tool is the case nobody looks at,
-# and a guest-tools ISO older than the protocol it speaks does not announce
-# itself -- it reads as an XP guest that will not attach.
+# Warn about artifacts left behind by a stage this host could not run. A
+# stage that ran refreshed its own output; a skipped one is the case nobody
+# looks at. A guest-tools ISO older than the protocol it speaks does not
+# announce itself. It reads as an XP guest that will not attach.
 stale=()
 if [ -n "$GUEST_STALE" ]; then
   for iso in guest-tools/out/*.iso; do

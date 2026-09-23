@@ -1,5 +1,5 @@
 /*
- * voodoo_shim.h -- the seam between the QEMU device (voodoo2.c) and the
+ * voodoo_shim.h: the seam between the QEMU device (voodoo2.c) and the
  * shim that stands in for 86Box's platform (voodoo_shim.c). Not seen by the
  * vendored 86Box sources.
  *

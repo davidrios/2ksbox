@@ -71,8 +71,8 @@ def load_map(path, epoch=None):
     pointer, so the file is a sequence of epochs whose host ranges overlap:
     the same host address holds a different TB in every epoch, and a lookup
     that merges them attributes a sample to whichever entry happens to start
-    nearest (a 2026-09-05 lesson: a game's hottest instruction came out as a
-    different guest address in every run).  An epoch starts where the start
+    nearest (a game's hottest instruction then comes out as a different
+    guest address in every run).  An epoch starts where the start
     addresses jump back; `epoch` picks one (0 = boot; None = the last).
     Returns (starts, ends, names, lo, hi, n_epochs)."""
     epochs = [{}]

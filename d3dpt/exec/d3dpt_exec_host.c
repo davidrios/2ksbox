@@ -1,10 +1,10 @@
 /*
- * d3dpt_exec_host.c — d3dpt-exec-host.exe: the Direct3D executor's other
+ * d3dpt_exec_host.c, d3dpt-exec-host.exe: the Direct3D executor's other
  * process (docs/tracks/m15-wine-executor.md, ADR-018). A Windows program
  * run under Wine on a Linux or macOS host below DXVK's Vulkan 1.3 floor,
  * it loads the ordinary Windows build of the executor (d3dpt_exec.dll, the
- * decoder QEMU dlopens in process everywhere else) on Wine's own d3d9 —
- * WineD3D over the host's OpenGL — and answers d3dpt_remote.h requests
+ * decoder QEMU dlopens in process everywhere else) on Wine's own d3d9
+ * (WineD3D over the host's OpenGL) and answers d3dpt_remote.h requests
  * from its stdin, which is QEMU's libd3dpt_exec_remote on the other end.
  *
  * It maps the regions QEMU names (the command window, VRAM, the frame
@@ -143,7 +143,7 @@ static void cb_vram_dirty(void *ud, uint32_t offset, uint32_t bytes)
         dirty[cur.ndirty].offset = offset; dirty[cur.ndirty].bytes = bytes; cur.ndirty++;
         return;
     }
-    /* full: one range over everything so far and this one — more scanout
+    /* full: one range over everything so far and this one. More scanout
      * work for the adapter, never a byte it does not see */
     uint64_t lo = offset, hi = (uint64_t)offset + bytes;
     for (uint32_t i = 0; i < cur.ndirty; i++) {

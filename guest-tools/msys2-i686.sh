@@ -15,15 +15,15 @@
 #   -nm, -ar, -windres ...), which MSYS2's binutils does not install: shims
 #   in guest-tools/tools/msys2-bin. gcc has its prefixed name already.
 # - perl's core_perl on PATH, for qemu-3dfx's `shasum`.
-# - **Linux's i686 runtime instead of MSYS2's.** MSYS2 builds its 32-bit
+# - Linux's i686 runtime instead of MSYS2's. MSYS2 builds its 32-bit
 #   runtime for the Pentium 4: libmingwex's printf and dtoa, libgcc's
 #   double-to-unsigned conversion, msvcrt's stat and time helpers and
 #   libwinpthread all contain SSE2, and a guest program linking them faults
 #   on a Pentium III (check_isa: "ANISTEST.EXE contains 11 SSE2+/POPCNT
-#   instructions", 2026-09-17; the cross toolchain in MSYS2's msys repo is
-#   built the same way). So the i686 gcc here links the runtime the Linux
-#   ISO links -- Arch's mingw-w64-crt, -winpthreads and gcc's libgcc,
-#   pinned below by version and sha256 -- through -B and -L, which put its
+#   instructions"; the cross toolchain in MSYS2's msys repo is built the
+#   same way). So the i686 gcc here links the runtime the Linux ISO links
+#   (Arch's mingw-w64-crt, -winpthreads and gcc's libgcc, pinned below by
+#   version and sha256) through -B and -L, which put its
 #   crt2.o, libmingwex, libgcc and the rest ahead of MSYS2's (checked on
 #   Linux: the same link takes every one of them from the given folders).
 #   Headers stay MSYS2's own. MSYS2's gcc must be the libgcc's version.
@@ -83,7 +83,7 @@ PKGS
     # the compilers, both names conf_wrapper and our scripts use, linking the
     # runtime above (-B for crt2.o / crtbegin.o, -L for the libraries). The
     # -L folders go *after* the caller's arguments: ld searches -L in command
-    # line order, and a build that names its own library folder must win --
+    # line order, and a build that names its own library folder must win.
     # wine9x links pthread9x's libpthread.a with -L, and ahead of it Arch's
     # winpthreads libpthread.a answered instead ("undefined reference to
     # _msize_int", crt_locks_init ...). Any -L still precedes gcc's own.

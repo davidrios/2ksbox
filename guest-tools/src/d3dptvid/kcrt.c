@@ -1,18 +1,18 @@
 /*
- * kcrt.c — the two CRT symbols GCC emits calls to even in freestanding
+ * kcrt.c: the two CRT symbols GCC emits calls to even in freestanding
  * code (struct copies, zero-initialisation). Kernel modules link no CRT
  * and win32k.sys exports neither, so both drivers carry these, and so does
  * the 9x ring-3 HAL (d3dpthal.dll), which links no CRT either.
  *
- * They are string instructions, not C loops: every Direct3D batch goes
+ * They are string instructions, not C loops. Every Direct3D batch goes
  * through memcpy into the command window (the runtime's command stream,
- * the vertices), and under TCG a C byte loop is one trip through a
+ * the vertices). Under TCG a C byte loop is one trip through a
  * three-instruction translated block per byte, where `rep movsd` is one
- * helper call per copy (patch 17). Measured honestly (doc 19 §31): the
- * loop looked like ~30 % of 3DMark 99's race in a profile, but that was
- * patch 35's walks landing on its stores, and the score is the same
- * either way. Written in asm so GCC's loop-idiom pass cannot turn a loop
- * back into a call to itself.
+ * helper call per copy (patch 17). The score does not change either way
+ * (doc 19 §31): the loop looked like ~30 % of 3DMark 99's race in a
+ * profile, but that was patch 35's walks landing on its stores. Written
+ * in asm so GCC's loop-idiom pass cannot turn a loop back into a call to
+ * itself.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */

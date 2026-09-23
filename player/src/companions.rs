@@ -1,40 +1,40 @@
 //! Where an *installed* player's optional companions are, and how QEMU is
 //! told about them.
 //!
-//! Three of the things a guest can use are `dlopen`ed by QEMU itself,
-//! late, by a search that starts at `build/…` — the checkout this binary
+//! Several of the things a guest can use are `dlopen`ed by QEMU itself,
+//! late, by a search that starts at `build/…` in the checkout this binary
 //! was built from (`hw/3dfx/glide2x_impl.c`, `d3dpt/hw/d3dpt_exec_load.c`).
 //! A package has no checkout, so each of them names an environment
-//! variable as its first candidate, and this is what fills those in:
+//! variable as its first candidate, and this module fills those in:
 //!
-//! * `QEMU_GLIDE_LIB`  — our OpenGLide build (doc 12 §5).
-//! * `D3DPT_EXEC_LIB`  — the Direct3D executor (doc 14).
-//! * `D3DPT_DXVK_LIB`  — the DXVK `d3d9` the executor runs on, which it
+//! * `QEMU_GLIDE_LIB`, our OpenGLide build (doc 12 §5).
+//! * `D3DPT_EXEC_LIB`, the Direct3D executor (doc 14).
+//! * `D3DPT_DXVK_LIB`, the DXVK `d3d9` the executor runs on, which it
 //!   `dlopen`s in turn and which is not named like the others.
-//! * `D3DPT_EXEC_REMOTE_LIB` — the executor in another process, on Wine
+//! * `D3DPT_EXEC_REMOTE_LIB`, the executor in another process, on Wine
 //!   (ADR-018, M15): what QEMU's loader opens when DXVK finds no Vulkan
 //!   device, and `D3DPT_EXEC_HOST` the Windows program that process runs
 //!   (`lib/2ksbox/wine/d3dpt-exec-host.exe`, the executor's Windows
 //!   build beside it). The Wine itself is not shipped: the library finds
 //!   one by its own rule (`D3DPT_WINE`, `PATH`, a Wine app) and the
 //!   launcher's probe follows the same rule for its verdict.
-//! * `VK_DRIVER_FILES` — the Vulkan driver the executor needs. Stock macOS
+//! * `VK_DRIVER_FILES`, the Vulkan driver the executor needs. Stock macOS
 //!   has no Vulkan at all, so a redistributable app carries a loader and
 //!   an ICD of its own; on Linux the system's driver is the right one and
 //!   nothing is set.
-//! * `LIBSYNTH_SF2` — the General MIDI bank the `mpu401` device plays
-//!   through (doc 20 §4). Not a `dlopen`, but the same problem: a
+//! * `LIBSYNTH_SF2`, the General MIDI bank the `mpu401` device plays
+//!   through (doc 20 §4). Not a `dlopen`, but the same problem. A
 //!   machine says `synth=gm` and the file that answers it lives wherever
 //!   this build was installed, which is not something to freeze into
-//!   every machine's bundle. **Set in a checkout too**, unlike the four
-//!   above, because there QEMU has no search of its own to fall back on
-//!   — a library is found beside the binary, a SoundFont is not.
+//!   every machine's bundle. **Set in a checkout too**, unlike the ones
+//!   above, because there QEMU has no search of its own to fall back on.
+//!   A library is found beside the binary, a SoundFont is not.
 //!
-//! Only ever *when the caller left them unset*: a developer running the
+//! Only ever *when the caller left them unset*. A developer running the
 //! packaged player with `D3DPT_EXEC_LIB=` pointing at a fresh build is
 //! doing that deliberately, and an A/B that the package silently
-//! overrode would be worse than useless. Everything missing is simply not
-//! set — QEMU already reports each absence in its own words ("d3dpt:
+//! overrode would be worse than useless. Anything missing is left unset,
+//! and QEMU reports each absence in its own words ("d3dpt:
 //! libd3dpt_exec not found … Direct3D pass-through off").
 //!
 //! The prefix rule is `launcher_core::paths`', deliberately duplicated
@@ -44,8 +44,8 @@
 use std::path::{Path, PathBuf};
 
 /// The install prefix this player is running under, or `None` in a
-/// checkout. `share/2ksbox` is the marker, as it is for the launcher —
-/// inside a macOS `.app` that makes the prefix `Contents`, whose
+/// checkout. `share/2ksbox` is the marker, as it is for the launcher.
+/// Inside a macOS `.app` that makes the prefix `Contents`, whose
 /// `MacOS/` plays the part `bin/` plays elsewhere.
 fn install_prefix() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
@@ -80,7 +80,7 @@ fn set_if_unset_and_present(var: &str, path: PathBuf) {
     if std::env::var_os(var).is_some() || !path.exists() {
         return;
     }
-    // SAFETY: main() calls this before any thread exists — the event loop
+    // SAFETY: main() calls this before any thread exists. The event loop
     // and QEMU's own thread are both started after it returns.
     unsafe { std::env::set_var(var, path) };
 }
@@ -96,7 +96,7 @@ const VARS: [(&str, &str); 7] = [
     ("soundfont", "LIBSYNTH_SF2"),
 ];
 
-/// What `announce` resolved, one line each — the answer to "did this
+/// What `announce` resolved, one line each. It answers "did this
 /// package ship the thing, and is the copy it found its own?". Called
 /// after `announce`, so a name with a path is either the package's file or
 /// the caller's own override, and a name without one is a companion this

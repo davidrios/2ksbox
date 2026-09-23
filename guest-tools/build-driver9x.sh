@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 # Build the Win98/Me display driver for the d3dpt-vga adapter (doc 19,
-# ADR-012 / M10): the 16-bit DIB Engine mini display driver d3dpt9x.drv and
-# its INF, staged as guest-tools/out/driver9x/.
+# ADR-012 / M10): the 16-bit DIB Engine mini display driver d3dpt9x.drv,
+# the ring-0 mini-VDD d3dpt9v.vxd, the ring-3 HAL d3dpt9hl.dll and the INF,
+# staged as guest-tools/out/driver9x/, plus the 9x probe programs.
 #
-# Unlike everything else in guest-tools/, this needs **Open Watcom**, not
-# mingw-w64: the target is a 16-bit NE module (and later a ring-0 VxD), and
-# mingw can produce neither format. Point WATCOM at an installed tree —
+# Unlike everything else in guest-tools/, the .drv and the VxD need Open
+# Watcom, not mingw-w64: they are a 16-bit NE module and a ring-0 LE
+# module, and mingw can produce neither format. Point WATCOM at an
+# installed tree, or install one where this script looks by default:
 #
 #   WATCOM=$HOME/.local/opt/open-watcom guest-tools/build-driver9x.sh
 #
-# — or install one where this script looks by default. Open Watcom v2 ships
-# host binaries for all of our machines in one tarball:
-# https://github.com/open-watcom/open-watcom-v2 (the Last-CI-build release's
-# ow-snapshot.tar.xz unpacks ready to use, Linux x86-64 in binl64 and macOS
-# arm64 in armo64), so this builds on the Air as well as on the rig — and on
-# Windows, in MSYS2 (binnt64; WATCOM=/c/WATCOM wherever it was unpacked).
+# Open Watcom v2 ships host binaries for all of our machines in one
+# tarball: https://github.com/open-watcom/open-watcom-v2 (the Last-CI-build
+# release's ow-snapshot.tar.xz unpacks ready to use, Linux x86-64 in binl64
+# and macOS arm64 in armo64). So this builds on the Air, on the rig and on
+# Windows in MSYS2 (binnt64; WATCOM=/c/WATCOM wherever it was unpacked).
 #
-# The headers this builds against are in src/d3dptvid/ddk9x/ — no Microsoft
+# The headers this builds against are in src/d3dptvid/ddk9x/. No Microsoft
 # DDK, same rule as the XP driver (doc 15). dibeng.lib is made here by wlib
 # from a text import list, so the DIB Engine needs no DDK either.
 #
@@ -164,15 +165,15 @@ echo "==> d3dptvxd.obj (32-bit, ring 0)"
 # wlink's LE output is not quite a VxD yet. The fix is the object table,
 # not the header (this is what vmdisp9x's `fixlink -vxd32` does): every
 # object must be marked executable, and every object's base virtual
-# address must be zero, because a VxD is flat — all its pages start at the
-# beginning. The module-type field is set to what a real Windows 98 VxD
+# address must be zero, because a VxD is flat and all its pages start at
+# the beginning. The module-type field is set to what a real Windows 98 VxD
 # carries as well (checked against the guest's own VJOYD.VXD and
-# FXMEMMAP.VXD, both 0x38000). Then: the DDB must sit at offset 0 of the
-# VxD's one object — that is where the entry table points and where the
-# VMM's loader looks. Anything the compiler emits into the same segment
-# ahead of it — a string literal, a const array, a static without an
-# initialiser — pushes it off, and the VMM then declines the module in
-# complete silence (doc 19 Section 12). The map says where it went, so the
+# FXMEMMAP.VXD, both 0x38000). Then the DDB must sit at offset 0 of the
+# VxD's one object, where the entry table points and where the VMM's
+# loader looks. Anything the compiler emits into the same segment ahead of
+# it (a string literal, a const array, a static without an initialiser)
+# pushes it off, and the VMM then declines the module in complete silence
+# (doc 19 §12). The map says where it went, so the
 # build checks. Two VxDs go through this: the mini-VDD and the blue-screen
 # trigger of tools/win98-bsod-test.sh.
 link_vxd() {   # link_vxd <name> <object>: $BUILD/<name>.vxd from $BUILD/<object>.obj
@@ -269,9 +270,8 @@ PYFIX
 # Every internal relocation must name a segment the NE segment table has.
 # wlink can emit one that does not: a segment that ends up empty is dropped
 # from the table while the relocations that referenced it keep its old
-# index, and KERNEL then refuses the whole module without a word — which is
-# exactly how doc 19 Section 13 was spent. Nothing downstream complains, so
-# the build does.
+# index, and KERNEL then refuses the whole module without a word (doc 19
+# §13). Nothing downstream complains, so the build does.
 python3 - "$BUILD/d3dpt9x.drv" <<'PYCHK'
 import struct, sys
 p = sys.argv[1]
@@ -305,9 +305,9 @@ PYCHK
 # takes a function's attributes from its *first* declaration, so a DDK
 # prototype without `__loadds` silently strips it from the definition, and
 # the export then reads the driver's variables through whatever DS its
-# caller had — Display Settings thunks down from 32-bit code, so that DS is
+# caller had. Display Settings thunks down from 32-bit code, so that DS is
 # not ours, and `ValidateMode` turned a stack word into a selector and GPFed
-# on the first mode it was asked about (doc 19 Section 18). The three shapes
+# on the first mode it was asked about (doc 19 §18). The three shapes
 # an entry has: a far `jmp` to the DIB Engine (`ea`), a thunk that loads ES
 # with DGROUP to push the PDEVICE (`b8 DGROUP 8e c0`), or a C function whose
 # prologue loads DS (`b8 DGROUP 8e d8`). Anything else is a function that
@@ -353,18 +353,18 @@ PYDS
 # The ring-3 HAL DLL. This one is *not* Watcom's: on 9x the DirectDraw /
 # Direct3D HAL is an ordinary user-mode Win32 DLL loaded into the game's
 # own process (doc 19 §1), so it builds with the same i686 mingw-w64 the
-# XP driver and the guest wrappers use — and it is the only 9x binary
-# that links the OS-independent core. A host with no mingw still gets a
-# working display driver; it just gets no DirectDraw with it, and says so.
+# XP driver and the guest wrappers use. It is the only 9x binary that
+# links the OS-independent core. A host with no mingw still gets a working
+# display driver, without DirectDraw, and the build says so.
 #
 # Note the include path: *not* $DDK. Those are the 16-bit interface
 # headers, full of `__far`; the 32-bit DirectDraw driver headers
 # (ddrawi.h, d3dhal.h, dmemmgr.h) are ones mingw-w64 ships itself, and
 # they are the ones this half wants.
 HALCC=i686-w64-mingw32-gcc
-# **Above 2 GiB, and that is not a preference.** DirectDraw loads this DLL
-# and calls DriverInit in `DDHELP.EXE`, not in the application — so the
-# callback addresses it publishes are flat pointers in DDHELP's address
+# The base must be above 2 GiB. DirectDraw loads this DLL and calls
+# DriverInit in `DDHELP.EXE`, not in the application, so the callback
+# addresses it publishes are flat pointers in DDHELP's address
 # space, and the HALINFO validator that IsBadCodePtr's them runs in the
 # *game's*. Windows 9x maps a DLL based in the shared arena (0x80000000 -
 # 0xBFFFFFFF) at one address for every process, which is what makes one
@@ -372,17 +372,16 @@ HALCC=i686-w64-mingw32-gcc
 # private to whoever loaded it and every callback it publishes is a bad
 # pointer everywhere else. The symptom is a HAL that is refused with no
 # message at all (doc 19 §22). The reference driver bases its at
-# 0xB00B0000 for the same reason, and this is deliberately its
-# neighbourhood.
+# 0xB00B0000 for the same reason.
 #
-# **The address has to be one this Windows will actually give.** A base
-# it will not honour is relocated into the private arena instead, and the
-# DLL then publishes callbacks no other process can reach; 0xB3D00000 and
-# 0xB00D0000 both came back as 0x00b50000 on this guest (2026-09-08), and
-# stripping the relocation table to force the issue only turned that into
-# `LoadLibrary` failing outright. So the value is the reference driver's
-# own, which is known to load on a 9x guest — and `DriverInit` checks the
-# base it actually got and says so rather than running on a bad one.
+# The address has to be one this Windows will actually give. A base it
+# will not honour is relocated into the private arena instead, and the DLL
+# then publishes callbacks no other process can reach. 0xB3D00000 and
+# 0xB00D0000 both came back as 0x00b50000 on our guest, and stripping the
+# relocation table to force the issue only made `LoadLibrary` fail
+# outright. So the value is the reference driver's own, which is known to
+# load on a 9x guest, and `DriverInit` checks the base it actually got and
+# says so rather than running on a bad one.
 HAL_BASE=0xB00B0000
 if command -v "$HALCC" >/dev/null; then
   CORE="$ROOT/guest-tools/src/d3dptvid/core"
@@ -399,8 +398,8 @@ if command -v "$HALCC" >/dev/null; then
      -lgcc -lkernel32
   # `-nostdlib` drops the default libraries, so kernel32 is named on
   # purpose: it is the one import this DLL is allowed (the check below
-  # enforces exactly that), and the OS services the core will ask for —
-  # allocate, free, a performance counter — all come from it.
+  # enforces exactly that), and the OS services the core asks for
+  # (allocate, free, a performance counter) all come from it.
   #
   # Loaded into every game's address space, so it must pull in no runtime
   # and must not reach past the pentium3 floor the guests are built to.
@@ -412,24 +411,19 @@ if command -v "$HALCC" >/dev/null; then
   # `\bDriverInit$`, not a column-by-column match of objdump's export line.
   # The strict form (`\[.*\]  *[0-9a-f]+ DriverInit$`) depends on how many
   # hex digits objdump prints for the export RVA and how it spaces them, and
-  # it has failed twice on a DLL that was perfectly good — a rebuild with
-  # identical inputs passed both times. A build check that cries wolf is
-  # worse than no check: the name appears nowhere else in this output.
+  # it failed twice on a good DLL that a rebuild with identical inputs
+  # passed. The name appears nowhere else in this output.
   #
   # And it must not pipe objdump *into* `grep -q`: grep closes the pipe on
-  # the match, objdump takes SIGPIPE (141), and under `set -o pipefail`
-  # (line 23) the pipeline then reports failure even though the export was
-  # found — a race that failed roughly one build in eight on a good DLL,
-  # only under the CPU load of a full build (2026-09-09). Every other check
-  # here reads objdump's whole output first; this one now does too, matching
-  # against a here-string so there is no upstream process to signal.
+  # the match, objdump takes SIGPIPE (141), and under `set -o pipefail` the
+  # pipeline then reports failure even though the export was found. That
+  # race failed about one build in eight on a good DLL, under the CPU load
+  # of a full build. Every check here reads objdump's whole output first;
+  # this one matches against a here-string so there is no upstream process
+  # to signal.
   hlexp="$(i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll")"
   grep -qE '\bDriverInit(@4)?$' <<<"$hlexp" \
     || { echo "ERROR: d3dpt9hl.dll does not export DriverInit"; exit 1; }
-  # A freestanding DLL has no CRT startup, so the entry point has to be
-  # named by hand — and ld only *warns* when it cannot find one, leaving
-  # AddressOfEntryPoint zero. Windows then calls address zero the moment
-  # DirectDraw loads this into a game, which on 9x is a silent reboot.
   # The shared-arena base, checked rather than assumed: getting it wrong
   # costs a HAL that is silently refused, and nothing downstream says so.
   ib=$(i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | awk '/ImageBase/ {print $2}')
@@ -437,6 +431,10 @@ if command -v "$HALCC" >/dev/null; then
     echo "ERROR: d3dpt9hl.dll is based at 0x$ib, below the Win9x shared arena;"
     echo "       DDHELP's callbacks would be bad pointers in every game"; exit 1; }
 
+  # A freestanding DLL has no CRT startup, so the entry point has to be
+  # named by hand, and ld only *warns* when it cannot find one, leaving
+  # AddressOfEntryPoint zero. Windows then calls address zero the moment
+  # DirectDraw loads this into a game, which on 9x is a silent reboot.
   ep=$(i686-w64-mingw32-objdump -p "$BUILD/d3dpt9hl.dll" | awk '/AddressOfEntryPoint/ {print $2}')
   [ -n "$ep" ] && [ "$ep" != "00000000" ] \
     || { echo "ERROR: d3dpt9hl.dll has no entry point (AddressOfEntryPoint $ep)"; exit 1; }
@@ -494,7 +492,7 @@ PYPE
      -march=pentium3 -mtune=generic -mwindows \
      -o "$OUT/ddprobe.exe" "$SRC/ddprobe.c" -lddraw -ldxguid -luser32
 
-  # The monitor power-down without the wait: doc 19 §40's test, which
+  # The monitor power-down without the wait: doc 19 §41's test, which
   # otherwise depends on the power scheme in whichever image it is run on.
   echo "==> pwrprobe.exe (asks for the monitor power-down the idle time-out asks for)"
   "$HALCC" -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \

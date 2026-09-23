@@ -7,7 +7,7 @@
 //* APIENTRY. OpenGLide's Glextensions.h wants the typedefs, because it
 //* resolves every extension through the platform's own GetProcAddress.
 //* The seventeen it names are all we add, plus the four EXT_paletted_texture
-//* / EXT_packed_pixels enums PGTexture.cpp uses — those two extensions do
+//* / EXT_packed_pixels enums PGTexture.cpp uses. Those two extensions do
 //* not exist on macOS at all, and OpenGLide already asks for them at
 //* runtime before it uses either, so this only lets the file compile.
 //*

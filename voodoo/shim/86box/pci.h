@@ -1,5 +1,5 @@
 /*
- * pci.h -- 2ksbox's stand-in for 86Box's <86box/pci.h>. pci_add_card records
+ * pci.h: 2ksbox's stand-in for 86Box's <86box/pci.h>. pci_add_card records
  * the card's configuration-space handlers; the QEMU PCI device forwards the
  * bytes it does not own itself (0x40-0x43, the initEnable register) to them
  * and lets the PCI core do the BAR. The two timing globals feed

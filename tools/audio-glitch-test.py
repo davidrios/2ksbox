@@ -5,8 +5,8 @@ it hands the audio device (`PLAYER_AUDIO_TAP`), and every discontinuity in
 that recording is counted. "Sounds crackle sometimes" is a count here.
 
 The consumer is the player's simulated DAC (`PLAYER_AUDIO_NULL=<frames>`):
-it drains the ring the way a real device does — a whole period at a time,
-1024 frames being what PipeWire hands a client — so the run is headless
+it drains the ring the way a real device does (a whole period at a time,
+1024 frames being what PipeWire hands a client), so the run is headless
 and repeatable, and a real device's burstiness is part of it.
 
 Two sources, because they fail differently:
@@ -19,7 +19,7 @@ Two sources, because they fail differently:
 **sb16** is what a Windows or DOS game does with a Sound Blaster: 8-bit
 auto-init DMA at 22050 Hz out of an 8 KiB ring, the guest keeping the ring
 filled a fixed margin (`MARGIN=` samples, default 441 = 20 ms) ahead of the
-play cursor it reads off the DMA controller — DirectSound's own scheme.
+play cursor it reads off the DMA controller, DirectSound's own scheme.
 QEMU's sb16 moves the guest's DMA exactly as far as the audio core asks,
 so if the host side ever pulls the guest ahead of wall time by more than
 the margin, the card plays samples the guest has not written yet. The
@@ -28,13 +28,13 @@ on COM1: `late` events, the `stale` samples played, and the largest jump
 of the cursor between two polls.
 
 **opl** is a synthesizer: nothing can be read ahead of a guest there, so
-a click in it is the ring's own — audio dropped by the producer or a
+a click in it is the ring's own: audio dropped by the producer or a
 consumer that ran dry.
 
 The verdict is the tap's: a least-squares sine recurrence
 (y[n] = c·y[n-1] − y[n-2]) is exact for a pure tone whatever its phase and
 amplitude, so its residual is quantisation noise everywhere except where
-the waveform breaks — a dropped tick, a padded silence, a stale buffer.
+the waveform breaks: a dropped tick, a padded silence, a stale buffer.
 
 Knobs: `PERIOD=` the DAC's frames (1024), `SECS=` (20), `MARGIN=` (sb16),
 `ICOUNT=1` paces the guest like a DOS machine (`-icount shift=7,align=on`),

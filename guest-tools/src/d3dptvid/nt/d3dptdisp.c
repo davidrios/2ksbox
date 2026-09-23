@@ -1,33 +1,30 @@
 /*
- * d3dptdisp.c — the XP display driver DLL for the d3dpt-vga adapter (doc
- * 15, ADR-008 / M7a). Kernel mode (win32k loads it), no CRT; the GDI DDI
- * of winddi.h.
+ * d3dptdisp.c: the XP display driver DLL for the d3dpt-vga adapter (doc
+ * 15, ADR-008). Kernel mode (win32k loads it), no CRT, the GDI DDI of
+ * winddi.h. The DirectDraw/Direct3D logic shared with the 9x driver lives
+ * in ../core/, and this file is the NT layer around it.
  *
- * The "framebuf" shape: the driver exposes the modes its miniport
- * (d3dptvid.sys) enumerates, switches to one, maps the linear frame
- * buffer and hands GDI an engine bitmap that *is* the frame buffer
- * (EngCreateBitmap over the mapped VRAM, no hooks). GDI then draws every
- * pixel itself, straight into guest VRAM, which QEMU shows without a copy
- * and the player uploads by dirty rectangle. The software cursor is
- * GDI's too (no DrvSetPointerShape). Nothing GDI does here is accelerated
- * on purpose: this step buys the mode table and the kernel workflow.
+ * GDI (M7a). The driver exposes the modes its miniport (d3dptvid.sys)
+ * enumerates, switches to one and maps the linear frame buffer. GDI draws
+ * every pixel itself, straight into guest VRAM, which QEMU shows without a
+ * copy and the player uploads by dirty rectangle. No GDI drawing is
+ * accelerated. The pointer is a hardware cursor sprite (register set v4).
  *
- * M7b, the DirectDraw DDI (bottom of the file): the surface is a device
- * surface GDI still draws on (EngModifySurface with pvScan0), VRAM after
- * the primary is one linear heap dxg.sys allocates DirectDraw surfaces
- * from, DdMapMemory maps VRAM into the game's process, DdFlip is a write
- * of the back buffer's offset into the device's OFFSET register (a real
- * page flip, no copy) and DdWaitForVerticalBlank waits for the device's
- * frame counter. Blits are not hooked: DirectDraw's HEL does them on the
- * mapped VRAM.
+ * DirectDraw (M7b). The surface is a device surface GDI still draws on
+ * (EngModifySurface with pvScan0). VRAM after the primary is one linear
+ * heap dxg.sys allocates DirectDraw surfaces from. DdMapMemory maps VRAM
+ * into the game's process. DdFlip writes the back buffer's offset into the
+ * device's OFFSET register (a real page flip, no copy), and
+ * DdWaitForVerticalBlank waits for the device's frame counter. DirectDraw's
+ * HEL does every blit on the mapped VRAM.
  *
- * M7c, the Direct3D DDI (after the DirectDraw section): a DX7 non-T&L HAL.
- * Every surface dxg creates is registered with the host by its VRAM
- * offset (DdCreateSurfaceEx); a context is a render target + Z pair
- * (D3dContextCreate); D3dDrawPrimitives2 copies the runtime's DP2 token
+ * Direct3D (M7c). A DX7 non-T&L HAL plus the DX8 DDI. Every surface dxg
+ * creates is registered with the host by its VRAM offset
+ * (DdCreateSurfaceEx). A context is a render target + Z pair
+ * (D3dContextCreate). D3dDrawPrimitives2 copies the runtime's DP2 token
  * stream and vertex buffer into the device's command window (top 64 MiB
- * of VRAM, d3dpt_proto.h layout, encoder d3dpt_enc.h) and rings the
- * DOORBELL register; the host interprets the tokens on DXVK and, at
+ * of VRAM, d3dpt_proto.h layout, encoder d3dpt/d3dpt_enc.h) and rings the
+ * DOORBELL register. The host executor replays the tokens and, at
  * EndScene / Lock / Flip, writes the rendered frame back into the render
  * target's VRAM (READBACK), so flips and HEL blits see it.
  *
@@ -46,9 +43,9 @@
 
 #define ALLOC_TAG 0x64336d64   /* 'dm3d' */
 
-/* The core spells out for itself the three DirectDraw-internal bits it
- * acts on, because it includes no DDK header (doc 19 §19). Here both are
- * visible, so here is where they are checked. */
+/* The core defines its own copies of the three DirectDraw-internal bits
+ * it uses, because it includes no DDK header (doc 19 §19). Both are
+ * visible here, so this is where they are checked. */
 typedef char d3dpt_bits_assert[
     (DDSCAPS_EXECUTEBUFFER_ == DDSCAPS_EXECUTEBUFFER &&
      DDRAWISURF_HASCKEYSRCBLT_ == DDRAWISURF_HASCKEYSRCBLT &&
@@ -71,14 +68,14 @@ typedef struct _PDEV {
     ULONG blt_lines;            /* the first DdBlt calls logged */
     ULONG flip_lines;           /* the first flips logged: the two buffers' handles and offsets */
 
-    /* the hardware cursor (register set v4): its image lives in the
-     * D3DPT_FB_CURSOR_BYTES above the DirectDraw heap */
+    /* the hardware cursor (register set v4). Its image lives in the
+     * D3DPT_FB_CURSOR_BYTES above the DirectDraw heap. */
     ULONG cursor_lines;         /* the first shapes logged */
 } PDEV, *PPDEV;
 
-/* the PDEV whose Direct3D is on (the primary display); the core keeps the
- * pointer, this file needs it back as a PDEV, and the cast is sound
- * because the core is the PDEV's first member */
+/* The PDEV whose Direct3D is on (the primary display). The core keeps the
+ * pointer, and the cast back is sound because the core is the PDEV's
+ * first member. */
 static PPDEV nt_d3d_pdev(void)
 {
     return (PPDEV)d3d_core;
@@ -86,7 +83,7 @@ static PPDEV nt_d3d_pdev(void)
 
 /* --------------------------------------------------------------- modes */
 
-/* the miniport's list; the caller frees *out with EngFreeMem */
+/* the miniport's mode list. The caller frees *out with EngFreeMem. */
 static ULONG get_modes(HANDLE hDriver, PVIDEO_MODE_INFORMATION *out)
 {
     VIDEO_NUM_MODES nm;
@@ -256,9 +253,9 @@ static void build_palette(ULONG *pal)
     }
 }
 
-/* n PALETTEENTRY-form colours into the device's PALETTE registers from
- * entry start (the host applies them at its next refresh); through the
- * miniport's IOCTL while the register page is not mapped yet */
+/* Writes n PALETTEENTRY-form colours into the device's PALETTE registers
+ * from entry start. The host applies them at its next refresh. Before the
+ * register page is mapped, this goes through the miniport's IOCTL. */
 static void set_clut(PPDEV p, ULONG start, ULONG n, const ULONG *rgb)
 {
     ULONG i;
@@ -293,8 +290,8 @@ static void set_clut(PPDEV p, ULONG start, ULONG n, const ULONG *rgb)
     }
 }
 
-/* palette-managed 8 bpp: GDI's system palette, at mode set and whenever a
- * palette is realized */
+/* Palette-managed 8 bpp. GDI calls this with its system palette at mode
+ * set and whenever a palette is realized. */
 BOOL APIENTRY DrvSetPalette(DHPDEV dhpdev, PALOBJ *ppalo, FLONG fl, ULONG iStart, ULONG cColors)
 {
     PPDEV p = (PPDEV)dhpdev;
@@ -313,10 +310,10 @@ BOOL APIENTRY DrvSetPalette(DHPDEV dhpdev, PALOBJ *ppalo, FLONG fl, ULONG iStart
     return TRUE;
 }
 
-/* GDI's gamma ramp — and with it DirectDraw's gamma control and Direct3D
- * 8's SetGammaRamp, which reach the driver through here on NT — into the
- * adapter's GAMMA block (register set v5): the high byte of each of the
- * three 256-word ramps, then GAMMA_ENABLE, where the adapter takes them */
+/* GDI's gamma ramp into the adapter's GAMMA block (register set v5). On NT
+ * DirectDraw's gamma control and Direct3D 8's SetGammaRamp also arrive
+ * here. The driver writes the high byte of each of the three 256-word
+ * ramps, then GAMMA_ENABLE, which makes the adapter take them. */
 BOOL APIENTRY DrvIcmSetDeviceGammaRamp(DHPDEV dhpdev, ULONG iFormat, LPVOID lpRamp)
 {
     PPDEV p = (PPDEV)dhpdev;
@@ -415,9 +412,9 @@ DHPDEV APIENTRY DrvEnablePDEV(DEVMODEW *pdm, LPWSTR pwszLogAddress, ULONG cPat,
     d.cxDither = 0;
     d.cyDither = 0;
     if (p->core.bpp == 8) {
-        /* palette-managed: GDI owns the 256 entries and hands them to
-         * DrvSetPalette; the default palette has the 20 system colours
-         * where GDI expects them */
+        /* Palette-managed. GDI owns the 256 entries and hands them to
+         * DrvSetPalette. The default palette has the 20 system colours
+         * where GDI expects them. */
         build_palette(p->pal);
         d.flGraphicsCaps = GCAPS_PALMANAGED | GCAPS_COLOR_DITHER | GCAPS_ASYNCMOVE;
         d.cxDither = d.cyDither = 8;
@@ -526,10 +523,10 @@ HSURF APIENTRY DrvEnableSurface(DHPDEV dhpdev)
     sizl.cx = p->core.w;
     sizl.cy = p->core.h;
     /* A device surface (DirectDraw needs one) that GDI still draws on
-     * itself: EngModifySurface hands it the frame buffer bytes. The hook /
-     * flag combinations win32k accepts are not documented consistently, so
-     * try them in order and say which one took; the engine bitmap of M7a
-     * is the last resort (desktop works, no DirectDraw). */
+     * itself, with EngModifySurface handing it the frame buffer bytes. The
+     * hook / flag combinations win32k accepts are not documented
+     * consistently, so try them in order and log which one took. An engine
+     * bitmap is the last resort (the desktop works, DirectDraw does not). */
     hsurf = (p->core.regs && (p->core.regs[D3DPT_FB_REG_DDFLAGS / 4] & DDF_ENGINE_BITMAP)) ? NULL :
             EngCreateDeviceSurface((DHSURF)p, sizl, bmf_of(p));
     if (hsurf) {
@@ -610,8 +607,9 @@ VOID APIENTRY DrvDisableSurface(DHPDEV dhpdev)
     unmap_regs(p);
 }
 
-/* GDI calls this before touching the surface when HOOK_SYNCHRONIZE is set:
- * nothing to wait for, every access is a plain memory write */
+/* GDI calls this before touching the surface when HOOK_SYNCHRONIZE is set.
+ * There is nothing to wait for, since every access is a plain memory
+ * write. */
 VOID APIENTRY DrvSynchronizeSurface(SURFOBJ *pso, RECTL *prcl, FLONG fl)
 {
 }
@@ -629,8 +627,8 @@ BOOL APIENTRY DrvAssertMode(DHPDEV dhpdev, BOOL bEnable)
     if (p->core.regs) {
         p->core.regs[D3DPT_FB_REG_CURSOR_ENABLE / 4] = 0;    /* no sprite over the VGA text */
     }
-    /* another PDEV (a full-screen console, the logon desktop switching) takes
-     * the screen: back to VGA text through the miniport */
+    /* Another PDEV (a full-screen console, the logon desktop switching)
+     * takes the screen, so go back to VGA text through the miniport. */
     return EngDeviceIoControl(p->hDriver, IOCTL_VIDEO_RESET_DEVICE, NULL, 0,
                               NULL, 0, &ret) == 0;
 }
@@ -638,11 +636,11 @@ BOOL APIENTRY DrvAssertMode(DHPDEV dhpdev, BOOL bEnable)
 /* ------------------------------------------------------ hardware cursor
  * (register set v4, doc 15 "The hardware cursor"). GDI hands the pointer
  * as a 1 bpp mask surface (AND rows over XOR rows) and, for a colour
- * pointer, a colour surface with a translation to the screen format; the
- * driver turns it into a8r8g8b8 in the VRAM area above the DirectDraw
- * heap and tells the device, which hands it to the host as a cursor
- * sprite. Pointers beyond D3DPT_FB_CURSOR_MAX stay with GDI's software
- * pointer (SPS_DECLINE). */
+ * pointer, a colour surface with a translation to the screen format. The
+ * driver converts it to a8r8g8b8 in the VRAM area above the DirectDraw
+ * heap and tells the device, which passes it to the host as a cursor
+ * sprite. Pointers larger than D3DPT_FB_CURSOR_MAX stay with GDI's
+ * software pointer (SPS_DECLINE). */
 #ifndef SPS_ALPHA
 #define SPS_ALPHA 0x00000010
 #endif
@@ -679,7 +677,7 @@ ULONG APIENTRY DrvSetPointerShape(SURFOBJ *pso, SURFOBJ *psoMask, SURFOBJ *psoCo
         return SPS_DECLINE;
     }
     if (!psoMask && !psoColor) {
-        /* no shape: the pointer goes away */
+        /* no shape: hide the pointer */
         cursor_show(p, -1, 0);
         return SPS_ACCEPT_NOEXCLUDE;
     }
@@ -701,8 +699,9 @@ ULONG APIENTRY DrvSetPointerShape(SURFOBJ *pso, SURFOBJ *psoMask, SURFOBJ *psoCo
     img = (ULONG *)((UCHAR *)p->core.fb + cursor_offset(&p->core));
 
     if (psoColor) {
-        /* the colour pointer as 32 bpp: straight when it is, through a
-         * 32 bpp engine bitmap and the translation otherwise */
+        /* The colour pointer as 32 bpp. Copy it directly when it already
+         * is, otherwise go through a 32 bpp engine bitmap and the
+         * translation. */
         if (psoColor->iBitmapFormat == BMF_32BPP) {
             for (j = 0; j < h; j++) {
                 const ULONG *row = (const ULONG *)((const UCHAR *)psoColor->pvScan0 + (LONG)j * psoColor->lDelta);
@@ -749,9 +748,9 @@ ULONG APIENTRY DrvSetPointerShape(SURFOBJ *pso, SURFOBJ *psoMask, SURFOBJ *psoCo
             }
         }
     } else {
-        /* a monochrome pointer: AND 1 / XOR 0 transparent, AND 0 black or
-         * white by XOR, AND 1 / XOR 1 (invert the screen) approximated as
-         * black — a sprite has no way to invert */
+        /* A monochrome pointer. AND 1 / XOR 0 is transparent, AND 0 is
+         * black or white by XOR. AND 1 / XOR 1 (invert the screen) becomes
+         * black, because a sprite cannot invert. */
         for (j = 0; j < h; j++) {
             for (i = 0; i < w; i++) {
                 ULONG a = mask_bit(psoMask, j, i), xr = mask_bit(psoMask, h + j, i);
@@ -787,11 +786,12 @@ VOID APIENTRY DrvMovePointer(SURFOBJ *pso, LONG x, LONG y, RECTL *prcl)
 
 /* ------------------------------------------------------------ DirectDraw
  * dxg.sys drives these (ddrawint.h, the NT DirectDraw DDI). Surfaces come
- * out of one linear heap in VRAM behind the primary; the runtime does the
- * allocation and the HEL blits, we do memory mapping, flips and vblank. */
+ * out of one linear heap in VRAM behind the primary. The runtime does the
+ * allocation and the HEL blits. The driver does memory mapping, flips and
+ * vblank. */
 
-/* the callbacks below, and this file's own helpers, forward-declared:
- * dxg's tables are built before the functions are defined */
+/* Forward declarations, because dxg's tables are built before these
+ * functions are defined. */
 static DWORD APIENTRY DdSetColorKey(PDD_SETCOLORKEYDATA d);
 static DWORD APIENTRY DdBlt(PDD_BLTDATA d);
 static DWORD APIENTRY DdCreateSurface(PDD_CREATESURFACEDATA d);
@@ -816,8 +816,8 @@ static DWORD APIENTRY D3dSceneCapture(LPD3DNTHAL_SCENECAPTUREDATA d);
 static ULONG surf_handle(PDD_SURFACE_LOCAL s);
 static void nt_register(PPDEV p, PDD_SURFACE_LOCAL s);
 
-/* the callback tables dxg is handed: pointers to this file's functions,
- * so they are the layer's; what they claim is core_caps.c's */
+/* The callback tables dxg is handed. They point at this file's functions,
+ * so they belong to the NT layer. The caps they claim are core_caps.c's. */
 static D3DNTHAL_CALLBACKS d3d_callbacks;
 static DD_D3DBUFCALLBACKS d3d_bufcallbacks;
 
@@ -832,8 +832,8 @@ static void d3d_callbacks_init(void)
     d3d_callbacks.ContextDestroyAll = D3dContextDestroyAll;
     d3d_callbacks.SceneCapture = D3dSceneCapture;
 
-    /* the command / vertex buffers of DrawPrimitives2: dxg allocates them
-     * in system memory once the driver says so (NOTHANDLED + the caps) */
+    /* DrawPrimitives2's command / vertex buffers. dxg allocates them in
+     * system memory once the driver says so (NOTHANDLED + the caps). */
     for (i = 0; i < sizeof(d3d_bufcallbacks) / 4; i++) ((ULONG *)&d3d_bufcallbacks)[i] = 0;
     d3d_bufcallbacks.dwSize = sizeof(d3d_bufcallbacks);
     d3d_bufcallbacks.dwFlags = DDHAL_D3DBUFCB32_CANCREATED3DBUF | DDHAL_D3DBUFCB32_CREATED3DBUF |
@@ -911,18 +911,16 @@ static DWORD APIENTRY DdCanCreateSurface(PDD_CANCREATESURFACEDATA d)
         dbg_hex(&p->core, " different pf ", d->bIsDifferentPixelFormat);
         dbg_puts(&p->core, "\n");
     }
-    /* the display format always; with Direct3D also the texture and Z
-     * formats the host mirrors (pf_format) */
+    /* Always the display format. With Direct3D, also the texture and Z
+     * formats the host mirrors (pf_format). */
     if (!d->bIsDifferentPixelFormat) {
         d->ddRVal = DD_OK;
     } else if (p->core.d3d && pf_format(&d->lpDDSurfaceDesc->ddpfPixelFormat) != 0) {
         d->ddRVal = DD_OK;
     } else {
-        /* The surface a game cannot have is why it falls back to its
-         * software renderer, so say which format was refused (the first
-         * few: a game that keeps asking would flood the log). Palettized
-         * and colour-keyed textures are what a 1997 title asks for and
-         * this HAL does not offer yet. */
+        /* A refused surface is why a game falls back to its software
+         * renderer, so log which format was refused. Only the first few,
+         * because a game that keeps asking would flood the log. */
         if (p->refusals < 8) {
             const DDPIXELFORMAT *f = &d->lpDDSurfaceDesc->ddpfPixelFormat;
             p->refusals++;
@@ -957,10 +955,11 @@ static DWORD APIENTRY DdFlip(PDD_FLIPDATA d)
         d->ddRVal = DDERR_UNSUPPORTED;
         return DDHAL_DRIVER_HANDLED;
     }
-    /* the previous flip is still on its way to the screen: this is where a
-     * double-buffered game waits for the refresh, as it would on a real
-     * card. Nothing above may have happened yet — without DDFLIP_WAIT the
-     * runtime hands DDERR_WASSTILLDRAWING straight to the game. */
+    /* The previous flip is still on its way to the screen. This is where a
+     * double-buffered game waits for the refresh, as on a real card.
+     * Nothing may change state before this point, because without
+     * DDFLIP_WAIT the runtime hands DDERR_WASSTILLDRAWING straight to the
+     * game. */
     if (!flip_done(&p->core)) {
         if (!(d->dwFlags & DDFLIP_WAIT)) {
             d->ddRVal = DDERR_WASSTILLDRAWING;
@@ -970,9 +969,10 @@ static DWORD APIENTRY DdFlip(PDD_FLIPDATA d)
         p->core.flip_pending = FALSE;
     }
     if (p->flip_lines < 8 && d->lpSurfCurr && d->lpSurfCurr->lpGbl && d->lpSurfTarg->lpGbl) {
-        /* which object is where: under dxg's model the offsets never change
-         * and the runtime's render target handle alternates; a runtime that
-         * swaps memory shows the same handle at alternating offsets */
+        /* Which object is where. Under dxg's model the offsets never
+         * change and the runtime's render target handle alternates. A
+         * runtime that swaps memory shows the same handle at alternating
+         * offsets. */
         p->flip_lines++;
         dbg_hex(&p->core, "d3dptdisp: flip curr ", surf_handle(d->lpSurfCurr));
         dbg_hex(&p->core, " at ", (ULONG)d->lpSurfCurr->lpGbl->fpVidMem);
@@ -981,22 +981,22 @@ static DWORD APIENTRY DdFlip(PDD_FLIPDATA d)
         dbg_puts(&p->core, "\n");
     }
     if (d3d_ctx_live) {
-        /* what Direct3D rendered into the back buffer must be in its VRAM
-         * before it is scanned out — the VRAM the target has *now*: a
-         * surface the host knows at another offset is registered again
-         * first (a no-op under dxg's model below) */
+        /* What Direct3D rendered into the back buffer must be in the VRAM
+         * the target has *now* before it is scanned out. A surface the host
+         * knows at another offset is registered again first (a no-op under
+         * dxg's model below). */
         d3d_register_moved(&p->core, d->lpSurfCurr);
         d3d_register_moved(&p->core, d->lpSurfTarg);
         d3d_readback(&p->core, surf_handle(d->lpSurfTarg));
     }
-    /* the page flip: scan out from the target's VRAM offset. Nothing to
-     * exchange: on NT dxg does not exchange the two surfaces' memory, it
-     * exchanges their roles (the PRIMARYSURFACE caps move, each handle keeps
-     * its VRAM, the application's "back buffer" is the other object from now
-     * on) and tells the driver with a CreateSurfaceEx pair. The first M7c cut
-     * re-registered the target at the current surface's offset and vice versa
-     * here, which put the host's render target in the displayed buffer every
-     * other frame (CKTEST, 2026-09-05). */
+    /* The page flip scans out from the target's VRAM offset and swaps
+     * nothing. On NT dxg does not exchange the two surfaces' memory. It
+     * exchanges their roles (the PRIMARYSURFACE caps move, each handle
+     * keeps its VRAM, the application's "back buffer" is the other object
+     * from now on) and tells the driver with a CreateSurfaceEx pair.
+     * Re-registering the target at the current surface's offset here (and
+     * vice versa) put the host's render target in the displayed buffer
+     * every other frame (CKTEST). */
     p->core.regs[D3DPT_FB_REG_OFFSET / 4] = (ULONG)d->lpSurfTarg->lpGbl->fpVidMem;
     flip_issued(&p->core);
     d->ddRVal = DD_OK;
@@ -1013,9 +1013,9 @@ static DWORD APIENTRY DdGetFlipStatus(PDD_GETFLIPSTATUSDATA d)
 {
     PPDEV p = (PPDEV)d->lpDD->dhpdev;
 
-    /* DDGFS_CANFLIP and DDGFS_ISFLIPDONE both come down to "is the last
-     * flip on the screen": the runtime spins here for DDFLIP_WAIT and
-     * passes DDERR_WASSTILLDRAWING to the game without it */
+    /* DDGFS_CANFLIP and DDGFS_ISFLIPDONE both ask whether the last flip is
+     * on the screen. The runtime spins here for DDFLIP_WAIT and passes
+     * DDERR_WASSTILLDRAWING to the game without it. */
     d->ddRVal = (p->core.regs && !flip_done(&p->core)) ? DDERR_WASSTILLDRAWING : DD_OK;
     return DDHAL_DRIVER_HANDLED;
 }
@@ -1047,8 +1047,8 @@ static BOOL guid_eq(const GUID *a, const GUID *b)
     return x[0] == y[0] && x[1] == y[1] && x[2] == y[2] && x[3] == y[3];
 }
 
-/* GUID_NTCallbacks of ddrawint.h; spelled out because INITGUID would define
- * every GUID of ddrawint.h and d3dnthal.h twice */
+/* GUID_NTCallbacks of ddrawint.h, spelled out because INITGUID would
+ * define every GUID of ddrawint.h and d3dnthal.h twice */
 static const GUID guid_ntcallbacks = {
     0x6fe9ecde, 0xdf89, 0x11d1, { 0x9d, 0xb0, 0x00, 0x60, 0x08, 0x27, 0x71, 0xba }
 };
@@ -1072,16 +1072,16 @@ static const GUID guid_parseunknown = {
     0x2e04ffa0, 0x98e4, 0x11d1, { 0x8c, 0xe1, 0x00, 0xa0, 0xc9, 0x06, 0x29, 0xa8 }
 };
 /* GUID_DDStereoMode doubles as GUID_GetDriverInfo2 (DX8 DDI) when the data
- * carries the D3DGDI2 magic; a real stereo query is refused */
+ * carries the D3DGDI2 magic. A real stereo query is refused. */
 static const GUID guid_stereomode = {
     0xf828169c, 0xa8e8, 0x11d2, { 0xa1, 0xf2, 0x00, 0xa0, 0xc9, 0x83, 0xea, 0xf6 }
 };
 
-/* the DX8 runtime's questions (GetDriverInfo2): the answer goes into the
- * same buffer. The size that counts is the one inside the GDI2 header:
+/* The DX8 runtime's GetDriverInfo2 queries. The answer goes into the same
+ * buffer. The size that counts is the one inside the GDI2 header.
  * d3d8.dll leaves the outer dwExpectedSize at the previous query's 24
  * bytes and rejects the driver unless dwActualSize equals the inner one
- * (its disassembly, 2026-09-05) */
+ * (found by disassembling d3d8.dll). */
 static void gdi2_answer(PPDEV p, PDD_GETDRIVERINFODATA d)
 {
     DD_GETDRIVERINFO2DATA_ *g = (DD_GETDRIVERINFO2DATA_ *)d->lpvData;
@@ -1184,26 +1184,27 @@ static DWORD APIENTRY DdGetDriverInfo(PDD_GETDRIVERINFODATA d)
         ULONG i;
         for (i = 0; i < sizeof(cb) / 4; i++) ((ULONG *)&cb)[i] = 0;
         cb.dwSize = sizeof(cb);
-        /* GetDriverState is not optional: ddraw.dll drops the whole HAL
+        /* GetDriverState is not optional. ddraw.dll drops the whole HAL
          * (DDCAPS_NOHARDWARE) when a device with DRAWPRIMITIVES2EX or T&L
-         * caps answers Miscellaneous2Callbacks without it (2026-09-04
-         * bisection + ddraw disassembly) */
+         * caps answers Miscellaneous2Callbacks without it (found by
+         * bisection and ddraw disassembly). */
         cb.dwFlags = DDHAL_MISC2CB32_CREATESURFACEEX | DDHAL_MISC2CB32_GETDRIVERSTATE;
         cb.CreateSurfaceEx = DdCreateSurfaceEx;
         cb.GetDriverState = DdGetDriverState;
         info_copy(d, &cb, sizeof(cb));
     } else if (p->core.d3d && !(ddflags(&p->core) & DDF_NO_PARSEUNKNOWN) && guid_eq(&d->guidInfo, &guid_parseunknown)) {
-        /* the runtime hands us its parser (lpvData is the function itself,
-         * dwExpectedSize 0): the legacy execute-buffer opcodes the DX3 path
-         * leaves in a DrawPrimitives2 stream are skipped with it (walk) */
+        /* The runtime hands over its parser (lpvData is the function
+         * itself, dwExpectedSize 0). walk uses it to skip the legacy
+         * execute-buffer opcodes the DX3 path leaves in a DrawPrimitives2
+         * stream. */
         p->core.parse_unknown = (HRESULT (APIENTRY *)(PVOID, PVOID *))d->lpvData;
         d->dwActualSize = d->dwExpectedSize;
         d->ddRVal = DD_OK;
     } else if (p->core.d3d && !(ddflags(&p->core) & DDF_NO_DX8) && guid_eq(&d->guidInfo, &guid_stereomode) &&
                d->lpvData && d->dwExpectedSize >= sizeof(DD_GETDRIVERINFO2DATA_) &&
                ((DD_GETDRIVERINFO2DATA_ *)d->lpvData)->dwMagic == D3DGDI2_MAGIC_) {
-        /* the DX8 DDI: without this answer d3d8.dll takes us for a DirectX 7
-         * driver (software vertex processing, the DX7 token set) */
+        /* The DX8 DDI. Without this answer d3d8.dll treats the driver as
+         * DirectX 7 (software vertex processing, the DX7 token set). */
         gdi2_answer(p, d);
     } else {
         d->ddRVal = DDERR_CURRENTLYNOTAVAIL;
@@ -1232,14 +1233,15 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *pHalInfo, DWORD *p
     if (p->core.cmd_offset + D3DPT_SHM_SIZE > p->core.fb_len) {
         p->core.cmd_offset = 0;
     }
-    d3d_callbacks_init();       /* the layer's half of the caps: whose functions dxg calls */
+    d3d_callbacks_init();       /* the NT layer's half: which functions dxg calls */
     p->core.gamma = !(ddflags(&p->core) & DDF_NO_GAMMA);   /* DrvIcmSetDeviceGammaRamp (v5): D3D8's FULLSCREENGAMMA */
     d3d_init(&p->core);
     *pdwNumHeaps = 1;
-    /* the FOURCC surfaces DirectDraw may create at all (it checks this
-     * list before the pixel-format callbacks): the compressed textures,
-     * and the DX8 format with no DDPIXELFORMAT that d3d8.dll creates as a
-     * FOURCC of its D3DFORMAT. First call: the count; second call: the codes */
+    /* The FOURCC surfaces DirectDraw may create at all. It checks this list
+     * before the pixel-format callbacks. The list holds the compressed
+     * textures and the DX8 format with no DDPIXELFORMAT, which d3d8.dll
+     * creates as a FOURCC of its D3DFORMAT. The first call asks for the
+     * count, the second for the codes. */
     *pdwNumFourCCCodes = p->core.d3d ? 6 : 0;
     if (pdwFourCC && p->core.d3d) {
         pdwFourCC[0] = 0x31545844;      /* 'DXT1' (FOURCC_ is defined further down) */
@@ -1270,10 +1272,11 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *pHalInfo, DWORD *p
     pHalInfo->vmiData.pvPrimary = p->core.fb;
 
     pHalInfo->ddCaps.dwSize = sizeof(DDNTCORECAPS);
-    /* The caps dxg accepts (2026-09-04 bisection, doc 15): no blit caps
-     * (DirectDraw's HEL blits on the mapped VRAM), wide surfaces, primary,
-     * offscreen and flip chains. DDCAPS_GDI in dwCaps makes dxg drop the
-     * HAL altogether (NOHARDWARE, system-memory surfaces). */
+    /* The caps dxg accepts, found by bisection (doc 15 "dxg's caps
+     * rules"). No blit caps (DirectDraw's HEL blits on the mapped VRAM),
+     * wide surfaces, primary, offscreen and flip chains. DDCAPS_GDI in
+     * dwCaps makes dxg drop the HAL altogether (NOHARDWARE, system-memory
+     * surfaces). */
     pHalInfo->ddCaps.dwCaps = 0;
     pHalInfo->ddCaps.dwCaps2 = DDCAPS2_WIDESURFACES | (p->core.gamma ? DDCAPS2_PRIMARYGAMMA : 0);   /* gamma control: GDI's ramp */
     pHalInfo->ddCaps.ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_OFFSCREENPLAIN |
@@ -1281,42 +1284,43 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *pHalInfo, DWORD *p
     if (ddflags(&p->core) & DDF_GDI_CAP) {
         pHalInfo->ddCaps.dwCaps |= DDCAPS_GDI;
     }
-    /* No DDCAPS_BLT / BLTSTRETCH / BLTCOLORFILL: tried 2026-09-05 evening
-     * (doc 15 "Blit caps and the HEL") — on XP a DdBlt that returns
-     * DDHAL_DRIVER_NOTHANDLED is E_NOTIMPL to the application, not a
-     * fallback to the HEL (DDTEST's windowed colour fill failed), so the
-     * caps need a real blitter in the driver; and they did not change
-     * FIFA 2000's 1:1 videos, which never Blt at all. */
+    /* No DDCAPS_BLT / BLTSTRETCH / BLTCOLORFILL (doc 15 "Blit caps and the
+     * HEL"). On XP a DdBlt that returns DDHAL_DRIVER_NOTHANDLED is
+     * E_NOTIMPL to the application, not a fallback to the HEL (DDTEST's
+     * windowed colour fill failed), so these caps need a real blitter in
+     * the driver. They also did not change FIFA 2000's 1:1 videos, which
+     * never Blt at all. */
     /* Source colour keys on video-memory textures (doc 15 "Palettized
-     * textures and colour keying"): without these caps user-mode ddraw
+     * textures and colour keying"). Without these caps user-mode ddraw
      * keeps a texture's key to itself (SetColorKey succeeds, nothing
-     * reaches the kernel); with them dxg calls DdSetColorKey and records
-     * the key in the surface — provided the driver also has a Blt
-     * callback, or dxg drops the whole HAL (DDCAPS_NOHARDWARE; CKTEST
-     * bisection 2026-09-05, DDF_CKEY_NOBLTCB is the repro). No DDCAPS_BLT,
-     * so the HEL still does every blit and DdBlt is never called. */
+     * reaches the kernel). With them dxg calls DdSetColorKey and records
+     * the key in the surface, but only if the driver also has a Blt
+     * callback. Otherwise dxg drops the whole HAL (DDCAPS_NOHARDWARE,
+     * found with CKTEST; DDF_CKEY_NOBLTCB reproduces it). There is no
+     * DDCAPS_BLT, so the HEL still does every blit and DdBlt is never
+     * called. */
     if (p->core.d3d && !(ddflags(&p->core) & DDF_NO_CKEY)) {
         pHalInfo->ddCaps.dwCaps |= DDCAPS_COLORKEY;
         pHalInfo->ddCaps.dwCKeyCaps = DDCKEYCAPS_SRCBLT;
     }
     pHalInfo->ddCaps.dwVidMemTotal = dd_heap_end(&p->core) - start;
     pHalInfo->ddCaps.dwVidMemFree = dd_heap_end(&p->core) - start;
-    /* dwPalCaps stays 0 at 8 bpp too: XP's dxg.sys drops the whole HAL when
-     * a driver reports palette caps (its post-enable validation, next to the
-     * DDCAPS_GDI check; 2026-09-04 disassembly). On NT the primary's palette
-     * is GDI's: SetPalette / SetEntries reach DrvSetPalette. */
+    /* dwPalCaps stays 0 at 8 bpp too. XP's dxg.sys drops the whole HAL when
+     * a driver reports palette caps (its post-enable validation, next to
+     * the DDCAPS_GDI check, found by disassembly). On NT the primary's
+     * palette is GDI's, and SetPalette / SetEntries reach DrvSetPalette. */
     if (!(ddflags(&p->core) & DDF_NO_GETDRIVERINFO)) {
         pHalInfo->GetDriverInfo = DdGetDriverInfo;
         pHalInfo->dwFlags = DDHALINFO_GETDRIVERINFOSET;
-        /* the DX8 runtime asks its GetDriverInfo2 questions (D3DCAPS8, the
-         * format list) only when this is set; without it we are a DirectX 7
-         * driver to d3d8.dll whatever the answers would have been */
+        /* The DX8 runtime sends its GetDriverInfo2 queries (D3DCAPS8, the
+         * format list) only when this is set. Without it d3d8.dll treats
+         * the driver as DirectX 7 whatever the answers would have been. */
         if (p->core.d3d && !(ddflags(&p->core) & DDF_NO_DX8)) {
             pHalInfo->dwFlags |= DDHALINFO_GETDRIVERINFO2;
         }
     }
     if (p->core.d3d) {
-        /* the Direct3D HAL: caps here, the callbacks through GetDriverInfo */
+        /* the Direct3D HAL: caps here, callbacks through GetDriverInfo */
         if (!(ddflags(&p->core) & DDF_NO_3D_CAP)) {
             pHalInfo->ddCaps.dwCaps |= DDCAPS_3D;
             pHalInfo->ddCaps.ddsCaps.dwCaps |= DDSCAPS_3DDEVICE | DDSCAPS_TEXTURE | DDSCAPS_ZBUFFER | DDSCAPS_MIPMAP;
@@ -1366,8 +1370,8 @@ BOOL APIENTRY DrvEnableDirectDraw(DHPDEV dhpdev, DD_CALLBACKS *cb, DD_SURFACECAL
         scb->GetBltStatus = DdGetBltStatus;
         scb->GetFlipStatus = DdGetFlipStatus;
         if (((PPDEV)dhpdev)->core.d3d) {
-            /* Direct3D: surfaces come and go (host mirror), Lock reads back a
-             * rendered target, Unlock marks texels the guest wrote */
+            /* Direct3D. DestroySurface drops the host mirror, Lock reads
+             * back a rendered target, Unlock marks texels the guest wrote. */
             scb->dwFlags |= DDHAL_SURFCB32_DESTROYSURFACE | DDHAL_SURFCB32_LOCK | DDHAL_SURFCB32_UNLOCK;
             scb->DestroySurface = DdDestroySurface;
             scb->Lock = DdLock;
@@ -1377,8 +1381,8 @@ BOOL APIENTRY DrvEnableDirectDraw(DHPDEV dhpdev, DD_CALLBACKS *cb, DD_SURFACECAL
                 scb->SetColorKey = DdSetColorKey;
             }
             if (!(ddflags(&((PPDEV)dhpdev)->core) & DDF_CKEY_NOBLTCB)) {
-                /* every blit under the blit caps: declined back to the HEL
-                 * (and its presence keeps the HAL with the colour-key caps) */
+                /* Declines every blit back to the HEL. Its presence keeps
+                 * the HAL alive with the colour-key caps. */
                 scb->dwFlags |= DDHAL_SURFCB32_BLT;
                 scb->Blt = DdBlt;
             }
@@ -1400,8 +1404,8 @@ VOID APIENTRY DrvDisableDirectDraw(DHPDEV dhpdev)
 
 /* -------------------------------------------------------------- Direct3D
  * The DX7 HAL (doc 15, M7c). dxg.sys calls these with its device lock
- * held, so one encoder per PDEV is enough. Surfaces are dxg's, in VRAM;
- * the host mirrors the ones Direct3D touches by their VRAM offset. */
+ * held, so one encoder per PDEV is enough. Surfaces are dxg's, in VRAM.
+ * The host mirrors the ones Direct3D touches by their VRAM offset. */
 
 /* --- D3D buffers (the runtime's command and vertex buffers): system memory, dxg's --- */
 
@@ -1441,20 +1445,20 @@ static DWORD APIENTRY D3dCreateD3DBuffer(PDD_CREATESURFACEDATA d)
         dbg_puts(&p->core, "\n");
     }
     /* A vertex / index buffer the runtime wants in video memory (it asks
-     * only under D3DDEVCAPS_HWVERTEXBUFFER / HWINDEXBUFFER, v9): dxg takes
+     * only under D3DDEVCAPS_HWVERTEXBUFFER / HWINDEXBUFFER, v9). dxg takes
      * it from the linear heap when told the block size, as for a compressed
-     * texture (DdCreateSurface); dwLinearSize is its bytes. Command buffers
-     * and everything else stay in system memory, dxg's. */
+     * texture (DdCreateSurface). dwLinearSize is its size in bytes. Command
+     * buffers and everything else stay in dxg's system memory. */
     if (p && p->core.reg_lines < 4096 && d->lpDDSurfaceDesc && d->dwSCnt && d->lplpSList[0] && d->lplpSList[0]->lpSurfMore) {
         p->core.reg_lines++;
         dbg_hex(&p->core, "d3dptdisp:   caps2 ", d->lplpSList[0]->lpSurfMore->ddsCapsEx.dwCaps2);
         dbg_puts(&p->core, "\n");
     }
-    /* The request's caps decide, not ddsCapsEx: the runtime's vertex buffers
-     * came without DDSCAPS2_VERTEXBUFFER (DDSD_FVF is their mark, the index
-     * buffers carry DDSCAPS2_INDEXBUFFER), and a buffer refused here while
-     * dxg had already picked the heap for it ended with SYSTEMMEMORY caps on
-     * a heap offset — the first D3DGAME8 run on v9 crashed in its first Lock */
+    /* The request's caps decide, not ddsCapsEx. The runtime's vertex buffers
+     * come without DDSCAPS2_VERTEXBUFFER (DDSD_FVF marks them, the index
+     * buffers carry DDSCAPS2_INDEXBUFFER). A buffer refused here after dxg
+     * had picked the heap for it ended up with SYSTEMMEMORY caps on a heap
+     * offset, and D3DGAME8 crashed in its first Lock. */
     if (p && !(ddflags(&p->core) & DDF_NO_HWVB) && d->lpDDSurfaceDesc &&
         (d->lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_VIDEOMEMORY) &&
         (d->lpDDSurfaceDesc->ddsCaps.dwCaps & DDSCAPS_EXECUTEBUFFER) && d->lpDDSurfaceDesc->dwLinearSize &&
@@ -1516,12 +1520,12 @@ static DWORD APIENTRY D3dLockD3DBuffer(PDD_LOCKDATA d)
         }
         dbg_puts(&p->core, "\n");
     }
-    /* a VRAM buffer (v9): remember what the runtime locks — the byte range
-     * in rArea (left..right) when it gives one, the whole buffer otherwise
-     * — for the VRAM_DIRTY_RANGE the Unlock sends. dxg hands the caller the
-     * pointer (NOTHANDLED); DISCARD / NOOVERWRITE need nothing here, every
-     * draw before this Lock has run (the DP2 records execute in the
-     * doorbell write) */
+    /* A VRAM buffer (v9). Remember what the runtime locks, for the
+     * VRAM_DIRTY_RANGE the Unlock sends: the byte range in rArea
+     * (left..right) when it gives one, the whole buffer otherwise. dxg
+     * hands the caller the pointer (NOTHANDLED). DISCARD / NOOVERWRITE need
+     * nothing here, because every draw before this Lock has already run
+     * (the DP2 records execute in the doorbell write). */
     if (p && d->lpDDSurface && d->lpDDSurface->lpGbl && !(d->lpDDSurface->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
         surf_lock_range(surf_handle(d->lpDDSurface), d->bHasRect, d->rArea.left, d->rArea.right);
     }
@@ -1533,7 +1537,7 @@ static DWORD APIENTRY D3dUnlockD3DBuffer(PDD_UNLOCKDATA d)
 {
     PPDEV p = (PPDEV)d->lpDD->dhpdev;
 
-    /* a VRAM buffer (v9): the locked range is the guest's now */
+    /* a VRAM buffer (v9): the guest has written the locked range */
     if (p && d->lpDDSurface && !(d->lpDDSurface->ddsCaps.dwCaps & DDSCAPS_SYSTEMMEMORY)) {
         surf_unlock_dirty(&p->core, surf_handle(d->lpDDSurface));
     }
@@ -1545,8 +1549,8 @@ static DWORD APIENTRY D3dUnlockD3DBuffer(PDD_UNLOCKDATA d)
 
 /* --------------------------------------- what the core asks of NT
  *
- * The four services the core cannot have of its own (doc 19, "The
- * split"), plus the surface accessors: NT's DD_SURFACE_LOCAL and 9x's
+ * The four OS services the core cannot provide itself (doc 19 §19), plus
+ * the surface accessors. NT's DD_SURFACE_LOCAL and 9x's
  * DDRAWI_DDRAWSURFACE_LCL hold the same facts at different offsets, and
  * this is the NT half of that translation. */
 
@@ -1652,8 +1656,8 @@ static ULONG surf_handle(PDD_SURFACE_LOCAL s)
     return (s && s->lpSurfMore) ? s->lpSurfMore->dwSurfaceHandle : 0;
 }
 
-/* register a surface (and, for a chain root, what hangs off it) — the
- * core wants a descriptor, the callbacks have an lpDDSLcl */
+/* Registers a surface with the core, which wants a descriptor where the
+ * callbacks have an lpDDSLcl. */
 static void nt_register(PPDEV p, PDD_SURFACE_LOCAL s)
 {
     d3dpt_surf_desc d;
@@ -1663,12 +1667,13 @@ static void nt_register(PPDEV p, PDD_SURFACE_LOCAL s)
     }
 }
 
-/* dxg calls this once per surface it creates; with Direct3D on, every one is
- * mirrored (CreateSurfaceEx: a flip chain's members from the attach list) */
-/* dxg sizes a video-memory surface from its pixel format's bit count before
- * it takes it from the heap; a compressed FOURCC format has none, so the
+/* dxg calls this once per surface it creates. With Direct3D on, every one
+ * is mirrored later, in CreateSurfaceEx.
+ *
+ * dxg sizes a video-memory surface from its pixel format's bit count before
+ * it takes it from the heap. A compressed FOURCC format has none, so the
  * request was for zero bytes and every DXT texture failed at CreateTexture
- * with D3DERR_OUTOFVIDEOMEMORY (DXTTEST, doc 15). As the DDK samples do:
+ * with D3DERR_OUTOFVIDEOMEMORY (DXTTEST, doc 15). As the DDK samples do,
  * hand dxg the block size (the whole compressed image as one block) and the
  * linear size, and let it allocate. Everything else is left to dxg. */
 static DWORD APIENTRY DdCreateSurface(PDD_CREATESURFACEDATA d)
@@ -1694,16 +1699,16 @@ static DWORD APIENTRY DdCreateSurface(PDD_CREATESURFACEDATA d)
     }
     if (sd && d->dwSCnt && d->lplpSList[0] && d->lplpSList[0]->lpSurfMore &&
         (d->lplpSList[0]->lpSurfMore->ddsCapsEx.dwCaps2 & DDSCAPS2_VOLUME_)) {
-        /* a volume texture: dxg would size it as one slice, so the whole
-         * box is asked for as a block of depth x (row pitch x height) bytes
-         * (the depth in dwCaps4's low word; every level is a surface of its
-         * own). The block's height is the slice pitch on purpose:
-         * dwBlockSizeY is lSlicePitch's union, and user mode takes its copy
-         * of the surface when this call returns — a slice pitch set any later
-         * (CreateSurfaceEx) reaches the kernel's copy only, and the runtime
-         * locks slice n n bytes in (VOLTEST, 2026-09-11) */
-        /* a row and the rows in the surface's own format: block rows for
-         * DXT, dword-aligned texel rows otherwise */
+        /* A volume texture. dxg would size it as one slice, so the whole
+         * box is requested as a block of depth x (row pitch x height) bytes
+         * (the depth is in dwCaps4's low word, and every level is a surface
+         * of its own). The block's height is the slice pitch on purpose.
+         * dwBlockSizeY shares a union with lSlicePitch, and user mode takes
+         * its copy of the surface when this call returns. A slice pitch set
+         * any later (CreateSurfaceEx) reaches only the kernel's copy, and the
+         * runtime then locks slice n at n bytes in (VOLTEST). */
+        /* Row size and row count in the surface's own format: block rows
+         * for DXT, dword-aligned texel rows otherwise. */
         ULONG fmt = pf_format(&sd->ddpfPixelFormat);
         for (i = 0; i < d->dwSCnt; i++) {
             PDD_SURFACE_LOCAL s = d->lplpSList[i];
@@ -1746,8 +1751,8 @@ static DWORD APIENTRY DdCreateSurface(PDD_CREATESURFACEDATA d)
     }
     f = sd->ddpfPixelFormat.dwFourCC;
     if (fmt_fourcc_rows(f)) {
-        /* Q8W8V8U8 (a D3DFORMAT as the FOURCC): dword-aligned texel rows,
-         * which dxg cannot size from a bit count it does not have */
+        /* Q8W8V8U8 (a D3DFORMAT as the FOURCC). Dword-aligned texel rows,
+         * which dxg cannot size without a bit count. */
         for (i = 0; i < d->dwSCnt; i++) {
             PDD_SURFACE_LOCAL s = d->lplpSList[i];
             PDD_SURFACE_GLOBAL g = s ? s->lpGbl : NULL;
@@ -1798,8 +1803,9 @@ static DWORD APIENTRY DdCreateSurface(PDD_CREATESURFACEDATA d)
 
 static DWORD APIENTRY DdCreateSurfaceEx(PDD_CREATESURFACEEXDATA d)
 {
-    /* one PDEV has Direct3D (the primary display); the data's lpDDLcl is a
-     * union with the global in some DDK versions, so it is not dereferenced */
+    /* One PDEV has Direct3D (the primary display). The data's lpDDLcl
+     * shares a union with the global in some DDK versions, so it is not
+     * dereferenced. */
     PPDEV p = nt_d3d_pdev();
     PDD_SURFACE_LOCAL s = d->lpDDSLcl;
 
@@ -1810,8 +1816,8 @@ static DWORD APIENTRY DdCreateSurfaceEx(PDD_CREATESURFACEEXDATA d)
     return DDHAL_DRIVER_HANDLED;
 }
 
-/* the runtime's device-info queries (D3DDEVINFOID_*: texture manager,
- * vertex stats): nothing to report, the buffer stays as it was */
+/* The runtime's device-info queries (D3DDEVINFOID_*: texture manager,
+ * vertex stats). Nothing to report, so the buffer stays as it was. */
 static DWORD APIENTRY DdGetDriverState(PDD_GETDRIVERSTATEDATA d)
 {
     d->ddRVal = DD_OK;
@@ -1837,11 +1843,11 @@ static DWORD APIENTRY DdDestroySurface(PDD_DESTROYSURFACEDATA d)
     return DDHAL_DRIVER_NOTHANDLED;
 }
 
-/* A Z buffer locked for writing (doc 19 §34): a title that resets its
+/* A Z buffer locked for writing (doc 19 §34). A title that resets its
  * depth by hand, or dxg's HEL doing a depth fill, writes VRAM the host's
- * depth buffer never sees; DdUnlock hands it to the core, which makes a
- * buffer written to one value a host Z clear. A read-only lock is left
- * alone (a title reading its depth must not wipe the frame's). */
+ * depth buffer never sees. DdUnlock hands it to the core, which turns a
+ * buffer written to one value into a host Z clear. A read-only lock is
+ * left alone, so a title reading its depth does not wipe the frame's. */
 static PDD_SURFACE_LOCAL zlock_surf;
 static ULONG zlocks, zlocks_said;
 
@@ -1865,7 +1871,7 @@ static DWORD APIENTRY DdLock(PDD_LOCKDATA d)
         }
         zlock_surf = (d->dwFlags & DDLOCK_READONLY) ? NULL : s;
     }
-    /* a render target the host drew into: bring the frame into VRAM first */
+    /* a render target the host drew into: read the frame back into VRAM first */
     if (d3d_ctx_live && s && surf_is_target(s->ddsCaps.dwCaps)) {
         d3d_register_moved(&p->core, s);
         d3d_readback(&p->core, surf_handle(s));
@@ -1874,12 +1880,12 @@ static DWORD APIENTRY DdLock(PDD_LOCKDATA d)
     return DDHAL_DRIVER_NOTHANDLED;
 }
 
-/* SetColorKey(DDCKEY_SRCBLT) on a video-memory texture: the host keys the
+/* SetColorKey(DDCKEY_SRCBLT) on a video-memory texture. The host keys the
  * texels in [low, high] (alpha 0 + alpha test while COLORKEYENABLE is on).
- * dxg records the key in the surface as well, which is where registration
- * takes it from for a key set before the surface was mirrored (the core's
- * surf_key_snapshot; surf_colorkey_check tells the host at the first bind);
- * dwFlags also carries DDCKEY_COLORSPACE for a range */
+ * dxg also records the key in the surface, and registration reads it from
+ * there for a key set before the surface was mirrored (the core's
+ * surf_key_snapshot; surf_colorkey_check tells the host at the first
+ * bind). dwFlags also carries DDCKEY_COLORSPACE for a range. */
 static DWORD APIENTRY DdSetColorKey(PDD_SETCOLORKEYDATA d)
 {
     PPDEV p = (PPDEV)d->lpDD->dhpdev;
@@ -1901,12 +1907,12 @@ static DWORD APIENTRY DdSetColorKey(PDD_SETCOLORKEYDATA d)
     return DDHAL_DRIVER_HANDLED;
 }
 
-/* Present so that dxg accepts the colour-key caps; never called, since the
- * driver claims no DDCAPS_BLT (the HEL does every blit in user mode).
- * Declines anything that does arrive — which on XP the application sees
- * as E_NOTIMPL, not as a HEL fallback (doc 15 "Blit caps and the HEL"),
- * so claiming blit caps needs a real blitter here. The first few calls
- * are logged with their rectangles. */
+/* Present so that dxg accepts the colour-key caps. Never called, since the
+ * driver claims no DDCAPS_BLT (the HEL does every blit in user mode). It
+ * declines anything that does arrive, which on XP the application sees as
+ * E_NOTIMPL, not as a HEL fallback (doc 15 "Blit caps and the HEL"). So
+ * claiming blit caps needs a real blitter here. The first few calls are
+ * logged with their rectangles. */
 static DWORD APIENTRY DdBlt(PDD_BLTDATA d)
 {
     PPDEV p = (PPDEV)d->lpDD->dhpdev;
@@ -1957,9 +1963,9 @@ static DWORD APIENTRY D3dContextCreate(LPD3DNTHAL_CONTEXTCREATEDATA d)
     if (!p || !p->core.d3d || !rt || !rt->lpGbl) {
         return DDHAL_DRIVER_HANDLED;
     }
-    /* the targets again (and the chain the target belongs to: a DirectX 6
-     * title's back buffer is first seen here): a flip chain's surfaces may
-     * have moved */
+    /* Register the targets again, with the chain the target belongs to,
+     * because a flip chain's surfaces may have moved. A DirectX 6 title's
+     * back buffer is first seen here. */
     d3d_register_chain(&p->core, rt);
     if (z) {
         nt_register(p, z);
@@ -1970,8 +1976,8 @@ static DWORD APIENTRY D3dContextCreate(LPD3DNTHAL_CONTEXTCREATEDATA d)
 
 static DWORD APIENTRY D3dContextDestroy(LPD3DNTHAL_CONTEXTDESTROYDATA d)
 {
-    /* no PDEV in the data: the context id is enough once we find its PDEV,
-     * and there is one PDEV with Direct3D on (the primary display) */
+    /* The data carries no PDEV. The context id is enough, because only one
+     * PDEV has Direct3D on (the primary display). */
     PPDEV p = nt_d3d_pdev();
 
     d->ddrval = p ? ctx_destroy_one(&p->core, d->dwhContext) : DD_OK;
@@ -2056,9 +2062,9 @@ static DWORD APIENTRY D3dDrawPrimitives2(LPD3DNTHAL_DRAWPRIMITIVES2DATA d)
         dbg_hex(&p->core, " at ", (ULONG)d->lpDDCommands->lpGbl->fpVidMem);
         dbg_hex(&p->core, " +", d->dwCommandOffset);
         dbg_hex(&p->core, " len ", d->dwCommandLength);
-        /* under USERMEMVERTICES lpDDVertex is not valid (the DDK's word; with
-         * video-memory buffers in play it arrived as a dangling pointer whose
-         * lpGbl was garbage: STOP 0x8E in this very log block, 2026-09-05) */
+        /* Under USERMEMVERTICES lpDDVertex is not valid (the DDK says so).
+         * With video-memory buffers in play it arrived as a dangling pointer
+         * whose lpGbl was garbage, and this log block hit STOP 0x8E. */
         if (!(d->dwFlags & D3DNTHALDP2_USERMEMVERTICES) && d->lpDDVertex && d->lpDDVertex->lpGbl) {
             dbg_hex(&p->core, " vtx caps ", d->lpDDVertex->ddsCaps.dwCaps);
             dbg_hex(&p->core, " at ", (ULONG)d->lpDDVertex->lpGbl->fpVidMem);
@@ -2083,8 +2089,8 @@ static DWORD APIENTRY D3dDrawPrimitives2(LPD3DNTHAL_DRAWPRIMITIVES2DATA d)
     call.vsize = d->dwVertexSize;
     call.vcount = d->dwVertexLength;
     call.vlen = call.vtx ? d->dwVertexLength * d->dwVertexSize : 0;
-    /* what the buffer really holds from vtx on: the declared vertices for
-     * user memory, a dxg buffer's linear size otherwise */
+    /* What the buffer really holds from vtx on: the declared vertices for
+     * user memory, a dxg buffer's linear size otherwise. */
     call.vall = call.vlen;
     if (call.vtx && !(d->dwFlags & D3DNTHALDP2_USERMEMVERTICES) &&
         d->lpDDVertex->lpGbl->dwLinearSize > d->dwVertexOffset) {
@@ -2098,8 +2104,8 @@ static DWORD APIENTRY D3dDrawPrimitives2(LPD3DNTHAL_DRAWPRIMITIVES2DATA d)
 
     dp2_run(&p->core, &call, &res);
     d->ddrval = res.hr;
-    /* a bounce offset counts from the command buffer's start, like
-     * dwCommandOffset; an error offset is the core's own */
+    /* A bounce offset counts from the command buffer's start, like
+     * dwCommandOffset. An error offset is the core's own. */
     d->dwErrorOffset = res.bounce ? d->dwCommandOffset + res.offset : res.offset;
     return DDHAL_DRIVER_HANDLED;
 }

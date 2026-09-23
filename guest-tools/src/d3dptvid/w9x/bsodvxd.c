@@ -1,15 +1,14 @@
 /*
- * bsodvxd.c — a VxD whose only job is to blue-screen Windows 98 (doc 19
- * §29). Loaded dynamically by bsod.exe (`\\.\C:\BSODVXD.VXD`); its
- * Sys_Dynamic_Device_Init executes an invalid opcode in ring 0, and the VMM
- * puts up its fatal-exception screen ("exception 06 ... in VxD BSODVXD(01)
- * ... press any key to attempt to continue") — the message mode whose
- * visibility tools/win98-bsod-test.sh guards.
+ * bsodvxd.c: a VxD that blue-screens Windows 98 (doc 19 §29). bsod.exe
+ * loads it dynamically (`\\.\C:\BSODVXD.VXD`). Its Sys_Dynamic_Device_Init
+ * executes an invalid opcode in ring 0 and the VMM puts up its
+ * fatal-exception screen ("exception 06 ... in VxD BSODVXD(01) ... press
+ * any key to attempt to continue"). tools/win98-bsod-test.sh checks that
+ * this message mode is visible.
  *
- * Why a VxD of our own rather than a Windows bug: the `con\con` path that
- * every write-up names is patched on the test image (bsod.c tries it first
- * and says so), and a trigger the test depends on has to be something we
- * ship. Nothing here touches the adapter; the mini-VDD is the one that has
+ * A VxD of our own rather than a Windows bug, because the `con\con` path is
+ * patched on the test image (bsod.c tries it first) and a trigger the test
+ * depends on has to be something we ship. Nothing here touches the adapter; the mini-VDD is the one that has
  * to notice (SAVE_MESSAGE_MODE_STATE).
  *
  * Built by guest-tools/build-driver9x.sh with the same recipe as the
@@ -48,11 +47,10 @@ DDB VXD_DDB = {
 #ifdef BSOD_TIMER
 /* bsodtmr.vxd: the same fault from a timer callback a second after load
  * instead of from init. A fault in a VxD's init reaches the adapter through
- * the VDD's screen switch (PRE_HIRES_TO_VGA); one outside any VM's own
- * execution -- the patch-44 corruption's, from VTDAPI's timer event
- * (2026-09-12) -- gets its blue screen with no switch and no mini-VDD call
- * at all, only the VMM's Begin_Message_Mode, and that is the one this
- * trigger makes. Two things keep the VxD loaded until the callback runs:
+ * the VDD's screen switch (PRE_HIRES_TO_VGA). A fault outside any VM's own
+ * execution (patch 44's TLB corruption faulted from VTDAPI's timer event)
+ * gets its blue screen with no switch and no mini-VDD call, only the VMM's
+ * Begin_Message_Mode. This trigger makes that second kind. Two things keep the VxD loaded until the callback runs:
  * W32_DEVICEIOCONTROL answers DIOC_OPEN with EAX = 0 (otherwise CreateFile
  * fails and the loader unloads the VxD, pending time-out and all), and
  * bsod.exe holds the handle open. */

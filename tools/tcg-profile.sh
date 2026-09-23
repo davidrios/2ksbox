@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tcg-profile.sh — where does the emulated CPU's time go under TCG? (M9 track)
+# Where does the emulated CPU's time go under TCG? (M9 track)
 #
 #   tools/tcg-profile.sh <image.qcow2> <name> ['guest command line']
 #   tools/tcg-profile.sh ~/vms/winxp.qcow2 idle
@@ -11,9 +11,9 @@
 # `-perfmap` (QEMU writes /tmp/perf-<pid>.map: one line per translated guest
 # instruction with its host code range), optionally types a command into the
 # Run dialog, waits WARM seconds for it to settle, then samples the whole
-# QEMU process for SECS seconds — macOS: `sample` at 1 ms (every thread, the
-# call tree with self counts; generated code shows as unknown addresses);
-# Linux: `perf record -g -p`. Saves the perf map, `info jit`, a screendump
+# QEMU process for SECS seconds (macOS: `sample` at 1 ms, every thread, the
+# call tree with self counts, generated code as unknown addresses; Linux:
+# `perf record -g -p`). Saves the perf map, `info jit`, a screendump
 # and the QEMU log next to the sample, then prints the report
 # (tools/tcg-profile.py): time per thread, the vCPU thread split into
 # generated code / helpers / softmmu slow path / translation / interrupts /
@@ -21,7 +21,7 @@
 # user, hot pages, hot instructions).
 #
 # Env: OUT (build/tcg-profile/<name>), BOOT_WAIT (the cap on waiting for
-# the desktop, 300 s — the boot is not slept out: the run waits for the
+# the desktop, 300 s; the boot is not slept out, the run waits for the
 # guest's disks to go quiet, and on VGA=d3dpt for the adapter's mode line),
 # WARM (20 s after the command), SECS (30 s of sampling), CPU (pentium3;
 # add ,x87-fast=off etc.), MEM (512), VGA (cirrus | d3dpt = -vga none
@@ -37,8 +37,8 @@
 # KEYS_WAIT (15 s) after the command: menus and dialogs of a GUI program,
 # `keys.png` shows the result), DFILTER='0x80501000..0x80502000,...' (second pass:
 # also log the guest disassembly, the optimized TCG ops and the host code
-# of every TB starting in those ranges to $OUT/qemu-d.log — the
-# `tcg-profile.py --hot` line of a first pass — for tools/tcg-hot.py),
+# of every TB starting in those ranges to $OUT/qemu-d.log, from the
+# `tcg-profile.py --hot` line of a first pass, for tools/tcg-hot.py),
 # QEMU_EXTRA='-global ...' (more QEMU arguments, e.g. an experiment's switch),
 # QEMU_BIN (another qemu-system-i386, e.g. a baseline kept aside for an A/B),
 # FPS=<s> (after the sample, tools/tcg-fps.py counts the guest's distinct VGA
@@ -74,7 +74,7 @@ export D3DPT_EXEC_LIB="${D3DPT_EXEC_LIB:-$ROOT/build/d3dpt/libd3dpt_exec.$SO}"
 export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)}"
 if [ "$OS" = Darwin ]; then  # docs/build-macos.md: Homebrew's loader, the LunarG KosmicKrisp ICD
   # the loader's own keg, never all of `/opt/homebrew/lib`, which shadows
-  # ImageIO's codecs by leaf name (docs/00-status.md, 2026-09-08)
+  # ImageIO's codecs by leaf name (docs/build-macos.md)
   VKLIB=/opt/homebrew/opt/vulkan-loader/lib
   [ -d "$VKLIB" ] || VKLIB=/opt/homebrew/lib
   export DYLD_LIBRARY_PATH="$VKLIB${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
@@ -107,8 +107,8 @@ echo "== $NAME: pid $QPID, booting"
 GW_PID=$QPID
 gw_wait_sock "$SOCK" || exit 1
 # This machine has no serial line and (unless VGA=d3dpt) no adapter of ours
-# to ask, and the command below must be typed exactly once — starting a game
-# twice would wreck the sample — so the boot is not knocked on: it ends when
+# to ask, and the command below must be typed exactly once (starting a game
+# twice would wreck the sample), so the boot is not knocked on. It ends when
 # the guest stops reading its disk, which is as close to "the desktop is
 # settled" as a machine that cannot answer questions gets (tools/guestwait.sh).
 [ "${VGA:-cirrus}" = d3dpt ] && { gw_wait_log "$LOG" "linear mode on" "$BOOT_WAIT" || true; }

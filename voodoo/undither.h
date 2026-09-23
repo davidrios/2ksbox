@@ -1,5 +1,5 @@
 /*
- * undither.h -- the Voodoo's ordered dither, undone at scanout (doc 21 §12).
+ * undither.h: the Voodoo's ordered dither, undone at scanout (doc 21 §12).
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -11,7 +11,7 @@
 struct voodoo_t;
 
 /* Write the front buffer into dst as 32-bit pixels (B | G << 8 | R << 16,
- * through the card's CLUT -- the same pixels the ordinary path writes), with
+ * through the card's CLUT, the same pixels the ordinary path writes), with
  * the rasterizer's dither reconstructed away.
  *
  * Returns 1 when it did. Returns 0 and touches nothing when it cannot, with

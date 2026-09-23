@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# xp-ssebench.sh — run SSEBENCH.EXE (guest-tools ISO, doc 16) in an XP image
+# Run SSEBENCH.EXE (guest-tools ISO, doc 16) in an XP image
 # headlessly, once per CPU configuration, and print the results.
 #
 #   tools/xp-ssebench.sh <image.qcow2> [cpu-config ...]
@@ -44,7 +44,7 @@ for cfg in "${CONFIGS[@]}"; do
   echo "== -cpu $cfg: booting"
   GW_PID=$QPID
   gw_wait_sock "$SOCK" || exit 1
-  # No serial port on this machine, by decision — it is a benchmark, and the
+  # No serial port on this machine, by decision. It is a benchmark, and the
   # measured machine stays the one the numbers were taken on. So the proof
   # that the shell is there is a marker on the same floppy the results come
   # back on: a removable drive, which XP writes through rather than holding

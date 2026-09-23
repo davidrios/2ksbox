@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""tcg-fps.py <qmp socket> <seconds> [rate] — frames per second of a guest
+"""tcg-fps.py <qmp socket> <seconds> [rate]: frames per second of a guest
 drawing on the VGA surface, measured from outside (M9 track).
 
 Takes a QMP screendump `rate` times a second (default 25) over one
@@ -9,7 +9,7 @@ changes the VGA surface once per frame, so distinct dumps per second is its
 frame rate (capped at `rate`; a frame that repeats a previous image counts as
 none).  Prints `fps <distinct/s> dumps <n> distinct <m>` and, under it, the
 per-second counts, which is where a game that stalls on one effect shows it.  A screendump shows
-the VGA surface only — nothing for a guest presenting through the 3D device.
+the VGA surface only, nothing for a guest presenting through the 3D device.
 """
 import hashlib
 import json

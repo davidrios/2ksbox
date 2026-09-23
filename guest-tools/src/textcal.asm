@@ -1,4 +1,4 @@
-; textcal.asm - the 720x400 text-mode calibration patterns (doc 09).
+; textcal.asm: the 720x400 text-mode calibration patterns (doc 09).
 ;
 ;   TEXTCAL.COM        DOS real mode; FreeDOS on the rig, or a Win98
 ;                      "Restart in MS-DOS mode" screen.
@@ -6,7 +6,7 @@
 ; Windows 98 cannot put its desktop at 720x400: no display driver offers it
 ; and it is not a VESA graphics mode. 720x400 is the VGA *text* mode, and it
 ; is what the tube is already showing whenever the machine is at a DOS
-; prompt - 80x25 cells of 9x16 pixels, 400 lines, 70 Hz. So the only way to
+; prompt: 80x25 cells of 9x16 pixels, 400 lines, 70 Hz. So the only way to
 ; photograph it is from DOS, which is what this is.
 ;
 ; The patterns are built from a custom character generator: a calibration

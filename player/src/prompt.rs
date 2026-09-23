@@ -8,7 +8,7 @@
 //! none, and Linux has no message box to call that also works inside the
 //! Flatpak and over a full-screen window. A BGRA image in the VGA's own
 //! 8x16 font (`vgafont16.bin` is QEMU's `ui/vgafont.h` as bytes), which
-//! `Gpu` blends over the finished picture -- after the CRT chain, so it is
+//! `Gpu` blends over the finished picture after the CRT chain, so it is
 //! never shaded.
 
 const FONT: &[u8; 4096] = include_bytes!("vgafont16.bin");
@@ -19,8 +19,8 @@ const COLS: u32 = 42;
 const LINES: [&str; 4] = [
     "Close the player?",
     "",
-    "The machine stops at once, as if its plug",
-    "were pulled: unsaved work in it is lost.",
+    "The machine turns off at once and any",
+    "unsaved work in it is lost.",
 ];
 /// The image at scale 1.
 const W: u32 = 2 * PAD + COLS * CW;

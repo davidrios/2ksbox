@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# win98-reboot-test.sh — a Win98 guest must survive a restart.
+# A Win98 guest must survive a restart.
 #
 #   tools/win98-reboot-test.sh ~/vms/win98.qcow2 [qmp|guest|both]
 #
@@ -7,7 +7,7 @@
 # its local APIC off through IA32_APIC_BASE, which in QEMU also clears
 # CPUID.01H:EDX.APIC; RESET puts the enable bit back but not the feature
 # bit, so the next POST is told the CPU has no local APIC, SeaBIOS skips
-# smp_setup() and never programs LINT0 as ExtINT -- and the enabled APIC
+# smp_setup() and never programs LINT0 as ExtINT, and the enabled APIC
 # with a masked LINT0 swallows every i8259 interrupt. The guest then boots
 # to its first wait on the BIOS tick counter at 0040:006C and spins there
 # for ever: a frozen splash screen (or a boot menu whose countdown never
@@ -16,15 +16,15 @@
 #
 # So the verdict is not "does the screen change". It is:
 #
-#   1. the machine really reset            -- a second SeaBIOS banner on the
-#                                             debugcon, not a screendump
-#   2. the guest made progress after it    -- disk reads, which a guest
-#                                             spinning on the tick counter
-#                                             does not issue (the frozen run
-#                                             stops dead at ~400 of them)
-#   3. LINT0 is ExtINT again               -- the mechanism itself, so a
-#                                             regression is named, not just
-#                                             observed
+#   1. the machine really reset            a second SeaBIOS banner on the
+#                                          debugcon, not a screendump
+#   2. the guest made progress after it    disk reads, which a guest
+#                                          spinning on the tick counter
+#                                          does not issue (the frozen run
+#                                          stops dead at ~400 of them)
+#   3. LINT0 is ExtINT again               the mechanism itself, so a
+#                                          regression is named, not just
+#                                          observed
 #
 # Two ways in, because they are different code paths in QEMU and only the
 # second is what a user does: `qmp` is a QMP system_reset, `guest` is the
@@ -33,15 +33,16 @@
 # that is the script failing to click, not the machine failing to reboot.
 #
 # Win98 runs emulated by decision (CLAUDE.md: under KVM this image's
-# Explorer dies at startup). The image is never written -- everything goes
+# Explorer dies at startup). The image is never written; everything goes
 # to a qcow2 overlay under build/win98-reboot. Needs a guest image, so it is
 # run by hand and never from scripts/test.sh.
 #
-# Env: OUT=dir, QEMU=binary (an A/B against another build), BIOS=0 (use the
-# binary's own firmware instead of qemu/pc-bios, for a stock-QEMU control),
 # The first boot is not slept out: this test already counts the guest's
 # disk reads, so it waits for them to stop instead (tools/guestwait.sh)
 # and BOOT_WAIT is the cap on that.
+#
+# Env: OUT=dir, QEMU=binary (an A/B against another build), BIOS=0 (use the
+# binary's own firmware instead of qemu/pc-bios, for a stock-QEMU control),
 # BOOT_WAIT=s (the cap, default 300), WATCH=s (default 150), MIN_READS=n (default
 # 5000: a full Win98 boot is ~60000, a frozen one ~400).
 set -uo pipefail
@@ -86,8 +87,8 @@ PY
 }
 lvt0() { hmp "info lapic" | sed -n 's/^LVT0\t *\([^ ]*\).*/\1/p'; }
 # POSTs so far. A SeaBIOS built without debug output (any stock QEMU) writes
-# nothing at all here, and then this evidence is simply not available — see
-# where it is used.
+# nothing at all here, and then this evidence is not available (see where
+# it is used).
 banners() {
   local n
   n=$(grep -c "^SeaBIOS (version" "$D/seabios.log" 2>/dev/null)
@@ -163,7 +164,7 @@ for MODE in $MODES; do
   # Did the machine reset at all? The banners say so outright; with a
   # firmware that logs nothing (a stock QEMU's SeaBIOS) the fallback is that
   # a reset always re-reads the boot sector, so *some* reads must have
-  # happened — the freeze this guards stops at a few hundred of them, well
+  # happened. The freeze this guards stops at a few hundred of them, well
   # above zero and well below MIN_READS.
   reset_seen=1
   if [ "$banners_before" -gt 0 ]; then

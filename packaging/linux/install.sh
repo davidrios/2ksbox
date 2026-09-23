@@ -31,11 +31,10 @@ done
 app=2ksbox
 appid=com._2ksbox.Launcher
 desktop_dir=$prefix/share/applications
-# The icon arrives with the wholesale `share/` copy below, already under
-# `share/icons/hicolor/<n>x<n>/apps/` where a desktop looks for it; this
-# is only the size the desktop entry names outright, and the tree the
-# uninstall has to clear (it is the one thing this installs outside
-# `share/2ksbox`).
+# The icons arrive with the wholesale `share/` copy below, already under
+# `share/icons/hicolor/<n>x<n>/apps/`. These name the size the desktop
+# entry points at and the tree the uninstall clears (the one thing this
+# installs outside `share/2ksbox`).
 icon_dir=$prefix/share/icons/hicolor
 icon_size=256
 metainfo_dir=$prefix/share/metainfo
@@ -57,8 +56,8 @@ fi
 
 # The layout is copied wholesale: every path the launcher resolves is
 # relative to bin/, so anything that arrives here as a set has to leave as
-# one. `cp -a` rather than install(1) per file — pc-bios alone is hundreds
-# of files, and none of them need a mode of their own.
+# one. `cp -a` rather than install(1) per file, because pc-bios alone is
+# hundreds of files and none of them need a mode of their own.
 for dir in bin lib libexec share; do
   [ -d "$here/$dir" ] || continue
   mkdir -p "$prefix/$dir"
@@ -66,20 +65,19 @@ for dir in bin lib libexec share; do
 done
 
 # The desktop entry ships with a bare `Exec=2ksbox`, which is only right
-# if the prefix's bin/ is on PATH. It is here that we know the absolute
-# path, so write it in.
+# if the prefix's bin/ is on PATH. Here we know the absolute path, so
+# write it in.
 #
-# `Icon=` gets the same treatment for the same reason: the bare
-# `Icon=<app id>` only resolves when the prefix's `share/` is on
-# XDG_DATA_DIRS, which a private prefix is not, so the entry names one
-# size outright. The whole set is still installed — a desktop that *does*
-# see the prefix picks the size it wants from it.
+# `Icon=` likewise. The bare `Icon=<app id>` only resolves when the
+# prefix's `share/` is on XDG_DATA_DIRS, which a private prefix is not, so
+# the entry names one size outright. The whole set is still installed, and
+# a desktop that does see the prefix picks the size it wants.
 mkdir -p "$desktop_dir"
 sed -e "s|^Exec=.*|Exec=$prefix/bin/$app|" \
     -e "s|^Icon=.*|Icon=$icon_dir/${icon_size}x${icon_size}/apps/$appid.png|" \
     "$here/share/$app/desktop/$appid.desktop" > "$desktop_dir/$appid.desktop"
-# AppStream metadata, so a software centre knows what this is. Copied
-# unmodified — nothing in it is path-dependent.
+# AppStream metadata for software centres. Copied unmodified, since
+# nothing in it depends on the path.
 mkdir -p "$metainfo_dir"
 cp -f "$here/share/$app/desktop/$appid.metainfo.xml" "$metainfo_dir/$appid.metainfo.xml"
 command -v update-desktop-database >/dev/null && update-desktop-database "$desktop_dir" 2>/dev/null || true
@@ -92,9 +90,8 @@ echo "  player:   $prefix/bin/$app-player"
 # distribution has it, and a copy of our own would still have to match the
 # host's Wayland, OpenGL and fontconfig. Say so here rather than let the
 # launcher fail with a loader error nobody can act on. The QML modules are
-# the other half and are invisible to ldd — a missing QtQuick.Controls is
-# an error on stderr about a module not being installed, not a missing
-# library — so the package names are given whole.
+# invisible to ldd (a missing QtQuick.Controls is a stderr error about a
+# module, not a missing library), so the package names are given whole.
 if command -v ldd >/dev/null && ldd "$prefix/bin/$app" 2>/dev/null | grep -q 'not found'; then
   echo
   echo "  Qt 6 is missing on this system, so the launcher will not start:"

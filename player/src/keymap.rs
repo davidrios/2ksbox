@@ -8,7 +8,7 @@ use winit::keyboard::{Key, KeyLocation, NamedKey};
 /// option moves (xkb's `ctrl:swapcaps`, `ctrl:nocaps`, `caps:escape`,
 /// `altwin:swap_alt_win`, …): a Caps Lock the host reads as Control is
 /// Control to the guest too. `None` for every other key, which goes by
-/// where it sits — the guest has a layout of its own, and a letter
+/// where it sits. The guest has a layout of its own, and a letter
 /// translated by both would be a different letter.
 pub fn as_host_reads(logical: &Key, location: KeyLocation) -> Option<K> {
     let Key::Named(named) = logical else {
@@ -118,8 +118,7 @@ pub fn atset1(code: K) -> Option<u32> {
         K::F12 => 0x58,
         K::NumpadEqual => 0x59,
         // the keys of a Brazilian ABNT2 and a Japanese keyboard that a US
-        // one lacks: ABNT2's `/?` beside the right Shift and its keypad `.`
-        // never reached a Portuguese Windows before 2026-09-17
+        // one lacks (ABNT2's `/?` beside the right Shift and its keypad `.`)
         K::KanaMode => 0x70,
         K::IntlRo => 0x73,
         K::Convert => 0x79,

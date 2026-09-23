@@ -17,12 +17,12 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", dir.display());
     println!("cargo:rustc-link-lib=dylib=qemu-embed-i386");
     // Exported to dependents as DEP_QEMU_EMBED_I386_LIBDIR (via `links`), so
-    // binaries can bake an rpath — link-args here would not propagate.
+    // binaries can bake an rpath. Link-args here would not propagate.
     println!("cargo:libdir={}", dir.display());
 }
 
 /// `canonicalize` on a Windows host answers `\\?\C:\...`, a verbatim path in
-/// which `/` is not a separator — and the linker joins `/libqemu-embed-…`
+/// which `/` is not a separator, and the linker joins `/libqemu-embed-…`
 /// onto the search directory, so a native Windows build (MSYS2, docs/
 /// build-windows.md) would not find the library. A drive path loses the
 /// prefix; anything else (a UNC share) is left as it was.

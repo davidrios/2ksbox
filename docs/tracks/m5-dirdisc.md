@@ -1,21 +1,20 @@
-# Track: M5g — a host directory as a CD-ROM (`isodir:`)
+# Track M5g: a host directory as a CD-ROM (`isodir:`)
 
 This track makes "share this folder with the guest" a disc in the drive.
 `isodir:/path/to/folder` serves a host directory as a read-only
-ISO 9660 + Joliet volume. libdisc generates the volume lazily. No image file
-is written, nothing is copied, and `xorriso` is not needed at run time.
+ISO 9660 + Joliet volume that libdisc generates lazily. No image file is
+written, nothing is copied, and `xorriso` is not needed at run time.
 
-The track was opened and merged on 2026-09-06. On 2026-09-07 a step raised
-the ceiling from a CD to a dual-layer DVD. This record keeps the scope, the
-test loop, the traps and what stayed open. The design lives elsewhere:
+The track was opened and merged on 2026-09-06; a later step raised the
+ceiling from a CD to a dual-layer DVD. This doc keeps the scope, the test
+loop, the traps and what stayed open. The design lives elsewhere:
 
-- **Doc 17 §8:** the volume layout, the decisions, the limits and the
+- Doc 17 §8 has the volume layout, the decisions, the limits and the
   model additions.
-- **Doc 17 §5.1:** the `isodir` driver beside `cdimage`, and the `raw` node
+- Doc 17 §5.1 has the `isodir` driver beside `cdimage`, and the `raw` node
   the block layer puts on top of it.
-- **Doc 07:** the launcher side ("Add folder…", forced Insert/Eject).
-- **`docs/tracks/m5-cdrom-backend.md`:** the M5 code that this track
-  extends.
+- Doc 07 has the launcher side ("Add folder…", forced Insert/Eject).
+- `docs/tracks/m5-cdrom-backend.md` has the M5 code this track extends.
 
 ## Scope and files
 
@@ -25,8 +24,8 @@ test loop, the traps and what stayed open. The design lives elsewhere:
 - `libdisc/src/msf.rs`: `Msf::from_lba` saturates.
 - `libdisc/src/bin/discx.rs`: `selftest`'s `dirdisc` case, and `info` /
   `dump` / `convert` / `export` / `mktree` on a directory.
-- `libdisc/qemu/cdimage.c`: the `isodir` BlockDriver. This is an overlay
-  file of ours, so no QEMU patch was needed.
+- `libdisc/qemu/cdimage.c`: the `isodir` BlockDriver. It is an overlay
+  file of ours, so it needs no QEMU patch.
 - QEMU patch 53 (`atapi-dvd-profile`): above an 80-minute CD the medium
   reports a DVD-ROM profile. Patch 52's shelf strips the prefix before it
   checks the host path.
@@ -73,26 +72,24 @@ the macOS tool differences, NFD names from bsdtar) are in
 - **The `raw` node hides failures.** The block layer puts a `raw` format
   node above a protocol driver it found by prefix, so `cdimage_disc()` has
   to walk down through format nodes. If it does not, nothing fails
-  visibly: files still read, and only the model's answers go missing (the
+  visibly. Files still read, and only the model's answers go missing (the
   TOC, READ CD, the sense of a bad sector). The SeaBIOS probe in `dirdisc`
-  is the proof, and it needs no guest.
-- **A prefix is a contract.** Everything that *inspects* a medium string
-  has to understand `isodir:`, not only the code that passes it on. The C
-  side of the shelf once `access()`ed the prefix with the path and called
-  every folder "missing on the host".
-- **Validate where the disc is built.** Make the arithmetic after that
-  unable to fail. A 34 GiB folder once got past the builder and panicked
-  in MSF on the TOC's lead-out. The panic reached the guest as
-  `LIBDISC_EIO` on an unrelated command. Now the size is refused up front
-  with both sizes in the message, and `Msf::from_lba` saturates.
-- **Force tray changes.** An unforced `blockdev-change-medium` or `eject`
-  only asks a guest that has locked the tray. XP locks it for every open
-  handle, so the swap happened minutes later. The launcher forces it (doc
-  07).
+  catches it without a guest.
+- **Everything that inspects a medium string must understand `isodir:`**,
+  not only the code that passes it on. The C side of the shelf once
+  `access()`ed the prefix with the path and called every folder "missing
+  on the host".
+- **Validate where the disc is built**, so the arithmetic after it cannot
+  fail. A 34 GiB folder once got past the builder and panicked in MSF on
+  the TOC's lead-out, which reached the guest as `LIBDISC_EIO` on an
+  unrelated command. The builder now refuses the size up front with both
+  sizes in the message, and `Msf::from_lba` saturates.
+- **Force tray changes.** The launcher does (doc 07); why is in
+  `docs/00-status.md` "Gotchas" (a QMP medium change must pass `force`).
 - **A program that polls a drive consumes its media-change news.** The
-  sense is delivered once, to whoever asks first. `CDSHELF` therefore
-  dismounts the volume itself (`FSCTL_DISMOUNT_VOLUME`) after a swap.
-  Before that, a swap into a full drive left Windows on the old disc.
+  sense goes once, to whoever asks first, so `CDSHELF` dismounts the
+  volume itself (`FSCTL_DISMOUNT_VOLUME`) after a swap. Without that, a
+  swap into a full drive left Windows on the old disc.
 - **Changing a host file under a mounted disc gives a read error** (the
   sector reads as `EMEDIUM`), never a torn file. To see edits, eject and
   insert again.

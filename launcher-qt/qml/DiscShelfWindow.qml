@@ -2,34 +2,32 @@
 // the shared shelf itself; opened from a machine's row it also carries
 // that machine's boot-disc choice and, while it runs, live insert/eject.
 //
-// Library edits save as they're made — there is no "Save" button,
-// because a shelf is a list of things you own, not a document being
-// drafted.
+// Library edits save as they're made, with no "Save" button, because a
+// shelf is a list of things you own, not a document being drafted.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import com._2ksbox.launcher
 
-// A real top-level window — see `WizardWindow.qml`, modal like the rest.
-// This one was modeless the longest, on the argument that swapping a
-// disc into a running machine is something you want to do *while*
-// looking at it — but the machine is another process with its own
-// window, so blocking the launcher's grid never hid it anyway.
+// A real top-level window, modal like the rest (see `WizardWindow.qml`).
+// Swapping a disc into a running machine while watching it still works:
+// the machine is another process with its own window, which blocking the
+// launcher's grid does not hide.
 Window {
     id: root
 
-    // Typed, not `var` — see `ShaderProfilesWindow.qml`.
+    // Typed, not `var` (see `ShaderProfilesWindow.qml`).
     required property DiscModel discs
 
     /// Something changed that the grid should know about.
     signal changed()
 
-    /// The item the headless screenshot path grabs — see `Main.qml`.
+    /// The item the headless screenshot path grabs (see `Main.qml`).
     property Item grabItem: body
 
     /// What the "Add disc" field is showing, and the dialog's own result
-    /// delivered to it — the probe's way in (`Main.qml`'s `pickdisc`).
+    /// delivered to it: the probe's way in (`Main.qml`'s `pickdisc`).
     /// A real `FileDialog` is the window system's and cannot be driven
     /// offscreen, so the probe hands the field the path the dialog would
     /// have; `acceptPath` is the line the dialog itself runs, so the
@@ -51,17 +49,17 @@ Window {
     minimumHeight: 360
     flags: Qt.Dialog
     // One at a time (`WizardWindow.qml`): a secondary window blocks the
-    // grid behind it, so there is never a second one to wonder about.
+    // grid behind it, so there is never a second one.
     modality: Qt.ApplicationModal
     color: palette.window
 
     onVisibleChanged: if (!visible) root.changed()
 
-    // Esc is Cancel, the way every other dialog on the desktop behaves.
-    // It goes through `close()` rather than hiding the window, because
-    // that is what runs `onVisibleChanged` above — the one place a
-    // model's own `open` flag is put back. Not while a file dialog is up:
-    // that Esc is the dialog's (`PathField.browsing`).
+    // Esc is Cancel, as in every other dialog on the desktop. It goes
+    // through `close()` rather than hiding the window, because that runs
+    // `onVisibleChanged` above, the one place a model's own `open` flag
+    // is put back. Not while a file dialog is up: that Esc is the
+    // dialog's (`PathField.browsing`).
     Shortcut {
         sequences: [StandardKey.Cancel]
         enabled: !adder.browsing && !folderDialog.visible
@@ -108,7 +106,7 @@ Window {
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
                     opacity: 0.75
-                    text: qsTr("The machine is running: Insert swaps the disc now. The boot choice applies on the next start.")
+                    text: qsTr("The machine is running. Insert swaps the disc now, and the boot choice applies on the next start.")
                 }
                 Button {
                     text: qsTr("Eject")
@@ -118,9 +116,9 @@ Window {
 
             MenuSeparator { Layout.fillWidth: true }
 
-            // A stock list and nothing drawn by hand (user decision, 2026-09-22:
-            // no list box, no zebra rows, no colours of ours -- the style's own
-            // look, whichever style it is): a `ListView` of `ItemDelegate`s.
+            // A stock list with nothing drawn by hand (user decision: no
+            // list box, no zebra rows, no colours of ours, only the style's
+            // own look): a `ListView` of `ItemDelegate`s.
             ListView {
                 id: shelf
                 Layout.fillWidth: true
@@ -144,7 +142,7 @@ Window {
                     contentItem: RowLayout {
                         spacing: 8
 
-                        // Buttons come *before* the path: a disc image's
+                        // Buttons come before the path: a disc image's
                         // path is routinely long enough to widen a column
                         // past the screen, and anything after it would go
                         // with it.
@@ -210,15 +208,13 @@ Window {
                 label: qsTr("Add disc")
                 nameFilter: root.discs.discFilter
                 // The one field with no model behind it: what the user
-                // types *is* the value, until "Add to shelf" empties it.
+                // types is the value, until "Add to shelf" empties it.
                 onEdited: (path) => adder.value = path
-                // A disc chosen in the dialog goes on the shelf there and
-                // then: the dialog already asked the question "Add to
-                // shelf" is there to ask, so leaving the path sitting in
-                // the field reads as a picker that did nothing
-                // (user-reported, 2026-09-09). "Add folder…" below has
-                // always worked that way. The field and its button stay
-                // for a path someone *types*.
+                // A disc chosen in the dialog goes on the shelf at once.
+                // The dialog already asked what "Add to shelf" asks, so
+                // leaving the path in the field reads as a picker that did
+                // nothing. "Add folder…" below works the same way. The
+                // field and its button stay for a typed path.
                 onPicked: (path) => { root.discs.add(path); adder.value = "" }
             }
 
@@ -234,9 +230,9 @@ Window {
                     // a volume over it as the guest reads it, which is how
                     // a pile of files reaches a machine whose networking
                     // nobody wants to trust. No name filter can express "a
-                    // folder", so it is its own dialog — Qt's FolderDialog,
-                    // the same portal/NSOpenPanel/IFileDialog backends
-                    // PathField's FileDialog reaches.
+                    // folder", so it is its own dialog: Qt's FolderDialog,
+                    // on the same portal/NSOpenPanel/IFileDialog backends
+                    // as PathField's FileDialog.
                     text: qsTr("Add folder…")
                     ToolTip.visible: hovered
                     ToolTip.text: qsTr("Share a folder with the guest as a disc")
@@ -247,8 +243,8 @@ Window {
                 }
                 Button {
                     // Doc 07's one-click guest-tools attach: no path to find,
-                    // no browsing — the driver/test ISO this checkout last
-                    // built.
+                    // no browsing, just the driver/test ISO this checkout
+                    // last built.
                     text: qsTr("Add guest-tools ISO")
                     enabled: root.discs.guestToolsIso !== ""
                     ToolTip.visible: hovered

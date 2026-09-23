@@ -1,18 +1,18 @@
-; qclock.asm — DOS Quake's clock, read the way DOS Quake reads it, held
+; qclock.asm: DOS Quake's clock, read the way DOS Quake reads it, held
 ; against the processor's time-stamp counter.
 ;
 ;   QCLOCK.COM [seconds]   DOS real mode or a Win9x DOS box; 30 s by
 ;                          default, 120 at most. A key ends it early.
 ;
-; The question behind it (2026-09-10): quake.exe in a Windows 98 DOS box
+; The question behind it: quake.exe in a Windows 98 DOS box
 ; on an unthrottled machine "speeds up momentarily for no reason". DOS
 ; Quake has one clock, Sys_FloatTime (WinQuake/sys_dos.c in id's GPL
 ; release), and it is built from two sources that are only consistent on
 ; an idle real PC:
 ;
 ;   * the BIOS tick count, the low word at 0040:006C, which INT 8 bumps
-;     18.2 times a second — in a DOS box, Windows' *simulated* INT 8,
-;     delivered when the VM is scheduled and caught up in bursts after;
+;     18.2 times a second (in a DOS box, Windows' *simulated* INT 8,
+;     delivered when the VM is scheduled and caught up in bursts after);
 ;   * PIT counter 0, latched and read straight off ports 0x43 / 0x40, put
 ;     in mode 2 by Sys_Init so it counts 65536 down to 1 once per tick.
 ;
@@ -23,8 +23,8 @@
 ;   if (time < 0) time = 0;                (the -3000 s case aside)
 ;   curtime += time; 100000 calls in a row with time == 0 add 1.0 s.
 ;
-; So a reading that goes *backward* — the counter wrapped and the tick it
-; owes has not arrived yet — counts nothing and lowers the reference, and
+; So a reading that goes *backward* (the counter wrapped and the tick it
+; owes has not arrived yet) counts nothing and lowers the reference, and
 ; the next reading after the tick does arrive counts in full from there.
 ; Every late tick is time Quake counts twice. Ticks that arrive in a burst
 ; after the VM was starved become a burst of forward steps, and Quake
@@ -33,20 +33,20 @@
 ; This program is that loop, with nothing else in it: Quake's read in a
 ; tight loop, interrupts on (the ticks have to arrive the way they do for
 ; the game), and the TSC read beside it as the clock nobody queues or
-; virtualizes — RDTSC is not trapped in V86 mode on 9x, and under TCG it
+; virtualizes. RDTSC is not trapped in V86 mode on 9x, and under TCG it
 ; follows the host's own counter. Every 18 ticks (~1 s) it closes a
 ; window, and at the end prints one line per window:
 ;
 ;   true_ms   the window by the TSC
 ;   tick_ms   the window by the raw tick+counter reading, no clamping
 ;   quake_ms  what Quake's curtime advanced by
-;   speed%    quake_ms / true_ms — the fast-forward, if there is one,
+;   speed%    quake_ms / true_ms; the fast-forward, if there is one,
 ;             is a window well above 100 (FAST at 110 and over)
 ;   back      readings that went backward (a tick owed and not yet
 ;             delivered), backmax the largest of them in ms
 ;   jumps     reads that saw the tick count move by more than one since
 ;             the read before (a burst), jumpmax the most ticks at once
-;   gapmax    the longest time between two consecutive reads, in ms —
+;   gapmax    the longest time between two consecutive reads, in ms:
 ;             how long this VM was not running at all
 ;   stall     Quake's 100000-identical-reads second
 ;
@@ -116,7 +116,7 @@ start:
         xor     ax, ax
         mov     es, ax                  ; es:046c is 0040:006c
 
-        ; Sys_Init: counter 0 in mode 2, period 65536 — the same 18.2 Hz
+        ; Sys_Init: counter 0 in mode 2, period 65536, the same 18.2 Hz
         ; the BIOS runs it at, but counting once per tick instead of
         ; mode 3's twice.
         mov     al, 0x34

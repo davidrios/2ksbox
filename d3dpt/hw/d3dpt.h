@@ -1,5 +1,5 @@
 /*
- * d3dpt.h — the paravirtual Direct3D device (hw/d3dpt, doc 14). Overlaid
+ * d3dpt.h: the paravirtual Direct3D device (hw/d3dpt, doc 14). Overlaid
  * into qemu/hw/d3dpt by scripts/prepare-qemu.sh; patch 40 wires
  * d3dpt_mm_init() into the pc machine and the meson tree.
  *

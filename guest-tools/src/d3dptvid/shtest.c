@@ -1,25 +1,25 @@
 /*
- * shtest.c — vertex and pixel shaders 1.x through XP's own d3d8.dll on our
- * driver's DX8 DDI (doc 15, M7c, protocol v7): the runtime's CREATE / SET /
+ * shtest.c: vertex and pixel shaders 1.x through XP's own d3d8.dll on our
+ * driver's DX8 DDI (doc 15, M7c, protocol v7). The runtime's CREATE / SET /
  * DELETE*SHADER and *SHADERCONST tokens reach the driver only with hardware
- * vertex processing, so this is the check that they get through the DP2
- * stream and that the host runs them.
+ * vertex processing, so this checks that they get through the DP2 stream
+ * and that the host runs them.
  *
  *   SHTEST
  *
- * A windowed 320x240 device (hardware vertex processing when the caps offer
- * it; software otherwise, which the log says — then the runtime runs the
- * shaders itself and the driver sees XYZRHW draws), then one case after the
- * other, each a draw read back at a few pixels and compared with the colour
- * it must have:
+ * Opens a windowed 320x240 device with hardware vertex processing when the
+ * caps offer it. Otherwise it runs software vertex processing and logs so;
+ * the runtime then runs the shaders itself and the driver sees XYZRHW
+ * draws. Then one case after the other, each a draw read back at a few
+ * pixels and compared with the colour it must have:
  *   vs 1.1 through a declaration, oD0 = v5 * c0 (c0 red, then green),
  *   the same through a vertex + index buffer (DrawIndexedPrimitive),
- *   two streams (protocol v10): the position in one vertex buffer, the
+ *   two streams (protocol v10), the position in one vertex buffer and the
  *   colour in another at a different stride, through DrawPrimitive with a
  *   StartVertex, DrawIndexedPrimitive with a BaseVertexIndex, the colour
  *   stream in system memory, and the fixed function on a two-stream
- *   declaration — every buffer's first vertices a decoy colour, so a stream
- *   read from the wrong vertex shows,
+ *   declaration. Every buffer's first vertices are a decoy colour, so a
+ *   stream read from the wrong vertex shows,
  *   a declaration-only shader (the fixed function on a FLOAT3 + colour layout),
  *   D3DVSD_CONST in the declaration (loaded when the shader is set),
  *   ps 1.1 r0 = c0 (yellow), then off again,
@@ -74,9 +74,9 @@ static void pump(void)
     }
 }
 
-/* --- shader models 1.x by hand: a version token, instruction tokens
- * (the opcode), parameter tokens (bit 31, the register type in bits 28..30,
- * write mask / swizzle in 16..23, the register number) --- */
+/* --- shader models 1.x by hand, as a version token, instruction tokens
+ * (the opcode) and parameter tokens (bit 31, the register type in bits
+ * 28..30, write mask / swizzle in 16..23, the register number) --- */
 #define VS11        0xFFFE0101u
 #define PS11        0xFFFF0101u
 #define SH_END      0x0000FFFFu
@@ -104,10 +104,10 @@ static const DWORD ps_const_code[] = { PS11, OP_MOV, DST(R_TEMP, 0), SRC(R_CONST
 /* ps 1.1: t0 sampled, r0 = t0 * v0 */
 static const DWORD ps_tex_code[] = { PS11, OP_TEX, DST(R_TEXTURE, 0), OP_MUL, DST(R_TEMP, 0), SRC(R_TEXTURE, 0), SRC(R_INPUT, 0), SH_END };
 
-/* the declarations: position + colour (20 bytes), a FLOAT3 position +
+/* the declarations: position + colour (20 bytes); a FLOAT3 position +
  * colour for the fixed function (16 bytes; d3d8.dll refuses a
- * declaration-only shader whose registers are not in FVF order —
- * D3DERR_INVALIDCALL before the driver sees it), position + colour with
+ * declaration-only shader whose registers are not in FVF order with
+ * D3DERR_INVALIDCALL before the driver sees it); position + colour with
  * c0 = blue */
 static const DWORD decl_pc[] = {
     D3DVSD_STREAM(0), D3DVSD_REG(D3DVSDE_POSITION, D3DVSDT_FLOAT4), D3DVSD_REG(D3DVSDE_DIFFUSE, D3DVSDT_D3DCOLOR), D3DVSD_END()
@@ -373,11 +373,11 @@ int main(int argc, char **argv)
         IDirect3DDevice8_SetStreamSource(dev, 0, NULL, 0);
     }
 
-    /* --- two streams: the position (16 bytes) in one buffer, the colour (8
-     * bytes) in another, both after DECOY decoy vertices — red and off to
-     * the right — so a stream read from the wrong vertex draws the wrong
-     * colour or in the wrong place. The quad's own colour is white, c0
-     * decides --- */
+    /* --- two streams, the position (16 bytes) in one buffer and the colour
+     * (8 bytes) in another, both after DECOY decoy vertices that are red
+     * and off to the right. A stream read from the wrong vertex draws the
+     * wrong colour or in the wrong place. The quad's own colour is white;
+     * c0 decides --- */
     if (caps.MaxStreams >= 2) {
         static const struct p4vtx p4_decoy = { 0.5f, -0.5f, 0.5f, 1.0f };
         static const struct p3vtx p3_decoy = { 0.5f, -0.5f, 0.5f };

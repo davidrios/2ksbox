@@ -686,7 +686,7 @@ fn exp_jit(c: &Ctx) {
     let f: extern "C" fn(u64, u64) -> u64 = unsafe { core::mem::transmute(jit() as usize) };
     let r = f(0, 100);
     prln!("jit: code written by the host process executes in the VM: f(100) = {} (expect 142)", r);
-    // self-patching: rewrite the immediate, sync, call — no W^X toggle exists here
+    // self-patching: rewrite the immediate, sync, call; no W^X toggle exists here
     let n = 100_000u64;
     let mut bad = 0u64;
     let t0 = ticks();

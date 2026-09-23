@@ -1,17 +1,17 @@
 /*
- * d3dpt_ddi.h — the Direct3D DDI types that are the *same* on every
- * Windows the driver runs on: the DirectX caps structures, the
+ * d3dpt_ddi.h: the Direct3D DDI types that are the same on every
+ * Windows the driver runs on. These are the DirectX caps structures, the
  * DrawPrimitives2 command header and its token numbers, the DirectX 8
  * GetDriverInfo2 shapes and D3DCAPS8.
  *
  * They live here rather than in a per-OS DDK header because the core
  * (core/ sources) fills them and the core must include no DDK header of
- * either family (doc 19, "The split"). NT's d3dnthal.h and the 9x
- * d3dhal.h keep only what genuinely differs — the callback data
- * structures and the surface objects — and include this for the rest.
- * The layouts are the DDK's; the trailing underscore says the name is
- * ours, spelled out so that neither d3dtypes.h / d3dcaps.h nor the
- * user-mode windows.h has to be reachable from a kernel build.
+ * either family (doc 19, "The split"). NT's ddk/d3dnthal.h and the 9x
+ * w9x/ddhal32.h keep only what differs, the callback data structures and
+ * the surface objects. The layouts are the DDK's. The trailing
+ * underscore marks a name as ours, spelled out so that neither
+ * d3dtypes.h / d3dcaps.h nor the user-mode windows.h has to be reachable
+ * from a kernel build.
  *
  * Needs <windef.h> and <ddraw.h> (for DDSURFACEDESC / DDPIXELFORMAT)
  * included first; the includer's DDK header does that.

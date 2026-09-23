@@ -15,7 +15,7 @@
  * The same file also registers `isodir`, which serves a host *directory*
  * as a generated ISO 9660 + Joliet volume (M5g, docs/17-cdrom-implementation.md §8).
  * It is a protocol driver, `isodir:/path/to/folder`, because a directory
- * can be neither probed nor opened as a `file` child — the shape vvfat's
+ * can be neither probed nor opened as a `file` child, the shape vvfat's
  * `fat:` prefix has for the same reason. Everything else is shared with
  * cdimage: the same state, the same reads, the same disc handle reaching
  * hw/ide/atapi.c, so a folder is a disc in the drive like any other.

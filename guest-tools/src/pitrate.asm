@@ -1,11 +1,11 @@
-; pitrate.asm — the PIT at 1 kHz, counted by the guest: IRQ 0 is what a
+; pitrate.asm: the PIT at 1 kHz, counted by the guest. IRQ 0 is what a
 ; 1 kHz guest clock is made of, and this asks whether all of them arrive.
 ;
 ;   PITRATE.COM [H] [n]    DOS real mode; n lines (10 by default), H to
 ;                          halt between ticks instead of spinning
 ;
 ; Windows 9x's multimedia timer reprograms counter 0 to 1 ms for
-; timeBeginPeriod(1) — what a MIDI sequencer and many games run on — and
+; timeBeginPeriod(1), which a MIDI sequencer and many games run on, and
 ; then keeps time by counting IRQ 0. So does this program: counter 0 in
 ; mode 2 at 1193 (1000.15 Hz), an INT 8 handler of its own that counts and
 ; acknowledges, and one "T" line on COM1 per 1000 ticks, written straight to
@@ -13,9 +13,9 @@
 ; timestamps the lines as they arrive, and 1.000 s between two of them is a
 ; guest clock at 100 %. `tools/pit-guest-test.py` reads them.
 ;
-; Why (2026-09-17): QEMU raises every transition that came due while the
-; main loop slept back to back, and on the edge-triggered 8259 those are
-; one interrupt — so the guest's clock ran at the rate of the host's
+; Why: QEMU raised every transition that came due while the main loop
+; slept back to back, and on the edge-triggered 8259 those are one
+; interrupt, so the guest's clock ran at the rate of the host's
 ; wakeups: 50 % with 2 ms waits, 6 % with Windows' default 15.6 ms ones
 ; (MIDI "too slow" on a Windows host). Patch 65 reinjects them.
 ;

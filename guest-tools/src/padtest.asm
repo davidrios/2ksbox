@@ -1,11 +1,11 @@
-; padtest.asm — the gameport at 0x201 as a DOS game reads it (M13 path B,
+; padtest.asm: the gameport at 0x201 as a DOS game reads it (M13 path B,
 ; docs/tracks/m13-gamepads.md).
 ;
 ;   PADTEST.COM        DOS real mode: FreeDOS, a Win98 "Restart in MS-DOS
 ;                      mode" screen, or the harness
 ;                      (tools/pad-guest-test.py).
 ;
-; DOS is the family the USB pad cannot reach — no USB stack — so this port
+; DOS has no USB stack, so the USB pad cannot reach it and this port
 ; is the only controller a DOS game can have, and it is read by the game
 ; itself: nothing is installed, there is no driver and no API. What that
 ; reading looks like is the whole of this program, and it is what the
@@ -14,8 +14,8 @@
 ;   * one write to 0x201 (any value) triggers four RC one-shots;
 ;   * bits 0-3 of a read stay *set* while each axis is still charging;
 ;   * bits 4-7 are the four buttons, *clear* while held;
-;   * so an axis is a *count* — how many times the loop went round before
-;     the bit fell — and it is in units of nothing at all: a faster CPU
+;   * so an axis is a *count* (how many times the loop went round before
+;     the bit fell), in units of nothing at all: a faster CPU
 ;     counts higher for the same stick position, which is why every game
 ;     of the era had a calibration step.
 ;
@@ -26,8 +26,8 @@
 ; serial line.
 ;
 ; The presence test is the era's own and worth keeping in mind when a
-; guest says there is no joystick: an idle port reads 0xf0 here — the
-; one-shots expired, no button held — while a machine with *no* gameport
+; guest says there is no joystick. An idle port reads 0xf0 here (the
+; one-shots expired, no button held), while a machine with *no* gameport
 ; reads 0xff off the open bus. The low nibble is the answer, and it is
 ; only meaningful when nothing was armed.
 ;
@@ -45,7 +45,7 @@ PORT    equ     0x201
 ; The counting loop's cap. An unthrottled TCG guest runs the loop far
 ; faster than any period CPU and would otherwise count past a 16-bit
 ; counter on the long end of the axis (~1.1 ms), so the counts are 32-bit
-; and this only stops a runaway when nothing ever clears the bit — a
+; and this only stops a runaway when nothing ever clears the bit: a
 ; missing device, or a model that arms and never expires.
 LIMIT   equ     2000000
 ; Samples, and the gap between them in BIOS ticks (~55 ms). 480 x 4 ticks
@@ -121,7 +121,7 @@ start:
 ; One arm and one count, into cnt[4] and btn. Interrupts off for the
 ; duration: at a period pace the whole thing is about a millisecond, and a
 ; timer tick inside the loop would add its own service time to whichever
-; axis was still charging — which reads as a stick that jumps.
+; axis was still charging, which reads as a stick that jumps.
 read_pad:
         pushad
         pushf
@@ -222,7 +222,7 @@ putc:
         mov     dx, 0x3fd
         mov     cx, 0xffff              ; bounded: a line that never drains
 .wait:  in      al, dx                  ; must not take the program with it
-        test    al, 0x20                ; THR empty — and 0xff (no UART at
+        test    al, 0x20                ; THR empty; 0xff (no UART at
         jnz     .send                   ; all) has that bit set too
         loop    .wait
 .send:  mov     al, bl

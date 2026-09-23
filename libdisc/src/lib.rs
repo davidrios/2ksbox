@@ -1,4 +1,4 @@
-//! libdisc — raw optical disc model for the QEMU CD-ROM backend (docs 05
+//! libdisc: raw optical disc model for the QEMU CD-ROM backend (docs 05
 //! and 17).
 //!
 //! Sessions, tracks, indices and per-sector kinds over cue/bin, CloneCD and
@@ -284,8 +284,8 @@ pub struct Session {
 /// and a shared tree can hold thousands, where macOS' default limit is
 /// 256 descriptors. `Disc` opens on demand into a small cache instead
 /// (`payload_handle`), and re-checks length and mtime every time it
-/// opens: a payload that changed underneath us is `Error::Medium` — the
-/// read error a drive reports for a damaged sector — rather than a
+/// opens: a payload that changed underneath us is `Error::Medium` (the
+/// read error a drive reports for a damaged sector) rather than a
 /// silently torn read. A disc is a snapshot of the tree it was opened on.
 pub struct Payload {
     pub path: PathBuf,
@@ -300,10 +300,10 @@ pub struct Payload {
 const FD_CACHE: usize = 8;
 
 /// A host file that failed a guest's read, said on stderr (the player's
-/// log) — the first few times only. A guest sees a failed sector as a sense
+/// log), the first few times only. A guest sees a failed sector as a sense
 /// code, and CD audio as a play that stops, with nothing anywhere to say
 /// which file or why: "CD music sometimes doesn't work, especially off a
-/// Samba share" was all there was to go on (2026-09-17).
+/// Samba share" was all there was to go on.
 fn report_file_error(msg: &str) {
     use std::sync::atomic::{AtomicU32, Ordering};
     static SAID: AtomicU32 = AtomicU32::new(0);
@@ -471,7 +471,7 @@ impl Disc {
 
     /// Open an image: `.cue`, `.ccd`, `.mds`, `.iso`, dispatching on the
     /// extension first and on the content when the extension says
-    /// nothing — or a **host directory**, with or without the `isodir:`
+    /// nothing. It also takes a **host directory**, with or without the `isodir:`
     /// prefix the QEMU block driver strips, as a generated ISO 9660 +
     /// Joliet volume over the tree (`isodir`, doc `m5-dirdisc`).
     pub fn open(path: &Path) -> Result<Disc> {

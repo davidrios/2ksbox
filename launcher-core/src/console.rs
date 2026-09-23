@@ -1,32 +1,31 @@
 //! The console a Windows GUI program has, or has not.
 //!
-//! Both front ends are *windowed* programs on Windows
+//! The front end is a windowed program on Windows
 //! (`windows_subsystem = "windows"`), because a console-subsystem binary
-//! opens a black terminal window the moment someone double-clicks it and
-//! keeps it there for the life of the launcher. That costs two things
-//! back, and this module is both of them:
+//! opens a black terminal window when someone double-clicks it and keeps
+//! it for the life of the launcher. That choice costs two things, and
+//! this module handles both:
 //!
-//! * a windowed program started from `cmd.exe` inherits no console, so
-//!   `launcher --paths` would print into nowhere — [`attach_parent`]
-//!   borrows the console it was launched from, and only then;
-//! * a windowed program has no console to *lend*, so every console
-//!   program it starts gets a brand-new window of its own — one flash
-//!   per `qemu-img` call and a permanent black rectangle behind the
-//!   player. [`command`] is how this crate starts a subprocess, and it
-//!   asks for no console at all.
+//! * A windowed program started from `cmd.exe` inherits no console, so
+//!   `launcher --paths` would print into nowhere. [`attach_parent`]
+//!   borrows the console it was launched from.
+//! * A windowed program has no console to lend, so every console program
+//!   it starts gets a new window of its own: one flash per `qemu-img`
+//!   call and a permanent black rectangle behind the player. [`command`]
+//!   is how this crate starts a subprocess, and it asks for no console.
 //!
-//! On every other platform both are nothing: `attach_parent` returns and
-//! `command` is `Command::new`.
+//! On every other platform `attach_parent` does nothing and `command` is
+//! `Command::new`.
 
 use std::path::Path;
 use std::process::Command;
 
 /// Start a subprocess without giving it a console window of its own.
 ///
-/// Only when we have no console to lend it: run the launcher *from* a
-/// terminal and its children keep inheriting that terminal, which is
-/// where a developer wants the player's diagnostics. Run it from
-/// Explorer and nothing flashes.
+/// Only when we have no console to lend it. Run the launcher from a
+/// terminal and its children inherit that terminal, which is where a
+/// developer wants the player's diagnostics. Run it from Explorer and
+/// nothing flashes.
 pub fn command(bin: &Path) -> Command {
     #[cfg_attr(not(windows), allow(unused_mut))]
     let mut cmd = Command::new(bin);
@@ -40,14 +39,13 @@ pub fn command(bin: &Path) -> Command {
 }
 
 /// Attach to the console this process was launched from, if there is one
-/// and nothing has already given us a standard output — a redirection
+/// and nothing has already given us a standard output. A redirection
 /// (`launcher --paths > file`, or a test harness reading a pipe) hands a
-/// windowed program perfectly good handles, and those must be left
-/// alone.
+/// windowed program working handles, and those must be left alone.
 ///
 /// Call it before writing anything, and only when the command line asks
-/// for output: attaching for a GUI run would put a console behind the
-/// window, which is the thing this module exists to avoid.
+/// for output. Attaching for a GUI run would put a console behind the
+/// window, which this module exists to avoid.
 pub fn attach_parent() {
     #[cfg(windows)]
     unsafe {
@@ -103,9 +101,8 @@ pub fn attach_parent() {
 
 /// Whether a subprocess started by [`command`] inherits somewhere to
 /// print. False only for a windowless Windows process, whose children
-/// are deliberately given no console — a caller with output worth
-/// keeping (the player's start-up diagnostics) redirects it to a file
-/// instead of losing it.
+/// get no console. A caller with output worth keeping (the player's
+/// start-up diagnostics) then redirects it to a file.
 pub fn inherits_output() -> bool {
     #[cfg(windows)]
     {

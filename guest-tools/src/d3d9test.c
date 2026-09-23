@@ -10,7 +10,8 @@
  *
  * Build (mingw-w64, msvcrt, Pentium III floor as the rest of the ISO):
  *   i686-w64-mingw32-gcc -O2 -o d3d9test.exe d3d9test.c -ld3d9 -lgdi32 -luser32
- * Run next to D3D9.DLL + WINED3D.DLL (+ OPENGL32.DLL) in the game folder.
+ * It runs on whichever D3D9 is copied next to it (D3DPT\ or
+ * WINED3D\D3D8-9\ from the ISO, SETUP /GAME 1 or 4).
  */
 #include <windows.h>
 #include <d3d9.h>

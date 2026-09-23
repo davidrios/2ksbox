@@ -2,22 +2,21 @@
 //! guest-tools ISO attach").
 //!
 //! One object, two modes. Opened on its own it manages the shared shelf
-//! (`disc_library.rs`) — add, label, remove. Opened from a machine it
-//! carries that machine's two disc decisions as well: which disc is in
-//! the drive at **boot** (a bundle edit, `Machine::disc`) and — while
-//! the machine is running — which disc to **insert** right now (a
-//! monitor command, `control.rs`). The shelf is deliberately not
-//! filtered per machine: it is the user's collection, and any disc can
-//! go in any drive.
+//! (`disc_library.rs`): add, label, remove. Opened from a machine it also
+//! carries that machine's two disc decisions: which disc is in the drive
+//! at **boot** (a bundle edit, `Machine::disc`) and, while the machine
+//! runs, which disc to **insert** now (a monitor command, `control.rs`).
+//! The shelf is not filtered per machine: it is the user's collection,
+//! and any disc can go in any drive.
 //!
-//! Library edits save as they are made; there is no "Save" button,
-//! because a shelf is a list of things you own, not a document being
-//! drafted. *When* they are written is left to the front end: Qt's
-//! `TextField` has an `editingFinished` and calls `set_label` then
-//! `flush` once, rather than writing the file on every keystroke.
+//! Library edits save as they are made, with no "Save" button, because a
+//! shelf is a list of things you own, not a document being drafted. The
+//! front end decides when they are written: Qt's `TextField` calls
+//! `set_label` then `flush` once on `editingFinished`, rather than
+//! writing the file on every keystroke.
 //!
-//! The rows are in the shelf's own order — by label, `disc_library`'s
-//! invariant — so a row number is only good until the next edit.
+//! The rows are in the shelf's own order (by label, `disc_library`'s
+//! invariant), so a row number is only good until the next edit.
 
 use crate::bundle::Machine;
 use crate::control;
@@ -72,10 +71,10 @@ impl Shelf {
         self.load(library_path);
     }
 
-    /// The same, from a bundle path — for a front end that addresses its
-    /// windows by path rather than by a `Machine` it is already holding.
-    /// A bundle that won't load still opens the shelf (the shared half
-    /// is perfectly usable), with the reason in `error`.
+    /// The same, from a bundle path, for a front end that addresses its
+    /// windows by path rather than by a `Machine` it already holds. A
+    /// bundle that won't load still opens the shelf (the shared half
+    /// works), with the reason in `error`.
     pub fn open_for_path(&mut self, bundle_path: PathBuf, library_path: &Path) {
         match Machine::load(&bundle_path) {
             Ok(machine) => self.open_for(&machine, bundle_path, library_path),
@@ -91,8 +90,8 @@ impl Shelf {
         self.library_path = library_path.to_path_buf();
         match DiscLibrary::load(library_path) {
             Ok(library) => self.library = library,
-            // A corrupt shelf is reported, never silently replaced with
-            // an empty one — the next save would then destroy it.
+            // A corrupt shelf is reported, never replaced with an empty
+            // one, which the next save would write over it.
             Err(e) => self.error = Some(format!("{}: {e}", library_path.display())),
         }
     }
@@ -117,9 +116,9 @@ impl Shelf {
     /// it calls.
     ///
     /// The row moves to where the new name belongs (the shelf is kept in
-    /// order by label), so a caller holding row numbers must re-read them
-    /// — which is what Qt's `beginResetModel` bracket around every shelf
-    /// operation already does.
+    /// order by label), so a caller holding row numbers must re-read
+    /// them. Qt's `beginResetModel` bracket around every shelf operation
+    /// already does.
     pub fn set_label(&mut self, row: usize, label: &str) {
         let Some(disc) = self.library.discs.get_mut(row) else { return };
         if disc.label == label {
@@ -150,38 +149,36 @@ impl Shelf {
     }
 
     /// `flush`, with any failure folded into `error` rather than
-    /// returned — what a front end wants at the end of a frame or a
-    /// handler, where there is nobody to return an error to.
+    /// returned, for the end of a frame or a handler, where there is
+    /// nobody to return an error to.
     pub fn flush_reporting(&mut self) {
         if let Err(e) = self.flush() {
             self.error = Some(e.to_string());
         }
     }
 
-    /// Whether the shelf was written since this was last asked — the cue
-    /// to republish it to any running machine's drive so the in-guest
-    /// CDSHELF program sees a disc the moment it is added.
+    /// Whether the shelf was written since this was last asked. If so,
+    /// the caller republishes it to any running machine's drive, so the
+    /// in-guest CDSHELF program sees a disc the moment it is added.
     pub fn take_saved(&mut self) -> bool {
         std::mem::take(&mut self.saved)
     }
 
     /// The directory of the bundle this window has open, so the caller
-    /// can tell whether *that* machine is the running one.
+    /// can tell whether that machine is the running one.
     pub fn bundle_dir(&self) -> Option<&Path> {
         self.machine.as_ref().and_then(|m| m.bundle_path.parent())
     }
 
     /// Put a disc on the shelf.
     ///
-    /// Both windows call this from more than one place, and one of them
-    /// is the "Browse…" dialog itself: a file chosen there is on the shelf
-    /// before the dialog has finished closing, rather than landing in
-    /// the text field for a second confirming click on "Add to shelf"
-    /// (user-reported, 2026-09-09 — a picker that appears to do nothing).
-    /// The field and its button are for a path someone *types*; "Add
-    /// folder…" was already the immediate kind. Nothing is lost by it:
-    /// a disc added by mistake is one "Remove" away, and the shelf is a
-    /// list of what you own, not a document being drafted.
+    /// Both windows call this from more than one place, one of them the
+    /// "Browse…" dialog itself. A file chosen there is on the shelf
+    /// before the dialog closes, rather than landing in the text field
+    /// for a second click on "Add to shelf"; a picker that seemed to do
+    /// nothing was reported as a bug. The field and its button are for a
+    /// typed path, and "Add folder…" adds immediately too. A disc added
+    /// by mistake is one "Remove" away.
     pub fn add(&mut self, path: PathBuf) {
         let label = disc_library::default_label(&path);
         if self.library.add(path) {
@@ -196,7 +193,7 @@ impl Shelf {
     }
 
     /// Doc 07's one-click guest-tools attach: no path to find, no
-    /// browsing — the driver/test ISO this checkout last built.
+    /// browsing, just the driver/test ISO this checkout last built.
     pub fn add_guest_tools(&mut self) {
         match disc_library::guest_tools_iso() {
             Some(iso) => self.add(iso),
@@ -294,10 +291,10 @@ impl Shelf {
 
     /// Run one operation on the running machine's monitor. A fresh
     /// connection each time (jobs and block nodes are QEMU-global, so
-    /// nothing is lost, and there is no half-open socket to nurse);
-    /// failures land in the error line rather than a panic — the guest
-    /// may have shut down between the repaint that drew the button and
-    /// the click on it.
+    /// nothing is lost, and there is no half-open socket to keep).
+    /// Failures land in the error line rather than a panic, because the
+    /// guest may have shut down between the repaint that drew the button
+    /// and the click on it.
     fn live(&mut self, op: impl FnOnce(&mut control::Control) -> Result<(), String>, done: &str) {
         let Some(dir) = self.bundle_dir() else {
             self.status = None;

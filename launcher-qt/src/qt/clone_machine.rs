@@ -2,10 +2,10 @@
 //! `launcher_core::clone_machine::CloneMachine`.
 //!
 //! The model decides everything: the name offered, what is copied and
-//! where, the refusal while the machine runs, the sentences. What is here
-//! is the projection onto properties and the three things a view does —
-//! type a name, press Clone, and ask a running copy how it is doing from
-//! a `Timer` (`Main.qml`, which also rescans the grid when it lands).
+//! where, the refusal while the machine runs, the sentences. This file
+//! is the projection onto properties and the three things a view does:
+//! type a name, press Clone, and poll a running copy from a `Timer`
+//! (`Main.qml`, which also rescans the grid when it lands).
 
 #[cxx_qt::bridge]
 pub mod ffi {
@@ -120,8 +120,8 @@ impl ffi::CloneModel {
         self.rust().model.saved_path().map(|p| qs(p.display())).unwrap_or_default()
     }
 
-    /// The model, onto the properties — every one through its own
-    /// setter (see the header of `main.rs`).
+    /// The model, onto the properties, each through its own setter (see
+    /// the header of `main.rs`).
     fn publish(mut self: Pin<&mut Self>) {
         let (open, title, name, note, warning, error, status, busy, can_submit, progress, progress_label);
         {

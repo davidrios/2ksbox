@@ -1,6 +1,6 @@
 //! The machine bundle format (doc 07): a declarative `machine.toml` the
 //! launcher reads and writes. "Hand-written bundles + the player binary is
-//! a fully supported path" (doc 07) — `qemu_args` is the one place that
+//! a fully supported path" (doc 07). `qemu_args` is the one place that
 //! translates a bundle into a real `qemu-system-i386` command line; no
 //! user-visible QEMU command line exists anywhere else.
 
@@ -16,25 +16,24 @@ pub enum Family {
     Xp,
     /// A DOS machine: MS-DOS or FreeDOS on the same i440FX PC, with the
     /// SB16 the Win98 family already carries "for DOS boxes/games" (doc
-    /// 06) and no network card. What actually makes it a *DOS* machine
-    /// is `CpuSpeed`: the era's software paces itself by how fast the
-    /// CPU is, and emulation is far too fast for it (doc 06).
+    /// 06) and no network card. What makes it a DOS machine is
+    /// `CpuSpeed`: the era's software paces itself by how fast the CPU
+    /// is, and emulation is far too fast for it (doc 06).
     Dos,
     /// Anything else of the era on the same PC: BeOS, a period Linux,
-    /// OS/2. Defined by what it *doesn't* get — our own paravirtual
-    /// adapter (`d3dpt-vga`) is a Windows display driver and the 3D
+    /// OS/2. Defined by what it doesn't get: our paravirtual adapter
+    /// (`d3dpt-vga`) needs a Windows display driver and the 3D
     /// pass-through is a set of Windows DLLs, so none of it is reachable
     /// here. What is left is hardware every one of these systems shipped
     /// a driver for in the nineties: the Bochs/standard VGA with VBE 2.0,
-    /// an RTL8139 and an ES1370. 2D, the CRT shader chain and the real
-    /// CD-ROM model, which is the DOS family's story on a guest modern
-    /// enough to want PCI cards.
+    /// an RTL8139 and an ES1370. It gets 2D, the CRT shader chain and the
+    /// real CD-ROM model, like the DOS family but with PCI cards.
     Other,
 }
 
 impl Family {
     /// In the order a picker should offer them: the three the project is
-    /// actually built around first, then the catch-all.
+    /// built around first, then the catch-all.
     pub const ALL: [Family; 4] = [Family::Win98, Family::Xp, Family::Dos, Family::Other];
 
     pub fn label(self) -> &'static str {
@@ -51,27 +50,25 @@ impl Family {
 /// feels like rather than after the knob underneath.
 ///
 /// DOS-era software calibrates delay loops against the CPU it finds and
-/// then trusts the answer forever, so on a fast machine it does not merely
-/// run quickly — it runs *wrong*: unplayable games, Turbo Pascal's
-/// "runtime error 200", music that plays at double speed. Our TCG runs a
-/// DOS guest at around 610 million instructions/s on the Linux box
-/// (measured 2026-09-06, a tight loop under `-cpu pentium3`), which is
+/// then trusts the answer forever, so on a fast machine it runs wrong:
+/// unplayable games, Turbo Pascal's "runtime error 200", music at double
+/// speed. Our TCG runs a DOS guest at around 610 million instructions/s
+/// on the Linux box (a tight loop under `-cpu pentium3`), which is
 /// Pentium III territory; KVM is far beyond that.
 ///
 /// QEMU's only rate control is `-icount`, whose `shift` sets one
-/// instruction per 2^shift ns — so the rates below are powers of two by
-/// construction, and the labels say which real machine each is closest
-/// to. Two things follow from how it works, both of which the UI says
-/// out loud: it needs `align=on` to pace against the host at all (without
-/// it the guest only *believes* it is slow), and it cannot coexist with
-/// KVM, so a throttled machine runs emulated whatever its `accel` says.
+/// instruction per 2^shift ns, so the rates below are powers of two and
+/// the labels name the real machine each is closest to. The UI states
+/// both consequences: it needs `align=on` to pace against the host at
+/// all (without it the guest only believes it is slow), and it cannot
+/// coexist with KVM, so a throttled machine runs emulated whatever its
+/// `accel` says.
 ///
 /// The cap is exact where it matters. Measured on the Linux box with a
 /// 100M-instruction loop: 30.6 MIPS asked 31.25, 7.9 asked 7.8. Above
-/// ~30 MIPS the alignment only corrects the guest when it falls *behind*,
-/// so the fast entries are a ceiling the host may not reach and may
-/// overshoot — which is why the two slowest entries are the ones a 1993
-/// game should be given.
+/// ~30 MIPS the alignment only corrects the guest when it falls behind,
+/// so the fast entries are a ceiling the host may miss or overshoot.
+/// That is why a 1993 game should get one of the two slowest entries.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CpuSpeed {
     /// No throttle: as fast as this host emulates (or KVM, if the machine
@@ -95,8 +92,8 @@ pub enum CpuSpeed {
 
 impl CpuSpeed {
     /// In the order a combo box should offer them: fastest first, because
-    /// "as fast as possible" is the answer for everything that is not a
-    /// DOS game, and the list then reads downwards through the eras.
+    /// full speed is right for everything but a DOS game, and the list
+    /// then reads downwards through the eras.
     pub const ALL: [CpuSpeed; 7] = [
         CpuSpeed::Unthrottled,
         CpuSpeed::Pentium133,
@@ -135,16 +132,15 @@ impl CpuSpeed {
 
 /// The display adapter, on the families that have a choice of one.
 ///
-/// The choice exists because there are two honest answers and nothing
-/// here can pick between them. On Windows it is *our* adapter and driver
-/// (docs 15, 19) against the in-box driver Windows already has: ours is
-/// what the whole display path is built on — the mode table, the linear
-/// frame buffer the player scans out, the page flips that pace a game,
-/// the Direct3D DDI — and the Cirrus is what a machine falls back to
-/// when the driver is not installed yet, when it is being A/B'd against,
-/// or when a title misbehaves on it. On `Other` there is no driver of
-/// ours at all, so it is one standard adapter against another and only
-/// the person installing the guest knows which has a driver in the box.
+/// There are two valid answers and nothing here can pick between them.
+/// On Windows it is our adapter and driver (docs 15, 19) against the
+/// in-box driver Windows already has. Ours carries the whole display
+/// path (the mode table, the linear frame buffer the player scans out,
+/// the page flips that pace a game, the Direct3D DDI). The Cirrus is the
+/// fallback when the driver is not installed yet, for an A/B, or when a
+/// title misbehaves on ours. On `Other` there is no driver of ours, so it
+/// is one standard adapter against another, and only the person
+/// installing the guest knows which has a driver in the box.
 ///
 /// Every entry is an adapter with a real VGA BIOS, so any of them boots
 /// anything; the difference is what the guest finds a driver for.
@@ -154,27 +150,26 @@ impl CpuSpeed {
 #[serde(rename_all = "lowercase")]
 pub enum Video {
     /// `d3dpt-vga`, our own paravirtual adapter, driven by our display
-    /// driver from the guest-tools ISO (docs 15, 19). Windows only —
-    /// there is no driver for it anywhere else, and a guest without one
-    /// comes up on the plain VGA the device also is.
+    /// driver from the guest-tools ISO (docs 15, 19). Windows only, since
+    /// there is no driver for it anywhere else. A guest without the
+    /// driver comes up on the plain VGA the device also provides.
     #[serde(rename = "d3dpt")]
     D3dpt,
     /// QEMU's standard VGA: the Bochs adapter, VBE 2.0 and a linear
     /// frame buffer. What a period VESA driver wants, what a modern
     /// Linux binds `bochs-drm` to, and the later of the two VESA BIOSes
-    /// a DOS title can find. **No XP driver at all** (XP falls back
-    /// to 800×600×4 vga.sys), which is why the Windows families do not
-    /// offer it.
+    /// a DOS title can find. **No XP driver at all** (XP falls back to
+    /// 800×600×4 vga.sys), so the Windows families do not offer it.
     Std,
     /// Cirrus Logic GD5446. A chip that really existed, so a guest of
-    /// the era is likely to have a *native* driver for it: Windows 98 and
+    /// the era is likely to have a native driver for it: Windows 98 and
     /// XP both have one in the box, and so do BeOS R5 and XFree86.
     Cirrus,
 }
 
 impl Video {
     /// Every variant, for serde round-trips and label lookups. **Not what
-    /// a picker offers** — that is `video_choices(family)`, because half
+    /// a picker offers**; that is `video_choices(family)`, because some
     /// of these are wrong on any given family.
     pub const ALL: [Video; 3] = [Video::D3dpt, Video::Std, Video::Cirrus];
 
@@ -204,50 +199,44 @@ impl Video {
 /// where there is nothing to choose.
 ///
 /// The Windows families choose between our adapter and the one Windows
-/// has an in-box driver for; they are not offered the standard VGA,
-/// which has no XP driver at all. Both start on ours. `Other` chooses between the two
-/// standard adapters, since nothing of ours runs there. DOS chooses
-/// between those same two, and for the one reason that has nothing to do
-/// with drivers: its titles program the adapter themselves, so what
-/// changes is **which VESA BIOS the game finds** — the Bochs one's VBE
-/// 2.0 with its linear frame buffer, or the Cirrus's of the period.
+/// has an in-box driver for. They are not offered the standard VGA,
+/// which has no XP driver at all. Both start on ours. `Other` chooses
+/// between the two standard adapters, since nothing of ours runs there.
+/// DOS chooses between those same two for a reason unrelated to drivers:
+/// its titles program the adapter themselves, so what changes is
+/// **which VESA BIOS the game finds**, the Bochs one's VBE 2.0 with its
+/// linear frame buffer or the Cirrus's of the period.
 pub fn video_choices(family: Family) -> &'static [Video] {
     match family {
-        // XP starts on ours: the driver has been the whole display path
-        // there since 2026-09-04 and every game the M4/M7 tracks were
-        // built on runs through it.
+        // XP starts on ours: the driver is the whole display path there
+        // and every game the M4/M7 tracks were built on runs through it.
         Family::Xp => &[Video::D3dpt, Video::Cirrus],
-        // Win98 starts on ours too since 2026-09-16 (user decision). It
-        // started on the Cirrus from 2026-09-07, while the 9x driver
-        // (doc 19) was days old against XP's; the Cirrus stays one pick
-        // away as the in-box driver and the A/B.
+        // Win98 starts on ours too (user decision). The Cirrus stays one
+        // pick away as the in-box driver and the A/B.
         Family::Win98 => &[Video::D3dpt, Video::Cirrus],
         Family::Other => &[Video::Std, Video::Cirrus],
-        // DOS starts on the standard VGA (2026-09-09, user decision):
-        // its VBE 2.0 and linear frame buffer are the fuller of the two
-        // VESA BIOSes a title can find, and the Cirrus — which is what a
-        // DOS machine got while the adapter was hardcoded, and what
-        // `Other` is offered for its *native* drivers — is the other
-        // half of an A/B nothing else here can settle: a title whose
-        // modes come out wrong on one BIOS is the only evidence there
-        // is. Our own adapter is not on offer, there being no DOS driver
-        // for it anywhere.
+        // DOS starts on the standard VGA (user decision): its VBE 2.0
+        // and linear frame buffer are the fuller of the two VESA BIOSes
+        // a title can find. The Cirrus (what a DOS machine got while the
+        // adapter was hardcoded) is the other half of an A/B that only a
+        // title whose modes come out wrong on one BIOS can settle. Our
+        // own adapter is not offered, since it has no DOS driver.
         Family::Dos => &[Video::Std, Video::Cirrus],
     }
 }
 
-/// Which Direct3D 9 implementation the *host* runs the paravirtual
-/// device's executor on (ADR-007 and its 2026-09-21 amendment). It is a
-/// property of the host and not of the guest — every guest sees the same
-/// device either way — and it is on the machine form because a host can
-/// have both and a user with a game that draws wrong on one wants the
-/// other, without a rebuild or an environment variable.
+/// Which Direct3D 9 implementation the host runs the paravirtual
+/// device's executor on (ADR-007 and its second amendment). It is a
+/// property of the host, not the guest (every guest sees the same device
+/// either way). It is on the machine form because a host can have both,
+/// and a user whose game draws wrong on one wants the other without a
+/// rebuild or an environment variable.
 ///
 /// Only Windows has two: DXVK everywhere, and there also the system's own
-/// `d3d9.dll`, which is what a host below DXVK's Vulkan 1.3 floor
-/// (ADR-013 — pre-Broadwell Intel, Kepler and older, TeraScale) has
-/// instead of nothing. On Linux and macOS `system` is refused by the
-/// executor with a line in the log, which is why the picker says so.
+/// `d3d9.dll`, which a host below DXVK's Vulkan 1.3 floor (ADR-013:
+/// pre-Broadwell Intel, Kepler and older, TeraScale) has instead of
+/// nothing. On Linux and macOS the executor refuses `system` with a line
+/// in the log, so the picker does not offer it there (`d3d9_choices`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum D3d9 {
@@ -275,9 +264,9 @@ impl D3d9 {
     }
 
     /// The one line under the picker: what this entry is for, on the
-    /// host this launcher runs on and no other (user, 2026-09-22: a
-    /// note that talks about Linux to someone on Windows is noise). Not
-    /// a front end's to write (ADR-014).
+    /// host this launcher runs on and no other (user decision: a note
+    /// that talks about Linux to someone on Windows is noise). Not a
+    /// front end's to write (ADR-014).
     pub fn note(self) -> &'static str {
         match self {
             D3d9::Auto if cfg!(windows) => {
@@ -292,9 +281,9 @@ impl D3d9 {
     }
 }
 
-/// What the picker offers: only what this host can run (user,
-/// 2026-09-22 — an entry for another OS is noise), so the system
-/// Direct3D 9 is listed on Windows alone. A machine file is still
+/// What the picker offers: only what this host can run (user decision:
+/// an entry for another OS is noise), so the system Direct3D 9 is
+/// listed on Windows alone. A machine file is still
 /// portable: a bundle saying `system` opened on a Linux or macOS host
 /// shows as Automatic and keeps its value until something else is
 /// picked (`effective_video`'s rule, one level up), and the executor
@@ -313,74 +302,69 @@ pub fn d3d9_choices() -> &'static [D3d9] {
 /// All three guest-facing paths exist now: a USB HID gamepad (patch 26)
 /// for the families with a USB stack, a gameport at 0x201 (patch 27) for
 /// the ones without, and the key mapping for everything else. Which of
-/// them a family is *offered* is `pad_choices`, and it is offered only
-/// where this project can say what the guest needs — the same rule the
+/// them a family is offered is `pad_choices`, and a path is offered only
+/// where this project can say what the guest needs, the same rule the
 /// display-adapter picker follows for an adapter a family has no driver
 /// for.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Pad {
-    /// A controller plugged into the host does nothing. The default, and
-    /// not merely the conservative choice: with `Keys` a resting stick
-    /// that drifts past the threshold holds an arrow key down, and on a
-    /// desktop that is a cursor sliding across the screen with no
-    /// visible cause. Someone who wants a pad says so.
+    /// A controller plugged into the host does nothing. The default for
+    /// a reason: with `Keys` a resting stick that drifts past the
+    /// threshold holds an arrow key down, and on a desktop that is a
+    /// cursor sliding across the screen with no visible cause. Someone
+    /// who wants a pad says so.
     #[default]
     None,
     /// A real USB HID gamepad on the machine (`-usb -device
     /// usb-gamepad`, patch 26). Two sticks, an 8-way hat and twelve
-    /// buttons, bound by the guest's own in-box HID stack — DirectInput
+    /// buttons, bound by the guest's own in-box HID stack; DirectInput
     /// and `joy.cpl` see it on the first boot after it is added. This is
-    /// the entry a game of the era can actually use: it enumerates as a
+    /// the entry a game of the era can use: it enumerates as a
     /// controller, and the sticks are analog.
     ///
-    /// **Confirmed with a real controller on 2026-09-09**, on XP and on
-    /// Windows 98 SE, both showing it in the Game Controllers panel. The
-    /// two are not the same experience and the wizard says so: XP needs
-    /// nothing, and 98 SE binds its own driver but asks for the Windows
-    /// 98 source files the first time — the CD, or the CAB folder on the
-    /// disk. Saying "nothing to install" for both, as this doc did until
-    /// that run, leaves someone staring at a file-copy dialog wondering
-    /// what went wrong.
+    /// **Confirmed with a real controller** on XP and on Windows 98 SE,
+    /// both showing it in the Game Controllers panel. The wizard tells
+    /// them apart: XP needs nothing, and 98 SE binds its own driver but
+    /// asks for the Windows 98 source files the first time (the CD, or
+    /// the CAB folder on the disk). Without that warning the user faces
+    /// an unexplained file-copy dialog.
     ///
-    /// Not offered on DOS, which has no USB stack at all — that is what
-    /// path B's gameport is for. Windows 98 *first edition* is still the
-    /// doubt on the 9x side: its USB support predates the HID class being
-    /// reliable, and it may want the USB supplement. Untried.
+    /// Not offered on DOS, which has no USB stack; path B's gameport
+    /// covers it. Windows 98 first edition is still in doubt: its USB
+    /// support predates a reliable HID class, and it may want the USB
+    /// supplement. Untried.
     Usb,
     /// The analog joystick port at 0x200-0x207 (`-device gameport`, patch
     /// 27): four one-shots and four buttons, which is the whole of what
     /// the hardware ever had. The **only** path that reaches DOS, where a
-    /// game reads the port itself and there is no USB stack for path A to
-    /// use — and the period-correct one, since this is the connector the
-    /// sticks of the era plugged into.
+    /// game reads the port itself and there is no USB stack for path A,
+    /// and the period-correct one: the sticks of the era plugged into
+    /// this connector.
     ///
-    /// What the guest has to do is not nothing, and the wizard says so:
-    /// the port is not Plug and Play (it never was), so Windows 9x wants
-    /// Add New Hardware and then a calibration pass in the Game
-    /// Controllers panel. DOS needs neither.
+    /// The guest has work to do, and the wizard says so: the port is not
+    /// Plug and Play, so Windows 9x wants Add New Hardware and then a
+    /// calibration pass in the Game Controllers panel. DOS needs neither.
     ///
-    /// Nobody here has done that, and the wizard steers away from it
-    /// rather than describing it as the way: on 98 a *Windows* game gets
-    /// its joystick from [`Pad::Usb`] through both APIs one can call —
-    /// DirectInput and winmm's `joyGetPosEx` on top of VJOYD, measured by
-    /// the `pad-guest-98` check — so the driver half of this port was
-    /// dropped from M13 rather than built. What is left to this variant
-    /// is what it was built for: DOS, which has no USB stack, and a DOS
-    /// box under Windows 98, which reads 0x201 itself.
+    /// Nobody here has done that, and the wizard steers away from it. On
+    /// 98 a Windows game gets its joystick from [`Pad::Usb`] through both
+    /// APIs it can call (DirectInput, and winmm's `joyGetPosEx` on top of
+    /// VJOYD, measured by the `pad-guest-98` check), so the driver half of
+    /// this port was dropped from M13. This variant is for DOS, which has
+    /// no USB stack, and a DOS box under Windows 98, which reads 0x201
+    /// itself.
     ///
-    /// Not offered on XP: `gameenum.sys` is still in the box, but a
-    /// non-PnP port has nothing to enumerate it and Microsoft was already
-    /// retiring analog sticks — XP's answer is path A. Nor on `Other`,
-    /// where the guest is an OS this project cannot name a driver step
-    /// for.
+    /// Not offered on XP: `gameenum.sys` is still in the box, but nothing
+    /// enumerates a non-PnP port and Microsoft was already retiring
+    /// analog sticks, so XP gets path A. Nor on `Other`, an OS this
+    /// project cannot name a driver step for.
     Gameport,
     /// The pad presses keys: the player maps its controls onto the key
     /// events it already sends, against `gamepad::default_key_bindings`.
-    /// Reaches **every** guest — DOS, Win98 FE, XP, `Other` — because
+    /// Reaches **every** guest (DOS, Win98 FE, XP, `Other`), because
     /// there is no device for the guest to support. The cost is that it
-    /// is a mapping and not a controller: no analog anything, and a game
-    /// that enumerates DirectInput or reads 0x201 still finds nothing.
+    /// is a mapping, not a controller: nothing analog, and a game that
+    /// enumerates DirectInput or reads 0x201 still finds nothing.
     Keys,
 }
 
@@ -397,10 +381,10 @@ impl Pad {
     }
 
     /// The name this serializes to. Must agree with the `rename_all`
-    /// above — `pad_lenient` reads through this, so a disagreement would
-    /// make every bundle's `pad` field fall back to the default in
-    /// silence. The `pad` check in `scripts/test.sh` writes a machine
-    /// and reads it back to prove they still agree.
+    /// above: `pad_lenient` reads through this, so a disagreement would
+    /// make every bundle's `pad` field silently fall back to the default.
+    /// The `pad` check in `scripts/test.sh` writes a machine and reads it
+    /// back to prove they still agree.
     pub fn name(self) -> &'static str {
         match self {
             Pad::None => "none",
@@ -416,17 +400,15 @@ impl Pad {
 }
 
 /// Reads `pad` **leniently**: a value this build has never heard of
-/// becomes `None` — the family default — instead of failing the whole
+/// becomes `None` (the family default) instead of failing the whole
 /// bundle.
 ///
-/// Unlike every other enum in this file, `Pad` was *known* to be gaining
-/// variants — paths A and B of the M13 track added `usb` and `gameport`
-/// after the field shipped — and the rule stays now that they have: a
-/// machine someone made in a newer build and opened in an older one would
-/// otherwise refuse to load at all, not "the pad setting was ignored" but
-/// "this machine does not exist", losing its disk, its discs and its
-/// shader profile over a field about a controller. That trade is never
-/// worth it, so this one field is read the forgiving way.
+/// Unlike every other enum in this file, `Pad` was known to be gaining
+/// variants (M13's paths A and B added `usb` and `gameport` after the
+/// field shipped), and the rule stays. Otherwise a machine made in a
+/// newer build and opened in an older one would not load at all, and
+/// the user would lose sight of its disk, discs and shader profile over
+/// a controller setting.
 fn pad_lenient<'de, D>(d: D) -> Result<Option<Pad>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -444,20 +426,18 @@ where
 /// installed by hand for a class of device it was already dropping, and
 /// the `Other` family is an OS this project cannot name a step for. So
 /// DOS is offered the gameport and not the HID pad, XP and `Other` the
-/// HID pad and not the gameport, and Win98 — which has both stacks —
-/// both.
+/// HID pad and not the gameport, and Win98, which has both stacks, both.
 ///
-/// Every family starts on `None`, and that is a decision rather than
-/// caution. A machine nobody asked for a pad on should not grow a device
-/// in its Device Manager, and it is the same call this project already
-/// made for networking, which is off on new machines because a guest that
-/// waits on DHCP at boot is worse than one with no network. A pad is one
-/// pick away either way.
+/// Every family starts on `None`. A machine nobody asked for a pad on
+/// should not grow a device in its Device Manager. Networking follows the
+/// same rule: it is off on new machines because a guest that waits on
+/// DHCP at boot is worse than one with no network. A pad is one pick
+/// away either way.
 pub fn pad_choices(family: Family) -> &'static [Pad] {
     match family {
-        // No USB stack, so no HID gamepad. Nothing to warn about — the
-        // entry simply is not offered, the way the display-adapter picker
-        // does not offer an adapter a family has no driver for.
+        // No USB stack, so no HID gamepad. Nothing to warn about: the
+        // entry is not offered, as the display-adapter picker does not
+        // offer an adapter a family has no driver for.
         Family::Dos => &[Pad::None, Pad::Gameport, Pad::Keys],
         Family::Win98 => &[Pad::None, Pad::Usb, Pad::Gameport, Pad::Keys],
         Family::Xp | Family::Other => &[Pad::None, Pad::Usb, Pad::Keys],
@@ -470,20 +450,20 @@ pub fn default_pad(family: Family) -> Pad {
     pad_choices(family).first().copied().unwrap_or(Pad::None)
 }
 
-/// The digital sound card, and — for the two cards that carried one —
-/// the FM chip that comes with it (doc 20 §6).
+/// The digital sound card and, for the cards that carried one, the FM
+/// chip that comes with it (doc 20 §6).
 ///
-/// The era's split is the reason this is a choice at all: a Sound
-/// Blaster is what a DOS game knows how to find and what Windows 98 has
-/// a driver for in the box, and an AC'97 is what a machine of 2001 has
-/// and what sounds better. Neither is right for both families.
+/// The era's split is why this is a choice: a Sound Blaster is what a
+/// DOS game knows how to find and what Windows 98 has a driver for in
+/// the box, and an AC'97 is what a machine of 2001 has and sounds
+/// better. Neither is right for both families.
 ///
 /// **The FM chip is not in this list, on purpose.** A card either had
 /// one or it did not: an SB16 carries a YMF262 at 0x388 and at its own
-/// base, an AdLib *is* one, and an AC'97, an ES1370 and a Gravis have
-/// none. So picking a card here decides whether the machine has FM, the
-/// way buying one did — and a game that only knows AdLib music finds it
-/// on exactly the machines where it would have.
+/// base, an AdLib is one, and an AC'97, an ES1370 and a Gravis have
+/// none. So picking a card decides whether the machine has FM, the way
+/// buying one did, and a game that only knows AdLib music finds it on
+/// exactly the machines where it would have.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Sound {
@@ -493,27 +473,27 @@ pub enum Sound {
     Sb16,
     /// The Intel AC'97 codec: 2001's card, and XP's in-box driver.
     /// 98 has a driver for it in the guest tools (doc 06), not in the
-    /// box. No FM at all — a DOS box inside such a machine has no music.
+    /// box. No FM at all, so a DOS box inside such a machine has no music.
     Ac97,
     /// Ensoniq AudioPCI (ES1370): doc 06's card for the `Other`
     /// family, the one BeOS R5 and a period Linux both drive in the box.
     Es1370,
-    /// Gravis Ultrasound: a wavetable card, so its *music* is its own —
-    /// no MPU-401 and no FM involved — and the guest needs Gravis's own
+    /// Gravis Ultrasound: a wavetable card, so its music is its own (no
+    /// MPU-401 and no FM involved), and the guest needs Gravis's own
     /// drivers and its `ULTRASND` line before anything comes out of it.
     Gus,
     /// An AdLib and nothing else: the OPL3 at 0x388, no digital audio at
     /// all. The 1990 machine, for a title that predates sampled sound.
     Adlib,
-    /// No sound card. The machine keeps whatever the *music* picker
-    /// gives it, which is a real configuration: an MPU-401 and a module
-    /// was how music was done before cards could play samples.
+    /// No sound card. The machine keeps whatever the music picker gives
+    /// it, which is a real configuration: an MPU-401 and a module was how
+    /// music was done before cards could play samples.
     None,
 }
 
 impl Sound {
     /// Every variant, for serde round-trips and label lookups. **Not
-    /// what a picker offers** — that is `sound_choices(family)`.
+    /// what a picker offers**; that is `sound_choices(family)`.
     pub const ALL: [Sound; 6] = [Sound::Sb16, Sound::Ac97, Sound::Es1370, Sound::Gus, Sound::Adlib, Sound::None];
 
     pub fn label(self) -> &'static str {
@@ -542,14 +522,14 @@ impl Sound {
     /// The devices this card is. The PCI cards carry their address for
     /// the reason every pinned address here exists: removing the NIC
     /// above them must not slide them into its slot, which an installed
-    /// guest would see as its sound card having been swapped.
+    /// guest would see as a swapped sound card.
     fn args(self) -> Vec<String> {
         let device = |spec: &str| vec!["-device".to_string(), spec.to_string()];
         match self {
             // Two devices, because the card is two chips: the SB16 for
-            // digital audio and the OPL3 that sits at 0x388 *and* is
-            // mirrored at the card's own base, which is where an
-            // SB-aware driver looks for it.
+            // digital audio and the OPL3 that sits at 0x388 and is
+            // mirrored at the card's own base, where an SB-aware driver
+            // looks for it.
             Sound::Sb16 => {
                 let mut v = device("sb16,audiodev=embed0");
                 v.extend(device("opl3,audiodev=embed0,sbbase=0x220"));
@@ -567,23 +547,22 @@ impl Sound {
 /// What is behind the machine's MIDI port (doc 20 §6): an MPU-401 at
 /// 0x330 and the synthesizer that plays what the guest writes to it.
 ///
-/// This is the *music* half of a period machine's audio, and the half
-/// QEMU never had — there is no MPU-401 device in it at all, so a game
-/// offering "General MIDI" or "Roland MT-32" in its setup program had
-/// nothing to talk to here.
+/// This is the music half of a period machine's audio, which stock QEMU
+/// lacks: it has no MPU-401 device, so a game offering "General MIDI" or
+/// "Roland MT-32" in its setup program had nothing to talk to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Music {
-    /// A SoundFont General MIDI synthesizer. The bank we ship unless
-    /// `soundfont` names another, and which bank it is matters more to
-    /// how the music sounds than anything else on this screen.
+    /// A SoundFont General MIDI synthesizer, on the bank we ship unless
+    /// `soundfont` names another. The bank matters more to how the music
+    /// sounds than anything else on this screen.
     Gm,
-    /// A Roland CM-32L — the MT-32 family — which needs the user's own
+    /// A Roland CM-32L (the MT-32 family), which needs the user's own
     /// ROM images in `mt32_roms`. What a 1990 title means by "Roland".
     Mt32,
-    /// No MIDI port on the machine at all. Deliberately not "a port
-    /// that swallows notes": a game that found one would pick it and
-    /// play to nobody, which is worse than not offering it.
+    /// No MIDI port on the machine at all, rather than a port that
+    /// swallows notes: a game that found one would pick it and play to
+    /// nobody.
     None,
 }
 
@@ -611,10 +590,10 @@ impl Music {
 ///
 /// Every family keeps the card it already had as its first entry, so no
 /// existing machine changes hardware by being opened: 98 and DOS on the
-/// Sound Blaster, XP on the AC'97, `Other` on the Ensoniq. What is new
-/// is that the others are reachable — an AC'97 in a 98 machine that
-/// wants the better codec, a Gravis in a DOS machine for the games
-/// written for one, an AdLib for a 1990 title, and nothing at all.
+/// Sound Blaster, XP on the AC'97, `Other` on the Ensoniq. The rest are
+/// one pick away: an AC'97 in a 98 machine that wants the better codec,
+/// a Gravis in a DOS machine for the games written for one, an AdLib for
+/// a 1990 title, and no card at all.
 pub fn sound_choices(family: Family) -> &'static [Sound] {
     match family {
         // Windows has the SB16 driver in the box and a DOS box inside 98
@@ -637,8 +616,8 @@ pub fn sound_choices(family: Family) -> &'static [Sound] {
 /// machine has nothing but the card's FM otherwise, and Windows 98's
 /// own MIDI output is that same FM chip. XP ships a wavetable
 /// synthesizer with the operating system and `Other` is a family we add
-/// no drivers to, so both start with no port — it is one pick away when
-/// a game wants a real MT-32.
+/// no drivers to, so both start with no port. It is one pick away when a
+/// game wants a real MT-32.
 pub fn music_choices(family: Family) -> &'static [Music] {
     match family {
         Family::Win98 | Family::Dos => &[Music::Gm, Music::Mt32, Music::None],
@@ -658,9 +637,9 @@ pub fn default_music(family: Family) -> Music {
 }
 
 /// Which drive the machine boots from. `Auto` leaves the order to QEMU,
-/// which tries the hard disk, then the floppy, then the CD — the right
-/// answer for an installed Windows and for the wizard's "boot the
-/// installer from the CD because the new disk is blank" case alike.
+/// which tries the hard disk, then the floppy, then the CD. That is right
+/// both for an installed Windows and for the wizard's "boot the
+/// installer from the CD because the new disk is blank" case.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Boot {
@@ -697,44 +676,42 @@ impl Boot {
 }
 
 /// How the guest's instructions are executed. Kept in the bundle rather
-/// than decided at spawn time, because it is a property of the machine a
-/// user can want to pin: an era CPU under TCG is the reference behaviour
-/// the whole project is tuned for (docs 13 and 16's x87/SSE fast paths
-/// only exist there), while KVM is what makes an XP game playable on a
-/// Linux host.
+/// than decided at spawn time, because a user can want to pin it: an era
+/// CPU under TCG is the reference behaviour the project is tuned for
+/// (docs 13 and 16's x87/SSE fast paths only exist there), while KVM is
+/// what makes an XP game playable on a Linux host.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Accel {
     /// Hardware acceleration when the host has it, emulation otherwise.
-    /// QEMU itself picks, from the `kvm:tcg` (Windows: `whpx:tcg`) list —
-    /// no host probing here can be wrong.
+    /// QEMU itself picks from the `kvm:tcg` (Windows: `whpx:tcg`) list,
+    /// so no host probing here can get it wrong.
     #[default]
     Auto,
     /// Hardware acceleration only: the machine refuses to start without
-    /// it, which is what "required" has to mean to be worth choosing over
-    /// `Auto`. Named `kvm` in the bundle for every host — the field says
-    /// what the user asked for, and each host spells it its own way
-    /// (`whpx` on Windows), so a machine directory copied between them
-    /// keeps meaning the same thing.
+    /// it, which is what makes it worth choosing over `Auto`. Named `kvm`
+    /// in the bundle on every host. The field says what the user asked
+    /// for, and each host spells it its own way (`whpx` on Windows), so a
+    /// machine directory copied between hosts keeps its meaning.
     Kvm,
-    /// Emulation only. The honest choice for Win98: KVM runs the guest at
+    /// Emulation only. The right choice for Win98: KVM runs the guest at
     /// host speed, and Win9x has real fast-CPU bugs (doc 06) that the
-    /// `pentium3` model does not protect against, since it is the *speed*
-    /// that trips them.
+    /// `pentium3` model does not protect against, since the speed trips
+    /// them.
     Tcg,
 }
 
 impl Accel {
     pub const ALL: [Accel; 3] = [Accel::Auto, Accel::Kvm, Accel::Tcg];
 
-    /// The label both front ends show. Here rather than inline in a
-    /// combo box, like `Family::label` and `Boot::label`, so the two
-    /// cannot end up offering differently-worded choices.
+    /// The label a front end shows. Here rather than inline in a combo
+    /// box, like `Family::label` and `Boot::label`, so every front end
+    /// offers the same wording.
     pub fn label(self) -> &'static str {
         match self {
             Accel::Auto => "Automatic",
-            // Named for what this host actually has — the same setting,
-            // spelled the way the machine in front of the user spells it
+            // Named for what this host has: the same setting, spelled
+            // the way this host spells it
             // (`crate::player::hw_accel_label`).
             Accel::Kvm if cfg!(target_os = "windows") => "WHPX (required)",
             Accel::Kvm if cfg!(target_os = "linux") => "KVM (required)",
@@ -748,16 +725,15 @@ impl Accel {
 /// (`patches/qemu/README.md`, docs 13 and 16, the M8/M9 tracks), with
 /// the off switch the patch already gave it.
 ///
-/// Every one of them is *the emulator running the guest's arithmetic on
-/// the host's own silicon instead of simulating it*, which is why each
-/// arrived with an off switch: the switch is the oracle. When a guest
-/// computes the wrong number or a game stops drawing, one run with one
-/// of these off says whether a fast path did it — the alternative is
-/// bisecting a patch queue against a Windows install.
+/// Each one shortcuts how the emulator runs or translates guest code, so
+/// each arrived with an off switch that serves as the oracle. When a
+/// guest computes the wrong number or a game stops drawing, one run with
+/// one of these off says whether a fast path did it, instead of bisecting
+/// a patch queue against a Windows install.
 ///
-/// They therefore only exist under emulation. A machine running on KVM
-/// executes on the host CPU directly and none of these is reachable;
-/// the form says so rather than showing eight switches that do nothing.
+/// They only exist under emulation. A machine on KVM executes on the
+/// host CPU directly and none of these is reachable; the form says so
+/// rather than showing switches that do nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Optimization {
     X87Fast,
@@ -779,9 +755,9 @@ pub enum Optimization {
 /// Where an optimization's switch goes on the command line: a property
 /// of the guest CPU (`-cpu pentium3,x87-fast=off`) or of the TCG
 /// accelerator itself (`-accel tcg,smc-same-value=off`). The two are not
-/// interchangeable — QEMU looks each name up on a different object — and
-/// the accelerator half is the reason `qemu_args` spells the accelerator
-/// as `-accel` rather than `-machine accel=`.
+/// interchangeable, since QEMU looks each name up on a different object,
+/// and the accelerator half is why `qemu_args` spells the accelerator as
+/// `-accel` rather than `-machine accel=`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Knob {
     Cpu,
@@ -793,12 +769,11 @@ impl Optimization {
     /// first, in the order they were written (the inexact one last), then
     /// the ones about translation.
     ///
-    /// Patch 21's `pinned-regs` is not here any more (2026-09-16, user
-    /// decision): it crashed guests and its gain was too small to pursue,
-    /// so the form no longer offers it. The patch keeps its accelerator
-    /// property, off by default; a bundle that still has the entry keeps
-    /// it in the table, never on the command line, until "All defaults"
-    /// (`Optimizations::RETIRED`).
+    /// Patch 21's `pinned-regs` is not here (user decision): it crashed
+    /// guests and its gain was too small to pursue. The patch keeps its
+    /// accelerator property, off by default. A bundle that still has the
+    /// entry keeps it in the table, never on the command line, until
+    /// "All defaults" (`Optimizations::RETIRED`).
     pub const ALL: [Optimization; 14] = [
         Optimization::X87Fast,
         Optimization::SseFast,
@@ -857,11 +832,10 @@ impl Optimization {
         }
     }
 
-    /// Whether a machine that says nothing has it on. Everything that
-    /// has shipped is on — turning one off is a diagnosis, not a
-    /// preference — and one is off: `x87-pc64-as-53`, because it is the
-    /// one switch that changes what the guest computes rather than how
-    /// fast.
+    /// Whether a machine that says nothing has it on. Everything is on
+    /// (turning one off is a diagnosis, not a preference) except
+    /// `x87-pc64-as-53`, the one switch that changes what the guest
+    /// computes rather than how fast.
     pub fn default_on(self) -> bool {
         !matches!(self, Optimization::X87Pc64As53)
     }
@@ -887,8 +861,8 @@ impl Optimization {
         }
     }
 
-    /// The sentence under it: what it buys, and — for the one case where
-    /// it matters — why it is off.
+    /// The sentence under it: what it buys, and for the one that is off
+    /// by default, why.
     pub fn note(self) -> &'static str {
         match self {
             Optimization::X87Fast => {
@@ -947,11 +921,10 @@ impl Optimization {
     }
 }
 
-/// A machine's optimization settings: **only what differs from
+/// A machine's optimization settings. **Only what differs from
 /// `Optimization::default_on` is stored**, so a bundle that says nothing
-/// runs exactly the way every bundle written before this field existed
-/// did, and an optimization added to the patch queue later arrives on in
-/// every bundle that already exists.
+/// runs on the defaults, and an optimization added to the patch queue
+/// later arrives on in every bundle that already exists.
 ///
 /// Keyed by the QEMU property name rather than by the enum, so a bundle
 /// written by a launcher that knows an optimization this build does not
@@ -970,9 +943,9 @@ impl Optimizations {
         self.enabled(opt) == opt.default_on()
     }
 
-    /// Turn one on or off. Putting it back on its own default *removes*
-    /// the entry rather than writing it out, which is what keeps a
-    /// `machine.toml` holding only what someone actually changed.
+    /// Turn one on or off. Putting it back on its own default removes
+    /// the entry rather than writing it out, so a `machine.toml` holds
+    /// only what someone changed.
     pub fn set(&mut self, opt: Optimization, on: bool) {
         if on == opt.default_on() {
             self.0.remove(opt.key());
@@ -986,8 +959,8 @@ impl Optimizations {
     const RETIRED: [&'static str; 1] = ["pinned-regs"];
 
     /// Every optimization back on its default. Only the ones this build
-    /// knows about, and the ones it retired: an entry a newer launcher
-    /// wrote is not something this one can decide is wrong.
+    /// knows about, and the ones it retired. This build cannot judge an
+    /// entry a newer launcher wrote.
     pub fn reset(&mut self) {
         for opt in Optimization::ALL {
             self.0.remove(opt.key());
@@ -1001,20 +974,17 @@ impl Optimizations {
         Optimization::ALL.iter().all(|opt| self.is_default(*opt))
     }
 
-    /// Every optimization this build knows about turned **off** — the
-    /// control run, in one click, for "is one of ours what broke this
-    /// guest". Written as explicit `false` entries for the ones whose
-    /// default is on, exactly as unticking each box would, so the
-    /// bundle says what it means and `--print-args` shows the whole
-    /// line. It is deliberately not the same shape as `reset`, which
-    /// *removes* entries.
+    /// Every optimization this build knows about turned **off**: the
+    /// one-click control run for "did one of ours break this guest".
+    /// Written as explicit `false` entries for the ones whose default is
+    /// on, as unticking each box would, so the bundle says what it means
+    /// and `--print-args` shows the whole line. Unlike `reset`, which
+    /// removes entries.
     ///
-    /// **This is not a pristine QEMU.** Three patches of the queue have
-    /// no runtime switch at all — 15 (`tb-invalidate-fast`), 16
-    /// (`tlb-floor`) and 19 (`tls-hot-paths`) — so a guest that is still
-    /// wrong with everything here off has not cleared our tree, only the
-    /// eight switches. `Form::optimizations_note` says so where someone
-    /// about to rely on it will read it.
+    /// **This is not a pristine QEMU.** Some patches of the queue have no
+    /// runtime switch (`patches/qemu/README.md` names them), so a guest
+    /// that is still wrong with everything here off has cleared only
+    /// these switches, not our whole tree.
     pub fn disable_all(&mut self) {
         for opt in Optimization::ALL {
             self.set(opt, false);
@@ -1023,8 +993,8 @@ impl Optimizations {
 
     /// Every optimization this build knows about turned **on**, the
     /// other end of the same shortcut. `x87-pc64-as-53` comes on with
-    /// it: the switch means what it says, and its own note is where the
-    /// warning about it lives.
+    /// it: the switch means what it says, and the warning lives in that
+    /// optimization's own note.
     pub fn enable_all(&mut self) {
         for opt in Optimization::ALL {
             self.set(opt, true);
@@ -1064,9 +1034,9 @@ pub struct Machine {
     /// How to execute the guest, or `None` for "whatever this family
     /// runs as" (`default_accel`). Absent rather than defaulted, so a
     /// bundle written before this field existed follows its family
-    /// instead of silently acquiring KVM — which for a Win98 machine
-    /// would be a *change* to how it had been running. Anything this
-    /// launcher saves carries an explicit value: the form always has one.
+    /// instead of silently acquiring KVM, which for a Win98 machine would
+    /// change how it had been running. Anything this launcher saves
+    /// carries an explicit value, since the form always has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accel: Option<Accel>,
     /// Whether the machine has a network adapter at all (doc 06's
@@ -1076,46 +1046,44 @@ pub struct Machine {
     /// never waits on a network at boot.
     ///
     /// Defaults to `false` when the field is absent, like a new machine
-    /// (`default_network`). Until 2026-09-16 an absent field meant on,
-    /// which is how every bundle written before the field existed ran;
-    /// the user decided networking is off by default for every machine,
-    /// that one included (the wizard has always written the field, so it
-    /// is a hand-written bundle, or one from before 2026-09-05, that
-    /// loses its card).
+    /// (`default_network`). An absent field used to mean on; the user
+    /// decided networking is off by default for every machine. The
+    /// wizard has always written the field, so only a hand-written or
+    /// very old bundle loses its card.
     #[serde(default)]
     pub network: bool,
-    /// Whether the machine gets the USB tablet: an *absolute* pointing
+    /// Whether the machine gets the USB tablet: an absolute pointing
     /// device, so the host pointer and the guest cursor are the same
     /// pointer and the window never has to grab anything (doc 03's
-    /// pointer model, doc 06's "Pointer" rows). `false` leaves
-    /// the machine the PS/2 mouse the chipset already gives it, which is
-    /// relative — the player then grabs on a click and Ctrl+Alt+G gives
-    /// the pointer back, which is what mouselook needs and the only
-    /// thing a DOS mouse driver can read.
+    /// pointer model, doc 06's "Pointer" rows). `false` leaves the
+    /// machine the PS/2 mouse the chipset already gives it, which is
+    /// relative: the player grabs on a click and Ctrl+Alt+G gives the
+    /// pointer back. Mouselook needs that, and it is the only thing a DOS
+    /// mouse driver can read.
     ///
     /// Defaults to `true` when the field is absent, which is how every
-    /// bundle written before it existed ran — the tablet was
-    /// unconditional, and a machine must not have its pointer change
-    /// under it by being read by a newer launcher.
+    /// bundle written before it existed ran (the tablet was
+    /// unconditional). A newer launcher must not change a machine's
+    /// pointer by reading it.
     #[serde(default = "seamless_mouse_default")]
     pub seamless_mouse: bool,
     /// A 3dfx Voodoo 2 on the PCI bus (`-device voodoo2`: 86Box's
     /// emulation of the chip, doc 21, M14) beside whatever 2D adapter
-    /// the machine has — it borrows the monitor from that adapter's
+    /// the machine has. It borrows the monitor from that adapter's
     /// console, as the card borrowed it through a cable. Beside the
     /// Glide pass-through, not instead of it (ADR-016): a game draws on
     /// whichever `glide2x.dll` it loads, 3dfx's or the guest tools'.
     /// The guest needs 3dfx's own Voodoo2 driver. Off unless picked, on
-    /// every family: no bundle had the field before it existed and no
-    /// machine grows a card by being read by a newer launcher.
+    /// every family, so no machine grows a card by being read by a newer
+    /// launcher.
     #[serde(default)]
     pub voodoo2: bool,
     /// The card's dither reconstructed away at scanout
     /// (`-device voodoo2,undither=on`, doc 21 §12). A Voodoo stores
     /// RGB565 through an ordered dither, and this puts back the colour
-    /// the rasterizer had by inverting that table — exact over a 4x4
-    /// window, and where no single colour could have produced a window
-    /// the pixel is left as it was, so an edge is never blurred. Off
+    /// the rasterizer had by inverting that table. It is exact over a
+    /// 4x4 window, and where no single colour could have produced a
+    /// window the pixel is left as it was, so an edge is never blurred. Off
     /// unless picked, and meaningless without [`Machine::voodoo2`]: the
     /// form keeps the two together and `--print-args` writes the
     /// property only with the card.
@@ -1124,7 +1092,7 @@ pub struct Machine {
     /// Primary IDE hard disk (qcow2).
     pub disk: PathBuf,
     /// The disc in the CD-ROM drive when the machine boots, if any. Just
-    /// one: the *collection* of discs is the shared shelf
+    /// one: the collection of discs is the shared shelf
     /// (`disc_library.rs`), not a per-machine list, and any other disc is
     /// swapped in at runtime through the monitor (`control.rs`).
     #[serde(default)]
@@ -1150,8 +1118,8 @@ pub struct Machine {
     /// lists a floppy on the Win98 machine ("driver/utility sneakernet,
     /// boot disks") and doc 07 lists floppy images among the media the
     /// launcher handles; a DOS machine may boot from one. Absent means
-    /// no disk in the drive — the controller is there either way, as on
-    /// a real PC of the era.
+    /// no disk in the drive. The controller is there either way, as on a
+    /// real PC of the era.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub floppy: Option<PathBuf>,
 
@@ -1161,14 +1129,13 @@ pub struct Machine {
     pub boot: Option<Boot>,
 
     /// How fast the CPU is allowed to run (`CpuSpeed`). Absent =
-    /// unthrottled, again what every earlier bundle was doing.
+    /// unthrottled, which is what every earlier bundle was doing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_speed: Option<CpuSpeed>,
 
-    /// The display adapter, on a family that has a choice of one
-    /// (`default_video` — `Other` alone today). Absent = that family's
-    /// default, and on every other family the field is not read at all:
-    /// their adapter is what their driver is written for.
+    /// The display adapter (`video_choices`). Absent = that family's
+    /// default, and a value the family does not offer falls back to it
+    /// (`effective_video`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<Video>,
 
@@ -1180,9 +1147,8 @@ pub struct Machine {
     pub d3d9: Option<D3d9>,
 
     /// What a host gamepad does for this machine (`Pad`). Absent = that
-    /// family's default, which is `Pad::None` everywhere — so a bundle
-    /// written before this field existed keeps behaving exactly as it
-    /// did, which for a gamepad means ignoring one.
+    /// family's default, which is `Pad::None` everywhere, so a bundle
+    /// written before this field existed still ignores a gamepad.
     #[serde(
         default,
         deserialize_with = "pad_lenient",
@@ -1203,10 +1169,10 @@ pub struct Machine {
     pub music: Option<Music>,
 
     /// A SoundFont bank of the user's own, for `Music::Gm`. Absent =
-    /// the one the package ships, which the *player* names to QEMU
+    /// the one the package ships, which the player names to QEMU
     /// (`LIBSYNTH_SF2`, `player/src/companions.rs`) rather than the
-    /// bundle: where an installed tree keeps its resources is not
-    /// something to freeze into a machine's file.
+    /// bundle, so where an installed tree keeps its resources is never
+    /// frozen into a machine's file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub soundfont: Option<PathBuf>,
 
@@ -1216,14 +1182,6 @@ pub struct Machine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mt32_roms: Option<PathBuf>,
 
-    /// Which of our own emulator fast paths this machine runs with
-    /// (`Optimization`), holding only what someone turned off — absent
-    /// means all of them at their shipped setting.
-    ///
-    /// **Last in the struct on purpose.** It is the only field that
-    /// serializes to a TOML *table*, and a table swallows every
-    /// key-value line that follows it: written anywhere else, the fields
-    /// after it would be read back as part of `[optimizations]`.
     /// Arguments added to the end of QEMU's command line, one list
     /// entry per argument, exactly as typed into the form's "Extra QEMU
     /// arguments" field. The escape hatch for what the form has no field
@@ -1232,6 +1190,14 @@ pub struct Machine {
     /// says so at start. Absent from every bundle that has none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_qemu_args: Vec<String>,
+    /// Which of our own emulator fast paths this machine runs with
+    /// (`Optimization`), holding only what differs from each one's
+    /// default. Absent means all of them at their shipped setting.
+    ///
+    /// **Last in the struct on purpose.** It is the only field that
+    /// serializes to a TOML table, and a table swallows every key-value
+    /// line that follows it: written anywhere else, the fields after it
+    /// would be read back as part of `[optimizations]`.
     #[serde(default, skip_serializing_if = "Optimizations::is_empty")]
     pub optimizations: Optimizations,
 }
@@ -1240,15 +1206,15 @@ pub struct Machine {
 ///
 /// **Win98 is emulated by default.** KVM runs the guest at host speed,
 /// and doc 06's `pentium3` model does not protect against Win9x's
-/// fast-CPU bugs — it is the *speed* that trips them, not the CPUID. TCG
-/// is also the path this project's own x87/SSE fast paths (docs 13, 16)
-/// exist for, so it is the configuration Win98 is actually tuned and
-/// tested on here. XP has none of those problems and wants the speed.
+/// fast-CPU bugs, since the speed trips them, not the CPUID. TCG is also
+/// the path this project's x87/SSE fast paths (docs 13, 16) exist for,
+/// so it is the configuration Win98 is tuned and tested on here. XP has
+/// none of those problems and wants the speed.
 pub fn default_accel(family: Family) -> Accel {
     match family {
         // A DOS machine is throttled by default and a throttle needs TCG
-        // (`-icount` and KVM cannot coexist), so this is the only honest
-        // default; `Auto` would promise KVM and not deliver it.
+        // (`-icount` and KVM cannot coexist), so this is the only
+        // truthful default; `Auto` would promise KVM and not deliver it.
         Family::Win98 | Family::Dos => Accel::Tcg,
         // Nothing here is tuned for an era Linux or BeOS, and neither
         // has Win9x's fast-CPU bugs: take the host's speed when it is
@@ -1257,22 +1223,20 @@ pub fn default_accel(family: Family) -> Accel {
     }
 }
 
-/// Whether a *new* machine of this family gets a card. **None of them
-/// do** (the user's decision, 2026-09-07): these guests stopped getting
-/// security fixes twenty years ago, so a machine that is on a network
-/// before anyone asked for it is the wrong way round — the checkbox is
-/// right there in the wizard for the machine that wants one, and turning
-/// it on later is a card appearing, which Windows handles far better
-/// than one disappearing. DOS had never got one anyway, for a reason of
-/// its own: it reaches a network only through a packet driver the user
-/// installs by hand, so the card would be an unused device the guest
-/// still enumerates.
+/// Whether a new machine of this family gets a card. **None of them
+/// do** (user decision): these guests stopped getting security fixes
+/// twenty years ago, so none should be on a network before anyone asked.
+/// The checkbox is in the wizard for the machine that wants one, and
+/// turning it on later is a card appearing, which Windows handles far
+/// better than one disappearing. DOS never got one anyway: it reaches a
+/// network only through a packet driver the user installs by hand, so
+/// the card would be an unused device the guest still enumerates.
 ///
 /// The family is still the argument, because that is what a default here
-/// is allowed to depend on and one of them may want a card again.
+/// may depend on and one of them may want a card again.
 ///
-/// A bundle with no `network` field has no card either (since
-/// 2026-09-16, `Machine::network`).
+/// A bundle with no `network` field has no card either
+/// (`Machine::network`).
 pub fn default_network(_family: Family) -> bool {
     false
 }
@@ -1288,13 +1252,13 @@ fn seamless_mouse_default() -> bool {
 /// don't. DOS's mouse drivers talk to the PS/2 controller, so a tablet
 /// would leave the guest with a pointer it cannot see. `Other` is off
 /// for the weaker version of the same reason: an absolute USB pointer
-/// needs the guest's USB HID stack *and* its windowing system to agree
-/// it is absolute, which an era Linux (XFree86 wants an explicit
-/// `evdev`/`usbtablet` input section) and BeOS do not do out of the box
-/// — and unlike the Windows families there is no guest-tools install
-/// that would fix it. The PS/2 mouse works everywhere, so that is what a
-/// machine we cannot test starts with; the checkbox turns it on for a
-/// guest that does handle it. (An existing bundle with no
+/// needs the guest's USB HID stack and its windowing system to agree it
+/// is absolute, which an era Linux (XFree86 wants an explicit
+/// `evdev`/`usbtablet` input section) and BeOS do not do out of the box,
+/// and unlike the Windows families there is no guest-tools install that
+/// would fix it. The PS/2 mouse works everywhere, so a machine we cannot
+/// test starts with it; the checkbox turns the tablet on for a guest
+/// that handles it. (An existing bundle with no
 /// `seamless_mouse` field is unaffected: taking a pointing device away
 /// from a machine that has been running with one is a hardware change,
 /// not a default.)
@@ -1305,7 +1269,7 @@ pub fn default_seamless_mouse(family: Family) -> bool {
 /// The speed a family runs at unless the machine says otherwise. Only
 /// DOS is throttled: a 486DX2-66 is the machine most of the CD-ROM era
 /// was written for, and it is inside the range where the cap is exact
-/// (see `CpuSpeed`). Windows machines are unthrottled — 9x and XP read
+/// (see `CpuSpeed`). Windows machines are unthrottled: 9x and XP read
 /// the clock instead of counting instructions, and a throttle would only
 /// make them slow.
 pub fn default_cpu_speed(family: Family) -> CpuSpeed {
@@ -1318,14 +1282,13 @@ pub fn default_cpu_speed(family: Family) -> CpuSpeed {
 /// The adapter a family starts on, or `None` when it has no choice to
 /// make. Always the first of `video_choices`, so the list and the
 /// default cannot disagree: our own adapter on both Windows families,
-/// where the whole display path is built on it, and the standard VGA on `Other`,
-/// the one with a VESA path every guest can fall back on when it has no
-/// native driver at all.
+/// where the whole display path is built on it, and the standard VGA on
+/// DOS and `Other`, a VESA path every guest can fall back on when it has
+/// no native driver.
 pub fn default_video(family: Family) -> Option<Video> {
     video_choices(family).first().copied()
 }
 
-/// doc 06's RAM default for a family.
 /// The size a new machine's disk is offered at, in GB (a qcow2, so
 /// only what the guest writes is taken on the host). Enough for the OS
 /// and the era's games installed in full: a Windows 98 install is a few
@@ -1339,6 +1302,7 @@ pub fn default_disk_size_gb(family: Family) -> u32 {
     }
 }
 
+/// doc 06's RAM default for a family.
 pub fn default_ram_mb(family: Family) -> u32 {
     match family {
         Family::Win98 => 256, // doc 06: 256 MB default, ≤512 MB hard cap
@@ -1348,18 +1312,17 @@ pub fn default_ram_mb(family: Family) -> u32 {
         // nothing. 64 MB is generous for the era and stays inside what
         // MS-DOS 6.22's own HIMEM.SYS manages.
         Family::Dos => 64,
-        // No family default to inherit, so the number is the one that
-        // suits the range of things this covers: an era Linux desktop or
-        // BeOS R5 is comfortable in 512 MB and neither needs more.
+        // No family default to inherit. An era Linux desktop or BeOS R5
+        // is comfortable in 512 MB and neither needs more.
         Family::Other => 512,
     }
 }
 
 /// A value inside a QEMU option string. Options are separated by commas
-/// there, so a comma in a value is written twice — otherwise a disk in
-/// `~/Games/Doom, Quake and friends/` silently becomes an unknown option
-/// and QEMU refuses the whole line. Paths come from a file picker, and a
-/// comma in a directory name is entirely ordinary.
+/// there, so a comma in a value is written twice. Otherwise a disk in
+/// `~/Games/Doom, Quake and friends/` becomes an unknown option and QEMU
+/// refuses the whole line. Paths come from a file picker, and a comma in
+/// a directory name is ordinary.
 fn opt_value(s: &str) -> String {
     s.replace(',', ",,")
 }
@@ -1374,11 +1337,10 @@ pub fn ram_mb_range(family: Family) -> std::ops::RangeInclusive<u32> {
         Family::Win98 => 32..=512,
         Family::Xp => 64..=3072,
         Family::Dos => 4..=256,
-        // The widest range we can honestly offer: we don't know what is
-        // going in, so the only limits are the machine's. The bottom is
-        // where a 1995 kernel still boots, the top is XP's 32-bit
-        // ceiling. BeOS R5 is the one guest with a lower one of its own
-        // (1 GB), which the wizard says rather than enforces.
+        // We don't know what guest is going in, so the only limits are
+        // the machine's. The bottom is where a 1995 kernel still boots,
+        // the top is XP's 32-bit ceiling. BeOS R5 has a lower ceiling of
+        // its own (1 GB), which the wizard states rather than enforces.
         Family::Other => 16..=3072,
     }
 }
@@ -1429,7 +1391,7 @@ impl Machine {
 
     /// Writes the bundle in the current format, which also migrates a
     /// legacy one: the boot disc moves to `disc` and the old per-machine
-    /// `discs` list is dropped. Its entries aren't lost — the library
+    /// `discs` list is dropped. Its entries aren't lost: the library
     /// scan imports them onto the shared shelf
     /// (`DiscLibrary::import_legacy`) before anything here can rewrite a
     /// bundle.
@@ -1441,21 +1403,15 @@ impl Machine {
         std::fs::write(path, text)
     }
 
-    /// The `qemu-system-i386` arguments the player expects on its own
-    /// command line (`player -- <these>`), per doc 06's reference tables.
-    /// `pc_bios_dir` is `qemu/pc-bios` (see README's `-L`); `shelf`, when
-    /// given, is the flat disc-shelf file the drive answers the in-guest
-    /// `CDSHELF` program from (`cdshelf/cdshelf_proto.h`).
     /// The accelerator, as `-accel` options. `Auto` is expressed as
     /// QEMU's own fallback list rather than by probing `/dev/kvm` here:
-    /// the answer a probe gives can still be wrong at spawn time
-    /// (permissions, a module unloaded since), and QEMU's list already
-    /// means exactly "KVM if you can, emulation otherwise" — two
-    /// `-accel` options are tried in order and the first that
-    /// initializes wins, which is the same code path `accel=kvm:tcg`
-    /// took. `kvm` is only offered where it exists at all — on macOS the
-    /// name is not a registered accelerator, and listing it there would
-    /// print a warning on every boot for nothing.
+    /// a probe's answer can still be wrong at spawn time (permissions, a
+    /// module unloaded since), and QEMU's list already means "KVM if you
+    /// can, emulation otherwise". Two `-accel` options are tried in order
+    /// and the first that initializes wins, the same code path
+    /// `accel=kvm:tcg` took. `kvm` is only offered where it exists: on
+    /// macOS the name is not a registered accelerator, and listing it
+    /// would print a warning on every boot.
     ///
     /// **`-accel`, not `-machine accel=`, and the two cannot be mixed**
     /// ("The -accel and \"-machine accel=\" options are incompatible",
@@ -1466,9 +1422,9 @@ impl Machine {
         let mut tcg = "tcg".to_string();
         tcg.push_str(&self.optimization_props(Knob::Tcg));
         match self.effective_accel() {
-            // "hardware acceleration, required": spelled the way the
-            // host in hand spells it (`whpx` on Windows), so a machine
-            // directory carries between them meaning the same thing.
+            // "Hardware acceleration, required", spelled the way this
+            // host spells it (`whpx` on Windows), so a machine directory
+            // copied between hosts keeps its meaning.
             Accel::Kvm if cfg!(target_os = "windows") => vec!["-accel".into(), "whpx".into()],
             Accel::Kvm => vec!["-accel".into(), "kvm".into()],
             Accel::Auto if cfg!(target_os = "linux") => {
@@ -1481,8 +1437,8 @@ impl Machine {
         }
     }
 
-    /// The `,name=on`/`,name=off` tail for one kind of switch — **only
-    /// what differs from the property's own default in our QEMU**, so a
+    /// The `,name=on`/`,name=off` tail for one kind of switch, **only
+    /// what differs from the property's own default in our QEMU**. A
     /// machine that has changed nothing produces the command line it
     /// always produced, and one run against a QEMU without these patches
     /// still starts.
@@ -1497,13 +1453,12 @@ impl Machine {
         out
     }
 
-    /// What this machine actually runs as: its own setting, or its
-    /// family's (`default_accel`) when the bundle doesn't say —
-    /// **except** that a throttled CPU forces emulation, because QEMU
-    /// refuses `-icount` together with KVM ("cannot enable icount when
-    /// KVM is enabled") and starting is better than being right about
-    /// the accelerator. The wizard says so next to the field, so this
-    /// never happens behind someone's back.
+    /// What this machine runs as: its own setting, or its family's
+    /// (`default_accel`) when the bundle doesn't say. **Except** that a
+    /// throttled CPU forces emulation, because QEMU refuses `-icount`
+    /// together with KVM ("cannot enable icount when KVM is enabled"),
+    /// and starting matters more than the accelerator. The wizard says
+    /// so next to the field.
     pub fn effective_accel(&self) -> Accel {
         if self.effective_cpu_speed().icount_shift().is_some() {
             return Accel::Tcg;
@@ -1521,8 +1476,8 @@ impl Machine {
     /// settles it. A `video` naming an adapter this family does not
     /// offer falls back to its default rather than being obeyed:
     /// `video = "std"` on an XP machine would leave the guest with no
-    /// driver at all (there is none for the Bochs adapter on XP), which
-    /// is not something a stray bundle field should be able to do.
+    /// driver at all (there is none for the Bochs adapter on XP), and a
+    /// stray bundle field should not be able to do that.
     pub fn effective_video(&self) -> Option<Video> {
         let choices = video_choices(self.family);
         let default = *choices.first()?;
@@ -1535,7 +1490,7 @@ impl Machine {
     /// What this machine does with a host gamepad: its own setting, or
     /// its family's default. A `pad` naming a setting this family does
     /// not offer falls back the way `effective_video` does. That is also
-    /// where a bundle from a *later* launcher lands: `pad_lenient` has
+    /// where a bundle from a later launcher lands: `pad_lenient` has
     /// already turned its unknown `usb` or `gameport` into `None`, and
     /// this turns `None` into the family's default.
     pub fn effective_pad(&self) -> Pad {
@@ -1548,7 +1503,7 @@ impl Machine {
 
     /// The `-vga` / `-device` pair that puts the machine's adapter on it.
     /// `-vga none` first for every choice, so the machine never gets the
-    /// default adapter *as well as* the one it asked for.
+    /// default adapter as well as the one it asked for.
     fn video_args(&self) -> Vec<String> {
         let mut args = vec!["-vga".to_string(), "none".to_string()];
         if let Some(video) = self.effective_video() {
@@ -1573,16 +1528,16 @@ impl Machine {
         args
     }
 
-    /// The value of the adapter's `d3d9=` property, or `None` for "say
-    /// nothing" — which is what a machine on [`D3d9::Auto`] writes on a
+    /// The value of the adapter's `d3d9=` property, or `None` to say
+    /// nothing, which is what a machine on [`D3d9::Auto`] writes on a
     /// host where auto means what the executor's own auto means.
     ///
     /// `Auto` is resolved **here**, by the host's Vulkan probe, and only
-    /// on Windows: the executor can tell a DXVK that opens no adapter
+    /// on Windows. The executor can tell a DXVK that opens no adapter
     /// from one that opens a real one, but not a software Vulkan device
     /// from a hardware one, and on a Windows host a real card's own
     /// Direct3D 9 beats a software Vulkan rasteriser every time
-    /// (ADR-007's 2026-09-21 amendment, ADR-013's floor).
+    /// (ADR-007's second amendment, ADR-013's floor).
     fn d3d9_arg(&self) -> Option<&'static str> {
         match self.d3d9.unwrap_or(D3d9::Auto) {
             D3d9::Dxvk => Some("dxvk"),
@@ -1597,8 +1552,8 @@ impl Machine {
 
     /// The card this machine has. One the family does not offer falls
     /// back to its default rather than being obeyed, for the reason
-    /// `effective_video` does the same: a stray field should not be
-    /// able to produce a machine whose guest has no driver.
+    /// `effective_video` does: a stray field should not be able to
+    /// produce a machine whose guest has no driver.
     pub fn effective_sound(&self) -> Sound {
         let choices = sound_choices(self.family);
         match self.sound {
@@ -1619,10 +1574,10 @@ impl Machine {
     /// The sound card and the MIDI port, as devices (doc 20 §6).
     ///
     /// The bank for a General MIDI port is named here **only when the
-    /// user chose one**: the one we ship is a companion of the player's,
-    /// found by the player's own rule the way the Glide wrapper is, so
-    /// that a package that moves does not invalidate every machine file
-    /// in the library.
+    /// user chose one**. The one we ship is a companion of the player's,
+    /// found by the player's own rule like the Glide wrapper, so a
+    /// package that moves does not invalidate every machine file in the
+    /// library.
     fn audio_args(&self) -> Vec<String> {
         let mut args = self.effective_sound().args();
         let music = self.effective_music();
@@ -1650,9 +1605,14 @@ impl Machine {
         self.boot.unwrap_or_default()
     }
 
+    /// The `qemu-system-i386` arguments the player expects on its own
+    /// command line (`player -- <these>`), per doc 06's reference tables.
+    /// `pc_bios_dir` is `qemu/pc-bios` (see README's `-L`); `shelf`, when
+    /// given, is the flat disc-shelf file the drive answers the in-guest
+    /// `CDSHELF` program from (`cdshelf/cdshelf_proto.h`).
     pub fn qemu_args(&self, pc_bios_dir: &Path, shelf: Option<&Path>) -> Vec<String> {
         // Windows 98 has no driver for an HPET (`PNP0103` is in none of
-        // 98 SE's INFs) and never uses one — it times off the PIT — so on
+        // 98 SE's INFs) and never uses one (it times off the PIT), so on
         // 98 it is an "Unknown Device" with a yellow mark in Device
         // Manager and nothing else. QEMU's fw_cfg (`QEMU0002`) is the one
         // other device 98 has no driver for, but its `_STA` says "not
@@ -1673,16 +1633,13 @@ impl Machine {
         ]);
         // The pointer (doc 03). The USB tablet is an absolute device: it
         // reports where the pointer is rather than how far it moved, so
-        // the host pointer *is* the guest cursor and nothing has to be
-        // grabbed. Without it the machine keeps the PS/2 mouse alone —
-        // relative, grabbed on a click — and the controller goes with
-        // the tablet, because the tablet is the only thing on it.
-        // ...and the gamepad (M13 path A), which needs the same
-        // controller. `-usb` goes on once for both: QEMU takes a second
-        // one, but it is the kind of line nobody reads twice, and a
-        // machine whose pointer is turned off must still get a
-        // controller for its pad rather than a `-device usb-gamepad`
-        // with no bus to attach to.
+        // the host pointer is the guest cursor and nothing has to be
+        // grabbed. Without it the machine keeps only the PS/2 mouse
+        // (relative, grabbed on a click).
+        // The gamepad (M13 path A) needs the same USB controller. `-usb`
+        // goes on once for both. A machine whose pointer is turned off
+        // must still get a controller for its pad rather than a
+        // `-device usb-gamepad` with no bus to attach to.
         let pad_usb = self.effective_pad() == Pad::Usb;
         if self.seamless_mouse || pad_usb {
             args.push("-usb".into());
@@ -1693,11 +1650,10 @@ impl Machine {
         if pad_usb {
             args.extend(["-device".into(), "usb-gamepad".into()]);
         }
-        // ...and path B's gameport (patch 27), which needs no controller
-        // of any kind: it is an ISA device at 0x200-0x207, and every
-        // machine this project makes has an ISA bus. It is also the only
-        // pad device DOS can use, which is why that family is offered it
-        // and not the USB one.
+        // Path B's gameport (patch 27) needs no controller: it is an ISA
+        // device at 0x200-0x207, and every machine this project makes
+        // has an ISA bus. It is the only pad device DOS can use, so that
+        // family is offered it and not the USB one.
         if self.effective_pad() == Pad::Gameport {
             args.extend(["-device".into(), "gameport".into()]);
         }
@@ -1711,13 +1667,13 @@ impl Machine {
             }
             args.extend(["-device".into(), dev]);
         }
-        // The CPU rate, when the machine asks for one. `align=on` is the
-        // whole point and not a detail: `-icount shift=N` on its own only
-        // makes the *guest's* clock a function of instructions retired,
-        // which leaves the guest believing it is slow while the host runs
-        // it as fast as it likes — measured 2026-09-06, a run that was
-        // meant to be throttled finished in less wall-clock time than the
-        // unthrottled one, because the guest's idle waits collapse too.
+        // The CPU rate, when the machine asks for one. `align=on` is what
+        // throttles: `-icount shift=N` on its own only makes the guest's
+        // clock a function of instructions retired, so the guest believes
+        // it is slow while the host runs it as fast as it likes. Measured:
+        // a run meant to be throttled finished in less wall-clock time
+        // than the unthrottled one, because the guest's idle waits
+        // collapse too.
         if let Some(shift) = self.effective_cpu_speed().icount_shift() {
             args.extend(["-icount".into(), format!("shift={shift},align=on")]);
         }
@@ -1731,46 +1687,39 @@ impl Machine {
             args.extend(["-boot".into(), format!("order={order}")]);
         }
         // Doc 06's per-family NIC on QEMU's user-mode NAT, or no adapter
-        // at all — not an unplugged cable: a card that is present would
-        // still make Windows enumerate it, ask for its driver on a fresh
-        // install and wait on it at boot, none of which is what turning
-        // networking off is for.
+        // at all rather than an unplugged cable. A card that is present
+        // still makes Windows enumerate it, ask for its driver on a fresh
+        // install and wait on it at boot.
         //
-        // `-nic none` is the half that actually turns it off. QEMU
-        // *creates a NIC of its own* when the command line asks for no
-        // networking at all — leaving out the `-netdev` doesn't remove
-        // the card, it only replaces ours with an e1000 in the slot
-        // below (`query-pci` says so), which is the opposite of what the
-        // setting means.
+        // `-nic none` is what turns it off. QEMU creates a NIC of its own
+        // when the command line asks for no networking at all: leaving
+        // out the `-netdev` only replaces ours with an e1000 in the slot
+        // below (`query-pci` shows it).
         //
         // The Windows devices carry explicit PCI addresses because
         // removing the NIC would otherwise slide the card below it up
         // into its slot, and a card that moves is a hardware change an
         // installed Windows re-detects. These are the addresses those
-        // devices already get from their `-device` order today, so
-        // pinning them changes nothing for an existing machine — it only
-        // keeps them still when the NIC comes and goes. DOS needs none of
-        // it: its display is `-vga` (not a `-device`) and its SB16 is
-        // ISA, so its NIC is the only card in the sequence.
+        // devices already get from their `-device` order, so pinning them
+        // changes nothing for an existing machine; it only keeps them
+        // still when the NIC comes and goes. DOS needs none of it: its
+        // SB16 is ISA, so its NIC is the only PCI card in the sequence.
         if !self.network {
             args.extend(["-nic".into(), "none".into()]);
         }
         match self.family {
-            // The adapter is a *choice* here since 2026-09-07
-            // (`video_choices`): `d3dpt-vga` with our own display driver
-            // (doc 19, M10) — the linear frame buffer the player scans
-            // out, the mode table, the page flips that pace a game,
-            // Direct3D through the driver, and where this family starts
-            // (since 2026-09-16; the Cirrus before) — or the Cirrus and
-            // the in-box driver Windows already has, which has none of
-            // that.
+            // The adapter is a choice (`video_choices`): `d3dpt-vga` with
+            // our own display driver (doc 19, M10), which carries the
+            // linear frame buffer the player scans out, the mode table,
+            // the page flips that pace a game and Direct3D, and is where
+            // this family starts. Or the Cirrus and the in-box driver
+            // Windows already has, which has none of that.
             //
             // **Changing it is a hardware change to an installed guest.**
-            // That is a real consequence and not a detail: the guest
-            // finds an unknown adapter, comes up in plain VGA, and wants
-            // a driver — ours from the guest-tools ISO (`SETUP`, doc 19
-            // §16), or Windows' own for the Cirrus — before it has its
-            // desktop back. The machine boots either way.
+            // The guest finds an unknown adapter, comes up in plain VGA,
+            // and wants a driver (ours from the guest-tools ISO, `SETUP`,
+            // doc 19 §16, or Windows' own for the Cirrus) before it has
+            // its desktop back. The machine boots either way.
             Family::Win98 => {
                 args.extend(self.video_args());
                 if self.network {
@@ -1783,16 +1732,14 @@ impl Machine {
             // The 1994 PC: the same chipset and the SB16 doc 06 already
             // puts on the Win98 machine "for DOS boxes/games", one of the
             // two standard adapters for its VGA and VESA modes, and
-            // nothing else. No 3D of any kind is reachable from DOS here
-            // — the Glide wrapper for DOS is GLIDE2X.OVL, which we do not
-            // build.
+            // nothing else. 3D reaches DOS through qemu-3dfx's GLIDE2X.OVL
+            // or the Voodoo 2 card above.
             //
-            // The adapter is a *choice* here too since 2026-09-09
-            // (`video_choices`), and the only family where it is not a
-            // driver question: a DOS title programs the registers itself,
-            // so what a different adapter changes is which VESA BIOS it
-            // finds. It starts on the standard VGA — the fuller of the
-            // two — where the hardcoded line it replaces said `cirrus`.
+            // The adapter is a choice here too (`video_choices`), and the
+            // only family where it is not a driver question: a DOS title
+            // programs the registers itself, so a different adapter
+            // changes which VESA BIOS it finds. It starts on the standard
+            // VGA, the fuller of the two.
             Family::Dos => {
                 args.extend(self.video_args());
                 if self.network {
@@ -1815,13 +1762,13 @@ impl Machine {
             // period Linux alike, because there is no guest-tools install
             // to add one afterwards.
             //
-            // Its two adapters are the two *standard* ones — never
+            // Its two adapters are the two standard ones, never
             // `d3dpt-vga`, which needs our display driver and so exists
-            // for Windows only — so this family has no 3D path of any
-            // kind whichever is picked.
+            // for Windows only. So this family has no 3D path through the
+            // adapter whichever is picked.
             //
             // The PCI addresses are pinned for the same reason the
-            // Windows families pin theirs — removing the NIC would slide
+            // Windows families pin theirs: removing the NIC would slide
             // the sound card up into its slot, and a card that moves is a
             // hardware change a guest re-detects. Every adapter here
             // takes 0x02 (measured), so these two follow it.
@@ -1842,10 +1789,10 @@ impl Machine {
         }
         // The CD-ROM drive is always attached, empty tray and all: a
         // real machine of the era has one, and the launcher's live disc
-        // swap (`control.rs`) needs a device to put a disc *into* — a
-        // drive that only exists when the bundle happened to ship a disc
-        // couldn't be loaded later. The id is what a medium change
-        // addresses (`control::CDROM_ID`).
+        // swap (`control.rs`) needs a device to put a disc into. A drive
+        // that only existed when the bundle named a disc couldn't be
+        // loaded later. The id is what a medium change addresses
+        // (`control::CDROM_ID`).
         let mut drive = "if=none,id=cd0,media=cdrom".to_string();
         if let Some(disc) = self.boot_disc() {
             // `qemu_medium`, not the path: a shared folder is a disc too,
@@ -1856,7 +1803,7 @@ impl Machine {
         if let Some(shelf) = shelf {
             // The drive answers the in-guest CDSHELF program from this
             // file (patch 52). Without it the vendor command reports
-            // "no shelf" and the drive is an ordinary CD-ROM — which is
+            // "no shelf" and the drive is an ordinary CD-ROM, which is
             // also what a hand-written bundle run straight through
             // `player` gets.
             cd.push_str(&format!(",shelf={}", opt_value(&shelf.display().to_string())));

@@ -1,5 +1,5 @@
 /*
- * vid_svga.h -- 2ksbox's stand-in for 86Box's <86box/vid_svga.h>. A Voodoo
+ * vid_svga.h: 2ksbox's stand-in for 86Box's <86box/vid_svga.h>. A Voodoo
  * 1/2 is a pass-through card: the 2D adapter's signal goes through it and,
  * with fbiInit0's VGA_PASS bit set, the Voodoo drives the monitor instead.
  * 86Box models that as the Voodoo "overriding" the primary SVGA; here the

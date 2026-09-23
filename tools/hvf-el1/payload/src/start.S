@@ -224,7 +224,7 @@ unhandled:
 
 // ------------------------------------------------- guarded window accesses
 // try_load32(addr) -> (x0 = value, x1 = 0) or (x1 = x86 #PF error code):
-// the fault handler, finding RESUME set, redirects ELR there — the
+// the fault handler, finding RESUME set, redirects ELR there, the
 // prototype's stand-in for cpu_loop_exit()'s longjmp.
     .section .text, "ax"
     .globl try_load32

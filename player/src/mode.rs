@@ -17,13 +17,13 @@
 //! might set: forcing 4:3 on an unlisted size would distort a widescreen one,
 //! and every 4:3 mode that *does* have square pixels comes out at 4:3 from
 //! that rule anyway. What the table has to carry is the modes where the two
-//! disagree -- the VGA's 200-, 240-, 350- and 400-line modes, whose pixels
-//! are not square -- plus a name for each, and the place a correction goes
+//! disagree (the VGA's 200-, 240-, 350- and 400-line modes, whose pixels
+//! are not square), plus a name for each, and the place a correction goes
 //! when one is measured against the reference CRT (doc 09).
 //!
 //! Two things are rules rather than entries, because a table of exact sizes
 //! cannot state them. Double-scanning: the CRTC sets its bit below ~300
-//! lines. And the VGA raster itself (`vga_raster`) -- a size at one of the
+//! lines. And the VGA raster itself (`vga_raster`): a size at one of the
 //! four VGA widths and at most 480 lines is a 4:3 picture whether or not its
 //! line count is one of the round ones, because a guest can scan any number
 //! of lines onto that one raster and QEMU's text path does not even report
@@ -55,14 +55,14 @@ const DOUBLE_SCAN_BELOW: u32 = 300;
 
 /// The widths a VGA can display: the 8- and 9-dot character clocks and the
 /// halved low-resolution ones. Every mode the CRTC scans at one of these is
-/// a 4:3 picture on the tube whatever its line count -- see `vga_raster`.
+/// a 4:3 picture on the tube whatever its line count (see `vga_raster`).
 const VGA_WIDTHS: &[u32] = &[320, 360, 640, 720];
 
 /// The tallest raster a VGA scans (480 lines). Above it a size is an SVGA
 /// mode, whose pixels are square.
 const VGA_LINES_MAX: u32 = 480;
 
-/// Is this size a VGA raster -- a 4:3 picture whose pixels are not square?
+/// Is this size a VGA raster, a 4:3 picture whose pixels are not square?
 ///
 /// The table's exact sizes cannot answer this on their own, because the size
 /// the player is handed is not always the raster the CRTC scans. QEMU's text
@@ -146,7 +146,7 @@ impl Mode {
     /// Parameter overrides that tell a CRT preset this mode's scanline count
     /// (doc 03 rule 3). The names are crt-guest-advanced's; a preset that
     /// declares none of them has no way to be told and is left at its
-    /// defaults -- see `Chain::has_parameter` at the call site.
+    /// defaults (see `Chain::has_parameter` at the call site).
     ///
     /// `vga_mode` ("VGA Single/Double Scan mode") switches that preset from
     /// its console-oriented interlace guess to the two VGA cases, and

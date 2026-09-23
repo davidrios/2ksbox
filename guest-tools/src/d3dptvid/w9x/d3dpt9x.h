@@ -1,6 +1,6 @@
 /*
- * d3dpt9x.h — the Win98/Me display driver for the d3dpt-vga adapter
- * (doc 19, ADR-012 / M10): what the driver's own translation units share.
+ * d3dpt9x.h: what the translation units of the Win98/Me d3dpt-vga display
+ * driver share (doc 19, ADR-012 / M10).
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -34,35 +34,33 @@ void dbg_str(const char *s);
 void dbg_val(const char *tag, DWORD v);
 void ZeroFar(void __far *p, WORD n);
 
-/* 16x16 -> 32, inline: the driver links no C runtime, so a DWORD multiply
- * has to come from here rather than from Watcom's __U4M. It lives in the
- * header because a `#pragma aux` is not a symbol — a second translation
- * unit that only declares it gets an undefined `MulW_`. */
+/* 16x16 -> 32, inline. The driver links no C runtime, so a DWORD multiply
+ * comes from here rather than from Watcom's __U4M. It lives in the header
+ * because a `#pragma aux` is not a symbol. A second translation unit that
+ * only declares it gets an undefined `MulW_`. */
 DWORD MulW(WORD a, WORD b);
 #pragma aux MulW = "mul bx" parm [ax] [bx] value [dx ax];
 
-/* **One pitch for a mode, everywhere** (doc 19 §33, 2026-09-13). The HAL
- * tells DirectDraw to align its heap surfaces to D3DPT9X_PITCH_ALIGN, and
- * DirectDraw rounds a flip chain's back buffers' pitch up to it: 800x600x8
- * got 832-byte back buffers on a screen scanned out at 800, and every flip
- * showed a sheared frame (Diablo II's menu, a stripe per line). So the
- * mode's own pitch — GDI's, the primary's, the HAL mode table's, the
- * adapter's register — is rounded the same way, and whatever DirectDraw
- * allocates for a flip chain has the pitch the screen is scanned at. */
+/* One pitch for a mode, everywhere (doc 19 §33). The HAL tells DirectDraw
+ * to align its heap surfaces to D3DPT9X_PITCH_ALIGN, and DirectDraw rounds
+ * a flip chain's back-buffer pitch up to it. At 800x600x8 that gave
+ * 832-byte back buffers on a screen scanned out at 800, and every flip
+ * showed a sheared frame (Diablo II's menu). So the mode's own pitch is
+ * rounded the same way in GDI, the primary, the HAL mode table and the
+ * adapter's register, and a flip chain gets the pitch the screen is
+ * scanned at. */
 #define D3DPT9X_PITCH_ALIGN 64
 #define D3DPT9X_PITCH(w, bpp) \
     ((MulW((w), ((bpp) + 7) / 8) + (D3DPT9X_PITCH_ALIGN - 1)) & ~(DWORD)(D3DPT9X_PITCH_ALIGN - 1))
 
-/* **The 9x half of `-device d3dpt-vga,ddflags=N`** (doc 19 §21). One
- * register, two drivers: the NT core owns the low half of DDFLAGS
- * (`core/d3dpt_core.h`'s `DDF_*`) and everything 9x-only lives in the
- * high half, so the two can never collide.
+/* The 9x half of `-device d3dpt-vga,ddflags=N` (doc 19 §21). The NT core
+ * owns the low half of DDFLAGS (`core/d3dpt_core.h`'s `DDF_*`) and the
+ * 9x-only flags live in the high half, so the two never collide.
  *
- * `D9F_CERTIFIED` is the repro for the bug that cost this step: it puts
- * `DDCAPS2_CERTIFIED` back in the caps, which makes the 32-bit runtime
- * throw the whole HAL away *after* the 16-bit half accepted it. Kept
- * because the failure is silent at both ends and this is the only way
- * to see it happen again on purpose. */
+ * `D9F_CERTIFIED` puts `DDCAPS2_CERTIFIED` back in the caps, which makes
+ * the 32-bit runtime throw the whole HAL away after the 16-bit half
+ * accepted it. The failure is silent at both ends, and this flag is the
+ * only way to reproduce it on purpose. */
 #define D9F_CERTIFIED    0x01000000ul   /* the repro: claim DDCAPS2_CERTIFIED again */
 
 /* the DirectDraw half (d3dpt9dd.c): the DCICOMMAND escapes through which

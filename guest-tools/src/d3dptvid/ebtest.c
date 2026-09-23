@@ -1,14 +1,14 @@
 /*
- * ebtest.c — the DirectX 3 way of drawing, through our driver's HAL: the
- * IDirect3D (v1) device on the back buffer, execute buffers (D3DOP_*
+ * ebtest.c: the DirectX 3 way of drawing, through our driver's HAL. It uses
+ * the IDirect3D (v1) device on the back buffer, execute buffers (D3DOP_*
  * instructions, D3DOP_PROCESSVERTICES, D3DOP_TRIANGLE), texture handles
  * (IDirect3DTexture::Load + GetHandle, D3DRENDERSTATE_TEXTUREHANDLE) and
- * the viewport's Clear through a background material — what Moto Racer
- * (1997) does, and what a DX6+ runtime has to emulate on a DrawPrimitives2
+ * the viewport's Clear through a background material. Moto Racer (1997)
+ * draws this way, and a DX6+ runtime has to emulate it on a DrawPrimitives2
  * driver (doc 15 "Execute buffers").
  *
- *   EBTEST [w h bpp] [-rgb]    (default 640 480 16: the mode a 1997 title asks for;
- *                               -rgb: the runtime's RGB software device instead of the HAL, the control)
+ *   EBTEST [w h bpp] [-rgb]    (default 640 480 16, the mode a 1997 title asks for;
+ *                               -rgb runs the runtime's RGB software device instead of the HAL, as the control)
  *
  * Cases, each read back from the back buffer before the flip:
  *   1. viewport Clear to the background material's colour;
@@ -510,7 +510,7 @@ int main(int argc, char **argv)
         logp("3. the quad textured: no texture handle                    FAIL\n");
     }
 
-    /* case 4: a colour-keyed texture: texel (tx, ty) at pixel (100 + tx * 5, 80 + ty * 3.75); the 8x8 cell (0,0) is red, cell (1,0) is keyed */
+    /* case 4, a colour-keyed texture. Texel (tx, ty) is at pixel (100 + tx * 5, 80 + ty * 3.75); the 8x8 cell (0,0) is red, cell (1,0) is keyed */
     ktex = make_texture(dd, dev, 1, &hktex);
     if (ktex && hktex) {
         if (SUCCEEDED(eb_begin(eb, q, sizeof q))) {

@@ -46,9 +46,9 @@ impl Pattern {
 
 /// Geometry test image for the mode sweep (doc 03 rules 2 and 3): SMPTE
 /// bars, a 1px border, a block of alternating single-pixel lines so
-/// scanline handling is visible, and a circle drawn in *display* space —
-/// an ellipse in the framebuffer, round on screen only when the mode's
-/// pixel aspect has been applied.
+/// scanline handling is visible, and a circle drawn in *display* space.
+/// The circle is an ellipse in the framebuffer, round on screen only when
+/// the mode's pixel aspect has been applied.
 pub fn geometry(w: usize, h: usize, display_aspect: f32) -> Vec<u32> {
     let mut fb = vec![0u32; w * h];
     let (cx, cy) = (display_aspect as f64 / 2.0, 0.5);

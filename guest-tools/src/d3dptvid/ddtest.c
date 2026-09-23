@@ -1,17 +1,17 @@
 /*
- * ddtest.c — DirectDraw 7 test for the d3dpt-vga driver (doc 15, M7b).
+ * ddtest.c: DirectDraw 7 test for the d3dpt-vga driver (doc 15, M7b).
  *
  *   DDTEST.EXE [w h bpp] [frames] [-windowed]
  *
  * Prints the HAL caps DirectDraw reports for the adapter (is there a HAL
  * at all, video memory, flip support), then runs an exclusive full-screen
- * flip chain: each frame Lock/Unlock draws a moving pattern into the back
- * buffer, a Blt colour fill paints a bar, Flip presents. Reports whether
- * the surfaces landed in video memory, the frame rate, and dumps the
- * last back buffer to ddtest.bmp. Everything also goes to ddtest.log.
- * At 8 bpp a 256-entry palette (four ramps) goes on the primary and is
- * rotated by one entry per frame through SetEntries: the 2D titles'
- * palette animation; the BMP is written through that palette.
+ * flip chain. Each frame Lock/Unlock draws a moving pattern into the back
+ * buffer, a Blt colour fill paints a bar, and Flip presents. Reports
+ * whether the surfaces landed in video memory and the frame rate, and
+ * dumps the last back buffer to ddtest.bmp. Everything also goes to
+ * ddtest.log. At 8 bpp a 256-entry palette (four ramps) goes on the
+ * primary and SetEntries rotates it by one entry per frame, the palette
+ * animation of 2D titles; the BMP is written through that palette.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -311,10 +311,10 @@ int main(int argc, char **argv)
     hr = dd->lpVtbl->WaitForVerticalBlank(dd, DDWAITVB_BLOCKBEGIN, NULL);
     logp("WaitForVerticalBlank %08lx\n", hr);
 
-    /* GetVerticalBlankStatus, in the loop a title of the era writes around
-     * it: how many "in blank" answers in 500 ms. The adapter has no beam
-     * position, so the driver says yes once a frame (about 30 at 60 Hz); it
-     * used to say no always, and `while (!in_vb)` never ended. */
+    /* GetVerticalBlankStatus in the loop a title of the era writes around
+     * it, counting "in blank" answers over 500 ms. The adapter has no beam
+     * position, so the driver says yes once a frame (about 30 at 60 Hz). A
+     * driver that always says no hangs `while (!in_vb)` forever. */
     {
         DWORD t0 = GetTickCount(), polls = 0, yes = 0;
         BOOL in_vb;

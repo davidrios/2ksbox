@@ -1,10 +1,10 @@
 /*
- * zc-vulkan-test.c — the zero-copy ring with the frontend's Vulkan import,
- * and nothing else: no guest, no player, no wgpu, no window (doc 12 §4).
+ * The zero-copy ring with the frontend's Vulkan import, and nothing else:
+ * no guest, no player, no wgpu, no window (doc 12 §4).
  *
  * Why it exists. The ring's second buffer stops being written through: GL
- * hands back every frame blitted into it while the dma-buf's own memory —
- * what the frontend imported and samples — keeps the frame it held first,
+ * hands back every frame blitted into it while the dma-buf's own memory
+ * (what the frontend imported and samples) keeps the frame it held first,
  * so one publish in three is a frozen picture. `tools/embed-3d-test.c`
  * shows the backend alone writing through to every slot, so it takes the
  * import to go wrong; but that test has no Vulkan in it and the player has
@@ -14,7 +14,7 @@
  *
  * It is also the thing to bisect. `--stage` picks how much of the import to
  * do, so the parameter that matters can be found by running it a few times
- * rather than argued about — and if the full stage reproduces here, this is
+ * rather than argued about, and if the full stage reproduces here, this is
  * the reproducer to carry anywhere else.
  *
  * Linux only (EGL backend). Build & run from the repo root:
@@ -50,7 +50,7 @@ void MGLWndRelease(void);
 
 /* How much of the frontend's import to perform. */
 enum {
-    ST_NONE,        /* no Vulkan at all — the control, i.e. embed-3d       */
+    ST_NONE,        /* no Vulkan at all: the control, i.e. embed-3d        */
     ST_MEM,         /* import the memory, no image                         */
     ST_IMAGE,       /* create the image, import nothing                    */
     ST_NODEDICATED, /* the full import without the dedicated allocation    */
@@ -639,7 +639,7 @@ int main(int argc, char **argv)
      * depth-tested textured quad, the texture reuploaded every frame. A bare
      * glClear is not what the guest does, and which of the two the producer
      * is running turns out to decide whether a slot keeps being written
-     * through (GLQuake diverges, wglgears does not — doc 12 §4).
+     * through (GLQuake diverges, wglgears does not; doc 12 §4).
      */
     GLuint tex = 0;
     static uint32_t texels[64 * 64];

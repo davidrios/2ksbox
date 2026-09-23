@@ -3,14 +3,14 @@
 driver in the picture: a DOS program finds the card in PCI configuration
 space, maps its 16 MiB BAR, checks the Voodoo 2 strap in initEnable, runs
 the siProcess measurement 3dfx's Glide starts with (a PCI-clock countdown
-that has to read zero, or glide2x.dll polls it for ever -- 2026-09-12), runs
+that has to read zero, or glide2x.dll polls it for ever), runs
 the init sequence 3dfx's own sst1init runs (frame-buffer geometry, video
 timing, the DAC's PLL, the colour lookup table, VGA pass-through), fills
 the back buffer with red through the linear frame buffer, reads a pixel
 of it back through the same window (which makes the chip flush its FIFO:
 a store that never landed reads back as something else), swaps, then
-drives the **command FIFO** the way 3dfx's Glide does -- packets written
-into the ring's window and the chip told nothing -- in two batches (a blue
+drives the **command FIFO** the way 3dfx's Glide does (packets written
+into the ring's window and the chip told nothing) in two batches (a blue
 fastfill and swap that has to follow a JMP from the ring's end back to its
 start, then a magenta one after the read pointer was read), and gives the
 monitor back to the VGA.
@@ -26,7 +26,7 @@ dithers in every channel over the whole screen, then blended onto itself
 96 times per column at falling alpha, through the chip's own triangle
 setup. A colour blended onto itself is that colour, so every column's
 pixel must read the reference band's and the screendump must be one 4x4
-dither tile from corner to corner -- which it is only if each blend's
+dither tile from corner to corner, which it is only if each blend's
 read-back had its dither taken out. 86Box's interpreter always did;
 its two code generators did not until patch 64 (the columns walked
 7bef ... 6b4d, 10,240 pixels off the tile). `RECOMP=off` runs the
@@ -38,31 +38,31 @@ the PCI bus, so an LFB write is drawn after every packet the guest put in
 the ring before it and a register that reconfigures the FIFO lands behind
 them all; 86Box has two queues and empties the LFB one first. *Teardown* is
 the guard: a cyan fill and a swap go into the ring and fbiInit7's
-command-FIFO bit is cleared at once, with no idle wait -- the frame has to
+command-FIFO bit is cleared at once, with no idle wait. The frame has to
 be cyan (the packets were run, not dropped) and the status register has to
 read idle afterwards, which is what Glide's grSstIdle waits for at
-grSstWinClose and what Carmageddon's 3dfx build hung on for ever
-(2026-09-18). Both halves of it fail without the fix.
+grSstWinClose and what Carmageddon's 3dfx build hung on for ever. Both
+halves of it fail without the fix.
 
 *Ordering* is the other one: the ring gets a red fastfill over the whole
 screen, then with nothing waited for the guest writes a 38,400-dword blue
 block through the LFB, then the ring gets the swap. The block has to be on
 top, and the device has to report at least one publish behind 86Box's own
-FIFO -- the scene is built to make one, and none means the ordering point
-was never reached. Keeping the order there is patch 72's job (the thread's
+FIFO (the scene is built to make one, and none means the ordering point
+was never reached). Keeping the order there is patch 72's job (the thread's
 ring loop yields the moment anything appears in the other FIFO), and it is
 what keeps a game's HUD from landing in the buffer a swap has just turned
-into the back one: Carmageddon's flashed in and out for it, 2026-09-18. The
+into the back one (Carmageddon's HUD flashed in and out without it). The
 mirror of it, a wait for the *ring* before an LFB write, is `LFB_ORDER=on`:
 that window is shorter than the consumer's wake and the block is on top
 either way, which is the measurement that ruled it out as the HUD's cause.
 
-Then the **swapped pair** (doc 21 §13, 2026-09-21): Glide writes a two-word
-packet value first and header second, and the chip counts the ring's depth
-over what is written *contiguously* (its hole counter). 86Box counted every
+Then the **swapped pair** (doc 21 §13): Glide writes a two-word packet
+value first and header second, and the chip counts the ring's depth over
+what is written *contiguously* (its hole counter). 86Box counted every
 write as it came, so a consumer caught up with the guest read the header's
-slot the moment the value landed -- a stale word from the last lap, taken as
-a header -- which is how Carmageddon's 3dfx build froze on every race start
+slot the moment the value landed (a stale word from the last lap, taken as
+a header). That is how Carmageddon's 3dfx build froze on every race start
 on `ramfifo=off`. The phase plants such a stale word (a type-1 header
 claiming 256 values, written as a colour on a first lap), brings the
 consumer to rest on that slot, writes the value of a `color1` packet past
@@ -70,12 +70,12 @@ it, lets the consumer look (`cmdFifoDepth` polled to zero), and only then
 writes the header, followed by a fill and a swap: the frame has to be
 yellow. Counted per write, the stale header eats the fill and the swap:
 `MMIO_HOLES=off` (the device's `mmio-holes=off`, 86Box's own count) is the
-control, and there the frame must *not* be yellow -- and the phases after
-it are not judged, the consumer being parked inside the stale packet.
+control, and there the frame must *not* be yellow. The phases after it
+are not judged, the consumer being parked inside the stale packet.
 
-Then the **wrap** (doc 21 §13, the same day): the same pair, value first, at
-the ring's base right after the guest's JMP back to it, with a stale header
-there from the lap before -- what every lap of Carmageddon's race does.
+Then the **wrap** (doc 21 §13): the same pair, value first, at the ring's
+base right after the guest's JMP back to it, with a stale header there
+from the lap before, which is what every lap of Carmageddon's race does.
 Glide writes cmdFifoAMin and AMax once at init and never at a wrap, so the
 write side has to follow the JMP itself to know where the contiguous count
 goes on; taking the value's slot as that point instead held every word of
@@ -88,22 +88,21 @@ green. Not judged in the control, whose consumer is already parked.
 Then the **partial packet** (doc 21 §9): the header of a two-word packet
 is written and its value is not, and `cmdFifoRdPtr` is read 256 times. The
 chip takes the header and parks wanting the value, so the read pointer has
-to stop one word in and stay there -- it never passes what the guest has
+to stop one word in and stay there. It never passes what the guest has
 written, because Glide's free space is `rp - wp - 1` and a pointer past
 `wp` turns the whole ring into a few words of room, so the guest waits for
 space on a ring that is empty. FIFA 2000's loading screen died on exactly
 that. Then the value arrives and the packet completes.
 
 Then the **stranded client** (doc 21 §11): with the FIFO still off from
-the teardown, a burst of dwords goes into the 0x200000 window -- what a
-Glide whose FIFO was switched off under it goes on doing -- at the offsets
+the teardown, a burst of dwords goes into the 0x200000 window (what a
+Glide whose FIFO was switched off under it goes on doing) at the offsets
 of cmdFifoBaseAddr, videoDimensions and fbiInit7. The device refuses such a
 write, so the ring's own register has to read back where it was;
 `FIFO_OFF_REGS=on` (the device's `fifo-off-regs=on`) is the control that
 decodes the burst as register writes the way 86Box does, and it has to move
-the ring. That walk is what leaves a card unusable after a game's close --
-FIFA 2000 on `base98-br` took the guest's Windows down with it on
-2026-09-20.
+the ring. That walk is what leaves a card unusable after a game's close
+(FIFA 2000 on `base98-br` took the guest's Windows down with it).
 
 Both phases write swapbufferCMD to the register window as well as putting
 the packet in the ring, because 3dfx's Glide does and the card's own
@@ -114,7 +113,7 @@ busy for ever off that difference.
 
 The evidence is on the host side: a QMP screendump while the Voodoo has
 the monitor must be the 640x480 red frame (the whole path from a guest
-`mov` to the console surface -- register decode, the memory FIFO, the
+`mov` to the console surface: register decode, the memory FIFO, the
 swap on the display timer's retrace, the CLUT, the pass-through switch),
 and one after it lets go must be the VGA's text screen again. Every
 `voodoo2:` line QEMU printed is shown.
@@ -122,22 +121,22 @@ and one after it lets go must be the VGA's text screen again. Every
     tools/voodoo-guest-test.py          # needs nasm, mtools, build/qemu
     VGA=d3dpt tools/voodoo-guest-test.py   # beside our own adapter (std, cirrus, d3dpt)
 
-The 2D adapter is whatever the machine has -- a Voodoo 2 is a 3D-only
-card that borrows the monitor -- and `VGA=` picks it: `std` (default),
+The 2D adapter is whatever the machine has (a Voodoo 2 is a 3D-only
+card that borrows the monitor), and `VGA=` picks it: `std` (default),
 `cirrus`, or `d3dpt` for `-vga none -device d3dpt-vga`, the pairing a
 launcher machine on our own display driver would run. Beside `d3dpt` the
 program first puts that adapter in a linear mode, 800x600x32 filled
 green, the state a Windows desktop leaves it in: the monitor the Voodoo
 hands back is then a linear frame and not the VGA core's text screen, and
 the screendump after the hand-back must be that green frame. It used to
-stay the Voodoo's last one for good -- the adapter's invalidate did not
-put its own surface back on the console when its mode had not changed
-(2026-09-12: every full-screen switch on a Win98 machine with the card
-left a stale frame up for good).
+stay the Voodoo's last one for good, because the adapter's invalidate did
+not put its own surface back on the console when its mode had not changed
+(every full-screen switch on a Win98 machine with the card left a stale
+frame up).
 
 Outputs in build/voodoo-guest/ (build/voodoo-guest-<VGA>/ beside another
-adapter). The `voodoo-guest` and `voodoo-guest-d3dpt` checks in the guest
-stage of scripts/test.sh.
+adapter). The `voodoo-guest`, `voodoo-guest-d3dpt`, `voodoo-guest-mmiofifo`
+and `voodoo-guest-undither` checks in the guest stage of scripts/test.sh.
 """
 import importlib.util
 import os
@@ -1642,7 +1641,7 @@ def off_colour_pixels(path):
     """Pixels of the dither scene that are not the one colour the scene is.
 
     The scene is one grey over the whole screen (a blend of a colour onto
-    itself is that colour), dithered on the way into the frame buffer -- so
+    itself is that colour), dithered on the way into the frame buffer, so
     with `undither=on` the frame has to come back *flat*, and at the colour
     that was rendered rather than near it. The interior only: the outermost
     two rows and columns see a window clamped at the edge of the screen,
@@ -1706,7 +1705,7 @@ def main():
                 # headless, nothing refreshes the console on its own: this
                 # dump is what makes the adapter put its linear surface up
                 # before the Voodoo takes the monitor, as the player's
-                # refresh does -- without it the hand-back finds no linear
+                # refresh does. Without it the hand-back finds no linear
                 # surface of the adapter's and the bug cannot show
                 wait_for(log, b"D3DPT READY", p, 180, "the linear mode, after its flips")
                 q.screendump(shot_lin)
@@ -1785,7 +1784,7 @@ def main():
             ok = False
     # the dither phase: a colour blended onto itself is that colour, so
     # every column reads the reference band's pixel and the frame is one
-    # dither tile -- which it is only if the read-back is un-dithered
+    # dither tile, which it is only if the read-back is un-dithered
     # (patch 64 for the recompilers; the interpreter always did)
     ref = [l.split()[2] for l in text.splitlines()
            if l.startswith("DITH REF ") and len(l.split()) == 3]
@@ -1828,7 +1827,7 @@ def main():
         ok = False
     # and the other direction, the one a game meets: the LFB block was
     # written before the swap packet, so 86Box's own queue has to be empty
-    # before the ring's publish point lets that swap through -- on either
+    # before the ring's publish point lets that swap through, on either
     # transport (with ramfifo=off the publish point is the ring-window write
     # itself). The device counts the times it waited; the scene above is
     # built to make one, and none means the ordering point was never
@@ -1939,7 +1938,7 @@ def main():
     # has written. The header alone is consumed and the chip parks wanting
     # the value, one word in; then the value arrives and the packet
     # completes. Taking the rest on a guess instead is what deadlocked FIFA
-    # 2000's loading screen (2026-09-20): the guest's free space is
+    # 2000's loading screen: the guest's free space is
     # `rp - wp - 1`, so a pointer past the write pointer leaves it waiting
     # for room on an empty ring.
     pp_c = [l.split()[2] for l in text.splitlines()
@@ -1971,9 +1970,9 @@ def main():
     # the stranded client: a burst into the command-FIFO window with the
     # FIFO off must leave the ring's own register where it was. With
     # fifo-off-regs=on it is decoded as a register write instead, the walk
-    # 86Box does and the chip is said to do -- the control, which must move
-    # it. That walk is what left a card unusable after a game's close
-    # (2026-09-20, FIFA 2000 on base98-br).
+    # 86Box does and the chip is said to do. That is the control, which
+    # must move it. That walk is what left a card unusable after a game's
+    # close (FIFA 2000 on base98-br).
     st_b = [l.split()[2] for l in text.splitlines()
             if l.startswith("ST BEFORE ") and len(l.split()) == 3]
     st_a = [l.split()[2] for l in text.splitlines()
@@ -2015,9 +2014,9 @@ def main():
             print("FAIL the console did not go back to d3dpt-vga's 800x600 linear mode")
             ok = False
         # the adapter's hardware cursor (patch 66): shown before the Voodoo
-        # takes the monitor, hidden while it has it -- a pass-through cable
+        # takes the monitor, hidden while it has it (a pass-through cable
         # shows nothing of the 2D card, and Windows' desktop pointer was
-        # drawn over Moto Racer on the Voodoo 2 -- shown again after
+        # drawn over Moto Racer on the Voodoo 2), shown again after
         # (the switch is published before the device logs it, so each
         # line is placed by its own passthrough field)
         cur, seen = [], False

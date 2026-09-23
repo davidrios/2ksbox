@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# w98-quake2.sh -- Quake II's software renderer timedemo on a Win98 machine,
+# Quake II's software renderer timedemo on a Win98 machine,
 # headless (docs/22 §6): a raw copy of the image through
 # tools/win98-game-test.sh, the disc on ide.1 (a minimal install reads its
 # pak files off the CD: quake2.exe scans the drives for INSTALL\DATA), and
 # from RUN.BAT `quake2.exe +set vid_ref soft +set sw_mode 3 +set logfile 2
-# +timedemo 1 +map demo1.dm2` -- 640x480 software rendering, the console
+# +timedemo 1 +map demo1.dm2`: 640x480 software rendering, the console
 # logged and flushed to BASEQ2\QCONSOLE.LOG, demo1 played as fast as the
 # machine can. The number is the game's own "N frames, S seconds: F fps"
 # line, pulled off the disk afterwards; the screendumps every 5 s show the
@@ -14,7 +14,7 @@
 #   tools/w98-quake2.sh <name>
 #     env: IMG= (base98-us), Q2= (the .iso), CPU=, QEMU_TCG_OPTS=, EXTRA=,
 #     DEMO= (demo1.dm2), RUN_SECS= (200), FRESH= (1)
-# Output: build/w98game/<name>/ -- QCONSOLE.LOG, fps.txt, shots/, qemu.log.
+# Output: build/w98game/<name>/: QCONSOLE.LOG, fps.txt, shots/, qemu.log.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NAME=$1

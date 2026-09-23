@@ -140,17 +140,16 @@ if [ ! -f qemu/VERSION ] || [ ! -f third_party/qemu-3dfx/00-qemu92x-mesa-glide.p
 fi
 
 # The patch queue is applied to the one qemu/ tree both builds compile
-# from, so it is prepared here exactly as scripts/build.sh does it -- and
-# never twice in a row for nothing, which is what the stamp is for there.
-# Here it is unconditional but cheap: a Windows build is not the inner
-# loop, and a tree left half-prepared by an interrupted native build is
-# the failure that costs an hour.
+# from, so it is prepared here as scripts/build.sh does it. build.sh skips
+# an unchanged queue by its stamp; here prepare is unconditional but cheap.
+# A Windows build is not the inner loop, and a tree left half-prepared by
+# an interrupted native build is the failure that costs an hour.
 if want qemu; then
   say "qemu: prepare (overlay + patch queue)"
   scripts/prepare-qemu.sh
 
-  # the compiler is part of a build directory: meson will not switch one
-  # (patch 68 moved the Windows QEMU from GCC to clang, 2026-09-17)
+  # meson will not switch a build directory's compiler (patch 68 moved the
+  # Windows QEMU from GCC to clang), so a different one configures afresh
   want_cc="${WIN_QEMU_CC:-clang}"
   if [ -f build/win/qemu/build.ninja ] && [ "$(cat build/win/qemu/.2ksbox-cc 2>/dev/null || echo gcc)" != "$want_cc" ]; then
     echo "    build/win/qemu was built with $(cat build/win/qemu/.2ksbox-cc 2>/dev/null || echo gcc), wanted $want_cc - configuring afresh"
@@ -185,7 +184,7 @@ fi
 # rather than another member of the one above.
 # MSYS2 only. qt-build-utils runs moc and the other Qt tools with an empty
 # environment, and MSYS2 keeps them in share/qt6/bin, away from the DLLs in
-# bin/ they load -- so with no PATH none of them starts ("moc unexpectedly
+# bin/ they load. With no PATH none of them starts ("moc unexpectedly
 # exited"). build/win/qt-host gets a copy of each tool beside its own DLL
 # closure (ldd), and QMAKE becomes packaging/windows/qmake-host.c, which
 # answers the tool-directory queries with that folder and passes everything
@@ -207,10 +206,10 @@ msys2_qt_host() {
     > "$dir/qt-host-paths.h"
   gcc -O2 -Wall -static -I"$dir" -o "$dir/qmake-host.exe" packaging/windows/qmake-host.c
   export QMAKE="$(cygpath -m "$dir/qmake-host.exe")"
-  # Each of them the way qt-build-utils runs it -- with no environment at all
-  # -- because its own failure is "could not find Qt" with the output thrown
-  # away. MSYS2's `env -i` would not do: it puts Windows' own variables back
-  # for a native program. A native Python's env={} does not.
+  # Run each the way qt-build-utils does, with no environment at all,
+  # because its own failure is "could not find Qt" with the output thrown
+  # away. MSYS2's `env -i` would not do, since it puts Windows' own
+  # variables back for a native program. A native Python's env={} does not.
   python3 - "$QMAKE" "$real" "$(cygpath -m "$dir")" <<'PY' || exit 1
 import os, subprocess, sys
 qmake, real, tools = sys.argv[1:4]
@@ -253,9 +252,9 @@ fi
 if want exec; then
   # The queue is applied on the host, like qemu's above. The DXVK tree is
   # shared with the native build, so this keeps scripts/build.sh's own
-  # stamp (same file, same hash): a prepare hands both builds fresh
-  # mtimes, and one that changed nothing would cost the native DXVK a
-  # full rebuild.
+  # stamp (same file, same hash). A prepare hands both builds fresh
+  # mtimes, so one that changed nothing would cost the native DXVK a full
+  # rebuild.
   say "exec: DXVK d3d9.dll (prepare + mingw $HOW)"
   dxvk_stamp=$( { git -C third_party/dxvk rev-parse HEAD 2>/dev/null || echo none
                   find patches/dxvk scripts/prepare-dxvk.sh -type f | LC_ALL=C sort | tr '\n' '\0' | xargs -0 cat
@@ -278,11 +277,11 @@ if want exec; then
   # ... and the guest DLLs' host test beside it. The display driver's
   # records never present; this one creates a swapchain, opens a scene and
   # calls Present, which is the half of the executor that differs between
-  # DXVK and the system Direct3D 9 backend (D3DPT_D3D9, 2026-09-21).
+  # DXVK and the system Direct3D 9 backend (D3DPT_D3D9).
   inw "$WCXX" -std=c++17 -O2 -static -o build/win/d3dpt-exec-test.exe tools/d3dpt-exec-test.cpp
-  # The WGL probe rides along: it is the same 3D stage, it is one
-  # compile, and it is the first thing to run on a Windows machine whose
-  # Win98 guest gets no OpenGL (tools/wgl-probe.c).
+  # The WGL probe (tools/wgl-probe.c) rides along as one more compile. It
+  # is the first thing to run on a Windows machine whose Win98 guest gets
+  # no OpenGL.
   say "exec: wgl-probe.exe (the embed backend's WGL sequence, without QEMU)"
   inw "$WCC" -O1 -o build/win/wgl-probe.exe tools/wgl-probe.c \
     -lopengl32 -lgdi32 -luser32

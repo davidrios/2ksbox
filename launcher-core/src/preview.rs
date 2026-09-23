@@ -6,37 +6,36 @@
 //! **It opens its own GPU.** Qt Quick renders through QRhi and cxx-qt
 //! exposes no handle to it, so `headless()` opens a windowless device
 //! (~40 MB of VRAM and one more driver context) and the front end reads
-//! the frame back to the CPU (`read_frame`). Everything between those two
-//! ends — decoding the image, the source-size cap, loading the chain, the
-//! integer-scale viewport math — is this file, once, and the
+//! the frame back to the CPU (`read_frame`). Everything in between
+//! (decoding the image, the source-size cap, loading the chain, the
+//! integer-scale viewport math) is in this file, and the
 //! `--preview-shader` verb dumps the same frame as a PNG (doc 07).
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// A source bigger than this is downsized on the CPU before the shader
-/// ever sees it. Generous enough to pass any real game resolution
-/// through untouched — this is meant to *look like the player*: a native
-/// game resolution treated as-is, then integer-scaled up exactly the way
-/// `player::Gpu::viewport` does — it is only a sanity cap against
-/// rendering, say, a 12-megapixel phone photo at full size every frame.
+/// sees it. Any real game resolution passes through untouched, so the
+/// preview looks like the player: the native resolution as-is, then
+/// integer-scaled the way `player::Gpu::viewport` does. The cap only
+/// stops a 12-megapixel phone photo from rendering at full size every
+/// frame.
 const MAX_SOURCE_W: u32 = 1600;
 const MAX_SOURCE_H: u32 = 1200;
 
 /// The rate the preview's clock runs at, and so the rate an animated
 /// preset flickers, rolls or fades at in it: the frame rate the player
-/// would be presenting the same preset at on a machine of the era. The
-/// preview counts frames off this clock rather than counting its own
-/// renders (see `shader_chain::Chain::run_at`), so a front end that
-/// cannot redraw this often — the Qt build reads every frame back to the
-/// CPU and hands it over as a file — shows an effect at its real speed
-/// with frames missing, rather than the same effect in slow motion.
+/// presents the same preset at on a machine of the era. The preview
+/// counts frames off this clock rather than counting its own renders
+/// (see `shader_chain::Chain::run_at`). A front end that cannot redraw
+/// this often (the Qt build reads every frame back to the CPU and hands
+/// it over as a file) then shows an effect at its real speed with frames
+/// missing, not in slow motion.
 pub const FRAME_RATE: f64 = 60.0;
 
 /// How long a front end may wait before asking for the next frame of an
-/// animated preset. Just under 1/60 s, so a timer that fires on this
-/// interval and a clock that runs at `FRAME_RATE` don't beat against
-/// each other into a visibly uneven flicker.
+/// animated preset. Just under 1/60 s, so a timer on this interval and a
+/// clock at `FRAME_RATE` don't beat into a visibly uneven flicker.
 pub const FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
 pub struct Preview {
@@ -48,11 +47,11 @@ pub struct Preview {
     preset_path: Option<PathBuf>,
     chain: Option<shader_chain::Chain>,
     viewport: (u32, u32),
-    /// When the loaded preset started animating — frame 0 of it.
+    /// When the loaded preset started animating (its frame 0).
     clock: Instant,
-    /// A frame number to render instead of the clock's: the headless
-    /// verbs, so that "the same preset at frame 12" is a thing that can
-    /// be dumped twice and compared.
+    /// A frame number to render instead of the clock's, for the headless
+    /// verbs, so "the same preset at frame 12" can be dumped twice and
+    /// compared.
     pinned_frame: Option<usize>,
     error: Option<String>,
 }
@@ -74,10 +73,10 @@ impl Preview {
         }
     }
 
-    /// Open a windowless adapter and device of this preview's own — the
+    /// Open a windowless adapter and device of this preview's own. The
     /// toolkit will not lend one, and the headless verbs have none.
-    /// Fails only when there is no usable GPU at all, which is
-    /// the same condition that would stop the player from running.
+    /// Fails only when there is no usable GPU at all, which would stop
+    /// the player too.
     pub fn headless() -> Result<Preview, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -88,10 +87,9 @@ impl Preview {
         let adapter_info = adapter.get_info();
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("shader preview"),
-            // The preview has to show what the player will show, so it
-            // opens its device with the same feature: without it a
-            // curved preset previews with its edge pixels smeared
-            // outwards (`shader_chain::required_features`).
+            // The preview opens its device with the player's feature
+            // set. Without it a curved preset previews with its edge
+            // pixels smeared outwards (`shader_chain::required_features`).
             required_features: shader_chain::required_features(&adapter),
             ..Default::default()
         }))
@@ -107,22 +105,21 @@ impl Preview {
     /// need not: the loaded preset draws the same picture forever and
     /// only a slider, a new image or a resize can change it.
     ///
-    /// Plenty of presets do *not* stand still — an interlaced CRT draws
+    /// Plenty of presets do not stand still: an interlaced CRT draws
     /// alternate fields, a phosphor afterglow decays over several
-    /// frames, an NTSC signal shimmers — and a preview that renders only
-    /// when something is clicked shows one frozen frame of that and
-    /// nothing of the effect. Whether a preset is one of them is
-    /// `shader_chain::preset_is_animated`'s answer, not a front end's,
-    /// and so is the interval: the front end runs a timer at it.
+    /// frames, an NTSC signal shimmers. A preview that renders only when
+    /// something is clicked shows one frozen frame of that. Whether a
+    /// preset animates is `shader_chain::preset_is_animated`'s answer,
+    /// not a front end's, and so is the interval the front end's timer
+    /// runs at.
     pub fn frame_interval(&self) -> Option<Duration> {
         self.chain.as_ref()?.animated().then_some(FRAME_INTERVAL)
     }
 
     /// Render one fixed frame number from now on instead of following
-    /// the clock — for the headless verbs and the tests behind them,
-    /// where "frame 0 and frame 7 of this preset differ" has to be a
-    /// repeatable statement. Never used by the real editor: there the
-    /// animation is the point.
+    /// the clock, for the headless verbs and the tests behind them, where
+    /// "frame 0 and frame 7 of this preset differ" has to be repeatable.
+    /// The real editor never uses it.
     pub fn pin_frame(&mut self, frame: usize) {
         self.pinned_frame = Some(frame);
     }
@@ -135,13 +132,12 @@ impl Preview {
     }
 
     /// The exact size the last rendered frame came out at: the input
-    /// image's own size times the largest *integer* factor that fits the
-    /// area asked for. Never a fraction, so the shader is never blurred
-    /// by a second, non-integer resample the way stretching it to fill
-    /// the area exactly would; smaller than the area on one axis
-    /// (letterboxed) unless the aspect ratios happen to match. The
-    /// caller centres it and fills the rest with black — "how it will
-    /// really look in the player", not an image widget stretched to fit.
+    /// image's own size times the largest integer factor that fits the
+    /// area asked for. Never a fraction, so a second, non-integer
+    /// resample never blurs the shader's output. It is smaller than the
+    /// area on one axis (letterboxed) unless the aspect ratios match. The
+    /// caller centres it and fills the rest with black, as the player
+    /// does, rather than stretching it to fit.
     pub fn viewport(&self) -> (u32, u32) {
         self.viewport
     }
@@ -152,10 +148,9 @@ impl Preview {
     }
 
     /// Reflect the editor's current preset path, effective parameter
-    /// values (defaults already merged with overrides — this doesn't
-    /// need to know which is which), image path, and the area available
-    /// to render into, reloading only what actually changed and
-    /// re-rendering a frame.
+    /// values (defaults already merged with overrides), image path, and
+    /// the area available to render into, reloading only what changed
+    /// and re-rendering a frame.
     pub fn update(&mut self, preset: &Path, params: &[(String, f32)], image: &Path, area_w: u32, area_h: u32) {
         if self.image_path.as_deref() != Some(image) {
             self.load_image(image);
@@ -173,14 +168,15 @@ impl Preview {
         self.render(area_w, area_h);
     }
 
-    /// Read the last frame back as `(width, height, RGB8)` — the CPU
-    /// path, since the front end cannot take a texture.
+    /// Read the last frame back as `(width, height, RGB8)`, the CPU path,
+    /// since the front end cannot take a texture.
     pub fn read_frame(&self) -> Option<(u32, u32, Vec<u8>)> {
         let tex = self.output_texture()?;
         Some(shader_chain::read_texture(&self.device, &self.queue, tex))
     }
 
-    /// Dump the last frame as a PNG — what `--preview-shader` writes.
+    /// Dump the last frame as a PNG, which is what `--preview-shader`
+    /// writes.
     pub fn dump_png(&self, out: &str) -> Result<(), String> {
         let tex = self.output_texture().ok_or("no frame rendered")?;
         shader_chain::dump_texture(&self.device, &self.queue, tex, out);
@@ -197,16 +193,14 @@ impl Preview {
                 return;
             }
         };
-        // A CRT preset is written to *upscale* a small native-resolution
-        // source, never to shrink one: several (crt-aperture.slang, e.g.)
-        // compute `scale = floor(OutputSize / SourceSize)` and then
-        // divide by it — 0 when the source is bigger than the render
-        // target, i.e. NaN, i.e. a solid black frame (found from a real
-        // report: a 1025x791 photo through crt-aperture rendered black).
-        // `render`'s own `.max(1.0)` on the scale now guarantees that
-        // can't happen regardless of this cap — this is just the sanity
-        // limit against treating an arbitrarily huge photo as "native
-        // resolution" and rendering it at full size every frame.
+        // A CRT preset is written to upscale a small native-resolution
+        // source, never to shrink one. Several (crt-aperture.slang, e.g.)
+        // compute `scale = floor(OutputSize / SourceSize)` and divide by
+        // it, which is 0 when the source is bigger than the render target:
+        // NaN, a solid black frame (a 1025x791 photo through crt-aperture
+        // rendered black). `render`'s `.max(1.0)` on the scale prevents
+        // that regardless of this cap, which only stops a huge photo from
+        // rendering at full size every frame.
         let img = if img.width() > MAX_SOURCE_W || img.height() > MAX_SOURCE_H {
             img.resize(MAX_SOURCE_W, MAX_SOURCE_H, image::imageops::FilterType::Triangle)
         } else {
@@ -221,8 +215,8 @@ impl Preview {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             // Not sRGB: the shader's own GAMMA_INPUT parameter (present
-            // on most CRT presets) does that math itself, same as the
-            // player feeding it raw (non-sRGB-tagged) guest pixels.
+            // on most CRT presets) does that math, as when the player
+            // feeds it raw (non-sRGB-tagged) guest pixels.
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
@@ -245,7 +239,7 @@ impl Preview {
         self.preset_path = Some(path.to_path_buf());
         self.chain = None;
         // A preset that animates starts at its own frame 0, not at
-        // however long this window happened to be open.
+        // however long this window has been open.
         self.clock = Instant::now();
         // The readback path is indifferent to the format; RGBA8 is what
         // `shader_chain::read_texture` and `dump_texture` expect.
@@ -267,15 +261,14 @@ impl Preview {
         if self.chain.is_none() {
             return;
         }
-        // Exactly `player::Gpu::viewport`'s own math: the largest
-        // *integer* scale that fits the area, floored (never a fraction
-        // — that would blur the very thing being previewed) and never
-        // below 1 (never shrunk; this is also what keeps some presets'
-        // own `1.0 / floor(OutputSize/SourceSize)` away from a division
-        // by zero). Below 1 in the area itself, the rendered frame is
-        // bigger than the area and the caller crops it around the
-        // centre — same as making the real player's window smaller than
-        // the guest's native resolution.
+        // Exactly `player::Gpu::viewport`'s math: the largest integer
+        // scale that fits the area, floored (a fraction would blur the
+        // thing being previewed) and never below 1. The floor of 1 also
+        // keeps some presets' own `1.0 / floor(OutputSize/SourceSize)`
+        // away from a division by zero. When the area is smaller than the
+        // image, the frame is bigger than the area and the caller crops
+        // it around the centre, as the player does when its window is
+        // smaller than the guest's native resolution.
         let (aw, ah) = (area_w.max(1) as f32, area_h.max(1) as f32);
         let scale = (aw / iw as f32).min(ah / ih as f32).floor().max(1.0);
         let (rw, rh) = ((iw as f32 * scale) as u32, (ih as f32 * scale) as u32);

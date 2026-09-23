@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # The M15 spike on a *second macOS on this Mac* (ADR-019's community build's
 # user: a pre-26 macOS, no Vulkan 1.3, the real GPU), run from a Terminal
-# booted into that macOS — not over ssh: one machine runs one macOS at a
+# booted into that macOS, not over ssh. One machine runs one macOS at a
 # time, and this one mounts the other volume's checkout under /Volumes.
-# tools/macvm-wine-spike.sh is the same idea for a VM, and a VM turned out
-# to have no accelerated OpenGL for Wine at all; this is the real test.
+# tools/macvm-wine-spike.sh is the same idea for a VM, but a VM has no
+# accelerated OpenGL for Wine at all, so this is the real test.
 #
 #   cd "/Volumes/Macintosh HD - Data/Users/<you>/work/win-98-xp-virt"   # the 26 volume's checkout
 #   tools/macos-wine-spike-local.sh
@@ -18,8 +18,8 @@
 #   build/test/dp2-test.bmp, build/test/exec-test.bmp     the DXVK frames (the oracle)
 # and, on this macOS, Rosetta: `softwareupdate --install-rosetta --agree-to-license`
 # (a fresh install has none; no sudo needed). A bare install has no python3
-# either — /usr/bin/python3 is the Command Line Tools' stub, which asks to
-# install them — so the diff runs on `$PYTHON`, else a python3 that answers,
+# either (/usr/bin/python3 is the Command Line Tools' stub, which asks to
+# install them), so the diff runs on `$PYTHON`, else a python3 that answers,
 # else uv's own CPython from the checkout owner's home on the other volume.
 #
 # It unpacks Wine beside the tarball if that has not been done, keeps its

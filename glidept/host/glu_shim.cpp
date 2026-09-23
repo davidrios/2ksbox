@@ -3,8 +3,8 @@
 //*
 //* Upstream links libGLU for gluErrorString (one log line) and
 //* gluBuild2DMipmaps (behind the BuildMipMaps option). GLU is a
-//* deprecated library that is not in every runtime we ship into — the
-//* Flatpak's org.freedesktop.Sdk among them — and both uses have a
+//* deprecated library that is not in every runtime we ship into (the
+//* Flatpak's org.freedesktop.Sdk among them), and both uses have a
 //* one-line replacement in core GL, so patches/openglide/01 renames the
 //* call sites to these.
 //*
@@ -37,7 +37,7 @@ const char *ogl_error_string(GLenum error)
 /*
  * gluBuild2DMipmaps scaled the image to a power of two and built every
  * level on the CPU. Glide textures are already power-of-two and at most
- * 256x256, so GL_GENERATE_MIPMAP over the same upload is the whole of it —
+ * 256x256, so GL_GENERATE_MIPMAP over the same upload is the whole of it,
  * and it is the driver's own downsample rather than GLU's box filter.
  */
 GLint ogl_build_2d_mipmaps(GLenum target, GLint components,

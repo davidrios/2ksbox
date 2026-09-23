@@ -1,5 +1,5 @@
 /*
- * d3d8.c — the guest d3d8.dll of the paravirtual Direct3D device (doc 14
+ * d3d8.c: the guest d3d8.dll of the paravirtual Direct3D device (doc 14
  * P4): Direct3D 8 as thin wrappers over the d3d9 object model of d3d9.c,
  * compiled into one translation unit (the d3d8to9 shape, in C). The
  * device, resources, encoder and transport are the d3d9 ones; this file
@@ -23,8 +23,8 @@
 /* ------------------------------------------------------ D3D8-only types */
 /* mingw's d3d8types.h / d3d8caps.h pack these to 4 bytes on i386; a
  * naturally aligned D3DADAPTER_IDENTIFIER8 is 4 bytes longer and
- * GetAdapterIdentifier then clears past the caller's buffer (found the
- * hard way: D3DGAME8 hung on return from main) */
+ * GetAdapterIdentifier then clears past the caller's buffer (D3DGAME8
+ * hung on return from main) */
 #pragma pack(push, 4)
 typedef struct _D3DPRESENT_PARAMETERS8 {
     UINT BackBufferWidth, BackBufferHeight;
@@ -115,8 +115,8 @@ struct w8 { const void *vt; LONG ref; void *inner; struct dev8 *dev8; };
 /* One wrapper per inner object, for as long as the object lives: the same
  * IDirect3DSurface8 comes back from every GetRenderTarget / GetSurfaceLevel
  * (identity), and a wrapper the application released stays usable while the
- * object lives on under its owner (real D3D8 behaviour — Vice City keeps
- * using its released render-target surface; the freed wrapper was its
+ * object lives on under its owner (real D3D8 behaviour: Vice City keeps
+ * using its released render-target surface, and a freed wrapper is its
  * "Unhandled exception at address 00000001"). The caller passes a reference
  * on inner (from a Get* / Create*); a live wrapper already holds one. The
  * wrapper is freed by res_free together with the object. */
@@ -144,7 +144,7 @@ static ULONG w8_release(struct w8 *w)
     LONG r = InterlockedDecrement(&w->ref);
     if (r == 0) {
         /* drop our references; the wrapper itself stays as the object's identity
-         * (freed with the object by res_free — possibly right here) */
+         * (freed with the object by res_free, possibly right here) */
         struct dev8 *d = w->dev8;
         IUnknown_Release((IUnknown *)w->inner);
         dev8_Release((IDirect3DDevice8 *)d);

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# xp-game-test.sh — a game on the M4 Direct3D device (doc 14), headless.
+# A game on the M4 Direct3D device (doc 14), headless.
 #
 #   tools/xp-game-test.sh <image.qcow2> "<game dir on C:>" <exe> [name]
 #   tools/xp-game-test.sh stacks <drwtsn32.log>          # print the newest report's thread stacks
 #
 # Boots a snapshot=on view of the image with bare qemu-system-i386 (no
-# player), the discs in CDS on the IDE slots after the disk — the same
-# letters the game sees under the player —, and a FAT32 USB stick that
+# player), the discs in CDS on the IDE slots after the disk (the same
+# letters the game sees under the player), and a FAT32 USB stick that
 # carries RUN.BAT and receives everything the run produces. RUN.BAT is
 # typed into the Run dialog once XP is up; it relaunches itself minimized
 # (so no console sits in front of the game's dialogs), optionally copies
@@ -128,7 +128,7 @@ gw_wait_sock "$SOCK" || exit 1
 t0=$(date +%s)
 # No boot sleep: knock on the Run dialog from the start and let the guest
 # say when it has the command (tools/guestwait.sh). RUN.BAT's own marker on
-# the stick is the proof — the D3D device attaching comes later, and on a
+# the stick is the proof. The D3D device attaching comes later, and on a
 # NO_ATTACH run it never comes at all.
 gw_poke_until "$SOCK" xp 'cmd /c for %d in (D E F G H I) do if exist %d:\RUN.BAT %d:\RUN.BAT' "${BOOT_WAIT:-300}" \
   mcopy -n -i "$FAT" ::/STARTED.TXT "$OUT/STARTED.TXT" \

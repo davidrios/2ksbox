@@ -1,8 +1,8 @@
 //! 2ksbox player (doc 02): one running machine per process.
 //!
-//! M1 state: `player -- <qemu-system args>` boots QEMU in-process and
-//! presents the guest framebuffer through wgpu (integer-scaled 4:3);
-//! keyboard and mouse are injected. No args → the M0 test pattern.
+//! `player -- <qemu-system args>` boots QEMU in-process and presents the
+//! guest framebuffer through wgpu and the CRT shader chain; keyboard,
+//! mouse and pad are injected. No args → the test pattern.
 
 mod audio;
 mod companions;
@@ -400,7 +400,7 @@ impl Gpu {
 
     /// Write the guest's own frame out as a PNG: the texture QEMU
     /// published, at the mode's own size, before the geometry stage
-    /// stretched it and before the CRT chain drew on it — a shot of what
+    /// stretched it and before the CRT chain drew on it. A shot of what
     /// the machine rendered, not of what the window shows. Ctrl+Alt+S.
     ///
     /// The imported 3D slot is shot the same way when one is on show, so
@@ -520,15 +520,15 @@ impl Gpu {
 
     /// Largest rect of the mode's own display aspect that fits the surface,
     /// centered (doc 03 geometry stage, rules 2 and 4). Pure, and run only
-    /// when one of its two inputs changes -- `guest_surface_changed` for the
-    /// mode, `resize` for the host surface. Everything it needs about the
+    /// when one of its two inputs changes (`guest_surface_changed` for the
+    /// mode, `resize` for the host surface). Everything it needs about the
     /// guest is in `self.mode`, which is why the analysis is not repeated
     /// here.
     ///
     /// The height is an integer multiple of the guest's rows so scanlines
     /// stay even, and the width then follows the display aspect rather than
-    /// the framebuffer's ratio — which is the whole point of rule 2: a
-    /// 320x200 mode is a 4:3 picture, not a 1.6:1 one, and integer-scaling
+    /// the framebuffer's ratio. That is rule 2. A 320x200 mode is a 4:3
+    /// picture, not a 1.6:1 one, and integer-scaling
     /// both axes would show it stretched. Square-pixel 4:3 modes (640x480,
     /// 800x600, …) come out exactly as they did before.
     fn fit(&self) -> (f32, f32, f32, f32) {
@@ -541,7 +541,7 @@ impl Gpu {
         let dar = m.display_aspect;
         // The vertical quantum is the scanline, not the guest row: on a
         // double-scanned mode they differ, and it is the scanline pitch that
-        // has to come out even — 320x200 in a 2400-line surface is 6 pixels
+        // has to come out even. 320x200 in a 2400-line surface is 6 pixels
         // per scanline this way and 5.5 if the rows are quantised instead.
         // Every whole scale of the scanlines is a whole scale of the rows
         // too, so this only ever refines the old rule.
@@ -562,8 +562,8 @@ impl Gpu {
         // viewport puts the picture on a sampling grid that moves with the
         // window's size: every odd pixel of width shifts the centred origin
         // by half a texel and the whole image crawls while the window is
-        // dragged out. Rounding costs at most half a pixel of aspect -- far
-        // inside the 0.5 % the sweep allows -- and buys a picture that stands
+        // dragged out. Rounding costs at most half a pixel of aspect, far
+        // inside the 0.5 % the sweep allows, and buys a picture that stands
         // still. It also keeps the blit exactly the size of the chain's
         // output texture, which is integer anyway.
         let vw = vw.round().clamp(1.0, sw);
@@ -573,7 +573,7 @@ impl Gpu {
 
     /// Where the picture goes: the held answer, never a fresh computation.
     /// A frame is drawn from this, so a mode change reaches the screen as
-    /// one step -- the analysis, the fit, the chain's output size and the
+    /// one step: the analysis, the fit, the chain's output size and the
     /// preset's parameters all move together, before anything is drawn
     /// (doc 03 rule 5).
     fn viewport(&self) -> (f32, f32, f32, f32) {
@@ -598,7 +598,7 @@ impl Gpu {
     /// it the geometry stage has no whole scale left and falls back to a
     /// free fit, which is the one case where the guest's pixels are shrunk
     /// and the mode stops being pixel-accurate. The floor is the 1x picture
-    /// -- the *displayed* size, so an aspect-corrected mode counts its
+    /// at the *displayed* size, so an aspect-corrected mode counts its
     /// corrected width (320x200 -> 534x400), not its framebuffer's.
     ///
     /// Physical pixels: the surface is in physical pixels too, so this is
@@ -646,7 +646,7 @@ impl Gpu {
     /// refresh tick before the first frame of the new mode: re-fitting there
     /// would draw the *old* pixels into the new mode's box for that tick,
     /// which is the stretched leftover rule 5 forbids. The surface's own
-    /// texture is therefore the trigger -- it is (re)created by exactly the
+    /// texture is therefore the trigger. It is (re)created by exactly the
     /// three things that can change what is on screen, and each of them
     /// calls this: the guest's framebuffer upload (`ensure_texture`), a 3D
     /// slot taken or dropped (`use_slot`), and a slot re-imported at another
@@ -895,13 +895,13 @@ struct App {
     guest_cursor_seq: u64,
     /// A fully transparent cursor, and the only way the player hides one.
     /// winit's own `set_cursor_visible(false)` builds its invisible cursor by
-    /// decoding a 16x16 GIF, which on macOS is ImageIO — and ImageIO
+    /// decoding a 16x16 GIF, which on macOS is ImageIO, and ImageIO
     /// `dlopen`s its codecs by leaf name, so `/opt/homebrew/lib` on
     /// `DYLD_LIBRARY_PATH` (which is how a dev checkout finds the Vulkan
     /// loader) hands it Homebrew's `libgif` for its own `libGIF.dylib` on a
     /// case-insensitive filesystem: the decode then branches through a
     /// poisoned pointer and the player dies of SIGBUS on the first grab
-    /// (2026-09-08). A cursor built from raw RGBA never reaches ImageIO.
+    /// A cursor built from raw RGBA never reaches ImageIO.
     blank_cursor: Option<CustomCursor>,
     /// The pointer is over the image (CursorMoved inside the viewport).
     pointer_inside: bool,
@@ -926,7 +926,7 @@ enum HostCursor {
 /// Shade the calibration patterns (doc 09): each BMP that
 /// `tools/crtcal-render` wrote goes through the loaded preset at the size it
 /// was drawn at, and the shaded frame lands beside it as a PNG. That is the
-/// other half of the comparison — one photograph of the tube showing the
+/// other half of the comparison: one photograph of the tube showing the
 /// pattern, one shaded frame of the same pattern, held side by side.
 struct Calib {
     files: Vec<std::path::PathBuf>,
@@ -970,8 +970,8 @@ const SWEEP_SURFACE: (u32, u32) = (3200, 2400);
 
 /// The mode sweep (doc 03's "The mode sweep", M2): step through every mode
 /// the table knows, upload a geometry pattern at that size and run the real
-/// display path — mode analysis, the geometry stage, the loaded preset —
-/// then check what each did with it. No guest and no QEMU: the boundary
+/// display path (mode analysis, the geometry stage, the loaded preset),
+/// then check what each did with it. No guest and no QEMU. The boundary
 /// under test is the player's own display path.
 struct Sweep {
     out: std::path::PathBuf,
@@ -1012,7 +1012,7 @@ fn sweep_upload(gpu: &mut Gpu, s: &Sweep) {
 /// block and clear of the circle) and scale to the full height.
 ///
 /// Counted rather than measured as a repeat period, because the pitch need
-/// not be a whole number of output pixels — 400 scanlines in a 2200-pixel
+/// not be a whole number of output pixels. 400 scanlines in a 2200-pixel
 /// viewport alternate 5 and 6 pixels, and their *period* is then two
 /// scanlines, which would read as half the count.
 fn measure_scanlines(w: u32, h: u32, rgb: &[u8]) -> Option<u32> {
@@ -1111,13 +1111,13 @@ fn sweep_step(gpu: &mut Gpu, s: &mut Sweep) -> bool {
 
     // rule 3, end to end: count the scanlines in the frame the preset just
     // drew and hold them against the ones the tube scanned. The dump is for
-    // the eye — the circle is round when the geometry is right.
+    // the eye. The circle is round when the geometry is right.
     let mut drawn = String::new();
     if let Some(tex) = gpu.chain.as_ref().and_then(|c| c.output_texture()) {
         let (ow, oh, rgb) = shader_chain::read_texture(&gpu.device, &gpu.queue, tex);
         // Below three output pixels per scanline there is nothing to count:
         // at two the preset has no room for a gap and draws a flat field
-        // (measured — one LSB of modulation at 1152x864 and above).
+        // (measured: one LSB of modulation at 1152x864 and above).
         let countable = oh >= m.scanlines * 3;
         let measured = if countable {
             measure_scanlines(ow, oh, &rgb)
@@ -1214,7 +1214,7 @@ impl App {
 
     /// Orderly exit: QEMU must finish `qemu_cleanup` before the process
     /// exits, or QEMU's own atexit handlers (audio_cleanup, exit notifiers)
-    /// run on this thread concurrently with the main loop — seen on macOS as
+    /// run on this thread concurrently with the main loop. On macOS that shows as
     /// `assertion failed: mutex->initialized` in qemu_mutex_lock_impl.
     fn join_qemu(&mut self) -> i32 {
         self.closing = true;
@@ -1263,7 +1263,7 @@ impl App {
     /// host's (on Windows no program can have it, on Linux the desktop
     /// takes it), so the guest gets it from one nobody else uses. The hand
     /// is holding Ctrl and Alt, so the guest has them already: this lets
-    /// Shift go and presses Delete, and D's release lets Delete go — a press
+    /// Shift go and presses Delete, and D's release lets Delete go. That is a press
     /// as long as the hand's, never a zero-length one.
     fn ctrl_alt_del(&mut self, down: bool) {
         let Some(vm) = self.vm() else { return };
@@ -1331,8 +1331,8 @@ impl App {
         vm.input_flush();
     }
 
-    /// The pad's current state to whichever pad device the machine has —
-    /// the `usb-gamepad` (M13 path A) or the `gameport` (path B). One
+    /// Send the pad's current state to whichever pad device the machine
+    /// has, the `usb-gamepad` (M13 path A) or the `gameport` (path B). One
     /// call for both: `qemu_embed_pad_state` offers the state to each and
     /// the absent one ignores it, so the player never has to know which
     /// device the bundle chose, only that there is one.
@@ -1373,8 +1373,8 @@ impl App {
     }
 
     /// Alt+F4 and the like: ask before pulling the plug. Nothing reaches
-    /// the guest while the question is up -- the grab let go, the keys the
-    /// guest holds (the Alt of Alt+F4) lifted -- and the pointer is the
+    /// the guest while the question is up (the grab let go, the keys the
+    /// guest holds, such as the Alt of Alt+F4, lifted) and the pointer is the
     /// host's, to click with.
     fn ask_to_close(&mut self) {
         self.set_grab(false);
@@ -1428,8 +1428,8 @@ impl App {
         }
     }
 
-    /// Ctrl+Alt+K. Off drops the capture — the inhibitor destroyed, the
-    /// grab or the hook let go — and on makes a new one, so each state is
+    /// Ctrl+Alt+K. Off drops the capture (the inhibitor destroyed, the
+    /// grab or the hook let go) and on makes a new one, so each state is
     /// what the other was built from.
     fn toggle_keyboard_capture(&mut self) {
         self.kbd_off = !self.kbd_off;
@@ -1445,12 +1445,16 @@ impl App {
 
     fn apply_title(&self) {
         let Some(gpu) = self.gpu.as_ref() else { return };
-        let mut title = String::from("2ksbox player");
+        let mut notes = Vec::new();
         if self.grabbed {
-            title.push_str(" — mouse grabbed (Ctrl+Alt+G releases)");
+            notes.push("Ctrl+Alt+G releases the mouse");
         }
         if self.kbd_off {
-            title.push_str(" — host shortcuts stay the host's (Ctrl+Alt+K)");
+            notes.push("Ctrl+Alt+K sends shortcuts to the guest");
+        }
+        let mut title = String::from("2ksbox player");
+        if !notes.is_empty() {
+            title.push_str(&format!(" ({})", notes.join(", ")));
         }
         gpu.window.set_title(&title);
     }
@@ -1701,7 +1705,7 @@ impl ApplicationHandler for App {
         // windowing connection is still open: run_app() consumes the event
         // loop, so by the time App drops the wl_display / X Display is gone
         // and the inhibitor's destroy (or XUngrabKeyboard) touches freed
-        // memory -- a SIGSEGV after every power-off.
+        // memory: a SIGSEGV after every power-off.
         self.kbd = None;
     }
 
@@ -1928,7 +1932,7 @@ impl ApplicationHandler for App {
                 let sprite = !self.host_cursor_possible();
                 let Some(gpu) = self.gpu.as_mut() else { return };
                 // The sweep never presents: it reads the chain's output
-                // texture back instead. It must not acquire either — with
+                // texture back instead. It must not acquire either. With
                 // FIFO the second acquire blocks until the first image has
                 // been scanned out, which an occluded window (a test run
                 // behind a terminal, the usual case) never does.
@@ -1984,7 +1988,7 @@ impl ApplicationHandler for App {
                     }
                 }
                 if let Some(t) = published {
-                    // publish→present (measured after the present call) — doc 03 latency gate
+                    // publish→present (measured after the present call), doc 03's latency gate
                     self.latency.push(t.elapsed().as_secs_f32() * 1000.0);
                     if self.latency.len() >= 240 {
                         if std::env::var("PLAYER_LATENCY").is_ok() {
@@ -2087,7 +2091,7 @@ impl ApplicationHandler for App {
                 }
             }
             // PLAYER_QMP_EXEC: one request object or an array of them, run once
-            // the guest has drawn — a shell-level way to try commands
+            // the guest has drawn. A shell-level way to try commands
             // (eject, blockdev-change-medium, snapshot-save, ...).
             if !*qmp_exec_done && *last_seq > 0 {
                 *qmp_exec_done = true;
@@ -2115,7 +2119,7 @@ impl ApplicationHandler for App {
             pads.poll(display.published_seq());
         }
         // ...and then what the machine says that means. Split from the
-        // poll above because the pad is read whatever the setting — a
+        // poll above because the pad is read whatever the setting. A
         // machine with the pad off still logs under PLAYER_PAD_LOG, which
         // is how someone works out whether the controller is seen at all
         // before deciding to turn it on.
@@ -2128,13 +2132,13 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _el: &ActiveEventLoop) {
-        // Headless verification (PLAYER_DUMP_OUT, PLAYER_SHOT_EVERY): an
-        // occluded window may never get RedrawRequested — and a scripted
-        // run's window is behind a terminal, or on another workspace, as a
-        // rule — but the shader chain renders into our own texture, so
-        // drive the frame from here in those modes. (The first PLAYER=1
-        // run of tools/win98-game-test.sh took no shot at all with the
-        // periodic shot on the redraw path, 2026-09-10.)
+        // Headless verification (PLAYER_DUMP_OUT, PLAYER_SHOT_EVERY). An
+        // occluded window may never get RedrawRequested, and a scripted
+        // run's window is behind a terminal or on another workspace as a
+        // rule. The shader chain renders into our own texture, so drive
+        // the frame from here in those modes. With the periodic shot on
+        // the redraw path, a PLAYER=1 run of tools/win98-game-test.sh took
+        // no shot at all.
         let every = shot_every();
         if std::env::var("PLAYER_DUMP_OUT").is_ok() || every.is_some() {
             if let Some(Source::Qemu {
@@ -2238,7 +2242,7 @@ fn main() {
     // Windows rounds every wait to its timer tick, 15.6 ms unless a process
     // asks for less, and QEMU's main loop waits for its timers: a guest's
     // 1 kHz timer (a MIDI sequencer's, a game's) fired a tick late and its
-    // clock ran at 6 % (2026-09-17). Patch 65 keeps those ticks; this keeps
+    // clock ran at 6 %. Patch 65 keeps those ticks; this keeps
     // them from arriving 15 at a time. For the life of the process, which
     // is what the request is scoped to since Windows 10 2004.
     #[cfg(windows)]
@@ -2319,7 +2323,7 @@ fn main() {
     event_loop.run_app(&mut app).expect("run");
     let status = app.join_qemu();
     // Return, don't exit(): QEMU's atexit handlers run here, after its
-    // thread has already completed qemu_cleanup — the same order as
+    // thread has already completed qemu_cleanup, the same order as
     // qemu-system's own main().
     if status != 0 {
         std::process::exit(status);

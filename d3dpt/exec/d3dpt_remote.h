@@ -1,5 +1,5 @@
 /*
- * d3dpt_remote.h — the wire between the out-of-process Direct3D executor's
+ * d3dpt_remote.h: the wire between the out-of-process Direct3D executor's
  * two halves (docs/tracks/m15-wine-executor.md, ADR-018): QEMU's side,
  * libd3dpt_exec_remote (d3dpt_exec_remote.c, POSIX, the d3dpt_exec.h API
  * over a child process), and the child, d3dpt-exec-host.exe
@@ -8,8 +8,8 @@
  *
  * Requests go down the child's stdin, replies come up its stdout, both as
  * fixed 32-byte records (little-endian both sides; x86_64 and arm64 hosts
- * agree on this layout). Everything with a size — the command window,
- * VRAM, the frame the executor presents — lives in ONE shared file: QEMU
+ * agree on this layout). Everything with a size (the command window,
+ * VRAM, the frame the executor presents) lives in ONE shared file. QEMU
  * maps regions of it as guest RAM (memory_region_init_ram_from_fd), the
  * child maps the same regions with MapViewOfFile, and a request names a
  * region and an offset rather than carrying bytes. Every region starts at

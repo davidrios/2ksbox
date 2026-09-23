@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Prepare the QEMU submodule tree: overlay qemu-3dfx device models, apply the
-# version-matched patch, and stamp the qemu-3dfx commit id (guest wrappers
-# verify it — build wrappers from the SAME third_party/qemu-3dfx commit).
+# version-matched patch, apply our queue, and stamp the qemu-3dfx commit id.
+# Guest wrappers verify that id, so build them from the SAME
+# third_party/qemu-3dfx commit.
 #
 # Idempotent. Reset with:  git -C qemu checkout . && git -C qemu clean -fd hw/3dfx hw/mesa
 set -euo pipefail
@@ -42,16 +43,17 @@ restore_mtimes() {
 }
 
 echo "==> overlaying hw/3dfx and hw/mesa"
-# -c: checksum compare so unchanged files (esp. meson.build) are not rewritten —
-# a touched meson.build makes ninja regenerate and reset configure options.
+# -c: checksum compare so unchanged files (esp. meson.build) are not
+# rewritten. A touched meson.build makes ninja regenerate and reset
+# configure options.
 rsync -rc "$FX/qemu-0/hw/3dfx" "$FX/qemu-1/hw/mesa" "$QEMU/hw/"
 
 echo "==> overlaying embed/ (libqemu_embed)"
 rsync -rc --delete "$ROOT/embed/" "$QEMU/embed/"
 
 # glidept/glide_host.h is the one header the Glide device (hw/3dfx, patch
-# 33), the embed provider and the host-side wrapper share -- like
-# d3dpt_proto.h for Direct3D. Both consumers get a copy beside them.
+# 33), the embed provider and the host-side wrapper share, like
+# d3dpt_proto.h for Direct3D. Both QEMU consumers get a copy beside them.
 rsync -c "$ROOT/glidept/glide_host.h" "$QEMU/embed/"
 rsync -c "$ROOT/glidept/glide_host.h" "$QEMU/hw/3dfx/"
 
@@ -83,18 +85,17 @@ rsync -c "$ROOT/gamepad/qemu/usb-gamepad.h" "$QEMU/hw/usb/"
 rsync -c "$ROOT/gamepad/qemu/gameport.h" "$QEMU/hw/input/"
 rsync -c "$ROOT/gamepad/qemu/usb-gamepad.h" "$ROOT/gamepad/qemu/gameport.h" "$QEMU/embed/"
 
-# git in the QEMU tree, retried while the index is locked: on Windows a
-# scanner can hold the index.lock of the git that has just exited open for a
-# moment, and the next git dies with "Unable to create index.lock: File
-# exists" (2026-09-17, the PC -- three builds in a row). Every other failure
-# is reported and fatal, as before.
+# git in the QEMU tree, retried while the index is locked. On Windows a
+# scanner can hold the index.lock of the git that has just exited open for
+# a moment, and the next git dies with "Unable to create index.lock: File
+# exists". Every other failure is reported and fatal.
 qgit() {
   local err rc
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     # stderr into `err`, stdout through (callers read `ls-files`). The
     # assignment is its own command, so it must not be the last one in a
     # bare list or `set -e` ends the script here, before the retry below
-    # and with git's message captured rather than printed (2026-09-17).
+    # and with git's message captured rather than printed.
     { err=$(git -C "$QEMU" "$@" 2>&1 >&3) && rc=0 || rc=$?; } 3>&1
     if [ "$rc" -eq 0 ]; then return 0; fi
     case "$err" in
@@ -108,17 +109,15 @@ qgit() {
 
 # Deterministic: restore every TRACKED file any patch touches to pristine
 # v9.2.4, then apply the 3dfx patch and our queue fresh. (Overlay files were
-# already refreshed by rsync above.) Partial states — e.g. a manual
-# `git checkout meson.build` — previously slipped past an "already applied"
-# heuristic and silently dropped hunks.
+# already refreshed by rsync above.) An "already applied" heuristic let
+# partial states, such as a manual `git checkout meson.build`, slip past
+# and silently drop hunks.
 patched_files() {  # print paths from '+++ ./x' (diff -Nru) and '+++ b/x' (git) headers
   sed -n 's|^+++ \./||p; s|^+++ b/||p' "$@" | sort -u
 }
 echo "==> restoring tracked files touched by patches"
-# One git per run, not one per file: on Windows a scanner can hold the
-# index.lock of the git that just finished open for a moment, and the next
-# one dies with "Unable to create index.lock: File exists" (2026-09-17, the
-# PC). `ls-files` prints the tracked subset, which is what may be restored.
+# One git per run, not one per file, for the index.lock trap above.
+# `ls-files` prints the tracked subset, which is what may be restored.
 restore=()
 while IFS= read -r f; do restore+=("$f"); done < <(
   patched_files "$PATCH" "$ROOT"/patches/qemu/*.patch)
@@ -131,8 +130,8 @@ if [ ${#restore[@]} -gt 0 ]; then
   fi
 fi
 # Files a patch CREATES ('--- /dev/null' header) must not pre-exist for
-# git apply. Untracked overlay files (hw/3dfx, hw/mesa, embed) are also
-# untracked but are refreshed by rsync above — never touch those here.
+# git apply. The overlay files (hw/3dfx, hw/mesa, embed) are untracked too
+# but rsync refreshed them above, so never touch those here.
 created_files() {
   awk '/^--- \/dev\/null/ { getline; sub(/^\+\+\+ (b\/|\.\/)/, ""); print }' "$@" | sort -u
 }
@@ -153,22 +152,22 @@ for p in "$ROOT"/patches/qemu/*.patch; do
   fi
 done
 
-# SeaBIOS reports 06/23/99 as the legacy BIOS date (F000:FFF5 — the eight
-# bytes ending three from the end of every one of its images), and that one
-# string decides how Windows 98 installs. Setup's DetectACPIBIOS (sysdetmg.dll)
+# SeaBIOS reports 06/23/99 as the legacy BIOS date (F000:FFF5, the eight
+# bytes ending three from the end of each of its images), and that string
+# decides how Windows 98 installs. Setup's DetectACPIBIOS (sysdetmg.dll)
 # compares it against ACPICheckDate, which machine.inf on the Win98 SE CD
-# sets to "12/01/99": a BIOS at least that new is trusted to be ACPI, an
-# older one is only believed if it matches BIOSINFO.INF's [GoodACPIBios] --
+# sets to "12/01/99". A BIOS at least that new is trusted to be ACPI. An
+# older one is believed only if it matches BIOSINFO.INF's [GoodACPIBios],
 # four 1998 machines named by their ACPI OEM ids, none of them us. So a
 # plain SETUP installs in PnP-BIOS mode, where the PCI bus is never
 # enumerated: "Plug and Play BIOS" with a yellow ! in Device Manager, and
-# no device added to the bus afterwards (the USB tablet, AC'97, the NIC) is
-# ever detected. The install has to be `SETUP /p j` -- which is not
-# something a launcher can type for a user -- or the date has to be past
-# the cutoff, which is this. 12/31/99 rather than a 2000s date because the
-# comparison is on a two-digit year. Nothing else reads this field: the
-# per-machine quirks in BIOSINFO.INF that key on `date=` all want an exact
-# 1994-1996 day, and the guests' own clocks come from the RTC.
+# no device added to the bus later (the USB tablet, AC'97, the NIC) is
+# ever detected. The fix is either `SETUP /p j`, which a launcher cannot
+# type for the user, or a date past the cutoff, which is this. 12/31/99
+# rather than a 2000s date because the comparison is on a two-digit year.
+# Nothing else reads this field. The BIOSINFO.INF quirks that key on
+# `date=` all want an exact 1994-1996 day, and the guests' clocks come
+# from the RTC.
 echo "==> stamping the legacy BIOS date (Win98 installs ACPI only past 12/01/99)"
 BIOS_DATE=12/31/99
 # one checkout for all three: a pristine blob each, and one git (see qgit)

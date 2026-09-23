@@ -1,5 +1,5 @@
 /*
- * d3dpt_exec_int.h — what d3dpt_exec.cpp (the d3d9 records, doc 14) and
+ * d3dpt_exec_int.h: what d3dpt_exec.cpp (the d3d9 records, doc 14) and
  * d3dpt_exec_ddi.cpp (the display driver's records, doc 15 M7c) share:
  * the executor state, the batch parser state and the record accessors.
  * Internal to libd3dpt_exec.
@@ -36,7 +36,7 @@ struct Exec {
     /* which implementation is behind d3d: DXVK (false) everywhere it runs,
      * or Windows' own Direct3D 9 (true), the fallback for a host below
      * DXVK's Vulkan 1.3 floor. Everything the system implementation
-     * refuses and DXVK takes hangs off this flag — d3dpt_exec.cpp's
+     * refuses and DXVK takes hangs off this flag. d3dpt_exec.cpp's
      * header has the list. */
     bool native = false;
     HWND hwnd = nullptr;            /* native: the window D3D9 will not make a device without */
@@ -61,8 +61,8 @@ struct Exec {
      * (the DirectDraw/Direct3D 7 DDI has no such call), and the guest
      * DLLs pass on whatever the game does; DXVK draws outside a scene
      * happily, Windows' own Direct3D 9 answers D3DERR_INVALIDCALL and
-     * draws nothing — which is what "the host drew 60-170 frames/s and
-     * every readback was zero" was, on 2026-09-17. So the executor keeps
+     * draws nothing. That was "the host drew 60-170 frames/s and every
+     * readback was zero". So the executor keeps
      * the scene itself: opened before a draw, closed before every
      * transfer that D3D9 will not do inside one (StretchRect,
      * GetRenderTargetData, Present) and at the end of a batch. Both
@@ -128,7 +128,7 @@ template<class T> static const uint8_t *tail(const T *t) { return (const uint8_t
 bool exec_ddi_op(Batch &b, const d3dpt_cmd *c);
 /* a lost device came back (native only): the display driver's objects in
  * the default pool are gone with it, so drop them and mark their VRAM
- * dirty — every one of them is a copy of guest VRAM and is made again on
+ * dirty. Every one of them is a copy of guest VRAM and is made again on
  * its next use. The surfaces stay registered: the guest driver sends a
  * VRAM_SURFACE once and never again. */
 void exec_ddi_device_reset(Exec &x);

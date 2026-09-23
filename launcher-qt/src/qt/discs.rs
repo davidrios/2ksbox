@@ -1,18 +1,14 @@
 //! The disc shelf (doc 07), as a QML model over
 //! `launcher_core::shelf::Shelf`.
 //!
-//! One object, two modes, both the shelf's: opened on its own it manages
-//! the shared collection (add, label, remove); opened from a machine's
-//! row it also carries that machine's two disc decisions — which disc is
-//! in the drive at **boot** (a bundle edit) and, while it runs, which to
-//! **insert** now (a monitor command). None of that is here.
+//! One object, two modes, both decided by the core model: opened on its
+//! own it manages the shared collection (add, label, remove), and opened
+//! from a machine's row it also carries that machine's boot disc and,
+//! while it runs, live insert (`launcher_core::shelf`).
 //!
-//! What is here: the rows as a `QAbstractListModel`, and the one place
-//! Qt genuinely does better than immediate mode — a `TextField` has an
-//! `editingFinished`, so a label commit is one `set_label` plus one
-//! `flush`, where the egui build has to set a dirty flag while drawing
-//! and write at the end of the frame or it would save the file on every
-//! keystroke.
+//! This file holds the rows as a `QAbstractListModel`. A `TextField` has
+//! an `editingFinished`, so a label commit is one `set_label` plus one
+//! `flush` rather than a write on every keystroke.
 
 #[cxx_qt::bridge]
 pub mod ffi {
@@ -48,7 +44,7 @@ pub mod ffi {
         #[qproperty(bool, has_boot)]
         #[qproperty(QString, status)]
         #[qproperty(QString, error)]
-        /// The newest guest-tools ISO this checkout built, or "" — doc
+        /// The newest guest-tools ISO this checkout built, or "": doc
         /// 07's one-click attach, with nothing to browse for.
         #[qproperty(QString, guest_tools_iso)]
         /// The file dialog's name filter for a disc image, from the
@@ -101,20 +97,20 @@ pub mod ffi {
         #[qinvokable]
         fn eject_live(self: Pin<&mut DiscModel>);
 
-        /// Whether the shelf was written since this was last asked — the
-        /// cue to republish it to every running machine's drive so the
-        /// in-guest CDSHELF program sees a disc the moment it's added.
+        /// Whether the shelf was written since this was last asked. If
+        /// so, QML republishes it to every running machine's drive, so
+        /// the in-guest CDSHELF program sees a disc the moment it's added.
         #[qinvokable]
         fn take_saved(self: Pin<&mut DiscModel>) -> bool;
 
         /// Republish the shelf for one running machine's bundle
         /// directory. `Main.qml` calls this for each running row after
-        /// `take_saved`, which is what the egui build does too.
+        /// `take_saved`.
         #[qinvokable]
         fn publish_to(self: &DiscModel, bundle_dir: &QString);
 
         /// The bundle the window has open, so the caller can tell whether
-        /// *that* machine is the running one.
+        /// that machine is the running one.
         #[qinvokable]
         fn bundle_dir(self: &DiscModel) -> QString;
     }
@@ -180,9 +176,8 @@ impl ffi::DiscModel {
             ROLE_LABEL => QVariant::from(&qs(&disc.label)),
             // The file name and its directory as separate roles, because
             // a full path in one column makes every row read
-            // `/home/…/…/…` once it is elided. Same reasoning as the egui
-            // build's two-column split; QML elides the directory and
-            // shows the whole path as a tooltip.
+            // `/home/…/…/…` once it is elided. QML elides the directory
+            // and shows the whole path as a tooltip.
             ROLE_NAME => QVariant::from(&qs(disc
                 .path
                 .file_name()
@@ -319,9 +314,9 @@ impl ffi::DiscModel {
         unsafe { self.as_mut().end_reset_model() };
     }
 
-    /// The shelf, onto the properties — every one through its own
-    /// setter, because a direct write to one of those fields changes
-    /// what QML reads without telling it (see the header of `main.rs`).
+    /// The shelf, onto the properties, each through its own setter,
+    /// because a direct write to one of those fields changes what QML
+    /// reads without telling it (see the header of `main.rs`).
     fn publish(mut self: Pin<&mut Self>) {
         let (count, open, title, for_machine, boot_label, has_boot, status, error, iso, filter);
         {

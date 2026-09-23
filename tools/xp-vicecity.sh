@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# xp-vicecity.sh — GTA Vice City (Rockstar North, 2003; DirectX 8 through
+# GTA Vice City (Rockstar North, 2003; DirectX 8 through
 # RenderWare: XP's own d3d8.dll on the driver's DX8 DDI, no wrapper DLL) on
 # the d3dpt-vga driver, headless. The workload behind protocol v9's
 # video-memory vertex / index buffers (doc 15 "Vertex and index buffers in
@@ -67,8 +67,8 @@ if [ "$MODE" != attach ]; then
     -qmp "unix:$SOCK,server,nowait" -serial none -monitor none > "$OUT/qemu.log" 2>&1 < /dev/null &
   disown
   # the desktop: its mode switch comes at the logon screen, the desktop itself
-  # some seconds (KVM) or a couple of minutes (TCG) later — keys typed before
-  # it are lost (the first TCG run sat at the screen saver)
+  # some seconds (KVM) or a couple of minutes (TCG) later. Keys typed before
+  # it are lost (a TCG run can sit at the screen saver)
   gw_wait_log "$OUT/qemu.log" "linear mode on (800x600x" "${DESKTOP_WAIT_MAX:-300}" \
     || { echo "the desktop never came up on our driver:"; tail -5 "$OUT/qemu.log"; exit 1; }
   sleep "${DESKTOP_WAIT:-$([ -n "${NO_KVM:-}" ] && echo 120 || echo 15)}"; T "desktop"

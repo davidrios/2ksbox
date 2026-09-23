@@ -4,7 +4,7 @@
 The `midi-guest` battery proves a DOS program can drive an OPL3 and an
 MPU-401 that a test wrote by hand. This proves the thing that matters:
 that a **real game of the era**, through its own sound system, finds them
-and plays its score on them. Duke Nukem 3D is a good one to ask — the
+and plays its score on them. Duke Nukem 3D is a good one to ask. The
 Apogee Sound System it uses supports all three of this milestone's paths
 (the Sound Blaster's FM, General MIDI on an MPU-401, and the Gravis's own
 wavetable), and its title screen starts the music with nothing to click.
@@ -19,9 +19,9 @@ image, and the game never needs the disc at run time.
     tools/duke-guest-test.py --run "DIR D:\\"      # a DOS command instead of the game
     tools/duke-guest-test.py --setup --keys …   # drive SETUP.EXE by hand
 
-**What is proven, and what is not** (2026-09-09):
+**What is proven, and what is not**:
 
-* `--music gm` runs from nothing — it extracts the game, builds the
+* `--music gm` runs from nothing. It extracts the game, builds the
   disk, drives SETUP.EXE once for a config, and the game plays: the
   device reports ~1000 bytes and 300-450 note-ons per 5 s across 5 to 8
   MIDI channels, and 70 s of the recording is audible.
@@ -29,7 +29,7 @@ image, and the game never needs the disc at run time.
   writes and 516 key-ons in 5 s), but **only when SETUP.EXE launches the
   game itself** after picking its *AdLib* entry. Started from a batch
   file with the same config patched in, the game answers "Couldn't find
-  selected sound card" — with `MusicDevice = 2`, with `MidiPort` at
+  selected sound card", with `MusicDevice = 2`, with `MidiPort` at
   0x388 as its own SETUP writes it, and with `BLASTER` exported. That is
   the game's configuration and not the device (the `midi-guest` battery
   and the `music` check both drive the same OPL3 from a standing start),
@@ -60,7 +60,7 @@ DISK_MB = 96                    # the game is ~46 MB
 # The music device numbers in the game's own DUKE3D.CFG, learned by
 # driving its SETUP.EXE and reading the file back:
 #
-#   MusicDevice = 4  General Midi, on `MidiPort` — our mpu401 at 0x330.
+#   MusicDevice = 4  General Midi, on `MidiPort`: our mpu401 at 0x330.
 #   MusicDevice = 2  AdLib: the OPL3 at 0x388.
 #   MusicDevice = 1  "Sound Blaster" music, which this game refuses to
 #                    initialize here ("Couldn't find selected sound
@@ -72,13 +72,13 @@ DISK_MB = 96                    # the game is ~46 MB
 # `MidiPort` goes with the device and is not only the MPU's: the AdLib
 # entry probes the *FM* chip at whatever this says, so a config that
 # names 0x330 while asking for AdLib finds nothing and the game says
-# "Couldn't find selected sound card" — which is what patching only the
-# device number produced (2026-09-09).
+# "Couldn't find selected sound card", which is what patching only the
+# device number produces.
 MUSIC_DEVICE = {"gm": (4, "0x330"), "fm": (2, "0x388")}
 
 # **The config is the game's own.** A hand-written DUKE3D.CFG with the
-# right `MusicDevice` in it is not enough — the game reads its own
-# sections and falls back to no sound card at all — and 3D Realms' file
+# right `MusicDevice` in it is not enough (the game reads its own
+# sections and falls back to no sound card at all), and 3D Realms' file
 # is not something to check into this repository. So SETUP.EXE writes
 # one, once per staged disk, driven blind through the menus below, and
 # every later run patches one line of it. These are the steps: Sound
@@ -141,7 +141,7 @@ class Iso:
         return bytes(out[:length])
 
     def listdir(self, lba, length):
-        """[(name, size, lba, is_dir)] — one directory's records."""
+        """[(name, size, lba, is_dir)]: one directory's records."""
         data = self.read(lba, length)
         out, i = [], 0
         while i < len(data):
@@ -200,7 +200,7 @@ def sh(*cmd, **kw):
 def make_disk(path, mb, files, extra):
     """A partitioned FAT hard disk with the game on it. mtools formats
     inside the partition but writes no table for a disk it did not make,
-    so the table is written here — `tools/xp-cdimage-test.sh`'s recipe,
+    so the table is written here, `tools/xp-cdimage-test.sh`'s recipe,
     with FAT16 and a DOS partition type because the guest is FreeDOS."""
     if os.path.exists(path):
         os.unlink(path)
@@ -253,7 +253,7 @@ def read_back(path, name, dest):
 # `tools/x87-guest-test.py` fetches. Nothing here redistributes them.
 #
 #   HIMEMX   DUKE3D.EXE is a DOS/4GW program, and DOS/4GW needs XMS.
-#   UDVD2    a CD-ROM driver, with SHSUCDX as the MSCDEX half — the game
+#   UDVD2    a CD-ROM driver, with SHSUCDX as the MSCDEX half. The game
 #            checks for its own CD on the way out, and a machine with no
 #            CD *letter* fails that check however good its drive is.
 REPO = "https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.3/"
@@ -299,7 +299,7 @@ def boot_floppy(run_line):
         # there is still no D:, which is exactly what the game's CD check
         # complains about.
         # BLASTER is how every DOS program of the era is told where the
-        # card is — doc 20 §6 — and the game's FM music needs it: its
+        # card is (doc 20 §6), and the game's FM music needs it: its
         # AdLib entry initialized only when SETUP.EXE launched the game
         # itself (SETUP puts BLASTER in the environment) and not from a
         # plain batch file, until this line existed. `P330` is the MIDI
@@ -426,9 +426,9 @@ def run(disk, floppy, disc, wav, seconds, music, shots, keys=()):
     log = open(os.path.join(OUT, "qemu.log"), "wb")
     p = subprocess.Popen([
         QEMU, "-machine", "pc", "-cpu", "pentium3", "-m", "64",
-        # doc 06's DOS machine: a real VGA/VESA BIOS of the period, and
-        # the one family with no adapter choice. Never `d3dpt-vga` —
-        # that adapter is driven by a *Windows* display driver of ours.
+        # doc 06's DOS machine: a real VGA/VESA BIOS of the period. Never
+        # `d3dpt-vga`, which is driven by a *Windows* display driver of
+        # ours.
         "-vga", "cirrus",
         "-L", os.path.join(ROOT, "qemu/pc-bios"), "-display", "none", "-net", "none",
         "-drive", "file=%s,if=floppy,index=0,format=raw" % floppy,

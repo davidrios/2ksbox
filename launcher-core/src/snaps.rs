@@ -1,28 +1,27 @@
-//! The per-machine snapshot window's model (doc 07 step 5b/5c): which
+//! The per-machine snapshot window's model (doc 07, "Snapshots"): which
 //! source the list comes from, the in-flight job, and every operation
 //! its buttons run.
 //!
-//! The rules, all of which are the reason this is one implementation:
+//! The rules, which are the reason this is one implementation:
 //!
-//! * a running machine is driven through its monitor (`control.rs`),
+//! * A running machine is driven through its monitor (`control.rs`),
 //!   because `qemu-img` writing to an image QEMU has open corrupts it,
-//!   and even listing wants an image lock QEMU already holds;
-//! * a stopped one goes through `qemu-img` (`snapshots.rs`);
-//! * starting or stopping under the window re-reads the list from the
-//!   other source;
-//! * live save/load/delete are *jobs*, not synchronous commands — saving
-//!   a 512 MB guest's RAM takes a visible moment — so the window polls
-//!   rather than the UI thread blocking on QEMU's main loop;
-//! * a load runs on a stopped VM and only resumes afterwards if the
-//!   guest was actually running: a machine the user had paused shouldn't
-//!   come back running because of a restore;
-//! * `reload` never clears `error` — a failed operation reports and then
-//!   re-reads, and a successful re-read must not wipe that away (it did,
-//!   once: a failed live restore looked like it had worked).
+//!   and even listing wants an image lock QEMU already holds.
+//! * A stopped one goes through `qemu-img` (`snapshots.rs`).
+//! * Starting or stopping under the window re-reads the list from the
+//!   other source.
+//! * Live save, load and delete are jobs, not synchronous commands
+//!   (saving a 512 MB guest's RAM takes a visible moment), so the window
+//!   polls rather than blocking the UI thread on QEMU's main loop.
+//! * A load runs on a stopped VM and resumes afterwards only if the
+//!   guest was running, so a machine the user had paused stays paused.
+//! * `reload` never clears `error`. A failed operation reports and then
+//!   re-reads, and a successful re-read must not wipe the report; when
+//!   it did, a failed live restore looked like it had worked.
 //!
-//! What the front end still owns is *when* `poll` is called — Qt runs a
-//! `Timer` that says the interval out loud and stops when there is no
-//! job — and how a destructive restore is confirmed.
+//! The front end still owns when `poll` is called (Qt runs a `Timer`
+//! that stops when there is no job) and how a destructive restore is
+//! confirmed.
 
 use crate::bundle::Machine;
 use crate::control::{self, Control};
@@ -39,8 +38,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(400);
 pub struct Snapshots {
     /// Whether the window is up.
     pub open: bool,
-    /// The bundle directory, so the caller can say whether *this*
-    /// machine is the running one.
+    /// The bundle directory, so the caller can say whether this machine
+    /// is the running one.
     bundle_dir: Option<PathBuf>,
     machine_name: String,
     disk: PathBuf,
@@ -71,7 +70,7 @@ impl Snapshots {
         self.refresh();
     }
 
-    /// The same, from a bundle path — for a front end that addresses its
+    /// The same, from a bundle path, for a front end that addresses its
     /// windows by path rather than by a `Machine` it already holds.
     pub fn open_for_path(&mut self, bundle_path: &Path, running: bool) {
         let dir = bundle_path.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -133,14 +132,14 @@ impl Snapshots {
     /// Connect to the running machine's monitor. A fresh connection per
     /// operation rather than one held across frames: jobs and block
     /// nodes are QEMU-global, not per-monitor, so nothing is lost, and
-    /// there is no half-open socket to nurse when a guest shuts down.
+    /// there is no half-open socket to handle when a guest shuts down.
     fn control(&self) -> Result<Control, String> {
         let dir = self.bundle_dir.as_deref().ok_or("no machine open")?;
         Control::connect(&control::socket_path(dir))
     }
 
-    /// Re-read the list from whichever source applies. Deliberately does
-    /// *not* touch `error` — see this module's header.
+    /// Re-read the list from whichever source applies. Never touches
+    /// `error`; this module's header says why.
     fn reload(&mut self) -> Result<(), String> {
         let result = if self.running {
             self.control().and_then(|mut c| c.disk_node(&self.disk)).map(|(_, snapshots)| snapshots)
@@ -159,8 +158,8 @@ impl Snapshots {
         }
     }
 
-    /// Re-read and make the result the window's current message — for
-    /// opening the window, or when the machine started or stopped.
+    /// Re-read and make the result the window's current message, for
+    /// opening the window or when the machine started or stopped.
     fn refresh(&mut self) {
         self.error = self.reload().err();
     }
@@ -253,7 +252,7 @@ impl Snapshots {
         self.poll_now();
     }
 
-    /// Poll now, ignoring the throttle — for a caller driving a job from
+    /// Poll now, ignoring the throttle, for a caller driving a job from
     /// a loop rather than from frames or a timer (`cli`'s `--snapshots`).
     pub fn poll_job_now(&mut self) {
         self.last_poll = None;

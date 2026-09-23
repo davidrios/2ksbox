@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# wined3d-sys-test.sh -- SETUP's "WineD3D as this machine's DirectDraw" and
-# the login helper behind it (doc 19 §43), in a real Win98 guest, headless.
+# SETUP's "WineD3D as this machine's DirectDraw" and the login helper
+# behind it (doc 19 §43), in a real Win98 guest, headless.
 #
 # What it proves, and why it takes three boots.
 #
 # On 9x the WineD3D copy of DDRAW.DLL next to a game reaches that game only if
 # it is the first program of the session to touch DirectDraw (doc 19 §42): the
 # machine keeps one module per name and DDHELP.EXE holds Windows' own once
-# anything has used it. So the check deliberately runs a DirectDraw program --
-# DDPROBE.EXE, from a folder with none of Wine's files in it -- *before* the
+# anything has used it. So the check deliberately runs a DirectDraw program
+# (DDPROBE.EXE, from a folder with none of Wine's files in it) *before* the
 # probe, which is the case a per-game folder loses.
 #
 #   boot 1  SETUP /I <n> installs the switcher, DDSYS.DLL and D3DPRE.EXE and
 #           adds the Run entry. Nothing is redirected yet: which way it should
 #           point is the host's business, and the helper decides that at every
 #           login.
-#   boot 2  no-exec=on -- a host with no Direct3D executor. The helper must
+#   boot 2  no-exec=on, a host with no Direct3D executor. The helper must
 #           point DirectDraw at WineD3D, and the probe must then find a HAL
 #           *after* DDPROBE has loaded DirectDraw from the system folder.
 #   boot 3  the same image with the executor available. The helper must take
@@ -29,7 +29,7 @@
 #     env: COMP= (the /I number, 7), RAW=, OUT=, KEEP=1 (leave the raw copy)
 #
 # It runs in the player (the GL pass-through is what WineD3D draws through, so
-# a bare qemu-system-i386 would have no 3D provider at all), on a raw copy --
+# a bare qemu-system-i386 would have no 3D provider at all), on a raw copy,
 # never the user's image. Local only (needs a Win98 image), not in
 # scripts/test.sh.
 #

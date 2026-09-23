@@ -19,8 +19,8 @@
 #                         a --target build never puts the player
 #   D3DPT_EXEC_LIB        QEMU's own search is relative to the working directory
 #   D3DPT_DXVK_LIB        the executor loads DXVK only by the package's name for
-#                         it, dxvk_d3d9.dll -- never plain d3d9.dll, which is
-#                         Windows' own -- so the build is copied to that name
+#                         it, dxvk_d3d9.dll (never plain d3d9.dll, which is
+#                         Windows' own), so the build is copied to that name
 #
 # The launcher is a windowed program and writes nothing to this terminal:
 # its log is %APPDATA%\2ksbox\data\launcher.log, and a machine's is

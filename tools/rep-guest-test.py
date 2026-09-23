@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """REP MOVS / STOS under TCG with the fast path on and off (patch 17, M9
 track): a DOS program runs a battery of `rep movs{b,w,d}` / `rep stos{b,w,d}`
-cases — 16- and 32-bit address size, DF both ways, counts around the fast
+cases (16- and 32-bit address size, DF both ways, counts around the fast
 path's threshold, runs crossing one and two pages, elements straddling a page
-boundary, every overlap of source and destination (pattern fills included),
-fill values with equal and distinct bytes — over a page-aligned 16 KiB region,
+boundary, every overlap of source and destination including pattern fills,
+fill values with equal and distinct bytes) over a page-aligned 16 KiB region,
 and prints a hash of the region plus the final ESI/EDI/ECX after each case on
 COM1. Boots it on the FreeDOS test floppy (fetched by tools/x87-guest-test.py
 on first use) under `-cpu pentium3,rep-fast=on` and `=off`, requires the two

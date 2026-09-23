@@ -11,329 +11,8 @@
 # tools/. Outputs land in build/test/. A check that cannot run here (no
 # x86 host, no display, no image) is reported as SKIP, not as a failure.
 #
-# Host stage
-#   x87-fast       tools/x87-fast-test.c: patch 05's fast path vs the real x87
-#   libdisc        discx selftest (doc 17 §6.1): synthetic cue/bin, CCD and ISO
-#                  images, the CD model's reads, EDC/ECC, Q synthesis and the
-#                  MMC responders checked through libdisc's C API
-#   guest-dirdisc  the same tree served as a *folder* (isodir:<dir>): XP copies it
-#                  through cdrom.sys and every file matches the directory itself
-#   dirdisc        a host directory served as a disc (isodir, M5g): discx generates
-#                  the ISO 9660 + Joliet volume over a fixture tree, exports it and
-#                  xorriso (or bsdtar) reads the folder back out identical, and
-#                  bsdtar with Joliet off reads the 8.3 tree a DOS driver sees;
-#                  then
-#                  qemu-img reads the same bytes through the block layer and
-#                  SeaBIOS probing the drive proves the ATAPI path finds the disc
-#                  model (a plain .iso on the raw driver is the control)
-#   dirshelf       a shared folder as a disc from the launcher's side: on the shelf
-#                  under its own name, in the flat shelf file and on the boot
-#                  drive as `isodir:`, commas in the path doubled, and our QEMU
-#                  opening both folders
-#   qt-wizard      what the Qt wizard's fields *show* on each family, beside what
-#                  the shared form says: a spin box bounds the value it is
-#                  handed against the range it has at that moment, and a model
-#                  that republishes a form nobody caught up puts a stale name
-#                  back over a typed one, and an optimization box clicked by
-#                  hand stopped following Turn all on / off, and a combo box
-#                  bound to a property whose name QML never resolved came up
-#                  empty with no warning anywhere (the Direct3D row) — all
-#                  disagreements between the control and the model that
-#                  nothing which asks the model would ever notice; then where
-#                  the form *opens*: at the top for a new machine and for a
-#                  different one than last time, where it was left for the
-#                  same one again (only if a launcher-qt has been built)
-#   qt-close       the title bar's close button on a Qt dialog: the close event
-#                  delivered the way the window system delivers it must reach
-#                  the wizard window exactly once and leave no modal window
-#                  registered — a second one is `close()` re-entered from the
-#                  window's own hide, which on macOS left the main window locked
-#                  behind a dialog that was gone (only if a launcher-qt has
-#                  been built)
-#   qt-esc         Esc reaches the shader editor that New profile… opens over the
-#                  profile list: the editor must have the keyboard and be the
-#                  only window whose Esc matches — Quick Controls matches every
-#                  open window's at once, and two is an ambiguous shortcut Qt
-#                  fires in neither (only if a launcher-qt has been built)
-#   qt-snapshots   the Qt snapshots window's first layout, on a stopped machine
-#                  with a real qcow2: the list box must take all the spare
-#                  height, i.e. the "New snapshot" row ends at the bottom of
-#                  the column — an empty status row used to take half of it
-#                  (only if a launcher-qt and qemu-img have been built)
-#   qt-profile     the Qt shader-profile windows, driven: a new profile saved from
-#                  the editor has to appear in the list behind it, and the next
-#                  New profile… has to come up with an *empty* preset field —
-#                  both are things only a probe that asks the controls can see,
-#                  because the profile is on disk and the model is empty in the
-#                  runs that fail (only if a launcher-qt has been built)
-#   qt-shelf       the Qt disc shelf's "Add disc" field, driven through the half a
-#                  real file dialog cannot be: a disc *picked* goes on the shelf
-#                  by itself and leaves the field empty, rather than waiting for
-#                  a second click on "Add to shelf" — the model is right either
-#                  way, so only a probe that asks the window can tell them apart
-#                  (only if a launcher-qt has been built)
-#   qt-firstrun    the Qt first-run shader offer, driven: Qt's own MessageDialog
-#                  is really up on a launcher with no preset collection (it is
-#                  shown on a property that has to be published before the first
-#                  frame), application-modal, with the platform's Yes/No and the
-#                  shared model's words in it; No answers the offer and the next
-#                  start comes up with nothing over the grid; and Yes leads to a
-#                  download that is *not* in a dialog and then to a Retry/Cancel
-#                  result dialog — the sequence that broke when one dialog
-#                  followed the model, since accept()/close() both emit
-#                  rejected() (only if a launcher-qt has been built)
-#   qt-clone       the Qt "Clone…" window, driven: it comes up offering
-#                  "<name> (copy)", a name typed over that reaches the model,
-#                  Clone copies the machine on its thread, and the window
-#                  goes away and the grid rescans to show the new machine,
-#                  whose bundle has that name and its own copy of the disk
-#                  (only if a launcher-qt has been built)
-#   clone          "Clone…" without a toolkit (doc 07): a wizard-made machine
-#                  with data and a snapshot on its disk is cloned under the
-#                  offered name, boots a disk of its own that is a byte copy,
-#                  keeps the snapshot, and from then on writes nothing the
-#                  original sees; the offered name moves on to "(copy 2)", a
-#                  taken name and an empty one are refused; a disk outside
-#                  the library whose backing file is named relative to it is
-#                  copied into the clone and still reads through to the
-#                  backing file; and a machine with a QEMU on its monitor
-#                  socket is refused and leaves nothing behind
-#   shader-defaults the first-run shader offer without a toolkit: a launcher with
-#                  no collection asks and one with a collection does not, "Not
-#                  now" is remembered so the question is asked exactly once, and
-#                  a "yes" writes the three starter profiles — each naming a
-#                  preset librashader really parses, by absolute path, with no
-#                  parameter overrides — and writes them only once
-#   shelforder     the disc shelf is one list in one order: discs added in the
-#                  wrong order come back by label (case-insensitively, and disc
-#                  10 after disc 2), a later addition lands where its name
-#                  belongs, and the flat file the in-guest CDSHELF program lists
-#                  by slot number carries that same order
-#   cdimage        the cdimage block driver (patch 50) through QEMU's block layer:
-#                  qemu-img probes the cue and the ccd to "cdimage" with the
-#                  lead-out × 2048 as the size, the data track dd'd out equals the
-#                  ISO, a plain .iso still probes to raw
-#   icons          scripts/gen-icons.sh --check: every checked-in size still
-#                  matches packaging/icon/2ksbox.png, the one master
-#   package        scripts/package-linux.sh (or package-macos.sh on a Mac): the
-#                  install layout staged from this build, and the staged launcher
-#                  asked with a scrubbed environment whether
-#                  player/qemu-img/firmware/guest-tools all resolve inside the
-#                  package (doc 07's install layout); the .app is additionally
-#                  run and every image its loader touches must be inside it
-#   optimizations  the wizard's fast-path switches (patches/qemu/README.md) from a
-#                  checkbox to a real QEMU: a default machine's line unchanged,
-#                  each switch on the option QEMU looks it up on, our QEMU
-#                  accepting the line the launcher writes
-#   mode-sweep     the player's display path without a guest (doc 03, M2): every
-#                  mode through mode analysis, the geometry stage and a real CRT
-#                  preset — and that the device it opened kept
-#                  ADDRESS_MODE_CLAMP_TO_BORDER, without which librashader
-#                  samples clamp-to-edge and curved presets smear
-#   pointer        the wizard's pointer switch (doc 03's grab model): a new
-#                  Windows machine gets the USB tablet and a new DOS machine
-#                  does not, the checkbox adds and removes the device and its
-#                  controller, and our QEMU accepts both machines
-#   voodoo2        the wizard's Voodoo 2 switch (doc 21): a new machine on
-#                  any family has no card, the checkbox adds `-device
-#                  voodoo2` in the slot after the sound card's and removes
-#                  it again, our QEMU accepts the machine with it, and the
-#                  device is on the bus of the machine it booted
-#   extra-args     the form's "Extra QEMU arguments" field: none on a new
-#                  machine, a line with a quoted argument lands at the end of
-#                  --print-args and in the bundle as a list, survives an
-#                  edit that does not touch it, a quote left open is refused
-#                  with the bundle unchanged, our QEMU applies a -global from
-#                  it to our adapter, and an empty line clears it
-#   pad            the gamepad (M13 step 0): a new machine on every family
-#                  ignores a controller, neither setting adds anything to the
-#                  QEMU command line, a bundle naming a setting from a later
-#                  launcher still loads, and the host end's deadzone and
-#                  two-threshold hysteresis behave under PLAYER_PAD_SCRIPT
-#                  (no machine running this suite has a controller)
-#   hpet           a Win98 machine has no HPET (98 has no driver for one, so
-#                  it was an Unknown Device in Device Manager) and an XP one
-#                  keeps it, asked of our QEMU's own device tree
-#   family-other   the "Other" family (doc 06): a machine for an era OS that is
-#                  neither Windows nor DOS gets standard hardware and none of
-#                  ours — the Bochs VGA rather than d3dpt-vga, no network card
-#                  until someone asks for one and an ES1370 at its pinned slot,
-#                  no USB tablet — the RTL8139 arrives at 0x03 when the box is
-#                  ticked, the sound card stays put when the NIC goes, and our
-#                  QEMU accepts the line
-#   display-adapter the wizard's display-adapter picker (doc 06): each family
-#                  offers the adapters it has a question about and starts on the
-#                  right one — a driver question on the three families that have
-#                  drivers, and on DOS which VESA BIOS the title finds — an
-#                  adapter a family doesn't offer is refused rather than written,
-#                  the cards below it don't move when it changes, and our QEMU
-#                  accepts every one of them
-#   d3d9           the machine form's Direct3D picker (ADR-007's 2026-09-21
-#                  amendment): a new machine says nothing, which is what `auto`
-#                  means on a host DXVK runs on — and on a Windows host below
-#                  the Vulkan 1.3 floor it says `system`, which has to agree
-#                  with `--host-check`; `dxvk` and `system` reach the adapter
-#                  that carries the executor and no other device; and our own
-#                  QEMU shows the property on `d3dpt-vga` in `info qtree`
-#   libsynth       synthx selftest (doc 20 §7): the three music engines through the
-#                  C API the QEMU devices drive them through — the AdLib detection
-#                  sequence a game runs before it will play a note, a 440 Hz FM
-#                  note measured against its neighbours, the same note through the
-#                  General MIDI bank the packages ship, and a running-status
-#                  note-off with a real-time byte wedged inside the note-on
-#   music          the sound-card and MIDI-port pickers (doc 20 §6) from a combo
-#                  box to a real QEMU — each family's default is the card it
-#                  always had, the FM chip follows the card that carried one, a
-#                  card a family doesn't offer is refused rather than written, an
-#                  MT-32 with no ROMs is refused at the form — and then the two
-#                  devices *sounding*: the monitor writes the ports a guest would
-#                  and the note has to be in the wav QEMU recorded
-#   sb-mixer       the SB16's mixer volumes, applied (patch 61): the FM note at
-#                  unity and again with the card's FM volume, its master volume
-#                  and the SB Pro's FM register each at -12 dB — QEMU's own wav
-#                  has to come out 12 dB down all three ways. QEMU stored these
-#                  registers and applied none, so Windows' sliders reached
-#                  nothing and a game's effects over CD music clipped
-#   sb16-irq       the Sound Blaster's interrupt line (patch 25), asked of the
-#                  card and the PIC: a DSP reset clears the pending interrupt
-#                  and makes none, and a silence block's is one the driver's
-#                  read of the status port can acknowledge — an assertion that
-#                  cannot be acknowledged holds the line and every interrupt
-#                  after it is lost to the edge-triggered i8259
-#   capi           launcher-capi/examples/smoke.c: a third front end, in C, over
-#                  the same models the Qt launcher uses — the wizard's
-#                  DOS defaults, the disc shelf, snapshots and the profile
-#                  editor, driven through include/launcher_core.h (doc 07)
-#   preview-anim   the launcher's shader preview keeps drawing (doc 07): a preset
-#                  that stands still says so and renders the same picture at any
-#                  frame number, one that does not (an interlaced CRT) says so
-#                  and renders two different pictures at two frame numbers
-#   embed-3d       tools/embed-3d-test.c: the window-less Mesa backend (Linux):
-#                  swap presentation, and the front-buffer flush WineD3D's
-#                  ddraw presents its primary surface with
-#   glide-host     tools/glide-host-test.cpp: Glide pass-through without a guest
-#                  (Linux) — the real host wrapper loaded by hw/3dfx, opened
-#                  through glidewnd.c's handshake, a triangle checked in the
-#                  frame the frontend receives, orientation included
-#   d3dpt-exec     tools/d3dpt-exec-test.cpp: guest encoder → decoder → DXVK,
-#                  frames delivered, hostile batch refused
-#   d3dpt-dp2      tools/d3dpt-dp2-test.cpp: the display driver's records (doc 15
-#                  M7c): VRAM surfaces, a context, the D3D7TEST scene as DP2
-#                  tokens, readback pixels checked, hostile records refused
-#   d3dgame9-nat   the reference scene natively on DXVK: frame 300 within
-#                  D3D_GOLDEN_BUDGET pixels (tolerance 8, HUD masked) of the
-#                  rig golden; this frame is the oracle for the guest stage
-#   d3dfeat9-nat   the feature test natively: frame + log lines kept as the
-#                  oracle for the guest stage
-#
-# Guest stage
-#   sse-guest      tools/sse-guest-test.py: the SSE battery, sse-fast on/off identical (doc 16)
-#   atapi-guest    tools/atapi-guest-test.py: a DOS program drives the ATAPI drive
-#                  on the selftest's flipped-sector cue by PIO (patch 51); every
-#                  reply identical to discx's at byte-count limits 512 and 65534,
-#                  then the disc shelf (patch 52) and a second boot running the
-#                  real CDSHELF.COM against it
-#   atapi-read-error ATAPI_READ_ERROR=1 tools/atapi-guest-test.py: the same battery
-#                  with four sectors of the audio track unreadable on the host
-#                  (tools/read-error-inject.c, an LD_PRELOAD failing pread64 with
-#                  EIO; Linux only): the plays over them must advance and complete,
-#                  the sectors played as silence (patch 55 — without it CD music
-#                  stopped for good on one bad read of a disc on a network share)
-#   x87-guest      tools/x87-guest-test.py: a DOS x87 battery under TCG,
-#                  identical with the fast path on and off (needs nasm,
-#                  mtools and the FreeDOS floppy the tool fetches on first use)
-#   rep-guest      tools/rep-guest-test.py: a DOS rep movs/stos battery (widths,
-#                  address sizes, DF, page crossings, overlaps), rep-fast on/off
-#                  identical and equal to a model of the instruction (patch 17)
-#   midi-guest     tools/midi-guest-test.py: the music devices as a *guest* meets
-#                  them (doc 20) — a DOS program runs the AdLib detection sequence,
-#                  plays 440 Hz on the OPL3, then resets an MPU-401, puts it in UART
-#                  mode and plays A4 through it; the wav QEMU's own backend recorded
-#                  is what is checked, so a device that takes every write and plays
-#                  nothing fails here. Two boots, ~11 s
-#   voodoo-guest   tools/voodoo-guest-test.py: the Voodoo 2 device (doc 21, M14) as
-#                  a guest meets it with no 3dfx driver — a DOS program finds
-#                  121a:0002 in configuration space, maps the BAR, reads the
-#                  Voodoo 2 strap, runs the chip's init sequence, fills the back
-#                  buffer red through the LFB, reads a pixel back, swaps; a
-#                  screendump must be the 640x480 red frame while the Voodoo has
-#                  the monitor and the VGA's text screen after it lets go. Then
-#                  the command FIFO the way Glide drives it (doc 21 §9): two
-#                  batches of packets into the ring's window -- a blue fill and
-#                  swap across a JMP, a magenta one after a read-pointer read --
-#                  and the read pointer must end where the packets do and the
-#                  frames be blue, then magenta: under ramfifo=on (the default)
-#                  only the device's own packet walk can have run them. Then the
-#                  teardown (doc 21 §13): a fill and a swap go into the ring and
-#                  fbiInit7's command-FIFO bit is cleared at once, with no idle
-#                  wait -- the frame must be the fill (the packets were run, not
-#                  stranded) and the status register must read idle afterwards,
-#                  which is what Glide's grSstIdle waits for at grSstWinClose.
-#                  Carmageddon's 3dfx build spun there for ever with two words
-#                  outstanding (2026-09-18). ~20 s
-#   voodoo-guest-mmiofifo  the same with ramfifo=off, the per-dword MMIO path. ~10 s
-#   voodoo-guest-d3dpt  the same beside `-device d3dpt-vga`, the pairing a launcher
-#                  machine builds, with the adapter first put in an 800x600x32
-#                  linear mode: after the hand-back the screendump must be that
-#                  mode, not the Voodoo's last frame (a desktop that never came
-#                  back after a full-screen switch, 2026-09-12). ~10 s
-#   voodoo-guest-undither  the same with `undither=on` (doc 21 §12), where the
-#                  dither phase is the oracle: that scene is one grey over the
-#                  whole screen, dithered on the way into the frame buffer, so
-#                  with the dither reconstructed away at scanout the screendump
-#                  must come back one *flat* colour rather than one 4x4 tile --
-#                  and a grey, not a level off it. ~10 s
-#   pit-guest      tools/pit-guest-test.py: the PIT as a DOS game's clock meets it
-#                  (patch 34) — QCLOCK.COM, DOS Quake's Sys_FloatTime (the BIOS
-#                  tick word plus counter 0) read in a tight loop beside the TSC:
-#                  no backward reading and every window at 100 %, where upstream's
-#                  late IRQ 0 edge made it 200 %. The overdue-irq=off control is
-#                  reported, not required. Then the rate phase (patch 65):
-#                  PITRATE.COM counts IRQ 0 at 1 kHz and the host times its lines
-#                  — 100 % as built and with QEMU's waits rounded to Windows'
-#                  15.6 ms tick (tools/wait-granularity.c), spinning and halted;
-#                  reinject=off under those waits is the control (6 %). ~2 min
-#   vbe-palette    VBEPAL=1 tools/vga-dirty-guest-test.py vesa: a VESA game's palette
-#                  through the VGA BIOS (patches/seabios, firmware/) — 4F09h sets 65
-#                  entries in banked 640x480x8 on std and cirrus, the pages must read
-#                  back in those greys, and one entry with three different channels
-#                  must reach the DAC as red/green/blue and come back from a 4F09h
-#                  get. QEMU's own ROMs answer 0100 (DOS Quake quits, Duke's colours
-#                  are wrong). Two boots, ~12 s
-#   pad-guest      tools/pad-guest-test.py: the gameport as a DOS guest reads it
-#                  (M13 path B) — one write arms four one-shots and the axes are
-#                  the counts before each bit falls, with a scripted pad moving
-#                  the stick, the d-pad and the buttons. Runs the **player**, so
-#                  it skips without a display
-#   pad-guest-xp   tools/pad-guest-test.py xp: the USB HID pad as a Windows game
-#                  finds it (M13 path A) — through *both* APIs a title of the era
-#                  can call: DirectInput enumerates it, every axis on the report's
-#                  own 0..255 range, the POV hat's null state and the buttons; and
-#                  winmm's joyGetPosEx reads the same pad, on the same range, with
-#                  the two columns required to agree. Its own XP boot, ~60 s
-#   pad-guest-98   the same on Windows 98, against a launcher *machine* whose
-#                  Windows has had the pad's driver bound once (98 asks for its
-#                  own source files the first time); WIN98_PAD_MACHINE names it.
-#                  The winmm half is what closed M13's last item: a Windows game
-#                  on 98 gets its joystick from the USB pad through VJOYD too, so
-#                  the gameport's 9x driver half was dropped rather than built
-#   smc-guest      tools/smc-guest-test.py: self-modifying code (patched immediates,
-#                  same-value rewrites, opcode flips, a crossing store), smc-same-value
-#                  on/off both architecturally right (patch 18)
-#   guest-cdimage  tools/xp-cdimage-test.sh: XP boots with the guest-tools ISO
-#                  converted to a cue (+ a 1 kHz tone track) as its CD-ROM and
-#                  copies the whole disc through cdrom.sys; every file must
-#                  match the ISO's; with mingw, CDTEST.EXE then plays the tone
-#                  through MCI and the drive's audiodev (a wav) must carry it
-#   XP (Linux; KVM when /dev/kvm is usable, TCG otherwise):
-#   boots WINXP_IMG read-only (snapshot=on) with the newest guest-tools ISO
-#   and a fresh FAT32 scratch disk carrying RUN.BAT, drives the Run dialog
-#   over QMP, waits for the three programs to detach from the device, shuts
-#   XP down (DDVMTEST first: the DirectDraw shim's video-memory answer), and
-#   diffs: D3DGAME9 and D3DGAME8 pixel-identical to the native
-#   D3DGAME9 frame outside the wall-time HUD (and within budget of the rig
-#   golden), D3DFEAT9 byte-identical to the native frame with the same
-#   query / getter lines.
+# Every check group, what it proves and how to run it: docs/testing.md.
+# Each check function below says why it exists.
 #
 # Environment: WINXP_IMG (~/vms/winxp.qcow2), GUEST_ISO (newest
 # guest-tools/out/guest-tools-3dfx-*.iso), TEST_ACCEL (kvm|tcg),
@@ -396,12 +75,12 @@ if ! command -v timeout >/dev/null; then
     timeout() { # seconds, command...
       local s="$1" p w rc; shift
       "$@" & p=$!
-      # The watchdog gets none of the command's descriptors: a caller
+      # The watchdog gets none of the command's descriptors. A caller
       # reading the output through a pipe (`o="$(timeout … | sed …)"`)
       # waits for every writer to close it, so a watchdog that inherited
       # stdout held the pipe for the whole limit and every Qt check took
-      # its full 120 s on a Mac without coreutils (2026-09-07). Afterwards
-      # the sleep is killed with the subshell, or it lives on orphaned.
+      # its full 120 s on a Mac without coreutils. Afterwards the sleep is
+      # killed with the subshell, or it lives on orphaned.
       ( sleep "$s"; kill -9 "$p" 2>/dev/null ) >/dev/null 2>&1 </dev/null & w=$!
       wait "$p"; rc=$?
       pkill -P "$w" 2>/dev/null; kill "$w" 2>/dev/null
@@ -487,8 +166,8 @@ dirdisc_check() { # a host directory served as a disc, read back by someone else
 
   # The *other* tree: ISO 9660 level 1, which is what a real-mode DOS
   # driver reads and what Windows falls back to. bsdtar with Joliet
-  # turned off is the only reader here that will look at it, and the two
-  # colliding names are the point — a mangling that crossed their
+  # turned off is the only reader here that will look at it. The two
+  # colliding names are the point. A mangling that crossed their
   # contents would pass every check that only counts files.
   if command -v bsdtar >/dev/null; then
     local dos="$OUT/dirsrc-83"
@@ -515,8 +194,8 @@ dirdisc_check() { # a host directory served as a disc, read back by someone else
       && cmp -s "$OUT/dirsrc-qemu.iso" "$iso" || { echo "qemu-img read the folder differently from discx"; rc=1; }
   fi
 
-  # The drive: the ATAPI path has to find the disc model through whatever
-  # node graph the block layer built — a protocol driver reached by its
+  # The drive. The ATAPI path has to find the disc model through whatever
+  # node graph the block layer built. A protocol driver reached by its
   # filename prefix ends up under a probed `raw` format node, and a
   # cdimage_disc() that misses it fails silently, leaving the guest with
   # QEMU's stock answers. CDIMAGE_TRACE prints a line per packet only
@@ -573,18 +252,18 @@ cdimage_check() { # the block driver through qemu-img / qemu-io on the selftest 
   [ "$(nm -D build/qemu/libqemu-embed-i386.$SO 2>/dev/null | grep -c ' T _ZN3std')" = 0 ] || { echo "Rust std symbols exported from the embed library"; rc=1; }
   return $rc
 }
-host_check_probe() { # `launcher --host-check` (ADR-013), on any host
+host_check_probe() { # `launcherx --host-check` (ADR-013), on any host
   local rc=0 o
   # This host's own answer: either verdict is legal, the report is not.
   o="$(target/release/launcherx --host-check 2>&1)" || true
   case "$o" in *"Vulkan loader:"*) ;; *) echo "the report names no loader"; echo "$o"; rc=1;; esac
   case "$o" in *"Required: a 1.3 device"*) ;; *) echo "the report names no bar"; echo "$o"; rc=1;; esac
   # A host with no Vulkan driver at all, which every host can be made
-  # into: both loader variables, since which one is read depends on how
-  # old the loader is — and no Wine either (D3DPT_WINE naming a path that
-  # does not exist means none, by the probe's rule), which is the host
-  # with no executor at all: unavailable, pointed at WineD3D in the guest
-  # and at installing Wine.
+  # into. Both loader variables are set, since which one is read depends
+  # on how old the loader is. No Wine either (D3DPT_WINE naming a path
+  # that does not exist means none, by the probe's rule). That is the host
+  # with no executor at all, so the answer is unavailable, pointed at
+  # WineD3D in the guest and at installing Wine.
   o="$(VK_DRIVER_FILES=/nonexistent.json VK_ICD_FILENAMES=/nonexistent.json D3DPT_WINE=/nonexistent \
        target/release/launcherx --host-check 2>&1)" \
     && { echo "exit 0 with no Vulkan driver and no Wine"; rc=1; }
@@ -609,8 +288,8 @@ host_check_probe() { # `launcher --host-check` (ADR-013), on any host
   fi
   # Where lavapipe is installed, the other half is testable for real: a
   # software driver is *usable* (DXVK ranks a CPU device last but never
-  # excludes it), so the verdict is available and the warning is that it
-  # will be slow — never a refusal (ADR-013).
+  # excludes it), so the verdict is available with a warning that it
+  # will be slow, never a refusal (ADR-013).
   local lvp; lvp="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
   if [ -n "$lvp" ]; then
     o="$(VK_DRIVER_FILES="$lvp" target/release/launcherx --host-check 2>&1)" \
@@ -639,7 +318,7 @@ shelforder_check() { # the disc shelf is in order by label, all the way to the g
   got="$(printf '%s\n' "$o" | cut -f1 | tr '\n' ' ')"
   case "$got" in "$want "*) ;; *) echo "the shelf is not in order by label"; echo "  got:  $got"; echo "  want: $want"; rc=1;; esac
   # And the same order in the flat file the guest's own CDSHELF program
-  # lists (patch 52) — it is served by slot number, so the order the host
+  # lists (patch 52). It is served by slot number, so the order the host
   # writes is the order the guest shows and the numbers a guest loads by.
   shelf_file="$(target/release/launcherx --discs publish "$(dirname "$bundle")" \
                 | sed -n 's/^shelf published to //p')"
@@ -765,11 +444,10 @@ qtsnapshots_check() { # the Qt snapshots window's first layout (doc 07)
   # The window opened on a stopped machine with no snapshots, no status
   # and no error: the list box is the one item that grows, so the "New
   # snapshot" row must end at the bottom of the column, give or take the
-  # one spacing (8) above the empty status row. A nested layout
-  # fills by default, and the status row -- both of its children hidden
-  # until there is a status -- has no maximum, so it split the spare
-  # height with the list box and the window came up with the list stopping
-  # halfway (user-reported, 2026-09-13, until a status line capped it).
+  # one spacing (8) above the empty status row. A nested layout fills by
+  # default, and the status row (both children hidden until there is a
+  # status) had no maximum, so it split the spare height with the list box
+  # and the list stopped halfway down the window.
   o="$(timeout 120 env LAUNCHER_QT_SCREEN=snapshots LAUNCHER_QT_ARG="$bundle" LAUNCHER_QT_DELAY=300 \
        "$bin" 2>&1 | sed -n 's/^\[diag\] snapshots layout: //p')"
   [ -n "$o" ] || { echo "the probe printed no snapshots layout line"; return 1; }
@@ -788,11 +466,10 @@ shaderdefaults_check() { # the first-run shader offer and its starter profiles (
   local rc=0 dir="$OUT/shaderdefaults" o preset n
   rm -rf "$dir"; mkdir -p "$dir/profiles" "$dir/empty"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
-  # Everything here except the 50 MB itself: the download is the one part
-  # that needs the network, and `shader_source::fetch` is the same code
-  # the profile manager's button has always run. What is new — and what
-  # goes wrong quietly — is the question's *once-only* rule and the
-  # profiles written after a "yes".
+  # Everything here except the 50 MB download, the one part that needs
+  # the network. `shader_source::fetch` is the same code the profile
+  # manager's button runs. What can go wrong quietly is the question's
+  # *once-only* rule and the profiles written after a "yes".
 
   # A launcher with no collection asks, and says what it will do.
   export LAUNCHER_SHADERS_DIR="$dir/empty"
@@ -805,23 +482,22 @@ shaderdefaults_check() { # the first-run shader offer and its starter profiles (
     case "$o" in *"$n"*) ;; *) echo "the question does not mention the $n profile"; rc=1;; esac
   done
 
-  # A launcher that *has* one never asks — which is why nobody working in
-  # a checkout has ever seen this dialog (the submodule is a collection).
+  # A launcher that *has* one never asks, which is why nobody working in
+  # a checkout sees this dialog (the submodule is a collection).
   o="$(LAUNCHER_SHADERS_DIR=third_party/slang-shaders target/release/launcherx --first-run status)"
   [ "$o" = idle ] || { echo "a launcher with a collection asked anyway: $o"; rc=1; }
 
-  # "Not now" is remembered: answered once, and once only, or the offer
-  # becomes a thing that greets you on every start forever.
+  # "Not now" is remembered, or the offer comes back on every start.
   target/release/launcherx --first-run decline >/dev/null || { echo "--first-run decline failed"; rc=1; }
   [ -f "$dir/profiles/first-run.txt" ] || { echo "declining wrote no marker"; rc=1; }
   o="$(target/release/launcherx --first-run status)"
   [ "$o" = idle ] || { echo "the offer came back after being declined: $o"; rc=1; }
 
-  # The other half of a "yes", against the collection this checkout has:
-  # three profiles, each naming a preset that really is one (librashader
-  # parses it — a profile pointing at a missing or unreadable `.slangp`
-  # is only a parse error deferred to whoever opens it) and each at the
-  # preset's own defaults, which is an *empty* override table.
+  # The other half of a "yes", against the collection this checkout has.
+  # Three profiles, each naming a preset librashader really parses (a
+  # profile pointing at a missing or unreadable `.slangp` is a parse error
+  # deferred to whoever opens it), each at the preset's own defaults,
+  # which is an *empty* override table.
   o="$(target/release/launcherx --default-profiles third_party/slang-shaders)" \
     || { echo "--default-profiles failed"; return 1; }
   # `-eq`, not `=`: BSD `wc` pads its count with spaces and the string
@@ -839,8 +515,8 @@ shaderdefaults_check() { # the first-run shader offer and its starter profiles (
 
   # And running it again adds nothing. `shader_library::create` would
   # otherwise deduplicate the *slug* and hand back a second "CRT Royale"
-  # as `crt-royale-2` — a second download, or a second launcher start,
-  # slowly filling the library with copies.
+  # as `crt-royale-2`, and every second download or launcher start would
+  # add more copies to the library.
   o="$(target/release/launcherx --default-profiles third_party/slang-shaders)"
   case "$o" in "(nothing to add"*) ;; *) echo "a second run added profiles again: $o"; rc=1;; esac
   [ "$(ls "$dir/profiles"/*.toml | wc -l)" -eq 3 ] || { echo "the profile library is not still three"; rc=1; }
@@ -852,11 +528,11 @@ qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" LAUNCHER_SHADERS_DIR="$dir/empty"
   export QT_QPA_PLATFORM=offscreen
-  # Like `qt-wizard` and `qt-profile`, this asks the *window*: the model
-  # can be perfectly right about there being no presets and the dialog
-  # still never appear (it is shown on a property that has to be
-  # published before the first frame — the trap the whole port is written
-  # around), or appear and never go away again.
+  # Like `qt-wizard` and `qt-profile`, this asks the *window*. The model
+  # can be right about there being no presets and the dialog still never
+  # appear (it is shown on a property that has to be published before the
+  # first frame, the trap the whole port is written around), or appear
+  # and never go away.
   o="$(timeout 120 env LAUNCHER_QT_SCREEN=firstrun LAUNCHER_QT_ARG=decline LAUNCHER_QT_DELAY=300 \
        "$bin" 2>&1 | sed -n 's/^\[diag\] firstrun/firstrun/p')"
   [ -n "$o" ] || { echo "the probe printed no firstrun line"; return 1; }
@@ -864,19 +540,19 @@ qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
   printf '%s' "$o" | grep -q "firstrun: open=true, dialog=true, step=asking" \
     || { echo "the dialog was not up on a launcher with no presets"; rc=1; }
   # It is Qt's own confirmation dialog, application-modal (2), with the
-  # platform's Yes (0x4000) and No (0x10000) — 81920 together. Neither
+  # platform's Yes (0x4000) and No (0x10000), 81920 together. Neither
   # the modality nor the buttons are things this project draws, and a
   # hand-built row of buttons in a popup is what this replaced.
   printf '%s' "$o" | grep -q "modality=2, buttons=81920" \
     || { echo "not an application-modal Yes/No dialog"; rc=1; }
-  # The words in it are the shared model's (ADR-014): a sentence typed
-  # into QML is exactly what used to drift between two front ends.
+  # The words in it are the shared model's (ADR-014). A sentence typed
+  # into QML drifts between front ends.
   printf '%s' "$o" | grep -q "firstrun text: No CRT shader presets are installed yet" \
     || { echo "the dialog's text is not the model's headline"; rc=1; }
   printf '%s' "$o" | grep -q "slang-shaders (~50 MB) into $dir/empty" \
     || { echo "the dialog does not say what it will download or where"; rc=1; }
-  # No, through the dialog's own rejected signal — the wiring from a
-  # standard button to the model's verb, not a call into the model.
+  # No, through the dialog's own rejected signal. This tests the wiring
+  # from a standard button to the model's verb, not a call into the model.
   printf '%s' "$o" | grep -q "firstrun declined: open=false, step=$" \
     || { echo "the dialog's No did not answer the offer"; rc=1; }
   [ -f "$dir/profiles/first-run.txt" ] || { echo "declining through the window wrote no marker"; rc=1; }
@@ -888,13 +564,12 @@ qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
 
   # Yes, and then what replaces the question. The download is pointed at
   # a path that cannot be created, so it fails at once and the run needs
-  # no network: what is being checked is the *sequence* — the question
-  # answered, the download not in a dialog at all (`busy`, which is what
-  # the header shows), and then a second dialog with its own words and
-  # the platform's Retry (0x80000) + Cancel (0x400000) = 4718592. It is
-  # the transition a single dialog followed a model through until
-  # 2026-09-09, when following one turned out to answer it: a
-  # MessageDialog's `accept()` and `close()` both emit `rejected()`.
+  # no network. What is checked is the *sequence*. The question is
+  # answered, the download is not in a dialog at all (`busy`, which the
+  # header shows), and then a second dialog comes up with its own words
+  # and the platform's Retry (0x80000) + Cancel (0x400000) = 4718592. One
+  # dialog cannot follow the model through this, because a MessageDialog's
+  # `accept()` and `close()` both emit `rejected()`, which answers it.
   rm -rf "$dir/profiles"; mkdir -p "$dir/profiles"
   o="$(timeout 120 env LAUNCHER_SHADERS_DIR=/proc/nowhere/shaders LAUNCHER_QT_SCREEN=firstrun \
        LAUNCHER_QT_ARG=accept LAUNCHER_QT_DELAY=300 "$bin" 2>&1 | sed -n 's/^\[diag\] firstrun/firstrun/p')"
@@ -909,12 +584,11 @@ qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
 }
 qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
   qtwizard_fields_check || return 1
-  # Where the form opens (2026-09-22, user report): a ScrollView keeps
-  # its position across a hide and a show, so editing one machine after
-  # another opened the second wherever the first was left. The window
-  # starts on its first page at the top for a new machine and for a
-  # different one than it last showed, and keeps its place — the page and
-  # the scroll — when the same one is reopened.
+  # Where the form opens. A ScrollView keeps its position across a hide
+  # and a show, so editing one machine after another opened the second
+  # wherever the first was left. The window starts on its first page at
+  # the top for a new machine and for a different one than it last
+  # showed, and keeps its page and scroll when the same one is reopened.
   local rc=0 out y sec
   out="$(timeout 120 env LAUNCHER_QT_SCREEN=wizardscroll LAUNCHER_QT_DELAY=250 \
          launcher-qt/target/release/launcher-qt 2>&1)"
@@ -937,8 +611,8 @@ qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
 qtwizard_fields_check() { # the fields, family by family
   local rc=0 dir="$OUT/qtwizard" bin="launcher-qt/target/release/launcher-qt" f o out shown model lo hi n all step line
   rm -rf "$dir"; mkdir -p "$dir/library"
-  # A scratch library, never the user's own — the window lists it on the
-  # way up. Offscreen, so a check never throws a window on the desktop.
+  # A scratch library, never the user's own, since the window lists it on
+  # the way up. Offscreen, so a check never puts a window on the desktop.
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
   # Two profiles in the scratch library, for the shader picker below: a
@@ -947,13 +621,12 @@ qtwizard_fields_check() { # the fields, family by family
   mkdir -p "$dir/profiles"
   printf 'name = "Aperture"\npreset = "crt/crt-aperture.slangp"\n\n[params]\n' > "$dir/profiles/aperture.toml"
   printf 'name = "Lottes"\npreset = "crt/crt-lottes.slangp"\n\n[params]\n' > "$dir/profiles/lottes.toml"
-  # The model is right and the control disagrees is a whole class of Qt
+  # "The model is right and the control disagrees" is a whole class of Qt
   # bug (a spin box bounds the value it is handed against the range it
-  # has at that moment, and does not revisit it when the range widens),
-  # and it is invisible to everything that asks the model — which is what
-  # every other launcher check does. So this asks the *window*: it opens
-  # the real wizard headlessly on each family and prints what its memory
-  # field holds beside what the form says it should.
+  # has at that moment, and does not revisit it when the range widens).
+  # Every other launcher check asks the model and cannot see it. So this
+  # asks the *window*. It opens the real wizard headlessly on each family
+  # and prints what its memory field holds beside what the form says.
   for f in win98 xp dos other; do
     out="$(timeout 120 env LAUNCHER_QT_SCREEN=wizard LAUNCHER_QT_ARG="$f" LAUNCHER_QT_DELAY=250 \
            "$bin" 2>&1)"
@@ -967,16 +640,14 @@ qtwizard_fields_check() { # the fields, family by family
     [ "$model" -ge "$lo" ] && [ "$model" -le "$hi" ] \
       || { echo "$f: $model is outside the family's own range $lo..$hi"; rc=1; }
     echo "  $f: $o"
-    # The same class of bug from the other side, and the one a user hit:
-    # a name typed into the field and then a combo box touched. A text
+    # The same class of bug from the other side, the one a user hit. A
+    # name is typed into the field and then a combo box touched. A text
     # field writes the model *property* alone, so a verb that republishes
     # the form without catching it up first puts the form's own (empty)
-    # name back, and the name disappears from a window that never asked
-    # it to (2026-09-08). The page switch is such a verb too, and was the
-    # one left going around the catch-up (2026-09-23: the name vanished on
-    # a click on "System" and back), so the probe pages away and back
-    # before the family (whose own verb catches the form up) and reads
-    # the field after both.
+    # name back, and the typed name disappears. The page switch is such a
+    # verb too (the name vanished on a click on "System" and back), so the
+    # probe pages away and back before the family (whose own verb catches
+    # the form up) and reads the field after both.
     o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] wizard name: //p')"
     shown="$(printf '%s' "$o" | sed -n 's/^shown \[\(.*\)\] model \[.*\]$/\1/p')"
     model="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] model \[\(.*\)\]$/\1/p')"
@@ -989,24 +660,22 @@ qtwizard_fields_check() { # the fields, family by family
     model="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] model \[\(.*\)\]$/\1/p')"
     [ "$shown" = '-name "typed args"' ] || { echo "$f: the extra-arguments field lost what was typed (shows: $shown)"; rc=1; }
     [ "$model" = '-name "typed args"' ] || { echo "$f: the model lost the typed extra arguments (holds: $model)"; rc=1; }
-    # Every page fits the window as it opens (2026-09-22): the height is
-    # sized to the tallest page, so a page that grows past it is a form
-    # that scrolls where it never did.
+    # Every page fits the window as it opens. The height is sized to the
+    # tallest page, so a page that grows past it makes the form scroll.
     o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] wizard pages: //p')"
     [ -n "$o" ] || { echo "$f: the wizard printed no pages line"; rc=1; }
     over="$(printf '%s\n' "$o" | awk -F', ' '{ room = $1; sub(/^room /, "", room); sub(/ of.*/, "", room)
         for (i = 2; i <= NF; i++) { split($i, a, " "); if (a[2] + 0 > room + 0) printf "%s %s > %s ", a[1], a[2], room } }')"
     [ -z "$over" ] || { echo "$f: a page is taller than the window's room for it: $over"; rc=1; }
     # The Direct3D row (ADR-007's 2026-09-21 amendment), and a third
-    # shape of the same class: a QML binding that names a property the
-    # object has not got is silent — no warning anywhere — and the combo
-    # box simply comes up empty, which is how this row first shipped
-    # (cxx-qt's auto camel-case had made it `d3D9Labels`). So the count
-    # and the text are asked of the *window*: every entry this host can
-    # run (three on Windows, two elsewhere: the system Direct3D 9 is
-    # offered on Windows alone, 2026-09-22), one of them showing. Whether
-    # the row is there at all is the adapter's answer, and only the two
-    # Windows families start on ours.
+    # shape of the same class. A QML binding that names a property the
+    # object has not got gives no warning, and the combo box comes up
+    # empty. This row first shipped that way (cxx-qt's auto camel-case had
+    # made it `d3D9Labels`). So the count and the text are asked of the
+    # *window*: every entry this host can run, one of them showing. That
+    # is three on Windows and two elsewhere, since only Windows offers the
+    # system Direct3D 9. Whether the row is there at all is the adapter's
+    # answer, and only the two Windows families start on ours.
     o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] wizard direct3d: //p')"
     shown="$(printf '%s' "$o" | sed -n 's/^shown \[\(.*\)\] of .*/\1/p')"
     n="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] of \([0-9]*\) .*/\1/p')"
@@ -1019,10 +688,9 @@ qtwizard_fields_check() { # the fields, family by family
       dos:*"applies false"|other:*"applies false") ;;
       *) echo "$f: the Direct3D row's visibility does not follow the adapter: $o"; rc=1;;
     esac
-    # The shader profile combo, whose rows are the model's since
-    # 2026-09-23 (it was the one picker with a delegate of its own, and
-    # looked it): the app default and the two profiles planted above, the
-    # default showing on a new machine.
+    # The shader profile combo, whose rows come from the model: the app
+    # default and the two profiles planted above, the default showing on
+    # a new machine.
     o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] wizard shader: //p')"
     shown="$(printf '%s' "$o" | sed -n 's/^shown \[\(.*\)\] of .*/\1/p')"
     n="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] of \([0-9]*\) .*/\1/p')"
@@ -1032,10 +700,10 @@ qtwizard_fields_check() { # the fields, family by family
     case "$o" in *"model 0 default true") ;; *) echo "$f: the model does not say the default: $o"; rc=1;; esac
   done
   # The optimization shortcuts beside boxes that were clicked by hand
-  # (user, 2026-09-12: "Turn all on / off does nothing" after three boxes
-  # had been unticked). The model moved every time, so again only the
-  # window can say whether the boxes did: every step must show what the
-  # form says, and the form must be where the button said.
+  # ("Turn all on / off does nothing" after three boxes had been
+  # unticked). The model moved every time, so only the window can say
+  # whether the boxes did. Every step must show what the form says, and
+  # the form must be where the button said.
   out="$(timeout 120 env LAUNCHER_QT_SCREEN=optall LAUNCHER_QT_DELAY=250 "$bin" 2>&1)"
   o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] optall //p')"
   n="$(printf '%s\n' "$o" | sed -n 's/^boxes \([0-9]*\)$/\1/p')"
@@ -1061,7 +729,7 @@ qtclose_check() { # the title bar's close button on a Qt dialog (doc 07)
   # Cancel calls `close()`, which Qt guards against re-entry; the title
   # bar's button hands Qt a close *event*, which it does not. A window
   # whose `visibleChanged` clears a model flag that in turn calls
-  # `close()` re-enters from inside the first event and gets a second —
+  # `close()` re-enters from inside the first event and gets a second,
   # and the platform hide that ends the modal session on macOS is
   # skipped. The probe sends the event and counts what the window saw.
   o="$(timeout 120 env LAUNCHER_QT_SCREEN=closebox LAUNCHER_QT_DELAY=250        "$bin" 2>&1 | sed -n 's/^\[diag\] closebox: //p')"
@@ -1081,13 +749,13 @@ qtesc_check() { # Esc reaches the shader editor opened from the profile list (do
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
   # Every secondary window closes on Esc through a `Shortcut`, and Quick
-  # Controls matches a window's shortcut when the window `isActive()` —
-  # which a transient window is whenever its parent is, so every visible
+  # Controls matches a window's shortcut when the window `isActive()`.
+  # A transient window is active whenever its parent is, so every visible
   # secondary window matches at once. The editor is the one window opened
   # over *another* (the profile list), and two matches for one key is an
-  # ambiguous shortcut, which Qt fires in neither: Esc did nothing in the
-  # editor (user-reported, 2026-09-13). The list stands down while the
-  # editor is open, so exactly one may match.
+  # ambiguous shortcut, which Qt fires in neither, so Esc did nothing in
+  # the editor. The list stands down while the editor is open, so exactly
+  # one may match.
   o="$(timeout 120 env LAUNCHER_QT_SCREEN=escfocus LAUNCHER_QT_DELAY=400 "$bin" 2>&1 \
        | sed -n 's/^\[diag\] escfocus editor: //p')"
   [ -n "$o" ] || { echo "the probe printed no escfocus line"; return 1; }
@@ -1102,11 +770,11 @@ qtprofile_check() { # the Qt shader-profile windows, driven (doc 07)
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
   # Like `qt-wizard`, this asks the *windows*. Both failures it guards
-  # against left the model right and the screen wrong (user-reported,
-  # 2026-09-07): the editor's Save handler reached for the list window's
-  # own `profiles` model, which is not a property of the editor window,
-  # and the TypeError took the `changed()` beside it with it — so the
-  # profile was written and the list behind it never heard. And the
+  # against left the model right and the screen wrong. The editor's Save
+  # handler reached for the list window's own `profiles` model, which is
+  # not a property of the editor window, and the TypeError took the
+  # `changed()` beside it down too, so the profile was written and the
+  # list behind it never heard. And the
   # preset field wrote its own bound property, which destroys the
   # binding that feeds it, so a fresh profile's empty path never reached
   # the field. The preset does not have to exist: saving a profile
@@ -1131,19 +799,17 @@ qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
   export LAUNCHER_BROWSE_MEMORY="$dir/last-browse.txt"
-  # Brackets and a space, like a disc named after its year: the dialog's
+  # Brackets and a space, like a disc named after its year. The dialog's
   # URL leaves `[` `]` encoded in `toString()`, and QML that stripped
-  # `file://` off that shelved `%5B1996%5D`, a path that does not exist
-  # (user-reported, 2026-09-12).
+  # `file://` off that shelved `%5B1996%5D`, a path that does not exist.
   local iso="$dir/Game [1996].iso"
   : > "$iso"
   # A file dialog belongs to the window system and cannot be opened
   # offscreen, so the probe hands the field the path the dialog would
-  # have — every line of the wiring under test is downstream of that.
-  # What it guards: a picked disc is on the shelf without a second click
-  # (user-reported, 2026-09-09, "Browse… only fills the field"), and the
-  # field it came through is left empty, so the button beside it goes
-  # back to being for typing.
+  # have. Every line of the wiring under test is downstream of that.
+  # A picked disc must be on the shelf without a second click (it once
+  # only filled the field), and the field it came through is left empty,
+  # so the button beside it goes back to being for typing.
   o="$(timeout 120 env LAUNCHER_QT_SCREEN=pickdisc LAUNCHER_QT_ARG="$iso" LAUNCHER_QT_DELAY=300 \
        "$bin" 2>&1 | sed -n 's/^\[diag\] pickdisc: //p')"
   [ -n "$o" ] || { echo "the probe printed no pickdisc line"; return 1; }
@@ -1156,14 +822,14 @@ qtshelf_check() { # the Qt disc shelf's "Add disc" field, driven (doc 07)
     || { echo "the shelf file does not name the disc by its own path"; cat "$dir/discs.toml" 2>/dev/null; rc=1; }
   grep -q "%5B" "$dir/discs.toml" 2>/dev/null && { echo "the shelved path is still URL-encoded"; rc=1; }
   # Every dialog backend on Linux matches its globs case-sensitively, so
-  # a lower-case-only filter hid `GAME.CUE` (user-reported, 2026-09-11):
-  # the dialog must be handed both spellings (`browse::extensions`).
+  # a lower-case-only filter hid `GAME.CUE`. The dialog must be handed
+  # both spellings (`browse::extensions`).
   printf '%s' "$o" | grep -q 'filters \[Disc images (.*\*\.cue \*\.CUE' \
     || { echo "the disc dialog's filter has no upper-case globs"; rc=1; }
-  # The next "Browse…" on an empty field opens where that disc was picked
-  # (user-reported, 2026-09-12: the shelf's adder empties itself, and every
-  # dialog after the first started over in the working directory). The
-  # core decides, so the core's own verb is asked.
+  # The next "Browse…" on an empty field opens where that disc was picked.
+  # The shelf's adder empties itself, so without this every dialog after
+  # the first started over in the working directory. The core decides, so
+  # the core's own verb is asked.
   start="$(target/release/launcherx --browse-start "" file)"
   [ "$start" = "$dir" ] || { echo "an empty field's Browse… would open in '$start', not '$dir'"; rc=1; }
   return $rc
@@ -1176,7 +842,7 @@ dirshelf_check() { # a shared folder as a disc, from the shelf to a real QEMU (M
   # Three folders, because the awkward parts of a folder name are what
   # this is about: a space, a comma (which is what separates options in a
   # QEMU option string), and one plain one to compare against. They go
-  # through the launcher's own headless verbs — the code the shelf
+  # through the launcher's own headless verbs, the code the shelf
   # window's buttons run.
   spaced="$dir/Shared Files"; mkdir -p "$spaced"; echo hello > "$spaced/README.TXT"
   comma="$dir/Doom,Quake"; mkdir -p "$comma"; echo hi > "$comma/GAME.TXT"
@@ -1242,17 +908,14 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
   : >"$dir/disk.qcow2"
   bundle="$(target/release/launcherx --new xp pad "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
   dos="$(target/release/launcherx --new dos pad-dos "$dir/disk.qcow2")" || { echo "--new dos failed"; return 1; }
-  # A new machine ignores a controller, on every family. Not a detail: a
-  # stick that rests a little off centre would otherwise hold an arrow
-  # key down on a desktop nobody was playing a game on.
+  # A new machine ignores a controller, on every family. A stick that
+  # rests a little off centre would otherwise hold an arrow key down on a
+  # desktop nobody was playing a game on.
   for b in "$bundle" "$dos"; do
     grep -q '^pad = "none"' "$b" || { echo "a new machine did not come out with the pad off"; grep '^pad' "$b"; rc=1; }
   done
-  # Neither setting is a device, so neither may add anything to the
-  # *guest's* command line. This is what makes the track shippable a path
-  # at a time: the `usb` and `gameport` entries do not exist yet, and
-  # until their devices do, the launcher cannot write a line QEMU would
-  # refuse.
+  # Neither `none` nor `keys` is a device, so neither may add anything to
+  # the *guest's* command line (`usb` and `gameport` are, below).
   args="$(target/release/launcherx --print-args "$bundle")"
   local before="$args"
   # A machine with the pad off says nothing to the player either.
@@ -1271,9 +934,9 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
   grep -q '^pad = "none"' "$bundle" || { echo "turning it back off did not stick"; rc=1; }
   # A bundle from a later launcher, naming a setting this build has never
   # heard of. It must load and fall back, not refuse the whole machine
-  # over a field about a controller. (`gameport` was the placeholder here
-  # until path B landed and it became a real answer — the value has to be
-  # one no build knows, or this stops testing anything.)
+  # over a field about a controller. The value has to be one no build
+  # knows, or this stops testing anything (`gameport` was once the
+  # placeholder, until path B made it real).
   sed -i 's/^pad = "none"/pad = "wheel"/' "$bundle"
   args="$(target/release/launcherx --print-args "$bundle" 2>&1)" \
     || { echo "a bundle naming a future pad setting would not load at all"; echo "$args"; rc=1; }
@@ -1341,8 +1004,8 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
   args="$(target/release/launcherx --print-args "$w98")"
   case "$args" in *"-device gameport"*) ;; *) echo "a Win98 machine with the gameport on has no gameport"; echo "$args"; rc=1;; esac
   case "$args" in *usb-gamepad*) echo "the Win98 machine kept its usb-gamepad after switching to the gameport"; echo "$args"; rc=1;; esac
-  # The host end itself, against the scripted pad — no controller, no
-  # guest, no window. What it proves is the shaping: the deadzone
+  # The host end itself, against the scripted pad, with no controller,
+  # guest or window. What it proves is the shaping. The deadzone
   # swallows a resting stick, and the press/release pair has a gap in it
   # so an axis held between them does not chatter.
   if [ -x target/release/player ]; then
@@ -1354,9 +1017,9 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
     # threshold instead of two would release on the third and the guest
     # would see a key repeating at the poll rate.
     o="$(PLAYER_PAD_SCRIPT='5:lx=0.615,10:lx=0.72,15:lx=0.615' target/release/player --pad-sweep 20 2>&1)" || { echo "$o"; rc=1; }
-    # Per line, not over the whole output: a glob across it matches the
+    # Per line, not over the whole output. A glob across it matches the
     # word "press" from any *other* frame's line and the check passes for
-    # the wrong reason (it did, first time out).
+    # the wrong reason.
     echo "$o" | grep -q '^\[pad\] frame 5 lx .* press$' \
       && { echo "an axis under the press threshold was called pressed"; echo "$o"; rc=1; }
     echo "$o" | grep -q '^\[pad\] frame 10 lx .* press$' \
@@ -1500,15 +1163,15 @@ pad_check() { # the gamepad host end (M13 step 0) and the machine setting behind
     # human monitor, which is the one way to read 0x201 with no guest.
     # Three readings, and the middle one is the whole timing model:
     #
-    #   idle          f0 — the four one-shots expired, no button held.
-    #                      Not ff: that is what an *absent* port reads
+    #   idle          f0   the four one-shots expired, no button held.
+    #                      Not ff, which is what an *absent* port reads
     #                      off the open bus, and a game uses it to
     #                      decide there is no joystick.
-    #   armed         ff — every axis still charging. Read with the VM
+    #   armed         ff   every axis still charging. Read with the VM
     #                      stopped, where the virtual clock does not
     #                      move at all, so this is exact rather than a
     #                      race against a 576 us pulse.
-    #   a second on   f0 — and they end. A model that armed and never
+    #   a second on   f0   they end. A model that armed and never
     #                      expired would leave every game counting to
     #                      its own timeout, which reads as a stick
     #                      jammed at one extreme.
@@ -1552,8 +1215,8 @@ voodoo2_check() { # the wizard's Voodoo 2 switch (doc 21), from a checkbox to a 
     # (`-device voodoo2`, not the bare name: the scratch disk's path has it)
     case "$args" in *"-device voodoo2"*) echo "a new machine has a Voodoo 2 nobody picked"; echo "$args"; rc=1;; esac
   done
-  # The switch through the real form, on the Win98 machine (ours
-  # adapter + the chip is the pairing) and on DOS (3dfx's own overlay).
+  # The switch through the real form, on the Win98 machine (our adapter
+  # + the chip is the pairing) and on DOS (3dfx's own overlay).
   for b in "$bundle" "$dos"; do
     target/release/launcherx --wizard-edit "$b" - - - - - - - - - voodoo >/dev/null \
       || { echo "--wizard-edit voodoo failed on $b"; rc=1; }
@@ -1778,7 +1441,7 @@ PY
 }
 
 # What a driver writes to an MPU-401: reset, UART mode, then a program
-# change and a note-on for A4 — the note the checks measure.
+# change and a note-on for A4, the note the checks measure.
 mpu_note_script() {
   port_write 0x331 0xff
   port_write 0x331 0x3f
@@ -1787,10 +1450,10 @@ mpu_note_script() {
 }
 
 # The Sound Blaster's interrupt, asked of the card and the PIC and
-# nothing else (patch 25). Every count below is a *rising edge* of IRQ 5
-# — `info irq` only counts 0→1 — which is the whole point: the card holds
-# its line until the DSP status port is read, so an assertion nobody can
-# acknowledge holds it for good and every block after it is a level 1
+# nothing else (patch 25). Every count below is a *rising edge* of IRQ 5,
+# since `info irq` only counts 0→1, and edges are the point. The card
+# holds its line until the DSP status port is read, so an assertion nobody
+# can acknowledge holds it for good. Every block after it is a level 1
 # into an already-high line, an edge-triggered i8259 sees nothing, and
 # the card is deaf until the next reset. Duke Nukem 3D's SETUP.EXE plays
 # its "Test Sound FX Card" once and says "Playback failed, possibly due
@@ -1800,7 +1463,7 @@ sb16_irq_check() {
   # A block size first: `0x1c` with none set leaves the device with
   # block_size -1, and a DMA that then ran would spin in sb16.c's
   # left_till_irq wrap. The channel is masked at power-up, so nothing
-  # transfers here — `0x1c` is only how a guest says "auto-init", which
+  # transfers here. `0x1c` is only how a guest says "auto-init", which
   # is the state the old reset fabricated an interrupt out of.
   o="$( { port_write 0x22c 0x48; port_write 0x22c 0xff; port_write 0x22c 0x01
           port_write 0x22c 0x1c;               echo "info irq"
@@ -1856,8 +1519,8 @@ music_check() { # the two pickers, and then the devices actually sounding
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
   : >"$dir/disk.qcow2"
   # What each family starts on. Every family keeps the card it already
-  # had — 98 and DOS the Sound Blaster, XP the AC'97, Other the Ensoniq —
-  # so opening an existing machine changes no hardware; what is new is
+  # had (98 and DOS the Sound Blaster, XP the AC'97, Other the Ensoniq),
+  # so opening an existing machine changes no hardware. What is added is
   # the MIDI port on the two families that have no synthesizer of their
   # own, and the OPL3 that comes with the cards that carried one.
   for f in win98:sb16 dos:sb16 xp:AC97 other:ES1370; do
@@ -1938,8 +1601,8 @@ music_check() { # the two pickers, and then the devices actually sounding
   done
   # And the half no command line can show: the devices *sounding*. The
   # monitor writes the same ports a guest would, QEMU's own wav backend
-  # records what its mixer produced, and the note has to be in the file —
-  # a device that accepts every write and plays nothing passes everything
+  # records what its mixer produced, and the note has to be in the file.
+  # A device that accepts every write and plays nothing passes everything
   # above and fails here.
   rm -f "$dir/opl.wav" "$dir/midi.wav"
   { opl_note_script; sleep 2; echo quit; } \
@@ -1951,16 +1614,16 @@ music_check() { # the two pickers, and then the devices actually sounding
         -audiodev "wav,id=w,path=$dir/midi.wav" \
         -device "mpu401,audiodev=w,synth=gm,soundfont=$PWD/soundfonts/TimGM6mb.sf2" >/dev/null 2>&1
   target/release/synthx wavtone "$dir/midi.wav" 440 || rc=1
-  # And the interrupt the MIDI port must *not* raise (doc 20 §5.1,
-  # 2026-09-09). A real MPU-401's line is IRQ 2/9; QEMU's PIIX4 puts the
-  # ACPI SCI on IRQ 9, and an ACPI Windows 98 owns it, so the ACK a
-  # driver's reset queues is an interrupt no handler can acknowledge —
-  # the line stays high, the handler is re-entered on every IRET, and
-  # the guest triple-faults. Duke Nukem 3D's SETUP rebooted a machine
-  # doing exactly this. The reset is written the way a driver writes it
-  # and the PIC is asked what is pending; a guest's own answer to that
-  # is a spontaneous reboot, which no headless run could tell from a
-  # hang, so it is asked here of the hardware instead.
+  # And the interrupt the MIDI port must *not* raise (doc 20 §5.1). A
+  # real MPU-401's line is IRQ 2/9. QEMU's PIIX4 puts the ACPI SCI on
+  # IRQ 9, and an ACPI Windows 98 owns it, so the ACK a driver's reset
+  # queues is an interrupt no handler can acknowledge. The line stays
+  # high, the handler is re-entered on every IRET, and the guest
+  # triple-faults. Duke Nukem 3D's SETUP rebooted a machine doing exactly
+  # this. The reset is written the way a driver writes it and the PIC is
+  # asked what is pending. In a guest the symptom is a spontaneous reboot,
+  # which no headless run could tell from a hang, so the hardware is
+  # asked instead.
   o="$(printf 'o /b 0x331 0xff\ninfo pic\nquit\n' \
        | timeout 30 build/qemu/qemu-system-i386 -display none -monitor stdio \
            -audiodev none,id=w \
@@ -1989,10 +1652,10 @@ family_other_check() { # the "Other" family's hardware, from the picker to a rea
   # a BeOS or Linux guest on it would come up with no display at all.
   case "$args" in *"-vga std"*) ;; *) echo "an Other machine is not on the standard VGA"; echo "$args"; rc=1;; esac
   case "$args" in *d3dpt-vga*) echo "an Other machine got our own adapter, which has no driver for it"; echo "$args"; rc=1;; esac
-  # No card at all until someone asks for one — the default for every
-  # family since 2026-09-07 (`bundle::default_network`): these guests
-  # stopped getting security fixes twenty years ago, so a machine nobody
-  # has been asked about is off the network.
+  # No card at all until someone asks for one, the default for every
+  # family (`bundle::default_network`). These guests stopped getting
+  # security fixes twenty years ago, so a machine nobody has been asked
+  # about is off the network.
   case "$args" in *rtl8139*|*-netdev*) echo "a new machine came with a network card"; echo "$args"; rc=1;; esac
   case "$args" in *"-nic none"*) ;; *) echo "networking off did not emit -nic none, so QEMU supplies a card of its own"; echo "$args"; rc=1;; esac
   case "$args" in *"ES1370,audiodev=embed0,addr=0x04"*) ;; *) echo "no ES1370 at 0x04"; echo "$args"; rc=1;; esac
@@ -2011,9 +1674,8 @@ family_other_check() { # the "Other" family's hardware, from the picker to a rea
   args="$(target/release/launcherx --print-args "$bundle")"
   case "$args" in *rtl8139*) echo "turning networking off left the NIC behind"; echo "$args"; rc=1;; esac
   case "$args" in *"ES1370,audiodev=embed0,addr=0x04"*) ;; *) echo "the sound card moved when the NIC went"; echo "$args"; rc=1;; esac
-  # A bundle with no `network` field at all has no card either (since
-  # 2026-09-16; it used to mean on). Written by hand, as the wizard always
-  # writes the field.
+  # A bundle with no `network` field at all has no card either (it once
+  # meant on). Written by hand, as the wizard always writes the field.
   grep -v '^network' "$bundle" >"$dir/nofield.toml"
   args="$(target/release/launcherx --print-args "$dir/nofield.toml")"
   case "$args" in *rtl8139*|*-netdev*) echo "a bundle with no network field came with a card"; echo "$args"; rc=1;; esac
@@ -2092,28 +1754,26 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
   : >"$dir/disk.qcow2"
   # What each family starts on. XP and Win98 on our own adapter, because
-  # the whole display path is built on it (docs 15 and 19; Win98 started
-  # on the Cirrus until 2026-09-16, user decision); Other on the standard VGA, the one every guest can fall
-  # back on; DOS on the standard VGA too, since 2026-09-09 (user
-  # decision): the fuller of the two VESA BIOSes, where the hardcoded
-  # line it replaced said cirrus.
+  # the whole display path is built on it (docs 15 and 19). Other on the
+  # standard VGA, the one every guest can fall back on. DOS on the
+  # standard VGA too, the fuller of the two VESA BIOSes (user decision).
   for f in win98:"-device d3dpt-vga,addr=0x02" xp:"-device d3dpt-vga,addr=0x02" other:"-vga std" dos:"-vga std"; do
     want="${f#*:}"; f="${f%%:*}"
     bundle="$(target/release/launcherx --new "$f" "adapter-$f" "$dir/disk.qcow2")" || { echo "--new $f failed"; return 1; }
     args="$(target/release/launcherx --print-args "$bundle")"
     case "$args" in *"$want"*) ;; *) echo "a new $f machine is not on $want"; echo "$args"; rc=1;; esac
   done
-  # The switch itself, on a Windows machine: away from the adapter the
-  # family starts on (ours, on both) and back again. The one
-  # it left must be *gone* — a machine with both would show the guest two
-  # displays — and the cards pinned below it must not move, because a
-  # card that moves is a hardware change an installed guest re-detects.
+  # The switch itself, on a Windows machine, away from the adapter the
+  # family starts on (ours, on both) and back again. The one it left must
+  # be *gone*, since a machine with both would show the guest two
+  # displays. The cards pinned below it must not move, because a card
+  # that moves is a hardware change an installed guest re-detects.
   for f in win98:d3dpt:cirrus xp:d3dpt:cirrus; do
     other="${f##*:}"; f="${f%:*}"; first="${f#*:}"; f="${f%%:*}"
     bundle="$dir/library/adapter-$f/machine.toml"
     # A new machine has no NIC (`bundle::default_network`), and the
     # question below is whether the cards *under* the adapter move when
-    # it changes — so this one is given the card first.
+    # it changes, so this one is given the card first.
     target/release/launcherx --wizard-edit "$bundle" - - - net >/dev/null \
       || { echo "$f: --wizard-edit net failed"; rc=1; continue; }
     target/release/launcherx --wizard-edit "$bundle" - - - - - - - "$other" >/dev/null \
@@ -2122,8 +1782,8 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
     case "$args" in *"$(vga_args "$other")"*) ;; *) echo "$f: the $other adapter did not arrive"; echo "$args"; rc=1;; esac
     case "$args" in *"$(vga_args "$first")"*) echo "$f: the $first adapter is still there beside the $other"; echo "$args"; rc=1;; esac
     case "$args" in *"netdev=n0,addr=0x03"*) ;; *) echo "$f: the NIC moved when the adapter changed"; echo "$args"; rc=1;; esac
-    # The standard VGA is not on offer to Windows — XP has no driver for
-    # it at all — so asking for it must leave the machine as it was rather
+    # The standard VGA is not on offer to Windows (XP has no driver for
+    # it at all), so asking for it must leave the machine as it was rather
     # than produce a guest with no display.
     target/release/launcherx --wizard-edit "$bundle" - - - - - - - std >/dev/null \
       || { echo "$f: --wizard-edit std failed"; rc=1; continue; }
@@ -2134,14 +1794,13 @@ display_adapter_check() { # the wizard's adapter picker, from a combo box to a r
     args="$(target/release/launcherx --print-args "$bundle")"
     case "$args" in *"$(vga_args "$first")"*) ;; *) echo "$f: the $first adapter did not come back"; echo "$args"; rc=1;; esac
   done
-  # DOS has the picker too since 2026-09-09, and it is the one family
-  # where the question is not "which driver": its titles program the
-  # adapter themselves, so what changes is which VESA BIOS the game
-  # finds. Same three demands as above — the new one arrives, the old one
-  # is *gone* rather than sitting beside it, and it comes back — plus the
-  # one that is specific here: our own adapter is refused, because there
-  # is no DOS driver for it anywhere and a DOS machine on it would have
-  # the plain VGA and nothing else.
+  # DOS has the picker too, and it is the one family where the question
+  # is not "which driver". Its titles program the adapter themselves, so
+  # what changes is which VESA BIOS the game finds. The same three demands
+  # as above apply (the new one arrives, the old one is *gone*, and it
+  # comes back), plus one specific to DOS. Our own adapter is refused,
+  # because there is no DOS driver for it anywhere and a DOS machine on it
+  # would have the plain VGA and nothing else.
   bundle="$dir/library/adapter-dos/machine.toml"
   if target/release/launcherx --wizard-edit "$bundle" - - - - - - - cirrus >/dev/null; then
     args="$(target/release/launcherx --print-args "$bundle")"
@@ -2190,9 +1849,9 @@ d3d9_backend_check() { # the machine form's Direct3D picker, from a combo box to
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles"
   : >"$dir/disk.qcow2"
   bundle="$(target/release/launcherx --new xp d3d9 "$dir/disk.qcow2")" || { echo "--new xp failed"; return 1; }
-  # A machine nobody has touched is on `auto`, which says nothing at all
-  # — *unless* this host is a Windows one below DXVK's Vulkan 1.3 floor,
-  # where auto is resolved here rather than in the executor, because only
+  # A machine nobody has touched is on `auto`, which says nothing at all,
+  # *unless* this host is a Windows one below DXVK's Vulkan 1.3 floor.
+  # There auto is resolved here rather than in the executor, because only
   # this side has a Vulkan probe that can tell a software device from a
   # real one. So the absence is required, and the one presence allowed is
   # required to agree with `--host-check`.
@@ -2252,15 +1911,15 @@ d3d9_backend_check() { # the machine form's Direct3D picker, from a combo box to
 }
 
 bios_date_check() { # the legacy BIOS date, as a guest reads it out of a real QEMU
-  # Windows 98 installs ACPI — and so enumerates the PCI bus at all — only
+  # Windows 98 installs ACPI (and so enumerates the PCI bus at all) only
   # when the date at F000:FFF5 is at least the ACPICheckDate its own
-  # machine.inf carries, 12/01/99 (doc 06); an older BIOS has to be one of
+  # machine.inf carries, 12/01/99 (doc 06). An older BIOS has to be one of
   # the four machines in BIOSINFO.INF's [GoodACPIBios], and we are not.
   # SeaBIOS ships 06/23/99, so prepare-qemu.sh stamps every firmware image
   # it finds. A tree that lost the stamp still boots every existing guest,
-  # and only shows up weeks later as a *new* Win98 install that came out in
-  # PnP-BIOS mode — "Plug and Play BIOS" with a yellow ! and no USB tablet,
-  # AC'97 or NIC ever detected. Hence a check on the firmware itself.
+  # and only shows up weeks later as a *new* Win98 install in PnP-BIOS
+  # mode: "Plug and Play BIOS" with a yellow ! and no USB tablet, AC'97 or
+  # NIC ever detected. Hence a check on the firmware itself.
   local rc=0 out date key f cur
   out="$(printf '%s\n' '{"execute":"qmp_capabilities"}' \
         '{"execute":"human-monitor-command","arguments":{"command-line":"xp /8c 0xffff5"}}' \
@@ -2308,18 +1967,18 @@ optimizations_check() { # the wizard's fast-path switches, all the way to a real
   case "$args" in *=on*|*=off*) echo "a default machine names an optimization"; echo "$args"; rc=1;; esac
   grep -q '^\[optimizations\]' "$bundle" && { echo "a default machine wrote an [optimizations] table"; rc=1; }
   # Every switch, through the real form: off where it ships on, on where
-  # it ships off, and each on the option QEMU looks it up on — a CPU
-  # property on `-cpu`, an accelerator property on `-accel tcg`.
+  # it ships off, and each on the option QEMU looks it up on (a CPU
+  # property on `-cpu`, an accelerator property on `-accel tcg`).
   target/release/launcherx --optimizations "$bundle" \
     x87-fast off sse-fast off simd-fast off rep-fast off \
     smc-same-value off soft-imm off inline-lookup off \
     tb-invalidate-fast off tlb-floor off tls-hot-paths off jump-cache-keep off \
     eob-chain off tlb-retire off x87-pc64-as-53 on >"$OUT/optimizations-set.log" 2>&1 \
     || { echo "--optimizations failed"; cat "$OUT/optimizations-set.log"; rc=1; }
-  # Patch 21's pinned-regs left the form on 2026-09-16 (it crashed guests
-  # for too little gain): a bundle written while it was offered and still
-  # saying it on must not put it on the line, and "All defaults" below
-  # must take the entry away with the rest.
+  # Patch 21's pinned-regs left the form (it crashed guests for too
+  # little gain). A bundle written while it was offered and still saying
+  # it on must not put it on the line, and "All defaults" below must take
+  # the entry away with the rest.
   awk '{ print } /^\[optimizations\]/ { print "pinned-regs = true" }' "$bundle" >"$bundle.tmp" \
     && mv "$bundle.tmp" "$bundle"
   target/release/launcherx --optimizations "$bundle" pinned-regs on >/dev/null 2>&1 \
@@ -2329,12 +1988,9 @@ optimizations_check() { # the wizard's fast-path switches, all the way to a real
   for p in x87-fast=off sse-fast=off simd-fast=off rep-fast=off x87-pc64-as-53=on; do
     case "$args" in *"-cpu pentium3,"*"$p"*) ;; *) echo "$p is not on -cpu"; echo "$args"; rc=1;; esac
   done
-  # Since 2026-09-10 the three that had no switch have one, which is what
-  # makes "turn everything off" a control run rather than eight of
-  # eleven (fourteen since patches 42-44 and 47's x87-pc64-as-53, which
-  # ships off and is flipped on above; patch 21's pinned-regs left the form
-  # on 2026-09-16): a guest that is still wrong with these off has cleared
-  # our tree, and before this it had not.
+  # Every fast path has a switch, so "turn everything off" is a real
+  # control run. A guest that is still wrong with these off has cleared
+  # our tree.
   for p in smc-same-value=off soft-imm=off inline-lookup=off \
            tb-invalidate-fast=off tlb-floor=off tls-hot-paths=off jump-cache-keep=off \
            eob-chain=off tlb-retire=off; do
@@ -2365,31 +2021,31 @@ optimizations_check() { # the wizard's fast-path switches, all the way to a real
     && { echo "\"All defaults\" left an [optimizations] table behind"; rc=1; }
   return $rc
 }
-no_optionals_check() { # the artefacts link only what we chose (2026-09-07)
-  # QEMU auto-detects a large optional surface, so what a build links is
-  # otherwise decided by which libraries the machine happened to have --
-  # which is how this box, the Mac and the Flatpak SDK end up with three
+no_optionals_check() { # the artefacts link only what we chose
+  # QEMU auto-detects many optional features, so what a build links is
+  # otherwise decided by which libraries the machine happened to have.
+  # That is how this box, the Mac and the Flatpak SDK end up with three
   # different libqemu-embed. scripts/configure-qemu.sh disables the lot and
   # this asks the built artefacts whether it stuck, because a dropped flag
   # re-links silently and every packager starts carrying the library again.
   # Four families, all dead for us:
   #
-  #   display  the player is the front end -- it embeds QEMU, the embed
+  #   display  the player is the front end. It embeds QEMU, the embed
   #            library appends `-display none` itself and registers its own
   #            3D provider (patch 30). SDL, GTK/VTE, Cocoa, curses, spice.
   #   audio    the player's sound is patch 20's `embed` audiodev; the
   #            headless tools use `none`, xp-cdimage-test.sh uses `wav`.
   #   network  a bundle with networking on says `-netdev user` and nothing
   #            else, so slirp stays and AF_XDP/vde go.
-  #   block    every drive is a local file -- qcow2, a raw floppy, or a
+  #   block    every drive is a local file: qcow2, a raw floppy, or a
   #            disc image through our own `cdimage` driver (doc 17). curl,
   #            libssh, iscsi, nfs, rbd, gluster, blkio.
   #
   #   ...plus brlapi, a braille chardev nothing here has ever opened.
   #
-  # It looks for a *loaded* name as well as a linked one, because that is
-  # how SDL last bit -- sdl2-compat reaching for SDL3 through LoadLibrary,
-  # on a user's PC, where no import-table walk could have seen it.
+  # It looks for a *loaded* name as well as a linked one. sdl2-compat once
+  # reached for SDL3 through LoadLibrary on a user's PC, where no
+  # import-table walk could have seen it.
   local rc=0 f
   local names="build/qemu/libqemu-embed-i386.$SO build/qemu/qemu-system-i386"
   names="$names build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)"
@@ -2407,10 +2063,10 @@ no_optionals_check() { # the artefacts link only what we chose (2026-09-07)
   # compiled in: QAPI generates one AUDIODEV_DRIVER_<X> enumerator per
   # audio backend, each behind its own `if: CONFIG_AUDIO_<X>` (qapi/
   # audio.json), so the name is in the binary exactly when the backend is
-  # built. That catches the three with no shared object of their own --
-  # OSS, CoreAudio, DirectSound -- and it is how patch 23 was found: on
-  # Windows `--disable-dsound` was a no-op and dsoundaudio.c went in
-  # anyway. NONE, WAV and our EMBED are the three that must be there.
+  # built. That catches the three with no shared object of their own (OSS,
+  # CoreAudio, DirectSound). It is how patch 23 was found: on Windows
+  # `--disable-dsound` was a no-op and dsoundaudio.c went in anyway.
+  # NONE, WAV and our EMBED are the three that must be there.
   local builtin_audio='AUDIODEV_DRIVER_(ALSA|PA|PIPEWIRE|JACK|OSS|SNDIO|COREAUDIO|DSOUND|SDL|SPICE)$'
   for f in $names; do
     [ -f "$f" ] || continue
@@ -2442,15 +2098,15 @@ preview_anim_check() { # the shader preview keeps drawing (doc 07)
   # Plenty of presets do not stand still: an interlaced CRT draws
   # alternate fields, a phosphor afterglow decays, an NTSC signal
   # shimmers. The editor's preview renders on demand, so unless it knows
-  # to keep asking it shows one frozen frame of all that — the bug this
-  # guards. Both front ends take the answer from `launcher_core::preview`,
-  # so it is asked here through the verb they share.
+  # to keep asking it shows one frozen frame of all that. Every front end
+  # takes the answer from `launcher_core::preview`, so it is asked here
+  # through the shared verb.
   local moving=third_party/slang-shaders/crt/crt-beans-vga.slangp
   local still=third_party/slang-shaders/crt/crt-lottes.slangp
   local rc=0
   # A preset that stands still: said to stand still, and the same picture
-  # at any frame number. Also the probe — a box with no usable GPU can
-  # answer none of this, and that is a skip, not a failure.
+  # at any frame number. This is also the probe. A box with no usable GPU
+  # can answer none of this, and that is a skip, not a failure.
   if ! PREVIEW_FRAME=0 target/release/launcherx --preview-shader \
        "$still" "$GOLDEN" "$OUT/preview-still-0.png" >"$OUT/preview-still.txt" 2>&1; then
     sed 's/^/  /' "$OUT/preview-still.txt"
@@ -2544,7 +2200,7 @@ host_stage() {
 
   # the host GPU probe (ADR-013): what the launcher tells someone about 3D
   # before a machine exists. The verdict itself is a property of the box,
-  # so what is checked here is the part that has to hold on every box —
+  # so what is checked here is the part that has to hold on every box:
   # that a host with no Vulkan driver at all is reported unavailable,
   # exits non-zero and is pointed at the WineD3D path, that a software
   # driver is warned about rather than refused, and that a report always
@@ -2556,8 +2212,8 @@ host_stage() {
   # the wizard's emulation-optimization switches (patches/qemu/README.md):
   # that a machine nobody has touched still produces the command line it
   # always produced, that each switch lands on the option QEMU looks it up
-  # on — a CPU property on `-cpu`, an accelerator property on `-accel tcg`
-  # — and that our own QEMU actually accepts the line the launcher writes.
+  # on (a CPU property on `-cpu`, an accelerator property on `-accel tcg`),
+  # and that our own QEMU actually accepts the line the launcher writes.
   # The switches' *effect* is the guest batteries' job (x87-guest,
   # sse-guest, rep-guest, smc-guest); this is the wiring between them and
   # a checkbox.
@@ -2566,7 +2222,7 @@ host_stage() {
     || { [ -x target/release/launcherx ] || { FAIL+=(optimizations); echo "  FAIL optimizations (build)"; }; }
 
   # the wizard's pointer switch: a new Windows machine gets the USB tablet
-  # (absolute — the host pointer is the guest cursor and the window never
+  # (absolute: the host pointer is the guest cursor and the window never
   # grabs), a new DOS machine does not (its mouse drivers read the PS/2
   # controller), the checkbox adds and removes the device *and* its
   # controller, and our QEMU accepts both machines.
@@ -2576,19 +2232,18 @@ host_stage() {
     run_check extra-args extra-args.log extra_args_check || true
   fi
 
-  # the gamepad (M13 step 0): a new machine ignores a controller on every
-  # family, neither setting puts anything on the QEMU command line yet,
+  # the gamepad (M13): a new machine ignores a controller on every family,
+  # each setting puts on the QEMU command line only the device it names,
   # a bundle from a later launcher still loads, and the host end's
-  # shaping — the deadzone and the two-threshold hysteresis — behaves,
-  # driven by the scripted pad because no machine running this suite has
-  # a controller plugged into it.
+  # deadzone and two-threshold hysteresis behave, driven by the scripted
+  # pad because no machine running this suite has a controller.
   if [ -x target/release/launcherx ]; then
     run_check pad pad.log pad_check || true
   fi
 
   # the "Other" family (doc 06): the machine for an era OS that is neither
-  # Windows nor DOS is defined by what it does *not* get — our display
-  # adapter, whose driver is a Windows driver — so the check is that a new
+  # Windows nor DOS is defined by what it does *not* get, our display
+  # adapter, whose driver is a Windows driver. So the check is that a new
   # one comes out on standard hardware, with the cards pinned where an
   # installed guest will not see them move.
   if [ -x target/release/launcherx ]; then
@@ -2603,7 +2258,7 @@ host_stage() {
 
   # the music engines (doc 20): the three of them through the same C API
   # the two QEMU devices drive them through, including the bank the
-  # packages ship — no guest, no QEMU, ~3 s.
+  # packages ship. No guest, no QEMU, ~3 s.
   if [ -x target/release/synthx ]; then
     run_check libsynth libsynth.log libsynth_check || true
   else
@@ -2627,14 +2282,14 @@ host_stage() {
   fi
 
   # the display-adapter picker (doc 06): each family offers the adapters
-  # it has a real driver question about — Windows ours against the one it
-  # has an in-box driver for, Other the two standard ones, DOS neither —
-  # and changing it must not move the cards pinned below it.
+  # it has a real driver question about (Windows ours against the one it
+  # has an in-box driver for, Other the two standard ones, DOS the two
+  # VESA BIOSes), and changing it must not move the cards pinned below it.
   if [ -x target/release/launcherx ]; then
     run_check display-adapter display-adapter.log display_adapter_check || true
   fi
 
-  # which Direct3D 9 the host runs the executor on (ADR-007's 2026-09-21
+  # which Direct3D 9 the host runs the executor on (ADR-007's second
   # amendment): the form's picker, what `auto` resolves to here, and the
   # property on a real QEMU's device.
   if [ -x target/release/launcherx ]; then
@@ -2661,9 +2316,9 @@ host_stage() {
 
   # the application icon: every size in packaging/icon/ still derived from
   # the one master (doc 07). They are checked in because nothing that
-  # needs an icon can draw one — the launcher embeds a PNG at compile
-  # time, the Flatpak build is offline, the Windows package is
-  # cross-built without ImageMagick — so a master edited without a
+  # needs an icon can draw one. The launcher embeds a PNG at compile
+  # time, the Flatpak build is offline, and the Windows package is
+  # cross-built without ImageMagick, so a master edited without a
   # regenerate would ship the old picture everywhere but the repository.
   if command -v magick >/dev/null; then
     run_check icons icons.log scripts/gen-icons.sh --check || true
@@ -2673,7 +2328,7 @@ host_stage() {
 
   # the Linux package (M6 step 6): staged from this build and asked, with a
   # scrubbed environment, whether it resolves its own player, qemu-img,
-  # firmware and guest-tools — the launcher's paths are otherwise baked in
+  # firmware and guest-tools. The launcher's paths are otherwise baked in
   # at compile time and a regression there only shows on someone else's
   # machine. Rolls no tarball (the check is the point, not the archive).
   if [ ! -x launcher-qt/target/release/launcher-qt ]; then
@@ -2685,8 +2340,8 @@ host_stage() {
   elif [ "$OS" = Darwin ] && [ -f build/qemu/libqemu-embed-i386.dylib ] && [ -x build/qemu/qemu-img ] && [ -d qemu/pc-bios ]; then
     # The same question in the macOS form (docs/build-macos.md): the .app
     # staged, and everything the loader touches when the packaged player
-    # actually runs required to be inside it. No signing — a Developer ID
-    # is not something a test suite should assume, and the checks it would
+    # actually runs required to be inside it. No signing, since a
+    # Developer ID is not something a test suite should assume, and the checks it would
     # protect all run before it.
     run_check package package.log scripts/package-macos.sh --no-build --no-sign --no-dmg --out "$OUT/package" || true
   else
@@ -2694,10 +2349,10 @@ host_stage() {
   fi
 
   # the C ABI (doc 07): `launcher-core` is a library, and this proves it is
-  # usable as one — a C program creating a DOS machine through the shared
-  # wizard, putting a disc on the shelf and reading both back. It is the
-  # only check on the *third* front end's surface, so a rename or a
-  # changed default in a model shows up here as well as in the two GUIs.
+  # usable as one. A C program creates a DOS machine through the shared
+  # wizard, puts a disc on the shelf and reads both back. It is the only
+  # check on the C front end, so a rename or a changed default in a model
+  # shows up here as well as in the Qt launcher.
   # A scratch library and shelf, never the user's own.
   if cargo build -p launcher-capi >"$OUT/capi-build.log" 2>&1; then
     CAPI_LIB=""
@@ -2768,17 +2423,17 @@ host_stage() {
          -I"$DX" -I"$DX/windows" -I"$DX/directx" -ldl; then
       run_check d3dpt-dp2 d3dpt-dp2.log build/d3dpt-dp2-test "$OUT/dp2-test.bmp" || true
       # The same executor on a host with a Vulkan loader and no working
-      # device — which every host can be made into: both loader variables
-      # at a file that does not exist, so the loader finds no ICD and
+      # device, which every host can be made into. Both loader variables
+      # point at a file that does not exist, so the loader finds no ICD and
       # DXVK's instance constructor throws out of Direct3DCreate9. The
       # executor must say "no usable device" and the test must end by its
-      # own "no executor" exit (77), not by a signal: the candidate list
+      # own "no executor" exit (77), not by a signal. The candidate list
       # names the same DXVK by its full path and by its leaf name, and a
       # second Direct3DCreate9 on a DXVK whose constructor threw once
-      # dereferenced a null instance (2026-09-23, the community app on
-      # macOS 15: the player died at the adapter's realize and never
-      # reached the Wine executor). DXVK patch 09 and the executor's
-      # once-per-library rule both guard it; this asks the artefacts.
+      # dereferenced a null instance (the community app on macOS 15 died
+      # at the adapter's realize and never reached the Wine executor).
+      # DXVK patch 09 and the executor's once-per-library rule both guard
+      # it; this asks the artefacts.
       run_check exec-no-device exec-no-device.log exec_no_device_check || true
     else FAIL+=(d3dpt-dp2); echo "  FAIL d3dpt-dp2 (build)"; fi
   else
@@ -2818,7 +2473,7 @@ host_stage() {
         target/release/player --shader "$preset" --mode-sweep "$OUT/mode-sweep" || true
       # The chain's border sampling, from the run that just happened: the
       # player names the *reason* it is off, and "although this adapter
-      # has it" is the one that is our own descriptor's fault — a device
+      # has it" is the one that is our own descriptor's fault. A device
       # opened without `ADDRESS_MODE_CLAMP_TO_BORDER` makes librashader
       # sample clamp-to-edge, and every curved preset then smears its
       # outermost pixels over everything outside the tube.
@@ -2858,7 +2513,7 @@ host_stage() {
       # the occlusion query must have *resolved* (S_OK), not merely been
       # logged: a window-less client that nothing paces runs so far ahead of
       # the CS thread that GetData spins out and reports S_FALSE with 0
-      # pixels, and then only the guest-vs-native diff notices (2026-09-07)
+      # pixels, and then only the guest-vs-native diff notices
       if [ -f "$OUT/f9-native.bmp" ] && grep -q "occlusion query at frame .*: 0x00000000, [1-9]" "$OUT/D3DFEAT9.LOG"; then
         PASS+=(d3dfeat9-nat); echo "  PASS d3dfeat9-nat"
         grep "occlusion query\|getters" "$OUT/D3DFEAT9.LOG" | sed 's/^/       /'
@@ -2904,23 +2559,20 @@ guest_stage() {
       # The gameport as a DOS guest reads it (M13 path B). Unlike its
       # neighbours this one runs the **player**, because the pad reaches a
       # guest through the embed library and a bare QEMU has a gameport
-      # nothing ever moves — so it wants a display for the player's window
+      # nothing ever moves. So it wants a display for the player's window
       # and skips rather than fails without one.
       if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ -x target/release/player ]; then
         run_check pad-guest pad-guest.log python3 tools/pad-guest-test.py || true
       else
         skip pad-guest "needs target/release/player and a display (it runs the player)"
       fi
-    # **One skip per battery, not one skip standing for five.** Every DOS
-    # battery is gated on the same floppy, and this used to report the whole
-    # group as a single `SKIP x87-guest` — so a fresh worktree, which has no
-    # `build/images/144m/x86BOOT.img` until something fetches it, came back
-    # "37 passed, 1 skipped" while the main checkout ran the same suite as
-    # "42 passed, 0 skipped". The two numbers look like two different suites
-    # and are in fact the same one, minus everything that needs a DOS guest —
-    # including `atapi-guest`, which is the only check that reads a disc from
-    # inside a guest at all (found 2026-09-09, committing the SafeDisc 1.x
-    # weak-sector rule, which that battery is the regression guard for).
+    # **One skip per battery, not one skip standing for all of them.** Every
+    # DOS battery is gated on the same floppy. Reported as a single
+    # `SKIP x87-guest`, a fresh worktree (no `build/images/144m/x86BOOT.img`
+    # until something fetches it) came back "37 passed, 1 skipped" beside
+    # the main checkout's "42 passed, 0 skipped", which reads as two
+    # different suites. The missing ones include `atapi-guest`, the only
+    # check that reads a disc from inside a guest at all.
     else for c in x87-guest rep-guest smc-guest sse-guest atapi-guest atapi-read-error midi-guest pit-guest voodoo-guest voodoo-guest-d3dpt voodoo-guest-mmiofifo voodoo-guest-undither vbe-palette pad-guest; do
       skip "$c" "no FreeDOS floppy yet: run tools/x87-guest-test.py once to fetch it"
     done; fi
@@ -2932,11 +2584,6 @@ guest_stage() {
   [ -f "$img" ] || { skip guest "no XP image at $img (WINXP_IMG)"; return; }
   [ -n "$iso" ] && [ -f "$iso" ] || { skip guest "no guest-tools ISO (guest-tools/build-wrappers.sh)"; return; }
   [ -x build/qemu/qemu-system-i386 ] || { skip guest "no build/qemu/qemu-system-i386"; return; }
-  # The USB HID pad as a Windows game finds it (M13 path A): the same
-  # scripted pad, this time through XP's own HID stack and DirectInput.
-  # Its own XP boot rather than a passenger on the one below, because that
-  # machine has no `usb-gamepad` on it and adding one would change the
-  # hardware every other guest check runs against. ~60 s.
   # the CD-ROM backend: XP copies a converted guest-tools disc through cdrom.sys (doc 17 §6.3)
   if [ -x target/release/discx ] && command -v bsdtar >/dev/null; then
     # bsdtar keeps the ISO's read-only modes: make the previous extraction deletable first
@@ -3029,13 +2676,14 @@ guest_stage() {
     run_check "guest-F9-log=native" guest-F9-log.log diff "$OUT/f9-native.lines" "$OUT/f9-guest.lines" || true
   fi
 
-  # The pad in a Windows guest (M13 path A), **last in the stage**. Two
-  # more guest boots, and they go at the back because they are the newest
-  # checks here: a new check should not be able to perturb an established
-  # one by running before it. (What prompted the move was a `guest-cdimage`
-  # timeout on 2026-09-10 — which turned out to be another checkout's TCG
-  # guest running on the same box, the thing CLAUDE.md warns about, rather
-  # than these. The ordering is right either way.)
+  # The USB HID pad as a Windows game finds it (M13 path A), **last in the
+  # stage**: the same scripted pad, through the guest's own HID stack and
+  # DirectInput. Each is its own boot (~60 s on XP) rather than a passenger
+  # on the one above, because that machine has no `usb-gamepad` and adding
+  # one would change the hardware every other guest check runs against.
+  # They go at the back because they are the newest checks here, and a new
+  # check should not be able to perturb an established one by running
+  # before it.
   local pad98="${WIN98_PAD_MACHINE:-claude98}"
   if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && [ -x target/release/player ]; then
     run_check pad-guest-xp pad-guest-xp.log python3 tools/pad-guest-test.py xp "$img" || true

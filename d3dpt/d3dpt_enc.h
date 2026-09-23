@@ -1,5 +1,5 @@
 /*
- * d3dpt_enc.h — the guest-side batch encoder of the paravirtual Direct3D
+ * d3dpt_enc.h: the guest-side batch encoder of the paravirtual Direct3D
  * device, header-only C (no CRT beyond memcpy) so the same code runs in
  * the guest d3d9.dll (32-bit) and in the host test that drives the
  * executor without a guest. The doorbell callback is the only difference.

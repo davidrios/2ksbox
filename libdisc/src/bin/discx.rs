@@ -1,4 +1,4 @@
-//! discx — the libdisc exerciser (doc 17 §6.1).
+//! discx: the libdisc exerciser (doc 17 §6.1).
 //!
 //!   discx selftest <outdir>            write synthetic images, check the model through them
 //!   discx info <image>                 sessions, tracks, indices, extents
@@ -28,7 +28,7 @@ use libdisc::capi::{self, LibdiscSectorInfo, LibdiscTrackInfo};
 use libdisc::msf::Msf;
 use libdisc::{sector, subq, Disc, TrackMode};
 
-/// A disc opened through the C API in `capi.rs` — the boundary QEMU's
+/// A disc opened through the C API in `capi.rs`, the boundary QEMU's
 /// block driver and atapi.c use; every check goes through it.
 struct CDisc(*mut Disc);
 
@@ -396,8 +396,8 @@ fn check_lec(dir: &Path) -> Result<(), String> {
         }
     };
 
-    // A drive's L-EC decoder repairs what the P and Q parity can locate --
-    // one wrong symbol per codeword -- and hands the *original* bytes over.
+    // A drive's L-EC decoder repairs what the P and Q parity can locate
+    // (one wrong symbol per codeword) and hands the *original* bytes over.
     // Consecutive sector bytes fall in different codewords, so a burst is
     // spread across them and a long one is still repairable; past that two
     // errors land in one codeword and the sector is unreadable, which is
@@ -416,10 +416,10 @@ fn check_lec(dir: &Path) -> Result<(), String> {
         expect(&format!("one wrong {name} byte corrected"), d.read_cooked(1000).map(|b| b.to_vec()), Ok(want.clone()))?;
     }
     // Parity destroyed wholesale while the EDC stays intact: the bytes a
-    // cooked read delivers are provably good — the EDC is a CRC-32 over
-    // exactly those — so a drive hands the sector over and the parity is
-    // never consulted. This is the shape of a real dump found 2026-09-08
-    // (a Warcraft 3 disc, 92 sectors, every one of them EDC-clean).
+    // cooked read delivers are provably good (the EDC is a CRC-32 over
+    // exactly those), so a drive hands the sector over and the parity is
+    // never consulted. This is the shape of a real dump (a Warcraft 3
+    // disc, 92 sectors, every one of them EDC-clean).
     let d = damaged(&|bin: &mut Vec<u8>| bin[at + 2076..at + 2352].fill(0x5A))?;
     expect("wrong parity with an intact EDC still reads", d.read_cooked(1000).map(|b| b.to_vec()), Ok(want.clone()))?;
     expect("... and read_cd cooked too", d.read_cd(1000, 2, 0x10, 0).map(|v| v[..2048].to_vec()), Ok(want.clone()))?;
@@ -437,9 +437,9 @@ fn check_lec(dir: &Path) -> Result<(), String> {
     })?;
     expect("two scattered errors corrected", d.read_cooked(1000).map(|b| b.to_vec()), Ok(want.clone()))?;
 
-    // What a dump tool writes over a sector it could not read -- the whole
-    // body one filler byte, the header left alone (DiscImageCreator's
-    // "replaced at 0x55 except header") -- is exactly what a protection
+    // What a dump tool writes over a sector it could not read (the whole
+    // body one filler byte, the header left alone, DiscImageCreator's
+    // "replaced at 0x55 except header") is exactly what a protection
     // check reads, and it must stay unreadable.
     let d = damaged(&|bin: &mut Vec<u8>| bin[at + 16..at + 2352].fill(0x55))?;
     expect("a filled sector body is unreadable", d.read_cooked(1000).err(), Some(capi::LIBDISC_EMEDIUM))?;
@@ -448,7 +448,7 @@ fn check_lec(dir: &Path) -> Result<(), String> {
     // question: Crimson Skies' SafeDisc 1.50.020 reads its band with exactly
     // this CDB (byte 9 = 0xF8) and it is the read failing that it looks for.
     // Delivering the stored bytes told it the disc was clean and it refused to
-    // start (doc 17 §2.6c, 2026-09-09).
+    // start (doc 17 §2.6c).
     expect("read_cd raw of a filled body", d.read_cd(1000, 2, 0xF8, 0).err(), Some(capi::LIBDISC_EMEDIUM))?;
     // ... unless C2 error flags were asked for, which is how a dumping tool
     // gets an unreadable sector's bytes out of a real drive: the sector comes
@@ -1070,7 +1070,7 @@ fn scan(disc: &Disc, first: i32, count: Option<i32>) -> Result<(), String> {
                 // bytes a cooked read delivers, so a sector whose EDC comes
                 // out is read as it stands however wrong its parity is;
                 // otherwise the P/Q decoder gets a go, and only what it
-                // cannot repair is a medium error — which is what a
+                // cannot repair is a medium error, which is what a
                 // protection check is looking for.
                 if libdisc::ecc::edc_ok(&raw, kind) && sector::has_sync_header(&raw, kind) {
                     edc_intact += 1;
@@ -1131,16 +1131,8 @@ fn scan(disc: &Disc, first: i32, count: Option<i32>) -> Result<(), String> {
     Ok(())
 }
 
-/// Walk every sector's stored subchannel and characterise the Q frames that
-/// fail their CRC (doc 17 §2.6). On a real dump a failure is one of two very
-/// different things, and everything printed here exists to tell them apart:
-/// the drive's own read noise (scattered singletons, subchannel is delivered
-/// with no error correction) or our frame layout (clustered, systematic, or
-/// concentrated in one track / one ADR). The second half checks the opposite
-/// direction — how often `subq::synthesize` reproduces what the disc itself
-/// carries, which is the only real-disc test our synthesizer gets.
 /// Write a copy of an image in which every sector whose L-EC fails now
-/// verifies — **the negative control for a protection check** (doc 17 §2.6).
+/// verifies: **the negative control for a protection check** (doc 17 §2.6).
 ///
 /// A protected title passing on the real dump only proves the check was
 /// satisfied if the same check *rejects* a disc it should reject; otherwise a
@@ -1279,6 +1271,14 @@ fn write_all_at(h: &mut fs::File, buf: &[u8], offset: u64) -> std::io::Result<()
     }
 }
 
+/// Walk every sector's stored subchannel and characterise the Q frames that
+/// fail their CRC (doc 17 §2.6). On a real dump a failure is one of two very
+/// different things, and everything printed here exists to tell them apart:
+/// the drive's own read noise (scattered singletons, subchannel is delivered
+/// with no error correction) or our frame layout (clustered, systematic, or
+/// concentrated in one track / one ADR). The second half checks the opposite
+/// direction, how often `subq::synthesize` reproduces what the disc itself
+/// carries, which is the only real-disc test our synthesizer gets.
 fn subscan(disc: &Disc, first: i32, count: Option<i32>) -> Result<(), String> {
     let n = disc.sector_count() as i32;
     let end = count.map(|c| (first + c).min(n)).unwrap_or(n);

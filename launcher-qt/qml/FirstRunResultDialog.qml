@@ -2,12 +2,10 @@
 // download failed and can be tried again (`launcher_core::firstrun`).
 //
 // A second `MessageDialog` rather than the question one reused, for the
-// reason `FirstRunDialog.qml` gives at length: a dialog that is opened
-// and closed to follow a model answers its own question, because
-// `accept()` and `close()` both emit `rejected()`. Each of these is
-// opened when its step arrives and closed by the person pressing a
-// button, which is the only thing that closes a dialog on any desktop
-// anyway.
+// reason `FirstRunDialog.qml` gives: a dialog opened and closed to follow
+// a model answers its own question, because `accept()` and `close()`
+// both emit `rejected()`. Each of these is opened when its step arrives
+// and closed by the person pressing a button.
 //
 // Its words are the model's, like the question's. Its buttons are the
 // standard ones for the two outcomes: a failure can be retried or given
@@ -32,8 +30,8 @@ MessageDialog {
     informativeText: offer.detail
     buttons: root.failed ? (MessageDialog.Retry | MessageDialog.Cancel) : MessageDialog.Ok
 
-    // Retry and OK are the accept role, Cancel the reject one — all this
-    // has to know about the platform's buttons.
+    // Retry and OK are the accept role, Cancel the reject one. That is
+    // all this has to know about the platform's buttons.
     onAccepted: root.failed ? offer.retry() : offer.dismiss()
     onRejected: offer.dismiss()
 }

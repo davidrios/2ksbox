@@ -1,20 +1,21 @@
 /*
- * CDSHELF.EXE — the host's disc shelf, from inside Windows 98 or XP.
+ * CDSHELF.EXE: the host's disc shelf, from inside Windows 98 or XP.
  *
  * The Windows half of the in-guest disc shelf (doc 07); the DOS half is
  * guest-tools/src/cdshelf.asm and the protocol, shared by every side, is
  * cdshelf/cdshelf_proto.h. Lists the discs the host has on the shelf and
  * puts one of them in the drive:
  *
- *   CDSHELF                list the shelf
+ *   CDSHELF                the disc-shelf window
+ *   CDSHELF list           list the shelf
  *   CDSHELF 3              load slot 3
  *   CDSHELF E              empty the tray
- *   CDSHELF -d E:          use that drive rather than searching
+ *   CDSHELF -d E:          use that drive rather than searching (XP only)
  *   CDSHELF -v             the transport chatter as well
  *
- * ONE EXE FOR BOTH FAMILIES. The shelf is a vendor ATAPI command on the
+ * One EXE for both families. The shelf is a vendor ATAPI command on the
  * machine's own CD-ROM drive (patch 52), so all this program needs is a
- * way to send a raw command to that drive — and the two Windows families
+ * way to send a raw command to that drive, and the two Windows families
  * have different ones:
  *
  *   XP / 2000   SPTI: DeviceIoControl(IOCTL_SCSI_PASS_THROUGH_DIRECT) on
@@ -28,8 +29,8 @@
  *               installed for this to work on a stock install.
  *
  * Which one is used is decided by the OS, not by a #ifdef, so the same
- * binary runs on both. Everything above the transport — the protocol,
- * the listing, the medium-change wait — is shared.
+ * binary runs on both. Everything above the transport (the protocol,
+ * the listing, the medium-change wait) is shared.
  *
  * Built by guest-tools/build-wrappers.sh with the msvcrt + pentium3 shim
  * every guest binary here uses (Win9x has no UCRT).
@@ -145,12 +146,11 @@ typedef struct {
 #define STATUS_CHKCOND    0x02
 
 /*
- * ASPI32 is __cdecl, not stdcall — its exports carry no @n decoration,
+ * ASPI32 is __cdecl, not stdcall: its exports carry no @n decoration,
  * which is why GetProcAddress finds them under their plain names. Getting
- * this wrong does not fail to link: the first SendASPI32Command returns
+ * this wrong does not fail to link. The first SendASPI32Command returns
  * with the caller's stack four bytes out and Windows 98 kills the program
- * a moment later ("this program has performed an illegal operation"),
- * which is exactly what the first Win98 run of this program did.
+ * a moment later ("this program has performed an illegal operation").
  */
 typedef DWORD (__cdecl *pfnGetASPI32SupportInfo)(void);
 typedef DWORD (__cdecl *pfnSendASPI32Command)(void *);
@@ -229,7 +229,7 @@ static int aspi_exec(Drive *d, const BYTE *cdb, void *data, int datalen,
     /*
      * SendASPI32Command returns SS_PENDING only when the request is still
      * running; anything else means it already finished and the event will
-     * never be signalled — waiting on it unconditionally would stall for
+     * never be signalled. Waiting on it unconditionally would stall for
      * the whole timeout on every command.
      */
     if (aspi_send(&srb) == SS_PENDING) {
@@ -311,9 +311,9 @@ static unsigned le16(const BYTE *p)
 }
 
 /*
- * The reply is read twice: a header-only request first — which is how a
- * guest learns how many discs there are, and whether it understands the
- * protocol at all — and then one request sized for exactly that many.
+ * The reply is read twice: a header-only request first, which is how a
+ * guest learns how many discs there are and whether it understands the
+ * protocol at all, and then one request sized for exactly that many.
  * `buf` must hold CDSHELF_LIST_HEADER_SIZE + total * entry_size.
  */
 static int shelf_list(Drive *d, BYTE *buf, int buflen, int *total, int *count,
@@ -393,7 +393,7 @@ static int drive_has_shelf(Drive *d)
     }
     if (r == CDB_SENSE && sense.key == 5 && sense.asc == 0x20) {
         /* the drive knows nothing of the opcode, which is the right answer
-         * for a machine started without a shelf — and the one case worth
+         * for a machine started without a shelf, and the one case worth
          * explaining rather than reporting as "no drive found" */
         saw_no_shelf = 1;
         vlogf("  %s: a drive, but no shelf on it\n", d->name);
@@ -404,7 +404,7 @@ static int drive_has_shelf(Drive *d)
 /*
  * NT: every CD-ROM drive letter, opened through SPTI. A machine can have
  * more than one drive and only one of them is ours, so the shelf command
- * itself is the test — the same way the DOS build picks a drive.
+ * itself is the test, the same way the DOS build picks a drive.
  */
 static int find_drive_spti(Drive *d, char want_letter)
 {
@@ -527,7 +527,7 @@ static int is_win9x(void)
 /*
  * The medium change happens behind the command: the device runs it from a
  * bottom half (patch 52), and the drive then reports the ATAPI
- * medium-change dance — "no medium", then UNIT ATTENTION — before the new
+ * medium-change dance ("no medium", then UNIT ATTENTION) before the new
  * disc can be read. `wait_medium` polls TEST UNIT READY through that until
  * the drive agrees the tray is (or is not) occupied, so nothing here
  * reports success before the drive does, and Windows sees a settled drive.
@@ -565,16 +565,16 @@ static int wait_medium(Drive *d, int want_present, int dots)
 }
 
 /*
- * Put a disc in the drive: EMPTY IT FIRST, wait for the drive to say the
+ * Put a disc in the drive: empty it first, wait for the drive to say the
  * tray really is empty, and only then load the new one.
  *
- * Two reasons, both learned the hard way. Windows caches what it last saw
- * in the drive, and a swap it never saw as a removal leaves Explorer (and
- * MSCDEX) showing the previous disc's files — "inserting did nothing".
- * And on the device side the medium change runs from a *single* bottom
- * half (patch 52): an eject and a load issued back to back without
- * waiting collapse into one, and the one that survives is the last
- * request — so the wait between them is load-bearing, not politeness.
+ * Two reasons. Windows caches what it last saw in the drive, and a swap it
+ * never saw as a removal leaves Explorer (and MSCDEX) showing the previous
+ * disc's files, so inserting appears to do nothing. And on the device side
+ * the medium change runs from a *single* bottom half (patch 52): an eject
+ * and a load issued back to back without waiting collapse into one, and
+ * the one that survives is the last request. The wait between them is
+ * required.
  *
  * `slot < 0` just empties the drive.
  */
@@ -592,7 +592,7 @@ static int cdshelf_insert(Drive *d, int slot, int dots, Sense *sense)
     }
     /* An eject the drive never confirms means the old medium may still be
      * there when the new one is asked for, which is the swap that appears
-     * to do nothing. It was ignored here once; it is a failure now. */
+     * to do nothing, so it is a failure. */
     if (!wait_medium(d, 0, dots)) {
         return CDB_FAILED;
     }
@@ -608,13 +608,7 @@ static int cdshelf_insert(Drive *d, int slot, int dots, Sense *sense)
     return wait_medium(d, 1, dots) ? CDB_OK : CDB_FAILED;
 }
 
-/*
- * Windows caches what it last saw in the drive. IOCTL_STORAGE_CHECK_VERIFY
- * is the "look again" every CD utility of the era ends with; without it
- * Explorer can keep showing the previous disc's files until something else
- * touches the drive. Best effort — a failure here changes nothing about
- * the disc actually being loaded.
- */
+/* for tell_windows() below */
 #ifndef FSCTL_DISMOUNT_VOLUME
 #define FSCTL_DISMOUNT_VOLUME CTL_CODE(FILE_DEVICE_FILE_SYSTEM, 8, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #endif
@@ -627,13 +621,15 @@ static int cdshelf_insert(Drive *d, int slot, int dots, Sense *sense)
  * whoever asks first, and the first to ask is `wait_medium` polling TEST
  * UNIT READY through SPTI to know the tray had settled. The file system
  * driver therefore never sees a change, keeps the volume it cached, and
- * `dir` lists the disc that came *out* — the drive swapped, Windows did
+ * `dir` lists the disc that came *out*: the drive swapped, Windows did
  * not. Ejecting by hand worked only because Explorer's own polling
  * happened to catch a change we had not eaten.
  *
  * So say it directly: dismount what the file system is holding, then ask
- * it to look again. It remounts on the next access and reads the disc
- * that is actually in the drive. Windows 98 goes through ASPI and has no
+ * it to look again (IOCTL_STORAGE_CHECK_VERIFY, the "look again" every CD
+ * utility of the era ends with). It remounts on the next access and reads
+ * the disc that is actually in the drive. Both calls are best effort: a
+ * failure changes nothing about the disc being loaded. Windows 98 goes through ASPI and has no
  * volume handle to dismount; there the eject-and-settle in
  * `cdshelf_insert` is what MSCDEX notices.
  */
@@ -676,9 +672,9 @@ static void usage(void)
 /*
  * Plain USER32: a listbox, four buttons and a status line, created in code
  * rather than from a dialog resource so this stays one .c file the mingw
- * build compiles with no .rc step. Nothing here is newer than Windows 95 —
- * no common controls, no manifest — because the same EXE has to come up on
- * a stock Win98 as on XP.
+ * build compiles with no .rc step. Nothing here is newer than Windows 95
+ * (no common controls, no manifest), because the same EXE has to come up
+ * on a stock Win98 as on XP.
  *
  * Inserting a disc takes a second or two (the drive has to settle twice,
  * see cdshelf_insert), so it runs on a worker thread and posts the result
@@ -728,7 +724,7 @@ static int gui_disc_in_drive(void)
 
 /* `on` is "the drive is free to be asked something". Insert has a second
  * condition: while a disc is in the drive there is nowhere to put another
- * one, and the tray has to be emptied first — the button says so by being
+ * one, and the tray has to be emptied first. The button says so by being
  * grey, rather than by being pressed and then swapping a disc out from
  * under whatever in the guest is reading it. */
 static void gui_enable(int on)
@@ -781,7 +777,7 @@ static void gui_reload(void)
                     label, sizeof label);
         /* Insert is grey while this is true, so the status line is where
          * the way out of it is said */
-        gui_status("In the drive: %s — Eject it to put another disc in.", label);
+        gui_status("In the drive: %s. Eject it to put in another disc.", label);
     } else {
         gui_status("%d disc%s on the shelf.", gui.total, gui.total == 1 ? "" : "s");
     }
@@ -816,7 +812,7 @@ static void gui_start(int slot)
          * by the Eject button, deliberately, and not as a side effect of
          * asking for another disc */
         if (gui_disc_in_drive()) {
-            gui_status("There is a disc in the drive — Eject it first.");
+            gui_status("A disc is in the drive. Eject it first.");
             return;
         }
         if (e[CDSHELF_ENTRY_FLAGS_OFF] & CDSHELF_FLAG_MISSING) {
@@ -838,7 +834,7 @@ static void gui_start(int slot)
 }
 
 /* Insert the highlighted disc. A list with nothing selected answers
- * LB_GETCURSEL with LB_ERR, which is negative — and a negative slot is how
+ * LB_GETCURSEL with LB_ERR, which is negative, and a negative slot is how
  * gui_start() is told to empty the drive, so the row has to be checked
  * before it is passed on. */
 static void gui_insert_selected(void)
@@ -1045,8 +1041,8 @@ int main(int argc, char **argv)
             MessageBoxA(NULL,
                         saw_no_shelf
                             ? "This machine's CD-ROM drive has no disc shelf.\n\n"
-                              "The launcher gives its machines one; a machine started "
-                              "by hand needs -device ide-cd,shelf=..."
+                              "Machines started from the launcher have one. A machine "
+                              "started by hand needs -device ide-cd,shelf=..."
                             : "No CD-ROM drive with a disc shelf was found.",
                         "Disc shelf", MB_OK | MB_ICONINFORMATION);
         }

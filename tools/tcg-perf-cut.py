@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""tcg-perf-cut.py <run dir> [from to] -- a whole-run Linux perf profile
+"""tcg-perf-cut.py <run dir> [from to]: a whole-run Linux perf profile
 (tools/w98-3dmark.sh <n> whole, EXTRA=-perfmap) cut to one window, given in
 seconds after the Benchmark click, and split by thread and by bucket on the
 vCPU thread: generated code, the softmmu slow path, translation + lookup,
 dispatch, helpers, the executor, DXVK, libc. With no window it prints the
 `ddi:` frame-rate lines with their offsets so a window can be chosen (the
-first-person test is the ~15 s one). Writes <run dir>/pcs.txt -- samples per
-guest instruction -- for tools/tcg-form-weights.py. Keep the run's
+first-person test is the ~15 s one). Writes <run dir>/pcs.txt (samples per
+guest instruction) for tools/tcg-form-weights.py. Keep the run's
 perf-<pid>.map beside perf.data (w98-3dmark.sh copies it) or the generated
 code is one [unknown]. The Linux counterpart of tools/tcg-profile.py (macOS
 `sample`); docs/tracks/m9-tcg-aarch64.md, "Win98 3D"."""

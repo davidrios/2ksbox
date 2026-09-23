@@ -5,15 +5,15 @@
 // mingw's `call_once` parks the callable in `std::__once_call`, a
 // `__thread` variable reached through **emulated TLS**, and hands
 // `pthread_once` the address of `__once_proxy` to run. `__once_proxy`
-// lives in `libstdc++-6.dll`, and emutls keys its storage per *libgcc* —
-// of which there are two here, the one linked statically into this
+// lives in `libstdc++-6.dll`, and emutls keys its storage per *libgcc*,
+// of which there are two here: the one linked statically into this
 // binary (rustc does that for `x86_64-pc-windows-gnu`) and the one
 // `libstdc++-6.dll` uses. So the proxy reads a slot this binary never
 // wrote, finds NULL, and calls it.
 //
 // Defining `__once_proxy` here gives the linker a local definition to
 // prefer over the DLL's import, and this one reads `__once_call` through
-// *this* module's emutls — the same registry `call_once` wrote it to. It
+// *this* module's emutls, the same registry `call_once` wrote it to. It
 // is the whole of libstdc++'s own implementation (`src/c++11/mutex.cc`):
 // the proxy exists only to be a plain `void()` that `pthread_once` can
 // take the address of.

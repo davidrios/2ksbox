@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# tools/specbench/run.sh — the CPU-benchmark matrix of docs/22-tcg-evaluation.md,
-# headless: one XP boot per emulator configuration, the whole benchmark ISO
+# The CPU-benchmark matrix of docs/22-tcg-evaluation.md, headless: one XP boot per emulator configuration, the whole benchmark ISO
 # run inside it by SPECRUN.EXE, timings and output CRCs pulled off a floppy.
 # A GUI program on the list (Super PI) is keyed from here: SPECRUN announces
 # each start on COM1 and the host sends that name's key sequence.
@@ -10,7 +9,7 @@
 #   tools/specbench/run.sh ~/vms/winxp.qcow2 all        # every configuration below
 #
 # Configurations (a name → a QEMU binary and its -cpu / -accel line):
-#   stock      pristine QEMU v9.2.4 (build/qemu-stock, scripts in the paper) — the baseline
+#   stock      pristine QEMU v9.2.4 (build/qemu-stock, scripts in the paper), the baseline
 #   stock-pic  the same pristine tree built with our -fPIC/-Db_staticpic flags
 #              (build/qemu-stock-pic): the diagnostic that separates the cost of
 #              PIC objects (ours are linked into the embed library too) from
@@ -36,7 +35,7 @@
 # re-run after an interruption and only the missing ones run; `--status`
 # prints done/pending per configuration; PAUSE=1 asks on the terminal before
 # each one (Enter runs it, s skips, q quits), for interleaving the ~12-minute
-# runs with other work on the machine — a benchmark taken beside another
+# runs with other work on the machine. A benchmark taken beside another
 # load is not a benchmark.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -48,7 +47,7 @@ ISO="${ISO:-$ROOT/build/specbench/sb.iso}"
 OURS="$ROOT/build/qemu/qemu-system-i386"; OURS_BIOS="$ROOT/qemu/pc-bios"
 # Every launch through the no-ASLR launcher (WRAP= to override, WRAP="" for none): a launch
 # whose executable lands at an odd multiple of 16 KiB runs helper-heavy code ~35 % slower
-# on this Mac (docs/22 §5, 2026-09-15: 8 of 8 sampled launches, and dyld ignores segment
+# on this Mac (docs/22 §5: 8 of 8 sampled launches, and dyld ignores segment
 # alignment when it picks the slide), and a benchmark must not be a coin toss
 NOASLR="$ROOT/build/specbench/noaslr"; [ -x "$NOASLR" ] || NOASLR=""
 STOCK="${STOCK_BIN_OVERRIDE:-$ROOT/build/qemu-stock/qemu-system-i386}"; STOCK_BIOS="$ROOT/build/qemu-stock-src/pc-bios"

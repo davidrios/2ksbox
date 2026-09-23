@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""phases.py -- the census log cut into a run's phases and summed.
+"""The census log cut into a run's phases and summed.
 
     tools/hwmmu/phases.py <census.log> <shell_after_s> name:start:end [name:start:end ...]
 

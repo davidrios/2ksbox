@@ -161,8 +161,8 @@ pub fn parse(mds: &[u8], mds_path: &Path) -> Result<Disc> {
                 (_, sz) => return Err(bad(&format!("track {}: {sz}-byte sectors with mode {:#04x} not supported", e.point, e.mode))),
             };
             // The mode byte and the TOC control bits must agree. A track read
-            // with the wrong kind is silently unusable — every sector
-            // misclassified, no L-EC verified — so a contradiction is an
+            // with the wrong kind is silently unusable (every sector
+            // misclassified, no L-EC verified), so a contradiction is an
             // error, not a guess (this is what 0xEC-as-audio looked like).
             if mode.is_data() != (e.adr_ctl & 0x04 != 0) {
                 return Err(bad(&format!(

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# xp-driver-test.sh — drive an XP image through the d3dpt-vga driver tests
-# headlessly (doc 15). Boots standalone QEMU (KVM when /dev/kvm exists)
+# Drive an XP image through the d3dpt-vga driver tests headlessly
+# (doc 15). Boots standalone QEMU (KVM when /dev/kvm exists)
 # with the driver ISO and a FAT scratch disk, types commands over QMP, and
 # pulls the guest logs out of the scratch disk with mtools.
 #
@@ -28,18 +28,18 @@
 #   tools/xp-driver-test.sh <image.qcow2> bat run.bat                   # a batch file, staged as E:\RUN.BAT (long command lines)
 #
 # Env: QEMU_EXTRA='-audiodev none,id=snd0 -device AC97,audiodev=snd0' (more QEMU arguments: a
-# sound card), VGA=cirrus (XP's inbox driver instead of ours: the control for a crash), DDFLAGS=N (-device d3dpt-vga,ddflags=N), FBVER=N (-device d3dpt-vga,fb-version=N: the adapter reports another register set version, so a newer one checks the installed driver accepts a QEMU update), EXEC=wine (-device d3dpt-vga,exec=wine: the executor in another process on Wine's own d3d9, ADR-018 / M15 — what a Linux or macOS host below the floor runs, and on a host with Vulkan the A/B; D3DPT_WINE names the wine binary), NO_EXEC=1 (-device d3dpt-vga,no-exec=on: the adapter reports no Direct3D executor, as a host below ADR-013's Vulkan 1.3 floor does — the run then shows what one of those users gets: the DirectDraw half alone, no HAL, the runtime's software device or WineD3D), OUT=dir for screendumps
+# sound card), VGA=cirrus (XP's inbox driver instead of ours: the control for a crash), DDFLAGS=N (-device d3dpt-vga,ddflags=N), FBVER=N (-device d3dpt-vga,fb-version=N: the adapter reports another register set version, so a newer one checks the installed driver accepts a QEMU update), EXEC=wine (-device d3dpt-vga,exec=wine: the executor in another process on Wine's own d3d9, ADR-018 / M15. It is what a Linux or macOS host below the floor runs, and on a host with Vulkan the A/B; D3DPT_WINE names the wine binary), NO_EXEC=1 (-device d3dpt-vga,no-exec=on: the adapter reports no Direct3D executor, as a host with none does, and the run shows what such a user gets: the DirectDraw half alone, no HAL, the runtime's software device or WineD3D), OUT=dir for screendumps
 # and logs (default build/xp-driver-test), NO_KVM=1, CPU=pentium3 (the KVM CPU model), GAME_ISO=game.iso (the
 # game disc takes the CD-ROM drive the game was installed from, D:; the
 # driver ISO moves to the next drive, F: after the E: scratch), and for `cmd` / `bat`:
 # CMD_WAIT=s (the cap on waiting for the command to say it is done over
 # COM1, default 300; BOOT_WAIT=s is the cap on finding the shell at all,
-# REBOOT_WAIT=s the cap on `install`'s restart — none of the three is a
-# sleep any more, see tools/guestwait.sh) or SHOTS=n SHOT_EVERY=s (n screendumps
-# cmd-01.png … every s seconds — for watching a game start; SHOT_KEYS="26:esc"
+# REBOOT_WAIT=s the cap on `install`'s restart; none of the three is a
+# sleep, see tools/guestwait.sh) or SHOTS=n SHOT_EVERY=s (n screendumps
+# cmd-01.png … every s seconds, for watching a game start; SHOT_KEYS="26:esc"
 # presses a key right before screendump n). KEEP=1 leaves the machine
 # running at the end (QMP at OUT/qmp.sock; kill it yourself) for a look
-# at a guest that went wrong — `info registers` twice, `info pic`, a
+# at a guest that went wrong: `info registers` twice, `info pic`, a
 # second Run dialog typing `cmd /c type C:\WINDOWS\setupapi.log > COM1`.
 # `install` writes DRVINST's own lines to COM1 (serial-install.log) and a
 # screendump every 20 s (install-NN.png) while it waits. Needs
@@ -135,8 +135,8 @@ ACCEL=(-cpu pentium3)
 [ -e /dev/kvm ] && [ -z "${NO_KVM:-}" ] && ACCEL=(-accel kvm -cpu "${CPU:-host}")   # CPU=pentium3: Max Payne's JPEG decoder mis-decodes on a modern family
 LOG="$OUT/qemu-$MODE.log"
 # The guest's own line out. The scratch disk cannot be asked anything while
-# the guest is running — XP's lazy writer can hold a small FAT write for
-# minutes (tools/xp-cdimage-test.sh found that the hard way) — so every
+# the guest is running (XP's lazy writer can hold a small FAT write for
+# minutes), so every
 # command this script types ends by echoing a marker to COM1, and the run
 # waits for the marker instead of sleeping for as long as the command has
 # ever taken.
@@ -159,7 +159,7 @@ run() {  # one chained guest command line in a console that stays open
   Q type ' '; Q keys backspace          # the first key after the chord is lost, and Run opens on its last command
   Q type "cmd /k $1"; Q keys ret
 }
-run_until() {  # <marker> <cap> <command line> — run it, and wait for it to say it is done
+run_until() {  # <marker> <cap> <command line>: run it, and wait for it to say it is done
   local mark=$1 cap=$2; shift 2
   run "$* & echo $mark > COM1"
   gw_wait_log "$SER" "$mark" "$cap" || true
@@ -195,7 +195,7 @@ gw_wait_sock "$SOCK" || exit 1
 # No fixed boot sleep: knock on the Run dialog until the guest runs
 # something and says so on COM1 (tools/guestwait.sh). `install` is the mode
 # where the driver is not in the image yet, so there is no adapter line to
-# wait for either — the knocking is what works on every mode.
+# wait for either. The knocking works on every mode.
 gw_poke_until "$SOCK" xp 'cmd /c echo SHELLUP > COM1' "${BOOT_WAIT:-300}" grep -q SHELLUP "$SER" || {
   Q screendump "$OUT/$MODE-noshell.png" || true
   echo "the guest never reached its shell: see $OUT/$MODE-noshell.png and $LOG"
@@ -203,20 +203,20 @@ gw_poke_until "$SOCK" xp 'cmd /c echo SHELLUP > COM1' "${BOOT_WAIT:-300}" grep -
 case "$MODE" in
   install)
     # a shorter cap than the rest: if DRVINST ever turns out not to return,
-    # the restart below still works — cmd buffers the typed line until it does
-    # DRVINST's own words go to COM1 -- the serial log on the host, written
-    # the moment they are printed -- because an install that blocks (a
+    # the restart below still works, since cmd buffers the typed line until
+    # it does.
+    # DRVINST's own words go to COM1 (the serial log on the host, written
+    # the moment they are printed), because an install that blocks (a
     # dialog, a devnode restart that never comes back) shows a black
     # screendump and nothing else, and its console window dies with the
-    # guest (2026-09-22: a run spent 480 s in it with no evidence at all)
-    # and a screendump every 20 s meanwhile (install-NN.png): the one at the
-    # end shows where it ended, not what it went through
+    # guest. A screendump every 20 s meanwhile (install-NN.png), because the
+    # one at the end shows where it ended, not what it went through.
     ( i=0; while sleep 20; do i=$((i+1)); Q screendump "$OUT/install-$(printf %02d "$i").png" >/dev/null 2>&1 || true; done ) & SHOTPID=$!
     run_until DRVDONE "${CMD_WAIT:-300}" 'D:\DRIVER\DRVINST.EXE > COM1'
     Q screendump "$OUT/install-done.png"
     # the count to beat: the machine has to program the desktop mode once
-    # more, after the restart, and that — not a screendump of a desktop
-    # that looks the same either way — is the proof it came back on our
+    # more, after the restart, and that (not a screendump of a desktop
+    # that looks the same either way) is the proof it came back on our
     # driver (nothing at all here on the first install: the count is 0)
     seen=$(grep -c "linear mode on" "$LOG" 2>/dev/null || true)
     want=$(( ${seen:-0} + 1 ))
@@ -284,7 +284,7 @@ case "$MODE" in
     for p in $PROBES; do probe_verdict "$p"; done ;;
   gamma)
     # GAMMATEST: a gamma ramp through d3d8.dll's SetGammaRamp, which the
-    # adapter applies where it makes the picture (register set v5) — so the
+    # adapter applies where it makes the picture (register set v5). So the
     # evidence is the screen, not the probe: a screendump while each ramp is
     # held (the adapter says `gamma ramp on` / `off` when it takes one), and
     # the centre pixel of each, mid grey with blue at 3/4 and then unchanged

@@ -1,10 +1,10 @@
 /*
- * v2start.c — V2START.EXE, the Voodoo 2's start-up guard (doc 21 §11).
+ * v2start.c: V2START.EXE, the Voodoo 2's start-up guard (doc 21 §11).
  *
  * 3dfx's Voodoo 2 driver puts a Run entry, `Voodoo2`, in the registry:
  * `rundll32.exe 3dfxv2ps.dll,UpdateRegSettings` at every login. That call
- * brings the card up through Glide 3's init library in its own process —
- * video registers zeroed, command FIFO off — and under TCG it takes about
+ * brings the card up through Glide 3's init library in its own process
+ * (video registers zeroed, command FIFO off), and under TCG it takes about
  * three seconds. A Glide game started inside them has the card torn down
  * under its open window and hangs. On real hardware it is milliseconds,
  * so nothing in 3dfx's driver guards it.
@@ -107,7 +107,7 @@ static int command_runnable(const char *cmd)
     return SearchPathA(NULL, dll, NULL, sizeof found, found, NULL) != 0;
 }
 
-/* A RUNDLL32 process already running — the copy Explorer started from a
+/* A RUNDLL32 process already running: the copy Explorer started from a
  * Run entry that came back. Toolhelp is there on 98 and Me. */
 static HANDLE find_rundll32(void)
 {

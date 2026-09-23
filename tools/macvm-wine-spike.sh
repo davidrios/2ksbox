@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The M15 spike inside a macOS guest (docs/tracks/m15-wine-executor.md,
 # ADR-019): a pre-26 macOS in a UTM virtual machine on this Mac stands in
-# for the community build's user — no Vulkan 1.3, so the executor has to
-# run on Wine — and this drives the two host tests through the Windows
+# for the community build's user (no Vulkan 1.3, so the executor has to
+# run on Wine). This drives the two host tests through the Windows
 # build of the executor on Wine's own d3d9 *in that guest*, over ssh, and
 # diffs the frames it drew against the DXVK frames this host made.
 #
@@ -20,15 +20,15 @@
 # console with Remote Login on, Rosetta installed (`softwareupdate
 # --install-rosetta --agree-to-license`, it wants an administrator), and
 # passwordless sudo for that account (`echo 'USER ALL=(ALL) NOPASSWD: ALL'
-# | sudo tee /etc/sudoers.d/USER`) — because Wine has to run *in the
-# guest's GUI session*: a process started over ssh has no window server,
-# wined3d cannot make even its capability-probe window, and the only way
-# from ssh into that session is `launchctl asuser`, which is root's.
+# | sudo tee /etc/sudoers.d/USER`). Wine has to run *in the guest's GUI
+# session*. A process started over ssh has no window server, wined3d
+# cannot make even its capability-probe window, and the only way from ssh
+# into that session is `launchctl asuser`, which is root's.
 #
-# What this found on 2026-09-22 (macOS 15.6.1 guest, WineHQ 11.17, the
-# Air): Apple's paravirtual GPU has Metal and no accelerated OpenGL —
-# CGL offers "Apple Software Renderer" only, to arm64 and x86_64 alike —
-# and Wine's Mac driver demands kCGLPFAAccelerated for its bootstrap
+# What this found (macOS 15.6.1 guest, WineHQ 11.17, the Air): Apple's
+# paravirtual GPU has Metal and no accelerated OpenGL (CGL offers "Apple
+# Software Renderer" only, to arm64 and x86_64 alike), and Wine's Mac
+# driver demands kCGLPFAAccelerated for its bootstrap
 # context (winemac.drv/opengl.c init_context; AllowSoftwareRendering only
 # widens the list it enumerates afterwards), so **Wine has no OpenGL in
 # such a guest at all** and wined3d's GL renderer, the community build's
