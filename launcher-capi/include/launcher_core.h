@@ -360,13 +360,11 @@ char *lc_snapshots_size_label(const LcSnapshots *s, size_t row);
 /* The rows come in tree order, each root followed by its descendants:
  * indent every name by its depth and the list is the tree. The disk's
  * present state descends from at most one row (`is_current`), which is
- * where the next snapshot taken goes. `note` is "" or a line to put
- * under the list: a snapshot the launcher has no record of (taken by
- * hand, or before it kept one) sits at the top level without being a
- * root. */
+ * where the next snapshot taken goes.
+ * A snapshot the launcher has no record of (taken by hand, or before it
+ * kept one) is a row at the top level. */
 size_t lc_snapshots_depth(const LcSnapshots *s, size_t row);
 bool lc_snapshots_is_current(const LcSnapshots *s, size_t row);
-char *lc_snapshots_note(const LcSnapshots *s);
 void lc_snapshots_take(LcSnapshots *s, const char *name);
 /* Destructive, with no undo: confirm it. */
 void lc_snapshots_revert(LcSnapshots *s, const char *name);

@@ -21,8 +21,7 @@
 //! * The rows are a tree (`snapshots::Lineage`, the file beside the
 //!   bundle): a take records the snapshot the disk descended from, a
 //!   restore moves that pointer, and every read reconciles the file
-//!   against the disk. `note` says when a snapshot has no record and so
-//!   sits at the top level without being a root.
+//!   against the disk. A snapshot with no record sits at the top level.
 //!
 //! The front end still owns when `poll` is called (Qt runs a `Timer`
 //! that stops when there is no job) and how a destructive restore is
@@ -118,31 +117,6 @@ impl Snapshots {
     /// with `depth` saying how far in to draw a row.
     pub fn snapshots(&self) -> &[Snapshot] {
         &self.list
-    }
-
-    /// A line under the list when it needs one: a snapshot the launcher
-    /// has no record of is drawn at the top level, and that must not be
-    /// read as "taken from a fresh disk".
-    pub fn note(&self) -> Option<String> {
-        let unrecorded = self.list.iter().filter(|s| !s.recorded).count();
-        if unrecorded == 0 {
-            return None;
-        }
-        Some(if unrecorded == self.list.len() {
-            "The launcher records which snapshot each one is taken from. These were taken before it did, \
-             or by hand, so they are listed in order without a tree; the ones taken from now on are placed \
-             under the snapshot the machine was last restored to or took."
-                .to_string()
-        } else if unrecorded == 1 {
-            "One of these was taken before the launcher recorded where a snapshot is taken from, or by hand, \
-             and so is at the top level whatever it descends from."
-                .to_string()
-        } else {
-            format!(
-                "{unrecorded} of these were taken before the launcher recorded where a snapshot is taken from, \
-                 or by hand, and so are at the top level whatever they descend from."
-            )
-        })
     }
 
     pub fn error(&self) -> Option<&str> {

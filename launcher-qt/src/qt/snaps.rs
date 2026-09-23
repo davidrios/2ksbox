@@ -38,10 +38,6 @@ pub mod ffi {
         #[qproperty(bool, busy)]
         #[qproperty(QString, status)]
         #[qproperty(QString, error)]
-        /// A line under the list, or "": the model's word on snapshots
-        /// it has no record of, which sit at the top level without
-        /// being roots.
-        #[qproperty(QString, note)]
         type SnapshotModel = super::SnapshotModelRust;
 
         #[qinvokable]
@@ -114,7 +110,6 @@ pub struct SnapshotModelRust {
     busy: bool,
     status: QString,
     error: QString,
-    note: QString,
 
     /// The window's state machine. Everything above is a projection.
     model: Snapshots,
@@ -200,7 +195,7 @@ impl ffi::SnapshotModel {
     /// The model, onto the properties, each through its own setter (see
     /// the header of `main.rs`).
     fn publish(mut self: Pin<&mut Self>) {
-        let (count, open, title, running, busy, status, error, note);
+        let (count, open, title, running, busy, status, error);
         {
             let m = &self.rust().model;
             count = m.snapshots().len() as i32;
@@ -210,7 +205,6 @@ impl ffi::SnapshotModel {
             busy = m.job_pending();
             status = qs_opt(m.status());
             error = qs_opt(m.error());
-            note = qs_opt(m.note().as_deref());
         }
         self.as_mut().set_count(count);
         self.as_mut().set_title(title);
@@ -218,7 +212,6 @@ impl ffi::SnapshotModel {
         self.as_mut().set_busy(busy);
         self.as_mut().set_status(status);
         self.as_mut().set_error(error);
-        self.as_mut().set_note(note);
         // Last: `open` is what `Main.qml` shows the window on, so
         // everything its first frame draws is current by then.
         self.as_mut().set_open(open);

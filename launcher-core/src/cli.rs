@@ -740,9 +740,6 @@ pub fn print_snapshots(window: &snaps::Snapshots) {
             snap.size_label()
         );
     }
-    if let Some(note) = window.note() {
-        println!("[snapshots] {note}");
-    }
 }
 
 /// One line for whatever the first-run dialog would be showing: the

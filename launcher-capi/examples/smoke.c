@@ -503,13 +503,9 @@ int main(int argc, char **argv) {
     lc_string_free(err);
     check("...and lists nothing", lc_snapshots_count(snaps) == 0, NULL);
     check("...with no job in flight", !lc_snapshots_job_pending(snaps), NULL);
-    /* The tree's row accessors past the end, and the note under the list,
-     * which has nothing to say about an empty list. */
+    /* The tree's row accessors past the end. */
     check("...a row past the end is a root", lc_snapshots_depth(snaps, 0) == 0, NULL);
     check("...and not the current one", !lc_snapshots_is_current(snaps, 0), NULL);
-    char *tree_note = lc_snapshots_note(snaps);
-    check("...with no note under an empty list", tree_note && strlen(tree_note) == 0, tree_note);
-    lc_string_free(tree_note);
     /* A bundle that isn't there is an error, and it has to arrive as a
      * message, which is the part worth checking across a C boundary. */
     lc_snapshots_open_for(snaps, "/nonexistent/machine.toml", false);

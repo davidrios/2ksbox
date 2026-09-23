@@ -391,8 +391,8 @@ and runs without live control.
   move up to its parent, which is also what deleting a snapshot in the
   middle of a branch does. A snapshot with **no record** — taken by
   hand with `qemu-img`, or before the launcher kept the file — sits at
-  the top level and the window says so under the list rather than guess
-  a parent; restoring one gives it a record as a root, so the tree grows
+  the top level, with no parent guessed (and no notice: it is simply a
+  row); restoring one gives it a record as a root, so the tree grows
   from there. A record matches a snapshot by id, name *and* date, since
   qcow2 reuses an id once its snapshot is deleted. The clone copies the
   file with the rest of the bundle. The `snapshot-tree` check drives

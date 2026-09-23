@@ -1633,18 +1633,6 @@ pub unsafe extern "C" fn lc_snapshots_is_current(s: *const LcSnapshots, row: usi
     handle!(s, false).0.snapshots().get(row).map(|snap| snap.current).unwrap_or(false)
 }
 
-/// A line to put under the list, or "" when none is needed: it says
-/// when a snapshot has no record of its parent (taken by hand, or before
-/// the launcher kept one) and so sits at the top level without being a
-/// root.
-///
-/// # Safety
-/// `s` must be a live handle.
-#[no_mangle]
-pub unsafe extern "C" fn lc_snapshots_note(s: *const LcSnapshots) -> *mut c_char {
-    out_opt(handle!(s, std::ptr::null_mut()).0.note().as_deref())
-}
-
 /// # Safety
 /// `s` must be a live handle; `name` NUL-terminated.
 #[no_mangle]

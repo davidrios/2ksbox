@@ -191,17 +191,6 @@ Window {
                 }
             }
 
-            // The model's word on snapshots it has no record of (taken by
-            // hand, or before the launcher kept the tree): they are at the
-            // top level without being roots.
-            Label {
-                Layout.fillWidth: true
-                visible: root.snapshots.note !== ""
-                text: root.snapshots.note
-                wrapMode: Text.Wrap
-                opacity: 0.75
-            }
-
             RowLayout {
                 id: newRow
                 Layout.fillWidth: true

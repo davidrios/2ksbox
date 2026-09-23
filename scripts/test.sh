@@ -418,7 +418,7 @@ snaptree_check() { # the snapshot window's tree (doc 07): the launcher's own rec
   disk="$(dirname "$bundle")/disk.qcow2"
   # The window's rows as the CLI prints them: the name set in by its
   # depth, and the last column "current" / "no record" / nothing.
-  tree() { target/release/launcherx --snapshots "$1" 2>/dev/null | grep -v '^\[snapshots\]' | awk -F'\t' '{ printf "%s%s%s|", $2, ($5 == "" ? "" : " "), $5 }'; }
+  tree() { target/release/launcherx --snapshots "$1" 2>/dev/null | awk -F'\t' '{ printf "%s%s%s|", $2, ($5 == "" ? "" : " "), $5 }'; }
   op() { target/release/launcherx --snapshots "$bundle" "$@" >/dev/null 2>&1 || { echo "--snapshots $* failed"; return 1; }; }
   # a; b from a; back to a and c from a: b and c are siblings under a, and
   # the disk now descends from c. The flat list would read a, b, c.
@@ -439,12 +439,10 @@ snaptree_check() { # the snapshot window's tree (doc 07): the launcher's own rec
   o="$(tree "$copy")"; [ "$o" = "$want" ] || { echo "the clone's tree: got $o, wanted $want"; rc=1; }
   # Outside the launcher: a snapshot deleted by hand takes its record with
   # it on the next read, and one taken by hand has none, so it sits at the
-  # top level marked so, with the note under the list.
+  # top level marked so.
   $img snapshot -d b "$disk" && $img snapshot -c e "$disk" || { echo "qemu-img could not edit the disk"; return 1; }
   want="a|  d current|e no record|"
   o="$(tree "$bundle")"; [ "$o" = "$want" ] || { echo "after qemu-img -d b, -c e: got $o, wanted $want"; rc=1; }
-  o="$(target/release/launcherx --snapshots "$bundle" 2>/dev/null)"
-  case "$o" in *"[snapshots] One of these was taken before"*) ;; *) echo "no note about the snapshot with no record:"; echo "$o"; rc=1;; esac
   # Restoring one with no record makes it a root that the next take
   # hangs under, so the tree grows from there rather than staying flat.
   op restore e && op take f || return 1
