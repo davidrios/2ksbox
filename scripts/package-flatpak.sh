@@ -16,7 +16,14 @@
 #
 #   scripts/package-flatpak.sh              build, install --user, smoke check
 #   scripts/package-flatpak.sh --no-install just build into the repo
+#   scripts/package-flatpak.sh --no-wine    skip the Wine add-on (below)
+#   scripts/package-flatpak.sh --wine-only  only the add-on, onto the installed app
 #   scripts/package-flatpak.sh --check      only re-run the smoke check
+#
+# The Wine add-on (M15 step 7) is a second manifest,
+# `com._2ksbox.Launcher.Wine.yml`, built after the app because the app is
+# its runtime. Building Wine from source takes about half an hour more.
+# The smoke check expects it unless --no-wine was given.
 #
 # Environment:
 #   FLATPAK_USER_DIR    which `--user` installation to use (flatpak's own
@@ -31,14 +38,23 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 APPID=com._2ksbox.Launcher
+WINEID=$APPID.Wine
+# Both manifests leave the branch to the builder, so the local build is
+# `stable` like Flathub's and the add-on's `runtime-version: stable`
+# resolves to this app. Every ref below names the branch, because an
+# older `master` build may still be installed beside it.
+BRANCH=stable
 MANIFEST="packaging/flatpak/$APPID.yml"
+WINE_MANIFEST="packaging/flatpak/$WINEID.yml"
 BUILD_DIR="${FLATPAK_BUILD_DIR:-$ROOT/build/flatpak}"
-INSTALL=1 ONLY_CHECK=0
+INSTALL=1 ONLY_CHECK=0 WINE=1 APP=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-install) INSTALL=0; shift ;;
+    --no-wine) WINE=0; shift ;;
+    --wine-only) APP=0; shift ;;
     --check) ONLY_CHECK=1; shift ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
     *) echo "package-flatpak.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -49,7 +65,7 @@ smoke() {
   # against a different prefix.
   echo "==> flatpak run $APPID --paths"
   local out
-  out=$(flatpak run --user --command=2ksbox "$APPID" --paths) || return 1
+  out=$(flatpak run --user --command=2ksbox "$APPID//$BRANCH" --paths) || return 1
   echo "$out"
   local fail=0
   while read -r what path; do
@@ -58,6 +74,40 @@ smoke() {
       echo "package-flatpak.sh: $what resolved outside /app: $path" >&2; fail=1 ;;
     esac
   done <<< "$out"
+  # The Wine add-on (M15 step 7). With it installed the launcher must
+  # find the add-on's Wine and the PE pair under the mount point, and
+  # nothing else: a `wine` line outside /app is the host's, which the
+  # sandbox cannot run. Without it both lines say so, and that is a
+  # failure only when the add-on was expected.
+  if flatpak info --user "$WINEID//$BRANCH" >/dev/null 2>&1; then
+    echo "==> the Wine add-on is installed: wine and wine-host must be under /app/lib/2ksbox/wine"
+    while read -r what path rest; do
+      case "$what" in wine|wine-host) ;; *) continue ;; esac
+      case "$path" in /app/lib/2ksbox/wine/*) ;; *)
+        echo "package-flatpak.sh: $what is $path $rest, not the add-on's" >&2; fail=1 ;;
+      esac
+    done <<< "$out"
+    # And the pair under that Wine, in the sandbox, the way QEMU's remote
+    # library starts it (doc 14 "The child's Wine": the same prefix and
+    # overrides). With a shared file that does not exist the program
+    # loads the executor DLL, says so, and exits 4; exit 3 is a DLL it
+    # could not load, anything else a Wine that did not run it. The
+    # first run makes the prefix (a few seconds).
+    echo "==> the pair under the add-on's Wine"
+    local pair
+    pair=$(flatpak run --user --command=/app/lib/2ksbox/wine/bin/wine \
+      --env=WINEPREFIX="$HOME/.var/app/$APPID/data/2ksbox/wine" \
+      --env=WINEDLLOVERRIDES="mscoree,mshtml=" --env=WINEDEBUG=-all \
+      "$APPID//$BRANCH" /app/lib/2ksbox/wine/d3dpt-exec-host.exe /nonexistent </dev/null 2>&1) && rc=0 || rc=$?
+    printf '%s\n' "$pair" | grep -E '^d3dpt-exec-host' || true
+    if [ "$rc" != 4 ] || ! printf '%s\n' "$pair" | grep -q 'd3dpt-exec-host: executor'; then
+      echo "package-flatpak.sh: the pair did not start under the add-on's Wine (exit $rc)" >&2; fail=1
+    fi
+  elif [ "$WINE" = 1 ]; then
+    echo "package-flatpak.sh: the Wine add-on $WINEID//$BRANCH is not installed" >&2; fail=1
+  else
+    echo "==> no Wine add-on installed (--no-wine): Direct3D below the Vulkan floor is off in this app"
+  fi
   # The three companions QEMU dlopens by name: the Glide wrapper, the
   # Direct3D executor and the DXVK it runs on. They are in no import table,
   # so nothing above would notice their absence. The packaged *player*
@@ -67,10 +117,10 @@ smoke() {
   # not stage it, or did not make it at all.
   echo "==> flatpak run $APPID --companions"
   local comp
-  comp=$(flatpak run --user --command=2ksbox-player "$APPID" --companions) || return 1
+  comp=$(flatpak run --user --command=2ksbox-player "$APPID//$BRANCH" --companions) || return 1
   echo "$comp"
   while read -r what path; do
-    case "$what" in glide|d3dpt-exec|dxvk) ;; *) continue ;; esac
+    case "$what" in glide|d3dpt-exec|dxvk|d3dpt-remote) ;; *) continue ;; esac
     case "$path" in
       /app/*) ;;
       "(not"*) echo "package-flatpak.sh: the app ships no $what (its build step failed, or staged nothing)" >&2; fail=1 ;;
@@ -97,7 +147,7 @@ smoke() {
   echo "==> flatpak run $APPID (offscreen window grab)"
   flatpak run --user --command=2ksbox \
     --env=QT_QPA_PLATFORM=offscreen --env=LAUNCHER_QT_SHOT="$shot" \
-    --env=LAUNCHER_QT_DELAY=1500 "$APPID" >/dev/null 2>&1 || true
+    --env=LAUNCHER_QT_DELAY=1500 "$APPID//$BRANCH" >/dev/null 2>&1 || true
   if [ -s "$shot" ]; then
     echo "window         $(du -h "$shot" | cut -f1) grabbed offscreen: QML, plugins and all"
     rm -f "$shot"
@@ -126,10 +176,19 @@ avail=$(df -Pk "$BUILD_DIR" | awk 'NR==2 {print int($4/1048576)}')
 echo "==> installation: ${FLATPAK_USER_DIR:-$HOME/.local/share/flatpak}"
 echo "==> build dir:    $BUILD_DIR (${avail} GB free)"
 
-args=(--user --force-clean --state-dir "$BUILD_DIR/state")
+args=(--user --force-clean --default-branch="$BRANCH" --state-dir "$BUILD_DIR/state")
 [ "$INSTALL" = 1 ] && args+=(--install)
-flatpak-builder "${args[@]}" "$BUILD_DIR/build" "$MANIFEST"
+if [ "$APP" = 1 ]; then
+  flatpak-builder "${args[@]}" "$BUILD_DIR/build" "$MANIFEST"
+fi
+if [ "$WINE" = 1 ]; then
+  # The add-on builds against the *installed* app (its runtime), so it
+  # needs --install above, and the mingw SDK extension the manifest names.
+  [ "$INSTALL" = 1 ] || { echo "package-flatpak.sh: the Wine add-on builds against the installed app; drop --no-install or pass --no-wine" >&2; exit 2; }
+  flatpak info --user "$APPID//$BRANCH" >/dev/null 2>&1 || { echo "package-flatpak.sh: $APPID//$BRANCH is not installed; build the app first" >&2; exit 1; }
+  flatpak-builder "${args[@]}" --install-deps-from=flathub "$BUILD_DIR/build-wine" "$WINE_MANIFEST"
+fi
 
 [ "$INSTALL" = 1 ] || { echo "built (not installed): $BUILD_DIR/build"; exit 0; }
 smoke
-echo "installed: flatpak run $APPID"
+echo "installed: flatpak run $APPID//$BRANCH"

@@ -27,7 +27,7 @@ is the index.
 | **M12** music | `tracks/m12-music.md` | `libsynth/`, patches 60–61, `soundfonts/`, `bundle::Sound` / `Music`, `tools/midi-guest-test.py`, doc 20 | All stages landed · capture Win98's failing MIDI run, a host MIDI port |
 | **M13** gamepads | `tracks/m13-gamepads.md` | `player/src/pad.rs`, `gamepad/`, patches 26–27, `bundle::Pad`, `tools/pad-guest-test.py` | Done · a real controller on the key mapping, the USB pad on Win98 FE / Me |
 | **M14** Voodoo 2 device | `tracks/m14-voodoo2.md` | `voodoo/`, patch 62 and the Voodoo patches after it, `tools/voodoo-guest-test.py`, `scripts/sync-86box-voodoo.sh`, doc 21 | Active on `main` · a second Glide game after one has quit, a client left on a dead ring, the Air and Windows builds |
-| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Steps 1–6 done: the community app passed on a real macOS 15 and WineD3D-in-guest was removed (2026-09-23) · step 7, the Flatpak's Wine add-on (decided 2026-09-23, an extension of the app); the spike's host tests on the rig's Linux Wine |
+| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Steps 1–7 done: the community app passed on a real macOS 15, WineD3D-in-guest was removed, and the Flatpak's Wine add-on `com._2ksbox.Launcher.Wine` was built and checked in the sandbox (2026-09-23) · a game through the add-on on a below-floor host; the spike's host tests on the rig's Linux Wine |
 | Everything else (Glide on macOS / Windows, M2's leftovers) | "Next steps" below | | as listed |
 
 Rules: work on `main` or on a branch `track/<name>-<topic>` off it,
@@ -214,15 +214,16 @@ Each track's own order is in its track doc. This is the order across
 tracks, plus the items no track owns.
 
 1. **M15, the Direct3D fallback on Wine** (ADR-018,
-   `tracks/m15-wine-executor.md` "Steps"). Steps 1–6 are done: the
+   `tracks/m15-wine-executor.md` "Steps"). Steps 1–7 are done: the
    packaged community app on a real macOS 15 (the floor, `build-macos.md`)
    runs the game through the Wine executor, user-confirmed on 2026-09-23
-   ("works wonderfully"; no frame rate was written down), and
-   WineD3D-in-guest was removed the same day. Left: step 7, the
-   Flatpak's Wine as an add-on extension of the app (decided 2026-09-23;
-   the shape is in the track doc), and the spike's two host tests on the
-   rig's Linux Wine. A Windows host below the floor is not part of this;
-   it already runs its own `system32\d3d9.dll`.
+   ("works wonderfully"; no frame rate was written down), WineD3D-in-guest
+   was removed the same day, and the Flatpak's Wine is the add-on
+   `com._2ksbox.Launcher.Wine`, built and checked in the sandbox (the
+   track doc has the shape). Left: a game through the add-on on a
+   below-floor host, and the spike's two host tests on the rig's Linux
+   Wine. A Windows host below the floor is not part of this; it already
+   runs its own `system32\d3d9.dll`.
 2. **The measurements doc 22 still owes** (user decision, 2026-09-15).
    The Ryzen half of §6.2's games, including 3DMark2001 SE's high-detail
    Car Chase and Lobby as the benchmark for patch 47's inexact mode (+47 %

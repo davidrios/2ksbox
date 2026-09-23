@@ -486,9 +486,22 @@ Built from source against `org.kde.Sdk` 6.10 (Qt from KDE's runtime,
 the root filesystem. The build is offline, as Flathub requires: every
 crate is declared with a checksum in `packaging/flatpak/cargo-sources.json`.
 Run `scripts/gen-flatpak-cargo-sources.sh` and commit the result
-whenever a dependency changes. The Flatpak ships no Wine and no PE
-pair; below the Vulkan floor they come from the app's add-on extension,
-`com._2ksbox.Launcher.Wine` (M15 step 7, not built yet).
+whenever a dependency changes. Both manifests take their branch from the
+builder (`--default-branch=stable`, Flathub's), so an older `master`
+build stays installed beside a new one until it is uninstalled; the
+script names the branch in every ref.
+
+The app ships no Wine and no PE pair. Below the Vulkan floor they come
+from the app's add-on, `com._2ksbox.Launcher.Wine`
+(`packaging/flatpak/com._2ksbox.Launcher.Wine.yml`): a 64-bit Wine built
+from source, trimmed to what WineD3D over OpenGL needs, and the pair
+built with `org.freedesktop.Sdk.Extension.mingw-w64`, mounted at
+`lib/2ksbox/wine`. The script builds it after the app (the app is its
+runtime) and the check expects it; `--no-wine` skips it, `--wine-only`
+rebuilds just the add-on onto the installed app. A user installs it from
+the app's page in the store, or with
+`flatpak install flathub com._2ksbox.Launcher.Wine`; the wizard's
+Direct3D note says so on a below-floor host.
 
 ### macOS (`2ksbox.app` / `.dmg`)
 

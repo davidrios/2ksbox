@@ -299,9 +299,12 @@ A package with the player and not those two has guests with no
 Direct3D, so every packager stages both or neither
 (`lib/2ksbox/libd3dpt_exec.so` + `libdxvk_d3d9.so.0`, the second under
 the soname the executor looks up). The remote library and the PE pair
-(`lib/2ksbox/wine/`) likewise go all or none. The Flatpak builds them in
-its sandbox against the runtime (hence `third_party/dxvk` in its source
-copy: the executor needs its `include/native` headers). No Vulkan driver
+(`lib/2ksbox/wine/`) likewise go all or none. The Flatpak builds the
+libraries in its sandbox against the runtime (hence `third_party/dxvk`
+in its source copy: the executor needs its `include/native` headers);
+its pair, and the Wine that runs it, are the app's add-on
+`com._2ksbox.Launcher.Wine` mounted at that directory (M15 step 7), and
+the player names that Wine to QEMU as `D3DPT_WINE`. No Vulkan driver
 travels with the Linux packages; the macOS app carries the LunarG loader
 and KosmicKrisp. The packaged player names the files to QEMU through
 `player/src/companions.rs`, and packagers check `player --companions`,

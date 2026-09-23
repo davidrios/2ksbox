@@ -235,9 +235,10 @@ The fields, and why each is what it is:
     apps, `PATH`) and the executor's Windows build shipped
     (`lib/2ksbox/wine/d3dpt-exec-host.exe`): "runs through Wine on this
     host", slower than a Vulkan GPU;
-  - neither: a plain note naming the Wine to install (in the Flatpak,
-    the app's Wine add-on, M15 step 7); that guest has no Direct3D
-    pass-through.
+  - neither: a plain note naming the Wine to install (inside the
+    Flatpak's sandbox, where the host's Wine is out of reach, the app's
+    own add-on `com._2ksbox.Launcher.Wine`, M15 step 7); that guest has
+    no Direct3D pass-through.
 
   While our adapter is picked on a host with no executor, the note adds
   "Keep the 2ksbox adapter anyway. Only its Direct3D needs Vulkan.".

@@ -84,7 +84,9 @@ Detail in each one's ADR (`docs/10-decisions.md`) or design doc.
     "running an old unsupported Wine version in the guest is bad UX and
     doesn't make sense"). No package ships Wine itself; the Linux
     package and the macOS community build carry the executor's PE pair,
-    and the note says which Wine to install.
+    and the note says which Wine to install. The Flatpak is the
+    exception: its sandbox cannot run the host's Wine, so its Wine and
+    pair are the app's add-on `com._2ksbox.Launcher.Wine` (M15 step 7).
   - `-global d3dpt-vga.no-exec=on` models a host with **no executor at
     all**: the device reports `D3DPT_STATUS_NO_EXEC` before opening any
     library, the driver keeps its DirectDraw half, and games fall back as

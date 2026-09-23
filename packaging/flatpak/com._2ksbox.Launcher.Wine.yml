@@ -1,0 +1,120 @@
+# The Wine add-on of the Flatpak (M15 step 7, ADR-018).
+#
+#   scripts/package-flatpak.sh          builds the app, then this, and checks both
+#
+# Below DXVK's Vulkan 1.3 floor the Direct3D executor runs in another
+# process on Wine's own d3d9 (doc 14 "The executor on Wine"). Inside the
+# sandbox the app cannot run the host's Wine, and Flathub lists no second
+# app, so the Wine and the executor's Windows build come as an extension
+# of the app (user decision, 2026-09-23): the app declares the mount
+# point `lib/2ksbox/wine` under `add-extensions`, and Flathub shows this
+# on the app's page as an add-on. A host with a Vulkan 1.3 GPU never
+# needs it.
+#
+# The app is this extension's runtime, as with any Flatpak add-on, so
+# the app must be installed (`stable`) before this builds. Everything
+# lands under `build-options.prefix`, which is the extension's content:
+#
+#   lib/2ksbox/wine/bin/wine              a 64-bit Wine built from source
+#   lib/2ksbox/wine/lib/wine/…            its modules
+#   lib/2ksbox/wine/d3dpt_exec.dll        the executor's Windows build (mingw)
+#   lib/2ksbox/wine/d3dpt-exec-host.exe   the program that loads it under Wine
+#
+# The launcher and the player find `bin/wine` by that fixed path
+# (`launcher-core/src/host_gpu.rs`, `player/src/companions.rs`); QEMU's
+# remote library looks beside itself for the pair, as in the tarball.
+id: com._2ksbox.Launcher.Wine
+branch: stable
+runtime: com._2ksbox.Launcher
+runtime-version: stable
+sdk: org.kde.Sdk//6.10
+build-extension: true
+separate-locales: false
+appstream-compose: false
+sdk-extensions:
+  # The freedesktop 25.08 extension, which org.kde.Sdk 6.10 accepts the
+  # way it accepts rust-stable: Wine's DLLs are PE files since Wine 8,
+  # and the executor's pair is mingw's too.
+  - org.freedesktop.Sdk.Extension.mingw-w64
+build-options:
+  prefix: /app/lib/2ksbox/wine
+  append-path: /usr/lib/sdk/mingw-w64/bin
+  strip: true
+
+cleanup:
+  - '*.a'
+  - '*.la'
+  - /include
+  - /share/man
+  - /share/applications
+  - /lib/pkgconfig
+
+modules:
+  # Wine itself, one architecture: the pair is x86_64 and so is the guest
+  # traffic it decodes, so there is no 32-bit Wine here and no WoW64.
+  # Modelled on Flathub's org.winehq.Wine (stable-25.08), trimmed: no
+  # Gecko, no Mono (the prefix is made with `mscoree,mshtml=` and the
+  # executor loads neither), and nothing the executor does not touch
+  # (sound, printing, scanners, cameras, USB, networking APIs, GStreamer),
+  # which is what makes the build half an hour instead of hours. OpenGL,
+  # X11, Wayland, FreeType and fontconfig stay: WineD3D over OpenGL and
+  # the executor's hidden window need them. Vulkan stays for
+  # `D3DPT_WINE_RENDERER=vulkan`, a data point only.
+  - name: wine
+    build-options:
+      env:
+        LIBDIR: lib
+    config-opts:
+      - --enable-win64
+      - --disable-win16
+      - --disable-tests
+      - --disable-winemenubuilder
+      - --with-mingw=x86_64-w64-mingw32-gcc
+      - --without-alsa
+      - --without-capi
+      - --without-cups
+      - --without-dbus
+      - --without-ffmpeg
+      - --without-gphoto
+      - --without-gssapi
+      - --without-gstreamer
+      - --without-krb5
+      - --without-netapi
+      - --without-opencl
+      - --without-oss
+      - --without-pcap
+      - --without-pcsclite
+      - --without-pulse
+      - --without-sane
+      - --without-sdl
+      - --without-udev
+      - --without-usb
+      - --without-v4l2
+    make-install-args:
+      - LDCONFIG=/bin/true
+      - UPDATE_DESKTOP_DATABASE=/bin/true
+      - INSTALL_PROGRAM_FLAGS=-s
+    sources:
+      - type: archive
+        url: https://dl.winehq.org/wine/source/11.0/wine-11.0.tar.xz
+        sha256: c07a6857933c1fc60dff5448d79f39c92481c1e9db5aa628db9d0358446e0701
+
+  # The executor's Windows build and the program that runs it under Wine,
+  # from this tree's sources with the script a developer runs
+  # (`scripts/build-d3dpt-exec.sh --wine`, mingw). Only what the script
+  # reads is copied in: `d3dpt/` and the script, at the paths it expects.
+  - name: d3dpt-exec-wine
+    buildsystem: simple
+    build-commands:
+      - scripts/build-d3dpt-exec.sh --wine
+      - install -Dm755 build/d3dpt/wine/d3dpt_exec.dll build/d3dpt/wine/d3dpt-exec-host.exe -t ${FLATPAK_DEST}
+      - install -Dm644 com._2ksbox.Launcher.Wine.metainfo.xml -t ${FLATPAK_DEST}/share/metainfo
+    sources:
+      - type: dir
+        path: ../../d3dpt
+        dest: d3dpt
+      - type: file
+        path: ../../scripts/build-d3dpt-exec.sh
+        dest: scripts
+      - type: file
+        path: com._2ksbox.Launcher.Wine.metainfo.xml

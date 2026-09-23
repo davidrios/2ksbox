@@ -209,34 +209,57 @@ Numbered as ADR-018, doc 07 and CLAUDE.md cite them.
    `D3DPT_ESC_HOSTINFO` escape, which only the helper asked, stays as a
    diagnostic.
 7. **The Flatpak's Wine add-on** (user decision, 2026-09-23: "go with
-   the extension"). Flathub refuses a second listing of the same app, so
-   there is no DXVK app beside a Wine app; and inside the sandbox the app
-   cannot run the host's Wine (`flatpak-spawn --host` is a sandbox escape
-   reviewers refuse), so the manifest's "the host's own Wine" never held
-   there. The Wine is an **extension** of the app, listed on Flathub as
-   its add-on:
+   the extension"). Done the same day, on `track/m15-flatpak-wine`.
+   Flathub refuses a second listing of the same app, so there is no DXVK
+   app beside a Wine app; and inside the sandbox the app cannot run the
+   host's Wine (`flatpak-spawn --host` is a sandbox escape reviewers
+   refuse), so the manifest's "the host's own Wine" never held there.
+   The Wine is an **extension** of the app, which Flathub lists on the
+   app's page as an add-on:
    - `com._2ksbox.Launcher.Wine`, declared in the app manifest under
      `add-extensions` at `lib/2ksbox/wine` (`no-autodownload`,
-     `autodelete`, `version` = the app's branch), the directory the
-     tarball already uses for the PE pair. The app's Flatpak ships that
-     directory empty.
-   - Its own manifest, `build-extension: true` on `org.kde.Sdk` 6.10,
-     builds a 64-bit Wine from source, modelled on Flathub's
-     `org.winehq.Wine` (`stable-25.08`, the same freedesktop base; no
-     gecko, no mono, the executor needs neither), plus the PE pair
-     through `org.freedesktop.Sdk.Extension.mingw-w64` (branch 25.08
-     exists) with `scripts/build-d3dpt-exec.sh --wine`. Nothing is
-     checked in as a binary.
-   - The launcher and the C loader find it by one more fixed path in
-     their `find_wine` (`host_gpu.rs`, `d3dpt_exec_remote.c`):
-     `<prefix>/lib/2ksbox/wine/bin/wine`, after `D3DPT_WINE`. The pair
-     is where `lib/2ksbox/wine/d3dpt-exec-host.exe` is looked for today.
-   - `wine_install_hint()` in a sandbox (`/.flatpak-info` exists) says
-     "Install the Wine add-on" and names it; doc 07's third verdict gets
-     the sentence. `package-flatpak.sh` builds the extension too and its
-     smoke check lists `wine` and `wine-host` in `--companions`.
-   - Flathub: the extension is its own repo, submitted after the app,
-     and shows on the app's page as an add-on.
+     `autodelete`; `version` unset, so it follows the app's branch), the
+     directory the tarball uses for the PE pair. The app ships the
+     directory empty, and stages the remote library itself, since the
+     tarball's stager only stages it together with the pair.
+   - `packaging/flatpak/com._2ksbox.Launcher.Wine.yml`: `build-extension`
+     with the app as its runtime (the Flathub add-on shape), on
+     `org.kde.Sdk` 6.10 plus `org.freedesktop.Sdk.Extension.mingw-w64`
+     25.08. It builds Wine 11.0 from source, 64-bit only, modelled on
+     Flathub's `org.winehq.Wine` `stable-25.08` and trimmed (no Gecko or
+     Mono, no sound, printing, scanners, cameras, USB, GStreamer or
+     network APIs), and the pair with `scripts/build-d3dpt-exec.sh
+     --wine` from `d3dpt/` and the script alone. 175 MB installed; the
+     app and the add-on build in about half an hour together on the
+     Ryzen. Its AppStream file is an `addon` component that `extends`
+     the app. No binary is checked in.
+   - Both manifests take their branch from the builder:
+     `package-flatpak.sh` passes `--default-branch=stable`, Flathub's, so
+     the add-on's `runtime-version: stable` resolves locally too, and
+     every ref in the script names the branch. `--no-wine` skips the
+     add-on, `--wine-only` rebuilds it onto the installed app.
+   - Finding it: `host_gpu.rs`'s `find_wine` tries
+     `paths::shipped("lib/2ksbox/wine/bin/wine")` right after
+     `D3DPT_WINE`; the player's `companions.rs` exports that path as
+     `D3DPT_WINE` (a new `wine` line in `--companions`); the C loader's
+     `find_wine` looks for `wine/bin/wine` beside the library through the
+     same `dladdr` helper `find_host_exe` uses. Inside a sandbox
+     (`/.flatpak-info`) `wine_install_hint()` names the add-on.
+   - The check (`package-flatpak.sh`): with the add-on installed, `wine`
+     and `wine-host` in `--paths` must be under the mount point,
+     `d3dpt-remote` must be shipped, and the pair must start under the
+     add-on's Wine in the sandbox (`d3dpt-exec-host.exe` with a shared
+     file that does not exist prints `executor …, protocol 13` and exits
+     4). Passed 2026-09-23 on this box.
+   - Found on the way: `build-d3dpt-exec.sh` exited 1 on a host without
+     mingw even when the pair was optional (a bare `[ … ] && exit 1` as
+     its last line), which stopped the Flatpak's build. The worktree
+     needed QEMU's four meson subprojects downloaded by hand (`meson
+     subprojects download` in `qemu/`), which a normal `build.sh` does.
+   - Still open: a game through the add-on on a below-floor host (this
+     box has Vulkan 1.3, so the sandbox check cannot reach the child's
+     device), and the Flathub submission itself, where the add-on is its
+     own repo submitted after the app.
 
 ## Rules
 

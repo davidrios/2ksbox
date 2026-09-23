@@ -120,10 +120,12 @@ pub struct Wine {
 /// The rule `d3dpt/exec/d3dpt_exec_remote.c`'s `find_wine` follows, kept
 /// in step by hand (that library is C inside QEMU). `D3DPT_WINE` first;
 /// set to a path that does not exist it means none, so a test can take
-/// Wine away on a host that has one. Then the Mac apps by their fixed
-/// paths, the spike's tarball in a checkout, then `wine64` and `wine` on
-/// `PATH`. Never on Windows, where the host's own Direct3D 9 is the
-/// fallback.
+/// Wine away on a host that has one. Then a Wine the package itself
+/// carries under `lib/2ksbox/wine` (the Flatpak's add-on, M15 step 7;
+/// the player names it to QEMU as `D3DPT_WINE`), the Mac apps by their
+/// fixed paths, the spike's tarball in a checkout, then `wine64` and
+/// `wine` on `PATH`. Never on Windows, where the host's own Direct3D 9
+/// is the fallback.
 fn find_wine() -> Option<PathBuf> {
     if cfg!(windows) {
         return None;
@@ -131,6 +133,9 @@ fn find_wine() -> Option<PathBuf> {
     if let Some(env) = std::env::var_os("D3DPT_WINE") {
         let p = PathBuf::from(env);
         return p.is_file().then_some(p);
+    }
+    if let Some(p) = crate::paths::shipped("lib/2ksbox/wine/bin/wine") {
+        return Some(p);
     }
     let mut fixed: Vec<PathBuf> = [
         "/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine",
@@ -197,9 +202,14 @@ pub fn exec_host() -> Option<PathBuf> {
 }
 
 /// One line saying how to get a Wine here, for the note and the report.
+/// Inside the Flatpak's sandbox (`/.flatpak-info` exists there and
+/// nowhere else) the host's Wine is out of reach, and the answer is the
+/// app's own add-on (M15 step 7).
 fn wine_install_hint() -> &'static str {
     if cfg!(target_os = "macos") {
         "Install Wine (WineHQ's macOS build, or CrossOver) for Direct3D through it on this Mac."
+    } else if Path::new("/.flatpak-info").is_file() {
+        "Install the add-on \"Direct3D through Wine\" (com._2ksbox.Launcher.Wine) from the same store for Direct3D on this host."
     } else {
         "Install Wine (your distribution's wine package) for Direct3D through it on this host."
     }

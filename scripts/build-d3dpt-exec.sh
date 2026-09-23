@@ -73,5 +73,8 @@ if command -v "$WCXX" >/dev/null && command -v "$WCC" >/dev/null; then
   echo "==> $WOUT/d3dpt_exec.dll + d3dpt-exec-host.exe (the executor on Wine)"
 else
   echo "==> no $WCXX: the executor on Wine (build/d3dpt/wine/) not built; install mingw-w64 for it"
-  [ $WINE_ONLY = 1 ] && exit 1
+  # A failure only when the pair was all that was asked for. (As the last
+  # command of the script, a bare `[ … ] && exit 1` made the whole build
+  # exit 1 on a host without mingw, which stopped the Flatpak's.)
+  if [ $WINE_ONLY = 1 ]; then exit 1; fi
 fi

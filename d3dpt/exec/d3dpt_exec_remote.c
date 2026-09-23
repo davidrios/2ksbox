@@ -225,10 +225,29 @@ D3DPT_EXEC_API void d3dpt_exec_shared_map(uint64_t offset, void *ptr)
 
 static int file_exists(const char *p) { struct stat st; return p && *p && stat(p, &st) == 0; }
 
+/* the directory this library was loaded from, for the files a package
+ * stages beside it (lib/2ksbox/) */
+static int lib_dir(char *buf, size_t n)
+{
+    Dl_info info;
+    if (!dladdr((void *)lib_dir, &info) || !info.dli_fname) return 0;
+    const char *slash = strrchr(info.dli_fname, '/');
+    if (!slash) return 0;
+    snprintf(buf, n, "%.*s", (int)(slash - info.dli_fname), info.dli_fname);
+    return 1;
+}
+
 static const char *find_wine(char *buf, size_t n)
 {
     const char *env = getenv("D3DPT_WINE");
     if (env && *env) return env;
+    /* a Wine the package carries beside this library: the Flatpak's add-on
+     * (M15 step 7), which the player also names through D3DPT_WINE */
+    char dir[768];
+    if (lib_dir(dir, sizeof dir)) {
+        snprintf(buf, n, "%s/wine/bin/wine", dir);
+        if (file_exists(buf)) return buf;
+    }
     const char *fixed[] = {
         "/Applications/Wine Stable.app/Contents/Resources/wine/bin/wine",
         "/Applications/Wine Staging.app/Contents/Resources/wine/bin/wine",
@@ -259,13 +278,11 @@ static const char *find_host_exe(char *buf, size_t n)
 {
     const char *env = getenv("D3DPT_EXEC_HOST");
     if (env && *env) return env;
-    Dl_info info;
-    if (dladdr((void *)find_host_exe, &info) && info.dli_fname) {
-        const char *slash = strrchr(info.dli_fname, '/');
-        size_t dl = slash ? (size_t)(slash - info.dli_fname) : 1;
+    char dir[768];
+    if (lib_dir(dir, sizeof dir)) {
         const char *sub[] = { "/wine/d3dpt-exec-host.exe", "/d3dpt-exec-host.exe" };
         for (int i = 0; i < 2; i++) {
-            snprintf(buf, n, "%.*s%s", (int)dl, slash ? info.dli_fname : ".", sub[i]);
+            snprintf(buf, n, "%s%s", dir, sub[i]);
             if (file_exists(buf)) return buf;
         }
     }
@@ -300,7 +317,7 @@ static int ensure_child(void)
     char wbuf[1024], hbuf[1024];
     const char *wine = find_wine(wbuf, sizeof wbuf);
     const char *exe = find_host_exe(hbuf, sizeof hbuf);
-    if (!wine) { say("no Wine on this host (D3DPT_WINE, wine64/wine on PATH, a Wine app in /Applications)"); child_failed = 1; return 0; }
+    if (!wine) { say("no Wine on this host (D3DPT_WINE, wine/ beside this library, wine64/wine on PATH, a Wine app in /Applications)"); child_failed = 1; return 0; }
     if (!exe) { say("no d3dpt-exec-host.exe (D3DPT_EXEC_HOST, or wine/ beside this library; scripts/build-d3dpt-exec.sh builds it with mingw)"); child_failed = 1; return 0; }
 
     /* the child's environment: our own prefix, quiet, Wine's own d3d9 */

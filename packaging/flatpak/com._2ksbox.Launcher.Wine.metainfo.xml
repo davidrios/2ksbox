@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata for the Wine add-on (M15 step 7). An addon
+     component extends the app, which is how Flathub lists it on the app's
+     page instead of as a second app. -->
+<component type="addon">
+  <id>com._2ksbox.Launcher.Wine</id>
+  <extends>com._2ksbox.Launcher</extends>
+
+  <name>Direct3D through Wine</name>
+  <summary>Direct3D for hosts whose GPU has no Vulkan 1.3</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <!-- Wine is LGPL-2.1-or-later; the executor pair beside it is the
+       app's own (GPL-2.0-or-later, ADR-009). -->
+  <project_license>LGPL-2.1-or-later AND GPL-2.0-or-later</project_license>
+
+  <developer id="com._2ksbox">
+    <name>2ksbox</name>
+  </developer>
+
+  <description>
+    <p>
+      Windows XP and Windows 98 machines draw their Direct3D on the host
+      GPU through Vulkan. On a host whose GPU has no Vulkan 1.3, this
+      add-on gives them Wine's Direct3D over OpenGL instead. It is
+      slower, and it is only used when the GPU cannot do better. With a
+      Vulkan 1.3 GPU it is never needed.
+    </p>
+  </description>
+
+  <url type="homepage">https://2ksbox.com</url>
+
+  <releases>
+    <release version="0.0.1" date="2026-09-23"/>
+  </releases>
+</component>

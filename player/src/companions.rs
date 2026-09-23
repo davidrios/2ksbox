@@ -15,9 +15,11 @@
 //!   (ADR-018, M15): what QEMU's loader opens when DXVK finds no Vulkan
 //!   device, and `D3DPT_EXEC_HOST` the Windows program that process runs
 //!   (`lib/2ksbox/wine/d3dpt-exec-host.exe`, the executor's Windows
-//!   build beside it). The Wine itself is not shipped: the library finds
-//!   one by its own rule (`D3DPT_WINE`, `PATH`, a Wine app) and the
-//!   launcher's probe follows the same rule for its verdict.
+//!   build beside it). `D3DPT_WINE` is the Wine itself, which only the
+//!   Flatpak's add-on ships (`lib/2ksbox/wine/bin/wine`, M15 step 7);
+//!   every other package leaves it unset and the library finds one by
+//!   its own rule (`PATH`, a Wine app), which the launcher's probe
+//!   follows too for its verdict.
 //! * `VK_DRIVER_FILES`, the Vulkan driver the executor needs. Stock macOS
 //!   has no Vulkan at all, so a redistributable app carries a loader and
 //!   an ICD of its own; on Linux the system's driver is the right one and
@@ -86,12 +88,13 @@ fn set_if_unset_and_present(var: &str, path: PathBuf) {
 }
 
 /// The names `--companions` prints, in the order this module sets them.
-const VARS: [(&str, &str); 7] = [
+const VARS: [(&str, &str); 8] = [
     ("glide", "QEMU_GLIDE_LIB"),
     ("d3dpt-exec", "D3DPT_EXEC_LIB"),
     ("dxvk", "D3DPT_DXVK_LIB"),
     ("d3dpt-remote", "D3DPT_EXEC_REMOTE_LIB"),
     ("wine-host", "D3DPT_EXEC_HOST"),
+    ("wine", "D3DPT_WINE"),
     ("vulkan-icd", "VK_DRIVER_FILES"),
     ("soundfont", "LIBSYNTH_SF2"),
 ];
@@ -151,6 +154,7 @@ pub fn announce() {
     if !cfg!(windows) {
         set_if_unset_and_present("D3DPT_EXEC_REMOTE_LIB", dylib("d3dpt_exec_remote"));
         set_if_unset_and_present("D3DPT_EXEC_HOST", in_prefix(&prefix, "lib/2ksbox/wine/d3dpt-exec-host.exe"));
+        set_if_unset_and_present("D3DPT_WINE", in_prefix(&prefix, "lib/2ksbox/wine/bin/wine"));
     }
     // DXVK's own soname, which carries its major version rather than the
     // plain name the other three have. On Windows it is renamed in the

@@ -26,6 +26,20 @@ sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
 command: 2ksbox
 
+# The Wine add-on (M15 step 7): a host below DXVK's Vulkan 1.3 floor runs
+# the Direct3D executor in another process on Wine's d3d9 (ADR-018). The
+# sandbox cannot run the host's Wine, and Flathub lists no second app, so
+# the Wine and the executor's PE pair are an extension of this app,
+# `com._2ksbox.Launcher.Wine` (`packaging/flatpak/` has its manifest),
+# mounted at the directory the tarball uses for the pair. Not downloaded
+# with the app: a host with a Vulkan 1.3 GPU never needs it. It follows
+# this app's branch (`version` unset), and is removed with the app.
+add-extensions:
+  com._2ksbox.Launcher.Wine:
+    directory: lib/2ksbox/wine
+    no-autodownload: true
+    autodelete: true
+
 finish-args:
   # A machine is the point of the app: KVM when the host has it, the GPU
   # for the shader chain and the guest's 3D.
@@ -156,15 +170,20 @@ modules:
       # no meson wrap, so this builds offline. Only `d3d9`, and only
       # against DXVK patch 04's headless WSI, because the executor never
       # presents. No Vulkan driver is packaged; the runtime's GL/Vulkan
-      # extension supplies the host's. A host below Vulkan 1.3 runs the
-      # executor on Wine (ADR-018). The sandbox cannot run the host's, so
-      # the Wine and the executor's PE pair come from the app's add-on
-      # extension, `com._2ksbox.Launcher.Wine` at `lib/2ksbox/wine` (M15
-      # step 7, not written yet); this build ships neither.
+      # extension supplies the host's. The SDK has no mingw, so this
+      # builds the in-process executor and the remote library only; the
+      # PE pair the remote library runs under Wine comes with the Wine
+      # add-on (`add-extensions` above), into the directory made empty
+      # here for it to mount on.
       - scripts/configure-dxvk.sh
       - ninja -C build/dxvk
       - scripts/build-d3dpt-exec.sh
       - scripts/package-linux.sh --no-build --prefix /app
+      # The tarball stages the remote library only with the pair ("all or
+      # none", doc 14). Here the pair is the add-on's, so the library the
+      # app must carry is staged by hand, into the same place.
+      - install -Dm755 build/d3dpt/libd3dpt_exec_remote.so -t /app/lib/2ksbox
+      - mkdir -p /app/lib/2ksbox/wine
       # Flatpak exports these three by name, so they go where it looks
       # rather than through packaging/linux/install.sh (which rewrites
       # Exec/Icon to absolute paths for a plain prefix install; inside
