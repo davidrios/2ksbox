@@ -63,6 +63,14 @@ run.
   the Linux package and the macOS community build carry
   `libd3dpt_exec_remote` + the PE pair (all or none). No package ships a
   Wine; the note says which to install.
+- **The community app on a real macOS 15** (2026-09-23): its first start
+  crashed at the adapter's realize — DXVK's `Direct3DCreate9` a second
+  time after its constructor had thrown (Traps; DXVK patch 09, the
+  executor's once-per-library rule, the `exec-no-device` check) — and
+  with the executor rebuilt on the 15 side the packaged player boots the
+  XP machine to its desktop on the Wine executor through the packaged
+  pair (`linear mode on (800x600x16)` at 25 s, `Direct3D executor in
+  another process (Wine), ready`).
 
 ## Rejected alternatives
 
@@ -158,6 +166,15 @@ Silicon) — unpacked into `build/wine/` in a checkout, or an app in
   no loader calls through a null pointer in `Direct3DCreate9`, and
   unloading a probed library crashed too. The executor asks for
   `libvulkan` before trying DXVK and never closes a probed library.
+  And it did not survive a *loader with no working device* either
+  (2026-09-23, the community app on macOS 15, where KosmicKrisp loads
+  and reports no GPU): DXVK's constructor throws out of
+  `Direct3DCreate9`, the executor catches it and tries its next
+  candidate, which is the same library by its leaf name — and DXVK's
+  `Singleton` had already counted a user, so that second call got a null
+  instance and faulted. DXVK patch 09 counts after constructing, the
+  executor never asks a refused library twice, and the `exec-no-device`
+  check asks the artefacts (status doc, Open threads).
 - **The shared-file path is POSIX-only** in QEMU:
   `memory_region_init_ram_from_fd` is under `CONFIG_POSIX`, so both call
   sites carry the same guard or the Windows build fails ("call to
@@ -198,7 +215,8 @@ Numbered as ADR-018, doc 07 and CLAUDE.md cite them.
    cd "/Volumes/Macintosh HD - Data/Users/david/work/win-98-xp-virt"
    cp -R "build/wine/Wine Staging.app" /Applications/   # once
    build/macos-community/2ksbox.app/Contents/MacOS/2ksbox --host-check
-   #   "runs through Wine on this host (Wine 11.17, OpenGL)", exit 0
+   #   "runs through Wine on this host (Wine 11.17, OpenGL)", exit 0: KosmicKrisp
+   #   loads below 26 but reports no GPU, so DXVK finds no device and the third verdict is the one
    open build/macos-community/2ksbox.app
    #   an XP machine on a copy of build/xp-mac15.qcow2, Direct3D "auto";
    #   FIFA 2000 into a match
@@ -207,7 +225,14 @@ Numbered as ADR-018, doc 07 and CLAUDE.md cite them.
    The pass: the QEMU log says `exec: Direct3D executor in another
    process (Wine), ready`, the match draws on the M1's GL through the
    packaged pair, and its frame rate is written down against the Air's
-   22.6. The reboot is the user's to do.
+   22.6. The reboot is the user's to do. **Run 2026-09-23: the first
+   start crashed** at the adapter's realize (the second
+   `Direct3DCreate9` on a DXVK whose constructor had thrown; Traps —
+   fixed by DXVK patch 09 and the executor's once-per-library rule), and
+   with the executor rebuilt on the 15 side the packaged player boots the
+   machine to XP's desktop on the Wine executor. Left: the package
+   rebuilt with the fix on the 26 side, and FIFA 2000 into a match from
+   the launcher there, with its frame rate.
 6. **Retire WineD3D-in-guest, in one commit**, once 5 passes: the ISO's
    `WINED3D\` folders and README, `SETUP /GAME 4`/`5`, `/I 7` with
    `D3DPRE.EXE` and the `DDRAWME`/`DDSYS` switcher, the wine9x build and

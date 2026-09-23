@@ -417,6 +417,16 @@ run_check() { # name, log file, command...
   if [ $rc = 77 ]; then skip "$name" "$(tail -1 "$lf")"; return 0; fi
   FAIL+=("$name"); printf '  FAIL %s (exit %d) — %s\n' "$name" $rc "$lf"; tail -5 "$lf" | sed 's/^/       /'; return 1
 }
+exec_no_device_check() { # the executor with a loader and no Vulkan device: refused, never a crash
+  local o rc
+  o="$(VK_DRIVER_FILES=/nonexistent.json VK_ICD_FILENAMES=/nonexistent.json \
+       build/d3dpt-dp2-test "$OUT/dp2-no-device.bmp" 2>&1)"; rc=$?
+  echo "$o" | grep -v "^info:" | tail -8
+  if [ $rc -ge 128 ]; then echo "the dp2 test with no Vulkan device died of signal $((rc - 128))"; return 1; fi
+  if [ $rc != 77 ]; then echo "the dp2 test with no Vulkan device exited $rc, not 77 (no executor)"; return 1; fi
+  case "$o" in *"found no usable device"*) ;; *) echo "the executor never said the device was refused"; return 1;; esac
+  return 0
+}
 exec_wine_bin() { # a Wine for the executor's other process: D3DPT_WINE, the PATH, a Mac app, the spike's tarball
   if [ -n "${D3DPT_WINE:-}" ]; then [ -x "$D3DPT_WINE" ] && echo "$D3DPT_WINE"; return; fi
   local c
@@ -2757,6 +2767,19 @@ host_stage() {
     if c++ -std=c++17 -O2 -o build/d3dpt-dp2-test tools/d3dpt-dp2-test.cpp \
          -I"$DX" -I"$DX/windows" -I"$DX/directx" -ldl; then
       run_check d3dpt-dp2 d3dpt-dp2.log build/d3dpt-dp2-test "$OUT/dp2-test.bmp" || true
+      # The same executor on a host with a Vulkan loader and no working
+      # device — which every host can be made into: both loader variables
+      # at a file that does not exist, so the loader finds no ICD and
+      # DXVK's instance constructor throws out of Direct3DCreate9. The
+      # executor must say "no usable device" and the test must end by its
+      # own "no executor" exit (77), not by a signal: the candidate list
+      # names the same DXVK by its full path and by its leaf name, and a
+      # second Direct3DCreate9 on a DXVK whose constructor threw once
+      # dereferenced a null instance (2026-09-23, the community app on
+      # macOS 15: the player died at the adapter's realize and never
+      # reached the Wine executor). DXVK patch 09 and the executor's
+      # once-per-library rule both guard it; this asks the artefacts.
+      run_check exec-no-device exec-no-device.log exec_no_device_check || true
     else FAIL+=(d3dpt-dp2); echo "  FAIL d3dpt-dp2 (build)"; fi
   else
     skip d3dpt-exec "needs $D3DPT_EXEC_LIB and $D3DPT_DXVK_LIB"

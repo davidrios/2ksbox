@@ -1,0 +1,20 @@
+diff --git a/src/util/util_singleton.h b/src/util/util_singleton.h
+index ee5fe56..cf7cdd0 100644
+--- a/src/util/util_singleton.h
++++ b/src/util/util_singleton.h
+@@ -20,9 +20,14 @@ public:
+   Rc<T> acquire(Args... constantArgs) {
+     std::lock_guard lock(m_mutex);
+ 
+-    if (!(m_useCount++))
++    // Count the user only once the object exists: a constructor that
++    // throws (DxvkInstance on a host whose Vulkan ICD reports no GPU)
++    // must leave the count at zero, or the next acquire hands out the
++    // null object and the caller dereferences it.
++    if (!m_useCount)
+       m_object = new T(constantArgs...);
+ 
++    m_useCount += 1;
+     return m_object;
+   }
+ 

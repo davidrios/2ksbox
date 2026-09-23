@@ -83,6 +83,7 @@ Environment: `WINXP_IMG` (`~/vms/winxp.qcow2`), `GUEST_ISO` (newest
 | `glide-host` | `tools/glide-host-test.cpp` |
 | `d3dpt-exec`, `d3dpt-dp2` | `tools/d3dpt-exec-test.cpp`, `tools/d3dpt-dp2-test.cpp` |
 | `exec-wine` | the same two tests through the Wine executor; frames must equal the in-process ones |
+| `exec-no-device` | the dp2 test with both Vulkan loader variables at a file that does not exist — a loader with no working device, where DXVK's constructor throws out of `Direct3DCreate9`: the test's own exit 77, never a signal (DXVK patch 09, the executor's once-per-library rule) |
 | `crtcal` | `build/crtcal-render`: every calibration pattern's circle round on its tube |
 | `mode-sweep` | `player --mode-sweep`: the display path without a guest |
 | `d3dgame9-nat`, `d3dfeat9-nat` | the reference scene / feature test natively on DXVK, against the rig golden; kept as the guest stage's oracle |
@@ -242,7 +243,7 @@ writing another.
 | Tool | Proves / runs |
 |---|---|
 | `tools/d3dpt-exec-test.cpp` | decoder + DXVK executor without a guest: D3D9TEST's batches through the guest encoder → BMP, a hostile batch refused; `d3dpt-exec`. Cross-built as `build/win/d3dpt-exec-test.exe`, where it must pass on `D3DPT_D3D9=dxvk` and `system` alike |
-| `tools/d3dpt-dp2-test.cpp` | the display driver's records (doc 15 M7c): VRAM surfaces, a context, D3D7TEST's scene as DP2 tokens, readback checked, hostile records refused; its BMP is `D3D7TEST`'s oracle; `d3dpt-dp2`. Run it on both backends whenever the executor changes (107 checks each) |
+| `tools/d3dpt-dp2-test.cpp` | the display driver's records (doc 15 M7c): VRAM surfaces, a context, D3D7TEST's scene as DP2 tokens, readback checked, hostile records refused; its BMP is `D3D7TEST`'s oracle; `d3dpt-dp2`. Run it on both backends whenever the executor changes (107 checks each). `exec-no-device` runs it with no Vulkan device at all and requires exit 77 rather than a signal: a second `Direct3DCreate9` on a DXVK whose constructor had thrown dereferenced a null instance (2026-09-23, the community app on macOS 15; DXVK patch 09) |
 | `exec-wine` (check) | both tests with `D3DPT_EXEC_LIB=build/d3dpt/libd3dpt_exec_remote.$SO`: the executor's Windows build under Wine on Wine's d3d9 must draw the in-process frames (M15). Skips without Wine, without mingw's `build/d3dpt/wine/`, or over ssh on macOS; prefix `build/wine-prefix` |
 | `guest-tools/src/d3dgame9.c`, `d3dgame8.c` | the reference scene (doc 14): rig goldens first, diffed against every emulated path; `tools/d3dgame9-native.cpp` is it natively on DXVK |
 | `guest-tools/src/d3dfeat9.c` + `tools/d3dfeat9-native.cpp` | the D3D9 feature test (shaders, declarations, state blocks, queries, cube maps, surfaces, one quad per guest-DLL bug fixed): the guest frame byte-identical to native, getter lines equal |

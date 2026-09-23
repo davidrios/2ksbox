@@ -28,7 +28,7 @@ and ordered next steps; this table is the index.
 | **M12** music | `tracks/m12-music.md` | `libsynth/`, patches 60–61, `soundfonts/`, `bundle::Sound` / `Music`, `tools/midi-guest-test.py`, doc 20 | All stages landed · capture Win98's failing MIDI run, a host MIDI port |
 | **M13** gamepads | `tracks/m13-gamepads.md` | `player/src/pad.rs`, `gamepad/`, patches 26–27, `bundle::Pad`, `tools/pad-guest-test.py` | Done · a real controller on the key mapping, the USB pad on Win98 FE / Me |
 | **M14** Voodoo 2 device | `tracks/m14-voodoo2.md` | `voodoo/`, patch 62 and the Voodoo patches after it, `tools/voodoo-guest-test.py`, `scripts/sync-86box-voodoo.sh`, doc 21 | Active on `main` · a second Glide game after one has quit, a client left on a dead ring, the Air and Windows builds |
-| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Active, steps 1–4 done · a guest in the community app on macOS 15, then retire WineD3D-in-guest (step 6) |
+| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Active, steps 1–4 done; the community app's first start on macOS 15 crashed at the adapter's realize and is fixed (2026-09-23, DXVK patch 09) · a game in that app on macOS 15, then retire WineD3D-in-guest (step 6) |
 | Everything else (Glide on macOS / Windows, M2's leftovers) | "Next steps" below | — | as listed |
 
 Rules: work on `main` or a branch `track/<name>-<topic>` off it, rebased
@@ -217,15 +217,32 @@ own open items live in its track doc; fixed things leave this list.
   pixels on both adapters) are parked by the wine9x rule. The whole path
   retires in M15's last step (ADR-018).
 
-- **The Mac community app has not run a guest on its floor.** The app
-  targets Homebrew's floor, which is `LSMinimumSystemVersion` 15.0 now
-  (`docs/build-macos.md` "The floor"). The packager checks every load
-  command, and the M15 spike passed on a real macOS 15 (a second APFS
-  volume; a VM has no OpenGL for Wine). What is left is a guest in the
-  packaged `--community` app on that macOS. That run should also check
-  that the Direct3D probe says the bundled KosmicKrisp ICD, which needs
-  26, is unavailable rather than crashing. This is M15 step 5
-  (`docs/tracks/m15-wine-executor.md`, test loop).
+- **The Mac community app has not played a game on its floor.** The app
+  targets Homebrew's floor, `LSMinimumSystemVersion` 15.0
+  (`docs/build-macos.md` "The floor"), and the M15 spike passed on a real
+  macOS 15 (a second APFS volume; a VM has no OpenGL for Wine). **Its
+  first start there crashed** (user, 2026-09-23: "I've tried running the
+  xp image here on mac 15 but got a crash"), at the adapter's realize in
+  DXVK's `Direct3DCreate9`, before the guest ran an instruction.
+  KosmicKrisp *loads* on 15 and reports no GPU
+  (`vkEnumeratePhysicalDevices` fails), DXVK's constructor throws, the
+  executor moves on to its next candidate — the same library by its leaf
+  name, which dyld answers with the image already loaded — and DXVK's
+  `Singleton` had counted a user before constructing, so the second call
+  got a null instance. Fixed the same day: DXVK patch 09 counts after
+  constructing, the executor never asks a refused library twice
+  (`d3dpt_exec.cpp`, `refused`), and the `exec-no-device` check holds it.
+  With the executor rebuilt on the 15 side the packaged player booted
+  the XP machine to its desktop on the Wine executor through the
+  packaged pair. Found beside it, open: the packaged *launcher* there
+  says `Vulkan loader: not present` beside the app's own loader —
+  `ash::Entry::load()` asks dyld for `libvulkan.dylib` by leaf name, the
+  app ships `libvulkan.1.dylib`, and the launcher has no rpath into
+  `lib/2ksbox`; the verdict came out right on 15 regardless (Wine), but
+  the App Store build on a Mac without Homebrew would say Direct3D is
+  unavailable while the player runs DXVK. What is left is the package
+  rebuilt with the fix on the 26 side and FIFA 2000 into a match from it
+  on the 15 volume: M15 step 5 (`docs/tracks/m15-wine-executor.md`).
 
 - **x87 at PC=24 on aarch64 trails PC=53.** On the Air the
   single-precision loop (`X87BEN2S`) takes 0.49 s at PC=24 against 0.38 s

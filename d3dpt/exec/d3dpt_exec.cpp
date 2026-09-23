@@ -12,6 +12,8 @@
  */
 #include <cstdlib>
 #include <string>
+#include <vector>
+#include <algorithm>
 #include <exception>
 
 /*
@@ -936,8 +938,12 @@ static bool open_d3d9(Exec *x, const char *path, bool dxvk)
      * the host at all its Direct3DCreate9 logs "vkGetInstanceProcAddr not
      * found" and then calls through a null pointer (2026-09-22, the Air with
      * DYLD_LIBRARY_PATH unset: a segfault, in the host test and in QEMU's
-     * realize alike). A host with the loader and no device is DXVK's to
-     * refuse, and it does that cleanly. */
+     * realize alike). A host with the loader and no working device is
+     * DXVK's to refuse, and it does — by a C++ exception out of
+     * Direct3DCreate9 (its DxvkInstance constructor throws when the ICD
+     * gives no GPU: vkEnumeratePhysicalDevices failing, or no ICD at all),
+     * which the catch below takes; see the once-per-library rule after
+     * the dlopen for what that exception leaves behind. */
     if (dxvk) {
         static void *loader;
         if (!loader) {
@@ -953,6 +959,25 @@ static bool open_d3d9(Exec *x, const char *path, bool dxvk)
 #endif
     void *h = D3DPT_DLOPEN(path);
     if (!h) return false;
+    /* One failed Direct3DCreate9 per library, ever. The candidate list
+     * names the same DXVK more than once — a full path from the player,
+     * then the bare leaf name, which dlopen / LoadLibrary answer with the
+     * image already loaded under that name, the same handle — and DXVK's
+     * d3d9 keeps its Vulkan instance in a process-wide Singleton whose
+     * acquire() counts a user *before* constructing the instance: a
+     * constructor that threw leaves the count at one and the object null,
+     * and the next Direct3DCreate9 in the process hands the interface that
+     * null instance and faults in D3D9Options (2026-09-23: the community
+     * app on macOS 15, where KosmicKrisp loads and reports no GPU — the
+     * player died at the adapter's realize, on the *second* candidate, and
+     * the Wine executor it should have moved on to was never reached).
+     * Our DXVK patch 09 fixes the count; this keeps every other d3d9 with
+     * the same shape, and the same DXVK unpatched, from being asked twice. */
+    static std::vector<void *> refused;
+    if (std::find(refused.begin(), refused.end(), h) != refused.end()) {
+        x->log("%s: the library already asked and refused; not asked again", path);
+        return false;   /* the extra dlopen reference is nothing; never closed (see below) */
+    }
     auto create = (IDirect3D9 *(*)(UINT))D3DPT_DLSYM(h, "Direct3DCreate9");
     if (!create) { x->log("no Direct3DCreate9 in %s", path); D3DPT_DLCLOSE(h); return false; }
     IDirect3D9 *d3d = nullptr;
@@ -967,6 +992,7 @@ static bool open_d3d9(Exec *x, const char *path, bool dxvk)
         if (dxvk) x->log("%s: Direct3DCreate9 found no usable device", path);
         /* left mapped: DXVK has started threads and statics by now, and
          * unloading it under them is not safe */
+        refused.push_back(h);
         return false;
     }
     x->dxvk = h;
