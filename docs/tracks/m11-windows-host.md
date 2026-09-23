@@ -1,707 +1,171 @@
 # Track: M11 — the Windows host (build, package, run)
 
-The handoff for a session working on Windows as a *host*: cross-building
-the whole stack from Linux, packaging it, and closing the gaps a Windows
-host has that Linux and macOS do not. Read `docs/00-status.md` first for
-the global picture and the track rules, then this file, then
-`docs/build-windows.md`, which is the prose version of the build.
-
-Opened 2026-09-06 on `track/m11-windows-host` (worktree
-`.claude/worktrees/m11-windows-host`), because the user wants to see what
-2ksbox is like on Windows and the only machine that builds is this Linux
-one. Windows had been "untested" since M1 (doc 08).
-
-## Scope and files (this track owns them)
-
-- The cross toolchain: `packaging/windows/Dockerfile`,
-  `scripts/win-cross.sh`.
-- The Qt reproducer: `tools/qtmin/` (its README is the recipe).
-- The build: `scripts/build-windows.sh`, the `--windows` mode of
-  `scripts/configure-qemu.sh` and of `scripts/build-d3dpt-exec.sh`, and
-  their native MSYS2 mode with `scripts/win-run.sh`.
-- The package: `scripts/package-windows.sh`.
-- Windows branches of shared code: `embed/mglcntx_embed.c` (the WGL
-  backend) and `tools/wgl-probe.c`, `launcher-core/src/console.rs`,
-  `launcher-core/src/fatal.rs`,
-  `player/src/qmp.rs`,
-  `launcher-core/src/paths.rs` + `player.rs` + `wizard.rs` + `bundle.rs`
-  (the layout and the WHPX naming), `d3dpt/hw/d3dpt_exec_load.c`,
-  `d3dpt/exec/*.cpp`, `libdisc/src/bin/discx.rs`.
-- Docs: `docs/build-windows.md`, this file, the M11 rows of
-  `docs/00-status.md` and doc 08.
-- Shared with other tracks (rebase first, edit minimally, say so in the
-  commit): `patches/qemu/13-perfmap-darwin.patch`,
-  `31-mesa-ctx-weak.patch` and `50-cdimage-block-driver.patch`,
-  `scripts/configure-qemu.sh`, `qemu-embed/build.rs`, and the shared
-  layer of `embed/mglcntx_embed.c` (M3's file).
-
-## State (2026-09-06; the Qt package built 2026-09-08)
-
-The whole stack cross-builds and packages. **The first cross build since
-ADR-015 made `2ksbox.exe` the Qt launcher ran 2026-09-08**, from a
-worktree that had no `build/win` of its own (a Windows build belongs to
-its checkout like every other): `qemu rust qt exec` in 424 s, then
-`package-windows.sh` green — 412 MB staged, a **146 MB zip** (the older
-~92 MB figure below is the egui launcher's, before Qt's runtime, plugins
-and QML trees came along). The staged launcher answered `--paths` and
-wrote its `launcher.log`, the packaged `qemu-img.exe` wrote a qcow2, and
-`wgl-probe.exe` drew its frame. The one thing wine still will not do is
-open the Qt window offscreen — a report, not a verdict, and the real
-answer is `2ksbox-debug.bat` on the PC.
-
-That run also added the check the Linux packages needed
-(2026-09-07): the staged **player** must answer `--companions` with the
-libraries QEMU `LoadLibrary`s by name rather than through an import
-table. On Windows that is `d3dpt_exec.dll` — staged, and resolved inside
-the package — with `glide` legitimately "(not shipped)": there
-is no Glide wrapper for Windows yet (M3: the cross build has no glide
-stage). DXVK was not shipped either until 2026-09-17, when the executor's
-first real run on Windows' own Direct3D 9 drew black (item 5 below); it is
-`dxvk_d3d9.dll` beside the executor now.
-
-`scripts/build-windows.sh`
-then `scripts/package-windows.sh` produce a zip holding
-`2ksbox.exe`, `2ksbox-player.exe`, `qemu-img.exe`,
-`libqemu-embed-i386.dll` (all 20 embed API entry points exported),
-`d3dpt_exec.dll`, the mingw runtime closure, `pc-bios\`, the guest-tools
-ISO and `tools\wgl-probe.exe`. **WHPX is detected and built in**, and the
-embed library has a WGL backend, so a Win98 guest's OpenGL has somewhere
-to go.
-
-What has actually been *run*, all under wine on the build host:
-
-- `qemu-system-i386.exe -version` prints 9.2.4 with the qemu-3dfx
-  signature; `-M pc -accel tcg -m 64 -display none -qmp stdio` starts the
-  machine, negotiates QMP, answers and quits cleanly.
-- The staged launcher answers `--paths` with every companion inside the
-  package, from outside the checkout with an empty environment, and its
-  `--wizard-new` runs the packaged `qemu-img.exe` to create a real
-  qcow2 — which is also the DLL closure's proof.
-- The player's own window does **not** get that far: it initialises
-  Vulkan through wine's winevulkan (radv, "not a conformant
-  implementation") and then hangs before the first frame. Not chased:
-  wine is not the target, and the answer costs less on a real Windows
-  machine than in a wine debugger.
-
-### First run on real Windows (2026-09-06)
-
-The user ran the package on their PC. It starts, and two things were
-wrong — both of them things only a real Windows could show:
-
-1. **A terminal window.** The launcher was a console-subsystem binary, so
-   double-clicking it opened a black console and kept it for the session.
-   Both front ends are `windows_subsystem = "windows"` now, with
-   `launcher-core/src/console.rs` paying back what that costs: the debug
-   verbs borrow the console they were launched from when there is one
-   (`AttachConsole(ATTACH_PARENT_PROCESS)`, and only when nothing has
-   already handed us a stdout — a redirection or a test harness's pipe
-   must be left alone), and every subprocess the launcher starts is given
-   `CREATE_NO_WINDOW`, so `qemu-img` no longer flashes a console per call
-   and the player no longer sits behind one. Verified under wine both
-   ways: `package-windows.sh`'s `--paths` check still reads its pipe, and
-   `2ksbox.exe --host-check` from a `.bat` under `cmd` prints into that
-   console.
-2. **"Failed loading SDL3 library" on Play.** Fedora's `mingw64-SDL2` is
-   *sdl2-compat*: an `SDL2.dll` that `LoadLibrary`s `SDL3.dll`. The DLL
-   closure walks import tables, and a runtime load is not in one, so
-   SDL3 was never shipped and the player could not start on a machine
-   without its own. `package-windows.sh` now has a second pass over the
-   staged binaries' strings for sysroot DLL names that are not staged
-   yet (`SDL3.dll`, and ANGLE's `libEGL`/`libGLESv2`).
-   **Since 2026-09-07 neither SDL DLL is staged at all:** QEMU is
-   configured `--disable-sdl`, because nothing we ship opens a QEMU
-   window. `libEGL`/`libGLESv2` are still there — `libepoxy-0.dll`, the
-   Mesa pass-through's GL loader, names them at run time, and the same
-   pass catches that. It stays as the net for the next one.
-
-A windowless launcher has nowhere to put the player's output, which is
-precisely when a start-up failure needs reading, so `player::spawn`
-redirects it to `%APPDATA%\2ksbox\data\player.log` in that case —
-appended, with a header per run.
-
-Still open from that first run: whether a machine actually boots, and
-what WHPX does with it.
-
-### The QMP monitor's `fd=` on Windows (2026-09-06)
-
-The next run got as far as starting a machine and QEMU refused the
-command line: `-chardev socket,id=qmp0,fd=7368: File descriptor '7368' is
-not a socket`. 7368 is a `SOCKET` handle, and `fd=` on Windows is not one.
-Every socket call in QEMU's Windows build is an `os-win32.h` wrapper
-(`#define getsockopt qemu_getsockopt_wrap`) whose first line is
-`_get_osfhandle(fd)`, so the number has to be a **C-runtime descriptor**
-— and `util/qemu-sockets.c`'s `fd_is_socket()` is the getsockopt that
-fails on a raw handle.
-
-`_open_osfhandle()` makes that descriptor, but *whose* table it lands in
-depends on which CRT the module linking it uses, and the player cannot
-know that about the library it loads (both are msvcrt.dll today; nothing
-enforces it). So the handle crosses the boundary as a handle and the
-library converts: **`qemu_embed_socket_to_fd()`, embed API v7**. On Unix
-an fd is already an fd and it returns the value unchanged, so
-`player/src/qmp.rs` has one `into_raw` shape on both platforms.
-
-Anyone pulling this must rebuild the embed library before the player
-links (the API version moved).
-
-### The third run: nothing at all (2026-09-06)
-
-The report was "didn't work on windows, didn't start, no error messages
-nor anything". That sentence is a bug in this track, not a fact about the
-user's machine: since the first run's fix both front ends are
-`windows_subsystem = "windows"`, and a windowed program has no stderr. A
-panic on the way to the first window — or an `eframe::run_native` that
-returns `Err` — printed into nothing and the process vanished. The
-terminal that was removed took with it the only place a start-up failure
-could be read.
-
-So the launcher has two mouths now that need no toolkit
-(`launcher-core/src/fatal.rs`, called from the first line of both
-`main`s):
-
-- **A log**, `%APPDATA%\2ksbox\data\launcher.log`, beside the
-  `player.log` that was already there: a header per run, then one
-  milestone per start-up step (`exe`, `data dir`, `library: N machines`,
-  `opening the window`). The *last* line in the file is the answer — a
-  run that ends after `data dir` died loading the library — so no
-  particular failure had to be guessed at in advance.
-- **A message box**, because someone who double-clicked an icon will not
-  go looking for a log file. The panic hook writes the message, the
-  location and a backtrace to the log and then says so in a
-  `MessageBoxW`; `run_native`'s `Err` goes the same way.
-
-Then the case no Rust of ours can catch: a process that dies in the
-**loader** (a DLL that is not there) or in a **static initialiser** never
-reaches `main` and writes no log at all. So the package carries
-**`2ksbox-debug.bat`**, which runs the launcher from a console and keeps
-what it says in `2ksbox-debug.log`. Two things it has to do that are not
-obvious: every run goes through `start "" /b /wait`, because cmd does not
-wait for a windows-subsystem program and would otherwise record no exit
-code; and the launcher's *answers* come out of its own log rather than
-that console, because `start /b` does not hand the child the console's
-redirection — which is what `--diagnose` is for (`--paths` and
-`--host-check`, filed into the log instead of printed into nowhere).
-
-**The absence of `launcher.log` is itself the reading**: nothing of ours
-ran, and the exit code beside it names the loader failure (`0xC0000135` a
-missing DLL, `0xC0000142` an initialiser that failed, `0xC0000005` a
-fault — which is what the Qt binary does under wine). One .bat therefore
-asks both packages the same question and tells the two cases apart.
-
-Verified under wine: the packaged `2ksbox.exe` with no display reaches
-`[start] opening the window` and stops there — the winevulkan hang from
-the first run — which is the log doing exactly its job; and the panic
-hook's message, location and backtrace land in the log on the native
-build.
-
-### The fourth run: two answers at once (2026-09-06)
-
-`2ksbox-debug.bat` did its job on the user's PC the first time it was
-asked, and both halves of the report were new facts.
-
-**The Qt front end dies before `main` on real Windows too**: exit
-`-1073741819` = `0xC0000005`, an access violation, and no `launcher.log`
-at all. So it is not wine — the loader completes there as it does here
-and a static initialiser faults, which makes it **ours to fix** and not
-a question about wine's Qt 6 support. (What has been ruled out so far: a
-CRT mismatch — every binary in the package imports `msvcrt.dll`, Qt's
-included — and a malformed constructor list: the exe's `.ctors` is a
-well-formed `-1`, fifteen entries inside `.text`, `NULL`.) The egui
-package is the one to use meanwhile. **Found and fixed the same day** —
-`__once_proxy` across the libstdc++ DLL boundary, "The Qt binary's
-fault, found" below — and since ADR-015 (2026-09-07) the Qt build is the
-only package there is.
-
-**The egui front end started, and the machine it started did not**: the
-player's log said
-
-    network backend 'user' is not compiled into this binary
-
-`-netdev user` is a *compiled-in* backend — it is libslirp — and Fedora
-has no `mingw64-libslirp`, so the Windows QEMU had been built without it
-since the first day of this track (`slirp support: NO` in the configure
-summary, which nobody had read). The cross image now builds libslirp
-4.9.4 from source into the mingw sysroot, the same release the Flatpak
-manifest pins for the same reason, and the DLL closure picks
-`libslirp-0.dll` up on its own because QEMU imports it.
-
-Every check in `package-windows.sh` was green while this was broken,
-because none of them had ever asked our QEMU for anything the *launcher*
-writes: the wine checks start `-M pc`, and machines come from
-`bundle.rs`. There is a check for it now, and it is a static one —
-the package holds no `qemu-system-*.exe` (QEMU is in-process, inside
-`libqemu-embed-i386.dll`) and the player that would load it is the
-binary wine hangs in, so the question is put to the embed library's
-**import table**: `net/slirp.c` is libslirp's only consumer, so the
-import is the backend.
-
-### Both front ends (2026-09-06) — one package since ADR-015 (2026-09-07)
-
-`scripts/package-windows.sh --qt` rolled a second, complete package whose
-`2ksbox.exe` was `launcher-qt`, so the two could be unzipped side by side
-on one machine and compared. That flag is gone: the Qt build is the
-launcher (ADR-015), the one zip carries it and Qt, and `launcher.exe`
-was cross-built by the `rust` stage as a second opinion until the egui
-front end was deleted on 2026-09-13 (ADR-017). Qt crosses better
-than expected: Fedora has
-`mingw64-qt6-*` to link against, a native Qt of the same version for the
-tools that run here, and a `x86_64-w64-mingw32-qmake-qt6` whose `-query`
-splits `QT_INSTALL_*` (target) from `QT_HOST_*` (host) exactly the way
-cxx-qt's cargo-only build wants. Two things had to be said:
-
-- `CXX_QT_AUTORCC_OPTIONS=--no-zstd` (a supported cxx-qt env var, found
-  after nearly wrapping `rcc` by hand): the host rcc has zstd and the
-  mingw Qt6Core does not, so the default algorithm produces a resource
-  that asks the target for `qResourceFeatureZstd()` and will not link.
-- Qt deployment by hand, since Fedora has no cross `windeployqt`: the
-  plugin directories, the QML module trees, and a `qt.conf` so both
-  resolve relative to the executable. The DLL closure had to grow roots:
-  a platform plugin or a QML module's DLL sits in a subdirectory and
-  imports half of Qt, and nothing above it names either — it now walks
-  every binary anywhere in the package.
-
-### The Qt binary's fault, found (2026-09-06)
-
-`tools/qtmin/` is the smallest cxx-qt program that can be cross-built
-here, in three rungs — no bridge, one bridge, a QML module — so that the
-rung which stops printing `qtmin: main` names the layer. **Rung 1 already
-faults**: linking `cxx-qt-lib` is enough, and neither the QML
-registration nor the bridge nor a line of ours is involved.
-
-Read out of the crash with `wine winedbg` and `objdump`:
-
-1. `_GLOBAL__sub_I_call_initializers.cpp`, a static initialiser in the
-   C++ `cxx-qt-build` generates, calls `cxx_qt_init_crate_cxx_qt`;
-2. which uses `std::call_once`, and on mingw-w64 that parks the callable
-   in `std::__once_call` — a `__thread` variable reached through
-   **emulated TLS** — and asks `pthread_once` to run `__once_proxy`;
-3. `__once_proxy` is in `libstdc++-6.dll`, and its import is bound
-   correctly (the thunk really does land in the DLL — checked in the
-   debugger, not assumed). It reads `__once_call` back through emutls;
-4. but emutls keys its storage per *libgcc*, and there are two: the exe
-   links libgcc statically — rustc does that for `x86_64-pc-windows-gnu`
-   and neither `-C link-self-contained=no` nor `-shared-libgcc` moves it
-   — while `libstdc++-6.dll` uses `libgcc_s_seh-1.dll`'s. The proxy
-   reads a slot the exe never wrote, finds `NULL`, and calls it.
-
-Which is exactly the `rip=0` with a return address inside `pthread_once`
-that every dump of `launcher-qt.exe` shows, on wine and on the user's PC.
-
-**Fixed the same day**, in eleven lines
-(`launcher-qt/src/once_proxy.cpp`, and the same file in the reproducer):
-
-```cpp
-namespace std { extern __thread void (*__once_call)(); }
-extern "C" void __once_proxy() { std::__once_call(); }
-```
-
-A local definition is one the linker prefers over an import, so the proxy
-that runs is ours, and it reads `__once_call` through *this* module's
-emutls — the registry `call_once` just wrote it to. It is exactly what
-libstdc++'s own proxy does (`src/c++11/mutex.cc`): the function exists
-only to be a plain `void()` whose address `pthread_once` can take. It
-compiles to nothing off Windows, where the C++ runtime is one module.
-
-All three rungs of `qtmin` reach `main` with it, and **the Qt package
-passes every check the egui one does** — `--paths` from inside the
-package, its own `launcher.log`, and the packaged `qemu-img` driven
-through the wizard, all under wine. The three excuses
-`package-windows.sh` used to make for `--qt` are gone with the bug, so a
-Qt package that cannot do those things fails now.
-
-What did *not* work, for the next person who meets this: `-C
-link-arg=-static-libstdc++` (something on the link line still asks for
-the DLL, and the exe keeps importing `__once_proxy`),
-`-C link-self-contained=no`, and `-C link-arg=-shared-libgcc` — rustc
-links libgcc statically for this target regardless, so there are still
-two emutls registries. This fix makes that harmless rather than arguing
-with it.
-
-**The Qt binary did not start at all** — on wine or on the user's PC,
-where it exited `0xC0000005` — until the `std::call_once` fix above. It
-faulted on a call to address 0 before `main` ran, with either subsystem,
-while the egui binary in the same folder with the same DLLs answered
-`--paths` fine. Two things narrowed it before `tools/qtmin` named it:
-with `WINEDEBUG=+loaddll` the loader gets **all the way through** the DLL
-set — `Qt6Core`, `Qt6Gui`, `Qt6Network`, `Qt6Qml` and the system
-libraries after them — and only then faults, so nothing was missing; and
-`launcher.log` was **never created**, although the first statement in
-that binary's `main` is what opens it (`fatal::install("qt")`), so the
-process never reached `main`.
-
-### Dark mode, and half a theme (2026-09-06)
-
-The Qt launcher runs on the user's PC now, and the first thing it showed
-is that a Windows set to dark mode got it "all mixed up between dark and
-light". Reproduced here by forcing a dark palette on the launcher and
-grabbing a frame: the window and its labels go dark and every *control*
-stays light, because a Quick Controls style paints its buttons, fields
-and combo boxes from its own colours and only the surfaces around them
-come from the palette.
-
-So the launcher is a light-mode application, on every platform and
-whatever the desktop says (`launcher-qt/src/appearance.cpp`): the colour
-scheme is requested *and* a matching palette is handed over, because
-`setColorScheme` is only a request — Windows honours it, this checkout's
-Wayland session and the offscreen plugin do not, and the palette is what
-the controls actually read. `LAUNCHER_QT_SCHEME=system` gives the
-desktop's own back, `=dark` forces the other one.
-
-The style is left alone where a platform has a real one. Asking
-`QQuickStyle::name()` is what makes Qt resolve a style — the environment
-variable, then a config file, then the platform's own — so Windows has
-already answered "Windows" by the time we ask and keeps it; only the
-platforms whose default is "Basic" (no system colours at all) are given
-Fusion. The start-up log now carries the line that settles all of this:
-
-    [start] style Windows, scheme light, window #efefef, base #ffffff
-
-Two things that cost a build each: `QQuickStyle` needs
-`.qt_module("QuickControls2")`, and on Windows that is not enough — the
-generated archive holding `appearance.cpp` is linked *after* the Qt
-import libraries, and a PE import library only satisfies symbols already
-undefined when the linker walks past it, so `build.rs` names
-`-lQt6QuickControls2` again as a `rustc-link-arg`. On ELF the same code
-links either way, which is why it built here and not there.
-
-### Windows 11's own look, and the desktop's dark mode back (2026-09-22)
-
-What the "Windows" style above draws is Vista-era common controls, and
-on the user's Windows 11 PC the launcher looked its age: flat grey
-buttons with one-pixel borders, black-bordered fields, and — a real
-defect, not taste — the wizard's fields overflowing the 660-wide window
-under that style, every Browse button cut off with the scrollbar drawn
-over the text fields. Grabbed on the PC through `scripts/win-run.sh
-launcher` with `LAUNCHER_QT_SHOT`, beside the same windows with
-`QT_QUICK_CONTROLS_STYLE=FluentWinUI3`: Qt's own Windows 11 style, in Qt
-since 6.8 and in both the cross image's 6.10 and MSYS2's 6.11, pure QML
-(so the offscreen grabs the packagers take still work, and nothing new
-is staged — it lives in the `QtQuick/Controls` tree already copied),
-and a whole theme in each mode: its `Config.qml` picks the light or dark
-control set from `Application.styleHints.colorScheme`, the very thing
-`launcher_qt_set_scheme` sets. So the half-theme reason for the
-light-only rule is gone on Windows, and both halves changed (user
-decision): `appearance.cpp` names FluentWinUI3 on Windows unless
-`QT_QUICK_CONTROLS_STYLE` does, and `main.rs` defaults the scheme to
-the desktop's there (`LAUNCHER_QT_SCHEME=light` is the old behaviour;
-Linux and macOS stayed light for a day more — since 2026-09-23 every
-platform follows the desktop, the half theme having turned out to be the
-forced palette's own doing: `appearance.cpp`'s header). The log line is now
-
-    [start] style FluentWinUI3, scheme dark, window #202020, base #1e1e1e
-
-or `scheme light` on a light desktop. Two things the switch showed.
-Under the system's dark palette the machine grid's hand-drawn zebra rows
-came out navy: Windows' dark palette derives `AlternateBase` from the
-accent colour. The answer was not a better colour but none at all (user
-decision, the same day: "everything uses just stock styles") — every
-list is now a stock `ListView` of `ItemDelegate`s with no box, no zebra
-and no palette role read anywhere in the QML, the header rows take
-their margins from an invisible delegate's own padding so the columns
-line up under any style, and `Disclosure.qml` is a stock `ToolButton`
-whose `expanded` is its own flag rather than `checked` (a checked tool
-button is drawn filled, which reads as a toggle). And Fluent's buttons
-are wider, so the grid's row of five clipped "Clone…" at 980; the
-window is 1060 wide now.
-
-### OpenGL in the embed library
-
-Written the same day: `embed/mglcntx_embed.c` grew a Windows branch using
-WGL with a `WGL_ARB_pbuffer` as the drawable — the Linux backend's shape
-(the pbuffer is FBO 0, the swap is a readback of its back buffer), not
-the macOS one's FBO stand-in, because Windows has a real offscreen
-drawable and macOS does not. One 1×1 window is created and never shown,
-because WGL cannot reach a device's pixel formats or its ARB entry points
-without one. Everything goes through epoxy, which the embed library
-already links.
-
-Three things this needed elsewhere:
-
-- **The weak-symbol trick does not work on Windows.** Marking
-  `hw/mesa/mglcntx_mingw.c`'s entry points weak the way patch 31 does for
-  GLX links the DLL fine and then leaves `qemu-system-i386.exe`
-  with `undefined reference to MGLCreateContext` — a COFF weak external
-  is not an ELF weak definition, and ld.bfd does not fall back to the
-  aliased body (the object's own calls to its own weak symbols are
-  undefined too). The file is split instead: its WGL backend behind
-  `MESAGL_WGL_BACKEND`, its platform-independent helpers behind the
-  negation, and patch 10's meson hunk compiles it once more — backend
-  half only — into the emulators alone, so the archive both consumers
-  share holds the helpers and no backend. `strings` says it worked: the
-  emulator carries the WGL backend's messages and the DLL the
-  window-less one's, neither the other's.
-- The shared WGL layer at the top of `mglcntx_embed.c` *defines*
-  `PIXELFORMATDESCRIPTOR`, `WORD`, `DWORD`, `BYTE` because Linux and
-  macOS have no `windows.h`; on Windows those give way to the real ones.
-- `HPBUFFERARB` in that layer is a record of what the guest asked for,
-  not a handle, and on Windows the name belongs to `wglext.h` — it is
-  now `FakePBuffer`, which is what it always was.
-
-`tools/wgl-probe.c` is the test: the same sequence without QEMU, drawing
-the frame `tools/embed-3d-test.c` draws and checking the same three
-pixels. It passes under wine on this host (Mesa 26.2, RX 9060 XT), which
-is what says the sequence itself is right; it ships in the package as
-`tools\wgl-probe.exe` so the same question can be asked on the machine
-where a guest's 3D actually fails.
-
-### The six things that were in the way
-
-1. **`tcg/perf.c`** — patch 13 compiles it on every host, and half of it
-   (jitdump) needs `mmap` and `flockfile`. The perfmap half is plain
-   stdio and stays; `-jitdump` on Windows says it is unavailable.
-2. **libdisc's link libraries** are per-platform and meson forbids a
-   chained ternary, so patch 50's `link_args` became an `if/elif`
-   (`-lkernel32 -lntdll -luserenv -lws2_32 -ldbghelp`, from
-   `rustc --print native-static-libs`).
-3. **`d3dpt_exec_load.c`** dlopens the executor: `LoadLibrary` /
-   `GetProcAddress` behind three macros.
-4. **The player's QMP monitor is a socketpair**, which Windows has not
-   got. A loopback pair stands in, and the accepted connection is proved
-   to be our own (peer address == our connecting socket's own address)
-   before the monitor is handed to it — otherwise a local process that
-   raced for the port would be handed a QMP monitor. QEMU's `fd=` is a
-   plain integer on both platforms.
-5. **The executor** compiled almost unchanged against mingw's own
-   `<windows.h>` / `<d3d9.h>` instead of DXVK's stand-ins for them (x86-64
-   has one calling convention, so the COM ABI is the same). It loads
-   plain `d3d9.dll` at run time: the system implementation, or a DXVK
-   build dropped next to the player, which the loader prefers because it
-   searches the executable's directory first. `access()` became a
-   `fopen` probe and `%zu` needs `__USE_MINGW_ANSI_STDIO`.
-   **Reversed 2026-09-17 (user decision): the executor runs on DXVK on
-   Windows too, and only on DXVK.** It was weighed on 2026-09-08 and kept
-   on the system d3d9, with the cost written down — Windows the only build
-   whose D3D path had no oracle, and no batch ever run through it — and
-   the first real run paid it: on the user's PC (RTX 3090) dxdiag and
-   3DMark 99 ran in a Win98 guest at 60–170 frames/s of host draws and
-   showed black, every readback's first pixel zero. Reading the executor
-   against Windows' own Direct3D 9 found two things DXVK accepts and it
-   refuses: the display driver's path draws with no `BeginScene`, and
-   every device is created with no window at all. Rather than keep a
-   second rasteriser bug-for-bug equal, the package ships DXVK's own
-   `d3d9.dll` (`configure-dxvk.sh --windows`, DXVK's `build-win64.txt`,
-   glslang in the cross image) renamed `dxvk_d3d9.dll`, so nothing can
-   mistake it for the system's, and the executor loads that name or
-   `D3DPT_DXVK_LIB` and nothing else. Patch 08 builds the headless WSI
-   on Windows beside Win32, and the executor asks for it on every host.
-   The display driver's host test cross-builds (`d3dpt-dp2-test.exe`)
-   and `package-windows.sh` runs it under wine against the *staged* pair:
-   107 checks, the frame byte-identical to the Linux build's. A Windows
-   host below Vulkan 1.3 has no Direct3D pass-through, like any other
-   host (ADR-013).
-
-   **Amended 2026-09-21 (user decision): such a host runs the executor on
-   the system Direct3D 9 after all** — not a reversal of the line above,
-   which stands for every host that *can* run DXVK, but because the
-   alternative for a Windows host below the floor was WineD3D inside the
-   guest, and "the wine path is just not very good" while the card's own
-   D3D9 driver is right there. The difference from the 2026-09-08 choice
-   this file recorded is that the backend was **built** this time rather
-   than assumed: a hidden window, the executor's own scene, the
-   backbuffer read before Present instead of after (SWAPEFFECT_DISCARD
-   leaves it undefined on real hardware — that is where the black frames
-   went), a lost device that comes back, and two retries for what a real
-   driver refuses. `D3DPT_D3D9=auto|dxvk|system`, the adapter's `d3d9=`
-   property, the machine form's Direct3D row; `auto` is resolved by the
-   launcher's Vulkan probe, the only thing that can tell a software
-   Vulkan device from a real one. The oracle this build never had is now
-   two programs, both cross-built here and both runnable on either
-   backend: `d3dpt-dp2-test.exe` (the display driver's 107 checks) and
-   `d3dpt-exec-test.exe` (the guest DLLs' path — the swapchain, the
-   scene and the Present the other one has not got). On the PC,
-   2026-09-21: both pass on both backends, both frames byte-identical —
-   and `base98-br` itself, on an overlay with `d3d9=system`, runs
-   `D3D7TEST.EXE` through the Win98 display driver with the same 13
-   readbacks the DXVK run makes. ADR-007 and ADR-013 carry the decision;
-   doc 00 has the measurements and the one difference between the two
-   backends (the undefined X byte of an X8R8G8B8 target).
-5b. **The WGL backend's entry points** (2026-09-21, after the first GL
-   guest ever run here). libepoxy resolves lazily and WGL answers
-   `wglGetProcAddress` only with a context current, so the first ARB call
-   after `plat_open`'s `wglMakeCurrent(NULL, NULL)` *faulted* — GLQuake
-   took the player down with `glcntx: ChoosePixelFormat()` as the last
-   line of `player.log`. Every ARB call in the backend borrows the
-   bootstrap context now (doc 12 "The WGL rule"), and with that the chain
-   runs: `GLPROBE.EXE` in `base98-br` reads this host's own
-   `NVIDIA GeForce RTX 3090/PCIe/SSE2` and `4.6.0 NVIDIA 616.64` through
-   the pass-through. `tools/wgl-probe.exe` passes either way and always
-   would — it resolves its pointers by hand — so it answers a different
-   question than it looked like it did.
-
-6. **The package layout.** A Unix prefix's `bin`/`lib`/`libexec`/`share`
-   split is wrong on Windows, where the loader wants the DLLs beside the
-   exe and the user wants one folder. `paths.rs` now knows both shapes;
-   the strings at the call sites did not change.
-
-## Build / test loop
+Windows as a *host*: the whole stack cross-built from Linux into a
+portable zip, the same stages built natively on a Windows PC for
+debugging, and the Windows branches of shared code. The track is done:
+the package runs on the user's PC (Ryzen 9 5900X, RTX 3090, the
+`base98-br` image), including 3D guests on both Direct3D backends and the
+OpenGL pass-through. This file is the record — scope, where the design
+lives, how to test, the traps, what stayed open.
+
+- **The build, the package and the platform's quirks:**
+  `docs/build-windows.md` (the container, the stages, the DLL closure, Qt
+  deployment, `2ksbox-debug.bat`, the Direct3D 9 backends, WGL, WHPX,
+  the native MSYS2 build).
+- The clang-built QEMU: `patches/qemu/README.md`, patch 68.
+- The WGL backend's rule: doc 12, "The WGL rule".
+- Which Direct3D 9 the executor runs on: ADR-007 and its second
+  amendment (doc 10), `docs/build-windows.md`.
+- The Windows keyboard capture: doc 03 §"Input path",
+  `player/src/kbcapture.rs`.
+
+## Scope and files
+
+- Cross toolchain: `packaging/windows/Dockerfile`, `scripts/win-cross.sh`,
+  `packaging/windows/clang-mingw-cc` / `-cxx`.
+- Build: `scripts/build-windows.sh` (cross, and native under MSYS2
+  MINGW64), the `--windows` mode of `scripts/configure-qemu.sh` and
+  `scripts/build-d3dpt-exec.sh`, `scripts/win-run.sh`,
+  `packaging/windows/qmake-host.c`, `guest-tools/msys2-i686.sh`.
+- Package: `scripts/package-windows.sh`.
+- The Qt reproducer: `tools/qtmin/` (its README has the `__once_proxy`
+  diagnosis); the fix is `launcher-qt/src/once_proxy.cpp`.
+- Windows branches of shared code: `embed/mglcntx_embed.c` (WGL) and
+  `tools/wgl-probe.c`; `launcher-core/src/console.rs`, `fatal.rs`,
+  `paths.rs`, `player.rs`, `wizard.rs`, `bundle.rs` (the one-folder
+  layout, WHPX naming), `control.rs` (live control through Winsock
+  AF_UNIX); `player/src/qmp.rs`, `player/src/kbcapture.rs`;
+  `launcher-qt/src/appearance.cpp`; `d3dpt/hw/d3dpt_exec_load.c`,
+  `d3dpt/exec/*.cpp`; `libdisc/src/bin/discx.rs`.
+- Patches it added: 68 (clang), 69 (mkvenv's `file://C:/…` wheels URL
+  under Python 3.14); Windows hunks in 10, 13, 50.
+
+## Test loop
 
 ```sh
-scripts/win-cross.sh --build          # once
-scripts/build-windows.sh              # qemu, rust, exec, guest
-scripts/package-windows.sh            # zip + the wine checks
-scripts/build-windows.sh rust         # the inner loop while changing Rust
+scripts/win-cross.sh --build          # once, and after a Dockerfile change
+scripts/build-windows.sh              # qemu rust qt exec guest (cross)
+scripts/build-windows.sh rust         # one stage (stages are positional)
+scripts/package-windows.sh            # the zip, then its checks under wine
 ```
 
-On the PC itself, in MSYS2's MINGW64 shell (docs/build-windows.md,
-"Building on Windows" — the one-time setup is there):
+`package-windows.sh` is the Windows evidence `scripts/test.sh` cannot
+give: the staged launcher's `--paths` and an offscreen window grab, the
+player's `--companions` (the libraries QEMU loads by name), both
+Direct3D host tests through the staged `d3dpt_exec.dll` + `dxvk_d3d9.dll`
+(107 checks, frame byte-identical to Linux's), `qemu-img.exe` writing a
+qcow2 (which also proves the DLL closure), and libslirp in the embed
+DLL's import table. Wine is not the target: a wine failure is
+investigated, not believed.
+
+On the PC, in MSYS2's MINGW64 shell (one-time setup in
+`docs/build-windows.md`, "Building on Windows"):
 
 ```sh
-scripts/build-windows.sh              # qemu, rust, qt, exec (and the ISO if absent), natively
-scripts/build-windows.sh guest        # the guest-tools ISO again, after a driver change
-scripts/win-run.sh launcher           # out of the checkout
-GDB=1 scripts/win-run.sh player ...   # the command line from launcher.log's [player] line
+scripts/build-windows.sh              # natively
+scripts/win-run.sh launcher           # the launcher out of the checkout
+GDB=1 scripts/win-run.sh player ...   # the [player] line from launcher.log
+build/win/d3dpt-dp2-test.exe / d3dpt-exec-test.exe   # with D3DPT_D3D9=dxvk and =system
 ```
 
-`scripts/test.sh` is unchanged and stays a Linux suite: it needs guest
-images and a GPU, and now a Windows host too. The Windows evidence is
-`package-windows.sh`'s own checks.
+What to ask the user for when a package misbehaves: `2ksbox-debug.bat`
+and its `2ksbox-debug.log`. The last line of `launcher.log` names the
+start-up step that died; no `launcher.log` at all means the loader or a
+static initialiser, and the exit code says which (`0xC0000135` missing
+DLL, `0xC0000142` initialiser, `0xC0000005` fault).
+`PLAYER_KEYBOARD_LOG=1` puts the keyboard capture's decisions in
+`player.log`. Both logs are in `%APPDATA%\2ksbox\data`.
 
-## Next steps, in order
+## Traps
 
-0. **The 2026-09-17 package on the PC** (docs/00-status.md, "The first
-   Windows host run"): dxdiag / 3DMark 99 on DXVK, a MIDI's tempo, CD
-   music, the pointer over Moto Racer and `2ksbox-debug.bat` are
-   **confirmed fixed** by the user, and so is **the Windows key**
-   (2026-09-19). Left: Moto Racer's speed — the first clang-built QEMU
-   (patch 68) ever to run on real Windows.
+- **An import-table closure is not a closure.** A DLL loaded with
+  `LoadLibrary` is in no import table: Fedora's SDL2 was sdl2-compat and
+  loaded SDL3 that way ("Failed loading SDL3 library" on the first real
+  run), and `libepoxy-0.dll` names `libEGL`/`libGLESv2` at run time.
+  `package-windows.sh`'s strings pass catches them; Qt's platform plugin
+  and QML modules are why the closure walks every binary in the package.
+- **Fedora has no `mingw64-libslirp`**, and `-netdev user` is compiled
+  in: without it every launcher machine dies with "network backend
+  'user' is not compiled into this binary", while configure only says
+  `slirp support: NO`. The image builds libslirp from source.
+- **`windows_subsystem = "windows"` costs three things**: a console for
+  the debug verbs (`console.rs` attaches the parent's, and gives every
+  child `CREATE_NO_WINDOW`), a home for the player's output
+  (`player.log`), and anywhere for a failure to go (`fatal.rs`: the log
+  plus a message box). None is optional once the attribute is set.
+- **cmd does not wait for a windowed program**, and `start "" /b /wait`
+  (which does) does not pass the console's redirection to the child.
+  Take the exit code from `start /b /wait` and the output from a file the
+  program writes (`--diagnose`).
+- **QMP `fd=` on Windows is a C-runtime descriptor**, not a `SOCKET`
+  (QEMU's socket wrappers start with `_get_osfhandle`). Whose CRT table
+  it lands in depends on the module, so the handle crosses into the
+  embed library, which converts: `qemu_embed_socket_to_fd()`, embed API
+  v7 (doc 11).
+- **Two emutls registries.** rustc links libgcc statically for
+  `x86_64-pc-windows-gnu`, `libstdc++-6.dll` uses `libgcc_s_seh-1.dll`'s,
+  so `std::call_once` in cxx-qt's generated initialiser reached a
+  `__once_proxy` reading `NULL`: the Qt launcher died before `main` with
+  `0xC0000005`. A local `__once_proxy` fixes it; `-static-libstdc++`,
+  `-C link-self-contained=no` and `-shared-libgcc` do not. MSYS2's GCC 16
+  has no exported `std::__once_call`, so the proxy compiles only where
+  `_GLIBCXX_NO_EXTERN_THREAD_LOCAL` is absent.
+- **A COFF weak external is not an ELF weak definition**: patch 31's
+  trick leaves `qemu-system-i386.exe` with undefined references, so
+  `mglcntx_mingw.c` is split instead (`docs/build-windows.md`, "OpenGL
+  for a Win98 guest").
+- **A PE import library only satisfies symbols already undefined** when
+  the linker reaches it: `launcher-qt/build.rs` names
+  `-lQt6QuickControls2` again as a `rustc-link-arg`, since the archive
+  holding `appearance.cpp` links after the Qt import libraries. ELF links
+  either way.
+- **`CXX_QT_AUTORCC_OPTIONS=--no-zstd`**: the host rcc has zstd and the
+  mingw Qt6Core does not.
+- **A low-level keyboard hook in the player is never called while the
+  player is the foreground window** — the only time it is wanted; the
+  cause was not found. The Windows keys are taken with raw input and
+  `RIDEV_NOHOTKEYS` instead (doc 03 §"Input path"). System hotkeys
+  (Alt+Tab, Alt+F4, Ctrl+Alt+Del, Win+L) reach no program.
+- **Emulated TLS**: mingw GCC's `__thread` is a call per access, and QEMU
+  touches thread-locals on every device access — a VGA register read
+  cost 2.3x Linux's. The QEMU is built with clang (patch 68;
+  `WIN_QEMU_CC=gcc` is the old build).
+- `win-cross.sh` forwards a **whitelist** of environment variables into
+  the container: a knob that seems ignored is probably not on it.
+  `build-windows.sh` configures QEMU only when `build.ninja` is missing
+  or the compiler changed, so a changed configure flag needs
+  `scripts/win-cross.sh scripts/configure-qemu.sh --windows` by hand.
+- A `wine` command piped into another looks like a hang: redirect to a
+  file. Unset `DISPLAY`/`WAYLAND_DISPLAY` for anything under wine that
+  might crash, or its crash dialog lands on the user's desktop.
+- `%APPDATA%\2ksbox\data`, not `%APPDATA%\2ksbox`, is the data directory
+  (`directories`' convention).
 
-   The Windows key took three rounds and the first two were wrong.
-   **Settled 2026-09-18**: the low-level hook is gone. It is called for every
-   key on the machine except while the player's own window is in front, which
-   is the only time it is wanted — measured every way on the PC
-   (docs/00-status.md item 5). The keyboard is registered for raw input with
-   `RIDEV_NOHOTKEYS` instead, which is scoped to the foreground window by the
-   window manager and leaves the key arriving as an ordinary `WM_KEYDOWN`:
-   three Windows keys at the focused player and the foreground never moves,
-   Ctrl+Alt+K and the next one opens Search. **Confirmed by the user on
-   2026-09-19**, with a real keyboard in a real guest: the Windows keys and
-   **Ctrl+Esc** reach the guest; Alt+Tab and the other *system* hotkeys stay
-   Windows', as measured. `PLAYER_KEYBOARD_LOG=1 scripts/win-run.sh launcher`
-   prints the registration and every focus change to
-   `%APPDATA%\2ksbox\data\player.log`. **This item is closed.**
-0b. **Run the native build on the PC.** It **builds there, every stage**
-   (2026-09-17, the user: `qemu`, `rust`, `qt`, `exec` and the guest-tools
-   ISO, in MSYS2's MINGW64 shell). Nothing built there has been run yet:
-   next is `scripts/win-run.sh launcher`, a machine booted from it, and the
-   Windows-built ISO in a guest (its `SETUP.EXE`, a driver it installs).
-   What it took, in the order the PC hit it: `diffutils` (QEMU's meson
-   requires `diff`); mkvenv's `file://C:/…` wheels URL under Python 3.14
-   (patch 69); qt-build-utils running MSYS2's moc with no `PATH` to its
-   DLLs (`build/win/qt-host` + `packaging/windows/qmake-host.c`);
-   `once_proxy.cpp` not linking against GCC 16's libstdc++, which exports
-   no `std::__once_call` and needs no proxy; the ISO's GLIDETEST including
-   OpenGLide's SDK header from a tree nothing had prepared; the XP driver
-   script's failures hidden by `>/dev/null`; MSYS2's i686 runtime being
-   Pentium 4 code, answered by linking Arch's pinned i686 runtime (the
-   Linux ISO's own); and that runtime's `-L` folders shadowing wine9x's
-   own `libpthread.a` until they moved behind the caller's arguments.
-1. **Rebuild and re-package for the ADR-015 shape**, then
-   `2ksbox-debug.bat` on the PC and read the `2ksbox-debug.log` it
-   writes: there is one zip now, its `2ksbox.exe` is the Qt launcher, and
-   nothing about that path has been run since the packager changed. A
-   `launcher.log` with milestones names the step that failed; no
-   `launcher.log` at all plus an exit code names a loader failure.
-2. **Does the window come up on Windows?** It starts and does real work
-   under wine, and the packaging check grabs one offscreen there — but
-   wine's Qt 6 is not the target's, and only that machine can say.
-3. **Boot a machine on the user's Windows PC.** The QMP monitor's `fd=`
-   is a CRT descriptor and the QEMU beside it has libslirp now, which is
-   where runs two and four stopped; what a guest does under WHPX is the
-   next unknown.
-4. **A Win98 guest with 3D on real Windows.** The WGL backend is written
-   and its sequence passes under wine (`tools/wgl-probe.exe`), but no
-   guest has used it.
-5. **The installer.** Doc 07 wants an installer as well as the portable
-   zip. QEMU's own `mingw32-nsis` recipe is in the cross image's reach.
-6. **Zero-copy frames** through a DXGI shared handle, the Windows answer
-   to the dma-buf ring and IOSurface.
-7. **Live control on the PC** (2026-09-16, written, not run on Windows):
-   the launcher's monitor is a Unix-domain socket here too — QEMU binds
-   `unix:` on Windows, the launcher connects through Winsock AF_UNIX
-   (`launcher-core/src/control.rs`). Wine has no AF_UNIX (`socket()`
-   answers 10047), so nothing here can run it: start a machine from the
-   launcher, open Snapshots… and take one, and swap a disc from the shelf.
-   `launcher.log` saying `live control off: …` means the trial bind
-   failed and the machine ran without it.
-8. **A second Windows check that boots a guest**, once (1) says what
-   actually happens. The shape to aim for is `xp-driver-test.sh`'s: drive
-   the machine over QMP, pull the artefacts out, diff a frame.
+## What stayed open
 
-## A clang-built QEMU (2026-09-17: measured, then shipped as patch 68)
-
-**Superseded the same day**: `configure-qemu.sh --windows` builds with clang
-now (patch 68 makes QEMU accept it; `WIN_QEMU_CC=gcc` is the old build), and
-a VGA register read — a device access with no clock behind it, which the
-port-I/O kernel below was not (it read the PIT, and wine's
-QueryPerformanceCounter is a syscall) — measured 52.7 ns on Linux, 121.6 on
-GCC, 63.5 on the clang package. The recipe below is how it was first tried.
-
-mingw GCC 15 has only emulated TLS: every `__thread` access is a call to
-`__emutls_get_address` (10.5 ns against 1 ns for a global, under wine), and
-QEMU touches `current_cpu`, the BQL flag and RCU state on every device
-access. clang for `x86_64-w64-mingw32` emits native TLS (`%gs:0x58`,
-`_tls_index`). The recipe (clang and lld are in the cross image; the tree
-edits are temporary and `prepare-qemu.sh` restores them):
-
-```sh
-# in qemu/: meson.build's gcc_struct check -> qemu_common_flags += '-mno-ms-bitfields'
-#           include/qemu/compiler.h: QEMU_PACKED without gcc_struct
-# build/win/clang/cc = clang --target=x86_64-w64-mingw32 -fuse-ld=lld "$@" (cxx likewise)
-WIN_QEMU_BUILD=$PWD/build/win/qemu-clang scripts/win-cross.sh scripts/configure-qemu.sh \
-  --windows --cc=$PWD/build/win/clang/cc --cxx=$PWD/build/win/clang/cxx --host-cc=gcc
-sed -i 's| -Xlinker --dynamic-list=[^ ]*qemu-plugin.symbols||g' build/win/qemu-clang/build.ninja
-scripts/win-cross.sh ninja -C build/win/qemu-clang qemu-system-i386.exe
-```
-
-Measured under wine against the Linux build, one DOS kernel per path, ns
-per pass (Linux / GCC / clang): memory blit 13.3 / 13.4 / 13.4, generated
-loop 16.9 / 16.9 / 16.9, x87 at 24-bit precision 28.7 / 29.1 / 29.5, x87
-helpers at 64-bit 73.5 / 93.1 / 96.5, **port I/O 74.6 / 206.0 / 146.3**. So
-native TLS is worth ~60 ns per device access, a third of the gap there;
-what remains is wine's or the Windows ABI's and cannot be told apart
-without the PC. The run also found patch 65's division by a PIT count of 0
-before the reset, which the GCC build never evaluated. Shipping clang
-means the `-mno-ms-bitfields` change for real (upstream took it later) and
-the embed DLL built the same way — the user's call.
-
-## Gotchas found here
-
-- **Fedora has no `mingw64-libslirp`**, and QEMU's `-netdev user` is a
-  compiled-in backend rather than a plugin: without it every machine the
-  launcher writes fails at start-up with "network backend 'user' is not
-  compiled into this binary". The cross image builds it from source. The
-  configure summary says `slirp support: NO` and nothing else does.
-
-- Fedora's default Python breaks QEMU's `mkvenv` (3.14 vs 3.8–3.13); the
-  image pins 3.13 and installs a real `distlib` for it.
-- `scripts/win-cross.sh` forwards a **whitelist** of environment
-  variables into the container. A knob that seems to be ignored is
-  probably not on it.
-- A `wine` command whose output goes through a pipe can look like a hang;
-  redirect to a file.
-- A kept copy of the cross image's DLLs (`build/win/sysroot-bin`) is a
-  snapshot of an older image: the first `--qt` package took one from
-  before Qt was installed and shipped a Qt launcher with no `Qt6Core.dll`.
-  Both sysroot copies are refreshed on every packaging run now.
-- Running the packaged binaries under wine with a display attached puts
-  wine's crash dialog **on the user's desktop** when one of them faults.
-  Unset `DISPLAY`/`WAYLAND_DISPLAY` for anything that might crash.
-- The launcher's Windows data directory is `%APPDATA%\2ksbox\data`
-  (`directories`' own convention), not `%APPDATA%\2ksbox`.
-- A DLL loaded with `LoadLibrary` is not in any import table, so a
-  closure walked from those alone is not a closure. Fedora's SDL2 was
-  sdl2-compat and loaded SDL3 that way (SDL is no longer built or staged);
-  `package-windows.sh` keeps the strings-based second pass for the next one.
-- **cmd does not wait for a windows-subsystem program**, and `start ""
-  /b /wait` (which does) does not pass the console's redirection to the
-  child: a `.bat` that runs a windowed program gets neither its output
-  nor its exit code by writing the obvious thing. Take the exit code
-  from `start /b /wait` and the output from a file the program writes
-  itself (`--diagnose`).
-- `windows_subsystem = "windows"` is what stops the terminal window, and
-  it costs a console for the debug verbs and a place to put a child's
-  output. Both are in `launcher-core/src/console.rs`; neither is
-  optional once the attribute is set. It costs a third thing that took
-  a whole run on the user's PC to notice: there is nowhere for a
-  *failure* to go either, so `launcher-core/src/fatal.rs` is not
-  optional either.
+1. **Moto Racer slow on the 5900X with the CPU at 5 %** — in the menus
+   and the software-renderer race; 5 % is one of 24 threads, so
+   CPU-bound. Not reproduced on Linux (60 flips/s, also under 15.6 ms
+   waits). The user's log has no software-race window (no `0 draws`
+   rates) and its last session switches to 640x480 at **8 bits** twice
+   with no page flips, where the Linux run was 16 bits and flipping:
+   that, and timing the clang-built QEMU (patch 68) there, are the next
+   questions for the PC.
+2. **Live control on the PC**: the launcher's monitor socket through
+   Winsock AF_UNIX (`launcher-core/src/control.rs`) is written and not
+   run — wine has no AF_UNIX (`socket()` answers 10047). Start a machine,
+   take a snapshot, swap a disc from the shelf; `live control off: …` in
+   `launcher.log` means the trial bind failed.
+3. **The Windows-built guest-tools ISO in a guest** (its `SETUP.EXE` and a
+   driver it installs). The native build builds every stage and runs the
+   launcher; the ISO it builds has not been booted.
+4. **An installer** beside the portable zip (doc 07); QEMU's own
+   `mingw32-nsis` recipe is in the cross image's reach.
+5. **Zero-copy frames** through a DXGI shared handle, the Windows
+   counterpart of the dma-buf ring and IOSurface; frames take the
+   readback path today.
+6. **A Windows check that boots a guest**, in the shape of
+   `tools/xp-driver-test.sh`: drive it over QMP, pull the artefacts, diff
+   a frame.
+7. **No Glide wrapper on Windows**: the cross build has no glide stage, so
+   `player --companions` reports it "(not shipped)".

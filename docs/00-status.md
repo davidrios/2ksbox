@@ -1,2609 +1,597 @@
-# 0. Status and how to resume (updated 2026-09-21)
+# 0. Status and how to resume (updated 2026-09-23)
 
-Read this first in a new session. Decisions: doc 10. Plan: doc 08.
+The handoff for a new session: which tracks exist and who owns what,
+where each area stands today, the everyday commands, the open threads,
+the next steps and the gotchas that cost a day each. It holds current
+state only — fixed things leave it for their design doc and for git.
+Decisions are in doc 10, the milestone plan in doc 08, every test tool
+in `docs/testing.md`, and the build stages, player options and logs in
+`docs/development.md`.
 
 ## Tracks (pick one per session)
 
 Work runs as parallel tracks, one session each, so the handoffs stay
-separate. Each track has its own doc with scope, owned files, state,
-build/test loop and ordered next steps:
+separate. Each track doc has its scope, owned files, state, test loop
+and ordered next steps; this table is the index.
 
-| Track | Doc | Owns | Next |
+| Track | Doc | Owns | State · next |
 |---|---|---|---|
-| **M4 — paravirtual Direct3D device** (DLL path, executor, tests) | `docs/tracks/m4-d3d-device.md` | `d3dpt/exec`, `d3dpt/hw/d3dpt_mm.c`, `guest-tools/src/d3dpt/`, `scripts/test.sh`, doc 14 | a real game on the device |
-| **M7 — XP display driver** (`d3dpt-vga`, miniport + display DLL, DirectDraw/Direct3D DDI) | `docs/tracks/m7-display-driver.md` | `d3dpt/hw/d3dpt_vga.c`, `d3dpt/hw/d3dpt_exec_load.[ch]`, `d3dpt/d3dpt_fb.h`, `d3dpt/exec/d3dpt_exec_ddi.cpp`, `guest-tools/src/d3dptvid/`, `tools/xp-driver-test.sh`, `tools/xp-fifa2000.bat`, `tools/xp-fifa-match.sh`, `tools/xp-diablo.sh`, `tools/d3dpt-dp2-test.cpp`, doc 15 | **the DX8 DDI landed 2026-09-05** (`D3DCAPS8`, hardware T&L, the DX8 token stream rewritten by the driver, TEXBLT, state sets, render-to-texture; D3DGAME8 through XP's own d3d8.dll with hardware vertex processing); Max Payne's clipped fans fixed the same day (they are stream-0 draws into the runtime's own clip buffer; the DP2 vertex buffer is a dummy under d3d8.dll) — the alley renders complete with hardware T&L; DXT textures fixed the same night (`DdCreateSurface` sizes compressed surfaces for dxg's heap; `DRIVER\DXTTEST.EXE` probes every format × pool); **vertex / pixel shaders 1.x landed the same night (protocol v7):** vs 1.1 / ps 1.4 claimed, the shader tokens forwarded, shaders kept per context on the host (DX8 declaration → d3d9, declaration-only = fixed function, constants), every function validated against a vs/ps 1.x opcode table because DXVK asserts on garbage; `DRIVER\SHTEST.EXE` + `xp-driver-test.sh shtest` is the guest check; **palettized textures + colour keying the same night (v8):** P8 textures through the DP2 palette tokens, `DDCAPS_COLORKEY` with a never-called `Blt` callback (dxg's rule, found by bisection) → `DdSetColorKey` → the host keys texels to alpha 0 and forces the alpha test (`CKTEST.EXE` / `xp-driver-test.sh cktest`); the same probe found `DdFlip` re-registering the flip chain as if a flip swapped memory (it swaps roles on NT) — fixed; **the DirectX 3 path the same day (2026-09-05 afternoon):** Moto Racer takes the HAL with v8 and drew nothing through it — it is an execute-buffer title (`IDirect3DDevice::Execute`), a path never exercised; `DRIVER\EBTEST.EXE` + `xp-driver-test.sh ebtest` reproduce it, the `d3dim.dll` disassembly explained it (doc 15 "Execute buffers"): `dwMaxVertexCount` 65535 made every `Execute` fail with `E_OUTOFMEMORY` (now 2048), and the UNCLIPPED path is a pass-through of the raw instruction stream that the driver must partly consume and partly *bounce* back with `D3DERR_COMMAND_UNPARSED`; the DX5 texture render states mapped in the executor; EBTEST 5/5, **Moto Racer plays** (`tools/xp-motoracer.sh`: name screen, showroom, the race with keyed palms, 120 fps; played by hand by the user 2026-09-05 evening: works great, fast under TCG too); **untracked writes the same evening:** the showroom's 2D panels are GDI through `GetDC` (no driver callback, no `VRAM_DIRTY`) — the executor shadows every render target's VRAM and uploads / keeps what the guest changed behind its back (doc 15 "Untracked writes"); the one-triangle draws cannot be batched (a texture switch before each). **video-memory vertex / index buffers the same night (protocol v9):** `D3DDEVCAPS_HWVERTEXBUFFER | HWINDEXBUFFER`, the runtime's buffers in dxg's heap, `BUFFERBLT` done in the driver (24 bytes, not 20), Lock / Unlock ranges as `VRAM_DIRTY_RANGE`, a `DRAW8` naming the buffer instead of carrying the vertices — GTA Vice City in the city (`tools/xp-vicecity.sh play`, ~480 draws a frame, limiter and vertical blank off): KVM 360–375 frames/s against 265–285 without, TCG 62–75 against 51–55 (`ddflags=0x100000` is the A/B); **more than one vertex stream 2026-09-11 (protocol v10):** `MaxStreams` 16, a `DRAW8` under a shader carries every bound stream, the host interleaves the ones the declaration reads into one vertex (`ddflags=0x200000` is the A/B; SHTEST 13/13 in the guest; doc 15 "More than one vertex stream"; the track doc's "Games to test, by feature" names a title per open feature); **cube textures the same day (protocol v11):** plain, mip-mapped, DXT and render-target cubes on the DX8 face — the six faces found from the root by a new `d3dpt_os_attached_all` hook, one host cube per root, each face's handle mapped onto it (`VRAM_CUBE_FACE`) so a face can be a render target and a face's Lock re-reads the cube; `DRIVER\CUBETEST.EXE` / `xp-driver-test.sh cubetest`, `ddflags=0x400000` the A/B; D3DGAME8's filtering difference found and fixed on the way (d3d8.dll hands a DX8 driver `D3DTEXF_*` filter values and the executor read them as DX7's, so trilinear was point-mipped; the driver rewrites an interface-4 context's `MAGFILTER` / `MIPFILTER`, doc 15 — D3DGAME8 is inside its budget against the native oracle for the first time, 618 pixels beyond tolerance where it was 11 k); **the DX8 feature probes the same day:** one `DRIVER\` program per Direct3D 8 feature over `d3d8probe.h` — CUBETEST, STRMTEST, VOLTEST, FMTTEST, BUMPTEST, SPRTEST, ANISTEST, PATCHTST — each saying `NOT OFFERED` while the driver lacks its feature and being its check once the caps claim it (`xp-driver-test.sh <image> probes`, all eight in one boot): cubes, streams, DOT3 and point sprites pass (a per-vertex point size too, `D3DFVFCAPS_PSIZE` claimed the same day), and EMBM since V8U8 went into both texture lists the same day (`ddflags=0x800000` the A/B), the extra formats / patches not offered; **volume textures the same day (protocol v12):** one record per volume with its depth and slice pitch, the driver sizing the box itself — dxg would give it one slice, and the allocation's block height is the slice pitch the runtime uses (doc 15) — VOLTEST 4/4, `ddflags=0x1000000` the A/B; **anisotropic filtering the same day**, caps only (`MaxAnisotropy` 16 on both faces; ANISTEST's far-row contrast 0 trilinear, 252 anisotropic; `ddflags=0x2000000` the A/B); **the rest of DX8's texture formats the same day** (L8, A8L8, A4L4, A8, X4R4G4B4, R3G3B2, A8R3G3B2, DXT2, DXT4 as 2D textures; the host expands whatever its DXVK lacks to A8R8G8B8, and X4R4G4B4 always, since DXVK samples its X nibble as alpha; the driver's V8U8 `TEXBLT` copied zero-byte rows until then; FMTTEST 9/9, `ddflags=0x4000000` the A/B); **the luminance bump maps the same day** (L6V5U5 and X8L8V8U8 in the DX8 list, so `BUMPENVMAPLUMINANCE` has a format to use; DXVK converts them itself, and its ubershader never applied the luminance until `patches/dxvk/07`; Q8W8V8U8 left out, since d3d8.dll never puts it in video memory; BUMPTEST 8/8); **DXT volume textures the same day** (the volume branch of `DdCreateSurface` sized from `dwRGBBitCount`, which a compressed surface has none of; now in block rows, on 9x too; VOLTEST 5/5); **full-screen multisampling the same day (protocol v13)** (2 and 4 samples on the render-target and depth formats, by flip; the host renders multisampled and resolves into VRAM at every readback; windowed would need a driver blitter; MSAATEST 2/2, `ddflags=0x8000000` the A/B); **gamma ramps the same day (register set v5)** (the adapter applies the ramp where it makes the picture, like a RAMDAC; the XP driver's `DrvIcmSetDeviceGammaRamp` takes GDI's, DirectDraw's and Direct3D 8's ramps; `xp-driver-test.sh <image> gamma` checks a screendump: 80 80 60 held, 80 80 80 back; `ddflags=0x10000000` the A/B); **open first:** a title with shaders, a title with split streams, 3DMark2001's Nature for the cubes; `ZBIAS` → DEPTHBIAS since 2026-09-05 evening; more 8 bpp titles (StarCraft, AoE) — the FIFA keyboard is confirmed fixed, the flip chain has a vertical blank and the hardware cursor landed (register set v4, the player shows the guest's shape; all 2026-09-05) |
-| **M8 — CPU fast paths in TCG** (x87 shadows, SSE inline, TCG float opcodes) | `docs/tracks/m8-tcg-fastpaths.md` | `patches/qemu/05`, `06`, `11`, `12`, `tools/x87-*`, `tools/sse-guest-test.py`, `guest-tools/src/ssebench.c`, docs 13 and 16 | **merged to `main` 2026-09-04** (the SSE/SIMD patches re-sequenced after the upstream backports as `11-sse-inline-tcg` / `12-simd-inline-tcg`, `scripts/test.sh all` green on x86-64; XP `SSEBENCH.EXE` on the x86-64 box clamp+cmp 43 % of the rig vs the Air's 34 %). Air build + `scripts/test.sh all` on the merged `main` green the same day (aarch64 over the re-sequenced queue, both batteries identical). Next: item 2 of the track doc — a real Direct3D workload with and without `*-fast=off` |
-| **M9 — TCG on Apple Silicon** (profile-first: where the vCPU's time goes under TCG on the Air, then the optimization the data picks) | `docs/tracks/m9-tcg-aarch64.md` | `tools/tcg-profile.sh`, `tools/tcg-profile.py`, `tools/tcg-hot.py`, `tools/tcg_profile_lib.py`, `patches/qemu/13`+ | **2026-09-12: Win98 3D (3DMark 99) — patches 35–39, 41–45 plus an executor fix took the first-person test 4.5 → 19.5 fps (27.8 with the vertical blank off), CPU 3DMarks 10969 → 16899, 3DMarks 3334 → 6005 (the total sits at the 60 Hz cap); patch 45 (2026-09-12) made the x87 shadows binary32 at PC=24; **the "first person" figures were the CPU 3D Speed test's window — the first-person test itself has been at the 60 Hz cap since 2026-09-11 evening, and the user closed the optimization work on 2026-09-12** (the track doc's correction); the handoff and the next steps are the track doc's "Win98 3D" section (first: the vertical-blank-off number, then build patch 39's aarch64 half on the Mac and run the SSE battery).** **merged to `main` 2026-09-06** (patches 13–21; 21 opt-in). Opened 2026-09-05 on `track/m9-tcg-aarch64` (branch deleted 2026-09-06): `-perfmap` on Darwin (patch 13), the profiler (`sample` + perf map + a second pass on the hot pages) run on XP idle / 7-Zip / D3DGAME9 / Super PI. 7-Zip: 77 % generated code, 14 % the TB-lookup helper (every `ret`), and inside generated code the samples sit on load chains — 43 % the softmmu TLB lookup, 41 % guest registers reloaded from `env` at block boundaries. Super PI: 12 % in macOS's JIT write-protect toggle on every main-loop round trip → **patch 14** (state tracked per thread): 1M 1:36.2 → 1:25.3. Barriers off = +4 % on 7-Zip. Next (the user picks): inline TB lookup for indirect jumps, then pinned guest registers across chained TBs (aarch64's x20–x28); ranking and design notes in the track doc. **HVF EL1 probe** (`tools/hvf-el1/`, same day): a 37 KiB bare-metal Rust guest under Hypervisor.framework with the x86 page tables mirrored in stage 1 — an exit is 0.85 µs vs 40 ns for an in-VM exception and 0.9 ns for an in-VM call (helpers must live in the VM, and the runtime for that is tiny); a mirrored load is 1.4–2.6× faster than today's softmmu sequence while the set fits the L2 TLB (12 MiB at 4 KiB), ~2× slower on random dependent access beyond it (nested walks); CR3 switch 19 ns with ASIDs. Verdict in the track doc: weeks not months, one measurable risk. **Evening, the games** (the user's updated `winxp-m7` runs FIFA 2000 and Moto Racer 1997): Moto Racer's software renderer profiled — vCPU 14 % generated code, 49 % softmmu slow path, 25 % TB maintenance. Two pathologies, not "TCG is slow": the dynamic TLB sat at 64–256 entries (XP flushes at every context switch, so the resize policy saw a tiny working set) and two live pages sharing an index made every access a victim-TLB swap (6 M/s) → **patch 16** (4096-entry floor: slow path 1.3 %); and TB invalidation storms — the vAPIC option ROM's TPR stubs invalidated at every interrupt by an upstream range bug (every XP run, idle included), writes to any page holding a TB paying two g_tree lookups and a list walk, a 64 KiB jump-cache flush per invalidated TB → **patch 15**. After both: generated code 57–59 %; what remains is the game's own self-modifying rasterizer (immediates patched per span, 20k retranslations/s) and the register file in `env` at block ends (step 2). Frame-rate probe `tools/tcg-fps.py` + `tools/xp-moto-race.sh` (into a practice race headless): **the race 4.9 → 7.1–7.3 fps**; 7-Zip +2–5 %. M7 lead from the game's options: `D3D: NOT DETECTED` — its Direct3D 5 HAL probe fails against our driver; detected, the software rasterizer would be bypassed. **Later that day, a correction:** the profiler merged the perf map's code-buffer epochs (fixed: epoch from the `info jit` flush counts), and re-mapped, 80–90 % of the game's generated code is one `rep movsd` — its rectangle blit, 37 host instructions per dword with the registers going through `env` every iteration. The HVF probe got the loop as kernels: today 2.1 ns/dword, pinned registers 1.17, the VM's mirror 0.40, a per-page-run memcpy fast path 0.09 — so a **REP MOVS/STOS fast path (patch 17)** is the next item, ahead of the inline TB lookup. Also found: in the VM, stores under mixed mapping kinds (block-mapped `env` + page-mapped window) cost ~2 ns per pair — a constraint for the port. **Patch 17 (2026-09-05, evening)**: the fast path — one non-faulting probe of the source page and one of the destination per page run, then host `memcpy`/`memset`, the instruction re-entered per page; `rep-fast=off` the oracle, `tools/rep-guest-test.py` (536 cases: widths, address sizes, DF, page crossings, straddling elements, overlaps, fill values; on/off identical and equal to a model) in the guest stage of `scripts/test.sh`; `string-bench` MOVSD/STOSD 2.15 → 0.07 ns per element; Moto Racer's race unchanged at 7.3 → 7.5 fps — the blit dominates the demo's profile, not the race's. **Patch 18 (same evening, "find the pacer")**: the race sampled *in the race* (`RACE_SAMPLE=`) is 53 % translation + 17 % TB-invalidation walk, 5 % generated code: the game's texture-mapping span loop patches its own immediates per span (`tools/smc-diff.py` on `RACE_MEMSAVE=` captures shows exactly which bytes), and a stats build counted ~700 k code-page stores a second, **94 % of them rewriting the value already there**, each walking ~80 TBs and most invalidating one. A store that leaves the bytes unchanged now invalidates nothing (exact by construction; `-accel tcg,smc-same-value=off` the oracle, `tools/smc-guest-test.py` in the suite): **the race 7.3 → 21.7 fps at the standing start** (probe-saturated; **39.2 fps at 60 dumps/s**, still near the probe's ceiling — over 5× from 7.3), mid-race 12.1 → 19.0 (the race's vCPU: translation 53 % → 29 %, generated code 4.8 % → 25.6 %). Also learned: the fps depends on the track section (the user's observation: standing start 7.4, 13 s in 11.6 before the patch), `-perfmap` costs 12 % of the vCPU on this workload (`PERFMAP=0`), and the M7 driver's `DdWaitForVerticalBlank` waits for a FRAMES counter that only console refreshes advance (headless: the probe's own screendumps) — not this game's pacer (60 dumps/s changed nothing), but a real device-side vblank timer is the right shape for M7. **Patch 19 (afternoon)**: the race's next item was 8.8 % of the vCPU in macOS's TLS thunk — not the translator's `tcg_ctx` as guessed but five nested `rcu_read_lock` pairs per code-page store in `notdirty_write` (the vCPU holds the lock for the whole of `cpu_exec`); `_rcu_locked` dirty-bitmap helpers, an RCU guard for the atomic step that lacked one, and one `tcg_ctx` read per op / temp / constant in `tcg.c` and the optimizer: thunk 8.8 → 2.5 %, generated code 25.6 → 28.3 %, standing start 37.9 → 40.4 fps (60 dumps/s, no perf map; mid-race samples land on different track sections per run and are not an A/B number). **Patch 20 (evening, the user's pick)**: the jump-cache probe of `ret` / `call *` / `jmp *` as TCG ops instead of `helper_lookup_tb_ptr` — a generic `translator_lookup_and_goto_ptr` fed by i386's `gen_eob` with pc / cs_base / flags computed exactly as `cpu_get_tb_cpu_state` does, one branch-free mismatch word, one `goto_ptr` to the TB or the epilogue (the main loop is the miss path); `-accel tcg,inline-lookup=off` the oracle. 7-Zip compress rating +12 %, decompress +7 % (the helper was 13.9 % of the vCPU), the race's helper share 5.8 % → 0 (its fps probe is saturated at 39). **Patch 21 (night, in progress, off by default)**: pinned guest registers (doc 18) — `eip` + the eight GPRs in x20–x28 across chained TBs, with `op T; mov G, T` coalesced, in-place partial-register writes, the slow path saving live caller-saved registers itself; 7-Zip decompress +15 %, compress +3 % over `pinned-regs=off`, and the finding that the profile's 41 % on register loads was sampler skid off the TLB chain. `-accel tcg,pinned-regs=on` to try it; open: a boot crash seen once with 8 pinned, a 3 % stall at the flags-helper call boundary |
-| **M5 — CD-ROM backend** (libdisc, `cdimage` block driver, ATAPI/MMC, CD-DA) | `docs/tracks/m5-cdrom-backend.md` | `libdisc/`, `patches/qemu/50..59`, `tools/atapi-guest-test.py`, `guest-tools/src/cdtest.c`, docs 05 and 17 | steps 1–6 landed 2026-09-04 (model, cue/bin + CCD + MDS + ISO, EDC/ECC, Q, MMC responders, C API, `discx`, the `cdimage` block driver + patch 50, patch 51 = ATAPI + CD-DA from the model, DOS + XP guest tests incl. the tone through MCI into a wav, real dumps copied and scanned clean); next: step 7 has its dumps at last (2026-09-05, `oldstuff/`), and **its acceptance criterion is met on FIFA 2002**: DiscImageCreator's own log ("584 unmatch sector is replaced at 0x55 except header"), our scan of its `.bin` and our scan of an Alcohol dump of the same disc made four years later all name the same 584 sectors from LBA 811. **Age of Mythology disc 1** carries an intact SafeDisc 2 band too (580 sectors from LBA 825; `qemu-img convert -f cdimage` already fails `-EIO` on them) and **Settlers 3 CD01** an intact VOB ProtectCD region (538 sectors at 195539–196076, corrupt in the data *and* the Q timing, over flawless subchannel). Rule found on four discs (doc 17 §6.x): the **SafeDisc version** decides whether an L-EC band exists — 2.x writes one, 1.x (The Sims, Rayman 2) writes none — not the dumping tool, so redump/DIC sets are good sources for 2.x. The 1.x pair are the fixtures for the opposite case: protection files present, nothing for `scan` to find. **Step 8 first result (user, 2026-09-05): FIFA 2002 installs, launches and reaches its menus from `FIFA2002.mds` in XP** — SafeDisc 2.x's check reads the 584-sector band through `cdimage` → patch 51 → libdisc, gets the errors it expects and lets the game run, so doc 05's SafeDisc 2.x acceptance row is **PASS** on real protected media. (Use the `.mds`, not the `.cue`: the DIC bin has 64 undescrambled sectors outside the band, at LBA 135084 / 161089 / 223875 / 224045, which correctly return `-EIO` and would break an install for reasons that are nothing to do with the protection.) A match was not reached — suspected display path, not the disc, untriaged. **Doc 05's plain mixed-mode + CD-DA row is PASS too (user, 2026-09-05):** Age of Empires Gold and Moto Racer both play their CD soundtracks while the game runs, in XP, in the player, from their `.mds` — the first time a title's own audio code drove PLAY / position / routing, and, since those are the two discs the undeclared-pregap conventions differ on, the evidence that the ~0.7 % Q-synthesis miss (doc 17 §2.6) does not reach a game. **VOB ProtectCD is PASS too (user, 2026-09-05):** The Settlers 3 plays from `CD01.ccd` + `CD02.ccd` in XP, tutorial on CD1 and campaign on CD2, which it asks for and accepts — the first CCD (real `.sub`, replayed verbatim) run in a guest, and an incidental multi-disc pass. **And the cue/ccd A/B was run the same day:** it plays from the `.cue` too, both discs, and the cue carries no `.sub` — identical data anomaly (same 697 failing LBAs), Q synthesized rather than replayed — so **ProtectCD reads the data anomaly and synthesized subchannel satisfies it**, and a dump without `.sub` is a fine source for such a title (doc 17 §2.6). Nothing we have met yet actually reads Q. Scans: CD01 = the 538-sector band + 9 scattered singles + a benign 150-sector run-out; **CD02 has no band at all**. **The open gap is a negative control** — three schemes pass and no check has ever been seen to *fail*, so a pass is inference from a game that started. **The control discs are built** (`discx repair`, new: regenerates EDC/ECC over the dumped user data of every L-EC-failing sector and touches nothing else; `oldstuff/clean/fifa2002/FIFA2002.mds`, 584 sectors, and `oldstuff/clean/settlers3/CD01.cue`, 547, each diffed against its original to offsets 2064–2351 of exactly those sectors). **Both titles ran from the clean discs anyway (user, 2026-09-05)**, so the SafeDisc 2.x and ProtectCD rows are downgraded from PASS to **inconclusive** and the cue/ccd A/B conclusion is void: a check that does not notice its band was repaired is not one we have watched pass, and nothing measured yet shows our error delivery is what satisfied either. Likeliest single cause of both: an era protection skipping authentication when it cannot get the low-level access it wants, so our drive is never asked. **Empty drive (user, same day): FIFA 2002 asks for the CD** — so *a* disc check runs, but a volume-label / file-presence check behaves exactly that way and the repaired disc satisfies it too, so this does not show SafeDisc's authentication runs. **The trace is in (2026-09-05, doc 17 §2.6b) and it answers the question.** Both EXEs are genuinely wrapped (`stxt371`/`stxt774`/`BoG_`; ProtectCD's `.ficken`), so no cracked binary. SafeDisc's probe is **LBA 800 then one pseudo-random single sector, ×22 per launch**, and **never reads a corrupt sector**: 0 of 506 reads land in the 584-sector band — it measures something about reading (timing, for an anchor-then-seek pattern), not our L-EC failures, which is exactly why a repaired disc passes. **And the check does fail headlessly** (*"insira o CD"*, reproducible, `-nodefaults` changed nothing) while the player passes on the same disc — so we finally have a working and a failing configuration side by side. **The passing launch is now traced too** (player, FIFA 2002 reaching its intro): 13 anchor-probe pairs, then 281 multi-sector reads out to LBA 250230 as the game loads content — and **still 0 of 781 reads touch the band**, so the finding holds from the inside and the `repair` control was right. **Settlers 3 traced too (2026-09-05): the cleaner result** — `CD01.ccd` in the player launches to the main menu and in 1196 reads never goes near the band (0 above LBA 195000, one READ SUB-CHANNEL all session, content stopping at LBA 191776 below the band's 195539), so neither the data nor the Q anomaly is read. **Both schemes tested agree: the L-EC band is not what the check reads.** Doc 05's two protection rows now record what was measured instead of a PASS/inconclusive verdict, and their stated premises are marked disproved. §2.5 stays right — verify and never correct is correct drive behaviour and `atapi-guest-test.py` proves the errors are delivered — but no protection met so far depends on it; finding one that does is the open question. **Harness gotcha:** the check rejects when the CD shares the boot disk's IDE channel (bare `-drive media=cdrom` = ide0 slave) and passes on `ide.1` where the player puts it — same disc, same display, one variable; put a protected title's disc on its own channel. **The `GET CONFIGURATION` defect reported here was withdrawn the same day**: split by IDEState, every such rejection came from the *empty* default CD-ROM drive falling through to QEMU's stock handler, not from our model, which answered 0 of them across five traces; the one sense reply our drive does give is MODE SENSE(10) page 0x1b, where refusing an unsupported mode page is correct SPC behaviour. Nothing to fix. **Step 8 is closed, 2026-09-09, by the title that does read its band: Crimson Skies.** Its original loader (`CRIMSON2.EXE` in the user's own `claude98` Win98 install, the patched `CRIMSON.EXE` renamed aside) is genuine **SafeDisc 1.50.020**, and its `C_SKIES.cue` carries **579 L-EC-failing sectors from LBA 807 to 10018** — so §6.x's "SafeDisc 1.x writes no band" is disproved, and 1.x dumps simply differ (NFS Porsche Unleashed, also 1.x, has none, and works). The check reads that band **raw** — `READ CD` byte 9 = `0xF8`, one sector at a time, an anchor `READ(10)` at LBA 800 between each — and all three of its rounds ended on the first probe that hit a band sector, so it recognises a weak sector by what comes back. It refused with *"Cannot locate the CD-ROM"* because our raw path delivered those sectors' bytes: `mmc::read_cd_sector` verified L-EC only on a cooked read, on the reasoning that "dumping a disc and reading a protection band both depend on the stored bytes coming back as stored" — right about dumping, backwards about the band. **The A/B is the negative control this milestone has been missing since 2026-09-05:** same image, same disc, one variable, and with a raw read of an unreadable sector answered `03/11/05` the loader gets its error, does REQUEST SENSE, carries on, decrypts `CRIMSON.ICD` and reaches the game's "Select Video Device" dialog. The rule now: a raw READ CD delivers the stored bytes only when the sector is readable at all (the same `verify_or_correct` the cooked path uses, so a correctable byte still round-trips with its damage), **unless C2 error flags were asked for** — the one shape a real dumping tool uses to get an unreadable sector out of a real drive, which keeps §2.5's dumping case working. Doc 17 §2.6c and §4.3; `discx selftest`'s `lec` case carries both halves. **Not a bug report closed:** the user runs the *patched* `CRIMSON.EXE` (2025-11-02, the size of `oldstuff/C_SKIES_FIX/crimson.exe`), which never reads the disc, and their actual complaint about this title is that it renders badly — the DX7 DDI's problem, fixed 2026-09-09 (the executor's legacy TEXTUREMAPBLEND blend, doc 19 §28; one cosmetic thing, the QUIT button's bottom half, stays open). `CRIMSON2.EXE` is a protection fixture, not a game anyone here plays. Left: triage the FIFA 2002 no-match, AoM as a second SafeDisc 2 title, SecuROM (needs DPM), Win98 CD Player by ear, M5f with M6 |
-| **M6 — launcher** (machine library, guided creation, snapshots UI, disc shelf, packaging) | `docs/tracks/m6-launcher.md` | `launcher-core/`, `launcher-qt/` (the shipped and, since 2026-09-13, only front end — ADR-015, ADR-017), `launcher-capi/`, `shader-chain/`, `scripts/package-*.sh`, doc 07 | **2026-09-17: the machine form has an "Extra QEMU arguments" field** (`extra_qemu_args` in the bundle, appended last; doc 07; the `extra-args` check). **2026-09-22: the form opens at the top for a new machine or a different one than last time** — a ScrollView keeps its position across hide and show, so editing one machine after another opened the second wherever the first was left (user report); the core form now says which bundle it edits (`Form::bundle_path`, published as the Qt wizard's `bundlePath`) and `WizardWindow.qml` compares it with the last one shown. Same day: the grid's Shader column takes the spare width so a row's buttons sit against the right edge at any window width (user request). **Same day: the machine form is a settings window with a sidebar of sections** (General, System, Display, Audio, Input, Network, Storage — `wizard::Section`, the Qt wizard's `section` / `sectionLabels()`, `lc_wizard_section`; user request, VirtualBox / UTM style: the one long form had outgrown its window); a page each, the buttons under them fixed; the same-machine rule above now keeps the page too, and the `wizardscroll` probe reports `section=` beside `y=`. **2026-09-23: a page switch keeps the typed name** (user report: "machine name is not preserved when switching categories") — the Qt model's `choose_section` was the one verb that republished the form without first pulling the two-way-bound text fields, so the form's stale empty name overwrote the field; it goes through `edit` like every other verb now, and the `qt-wizard` probe pages away and back before it reads the name. **Same day: the host's 3D answer moved under the Direct3D picker** (`Form::d3d9_note()`, with the software-Vulkan warning; the separate `graphics_note()` line under the adapter is gone from the Qt form — user: out of place beside the picker — and stays in the core and the C API for a front end without one). Same day: the undither box's sentence is empty while the Voodoo 2 is off (user: hide it), so the form shows nothing under a box it has greyed. Same day: the form's window is 820×440, sized to the tallest page as `pageReport()` measured it (293 + 70 of chrome; user: 600 was too tall), and the `qt-wizard` check requires every page to fit the room the window gives it. Same day: the Direct3D picker offers and describes only what this host can run — the system Direct3D 9 is listed on Windows alone (`bundle::d3d9_choices`), and no label or note names another OS (user); a bundle saying `system` on another host shows as Automatic and keeps its value; the C smoke checks the count and the wording per host. **2026-09-13: the egui front end `launcher/` was deleted (ADR-017); the log below is history.** Opened 2026-09-04 (worktree `.claude/worktrees/m6-launcher`, branch `track/m6-launcher`): UI toolkit decided (egui/eframe, not Slint — license fit); bundle format, library grid, spawning a player, the guided creation wizard with a native file picker, editing an existing machine in place (steps 1–4), a shader profile manager (named presets + parameter overrides, assignable per machine), and a live shader preview (an image run through the real filter chain inside the launcher's own egui/wgpu surface, re-rendered as sliders move) landed — the filter-chain code itself moved into a new shared `shader-chain/` crate used by both `player` and `launcher`. Verified headlessly + real dump-diffs (no working GUI click automation on this session's Wayland setup — a human should click through the wizard and the shader manager once). **Step 5a (disc-shelf editing) landed 2026-09-05:** a per-machine "Discs (n)…" window (`launcher/src/discshelf.rs`) reorders/adds/removes the shelf whose first entry is the boot CD-ROM, including doc 07's one-click guest-tools ISO attach; a bundle edit, so no IPC — and the widgets themselves were driven headlessly for the first time on this track (`--diag-shelf-frame` runs the real window through `egui::Context::run_ui` with synthetic clicks). **Step 5b (snapshots, offline) landed the same day:** a per-machine "Snapshots…" window over the qcow2's internal snapshots via `qemu-img` (listing through `info --output=json`, not the human-formatted `snapshot -l` table), refused entirely while the machine is running (qemu-img writing to an image QEMU has open corrupts it) and with a two-click confirmation on "Restore"; verified against a real `savevm` snapshot as well as `qemu-img`-made ones. **Step 5c (live control) landed the same day, finishing step 5:** the launcher adds `-qmp unix:<runtime dir>/…,server,nowait` to the args it spawns the player with and speaks QMP to that socket itself — no new protocol, no player change, no IPC surface on either binary (QEMU allows several monitors; the player's own socketpair one is untouched), the same shape `tools/qmpc.py` already uses. Live disc insert/eject (`blockdev-change-medium`/`eject`) and live snapshots (`snapshot-save`/`-load`/`-delete` as polled QMP *jobs*, so the UI never blocks on QEMU writing a guest's RAM); a restore stops the VM and resumes it only if it was running. Verified against a stand-in QEMU on the exact `--print-args` line *and* against the real `player` binary. **The disc shelf from inside the guest, 2026-09-05:** a vendor ATAPI opcode on the machine's own CD-ROM drive (patch 52, protocol `cdshelf/cdshelf_proto.h`) plus the two guest programs that speak it — `guest-tools/src/cdshelf.c` (one EXE for Win98 and XP: SPTI on NT, `WNASPI32.DLL` at run time on 9x) and `guest-tools/src/cdshelf.asm` (DOS, PIO). Guarded by `tools/atapi-guest-test.py`, which now also boots `CDSHELF.COM` for real; the XP path was run end to end in a real guest. **Memory and acceleration**, same day: the machine form exposes `ram_mb` (per-family bounds from doc 06) and a new `accel` = auto/kvm/tcg translating to `-machine pc,accel=…` (defaulting per family: Win98 emulated, XP automatic), `auto` being QEMU's own `kvm:tcg` fallback rather than a probe here; `query-kvm` on a real player confirms each setting. **Networking**, same day: a `network` bool (default on) turning doc 06's per-family NIC on QEMU's user-mode NAT on or off from the same form — off emits `-nic none`, because QEMU otherwise supplies a NIC of its own, and XP's PCI devices carry their existing addresses explicitly so losing the NIC doesn't move the sound card; `query-pci` on a real player confirms all four combinations. **The shader presets themselves**, same day: `launcher/src/shader_source.rs` finds the collection (`LAUNCHER_SHADERS_DIR`, else the `third_party/slang-shaders` submodule, else a downloaded copy in the data dir) and the profile manager offers to **download** it when there is none — upstream's tarball over HTTPS on its own thread, unpacked through a `.part` staging directory; an empty preset field's "Browse…" now opens in that collection. **Step 6a (the install layout + the Linux package) landed 2026-09-05:** `launcher/src/paths.rs` decides from the running executable whether this is an installed tree (`<exe dir>/..` holding `share/2ksbox`) or a source checkout and answers **only** from that one — no fallback, so a package can't pass on the machine that built it and fail elsewhere — with `player/build.rs` adding an `$ORIGIN/../lib/2ksbox` rpath *ahead* of the absolute build one for the same reason; doc 07 carries the layout. `scripts/package-linux.sh` stages it (launcher, player, embed library, our `qemu-img` in `libexec/`, firmware, guest-tools ISO, `--with-shaders` for the presets), checks it by asking the staged binary itself with `env -i` from `/` (the new `--paths` verb, a real disk created by the packaged `qemu-img`, `ldd` on the staged player, `desktop-file-validate`) and rolls a 78 MB `.tar.zst`; it is the `package` check in `scripts/test.sh`. Verified as a stranger would: extracted elsewhere, installed into a prefix with `packaging/linux/install.sh`, the extracted tree deleted, and the machine then created and **booted** (SeaBIOS → iPXE DHCP, screendumped) from the prefix alone. **The project got its name the same day (ADR-011): `2ksbox`, `2ksbox.com`** — the user moved the *packaged* identity only (`bin/2ksbox`, `share/2ksbox`, application ID `com._2ksbox.Launcher`, whose escaped leading digit `flatpak build-init` requires), while the repository, the docs and the user's data directory kept `win98-xp-virt` for one more day — the rename finished 2026-09-06 (below). The AppStream metainfo landed with the name (homepage `2ksbox.com`, an **empty OARS content rating** — that field rates 2ksbox itself, not the Windows software someone runs in a guest, the same reading RetroArch's own metadata takes — validated on every package). **Step 6b (the Flatpak) landed the same day:** `packaging/flatpak/com._2ksbox.Launcher.yml` + `scripts/package-flatpak.sh`, a real from-source build against `org.freedesktop.Sdk//25.08` (host binaries cannot be reused — the runtime's glibc is 2.42 and our embed library already references 2.43) that reuses the install layout via a new `package-linux.sh --prefix /app`, plus two modules for gaps in the runtime: **libslirp** (absent, and `-netdev user` — which every generated machine uses — needs it) and a build-only **distlib** (QEMU 9.2's mkvenv wants `distlib.version`, which pip 26 no longer vendors: "found no usable distlib"). Verified by running it, not by exit 0 — inside the sandbox every companion resolves under `/app` and the library under `~/.var/app`, a machine created with the packaged `qemu-img` **boots** (SeaBIOS → iPXE DHCP through the bundled libslirp, screendumped over the app's own QMP socket), `query-kvm` reports enabled, and the GUI runs (`app_id com._2ksbox.Launcher`, radv up, a correct egui frame dumped from inside). Open: screenshots for the metainfo before a Flathub submission (offline cargo sources landed). **Merged to `main` 2026-09-06** (`scripts/test.sh all` green on the Linux box, 24 checks). **A Qt port spike landed 2026-09-06 after that merge** (`launcher-qt/`, doc 07's "The Qt port"): a second, feature-complete front end on Qt 6.11 + cxx-qt 0.10 with the views in QML and the secondary screens as real top-level windows, deliberately *outside* the workspace so the root `cargo build` never needs Qt. It re-includes the toolkit-free `launcher/src` modules verbatim (ten of seventeen, 1,943 lines, compiled unchanged — the logic half is provably portable) and replaces 3,208 lines of egui with 2,924 Rust + 1,678 QML. **Tidied 2026-09-06:** two of those modules were reaching across the boundary they exist to prove — `disc_library` named `filepicker::Filter`, and `control` took the `Snapshot` type out of a file that also held an egui window, which forced the port to copy that file's free half. `DISC_FILTER` is now a plain `(label, extensions)` pair the shelf owns and `snapshots.rs` is the free half alone (the window is `snapshots_ui.rs`), so the copy and the Qt crate's whole `filepicker` module are gone; `--preview-shader` renders byte-identically to the egui build. **Both front ends are maintained from 2026-09-06, over one library:** the spike stopped being a spike, and the sharing moved from ten `#[path]`-included files to a real crate, `launcher-core/`, that holds *everything the launcher decides* — the data and the subprocesses as before, plus each window's own state machine (`machines`, `wizard`, `shelf`, `snaps`, `editor`), the shader preview's render path, the file-dialog decisions, and every toolkit-free debug verb (`cli`), so both binaries answer `--paths` / `--discs` / `--snapshots` / `--wizard-new` / `--preview-shader` with the same code rather than the Qt build reimplementing two and lacking twenty. That found four real divergences the `#[path]` arrangement could not: the Qt wizard had **no processor, floppy or boot-order field**, so a DOS machine created there came out unthrottled; its networking checkbox did not follow the family; the line under it said `Windows won't see a card` where egui said `the guest`; and saving a *new* shader profile dropped the parameter overrides on the **egui** side and kept them on the Qt side. All four are now one implementation. Measured after the split: 4,435 shared lines (was 1,943), 1,735 egui (was 3,208), 2,132 Qt Rust + 1,772 QML (was 2,924 + 1,678) — not a net saving in lines, and never going to be; the saving is one place to change any of it. Checked three ways: `--preview-shader` byte-identical across the two binaries, the shared verbs identical, and a DOS machine created through *each front end's real window* (egui's `--diag-wizard-frame`, Qt's `LAUNCHER_QT_SCREEN=create` under `QT_QPA_PLATFORM=offscreen`) differing only in name and disk path. **And the core is usable as a library:** `launcher-capi/` is a C ABI over the same models (opaque handles, index-addressed rows, caller-owned strings; `include/launcher_core.h`), so a native macOS front end in Swift — or anything that speaks C — is a view over it too; `examples/smoke.c` is a third front end in miniature and is the new `capi` check in `scripts/test.sh` (12/12 host). It is a workspace member but not a *default* one, since it builds a cdylib+staticlib of the whole launcher. **Our own emulator fast paths are checkboxes, 2026-09-06:** the machine form has an "Emulation optimizations" section — one switch per QEMU patch that carries an off switch (`x87-fast`, `sse-fast`, `simd-fast`, `rep-fast` on `-cpu`; `smc-same-value`, `inline-lookup`, `pinned-regs` on `-accel tcg`), all on except `pinned-regs`, which its own patch ships off. The reason to expose them is that **the switch is the oracle**: each replaces simulated arithmetic with the host's own, so a guest that computes the wrong number is diagnosed in one run instead of a bisect against a Windows install — and the section says so, along with the measured gain under each and the fact that they do nothing on a machine headed for KVM. Only the *difference* is stored (`[optimizations]` in the bundle, keyed by the QEMU property name), so a machine that has changed nothing writes no table and produces the command line it always produced, and one added to the queue later arrives on in every bundle that exists. The accelerator moved to `-accel kvm -accel tcg,…` from `-machine accel=kvm:tcg` — the accelerator-side properties need somewhere to live and QEMU refuses the two spellings together; it is the same code path, `query-kvm` agrees, and the DOS family test now reads the `-accel` list instead. All three front ends (`launcher_core::wizard`, both GUIs, the C ABI) and the new `--optimizations` verb; the `optimizations` check in `scripts/test.sh` drives the real form and hands the result to our real `qemu-system-i386`. Both wizards' fields also scroll now, with the buttons pinned — seven more rows was enough to push "Save" off a small screen. **The shader preview animates, 2026-09-06 (user-reported):** presets that change from frame to frame — an interlaced CRT's alternate fields, a TV's flicker, a phosphor afterglow, a shimmering NTSC signal — showed one frozen frame, because the preview renders when something is clicked and the player is the only thing that renders continuously. `shader_chain::preset_is_animated` now reads the preprocessed pass sources for a *use* of `FrameCount` (the `params.FrameCount` member access: 1131 of the slang-shaders tree declare that uniform and only 271 read it) or of a history/feedback texture, `preview::Preview::frame_interval()` turns that into "redraw every 16 ms" or `None`, and each front end obeys in its own idiom (egui `request_repaint_after`, a QML `Timer`). The frame number comes from a clock at 60/s rather than from a count of renders, so the effect runs at the player's speed even on the Qt path, which reads every frame back to the CPU; the headless verbs pin one frame (`PREVIEW_FRAME`, default 0) and stay reproducible. Checked over all 100 `crt/*.slangp` presets: 51 still and unchanging, 18 animated and really different at frames 0 vs 1, 23 conservative "animated" whose picture happens not to move at this source size, **no preset called still that moves** — and guarded by the new `preview-anim` check in `scripts/test.sh`. **A "Seamless mouse" checkbox, 2026-09-06:** the machine editor's last unexposed piece of hardware, the USB tablet, which every bundle carried unconditionally. `seamless_mouse` in the bundle follows the family like `network` does — on for Win98 and XP, off for DOS, whose mouse drivers read the PS/2 controller and would find no pointer at all on a tablet — and an absent field still means on, so no existing machine's pointer changes under it. On, `-usb -device usb-tablet`: absolute, so the host pointer *is* the guest cursor and the window never grabs. Off, the PS/2 mouse alone: the player takes the pointer on a click and Ctrl+Alt+G gives it back, which is the relative movement mouselook needs — a game whose view sticks instead of turning is this checkbox. The player already handled both (`mouse_is_absolute`); nothing there changed. All three front ends plus `--wizard-edit … seamless|noseamless`, and the new `pointer` check in `scripts/test.sh` takes the switch to a real `qemu-system-i386`. **Step 6c (the macOS app) landed 2026-09-06**, on the Air: `scripts/package-macos.sh` builds `2ksbox.app`, signed for Developer ID with the hardened runtime, notarized, stapled and rolled into a `.dmg` -- reasoning and recipe in `docs/build-macos.md` ("The app"). The bundle *is* an install prefix: `Contents` has doc 07's `lib`/`libexec`/`share` shape and the same `share/2ksbox` marker, so `launcher_core::paths` needed exactly one macOS branch -- `bin_dir()`, because `MacOS/` is the only directory Launch Services will start a program from. What is genuinely new is that the app carries its **whole non-system dylib closure** (20-odd libraries, ~14 MB: Homebrew's glib/pixman/zstd/libslirp, XQuartz's libGL and its X11 chain, which QEMU's `opengl` feature links even though the embed backend only ever `dlsym`s OpenGL.framework), every install name rewritten to `@rpath` and **every `LC_RPATH` pointing out of the app deleted** -- meson gives `libqemu-embed` one per Homebrew prefix and they are searched first, so a bundle that keeps them loads the build machine's Homebrew, passes every check that reads load commands, and fails on the first Mac without Homebrew. It is also the first package to ship the Glide wrapper and the Direct3D executor: `player/src/companions.rs` names `QEMU_GLIDE_LIB`, `D3DPT_EXEC_LIB`, `D3DPT_DXVK_LIB` and `VK_DRIVER_FILES` to QEMU when an installed player finds them unset, since each of those `dlopen` searches starts at a `build/` directory a package does not have; the Vulkan the executor needs does not exist on stock macOS, so the app carries the LunarG loader and the KosmicKrisp ICD with a manifest of its own, found through new DXVK patch 06 (`@loader_path` ahead of the bare leaf names, because `DYLD_*` is stripped from a hardened process). Two dependencies were invisible to a walk of load commands and both were caught by the same new check -- the packaged player run under `DYLD_PRINT_LIBRARIES=1`, where every image the loader touches must be inside the app: the Homebrew `LC_RPATH`s above, and `libSDL3`, which sdl2-compat `dlopen`s from `@loader_path` rather than linking (that second one is gone since 2026-09-07: QEMU is built `--disable-sdl` and the pair is no longer bundled at all -- the check is what would have caught it either way). Proved end to end on the Air: the executor harness renders 60 frames at 628 fps through the app's own DXVK, loader and ICD with `env -i`; the signed, hardened app runs TCG (the `com.apple.security.cs.allow-jit` entitlement) and boots Win98 to its 800x600 desktop with sound. `LSMinimumSystemVersion` is measured from the bundle's own Mach-O files rather than chosen, and is **macOS 26.6** today -- Homebrew's libslirp and sdl2-compat are the 26.0 bottles and QEMU's own build targets the running OS; lowering it means building those against a floor first. It is the `package` check in `scripts/test.sh` on a Mac. **The final icon landed 2026-09-06** (the user's artwork: a beige CRT showing a green hill under a teal sky, which is the whole product in one picture, replacing the flat SVG placeholder). One master at `packaging/icon/2ksbox.png` and `scripts/gen-icons.sh` deriving every size from it — 16–512 PNGs and a four-size `.ico` — all checked in, because none of the places that need an icon can draw one: both launchers `include_bytes!` the 256 at compile time, the Flatpak build is offline, the Windows package is cross-built in a container with no ImageMagick, and `install.sh` runs from a tarball on a machine with no build tools. The Linux package installs the set into `share/icons/hicolor/<n>x<n>/apps/`, the Flatpak exports four sizes, macOS builds its `.icns` from the same PNGs, and **every Windows .exe now carries the `.ico` as a resource** — user-reported as missing: `packaging/windows/win-icon.rs` is `include!`d by three build scripts, writes a one-line `.rc` and runs the cross container's `windres`, verified by cross-building a binary and finding all four images in its `.rsrc`. The Qt launcher had no icon *or* desktop-file name at all and now sets both, the pair the egui build has always set. `gen-icons.sh --check` is the new `icons` check in `scripts/test.sh`. **A Qt-only bug, fixed 2026-09-06 (user-reported):** the profile list always said "No shader presets on this machine" and offered to download them on a machine that had them, and the button then fetched 50 MB over the collection already on disk. The preset-collection properties are published by `ShaderEditor::publish`, which only ran when an *editor* verb did, and the profile list opens without one — so they sat at their `QString` defaults, which is why the offer read "Download presets ()" into "" rather than naming the size and the destination `PresetState::Missing` carries. It now publishes in `cxx_qt::Initialize`, the constructor QML uses. The class is worth remembering (doc 07): the egui build cannot have this bug because it reads the model while drawing, and every retained-mode property that is read before any verb runs has the same exposure. **A second Qt-only one, 2026-09-06 (user-reported):** the "Emulation optimizations" section was opened by a `CheckBox`, which reads as the switch that turns the optimizations *off* rather than as a fold — Quick Controls ships no disclosure, so the checkbox had stood in for one. `launcher-qt/qml/Disclosure.qml` is the disclosure: a triangle that turns to point down (drawn on a `Canvas`, because "▸" is a font's problem on some desktop), the header's label, hover feedback from the palette's own accent and **no checked background**, since a filled header is what a toggle looks like; `Accessible.role` is `Button`, so a screen reader does not repeat the mistake either. It is what egui's `CollapsingHeader` has always drawn on the other side. Verified in the real window, closed and open, through `LAUNCHER_QT_SCREEN=wizard`. **The disc shelf is in order by label, 2026-09-06 (user-asked):** it had been in the order discs were added, which is no order at all once a shelf is a collection. Sorted case-insensitively with digit runs compared as numbers (`disc 10` after `disc 2`, not between `disc 1` and it), as an invariant of `DiscLibrary` rather than a sort per view — so the egui list, the Qt model, the C ABI, `--discs` and **the flat file the in-guest CDSHELF program lists** are one order; they have to be, since that file is served by slot number and a view that sorted for itself would show a disc under one number and load another. Two consequences the front ends carry: a row index is only good until the next edit, and a rename must not re-sort while it is being typed (Qt's `editingFinished` gives that for free; the egui build re-sorts on the field's `lost_focus`, or the row slides out from under the cursor). The new `shelforder` check in `scripts/test.sh` adds five discs in the wrong order through the launcher's own verbs and reads the order back out of both the shelf and the published guest file; the `capi` smoke test asks the same of the C ABI and now looks its rows up by path, the way a front end has to. **A third Qt-only bug, fixed 2026-09-07 (user-reported):** "New machine" on the Qt launcher opened a fresh Win98 machine on **32 MB** — the bottom of that family's range, where the shared form says 256. The form was right; the order the model published in was not. `set_ram_mb` ran before `set_ram_min`/`set_ram_max`, and a `SpinBox` bounds the value it is handed against the range it has *at that moment* and never revisits it when the range widens, so 256 arrived into `WizardRust`'s default `0..0`, became 0, and was lifted to 32 when the minimum landed — with the `value:` binding never firing again, because the model's number had not changed. The rule, now in doc 07 beside the `cxx_qt::Initialize` one it is a cousin of: **a control that clamps must be given its range before its value**; plus `Wizard` publishes in `Initialize` so a window built at start-up binds to a real form, and `open` is published **last** in all four models, since that is the flag `Main.qml` shows a window on. Only a *window* can see this bug — every existing check asks the model, which was correct — so the headless path grew a probe mode: `LAUNCHER_QT_SCREEN` with no `LAUNCHER_QT_SHOT` drives a screen, prints what it holds and quits, needing no GPU (a `grabToImage` never completes while a running player holds the card). The new `qt-wizard` check opens the real wizard on all three families and fails if the memory field and the form disagree — against the unfixed binary it says `win98: the memory field shows 32, the form says 256`. **A fourth Qt-only bug, macOS only, fixed 2026-09-07 (user-reported):** dismissing a dialog with the title bar's close button (rather than Cancel) left the main window locked behind it. The flag-driven windows (wizard, shader editor) cleared their model flag from `onVisibleChanged`, and `Main.qml` turned that into a second `close()` from inside Qt's own close — `destroy()` emits `visibleChanged` before it unregisters the modal window and hides the platform window, and the title bar's route has no re-entry guard — so the platform window was deleted inside the first close event and the outer hide skipped Cocoa's `endModalSession`. Now `closeIfShown` (skip a `close()` on a window that is already hidden), the rule in doc 07 beside the other two, and a `closebox` probe screen that delivers a close *event* the way the window system does (`launcher-qt/src/close_event.cpp`) and counts what the window receives: the new `qt-close` check in `scripts/test.sh` wants one and the unguarded build gave two. Found on the way: `test.sh`'s Mac stand-in for `timeout` backgrounded a watchdog that inherited the check's output pipe, so every `$(timeout … | sed …)` waited the full limit — each Qt check took 120 s on a Mac without coreutils; the watchdog now gets no descriptors and both checks take five seconds together. **A fifth Qt-only bug, fixed 2026-09-07 (user-reported, three symptoms):** in the shader profile editor, a saved profile never appeared in the list behind it, "New profile…" came up with the last profile's preset still in its field, and (found while writing the probe) a name typed before the preset was picked was wiped when it was. Three shapes of the same retained-mode trap, all in doc 07 now. The list: the editor window's Save handler called `root.profiles.refresh()`, but `profiles` is the *other* window's property — a `TypeError` that took the `changed()` beside it with it, so the profile was on disk and nothing was told (`Main.qml` owns both models and already refreshes them on `changed()`). The field: `PathField` was bound to `editor.presetPath` by its owner *and* assigned to its own `value` from inside, and **a QML binding is destroyed by the first imperative write to its property** — so the control unbound itself the moment it was first filled and the empty path a fresh profile publishes had nothing to arrive through; it is a controlled component now (`value` in, `edited(path)` out), which also fixes the same latent bug in the wizard's three path fields. The name: the editor's three text properties are edited in the *properties* while `publish()` copies the model's older copy back out over them, so every verb that publishes now hands the model the current text first (`catch_up`) — the exceptions being `new_profile` and `edit`, where the model is deliberately the newer one. All three are invisible to anything that asks the model, so the headless path grew a `saveprofile` screen that drives the real windows (New profile…, a name, a preset typed into the field, Save, New profile… again) and prints the list's count either side and what the field is **showing**: the new `qt-profile` check in `scripts/test.sh` wants `0 -> 1` and an empty field, and the unfixed build gives `0 -> 0` with the old preset still in it. **A new machine has no network card, 2026-09-07 (the user's decision):** `bundle::default_network` is off for every family now, not just DOS — these guests stopped getting security fixes twenty years ago, so a machine nobody has been asked about is off the network, and the wizard's checkbox is right there for the one that wants a card (ticking it later is a card *appearing*, which Windows takes far better than one disappearing). Nothing that exists changes: an absent `network` field still means on (`network_enabled_default`), because taking a card away from a machine that has been running with one is a hardware change. Both wizards, `--wizard-new` and the C ABI read the one default; the `family-other` check now wants no card and `-nic none` on a new machine and the RTL8139 at `0x03` once the box is ticked, and `display-adapter` gives its machines a card before asking whether the adapter change moved it. **A sixth Qt-only bug, fixed 2026-09-08 (user-reported):** in the machine editor, the machine's name disappeared from the Name field as soon as any combo box was touched. The same shape as the shader editor's third symptom the day before, in the window that never got the fix: `Wizard::pull` (the wizard's `catch_up`) copies the text properties QML writes into the form, and only `fill_advanced` and `submit` ever called it — every `choose_*` / `reset_*` verb changed the form and published, so the form's own stale name went back out over what had been typed. Visible rather than merely wrong because **typing does not destroy a QML binding**: a binding dies on a write from JavaScript, and a keystroke is a write from C++, so `text: wizard.name` stayed live and re-evaluated to the empty string on the model's next notify — in front of the user. Six fields were exposed (name, both paths, disk size, advanced TOML, shader profile), and every form-changing verb now goes through one `Wizard::edit(|form| …)` that pulls, changes and publishes in that order, because a rule with one place to forget it is the only kind that holds. `qt-wizard` grew the probe: it types into the real field with `insert` (a JS assignment would unbind the field and hide the bug), moves the family combo box and prints what the field **shows** beside what the model holds — the unfixed build says `shown [] model []`. **The shader download is offered on the way up, 2026-09-09 (user-asked):** the "Download presets" button has always been two windows deep, on the profile manager's preset row, which is where somebody who has never opened the profile manager will not find it — so a launcher that finds **no collection at all** now asks once, as a modal question over the grid, and a "yes" also writes three starter profiles against what just landed (**CRT Aperture**, **CRT Royale**, **Apple II**, each at its preset's own defaults — an empty override table, not a snapshot of today's values). `launcher_core::firstrun` is the whole model, **including the words at every step** — one `state()` poll answers with a headline and a detail, because the first cut had both front ends formatting "Downloading shader presets… 12.3 MB" for themselves, once in Rust and once in QML. Qt puts those two strings in a real `MessageDialog` (`text` / `informativeText`, application-modal, the platform's own buttons); egui stacks them in a `Modal` with the model's `confirm_label` / `cancel_label`, since it has no standard buttons — the one deliberate difference, because a native dialog with hand-written button text is what looks wrong on every desktop at once, which is why the size and the destination are in the question. **The Qt side is two dialogs and not one, and that is trap 5 in doc 07:** `MessageDialog.accept()` and `close()` both emit **`rejected()`**, so a dialog whose visibility follows a model answers its own question — Yes started the download, the step changed, the code closed the dialog, and the close came back as a "No" that put the offer away with the marker already written. One dialog per thing there is to answer (the question, then the outcome), opened when its step arrives and closed only by a button; the download in between has no dialog at all and runs in the launcher's header, since it needs no answer and a modal would lock the window for a minute. Answered *either way* it writes `first-run.txt` into the profile directory, so "Not now" is never re-asked — the marker sits beside the profiles because a successful download replaces the preset directory by a rename and would take it with it — and `shader_library::create_defaults` skips a name the library already holds, since `create` would otherwise deduplicate the slug and hand back `crt-royale-2` on the second run. One thing only a *late* collection exposes: the profile manager caches "there is none" for the life of the process, so accepting the offer calls `editor::Presets::forget` on the way out or the manager goes on offering to download what has just been downloaded. Two new checks: `shader-defaults` (the offer's once-only rule and what a "yes" writes, without a toolkit and without the 50 MB — the download itself is the profile manager's long-standing code) and `qt-firstrun`, which asks the real dialogs — modality, the platform's buttons, the model's text, No answering the offer, and Yes leading to a download that is not in a dialog and then to a Retry/Cancel result dialog (pointed at an uncreatable path, so it fails at once and needs no network). Verified end to end once by hand: `launcherx --first-run accept` fetched the collection and wrote the three profiles pointing into it. Next: an AppImage (6b′, the user's "both"), then Windows (6d) |
-| **M10 — native Win98 display driver** (the XP driver split into an OS-independent core, then a 9x layer on it) | `docs/tracks/m10-win98-driver.md` | `guest-tools/src/d3dptvid/` (after the split), `guest-tools/build-driver.sh`, the 9x driver + VxD, `guest-tools/src/setup.c`'s 98/Me role, `tools/setup-guest-test.sh`, docs 19 and ADR-012 | **opened 2026-09-06** (worktree `.claude/worktrees/m10-win98-driver`, branch `track/m10-win98-driver`): **step 0 done the same day** — the 9x driver model is established from `vmdisp9x` / `vmhal9x` and written into doc 19: three binaries (16-bit `.drv` over the DIB engine, ring-0 mini-VDD `.vxd`, and the DirectDraw/D3D HAL as a **ring-3 DLL in the game's process**, which is the only one that links our core); the per-call DDI structures and the DP2 opcodes are identical to NT's, the DirectDraw *object* structures are not; DDI 8 works on 9x; `DDCAPS_GDI` is normal there and fatal on NT; modes come from the INF; Open Watcom is a new build prerequisite for the `.drv`/`.vxd`. **The toolchain risk is gone the same day**: Open Watcom v2's Linux binaries build `d3dpt9x.drv` (module `DISPLAY`, ordinal exports, the `oembin` resources GDI needs, imports `KERNEL`+`DIBENG` only, no CRT — so nothing OWPL-licensed enters a GPL binary), the INF installs it through Win98's PnP with no clicks, and `tools/win98-driver-test.sh` runs the whole thing headless. **But a `.drv` alone cannot drive the adapter**: SeaBIOS maps its BARs and Windows unmaps both within half a minute because nothing claimed the resources, so the driver's probe finds zeros and GDI falls back to VGA (doc 19 §11). **The mini-VDD landed the same day** (`d3dpt9v.vxd`, doc 19 §12): it loads, claims the adapter, maps VRAM and the register page, checks the register set and installs itself in the main VDD's dispatch table — and the BARs now survive the whole boot. Three `wlink` facts had to be found first, all silent failures: every LE object needs base address 0 and the executable flag, the DDB must sit at offset 0 of the *code* object (everything in one CODE-class segment), and the entry-table bundle must be a 32-bit entry. **The driver runs, same day** (doc 19 §13, §14): GDI loads it, `DriverInit` claims the adapter through the mini-VDD, `Enable` sets the mode — `d3dpt-vga: linear mode on (640x480x32 pitch 2560 offset 0)` — and GDI draws into guest VRAM, the DIB engine's software cursor landing at the right place and scale. Three problems had to be found first, none of which produced a message anywhere: wlink dropped an empty `_TEXT`/`FAR_DATA` segment (the one the `__based(__segname("_TEXT")) *pText` idiom creates) and left a relocation naming it, so KERNEL refused the whole module; the mini-VDD mapped the adapter with `_MapPhysToLinear`, which lands in the ring-0 system arena — it now uses `_PageReserve(PR_SHARED)` + `_PageCommitPhys(PC_USER|PC_WRITEABLE|PC_INCR)`, where **this VMM refuses `PC_PRESENT`** silently and `PC_INCR` is what stops all 128 MB aliasing onto one page; and a 16-bit `*(DWORD __far *)` is two word accesses, which `d3dpt-vga`'s `valid.min_access_size = 4` register BAR answers with zero and drops, so `RegGet`/`RegPut` are hand-written 32-bit accesses. The adapter needed no change for 9x. `build-driver9x.sh` now fails the build on a dangling NE relocation and on a DDB that is not at offset 0. **And the strip of garbage at the top of VRAM turned out to be the message** (doc 19 §15): what looked like "a black desktop that never paints" was a Win98 **fatal exception written in VGA text mode**, invisible because the adapter is scanning out a linear frame buffer and nothing puts our device back to VGA. QEMU's VGA core keeps its planes interleaved four bytes to a character cell from VRAM offset 0, so the text page *is* the first 32 KB of the frame buffer; `tools/win98-driver-test.sh` reads it out and prints it after every run now, which is the single most useful thing the harness does. The first fault it named: `DIB_ExtTextOutExt` (DIBENG ordinal 403) does not take the PDEVICE as its extra argument the way every other `…Ext` entry does — it takes two more pointers — so thunking it with one dword left the Engine's argument list four bytes low and its first instruction loaded a garbage selector, a fatal exception 0D the moment anything drew text; `ExtTextOut` forwards to the plain ordinal 14 now. **And it installs the way every other 9x display driver installs** (2026-09-07): `display.drv=pnpdrvr.drv` is the correct configuration for any PnP display driver — the inbox Cirrus loads that way in this same image, and there is no such file — and ours now resolves through it. What had been missing was the `DelReg` the reference INF has: `CURRENT`, `DEFAULT` and `MODES` survive an AddReg, so a device that has been running the inbox VGA keeps a `CURRENT` naming *that* driver and GDI resolves through the leftovers. With that plus the 4 bpp rows handing low-colour modes back to `vga.drv`/`supervga.drv`, `NAME_IN_INI=0 tools/win98-driver-test.sh <image> install` brings up the mini-VDD from the registry's `minivdd` value and the driver from its `drv` value, at 800x600x16, with nothing anywhere naming either; the SYSTEM.INI workaround is off by default now. The eight-minute logo stall seen before the fix was **patch 22's APIC bug**, not this one. **And the second toolchain is not a Linux-only prerequisite** (2026-09-07): the Open Watcom snapshot carries a host directory per platform — `armo64` is macOS arm64 — so `build-driver9x.sh` picks one from `uname` and the Air builds both binaries natively, no container and no Rosetta. `d3dpt9v.vxd` comes out byte-identical to the Linux build; `d3dpt9x.drv` differs by one instruction selection inside `Enable` (same semantics, one byte shorter) and the displacements that shift after it, so "diff it against the rig's" is not a check. The Mac-built pair runs in a guest on the Air too: `NAME_IN_INI=1 tools/win98-driver-test.sh ~/vms/win98.qcow2 install` gets the mini-VDD, `adapter found`, `DriverInit done` and `d3dpt-vga: linear mode on (640x480x32 pitch 2560 offset 0)` 14 s into the boot. PnP does not match the INF on *that* image — it is a Sep-4 install from before the BIOS-date stamp, with no ACPI in its boot log — which is why the `NAME_IN_INI=0` path there ends on the inbox VGA. **And the split landed 2026-09-07** (doc 19 §19, the track's step 1): `d3dptdisp.c`'s 3 708 lines are now 1 975 of `nt/` over 1 940 of `core/` in five files — the DP2 walker, the surface table and its format arithmetic, the caps, the contexts and the flip chain — and the core includes no DDK header of either family. It took **two** boundaries, not the one the plan named. The DDI *payloads* (`D3DDEVICEDESC_V1`, the extended caps, `D3DCAPS8`, the DP2 command header, the `GetDriverInfo2` shapes) are identical on NT and 9x and were already our own transcription rather than a DDK's, so they moved out of `ddk/d3dnthal.h` into `core/d3dpt_ddi.h` as one definition and the NT header keeps only the callback *data* structures and tables; the surface *objects* are the ones that differ, and they meet in `d3dpt_surf_desc`, which the layer fills. Six `d3dpt_os_*` hooks are the whole of what the core asks of the OS (allocate, free, a tick, describe a surface, its non-mip attachments, its next mip level) — and since nothing in the source can enforce that, `build-driver.sh` asks `nm` what the core objects still want from outside and fails on anything that is not one of its own, a hook, or `memcpy` / `memset`; proved by breaking it on purpose. Two mistakes, both instructive: `d3d_caps_init` used to fill both the caps *and* the callback tables, and pulling the tables into the layer left them uninitialised for one build — which compiles perfectly; and `DDSCAPS_EXECUTEBUFFER`, which mingw's public `ddraw.h` does not carry, went into the core header as `0x800` when it is `0x00800000` (`DDSCAPS_RESERVED2` in both DDKs). The second is the argument for the guest battery in one line: the NT layer was unaffected (`ddrawint.h`'s definition won the `#ifndef`), the driver built, installed and drew a byte-perfect D3D7TEST frame, and the only thing that broke was protocol v9's *vertex* buffers — the DX8 runtime's carry no `DDSCAPS2_VERTEXBUFFER`, so that bit was the only thing recognising them, while its index buffers carry `DDSCAPS2_INDEXBUFFER` and kept working. `SHTEST` came back `9 cases, 1 failed`. The core now owns its three DirectDraw-internal bits under its own names and the NT layer will not compile if one disagrees with the DDK's. Proved with the whole M7 battery on a fresh overlay: `d3d7` byte-identical to the golden host frame (0 of 307200 pixels), `shtest` 9/9, `cktest` 4/4, `ebtest` 5/5, `dxttest` as documented, and `d3dgame8` pixel-identical to the *pre-split* driver installed into a second overlay once the on-screen fps counter is masked — the honest A/B, since that frame's standing difference from the native oracle is the known DXT1 particle one and it is the same on both. **And the ring-3 HAL's publication chain landed 2026-09-08** (doc 19 §20, the track's step 3): the third 9x binary exists — `d3dpt9hl.dll`, ring 3, mingw, the one that will link the core — the `.drv` answers all four `DCICOMMAND` escapes, the two halves share a block through the linear address the escape hands over, and in a real guest DirectDraw loads the DLL into the probe's own process, calls `DriverInit` there, and **the DLL reads the adapter's MAGIC and VERSION registers from ring 3** (`42463344` = `D3FB`). That answers doc 19 §8's first open question: the doorbell can be a direct register write, the same cost profile as XP, and the mini-VDD needs no ioctl handler. Three facts on the way, each of which looked like something else: `QUERYESCSUPPORT(DCICOMMAND)` must return `DD_HAL_VERSION` and not 1 (a 1 makes DirectDraw treat the driver as a 1994 DCI driver forever, silently); DPMI cannot read the base of a **GDT** selector, which is what the mini-VDD builds, so the VxD returns the register page's linear address itself now; and the pointers inside `DDHALINFO` are 16-bit far pointers, not linear ones — linear ones make `DDHAL_SetInfo` refuse the lot. **And the runtime took it the same day** (doc 19 §21): the seam was one bit — `DDCAPS2_CERTIFIED`, which the driver claimed and DirectDraw's HALINFO validator refuses, "certified" being something the runtime says about a driver rather than the reverse. It is invisible from the driver because the *16-bit* `DDHAL_SetInfo` only stores the structure and returns TRUE, and 32-bit `ddraw.dll` validates it afterwards and silently builds an emulation-only object instead — so the driver's log says "DirectDraw took the HAL" while every application sees one that was never published. Found by pulling the guest's own `DDRAW.DLL` out of the image and disassembling `DirectDrawCreate` down to the validator; its whole rule list is written up in doc 19 §21, including the 9x statement of doc 15's NT caps rules (`DDCAPS_BLT` needs a `Blt` callback *and* SRCCOPY in `dwRops`, each surface cap needs its `vmiData` alignment non-zero and even, no `DDSCAPS_OPTIMIZED`, every claimed callback must pass `IsBadCodePtr`). `ddprobe` now reads back our own `dwCaps 0x480`, 126 MB of video memory, a primary that is `DDSCAPS_VIDEOMEMORY` and a video-memory-only offscreen surface that creates and locks: DirectDraw allocates out of the adapter. Five other hypotheses were each spent a boot on first (`DDHALINFO_ISPRIMARYDISPLAY`, which was genuinely missing and is genuinely not it; `MODEXILLEGAL`; `dwHALVersion` both ways; the reference's rich caps; zeroed vidmem totals) and are listed so nobody repeats them; the bisection knob they were run with is the 9x half of `ddflags`, in its high half so it cannot collide with the NT core's, and one bit of it is kept as the repro. **And then the callbacks turned out to be unreachable** (doc 19 §22, same day): publishing two more showed that *none* is entered, for two stacked reasons. A `*(DWORD *)&far` store in the small model truncated every callback address to its offset, so §21's accepted HAL had an empty table — which is *why* it was accepted, since the validator only `IsBadCodePtr`s non-zero entries. With that fixed DirectDraw refuses the HAL, because it loads the DLL and calls `DriverInit` in **`DDHELP.EXE`**, once for the machine, while every application validates the stored HALINFO in **its own** address space — and a DLL in the private arena has a different address in every process (measured: DDHELP `0x00b50000`, the probe's own `LoadLibrary` `0x00ca0000`, its `GetModuleHandle` NULL beforehand). **The shared arena solved (2026-09-08, doc 19 §23):** Windows 9x requires every section of a DLL based above 0x80000000 to carry `IMAGE_SCN_MEM_SHARED` (`0x10000000`) or it relocates it down into the per-process private arena (`< 0x80000000`), breaking cross-process callback addresses. `build-driver9x.sh` now post-processes `d3dpt9hl.dll` to set `IMAGE_SCN_MEM_SHARED` on all sections and recalculates the PE checksum. In the guest, `d3dpt9hl.dll` loads at `0xB00B0000` across DDHELP and application processes, `IsBadCodePtr` succeeds in the game, `dd callbacks=0x00000033` are published without withholding, and DirectDraw invokes `WaitForVerticalBlank`, `CanCreateSurface`, and `CreateSurface` in the 32-bit DLL. `ddprobe` allocates and locks primary and offscreen surfaces from the adapter's VRAM heap. **And step 4 — the Direct3D DDI — passes 2026-09-08** (doc 19 §25): `EBTEST` 5 cases 0 failed and `D3D7TEST` byte-identical to `d3dpt-dp2-test`'s golden frame (0 of 307200 pixels), HAL and T&L HAL both enumerated, 300 frames at 59.1 fps. The bug behind five black frames was the second instance of §19's shape — the layer derived the Direct3D command window from the VRAM size instead of reading the adapter's `D3DPT_FB_REG_CMD_OFFSET`, and encoded every batch 16 KiB below the window the executor reads, so all seventeen `DrawPrimitives2` calls returned success against a header nothing had written and the host logged no `ddi:` line at all. Landed with it: **a 2ksbox Win98 machine runs DirectX 9.0c** (the in-box 6.1 is an older DDI generation than `core/` was proven against, and it has no pixel oracle — `D3D7TEST`'s DX7 path cannot run there), and the three DirectX 6 accommodations that had grown in the 9x layer were deleted on the evidence of one-shot logs that never fired. **And step 5 met real games 2026-09-09** (doc 19 §26): the user installed six titles into a Win98 machine of their own and reported the mouse glitching in Total Annihilation, LEGO Island glitched in both graphics and pointer, Blood glitched whatever the screen configuration, and "lots of glitches changing screen resolutions". Three driver bugs came out of it, none of which our own test programs could have found. **The pointer lived in the frame buffer**: `dibthunk.asm` jumped `SetCursor`/`MoveCursor`/`CheckCursor` straight to the DIB Engine, whose cursor is composited into VRAM with a save-under that only GDI's `BeginAccess`/`EndAccess` pair protects — and DirectDraw does not go through GDI, so a game that locks the primary (TA does, every frame, caps `0x1000c238` = the *visible* primary) leaves that save-under stale and the next mouse move stamps it back onto the screen. The 9x driver now drives the adapter's v4 cursor sprite as the XP one does, and no pointer enters the frame buffer at all. **The DirectDraw heap ran 64 MB into the Direct3D command window** — `fpEnd` was derived from the VRAM size instead of read from `D3DPT_FB_REG_CMD_OFFSET`, the third instance of that same shape on this track. **And an 8 bpp mode came up with an uninitialised palette**, because `Enable` programmed the adapter's 256 palette registers from a colour table that is ours, sits past the DIB Engine's PDEVICE and nothing had written yet. New harness `tools/win98-game-test.sh`; with the fixes in, TA and LEGO Island both run correctly headless. **And the DOS box works**: Blood is the DOS Build-engine game, so what it wants is a screen switch — the mini-VDD hooks the main VDD's four `HIRES_TO_VGA` / `VGA_TO_HIRES` dispatch entries and turns the linear frame buffer off and on around it, so the device hands the scanout back to its VGA core for the VM. All four are called, in order, with the display driver's own `RestoreDesktopMode` in the middle, and Blood renders full-screen at 640x480 through the whole of its attract demo. Its earlier failures were guest configuration, not the driver: a DOS/4GW stub cannot find `dos4gw.exe` unless the batch `cd`s first, and the image's `AUTOEXEC.BAT` has no `SET BLASTER=`, so every DOS game fails its sound probe before drawing anything. **Crimson Skies renders since 2026-09-09, and the bug was the host executor's, not the driver's** (doc 19 §28): recorded as a SafeDisc failure (a parallel session measured the original loader, the user runs a patched no-CD one), then as GDI (§27 eliminated Direct3D on the splash screen; the menu with the white logo and buttons *is* Direct3D, 57 textured quads a frame). The game picks the DirectX 5 `TEXTUREMAPBLEND MODULATE` with no texture bound, sets its own `COLORARG2` / `ALPHAARG2` and binds a texture per draw; the executor's legacy-blend emulation (the GTA 2 fix, doc 15) was ended by the ARGs and left the colour op at "no texture: the diffuse" — `ffffffff`, white silhouettes with the texture's alpha. One flag per op now, ended only by the app's own op, `d3dpt-dp2-test` has the sequence. NFS Porsche's silence is guest sound configuration. **And the evening of 2026-09-09 closed three more from the same chair** (doc 19 §29): Blood "hangs with the whole screen glitched" on exit, a "big mouse cursor" over Blood, and "BSODs don't show up". The exit was **not a hang** — measured: the four §26 calls all arrive, the linear mode comes back, and Windows sits idle and healthy behind Blood's last frame tiled across the desktop for as long as anyone waits, because *nothing asks it to repaint*. The four mini-VDD calls put the adapter back; what puts the desktop back is the older channel every 9x display driver implements and ours did not — the VDD's **INT 2Fh AX=4001h / 4002h screen-switch notifications**, hooked in `Enable`: `BUSY` on the DIB Engine's PDEVICE on the way out (GDI stops writing into what is now the DOS program's VGA memory), the mode restored and **USER's undocumented repaint entry, ordinal 275**, called on the way back (`dibthunk.asm`'s `_SWHook`, `d3dpt9x.c`'s `SwitchToBgnd` / `SwitchToFgnd`, `UserRepaintDisable` made real). With it Blood's Quit is followed by the desktop within ten seconds. The big pointer was the adapter's cursor sprite composited by the player into a VGA frame that has no cursor: `d3dpt-vga` now reports it hidden whenever `ENABLE` is off. And **blue screens are visible and now guarded**: a VxD's fatal exception reaches the adapter through the ordinary `PRE_HIRES_TO_VGA` switch (so the §26 hook already shows it), the mini-VDD also answers the DDK's `SAVE_MESSAGE_MODE_STATE` (45) for message screens that skip the switch, and `tools/win98-bsod-test.sh` blue-screens a copy of the image on purpose with a VxD of ours (`bsodvxd.vxd`, `ud2` in ring 0 at load — `con\con` is patched on the image) and requires the screendump to be the blue screen and the desktop to come back after a key. **And a real blue screen was found and fixed 2026-09-10** (doc 19 §30): the user's Carmageddon blue-screened at the switch to 320×200×8 ("it broke", the recoverable message, then a glitched unresponsive desktop) — a GDI **heap overrun**, `Enable` writing the 8 bpp mode's 256-entry colour table 1 KiB past a display PDEVICE that GDI allocated **once at boot** from the 16 bpp desktop's size, so the fault surfaced in a different VxD each run (VMM, VTDAPI, VSB16, KERNEL32). Reproduced headless with the game and independently with a `DDPROBE <w> <h> <bpp> [sys]` mode test, gone in both after one line — reserve the colour table in `dpDEVICEsize` for every depth, not just 8 bpp (the fifth "value the 8 bpp path needs, sized where the mode was not really decided" on this driver). **And the black screen that followed was the driver offering a mode DirectDraw does better** (doc 19 §30, later the same day): the game's `PRIMARYSURFACE | FLIP | COMPLEX | SYSTEMMEMORY` chain with `DDSCL_ALLOWMODEX` is the SDK's **Mode X recipe** — the runtime switches the display driver out, programs the VGA registers and the DAC itself and copies the system-memory chain into planar VGA memory on every flip — and a 1997 driver with no 320×200 mode gave the game exactly that. Ours listed 320×200 and 320×240 as driver modes *and* set `DDHALINFO_MODEXILLEGAL`, so the game got a real linear mode with a system-memory primary that nothing presents (the runtime flips it by pointer swap and the HAL never hears of it): black with the palette right, as the probe showed by coming up in its own palette's index 0. The "frame in VRAM" of the first reading was the desktop repainted at 320×200. The two modes are gone from the table and the flag is clear, as in the reference driver; measured with the game, the VGA core reports Mode X 320×200 (`sr4=06`, double-scanned) and the screendumps are Carmageddon's menu and Quit dialog in colour. Two harness traps came out with it: `d3dpt-vga` held the last linear frame for 15 *refreshes* after `ENABLE` dropped — 250 ms under the player, 45 s headless, where an idle console refreshes every 3 s — and is wall-clock now (`D3DPT_FB_VGA_GRACE_MS`), and it reports the VGA core's mode registers once per change; and `hang.txt`'s `F000:D40F` in V86 mode is SeaBIOS's interrupt-stub `iret`, an idle Windows 98, not a dead one. Known limitation: a system-memory *flipping* primary in exclusive full-screen on a driver mode hangs the app that owns it (`DDPROBE 640 480 8 sys`) — traced to the DirectX 6 HEL blocking in `Flip`'s `DDFLIP_WAIT` for a present it never completes (52/60 EIP samples are the System VM idling, so the thread is blocked, not busy); declining the flip in our HAL only moves the block, so it is the runtime's, not ours. No shipped title reaches it (320×200 is Mode X, 640×480 games use a video-memory primary that flips through OFFSET without blocking) |
-| **M11 — the Windows host** (cross build from Linux, the package, the Windows branches of shared code) | `docs/tracks/m11-windows-host.md` | `packaging/windows/`, `scripts/win-cross.sh`, `scripts/build-windows.sh`, `scripts/package-windows.sh`, doc `build-windows.md` | opened 2026-09-06 (worktree `.claude/worktrees/m11-windows-host`, branch `track/m11-windows-host`): the whole stack cross-builds with mingw-w64 in a Fedora container and packages as a portable zip — `2ksbox.exe`, `2ksbox-player.exe`, `qemu-img.exe`, `libqemu-embed-i386.dll`, `d3dpt_exec.dll`, the DLL closure walked from the import tables, `pc-bios\` and the guest-tools ISO. **WHPX detected and built in**, and the launcher names it (the wizard asks `WHvGetCapability`, not `/dev/kvm`). Verified under wine: our `qemu-system-i386.exe` starts a `pc` machine on TCG, negotiates QMP and quits cleanly; the staged launcher resolves every companion inside the package and its wizard drives the packaged `qemu-img.exe` to a real qcow2. **First run on the user's PC, 2026-09-06:** it starts, and the two things it showed were a Windows-only pair — the launcher was a console-subsystem binary (a black terminal on every double-click; both front ends are `windows_subsystem = "windows"` now, with `launcher-core/src/console.rs` giving the debug verbs the console they were launched from and every subprocess none, plus `player.log` for a windowless launcher's child), and Play died with "Failed loading SDL3 library" because Fedora's SDL2 is *sdl2-compat* and loads SDL3 at run time, which no import-table closure can see (the packaging step now has a strings pass for exactly that; SDL itself went away on 2026-09-07 with `--disable-sdl`, and the pass stayed). **Both front ends cross-build since the same day** (`--qt` rolls a second complete package): Fedora has the mingw Qt 6 and a native Qt of the same version for moc/rcc, `CXX_QT_AUTORCC_OPTIONS=--no-zstd` because the host rcc has zstd and the mingw Qt6Core does not, and Qt is deployed by hand (no cross `windeployqt`) with a `qt.conf` — but **the Qt binary faults on a null call under wine before `main`**, where the egui one in the same folder is fine, so it is unverified and the checks say so. **Second run on the PC, 2026-09-06:** starting a machine failed at the command line with `-chardev socket,id=qmp0,fd=7368: File descriptor '7368' is not a socket` — `fd=` on Windows is a *C-runtime descriptor*, not a `SOCKET` (every QEMU socket call there is an `os-win32.h` wrapper starting with `_get_osfhandle`), and which CRT descriptor table it lands in is the linking module's business, so the player hands the raw handle across and the library converts it: `qemu_embed_socket_to_fd()`, **embed API v6 → v7** (rebuild the embed library before the player links). **Third run, 2026-09-06: it did not start at all — "no error messages nor anything" — which is what `windows_subsystem = "windows"` costs: a windowed program has no stderr, so a panic on the way to the first window prints into nothing and the process vanishes.** `launcher-core/src/fatal.rs` is the answer both front ends now call from the first line of `main`: a start-up log at `%APPDATA%\2ksbox\data\launcher.log` with a milestone per step (its *last* line names the step that died), a panic hook that files message, location and backtrace there and then says so in a `MessageBoxW`, and `run_native`'s `Err` through the same door; plus `2ksbox-debug.bat` in the package for the failure no Rust of ours can catch — a process that dies in the loader or a static initialiser never reaches `main`, and **the absence of `launcher.log` is itself the reading**, with the exit code beside it naming which (`start "" /b /wait`, because cmd does not wait for a windowed program; `--diagnose` files its answers rather than printing them, because `start /b` does not pass the console's redirection). **Fourth run, 2026-09-06: `2ksbox-debug.bat` answered both questions at once.** The Qt binary dies before `main` on real Windows too (`0xC0000005`, no `launcher.log`), so it is a static initialiser of ours and not wine — a CRT mismatch and a malformed `.ctors` list are both ruled out. And the egui one started, and *its machine* did not: `network backend 'user' is not compiled into this binary` — `-netdev user` is libslirp, Fedora has no mingw package for it, and the Windows QEMU had been built `slirp support: NO` since day one of the track. The cross image builds libslirp 4.9.4 from source now (the release the Flatpak pins, for the same reason), the closure ships `libslirp-0.dll`, and `package-windows.sh` asks the embed library's **import table** for it — every check had been green because none of them had ever asked our QEMU for anything the *launcher* writes. **The Qt binary's fault is found and fixed** (`tools/qtmin/`, the smallest cxx-qt program that cross-builds here, in three rungs — and rung one, with no bridge and no QML module, already faulted): cxx-qt's generated crate initialiser uses `std::call_once`, mingw parks the callable in `std::__once_call` through **emulated TLS**, and `__once_proxy` — bound correctly, in `libstdc++-6.dll` — reads it back through *its* libgcc's emutls rather than the statically-linked one in the exe, finds NULL and calls it. Eleven lines (`launcher-qt/src/once_proxy.cpp`) define that proxy locally, where both halves agree; it compiles to nothing off Windows. **The Qt package now passes every check the egui one does** — `--paths`, its own `launcher.log`, and the packaged `qemu-img` driven through the wizard under wine — so the three excuses `package-windows.sh` made for `--qt` are gone. **The egui package works on the user's Windows PC (2026-09-06), and so does the Qt one now.** The first thing it showed there: a Windows in dark mode got the launcher "all mixed up between dark and light" — a Quick Controls style paints its controls from its own colours and takes only the surfaces around them from the palette, so half a theme. The launcher is a **light-mode application** now on every platform (`launcher-qt/src/appearance.cpp`: the scheme is requested *and* a matching palette handed over, because `setColorScheme` is only a request; `LAUNCHER_QT_SCHEME=system|dark` overrides, and `launcher.log` records `style … scheme … window …` for the next report). Next: a machine booted there. The embed library has a **WGL backend** for Win98's OpenGL (a `WGL_ARB_pbuffer` as the drawable; qemu-3dfx's own WGL backend is *split* rather than weakened — a COFF weak external is not an ELF weak definition and leaves qemu-system-i386.exe undefined — so patch 10 compiles its backend half a second time into the emulators alone and the archive both consumers share holds neither), verified by `tools/wgl-probe.exe` under wine on an AMD card and shipped in the package as the diagnostic for a Windows machine whose guest gets no 3D **A native build on the PC, for debugging (2026-09-17; every stage, the ISO included, builds on the user's PC the same day, and nothing it built has been run there yet):** `scripts/build-windows.sh` in MSYS2's MINGW64 shell builds `qemu rust qt exec` with no container — the cross image's ABI (msvcrt, libstdc++, `x86_64-pc-windows-gnu`), MSYS2's Python 3.14 with `distlib` (QEMU 9.2 configures and generates with it, checked on Linux), the optional libraries the cross summary says NO to pinned off — and `scripts/win-run.sh launcher|player|qemu` runs it out of the checkout (`GDB=1` for gdb); docs/build-windows.md "Building on Windows". The package still comes from Linux. Its first run on the PC stopped at configure: mkvenv gave pip `file://C:/…` for QEMU's bundled wheels, which Python 3.14 reads as a host named `C:` — patch 69 — and then at the Qt launcher, whose build runs MSYS2's moc with an empty environment and so without its DLLs (`build/win/qt-host`, `packaging/windows/qmake-host.c`). The guest-tools ISO builds there too (`scripts/build-windows.sh guest`, linking Arch's pinned i686 runtime because MSYS2's is Pentium 4 code): `guest-tools/msys2-i686.sh` switches the guest scripts to MSYS2's i686 toolchain as `MSYSTEM=MINGW32`, the only native mode qemu-3dfx's wrapper build has **2026-09-22: the launcher on Windows is Qt's own Windows 11 style (FluentWinUI3) and follows the desktop's light or dark mode** (user decision; the "Windows" style it resolved by itself drew Vista-era controls, and its light-only rule was a workaround for that style's half theme — the track doc's "Windows 11's own look"), and, the same day, **every list in the QML is stock** (user decision: no hand-drawn list box, zebra rows or palette colours; `ListView` + `ItemDelegate`, `Disclosure.qml` a stock `ToolButton`); Linux and macOS keep their styles and stay light |
-| **M5g — a host directory as a CD-ROM** (`isodir:`, ISO 9660 + Joliet generated lazily by libdisc) — **done, merged 2026-09-06** | `docs/tracks/m5-dirdisc.md` | `libdisc/src/isodir.rs`, `libdisc/qemu/cdimage.c` (the second driver), the shelf's folder entries in `launcher/src/disc_library.rs` | **step 1 landed 2026-09-06**: `isodir.rs` generates the ISO 9660 + Joliet volume over a tree, `Source::Mem` holds its metadata, `eof_pad` covers the sector a shared file ends in, payload handles are lazy behind an 8-entry cache with a re-`stat` (a file changed under an open disc is `EMEDIUM`, not a torn read) and `extent_at` is a binary search; the `dirdisc` check in `scripts/test.sh` has xorriso read the fixture tree back out of the generated volume identical. **Step 2 the same day**: the `isodir` protocol driver in our own `cdimage.c` (no QEMU patch changed) — `qemu-img` names it and reads the same bytes `discx` does, and SeaBIOS probing the drive proves the ATAPI path finds the disc model **through the `raw` format node the block layer probes on top of it** (the risk the track doc named; a plain `.iso` on the raw driver is the control). **Step 3 the same day, and on the Mac**: XP copies the folder through cdrom.sys and all 311 files come back identical (`RUN.BAT started after 30 s`, copy done at 33 s — XP boots in ~35 s under TCG on the M1), `guest-dirdisc` added to the suite's guest stage. `tools/xp-cdimage-test.sh` runs on macOS now: mtools builds the scratch disk where sfdisk/mkfs.fat are absent (`-H 2048`, or XP mounts no E: at all) and the run waits on **COM1** rather than on FAT writes XP's lazy writer holds for minutes. **Step 4 the same day**: the launcher puts a folder on the shelf ("Add folder…" in both front ends), and one function — `disc_library::qemu_medium` — decides `isodir:<path>` for the boot drive, a live insert and the flat shelf file alike; `bundle.rs` now doubles commas in every path it writes into a QEMU option string (a disk in `~/Games/Doom, Quake and friends/` had been silently refusing the whole line). New `dirshelf` check. **Step 5 the same day, and the track is done**: Win98 reads a shared folder through its own CDFS (`tools/dirdisc-guest-test.sh`, long names and all), the 8.3 tree a DOS driver sees is checked with bsdtar's Joliet off (including that the two colliding names kept the right contents), every refusal has a case, and **two bugs the guests found**: patch 52 called every shared folder `[missing on the host]` because it `access()`ed the `isodir:` prefix as part of the path, and a swap into a full drive left Windows reading the previous disc — `CDSHELF`'s own tray polling consumes the media-change sense a drive raises once, so it now dismounts the volume outright |
-| **M12 — music** (the OPL3 and MPU-401 devices, the SoundFont / MT-32 / FM engines, the sound-card and music pickers) | `docs/tracks/m12-music.md` | `libsynth/` (the crate, `synthx`, and `qemu/opl3.c` + `qemu/mpu401.c`), `patches/qemu/60`, `soundfonts/`, `bundle::Sound` / `bundle::Music`, `tools/midi-guest-test.py`, doc 20 | **a guest has music, 2026-09-09.** QEMU had no MPU-401 at all and its `sb16` carries no OPL, so a DOS game that asked a Sound Blaster for music played to nobody here. Now: `libsynth` (Nuked-OPL3 + rustysynth + moont, all pure Rust, linked into QEMU like libdisc), `-device opl3` (0x388 and the SB mirror, with the timers a detection routine reads) and `-device mpu401` (UART mode, `synth=gm|mt32`) behind patch 60, a **sound-card** and a **music** picker in the machine form (both front ends, the C API and `launcherx --music`), the GPL-2 bank `soundfonts/TimGM6mb.sf2` in all four packages, and two checks: `libsynth` (the engines through their C API) and `music` (the pickers, then the *sound* — the monitor writes the ports and the note has to be in the wav QEMU recorded). **A DOS guest drives both** (`tools/midi-guest-test.py`, the `midi-guest` check, same day): a DOS program runs the AdLib detection sequence at the ports (`OPL status 00 c0 00`), plays 440 Hz on the OPL3, then resets an MPU-401 (`fe fe`), puts it in UART mode and plays A4 — and the wav QEMU recorded holds both notes. The **CM-32L stays unverified by decision** — nobody here has Roland ROMs and none are coming, so `mt32-tone` SKIPs and `moont`'s claim of sample accuracy against Munt is taken at its word; everything around it (the option, the form's refusal without a ROM directory, the size-based finder and its message for an original MT-32's half-size PCM ROM) is checked. **A real game, same day:** Duke Nukem 3D (Atomic Edition, the user's own disc) plays its score through our MPU-401 — 300-450 note-ons per 5 s on 5 to 8 channels, 70 s of audible wav — from a run that starts with nothing (`tools/duke-guest-test.py`: the DOS build off the disc, a FAT disk, the game's own SETUP.EXE driven for a config, the disc back in the drive for its CD check). The OPL3 plays the same game when SETUP launches it (516 key-ons in 5 s); from a batch file that game refuses whatever the config says, which is its own business. Both devices now report what the guest does to them every 5 s. **The MIDI port lost its interrupt line, 2026-09-09** (doc 20 §5.1): it shipped on the hardware's own IRQ 2/9, which is where QEMU's PIIX4 puts the ACPI SCI, so on an ACPI Win98 — every machine the launcher installs — the ACK a driver's reset queues was an interrupt no handler could acknowledge. The line stayed high, the handler was re-entered on every `IRET`, and after 234 nested `INT 0x59` the ring-0 stack ran off its end: #PF, #DF, triple fault, and Windows rebooted in front of the user. Reproduced with Duke Nukem 3D's own SETUP (Choose Music Card → General Midi → 0x330 → **Test Music Card**) on the user's own machine, headless, and fixed by defaulting `irq=` to "none" — the interrupt is for MIDI *in*, which this device has none of, and every driver of the period polls the status register. A DOS machine could not have caught it: DOS leaves IRQ 9 masked. The `music` check now writes the reset and requires the slave PIC to have nothing pending. **And `scripts/build.sh` was rebuilding the old devices**: `libsynth/qemu` was missing from the `qemu-prepare` stamp, so an edit to `opl3.c` / `mpu401.c` was "overlays unchanged" and never reached `hw/audio/`. **And the *sound* card's interrupt, one menu row up, 2026-09-09** (doc 20 §5.2, patch 25): QEMU's own `sb16` fabricated an interrupt on every DSP reset that followed an auto-init DMA — a raise and an immediate lower, which no hardware does — and the guest doing that reset is one that has finished and masked IRQ 5, so the edge sat latched and unowned in the master PIC (`pic0 irr=20 imr=b8`) and Windows' VPICD never unmasked the line again. The same SETUP.EXE, one row up from the music test: **Test Sound FX Card** plays once and every press after says "Playback failed, possibly due to an invalid or conflicting IRQ". The end of a silence block (DSP 0x80) raised without a status bit for the driver to clear, which holds the line the same way. Three presses play with the patch. New `sb16-irq` check: `info irq` counts rising edges, a reset must add none and each silence block exactly one. **Windows 98 is in front of the port now, and it is not right yet** (user report, 2026-09-10): dxdiag's music test plays through the Microsoft software synth correctly, and through ours it starts correctly and then loses instruments until one is left. The same engine plays Duke Nukem 3D's DOS score fine, so it is what Windows sends and what we make of it that differ, and there was no way to look at either. There is now: `LIBSYNTH_MIDI_LOG=<file>` captures every byte the guest writes to the MIDI data port and `LIBSYNTH_OPL_LOG=<file>` every FM register write, both with a microsecond stamp on the host clock (which is the clock the engines render on), and `synthx midilog` / `opllog` / `play` read either capture back — a channel-by-second grid of note-ons (a row that stops was stopped by the guest; a row that keeps going while the sound does not is ours), what silenced each channel, notes left held against the engine's 64 voices, bytes the parser could attach to nothing, and the same stream played again with no guest at the timing it was written with. Doc 20 §7.2. The user recalls **both** of the guest's hardware synthesizers failing the same way while the Microsoft software synth is fine, which is why the FM chip is captured too: the two engines share no synthesis code (Nuked-OPL3 register-level, rustysynth over a byte stream), so a fault in both is in neither, and the suspects become what Windows sends and what the machine does to it under TCG. **Nobody has captured the failing run yet** — the next step is one run with both variables set. Then: a host MIDI port for a real module (doc 20 §8) |
-| **M13 — gamepads** (a real controller into a guest: the host end, then the three guest-facing paths) | `docs/tracks/m13-gamepads.md` | `player/src/pad.rs`, `embed/` (API v8), `patches/qemu/26`+`27`, `launcher-core/src/bundle.rs` (`Pad`), `gamepad/qemu/` (both devices), `guest-tools/src/padtest.asm`, `tools/pad-guest-test.py`, `scripts/test.sh` (the `pad` check) | **all four steps landed 2026-09-09** — step 0, path C, path A and path B — planned before any of them the same day. Opened out of doc 08's post-v1 list; the design for all three paths is in the track doc. QEMU has no gameport, no gamepad HID (`hw/input/hid.h` is mouse / tablet / keyboard) and no joystick class in its input core, so every guest path is new code. Step 0 is in: `gilrs` in the player (enumerating on Linux, cross-compiling clean for windows-gnu), the abstract pad in the new `gamepad/` crate, `bundle::Pad` and its wizard row, `player --pads` / `--pad-sweep`, and `PLAYER_PAD_SCRIPT` — a synthetic pad, because no machine running `scripts/test.sh` has a controller plugged in and without it the track could only ever be hand-tested; the `pad` check guards the deadzone and the two-threshold hysteresis. Two plan corrections in the track doc: embed API v8 has no consumer until path A, and the shared model could not live in `launcher-core` without the player depending on the launcher. Then path C, done the same day: `KeyMap` recomputes the wanted set of scancodes each poll and diffs it rather than reacting to transitions — a diff cannot drift into a key stuck down in the guest, and a set union releases a shared key (the d-pad *and* the stick are both on the arrows) only when the last holder lets go; releases go before presses in one flush, so a stick crossing centre never holds both arrows. `player::pad_args` writes `--pad keys` from `bundle::Pad`. **Not proved: keys arriving in a real guest** — `tools/pad-guest-test.sh` is unwritten, the box had another session's TCG guests running throughout. Then path A the same day: `usb-gamepad` (`gamepad/qemu/dev-gamepad.c`, **patch 26**, built under `CONFIG_USB_HID`) — two analog sticks, an 8-way hat with a null state and twelve buttons in a six-byte report, driven by **absolute state** through embed API **v8** (`qemu_embed_pad_state`) so a dropped update is corrected rather than leaving a button held; a second one is refused at realize. The joystick event class the plan wanted was dropped — QEMU's input core is built around consoles and a gamepad has no console affinity — so the shim calls the device directly, which is not upstreamable as it stands and the track doc says so. `tools/hid-descriptor-check.py` parses the shipped descriptor bytes (collections balanced, report exactly `GAMEPAD_REPORT_LEN`, hat null state) and the `pad` check mutates two copies to prove the checker can still fail; a real `qemu-system-i386` attaches the device (`info usb` = *2ksbox USB Gamepad*). **Both front ends gained the picker** — until now the setting was reachable only by hand-editing `machine.toml`. **Both front ends gained the picker** the same day. Then **path B**, the gameport at 0x200-0x207 (`gamepad/qemu/gameport.c`, **patch 27**, its own `CONFIG_GAMEPORT`): four RC one-shots and four buttons, `t = 24.2 us + 0.011 x R us`, modelled with **no timer at all** — the write records deadlines on `QEMU_CLOCK_VIRTUAL` and a read compares against them. A standalone ISA device, not a member of a sound card, because the card is a separate choice and a joystick should not vanish with it; fed by the *same* `qemu_embed_pad_state` as the USB pad, so no API bump. The **d-pad drives the first stick's axes to their ends inside the device** — a Gravis GamePad has no pots at all, so a DOS game cannot tell a d-pad from a stick and has no other way to read one. `bundle::Pad::Gameport` is offered to DOS (which cannot have path A) and Win98 (which has both stacks), to neither XP nor Other, and the wizard's warning is per-device now because the true sentence differs: Windows finds a USB pad by itself and does *not* find this one. **A real DOS guest reads it, 2026-09-09** (`tools/pad-guest-test.py`, `PADTEST.COM` from `guest-tools/src/padtest.asm`, the player driving a scripted pad): on the paced machine the family really uses, a stick's short end / centre / long end come back as **12 / 265 / 571 counts** against true pulse ratios of 1 : 23.8 : 46.4, the idle port reads f0 (not the ff an absent port gives), and the d-pad and buttons arrive. `UNTHROTTLED=1` is the control and shows why the throttle matters: ten times the counts and a **2.25x spread on an axis nobody is touching**, so a game with a fixed timeout would see a jammed stick — the DOS family's `-icount …,align=on` was already there for the processor picker. The harness judges every axis against the undriven one's own spread, so both machines pass the same checks. **Both devices are user-confirmed with a real PlayStation 5 DualSense, 2026-09-09 / 09-10** — the first time anything in this track has been *felt* rather than driven by `PLAYER_PAD_SCRIPT`, so the `gilrs` end (which button id is which control, which way an axis points) is confirmed with it. Path A on XP and Windows 98 SE — the pad shows up and moves in the Game Controllers panel on both — and that run corrected the claim beside it: 98 SE does *not* need "nothing installed". It binds its own HID driver, but the New Hardware wizard asks for the Windows 98 source files the first time (the CD, or the CAB folder on the disk); XP needs nothing. The wizard's note, `bundle::Pad::Usb` and the track doc said "XP, 98 SE and Me need nothing installed", which is right about XP and leaves a 98 SE user staring at a file-copy dialog; they say the two separately now. **Both guest devices are under a test since 2026-09-10**, so neither hand run is load-bearing: `pad-guest` (the gameport, a FreeDOS guest), `pad-guest-xp` (the USB pad, its own XP boot, ~60 s) and `pad-guest-98` (the same on Windows 98, against a launcher *machine* whose Windows has the driver bound — `WIN98_PAD_MACHINE`, default `claude98`) are in the suite's guest stage — `guest-tools/src/padwin.c` → `PADWIN.EXE` asks XP's own DirectInput what a game would ask, with every axis put on the **report's own 0..255 range** so a reading is the byte `hid_axis()` made, and the two guests are asked deliberately opposite things about the d-pad (axes on the gameport, the POV hat and *only* the hat on HID). Both run the player and skip without a display. **Path C's guest test is dropped by decision** — more harness than the path is worth, and `player --pad-sweep` already checks its map, ordering and scancodes. Path B is confirmed *present* on 98 — `PADTEST.COM` in a Win98 DOS box reads the DualSense's sticks, d-pad and buttons, which is also the only run to exercise the **d-pad fold** (the device driving the first stick's axes to their ends) with real hardware. The 9x *driver* half — "Standard Game Port" through Add New Hardware so a *Windows* game sees a joystick — was **dropped by decision 2026-09-10** rather than built: `PADWIN.EXE` now reads the pad through **winmm** (`joyGetPosEx` on top of 9x's VJOYD, what a great many mid-90s titles call) as well as DirectInput, and on 98 the USB pad arrives through both — "Microsoft PC-joystick driver", four axes, twelve buttons, X 1..254, the hat and the buttons, tracking the DirectInput column sample for sample. The driver half had no customer left. The port keeps its DOS job, a DOS box under Windows included; 98 FE is still untried. Contended with M12 over `bundle.rs`. One trap found doing it, and it cost three Win98 boots: **a `usb-tablet` beside the pad makes Windows 98 enumerate no joystick at all** — with the tablet `devices: 0`, without it every check passes, same image and same everything else (XP does not care). The mechanism is not established; the A/B is. **M13 is done**: every path that reaches a guest has a check in the guest stage, and the last item was closed by measurement rather than work. Open but owed to nobody: a real controller has never driven path C. |
-| **M14 — the Voodoo 2 device** (86Box's rasterizer as a QEMU PCI device, `-device voodoo2`; doc 21) | `docs/tracks/m14-voodoo2.md` | `voodoo/`, `patches/qemu/62`, `tools/voodoo-guest-test.py`, `scripts/sync-86box-voodoo.sh`, doc 21 | opened and **merged to `main` 2026-09-12** (the branch and worktree deleted; the track continues on `main`): the port builds and a FreeDOS guest with no 3dfx code has driven it — found on the bus, the Voodoo 2 strap, the LFB written and read back, a swap, and the 640×480 frame on the console by screendump (the `voodoo-guest` check), beside `-vga std` and beside our own `d3dpt-vga`; the machine form's "Emulated 3dfx Voodoo 2" checkbox puts it on a machine (`voodoo2` in the bundle, the `voodoo2` check). **3dfx's own driver and Glide 2.x ran on it on 2026-09-12** (the user's `win98-2`): the first open froze on PCI config 0x54, `siProcess` (QEMU keeps writes past the header, Glide polls it for a countdown; now modelled, and in the guest test), and Glide's window teardown streams a burst into the FIFO window with the FIFO off (garbage into the register file) — the shim's `fatal()` now refuses instead of aborting, the SLI bit is unwritable on one card, the frame buffer has zero pages after it. The card is found and initialised and GLIDETEST's first window clears and draws its triangle (2 frames); it then **hangs at `grSstWinClose`** — the card never reports idle after the teardown burst, the track's next bug. **A desktop that never came back after the Voodoo let go of the monitor is fixed** (2026-09-12, the user's `test98`: every full-screen switch left a silver screen): `d3dpt-vga`'s invalidate did not put its own surface back on the console while its linear mode was unchanged, so it kept updating the Voodoo's; the `voodoo-guest-d3dpt` check holds it (doc 21 §7). 3dfx's driver switches the card on and off at every boot, which is why the unfixed build lost the screen from the start. **DxDiag on the card (2026-09-13)**: its DirectDraw test passes full screen on the chip at 60 fps and the desktop comes back; its Direct3D 7 test fails at step 46 (`GetDC`, DDERR_CANTCREATEDC) — whether a real Voodoo 2 does too is open (track doc). **A stranded Glide's packets are refused since 2026-09-20** (doc 21 §11): FIFA 2000 played for 2½ minutes on the card and then took the guest's Windows down at its close — the window closed, another `sst1InitRegisters` ran, and the client that still owned the ring went on streaming packets into a FIFO that was off, which 86Box decodes as register writes; the walk zeroes `videoDimensions` so the card never reads idle again. `-device voodoo2,fifo-off-regs=on` is the A/B that puts the walk back, the warning now names the writing module and the last init's without `VOODOO2_TRACE=1`, and the `voodoo-guest` check's stranded-client phase holds it. Beside the pass-through, not instead of it (doc 21 §1) |
-| **M15 — the Direct3D executor on Wine, on the host** (the fallback below DXVK's Vulkan 1.3 floor; ADR-018) | `docs/tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt/hw/d3dpt_exec_remote.c`, `d3dpt/hw/d3dpt_exec_load.[ch]`, the `--wine` stage of `scripts/build-d3dpt-exec.sh`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs`, the `exec-wine` check | **opened 2026-09-22** (user decision: "running an old unsupported Wine version in the guest is bad UX"): design and steps written, nothing built; step 1 is the spike — the Windows build of `d3dpt_exec.dll` on Wine's own d3d9 drawing the dp2 frame, on the rig (`wine` in the cross container) or on a Mac with the `wine-stable` cask. The PE pair cross-builds on the Air with Homebrew's mingw (checked). **Spike, first half, 2026-09-22 on the Air** (WineHQ 11.17 under Rosetta, `build/wine-spike/`): **both host tests pass on Wine's own d3d9 with frames byte-identical to DXVK's** — `d3dpt-dp2-test.exe` on both wined3d renderers, `d3dpt-exec-test.exe` with `D3DPT_D3D9=system` (the 2026-09-21 hidden window and executor-owned scene are what wined3d wants; the DXVK branch's NULL window draws the DLL path black under wined3d's GL) — with no executor change at all; step 1 is done here, the rig's run closes it. **Step 2, the transport, landed 2026-09-22 on the host tests**: `libd3dpt_exec_remote` + `d3dpt-exec-host.exe` under Wine, the same six entry points, the guest's regions as one shared file (QEMU patch 73 lets the VGA core take a pre-backed VRAM), `D3DPT_EXEC=` / `exec=` to choose, the `exec-wine` check — frames byte-identical to DXVK's through the child, 553 fps against 929 in process. **Step 3, XP, the same day**: `EXEC=wine tools/xp-driver-test.sh <overlay> d3dgame8` draws D3DGAME8 through the display driver, the DDI and the executor in the Wine process with VRAM as a region of the shared file, frame 300 within the rig budget (600 frames in 3.4 s against 2.1 s in process). Two traps met on the way and closed: the image's driver predated 2026-09-12 and refused the adapter (run `install` first; the track doc's loop), and a host with no Vulkan loader crashed at the adapter's realize in DXVK's `Direct3DCreate9` (the executor asks for `libvulkan` first now, and never unloads a probed library). **A macOS 15 guest in UTM cannot test the GL path** (2026-09-22, `tools/macvm-wine-spike.sh`): Apple's paravirtual GPU has no accelerated OpenGL and Wine's Mac driver refuses to start without one, so a real pre-26 macOS (a second APFS volume on the Air) is where the community build's path is proved. Found on the way: the exec test never cleared the Z buffer it enabled, and DXVK over KosmicKrisp starts one at 0.0, so the DXVK frame on the Air had been the clear colour alone (the test checks no pixels); it clears Z now. **The Windows build needed the shared-file path guarded** (2026-09-22): `memory_region_init_ram_from_fd` is inside `#ifdef CONFIG_POSIX` in QEMU's `include/exec/memory.h`, so the two call sites step 2 added (`d3dpt_vga.c`'s realize, `d3dpt_mm.c`'s `exec_load`) broke the MSYS2/clang build with `call to undeclared function`; both carry the same guard now and nothing is lost — `libd3dpt_exec_remote` is built on Linux and macOS only, and a Windows host below the floor runs the executor in process on the system's own Direct3D 9. On macOS only the community build carries this path (ADR-019). **Step 3 finished later that day**: the ten DX8 DDI probes through the child give the in-process verdicts (nine PASS, PATCHTST not offered either way), and the Win98 display driver's DX7 HAL draws D3D7TEST on it — after three findings: `install` blocked behind setupapi's *second* Logo dialog (DRVINST's watcher gave up after two minutes; it lives as long as the install now, and the harness prints the installer's lines from COM1), the Win98 machine *reset itself* when the child's 3.5 s device creation happened inside the guest's first status-register read (the device is made at the library's probe, before the guest boots), and a `base98-us` run without its Voodoo 2 meets 3dfx's login "Error" box, which takes exclusive mode from any DirectDraw program (D3D7TEST names the foreground window when `BeginScene` fails), and then a **blue screen at the first batch**: patch 65's tick reinjection raised a quarter second of owed 1 kHz ticks back to back after the vCPU's stall in the doorbell write (wined3d compiling its first shaders), and Win98's timer handler nests them until the VMM faults — `reinject=off` was the A/B (300 frames at 57 fps, frame byte-identical to the golden), and the patch now paces the catch-up at the acknowledge, one owed edge per half period (not through a timer: the main loop's wakeup merged that with the regular edge and a 1 kHz clock ran at 66 %). Open, found beside it: an XP whose driver is refused shows *black* on the adapter — the VGA core in a chained 256-colour 800×600 mode that renders nothing (BIOS text and DOS mode 13h render), which hid every one of those failed installs. **Step 4 the same day**: the launcher's probe has the third verdict — a Wine found by the remote library's own rule plus the shipped PE pair gives "runs through Wine on this host (Wine 11.17, OpenGL)", `--host-check` exits zero through it, `--paths` / `player --companions` name the Wine and the pair, the Linux package stages library and pair and the macOS one with the new `--community` flag (ADR-019), doc 15's and CLAUDE.md's `no-exec` now means "no executor at all". **Step 5's Air half, 2026-09-23**: FIFA 2000 plays a match on the Wine executor in the XP guest (`EXEC=wine tools/xp-fifa-match.sh`, now macOS-capable), 22.6 frames/s against 19.0 in process, every match key answered; Moto Racer in that image is on its software renderer (0 draws, 60 flips/s both ways) and on `base98-us` takes the Voodoo 2, so neither is a Direct3D test. **On a real macOS 15, 2026-09-22** (the Air's second APFS volume, `tools/macos-wine-spike-local.sh`): both host tests through the Wine child on the M1's own GL under Rosetta, frames byte-identical to DXVK's, 328 fps; a bare 15 install needs Rosetta installed and has no Python (the CLT stub), both handled by the script now (user-confirmed). **The community app is built for that run** (2026-09-22: `package-macos.sh --community`, every check passing, the Wine pair beside DXVK, minimum macOS 15.0 because Homebrew's floor moved to 15 on 09-10 — `docs/build-macos.md`) with a flattened XP image beside it (`build/xp-mac15.qcow2`) and the recipe in the track's test loop; the run itself, booted into the volume, is what is left. WineD3D-in-guest stays until the track's last step |
-| Everything else (M3 Glide/fences, M2, macOS bring-up) | this doc's "Next steps" | — | as listed |
+| **M4** paravirtual Direct3D device | `tracks/m4-d3d-device.md` | `d3dpt/exec/`, `d3dpt/hw/d3dpt_mm.c`, `guest-tools/src/d3dpt/`, `scripts/test.sh`, doc 14 | Done; the Win98 DLL path and the executor's harness · a game by hand, the P8 and other stubs, zero-copy present |
+| **M5** CD-ROM backend | `tracks/m5-cdrom-backend.md` | `libdisc/`, patches 50–59, `tools/atapi-guest-test.py`, `guest-tools/src/cdtest.c`, docs 05, 17 | Done (steps 1–8) · FIFA 2002's no-match, a second SafeDisc 2 title, SecuROM, multisession, CHD |
+| **M5g** a host folder as a CD (`isodir:`) | `tracks/m5-dirdisc.md` | `libdisc/src/isodir.rs`, `libdisc/qemu/cdimage.c` | Done |
+| **M6** launcher and packaging | `tracks/m6-launcher.md` | `launcher-core/`, `launcher-qt/`, `launcher-capi/`, `shader-chain/`, `scripts/package-*.sh`, doc 07 | Shipped (Qt, ADR-015/017), continues on `main` · AppImage, Windows installer, the preview as a `QQuickRhiItem`, the player's own overlay controls |
+| **M7** XP display driver | `tracks/m7-display-driver.md` | `d3dpt/hw/d3dpt_vga.c`, `d3dpt/hw/d3dpt_exec_load.[ch]`, `d3dpt/d3dpt_fb.h`, `d3dpt/exec/d3dpt_exec_ddi.cpp`, `guest-tools/src/d3dptvid/nt/`, `tools/xp-*.sh`, `tools/d3dpt-dp2-test.cpp`, doc 15 | Done through protocol v13 · a title for each probe-only DX8 feature, more 8 bpp titles, a driver stage in `scripts/test.sh` |
+| **M8** x87 / SSE fast paths | `tracks/m8-tcg-fastpaths.md` | patches 05, 06, 11, 12, `tools/x87-*`, `tools/sse-guest-test.py`, docs 13, 16 | Done · a real Direct3D workload with and without `*-fast=off` |
+| **M9** TCG on Apple Silicon | `tracks/m9-tcg-aarch64.md` | `tools/tcg-profile.*`, `tools/tcg-hot.py`, the TCG patches from 13 on | Done; optimization closed by user decision (2026-09-12) · patch 21's crash, binary32 at PC=24 slower than PC=53 on aarch64, the game tests uncapped on the Air |
+| **M10** Win98 display driver | `tracks/m10-win98-driver.md` | `guest-tools/src/d3dptvid/core/` and `w9x/`, `guest-tools/build-driver*.sh`, `setup.c`'s 9x role, `tools/win98-*.sh`, doc 19, ADR-012 | Active; steps 0–4 done, step 5 (real titles) under way · the doc 04 Win98 title matrix against the Glide / WineD3D control |
+| **M11** Windows host | `tracks/m11-windows-host.md` | `packaging/windows/`, `scripts/win-cross.sh`, `build-windows.sh`, `package-windows.sh`, `win-run.sh`, `embed/mglcntx_embed.c`'s WGL half, `build-windows.md` | Done; the zip runs guests on the user's PC · Moto Racer's speed there, the native MSYS2 build and its ISO run, live control, the installer |
+| **M12** music | `tracks/m12-music.md` | `libsynth/`, patches 60–61, `soundfonts/`, `bundle::Sound` / `Music`, `tools/midi-guest-test.py`, doc 20 | All stages landed · capture Win98's failing MIDI run, a host MIDI port |
+| **M13** gamepads | `tracks/m13-gamepads.md` | `player/src/pad.rs`, `gamepad/`, patches 26–27, `bundle::Pad`, `tools/pad-guest-test.py` | Done · a real controller on the key mapping, the USB pad on Win98 FE / Me |
+| **M14** Voodoo 2 device | `tracks/m14-voodoo2.md` | `voodoo/`, patch 62 and the Voodoo patches after it, `tools/voodoo-guest-test.py`, `scripts/sync-86box-voodoo.sh`, doc 21 | Active on `main` · a second Glide game after one has quit, a client left on a dead ring, the Air and Windows builds |
+| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Active, steps 1–4 done · a guest in the community app on macOS 15, then retire WineD3D-in-guest (step 6) |
+| Everything else (Glide on macOS / Windows, M2's leftovers) | "Next steps" below | — | as listed |
 
-Rules: branch `track/<name>-<topic>` off `main`, rebase on `main` before
-pushing, merge to `main` when green. Shared files (`d3dpt/d3dpt_proto.h`,
-`d3dpt/exec/`, `scripts/test.sh`, `player/`, `CLAUDE.md`, this doc) are
-edited minimally and the commit message says which track. In this doc a
-track edits only its own state-table row, its "Next steps" line and this
-table; everything else about the track lives in its track doc. Once a
-track's work is on `main`, its branch and worktree are deleted (local,
-worktree and remote) and the row says so — a branch name still in this
-table is one that still exists. The Mac side pulls `main`.
+Rules: work on `main` or a branch `track/<name>-<topic>` off it, rebased
+on `main` before pushing and merged when green. Shared files
+(`d3dpt/d3dpt_proto.h`, `d3dpt/exec/`, `scripts/test.sh`, `player/`,
+`CLAUDE.md`, this doc) are edited minimally and the commit message names
+the track. In this doc a track edits its own row here, its own "Where
+things stand" row and its own lines under "Next steps"; everything else
+about it lives in its track doc. A merged track's branch and worktree
+are deleted. Branches still on the remote: `track/m10-win98-driver` and
+`voodoo2-mmio-holes` (merged), `track/m9-hwmmu` (the hardware-MMU gauge,
+parked), `m14-glide3` (abandoned, tagged `m14-glide3-abandoned`) and
+`track/m14-voodoo2-sli` (an SLI pair and the Voodoo 3's screen filter,
+unmerged). The Mac pulls `main`.
 
 ## Where things stand
 
 | Area | State |
 |---|---|
-| QEMU fork | v9.2.4 + qemu-3dfx (d00e858) + our queue (`patches/qemu/README.md`). **Built with only what we use, since 2026-09-07.** QEMU auto-detects a large optional surface, so what a build links is otherwise decided by which libraries the machine happened to have — which is how this box, the Mac and the Flatpak SDK end up with three different `libqemu-embed`. Four dead families are disabled outright. *Display:* `--disable-sdl --disable-sdl-image --disable-gtk --disable-vte --disable-cocoa --disable-curses --disable-spice --disable-spice-protocol` — the player is the front end, it embeds QEMU, the embed library appends `-display none` itself and brings the 3D provider (patch 30). *Audio:* `--disable-alsa --disable-pa --disable-pipewire --disable-jack --disable-oss --disable-sndio --disable-coreaudio --disable-dsound` — the player's sound is the `embed` audiodev (patch 20). *Network:* `--disable-af-xdp --disable-vde --disable-bpf` (libbpf's one consumer is `hw/net/virtio-net.c`'s eBPF RSS, and the bundles write pcnet / rtl8139); **slirp stays**, every bundle says `-netdev user`. *Block:* `--disable-curl --disable-libssh --disable-libiscsi --disable-libnfs --disable-rbd --disable-glusterfs --disable-blkio` — every drive is a local file or a disc image through our own `cdimage` driver. Plus `--disable-brlapi`. `libqemu-embed-i386.so` went from **175 shared libraries to 93**; the Windows package lost `SDL2.dll` + `SDL3.dll`, the `.app` loses SDL2/SDL3 and Cocoa. `none` and `wav` audiodevs are built unconditionally, which is what every headless tool uses (`tools/xp-cdimage-test.sh` still captures CD-DA through `-audiodev wav`). `--disable-dsound` was a no-op until new patch `23-upstream-dsound-option`: QEMU 9.2's guard is `if not get_option('dsound').auto() or …`, and `not auto()` is true for *disabled* too, so DirectSound was compiled into `libqemu-embed-i386.dll` on every Windows build — found by the `no-optionals` check's probe for QAPI's `AUDIODEV_DRIVER_<X>` enumerators, each of which exists only behind its own `CONFIG_AUDIO_<X>` and so catches the three backends that link no shared object (OSS, CoreAudio, DirectSound). Patches 02/03/90 went with SDL; new patch `02-3dfx-sdl-optional` removes qemu-3dfx's `error('Featuring qemu-3dfx required SDL2')`, and Darwin now builds the same GLX context backend Linux does. Cost, on every platform: standalone `qemu-system-i386` has no 3D (it registers no provider, refuses the context and keeps running) **and no window** — QEMU starts a VNC server on `localhost:5900` when no `-display` is given (`system/vl.c`), so `-display vnc=:0` is the way to look at a guest by hand; VNC is kept for exactly that and needs no toolkit. DXVK followed — `-Dnative_sdl2=disabled`, patch 04's headless WSI is the only one built, and the native oracles use `tools/d3dgame-native/win32_headless.h` so they need no display. A `no-optionals` check in `scripts/test.sh` asks the built artefacts (link **and** bare library name, on both the native and the `build/win/` binaries) so none of it can come back quietly. Builds on Linux x86_64 (Arch) and macOS Apple Silicon (M1 Air, macOS 26.6.2 since 2026-09-03, for KosmicKrisp / ADR-007). **Windows x86_64 since 2026-09-06** (M11): cross-built with mingw-w64 from Linux, WHPX included, `qemu-system-i386.exe` boots a machine and answers QMP under wine — docs/build-windows.md. Patch 05 (2026-09-02): x87 on the host FPU at 53/24-bit precision, bit-exact vs softfloat (host oracle + in-guest on/off test), 2.2× on an x86-64 host loop; Super PI 1M on the Air 9:49 → 6:33. Patch 06 (2026-09-03, doc 13): x87 stack as host doubles in TCG, 7.4× vs softfloat on x86-64; **XP Super PI 1M on the Air 1:57, faster than the rig's real P4 1.7 (2:02)**. Patches 07/08 (2026-09-04): upstream x87 helper fixes (pseudo-NaN transcendentals, fcomi flags) and seven decoder / segment fixes from the 2025–26 fuzzing work, hand-rebased onto 05/06; suite green under KVM and TCG. Patch 09 (same day): the 10.0 repeated-string series, 12–16 % on rep movs/stos per `tools/string-bench.py` (DOS microbench, compares two QEMU binaries side by side). Upstream survey the same day: QEMU 10.x/11.x add nothing we need (11 dropped 32-bit *hosts*, not the i386 target; qemu-3dfx has no 10.x patch), staying on 9.2.4 is a decision. Patch 11 (2026-09-04, doc 16; `11-sse-inline-tcg`, numbered 07 on the track branch before the merge): SSE/SSE2 float inline on the host FPU, packed ops on the vector unit (new TCG vector float opcodes), scalar in general registers; 333,875-line on/off guest test identical on the Air; register-only bench packed 12×, scalar 3.6× over the helpers; **SSEBENCH.EXE in XP on the Air: SSE kernels 3.2–7.4×, x87 kernels 10–12× (`reference/benchmarks/README.md`)**; rig run 2026-09-04: checks bit-identical to the real P4, Air at 97–109 % of it on four of the nine kernels, 61 % packed transform, 34 % clamp+cmp, 18 % x87 C transform. **x86-64 host, 2026-09-04, clamp+cmp:** `minps`/`maxps`/`cmpps` had no native TCG vector op (unlike `fadd_vec` etc), so were synthesized from a 16-18-op total-order key transform just to feed `cmp_vec` a monotonic float ordering; new `fmin_vec`/`fmax_vec`/`fcmp_vec` opcodes map straight onto native `VMINPS`/`VMAXPS`/`VCMPPS` on x86-64 (same ISA as the guest, so −0/+0 tie-break and NaN-operand-selection come for free, only a 6-op NaN-presence check needed for the guard), aarch64 keeps the key-transform path (macros `0`, unvalidated). `tools/sse-guest-test.py` packed chain 8.1× → 10.0×; new isolated `SSEBENCHC` kernel 6.5× over the helper; 546,425 lines still bit-identical. Patch 12 (2026-09-04, `12-simd-inline-tcg`, was 08): MMX/SSE integer and permutation ops inline (`simd-fast`), 546,425-line on/off test identical, MMX chain 4× (aarch64). x86-64 host run (2026-09-04, same day): both guest batteries bit-identical; `simd_psadbw`'s gvec-vs-register-vec regression fixed, `pmulhw`/`pack*` given native x86-64 vector ops (`mulsh_vec`/`muluh_vec`, `ssnarrow_vec`/`usnarrow_vec`), MMX chain 1.4× → 1.7×; then packuswb's `env->sses_scratch` combine (a store-to-load-forwarding stall) replaced with `dup_i64_vec` + `bitsel_vec` (portable stock TCG ops, no new opcodes), MMX chain 1.7× → **2.1×**, still 546,425 lines bit-identical. aarch64 side validated on the Air the same day: both batteries bit-identical, register-only bench packed 13.8×, scalar 3.4×, MMX 3.6×, clamp+cmp 8.7× on the key-transform fallback. XP `SSEBENCH.EXE` on the x86-64 box (Ryzen 7 5700X, 2026-09-04): clamp+cmp 3.68 ns/op = 43 % of the rig (Air 34 %), scalar chain 116 %, convert 130 %, MMX blend 122 %, C normalize 99 %, normalize 89 %, packed xform 49 %, C xform 16 %; checks identical to the rig's. |
-| Player (Rust, `player/`) | Boots a machine in-process via `libqemu-embed-<target>`; wgpu presentation, librashader CRT chain, keyboard/mouse, audio, QMP over a socketpair (`PLAYER_QMP`, `PLAYER_QMP_EXEC`). Audio (2026-09-04): the embed audiodev keeps a 60 ms cushion (`PLAYER_AUDIO_MS`) ahead of the host audio thread and pins the guest's audio clock to wall time, dropping a stall's backlog instead of queuing it; `qemu-embed: audio:` stderr lines count gaps and drops. Before, a 10 ms cushion with no catch-up: every main-loop stall under TCG was a gap plus permanent extra latency inside the guest. **Win98 and XP run in it on the M1 Air** with sound and tablet mouse. Mode analysis (2026-09-05, doc 03, first M2 item): `player/src/mode.rs` says what a guest framebuffer size meant on an era monitor — display aspect, the scanline count the CRT actually drew, whether the CRTC double-scanned — and the player applies both. The geometry stage takes the aspect from there instead of the framebuffer's own ratio (320×200 is a 4:3 picture, not 1.6:1; so are 640×350, 640×400, 720×400 text and the mode X sizes), and the scanline count reaches the preset through `vga_mode` / `inter`. Measured on the real chain with crt-guest-advanced, counting scanlines in the frame the preset drew: **320×200 draws 400, not 200; 640×480 draws 480, not the 240** its interlace guess gave it — the control (`PLAYER_MODE_PARAMS=0`) is wrong two different ways, one scanline per guest row below the preset's 375-line trigger and half a field's worth at or above it. `player --mode-sweep <dir>` is the check (19 modes, ~2 s, a PNG each, wired in as `mode-sweep`). Open, and stated in doc 03: presets with no resolution override (crt-lottes, crt-royale) cannot be told the count at all — the player says so once and leaves them alone. Whole-pixel geometry (2026-09-06, user-reported): the viewport's size and origin are rounded to integers, because aspect correction makes the width fractional (320×200 at 1x is 533.33 wide) and a fractional rect re-samples the picture on a grid that shifts with the window — the image crawled while the window was resized, and the blit stretched the chain's own integer output texture by a fraction on top. The window also gets a minimum inner size of the 1x picture in physical pixels (the corrected width: 320×200 → 534×400), re-applied on every mode change and clamped to the monitor, so it can no longer be dragged below the native resolution into the free-fit branch that shrinks guest pixels. **Ctrl+Alt+S** the same day shoots the guest's own frame — native size, no geometry stage, no CRT chain, the imported 3D slot included — to `PLAYER_SHOT_DIR/2ksbox-NNNN.png` (default: the working directory). **The geometry stage is event-driven since 2026-09-07** (the M2 item, doc 03): the mode analysis, the window's minimum size, the preset's scanline parameters and the fitted rect are decided when one of the two things that decide them changes — the picture's own size (`Gpu::guest_surface_changed`, called from the three places a surface can appear on screen: the framebuffer upload, a 3D slot taken or dropped, a slot re-imported) or the host surface (`Gpu::resize`) — and the draw only reads the held rect. Before, `render` re-ran the analysis and the fit two or three times per frame and pushed shader parameters and window-resize requests from inside the draw; QEMU's own `on_switch` is deliberately *not* the trigger, since it lands up to a refresh tick before the first frame of the new mode and re-fitting there would stretch the old mode's pixels into the new mode's box for that tick. `mode-sweep` (19 modes, each one a mode change measured in the frame the preset drew) is the check. **The VGA raster is a rule since 2026-09-07** (user-reported: an XP install "suddenly not the right aspect ratio"): the table matched exact sizes only, and the size the player is handed is not always the raster the CRTC scans — QEMU's text path reports `rows × cheight` with the last partial row dropped, so a 400-line raster with a 12-line character cell arrives as **720×396** (`[display] switch 720x396`, XP's text-mode setup), missed `720x400` and was drawn square-pixel as an unlisted 1.818:1 picture — the install stretched across the window. `mode::vga_raster` now answers it from the raster instead: one of the four VGA widths (320/360/640/720) at 480 lines or fewer is a 4:3 picture whatever its line count, so the truncated text rasters (720×396, 720×392, 640×344) and the unlisted round ones (720×350) all come out right; anything else is still square-pixel. 720×396 is in the sweep. **The host's keyboard shortcuts are the guest's while the window has focus (2026-09-13, user request)**: the Windows key opens the guest's Start menu rather than the host's launcher, grabbed or not (a Windows machine is on the tablet and never grabs). `player/src/kbcapture.rs`: Wayland's shortcut inhibitor, an X11 keyboard grab, a low-level keyboard hook on Windows (since the same day every shortcut Windows acts on itself — the Windows keys, Alt+Tab/Esc/F4/Space, Ctrl+Esc — where it took only the Windows keys; **the hook was dropped on 2026-09-18** and Windows now uses the keyboard registered for raw input with `RIDEV_NOHOTKEYS`, because a low-level hook in the player is called for every key on the machine *except* while the player's own window is in front, which is the only time it is wanted — "The first Windows host run" item 5 has the measurements, and `PLAYER_KEYBOARD_LOG=1` the trace), nothing on macOS; **Ctrl+Alt+K** toggles it mid-run (user request, the same day: off drops the capture, on builds a new one, the title says when the host has its shortcuts), `PLAYER_KEYBOARD_CAPTURE=0` starts a run off and `scripts/test.sh` sets that. **Ctrl+Alt+Shift+D** sends Ctrl+Alt+Del (doc 03's input path); **Ctrl+Alt+Shift+F** toggles windowed full screen (borderless, user request). **A keyboard close asks first** (user request, the same day): a `CloseRequested` with Alt held — Alt+F4 while the host has its shortcuts — puts a question over the picture instead of stopping the machine; the player draws it itself (`player/src/prompt.rs`, the VGA 8x16 font as `vgafont16.bin`, blended after the CRT chain) because Linux has no message box to borrow inside the Flatpak. Enter, Close or a second Alt+F4 closes, Esc or Back returns, nothing reaches the guest meanwhile; the title bar's button does not ask. **A host keymap option reaches the guest** the same day (user report: sway's `xkb_options ctrl:swapcaps`): the player sent every key by where it sits, so the host's Caps-as-Control was Caps Lock in the guest and the real Control toggled the host's Caps Lock to reach it; Control, Shift, Alt, AltGr, Super, Caps Lock and Escape now go as the host reads them (`keymap::as_host_reads`), everything else still by position because the guest has a layout of its own. Built and type-checked for Linux and the Windows target; no check covers it — a compositor or a foreground window is the only thing that can answer, so it is hand-tested. The first hand test found it crashing the player (SIGSEGV in `wl_proxy_destroy`) after every guest power-off: that path left the capture to `App`'s drop, which runs after `run_app()` has consumed the event loop and closed the Wayland connection (an X11 display the same way); it is dropped in `ApplicationHandler::exiting` now, which every way out passes while the connection is still open. |
-| 3D | **GL pass-through runs inside the player on Linux** (doc 12 steps 1–2, 2026-09-02): patches 30/31 + `embed/mglcntx_embed.c` (EGL surfaceless pbuffer as FBO 0, `glReadPixels` on swap) + API v4. Win98 wglgears in the player: 420 fps at 800×600 with the readback path, desktop returns on exit. **A Glide title plays (2026-09-10): Rayman 2 at 640×480 on a copy of `claude98`, `PLAYER=1 tools/win98-game-test.sh` — doc 12 §5.** Standalone `-display sdl` did too (500+ fps on the Air) until SDL was dropped on 2026-09-07; the player is now the only 3D path. **macOS too** (CGL, no drawable, FBO stand-in; `GL 2.1 Metal / Apple M1`, wglgears in the player on the Air). **Linux zero-copy** (GBM dma-buf ring → Vulkan import, API v5, 2026-09-03): 575–600 fps wglgears, nothing copied per frame. **macOS zero-copy** (IOSurface ring → Metal, API v6) verified on the Air. **Glide works on Linux (2026-09-06, doc 12 §5).** qemu-3dfx ships no host-side Glide implementation at all -- `hw/3dfx` is a dispatcher that `dlopen`s a `libglide2x` and looks up 183 entry points in it, and upstream sells that library to donors -- so ours is **OpenGLide** (LGPL, `third_party/openglide` at `ad9a3dd`, four patches, `scripts/build-glide.sh`): 121 of the 183, which is all of Glide 2.x (Glide 3 and the Voodoo3 `Ext` set are absent). The handshake is reversed rather than extended: patch 33 hands the wrapper *our* context (`GlideHostOps` in `glidept/glide_host.h`, through its optional `setHostOps` export) instead of taking a window from it, so `grBufferSwap` publishes through the same `publish_frame` as `MGLSwapBuffers` -- dma-buf ring and shader chain included -- and a wrapper without the symbol, or `-display sdl`, is upstream unchanged. Guarded by the `glide-host` check (`tools/glide-host-test.cpp`): the real wrapper, loaded by the real dispatcher, opened through `glidewnd.c`'s own handshake, a green triangle over the upper-left half at 640x480 checked in the frame the frontend receives -- corners, so the Glide upper-left origin is checked too. The wrapper is found the way the D3D executor is (`QEMU_GLIDE_LIB`, then `build/glide/libglide2x.so`, then the loader's path), so a build tree needs no environment. **A Glide guest ran on 2026-09-06:** `TESTS\GLIDETEST.EXE` (`guest-tools/src/glidetest.c`) in Win98 in the player, headless through `tools/glide-guest-test.sh` -- `SETUP /ALL` off the ISO installs `GLIDE2X.DLL` + `FXMEMMAP.VXD`, and the program draws the same scene the host test draws and then reads its **own** pixels back through `grLfbLock`: `glidetest: 4 cases, 0 failed` at 640x480 (clear, triangle with the corners as the orientation check, re-clear, and a close/reopen -- a game's mode switch, where a leaked host context fails the second open). The guest sees `Glide 2.45 - OpenGLide 0.09rc9` and one board. The run found one real wrapper bug: `grLfbLock` never filled the caller's `lfbInfo->origin` (patch `04-lfb-origin`), which qemu-3dfx reports as `LFB origin mismatch` and caches for `grLfbBegin` -- a Glide 2.11 title would have read its buffer upside down after any lock. The same sources **build on macOS** (2026-09-06): OpenGLide says `<GL/gl.h>` and macOS has none -- the framework's headers are under `OpenGL/` and the only `GL/` on the box is XQuartz's Mesa, the implementation this must not bind to -- so `glidept/host/macos/GL/` forwards, on the include path on Darwin only, and carries what Apple's `glext.h` (stuck at `GL_GLEXT_VERSION 8`, 2003) lacks: the seventeen `PFNGL…PROC` typedefs, `APIENTRY`, four paletted/packed-pixel enums. `libglide2x.dylib` links against `OpenGL.framework` and `libSystem` alone, 120 entry points plus `setConfig`. **Nothing runs it there**: `glide-host` drives the embed backend's EGL path and is still Linux-only, and no Glide guest has run on a Mac. |
-| Voodoo 2 | **`-device voodoo2`, 86Box's Voodoo 2 emulation vendored verbatim behind a QEMU PCI device (doc 21, M14, 2026-09-12)**: the port in `voodoo/` (the sources, a shim of 86Box's platform headers, the device), patch 62 for the meson subdir. Proved by a FreeDOS guest through the whole path — PCI config, the chip's init sequence, an LFB fill read back, a swap on the display timer's retrace, the frame on the guest console by QMP screendump (`tools/voodoo-guest-test.py`, the `voodoo-guest` check), and the console handed back afterwards — beside `d3dpt-vga` in a linear mode too (`voodoo-guest-d3dpt`), where until 2026-09-12 the Voodoo's last frame stayed up for good because the adapter's invalidate did not re-install its own surface. **3dfx's own Win98 driver and Glide 2.x run on it since 2026-09-12** (`win98-2`): the first open spun on PCI config `siProcess` (0x54) until the device modelled its countdown; 86Box's `fatal()` is a counted refusal here, the SLI bit is unwritable and the frame buffer carries zero pages after it, because Glide's window teardown streams a burst through the FIFO with the FIFO off, which lands in the register file (as the chip would take it). The card initialises and draws; GLIDETEST's hang at `grSstWinClose` (seen 2026-09-12) is gone — it does not hang in the user's run of 2026-09-13 (`VOODOO2_TRACE=1` and the 5 s histograms read a spinning guest, should one come back). **Real games run on it (2026-09-13, the user by hand on `base98-br`): Quake II, Unreal Tournament and NFS Porsche Unleashed** — Glide 3 on 3dfx's own `glide3x.dll` included — and all three quit cleanly; Quake II and UT felt fine, Porsche slow, and a second game started after one has quit sometimes comes up with glitched graphics (open; no numbers or logs from these runs yet). **`SETUP.EXE` no longer overwrites the card's Glide** (2026-09-13, doc 21 §10): 3dfx's driver and our Glide component share `GLIDE2X.DLL` / `GLIDE3X.DLL` / `FXMEMMAP.VXD` / `GLIDE2X.OVL`, and every `SETUP /ALL` used to put ours back over 3dfx's; with a 3dfx device present it now leaves them alone, and `/GAME 6`/`7` put ours next to one game. `VOODOO=1 tools/setup-guest-test.sh` holds it: PASS on Win98 (`base98-br`, 36/36) and XP (`winxp.qcow2`, 16/16), and without the card 32/32 and 14/14. Getting a launcher machine's Win98 image through that harness took four fixes to the harness, each a boot that stopped before the shell: Win98 boots `hpet=off` as in the launcher (an HPET is an Unknown Device to it); `NO_NET=1` / `NO_USB=1` for an image with no NIC or tablet (QEMU adds a NIC unless told `-nic none`); a null INF for the driverless card, put into a raw copy; and `gw_run_dialog` opens Run with Win+R on 98 as well, because Ctrl+Esc R is the English Start menu's shortcut and a Portuguese 98 ignores it. The card's BAR lands at `0xfd000000`, clear of every fixed pass-through window. **No gray flash when a game takes the card or changes mode** (2026-09-14, the user's report): what the frame buffer holds then is 3dfx's init writing test patterns or the old mode at a new pitch, which a real monitor hid while it re-synced; the console now stays black until the guest's first swap (2 s at most), doc 21 §7. **First numbers on this box (2026-09-15, track doc step 2):** Quake II `timedemo demo1` 41 fps, UT's intro flyby 34 fps, Porsche's front end its own 30 fps cap (no race headless); the 5 s line has a `(N new)` column for the game's frame rate now. **The command FIFO is RAM now** (`ramfifo`, same day): every trapped dword had been a `cpu_io_recompile` under TCG, and with the ring as RAM and a packet walk at the guest's other card accesses **Quake II's timedemo went 41 → 147.5 fps** and UT's flyby 34 → 41 (doc 21 §9). **Two jobs are written up for a new session** in the track doc ("Two jobs, written up for a new session"): **A, blocking — a Glide program wedges at `grSstWinOpen`** on the card (the guest spins on `cmdFifoRdPtr`, the registers scribbled by packets written to the FIFO window while the FIFO is off; intermittent and it hits games by hand, 100 % reproducible headless with `GLIDETEST`; not the RAM FIFO, not the recompiler, not the resolution asked for). **A found, 2026-09-16** (doc 21 §11): 3dfx's driver runs `rundll32 3dfxv2ps.dll,UpdateRegSettings` from a Run entry at every login, which initialises the card through `GLIDE3X.DLL` in another process — about 3 s under TCG — and a Glide program started at the desktop has its window torn down under it (video registers zeroed, command FIFO off, then its packets decoded as registers). GLIDETEST started 20 s after the desktop passes all four cases, reopen included. The device now warns when an init starts under a live command FIFO, `tools/win98-game-test.sh` waits `VOODOO_WAIT` (20 s) on a machine with the card and names a collision in its summary, and `VOODOO2_TRACE=1` names the guest module and process behind each init. The hand-run hangs are this as well: the user saw a stray `rundll32` running every time a game froze. Two 86Box command-count bugs found along the way stay written up in the track doc, and **B — neither 86Box code generator subtracted the dither on a blend read-back** while its interpreter did: **fixed 2026-09-16 by patch 64**, on the overlaid `hw/voodoo` copy so `voodoo/86box/` stays verbatim (x86-64 and ARM64 alike, both emissions checked against the tables before a guest; the `voodoo-guest` dither phase now *requires* every column to equal the reference and the frame to be one 4x4 dither tile — 0 pixels off with the recompiler and the interpreter, 10,240 off with `DITHER_SUB=off` on either path, which is also exactly what the recompiler read before the patch). The ARM64 half still wants its `voodoo-guest` run on the Air. **2026-09-16: 3dfx's login helper has a guard** — the helper (a Run entry re-initialising the card from another process, 11–19 s under TCG on `base98-br`) hung any Glide program started meanwhile; `SETUP /I 6` now puts `V2START.EXE` in its place, which runs it and shows "Voodoo 2 driver is loading, please wait before running 3dfx games" until it exits, and `tools/win98-game-test.sh` watches its log instead of sleeping 20 s (doc 21 §11). **The dither can be undone rather than blurred since 2026-09-18** (`undither=on`, doc 21 §12): 86Box's own `filter=on` is leilei's approximation of the RAMDAC's postfilter and on a Voodoo 2 it is a single-scanline 4x1 pass (and a no-op until the guest writes `maxRgbDelta`, which nothing seeds), so instead `voodoo/undither.c` inverts the rasterizer's *own* dither tables — the phase at scanout is `(y & 3, x & 3)` for a linear buffer, and the intersection of a window's per-pixel intervals is what colour can have produced them: exact over a 4x4 (one value wide at every phase), within 2/255 over the 2x2 fallback, and where neither window holds one colour the pixel is left exactly as the unfiltered path wrote it, so an edge is an arithmetic impossibility rather than a threshold. The `voodoo-guest-undither` check is the proof and the dither phase is the oracle: that scene is one grey dithered into the frame buffer, and through the real device it comes back **one flat colour, (130,130,130) — the grey the program drew — on every interior pixel**. 1.4 ms a frame at 640x480 on the Air (a BQL hold, so measured, and down from 4.7: the hot loops plane-at-a-time over contiguous bytes, the CLUT lookup skipped on an identity ramp, and `combine_span` forced past clang's cost model, which alone is 2.2x on it; well clear of the 10–14 ms stalls that make audio click, but per presented frame, so ~20 % of the main loop's core at Quake II's 147 fps). **The machine form has it since the same day**, as "Undo its dither" on the same line as the Voodoo 2's own checkbox (`voodoo2_undither` in the bundle, doc 07): it is a setting of that card and of nothing else, so the form disables it without one, turns it off with the card, and `--print-args` writes `,undither=on` onto that same `-device` — a setting that reaches no device would be a lie on the screen. The `voodoo2` check walks all of that. The GPU was considered and refused: the player could do it for nothing, but the dither is the card's property and not the monitor's, the surface it gets has been through the CLUT, and a shader's frame is invisible to every QMP screendump — including the check that proves this right. Off by default. **A command-FIFO packet met with the FIFO off is refused since 2026-09-20** (doc 21 §11, `fifo-off-regs=on` the A/B): nothing writes that window on purpose with the FIFO off, and letting the dwords walk the register file is what leaves the card unusable after a stranded Glide — FIFA 2000's close on `base98-br` took Windows down with it, and the healthy reopen the same day's `VOODOO2_TRACE=1` caught (`initEnable 5001`, the `0x1e0`–`0x1f8` block, `fbiInit7` bit 8) was nowhere in it. **The walk never passes the guest's write pointer since 2026-09-20** (doc 21 §9): with the ring in RAM the device reconstructs the write pointer from poison, and a last resort took the rest of a part-written packet as data after 64 idle `cmdFifoRdPtr` polls. Glide's free space is `rp - wp - 1`, so a pointer past `wp` turns the whole ring into a few words of room and the guest waits for space on a ring that is empty — **FIFA 2000's loading screen** (the user, 2026-09-20): a 66-word LFB packet with 19 words written, 47 taken, and a guest asking for 66 words with 46 free, then 22.7 M `cmdFifoRdPtr` reads a second for ever. The same game runs matches start to finish on `ramfifo=off`, the transport that counts every write and guesses nothing. The guess is gone; the case it was written for — real data reading as poison — was closed at its root when the poison word stopped being `0xffffffff` (2026-09-17). The `voodoo-guest` check's partial-packet phase holds it: a header written and its value not, 256 rdptr polls, and the pointer must read one word in and stay there. **The MMIO ring is counted as the chip counts it since 2026-09-21** (doc 21 §13): Glide writes a two-word packet value first and header second, 86Box counted each write as it came, and a caught-up consumer read the header's slot before it was written — Carmageddon's race start on `ramfifo=off`, a `fatal()` inside a texture download and 27 M `cmdFifoRdPtr` reads per 5 s; the device holds a word ahead of a hole until the gap closes, and the `voodoo-guest` check's swapped-pair phase plants the stale word and requires the fill after it on screen. Track doc for what is next |
-| Guest machines (doc 06) | **Four families since 2026-09-07**: Win98, XP, DOS and **Other** — the catch-all for an era OS that is none of those (BeOS, a period Linux, OS/2), added on user request. Other is defined by what it does *not* get: standard hardware only, `-vga std` rather than `d3dpt-vga` (our adapter needs our display driver, which is a Windows driver), an RTL8139 at `0x03` and an ES1370 at `0x04` — both in the box on BeOS R5 and on a period Linux — 512 MB by default in a 16–3072 range, Automatic acceleration, unthrottled, and **no USB tablet**: an absolute pointer needs a guest USB stack and window system we cannot vouch for, and there is no guest-tools install to fix it with. No 3D of any kind, because every guest half of the pass-through is a Windows DLL. It is the one family with a sentence under the picker (`wizard::Form::family_note`), since the other three explain themselves. Guarded by the `family-other` check in `scripts/test.sh`; doc 06 has the table. **The display adapter became a choice the same day** (`bundle::Video`, `video` in the bundle, doc 06's new section): Win98 and XP pick between our own `d3dpt-vga` + driver (the whole display path, and XP's default) and the `cirrus` Windows has an in-box driver for (Win98's default since later the same day) — the honest answer for a machine whose driver is not installed yet and the A/B for a title that misbehaves on ours — while Other picks between `std` (default) and `cirrus`. An adapter a family does not offer falls back to that family's default rather than being obeyed, every adapter lands at PCI `0x02` so the cards below it do not move, and editing one warns that the guest will find new hardware. New check: `display-adapter`. **DOS joined the picker 2026-09-09** with `std` (its new default) and `cirrus`, and is the one family where the adapter is not a driver question at all: a DOS title programs the registers itself, so what changes is which VESA BIOS it finds — the Bochs adapter's VBE 2.0 with a linear frame buffer, or the Cirrus's of the period. It came out of a Duke Nukem 3D report (below): a game drawing wrongly in a VGA/VESA mode, with no way to change the adapter short of editing the bundle. **The default moved from `cirrus` to `std` with it** (user decision): the family had `-vga cirrus` hardcoded into its arguments from the day it landed (`8a0cfce`) and doc 06 recorded it that way, and that was the slip — the Cirrus belongs to `Other`, where a guest wants a chip a *native* driver was written for. Existing DOS machines carry no `video` field and so move to `std` on their next start; nothing is installed for them to lose, and the wizard's orange warning is a different sentence on DOS for that reason (a game that already ran its own setup may have recorded a mode the other adapter does not offer). `d3dpt-vga` stays refused on DOS, which has no driver for it. Three families since 2026-09-06: Win98, XP and **DOS**. The DOS machine is the same i440FX PC with the SB16 doc 06 already had "for DOS boxes/games", 64 MB, no NIC, cirrus, and no 3D of any kind (the DOS Glide wrapper is `GLIDE2X.OVL`, which we do not build). What makes it a DOS machine is the new **processor** field (`bundle::CpuSpeed`): a combo of named machines — Unthrottled, Pentium 133, Pentium 75, 486DX2-66, 486SX-25, 386DX-33, 286-12 — because era software times itself against the CPU it finds and our TCG runs a DOS guest at ~660 M instructions/s. It is QEMU `-icount shift=N,**align=on**`; without `align=on` the guest only *believes* it is slow (measured: a "throttled" run finished in less wall-clock time than the unthrottled one). `-icount` cannot run under KVM, so a chosen processor forces emulation — said in the wizard, not discovered later. Two more bundle fields landed with it, both promised by docs 06/07 and never implemented: `floppy` and `boot` (Automatic / Hard disk / Floppy / CD). Guarded by `tools/dos-guest-test.py` (12 checks, a real FreeDOS guest: 31.3 M/s measured against 31.25 asked, 7.8 against 7.8). | **Win98 moved onto `d3dpt-vga` 2026-09-07** (user decision), **back onto the cirrus as its default the same day** (user decision), once the adapter was a choice, and **onto ours as its default again 2026-09-16** (user decision) — so a new Win98 machine is ours, like XP, with the Cirrus one pick away. What follows is the 2026-09-07 state: a new Win98 machine was `-vga cirrus` and the in-box driver again, with ours (`-vga none -device d3dpt-vga,addr=0x02`, the M10 driver of doc 19, the NIC pinned below it at `0x03`) one pick away in the wizard. XP's default is unchanged and is ours. The reason for the default is that the 9x driver is much the newer of the two, so a 98 machine comes up on the driver Windows already has and is moved to ours deliberately — and moving it either way *is* a hardware change to an installed guest: it finds an unknown adapter on its next start, comes up in plain VGA and wants a driver before it has its desktop back. The test tools keep their own cirrus machines, which is where the inbox driver stays exercised.
-| Guest tools | **The ISO was reorganized 2026-09-06** into one folder per role with one copy of every file — except, since 2026-09-12 (user request), WineD3D's, whose `WINED3D\D3D8-9\` and `WINED3D\DDRAW\` hold the DLLs under the names a game loads, each with `WINED3D.DLL` and `OPENGL32.DLL`, to be copied whole from Explorer (`SETUP /GAME 4`/`5` copy the same folders), plus a `README.TXT` of its own saying which folder a game wants and that this is the fallback, tried after the display driver's own Direct3D — **`WINED3D\SYSTEM\` was dropped 2026-09-18** (user decision): wine9x's system-wide switcher DLLs were a third way to install the same thing, sitting on the same disc as the two per-game folders, and only made the folder read as a choice to understand; they are still built into `guest-tools/out/wine9x/` — (`SETUP.EXE` `README.TXT` `GLIDE\` `DRIVER\` `D3DPT\` `OPENGL\` `WINED3D\` `TESTS\` `CDSHELF\`, 20.1 MB → 15.4 MB), and grew **`SETUP.EXE`** at its root (`guest-tools/src/setup.c`): a console installer that offers the components *this* guest's Windows can use — 98/Me get Glide + `FXMEMMAP.VXD`, 2000/XP get Glide + `FXPTL.SYS` with the MAPMEM service and the `d3dpt-vga` display driver — plus the per-game file sets (`SETUP /GAME`), which is where WineD3D's `WINED9.DLL` → `D3D9.DLL` renames happen so the disc need not carry them twice. `SETUP /ALL` is the scriptable form. What went: `GAMEDIR\` (three different stacks in one folder, WineD3D's DLLs under the same names ours use), the test EXEs duplicated into `D3DPT\`, and the Glide DLLs duplicated across the two OS folders. The ISO's two README files are now real files (`guest-tools/README-ISO.txt`, `README-DRIVER.txt`) instead of heredocs inside the build scripts. Both families are verified end to end by **`tools/setup-guest-test.sh <image> [xp|win98]`** (`/LIST`, `/ALL`, `/GAME`, then Windows' own `dir` on everything that should exist, over COM1): XP 12/12 with the display driver installed and the miniport up in the QEMU log, Win98 10/10 with the VxD mapper and without the driver component being offered. Local only, never in `scripts/test.sh`. `guest-tools/build-wrappers.sh` builds the qemu-3dfx guest wrappers (msvcrt-linked, `-march=pentium3`, wglgears test EXE) and, since 2026-09-03, the WineD3D set from JHRobotics/wine9x (Wine 1.7.55 for 9x/XP: per-game D3D8/D3D9/WINED3D DLLs + system-wide switchers) with a D3D9 smoke test (`D3D9TEST.EXE`), the display-mode probe (`MODETEST.EXE`) and the reference workloads `D3DGAME9.EXE` / `D3DGAME8.EXE` (doc 14 P0a) into an ISO. **Rig (P4 + GeForce 6200), 2026-09-03: both run.** First-run fixes: ground triangle winding (top face was culled), shader path now applies the per-cube material (all cubes were one colour), d3dgame8 windowed swaps with COPY_VSYNC so both pace at the refresh rate by default (85 fps on the rig's monitor is vsync, `-novsync` for throughput), console output also goes to `d3dgameN.log`. **Golden captures landed 2026-09-03** (`reference/d3d/rig-2026-09-03/`, diff with `tools/bmpdiff.py`): d3dgame9 frame 300 windowed, fixed function and `-shader`. The rig's log explained the `-shader` oddity: d3dx9_36's HLSL compiler refuses ps_1_1 (X3539), so the cubes ran vs_1_1 + fixed-function pixel stage while the log claimed fixed function. **Rendering is frozen at that build** (the golden set must stay comparable; the rig stays off for now): only the log line naming the shader case and the elapsed-ms summary were fixed, no pixel changes. Mask the HUD bars (wall time) when diffing. d3dgame8 windowed with COPY_VSYNC runs at half refresh (43 fps at 85 Hz) on the GeForce driver: real behaviour, recorded. Must match the host's qemu-3dfx commit. **Win98 and XP (2026-09-03): wglgears and D3D9TEST run in the player on both** (WineD3D needs no Microsoft DX runtime in the guest; XP needs the FXPTL.SYS step first, see gotchas). XP D3D9TEST on the Air: adapter reported as "GeForce 6800" (WineD3D's GL-renderer mapping), x87 PC=24 after CreateDevice, 377–504 fps windowed 640×480. **Since 2026-09-19 every program on the disc writes its log — and any BMP it dumps — to `C:\2KSBOX`** (`guest-tools/src/guestlog.h`), the folder SETUP already puts the test programs and its own `SETUP.LOG` in, instead of to the current directory: that was the Run box's last folder, `WINDOWS`, a game's own folder, or the read-only CD the EXE was started from, where the log was never written at all. `BOXLOG=<dir>` set in the guest names another folder — which is how the harnesses put a log straight onto their scratch disk instead of copying it afterwards (`set BOXLOG=E:\D3DPT`). The deliberate exceptions are `WINDOWS\V2START.LOG`, the login marker `WAITFILE` waits on, and the per-game guest DLLs' logs, which belong next to the game's EXE. |
-| Guests | Images live outside the repo: `~/vms/win98.qcow2` and `~/vms/winxp.qcow2` on both machines (the XP image was copied to the Linux box 2026-09-03; it has FXPTL.SYS installed, no d3dx9, no games yet), plus `~/vms/scratch.img` on Linux (64 MB FAT32, seen as E:, for files out of the guest). Win98 SE on the Air: installed, repaired to PCI-bus enumeration (must be an ACPI `SETUP /p j` install or repaired — doc 06/build-macos). XP on the Air: installed, boots in the player in ~30 s (same as the rig, P4 1.7); integer 1.3–2× the rig (7-Zip), x87 FP 21 % on softfloat (Super PI 1M 9:49 vs 2:02), 104 % with patch 06 (1:57) — `reference/benchmarks/`. |
-| Direct3D device (M4) | **Works end to end on Linux, P0–P4 closed 2026-09-03/04** (doc 14 has the per-milestone detail and numbers). Executor: DXVK d3d9 native (ADR-007) — and, on a **Windows** host below its Vulkan 1.3 floor, that host's own `d3d9.dll` instead (2026-09-21, ADR-007's second amendment: `D3DPT_D3D9=auto|dxvk|system`, the adapter's `d3d9=` property, the machine form's Direct3D row; four accommodations behind `Exec::native`, both host tests passing on both backends with byte-identical frames) — `third_party/dxvk` + `patches/dxvk/` (01 macOS shim, 02/05 optional features, 03 portability, 04 headless WSI), verified on RADV and on the Air over KosmicKrisp (macOS 26). Transport: SysBus device `d3dpt/hw` (QEMU patch 40; register page 0xdfffe000, 64 MiB window 0xd8000000), protocol `d3dpt/d3dpt_proto.h` **v4**, decoder+executor `d3dpt/exec` → `build/d3dpt/libd3dpt_exec.so` dlopened by the device, frames through the GL frame path (`embed/embedfx.c`). Guest: `guest-tools/src/d3dpt/` — `d3d9.c` (+`d3d9_res.h`, `d3d9_p3.h`: resources, surfaces, shaders, declarations, queries, guest-side state blocks, cube maps) and `d3d8.c` (D3D8 wrappers in the same TU); vtables generated from mingw's headers (`gen_vtbl.py`, `gen_vtbl8.py`); ISO folder `D3DPT\` with D3D9.DLL, D3D8.DLL and the test EXEs. **Acceptance so far:** XP D3DGAME9 and D3DGAME8 frames on the device are byte-identical to the native DXVK build and 1089 pixels (tolerance 8) from the rig golden; D3DFEAT9 (hand-assembled SM1.1, no D3DX) byte-identical guest vs native including query results; D3D9TEST 2840 fps vs 1100 on WineD3D-in-guest. **First real games (user, 2026-09-04):** Max Payne (D3D8) starts, its resolution list had 16-bit entries only, and it freezes on the loading screen when a level starts (diagnosed 2026-09-04, see **Max Payne campaign crash** below — the game's own heap corruption on the cracked level data, not our stack). GTA Vice City refused with "cannot find enough available video memory". Fixed the same day: (1) Vice City asks DirectDraw 7 `GetAvailableVidMem`, not Direct3D, and XP's Cirrus driver answers 4 MB → `D3DPT\DDRAW.DLL`, a shim next to the EXE that forwards to the system ddraw.dll and reports 256 MB (`DDVMTEST.EXE` shows what such a check sees; `scripts/test.sh` runs it); (2) the Cirrus driver lists 24-bit modes and no 32-bit ones (`MODETEST`: 32 bpp = BADMODE), and the DLL mapped only 32 → X8R8G8B8, so EnumAdapterModes was 16-bit only; 24-bit now counts as 8888 (the switch already retried at 24 bpp), list cached and de-duplicated; (3) GetRasterStatus (60 Hz sweep from the performance counter), SetGammaRamp / GetGammaRamp (remembered, not applied) implemented in both DLLs instead of E_NOTIMPL. Gotcha: a 64-bit `%` in the DLL pulled in `libgcc_s_dw2-1.dll` and the EXE would not start; DLLs now link `-static-libgcc`. **2026-09-04 evening, from the first player log:** Max Payne in 32-bit crashed at start ("requires a DirectX 8 compatible display adapter") — it asks for a D3DFMT_D32 auto depth buffer, which DXVK's D3D9 refuses outright (`d3d9_format.cpp`: D32/D15S1/D24X4S4 "unsupported everywhere") while our `format_ok` advertises it → CreateDevice came back D3DERR_NOTAVAILABLE. Fixed host-side: `depth_norm()` in the executor maps D32→D24X8 and D15S1/D24X4S4→D24S8 in `fill_pp` and CREATE_DEPTH_STENCIL (one spot for both guest DLLs; the guest still answers GetDesc with the asked-for format), and `d3dpt-exec-test` now requests D32 auto depth so the case is regression-tested on every run. Vice City with the shim now dies silently before even Direct3DCreate8 (two attach/detach pairs in the log, no dialog) → the shim's OutputDebugString lines were invisible; it now also appends every call to `d3dpt_ddraw.log` next to the EXE (attach with EXE name, CreateEx wrapped-or-not, GetAvailableVidMem, EnumDisplayModes with mode count, SetCooperativeLevel/SetDisplayMode/CreateSurface/GetDeviceIdentifier with hr), and the d3d8/d3d9 attach log line now names the process. The silent Vice City exit was then explained: the user had deleted `D3D8.DLL` from the game folder (VC is D3D8 — all RenderWare GTAs through VC; San Andreas is the D3D9 one), so it ran on stock d3d8 over Cirrus. **The two "freezes", diagnosed headless the same night (`tools/xp-game-test.sh`, new):** neither was a hang. Both games were sitting in a **message box behind their fullscreen window** while the player showed only 3D frames (once a device existed the VGA surface was hidden, and a process that dies without `DLL_PROCESS_DETACH` never released it): the vCPU idled in HLT, QMP answered, Dr. Watson attached to the game (`drwtsn32 -p`) showed the main thread inside `MessageBoxA`. **Max Payne:** "JPEG Error — Corrupt JPEG data: 19 extraneous bytes before marker 0xd0", then "bad Huffman code", from `grphmfc.dll` while loading the level's textures. Not the disc (a 70 MB level archive copied inside the guest is byte-identical to the ISO), not memory corruption (XP's full page heap on the EXE: no fault), and gone with **`-cpu pentium3`** under KVM or TCG: the tutorial level loads and plays (Max in the alley, HUD, weapon — `build/xp-game-test/mp-p3/tutorial-alley.png`). The game's CPUID-dispatched JPEG decoder mis-decodes under `-cpu host` (family 25). **Vice City:** its own handler's box, "Unhandled exception c0000005 at address 00000001": under page heap the fault moved to `gta-vc.exe` reading a freed `IDirect3DSurface8` (`GetDesc` on the render-target surface it had fetched and released earlier, on RwRasterCreate for the camera). Our D3D8 wrappers were one fresh object per `Get*` call and died with the game's last `Release`; real D3D8 objects owned by the device / a texture keep their identity and live on at ref 0. Fixed in `d3d8.c` (`w8_new`: one wrapper per object, kept until the object is freed) and `d3d9_res.h` (texture level surfaces persist at ref 0 while the texture lives, `res_addref` retakes the texture reference); with it **Vice City reaches its main menu on the device** (`build/xp-game-test/vc-fixed/main-menu.png`: the Vice City logo and Start Game / Options / Quit at 41k presents), the menu's background texture showing as grey noise — the next stub, 8-bit palettized textures (`SetPaletteEntries` / `SetCurrentTexturePalette`, RenderWare's P8 rasters). Also found: the game's process had loaded **both** our `D3D8.DLL` and `D3D9.DLL` (something in it asks for d3d9), and the second refused to load because the device was busy — the DLL now forwards `Direct3DCreateN` to the system DLL when it cannot open the device (`d3dpt: forwarding to C:\WINDOWS\system32\d3d9.dll`), logging the module list. **Player:** while 3D is active the VGA surface is shown again after 1 s without a presented frame when the guest drew on it (`[display] no 3D frame for 1000 ms …`); `embedfx.c` no longer sets QEMU's passthrough for the D3D device so the VGA keeps rendering. **New diagnostics:** `D3DPT_DUMP_DIR` (executor frame dumps from bare QEMU), the DLL call trace (`D3DPT_TRACE=1` / `d3dpt_trace.on` → `d3d8_trace.log`, generated wrappers in the vtable headers, args logged), the DLL forwarding fallback, and the tool itself (screendumps, frames, keys, Dr. Watson stacks, page heap, `CPU=`). Gotcha: modern mingw's `psapi.h` maps to `K32*` kernel32 exports → XP's loader blocks the process in a hard-error dialog before `DllMain`; `PSAPI_VERSION 1`. **Max Payne campaign crash (diagnosed 2026-09-04, later):** the tutorial plays but New Game → any campaign level (Fugitive first) crashes on the loading screen with the game's own XP error box (a heap corruption), and it is **not** our stack. Two signatures, both entirely in game code with no `d3dpt`/DXVK frames: without page heap a wild jump to `eip=0x53414d41` (ASCII "AMAS" where an `X_LevelDBLevel` vtable pointer belongs); with full page heap a break in `RtlFreeHeap` ← MFC42 free ← the level-init function `MaxPayne+0x4fd72` (strings "Level init"/"Global AI object"/"MP_GM_AINETINIT"/"Enemy creation"). Ruled out as ours by varying every axis: reproduces under KVM `-cpu pentium3` (real host CPU, so not our TCG x87/SSE fast paths); reproduces with `x_level1.ras` copied byte-identical (123,196,327 B) to the guest's local disk (not QEMU CD/disk emulation, not our device streaming); reproduces at 256 MB and 1 GB RAM; the tutorial (local `x_data.ras`, same device) plays through. Conclusion: the level-1 data from the cracked DINO-BYTES ISO (SafeDisc; `secdrv.sys`/`drvmgt.dll` on the disc) corrupts the game's heap during level init. Open next: try a legit / differently-cracked `x_level1.ras` for a final verdict. Tool notes: `xp-game-test.sh` CDS discs get XP letters in **reverse** of CDS order (first CD → E:, second → D:); the image's `cd.ini` holds the level path (`E:\disk1\Levels`) and the game shows its own "insert the Max Payne CD" box (not a crash) when that path lacks `Disk1\Levels`; new `PRE_CMD=` env runs a batch command in the game dir before the EXE (used to stage a level archive local / rewrite `cd.ini`). Open: volume textures, swap-chain objects, GetFrontBuffer, lockable DEFAULT surfaces, lost-device protocol, zero-copy present (readback via GetRenderTargetData today), macOS build of `libd3dpt_exec`, decoder thread (everything runs on the vCPU thread under the BQL). |
-| XP display driver (M7, doc 15) | **M7a landed 2026-09-04, M7b (DirectDraw DDI) first cut the same evening; track doc `docs/tracks/m7-display-driver.md`.** `d3dpt-vga` PCI adapter (`d3dpt/hw/d3dpt_vga.c`: QEMU's stdvga core + a register BAR, `d3dpt/d3dpt_fb.h`; `-vga none -device d3dpt-vga`) and the driver pair `guest-tools/src/d3dptvid/` (video miniport, display driver, INF, `DRVINST.EXE` unattended installer, `SETMODE.EXE`, `DDTEST.EXE`), built by `guest-tools/build-driver.sh` with mingw-w64's DDK headers + ReactOS' public-domain `ddrawint.h` (`DRIVER\` on the guest-tools ISO). XP desktop from the host's mode table (42 modes, 1024×768×32@85 etc.) straight out of VRAM with no copy inside QEMU, no flash on mode switches, KVM verified. DirectDraw: HAL accepted by dxg, surfaces in VRAM, real page flips through the OFFSET register, cached VRAM mappings (miniport maps VRAM itself); DDTEST 640×480×16 flip chain 4762 fps, ×32 6383 fps, windowed HEL blit 305 fps (throughput: since the vertical blank below a flip chain runs at 60 fps, `DDFLAGS=32768` measures throughput again). Findings: `EngModifySurface` needs `HOOK_SYNCHRONIZE`, `DDCAPS_GDI` makes dxg drop the HAL, XP SP3's Logo dialog ignores every registry policy. `tools/xp-driver-test.sh` runs the guest loops headless. **M7c (Direct3D DDI) first cut 2026-09-04:** the DX7 non-T&L HAL on the doc 14 executor — VRAM 128 MiB with a 64 MiB command window on top (register set v2), surfaces mirrored from VRAM by handle, the DP2 token interpreter (`d3dpt/exec/d3dpt_exec_ddi.cpp`), readback into VRAM at EndScene / Lock / Flip; `D3D7TEST` (HAL device, Z, texture, the reference scene) at 2400 fps, its frame pixel-identical to the host-side `d3dpt-dp2-test`. **FIFA 2000 runs on the HAL unmodified (2026-09-04, headless, `tools/xp-fifa2000.bat`):** its DX6 Thrash renderer through DrawPrimitives2 — intro, title screen, attract-mode match at 800×600 with textures, kits, crowd and HUD; no unsupported token, no refused record, no colour keying asked for. Played by hand the same day: clean and smooth under KVM; the keyboard dead in the match under TCG — traced (doc 15) to the game's non-exclusive DirectInput keyboard, fed on XP by a hook that its match loop never services (Windows sees every key, the device reports none, KVM or TCG headless); fixed by `D3DPT\DINPUT.DLL` next to the EXE (a forwarding shim that merges `GetAsyncKeyState` into the keyboard state and logs the game's DirectInput use). **User-confirmed 2026-09-05 by A/B on a Linux TCG run** (keys with the DLL next to the EXE, dead keyboard again with it moved away: the shim is the variable) — and scoped the same day: the user's everyday setup is this Linux host run natively (KVM) on `-vga none -device d3dpt-vga`, where they report **no input issues and no custom DLLs anywhere** (stock XP on the driver, no WineD3D renames, no shim next to any EXE), so the unpumped-hook symptom is TCG-only and `DINPUT.DLL` is medicine for the Apple Silicon path, not the normal one. Decided with it (doc 15): the merge stays a per-game side-by-side DLL — `system32` fights Windows File Protection and cannot hold a shim of the same name, `AppInit_DLLs` would inject it into every process, and the merge is only correct where we have watched the game want it — with deployment becoming the launcher's job (M6). The shim is now silent by default (the fix alone); `D3DPT_DINPUT_LOG=1` restores the log and the sampler thread, whose 248 keys per 5 ms are not free under TCG. Tools from the hunt: `DRIVER\DITEST.EXE`, the embed library's input-queue statistics, `PLAYER_KEYS_HOLD`, the executor's `frames/s` line, `xp-driver-test.sh` `bat` / `GAME_ISO` / `SHOTS` / `SHOT_KEYS`, `qmpc.py click`. **8 bpp palettized modes (2026-09-04 night, register set v3): Diablo plays** — device PALETTE block + indexed shadow, palette-driven miniport modes, GDI palette management (`DrvSetPalette`), `DDPF_PALETTEINDEXED8`; the XP runtime wants `dwPalCaps` = 0 with no palette callbacks (palettes reach the driver through GDI) and Direct3D offered in every mode, else the HAL degrades to `DDCAPS_NOHARDWARE` (both found in the `dxg.sys` / `ddraw.dll` disassembly). `DDTEST 640 480 8` animates a palette at 1200 fps; `tools/xp-diablo.sh install\|play` gets Diablo into Tristram headless with screendumps. **The flip chain has a vertical blank (2026-09-05):** Moto Racer played at several times its speed because `DdFlip` never blocked and `DdGetFlipStatus` always said "done" — a 1997 racer is paced by its flip chain, and ours had no pace. `FRAMES` is now a clock (periods of the mode's `HZ` off the host clock, not the display client's pull, so a headless run paces like the player), `DdFlip` / `DdGetFlipStatus` hold the second flip of a double-buffered chain until it moves, bounded at 50 ms; `DDTEST`'s three exclusive chains and `D3D7TEST` all run at 60 fps (`DDFLAGS=32768` = `DDF_NO_VSYNC` restores the old numbers to the frame), the windowed `Blt` path is untouched as on real hardware, and the device prints `N page flips in 5.0 s` so a title's real frame rate — or its absence, meaning it blits — is visible in the log. **Max Payne with no wrapper DLL (2026-09-05, `tools/xp-maxpayne.bat`):** XP's d3d8.dll takes a driver without `D3DCAPS8` as a DX7 driver (software vertex processing, DX7 tokens) and the launcher, menu and tutorial level render on the HAL at ~290 fps; it exposed two executor bugs — `TRIANGLEFAN_IMM` / `LINELIST_IMM` have their payload and the next token DWORD-aligned by *offset* (the DX8 runtime emits them at offset 2 mod 4; the stream desynchronised into garbage tokens, and a half fix that aligned only the end drew one garbage fan per frame: black bands across the alley, found by the trace's per-draw render-target snapshots) and a garbage light index made DXVK throw `std::bad_alloc` that cannot be caught (DXVK's own static unwinder → abort): indices are validated before DXVK now, the host test covers both; plus the DP2 frame trace (`D3DPT_DP2_TRACE`: state snapshot, tokens, vertices, texture and per-draw target dumps), `D3DPT_DDI_REREAD`, `D3DPT_DDI_NOFOG`, the driver's surface registration log. The alley matches the M4 device's frame; `ZBIAS` (47) maps to DEPTHBIAS since 2026-09-05 evening (DXVK's d3d8 scale, `d3dpt-dp2-test` covers it). **The DirectX 8 DDI (2026-09-05, later):** `GetDriverInfo2` with `D3DCAPS8` and the DX8 format list, hardware T&L claimed in both caps sets (the executor's fixed-function mapping does the work), the DX8 token stream rewritten in the driver into self-contained draws (protocol v6 `D3DPT_DP2_DRAW8`: the runtime's vertex / index buffers are guest system memory), TEXBLT done in the driver, the DX8 state kept per context between calls, state sets as d3d9 state blocks, render-to-texture, MULTIPLYTRANSFORM, DXT pitches; D3DGAME8 runs through XP's own d3d8.dll with hardware vertex processing (~575 fps, render-to-texture and all; `xp-driver-test.sh d3dgame8` diffs it against the native oracle) FIFA / D3D7TEST keep working, Max Payne renders on it too since the clipped fans were fixed (2026-09-05, later: `CLIPPEDTRIANGLEFAN` offsets count into stream 0, which the runtime rebinds to its own clip buffer before the tokens; the DP2 call's vertex buffer under d3d8.dll is a 10 × 32-byte dummy — read from there the fans were heap garbage, the nearest walls and ground black); findings by disassembly: the HAL-info flag that unlocks the queries, `dwActualSize` checked against the inner header, no `CLIPTLVERTS` (the host does not clip TL vertices), FOURCC surfaces need the HAL info's list, DX8 state persists across calls by handle. DXT textures on this path failed in dxg's heap (a FOURCC format has no bit count, the driver had no `CreateSurface` to size it; fixed 2026-09-05 with `DdCreateSurface` + `DDHAL_PLEASEALLOC_BLOCKSIZE`, found with the new `DRIVER\DXTTEST.EXE`). **Shaders 1.x (2026-09-05 night, protocol v7):** `D3DVS_VERSION(1,1)` / `D3DPS_VERSION(1,4)` in the caps, the CREATE / SET / DELETE / CONST tokens pass through the driver, the executor keeps them per context (the `D3DVSD_*` declaration → a d3d9 declaration with `dcl`s prepended to the function, declaration-only shaders as the fixed function on that layout, `D3DVSD_CONST` loaded at set time, a DRAW8 under a shader carries the handle) and validates every function first — DXVK's compiler *asserts* on an unknown opcode (an abort: QEMU would die), found by the host test's hostile case; `SHTEST.EXE` / `xp-driver-test.sh shtest` verifies it through XP's own d3d8.dll. **Palettized textures and colour keying (2026-09-05 night, protocol v8):** the two caps Moto Racer 1997 wanted — P8 in both format lists, `TRANSPARENCY` / `ALPHAPALETTE`, `DDCAPS_COLORKEY` + `DDCKEYCAPS_SRCBLT` with a `SetColorKey` and a never-called `Blt` callback (dxg drops the HAL for the caps without a Blt callback, and without the caps user-mode ddraw never hands a texture's key down — four CKTEST runs, doc 15), the key sent by `DdSetColorKey` and re-checked off dxg's surface at texture bind → `VRAM_COLORKEY`; the executor takes palettes from the DP2 `SETPALETTE` / `UPDATEPALETTE` tokens, expands P8 and keyed textures to A8R8G8B8 (key = alpha 0), forces the alpha test under `COLORKEYENABLE` and overrides stage 0's alpha op when the app's ignores the texture alpha (the DX7 runtime's `TEXTUREMAPBLEND` emulation does that for every keyed 16-bit texture), and re-uploads dirty bound textures before each draw; `CKTEST.EXE` / `xp-driver-test.sh cktest` verifies it through the DX7 API. **Found by CKTEST's second case:** on NT a flip exchanges the two surfaces' roles, not their memory (the handles keep their VRAM, dxg moves the PRIMARYSURFACE caps and re-issues `CreateSurfaceEx`), and `DdFlip` had re-registered them as if the memory had swapped since the first M7c cut — the host rendered into the displayed buffer every other frame; fixed (doc 15 "A flip does not move memory"). **Moto Racer on it (2026-09-05, `tools/xp-motoracer.sh`):** it takes the HAL now and turned out to be a DirectX 3 title — execute buffers through XP's `d3dim.dll`, a path with two breakages of its own, both found with the new `DRIVER\EBTEST.EXE` probe and the runtime's disassembly (doc 15 "Execute buffers — the DirectX 3 path"): `hwCaps.dwMaxVertexCount` 65535 sized the runtime's TL vertex buffer over its own 65535-vertex limit, so every `Execute` failed with `E_OUTOFMEMORY` before a token was built (2048 now, `ddflags=0x40000` the repro); and the UNCLIPPED `Execute` is a pass-through of the execute buffer's raw `D3DOP_` instructions (`D3DHALDP2_EXECUTEBUFFER`) in which the driver consumes POINT / LINE / TRIANGLE / STATERENDER / SPAN / EXIT and must *bounce* the rest — `PROCESSVERTICES` first — with `D3DERR_COMMAND_UNPARSED` + `dwErrorOffset` so the runtime executes them and calls again (skipping them leaves the TL buffer empty); the DX5 texture render states (`TEXTUREHANDLE`, `TEXTUREMAPBLEND`, filters, address) arrive verbatim on this path and the executor maps them onto stage 0 now. EBTEST passes 5/5 through `d3dim.dll` (and on the RGB control); `tools/d3dpt-dp2-test.cpp` covers the executor half. **Moto Racer plays** (`tools/xp-motoracer.sh install|play`: the 3D name screen, the showroom bike, the Speed Bay race with the colour-keyed palms and the HUD at 120 fps under KVM; played by hand by the user 2026-09-05 evening after the untracked-writes fix: works great, fast under TCG too). **Untracked writes (2026-09-05, evening):** the showroom's 2D panels (header, arrows, features, Start / Back) were missing in every run — the game draws them with GDI through `GetDC` on the back buffer, which dxg serves with no driver callback (no `DrvDeriveSurface`), so no `VRAM_DIRTY` came and the executor's readback overwrote them each frame; the executor now keeps a shadow of every render target's VRAM, uploads what differs before a frame's first draw and keeps what differs at the readback (the target refreshed from VRAM before the next draw) — doc 15 "Untracked writes", `d3dpt-dp2-test` covers it, the device log counts `untracked guest pixels` (the race HUD's text, the 24×24 software mouse cursor). The one-triangle draws cannot be batched (a `TEXTUREHANDLE` before each, painter's order with Z off); `xp-motoracer.sh play` drives the menus by a screendump classifier (`tools/motoracer-state.py`) now, since the title takes only the keyboard and idles into an attract demo. **The hardware cursor (2026-09-05 evening, register set v4):** the user's flickering mouse was GDI's software pointer (painted into the GDI primary, one buffer of a flip chain: visible every other frame under a 60 Hz title) — `DrvSetPointerShape` / `DrvMovePointer` write the pointer as a8r8g8b8 above the DirectDraw heap and the CURSOR registers, the device hands it to QEMU's console, and the player shows the guest's shape as the host window's cursor over the image (the USB tablet puts the host pointer exactly there; hidden when the guest hides it, hidden as before for a guest without one); v4 = reinstall every image from the ISO (doc 15 "The hardware cursor"). **Tried and dropped the same evening:** blit / stretch caps for FIFA 2000's 320×240 videos — a declined `DdBlt` is E_NOTIMPL to the app on XP, not a HEL fallback, and the game never blits its movies anyway (doc 15 "Blit caps and the HEL"). **GTA Vice City plays on the DX8 DDI (user, the same evening, TCG):** the first real DirectX 8 title through XP's own d3d8.dll on the driver — nothing refused, no skipped draw, 400–600 draws a frame at 20–30 fps under TCG, water effects and all. **Video-memory vertex / index buffers (protocol v9, the same night; doc 15 "Vertex and index buffers in video memory"):** `D3DDEVCAPS_HWVERTEXBUFFER | HWINDEXBUFFER` in `D3DCAPS8`, the runtime's `D3DPOOL_DEFAULT` buffers taken from dxg's linear heap by the buffer callbacks (block size, as for a compressed texture), the MANAGED ones synced by `BUFFERBLT` (the driver's memcpy; the token is 24 bytes, a 20-byte guess desynchronised the stream), Lock / Unlock reporting the written range (`VRAM_DIRTY_RANGE`), and a `DRAW8` carrying `{handle, offset}` instead of the vertex / index bytes (`D3DPT_DRAW8_VRAM_VB` / `VRAM_IB`), the host reading the range straight from VRAM (no host copy). Vice City in the city, `tools/xp-vicecity.sh play` (menus by clicks, waits by the log's rate lines, the play disc as D:, the game's frame limiter off in the image): **KVM 360–375 frames/s against 265–285 with the buffers back in system memory (`ddflags=0x100000`), TCG 62–75 against 51–55.** Two findings: the runtime's vertex buffers arrive without `DDSCAPS2_VERTEXBUFFER` in `ddsCapsEx` (decide by the request's caps), and `lpDDVertex` dangles under `USERMEMVERTICES` (the driver's own debug line dereferenced it: STOP 0x8E). D3DGAME8's frame is pixel-identical with and without v9; both differ from the regenerated native oracle at the checker texels' edges (a mip-filtering difference of the DX8 path, open). Not yet: more than one stream (no title has asked), mode table from the player (M2), a present signal in phase with the player's swapchain, macOS run, StarCraft / AoE on the 8 bpp path. |
-| Win98 display driver (M10, doc 19) | **Track opened 2026-09-06; the driver loads, claims the adapter and draws the same day — the shell does not yet come up, and the reason is now readable rather than guessed at: Windows' fatal-exception message is written in VGA text mode behind the linear frame buffer, and the harness decodes it out of VRAM** (doc 19 §15) (`docs/tracks/m10-win98-driver.md`, ADR-012). **2026-09-07: Display Settings works** — it had shown one resolution because the applet's `ValidateMode` call GPFed: Open Watcom took the DDK prototype (no `__loadds`) over the definition, and the export ran on the caller's DS (doc 19 §18; the build now checks every export loads DGROUP); all eight modes validate and a live switch to 800×600 and back is proved. **2026-09-09 evening: a full-screen DOS box's return repaints the desktop** (the INT 2Fh 4001h/4002h hook and USER.275, doc 19 §29 — before it the return looked like a hang), **the cursor sprite hides while the linear mode is off**, and **blue screens are visible, and guarded** (`tools/win98-bsod-test.sh`, a faulting VxD of ours as the trigger). Win98 today is `-vga cirrus` with the inbox driver and gets its 3D from the qemu-3dfx Glide wrappers plus the WineD3D DLLs in a game folder; that path stays and becomes the control. The plan: split the XP driver into an OS-independent core (the DP2 walker, the surface table and its format arithmetic, the caps tables, contexts and readback, the flip chain, the encoder and the debug log — about three quarters of `d3dptdisp.c`, none of which states a fact about NT) plus a thin per-OS layer that keeps NT's `DD_SURFACE_LOCAL` and 9x's `DDRAWI_DDRAWSURFACE_LCL` behind a neutral descriptor, rebuild XP on it unchanged, then write the 9x layer. Step 0 says what that layer is: **three binaries** — a 16-bit `.drv` whose drawing exports jump to the DIB engine, a ring-0 mini-VDD `.vxd`, and the DirectDraw/Direct3D HAL as a **ring-3 32-bit DLL loaded into the game's process**, which is the only one that links the core (and builds with the mingw toolchain we already have; the other two need Open Watcom, a new prerequisite). The per-call DDI structures are field-for-field identical to NT's and the DP2 opcode values agree — the walker is portable as it stands — while the DirectDraw object structures are laid out differently, which is what the neutral descriptor is for. DDI 8 works on 9x, so all of M7c is in scope; `DDCAPS_GDI` is normal there and fatal on NT, so the caps table is per-OS; modes come from the INF rather than the adapter. The adapter itself is expected to need no change for 9x. **The split is done as of 2026-09-07** (doc 19 §19): `core/` is 1 940 lines in five files with no DDK header of either family in it, `nt/` is 1 975, the surface objects meet in a `d3dpt_surf_desc` the layer fills, the DDI structures that are the same everywhere live in `core/d3dpt_ddi.h`, and `build-driver.sh` proves with `nm` that the core reaches the OS only through its six `d3dpt_os_*` hooks. **800x600x8 flip chains were sheared until 2026-09-13** (doc 19 §33, Diablo II's menu): DirectDraw rounded the back buffers' pitch to the HAL's 64-byte alignment (832) while the mode was scanned at 800; every mode's pitch is now `D3DPT9X_PITCH` — the same rounding — and `DDPROBE <w> <h> <bpp>` logs a `pitch check:` of the primary against its back buffer **Crimson Skies flies since 2026-09-14** (doc 19 §34): the game resets its reversed-depth Z buffer by Locking it and writing 0 every frame, which the host's depth buffer never saw, so every world triangle failed GREATEREQUAL (black sky, trails) and the menu's QUIT button drew half; the core (`d3d_z_written`, called from `Unlock32` on 98 and `DdUnlock` on XP, which had the same gap) now turns a Z buffer written to one value through a Lock into a host Z clear, sampling every 7th row (~15%) rather than the whole buffer, and `ZFILLTEST.EXE` guards it on both families (the driver before it fails on both). **And its menu text since the same day**: every list entry and name field drew the game's 8x8 placeholder because our texture caps allowed any size — the game branches on `D3DPTEXTURECAPS_POW2` and never made those strings' textures without it (found by diffing `DEVCAPS.EXE`'s dump of our device against the Voodoo 2's). Both families now claim `POW2 | NONPOW2CONDITIONAL`, a GeForce's answer; `ddflags=0x2` (`DDF_TEX_ANYSIZE`) is the A/B. Open: a depth fill of part of the Z buffer is still lost (it wants a depth upload). **3DMark2001 SE's demo plays since the same day** (doc 19 §36): it froze black after its loading screen because a texture bind read the colour key off a surface the runtime had freed — the fault came with the command-window lock held, a handler in the faulting thread caught it, and the next thread spun on the lock for ever; the core keeps no OS surface pointer any more (both families) |
-| CPU evaluation (doc 22) | **`docs/22-tcg-evaluation.md`, done 2026-09-16: the patch queue measured on a reproducible tier (nbench, 7-Zip's benchmark, Super PI 1M, our SSEBENCH, inside the XP guest, `tools/specbench/`) and a game tier kept apart.** Default 2.34x geomean over pristine 9.2.4 on the Air (Super PI 5.3x, SSEBENCH 3.4x, nbench 1.5x, 7-Zip 1.1x), all-off 0.97x (the off paths cost 3 % — the three-build question answered), PIC free, every switch ablated (`x87-fast`, `sse-fast`, the three control-flow patches and `rep-fast` show; six are game-only), identical Super PI digits everywhere, raw data in `docs/22-data/`. Its first finding was the **code-buffer placement lottery** (patch 63, above). **The games remeasured 2026-09-16 on the Air** (doc 22 §6.2, all on `base98-us`, every switch off → default, each window checked against a screendump, raw data in `docs/22-data/games/`): 3DMark 99's race 39.3 → 89.2 fps and first person 35.0 → 79.6 uncapped (both at the 60 Hz cap capped; 3901 → 8686 3DMarks); 3DMark2001 SE's high-detail Car Chase 1.3 → 16.9 fps (24.8 with `x87-pc64-as-53`), Lobby 14.9 → 37.3 (42.9), Dragothic 28.4 → 52.9 (56.1), every low-detail scene at the cap, score 3163 → 5222 (5476); Blood 4.2 → 127.9 fps; Moto Racer's software renderer 2.9 → 83.5 fps; Quake II's timedemo 34.8 → 50.0 fps (a compiled renderer: the CPU tier's kind of gain, the control). New runners `tools/w98-3dmark2001.sh`, `w98-blood.sh`, `w98-moto.sh`, `w98-quake2.sh`; `w98-3dmark.sh` takes `TABLET=0` and its classifier's one-missing-shot flaw is fixed. Still to do: the same games on the Ryzen, the x86-64 rig, patch 21's crash. `docs/23-dbt-literature.md` is the literature survey, **and since 2026-09-16 its last section is the spikes**: each ranked item implemented behind a switch and measured on the same tier — the pc-indexed jump table (Tiaozhuan) and the back-edge-only interrupt check (SYSTOR 2022) each within noise (≤ 2 %), return prediction through a host `bl`/`ret` pair (MAMBO-X64) a 2–6 % loss as built, the SSE checks' ceiling 6 % of the SSE score (RAPIDO), and patch 21's crash reproduced with seven pinned registers (so it is not the eighth). Nothing landed; diff and runs in `docs/22-data/spikes/`. **The hardware-MMU design gauged on the workloads the same day** (`track/m9-hwmmu`, the M9 track doc's "Gauging the gain", `tools/hwmmu/`): a TCG-plugin census of every workload's memory behaviour times the EL1 probe's new workload-shaped kernels projects 1.1–1.2x (7-Zip 1.2x, Super PI and Quake II 1.16x, Blood 1.1x, the FP kernels 1.05x), and the nested-TLB risk does not occur (no 64K-access window over 1,600 distinct pages in 2.3 million); **abandoned for the time being (user decision 2026-09-16: 20 % is not worth the complexity at the speed already reached)**; the tools stay for the day a workload changes the number |
-| Tests | Integration / e2e only (CLAUDE.md policy, 2026-09-04): `scripts/test.sh all` runs the host tools (x87 oracle, embed Mesa backend, decoder + executor, the mode sweep through the player's real display path, the native DXVK reference scene within budget of the rig golden, the native feature test) and the guest stage (DOS x87 battery under TCG; XP headless on the D3D device from a `snapshot=on` view of `~/vms/winxp.qcow2` with a fresh scratch FAT disk and `RUN.BAT`, driven over QMP: D3DGAME9 / D3DGAME8 pixel-identical to the native frame outside the HUD, D3DFEAT9 byte-identical with the same query lines). 13 checks, ~2 min on the Linux box under KVM, all green at 2026-09-04. Local only by decision (2026-09-04): CI stays off the suite, it needs the images and a GPU. |
-| CD backend (M5, libdisc) | **Track opened 2026-09-04** (`docs/tracks/m5-cdrom-backend.md`; branch `track/m5-cdrom` merged and deleted 2026-09-06 — it is all on `main`), spec in doc 17: a `cdimage` QEMU format block driver over libdisc's C API (cooked view through the block layer, raw model for atapi.c), MMC responders in Rust so the host exerciser (`discx`) tests the exact bytes, L-EC verified on cooked reads (the SafeDisc signal comes from the drive model, no bad-sector lists), CD-DA through an `audiodev` on `ide-cd`. **Step 1 landed the same evening:** the disc model (sessions, tracks, indices, extents), cue/bin (`BINARY`/`MOTOROLA`/`WAVE`, PREGAP/POSTGAP, multi-FILE) and plain ISO parsers, raw ⇄ cooked synthesis with EDC/RSPC parity (verified on every cooked read, never corrected), Q-channel synthesis with MCN/ISRC frames and CRC-16, and `discx` (`selftest` writes `mixed.cue/.bin/.ccd/.img/.sub`, `cooked.cue`, `plain.iso`; `dump`, `info`, `convert iso → cue/bin + WAVE audio tracks`). The EDC/ECC generator was checked against Neill Corlett's `ecm` 1.03 as an independent oracle (it strips only sectors whose parity it can regenerate: 2000 of 2000, 1999 with one byte flipped). `scripts/test.sh` runs `discx selftest` as the `libdisc` check. **Step 2 landed the same night:** the MMC responders (`mmc.rs`: READ TOC formats 0/1/2, READ SUB-CHANNEL 1/2/3, READ DISC INFORMATION, the READ CD length table with the MMC-3 contiguity rule and the per-sector fill incl. C2 and the three subchannel forms) and the C API (`libdisc/libdisc.h` v1, `capi.rs`, every body under `catch_unwind`); `discx selftest` now goes through the `extern "C"` functions only (the boundary QEMU will use) and adds `toc`, `read-cd-length` (60 CDB combinations), `read-cd-fill`, `panic-safety` (corrupt cues, NULL handles, short buffers, probe scores). **Step 3 (CCD reader) the same night:** `.ccd` + `.img` + optional `.sub` (replayed verbatim, synthesized past a truncated file's end), every `[Entry]` kept for READ TOC format 2, multisession from the `Session=` fields, `DataTracksScrambled=1` refused; the `ccd` check proves TOCs, sub-channel replies, raw / cooked sectors and sub-channel bytes identical across `mixed.cue`, `mixed.ccd` and `cooked.cue`. **Step 4 (the `cdimage` block driver) the same night:** `libdisc/qemu/cdimage.[ch]` overlaid into `block/` + `include/block/` by prepare, patch `50-cdimage-block-driver` (meson option `libdisc_dir`, `CONFIG_CDIMAGE`), `configure-qemu.sh` builds the crate and passes the option; `-cdrom x.cue` / `x.ccd` probe to `cdimage` (a plain `.iso` stays on `raw`), `qemu-img info` reports lead-out × 2048, the data track dd'd through the block layer equals the ISO, audio and L-EC-failing sectors are `-EIO`, writes refused, no Rust `std` symbol exported from `libqemu-embed-i386.so` (the 17 `libdisc_*` and `cdimage_disc` are; harmless). **XP boots with the converted guest-tools disc as `-cdrom gt.cue` under KVM and copies all 49 files through cdrom.sys byte-identical to the ISO** (`tools/xp-cdimage-test.sh`, 46 s). `scripts/test.sh`: `cdimage` (host) and `guest-cdimage` (guest stage) checks. **Real dumps, 2026-09-05:** `discx subscan` (new) walks the stored subchannel and says whether a Q CRC failure is drive noise or our layout. On the two Alcohol dumps the failures are 1.9 % / 0.18 %, 99.7 % of them isolated single sectors, none valid in the un-deinterleaved form: read noise, not a bug — real subchannel is delivered without error correction, and doc 17 §2.6's verbatim replay is what protects it. The reverse check found two real bugs. **Fixed:** MDS track mode `0xEC` (Alcohol's mixed mode 2) was read as *audio*, so NFS Porsche Unleashed's v1.3 MDS came out as a 281,279-sector CD-DA track with no L-EC verified anywhere; it is Mode 2 XA (every sector header says mode 2, TOC control 4) and now parses as `mode2 form1` throughout. A guard now refuses any MDS whose mode byte and TOC control disagree, which is what a silent misparse looks like. **Not a bug, recorded instead:** synthesized subchannel in an *undeclared* pregap is a guess between three conventions real discs actually use (doc 17 §2.6); ours reproduces AoE's own frames 277,626 / 277,626 and a change to match Moto Racer's was tried and reverted for making two other discs worse. **Step 5 (patch `51-atapi-disc-model`) the same night:** atapi.c serves reads (PIO synchronously, DMA by chunks through a bottom half), READ CD / READ CD MSF over the full MMC-3 table, READ TOC 0/1/2, READ SUB-CHANNEL, READ DISC INFORMATION, GET CONFIGURATION / mode pages 2A and 0E as a CD-ROM drive, and tracks a CD-DA position (75 sectors/s of virtual time; no sound yet) for PLAY / PAUSE / RESUME / STOP; a plain ISO keeps QEMU's path byte for byte. `tools/atapi-guest-test.py` (DOS, PIO on the secondary channel): **142 replies at byte-count limits 512 and 65534 identical to `discx dump`**, sense 03/11/05 on the flipped sector, 05/64/00 on audio, audio positions advance / hold / complete; the XP copy test passes on the patch-51 path (cdrom.sys, DMA). **Real dumps (the user's `/mnt/data2/david/Downloads/oldstuff` on the Linux box, 2026-09-04):** MDS/MDF brought forward from M5e (`mds.rs`: tracks from index 1 for `length` sectors at `start_offset`, the pregap not in the file — verified against a RAW+SUB dump's own Q frames); `discx scan` walks a whole image: **0 L-EC failures over five discs** (Death Rally, Blood 1 = Mode 2 form 1 + 8 audio, Duke Atomic, AOE Gold and Moto Racer MDS with 14 / 12 audio tracks), the only failures being the 149 audio-format sectors at the end of Fire Fight's data track (what a drive fails too); a data-track sector without a sync pattern (a dump tool's zero filler) now fails L-EC. The AOE Gold dump has no bad sectors: not a SafeDisc disc after all; **a SafeDisc / SecuROM dump is still wanted**. **Step 6 (CD-DA) the same night:** `-device ide-cd,audiodev=<id>` opens a 44100 Hz stereo voice; PLAY / PAUSE / RESUME / STOP feed the audio sectors through mode page 0E's routing and volume, MODE SELECT(10) sets the page (a data-out packet command: its end-transfer function is registered in core.c's table, which otherwise aborts QEMU on an unknown one); `CDTEST.EXE` (`guest-tools/src/cdtest.c`, MCI) plays track 2 and logs positions; `tools/xp-cdimage-test.sh` with `CDTEST=` records the drive's audiodev into a wav whose loudest second must be the 1 kHz tone. XP copies the real Blood disc 1 (Mode 2 form 1 + 8 audio tracks) and the AOE Gold MDS through cdrom.sys byte-identical. Next: Win98's CD Player by ear in the player (`-drive if=none,id=cd0,media=cdrom,file=x.cue -device ide-cd,bus=ide.1,id=ide1-cd0,drive=cd0,audiodev=embed0`), a protected dump for steps 7–8, the player's disc shelf (M5f with M6). **In-game CD audio, 2026-09-05 (user):** AoE Gold and Moto Racer both play their soundtracks while the game runs, in XP, in the player, from their `.mds` — doc 05's plain mixed-mode + CD-DA row is PASS, and the two discs being exactly the pair the pregap conventions differ on is what closes doc 17 §2.6's open worry. |
-| Launcher (M6, `launcher-qt/` + `launcher-core/`) | **2026-09-23: the desktop's own file dialogs and colour scheme on Linux, and no forced light mode anywhere** (user report and decision). Qt picks a platform theme by `XDG_CURRENT_DESKTOP` — KDE's, GTK's for the GNOME family, the XDG portal's only inside a Flatpak — and this checkout's sway session matched nothing, so `FileDialog` drew Qt's own picker; `main.rs` sets `QT_QPA_PLATFORMTHEME=xdgdesktopportal` when the variable is empty (the portal theme wraps the theme Qt would have picked and defers to it with no file chooser on the bus, so KDE and GNOME lose nothing). With a theme that carries the desktop's dark scheme the forced-light rule of 2026-09-06 *made* the mixed look it was meant to prevent: a Quick Controls style draws its controls in the platform theme's palette and a palette handed to the application reaches only the surfaces, so Fusion drew dark controls on light windows. The scheme is the desktop's on every platform now (`LAUNCHER_QT_SCHEME=light\|dark` forces one; `appearance.cpp`'s header has the mechanism); macOS's style follows the system appearance itself and is untested since. **2026-09-16: every sentence the launcher shows was rewritten to be short and plain** (user request: less verbose, less "AI"): the machine form's notes and warnings (`wizard.rs`), the optimization notes (`bundle.rs`), the 3D verdict (`host_gpu.rs`), the first-run offer, the clone window and the QML windows' own labels. Two-sentence notes at most, no dates, doc numbers or patch names in the window, no benchmark anecdotes beyond one number where it helps; the substrings `scripts/test.sh` and `launcher-capi/examples/smoke.c` match on were kept or moved with the words (`No CRT shader presets are installed yet`, `name is required`). The label of our adapter is now "2ksbox adapter (d3dpt-vga)" and the unthrottled processor "Full speed (no throttle)". **2026-09-16: the machine form's "Advanced: edit machine.toml directly" box is gone** (user decision): the checkbox and text area in `WizardWindow.qml`, `Form::advanced`/`advanced_toml`/`preview_toml`/`fill_advanced` and their submit path, the Qt properties, and `lc_wizard_fill_advanced` plus the `advanced`/`advanced_toml` names in the C ABI. **2026-09-16: networking is off by default for every machine** (user decision): a bundle with no `network` field now means no card too, where it meant on (the wizard has written the field since it existed on 2026-09-05, and new machines have started without a card since 2026-09-07); the `family-other` check strips the field from a bundle and requires `-nic none`. **2026-09-16: a new Win98 machine starts on our `d3dpt-vga` adapter** (user decision; `bundle::video_choices`, it started on the Cirrus from 2026-09-07), like XP — the Cirrus is one pick away; the `display-adapter` and `capi` checks follow. **2026-09-16: a new machine's disk size follows the family** (user decision): 10 GB for Win98 and Other, 20 GB for XP, 2 GB for DOS (`bundle::default_disk_size_gb`; it was 2 GB for all), moved by a family switch until someone types another number — the `capi` check asks all three sizes and a typed one surviving. **2026-09-13: the egui front end `launcher/` was deleted (ADR-017).** **2026-09-13: "Clone…" on every grid row** — a new machine with the same settings and its own copy of the disk, snapshots included, refused while the machine runs (doc 07; `launcherx --clone`; the `clone` and `qt-clone` checks). `launcher-qt` is the only front end, over `launcher-core`; `launcher-capi` (the C ABI) and `launcherx` (the toolkit-free verbs) are the core's other callers. `cargo build --release` at the root now builds every member but `launcher-capi`, and `scripts/build.sh`'s `cargo check --release --workspace` now guards only `launcher-capi`. The `--diag-*-frame` verbs and `--pick-file` / `--pick-folder` went with it; the Qt build's offscreen screens are the headless frame grabs. `launcher-core` lost the API only egui called (`Preview::new` on a borrowed device, `output_view`, `device`/`queue`, the first-run dialog's `confirm_label`/`cancel_label`, the shelf's `discs_mut`/`mark_dirty`/`resort`), and `Cargo.lock`, `packaging/flatpak/cargo-sources.json` and `THIRD-PARTY-NOTICES.md` were regenerated without the egui crates — the notices' second listing is now `launcher-qt`'s, the binary that ships, from its own lock file. What follows is the track's log, the egui-era passages included. **Track opened 2026-09-04** (`docs/tracks/m6-launcher.md`, branch `track/m6-launcher`, worktree `.claude/worktrees/m6-launcher`), doc 07 is the design. UI toolkit decided: egui/eframe 0.36.1 (not Slint — MIT/Apache-2.0 fits the project's GPL-2.0-only + open-source stance; its default features are wgpu-backed already and unify with `player/`'s `wgpu` 30.0.1 / `winit` 0.30.13, one copy each in `Cargo.lock`). **Step 1 (bundle format), same day:** `launcher/src/bundle.rs`'s `Machine` (name, family, RAM, disk, disc shelf, shader override), serde+`toml` round-trip, `reference()` from doc 06's defaults, `qemu_args()` translating to the real `qemu-system-i386` line (doc 06's per-family device tables, `audiodev=embed0` throughout). **Step 2 (library grid), same day:** `launcher/src/library.rs` — a platform data dir (`directories` crate, `LAUNCHER_LIBRARY_DIR` override), one bundle subdirectory per machine (`slug()` deduplicates on name collision), `scan()` skipping unreadable bundles instead of failing the whole grid; `launcher --new <win98|xp> <name> <disk>` now writes into the library, `main.rs` renders a real `egui::Grid` (name/family/directory) over what it finds. **Step 3 (spawn a player), same day:** `launcher/src/player.rs` — locates the `player` binary alongside the launcher's own executable and `qemu/pc-bios` (both `LAUNCHER_*`-overridable), `spawn(&Machine)` runs `player -- <qemu_args>`; the grid shows "Play"/"Running" per row, polled via `try_wait()` on a 500 ms repaint tick; deliberately no stop/kill control (CLAUDE.md: only a guest-side or player-window shutdown should end a run). **Verified with a real player boot**, not just compiled: built `player` in this worktree by pointing `QEMU_EMBED_LIB_DIR` at the main checkout's already-built `build/qemu` (embed API version 6 in both), spawned it on a Win98 bundle against a throwaway empty qcow2 and the main checkout's `qemu/pc-bios`; the child reparented to init after the launcher process exited (confirmed independent lifecycle) and a `grim` screenshot showed real SeaBIOS → "No bootable device" → the pcnet NIC's iPXE ROM DHCP-configuring, proving the translated network device args are honored too. A plain workspace `cargo build` still fails on `player` in this worktree (no local `build/qemu`) — pre-existing, not a regression; `launcher` alone builds standalone. **Step 4 (guided creation wizard), same day:** `launcher/src/wizard.rs` — a `Wizard` (family, name, existing-or-new disk, install media, an advanced raw-TOML toggle) shown in an `egui::Window` from "New machine…"; `library::reserve_dir` (factored out of `create()`) makes the bundle directory first so a new disk (`player::create_disk`, using a new `player::qemu_img_binary()`) lands inside it before the referencing `machine.toml` is written; the advanced path validates hand-edited TOML with `toml::from_str` before writing so a bad edit can't corrupt the library. On success the grid rescans immediately. Verified via a `--wizard-new` debug verb (calls the same `Wizard::create` the window's button does): created a real 4 GiB qcow2 inside a fresh bundle directory, wrote a correct `machine.toml`, confirmed it appears in the real grid with a working Play button; the empty-name error path returns `Err` rather than panicking. **Not click-tested through the actual form** — no working mouse-click automation on this Wayland session — so a human should click through the wizard once. **Native file picker for the wizard's path fields (user request, same day):** egui has no OS dialogs of its own; `launcher/src/filepicker.rs` pairs a text field with a "Browse…" button using `rfd` (`default-features = false, features = ["xdg-portal"]` — no GTK dependency on Linux; the same crate and rationale as the user's own `~/work/nxvim` `bemtvi-gui`, checked directly before use) — NSOpenPanel / Win32 `IFileDialog` / the Linux XDG portal. Wired into `wizard.rs`'s disk and install-media fields with extension filters. Verified for real via a `--pick-file` debug verb: a genuine GTK-backed portal dialog opened over the Wayland session, screenshotted with `grim`; the button click itself is unverified for the same click-automation reason as the rest of the wizard. **Editing an existing machine (user request, same day):** the same form doubles as "Edit machine" (`Wizard::open_edit`, an `EditTarget` capturing what the form doesn't expose — RAM, the shader override, disc-shelf entries beyond the first "install media" slot — plus the bundle's exact original text for the advanced box, so a quick edit can't silently discard a hand-added field); `submit()` (renamed from `create()`) writes back to the existing bundle path in place, never renaming its directory even if the display name changes. An "Edit…" button sits next to "Play"/"Running" in the grid. Verified for real via a `--wizard-edit <machine.toml> <new-name>` debug verb against a hand-crafted bundle carrying a non-default RAM value, two disc-shelf entries and a shader override: renamed it, and confirmed by reading the file back that RAM (768, not reset to XP's 512 default), both discs and the shader survived untouched while only the name changed; `--print-args` on the result showed `-m 768`, confirming the preserved value reaches the real translated command line. The empty-name guard fires in edit mode too. The grid's new "Edit…" button was screenshotted next to "Play" for a real entry; the button click itself has the same unverified-by-click caveat as the rest of the wizard. **Bugfix (user-reported, same day):** "New machine" without a custom disk failed with "No such file or directory" — `pc_bios_dir`/`qemu_img_binary` defaulted to bare relative paths resolved against the process's cwd, not guaranteed to be the workspace root; fixed by anchoring both at the build-time `CARGO_MANIFEST_DIR` (same technique `qemu-embed/build.rs` already uses), `LAUNCHER_*` env overrides unchanged. Reproduced the exact reported error from `/tmp`, confirmed the fix (absolute cwd-independent `-L` path via `--print-args`, then a full new-disk flow from `/tmp`); also gave `create_disk`/`spawn` clearer errors naming the resolved binary path on a spawn failure. **Bugfix (user request, 2026-09-05):** "Browse…" should open where the field already points — `filepicker::pick_file_headless` takes a `start_dir`, extracted from the field's current value by the new `filepicker::start_dir()` (the value's own directory, or its parent if it names a file; `None`/OS default if empty or a bare filename), wired into `path_field`. Verified for real, catching a bug in the verification itself along the way: a first attempt passed a *file* path straight to `set_directory`, which broke the dialog (screenshotted: empty, no breadcrumb) — fixed by routing the debug verb through the same `start_dir()` `path_field` uses, then reverified a file path opens its parent directory correctly and no argument still falls back to the OS default. **Shader profile manager (user request, 2026-09-05):** a named, reusable shader preset selection plus parameter overrides, independent of any one machine (doc 07 settings taxonomy) — `launcher/src/shader_profile.rs`'s `ShaderProfile` (name, `.slangp` preset path, a sparse `BTreeMap<String, f32>` of overrides — everything else stays at the preset's own default so a profile survives the preset gaining new parameters) and `shader_library.rs` (flat `<slug>.toml` files under a new platform-data-dir library, `LAUNCHER_SHADER_PROFILES_DIR` override, mirroring `library.rs`'s scan/create/slug shape but one file per profile instead of a bundle subdirectory). `shader_manager.rs` is the manager window (New/Edit/Delete list; the editor parses the chosen preset via `librashader::presets::{ShaderPreset, get_parameter_meta}` — a new introspection-only `librashader` dependency in `launcher/Cargo.toml`, `presets`+`preprocess` features, no runtime backend — and draws one checkbox+slider per declared parameter, min/max/step/description all read from the shader source's own `#pragma parameter`). `bundle::Machine` gained `shader_profile: Option<String>` (a profile id, takes precedence) alongside the pre-existing raw `shader` override (now the advanced/hand-written-bundle escape hatch); the wizard's form gained a "Shader profile" combo box for both new and edited machines. `player.rs::resolve_shader`/`shader_args` translate a machine's resolved profile into the player's own `--shader`/`--shader-params` at spawn time. **Step 5a (disc-shelf editing), 2026-09-05:** `launcher/src/discshelf.rs` — a "Discs (n)…" button per grid row opens a window over `Machine::discs`, the ordered shelf whose first entry `qemu_args` attaches as the boot CD-ROM: add (the same `filepicker` field and `iso/cue/ccd/mds` filter as the wizard's install-media slot), Up/Down, Remove, and doc 07's one-click guest-tools ISO attach (`guest_tools_iso()` takes the newest `guest-tools/out/guest-tools-*.iso` — the name `scripts/test.sh` already globs — canonicalized because unlike `pc_bios_dir` this path is written *into* a bundle; `LAUNCHER_GUEST_TOOLS_ISO` overrides, and the button is greyed with a reason when nothing is built). `save()` re-reads the bundle and replaces only `discs`, so no other field can be lost. The window stays usable while the machine runs (a bundle edit can't touch a live guest) and says the change applies at the next boot; live media change is step 5c. **First widget-level headless verification on this track:** a new `--diag-shelf-frame <machine.toml> <out.png> [WxH] [x,y;…] [running]` verb runs the real `DiscShelf::show` through `egui::Context::run_ui` with synthetic pointer clicks and dumps the composited frame (click/paint machinery factored out of `--diag-editor-frame` as `diag_window_frames`/`parse_clicks`) — "Down" then "Save" reordered and wrote the shelf, "Remove" dropped a disc, "Add guest-tools ISO" appended the found ISO, each confirmed by reading `machine.toml` back with `ram_mb`/`shader_profile`/`shader` untouched and `--print-args` attaching the new first entry. Two layout bugs were caught *by* those dumps and fixed: long disc paths widened the grid until the buttons sat off-screen (buttons now precede the path, which is split file-name + truncating directory, plus a window `max_width`), and `↑`/`↓` rendered as tofu in egui's default font (now "Up"/"Down"). A `--disc-shelf <machine.toml> [<disc>|+tools ...]` verb does the same edit without a window. The grid's own new button is the one part still needing a human click. **Step 5b (snapshots, offline), same day:** `launcher/src/snapshots.rs` — a "Snapshots…" button per grid row opens a list of the machine disk's internal qcow2 snapshots (name, when, VM-state size) with Take / Restore / Delete, all through `qemu-img`, which is what `savevm`/`loadvm` write into; live snapshots are step 5c. Listing goes through `qemu-img info --output=json` rather than `snapshot -l`'s human-formatted table (which has no escaping for a tag containing a space, and the UI happily produces those), and `qemu-img`'s own stderr becomes the window's error text. Two safety rules: every operation is refused while the machine is running, with a note to shut the guest down first (qemu-img writing to an image QEMU has open corrupts it, and even the listing wants a lock QEMU holds), and "Restore" arms a second "Discard current state?" button before it runs (rolling the disk back has no undo and it sits one row from "Delete"). Verified through the real widgets against a real 256 MB qcow2: take/restore/delete driven by synthetic clicks (the confirmation arming on that row only, the status line reading back), a name typed into the "New snapshot" field and taken — which needed `diag_window_frames` to learn a `+text` typing step — plus a genuine `savevm` snapshot made by driving a live `qemu-system-i386` over QMP `human-monitor-command`, which lists with `1.2 MB` of VM state where the `qemu-img`-made ones correctly show `—`. Deleting a missing snapshot and a bundle pointing at a missing disk both surface qemu-img's message. **Step 5c (live control), same day:** `launcher/src/control.rs` — the launcher adds `-qmp unix:<runtime dir>/<bundle>-<hash>.qmp,server,nowait` to the arguments it spawns the player with and speaks QMP to that socket itself. No new protocol and no player change: QEMU allows several monitors, so the player's own in-process one (`player/src/qmp.rs`, a socketpair with no filesystem path) is untouched, and this is the shape `tools/qmpc.py` already uses; a bundle run straight through `player` simply has no launcher socket, doc 07's "the launcher is optional" path. The socket path is derived from the bundle directory (so any window finds it again without the app carrying it), its directory is forced to 0700 (a QMP monitor is complete control of the machine), and a stale socket from a *killed* player is removed before spawn since QEMU won't bind over one. Drives: the disc shelf's per-row "Insert" and an "Eject" (`blockdev-change-medium`/`eject`, one command doing open/eject/insert/close — no `format` argument, so a `.cue`/`.ccd` still probes to the `cdimage` driver of doc 17), and the snapshot window listing from `query-named-block-nodes` (`image.snapshots` is the same shape `qemu-img info --output=json` gives, so one kind of row either way) and running `snapshot-save`/`-load`/`-delete` as QMP *jobs* — started, then polled on the repaint tick rather than blocking the UI while QEMU writes a guest's RAM, buttons greyed meanwhile; a restore stops the VM (QEMU requires it) and resumes it only if it was running. Two deliberate bundle-format consequences: `qemu_args` gives the CD-ROM an id (`ide1-cd0`, matching `tools/xp-cdimage-test.sh`) so a medium change can name it, and always attaches the drive with an empty tray, since a drive that only existed when the bundle shipped a disc could never be loaded later. Unix sockets only, so live control is Linux/macOS; on Windows the socket is never created and each operation says so (a named pipe or loopback port is a step-6 question). Verified against a stand-in `qemu-system-i386` on the *exact* `--print-args` command line — live listing identical to the offline path, a real 2.8 MB VM-state snapshot taken/restored/deleted, the same take driven purely through the window's widgets (3.6 MB), insert and eject confirmed by `query-block` — and then against the **real `player` binary** (built with `QEMU_EMBED_LIB_DIR` pointed at the main checkout's `build/qemu`), which ran both monitors at once and took a live snapshot and a disc swap from the launcher. Two bugs the verification caught: a block node matched by filename alone picked the `file` protocol node instead of the qcow2 format node (a qcow2 is two nodes with the same filename; only the format node holds snapshots), and a failed live restore reported success because the post-operation list reload cleared the error on its way through — `reload()` no longer touches `error` at all. **The shelf became shared (user request, same day — "having one per machine doesn't make much sense"):** `launcher/src/disc_library.rs` holds the user's disc collection in one flat `discs.toml` beside `machines/` and `shader-profiles/` (`LAUNCHER_DISC_LIBRARY` overrides), entries `{label, path}` with an editable label defaulting to the file stem — a rip of Blood disc 2 is a property of the person, not of the machine that installed it first, and two machines wanting the same disc had to list it twice. A machine now keeps only `Machine::disc`, the disc in its drive at boot; `discs` survives to read older bundles (`boot_disc()` falls back to its first entry), `save()` drops it, and `DiscLibrary::import_legacy` folds every legacy entry onto the shared shelf at startup (deduplicated by path, so it just runs every time). `discshelf.rs` is one window in two modes — the bottom row's "Disc shelf…" manages the collection, a machine row's "Discs…" adds that machine's per-row "Boot" toggle (a bundle edit) and, while it runs, "Insert" (a monitor command); the shelf is not filtered per machine, since any disc can go in any drive, and library edits save as they are made rather than behind a Save button. Verified through the widgets: the migration moved four discs off a legacy bundle and was idempotent on re-run, a "Boot" click wrote the bundle and highlighted only that row, "Boot with an empty tray" leaves `if=none,id=cd0,media=cdrom` with no `file=`, an edited label persisted, and RAM/shader fields survived every write. Verbs are now `--discs` and `--boot-disc` (replacing `--disc-shelf`); `--diag-shelf-frame shelf` opens the library-only mode. One layout bug caught by the dumps: a bare `TextEdit` in a grid cell claims almost no width, so the label column collapsed to five characters — `add_sized`, not `desired_width`. **The shelf from inside the guest (user request, same day), host half landed:** the user wants one program running on DOS, Win98 *and* XP that lists the host's shelf and swaps a disc into the tray from inside the machine. Transport decided: a **vendor ATAPI command** (opcode 0xD0) on the guest's own CD-ROM drive — the one channel all three OSes can reach (direct PIO / ASPI / SPTI) and whose firmware we own (patch 51), so no new device and no guest driver. `cdshelf/cdshelf_proto.h` is the one header for every side (bump `CDSHELF_PROTO_VERSION` on change); `patches/qemu/52-atapi-disc-shelf.patch` adds `ide-cd`'s `shelf=<file>` plus LIST/LOAD/EJECT, the medium change running from a bottom half because it drains the very drive whose command is executing (a real drive behaves the same: command returns, tray moves after, UNIT ATTENTION next command); the launcher publishes the shelf beside the monitor socket at spawn and on every shelf edit, so a disc added while the guest runs is in its next listing. **Cross-track:** patch 52 and the ATAPI files are M5's area (52–59 were reserved for the CD-ROM backend) — this is CD-ROM work driven from M6 because the shelf is a doc 07 feature; the README reservation now says so and 53–59 stay M5's. Verified: prepare applies it cleanly and idempotently, QEMU builds and lists the property, a real player boots with the shelf attached, and `tools/atapi-guest-test.py` still passes (164 replies identical to `discx`) so patch 51 is unregressed in a real DOS guest. **The guest programs landed the same day:** `guest-tools/src/cdshelf.c` → `CDSHELF\CDSHELF.EXE`, *one* binary for both Windows families (SPTI on NT; on 9x `WNASPI32.DLL` loaded with `LoadLibrary` at run time, since linking it would make the EXE unloadable on XP where it doesn't exist), and `guest-tools/src/cdshelf.asm` → `CDSHELF\CDSHELF.COM` for a DOS box (PACKET commands by PIO, the way `tools/atapi-guest-test.py` already drives the drive — there is no DOS C toolchain in this build). Both take `CDSHELF` / `CDSHELF <n>` / `CDSHELF E`, find the drive by *asking each one for the shelf* rather than by configuration, and refuse a protocol version they don't speak. Writing them found three real bugs: patch 52's opcode had to become **`CONDDATA`** (only LIST transfers data — a guest sending LOAD/EJECT through SPTI or ASPI leaves the byte count limit at zero, which `ide_atapi_cmd()` aborts at the ATA level before the handler runs; LIST validates it itself), a **LOAD of a disc the host cannot open now fails with 02/3A** instead of returning GOOD and failing silently in the bottom half with only a host-side warning, and the DOS build cannot find the drive by the **ATAPI signature** (the BIOS has long since left the cylinder registers at 00/00 by the time a DOS program runs — measured under SeaBIOS — so it asks IDENTIFY PACKET DEVICE instead) nor skip **REQUEST SENSE after a CHECK CONDITION** (the drive repeats the condition to every later command until something clears it, so the medium-change poll spun for ever). Verified on three guests: `tools/atapi-guest-test.py` now drives the opcode itself (19 commands per byte-count limit — LIST at five allocation lengths with a 64-byte-truncated label and the MISSING flag checked byte for byte, a bad subcommand, a slot past the end, a slot the host lost, then LOAD/EJECT with **the sectors read before and after**, the shelf's slots 0 and 1 differing only in a corrupt sector 1000, so a changed tray is proven by the guest's own reads; 206 replies identical to `discx`, up from 164) and then boots a second time to run the real `CDSHELF.COM` on the same shelf with its output captured over COM1; and in **real XP** (`~/vms/winxp.qcow2` through a qcow2 overlay, the user's image never written) booted with an empty tray, `CDSHELF 0` loaded a real ISO over SPTI and `dir D:\` + `type D:\HELLO.TXT` in the same guest read the files off it — host shelf to Windows reading the disc, end to end — with swaps back and forth, the missing-disc refusal and an eject all correct — that XP run is kept as `tools/cdshelf-guest-test.sh <image> [xp|win98]` (local only, needs an image; writes to an overlay, never the image). **Win98 (ASPI) is attempted but blocked by the image, not the code:** `WNASPI32.DLL` does load on `~/vms/win98.qcow2` and reports a host adapter (so a stock 98 has the ASPI layer), and the first run crashed inside `SendASPI32Command` — which found a real bug, ASPI32 being `__cdecl` and not stdcall (its exports carry no `@n` to say so), leaving the caller's stack four bytes out on the first call; fixed, but unconfirmed on a guest, because every boot of that image since dies with *"SHELL32.DLL is linked to missing export SHLWAPI.DLL:…FileAttributesA"* before anything of ours runs — that install's shell DLLs are mismatched, so there is no Start menu to type into. Re-run the script once that image's Explorer starts. **CDSHELF grew a face, and always ejects first (user, same day, after running it in a real Win98 — "too unwieldy to use as a terminal command", and inserting over a disc "would do nothing"):** the Windows build is now `-mwindows` and with no arguments opens a window (the shelf as a list, Insert / Eject / Refresh, plain USER32 controls created in code so the same EXE comes up on 98 and XP, the swap on a worker thread so the window keeps painting); DOS, which can have no window, prints the shelf and waits for a key — 0-9 inserts that disc, `E` empties, `R` re-reads, Esc quits — and both keep their verbs for scripts, the listing one now explicit (`CDSHELF LIST`). **Insert means eject-then-load, with a wait for the empty tray in between**, for two reasons: Windows and MSCDEX show the old disc's files after a swap they never saw as a removal (the user's report), and the device runs the medium change from a *single* bottom half (patch 52), so an eject and a load sent back to back collapse into one and only the last survives. Verified on real guests: the XP window screendumped and driven from the keyboard with `query-block` on the machine's own QEMU confirming the actual medium (which caught a bug — a plain window keeps focus itself, so Tab/Enter did nothing until the frame handed focus to the list and Insert became the default button), `tools/cdshelf-guest-test.sh xp` still nine-for-nine, and the DOS menu driven by real key presses over QMP. **Memory and acceleration in the machine form (user request, same day):** the wizard now shows `ram_mb` (a per-family bounded drag field — Win98 32–512 MB, doc 06's hard cap, XP 64–3072 — with a "Default" button and a note at the Win98 ceiling; switching family moves an untouched value to that family's default and leaves a chosen one alone), and a new `Machine::accel` = `auto` | `kvm` | `tcg` becomes `-machine pc,accel=…`, **defaulting per family: Win98 emulated, XP automatic** (KVM runs the guest at host speed and the `pentium3` model does not protect Win9x from its own fast-CPU bugs; TCG is also what docs 13/16's fast paths — and this project's Win98 testing — are tuned for). The field is `Option<Accel>`, absent meaning "this family's default", so a bundle written before it existed keeps running the way it did rather than silently acquiring KVM. `auto` is **QEMU's own `kvm:tcg` fallback list**, not a `/dev/kvm` probe here — a probe can be stale by spawn time, and the list already means "KVM if you can, emulation otherwise" (plain `tcg` off Linux, where naming a nonexistent accelerator only prints a warning); `kvm` genuinely refuses to start without it, and `tcg` stays first-class as the era-CPU behaviour docs 13/16's fast paths are tuned for and the honest setting for Win98, whose fast-CPU bugs the `pentium3` *model* does not protect against. `player::kvm_available()` (opening `/dev/kvm` for write, which is the group-permission case a bare `exists()` misses) backs the form's hint line only. Verified through the TOML and `--print-args` for all three settings and the Win98 clamp, through the **real player** (`query-kvm` over the launcher's own QMP socket: `enabled: true` for auto and kvm, `false` for tcg — QEMU's own answer from inside the embed library), and through the real widgets with a new `--diag-wizard-frame` verb (family defaults, the combo actually switching, a typed value enabling "Default" and that button restoring it, an untouched value following a family switch while a chosen one stays). One bug found and fixed by it: `with_new_disk` set the family without going through the combo box, so `--wizard-new xp` created an XP machine with Win98's 256 MB — `build_machine` now decides from `ram_chosen`, not from the field's contents. **Networking in the machine form (user request, same day):** `Machine::network`, a bool defaulting to **true** when the field is absent (so no existing bundle loses its network by being read), is one checkbox under Acceleration — the machine either has doc 06's per-family NIC on QEMU's user-mode NAT (the form says what that means: outbound through the host, nothing on the network able to reach the guest, and that these are unpatched systems) or no adapter at all, so Windows never sees a card, asks for its driver or waits on a network at boot. Asking a *running* machine `query-pci` rather than trusting `--print-args` found the two things that make it real: **leaving out `-netdev` does not remove the card** — QEMU creates a NIC of its own when the command line asks for no networking, so "off" was an e1000 one slot below ours, the opposite of the setting, and the bundle now emits `-nic none`; and **removing the NIC moved the sound card**, since PCI slots follow `-device` order and XP's AC97 slid from slot 4 into 3, a hardware change an installed Windows re-detects — the XP devices now carry the `addr=` values their order already gave them (`d3dpt-vga` 0x02, `rtl8139` 0x03, `AC97` 0x04), so nothing changes for an existing machine and the NIC can come and go without disturbing its neighbours (Win98 needs none of this: its display is `-vga`, its SB16 is ISA). Verified on the real player for all four combinations (XP on: VGA 2 / Ethernet 3 / Audio 4; XP off: VGA 2 / Audio 4, no Ethernet; Win98 on: VGA 2 / Ethernet 3; Win98 off: VGA 2 alone), through the bundle and `--print-args` (`--wizard-edit … nonet` / `… net`, an edit that only renames leaving it alone, a bundle with no `network` line still getting the NIC), and through the real widgets with `--diag-wizard-frame` (the row checked by default, a synthetic click unchecking it and swapping the hint, the edit form opening on a stored `network = false`). **The launcher fetches the shader presets itself (user request, same day):** a profile needs a `.slangp` to build on, and until now that meant the `third_party/slang-shaders` submodule — which a clone without `--recurse-submodules`, or a future packaged build, does not have. `launcher/src/shader_source.rs` decides where the collection is (`LAUNCHER_SHADERS_DIR` if set — an explicit statement, nothing else consulted — else the checkout's submodule, else a downloaded copy in the platform data dir beside `machines/` and `shader-profiles/`; never written into `third_party/`, which belongs to git) and, when there is none, the profile manager and the editor both show "No shader presets on this machine" plus a **"Download presets (~50 MB)"** button: upstream's tarball over HTTPS (`ureq`/rustls, no system OpenSSL) streamed through `flate2` + `tar` onto disk on its own thread, the row showing a spinner and MB-so-far (codeload sends no `Content-Length`, so there is no honest percentage). It unpacks into a `.part` sibling and renames only once the result really contains presets — an interrupted download can't leave a half-collection that then reads as installed — and "has presets" means *a `.slangp` within two levels*, cached in the window rather than re-walked per frame. `master`, not the submodule's pin: a packaged launcher has no repository to read a pin out of, and a profile stores overrides by name. Tar entries that are neither file nor directory (symlinks can point anywhere on the host) and any path with `..` are skipped. **"Browse…" on an empty preset field opens in the collection** (`filepicker::path_field_in`/`browse_start` — the field's own value still wins, then the suggestion, then the OS default). Verified over the real network and through the widgets: `--download-shaders` pulled 50.3 MB into 2554 presets with no staging left behind and replaced an existing collection cleanly; a downloaded `crt-lottes.slangp` rendered through `--preview-shader` byte-identical to the submodule's copy (so the `.slang` sources came along and compile); a synthetic click on the button switched the row to "Downloading shader presets… 0.0 MB" and, with a new `~<ms>` wait step in the diag script runner, came back 20 s later with the row gone and the presets on disk, while killing the process mid-download left the destination untouched; `--browse-start` prints the right directory for an empty field, a downloaded collection, no collection at all, and a field that already names a preset. **The licence question this raised is decided (user, same day — ADR-009):** `launcher` and `shader-chain` are now **`GPL-2.0-or-later`**, everything that links QEMU (`player`, `qemu-embed`, and `libdisc`, compiled into QEMU) stays `GPL-2.0-only`. Apache-2.0 is GPLv2-incompatible and fine with GPLv3, and the launcher's tree is full of it — not just `ring` under `ureq`'s rustls but `ab_glyph`/`accesskit_winit`/`glutin` from egui/eframe and winit's `dpi`, i.e. the conflict predates the downloader by months. The launcher may relicense because it links no QEMU code (it spawns the player as a separate process); `shader-chain` moves with it because it is linked into both binaries, and "or later" still combines into the player's v2-only whole. **The player's side is decided too (user, same day — ADR-010): ship player binaries anyway.** It has the same Apache-2.0 exposure (`winit`, `cpal`, `ab_glyph`, `codespan-reporting`, `rspirv`) and cannot take "or later", because scanning what an i386 softmmu build compiles found **35 genuinely GPL-2.0-only QEMU files** — `util/bitmap.c`, `util/qemu-sockets.c`, `migration/migration.h`, `system/runstate-action.c` and `hw/audio/ac97.c` (the XP sound card) among them (`tools/gpl-scan.py`, re-run it after a QEMU bump). Nor are the crates swappable: `winit`/`cpal` could go, but `codespan-reporting` comes with naga and `rspirv` with librashader, so clean means dropping wgpu and librashader — ADR-005's whole stack. `dlopen` instead of linking was rejected (we already link the `.so`; the FSF treats the two alike and our coupling is callbacks on QEMU's vCPU threads with the BQL held). The clean fix — **QEMU in its own process** — is on the table with its premise measured rather than assumed: `tools/ipc-latency-spike.c` puts a frame notification across a process boundary at p50 18 µs / p99 226 µs idle and p50 17 µs / p99 35 µs with all 16 cores busy, i.e. ~1 % of a 16.7 ms frame, so **ADR-002's latency premise is not what blocks it** — the work is the VGA surface through shm, macOS IOSurface over a mach port, and the one-process assumptions in the lifecycle and the headless tools. `COPYING` and `THIRD-PARTY-NOTICES.md` are now in the tree and the README states the position for packagers. **The shipped front end is the Qt one since 2026-09-07 (ADR-015):** `launcher-qt` is what every packager installs as `2ksbox` — Linux, the Flatpak (moved to `org.kde.Platform` 6.10, since that is where Qt 6 comes from), macOS (`macdeployqt` before our own dylib closure, `-qmldir=launcher-qt/qml` because our QML is a Qt resource) and Windows (Qt staged by hand: there is no cross `windeployqt`). `launcher/` (egui) stays maintained and is installed by nothing — ADR-014's second view, the home of the `--diag-*-frame` verbs, and the fallback on a host where Qt is a problem. `scripts/build.sh` grew a `qt` stage in its default set (its own cargo workspace still, so a plain `cargo build` never needs Qt 6); a host without Qt builds everything else, says so in the summary, and rolls no package (`scripts/test.sh` skips `package` with the reason). Every packager also gained the one check `--paths` could never make: the staged launcher must open a **real window offscreen** (`QT_QPA_PLATFORM=offscreen` + `LAUNCHER_QT_SHOT`) and produce a PNG, because Qt resolves its platform plugin and its QML modules by name at run time out of directories no import table mentions. The Flatpak's offline `cargo-sources.json` now covers both lock files (554 crates), merged by `scripts/gen-flatpak-cargo-sources.sh`. **Verified this session: the Linux tarball and the Flatpak.** The tarball stages and passes every check including the window grab. The Flatpak built **offline** against `org.kde.Sdk` 6.10 from the merged cargo sources — the SDK's `qmake6` is where cxx-qt looks, so `launcher-qt` cross-checks nothing and simply compiles — installs, resolves every companion under `/app`, and opens a QML window offscreen on the runtime's own Qt. One check of my own was wrong at first and is worth remembering: **the sandbox has a `/tmp` of its own**, so a screenshot written there is invisible to the shell that asked for it; the grab goes under `$HOME` (the same path on both sides, and this app has `--filesystem=host`). The macOS `.app` and the Windows zip are written and unrun (a Mac and the cross container). **Play logs the line it ran (2026-09-07, user request):** the player binary, its shader arguments, `--` and every QEMU argument, quoted so it pastes back into a shell — `[player] …` in `launcher.log`, the first line of `player.log`, and the terminal when there is one. The command is derived from the bundle at spawn time, so a bundle alone never said what ran. **"Browse…" on the disc shelf adds the disc (2026-09-09, user-reported):** a file chosen in the dialog goes on the shelf as the dialog closes, rather than filling the text field and waiting for a second click on "Add to shelf" — the dialog already asked that question, and "Add folder…" beside it always worked this way. The field and its button stay for a path someone *types*. Both front ends (egui's `path_field` returns what the dialog produced; Qt's `PathField` has a `picked` signal beside `edited`, and an `acceptPath` the dialog and the probe both run), the decision written down in `Shelf::add` and doc 07, guarded by the new **`qt-shelf`** check — a file dialog belongs to the window system and cannot be opened offscreen, so the probe hands the field the path the dialog would have and asks the *window* whether the shelf grew and the field emptied (on the old wiring it reports "shelf 0").
-| Name (ADR-011) | **Everything is `2ksbox` since 2026-09-06.** The repository is `github.com/davidrios/2ksbox` (renamed by the user; the remote and both clone recipes point at it), the checkout is `~/work/2ksbox`, and the user's data directory is `~/.local/share/2ksbox` — `launcher-core/src/paths.rs::data_dir()` moves an old `win98-xp-virt` one there exactly once, as an atomic rename inside the same parent, only when the new name is absent (both present = neither touched, a stderr line says which is used); a failed move warns and leaves an empty library rather than refusing to start. The runtime dir (`$XDG_RUNTIME_DIR/2ksbox`, `paths::runtime_dir()`) is not migrated. `win98-xp-virt` survives only in that migration and in the historical passages of doc 10 / the M6 track doc. **Moving the checkout invalidates `build/`**: meson bakes absolute paths in, so `scripts/build.sh -f` reconfigures QEMU and DXVK from scratch after the move. |
-
-  On the player side, `player/src/shader.rs::Chain::load` takes `params: &[(String, f32)]` and applies them after the filter chain loads via `librashader::runtime::FilterChainParameters` (`RuntimeParameters::update_parameters`) — a name the preset doesn't declare is skipped with a stderr line, not a hard failure, so a profile saved against an older preset version can't crash the machine over one stale parameter. `main.rs` parses a new `--shader-params <name=value,...>` flag / `PLAYER_SHADER_PARAMS` env var (comma-separated, matching `PLAYER_KEYS`'s style), documented in README.md and `shaders/README.md`.
-
-  Verified for real, not just compiled: the whole launcher-side pipeline exercised headlessly through new debug verbs (`--new-shader-profile`, `--set-shader-param`, `--list-shader-params`, `--assign-shader`, `--print-shader-args`) — created a profile against the real `third_party/slang-shaders/crt/crt-lottes.slangp` (13 real parameters listed correctly, e.g. `brightBoost [0..2] step 0.05 = 1`), set an override, assigned the profile to a machine, and `--print-shader-args` resolved to the exact `--shader …/crt-lottes.slangp --shader-params brightBoost=1.8` the real `spawn()` would pass. On the player side (built via the same sibling-worktree `QEMU_EMBED_LIB_DIR` trick step 3 used, since this worktree still has no local `build/qemu`): dumped the shaded test-pattern frame via `PLAYER_DUMP_OUT` with and without `--shader-params brightBoost=1.8` — the two PNGs differ byte-for-byte from the very first bytes, proving the override actually reaches the rendered pixels, not just the parsed config; a bogus parameter name alongside a real one logged the "no parameter named" warning and still applied the real one, without crashing. `cargo build --workspace` clean, no warnings. **Not click-tested through the actual manager window** — same Wayland click-automation gap as the rest of this track — a human should click through "Shader profiles…", create/edit a profile with the sliders, and assign it to a machine via the wizard's new combo box once.
-
-  **Live shader preview (user request, 2026-09-05):** the editor gained a second column that runs a chosen preview image through the real filter chain and shows the result, updating as sliders move. Since a CRT preset's scanline/mask math depends on the actual pixel size it renders at (not the display size egui stretches it to afterward), the shader-chain code that does this — previously `player/src/shader.rs`'s `Chain` — moved into a new shared crate, `shader-chain/` (workspace member), so the player and the launcher can't drift on how librashader is driven; `Chain::load`/`set_parameters` are now split (load once, re-apply parameters on every slider tick without recompiling shaders) and `player/src/main.rs` was updated to match (`mod shader` replaced by `use shader_chain as shader`, behavior otherwise unchanged — reverified with the same dump-diff as the initial shader-profile-manager work). `launcher/src/shader_preview.rs`'s `Preview` runs on the `wgpu::Device`/`Queue` eframe itself already opened for egui (`egui_wgpu::RenderState`, reached via `eframe::wgpu`/`eframe::egui_wgpu` — no separate `wgpu` pin in `launcher/Cargo.toml`, Cargo unifies it with `shader-chain`'s own "30" pin) rather than a second GPU context: decodes the chosen image (`image` crate, `png`/`jpeg`/`bmp` features) into an `Rgba8Unorm` input texture, runs the chain at an integer-ish scale of the image sized to fit a ~480×360 pane (shrinking a large screenshot, upscaling a real game's native resolution so the mask is visible at all — the same reason the player renders its own chain at viewport size, not the guest's native resolution), and registers the output as an egui texture via `egui_wgpu::Renderer::register_native_texture`/`update_egui_texture_from_wgpu_texture` (reusing the same `TextureId` across reruns, freed on `Drop`). `LauncherApp` captures `cc.wgpu_render_state.clone()` once at startup and threads it down to the manager; a `None` (a non-wgpu eframe backend, not expected given the toolkit decision above) degrades to "no live preview" text instead of a panic.
-
-  Verified for real, not just compiled: a new `--preview-shader <preset> <image> <out.png> [name=value,...]` debug verb builds a real (windowless) `egui_wgpu::RenderState` via `RenderState::create` — the same call eframe itself makes at startup — and exercises `Preview` exactly as the editor's preview column does, dumping the rendered frame (`shader_chain::Chain` gained a small `output_texture()` accessor for this). Ran it against a real PNG (a 2560×1920 dump from the earlier shader-profile-manager test) and a real RGBA icon (`qemu/ui/icons/qemu_64x64.png`, exercising the alpha-channel decode path): the large image correctly rendered at 480×360 (shrunk to fit) and the small one at 360×360 (upscaled 5.6×, `min(480/64, 360/64)`); running with and without `brightBoost=1.8` produced two dumps that differ from the first bytes, same as the player's own test, proving the live-update path actually re-renders on a parameter change rather than caching a stale frame. Visually confirmed both dumps: the icon shows a visible scanline/mask pattern from `crt-lottes.slangp`, not a pass-through copy. `cargo build --workspace` clean, no warnings, including a full rebuild after moving `shader.rs` into `shader-chain/`.
-
-  **Bug fixed (user-reported, 2026-09-05): the preview showed a solid black shape instead of the image.** Root cause found from the user's exact repro (`crt-aperture.slangp` against a real 1025×791 photo): that preset's `.slang` computes `scale = floor(OutputSize.y / SourceSize.y)` then divides by it — `floor` of anything under 1 is 0, so the moment the render target is *smaller* than the source (exactly what shrinking a big photo to fit the ~480×360 preview pane does) it's a divide by zero, i.e. NaN, i.e. black. RetroArch/libretro CRT presets are written to upscale a small native resolution, never to shrink one (the same assumption the player's own doc 03 pipeline makes) — every case tried before the user's report (small game-resolution icons) upscaled and worked; a big photo was the first thing that ever asked a preset to shrink. Fixed by downsizing an oversized source *on the CPU* (`image::DynamicImage::resize`) before the shader ever sees it, so it only ever upscales; `shader_preview.rs`'s scale clamp changed from `(0.1, 8.0)` to `(1.0, 8.0)` to match. Verified against the user's exact preset+photo (now renders correctly) and re-ran every prior case to confirm no regression; the photo (a personal document image) was never kept or committed. Kept two debug tools built while hunting this before the repro arrived: `--diag-preview-frame` (renders one full egui frame the way eframe's own paint step would, for ruling the compositing layer in or out) and `LAUNCHER_DEBUG_SHADER_PREVIEW=<preset>;<image>[;fullscreen]` (opens the editor pre-filled at startup, for screenshotting the real windowed app without a GUI click).
-
-  **Preview reworked to match the player exactly (user request, same day):** "pick a 640x480 image and see exactly how it will look in the player, integer scaling and all" plus a fullscreen toggle that gives the sliders the width the letterboxed image doesn't need. `Preview::render` now uses the *exact* formula `player::Gpu::viewport` does (`scale = (area/native).floor().max(1.0)`, never a fraction, never a shrink) instead of the first cut's "fit inside ~480×360" scale, and `shader_manager.rs` paints the result centered in a black-filled area via the raw painter (`ui.painter_at(rect).image(...)`) rather than an `egui::Image` widget, which would have stretched it and thrown away the "always an integer multiple" property. This also means the earlier bugfix's CPU pre-resize is no longer what prevents the divide-by-zero — `.max(1.0)` alone guarantees that regardless of source size — it's now just a sanity cap against rendering a huge photo at full native size every frame. Layout: a fixed 300px controls column + the rest of the window for the preview; a new "Fullscreen" checkbox forces the editor's `egui::Window` to `ctx.viewport_rect()` (falling back to `max_size(900×700)` when off, since egui otherwise remembers the huge rect and `default_width` only applies once). The non-fullscreen preview area is floored at 480×360 so a compact window doesn't just crop the image down to whatever sliver of space is left over. Verified on the real windowed app: a 640×480 test image shows correctly at native 1:1 scale (no visible scanlines — correct, there's no row gap to darken without upscaling) in the compact window, and at a clearly higher integer scale, letterboxed with the sliders filling the freed width, once fullscreen is on; re-confirmed the crt-aperture/photo bugfix case renders via `.max(1.0)` alone, no CPU resize needed for it specifically. `cargo build --workspace` clean.
-
-  **Bug fixed (user-reported, 2026-09-05): the editor window only resized horizontally, opened very short, and its sliders kept that first short height even after the window grew.** One root cause for all three: an `egui::Window` is only as tall as its *content*, so a plain top-to-bottom stack of auto-sized widgets snaps back the moment you let go of the bottom edge — the window only "grew" at all because the preview pane asked for a floor of 480×360 once an image was picked, and the two body columns were independent `ui.vertical`s, so the slider column sized itself to its own content while the preview column decided the row's height. `editor_ui` now lays the form out as panels inside the window (`egui::Panel::top`/`bottom` for the name+preset header and the error+Save/Cancel footer, `CentralPanel` for the body), so the content always fills the window and the two columns share its full height; the params `ScrollArea` takes `auto_shrink([false, false])` and the preview area takes exactly what's left (the 480×360 floor is gone, replaced by the window's own `min_size`). The window itself now gets a `default_size` of 980×700 (not just `default_width`), and the profile *list* screen gets its own `egui::Window::id` so the editor's remembered size doesn't drag the two-row list open to 980px wide. Leaving "Fullscreen" restores the pre-fullscreen size from `ShaderManager::windowed_rect` instead of the old `max_size(900×700)` cap, which had also been what limited how tall the window could ever be dragged. **Second bug found while verifying it:** every parameter whose preset default sits off its own step grid (crt-lottes `warpX` 0.031, step 0.01) was silently marked as *overridden* the first time the editor drew it — a disabled `egui::Slider` still snaps its value to the step and reports `changed()` — so saving a fresh profile wrote overrides nobody asked for; the slider now steps and accepts changes only while its override checkbox is actually ticked. **Verified headlessly on the real editor window** with a new `--diag-editor-frame <preset> <image> <out.png> [<screen WxH>] [<drag dy>] [<x,y;… clicks>]` verb: it runs the actual `ShaderManager::show` through egui frame by frame with synthetic pointer events and dumps the composited frame. A 150 px drag of the bottom edge takes the window from 980×700 to 980×850 and it *stays* there after the release; the dumps show the sliders' column and the preview both filling the taller window; a click on "Fullscreen" fills the 1400×900 screen and a second click comes back to 980×850; with no preview image picked the window still opens at its full size (the original "starts very short" complaint) and `warpX`/`warpY` now show their true 0.031/0.041 defaults, unticked. **Still not click-tested by a human** — same Wayland gap as the rest of this track. |
+| QEMU | v9.2.4 + qemu-3dfx (`d00e858`) + our queue, patches 01–73 (`patches/qemu/README.md`). Built with only what we use: no display, host-audio, extra network or network-block backends (CLAUDE.md, the `no-optionals` check). The Windows QEMU is built with clang (patch 68); the Mac build needs no XQuartz (patch 70). |
+| Emulated CPU (TCG) | x87 shadows at PC=24/53/64 (doc 13), SSE and SIMD inline (doc 16), the M9 queue (REP, same-value SMC, soft immediates, inline TB lookup, TLB work). Doc 22: the default is 2.34x geomean over pristine 9.2.4 on the Air, all switches off 0.97x. Every patch has an off switch in the machine form; `pinned-regs` (patch 21, doc 18) is not offered — it still crashes XP. The hardware-MMU design gauges at 1.1–1.2x and is parked (user decision, 2026-09-16). |
+| Player | QEMU in-process (`libqemu-embed`, embed API v8), wgpu + librashader CRT chain, mode analysis (doc 03), the embed audiodev (f32, paced to the guest's clock, limiter; doc 11), guest hardware cursor as the window cursor, gamepads, host modifier keys as the host reads them, Alt+F4 asks. Options: `docs/development.md`. |
+| OpenGL / Glide pass-through | In the player on Linux (EGL), macOS (CGL) and Windows (WGL, doc 12 "The WGL rule"). Zero-copy: dma-buf ring on Linux (it repairs a slot that stops being written through), IOSurface on macOS. Glide 2 through our OpenGLide build (doc 12 §5); evidence on games is headless only (Rayman 2, Carmageddon DOS). No Windows Glide wrapper; the Glide 3 wrapper was abandoned for the Voodoo 2 device. |
+| Voodoo 2 (doc 21) | `-device voodoo2`, 86Box's chip; 3dfx's own Win98 driver runs Quake II, UT and NFS Porsche on it (the user, by hand); FIFA 2000's and Carmageddon's FIFO hangs are fixed (doc 21 §11, §13). 8 MB board by default (`texmem=2`), command FIFO in guest RAM (`ramfifo=on`, Quake II 41 → 147.5 fps). Open: a second game after one quits sometimes starts glitched. |
+| Direct3D executor (doc 14) | Protocol v13, one decoder, four D3D9s: DXVK natively and on Windows (the default, and what goldens are taken with); below the Vulkan 1.3 floor, Windows' own `d3d9.dll` (`D3DPT_D3D9`, ADR-007's second amendment) or Wine's on a Linux / macOS host (`exec=wine`, ADR-018, M15). `no-exec=on` models a host with no executor at all. |
+| XP display driver (doc 15) | `d3dpt-vga`, register set v5; DirectDraw and a DirectX 8 DDI with hardware T&L, shaders 1.x, palettes, colour keys, VRAM buffers, 16 streams, cube / volume textures, MSAA, gamma. FIFA 2000, Max Payne, Vice City, Moto Racer, Diablo play. |
+| Win98 display driver (doc 19) | The same core under a 9x layer; the default adapter for a new Win98 machine since 2026-09-16. The DirectX 3–8 checks pass as on XP; a 2ksbox Win98 runs DirectX 9.0c. Crimson Skies, 3DMark 99 / 2001 SE, Carmageddon (Mode X), Blood in a DOS box. Blue screens and power-down show. |
+| WineD3D in the guest | Still shipped as the fallback (`WINED3D\` on the ISO, `SETUP /GAME 4`/`5`, `/I 7`); retired in M15's last step and not before (ADR-018). |
+| CD-ROM (docs 05, 17) | `libdisc` behind the `cdimage` driver: cue/bin, CCD, MDS, ISO and `isodir:` folders, L-EC, subchannel, CD-DA, a DVD profile past 80 minutes, the disc shelf from inside the guest (patch 52, `CDSHELF`). SafeDisc 1.x's band read is the negative control; SafeDisc 2.x and ProtectCD never read theirs. |
+| Music (doc 20) | OPL3 and MPU-401 (no IRQ line) on SoundFont GM or the user's MT-32 ROMs; the SB16 applies its mixer (patch 61). Open: Win98's own MIDI through our port loses instruments. |
+| Gamepads (M13) | USB HID pad (patch 26), gameport (patch 27), key mapping. Done. |
+| Guest machines (doc 06) | Four families: Win98, XP, DOS, Other. Win98 / XP start on `d3dpt-vga`, DOS / Other on `std`; no network card by default; Win98 is TCG with `hpet=off`; the BIOS date stamp makes Win98 install ACPI; DOS paces with `-icount …,align=on`. |
+| Guest tools (`guest-tools/README.md`) | One ISO: `SETUP.EXE` installs what this Windows can use; every program logs to `C:\2KSBOX` (`BOXLOG=` overrides). |
+| Launcher (doc 07) | `launcher-qt` over `launcher-core` (also `launcherx`, `launcher-capi`). The machine form is a settings window with a page per section; the Direct3D picker shows only what this host runs; extra QEMU arguments; clone; first-run preset download. Window text short and plain (user rule). |
+| Packages | Linux tarball, Flatpak (`org.kde.Platform` 6.10), macOS app in two builds (ADR-019: App Store 26+, community with the Wine pair at Homebrew's floor, 15.0), Windows zip (cross build; the native MSYS2 build is for debugging). Every package opens a real window offscreen. |
+| Tests | `scripts/test.sh host` (~30 s) / `all` (+ XP and DOS guests); integration only, local only; `docs/testing.md`. |
+| Guest images | Outside the repo and read-only for a session: `~/vms/win98.qcow2`, `winxp.qcow2`, `winxp-m7*.qcow2`, `scratch.img` (E: in XP), and the launcher library's machines (`~/.local/share/2ksbox/machines/`: `base98-br`, `base98-us`, `claude98`, `win98-2`, …). Boot an overlay or a copy. |
 
 ## Build / run cheat sheet
 
+The stages, the player's options and the packagers are in
+`docs/development.md`; the test tools in `docs/testing.md`.
+
 ```sh
-git clone --recurse-submodules --shallow-submodules <repo>
-scripts/build.sh             # ALL of it: qemu, rust, the Qt launcher, dxvk, the D3D executor,
-                             # the guest ISO.
-                             # After every git pull, this is the command. ~3 s when up to
-                             # date (each prepare step is stamped: build/.stamp-*), and it
-                             # says in its summary what this host could not build. -f
-                             # re-runs every prepare; --test chains scripts/test.sh host.
-# The stages it runs, for driving one by hand:
-scripts/prepare-qemu.sh && scripts/configure-qemu.sh
-ninja -C build/qemu qemu-system-i386 qemu-img qemu-io libqemu-embed-i386.so     # .dylib on macOS
-cargo build --release                       # the default members: player, libdisc
-                                            # (discx), libsynth (synthx), gamepad,
-                                            # launcher-core (and its `launcherx` verb
-                                            # binary), qemu-embed, shader-chain
-cargo check --release --workspace           # the one non-default member, `launcher-capi`:
-                                            # installed by nothing, so checked and not
-                                            # release-linked (the egui `launcher` it also
-                                            # guarded was deleted 2026-09-13, ADR-017)
-(cd launcher-qt && cargo build --release)   # the launcher the packages install (needs Qt 6)
-# qemu/embed/
-# is a COPY of embed/ (prepare-qemu.sh rsyncs it); a stale copy links the
-# player against an old dylib ("undefined symbol _qemu_embed_..."). build.rs
-# warns when the copy differs. macOS: every stage targets Homebrew's floor
-# (scripts/macos-floor.sh, 14.0): export MACOSX_DEPLOYMENT_TARGET=$(scripts/macos-floor.sh)
-# before a hand-run cargo too, and cargo clean after raising it — cargo does
-# not rebuild for a new target on its own (build.sh does both).
-# Win98 in the player (macOS shown; Linux identical, drop coreaudio bits)
+scripts/build.sh           # after every pull: everything, only what changed
+                           # (-f re-runs every prepare, --test adds test.sh host)
+scripts/test.sh            # host stage; `all` adds the guests (before any
+                           # commit touching QEMU, embed, the D3D device, guest DLLs)
+
+# a machine the way the launcher runs it
+target/release/launcherx --print-args <machine>/machine.toml   # the exact QEMU line
 target/release/player --shader third_party/slang-shaders/crt/crt-lottes.slangp -- \
-  -L $PWD/qemu/pc-bios -machine pc -cpu pentium3 -m 256 -hda ~/vms/win98.qcow2 \
-  -vga cirrus -net none -usb -device usb-tablet -device sb16,audiodev=embed0
-# Direct3D device: build the executor once, then the ISO after every guest change
-scripts/prepare-dxvk.sh && scripts/configure-dxvk.sh && ninja -C build/dxvk && scripts/build-d3dpt-exec.sh
-guest-tools/build-wrappers.sh   # the guest-tools ISO (the D3DPT DLLs live on it)
-# A D3DPT_PROTO_VERSION bump makes BOTH stale, and neither rebuilds itself: the
-# suite then fails as "protocol mismatch" (d3dpt-dp2, executor N vs header M) and
-# as a guest stage whose DLLs log "host protocol M, this DLL speaks N" and quietly
-# forward to XP's own d3d9 on cirrus (guest-boot: no attach). scripts/build.sh
-# rebuilds both, and warns when this host cannot — which is the reason to use it
-# rather than the lines above.
-scripts/test.sh          # the regression suite, host stage (~30 s); `all` adds XP + DOS guests (~2 min)
-target/release/discx convert game.iso build/test/disc/game.cue --audio a.wav   # cue/bin from an ISO (+ audio tracks)
-build/qemu/qemu-img info build/test/disc/game.cue   # "file format: cdimage"; -cdrom game.cue probes to it (doc 17)
-tools/xp-cdimage-test.sh ~/vms/winxp.qcow2 build/test/disc/game.cue <dir with the ISO's files>   # XP copies the disc, hashes
-target/release/discx scan game.cue                 # every sector classified + L-EC verified: the bad-sector map of a dump
-CDIMAGE_TRACE=1 build/qemu/qemu-system-i386 … -cdrom game.cue   # every ATAPI packet, reply and sense on stderr
-python3 tools/atapi-guest-test.py                  # DOS ATAPI battery vs discx dump (the guest stage's atapi-guest)
-tools/string-bench.py --qemu old/qemu-system-i386 --qemu build/qemu/qemu-system-i386   # rep movs/stos/scas ns per element, A/B
-tools/rep-guest-test.py                                              # rep movs/stos battery, rep-fast on/off vs a model (patch 17)
-tools/smc-guest-test.py                                              # self-modifying code, smc-same-value on/off (patch 18)
-RACE_SAMPLE=15 RACE_MEMSAVE=0x436000:0x1000 tools/xp-moto-race.sh ~/vms/winxp-m7.qcow2 x   # profile *in* the race + code-page captures
-build/venv-capstone/bin/python tools/smc-diff.py build/tcg-profile/x/race/mem-0x436000-{a,b}.bin 0x436000   # what the game patches
-build/d3dpt-exec-test x.bmp 120 60                 # host-only check of decoder + executor
-build/d3dpt-dp2-test x.bmp                          # the display driver's records (M7c) without a guest
-guest-tools/build-wrappers.sh                      # ISO with D3DPT\ (D3D9.DLL, D3D8.DLL, tests)
-# XP test loop (Linux; -accel kvm -cpu host is fine, TCG identical): scratch FAT disk as E:
-# for files out of the guest (creation recipe in the gotchas), CD as D:
-target/release/player -- -L $PWD/qemu/pc-bios -machine pc -cpu pentium3 -m 512 -hda ~/vms/winxp.qcow2 \
-  -hdb ~/vms/scratch.img -cdrom guest-tools/out/guest-tools-3dfx-d00e858.iso -vga cirrus -net none \
-  -usb -device usb-tablet -qmp unix:/tmp/qmp.sock,server,nowait
-tools/qmpc.py /tmp/qmp.sock keys meta_l+r; tools/qmpc.py /tmp/qmp.sock type 'cmd /c xcopy D:\D3DPT E:\D3DPT\ /I /Y'; tools/qmpc.py /tmp/qmp.sock keys ret
-tools/qmpc.py /tmp/qmp.sock keys meta_l+r; tools/qmpc.py /tmp/qmp.sock type 'E:\D3DPT\D3DGAME9.EXE -frames 600 -dump 300 E:\OUT\G9.BMP'; tools/qmpc.py /tmp/qmp.sock keys ret
-tools/qmpc.py /tmp/qmp.sock json '{"execute":"system_powerdown"}'   # clean XP shutdown
-# no guest tool sleeps out a boot: . tools/guestwait.sh, then gw_poke_until / gw_wait_log /
-# gw_wait_quiet (BOOT_WAIT is the cap on giving up, not a wait). Each says on stderr what it
-# waited for and for how long, so a run's log shows where its time went.
-mcopy -i ~/vms/scratch.img@@1048576 ::/OUT/G9.BMP g9.bmp && tools/bmpdiff.py reference/d3d/rig-2026-09-03/d3dgame9-w300-ff.bmp g9.bmp --mask 0,368,270,112
-# host log: qemu-system-i386: info: d3dpt: … (device, executor, and every guest DLL log line)
-# a raw disc with CD audio in the player (doc 17): the explicit drive form instead of -cdrom, audiodev = the player's
-#   -drive if=none,id=cd0,media=cdrom,file=game.cue -device ide-cd,bus=ide.1,id=ide1-cd0,drive=cd0,audiodev=embed0
-# XP on our display driver (M7 track, doc 15): -vga none -device d3dpt-vga instead of -vga cirrus,
-# driver installed once per image from the ISO's DRIVER\ (DRVINST.EXE -reboot); headless loops:
-guest-tools/build-driver.sh && tools/xp-driver-test.sh ~/vms/winxp-m7c.qcow2 ddtest   # or d3d7
-# as a user below ADR-013's Vulkan 1.3 floor (doc 15): the adapter reports no executor,
-# so the driver offers DirectDraw and no Direct3D — the whole point of the WineD3D row.
-# One flag, and `-global d3dpt-vga.no-exec=on` is the form's Extra-QEMU-arguments spelling.
-NO_EXEC=1 tools/xp-driver-test.sh ~/vms/winxp-m7c.qcow2 d3d7      # d3dpt-vga,no-exec=on
-# (the launcher's own probe still sees this host's Vulkan: to take that away too, run
-#  tools/xp-wined3d-test.sh, which empties VK_DRIVER_FILES / VK_ICD_FILENAMES)
+  -L $PWD/qemu/pc-bios -machine pc,hpet=off -cpu pentium3 -m 256 \
+  -hda <overlay>.qcow2 -vga none -device d3dpt-vga -usb -device usb-tablet \
+  -device sb16,audiodev=embed0 -qmp unix:/tmp/q.sock,server,nowait
+
+# driving a guest
+tools/qmpc.py /tmp/q.sock keys meta_l+r      # Run dialog; `type '…'`, `keys ret`
+tools/qmpc.py /tmp/q.sock json '{"execute":"system_powerdown"}'   # clean stop
+mcopy -i ~/vms/scratch.img@@1048576 ::/OUT/G9.BMP g9.bmp   # a file out of E:
+
+# host-only D3D checks, and the XP driver loop
+build/d3dpt-exec-test x.bmp 120 60
+build/d3dpt-dp2-test x.bmp
+tools/xp-driver-test.sh <overlay> d3d7        # NO_EXEC=1 / EXEC=wine for the fallbacks
+
+# CD images
+target/release/discx scan game.cue            # the bad-sector map of a dump
+CDIMAGE_TRACE=1 build/qemu/qemu-system-i386 … -cdrom game.cue   # every ATAPI packet
+# a disc with CD audio in the player: the explicit drive, on its own channel
+#   -drive if=none,id=cd0,media=cdrom,file=game.cue \
+#   -device ide-cd,bus=ide.1,id=ide1-cd0,drive=cd0,audiodev=embed0
 ```
-Player env knobs: `PLAYER_DUMP`, `PLAYER_DUMP_OUT`, `PLAYER_DUMP_SEQ`,
-`PLAYER_KEYS`, `PLAYER_AUDIO_NULL`, `PLAYER_AUDIO_TAP`, `PLAYER_AUDIO_MS`,
-`PLAYER_LATENCY`, `PLAYER_REFRESH_MS`,
-`PLAYER_REFRESH_LOG` (the `[display] refresh #N` counter, off since
-2026-09-07 — it printed for as long as a machine was up and buried
-`PLAYER_SHADER`, `PLAYER_QMP`, `PLAYER_QMP_EXEC` (docs/development.md). Machine bundles
-handle firmware paths automatically; when running standalone QEMU manually pass
-`-L qemu/pc-bios`. Test image: FreeDOS 1.3 floppy
-(`build/images/144m/x86BOOT.img`, git-ignored; `tools/x87-guest-test.py`
-fetches FD13-FloppyEdition.zip from ibiblio and extracts it).
-macOS specifics: `docs/build-macos.md`. x87 tests need `brew install nasm
-mtools`; `tools/x87-guest-test.py` downloads the FreeDOS floppy itself.
 
-## Known issues / open threads
+A `D3DPT_PROTO_VERSION` bump makes the executor and the guest-tools ISO
+stale without saying so (`protocol mismatch`, a guest that never
+attaches); `scripts/build.sh` rebuilds both. A bare `qemu-system-i386`
+has no 3D and opens no window (VNC on `localhost:5900`); pass `-L
+qemu/pc-bios` to it by hand. The DOS batteries fetch the FreeDOS floppy
+themselves; on a Mac they need `brew install nasm mtools`.
 
-- **The first OpenGL guest ever run on Windows took the player down, in
-  one WGL call** (user, 2026-09-21: "glquake crashed when I tried to open
-  it… it crashed the whole qemu"; fixed the same day, doc 12 "The WGL
-  rule"). `player.log` ended at `glcntx: ChoosePixelFormat()` and the
-  process was gone — and that was the *only* GL activity in a 5 MB log,
-  so nothing about the pass-through had ever run on this host.
+## Open threads
 
-  **Why.** The Windows backend's entry points come from libepoxy, which
-  resolves each one lazily at its first call, and WGL answers
-  `wglGetProcAddress` only while a context is current on the calling
-  thread. `plat_open()` ends with `wglMakeCurrent(NULL, NULL)` on purpose
-  (a WGL context may be current on one thread at a time, and the thread
-  that opens the backend is not the one that draws), so the next ARB call
-  — `wglChoosePixelFormatARB` in `plat_choose` — was the first made with
-  nothing current. It does not fail there: it **faults**.
-  `tools/wgl-probe.exe` passes on this host and always would, because it
-  resolves the ARB pointers by hand while its own bootstrap context is
-  current; what pinned it down was a 40-line repro of exactly three steps
-  (bootstrap context, un-current, one ARB call through epoxy), which dies
-  with ACCESS_VIOLATION and exit 0xC0000005.
+What is known to be unfinished or unexplained across tracks. A track's
+own open items live in its track doc; fixed things leave this list.
 
-  **Fixed** in `embed/mglcntx_embed.c`: every ARB call in that backend
-  borrows the bootstrap context when the caller has none
-  (`wgl_borrow_ctx` / `wgl_return_ctx`) and restores exactly what it
-  found, "nothing" included. The same repro survives with the borrow.
+- **GL and Glide on a Windows host.** The OpenGL pass-through runs there
+  (`GLPROBE.EXE` in `base98-br` reads the host's own renderer since the
+  WGL fix, doc 12 "The WGL rule"), but no game has been run on it yet:
+  GLQuake is the user's next try. The Glide wrapper has no Windows build
+  at all (doc 12 "Order"; `glide` is "(not shipped)" in the package).
 
-  **And then the chain worked**, first time, on `base98-br` in the player
-  with `TESTS\GLPROBE.EXE`: `glcntx: pixel format 12: alpha 8 depth 24
-  stencil 8` → `MESAGL drawable ready` → `drawable 800x600` → the guest's
-  own strings *through* the pass-through (`mesapt: NVIDIA GeForce RTX
-  3090/PCIe/SSE2`, `4.6.0 NVIDIA 616.64`) → `DLL unloaded`. So OpenGL
-  pass-through runs on a Windows host as of 2026-09-21. **Still to do:**
-  GLQuake itself (the user's own run — GLPROBE proves the context and the
-  strings, not a frame of a game), and the same for a Glide title, whose
-  wrapper has no Windows build at all yet (doc 12 "Order").
+- **Windows' own Direct3D 9 is unproved on the hosts it is for.** Both
+  oracles pass on both backends and match byte for byte, but only on an
+  RTX 3090 that will never take this path (ADR-007's second amendment,
+  M11). Pre-Broadwell Intel, Kepler and TeraScale drivers are where the
+  next gaps will be; `D3DPT_D3D9=system` on any Windows host is how to
+  look for them, and a real title on a real such host is the next step.
 
-- **Windows' own Direct3D 9 is a backend again, for the hosts DXVK will
-  not run on** (2026-09-21, user decision; ADR-007's second amendment,
-  ADR-013's). "The wine path is just not very good": a Windows host below
-  the Vulkan 1.3 floor was being sent to WineD3D *in the guest* while the
-  machine itself had a perfectly good D3D9 driver for the card it was sold
-  with. So the executor takes a second D3D9 library — and this time it was
-  built rather than assumed, which is the difference from 2026-09-08.
+- **Win98's ACPI standby does not come back** (doc 19 §41). The idle
+  timer's step after the monitor blank suspends the whole VM: the vCPU
+  stops, input piles up in the embed queue (512 events, 151 dropped, 20 s
+  late on the user's run), and on the wake the screen is a blank 720x400
+  VGA text page because nothing reprograms the adapter after the resume,
+  so the machine idles straight back into standby. The player logs
+  nothing: `player/src/qmp.rs::is_notable` lists neither `SUSPEND` nor
+  `WAKEUP`.
 
-  **It is half of an answer ADR-018 finished the next day.** That decision
-  (2026-09-22, track M15) does the same thing for a Linux or macOS host
-  below the floor — the same executor on **Wine's** d3d9, out of process
-  because that is where Wine's lives — and retires WineD3D-in-guest with
-  it. The two were written a day apart without knowledge of each other and
-  say one thing: below the floor the executor gets a real D3D9 from
-  wherever the host keeps one, in process on Windows and under Wine
-  elsewhere. Nothing here is superseded; M15 covers the platforms this
-  cannot.
+- **The zero-copy ring's frozen slot has no known cause.** `zc_probe()`
+  finds and remakes a slot that stops being written through (GLQuake is
+  clean with one repair), but why it happens is open; doc 12 §4 lists
+  everything measured not to be it. What is left is mesapt's own
+  host-side path (texture uploads, the vertex-array cache, mapped
+  buffers).
 
-  **What it is.** `D3DPT_D3D9=auto|dxvk|system` in the executor
-  (`d3dpt/exec/d3dpt_exec.cpp`'s header is the reference), the adapter's
-  `d3d9=` property (`-device d3dpt-vga,d3d9=system`, `-global` spelling
-  too), and the machine form's **Direct3D** row (`bundle::D3d9`, the
-  `d3d9` check in `scripts/test.sh`). `auto` is resolved **in the
-  launcher** from its own Vulkan probe, because only that side can tell a
-  software Vulkan device from a real one and on Windows a card's own D3D9
-  beats lavapipe; the executor keeps a narrower auto of its own (DXVK,
-  then the system library when DXVK opens no adapter) so a bare
-  `qemu-system-i386` on such a host still gets 3D. DXVK stays the default
-  and the only rasteriser the goldens are held against.
+- **3DMark 99 on the Windows PC: two threads** (M14/M11, `base98-br`,
+  `scripts/win-voodoo-ab.sh`, log `build/win-voodoo-ab.log`; the FIFO
+  hangs are fixed, doc 21 §9).
+  - *A garbled loading screen*, seen once and not reproduced (usually the
+    Fill Rate one). It is the 800x600 desktop on `d3dpt-vga`, not a
+    Voodoo frame, in stale bands; `vga:full-frames=on` does not change it
+    and no flips or executor batches run meanwhile, so the guest wrote
+    those bytes itself. Next: which blit draws that background and where
+    it reads from.
+  - *The whole machine 3x slower after some guest restarts*, with no
+    Voodoo at all (`no-voodoo`): 46.3, 46.7, 62.4, **15.0**, 37.8 fps
+    across restarts in one player run, everything slower by the same
+    factor. Not a context leak, the ring falling back to MMIO, or audio or
+    input stalls. `d3dpt-vga` now reports `N batches in 5.0 s, M ms of
+    them in the executor` and the script passes `-msg timestamp=on`: a
+    flat host share with the rate halved is the guest or the vCPU. Also
+    worth checking inside Windows (Performance tab: a file system not
+    "32-bit" after hard resets) and the host's own CPU use.
 
-  **Why it drew black in September.** Nothing had been written for that
-  backend — it was `LoadLibrary("d3d9.dll")` and the same call sequence
-  DXVK takes. Four things the system implementation refuses, all now
-  behind `Exec::native`: a device with **no window** (a hidden 1x1 popup
-  now); a **draw outside a scene** — the display driver's DP2 stream has
-  no BeginScene anywhere, since the DX7 DDI has no such call, so the
-  executor opens and closes the scene itself on both backends
-  (`Exec::scene_begin`, closed before every StretchRect / readback /
-  Present); the **backbuffer read after Present**, undefined with
-  SWAPEFFECT_DISCARD on real hardware and where the frames actually went
-  (read before the flip on that backend); and a **device that can be
-  lost** (`TestCooperativeLevel` once per batch, `Reset`, and
-  `exec_ddi_device_reset` drops the default-pool mirror so every surface
-  is read from guest VRAM again). Hardware vertex processing and a
-  windowed backbuffer format that is not the desktop's are retried rather
-  than refused.
+- **Moto Racer's speed on the PC** (M11): slow in the menus and the
+  software race with the CPU at 5 % (one of 24 threads, so CPU-bound).
+  Not reproduced on Linux, 15.6 ms waits included. The clang-built QEMU
+  (patch 68) answers the measured gap but has not been run on the PC yet;
+  the user's log also shows 640x480 at **8 bits** with no page flips,
+  which no run here has covered.
 
-  **Measured on the PC, 2026-09-21** (5900X, RTX 3090 — a host with both,
-  which is how the two are compared at all). `d3dpt-dp2-test.exe`, the
-  display driver's 107 checks: **PASS on both**. `d3dpt-exec-test.exe`,
-  the guest DLLs' path with the swapchain and the Present the other one
-  has not got (cross-built for Windows for the first time here): 60 frames
-  on both, and **both BMPs byte-identical between DXVK and NVIDIA's own
-  Direct3D 9**. One driver gap found and met: `D3DFMT_L6V5U5` — the 1999
-  Matrox bump format — is listed by `CheckDeviceFormat` and drawn with no
-  luminance at all (BUMPENVMAPLUMINANCE black, X8L8V8U8 right both ways),
-  so on this backend it is converted to X8L8V8U8 at upload.
+- **`GetSwapChain` is a stub** in the guest D3D9 DLL (doc 14, "A review of
+  the guest DLLs").
 
-  **And a real guest, the same day.** `base98-br` on an overlay, its own
-  machine line with `d3d9=system` and the image's `no-exec=on` dropped,
-  `D3D7TEST.EXE` off the guest-tools CD through Win+R (the Portuguese
-  Start menu takes `D` as *Desligar* and shuts the machine down — that is
-  what the first attempt did). The log is the whole chain:
-  `d3d9: C:\WINDOWS\system32\d3d9.dll (this host's own Direct3D 9),
-  adapter "NVIDIA GeForce RTX 3090"`, then `ddi: device for 640x480
-  render targets -> 0x00000000` (CreateDevice on the hidden window),
-  `ddi: context 1 on 640x480`, and 13 readbacks of a drawn frame into
-  guest VRAM. The same run on `d3d9=dxvk`: the same 13 readbacks of the
-  same handles at the same VRAM offsets. The one difference between the
-  two, and worth knowing: the **X byte** of the X8R8G8B8 target comes
-  back `0xff` from DXVK and `0x00` from NVIDIA's d3d9 (`px0 0xff203040`
-  against `0x00203040`, RGB identical). It is undefined by the format and
-  period hardware varied too, so nothing here reads it — but a title that
-  treats X as alpha would see it, and this is where to start if one does.
+- **The NT side of the 3DMark2001 fixes is not re-run** (doc 19 §38):
+  Q8W8V8U8 as FOURCC 63 changed both families, but `xp-driver-test.sh
+  install` installed no driver at all on a `winxp-m7` overlay (HEAD's
+  driver and the one before alike), so the harness or the image is at
+  fault and BUMPTEST on XP is unmeasured.
 
-  **The row came up empty in the Qt launcher, and QML said nothing**
-  (user, 2026-09-21, fixed the same day). cxx-qt's `#[auto_cxx_name]`
-  capitalises the letter after a digit: `d3d9_labels` became
-  `d3D9Labels`, `WizardWindow.qml` asked for `d3d9Labels`, and **a QML
-  binding that names a property the object has not got is silent** — no
-  warning, no error, the combo box simply takes no model and the row's
-  `visible` binding keeps its default. So the machine form showed a
-  "Direct3D" row with an empty combo. Both sides say `d3d9` now (each
-  property and both invokables name their own `cxx_name` in
-  `launcher-qt/src/qt/wizard.rs`), and because the failure was invisible
-  to everything that asks the *model*, the window is now asked: the
-  wizard diag prints `wizard direct3d: shown [Automatic] of 3 model 0
-  applies true` and the `qt-wizard` check requires three entries, one of
-  them showing, and the row's visibility to follow the adapter. That is
-  the same lesson as the memory spin box and the name field before it —
-  a control can disagree with a model that is perfectly right.
+- **A fault inside a DDI callback leaks the command-window lock** and
+  freezes the session until the process dies (doc 19 §36). Accepted for
+  v1 (user decision, 2026-09-16); the fix is an exception frame that
+  releases the lock on unwind.
 
-  **What is not proved.** Every measurement above is on a card that will
-  never use this path. The hosts it is *for* — pre-Broadwell Intel,
-  Kepler, TeraScale — are untested here, and their D3D9 drivers are where
-  the next gaps will be; the frame comparison is also of one scene each,
-  not of a game. A real title on a real such host is the next step, and
-  `D3DPT_D3D9=system` on any Windows host is how to look for the gaps
-  before then.
+- **Win98 `SETUP /ALL` over an installed driver: `WININIT.INI [rename]`
+  sometimes lacks the `SYSTEM\` entries** (`VOODOO=1
+  tools/setup-guest-test.sh` on `~/vms/win98.qcow2`). All seven copies
+  are staged and logged, but the INI read right after holds the four
+  `INF\` renames and zero or one of the three `SYSTEM\` ones. Unknown
+  whether the 9x profile cache had not flushed yet (the restart would
+  still apply them; `REBOOT=1` says) or the renames are lost. That
+  image's `SYSTEM\GLIDE*.DLL` and `FXMEMMAP.VXD` are read-only
+  leftovers, so its three Voodoo marker checks fail regardless.
 
-- **The WineD3D fallback drew nothing on Linux, and it was ours: a frame
-  presented by a front-buffer flush was never published** (2026-09-20, doc 19
-  §44). The user pointed `base98-br-glide3` at WineD3D (`no-exec=on`,
-  `SETUP /I 7`) and started FIFA 2000: its 3D Setup listed the host's card
-  and took it, and the game then played its audio over a black screen. §40's
-  Moto Racer did the same under the fallback. Wine's ddraw presents the
-  primary surface by drawing into `GL_FRONT` and flushing — it never swaps —
-  and the embed backend published on a swap only; Mesa does not even refuse
-  `glDrawBuffer(GL_FRONT)` on a pbuffer, so nothing complained. The hooks for
-  that were written for macOS on 2026-09-03 and are the shared layer's now
-  (`embed/mglcntx_embed.c`), with one question left per OS: what plays
-  framebuffer 0 (macOS's FBO stand-in → `GL_COLOR_ATTACHMENT0`, the EGL and
-  WGL pbuffers → `GL_BACK`). One file apart on the same raw copy, same disc:
-  **206 player frames** — EA logo, menus, the attract match — against **29**
-  ending in pure black. `embed-3d` has the case with no guest in it (a
-  front-buffer flush must publish the magenta it drew) and fails on the old
-  backend. Open, and not presentation: the pitch draws black under the
-  players and the lines.
+- **Proved by probes, not yet by a title:** the display-driver core's
+  cut of long non-indexed draws (doc 19 §32; no probe draws 90,000
+  vertices), and the SB16 wave-name fix with a DirectSound *game* (doc
+  20 §5.3; dxdiag is the evidence so far). The user's own `claude98`
+  still needs `SETUP /I 5` from a current ISO and a restart.
 
-- **WineD3D can be the machine's DirectDraw on 9x, decided at every login**
-  (2026-09-20, doc 19 §43). The folder next to a game reaches only the first
-  DirectDraw program of a session (§42), so `SETUP /I 7` on 9x installs
-  wine9x's switcher as `DDRAWME.DLL`, this machine's own DirectDraw as
-  `DDSYS.DLL` (with the name inside it patched, `ddreplacer.c`'s edit), the
-  GL pass-through as the system `OPENGL32.DLL`, and `D3DPRE.EXE` in the Run
-  key. The helper asks the display driver through a private escape
-  (`d3dpt_esc.h`, answered from `D3DPT_FB_REG_D3D_STATUS`) whether this
-  *host* has a Direct3D executor, and writes or removes
-  `KnownDLLs\DDRAW = ddrawme.dll` — which the loader reads per
-  `LoadLibrary`, so it is in force for every program started afterwards with
-  no restart. `tools/wined3d-sys-test.sh` is the check, three boots, PASS on
-  2026-09-20: with `no-exec=on` the probe finds `Wine D3D7 T&L HAL` at
-  **545.5 fps** *after* a DirectDraw program has already loaded Windows' own,
-  and with the executor available the value is taken away again and the probe
-  is back on ours. **OpenGL is not part of the switch**: the pass-through is
-  the machine's GL in both modes (our own Direct3D does not use GL, and the
-  pass-through is the only accelerated one), which `TESTS\GLPROBE.EXE` says
-  in both boots — `GL_RENDERER AMD Radeon RX 9060 XT (radeonsi …)`, a cleared
-  pixel reading `00ff00`, 1052.6 fps with the executor on. That is why the
-  component refuses to install without the device mapper: the pass-through's
-  `DllMain` returns FALSE without it and every program that imports opengl32
-  would stop starting. Two things that do not work are measured there too:
-  replacing `DDRAW.DLL` (System File Protection restores it) and preloading
-  Wine's copy at login (an app-directory module never becomes the machine's,
-  resident or not).
+- **Parked, WineD3D's own rendering** (the wine9x rule; ADR-018 retires
+  the path in M15's last step): FIFA 2000 under the 9x fallback draws the
+  pitch black under the players and lines (doc 19 §44).
 
-- **Carmageddon's 3dfx build on the Voodoo 2: three hangs and a flicker, all
-  from one thing — 86Box has two queues into the chip and the guest has one
-  bus** (2026-09-18/19, doc 21 §13, patch 72; the user's own runs on
-  `base98-us`, the DOS `3DFX.EXE` started from Explorer in a Win98 DOS box,
-  `-device voodoo2` beside `d3dpt-vga`).
-  **The quit hang (closed).** Glide's `grSstWinClose` writes its last packets
-  and then clears fbiInit7's command-FIFO bit; that register write was
-  applied at once while the ring was still being consumed, 86Box's consumer
-  loop ends the moment `cmdfifo_enabled` goes false, and `SST_status`'s busy
-  bit *is* `cmdfifo_depth_rd != cmdfifo_depth_wr`. Two words of the 104 the
-  last walk counted were left, so the card read busy to every later poll and
-  the DOS box spun in `grSstIdle` for minutes while Windows carried on around
-  it — `busy: 0 cmds outstanding (wr 49668 rd 49668), fifo depth
-  59495109/59495111` with 27 million reads of register 0x000 in five seconds.
-  Such a write now runs the ring out first, and behind it the depths are
-  equalised if one still leaves the FIFO off with words unrun.
-  **The flashing HUD (fixed, one run still to confirm).** 86Box's thread
-  drained its memory FIFO once per wake and then stayed in the ring for as
-  long as the guest kept feeding it — in a race the whole frame, **~19,000
-  words behind, every 5 s line**. So the HUD written with `grLfbWriteRegion`
-  waited there while the swap that followed it in the ring was consumed, and
-  landed in the buffer that swap had just turned into the back one. The
-  user's two shots of one race say it exactly: the panels Carmageddon draws
-  as geometry are in both, the sprites it writes through the LFB are in one
-  and gone in the next. **Patch 72** makes the ring loop yield the moment
-  anything appears in the memory FIFO — three lines, no wait anywhere. The
-  vCPU waited for it instead for a day, and that is what priced the
-  mechanism: 3,200 waits and 1.8 s of vCPU time per 5 s, ~13 LFB-then-ring
-  turns a frame, one per HUD element (the frame rate went *up* all the same,
-  40–46 → 50–56 new frames a second, because the guest stopped spinning on
-  status: 7 M reads per 5 s → 950). **The first patch 72 was backwards**, and
-  saying so is the whole lesson: making the ring loop yield the moment
-  anything appears in the memory FIFO fixed one direction and broke the
-  other, because an LFB write then jumped *ahead* of ring words published
-  before it that the consumer — 20,000 words behind — had not reached. The
-  HUD landed before the world geometry of its own frame and was painted over,
-  and the user's run said exactly that: **the HUD almost never appeared**,
-  where before it had mostly appeared. Everything else about that run was
-  clean (301 frames, 301 new, 60 Hz, `0 packets part-written`, and `LFB
-  writes: 0 to the front buffer, 4446671 to the back, rows 0..469` — the HUD
-  going exactly where the game means it to). **Neither queue goes first:
-  they interleave**, and patch 72 now gives each memory-FIFO entry the ring's
-  write pointer as it was queued, so it runs once the ring has been consumed
-  that far and not before. A sequence number is what the thread never had,
-  and every arrangement without one is wrong in one direction or the other.
-  The guest test's ordering scene loads the ring with 192 full-screen fills
-  first, but does **not** discriminate on an idle host — measured both ways —
-  because the window needs a rasterizer that is behind. The game was the
-  oracle and **the user's run of 2026-09-19 closed it: the flicker stopped.**
-  One clause of the patch is not about ordering: a mark the ring can never
-  reach, which a `cmdFifoDepth` write makes by putting the read pointer back
-  to nothing under entries already queued, is stale rather than in the
-  future and is taken as due — otherwise the entry waits for a pointer that
-  is not coming back and the next guest write blocks in
-  `voodoo_queue_command`. Draining the memory FIFO from the guest's side
-  instead is the obvious alternative and is wrong: it holds 86Box's `flush`
-  while a swap goes past, which flips the buffer where it stands instead of
-  at the retrace, and it tore the teardown scene's frame exactly 64 rows
-  down — where the beam was.
-  **Open: a DOS/4GW page fault**, once, mid-race, on the same run that fixed
-  the flicker (`exception 0Eh at 237:8AF5B704`, unrelocated `2:000B8704`,
-  `EBX = EDI = FFFFFFFF`, error code 4 = a user-mode read of a page that is
-  not there). Nothing on the device side is implicated by that log: no
-  warning of any kind, the ring healthy throughout (`0 packets
-  part-written`), and in the whole 5 s window the
-  guest made essentially no reads that were not the status register or
-  `cmdFifoRdPtr` — so the 0xFFFFFFFF in its registers did not come from a
-  read of ours. It may be the game, now that it runs far enough to be
-  played. If it recurs, whether it recurs at the same point is the thing to
-  note, and `VOODOO2_TRACE=1` keeps the guest's last accesses.
-  **And the card read busy for the whole race** off one stale outstanding
-  command, which had the guest reading the status register 9–11 million times
-  per 5 s and is what `grLfbLock` waits on. The rule that puts a stale count
-  back could not reach it, because it ended a run of polls on any guest write
-  and `cmd_written_fifo` goes up on every triangle packet — 300,000 of them
-  in five seconds. It is the idle state itself that gates it now, held for
-  20 ms of continuous polling.
-  **The `ramfifo=off` freeze (closed).** A different stuck-busy, and a
-  general one: `written - cmd_read` is a running difference nothing ever
-  resynchronises, and on a Voodoo 2 a swap *packet* counts a read without a
-  write while the register write Glide makes beside it counts a write. One
-  command drifted and the card read busy for ever — `wr 3243 rd 3242`, both
-  FIFOs empty, 26 million status reads per 5 s. A card cannot be busy with
-  nothing to do: after 20,000 consecutive status reads with no guest write in
-  between and every real sign of work clear, the count is put back.
-  **The `ramfifo=off` race-start freeze (closed, 2026-09-21).** The
-  transport's own: Glide writes a two-word packet value first and header
-  second, the chip counts the ring's depth over what is written
-  contiguously, and 86Box counted every write as it came — so a consumer
-  caught up with the guest read the header's slot the moment the value
-  landed, a stale word from the last lap taken as a header, and
-  Carmageddon's race start ended in a `fatal()` inside a texture download
-  and 27 M `cmdFifoRdPtr` reads per 5 s. The device counts that path as the
-  chip does now (doc 21 §13; the `voodoo-guest` check's swapped-pair
-  phase). What parked it for a day was the check itself: the teardown
-  phase announced its scene the instant status read idle, which is the
-  retrace the swap lands on, so a screendump within a frame period of the
-  marker was the previous scene whole with the ring consumed and the card
-  idle — polled every millisecond it failed every time, the device never
-  involved; the phase waits out the scanout now as the others do. The first
-  race that got past the start found the count's other hole: at every wrap
-  Glide's first packet at the base is the same value-first pair, and a write
-  below the expected address was taken as the guest continuing there, so
-  every word of the next lap was held until the bitmap ran out. Glide never
-  writes `cmdFifoAMin` at a wrap, so the chip follows its own JMP on the
-  write side, and the device does now (doc 21 §13; the check's wrap phase).
-  The race then crashed in the guest with nothing on the device's side,
-  and that one was the **12 MB board**: the game dies printing a Glide
-  error, and the one Glide error a card's configuration decides is a
-  texture level spanning a 2 MB boundary of TMU memory — this device
-  reported 4 MB per TMU, a 1997 allocator walked past the line, 86Box's
-  8 MB default never can. `texmem=2` (the 8 MB board) is the default now
-  (doc 21 §13; the user's A/B, no crash).
-  **The "wide" menu is not ours.** Measured out of the screenshot rather than
-  argued: the player draws the 640x480 frame at exactly 3x with square pixels
-  (the CRT preset's scanline period is 3 host rows, autocorrelation peaks at
-  3/6/9), and the artwork is the middle 402 of 480 source rows. The guest
-  writes 153,601 dwords a frame — 640x480 at 16 bpp exactly — so the black
-  bands are in its own frame buffer: a 640x400 front end in a 640x480 Glide
-  buffer. The race frames from the same session measure 4:3 to four decimals.
+- **WineD3D-in-guest: XP's device mapper sometimes fails to install.**
+  On `winxp-m7.qcow2`, `tools/xp-wined3d-test.sh` failed to install the
+  mapper in 2 of 3 runs. INSTDRV printed nothing and left no MAPMEM
+  service (`sc`: 1060), so `OPENGL32.DLL` could not load, D3DGAME9 sat
+  behind an error box and XP ignored the power button. It is not an
+  address clash (`info mtree`). When the service is missing, the harness
+  now reruns INSTDRV straight to COM1 with its exit code, so the next
+  failure will say why. The frame's two WineD3D rendering defects
+  (checker bands, the grid blue instead of height-coloured; 153,633
+  pixels on both adapters) are parked by the wine9x rule. The whole path
+  retires in M15's last step (ADR-018).
 
-- **A guest-side wait starved the guest it was waiting for** (2026-09-18).
-  `tools/win98-game-test.sh` held the login with a CHOICE loop in a DOS box,
-  which is the only bounded wait COMMAND.COM can write — and CHOICE polls,
-  so the box never idled, a host core sat at 100 % and 3dfx's card
-  initialisation competed with the wait for the same guest CPU. Measured on
-  `base98-br`, same image and same command line otherwise: the helper takes
-  **1,047 ms at an idle login, 3,625 ms behind a DOS box, 12,646 ms behind
-  the CHOICE loop**. `WIN.INI`'s `run=` now names `WAITFILE.EXE`
-  (`guest-tools/src/waitfile.c`), which sleeps until `V2START.LOG` appears
-  and then starts `RUN.BAT`, so no DOS box is open until the card is ready:
-  **1,097 ms**. Worth remembering twice over — every timing taken behind that
-  loop was of a starved guest, and the rule CLAUDE.md already has ("never
-  sleep-poll beside a long job") applies inside the guest, where it costs
-  more.
-- **Win98's monitor power-down left the linear mode on, and standby is
-  still open** (2026-09-18, doc 19 §41). The user's report, twice: a
-  machine left alone came back frozen with "a green corrupted band on the
-  top band of the screen". Not a fault — an idle Windows takes the screen
-  away from the display driver for a monitor blank (`switched out`, INT 2Fh
-  AX=4001h), the driver marks the DIB Engine `BUSY` so nothing repaints,
-  and **the mini-VDD is told nothing**, so `ENABLE` stayed 1 and the
-  adapter went on scanning the frozen desktop out of VRAM offset 0, where
-  the VGA planes live — 20 rows of band at 800x600x16, §35's band from the
-  other end. `SwitchToBgnd` now drops the linear mode itself: measured with
-  the new `PWRPROBE.EXE`, `linear mode off` lands 69 µs after the
-  notification where the old driver held the mode for the whole 5.7 s
-  blank. **A guess was dropped on the way**: answering the DPMS escapes
-  (`SETPOWERMANAGEMENT`) looked like the real fix, and the escape log added
-  to find out says this Windows asks about escape 0xc01 and escape 0x27 and
-  never 0x1804 — it takes the screen away regardless, so the answers went
-  and the log line stayed. **Still open, and separate**: the same idle
-  timer's next step is an ACPI **standby**, which suspends the whole VM
-  (QMP `SUSPEND`; the vCPU stops, input piles up in the embed queue — 512
-  events, 151 dropped, 20 s of latency on the user's run — and the ALSA
-  stream errors for exactly its duration). The player says nothing about
-  it, because `player/src/qmp.rs::is_notable` lists neither `SUSPEND` nor
-  `WAKEUP`; and on the wake the guest runs again but the screen comes back
-  as a blank 720x400 VGA **text** page, with nothing reprogramming the
-  adapter after the resume, so the machine idles straight back into
-  standby. Measured twice with the user driving standby by hand.
-||||||| d81729b
+- **The Mac community app has not run a guest on its floor.** The app
+  targets Homebrew's floor, which is `LSMinimumSystemVersion` 15.0 now
+  (`docs/build-macos.md` "The floor"). The packager checks every load
+  command, and the M15 spike passed on a real macOS 15 (a second APFS
+  volume; a VM has no OpenGL for Wine). What is left is a guest in the
+  packaged `--community` app on that macOS. That run should also check
+  that the Direct3D probe says the bundled KosmicKrisp ICD, which needs
+  26, is unavailable rather than crashing. This is M15 step 5
+  (`docs/tracks/m15-wine-executor.md`, test loop).
 
-- **A zero-copy ring buffer can stop being written through; the ring now
-  notices and remakes it** (2026-09-18, doc 12 §4). Found as a fast
-  flicker in GLQuake on `base98-br`: every third presented frame was the
-  same frozen picture, because one ring slot's GL side kept returning
-  every frame blitted into it while the dma-buf's own memory — what the
-  frontend samples — held the frame it had first. `zc_probe()` now writes
-  a known colour into a slot through GL now and then and reads the
-  buffer's memory back; a slot that does not answer with it is freed and
-  made again, and the new one holds. Dense while the ring is young, one
-  present in 512 after that (`EMBED_ZC_PROBE=<n>` forces a rate, `=0` off,
-  `EMBED_ZC_HEAL=0` leaves it bad to study). The ring is back at three
-  slots and GLQuake is clean: every presented frame distinct on all three,
-  72 fps, one repair. **The cause is still open** and doc 12 §4 lists what
-  it is not, each measured: not the frontend at all (`PLAYER_ZC_IMPORT=0`
-  imports nothing and it still happens), not the Vulkan import's
-  parameters, not the set of GL calls the guest makes (all 27 GLQuake has
-  and wglgears has not, together, are clean in `tools/zc-vulkan-test.c
-  --draw=all`), not the shape of the frame it breaks on, not allocation
-  pressure, not the drawable's size or the render scaler. What is left is
-  mesapt's own host-side path — the decoder's texture uploads, the
-  vertex-array cache, the mapped-buffer path — rather than the API the
-  guest calls.
-- **A 1990s OpenGL game needs the extension string capped** (2026-09-17).
-  A modern host reports several thousand characters of extension names
-  and these titles read that into a fixed buffer: GLQuake's is 4096 bytes
-  and it dies with an invalid page fault in an unknown module, having
-  returned into the text of the list. `WRAPGL32.EXT` now ships in the
-  ISO's `OPENGL\` beside `OPENGL32.DLL` with `ExtensionsYear,1997`, and
-  `SETUP /GAME 3` copies it — never overwriting one already next to a
-  game, since it is the file a user tunes per title. GLQuake then runs
-  full-screen 640x480 at 72 fps on the pass-through.
+- **x87 at PC=24 on aarch64 trails PC=53.** On the Air the
+  single-precision loop (`X87BEN2S`) takes 0.49 s at PC=24 against 0.38 s
+  at PC=53. On the Ryzen both take 0.33 s. This has not been profiled
+  (`docs/tracks/m9-tcg-aarch64.md`, next steps item 1). The Win98 3D
+  optimization work itself was closed by the user on 2026-09-12: both of
+  3DMark 99's game tests hit the 60 Hz cap on the Ryzen and on the Air.
 
-- **The Mac build no longer needs XQuartz — not yet built on the Air**
-  (2026-09-17, patch 70). On macOS, `hw/mesa/mglcntx_linux.c`'s GLX
-  backend, which nothing had called since SDL went, is now a weak backend
-  that only refuses the context, and the `/opt/X11` flags are out of the
-  meson hunk and `configure-qemu.sh`. Checked on Linux: the queue applies
-  twice, the Darwin branch compiles (gcc and clang) and defines the same
-  symbols as GLX, `scripts/build.sh` rebuilt everything, and `test.sh all`
-  was stopped part-way with 49 PASS and no FAIL (the whole host stage and
-  the guest checks up to `midi-guest`). Still to do
-  on the Air: `scripts/build.sh -f`, `otool -L` on `qemu-system-i386` and
-  `libqemu-embed-i386.dylib` with nothing under `/opt/X11`, wglgears in the
-  player, and `package-macos.sh --no-sign --no-dmg` with no XQuartz library
-  in the app.
-- **3DMark 99 on the Windows PC: the FIFO hangs are fixed, two threads
-  left open — 2026-09-17** (M14, doc 21; `base98-br` on the user's PC,
-  driven by `scripts/win-voodoo-ab.sh`, whose log is
-  `build/win-voodoo-ab.log`). The hangs and the garbled loading screens
-  were the ring in RAM marking unwritten words with `0xffffffff`, which is
-  a white texel: see doc 21 §9 and the commit. Several full runs at 640x480
-  and 800x600 since, a `ctrl+alt+del` mid-benchmark, the driver back after
-  the restart, no hang. What is left, for whoever picks this up:
-  - **A garbled loading screen, seen once since and not reproduced**
-    (usually the 4th, the Fill Rate one). The screenshot of it
-    (`2ksbox-0002.png` in the checkout, not committed) is the **800x600
-    desktop on `d3dpt-vga`**, 3DMark's own 2D screen: its text crisp and
-    the picture around it in stale bands, with the Voodoo not on the
-    monitor at all. `-device d3dpt-vga,full-frames=on` (a whole frame every
-    refresh, `scripts/win-voodoo-ab.sh vga:full-frames=on`) does not change
-    it, so the bytes in VRAM are what is wrong, not the repaint; no page
-    flips and no executor batches run while that screen is up, so the guest
-    wrote them itself. Next: which blit draws that background, and where it
-    reads from.
-  - **The whole machine 3x slower after some guest restarts** (the user,
-    with **no Voodoo at all** — `win-voodoo-ab.sh no-voodoo`, where 3DMark
-    falls back to our own Direct3D — so the card is not in it). Measured
-    per restart inside one player run: 46.3, 46.7, 62.4, **15.0**, 37.8 fps
-    over the game tests, and the slow one is slower at *everything* by the
-    same factor, with the ratio of batches to draws unchanged — the guest
-    does a third as much per second, not the rendering. Ruled out: a leak
-    of contexts (one live on every boot), the ring falling back to MMIO,
-    audio or input stalls. **For the next run:** `d3dpt-vga` now reports
-    its own share of every 5 s window (`N batches in 5.0 s, M ms of them in
-    the executor`) — flat host share with the rate halved is the guest or
-    the vCPU, a grown share is us — and the A/B script passes
-    `-msg timestamp=on`, so the log can be read as a timeline. Worth one
-    look inside Windows while it is slow (My Computer → Properties →
-    Performance: anything but "32-bit" for the file system, after the hard
-    resets this image has had, would explain it) and one at the host's own
-    CPU use.
+- **Display Properties in Win98 under TCG faults RUNDLL32.** This is
+  upstream QEMU issue 1964. It is cosmetic, and KVM is not affected
+  (doc 06).
 
-- **The first Windows host run of a real guest — 2026-09-17** (M11,
-  `docs/tracks/m11-windows-host.md`; the user's PC: Ryzen 9 5900X, RTX 3090,
-  the `base98-br` image). Seven reports, each taken apart here. **The user
-  re-tested on the PC the same day: 1, 2, 3, 4 and 7 are fixed there; 5 and
-  6 are still to try.**
-  1. **dxdiag and 3DMark drew black.** The executor ran on Windows' own
-     Direct3D 9, which it had never done (no batch had gone through it on
-     Windows): the host drew 60–170 frames/s and every readback was zero.
-     Two calls DXVK accepts and native d3d9 refuses were found (no
-     `BeginScene` on the display driver's path, a device with no window).
-     **Fixed by not using it** (user decision, ADR-007's amendment): the
-     package ships DXVK's `d3d9.dll` as `dxvk_d3d9.dll` (patch 08 for the
-     headless WSI), and `package-windows.sh` draws a frame through the
-     staged pair under wine — 107 checks, byte-identical to Linux.
-     **Confirmed on the PC** (the user).
-  2. **MIDI too slow, with the SB16's FM synth and with the MPU-401 alike.**
-     Windows rounds QEMU's waits to its 15.6 ms timer tick; every PIT
-     transition that came due meanwhile was raised in one burst, one
-     interrupt at the 8259, and Win98's 1 kHz multimedia timer ran at the
-     rate of the wakeups. Reproduced on Linux with the waits rounded that way
-     (`tools/wait-granularity.c`): a 120-note metronome MIDI in Win98 played
-     42 notes in 171 s. **Fixed**: patch 65 keeps those ticks (the same
-     file: 59.50 s), and the player calls `timeBeginPeriod(1)`. Guarded by
-     `pit-guest`'s rate phase. **Confirmed on the PC** (the user).
-  3. **CD music sometimes stops, especially off a Samba share.** One
-     failed host read inside a play stopped CD audio for good (status 0x14).
-     **Fixed** (patch 55: played as silence, the `atapi-read-error` check);
-     libdisc now names every failed host read in `player.log`. Not
-     reproduced on a real share: if it still happens, the log will say which
-     file and what error. **Seems fixed on the PC** (the user).
-  4. **Windows' arrow over Moto Racer's own pointer.** Not Windows. Two
-     paths, both fixed. Headless on a copy of `base98-br`, 3dfx's login
-     helper had given the Voodoo 2 the monitor before the game started, so
-     the first run measured the Glide path: the 2D adapter's cursor stayed
-     published behind the pass-through (patch 66). The user plays it on our
-     adapter, not Glide, and there Windows keeps its pointer enabled behind
-     the exclusive-mode game, which never hides it: `d3dpt-vga` now hides
-     the sprite from a DirectDraw flip chain's first page flip until the
-     chain gives the screen back (`d3dpt_vga.c`; a page-flipping game draws
-     its own pointer, since GDI's software pointer is wiped by the first
-     flip). **That was first "until the next mode set", and the pointer
-     never came back after 3DMark 99** (the user, 2026-09-17): a game at
-     the desktop's own mode (800x600x16) sets no mode on the way out, since
-     DirectDraw calls the driver's SetMode only for a change. Now also 2 s
-     of guest time without a flip with the desktop's page on screen, where
-     DirectDraw leaves the scanout when a chain is released; a game idle on
-     its other page stays hidden, one idle on the desktop's page (a loading
-     screen) shows the pointer until its next flip. Moto
-     Racer headless with the software renderer: shown at the game's mode
-     switch, hidden at its first flip, back on the desktop after. Both are
-     the `voodoo-guest-d3dpt` check. **Confirmed on the PC** (the user).
-  5. **The Windows key reaches the host — and the hook was never going to
-     stop it.** Two rounds of fixing the `WH_KEYBOARD_LL` hook (a thread of
-     its own at time-critical priority, so one slow frame could not lose it
-     to `LowLevelHooksTimeout`; then installed for the capture's whole life
-     rather than on `WindowEvent::Focused`, re-armed every 2 s at the head of
-     the chain, and asking winit's own focus as well as
-     `GetForegroundWindow`) each fixed something real and neither fixed this.
-     `PLAYER_KEYBOARD_LOG=1` and a morning of measurement on the PC said why,
-     and the answer was not in any of them:
+- **On the Cirrus, a VESA picture comes out in blocks that have swapped
+  places.** The user saw this in Duke Nukem 3D (2026-09-10). The colours
+  were the missing 4F09h, which is fixed; the blocks are not explained.
+  Two causes are ruled out:
+  - The chain-4 bug is not it. In VBE modes both adapters map 0xA0000 as
+    a RAM alias, so writes never reach `vga_mem_writeb`.
+  - The window granularity is not wrong. The Cirrus's 16 KiB is the
+    hardware's, and `tools/vga-dirty-guest-test.py vesa cirrus` passes.
+    `GRAN64=1` makes the test assume 64 KiB, as the A/B.
 
-     **A low-level keyboard hook in the player is called for every key on the
-     machine except while the player's own window is the foreground one** —
-     which is the only time it is wanted. Not called late: not called at all,
-     zero invocations counted at the top of the hook procedure, with the hook
-     installed and its thread answering (its 2 s re-arm kept ticking through
-     the whole test). The moment the window loses focus the same hook is
-     called again, 0 ms after the key (`KBDLLHOOKSTRUCT.time`). What it is
-     not: not the timeout (0 ms), not the re-arm (gone, same result), not the
-     thread's timer (gone, same result), not the window (with the player's
-     capture *off*, a hook in a third process saw every key going to that
-     same focused window), not a Windows rule (a 60-line program with a
-     window and a hook of its own sees its own window's keys, 0 ms late), not
-     integrity levels (every process Medium) and not an exploit-protection
-     mitigation (`DisableExtensionPoints` OFF). With the player's hook
-     installed *and* the player focused, a hook in a third process went blind
-     too — the chain dies at a hook that is never entered. What in this
-     process does that was not found.
-
-     **So the hook is gone** (`player/src/kbcapture.rs`, 2026-09-18). The
-     keyboard is registered for raw input with **`RIDEV_NOHOTKEYS`**, which
-     stops the shell acting on the Windows keys while a window of this
-     process is the foreground one — the rule this wants, applied by the
-     window manager instead of by us — and the key still arrives as an
-     ordinary `WM_KEYDOWN`, so winit delivers it and the guest gets it down
-     the same path as every other key. No hook, no thread, no injection, no
-     `LowLevelHooksTimeout`, ~270 lines lighter. Measured on the PC with the
-     keys injected at the focused player: **three Windows keys in a row and
-     the foreground never moves** (before, every one of them put `SearchHost`
-     in front), then Ctrl+Alt+K and the next one opens Search again, which is
-     the unregister path.
-
-     **Confirmed on the PC on 2026-09-19** (the user, a real keyboard in a
-     real guest), with one correction to what this said the day before:
-     **Ctrl+Esc reaches the guest too** — it is a keyboard hotkey the shell
-     acts on, so `RIDEV_NOHOTKEYS` stops it with the rest and it opens the
-     guest's Start menu. What it does not cover is what Windows calls a
-     *system* hotkey — Alt+Tab, Alt+Esc, Alt+F4, Alt+Space, Ctrl+Alt+Del,
-     Win+L — measured, and the user's run agrees: no program gets those, the
-     hook never took them either (the same measurement), and the player
-     answers Alt+F4 by asking before it stops the machine. Also from this
-     round: ABNT2's `/?` and keypad `.`, and Pause, were in no keymap.
-  6. **Moto Racer slow on the 5900X with the CPU at 5 %** — in the menus
-     and with the software renderer (the user; not Glide, not the race on
-     Direct3D). **Not reproduced**: headless on Linux without the Voodoo,
-     the menus and the software race flip at 60/s, and still 60/s with
-     QEMU's waits rounded to 15.6 ms. The user's log has no software-race
-     window (no `0 draws` rates); its last session switches to 640x480 at
-     **8 bits** twice with no page flips, where this run was 16 bits and
-     flipping — the next question for the PC. The CPU at 5 % is one of 24
-     threads, so CPU-bound. **Addressed: the Windows QEMU is
-     built with clang now** (patch 68; x87 helper call shape, patch 67): a
-     device register read under wine went from 121.6 ns to 63.5 (Linux
-     52.7), every battery identical on the clang build. What follows is how
-     it was found. Not reproduced: timer granularity
-     is not it (the Voodoo race held 60 fps under 15.6 ms waits). The lead,
-     measured under wine with a DOS kernel per path: the Windows build is
-     equal on memory and generated code but **2.7x slower on a port I/O
-     and 1.25x on x87 helpers**, and mingw GCC 15 has only *emulated* TLS
-     — every `__thread` access (`current_cpu`, the BQL flag, RCU…) is a
-     call, 10.5 ns against 1 ns — while Moto Racer's Glide reads the
-     Voodoo's status register 2.8 million times a second. **A clang build
-     was then tried** (m11 track doc, "A clang-built QEMU"): native TLS
-     takes the port I/O from 206 to 146 ns (Linux 75), memory and generated
-     code unchanged, x87 helpers unchanged (1.31x) — about 60 ns of an MMIO
-     access, so ~15 % of the vCPU at Moto Racer's rate, and not the whole
-     gap. Shipping it needs QEMU 9.2's `gcc_struct` check replaced by
-     `-mno-ms-bitfields` (upstream's later route) and the plugin link flag
-     dropped, which is a decision, not a quick switch. It also found a real
-     bug: patch 65 divided by a PIT count of 0 before the reset, which
-     GCC's evaluation order happened to skip and clang's did not (fixed).
-     Placing the JIT buffer near the helpers on Windows was tried and
-     measured no difference, so it was dropped. The port-I/O kernel above
-     turned out to read the PIT's clock, and wine's QueryPerformanceCounter
-     is a syscall where Windows' is not; a VGA register read is the clean
-     number (the table in patch 68's row). Not yet run on the PC.
-  7. **`2ksbox-debug.bat` did not collect `player.log`.** It does now, the
-     lines this run added. **Confirmed on the PC** (the user).
-
-- **A review of the guest D3D8/D3D9 DLLs — 2026-09-13** (doc 14, "A
-  review of the guest DLLs"). Fixed: UpdateTexture into a DEFAULT texture
-  put a record naming handle 0 in the batch, and the host refused the batch
-  from it on (every draw behind it dropped); DrawIndexedPrimitiveUP above
-  MinVertexIndex 0 sent the wrong vertices and let DXVK read past the
-  record (the executor rebases the indices now); `Lock(offset, 0)` returned
-  the buffer's start and nested Locks lost the first range; recording a
-  state block applied it to the device; the `ddraw.dll` shim's
-  QueryInterface took no reference on the real object, so its Release freed
-  it; GetRenderTargetData was sized at 2 or 4 bytes a pixel; DEFAULT
-  offscreen surfaces could not be locked; Clear refused more than 64 rects;
-  D3D8 declaration constants of a second block went to the wrong
-  registers; and nothing was thread-safe — a `D3DCREATE_MULTITHREADED`
-  device now serialises every call through the generated vtable wrappers
-  (`D3DPT_LOCK`), as native does. Guarded by `D3DFEAT9`'s new row E,
-  "getters 2" line and loader thread ("getters 3", on a multithreaded
-  device), `DDVMTEST` and `tools/d3dpt-exec-test`; on the pre-review DLLs
-  `D3DFEAT9` fails and nothing else does, and with the lock compiled out
-  its "getters 3" line does (3 failed Presents, 3 refused batches). The executor's `batch error … at
-  record N` line (and the guest's `ret_index`) named the record *after* the
-  one that failed; it names the failing one now. **Open**: `GetSwapChain`
-  is a stub.
-
-- **x87 at 64-bit precision inline and exact — 2026-09-14** (doc 13
-  "PC=64 inline, exact", patch 48). A fourth inline mode keeps the x87
-  stack as the x80 values themselves (i64 mantissa + i32 sign|exponent
-  globals), so PC=64 code no longer takes a helper and softfloat per
-  instruction: loads, stores, compares and `fild` are inline, `+ - * /`
-  pure helper calls doing exact 128-bit integer arithmetic rounded to 64
-  bits. Exact, so on for everyone with `x87-fast`. 3DMark2001 SE's Lobby 35.2 → 39.7 fps (patch 47's inexact switch: 50.3); the x87 battery 906,713 lines identical on/off. Patch 49 (same day) inlines
-  `fmul` and `fst m32` after a profile had the helper calls at ~15 %: the
-  Lobby 39.7 → 44.2 fps, still exact. **Open:** `+ − /`, `fst m64` and
-  `fist` are still pure helper calls.
-
-- **3DMark2001 SE's Lobby debris: x87 at 64-bit precision — 2026-09-14**
-  (doc 13 "PC=64 as 53 bits", patch 47). The Lobby fell below the 60 Hz
-  cap while its debris flew, and not for alpha or the 3D path: a profile
-  there had the executor and DXVK under 1 % and the vCPU in 3DMark's own
-  code, over half of it x87 helpers and softfloat, because that code runs
-  at PC=64 (`FCW=033f`), which none of the x87 fast paths cover. New
-  optimization switch `x87-pc64-as-53` (a CPU property, **off by
-  default**, "not exact" in the machine form) runs PC=64 at 53 bits so
-  the fast paths and the inline mode take it. The Lobby 35.2 → 50.3 fps with it on (23 five-second windows, no trace).
-
-- **3DMark2001 SE's Pixel Shader ocean: cube maps on Win98 — 2026-09-15**
-  (doc 19 §39). The ocean drew black (seen on the rig first): its
-  `texm3x3vspec` reflection samples a cube map at stage 3, and d3d8.dll
-  bound handle 0 there because no cube map ever reached video memory on
-  9x. 9x DirectDraw wants `DDSCAPS2_CUBEMAP` claimed in
-  `DDMORESURFACECAPS`, through `GetDriverInfo` for
-  `GUID_DDMoreSurfaceCaps`, which the 9x layer never answered (NT's dxg
-  never asks). It answers now. The ocean draws, and **CUBETEST passes 9 of
-  9 on Win98**, its first run there. `ddflags=0x400000` is the A/B.
-
-- **3DMark2001 SE's Nature: Q8W8V8U8 — 2026-09-15** (doc 19 §38). The
-  benchmark stopped before Nature with "device does not support bump
-  normal maps": 3DMark asks `CheckDeviceFormat` for Q8W8V8U8 or W11V11U10,
-  and the DX8 list had neither. Q8W8V8U8 was left out on 2026-09-11 because
-  d3d8.dll never made its video-memory copy. The reason, found now: it has
-  no DDPIXELFORMAT, so the runtime creates it as FOURCC 63, and DirectDraw
-  refuses a FOURCC the driver does not list before asking the driver. Both
-  families list 63 and size the surface in CreateSurface. On `base98-us`
-  BUMPTEST passes 10 of 10 (from 8), and the whole benchmark runs, Nature
-  included, to a score of 5140 at 1024×768×32. **Open:** XP not re-run.
-  `xp-driver-test.sh install` could not install any driver on a
-  `winxp-m7` overlay today; HEAD's driver failed the same way, so the
-  harness or the image is at fault, not this change.
-
-- **White surfaces in 3DMark2001 SE on Win98: no surface wider than the
-  screen — 2026-09-14** (doc 19 §37). Nature's sky, the Dragothic ground and
-  the Lobby agent's coat drew white: d3d8.dll bound texture handle 0 for
-  them, because every 1024-wide texture stayed in system memory — 9x
-  DirectDraw puts nothing wider than the primary (640 at the demo's mode)
-  into video memory unless the driver claims `DDCAPS2_WIDESURFACES`, which
-  the NT driver always did and `d3dpt9dd.c` did not. Claimed now; the three
-  scenes draw right headless. The executor's trace dumps DXT textures
-  (decoded) since the same day. The same 3DMark with the guest DLLs quit
-  on an R8G8B8 render-target texture `CheckDeviceFormat` had promised and
-  DXVK does not have (doc 14): the wrapper answers the usage now, and the
-  demo plays through the guest DLLs too.
-  **Open:** the Lobby's debris still drops the demo to 10-35 frames/s.
-
-- **A texture bind read a surface the runtime had freed — 2026-09-14**
-  (doc 19 §36). 3DMark2001 SE's demo froze black on `base98-us` right
-  after its loading screen: the core kept each surface's OS object
-  (`SURF::lcl`) and read the colour key off it at every bind, nothing
-  cleared it when the runtime freed the surface, and the read faulted
-  inside `DrawPrimitives2` with the command-window lock held. The
-  application's handler swallowed the fault, the lock stayed taken, and
-  the next `DestroySurface32` spun on it for ever. The core now keeps no
-  OS pointer (the key is snapshotted at registration, later keys come
-  through `SetColorKey`), on both families; the 9x `TextureGetSurf32`
-  keeps its own list. The demo plays at the 60 Hz cap on the machine it
-  froze on, to its end; XP's `CKTEST` passes 4/0 on the new build.
-  **Open, an accepted risk for v1** (user decision, 2026-09-16): any
-  other fault inside a callback still leaks the lock the same way — the
-  callbacks want an exception frame that releases it on unwind.
-
-- **Win98 `SETUP /ALL` over an installed display driver: WININIT.INI's
-  `[rename]` sometimes lacks the `SYSTEM\` entries** (seen 2026-09-16 on
-  `~/vms/win98.qcow2`, `VOODOO=1 tools/setup-guest-test.sh`): all seven
-  copies are staged and SETUP logs each replace as scheduled, but the INI
-  `type`d right after holds the four `INF\` renames and zero or one of the
-  three `SYSTEM\` ones — one missing on one run, two on the next, with and
-  without the Voodoo 2 guard's SETUP. Not looked into: whether it is the 9x
-  profile cache not yet flushed when the batch reads the file (then the
-  restart would still apply them — `REBOOT=1` is the test that says) or
-  renames really lost. Same image: its `SYSTEM\GLIDE*.DLL` and
-  `FXMEMMAP.VXD` are read-only leftovers, so `VOODOO=1`'s markers cannot be
-  written there and those three checks fail on it regardless.
-
-- **A review of the display drivers (9x and the shared core) — 2026-09-12**
-  (doc 19 §32). Fixed: the 9x HAL kept the core's surface table in the
-  calling process's heap behind shared pointers (now a `HEAP_SHARED`
-  heap); its `DDHAL_GETDRIVERSTATEDATA` had the wrong layout and wrote
-  past the runtime's structure; its destroy callbacks invented a surface
-  handle and released it on the host; its command-window lock was
-  per-process and was never released when a game died holding it.
-  `GetVerticalBlankStatus` never said "in the blank" on either family
-  (doc 15), so `while (!in_vb)` spun for ever — 0 of 530 887 polls before,
-  one a frame after. In the core: a blit after a draw is sent in a record
-  of its own (the host would run every draw of a call on the last blit's
-  bytes — a safeguard: XP's d3d8.dll was measured to end the call before
-  such a blit itself, `MGDTEST` passing on the unfixed core too), long
-  non-indexed draws are cut into pieces the host takes, stream
-  0's stride is bounded, TEXBLT rounds mip rectangles right, and a DP2
-  `SETRENDERTARGET` becomes EndScene's readback target. The mini-VDD's
-  selectors were a page too long, and its DOS-box return turned the linear
-  mode on unconditionally. Proved by the Win98 battery on `test98` and the
-  whole M7 battery on XP (both frames byte-identical, every probe as
-  before, the new `MGDTEST` 3/0) and `scripts/test.sh all`. **Not proved by
-  a title**: the long-draw cut has no probe that needs it. GDIINFO's English/twips extents
-  look wrong and were measured not to matter (98's GDI uses LOGPIXELS).
-
-- **DirectSound on the SB16 "crashing on Linux" was the guest's language
-  — 2026-09-12** (doc 20 §5.3). On `claude98` `dxdiag` died in
-  DSOUND.DLL (`c0000409`, DirectX 9.0c's `/GS` cookie) and DirectSound
-  games did not run; the same fault on the player's `embed` audiodev, on
-  `none` and on a bare `qemu-system-i386`, so no host, audio path or
-  device was involved. The Portuguese Windows 98's `SB16.VXD` names the
-  wave-in device "Entrada de som wave da SB16 [220]", 33 characters in a
-  32-byte caps field with no NUL (`TESTS\WAVECAPS.EXE` shows it), and
-  DSOUND.DLL's copy of it overruns into the cookie; an English image says
-  `SB16 Wave In [220]`, hence "works on the Mac". Fixed in the guest
-  tools: the VxD reads name overrides from
-  `HKLM\SOFTWARE\Creative Tech\DeviceInfo\ROOT\PNPB003` (found in its
-  code, confirmed by a marker name), and SETUP's new 9x component
-  "Sound Blaster 16 device names" (`/I 5` on 98) writes a shorter name
-  there only when one does not fit, then asks for a restart; with it,
-  dxdiag opens — verified with the ISO's own SETUP on a copy of
-  `claude98`, the second boot in the player on `embed0` ("nothing to do",
-  `nul_at=28`, dxdiag up). **The user's own `claude98` still needs
-  `SETUP /I 5` from a new ISO and a restart.** Not run: a DirectSound
-  *game* after the fix, and `tools/setup-guest-test.sh` itself (its new
-  check is written, not yet run). `tools/win98-game-test.sh` now puts the sound devices on
-  the player's `embed0` under `PLAYER=1` (`AUDIO=none` for the A/B).
-
-- **WineD3D-in-guest, ADR-013's path, tested on the Air with no Vulkan on
-  the host — 2026-09-12** (`tools/xp-wined3d-test.sh`, what a Mac before
-  26 runs Direct3D 8/9 on). On `~/vms/winxp.qcow2` with cirrus the chain
-  works end to end: `SETUP /I 2` starts the mapper, `SETUP /GAME 4` stages
-  WineD3D with `OPENGL32.DLL`, `mesapt: DLL loaded` and the window-less CGL
-  context come up, WineD3D reports a D3D9 adapter ("NVIDIA GeForce 6800",
-  vs/ps 3.0, hardware vertex processing) and D3DGAME9 runs 600 frames in
-  ~10.8 s under TCG. The frame is the right scene — camera, cubes,
-  particles, render-to-texture panel — but fails the rig budget, 50 % of
-  pixels, on **two rendering defects**: the ground's checker comes out in
-  repeating bands with dark seams (a single mipmapped quad on the rig), and
-  the waving grid (a dynamic vertex buffer coloured by height, over an
-  R5G6B5 texture) is dark blue where the rig's is a rainbow. Deterministic
-  (153,633 pixels both runs). Whether they are wine9x's own or the Mac GL
-  pass-through's is not known — no other WineD3D capture of D3DGAME9
-  exists — and by the wine9x rule they are recorded, not chased. **On the
-  launcher's own XP machine** (`VGA=d3dpt`, no Vulkan, so our executor has
-  no device) it works the same — the identical frame, 153,633 pixels, on
-  `winxp.qcow2` and on `winxp-m7.qcow2` — so the adapter plays no part in
-  the defects. **One flake, open:** on `winxp-m7.qcow2` the mapper failed
-  to install in 2 of 3 runs — INSTDRV printed nothing and left no MAPMEM
-  service (`sc`: 1060, not installed) — so OPENGL32.DLL could not load,
-  D3DGAME9 sat behind its error box and XP ignored the power button; the
-  third run installed it normally. Not an address clash (`info mtree`: the
-  adapter's VRAM at 0xF0000000–0xF7FFFFFF, clear of the pass-through's
-  0xEA000000, 0xEFFFE000 and 0xFB000000–0xFBDFFFFF). When the service is
-  missing the harness now runs INSTDRV again straight to COM1 with its exit
-  code, which is what the next failure will say.
-  **The ISO changed with it** (user request): `WINED3D\D3D8-9\` and
-  `WINED3D\DDRAW\` hold the DLLs under the names a game loads, each with
-  `WINED3D.DLL` and `OPENGL32.DLL`, to copy from Explorer — the files are
-  the same for 98 and XP. SETUP's WineD3D sets had no `OPENGL32.DLL` before, so
-  `SETUP /GAME 4` alone left WineD3D on Windows' software GL 1.1.
-  (`WINED3D\SYSTEM\`, wine9x's system-wide switchers, sat beside them until
-  2026-09-18, when it was dropped: see the guest-tools row.)
-
-- **The Mac app targets Homebrew's floor, macOS 14, since 2026-09-12 —
-  and has not yet been run on a macOS 14 system.** Until then it measured
-  macOS 26.6, only because every build targeted the Mac it was built on.
-  User decision: follow Homebrew's floor (`HOMEBREW_MACOS_OLDEST_SUPPORTED`,
-  read by `scripts/macos-floor.sh`), Apple Silicon only — **since ADR-019
-  (2026-09-22) that floor is the *community* build's, which permits Intel
-  (untested) and carries the M15 Wine executor; the App Store build is
-  macOS 26+ on Apple Silicon**. Everything of ours
-  is built for it, QEMU with `-Werror=unguarded-availability-new` (patch 46
-  was the one API newer than the target, `strchrnul`), and
-  `package-macos.sh` swaps the app's Homebrew libraries for their
-  `arm64_sonoma` bottles and fails on anything still above it
-  (`scripts/macos-bottles.py`, `docs/build-macos.md` "The floor").
-  Measured on the Air (26.6) the same day: every artefact of ours is a
-  14.0 build, the packager swaps 129 files from 20 bottles (Qt's
-  declarative, SVG, image-format and multimedia modules, glib, ICU,
-  openssl, zstd, webp, brotli, …), `LSMinimumSystemVersion` comes out
-  14.0, and the loader, offscreen-window and firmware checks pass on the
-  swapped libraries. Two packager holes turned up on the way and are
-  closed: the Qt framework binaries (mode 644, no extension) were never in
-  its Mach-O list, so a swapped one went unsigned and killed the launcher
-  (`CODESIGNING Invalid Page`), and the "still links" check then read
-  their own install names as dependencies. What all this proves is the
-  load commands; what it cannot prove is behaviour on 14. Next: a macOS 14 (and 15) VM on the Air through Virtualization.framework —
-  the app starting, a guest booting, and the Direct3D probe saying
-  *unavailable* rather than crashing when the bundled KosmicKrisp ICD (an
-  11.0 build that needs 26 at run time) is loaded there, so that XP takes
-  ADR-013's WineD3D path.
-
-- **The guest-tools ISO never carried the Win98 HAL DLL — fixed
-  2026-09-11** (user report: installing the 98 driver by hand, the Update
-  Driver wizard asked for `d3dpt9hl.dll`). The INF's `CopyFiles` has named
-  it since the HAL landed (2026-09-08), but `build-wrappers.sh` staged only
-  `DRIVER9X\*.drv *.vxd *.inf` and `SETUP.EXE`'s 9x lists only those three
-  too. Every headless tool copies the DLL straight into the image with
-  mtools, so none of them could see it. Both now carry it, and
-  `tools/setup-guest-test.sh win98` requires `D3DPT9HL.DLL` among SETUP's
-  copies.
-- **The Qt wizard's "Turn all on" / "Turn all off" did nothing — fixed
-  2026-09-12** (user report). The shared model was right and so was the
-  bridge's Rust, but `disable_all_optimizations` / `enable_all_optimizations`
-  were declared in `launcher-qt/src/qt/wizard.rs` without `#[qinvokable]`,
-  so QML's call was a `TypeError` ("… is not a function") and the click
-  changed nothing; "All defaults" beside them had the attribute and worked.
-  The `qt-wizard` check now drives it through the window (`LAUNCHER_QT_SCREEN=optall`):
-  three boxes clicked by hand, then each shortcut, and every step's boxes
-  must show the form's mask — which also settles that a click does *not*
-  cut a Qt 6 CheckBox's `checked:` binding here (6.11).
-- **Win98 3D was slow because of TB-list walks, not the driver — fixed
-  2026-09-11 by patch 35** (user report: 3DMark 99 "a bit
-  underwhelming"). 3DMark 99 Max at 800×600×16 on `claude98`: **3334 →
-  5894 3DMarks**; the executor was under 0.3 % of QEMU before and after,
-  and 57 % had gone to walking the TB lists of pages mixing code and data
-  (doc 19 §31, `patches/qemu/README.md`). The same session rewrote the
-  drivers' `memcpy` (`kcrt.c`, now linked by the 9x HAL too) as `rep
-  movs` — measured, no score change. **Open:** the race test now sits at
-  the 60 Hz flip cap (`ddflags=32768` is the A/B); what is left is
-  generated code 40 %, softmmu lookups ~13 %, and one hot ring-0 block at
-  `0xC02402F6` nobody has named. **Then patch 36** (the same day): the
-  first-person test was 78 % guest code, half of it 3DMark's SSE transform
-  DLL, and every 16-byte SSE memory operand stalled its reader (two 8-byte
-  stores, one 16-byte load); assembled in the vector unit now — CPU
-  3DMarks 11642 → 13549, first person 13.6 → 15.4 fps. Still far from the
-  60 the user expects; next are the SSE lane-mask round trip, x87's
-  per-block 80→64-bit reload and the softmmu TLB check (doc 19 §31).
-  **Patch 37** (x87 PE sticky): CPU 3DMarks 13549 → 14690, first person
-  15.4 → 16.2 fps. A new TB flag must also go into patch 20's inline lookup
-  (`gen_lookup_and_goto_ptr`) — without it the patch lost 25 %. Next: an
-  opt-in relaxed floating-point mode for games (user request; deferred by
-  the user in favour of exact work). **Patch 38**: the inline lookup takes the
-  x87/SSE mode bits of the TB flags as constants — every `ret` / `call *` /
-  `jmp reg` ~22 instructions cheaper; CPU 3DMarks 14690 → 15389, first
-  person 16.2 → 17.1 fps. Only general optimizations, no title-specific
-  ones (user decision, 2026-09-11).
-  **Patch 39**: a TCG op tests a vector from a branch, so each inlined SSE op's
-  lane check skips its env round trip — CPU 3DMarks 15389 → 15940, first
-  person 17.5 fps (the aarch64 encoding is compiled first on the Mac).
-  The executor's DX7 indexed draws copied their batch's unused prefix into
-  DXVK (32 GB a run, found by a preloaded memcpy tracer): rebased, first
-  person 18.4 fps. A TLB-flush skip (patch 40) was dropped: upstream already
-  skips clean MMU indexes (`c.dirty`).
-  **Evening, patches 42–44 (the track doc's "evening session"):** the
-  counters, not the profile, named the next costs — Windows 98 reloads CR3
-  with its own value **2,400 times a second** in this test (its VMM's TLB
-  flush after every page a page fault maps or unmaps; 3DMark commits and
-  frees buffers every frame), and each one emptied the jump cache and the
-  softmmu TLB; and generated code re-entered the main loop 1.85 M times a
-  second (Win98's ring-0 entry, `popf`, and MSVC's `_ftol`, whose `fldcw`
-  blocks missed the inline probe with patch 38's constants). **Patch 42**
-  keeps the jump cache across flushes (generation-stamped entries, a stale
-  one re-validated by physical page) and grows it to 65,536: first person
-  18.2 → 19.0 fps. **Patch 43** chains a non-jump end of block when no
-  interrupt is pending and rebuilds the mode bits after a control-word
-  change: 19.0 → 19.1. **Patch 44** retires the TLB on a CR3 write and
-  reuses an entry once its page-table entries check unchanged (95 % of the
-  4.2 M walks per 10 s): **within noise on the Ryzen** (19.0 vs 18.9 fps,
-  CPU 3DMarks 16295 vs 16080 in the A/B) — the walks were cheap here; kept.
-  It was **not** exact until 2026-09-12: its list of filled TLB slots was
-  `uint16_t`, a table past 65,536 entries wrapped it, and a CR3 flush left
-  stale translations live (the SETUP.EXE corruption below). The executor and DXVK are under 1 % of the vCPU thread: every
-  lever left is TCG's generated code, 76 % of the frame, and by instruction
-  form the x87 memory forms (20 %, 2.9 samples each) and the softmmu chain
-  on 65 % of the instructions are the next two (the track doc's next steps
-  3 and 4). Three new switches in the wizard (`jump-cache-keep`,
-  `eob-chain`, `tlb-retire`), fourteen in all; `info jit` prints them and
-  the refill statistic. Tools: `tools/tcg-perf-cut.py`,
-  `tools/tcg-form-weights.py`, `w98-3dmark.sh JIT_SNAPS= PAGES=`,
-  `QEMU_TCG_OPTS=` on `win98-game-test.sh`. **With the vertical blank off
-  (`DDFLAGS=32768`) the first-person test runs at 26.2 fps**: the driver's
-  wait for the 60 Hz edge is a quarter of every frame at 19 fps, and the
-  CPU-bound number is the one to judge the remaining work by (60 fps means
-  2.3× from here). **2026-09-12, patch 45 (the track doc's item 3):** the
-  x87 shadows at PC=24 are binary32 — with PE sticky an op is one `mulss`-
-  class instruction plus a range check instead of the binary64 op, its
-  check and a two-conversion rounding pass; exact by the lowest binade
-  being refused as a result (the one place binary32's rounding and the
-  x87's 24-bit rounding differ). First person 26.2 → **27.8 fps** with the
-  vertical blank off, 19.0 → 19.5 with it on, CPU 3DMarks 16295 → 16899.
-  The x87 battery gained a sweep with PE set before each case: `fninit`
-  before every case had meant the sticky variant never ran in it.
-  **Then, the same day, the metric turned out to be mislabelled**:
-  screendumps against the timeline show the "first person" window (40–56
-  s after the click) to be 5 s of that test's tail plus 9 s of the
-  "Synthetic CPU 3D Speed" test presenting ~2 frames/s, so its "fps" is a
-  count over a mostly empty window; **the first-person test itself has
-  read 60.0 on 3DMark's own counter in every run since the first logged
-  one (2026-09-11 19:52)** and does 95–105 fps with the vertical blank
-  off. Both game tests are at the cap on the Ryzen. **The user closed the
-  optimization work on 2026-09-12**; the track doc's list is marked so,
-  and what remains is the Mac (build + batteries + the same run on the
-  Air), which is verification. `tools/w98-3dmark.sh` now writes
-  `tests.txt`, the rate lines placed by test from screendumps, so a run
-  reads right without knowing any of this. **On the Air (2026-09-12)** the
-  harness needed four things before it ran at all: `win98-game-test.sh`
-  now sets the Mac's executor environment itself (`.dylib`s, DXVK, the
-  Vulkan loader's keg on `DYLD_LIBRARY_PATH`, KosmicKrisp) as
-  `scripts/test.sh` does, and `w98-3dmark.sh` creates `build/w98game/`
-  on a checkout's first run, takes `TDM_DIR=\PROGRA~1\3DMARK~1` for an
-  English Windows (the user's `win98-2`), accepts Windows' standard navy
-  title bar in its dialog check, and no longer uses GNU `date +%N`. With
-  those, 3DMark ran end to end on `win98-2` (800×600×32, before patch
-  45): **5968 3DMarks, 14613 CPU 3DMarks** against the Ryzen's 6003 /
-  16295. **With patch 45** (the Mac verification, the track doc's items 1
-  and 2): every DOS battery exact on aarch64 — patch 39's never-compiled
-  encoding and patch 45's binary32 path included — and 3DMark at **6001 /
-  16085** with **both game tests at the 60 Hz cap** (race 59.8, first
-  person 59.8 fps by `tests.txt`), against the Ryzen's 6005 / 16899.
-  Uncapped (`DDFLAGS=32768`): 9235 / 16494, race 95.6 fps, first person
-  ≈ 85 fps against the Ryzen's 95–105. The one gap: single-precision x87
-  at PC=24 runs 29 % behind PC=53 here, where the Ryzen has them equal
-  (track doc, item 1). **Open:** `tools/w98-3dmark-tests.py` split that
-  uncapped run's first-person test at one missing screendump and reported
-  no rate for it (it joins shots only up to 7 s apart; track doc, item 2).
-
-- **DOS Quake in a Win98 DOS box speeds up for a moment now and then**
-  (2026-09-10, user report; unthrottled Win98, `quake.exe`; QEMU's half
-  fixed by patch 34 on 2026-09-11, Windows' half **not pursued, by user
-  decision** — below). No
-  `-icount` on that machine, so not the throttle's catch-up. The
-  suspect is Quake's own clock meeting a DOS box's timer: `Sys_FloatTime`
-  (id's `sys_dos.c`) is the BIOS tick word plus PIT counter 0 in mode 2,
-  and a reading that goes backward — the counter wrapped, the tick it
-  owes not delivered yet — counts zero *and becomes the new reference*,
-  so a late tick is counted twice once it lands; a DOS box's INT 8 is
-  Windows' simulation, delivered when the VM runs and caught up in
-  bursts, and `Host_FilterTime` hands each frame up to 0.1 s of it.
-  QEMU adds to it: `i8254.c`'s `pit_irq_timer` schedules each edge from
-  the last one's due time, so a starved main loop fires the owed edges
-  back to back while `pit_get_count` is already current. The probe is
-  `TESTS\QCLOCK.COM` (`guest-tools/src/qclock.asm`): Quake's read in a
-  tight loop beside the TSC, per-second `speed%`, backward readings,
-  tick bursts and the VM's longest gap. **Measured the same night, and
-  both layers are real.** *Pure DOS* (FreeDOS floppy, our QEMU, the
-  win98-2 machine's hardware): `speed% 200` in all 30 windows, exactly
-  one backward reading of a full 55 ms period per tick (540 of 540), no
-  VM gap over 0.5 ms — the IRQ 0 edge `i8254_common.c` schedules exactly
-  at the counter's wrap reaches the guest a main-loop wakeup later, and a
-  tight read loop lands in that window every tick, so DOS Quake counts
-  every period twice whenever its frames are fast enough to read the
-  clock densely (the 72 fps cap's spin). Real hardware's window is about
-  a microsecond. *Win98 DOS box* (win98-2's raw copy, `win98-game-test.sh`
-  with `RUN.BAT` = `QCLOCK 60 > C:\QCLOCK.TXT`): the same backward reading
-  on ~17 of 18 ticks, the DOS box's ticks arriving at ~12 Hz instead of
-  18.2 (18 ticks in ~1.49 s of TSC time at the 1 GHz TCG gives it), and
-  **Windows' catch-up bursts**: the tick count jumped 86 and 153 ticks at
-  once in two windows, i.e. Quake saw 5.4 s and 9.9 s of game time go by
-  in about a second each — the "momentary speed-up", measured. Over the
-  89 s run Quake counted 128 s. **Patch 34 (`34-pit-overdue-irq`,
-  2026-09-11) fixes the first layer**: every PIT port access delivers the
-  overdue edge first, and since an `IN`/`OUT` ends its TB the interrupt
-  is taken before the next instruction, as on the real part. Pure DOS
-  after it: 0 backward readings and 100 % in all 30 windows (the new
-  `pit-guest` check; `-global isa-pit.overdue-irq=off` is the control and
-  still reads 540 / 200 %). **And the bursts went with it**: the same
-  DOS box run on the patched QEMU shows no catch-up at all (the largest
-  tick jump 4, where it was 153) and Windows' tick clock keeping real
-  time (`tsc_khz` 1005230, against 1218938 before) — the DOS box had been
-  getting 12 ticks a second because the late edges were being *lost*: a
-  tight loop of trapped PIT reads holds the BQL, the main loop cannot run
-  `irq_timer`, and the owed edges it then fires back to back merge in the
-  PIC; Windows noticed the time it was short and paid it back in bursts.
-  **What is left is Windows' own**: inside the DOS box ~17 of 18 ticks
-  still read backward by one period (195 % in the tight loop). The IRQ
-  now reaches the machine on time, so the lag is between VTD/VPICD taking
-  it and the VM's reflected INT 8 updating 0040:006C while VTD's trapped
-  counter reads are already current. Quake itself on the patched build
-  confirmed it (user, 2026-09-11): the bursts are gone and the game is
-  now *steadily* fast in a DOS box — the doubling was there before too,
-  hidden by the ticks Windows was losing. **Decision (user, 2026-09-11):
-  DOS games run on pure DOS** — the DOS family, or Win98's "Restart in
-  MS-DOS mode" — where the probe reads 100 %; a Win9x DOS box's timer
-  virtualization is Windows' business and is not chased further. Left
-  untried for that reason: measuring the VM's tick lag, `[386Enh]
-  TrapTimerPorts=Off`, and the rate VTD programs the physical PIT to.
-  Don't reopen it for a DOS game that misbehaves only in a DOS box.
-
-- **A Win98 machine showed one Unknown Device in Device Manager** (fixed
-  2026-09-10, user report). The guest's registry had two ACPI devices
-  with no driver: `ACPI\*PNP0103`, the HPET, and `ACPI\QEMU0002`, QEMU's
-  fw_cfg — neither ID is in any of 98 SE's 500 INFs. fw_cfg's `_STA` is
-  0x0B (not shown in UI) and 98 hides it; the HPET's is 0x0F, so it was
-  the yellow mark. 98 never uses an HPET (it times off the PIT), so a
-  Win98 machine is now `-machine pc,hpet=off` (`Bundle::qemu_args`); an
-  installed guest just stops finding it. XP, DOS and Other keep theirs.
-  fw_cfg cannot be taken out of QEMU's DSDT without a patch, and hidden
-  it costs nothing. The `hpet` check asks our QEMU's `info qtree`.
-
-- **Every optimization of ours can be turned off, and in one click**
-  (2026-09-10, patch 29, user request). Eight of the eleven had a runtime
-  property; patches 15 (`tb-invalidate-fast`), 16 (`tlb-floor`) and 19
-  (`tls-hot-paths`) had none, which is how a user's "I disabled all
-  optimizations and it still happens" cleared eight of eleven and left in
-  the three that sit on TB invalidation, the softmmu TLB and
-  `notdirty_write`. All three now have accelerator properties defaulting
-  on, `tlb-floor` choosing its floor per resize rather than by
-  preprocessor so it can move at run time. The wizard grew **"Turn all
-  off"** and **"Turn all on"** beside "All defaults"
-  (`Optimizations::disable_all` / `enable_all` in `launcher-core`, so
-  the Qt front end and the C ABI both have them), and "all on" is deliberately
-  *not* the same as the defaults: `x87-pc64-as-53` ships off
-  (`pinned-regs` did too, until it left the form on 2026-09-16). The note above
-  the switches says which of the three states the machine is in. Guarded
-  by the `optimizations` check (all eleven on one command line, accepted
-  by our own `qemu-system-i386`, with a name that does not exist still
-  refused, so acceptance means something) and by
-  `launcher-capi/examples/smoke.c`, which asks each switch rather than
-  trusting the summary flag.
-
-- **The VGA chain-4 write marked the wrong byte dirty** (found and fixed
-  2026-09-10, patch `28-upstream-vga-chain4-dirty`, from the user's Duke
-  Nukem 3D report). `vga_mem_writeb`'s chain-4 branch stored the byte at
-  `(addr << 2) | plane` and marked `addr` dirty -- and `addr` is already
-  right-shifted by two for doubleword mode, so **a write anywhere in
-  video memory marked something in the first quarter of it**. In mode 13h
-  that is bytes 0..16000, pages 0-3, **scanlines 0-51**: below line 51
-  the screen is drawn once and never again, however many times the guest
-  rewrites it. Upstream's bug, not ours (`hw/display` carries no other
-  patch of the queue).
-
-  It needs an adapter that routes chain-4 writes through that function.
-  The standard VGA does not -- `vga_update_memory_access()` installs the
-  `vga.chain4` RAM alias, so its stores are plain RAM and the softmmu's
-  `TLB_NOTDIRTY` path marks them -- while the Cirrus keeps its own MMIO
-  ops and hands anything that is not a Cirrus extended mode to
-  `vga_mem_writeb`. Hence "clean at 320x200 on `-vga std`, wrong on
-  `-vga cirrus`", exactly as reported.
-
-  Three things about finding it are worth keeping:
-  - **Every emulation optimization off did not clear the M9 patches** --
-    at the time. Eight had switches; patches **15 (`tb-invalidate-fast`),
-    16 (`tlb-floor`) and 19 (`tls-hot-paths`) had none**, and 15 and 19
-    sit on the `notdirty_write` path, so an A/B with the switches was not
-    an A/B with the queue. **Fixed the next day by patch 29**: all eleven
-    have a property now, and the wizard has "Turn all off" / "Turn all
-    on" beside "All defaults".
-  - **A test with `-display none` and nobody asking for the screen hides
-    this entirely.** Nothing consumes the VGA dirty bitmap, the bits pile
-    up, and the one screendump at the end consumes them all and looks
-    perfect. `tools/vga-dirty-guest-test.py` therefore *polls*
-    screendumps throughout, which is what any real display listener does
-    on its refresh timer.
-  - The guest's own read-back is what separated the two halves: every
-    byte was in video memory (`VERIFY_BAD=0000`), so the writes were
-    never the question -- only the redraw was.
-
-- **A VESA game's palette never arrived: SeaBIOS's VGA BIOS has no VBE
-  4F09h** (fixed 2026-09-11 by `patches/seabios/01-vbe-set-palette`,
-  user-confirmed the same day on both games;
-  user reports: DOS Quake at 640x480 or above quits with "Unable to load
-  VESA palette", Duke Nukem 3D's 640x480 has its colours all wrong).
-  SeaBIOS 1.16.3's `handle_104f` has no case for 09h at all, so it falls
-  into the `debug_stub` that answers `0100`. And every mode its 4F01h
-  describes carries `VBE_MODE_ATTRIBUTE_NOT_VGA_COMPATIBLE`, which is
-  exactly what tells a program to use 4F09h rather than the DAC ports:
-  Quake uses 4F09h for every VESA mode and quits when it fails, Build
-  checks that attribute bit and carries on with a palette it never
-  loaded. The patch adds the function (BL 00h/80h set, 01h get, entries
-  blue/green/red/alignment in the DAC's current width, a secondary
-  palette and direct-colour modes refused), built by
-  `scripts/build-vgabios.sh` into `firmware/vgabios-{stdvga,cirrus}.bin`
-  -- checked in, because SeaBIOS needs an x86 gcc and GNU ld that the Mac
-  and the Flatpak SDK are not asked for -- and `prepare-qemu.sh` copies
-  them over `qemu/pc-bios/`, which every package ships. `d3dpt-vga` loads
-  `vgabios-stdvga.bin` too. The `vbe-palette` check in `scripts/test.sh`
-  is `VBEPAL=1 tools/vga-dirty-guest-test.py vesa`, now also asking for an
-  entry with three different channels: the set's `004f`, the DAC read
-  back through the ports as red 33 green 22 blue 11 (the table's order
-  is DOS Quake's), and a 4F09h get returning the table again. On QEMU's
-  own ROMs the same run reads `VBE_SETPAL=0100 DAC64=3f1f1f` on both
-  adapters. 4F08h (DAC width) still fails on the Cirrus and before a
-  VBE mode on the standard VGA; a program then stays at 6 bits, which is
-  consistent. What follows is the 2026-09-10 diagnosis.
-
-  `tools/vga-dirty-guest-test.py vesa` with `VBEPAL=1` asks
-  the VBE BIOS to set the palette -- function 4F09h, *Set/Get Palette
-  Data*, which is how a VESA title of the era sets its colours -- and the
-  BIOS answers **`AX=0x0100`: AH=01 failed, AL=00 not supported**, on
-  `-vga std` and `-vga cirrus` alike. The guest keeps the default VBE
-  ramp, so a correct picture comes out in the wrong colours. The same
-  palette written straight to the DAC ports (0x3C8/0x3C9) works on both
-  adapters in the same mode, which is why this is the palette *path* and
-  not the palette.
-
-  **VESA itself is not the problem, and that was worth checking**: the
-  same run reads `VBE00=004f SIG=VESA VER=0300` -- the BIOS announces
-  itself as **VBE 3.0** -- and mode set (4F02h), the mode-info block
-  (4F01h), bank switching (4F05h) and the drawing all work, with every
-  page of a banked 640x480x8 frame buffer reaching the display on both
-  adapters. 4F09h is a *required* function at that version. Its
-  neighbour 4F08h (DAC palette width) answers `AX=0x014f`, AL=4F
-  supported and AH=01 failed, so the two palette calls are the thin part
-  of an otherwise working implementation.
-  Open: whether Duke Nukem 3D actually uses 4F09h (Build has both), and
-  whether the fix belongs in the shipped VGABIOS (`pc-bios/vgabios-*.bin`
-  -- `roms/` is not checked out here) or somewhere of ours.
-  **Not** a dirty-tracking or addressing problem: with the harness right,
-  every page of a banked 640x480x8 frame buffer reaches the display on
-  both adapters.
-
-- **On the Cirrus the VESA picture also comes out in blocks that have
-  swapped places** (open, 2026-09-10, user report: "rainbow colours and
-  the image looked divided into squares switching positions randomly, but
-  kind of recognizable"). The rainbow is the 4F09h entry above. The blocks
-  are not, and are not explained yet. Ruled out so far:
-  - **Not patch 27's chain-4 bug.** In VBE mode 0x101 *both* adapters map
-    the 0xA0000 window as a **RAM alias** into `vga.vram` at the current
-    bank offset (`info mtree -f`, measured), so a VESA mode never reaches
-    `vga_mem_writeb` at all. The chain-4 fix is a mode-13h fix.
-  - **Not the window granularity being wrong.** The Cirrus reports 16 KiB
-    where the standard VGA reports 64 KiB, and that is the *hardware*:
-    `cirrus_update_bank_ptr` shifts the bank register by 14 or by 12
-    (16 KiB or 4 KiB), never by 16, so a real GD54xx reports the same and
-    a program assuming 64 KiB would be broken on the card too. A program
-    that reads the granularity gets every page in the right place
-    (`tools/vga-dirty-guest-test.py vesa cirrus` passes; `GRAN64=1` is the
-    knob that makes the guest assume 64 KiB instead, for the A/B).
-  Best remaining hypothesis, untested: Build has **card-specific SVGA
-  drivers** as well as a VBE one, and its Cirrus path banks by writing
-  GR9/GRB directly rather than calling 4F05h. If the driver and
-  `cirrus_update_bank_ptr` disagree about the granularity bit (GR0B bit
-  5), every bank lands at the wrong offset -- which is what blocks in
-  swapped places look like. The test to write drives those registers
-  directly, both ways round; the alternative is to log the game's own
+  The untested hypothesis is Build's own Cirrus SVGA driver: it banks
+  through GR9/GRB directly and may disagree with
+  `cirrus_update_bank_ptr` about GR0B bit 5. The next step is a test that
+  drives those registers both ways round, or a log of the game's own
   register writes.
 
-- **Two traps in that harness, both of which read as a QEMU bug** (2026-09-10,
-  each cost a wrong conclusion before being caught):
-  - **The DAC is 6-bit and QEMU expands it with `c6_to_8()`**, which
-    replicates the low bit into the bottom two: level 33 comes back as
-    135, not 132. A reader that assumes a plain 4x sees every *odd*
-    palette entry as a mismatch -- which looked exactly like "every other
-    4 KiB page is missing" until the actual RGB was printed.
-  - **Window granularity is not 64 KiB everywhere.** The standard VGA
-    reports 64 KiB, the **Cirrus reports 16 KiB** (`GRAN=0010`), and the
-    window number handed to VBE 4F05h counts *granules*. Hardcoding 64
-    puts the fill in the wrong place, which showed up as 69 of 75 pages
-    wrong on the Cirrus. Read it out of the mode-info block.
-  The lesson that generalises: the guest's own read-back (`VERIFY_BAD=`)
-  says whether the bytes are in memory, and printing the raw pixel says
-  what the display did with them. Two numbers, and neither was being
-  looked at.
+- **Protected discs against the EDC-first cooked read: argued, not
+  measured.** Test on the rig with `discx scan`. On FIFA 2002, Age of
+  Mythology disc 1 and Settlers 3 CD01, every L-EC failure must land in
+  *unreadable*, and FIFA 2002 must still reach its menus
+  (`docs/tracks/m5-cdrom-backend.md`, doc 17 §2.5).
+  `LIBDISC_NO_CORRECT=1` is the A/B.
 
-- **A new machine's untouched fields follow the family picker again** (2026-09-09, user report, `wizard::Form::choose_family`). Memory, the accelerator, the processor, the NIC and the pointer had a `*_chosen` flag each — until someone sets one, switching family moves it to the new family's default — but the four fields whose *list* is per family (the adapter, the sound card, the MIDI port, the pad) had none: they moved only when the new family did not offer what was in the field at all. So a new machine switched from Win98 to XP kept the Cirrus, which is XP's non-default, and a DOS machine switched to Win98 kept the Sound Blaster over the AC'97. All four have the flag now, `reset_*` clears it (so "Default" puts the field back to *following* the family rather than pinning what it reset to), and `open_edit` sets it on all four, since an existing machine's values are deliberate whatever they came from. Guarded in `launcher-capi/examples/smoke.c` (the `capi` check), which holds a live form: both directions of the rule and the "Default" case. The pad is the one of the four not asserted there — the C ABI has no pad row yet, M13 being newer than it. Three families since 2026-09-06: Win98, XP and **DOS**. The DOS machine is the same i440FX PC with the SB16 doc 06 already had "for DOS boxes/games", 64 MB, no NIC, cirrus, and no 3D of any kind (the DOS Glide wrapper is `GLIDE2X.OVL`, which we do not build). What makes it a DOS machine is the new **processor** field (`bundle::CpuSpeed`): a combo of named machines — Unthrottled, Pentium 133, Pentium 75, 486DX2-66, 486SX-25, 386DX-33, 286-12 — because era software times itself against the CPU it finds and our TCG runs a DOS guest at ~660 M instructions/s. It is QEMU `-icount shift=N,**align=on**`; without `align=on` the guest only *believes* it is slow (measured: a "throttled" run finished in less wall-clock time than the unthrottled one). `-icount` cannot run under KVM, so a chosen processor forces emulation — said in the wizard, not discovered later. Two more bundle fields landed with it, both promised by docs 06/07 and never implemented: `floppy` and `boot` (Automatic / Hard disk / Floppy / CD). Guarded by `tools/dos-guest-test.py` (12 checks, a real FreeDOS guest: 31.3 M/s measured against 31.25 asked, 7.8 against 7.8). | **Win98 moved onto `d3dpt-vga` 2026-09-07** (user decision), **back onto the cirrus as its default the same day** (user decision), once the adapter was a choice, and **onto ours as its default again 2026-09-16** (user decision) — so a new Win98 machine is ours, like XP, with the Cirrus one pick away. What follows is the 2026-09-07 state: a new Win98 machine was `-vga cirrus` and the in-box driver again, with ours (`-vga none -device d3dpt-vga,addr=0x02`, the M10 driver of doc 19, the NIC pinned below it at `0x03`) one pick away in the wizard. XP's default is unchanged and is ours. The reason for the default is that the 9x driver is much the newer of the two, so a 98 machine comes up on the driver Windows already has and is moved to ours deliberately — and moving it either way *is* a hardware change to an installed guest: it finds an unknown adapter on its next start, comes up in plain VGA and wants a driver before it has its desktop back. The test tools keep their own cirrus machines, which is where the inbox driver stays exercised.
-| Guest tools | **The ISO was reorganized 2026-09-06** into one folder per role with one copy of every file — except, since 2026-09-12 (user request), WineD3D's, whose `WINED3D\D3D8-9\` and `WINED3D\DDRAW\` hold the DLLs under the names a game loads, each with `WINED3D.DLL` and `OPENGL32.DLL`, to be copied whole from Explorer (`SETUP /GAME 4`/`5` copy the same folders), plus a `README.TXT` of its own saying which folder a game wants and that this is the fallback, tried after the display driver's own Direct3D — **`WINED3D\SYSTEM\` was dropped 2026-09-18** (user decision): wine9x's system-wide switcher DLLs were a third way to install the same thing, sitting on the same disc as the two per-game folders, and only made the folder read as a choice to understand; they are still built into `guest-tools/out/wine9x/` — (`SETUP.EXE` `README.TXT` `GLIDE\` `DRIVER\` `D3DPT\` `OPENGL\` `WINED3D\` `TESTS\` `CDSHELF\`, 20.1 MB → 15.4 MB), and grew **`SETUP.EXE`** at its root (`guest-tools/src/setup.c`): a console installer that offers the components *this* guest's Windows can use — 98/Me get Glide + `FXMEMMAP.VXD`, 2000/XP get Glide + `FXPTL.SYS` with the MAPMEM service and the `d3dpt-vga` display driver — plus the per-game file sets (`SETUP /GAME`), which is where WineD3D's `WINED9.DLL` → `D3D9.DLL` renames happen so the disc need not carry them twice. `SETUP /ALL` is the scriptable form. What went: `GAMEDIR\` (three different stacks in one folder, WineD3D's DLLs under the same names ours use), the test EXEs duplicated into `D3DPT\`, and the Glide DLLs duplicated across the two OS folders. The ISO's two README files are now real files (`guest-tools/README-ISO.txt`, `README-DRIVER.txt`) instead of heredocs inside the build scripts. Both families are verified end to end by **`tools/setup-guest-test.sh <image> [xp|win98]`** (`/LIST`, `/ALL`, `/GAME`, then Windows' own `dir` on everything that should exist, over COM1): XP 12/12 with the display driver installed and the miniport up in the QEMU log, Win98 10/10 with the VxD mapper and without the driver component being offered. Local only, never in `scripts/test.sh`. `guest-tools/build-wrappers.sh` builds the qemu-3dfx guest wrappers (msvcrt-linked, `-march=pentium3`, wglgears test EXE) and, since 2026-09-03, the WineD3D set from JHRobotics/wine9x (Wine 1.7.55 for 9x/XP: per-game D3D8/D3D9/WINED3D DLLs + system-wide switchers) with a D3D9 smoke test (`D3D9TEST.EXE`), the display-mode probe (`MODETEST.EXE`) and the reference workloads `D3DGAME9.EXE` / `D3DGAME8.EXE` (doc 14 P0a) into an ISO. **Rig (P4 + GeForce 6200), 2026-09-03: both run.** First-run fixes: ground triangle winding (top face was culled), shader path now applies the per-cube material (all cubes were one colour), d3dgame8 windowed swaps with COPY_VSYNC so both pace at the refresh rate by default (85 fps on the rig's monitor is vsync, `-novsync` for throughput), console output also goes to `d3dgameN.log`. **Golden captures landed 2026-09-03** (`reference/d3d/rig-2026-09-03/`, diff with `tools/bmpdiff.py`): d3dgame9 frame 300 windowed, fixed function and `-shader`. The rig's log explained the `-shader` oddity: d3dx9_36's HLSL compiler refuses ps_1_1 (X3539), so the cubes ran vs_1_1 + fixed-function pixel stage while the log claimed fixed function. **Rendering is frozen at that build** (the golden set must stay comparable; the rig stays off for now): only the log line naming the shader case and the elapsed-ms summary were fixed, no pixel changes. Mask the HUD bars (wall time) when diffing. d3dgame8 windowed with COPY_VSYNC runs at half refresh (43 fps at 85 Hz) on the GeForce driver: real behaviour, recorded. Must match the host's qemu-3dfx commit. **Win98 and XP (2026-09-03): wglgears and D3D9TEST run in the player on both** (WineD3D needs no Microsoft DX runtime in the guest; XP needs the FXPTL.SYS step first, see gotchas). XP D3D9TEST on the Air: adapter reported as "GeForce 6800" (WineD3D's GL-renderer mapping), x87 PC=24 after CreateDevice, 377–504 fps windowed 640×480. |
-| Guests | Images live outside the repo: `~/vms/win98.qcow2` and `~/vms/winxp.qcow2` on both machines (the XP image was copied to the Linux box 2026-09-03; it has FXPTL.SYS installed, no d3dx9, no games yet), plus `~/vms/scratch.img` on Linux (64 MB FAT32, seen as E:, for files out of the guest). Win98 SE on the Air: installed, repaired to PCI-bus enumeration (must be an ACPI `SETUP /p j` install or repaired — doc 06/build-macos). XP on the Air: installed, boots in the player in ~30 s (same as the rig, P4 1.7); integer 1.3–2× the rig (7-Zip), x87 FP 21 % on softfloat (Super PI 1M 9:49 vs 2:02), 104 % with patch 06 (1:57) — `reference/benchmarks/`. |
-| Direct3D device (M4) | **Works end to end on Linux, P0–P4 closed 2026-09-03/04** (doc 14 has the per-milestone detail and numbers). Executor: DXVK d3d9 native (ADR-007), `third_party/dxvk` + `patches/dxvk/` (01 macOS shim, 02/05 optional features, 03 portability, 04 headless WSI), verified on RADV and on the Air over KosmicKrisp (macOS 26). Transport: SysBus device `d3dpt/hw` (QEMU patch 40; register page 0xdfffe000, 64 MiB window 0xd8000000), protocol `d3dpt/d3dpt_proto.h` **v4**, decoder+executor `d3dpt/exec` → `build/d3dpt/libd3dpt_exec.so` dlopened by the device, frames through the GL frame path (`embed/embedfx.c`). Guest: `guest-tools/src/d3dpt/` — `d3d9.c` (+`d3d9_res.h`, `d3d9_p3.h`: resources, surfaces, shaders, declarations, queries, guest-side state blocks, cube maps) and `d3d8.c` (D3D8 wrappers in the same TU); vtables generated from mingw's headers (`gen_vtbl.py`, `gen_vtbl8.py`); ISO folder `D3DPT\` with D3D9.DLL, D3D8.DLL and the test EXEs. **Acceptance so far:** XP D3DGAME9 and D3DGAME8 frames on the device are byte-identical to the native DXVK build and 1089 pixels (tolerance 8) from the rig golden; D3DFEAT9 (hand-assembled SM1.1, no D3DX) byte-identical guest vs native including query results; D3D9TEST 2840 fps vs 1100 on WineD3D-in-guest. **First real games (user, 2026-09-04):** Max Payne (D3D8) starts, its resolution list had 16-bit entries only, and it freezes on the loading screen when a level starts (diagnosed 2026-09-04, see **Max Payne campaign crash** below — the game's own heap corruption on the cracked level data, not our stack). GTA Vice City refused with "cannot find enough available video memory". Fixed the same day: (1) Vice City asks DirectDraw 7 `GetAvailableVidMem`, not Direct3D, and XP's Cirrus driver answers 4 MB → `D3DPT\DDRAW.DLL`, a shim next to the EXE that forwards to the system ddraw.dll and reports 256 MB (`DDVMTEST.EXE` shows what such a check sees; `scripts/test.sh` runs it); (2) the Cirrus driver lists 24-bit modes and no 32-bit ones (`MODETEST`: 32 bpp = BADMODE), and the DLL mapped only 32 → X8R8G8B8, so EnumAdapterModes was 16-bit only; 24-bit now counts as 8888 (the switch already retried at 24 bpp), list cached and de-duplicated; (3) GetRasterStatus (60 Hz sweep from the performance counter), SetGammaRamp / GetGammaRamp (remembered, not applied) implemented in both DLLs instead of E_NOTIMPL. Gotcha: a 64-bit `%` in the DLL pulled in `libgcc_s_dw2-1.dll` and the EXE would not start; DLLs now link `-static-libgcc`. **2026-09-04 evening, from the first player log:** Max Payne in 32-bit crashed at start ("requires a DirectX 8 compatible display adapter") — it asks for a D3DFMT_D32 auto depth buffer, which DXVK's D3D9 refuses outright (`d3d9_format.cpp`: D32/D15S1/D24X4S4 "unsupported everywhere") while our `format_ok` advertises it → CreateDevice came back D3DERR_NOTAVAILABLE. Fixed host-side: `depth_norm()` in the executor maps D32→D24X8 and D15S1/D24X4S4→D24S8 in `fill_pp` and CREATE_DEPTH_STENCIL (one spot for both guest DLLs; the guest still answers GetDesc with the asked-for format), and `d3dpt-exec-test` now requests D32 auto depth so the case is regression-tested on every run. Vice City with the shim now dies silently before even Direct3DCreate8 (two attach/detach pairs in the log, no dialog) → the shim's OutputDebugString lines were invisible; it now also appends every call to `d3dpt_ddraw.log` next to the EXE (attach with EXE name, CreateEx wrapped-or-not, GetAvailableVidMem, EnumDisplayModes with mode count, SetCooperativeLevel/SetDisplayMode/CreateSurface/GetDeviceIdentifier with hr), and the d3d8/d3d9 attach log line now names the process. The silent Vice City exit was then explained: the user had deleted `D3D8.DLL` from the game folder (VC is D3D8 — all RenderWare GTAs through VC; San Andreas is the D3D9 one), so it ran on stock d3d8 over Cirrus. **The two "freezes", diagnosed headless the same night (`tools/xp-game-test.sh`, new):** neither was a hang. Both games were sitting in a **message box behind their fullscreen window** while the player showed only 3D frames (once a device existed the VGA surface was hidden, and a process that dies without `DLL_PROCESS_DETACH` never released it): the vCPU idled in HLT, QMP answered, Dr. Watson attached to the game (`drwtsn32 -p`) showed the main thread inside `MessageBoxA`. **Max Payne:** "JPEG Error — Corrupt JPEG data: 19 extraneous bytes before marker 0xd0", then "bad Huffman code", from `grphmfc.dll` while loading the level's textures. Not the disc (a 70 MB level archive copied inside the guest is byte-identical to the ISO), not memory corruption (XP's full page heap on the EXE: no fault), and gone with **`-cpu pentium3`** under KVM or TCG: the tutorial level loads and plays (Max in the alley, HUD, weapon — `build/xp-game-test/mp-p3/tutorial-alley.png`). The game's CPUID-dispatched JPEG decoder mis-decodes under `-cpu host` (family 25). **Vice City:** its own handler's box, "Unhandled exception c0000005 at address 00000001": under page heap the fault moved to `gta-vc.exe` reading a freed `IDirect3DSurface8` (`GetDesc` on the render-target surface it had fetched and released earlier, on RwRasterCreate for the camera). Our D3D8 wrappers were one fresh object per `Get*` call and died with the game's last `Release`; real D3D8 objects owned by the device / a texture keep their identity and live on at ref 0. Fixed in `d3d8.c` (`w8_new`: one wrapper per object, kept until the object is freed) and `d3d9_res.h` (texture level surfaces persist at ref 0 while the texture lives, `res_addref` retakes the texture reference); with it **Vice City reaches its main menu on the device** (`build/xp-game-test/vc-fixed/main-menu.png`: the Vice City logo and Start Game / Options / Quit at 41k presents), the menu's background texture showing as grey noise — the next stub, 8-bit palettized textures (`SetPaletteEntries` / `SetCurrentTexturePalette`, RenderWare's P8 rasters). Also found: the game's process had loaded **both** our `D3D8.DLL` and `D3D9.DLL` (something in it asks for d3d9), and the second refused to load because the device was busy — the DLL now forwards `Direct3DCreateN` to the system DLL when it cannot open the device (`d3dpt: forwarding to C:\WINDOWS\system32\d3d9.dll`), logging the module list. **Player:** while 3D is active the VGA surface is shown again after 1 s without a presented frame when the guest drew on it (`[display] no 3D frame for 1000 ms …`); `embedfx.c` no longer sets QEMU's passthrough for the D3D device so the VGA keeps rendering. **New diagnostics:** `D3DPT_DUMP_DIR` (executor frame dumps from bare QEMU), the DLL call trace (`D3DPT_TRACE=1` / `d3dpt_trace.on` → `d3d8_trace.log`, generated wrappers in the vtable headers, args logged), the DLL forwarding fallback, and the tool itself (screendumps, frames, keys, Dr. Watson stacks, page heap, `CPU=`). Gotcha: modern mingw's `psapi.h` maps to `K32*` kernel32 exports → XP's loader blocks the process in a hard-error dialog before `DllMain`; `PSAPI_VERSION 1`. **Max Payne campaign crash (diagnosed 2026-09-04, later):** the tutorial plays but New Game → any campaign level (Fugitive first) crashes on the loading screen with the game's own XP error box (a heap corruption), and it is **not** our stack. Two signatures, both entirely in game code with no `d3dpt`/DXVK frames: without page heap a wild jump to `eip=0x53414d41` (ASCII "AMAS" where an `X_LevelDBLevel` vtable pointer belongs); with full page heap a break in `RtlFreeHeap` ← MFC42 free ← the level-init function `MaxPayne+0x4fd72` (strings "Level init"/"Global AI object"/"MP_GM_AINETINIT"/"Enemy creation"). Ruled out as ours by varying every axis: reproduces under KVM `-cpu pentium3` (real host CPU, so not our TCG x87/SSE fast paths); reproduces with `x_level1.ras` copied byte-identical (123,196,327 B) to the guest's local disk (not QEMU CD/disk emulation, not our device streaming); reproduces at 256 MB and 1 GB RAM; the tutorial (local `x_data.ras`, same device) plays through. Conclusion: the level-1 data from the cracked DINO-BYTES ISO (SafeDisc; `secdrv.sys`/`drvmgt.dll` on the disc) corrupts the game's heap during level init. Open next: try a legit / differently-cracked `x_level1.ras` for a final verdict. Tool notes: `xp-game-test.sh` CDS discs get XP letters in **reverse** of CDS order (first CD → E:, second → D:); the image's `cd.ini` holds the level path (`E:\disk1\Levels`) and the game shows its own "insert the Max Payne CD" box (not a crash) when that path lacks `Disk1\Levels`; new `PRE_CMD=` env runs a batch command in the game dir before the EXE (used to stage a level archive local / rewrite `cd.ini`). Open: volume textures, swap-chain objects, GetFrontBuffer, lockable DEFAULT surfaces, lost-device protocol, zero-copy present (readback via GetRenderTargetData today), macOS build of `libd3dpt_exec`, decoder thread (everything runs on the vCPU thread under the BQL). |
-| XP display driver (M7, doc 15) | **M7a landed 2026-09-04, M7b (DirectDraw DDI) first cut the same evening; track doc `docs/tracks/m7-display-driver.md`.** `d3dpt-vga` PCI adapter (`d3dpt/hw/d3dpt_vga.c`: QEMU's stdvga core + a register BAR, `d3dpt/d3dpt_fb.h`; `-vga none -device d3dpt-vga`) and the driver pair `guest-tools/src/d3dptvid/` (video miniport, display driver, INF, `DRVINST.EXE` unattended installer, `SETMODE.EXE`, `DDTEST.EXE`), built by `guest-tools/build-driver.sh` with mingw-w64's DDK headers + ReactOS' public-domain `ddrawint.h` (`DRIVER\` on the guest-tools ISO). XP desktop from the host's mode table (42 modes, 1024×768×32@85 etc.) straight out of VRAM with no copy inside QEMU, no flash on mode switches, KVM verified. DirectDraw: HAL accepted by dxg, surfaces in VRAM, real page flips through the OFFSET register, cached VRAM mappings (miniport maps VRAM itself); DDTEST 640×480×16 flip chain 4762 fps, ×32 6383 fps, windowed HEL blit 305 fps (throughput: since the vertical blank below a flip chain runs at 60 fps, `DDFLAGS=32768` measures throughput again). Findings: `EngModifySurface` needs `HOOK_SYNCHRONIZE`, `DDCAPS_GDI` makes dxg drop the HAL, XP SP3's Logo dialog ignores every registry policy. `tools/xp-driver-test.sh` runs the guest loops headless. **M7c (Direct3D DDI) first cut 2026-09-04:** the DX7 non-T&L HAL on the doc 14 executor — VRAM 128 MiB with a 64 MiB command window on top (register set v2), surfaces mirrored from VRAM by handle, the DP2 token interpreter (`d3dpt/exec/d3dpt_exec_ddi.cpp`), readback into VRAM at EndScene / Lock / Flip; `D3D7TEST` (HAL device, Z, texture, the reference scene) at 2400 fps, its frame pixel-identical to the host-side `d3dpt-dp2-test`. **FIFA 2000 runs on the HAL unmodified (2026-09-04, headless, `tools/xp-fifa2000.bat`):** its DX6 Thrash renderer through DrawPrimitives2 — intro, title screen, attract-mode match at 800×600 with textures, kits, crowd and HUD; no unsupported token, no refused record, no colour keying asked for. Played by hand the same day: clean and smooth under KVM; the keyboard dead in the match under TCG — traced (doc 15) to the game's non-exclusive DirectInput keyboard, fed on XP by a hook that its match loop never services (Windows sees every key, the device reports none, KVM or TCG headless); fixed by `D3DPT\DINPUT.DLL` next to the EXE (a forwarding shim that merges `GetAsyncKeyState` into the keyboard state and logs the game's DirectInput use). **User-confirmed 2026-09-05 by A/B on a Linux TCG run** (keys with the DLL next to the EXE, dead keyboard again with it moved away: the shim is the variable) — and scoped the same day: the user's everyday setup is this Linux host run natively (KVM) on `-vga none -device d3dpt-vga`, where they report **no input issues and no custom DLLs anywhere** (stock XP on the driver, no WineD3D renames, no shim next to any EXE), so the unpumped-hook symptom is TCG-only and `DINPUT.DLL` is medicine for the Apple Silicon path, not the normal one. Decided with it (doc 15): the merge stays a per-game side-by-side DLL — `system32` fights Windows File Protection and cannot hold a shim of the same name, `AppInit_DLLs` would inject it into every process, and the merge is only correct where we have watched the game want it — with deployment becoming the launcher's job (M6). The shim is now silent by default (the fix alone); `D3DPT_DINPUT_LOG=1` restores the log and the sampler thread, whose 248 keys per 5 ms are not free under TCG. Tools from the hunt: `DRIVER\DITEST.EXE`, the embed library's input-queue statistics, `PLAYER_KEYS_HOLD`, the executor's `frames/s` line, `xp-driver-test.sh` `bat` / `GAME_ISO` / `SHOTS` / `SHOT_KEYS`, `qmpc.py click`. **8 bpp palettized modes (2026-09-04 night, register set v3): Diablo plays** — device PALETTE block + indexed shadow, palette-driven miniport modes, GDI palette management (`DrvSetPalette`), `DDPF_PALETTEINDEXED8`; the XP runtime wants `dwPalCaps` = 0 with no palette callbacks (palettes reach the driver through GDI) and Direct3D offered in every mode, else the HAL degrades to `DDCAPS_NOHARDWARE` (both found in the `dxg.sys` / `ddraw.dll` disassembly). `DDTEST 640 480 8` animates a palette at 1200 fps; `tools/xp-diablo.sh install\|play` gets Diablo into Tristram headless with screendumps. **The flip chain has a vertical blank (2026-09-05):** Moto Racer played at several times its speed because `DdFlip` never blocked and `DdGetFlipStatus` always said "done" — a 1997 racer is paced by its flip chain, and ours had no pace. `FRAMES` is now a clock (periods of the mode's `HZ` off the host clock, not the display client's pull, so a headless run paces like the player), `DdFlip` / `DdGetFlipStatus` hold the second flip of a double-buffered chain until it moves, bounded at 50 ms; `DDTEST`'s three exclusive chains and `D3D7TEST` all run at 60 fps (`DDFLAGS=32768` = `DDF_NO_VSYNC` restores the old numbers to the frame), the windowed `Blt` path is untouched as on real hardware, and the device prints `N page flips in 5.0 s` so a title's real frame rate — or its absence, meaning it blits — is visible in the log. **Max Payne with no wrapper DLL (2026-09-05, `tools/xp-maxpayne.bat`):** XP's d3d8.dll takes a driver without `D3DCAPS8` as a DX7 driver (software vertex processing, DX7 tokens) and the launcher, menu and tutorial level render on the HAL at ~290 fps; it exposed two executor bugs — `TRIANGLEFAN_IMM` / `LINELIST_IMM` have their payload and the next token DWORD-aligned by *offset* (the DX8 runtime emits them at offset 2 mod 4; the stream desynchronised into garbage tokens, and a half fix that aligned only the end drew one garbage fan per frame: black bands across the alley, found by the trace's per-draw render-target snapshots) and a garbage light index made DXVK throw `std::bad_alloc` that cannot be caught (DXVK's own static unwinder → abort): indices are validated before DXVK now, the host test covers both; plus the DP2 frame trace (`D3DPT_DP2_TRACE`: state snapshot, tokens, vertices, texture and per-draw target dumps), `D3DPT_DDI_REREAD`, `D3DPT_DDI_NOFOG`, the driver's surface registration log. The alley matches the M4 device's frame; `ZBIAS` (47) maps to DEPTHBIAS since 2026-09-05 evening (DXVK's d3d8 scale, `d3dpt-dp2-test` covers it). **The DirectX 8 DDI (2026-09-05, later):** `GetDriverInfo2` with `D3DCAPS8` and the DX8 format list, hardware T&L claimed in both caps sets (the executor's fixed-function mapping does the work), the DX8 token stream rewritten in the driver into self-contained draws (protocol v6 `D3DPT_DP2_DRAW8`: the runtime's vertex / index buffers are guest system memory), TEXBLT done in the driver, the DX8 state kept per context between calls, state sets as d3d9 state blocks, render-to-texture, MULTIPLYTRANSFORM, DXT pitches; D3DGAME8 runs through XP's own d3d8.dll with hardware vertex processing (~575 fps, render-to-texture and all; `xp-driver-test.sh d3dgame8` diffs it against the native oracle) FIFA / D3D7TEST keep working, Max Payne renders on it too since the clipped fans were fixed (2026-09-05, later: `CLIPPEDTRIANGLEFAN` offsets count into stream 0, which the runtime rebinds to its own clip buffer before the tokens; the DP2 call's vertex buffer under d3d8.dll is a 10 × 32-byte dummy — read from there the fans were heap garbage, the nearest walls and ground black); findings by disassembly: the HAL-info flag that unlocks the queries, `dwActualSize` checked against the inner header, no `CLIPTLVERTS` (the host does not clip TL vertices), FOURCC surfaces need the HAL info's list, DX8 state persists across calls by handle. DXT textures on this path failed in dxg's heap (a FOURCC format has no bit count, the driver had no `CreateSurface` to size it; fixed 2026-09-05 with `DdCreateSurface` + `DDHAL_PLEASEALLOC_BLOCKSIZE`, found with the new `DRIVER\DXTTEST.EXE`). **Shaders 1.x (2026-09-05 night, protocol v7):** `D3DVS_VERSION(1,1)` / `D3DPS_VERSION(1,4)` in the caps, the CREATE / SET / DELETE / CONST tokens pass through the driver, the executor keeps them per context (the `D3DVSD_*` declaration → a d3d9 declaration with `dcl`s prepended to the function, declaration-only shaders as the fixed function on that layout, `D3DVSD_CONST` loaded at set time, a DRAW8 under a shader carries the handle) and validates every function first — DXVK's compiler *asserts* on an unknown opcode (an abort: QEMU would die), found by the host test's hostile case; `SHTEST.EXE` / `xp-driver-test.sh shtest` verifies it through XP's own d3d8.dll. **Palettized textures and colour keying (2026-09-05 night, protocol v8):** the two caps Moto Racer 1997 wanted — P8 in both format lists, `TRANSPARENCY` / `ALPHAPALETTE`, `DDCAPS_COLORKEY` + `DDCKEYCAPS_SRCBLT` with a `SetColorKey` and a never-called `Blt` callback (dxg drops the HAL for the caps without a Blt callback, and without the caps user-mode ddraw never hands a texture's key down — four CKTEST runs, doc 15), the key sent by `DdSetColorKey` and re-checked off dxg's surface at texture bind → `VRAM_COLORKEY`; the executor takes palettes from the DP2 `SETPALETTE` / `UPDATEPALETTE` tokens, expands P8 and keyed textures to A8R8G8B8 (key = alpha 0), forces the alpha test under `COLORKEYENABLE` and overrides stage 0's alpha op when the app's ignores the texture alpha (the DX7 runtime's `TEXTUREMAPBLEND` emulation does that for every keyed 16-bit texture), and re-uploads dirty bound textures before each draw; `CKTEST.EXE` / `xp-driver-test.sh cktest` verifies it through the DX7 API. **Found by CKTEST's second case:** on NT a flip exchanges the two surfaces' roles, not their memory (the handles keep their VRAM, dxg moves the PRIMARYSURFACE caps and re-issues `CreateSurfaceEx`), and `DdFlip` had re-registered them as if the memory had swapped since the first M7c cut — the host rendered into the displayed buffer every other frame; fixed (doc 15 "A flip does not move memory"). **Moto Racer on it (2026-09-05, `tools/xp-motoracer.sh`):** it takes the HAL now and turned out to be a DirectX 3 title — execute buffers through XP's `d3dim.dll`, a path with two breakages of its own, both found with the new `DRIVER\EBTEST.EXE` probe and the runtime's disassembly (doc 15 "Execute buffers — the DirectX 3 path"): `hwCaps.dwMaxVertexCount` 65535 sized the runtime's TL vertex buffer over its own 65535-vertex limit, so every `Execute` failed with `E_OUTOFMEMORY` before a token was built (2048 now, `ddflags=0x40000` the repro); and the UNCLIPPED `Execute` is a pass-through of the execute buffer's raw `D3DOP_` instructions (`D3DHALDP2_EXECUTEBUFFER`) in which the driver consumes POINT / LINE / TRIANGLE / STATERENDER / SPAN / EXIT and must *bounce* the rest — `PROCESSVERTICES` first — with `D3DERR_COMMAND_UNPARSED` + `dwErrorOffset` so the runtime executes them and calls again (skipping them leaves the TL buffer empty); the DX5 texture render states (`TEXTUREHANDLE`, `TEXTUREMAPBLEND`, filters, address) arrive verbatim on this path and the executor maps them onto stage 0 now. EBTEST passes 5/5 through `d3dim.dll` (and on the RGB control); `tools/d3dpt-dp2-test.cpp` covers the executor half. **Moto Racer plays** (`tools/xp-motoracer.sh install|play`: the 3D name screen, the showroom bike, the Speed Bay race with the colour-keyed palms and the HUD at 120 fps under KVM; played by hand by the user 2026-09-05 evening after the untracked-writes fix: works great, fast under TCG too). **Untracked writes (2026-09-05, evening):** the showroom's 2D panels (header, arrows, features, Start / Back) were missing in every run — the game draws them with GDI through `GetDC` on the back buffer, which dxg serves with no driver callback (no `DrvDeriveSurface`), so no `VRAM_DIRTY` came and the executor's readback overwrote them each frame; the executor now keeps a shadow of every render target's VRAM, uploads what differs before a frame's first draw and keeps what differs at the readback (the target refreshed from VRAM before the next draw) — doc 15 "Untracked writes", `d3dpt-dp2-test` covers it, the device log counts `untracked guest pixels` (the race HUD's text, the 24×24 software mouse cursor). The one-triangle draws cannot be batched (a `TEXTUREHANDLE` before each, painter's order with Z off); `xp-motoracer.sh play` drives the menus by a screendump classifier (`tools/motoracer-state.py`) now, since the title takes only the keyboard and idles into an attract demo. **The hardware cursor (2026-09-05 evening, register set v4):** the user's flickering mouse was GDI's software pointer (painted into the GDI primary, one buffer of a flip chain: visible every other frame under a 60 Hz title) — `DrvSetPointerShape` / `DrvMovePointer` write the pointer as a8r8g8b8 above the DirectDraw heap and the CURSOR registers, the device hands it to QEMU's console, and the player shows the guest's shape as the host window's cursor over the image (the USB tablet puts the host pointer exactly there; hidden when the guest hides it, hidden as before for a guest without one); v4 = reinstall every image from the ISO (doc 15 "The hardware cursor"). **Tried and dropped the same evening:** blit / stretch caps for FIFA 2000's 320×240 videos — a declined `DdBlt` is E_NOTIMPL to the app on XP, not a HEL fallback, and the game never blits its movies anyway (doc 15 "Blit caps and the HEL"). **GTA Vice City plays on the DX8 DDI (user, the same evening, TCG):** the first real DirectX 8 title through XP's own d3d8.dll on the driver — nothing refused, no skipped draw, 400–600 draws a frame at 20–30 fps under TCG, water effects and all. **Video-memory vertex / index buffers (protocol v9, the same night; doc 15 "Vertex and index buffers in video memory"):** `D3DDEVCAPS_HWVERTEXBUFFER | HWINDEXBUFFER` in `D3DCAPS8`, the runtime's `D3DPOOL_DEFAULT` buffers taken from dxg's linear heap by the buffer callbacks (block size, as for a compressed texture), the MANAGED ones synced by `BUFFERBLT` (the driver's memcpy; the token is 24 bytes, a 20-byte guess desynchronised the stream), Lock / Unlock reporting the written range (`VRAM_DIRTY_RANGE`), and a `DRAW8` carrying `{handle, offset}` instead of the vertex / index bytes (`D3DPT_DRAW8_VRAM_VB` / `VRAM_IB`), the host reading the range straight from VRAM (no host copy). Vice City in the city, `tools/xp-vicecity.sh play` (menus by clicks, waits by the log's rate lines, the play disc as D:, the game's frame limiter off in the image): **KVM 360–375 frames/s against 265–285 with the buffers back in system memory (`ddflags=0x100000`), TCG 62–75 against 51–55.** Two findings: the runtime's vertex buffers arrive without `DDSCAPS2_VERTEXBUFFER` in `ddsCapsEx` (decide by the request's caps), and `lpDDVertex` dangles under `USERMEMVERTICES` (the driver's own debug line dereferenced it: STOP 0x8E). D3DGAME8's frame is pixel-identical with and without v9; both differ from the regenerated native oracle at the checker texels' edges (a mip-filtering difference of the DX8 path, open). Not yet: more than one stream (no title has asked), mode table from the player (M2), a present signal in phase with the player's swapchain, macOS run, StarCraft / AoE on the 8 bpp path. |
-| Win98 display driver (M10, doc 19) | **Track opened 2026-09-06; the driver loads, claims the adapter and draws the same day — the shell does not yet come up, and the reason is now readable rather than guessed at: Windows' fatal-exception message is written in VGA text mode behind the linear frame buffer, and the harness decodes it out of VRAM** (doc 19 §15) (`docs/tracks/m10-win98-driver.md`, ADR-012). **2026-09-07: Display Settings works** — it had shown one resolution because the applet's `ValidateMode` call GPFed: Open Watcom took the DDK prototype (no `__loadds`) over the definition, and the export ran on the caller's DS (doc 19 §18; the build now checks every export loads DGROUP); all eight modes validate and a live switch to 800×600 and back is proved. Win98 today is `-vga cirrus` with the inbox driver and gets its 3D from the qemu-3dfx Glide wrappers plus the WineD3D DLLs in a game folder; that path stays and becomes the control. The plan: split the XP driver into an OS-independent core (the DP2 walker, the surface table and its format arithmetic, the caps tables, contexts and readback, the flip chain, the encoder and the debug log — about three quarters of `d3dptdisp.c`, none of which states a fact about NT) plus a thin per-OS layer that keeps NT's `DD_SURFACE_LOCAL` and 9x's `DDRAWI_DDRAWSURFACE_LCL` behind a neutral descriptor, rebuild XP on it unchanged, then write the 9x layer. Step 0 says what that layer is: **three binaries** — a 16-bit `.drv` whose drawing exports jump to the DIB engine, a ring-0 mini-VDD `.vxd`, and the DirectDraw/Direct3D HAL as a **ring-3 32-bit DLL loaded into the game's process**, which is the only one that links the core (and builds with the mingw toolchain we already have; the other two need Open Watcom, a new prerequisite). The per-call DDI structures are field-for-field identical to NT's and the DP2 opcode values agree — the walker is portable as it stands — while the DirectDraw object structures are laid out differently, which is what the neutral descriptor is for. DDI 8 works on 9x, so all of M7c is in scope; `DDCAPS_GDI` is normal there and fatal on NT, so the caps table is per-OS; modes come from the INF rather than the adapter. The adapter itself is expected to need no change for 9x. **The split is done as of 2026-09-07** (doc 19 §19): `core/` is 1 940 lines in five files with no DDK header of either family in it, `nt/` is 1 975, the surface objects meet in a `d3dpt_surf_desc` the layer fills, the DDI structures that are the same everywhere live in `core/d3dpt_ddi.h`, and `build-driver.sh` proves with `nm` that the core reaches the OS only through its six `d3dpt_os_*` hooks |
-| Tests | Integration / e2e only (CLAUDE.md policy, 2026-09-04): `scripts/test.sh all` runs the host tools (x87 oracle, embed Mesa backend, decoder + executor, the mode sweep through the player's real display path, the native DXVK reference scene within budget of the rig golden, the native feature test) and the guest stage (DOS x87 battery under TCG; XP headless on the D3D device from a `snapshot=on` view of `~/vms/winxp.qcow2` with a fresh scratch FAT disk and `RUN.BAT`, driven over QMP: D3DGAME9 / D3DGAME8 pixel-identical to the native frame outside the HUD, D3DFEAT9 byte-identical with the same query lines). 13 checks, ~2 min on the Linux box under KVM, all green at 2026-09-04. Local only by decision (2026-09-04): CI stays off the suite, it needs the images and a GPU. |
-| CD backend (M5, libdisc) | **Track opened 2026-09-04** (`docs/tracks/m5-cdrom-backend.md`; branch `track/m5-cdrom` merged and deleted 2026-09-06 — it is all on `main`), spec in doc 17: a `cdimage` QEMU format block driver over libdisc's C API (cooked view through the block layer, raw model for atapi.c), MMC responders in Rust so the host exerciser (`discx`) tests the exact bytes, L-EC verified on cooked reads (the SafeDisc signal comes from the drive model, no bad-sector lists), CD-DA through an `audiodev` on `ide-cd`. **Step 1 landed the same evening:** the disc model (sessions, tracks, indices, extents), cue/bin (`BINARY`/`MOTOROLA`/`WAVE`, PREGAP/POSTGAP, multi-FILE) and plain ISO parsers, raw ⇄ cooked synthesis with EDC/RSPC parity (verified on every cooked read, never corrected), Q-channel synthesis with MCN/ISRC frames and CRC-16, and `discx` (`selftest` writes `mixed.cue/.bin/.ccd/.img/.sub`, `cooked.cue`, `plain.iso`; `dump`, `info`, `convert iso → cue/bin + WAVE audio tracks`). The EDC/ECC generator was checked against Neill Corlett's `ecm` 1.03 as an independent oracle (it strips only sectors whose parity it can regenerate: 2000 of 2000, 1999 with one byte flipped). `scripts/test.sh` runs `discx selftest` as the `libdisc` check. **Step 2 landed the same night:** the MMC responders (`mmc.rs`: READ TOC formats 0/1/2, READ SUB-CHANNEL 1/2/3, READ DISC INFORMATION, the READ CD length table with the MMC-3 contiguity rule and the per-sector fill incl. C2 and the three subchannel forms) and the C API (`libdisc/libdisc.h` v1, `capi.rs`, every body under `catch_unwind`); `discx selftest` now goes through the `extern "C"` functions only (the boundary QEMU will use) and adds `toc`, `read-cd-length` (60 CDB combinations), `read-cd-fill`, `panic-safety` (corrupt cues, NULL handles, short buffers, probe scores). **Step 3 (CCD reader) the same night:** `.ccd` + `.img` + optional `.sub` (replayed verbatim, synthesized past a truncated file's end), every `[Entry]` kept for READ TOC format 2, multisession from the `Session=` fields, `DataTracksScrambled=1` refused; the `ccd` check proves TOCs, sub-channel replies, raw / cooked sectors and sub-channel bytes identical across `mixed.cue`, `mixed.ccd` and `cooked.cue`. **Step 4 (the `cdimage` block driver) the same night:** `libdisc/qemu/cdimage.[ch]` overlaid into `block/` + `include/block/` by prepare, patch `50-cdimage-block-driver` (meson option `libdisc_dir`, `CONFIG_CDIMAGE`), `configure-qemu.sh` builds the crate and passes the option; `-cdrom x.cue` / `x.ccd` probe to `cdimage` (a plain `.iso` stays on `raw`), `qemu-img info` reports lead-out × 2048, the data track dd'd through the block layer equals the ISO, audio and L-EC-failing sectors are `-EIO`, writes refused, no Rust `std` symbol exported from `libqemu-embed-i386.so` (the 17 `libdisc_*` and `cdimage_disc` are; harmless). **XP boots with the converted guest-tools disc as `-cdrom gt.cue` under KVM and copies all 49 files through cdrom.sys byte-identical to the ISO** (`tools/xp-cdimage-test.sh`, 46 s). `scripts/test.sh`: `cdimage` (host) and `guest-cdimage` (guest stage) checks. **Real dumps, 2026-09-05:** `discx subscan` (new) walks the stored subchannel and says whether a Q CRC failure is drive noise or our layout. On the two Alcohol dumps the failures are 1.9 % / 0.18 %, 99.7 % of them isolated single sectors, none valid in the un-deinterleaved form: read noise, not a bug — real subchannel is delivered without error correction, and doc 17 §2.6's verbatim replay is what protects it. The reverse check found two real bugs. **Fixed:** MDS track mode `0xEC` (Alcohol's mixed mode 2) was read as *audio*, so NFS Porsche Unleashed's v1.3 MDS came out as a 281,279-sector CD-DA track with no L-EC verified anywhere; it is Mode 2 XA (every sector header says mode 2, TOC control 4) and now parses as `mode2 form1` throughout. A guard now refuses any MDS whose mode byte and TOC control disagree, which is what a silent misparse looks like. **Not a bug, recorded instead:** synthesized subchannel in an *undeclared* pregap is a guess between three conventions real discs actually use (doc 17 §2.6); ours reproduces AoE's own frames 277,626 / 277,626 and a change to match Moto Racer's was tried and reverted for making two other discs worse. **Step 5 (patch `51-atapi-disc-model`) the same night:** atapi.c serves reads (PIO synchronously, DMA by chunks through a bottom half), READ CD / READ CD MSF over the full MMC-3 table, READ TOC 0/1/2, READ SUB-CHANNEL, READ DISC INFORMATION, GET CONFIGURATION / mode pages 2A and 0E as a CD-ROM drive, and tracks a CD-DA position (75 sectors/s of virtual time; no sound yet) for PLAY / PAUSE / RESUME / STOP; a plain ISO keeps QEMU's path byte for byte. `tools/atapi-guest-test.py` (DOS, PIO on the secondary channel): **142 replies at byte-count limits 512 and 65534 identical to `discx dump`**, sense 03/11/05 on the flipped sector, 05/64/00 on audio, audio positions advance / hold / complete; the XP copy test passes on the patch-51 path (cdrom.sys, DMA). **Real dumps (the user's `/mnt/data2/david/Downloads/oldstuff` on the Linux box, 2026-09-04):** MDS/MDF brought forward from M5e (`mds.rs`: tracks from index 1 for `length` sectors at `start_offset`, the pregap not in the file — verified against a RAW+SUB dump's own Q frames); `discx scan` walks a whole image: **0 L-EC failures over five discs** (Death Rally, Blood 1 = Mode 2 form 1 + 8 audio, Duke Atomic, AOE Gold and Moto Racer MDS with 14 / 12 audio tracks), the only failures being the 149 audio-format sectors at the end of Fire Fight's data track (what a drive fails too); a data-track sector without a sync pattern (a dump tool's zero filler) now fails L-EC. The AOE Gold dump has no bad sectors: not a SafeDisc disc after all; **a SafeDisc / SecuROM dump is still wanted**. **Step 6 (CD-DA) the same night:** `-device ide-cd,audiodev=<id>` opens a 44100 Hz stereo voice; PLAY / PAUSE / RESUME / STOP feed the audio sectors through mode page 0E's routing and volume, MODE SELECT(10) sets the page (a data-out packet command: its end-transfer function is registered in core.c's table, which otherwise aborts QEMU on an unknown one); `CDTEST.EXE` (`guest-tools/src/cdtest.c`, MCI) plays track 2 and logs positions; `tools/xp-cdimage-test.sh` with `CDTEST=` records the drive's audiodev into a wav whose loudest second must be the 1 kHz tone. XP copies the real Blood disc 1 (Mode 2 form 1 + 8 audio tracks) and the AOE Gold MDS through cdrom.sys byte-identical. Next: Win98's CD Player by ear in the player (`-drive if=none,id=cd0,media=cdrom,file=x.cue -device ide-cd,bus=ide.1,id=ide1-cd0,drive=cd0,audiodev=embed0`), a protected dump for steps 7–8, the player's disc shelf (M5f with M6). **In-game CD audio, 2026-09-05 (user):** AoE Gold and Moto Racer both play their soundtracks while the game runs, in XP, in the player, from their `.mds` — doc 05's plain mixed-mode + CD-DA row is PASS, and the two discs being exactly the pair the pregap conventions differ on is what closes doc 17 §2.6's open worry. |
-| Launcher (M6, `launcher-qt/` + `launcher-core/`) | **2026-09-13: the egui front end `launcher/` was deleted (ADR-017).** **2026-09-13: "Clone…" on every grid row** — a new machine with the same settings and its own copy of the disk, snapshots included, refused while the machine runs (doc 07; `launcherx --clone`; the `clone` and `qt-clone` checks). `launcher-qt` is the only front end, over `launcher-core`; `launcher-capi` (the C ABI) and `launcherx` (the toolkit-free verbs) are the core's other callers. `cargo build --release` at the root now builds every member but `launcher-capi`, and `scripts/build.sh`'s `cargo check --release --workspace` now guards only `launcher-capi`. The `--diag-*-frame` verbs and `--pick-file` / `--pick-folder` went with it; the Qt build's offscreen screens are the headless frame grabs. `launcher-core` lost the API only egui called (`Preview::new` on a borrowed device, `output_view`, `device`/`queue`, the first-run dialog's `confirm_label`/`cancel_label`, the shelf's `discs_mut`/`mark_dirty`/`resort`), and `Cargo.lock`, `packaging/flatpak/cargo-sources.json` and `THIRD-PARTY-NOTICES.md` were regenerated without the egui crates — the notices' second listing is now `launcher-qt`'s, the binary that ships, from its own lock file. What follows is the track's log, the egui-era passages included. **Track opened 2026-09-04** (`docs/tracks/m6-launcher.md`, branch `track/m6-launcher`, worktree `.claude/worktrees/m6-launcher`), doc 07 is the design. UI toolkit decided: egui/eframe 0.36.1 (not Slint — MIT/Apache-2.0 fits the project's GPL-2.0-only + open-source stance; its default features are wgpu-backed already and unify with `player/`'s `wgpu` 30.0.1 / `winit` 0.30.13, one copy each in `Cargo.lock`). **Step 1 (bundle format), same day:** `launcher/src/bundle.rs`'s `Machine` (name, family, RAM, disk, disc shelf, shader override), serde+`toml` round-trip, `reference()` from doc 06's defaults, `qemu_args()` translating to the real `qemu-system-i386` line (doc 06's per-family device tables, `audiodev=embed0` throughout). **Step 2 (library grid), same day:** `launcher/src/library.rs` — a platform data dir (`directories` crate, `LAUNCHER_LIBRARY_DIR` override), one bundle subdirectory per machine (`slug()` deduplicates on name collision), `scan()` skipping unreadable bundles instead of failing the whole grid; `launcher --new <win98|xp> <name> <disk>` now writes into the library, `main.rs` renders a real `egui::Grid` (name/family/directory) over what it finds. **Step 3 (spawn a player), same day:** `launcher/src/player.rs` — locates the `player` binary alongside the launcher's own executable and `qemu/pc-bios` (both `LAUNCHER_*`-overridable), `spawn(&Machine)` runs `player -- <qemu_args>`; the grid shows "Play"/"Running" per row, polled via `try_wait()` on a 500 ms repaint tick; deliberately no stop/kill control (CLAUDE.md: only a guest-side or player-window shutdown should end a run). **Verified with a real player boot**, not just compiled: built `player` in this worktree by pointing `QEMU_EMBED_LIB_DIR` at the main checkout's already-built `build/qemu` (embed API version 6 in both), spawned it on a Win98 bundle against a throwaway empty qcow2 and the main checkout's `qemu/pc-bios`; the child reparented to init after the launcher process exited (confirmed independent lifecycle) and a `grim` screenshot showed real SeaBIOS → "No bootable device" → the pcnet NIC's iPXE ROM DHCP-configuring, proving the translated network device args are honored too. A plain workspace `cargo build` still fails on `player` in this worktree (no local `build/qemu`) — pre-existing, not a regression; `launcher` alone builds standalone. **Step 4 (guided creation wizard), same day:** `launcher/src/wizard.rs` — a `Wizard` (family, name, existing-or-new disk, install media, an advanced raw-TOML toggle) shown in an `egui::Window` from "New machine…"; `library::reserve_dir` (factored out of `create()`) makes the bundle directory first so a new disk (`player::create_disk`, using a new `player::qemu_img_binary()`) lands inside it before the referencing `machine.toml` is written; the advanced path validates hand-edited TOML with `toml::from_str` before writing so a bad edit can't corrupt the library. On success the grid rescans immediately. Verified via a `--wizard-new` debug verb (calls the same `Wizard::create` the window's button does): created a real 4 GiB qcow2 inside a fresh bundle directory, wrote a correct `machine.toml`, confirmed it appears in the real grid with a working Play button; the empty-name error path returns `Err` rather than panicking. **Not click-tested through the actual form** — no working mouse-click automation on this Wayland session — so a human should click through the wizard once. **Native file picker for the wizard's path fields (user request, same day):** egui has no OS dialogs of its own; `launcher/src/filepicker.rs` pairs a text field with a "Browse…" button using `rfd` (`default-features = false, features = ["xdg-portal"]` — no GTK dependency on Linux; the same crate and rationale as the user's own `~/work/nxvim` `bemtvi-gui`, checked directly before use) — NSOpenPanel / Win32 `IFileDialog` / the Linux XDG portal. Wired into `wizard.rs`'s disk and install-media fields with extension filters. Verified for real via a `--pick-file` debug verb: a genuine GTK-backed portal dialog opened over the Wayland session, screenshotted with `grim`; the button click itself is unverified for the same click-automation reason as the rest of the wizard. **Editing an existing machine (user request, same day):** the same form doubles as "Edit machine" (`Wizard::open_edit`, an `EditTarget` capturing what the form doesn't expose — RAM, the shader override, disc-shelf entries beyond the first "install media" slot — plus the bundle's exact original text for the advanced box, so a quick edit can't silently discard a hand-added field); `submit()` (renamed from `create()`) writes back to the existing bundle path in place, never renaming its directory even if the display name changes. An "Edit…" button sits next to "Play"/"Running" in the grid. Verified for real via a `--wizard-edit <machine.toml> <new-name>` debug verb against a hand-crafted bundle carrying a non-default RAM value, two disc-shelf entries and a shader override: renamed it, and confirmed by reading the file back that RAM (768, not reset to XP's 512 default), both discs and the shader survived untouched while only the name changed; `--print-args` on the result showed `-m 768`, confirming the preserved value reaches the real translated command line. The empty-name guard fires in edit mode too. The grid's new "Edit…" button was screenshotted next to "Play" for a real entry; the button click itself has the same unverified-by-click caveat as the rest of the wizard. **Bugfix (user-reported, same day):** "New machine" without a custom disk failed with "No such file or directory" — `pc_bios_dir`/`qemu_img_binary` defaulted to bare relative paths resolved against the process's cwd, not guaranteed to be the workspace root; fixed by anchoring both at the build-time `CARGO_MANIFEST_DIR` (same technique `qemu-embed/build.rs` already uses), `LAUNCHER_*` env overrides unchanged. Reproduced the exact reported error from `/tmp`, confirmed the fix (absolute cwd-independent `-L` path via `--print-args`, then a full new-disk flow from `/tmp`); also gave `create_disk`/`spawn` clearer errors naming the resolved binary path on a spawn failure. **Bugfix (user request, 2026-09-05):** "Browse…" should open where the field already points — `filepicker::pick_file_headless` takes a `start_dir`, extracted from the field's current value by the new `filepicker::start_dir()` (the value's own directory, or its parent if it names a file; `None`/OS default if empty or a bare filename), wired into `path_field`. Verified for real, catching a bug in the verification itself along the way: a first attempt passed a *file* path straight to `set_directory`, which broke the dialog (screenshotted: empty, no breadcrumb) — fixed by routing the debug verb through the same `start_dir()` `path_field` uses, then reverified a file path opens its parent directory correctly and no argument still falls back to the OS default. **Shader profile manager (user request, 2026-09-05):** a named, reusable shader preset selection plus parameter overrides, independent of any one machine (doc 07 settings taxonomy) — `launcher/src/shader_profile.rs`'s `ShaderProfile` (name, `.slangp` preset path, a sparse `BTreeMap<String, f32>` of overrides — everything else stays at the preset's own default so a profile survives the preset gaining new parameters) and `shader_library.rs` (flat `<slug>.toml` files under a new platform-data-dir library, `LAUNCHER_SHADER_PROFILES_DIR` override, mirroring `library.rs`'s scan/create/slug shape but one file per profile instead of a bundle subdirectory). `shader_manager.rs` is the manager window (New/Edit/Delete list; the editor parses the chosen preset via `librashader::presets::{ShaderPreset, get_parameter_meta}` — a new introspection-only `librashader` dependency in `launcher/Cargo.toml`, `presets`+`preprocess` features, no runtime backend — and draws one checkbox+slider per declared parameter, min/max/step/description all read from the shader source's own `#pragma parameter`). `bundle::Machine` gained `shader_profile: Option<String>` (a profile id, takes precedence) alongside the pre-existing raw `shader` override (now the advanced/hand-written-bundle escape hatch); the wizard's form gained a "Shader profile" combo box for both new and edited machines. `player.rs::resolve_shader`/`shader_args` translate a machine's resolved profile into the player's own `--shader`/`--shader-params` at spawn time. **Step 5a (disc-shelf editing), 2026-09-05:** `launcher/src/discshelf.rs` — a "Discs (n)…" button per grid row opens a window over `Machine::discs`, the ordered shelf whose first entry `qemu_args` attaches as the boot CD-ROM: add (the same `filepicker` field and `iso/cue/ccd/mds` filter as the wizard's install-media slot), Up/Down, Remove, and doc 07's one-click guest-tools ISO attach (`guest_tools_iso()` takes the newest `guest-tools/out/guest-tools-*.iso` — the name `scripts/test.sh` already globs — canonicalized because unlike `pc_bios_dir` this path is written *into* a bundle; `LAUNCHER_GUEST_TOOLS_ISO` overrides, and the button is greyed with a reason when nothing is built). `save()` re-reads the bundle and replaces only `discs`, so no other field can be lost. The window stays usable while the machine runs (a bundle edit can't touch a live guest) and says the change applies at the next boot; live media change is step 5c. **First widget-level headless verification on this track:** a new `--diag-shelf-frame <machine.toml> <out.png> [WxH] [x,y;…] [running]` verb runs the real `DiscShelf::show` through `egui::Context::run_ui` with synthetic pointer clicks and dumps the composited frame (click/paint machinery factored out of `--diag-editor-frame` as `diag_window_frames`/`parse_clicks`) — "Down" then "Save" reordered and wrote the shelf, "Remove" dropped a disc, "Add guest-tools ISO" appended the found ISO, each confirmed by reading `machine.toml` back with `ram_mb`/`shader_profile`/`shader` untouched and `--print-args` attaching the new first entry. Two layout bugs were caught *by* those dumps and fixed: long disc paths widened the grid until the buttons sat off-screen (buttons now precede the path, which is split file-name + truncating directory, plus a window `max_width`), and `↑`/`↓` rendered as tofu in egui's default font (now "Up"/"Down"). A `--disc-shelf <machine.toml> [<disc>|+tools ...]` verb does the same edit without a window. The grid's own new button is the one part still needing a human click. **Step 5b (snapshots, offline), same day:** `launcher/src/snapshots.rs` — a "Snapshots…" button per grid row opens a list of the machine disk's internal qcow2 snapshots (name, when, VM-state size) with Take / Restore / Delete, all through `qemu-img`, which is what `savevm`/`loadvm` write into; live snapshots are step 5c. Listing goes through `qemu-img info --output=json` rather than `snapshot -l`'s human-formatted table (which has no escaping for a tag containing a space, and the UI happily produces those), and `qemu-img`'s own stderr becomes the window's error text. Two safety rules: every operation is refused while the machine is running, with a note to shut the guest down first (qemu-img writing to an image QEMU has open corrupts it, and even the listing wants a lock QEMU holds), and "Restore" arms a second "Discard current state?" button before it runs (rolling the disk back has no undo and it sits one row from "Delete"). Verified through the real widgets against a real 256 MB qcow2: take/restore/delete driven by synthetic clicks (the confirmation arming on that row only, the status line reading back), a name typed into the "New snapshot" field and taken — which needed `diag_window_frames` to learn a `+text` typing step — plus a genuine `savevm` snapshot made by driving a live `qemu-system-i386` over QMP `human-monitor-command`, which lists with `1.2 MB` of VM state where the `qemu-img`-made ones correctly show `—`. Deleting a missing snapshot and a bundle pointing at a missing disk both surface qemu-img's message. **Step 5c (live control), same day:** `launcher/src/control.rs` — the launcher adds `-qmp unix:<runtime dir>/<bundle>-<hash>.qmp,server,nowait` to the arguments it spawns the player with and speaks QMP to that socket itself. No new protocol and no player change: QEMU allows several monitors, so the player's own in-process one (`player/src/qmp.rs`, a socketpair with no filesystem path) is untouched, and this is the shape `tools/qmpc.py` already uses; a bundle run straight through `player` simply has no launcher socket, doc 07's "the launcher is optional" path. The socket path is derived from the bundle directory (so any window finds it again without the app carrying it), its directory is forced to 0700 (a QMP monitor is complete control of the machine), and a stale socket from a *killed* player is removed before spawn since QEMU won't bind over one. Drives: the disc shelf's per-row "Insert" and an "Eject" (`blockdev-change-medium`/`eject`, one command doing open/eject/insert/close — no `format` argument, so a `.cue`/`.ccd` still probes to the `cdimage` driver of doc 17), and the snapshot window listing from `query-named-block-nodes` (`image.snapshots` is the same shape `qemu-img info --output=json` gives, so one kind of row either way) and running `snapshot-save`/`-load`/`-delete` as QMP *jobs* — started, then polled on the repaint tick rather than blocking the UI while QEMU writes a guest's RAM, buttons greyed meanwhile; a restore stops the VM (QEMU requires it) and resumes it only if it was running. Two deliberate bundle-format consequences: `qemu_args` gives the CD-ROM an id (`ide1-cd0`, matching `tools/xp-cdimage-test.sh`) so a medium change can name it, and always attaches the drive with an empty tray, since a drive that only existed when the bundle shipped a disc could never be loaded later. Unix sockets only, so live control is Linux/macOS; on Windows the socket is never created and each operation says so (a named pipe or loopback port is a step-6 question). Verified against a stand-in `qemu-system-i386` on the *exact* `--print-args` command line — live listing identical to the offline path, a real 2.8 MB VM-state snapshot taken/restored/deleted, the same take driven purely through the window's widgets (3.6 MB), insert and eject confirmed by `query-block` — and then against the **real `player` binary** (built with `QEMU_EMBED_LIB_DIR` pointed at the main checkout's `build/qemu`), which ran both monitors at once and took a live snapshot and a disc swap from the launcher. Two bugs the verification caught: a block node matched by filename alone picked the `file` protocol node instead of the qcow2 format node (a qcow2 is two nodes with the same filename; only the format node holds snapshots), and a failed live restore reported success because the post-operation list reload cleared the error on its way through — `reload()` no longer touches `error` at all. **The shelf became shared (user request, same day — "having one per machine doesn't make much sense"):** `launcher/src/disc_library.rs` holds the user's disc collection in one flat `discs.toml` beside `machines/` and `shader-profiles/` (`LAUNCHER_DISC_LIBRARY` overrides), entries `{label, path}` with an editable label defaulting to the file stem — a rip of Blood disc 2 is a property of the person, not of the machine that installed it first, and two machines wanting the same disc had to list it twice. A machine now keeps only `Machine::disc`, the disc in its drive at boot; `discs` survives to read older bundles (`boot_disc()` falls back to its first entry), `save()` drops it, and `DiscLibrary::import_legacy` folds every legacy entry onto the shared shelf at startup (deduplicated by path, so it just runs every time). `discshelf.rs` is one window in two modes — the bottom row's "Disc shelf…" manages the collection, a machine row's "Discs…" adds that machine's per-row "Boot" toggle (a bundle edit) and, while it runs, "Insert" (a monitor command); the shelf is not filtered per machine, since any disc can go in any drive, and library edits save as they are made rather than behind a Save button. Verified through the widgets: the migration moved four discs off a legacy bundle and was idempotent on re-run, a "Boot" click wrote the bundle and highlighted only that row, "Boot with an empty tray" leaves `if=none,id=cd0,media=cdrom` with no `file=`, an edited label persisted, and RAM/shader fields survived every write. Verbs are now `--discs` and `--boot-disc` (replacing `--disc-shelf`); `--diag-shelf-frame shelf` opens the library-only mode. One layout bug caught by the dumps: a bare `TextEdit` in a grid cell claims almost no width, so the label column collapsed to five characters — `add_sized`, not `desired_width`. **The shelf from inside the guest (user request, same day), host half landed:** the user wants one program running on DOS, Win98 *and* XP that lists the host's shelf and swaps a disc into the tray from inside the machine. Transport decided: a **vendor ATAPI command** (opcode 0xD0) on the guest's own CD-ROM drive — the one channel all three OSes can reach (direct PIO / ASPI / SPTI) and whose firmware we own (patch 51), so no new device and no guest driver. `cdshelf/cdshelf_proto.h` is the one header for every side (bump `CDSHELF_PROTO_VERSION` on change); `patches/qemu/52-atapi-disc-shelf.patch` adds `ide-cd`'s `shelf=<file>` plus LIST/LOAD/EJECT, the medium change running from a bottom half because it drains the very drive whose command is executing (a real drive behaves the same: command returns, tray moves after, UNIT ATTENTION next command); the launcher publishes the shelf beside the monitor socket at spawn and on every shelf edit, so a disc added while the guest runs is in its next listing. **Cross-track:** patch 52 and the ATAPI files are M5's area (52–59 were reserved for the CD-ROM backend) — this is CD-ROM work driven from M6 because the shelf is a doc 07 feature; the README reservation now says so and 53–59 stay M5's. Verified: prepare applies it cleanly and idempotently, QEMU builds and lists the property, a real player boots with the shelf attached, and `tools/atapi-guest-test.py` still passes (164 replies identical to `discx`) so patch 51 is unregressed in a real DOS guest. **The guest programs landed the same day:** `guest-tools/src/cdshelf.c` → `CDSHELF\CDSHELF.EXE`, *one* binary for both Windows families (SPTI on NT; on 9x `WNASPI32.DLL` loaded with `LoadLibrary` at run time, since linking it would make the EXE unloadable on XP where it doesn't exist), and `guest-tools/src/cdshelf.asm` → `CDSHELF\CDSHELF.COM` for a DOS box (PACKET commands by PIO, the way `tools/atapi-guest-test.py` already drives the drive — there is no DOS C toolchain in this build). Both take `CDSHELF` / `CDSHELF <n>` / `CDSHELF E`, find the drive by *asking each one for the shelf* rather than by configuration, and refuse a protocol version they don't speak. Writing them found three real bugs: patch 52's opcode had to become **`CONDDATA`** (only LIST transfers data — a guest sending LOAD/EJECT through SPTI or ASPI leaves the byte count limit at zero, which `ide_atapi_cmd()` aborts at the ATA level before the handler runs; LIST validates it itself), a **LOAD of a disc the host cannot open now fails with 02/3A** instead of returning GOOD and failing silently in the bottom half with only a host-side warning, and the DOS build cannot find the drive by the **ATAPI signature** (the BIOS has long since left the cylinder registers at 00/00 by the time a DOS program runs — measured under SeaBIOS — so it asks IDENTIFY PACKET DEVICE instead) nor skip **REQUEST SENSE after a CHECK CONDITION** (the drive repeats the condition to every later command until something clears it, so the medium-change poll spun for ever). Verified on three guests: `tools/atapi-guest-test.py` now drives the opcode itself (19 commands per byte-count limit — LIST at five allocation lengths with a 64-byte-truncated label and the MISSING flag checked byte for byte, a bad subcommand, a slot past the end, a slot the host lost, then LOAD/EJECT with **the sectors read before and after**, the shelf's slots 0 and 1 differing only in a corrupt sector 1000, so a changed tray is proven by the guest's own reads; 206 replies identical to `discx`, up from 164) and then boots a second time to run the real `CDSHELF.COM` on the same shelf with its output captured over COM1; and in **real XP** (`~/vms/winxp.qcow2` through a qcow2 overlay, the user's image never written) booted with an empty tray, `CDSHELF 0` loaded a real ISO over SPTI and `dir D:\` + `type D:\HELLO.TXT` in the same guest read the files off it — host shelf to Windows reading the disc, end to end — with swaps back and forth, the missing-disc refusal and an eject all correct — that XP run is kept as `tools/cdshelf-guest-test.sh <image> [xp|win98]` (local only, needs an image; writes to an overlay, never the image). **Win98 (ASPI) is attempted but blocked by the image, not the code:** `WNASPI32.DLL` does load on `~/vms/win98.qcow2` and reports a host adapter (so a stock 98 has the ASPI layer), and the first run crashed inside `SendASPI32Command` — which found a real bug, ASPI32 being `__cdecl` and not stdcall (its exports carry no `@n` to say so), leaving the caller's stack four bytes out on the first call; fixed, but unconfirmed on a guest, because every boot of that image since dies with *"SHELL32.DLL is linked to missing export SHLWAPI.DLL:…FileAttributesA"* before anything of ours runs — that install's shell DLLs are mismatched, so there is no Start menu to type into. Re-run the script once that image's Explorer starts. **CDSHELF grew a face, and always ejects first (user, same day, after running it in a real Win98 — "too unwieldy to use as a terminal command", and inserting over a disc "would do nothing"):** the Windows build is now `-mwindows` and with no arguments opens a window (the shelf as a list, Insert / Eject / Refresh, plain USER32 controls created in code so the same EXE comes up on 98 and XP, the swap on a worker thread so the window keeps painting); DOS, which can have no window, prints the shelf and waits for a key — 0-9 inserts that disc, `E` empties, `R` re-reads, Esc quits — and both keep their verbs for scripts, the listing one now explicit (`CDSHELF LIST`). **Insert means eject-then-load, with a wait for the empty tray in between**, for two reasons: Windows and MSCDEX show the old disc's files after a swap they never saw as a removal (the user's report), and the device runs the medium change from a *single* bottom half (patch 52), so an eject and a load sent back to back collapse into one and only the last survives. Verified on real guests: the XP window screendumped and driven from the keyboard with `query-block` on the machine's own QEMU confirming the actual medium (which caught a bug — a plain window keeps focus itself, so Tab/Enter did nothing until the frame handed focus to the list and Insert became the default button), `tools/cdshelf-guest-test.sh xp` still nine-for-nine, and the DOS menu driven by real key presses over QMP. **Memory and acceleration in the machine form (user request, same day):** the wizard now shows `ram_mb` (a per-family bounded drag field — Win98 32–512 MB, doc 06's hard cap, XP 64–3072 — with a "Default" button and a note at the Win98 ceiling; switching family moves an untouched value to that family's default and leaves a chosen one alone), and a new `Machine::accel` = `auto` | `kvm` | `tcg` becomes `-machine pc,accel=…`, **defaulting per family: Win98 emulated, XP automatic** (KVM runs the guest at host speed and the `pentium3` model does not protect Win9x from its own fast-CPU bugs; TCG is also what docs 13/16's fast paths — and this project's Win98 testing — are tuned for). The field is `Option<Accel>`, absent meaning "this family's default", so a bundle written before it existed keeps running the way it did rather than silently acquiring KVM. `auto` is **QEMU's own `kvm:tcg` fallback list**, not a `/dev/kvm` probe here — a probe can be stale by spawn time, and the list already means "KVM if you can, emulation otherwise" (plain `tcg` off Linux, where naming a nonexistent accelerator only prints a warning); `kvm` genuinely refuses to start without it, and `tcg` stays first-class as the era-CPU behaviour docs 13/16's fast paths are tuned for and the honest setting for Win98, whose fast-CPU bugs the `pentium3` *model* does not protect against. `player::kvm_available()` (opening `/dev/kvm` for write, which is the group-permission case a bare `exists()` misses) backs the form's hint line only. Verified through the TOML and `--print-args` for all three settings and the Win98 clamp, through the **real player** (`query-kvm` over the launcher's own QMP socket: `enabled: true` for auto and kvm, `false` for tcg — QEMU's own answer from inside the embed library), and through the real widgets with a new `--diag-wizard-frame` verb (family defaults, the combo actually switching, a typed value enabling "Default" and that button restoring it, an untouched value following a family switch while a chosen one stays). One bug found and fixed by it: `with_new_disk` set the family without going through the combo box, so `--wizard-new xp` created an XP machine with Win98's 256 MB — `build_machine` now decides from `ram_chosen`, not from the field's contents. **Networking in the machine form (user request, same day):** `Machine::network`, a bool defaulting to **true** when the field is absent (so no existing bundle loses its network by being read), is one checkbox under Acceleration — the machine either has doc 06's per-family NIC on QEMU's user-mode NAT (the form says what that means: outbound through the host, nothing on the network able to reach the guest, and that these are unpatched systems) or no adapter at all, so Windows never sees a card, asks for its driver or waits on a network at boot. Asking a *running* machine `query-pci` rather than trusting `--print-args` found the two things that make it real: **leaving out `-netdev` does not remove the card** — QEMU creates a NIC of its own when the command line asks for no networking, so "off" was an e1000 one slot below ours, the opposite of the setting, and the bundle now emits `-nic none`; and **removing the NIC moved the sound card**, since PCI slots follow `-device` order and XP's AC97 slid from slot 4 into 3, a hardware change an installed Windows re-detects — the XP devices now carry the `addr=` values their order already gave them (`d3dpt-vga` 0x02, `rtl8139` 0x03, `AC97` 0x04), so nothing changes for an existing machine and the NIC can come and go without disturbing its neighbours (Win98 needs none of this: its display is `-vga`, its SB16 is ISA). Verified on the real player for all four combinations (XP on: VGA 2 / Ethernet 3 / Audio 4; XP off: VGA 2 / Audio 4, no Ethernet; Win98 on: VGA 2 / Ethernet 3; Win98 off: VGA 2 alone), through the bundle and `--print-args` (`--wizard-edit … nonet` / `… net`, an edit that only renames leaving it alone, a bundle with no `network` line still getting the NIC), and through the real widgets with `--diag-wizard-frame` (the row checked by default, a synthetic click unchecking it and swapping the hint, the edit form opening on a stored `network = false`). **The launcher fetches the shader presets itself (user request, same day):** a profile needs a `.slangp` to build on, and until now that meant the `third_party/slang-shaders` submodule — which a clone without `--recurse-submodules`, or a future packaged build, does not have. `launcher/src/shader_source.rs` decides where the collection is (`LAUNCHER_SHADERS_DIR` if set — an explicit statement, nothing else consulted — else the checkout's submodule, else a downloaded copy in the platform data dir beside `machines/` and `shader-profiles/`; never written into `third_party/`, which belongs to git) and, when there is none, the profile manager and the editor both show "No shader presets on this machine" plus a **"Download presets (~50 MB)"** button: upstream's tarball over HTTPS (`ureq`/rustls, no system OpenSSL) streamed through `flate2` + `tar` onto disk on its own thread, the row showing a spinner and MB-so-far (codeload sends no `Content-Length`, so there is no honest percentage). It unpacks into a `.part` sibling and renames only once the result really contains presets — an interrupted download can't leave a half-collection that then reads as installed — and "has presets" means *a `.slangp` within two levels*, cached in the window rather than re-walked per frame. `master`, not the submodule's pin: a packaged launcher has no repository to read a pin out of, and a profile stores overrides by name. Tar entries that are neither file nor directory (symlinks can point anywhere on the host) and any path with `..` are skipped. **"Browse…" on an empty preset field opens in the collection** (`filepicker::path_field_in`/`browse_start` — the field's own value still wins, then the suggestion, then the OS default). Verified over the real network and through the widgets: `--download-shaders` pulled 50.3 MB into 2554 presets with no staging left behind and replaced an existing collection cleanly; a downloaded `crt-lottes.slangp` rendered through `--preview-shader` byte-identical to the submodule's copy (so the `.slang` sources came along and compile); a synthetic click on the button switched the row to "Downloading shader presets… 0.0 MB" and, with a new `~<ms>` wait step in the diag script runner, came back 20 s later with the row gone and the presets on disk, while killing the process mid-download left the destination untouched; `--browse-start` prints the right directory for an empty field, a downloaded collection, no collection at all, and a field that already names a preset. **The licence question this raised is decided (user, same day — ADR-009):** `launcher` and `shader-chain` are now **`GPL-2.0-or-later`**, everything that links QEMU (`player`, `qemu-embed`, and `libdisc`, compiled into QEMU) stays `GPL-2.0-only`. Apache-2.0 is GPLv2-incompatible and fine with GPLv3, and the launcher's tree is full of it — not just `ring` under `ureq`'s rustls but `ab_glyph`/`accesskit_winit`/`glutin` from egui/eframe and winit's `dpi`, i.e. the conflict predates the downloader by months. The launcher may relicense because it links no QEMU code (it spawns the player as a separate process); `shader-chain` moves with it because it is linked into both binaries, and "or later" still combines into the player's v2-only whole. **The player's side is decided too (user, same day — ADR-010): ship player binaries anyway.** It has the same Apache-2.0 exposure (`winit`, `cpal`, `ab_glyph`, `codespan-reporting`, `rspirv`) and cannot take "or later", because scanning what an i386 softmmu build compiles found **35 genuinely GPL-2.0-only QEMU files** — `util/bitmap.c`, `util/qemu-sockets.c`, `migration/migration.h`, `system/runstate-action.c` and `hw/audio/ac97.c` (the XP sound card) among them (`tools/gpl-scan.py`, re-run it after a QEMU bump). Nor are the crates swappable: `winit`/`cpal` could go, but `codespan-reporting` comes with naga and `rspirv` with librashader, so clean means dropping wgpu and librashader — ADR-005's whole stack. `dlopen` instead of linking was rejected (we already link the `.so`; the FSF treats the two alike and our coupling is callbacks on QEMU's vCPU threads with the BQL held). The clean fix — **QEMU in its own process** — is on the table with its premise measured rather than assumed: `tools/ipc-latency-spike.c` puts a frame notification across a process boundary at p50 18 µs / p99 226 µs idle and p50 17 µs / p99 35 µs with all 16 cores busy, i.e. ~1 % of a 16.7 ms frame, so **ADR-002's latency premise is not what blocks it** — the work is the VGA surface through shm, macOS IOSurface over a mach port, and the one-process assumptions in the lifecycle and the headless tools. `COPYING` and `THIRD-PARTY-NOTICES.md` are now in the tree and the README states the position for packagers. **The shipped front end is the Qt one since 2026-09-07 (ADR-015):** `launcher-qt` is what every packager installs as `2ksbox` — Linux, the Flatpak (moved to `org.kde.Platform` 6.10, since that is where Qt 6 comes from), macOS (`macdeployqt` before our own dylib closure, `-qmldir=launcher-qt/qml` because our QML is a Qt resource) and Windows (Qt staged by hand: there is no cross `windeployqt`). `launcher/` (egui) stays maintained and is installed by nothing — ADR-014's second view, the home of the `--diag-*-frame` verbs, and the fallback on a host where Qt is a problem. `scripts/build.sh` grew a `qt` stage in its default set (its own cargo workspace still, so a plain `cargo build` never needs Qt 6); a host without Qt builds everything else, says so in the summary, and rolls no package (`scripts/test.sh` skips `package` with the reason). Every packager also gained the one check `--paths` could never make: the staged launcher must open a **real window offscreen** (`QT_QPA_PLATFORM=offscreen` + `LAUNCHER_QT_SHOT`) and produce a PNG, because Qt resolves its platform plugin and its QML modules by name at run time out of directories no import table mentions. The Flatpak's offline `cargo-sources.json` now covers both lock files (554 crates), merged by `scripts/gen-flatpak-cargo-sources.sh`. **Verified this session: the Linux tarball and the Flatpak.** The tarball stages and passes every check including the window grab. The Flatpak built **offline** against `org.kde.Sdk` 6.10 from the merged cargo sources — the SDK's `qmake6` is where cxx-qt looks, so `launcher-qt` cross-checks nothing and simply compiles — installs, resolves every companion under `/app`, and opens a QML window offscreen on the runtime's own Qt. One check of my own was wrong at first and is worth remembering: **the sandbox has a `/tmp` of its own**, so a screenshot written there is invisible to the shell that asked for it; the grab goes under `$HOME` (the same path on both sides, and this app has `--filesystem=host`). The macOS `.app` and the Windows zip are written and unrun (a Mac and the cross container). **Play logs the line it ran (2026-09-07, user request):** the player binary, its shader arguments, `--` and every QEMU argument, quoted so it pastes back into a shell — `[player] …` in `launcher.log`, the first line of `player.log`, and the terminal when there is one. The command is derived from the bundle at spawn time, so a bundle alone never said what ran. **"Browse…" on the disc shelf adds the disc (2026-09-09, user-reported):** a file chosen in the dialog goes on the shelf as the dialog closes, rather than filling the text field and waiting for a second click on "Add to shelf" — the dialog already asked that question, and "Add folder…" beside it always worked this way. The field and its button stay for a path someone *types*. Both front ends (egui's `path_field` returns what the dialog produced; Qt's `PathField` has a `picked` signal beside `edited`, and an `acceptPath` the dialog and the probe both run), the decision written down in `Shelf::add` and doc 07, guarded by the new **`qt-shelf`** check — a file dialog belongs to the window system and cannot be opened offscreen, so the probe hands the field the path the dialog would have and asks the *window* whether the shelf grew and the field emptied (on the old wiring it reports "shelf 0").
-| Name (ADR-011) | **Everything is `2ksbox` since 2026-09-06.** The repository is `github.com/davidrios/2ksbox` (renamed by the user; the remote and both clone recipes point at it), the checkout is `~/work/2ksbox`, and the user's data directory is `~/.local/share/2ksbox` — `launcher-core/src/paths.rs::data_dir()` moves an old `win98-xp-virt` one there exactly once, as an atomic rename inside the same parent, only when the new name is absent (both present = neither touched, a stderr line says which is used); a failed move warns and leaves an empty library rather than refusing to start. The runtime dir (`$XDG_RUNTIME_DIR/2ksbox`, `paths::runtime_dir()`) is not migrated. `win98-xp-virt` survives only in that migration and in the historical passages of doc 10 / the M6 track doc. **Moving the checkout invalidates `build/`**: meson bakes absolute paths in, so `scripts/build.sh -f` reconfigures QEMU and DXVK from scratch after the move. |
+- **The CD-ROM drive has no speed model.** It advertises 4x, `SET CD
+  SPEED` does nothing, and a whole-disc read runs at hundreds of MB/s.
+  `throttling.bps-read=` holds back a `.iso` but not a libdisc image.
+  `tools/cd-rate-guest-test.py` shows that the bytes do not depend on the
+  read rate. Still untested: whether a title that paces itself on CD
+  reads minds a drive that is 100 times too fast. Testing that needs a
+  `speed=` on `ide-cd` that both drivers honour
+  (`docs/tracks/m5-cdrom-backend.md`).
 
-  On the player side, `player/src/shader.rs::Chain::load` takes `params: &[(String, f32)]` and applies them after the filter chain loads via `librashader::runtime::FilterChainParameters` (`RuntimeParameters::update_parameters`) — a name the preset doesn't declare is skipped with a stderr line, not a hard failure, so a profile saved against an older preset version can't crash the machine over one stale parameter. `main.rs` parses a new `--shader-params <name=value,...>` flag / `PLAYER_SHADER_PARAMS` env var (comma-separated, matching `PLAYER_KEYS`'s style), documented in README.md and `shaders/README.md`.
+- **Below the Vulkan floor: no measurements from real users.** Nobody
+  has measured how many users are below DXVK's Vulkan 1.3 bar. On such a
+  host, nobody has measured whether software Vulkan (lavapipe, which the
+  probe accepts as "available, in software (slow)") beats the Wine
+  executor or WineD3D in the guest (ADR-013/018, `launcher --host-check`).
 
-  Verified for real, not just compiled: the whole launcher-side pipeline exercised headlessly through new debug verbs (`--new-shader-profile`, `--set-shader-param`, `--list-shader-params`, `--assign-shader`, `--print-shader-args`) — created a profile against the real `third_party/slang-shaders/crt/crt-lottes.slangp` (13 real parameters listed correctly, e.g. `brightBoost [0..2] step 0.05 = 1`), set an override, assigned the profile to a machine, and `--print-shader-args` resolved to the exact `--shader …/crt-lottes.slangp --shader-params brightBoost=1.8` the real `spawn()` would pass. On the player side (built via the same sibling-worktree `QEMU_EMBED_LIB_DIR` trick step 3 used, since this worktree still has no local `build/qemu`): dumped the shaded test-pattern frame via `PLAYER_DUMP_OUT` with and without `--shader-params brightBoost=1.8` — the two PNGs differ byte-for-byte from the very first bytes, proving the override actually reaches the rendered pixels, not just the parsed config; a bogus parameter name alongside a real one logged the "no parameter named" warning and still applied the real one, without crashing. `cargo build --workspace` clean, no warnings. **Not click-tested through the actual manager window** — same Wayland click-automation gap as the rest of this track — a human should click through "Shader profiles…", create/edit a profile with the sliders, and assign it to a machine via the wizard's new combo box once.
-
-  **Live shader preview (user request, 2026-09-05):** the editor gained a second column that runs a chosen preview image through the real filter chain and shows the result, updating as sliders move. Since a CRT preset's scanline/mask math depends on the actual pixel size it renders at (not the display size egui stretches it to afterward), the shader-chain code that does this — previously `player/src/shader.rs`'s `Chain` — moved into a new shared crate, `shader-chain/` (workspace member), so the player and the launcher can't drift on how librashader is driven; `Chain::load`/`set_parameters` are now split (load once, re-apply parameters on every slider tick without recompiling shaders) and `player/src/main.rs` was updated to match (`mod shader` replaced by `use shader_chain as shader`, behavior otherwise unchanged — reverified with the same dump-diff as the initial shader-profile-manager work). `launcher/src/shader_preview.rs`'s `Preview` runs on the `wgpu::Device`/`Queue` eframe itself already opened for egui (`egui_wgpu::RenderState`, reached via `eframe::wgpu`/`eframe::egui_wgpu` — no separate `wgpu` pin in `launcher/Cargo.toml`, Cargo unifies it with `shader-chain`'s own "30" pin) rather than a second GPU context: decodes the chosen image (`image` crate, `png`/`jpeg`/`bmp` features) into an `Rgba8Unorm` input texture, runs the chain at an integer-ish scale of the image sized to fit a ~480×360 pane (shrinking a large screenshot, upscaling a real game's native resolution so the mask is visible at all — the same reason the player renders its own chain at viewport size, not the guest's native resolution), and registers the output as an egui texture via `egui_wgpu::Renderer::register_native_texture`/`update_egui_texture_from_wgpu_texture` (reusing the same `TextureId` across reruns, freed on `Drop`). `LauncherApp` captures `cc.wgpu_render_state.clone()` once at startup and threads it down to the manager; a `None` (a non-wgpu eframe backend, not expected given the toolkit decision above) degrades to "no live preview" text instead of a panic.
-
-  Verified for real, not just compiled: a new `--preview-shader <preset> <image> <out.png> [name=value,...]` debug verb builds a real (windowless) `egui_wgpu::RenderState` via `RenderState::create` — the same call eframe itself makes at startup — and exercises `Preview` exactly as the editor's preview column does, dumping the rendered frame (`shader_chain::Chain` gained a small `output_texture()` accessor for this). Ran it against a real PNG (a 2560×1920 dump from the earlier shader-profile-manager test) and a real RGBA icon (`qemu/ui/icons/qemu_64x64.png`, exercising the alpha-channel decode path): the large image correctly rendered at 480×360 (shrunk to fit) and the small one at 360×360 (upscaled 5.6×, `min(480/64, 360/64)`); running with and without `brightBoost=1.8` produced two dumps that differ from the first bytes, same as the player's own test, proving the live-update path actually re-renders on a parameter change rather than caching a stale frame. Visually confirmed both dumps: the icon shows a visible scanline/mask pattern from `crt-lottes.slangp`, not a pass-through copy. `cargo build --workspace` clean, no warnings, including a full rebuild after moving `shader.rs` into `shader-chain/`.
-
-  **Bug fixed (user-reported, 2026-09-05): the preview showed a solid black shape instead of the image.** Root cause found from the user's exact repro (`crt-aperture.slangp` against a real 1025×791 photo): that preset's `.slang` computes `scale = floor(OutputSize.y / SourceSize.y)` then divides by it — `floor` of anything under 1 is 0, so the moment the render target is *smaller* than the source (exactly what shrinking a big photo to fit the ~480×360 preview pane does) it's a divide by zero, i.e. NaN, i.e. black. RetroArch/libretro CRT presets are written to upscale a small native resolution, never to shrink one (the same assumption the player's own doc 03 pipeline makes) — every case tried before the user's report (small game-resolution icons) upscaled and worked; a big photo was the first thing that ever asked a preset to shrink. Fixed by downsizing an oversized source *on the CPU* (`image::DynamicImage::resize`) before the shader ever sees it, so it only ever upscales; `shader_preview.rs`'s scale clamp changed from `(0.1, 8.0)` to `(1.0, 8.0)` to match. Verified against the user's exact preset+photo (now renders correctly) and re-ran every prior case to confirm no regression; the photo (a personal document image) was never kept or committed. Kept two debug tools built while hunting this before the repro arrived: `--diag-preview-frame` (renders one full egui frame the way eframe's own paint step would, for ruling the compositing layer in or out) and `LAUNCHER_DEBUG_SHADER_PREVIEW=<preset>;<image>[;fullscreen]` (opens the editor pre-filled at startup, for screenshotting the real windowed app without a GUI click).
-
-  **Preview reworked to match the player exactly (user request, same day):** "pick a 640x480 image and see exactly how it will look in the player, integer scaling and all" plus a fullscreen toggle that gives the sliders the width the letterboxed image doesn't need. `Preview::render` now uses the *exact* formula `player::Gpu::viewport` does (`scale = (area/native).floor().max(1.0)`, never a fraction, never a shrink) instead of the first cut's "fit inside ~480×360" scale, and `shader_manager.rs` paints the result centered in a black-filled area via the raw painter (`ui.painter_at(rect).image(...)`) rather than an `egui::Image` widget, which would have stretched it and thrown away the "always an integer multiple" property. This also means the earlier bugfix's CPU pre-resize is no longer what prevents the divide-by-zero — `.max(1.0)` alone guarantees that regardless of source size — it's now just a sanity cap against rendering a huge photo at full native size every frame. Layout: a fixed 300px controls column + the rest of the window for the preview; a new "Fullscreen" checkbox forces the editor's `egui::Window` to `ctx.viewport_rect()` (falling back to `max_size(900×700)` when off, since egui otherwise remembers the huge rect and `default_width` only applies once). The non-fullscreen preview area is floored at 480×360 so a compact window doesn't just crop the image down to whatever sliver of space is left over. Verified on the real windowed app: a 640×480 test image shows correctly at native 1:1 scale (no visible scanlines — correct, there's no row gap to darken without upscaling) in the compact window, and at a clearly higher integer scale, letterboxed with the sliders filling the freed width, once fullscreen is on; re-confirmed the crt-aperture/photo bugfix case renders via `.max(1.0)` alone, no CPU resize needed for it specifically. `cargo build --workspace` clean.
-
-  **Bug fixed (user-reported, 2026-09-05): the editor window only resized horizontally, opened very short, and its sliders kept that first short height even after the window grew.** One root cause for all three: an `egui::Window` is only as tall as its *content*, so a plain top-to-bottom stack of auto-sized widgets snaps back the moment you let go of the bottom edge — the window only "grew" at all because the preview pane asked for a floor of 480×360 once an image was picked, and the two body columns were independent `ui.vertical`s, so the slider column sized itself to its own content while the preview column decided the row's height. `editor_ui` now lays the form out as panels inside the window (`egui::Panel::top`/`bottom` for the name+preset header and the error+Save/Cancel footer, `CentralPanel` for the body), so the content always fills the window and the two columns share its full height; the params `ScrollArea` takes `auto_shrink([false, false])` and the preview area takes exactly what's left (the 480×360 floor is gone, replaced by the window's own `min_size`). The window itself now gets a `default_size` of 980×700 (not just `default_width`), and the profile *list* screen gets its own `egui::Window::id` so the editor's remembered size doesn't drag the two-row list open to 980px wide. Leaving "Fullscreen" restores the pre-fullscreen size from `ShaderManager::windowed_rect` instead of the old `max_size(900×700)` cap, which had also been what limited how tall the window could ever be dragged. **Second bug found while verifying it:** every parameter whose preset default sits off its own step grid (crt-lottes `warpX` 0.031, step 0.01) was silently marked as *overridden* the first time the editor drew it — a disabled `egui::Slider` still snaps its value to the step and reports `changed()` — so saving a fresh profile wrote overrides nobody asked for; the slider now steps and accepts changes only while its override checkbox is actually ticked. **Verified headlessly on the real editor window** with a new `--diag-editor-frame <preset> <image> <out.png> [<screen WxH>] [<drag dy>] [<x,y;… clicks>]` verb: it runs the actual `ShaderManager::show` through egui frame by frame with synthetic pointer events and dumps the composited frame. A 150 px drag of the bottom edge takes the window from 980×700 to 980×850 and it *stays* there after the release; the dumps show the sliders' column and the preview both filling the taller window; a click on "Fullscreen" fills the 1400×900 screen and a second click comes back to 980×850; with no preview image picked the window still opens at its full size (the original "starts very short" complaint) and `warpX`/`warpY` now show their true 0.031/0.041 defaults, unticked. **Still not click-tested by a human** — same Wayland gap as the rest of this track. |
-
-- **A cooked read is decided by the EDC and repaired by the parity, the way
-  a drive does** (2026-09-08, doc 17 2.5, `docs/tracks/m5-cdrom-backend.md`).
-  Found from a user's Warcraft 3 dump: **92 L-EC failures**, and the in-game
-  video stops in the middle -- at one of them. We were refusing every sector
-  whose EDC/ECC does not verify. Two steps now sit behind
-  `sector::verify_or_correct`, in front of every cooked read (`read_cooked`,
-  so the block driver and `qemu-img` too, and the cooked shapes of
-  `READ CD`). **The EDC decides**: it is a CRC-32 over exactly the bytes a
-  cooked read delivers, so a sector whose EDC comes out is handed over
-  however wrong its parity is -- which is what this disc needed, since all
-  92 of its failures are EDC-clean (the parity fields are wrong, the data is
-  not). Only a wrong EDC gives **`ecc::correct`** work: single-symbol
-  Reed-Solomon per P and Q codeword, passes alternated up to four rounds,
-  the EDC the verdict there too, so a mis-correction cannot pass. **Raw
-  reads are untouched**: dumping and protection both need the stored bytes
-  as stored, and `sector_info` / `discx scan` still count what fails *as
-  stored*. Measured on the selftest disc: wholesale-wrong parity over an
-  intact EDC reads straight through; one wrong byte anywhere the parity
-  covers, two scattered errors and bursts to 96 bytes come back byte-exact
-  through the decoder; 128 bytes, a `0x55`-filled body (what
-  DiscImageCreator writes over an unreadable sector), a zeroed sector and a
-  wrong EDC over intact-looking parity all stay unreadable. **Still to do on
-  the rig, and this is not done until it is:** `discx scan` splits a disc's
-  failures into read-anyway / repaired / unreadable, and on FIFA 2002, Age
-  of Mythology disc 1 and Settlers 3 CD01 **every one must land in
-  unreadable** (their bands are `0x55` over the body, so their EDC is wrong
-  and step 1 cannot pass them -- but that is an argument, not a
-  measurement), with FIFA 2002 still reaching its menus.
-  `LIBDISC_NO_CORRECT=1` turns both steps off for that A/B. Neither dump is
-  on the Air.
-
-- **The CD-ROM drive has no speed model, and the one throttle there is
-  reaches only half the drives** (2026-09-08). It advertises 4x in mode
-  page 0x2A and treats `SET CD SPEED` as a no-op; a whole-disc read runs
-  at 580 MB/s under TCG. `-drive ...,throttling.bps-read=` holds a `.iso`
-  to the rate asked (measured: 614400 -> 666 KB/s in the guest) because
-  that path goes through the block layer, and does nothing at all to a
-  `.cue` / `.ccd` / `.mds` (10 705 KB/s on the same data), because
-  `atapi_disc_read_sector` reads from libdisc directly. Asked because two
-  games look like a bad read (Max Payne's "Corrupt JPEG data", a Warcraft
-  3 video stopping in the middle): **the bytes are not the problem** --
-  `tools/cd-rate-guest-test.py` reads one range 34 ways (PIO and
-  bus-master DMA, 1/8/~31 sectors a request, three byte-count limits,
-  2048 and 2352-byte sectors, unpaced and paced to 1x/4x/16x) and every
-  pass agrees with every other and with the host's own checksum, on both
-  drivers; the whole of `DINO-MAP.iso` reads back with zero refused
-  sectors. What is untested is whether a title that paces itself on CD
-  reads minds the drive being 100x too fast, and testing that needs a
-  delay in the ATAPI disc path (a `speed=` on `ide-cd` both drivers
-  honour) that nobody has written. See `docs/tracks/m5-cdrom-backend.md`.
-
-- **Hosts below Vulkan 1.3 get no Direct3D device** (ADR-013, 2026-09-06).
-  DXVK 3.1 asks for `VK_API_VERSION_1_3` at instance creation and rejects
-  every adapter below it, so pre-Broadwell Intel, Nvidia Kepler and older,
-  AMD TeraScale, and macOS before 26 (every Intel Mac) cannot run the
-  executor — several of which are otherwise *good* hosts, being x86 boxes
-  of about the right speed. They keep the OpenGL pass-through with
-  WineD3D-in-guest, **which is therefore not retired when M10 lands**.
-  `launcher --host-check` (`launcher-core/src/host_gpu.rs`, the
-  `host-check` check in `scripts/test.sh`) reports the verdict and every
-  device behind it, and the wizard says the one-line version under the
-  acceleration row through the shared model's `graphics_note()`, so all
-  three front ends say the same thing. **With no Vulkan, the note says to
-  keep our adapter** (2026-09-17, only while `d3dpt` is the one picked):
-  the driver offers Direct3D only after `D3D_STATUS` says the executor
-  loaded, so the rest of the adapter works, and picking the Cirrus from
-  the host was rejected because an image moves between hosts and an
-  adapter change is a driver install (doc 07). **Software Vulkan is used, not
-  refused** (the same-day amendment): lavapipe presents `llvmpipe` at
-  1.4.354, DXVK ranks a CPU device last but never excludes it, so the
-  verdict is "available, in software (slow)" with the note that
-  WineD3D-in-guest may well be faster — the choice is a measurement on
-  the box, not ours. Open: nobody has measured how many real users are
-  behind the bar, nor whether the software path actually beats WineD3D on
-  one of them; doc 14 P0b's GL/wgpu executor stays unbuilt until someone
-  has.
-
-- 3D sync is `glFinish` before every hand-off (both platforms); a shared
-  fence would let the vCPU continue while the blit drains.
-
-- **qemu-3dfx contains no Glide implementation.** `hw/3dfx` is 183 `dlsym`
-  calls into a `libglide2x` that upstream ships only to donors, so before
-  2026-09-06 Glide could not work here in *any* configuration -- the player
-  and (while it existed) `-display sdl` alike -- and the symptom was never
-  an error, just
-  `grSstWinOpen` failing and the guest falling back to software. Ours is
-  OpenGLide; `patches/openglide/README.md` has the whole argument, including
-  the two guest-side stacks (Glide to GL over the `OPENGL32.DLL`
-  pass-through; Glide to D3D over doc 14/15 with nGlide or dgVoodoo2) and
-  why neither was taken.
-
-- **Warm reboot of Win98 froze on the first frame — fixed 2026-09-06,
-  `patches/qemu/22-upstream-apic-reset-cpuid`.** Not a Mac problem after
-  all (it was filed as "freezes on the Air", cold start works): it
-  reproduces on Linux on every restart, and on a **stock QEMU 11.1.0**
-  too, so it is an upstream bug we now carry a patch for. Win98 turns its
-  local APIC off through `IA32_APIC_BASE`, which also clears
-  `CPUID.01H:EDX.APIC`; `apic_reset_common()` puts the enable bit back at
-  RESET and never the feature bit, so the next POST is told the CPU has no
-  local APIC. SeaBIOS then skips `smp_setup()` and never sets `LINT0` to
-  ExtINT, while the re-enabled APIC swallows the i8259's output at a
-  masked LINT0 — every PIC interrupt is dropped and the guest spins for
-  ever on IO.SYS's first wait for the BIOS tick at 0040:006C. **The
-  blinking cursor over a dead screen is a red herring**: `vga_draw_text`
-  blinks it on the host side, with no guest running at all, which is why
-  an install CD's boot menu can sit there with a live caret and a frozen
-  countdown. Diagnosis path worth reusing: `info registers` twice (EIP
-  identical = the guest is not moving), `info pic` (`irr=11 imr=b8 isr=00`
-  = a timer interrupt pending and never taken), `info lapic` (`LVT0
-  masked`), then `x /24i` at CS:IP to read the loop. Guard:
-  `tools/win98-reboot-test.sh`.
-- Display Properties in Win98 under TCG faults RUNDLL32 (upstream 1964).
-- On 2000/XP the qemu-3dfx OPENGL32.DLL maps the device through
-  `\\.\MAPMEM` = FXPTL.SYS in its DllMain and returns FALSE without it,
-  so every GL/D3D EXE "crashes at startup" (0xc0000142). The ISO's
-  device-mapper step (FXPTL.SYS + the MAPMEM service, as Administrator —
-  `SETUP.EXE`'s "Glide and the device mapper", or `GLIDE\INSTDRV.EXE` by
-  hand) is required for OpenGL and WineD3D, not only Glide. Hit and
-  resolved 2026-09-03.
-- FIFA 2000 (DX7, XP): with the WineD3D DDRAW.DLL it died in
-  SetCooperativeLevel before the menu (2026-09-03). Read from the disk image
-  (qemu-img convert → hdiutil attach → Dr Watson + Wine logs, the logs need
-  the flushing debug build): wined3d asked cirrus for 800×600×32 because it
-  maps the 24-bit desktop to B8G8R8X8, the driver refused, Wine 1.7.55
-  crashed in the init_3d error path. Fixed in `patches/wine9x/01` (verified:
-  the game runs, sound plays). Next symptom, white screen: wined3d logs show
-  `glDrawBuffer` → GL_INVALID_OPERATION, and ddraw presents the primary
-  surface by drawing into GL_FRONT + glFlush, never SwapBuffers; our embed
-  backend's FBO stand-in has no front buffer and only presented on swaps.
-  Fixed 2026-09-03 in `embed/mglcntx_embed.c` (macOS section): GL_FRONT/
-  GL_BACK on framebuffer 0 → GL_COLOR_ATTACHMENT0, glFlush/glFinish present
-  while the front buffer is selected. Not yet re-tested. Linux (EGL pbuffer)
-  had the same swap-only presentation and the same black screen until
-  2026-09-20, when those hooks moved into the shared layer (doc 19 §44). The
-  host also reports an ARB program failing to assemble ("out of range
-  indirect offset +65", 9× per run): unexplained, may matter later. The
-  stock software renderer also crashed once at match start with Microsoft's
-  DDraw (NULL surface in softdrawz.dll), so the game may have a second,
-  unrelated problem on this XP. **Parked 2026-09-03 (ADR-006):** the match
-  renders (flush present + mode follow), but the pitch texture is noise
-  bands, the screen flickers (present per glFlush) and DirectInput dies at
-  the mode switch; the host's "program error +65" lines are wined3d's own
-  ARB offset-limit probe, harmless. Direct3D 8/9 on XP moves to our
-  paravirtual device (doc 14); WineD3D stays the DX7 fallback.
-- Player: keys held in the guest are lifted on focus loss (2026-09-03):
-  Cmd+Tab delivered the Windows-key press to the player and its release to
-  the next app, leaving the guest with Win held down.
-- XP paints the whole screen white around a Cirrus mode switch (a D3D
-  title going fullscreen and back: 640×480 white, then 800×600 white for
-  ~0.6 s while the desktop repaints; seen on the VGA surface of a bare
-  `qemu-system-i386` too, so it is guest-drawn, not ours). Since
-  2026-09-04 the player publishes black instead of any uniform
-  single-colour frame within 1.5 s of a real mode switch
-  (`qemu_vm.rs`, `SWITCH_GRACE`); the log counts them
-  (`[display] N transitional frame(s) after the switch shown black`).
-  On the way in nothing shows because the VGA surface is frozen while
-  3D is active. The M7 driver path never had it (miniport zeroes VRAM).
-- XP has no driver for `-vga std` (Bochs VBE): basic 640×480×16. The M4
-  test loop runs XP with `-vga cirrus` (inbox GD5446 driver); the M7 track
-  replaces it with `-vga none -device d3dpt-vga` + our driver (doc 15),
-- Pixel aspect / mode analysis resolved in M2 (720×400 detected as 4:3 DAR
-  with double-scan scanline count; event-driven geometry updates in player).
-- `prepare-qemu.sh` must be followed by `configure-qemu.sh` when meson
-  files change; the script keeps `werror` off and unchanged mtimes stable.
-- x87 under TCG was all helper calls into 80-bit softfloat; patch 05 does
-  the 53/24-bit-precision common case on the host FPU, and patch 06
-  (doc 13, merged 2026-09-03) keeps the x87 stack as host doubles across
-  instructions in TCG at PC=53: 21.6 (softfloat) / 10.6 (patch 05) /
-  2.9 ns per op on x86-64; XP Super PI 1M on the Air 9:49 → 6:33 → 1:57
-  (rig: 2:02), `x87-fast=off` control at softfloat pace, Win98 boots.
-  Two aarch64 backend paths upstream never runs needed fixes (UMOV
-  element size, constant into a V register). PC=24 (Direct3D) is inline
-  too since 2026-09-03 (mode 2: same double shadows holding 24-bit
-  values, results rounded through binary32; guest test identical, DOS
-  loop 6.0× softfloat on the Air vs 10.4× at PC=53). Not yet checked in
-  a D3D title. Test any change to
-  it with `tools/x87-fast-test.c` (x86-64 host oracle) and
-  `tools/x87-guest-test.py` (on/off identical under TCG; needs nasm,
-  mtools, the FreeDOS floppy). Benchmarks inside a .COM must keep data on
-  a separate page from code or QEMU's SMC invalidation dominates.
-- SSE under TCG was a helper call per instruction (hardfloat inside, but
-  a call and a lane loop). Patch 07 (doc 16, 2026-09-04) inlines the
-  common cases when MXCSR admits the host FPU (RC nearest, no FTZ/DAZ,
-  all masked) *and* PE is already sticky: then the host can raise nothing
-  but PE, so one classification check per result replaces the residual
-  the x87 path needs; anything else takes the helper out of line.
-  Packed ops run on the vector unit (fadd_vec etc., vector checks, one
-  lane-mask branch through env), scalar ops in general registers.
-  Register-only bench on the Air: packed 1.2 ns/op vs 14 (12×), scalar
-  2.7 vs 10 (3.6×); memory-operand loops see less (the TLB lookup
-  dominates either way; the `dmb` barriers TCG emits for max_cpus > 1
-  measured free on the M1). `-cpu …,sse-fast=off` is the control. Test
-  any change with `tools/sse-guest-test.py` (on/off identical, incl.
-  SSE2 via `+sse2`, the hand-over case and a mixed x87/SSE block) and
-  re-run the x87 test: the slow blocks are shared. The hand-over exit
-  after the first inexact helper must be emitted at the end of the
-  instruction (after the register write-back) — the test caught
-  `cvttss2si` losing EAX when it was emitted inside the gen function.
-- Driving a Windows guest headlessly on Linux: pass
-  `-qmp unix:/path,server,nowait` to the player (extra monitor), then
-  `screendump` / `send-key` from a script; the QMP screendump shows the VGA
-  surface only (frozen while 3D is active) — grab the player window with
-  `grim` to see 3D frames. Win98 image copy: `~/vms/win98.qcow2`; wglgears
-  at `C:\WINDOWS\Desktop\GAMEDIR`.
-- Scripted guest runs: `tools/qmpc.py <sock> keys|type|screendump|json`
-  against `-qmp unix:…,server,nowait`. Shut Win98 down from inside
-  (`keys ctrl+esc`, `keys u`, `keys ret`) instead of killing the player —
-  a killed VM leaves the FAT dirty and every next boot runs ScanDisk.
-  `PLAYER_DUMP_OUT` dumps the shaded frame even when the window is
-  occluded (compositor screenshots are useless then).
-- macOS embed backend: never call `gl*`/`CGL*` by link — the QEMU build
-  used to link XQuartz's Mesa libGL too and the symbol bound there (GLX
-  library, no CGL context → silent no-ops, NULL renderer; patch 70 dropped
-  XQuartz on 2026-09-17). `dlsym` on the OpenGL.framework handle, the same
-  one the dispatch table uses.
-- The Mesa backend (`MGL*`) runs on the vCPU thread under the BQL and can
-  be driven without a guest right after `qemu_embed_new` (BQL held):
-  `tools/embed-3d-test.c`. Order: `InitMesaGL` → `MGLTmpContext` →
-  Choose/SetPixelFormat → `MGLCreateContext(MESAGL_MAGIC)` →
-  `MGLMakeCurrent(MESAGL_MAGIC, 0)` → draw → `MGLSwapBuffers`.
-- d3dpt: `D3DPT_EXEC_LIB` / `D3DPT_DXVK_LIB` point the device and the executor
-  at the libraries when not run from the repo root (defaults:
-  `build/d3dpt/libd3dpt_exec.so`, `build/dxvk/src/d3d9/libdxvk_d3d9.so.0`
-  relative to the cwd, then the bare sonames). The executor sets
-  `DXVK_WSI_DRIVER=Headless` itself. A guest process that finds no
-  executor sees `D3DPT_STATUS_NO_EXEC` and the DLL refuses to load
-  (0xc0000142), same shape as the missing-FXPTL case. Protocol changes
-  bump `D3DPT_PROTO_VERSION` in `d3dpt/d3dpt_proto.h`; DLL, executor and
-  device all check it. Driving XP from a script: `-cdrom` the ISO,
-  `qmpc.py … keys meta_l+r`, `type 'D:\\D3DPT\\D3D9TEST.EXE 3000'`, `keys ret`;
-  QMP `system_powerdown` shuts XP down cleanly. Getting files out of XP:
-  a raw FAT32 image as `-hdb` (`truncate -s 64M`, `sfdisk` one partition
-  at 2048, `mkfs.fat -F 32 --offset 2048`) appears as E: and is read with
-  `mcopy -i img@@1048576 ::/path out` — XP writes lazily, so list it a few
-  seconds after the program exits. Running EXEs from the CD works, but
-  their logs then land in `C:\`; xcopy the folder to E: first.
-  Guest-side debugging: the DLL's log lines reach the host log in order
-  with the device's own lines (`qemu-system-i386: info: d3dpt: guest: …`),
-  which is the only reliable channel when the guest freezes (files on the
-  scratch disk stay in the guest's write cache). A process that ends
-  without `DLL_PROCESS_DETACH` in that log was terminated or crashed at
-  exit; exit-path bisection with `_cexit()` + `ExitProcess()` vs
-  `return 0` found the stack smash above. mingw's d3d8 headers are
-  `#pragma pack(4)` on i386, d3d9's are not: never hand-copy a D3D8 struct
-  without the pack. Swapping the ISO under a running guest:
-  QMP `blockdev-change-medium` on `ide1-cd0`.
-  Hand-assembling SM1 bytecode: opcode numbers are D3DSIO_* (`m4x4` is 20,
-  not 24 = `m3x2`); a wrong opcode compiles fine in DXVK and draws
-  nothing — dump the SPIR-V with `DXVK_SHADER_DUMP_PATH` and read it.
-  **Rebuild QEMU after a protocol bump** (`prepare-qemu.sh` + ninja): the
-  device carries its own copy of the header and refuses a newer DLL
-  (0xc0000142 with a `d3dpt.log` version line).
-- Embed API bump (header `QEMU_EMBED_API_VERSION` + `qemu-embed` crate
-  `API_VERSION`) ⇒ every machine must re-run prepare + ninja the dylib
-  before `cargo build`, or the link fails on the new symbol.
-- KVM on Linux (`-accel kvm -cpu host`) works for XP with every device of
-  ours and is far faster than TCG; the x87 patches are TCG-only. TCG stays
-  the Apple Silicon path and `scripts/test.sh` accepts both.
-- Kernel-mode drivers with mingw-w64 (M7 track, doc 15): no `ntddk.h` in a
-  miniport, `winddi.h` needs the vendored `ddrawint.h`, GCC emits
-  `memcpy`/`memset` calls even freestanding; the debugger is a device
-  register echoed to the QEMU log. `grim` hangs inside the agent sandbox:
-  use QMP `screendump` on a standalone `-display none` run.
-- Keys typed while a full-screen DirectDraw window is up go to that window
-  and are lost: chain guest commands with `&` on one `cmd /k` line
-  (`qmpc.py type` knows `& ( ) , ; = ' " * % + ! > < |`), copy logs to the
-  FAT scratch disk at the end. Swap the CD under a running guest with QMP
-  `blockdev-change-medium` (device `ide1-cd0`).
+- **3D hand-off sync is `glFinish`.** Every hand-off to the frontend
+  waits in `glFinish`, on both platforms. A fence would let the vCPU go
+  on while the blit drains (doc 12).
 
 ## Next steps, in order
 
-**The Direct3D fallback moves to Wine on the host (ADR-018, 2026-09-22,
-track M15).** A Linux or macOS host below DXVK's Vulkan 1.3 floor keeps
-the paravirtual device and the very same executor, with its D3D9 supplied
-by Wine's d3d9 on the host — the Windows build of `d3dpt_exec.dll` in a
-host program under Wine, VRAM and the command window shared as a file,
-the five calls of `d3dpt_exec.h` over the child's stdio
-(`docs/tracks/m15-wine-executor.md` has the design). WineD3D-in-guest
-(wine9x on the ISO, `SETUP /GAME 4`/`5`, `/I 7`, `D3DPRE.EXE`) is
-retired by decision and removed in the track's last step, after the
-host path has drawn the reference scene and run a game; nothing of it
-is deleted before. First step: the spike in the track doc — one command
-on a host with Wine and a GL. **A Windows host below the floor is already
-served** and is not part of this track: it runs the same executor on its
-own `system32\d3d9.dll`, in process, since 2026-09-21 (ADR-007's second
-amendment, decided a day earlier and independently — "Windows' own
-Direct3D 9 is a backend again" under Known issues). M15 is for the two
-platforms with no system Direct3D 9 to borrow, and what it retires — the
-guest-side WineD3D — is the fallback on those platforms alone.
+Each track's own order is in its track doc; this is the order across
+tracks, and the items no track owns.
 
-**A QEMU launch on the Mac is a coin toss (2026-09-15, doc 22 §5.0) — fix
-it first.** In about a third of launches `mmap(NULL)` puts TCG's 1 GiB code
-buffer at 0x3_0000_0000, 8 GiB from the helpers, and every helper call in
-every TB becomes `movz/movk ×4 + blr` instead of `bl` / `adrp+add+blr`:
-x87/SSE helpers run at 0.55–0.65x, 7-Zip 0.89x, a tight JIT loop 1.00x,
-byte-identical binaries, idle machine, not thermal, not an efficiency core,
-not PIC. Pristine QEMU has it too. The fix is a load-time reservation of the
-buffer's address space next to the image (a constructor in `tcg/region.c`,
-**landed as `patches/qemu/63-jit-buffer-near-helpers`**, A/B in doc 22
-§5.0: pristine far in 2 of 6 launches, patched 0 of 6, and six paused
-launches' maps show the reservation within 1.2 GiB every time — 1 GiB
-five times, 512 MiB once). **Built into `build/qemu` and the embed library
-2026-09-16 01:02, and verified in the player**: a paused player launch with
-`QEMU_JIT_DEBUG=1` shows the dylib's constructor reserving 1 GiB 0.09 GiB
-from its own text and TCG using it. Doc 22's matrix was redone on it. To
-do: remeasure the games (they were all taken before the fix, so a third
-of those runs were far-regime ones). **`bl` reach is not worth
-chasing** (2026-09-16 01:00, user question): a 120 MiB buffer reserved
-directly above the image (every call one `bl`) against the 1 GiB near
-reservation (`adrp+add+blr`), four SSEBENCH launches each: SSE score 7.70
-vs 7.89 ns (2 %), x87 kernel within noise — relocating helpers into 128 MiB
-or a two-tier buffer buys nothing worth the flushes. **x86-64 hosts (user question
-2026-09-15):** the same reach rule exists — `call rel32` within 2 GiB, else
-`call [rip+pool]` (one indirect call through a constant-pool slot, far
-cheaper than aarch64's five instructions) — and there it is the *always*
-case, not a lottery: on Linux a PIE lives at 0x55… and mmap at 0x7f…, on
-Windows `VirtualAlloc(NULL)` is low and the EXE/DLL at 0x7ff…. Expected a
-few percent on helper-heavy code, unmeasured; the probe is
-`tools/specbench` on the rig (and the Windows build) with a Linux/Win32
-variant of patch 63 (mmap hint / `VirtualAlloc` hint near the image) as the
-A/B. It matters on every host: the user runs TCG everywhere, the Ryzen
-included (XP too, "mostly testing in emulation mode", 2026-09-15), so the
-rig measurement is the first x86-64 item, not a curiosity. `tools/specbench/noaslr.c` keeps the benchmark deterministic
-meanwhile.
+1. **M15, the Direct3D fallback on Wine** (ADR-018,
+   `tracks/m15-wine-executor.md`). A guest in the packaged community app
+   on a real macOS 15 — the app and `build/xp-mac15.qcow2` are built,
+   the run needs the Mac booted into the other volume (the user's to
+   do); the spike's two host tests on the rig's Linux Wine. Then step 6:
+   WineD3D-in-guest removed in one commit (the ISO's `WINED3D\`, `SETUP
+   /GAME 4`/`5`, `/I 7` with `D3DPRE.EXE`, the wine9x build and its
+   tests, doc 04's rows, CLAUDE.md's sentence), and the Flatpak's Wine
+   decided. A Windows host below the floor is not part of this: it runs
+   its own `system32\d3d9.dll` already.
+2. **The measurements doc 22 still owes** (user decision, 2026-09-15).
+   The Ryzen half of §6.2's games, including 3DMark2001 SE's high-detail
+   Car Chase and Lobby as the benchmark for patch 47's inexact mode
+   (+47 % and +15 % on the Air). The helper-reach question on x86-64,
+   where it is the *always* case (`call [rip+pool]` from a PIE or a
+   Windows EXE): a Linux / Win32 variant of patch 63 as the A/B through
+   `tools/specbench`. Three QEMU builds from one tree behind a meson
+   option (switches removed / hardwired on / switchable) to price the
+   switches themselves; later, "all off plus one switch". Not worth
+   chasing: `bl` reach on the Mac (2 %).
+3. **Patch 21 (`pinned-regs`)** crashes XP under Super PI with seven or
+   eight registers pinned (a bugcheck with auto-restart;
+   `tools/specbench/run.sh <image> pinned` reproduces it; doc 18 open
+   item 1). Off and not in the machine form (user decision, 2026-09-16:
+   1.1–1.2x at best); fixing it is optional.
+4. **Glide pass-through (M3, doc 12 §5).** The user has never had it
+   work by hand, so a hand run of a Glide title is owed; the headless
+   Rayman 2 and Carmageddon runs are its only evidence on games, and no
+   Glide game has run on the DOS family. Then a macOS `glide-host` check
+   (the CGL side of `tools/glide-host-test.cpp`) and a Glide guest on
+   the Air, a Windows Glide wrapper (M11's cross build has no stage),
+   and fence-based sync instead of `glFinish`.
+5. **Display (M2, doc 03).** Overscan crop, the curated preset pack
+   calibrated against the rig's CRT photos, an answer for presets with
+   no resolution override; XP's mode table fed from the player and a
+   present signal in phase with its swapchain (M7); the player's own
+   overlay controls (pause, snapshot, disc swap; doc 07).
+6. **Windows host (M11's leftovers).** Moto Racer's speed on the PC,
+   the first clang-built QEMU there; the native MSYS2 build run
+   (`scripts/win-run.sh launcher`, a machine, the Windows-built ISO in a
+   guest); live control over Winsock AF_UNIX on a real PC; the
+   installer; zero-copy frames through a DXGI shared handle; a Windows
+   check that boots a guest.
+7. **M14, Voodoo 2.** The glitched second Glide game after one quits
+   (not re-checked since the ring fixes of 2026-09-17..21); a Glide
+   client resuming on a dead ring (FIFA 2000's close); DxDiag's
+   Direct3D 7 test failing at `GetDC`; the Air (86Box's ARM64
+   recompiler, the `voodoo-guest` check there, the numbers) and the
+   Windows build; Diablo II's numbers; patches 64 and 71 upstream.
+8. **M10, Win98 driver.** The doc 04 Win98 title matrix against the
+   Glide / WineD3D control; Total Annihilation's exit from inside a
+   skirmish; Crimson Skies' half-drawn QUIT button and partial depth
+   fills (doc 19 §28, §34); the command-window lock a fault in a HAL
+   callback can leave held (§36); the VGA text page after an ACPI
+   standby resume (§41).
+9. **M12, music.** One run of dxdiag's music test on Win98 with both
+   `LIBSYNTH_MIDI_LOG` and `LIBSYNTH_OPL_LOG` set (doc 20 §7.2): both
+   synths lose instruments there while Microsoft's software synth does
+   not. Then "MPU-401 Compatible" from Add New Hardware, and a host MIDI
+   port (doc 20 §8).
+10. **M6, launcher and packages.** An AppImage (6b′), the Windows
+    installer (6d), the shader preview as a `QQuickRhiItem` (doc 07),
+    screenshots for a Flathub submission, `CDSHELF.EXE`'s Win98 (ASPI)
+    run.
+11. **M5, CD-ROM.** Triage FIFA 2002's no-match; Age of Mythology disc 1
+    as a second SafeDisc 2 title; SecuROM (needs DPM in `mds.rs`);
+    multisession; CHD; Win98's CD Player by ear. M5g: a guest-side check
+    of the stale-file rule.
+12. **The finished tracks' leftovers.** M4: a D3D8/9 game by hand on
+    the DLL path, its stubs, a decoder thread. M7: a shader title, a
+    split-stream title, 3DMark2001's Nature for cubes, StarCraft / Age of
+    Empires on 8 bpp, a driver stage in `scripts/test.sh`, something
+    better than a black screen when a guest's driver refuses the
+    adapter. M8: a Direct3D title with and without `*-fast=off`. M9: the
+    Air's game tests uncapped (`DDFLAGS=32768`), binary32 at PC=24 on
+    aarch64.
 
-**Patch 21 (`pinned-regs=on`) crashed XP again (2026-09-16 00:2x, doc 22's
-matrix):** the `pinned` configuration — our default plus `pinned-regs=on`,
-a no-ASLR launch — got through boot and the Run dialog, started Super PI
-1M, and twenty minutes later the guest was back at the XP boot logo with
-nothing more on COM1: a bugcheck with XP's auto-restart
-(`build/specbench/runs/pinned/crash-reboot.png`; the QEMU log has nothing).
-Third sighting of the mixed-case instability doc 18 lists as open item 1
-(pin-8 boot crash); the run was killed and the configuration has no
-numbers. Off by default stays right; the bug is now reproducible by
-`tools/specbench/run.sh <image> pinned`. **Later the same day the switch
-left the launcher** (user decision: too unstable, too little to gain —
-1.1-1.2x at best): `bundle::Optimization` no longer has it, the form
-offers fourteen switches, and a bundle that still says
-`pinned-regs = true` keeps the entry without it reaching the command
-line until "All defaults" clears it (the `optimizations` check plants one).
-The patch and its accelerator property stay in the queue, off.
+## Gotchas
 
-**Doc 22's open measurements (2026-09-15, user decision):** the 3DMark 99 race
-and first-person figures in the M9 track doc and doc 22 are **withdrawn** — the
-windows they were read from were misplaced (the 2026-09-12 correction) —
-**measured again on the Air 2026-09-16** (doc 22 §6.2; the classifier's
-one-missing-shot join fixed first), the Ryzen still to do.
-**3DMark2001 SE's high-detail Lobby and Car Chase are the benchmark for
-patch 47's inexact mode** (user observation 2026-09-15): their debris runs
-dynamic physics at x87 64-bit precision, the low-detail variants do not,
-and no visible difference with the switch on — on the Air the switch is
-worth +47 % in the Car Chase and +15 % in the Lobby at high detail, and
-the low-detail controls stay at the cap (doc 22 §6.2); the Ryzen still to
-do. Then
-the CPU matrix's leave-one-out runs (`tools/specbench/run.sh <image> all`
-resumes where it stopped), the `stock-pic` diagnostic, and — the user's
-plan — three QEMU builds from one tree (switches removed / all hardwired on /
-switchable) behind a meson option, so the switches' own cost can be measured
-and upstream-comparable numbers given. Later, at the user's call: the
-"all off plus one switch" family for a reader lifting one patch.
+Cross-cutting traps, each as symptom → cause → rule. A trap that
+belongs to one subsystem lives in its design doc; the pointers are at
+the end.
 
-Per-track order lives in the track docs: **M4** → `docs/tracks/m4-d3d-device.md`
-(a real game on the device, present/pacing, the Air build, the x87
-real-world number); **M7** → `docs/tracks/m7-display-driver.md` (FIFA 2000 plays on the
-M7c HAL with the `DINPUT.DLL` keyboard fix confirmed under TCG, the DirectX 8 DDI with hardware T&L (D3DGAME8, Max Payne and GTA Vice City through XP's own d3d8.dll), Diablo on
-the new 8 bpp modes, video-memory vertex buffers since protocol v9 (Vice City a third faster under KVM, a quarter under TCG), sixteen vertex streams since v10, cube textures since v11, volume textures since v12; next more 8 bpp
-titles, a driver stage in `scripts/test.sh`, the mode table from the player; the flip chain's vertical blank and the hardware cursor landed 2026-09-05). ADR-008 (2026-09-04): the M7 driver is the long-term XP shape; the
-M4 DLL device stays for Win98 and as the executor's harness. Below, the
-items nobody owns yet:
+### Building
 
-1. **M3 (doc 12):** the Glide offscreen path landed 2026-09-06 and a Glide
-   guest ran the same day (the 3D row above: `GLIDETEST.EXE` in Win98,
-   4 cases, 0 failed). **A Glide title plays since 2026-09-10: Rayman 2**
-   on a copy of `claude98`, in the player through `PLAYER=1
-   tools/win98-game-test.sh` (doc 12 §5 has the run: the game's own
-   `GXSetup` sees "Voodoo Graphics Glide 2 Driver", 640×480, the language
-   menu through the intro into the first level, 233 frames shot, no
-   wrapper complaint; the game refuses a hand-written `ubi.ini`, so its
-   setup program is clicked through). **And a DOS Glide game the same
-   day: Carmageddon's `3DFX.EXE`** from a Win98 DOS box through
-   qemu-3dfx's `GLIDE2X.OVL`, built here for the first time (Open Watcom,
-   `build-wrappers.sh`, which picks the snapshot's host directory the way
-   `build-driver9x.sh` does — `binl64` on a Mac is a Linux ELF that exists
-   and fails to exec; `SETUP.EXE` installs it on 9x) — which found that
-   OpenGLide never drew an LFB a game keeps write-locked across swaps
-   (patch `05-lfb-locked-swap`; the `glide-host` check guards it). Nobody
-   has played a level by hand yet, and no Glide game has run on the DOS
-   family proper. **Glide 3 is the next wrapper question, and Diablo II
-   is the title that decides it** (user, 2026-09-10: its Glide renderer
-   was "a lot better" than its Direct3D one, under an emulated Glide —
-   Sven's glide3x wrapper in all likelihood, which is the same job as the
-   62 Glide 3 entry points OpenGLide lacks, mostly the vertex-layout API;
-   no game is *blocked* on it, the Glide 3 titles all have a D3D path,
-   but several are worse there). `patches/openglide/README.md` now carries
-   the survey: what an open Glide 3 would be built from (3dfx's released
-   Glide 3 source as the spec; dgVoodoo 1 is LGPL but Glide 2 only;
-   psVoodoo unverified; the rest closed), why it is smaller than 62
-   functions (Glide 2's core is shared, the new surface is the vertex
-   layout, `grGet`/`grReset`, the context handle and the 3x variants),
-   and the alternative of **emulating the Voodoo chip** (PCem's GPL
-   rasterizer as a QEMU device — complete by construction, render threads
-   on cores TCG leaves idle; the trapped MMIO writes on the one vCPU
-   thread are the cost, and a Voodoo 2's RAM-backed command FIFO plus an
-   unlocked region removes most of it). **The decision procedure between
-   the two is recorded there too**: measure Diablo II in 86Box's Voodoo 2
-   on the Air first — if the software rasterizer keeps up on those cores,
-   the Voodoo 2 device is the Glide 3 track (exact, complete, an open
-   guest driver from 3dfx's source); if not, the wrapper is the only
-   GPU route and gets written.
-   **Settled, and the wrapper route abandoned (user, 2026-09-15).** The
-   Voodoo 2 device came first (M14, doc 21) and runs 3dfx's own
-   `glide3x.dll`: UT, NFS Porsche and Diablo II draw on it. The Glide 3
-   layer over OpenGLide that had been written meanwhile (branch
-   `m14-glide3`, step 1: `glidept/host/glide3.cpp`, `GLIDE3TEST.EXE`, a
-   `glide3-host` check — synthetic scenes only, never a real title) is
-   **not merged**; it is kept as the tag **`m14-glide3-abandoned`**
-   (aa9cb5c), its track doc included. The user adds that the Glide
-   pass-through never worked for them by hand at all, so the headless
-   Rayman 2 / Carmageddon runs above are its only evidence on games.
-   What is left of M3: **the wrapper on macOS and Windows** -- the Darwin branch
-   of `build-glide.sh` builds since 2026-09-06 but nothing exercises it, so
-   what is left there is a macOS `glide-host` check (the CGL side of
-   `tools/glide-host-test.cpp`, which is EGL today) and a Glide guest on
-   the Air, while M11's cross build still has no glide stage at all;
-   **packaging is done on Linux since 2026-09-07** -- `package-linux.sh`
-   stages `lib/2ksbox/libglide2x.so` and the Flatpak builds the wrapper
-   inside the sandbox (one more `build-commands` line, against the
-   runtime's own libGL), so an installed guest has Glide without
-   `QEMU_GLIDE_LIB` in the environment; the macOS app has staged it since
-   2026-09-06 and Windows has no wrapper to stage yet. What checks it is
-   the **staged player**, not the script: `player --companions` prints what
-   `player/src/companions.rs` resolved for the Glide wrapper, the Direct3D
-   executor and DXVK, and the packager requires each answer to be inside
-   the package -- a file staged where the player does not look passes every
-   other check there is. End to end, `PACKAGE=<tree>
-   tools/glide-guest-test.sh ~/vms/win98.qcow2` runs the guest battery out
-   of a package with nothing pointed at the wrapper by hand: **passed
-   2026-09-07** — `glidept: wrapper …/lib/2ksbox/libglide2x.so` in the
-   player's log, loaded out of the package, and the guest's own readback
-   `glidetest: 4 cases, 0 failed`.
-   **The Direct3D executor and its DXVK are staged the same day** (doc 14):
-   `lib/2ksbox/libd3dpt_exec.so` + `libdxvk_d3d9.so.0`, both or neither,
-   since the executor `dlopen`s DXVK by the name `companions.rs` hands it.
-   The Flatpak builds both inside the sandbox — the SDK has meson, ninja,
-   glslang and the Vulkan headers, DXVK's subprojects are vendored and it
-   declares no meson wrap, so the build stays offline — and
-   `third_party/dxvk` is no longer skipped out of the source copy, because
-   the executor needs its `include/native` headers to compile at all. No
-   Vulkan driver is packaged on Linux: the system's is the right one, and a
-   host below Vulkan 1.3 keeps GL + WineD3D (ADR-013). Proved by pointing
-   the `d3dpt-exec` harness at the **packaged** pair: 120 frames delivered,
-   the BMP written, the hostile batch refused.
-   And the old item, **fence-based sync instead of
-   `glFinish`**, untouched since 2026-09-03.
-2. **M2**: mode analysis landed 2026-09-05 (pixel aspect and the double-scan
-   scanline count, doc 03, `mode-sweep` in the suite), and the geometry stage
-   became event-driven 2026-09-07 (below, doc 03 "The geometry stage's one
-   moment"). Left: overscan crop, the curated preset pack calibrated against
-   the rig's CRT photos, and a preset-pack answer for presets with no
-   resolution override. On XP the device's own mode table is fed from the
-   player (an M7 track item).
-3. **Player:** the vblank signal for guests (the hardware cursor landed
-   2026-09-05 evening: the guest's shape is the host window's cursor over
-   the image, M7 register set v4 + `on_cursor` / `on_mouse_set` taken).
-4. **M5** → `docs/tracks/m5-cdrom-backend.md` (steps 1–8 done; step 8 closed 2026-09-09 by **SafeDisc 1.x**, which is the one scheme measured that reads its own L-EC band: Crimson Skies refused while a raw `READ CD` of an unreadable sector delivered its bytes and launches once that read fails as a drive's does — the negative control the milestone lacked, doc 17 §2.6c. SafeDisc 2.x, plain mixed-mode + CD-DA and VOB ProtectCD were already green, but 2.x and ProtectCD never read their anomalies, so their rows record what was measured rather than a PASS; left: the FIFA 2002 no-match, AoM as a second 2.x title, SecuROM which needs DPM in `mds.rs`, multisession; M5e MDS done early, CHD open); M5f with M6.
-5. **M5g** → `docs/tracks/m5-dirdisc.md`: a host directory in the drive
-   as a lazily generated ISO 9660 + Joliet volume, `isodir:/path`.
-   Read-only, snapshotted at insert, no image file and no run-time
-   `xorriso`; a new extent source in `libdisc` plus a vvfat-shaped
-   protocol driver in our own `cdimage.c`, so no QEMU patch changes.
-   **Steps 1–3 landed 2026-09-06** — the generator, the block driver,
-   and XP: `discx selftest`, the suite's `dirdisc` check and a full
-   `xp-cdimage-test.sh` run are green, an independent reader gets the
-   folder back identical, the drive sees a disc model through the `raw`
-   node QEMU probes above a protocol driver, and XP copies all 311 files
-   out of a shared folder byte for byte. **Step 4** puts it in the
-   launcher: "Add folder…" in both front ends, `isodir:` decided in one
-   place for the boot drive, live inserts and the shelf file, and commas
-   in paths doubled at last. **Step 5 finished the track**: Win98 reads a
-   folder through its own CDFS, the 8.3 tree has an independent reader,
-   every refusal has a case, and the guests found two bugs — the shelf's
-   C side did not know the `isodir:` prefix, and a disc swapped into a
-   full drive left Windows reading the previous one (`CDSHELF` now
-   dismounts the volume, because its own tray polling eats the drive's
-   one media-change sense). **Two more came out of the user's first
-   non-fixture folder, 2026-09-07:** a directory bigger than a disc was
-   laid out and then panicked in `Msf::from_lba` (`LBA 18011910 beyond
-   99-minute MSF range`) — `isodir` now measures the tree against the
-   disc's own capacity before laying it out and refuses with both sizes
-   named, and `from_lba` saturates instead of asserting, because
-   `capi.rs` turns a panic inside QEMU into an `EIO` on whatever command
-   happened to convert an address; and the shelf's **Insert** waited for
-   the guest to release the tray lock (the disc appeared "when I close
-   the program"), because `blockdev-change-medium` only *asks* a locked
-   guest unless `force` is passed, which `control.rs::insert_disc` now
-   does as `eject_disc` always has. **Step 6 then raised the ceiling
-   rather than keeping it** (2026-09-07): the limit was a *CD's*, and
-   QEMU's own `media_is_dvd()` already calls anything past an 80-minute
-   CD a DVD, so patch 53 reports the profile the medium actually is
-   (DVD-ROM current, CD-ROM still listed, the DVD Read feature, mode
-   page 2A's DVD-ROM bit — a CD in the tray answers byte for byte what
-   it did) and `isodir` now stops at a dual-layer DVD-9, 8.1 GiB.
-   `BIG=1 tools/dirdisc-guest-test.sh` measures the guest's own ceiling
-   with marker files planted at 703 MiB / 878 MiB / 2 / 4 / 7.8 GiB:
-   **Win98 under TCG read all five**, so its CDFS handles a DVD-sized
-   ISO 9660 volume.
-6. x87 / SSE: the **M8** track (`docs/tracks/m8-tcg-fastpaths.md`).
-7. **M6** → `docs/tracks/m6-launcher.md` (opened 2026-09-04: toolkit decided; bundle format, library grid, spawning a player, the guided creation wizard, the shader profile manager with a live preview and disc-shelf editing landed; a human should click through the wizard and the shader manager once — no GUI automation available this session; step 5 is done — snapshots and disc-shelf editing, offline through `qemu-img` and live over the launcher's own `-qmp unix:` socket — and **step 6a is done**: the install layout (`launcher-core/src/paths.rs` today, doc 07) and `scripts/package-linux.sh`, a checked, relocatable Linux tarball a stranger can install and boot from. The project is now named **2ksbox** (ADR-011) and the package carries that name plus the application ID `com._2ksbox.Launcher`; the repo/docs/data dir keep the working name. **Step 6b (the Flatpak) is done too** — it builds from source in the SDK, installs, and boots a machine with KVM inside the sandbox; what remains for Flathub is screenshots and offline cargo sources. **Step 6c (the macOS .app) is done too** — `scripts/package-macos.sh`, signed for Developer ID, hardened, notarized, stapled, `.dmg`; it carries its whole non-system dylib closure plus the Glide wrapper, the Direct3D executor and a Vulkan driver, and boots Win98 from the signed bundle. Next: an AppImage (6b′) and the Windows installer (6d; Windows live control landed 2026-09-16 on its own, over an AF_UNIX socket)). **ADR-015 (2026-09-07) made the Qt build the shipped launcher and every packager was rewritten for it** — only the Linux tarball had been *run* since — **(i) is done 2026-09-08**: `scripts/package-flatpak.sh` builds, installs and passes its smoke check on the new `org.kde.Platform` / `org.kde.Sdk` 6.10 runtime, which makes it also the first offline build of the merged `cargo-sources.json` (513 crates from both lock files) and the answer to whether cxx-qt finds the SDK's `qmake6` — it does, with no CMake step, and the app opens a real QML window offscreen inside its own sandbox. The same run is the first Flatpak to carry the three dlopened libraries, built in the sandbox against the runtime's own GL and Vulkan and resolved under `/app` by the packaged player's `--companions`. **(iii) is done 2026-09-08 too**: `scripts/build-windows.sh --package` cross-builds `qemu rust qt exec` in 424 s and `package-windows.sh` passes every check under wine — one 146 MB zip whose `2ksbox.exe` is the Qt launcher, with the staged player naming the packaged `d3dpt_exec.dll` through the new `--companions` check (`glide` and `dxvk` are legitimately absent there: no Windows Glide wrapper exists, and Windows has its own Direct3D 9). Untested on a real PC, which is the only place the Qt window question is settled. The ordered work left is: (ii) `scripts/package-macos.sh` on the Air, where the `macdeployqt` staging, the re-sign over Qt's own Mach-O files and the offscreen window check are all written and unrun; (iii) `scripts/build-windows.sh && scripts/package-windows.sh`, now that there is one zip rather than two. Then the preview's `QQuickRhiItem` (doc 07: the one place the Qt build is worse, and now on the shipped path).
-8. **M9** → `docs/tracks/m9-tcg-aarch64.md`: patches 17 (REP fast path)
-   18 (same-value SMC stores: Moto Racer's race 3×), 19 (the store
-   slow path's nested RCU locks, TLS on macOS) and 20 (the jump-cache
-   probe inline: 7-Zip +12 %) done 2026-09-05;
-   patch 21 (pinned guest registers, doc 18) built the same night and
-   **off by default** with two open items (a boot crash at 8 pinned, a
-   stall at the flags-helper call; the track doc's patch 21 section);
-   next: close those and turn it on. The same-value skip's leftovers are
-   **done, 2026-09-08**: the user's report that Moto Racer's software
-   renderer "almost hangs" when braking emits tyre smoke turned out to be
-   a *second* self-patching rasterizer — a translucent RGB565 span loop
-   at `0x4357f0` whose 14 immediate fields are rewritten per use with
-   values that really change, so patch 18's compare could not skip them;
-   every brake onset doubled the host code generated (30–36 → 57–69
-   MiB/s). Found with a new per-second harness (`tools/moto-watch.py`:
-   `info jit` at 4 Hz with a screendump a second, driving the bike over
-   the same QMP connection, tracing `translate_block` over one throttle
-   phase and one brake phase, and `WATCH_MEMSAVE=` for `smc-diff.py`),
-   and fixed by **patch 24, soft immediates**: a block four guest writes
-   have thrown away is retranslated with its immediates and displacements
-   emitted as host loads of the guest's own code bytes, so the guest's
-   store *is* the update, and a write landing entirely inside the fields
-   it reads that way invalidates nothing. `-accel tcg,soft-imm=off` is
-   the oracle and the eighth launcher checkbox;
-   `tools/smc-guest-test.py` grew to 13 cases across all four
-   combinations of the two SMC switches and asserts the path is reached.
-   **The race: 41 → 58 fps on the display driver's own flip counter (the
-   fps probe saturates at 52 and cannot see it), worst window 32.4 →
-   44.8, TB invalidations 36,500/s → 1/s** — the game now sits at the
-   60 Hz flip cap for most of the race. Then the HVF VM port the probe
-   found feasible.
-   **Blood is the next workload for it (2026-09-10)**: the user's report
-   that Blood is "sluggish depending on where you look" measures as
-   **9.4 fps facing the starting corridor, 154 facing a bare wall**
-   (Blood's own page flips, VBE index-9 writes), with ~40,000
-   retranslations a second either way and 95 % of them one block —
-   Build's column loop, which patches imm8 **shift and rotate counts**
-   per column besides the pointers and steps patch 24 absorbs. The
-   counts stay constants, the block fails soft four times, the address
-   gives up, and every per-column patch then retranslates. **Fixed the
-   same day in patch 24, in two parts**: soft shift / rotate counts (and
-   `gen_IMUL3`) — which kept the column loop but did not help, because a
-   second loop is two blocks two bytes apart over the same patched
-   fields and soft-imm's invalidation counters were hashed by `pc >> 2`,
-   so the two reset each other and never went soft (found with a
-   temporary refusal trace, never committed); the counters now hash
-   multiplicatively. **Blood's starting room, facing the corridor: 9.4 →
-   131 fps; facing a bare wall: 154 → 556** (its own VBE page flips, no
-   frame cap); TB invalidations ~460,000 → 18 in 10 s, translations in a
-   3 s trace 117,254 → 34, none of them Blood's. `tools/smc-guest-test.py`
-   is at 18 cases (a `shr` and a `rol` count patched per call, IMUL's
-   imm32, a 16-bit `rcr` that keeps its constant, one imm32 inside two
-   blocks two bytes apart) and now requires the writes to be absorbed at
-   four cases' fields, not just the right sums — against the old hash
-   case R computes right and is absorbed 0 times. The M9 track doc's
-   Blood section has the runs. `tools/win98-game-test.sh`
-   now builds the launcher's Win98 machine in full (`hpet=off`, the
-   OPL3 and the MPU-401 — `MUSIC=`), and `EXTRA=` passes QEMU arguments.
-   **Found on the way, and not an M9 bug:** `atapi-guest` had been failing
-   since patch 54 landed (2026-09-07 22:18, `1f0aa6f`). That patch changed
-   on purpose where the drive reports its head after a stop — it stays
-   where playback ended instead of falling back to the last sector *read*
-   — and the DOS battery still asserted the old contract ("0x15 at the
-   last read sector 2200"); its commit ran `scripts/test.sh host`, and
-   `atapi-guest` is in the **guest** stage, so nothing ran it against the
-   change. The two assertions now say what patch 54 says (the head inside
-   track 2 at or past where it was last seen playing, and inside track 3
-   for the START STOP UNIT case). Two traps to know: the battery prints
-   the audio status in *decimal*, so the alarming "status 21" was `0x15`
-   all along, and `prepare-qemu.sh` restores only files a *current* patch
-   touches, so removing a patch from the queue to A/B it leaves its edits
-   in any file nothing else touches (plus its untracked new files) —
-   `git checkout` those and re-run prepare, and check the switch first.
+- **Two builds must never share the `qemu/` tree at once.**
+  `build-windows.sh` re-applies the patch queue while
+  `package-flatpak.sh` copies the same tree, and the copy fails deep in
+  QEMU's compile with a header neither build uses. The *outputs*
+  (`build/qemu`, `build/win/qemu`) are separate; the sources are not.
+- **A build belongs to one checkout.** Never point `QEMU_BIN` or any
+  other `*_BIN` at another checkout's artefacts, configure into its
+  `build/`, or run its scripts: that tests someone else's patch queue,
+  and meson's recorded source path makes the other build compile *your*
+  sources from then on (check `build/qemu/meson-logs/`'s "Source dir").
+  Moving a checkout invalidates `build/` too: `scripts/build.sh -f`.
+- **A source edit with no effect: is its directory in the stamp?**
+  `scripts/build.sh` skips `prepare-qemu.sh` when the hashed inputs of
+  `stamp_stale qemu-prepare …` are unchanged, and an overlay missing
+  from that list rebuilds the *old* file silently (`libsynth/qemu` was).
+  `-f` bypasses every stamp.
+- **Removing a patch to A/B it leaves its edits behind.**
+  `prepare-qemu.sh` restores only files a *current* patch touches, so a
+  dropped patch's changes to other files (and its new files) survive:
+  `git checkout` those in `qemu/` and re-prepare — and check whether the
+  patch has an off switch first.
+- **`configure`: "found no usable distlib"** — pip 26 vendors
+  `distlib.scripts` but not `distlib.version`, which QEMU 9.2's `mkvenv`
+  imports. Install the real `distlib` for that interpreter. Python is
+  uv's 3.12; 3.14 works only with the real `distlib` (MSYS2).
+- **An ISO older than its sources means a stage died.**
+  `build-wrappers.sh` is `set -e` and writes the ISO last. On a Mac,
+  Homebrew's mingw is a symlink, so `build-driver.sh` finds the DDK
+  headers through `-print-sysroot`.
+- **Guest binaries are msvcrt and `-march=pentium3`.** Modern mingw
+  links the UCRT, which 9x lacks and XP never loads, and qemu-3dfx
+  compiles for `x86-64-v2`; the scripts force and check both. Define
+  `PSAPI_VERSION 1`, or `psapi.h` binds Windows 7's `K32*` exports and
+  XP's loader stops the process in a hard-error box before `DllMain`.
+- **Host toolchain.** QEMU 9.2 needs `--disable-werror`, `-fPIC` and
+  `b_staticpic` for the shared library. On macOS every stage targets
+  Homebrew's floor (`scripts/macos-floor.sh`, 15.0 today): a hand-run
+  cargo needs `MACOSX_DEPLOYMENT_TARGET` exported, and a `cargo clean`
+  after it rises (`build.sh` does both). The macOS link needs
+  `qemu_default_main`, which `embed/libqemu_embed.c` defines, and our
+  ld64 export list.
+- **Windows: `Unable to create index.lock: File exists`, the lock gone
+  when you look.** A scanner holds the lock of the git that just exited;
+  `prepare-qemu.sh` runs every git through `qgit`, which retries on
+  that and nothing else. A retrying wrapper must pass git's stdout
+  through (`2>&1 >&3` inside `{ } 3>&1`) or `ls-files` returns nothing.
 
-9. **M10** → `docs/tracks/m10-win98-driver.md` (opened 2026-09-06): the
-   native Win98 display driver, and the split of XP's driver into a
-   shared core that makes it cheap. Step 0 (the 9x driver model) closed
-   the same day out of `vmdisp9x` / `vmhal9x` — doc 19 has the answers,
-   and the good one is that the DP2 walker and every per-call DDI
-   structure carry over unchanged. Open Watcom then landed and the first
-   `d3dpt9x.drv` builds, installs through PnP and boots, and the mini-VDD
-   `d3dpt9v.vxd` now claims the adapter and keeps its BARs for the whole
-   boot. **Since 2026-09-06 the driver runs**: GDI loads it, it claims the
-   adapter through the mini-VDD, sets the mode (`linear mode on
-   (640x480x32 …)`) and GDI draws into guest VRAM. Three silent failures
-   stood between it and that, all written up in doc 19 §13/§14 and two of
-   them now build-time checks. Desktop shell resolved 2026-09-07 (INF PnP
-   installation via `pnpdrvr.drv` and `DelReg`; boots straight to desktop at
-   800x600x16 or chosen mode). Display Settings fixed 2026-09-07: its
-   `ValidateMode` call ran on the caller's DS because the DDK prototype
-   without `__loadds` was the first declaration Open Watcom saw (doc 19
-   §18), which is now the third silent failure `build-driver9x.sh` catches.
-   DirectDraw DDI complete 2026-09-08 (doc 19 §24, M10 Step 3): `d3dpt9hl.dll`
-   links the core, surface callbacks (`Flip`, `GetFlipStatus`, `Lock`, `Unlock`,
-   `DestroySurface`, `SetColorKey`) implemented, flip-chain pacing against
-   `D3DPT_FB_REG_FRAMES` (~60 Hz) verified in guest, 8 bpp hardware palette
-   programming wired. **Step 4 — the Direct3D DDI on 9x — passes 2026-09-08**
-   (doc 19 §25): `EBTEST` reports **5 cases, 0 failed** in a real Win98 guest
-   (the DirectX 3 face — execute buffers, `PROCESSVERTICES` COPY and TRANSFORM,
-   `TEXTUREHANDLE`, a colour key) and `D3D7TEST`'s frame is **byte-identical to
-   `d3dpt-dp2-test`'s golden frame** (0 of 307200 pixels, max channel difference
-   0), drawn by Windows' own `d3dim700.dll` through our HAL and executed by DXVK
-   on the host — the same bar XP is held to. HAL and T&L HAL both enumerate,
-   300 frames run at 59.1 fps (the §24 flip pacing under a real 3D load), and
-   `SetDisplayMode` to 640x480x32 from an 800x600x16 desktop works. The one bug
-   was **the second instance of §19's failure shape**: the layer *derived* the
-   Direct3D command window from the VRAM size (and subtracted the cursor as
-   well), landing 16 KiB below where the device reads it, so all seventeen
-   `DrawPrimitives2` calls, the contexts, the textures and every `d3d_readback`
-   returned success against a header nothing had written and every frame came
-   back black — with no `ddi:` line on the host to say so. The NT layer has
-   always read the adapter's `D3DPT_FB_REG_CMD_OFFSET`; the 9x layer does now.
-   **This also fixes the guest's DirectX**: a 2ksbox Win98 machine runs 9.0c
-   (doc 19 §25), because the in-box 6.1 is an older DDI generation than the one
-   `core/` was proven against, and three DirectX 6 accommodations were deleted
-   on the evidence of one-shot logs that never fired across two rendering runs.
-   **And the DX8 half passes the same day**: `SHTEST` 9 cases 0 failed
-   (vs/ps 1.x through `d3d8.dll`, hardware vertex processing), `CKTEST` 4
-   cases 0 failed (palettized textures, live `SetEntries`, source colour
-   keying), `DXTTEST` creating every format in every pool with no
-   unexpected HRESULT. That answers step 0's last open question by
-   demonstration — **a DDI-8 driver may omit the pre-DP2 HAL entries**
-   `vmhal9x` still implements — and means the whole M7c matrix (DirectX 3
-   through 8, hardware T&L, shaders, palettes, colour keys, the compressed
-   formats) reproduces on Win98 with no change to `core/`. **Step 5 is
-   under way with real titles** (doc 19 §26–§29): the pointer sprite, the
-   DirectDraw heap, the 8 bpp palette, the DOS-box screen switch both
-   ways — the return needed the INT 2Fh screen-switch hook and USER's
-   repaint entry, without which Windows sat idle behind Blood's last frame
-   and it read as a hang — the sprite hidden while the linear mode is off,
-   and blue screens proved visible (`tools/win98-bsod-test.sh`, a faulting
-   VxD of ours as the trigger; `SAVE_MESSAGE_MODE_STATE` hooked as well). Next: the rest of the doc 04 Win98 title
-   matrix through the driver against the Glide/WineD3D control. Total
-   Annihilation's reported exit crash did not reproduce from its main menu
-   (EXIT clicked headless: desktop back in eight seconds, clean shutdown);
-   an exit from inside a skirmish is the untested path. The shutdown
-   screen's intermittent green band is fixed (2026-09-14, doc 19 §35):
-   the linear mode goes off before the VDD starts putting the VGA back.
+### Running on a Mac
 
-## Gotchas learned (don't relearn)
+- **`/opt/homebrew/lib` on `DYLD_LIBRARY_PATH` kills every image
+  decode** (`SIGBUS` at `0xbad4007` in `IIO_Reader_GIF`): dyld searches
+  it by leaf name first, and on a case-insensitive disk it answers
+  ImageIO's `libGIF` / `libPng` / `libTIFF` / `libJPEG` with Homebrew's.
+  Put only `/opt/homebrew/opt/vulkan-loader/lib` there; unsetting it at
+  run time is too late. `DYLD_PRINT_LIBRARIES=1` shows it.
+- **A benchmark a third slower than the last is a far launch.** TCG's
+  code buffer 8 GiB from the helpers turns every helper call into
+  `movz/movk ×4 + blr` (x87 / SSE helpers at 0.55–0.65x). Patch 63
+  reserves it near the image at load time; check the JIT addresses in a
+  `sample` before believing a difference, and use
+  `build/specbench/noaslr` for runs that must repeat (doc 22 §5.0).
+- **A DXVK program's memory is its peak footprint** (`/usr/bin/time
+  -l`), not RSS: GPU memory is the same RAM. SIP strips `DYLD_*` at
+  every system binary, so put `env DYLD_LIBRARY_PATH=…` last in a
+  wrapper chain. A producer that never waits outruns DXVK's deferred
+  frees (a 16 GB Mac swapped for minutes; doc 14).
+- **Never call `gl*` / `CGL*` / `IOSurface*` by link in the embed
+  backend**: the symbol can bind to a GLX library that silently no-ops.
+  `dlsym` from the OpenGL.framework handle.
 
-- **On Windows a build dies with `Unable to create index.lock: File
-  exists` and the lock is gone by the time you look** (2026-09-17, the
-  PC, three builds in a row). Nothing else was running: a scanner holds
-  the `index.lock` of the git that has just exited open for a moment, and
-  the next one of a run of per-file gits fails. `prepare-qemu.sh` restores
-  the patched files and stamps the three BIOS blobs in one git each now,
-  and every git there goes through its own `qgit`, which retries while the
-  index is locked and is fatal on anything else. A helper that retries
-  must pass git's **stdout** through (`2>&1 >&3` inside `{ } 3>&1`): the
-  first cut captured it, so `ls-files` returned nothing, nothing was
-  restored, and the patch queue failed on an already-patched tree.
+### The player and the QEMU thread
 
-- **A benchmark number on the Mac depends on where mmap put the code
-  buffer** (2026-09-15, doc 22 §5.0): 8 GiB from the helpers is a 35–45 %
-  slower run of helper-heavy code, near is not, and the profile looks
-  identical. Two runs of the same binary that disagree by a third are two
-  launches, not a build difference — check the JIT addresses in a `sample`
-  before believing either, and run benchmarks through `build/specbench/noaslr`
-  until the reservation patch ships.
+- **Never `exit()` while the QEMU thread is alive**: QEMU's atexit
+  handlers race `qemu_cleanup` (`mutex->initialized` on macOS). The
+  player joins the thread; headless paths use `_exit`. A guest
+  power-off ends the loop while the UI still holds the handle, hence
+  the stop / release handshake before `qemu_embed_destroy`.
+- **An occluded window gets no swapchain image**: per-frame work that
+  must not stall (importing zero-copy slots) runs on the wake event.
+- **A crackle report: ask for the lines first.** `[audio] device asks
+  for N frames`, `qemu-embed: audio:` and `[audio] the guest's mix went
+  past full scale` — a timing fault and a clipping fault sound alike
+  and read differently. The pacing design is in doc 11;
+  `tools/audio-glitch-test.py` (`STALL=`, `CDAMP=`) reproduces both.
 
-- **A Windows 98 machine that dies at boot with "Windows protection error"
-  on `d3dpt-vga` but boots on the Cirrus has a driver older than the
-  register set** (claude98, 2026-09-12: a 2026-09-08 driver, register set
-  v4, on the v5 adapter). The mini-VDD refuses the device and stays out of
-  the way, the display driver fails `Enable`, and a `SYSTEM.INI` with
-  `*DisplayFallback=0` leaves Windows no VGA to fall back to. Fix the
-  image: boot it on the Cirrus, run the ISO's `SETUP /ALL`, switch back.
-  Drivers built since then accept any register set at or above their own
-  (doc 15 "Newer register sets are accepted"; `FBVER=` in the harnesses
-  checks it), so this happens once per image, not per QEMU update. A
-  failed boot sends the next one to safe mode — a headless repro has to
-  let that safe-mode boot finish before the next one means anything.
+### Driving a guest headless
 
-- **An ISA device of ours on IRQ 9 reboots an ACPI Windows 98.** QEMU's
-  PIIX4 puts the ACPI SCI on IRQ 9 (`hw/acpi/piix4.c`), and every Win98
-  the launcher installs is an ACPI install (doc 06's BIOS-date stamp), so
-  IRQ 9 belongs to the operating system and nothing on it knows about our
-  device. A line we assert and only *the guest* can lower — an MPU-401's
-  ACK, which is cleared by reading the data port — is then an interrupt no
-  handler acknowledges: it is re-entered on every `IRET` until the ring-0
-  stack runs off its end, and #PF → #DF → **triple fault** is a machine
-  reset, which the user sees as Windows spontaneously rebooting. That was
-  the MPU-401's shipped default and Duke Nukem 3D's SETUP triggered it on
-  its General MIDI test (doc 20 §5.1, 2026-09-09). **A DOS machine cannot
-  catch this** — DOS leaves IRQ 9 masked, so the same guest program is
-  fine there and the `duke-guest` battery passed throughout. Diagnose it
-  with `logfile <path>` + `log int,cpu_reset` over HMP, armed on the
-  keystroke: the log names the vector, shows `SP=` walking down a fixed
-  stride per entry, and ends in `Triple fault`. Prefer no interrupt line
-  at all for a device whose interrupt nothing needs.
+- **Wait for the guest, never a clock.** `tools/guestwait.sh`: a line
+  our device wrote, QMP block stats going quiet, or a knock on the Run
+  dialog answered on COM1. `BOOT_WAIT` and friends are caps on giving
+  up. A screendump is never evidence of life: `vga_draw_text` draws
+  over a dead machine.
+- **A frozen first frame with a blinking caret is a guest with no timer
+  interrupt**, not a hung emulator. `info registers` twice (EIP
+  unchanged), `info pic` (an unmasked `irr` bit with `isr=00`),
+  `info lapic` (`LVT0 masked`). Win98's restart was this (patch 22).
+- **A "hung" Win98 desktop may be idle and unrepainted**: EIP moving
+  with `HLT=1` across two `info registers`; `hang.txt` from
+  `win98-game-test.sh` has it.
+- **XP's lazy writer holds small FAT writes for minutes**: a harness
+  asks COM1, not the scratch disk, whether a command finished.
+- **Four shell traps that read as the test failing.** A `pgrep -f` /
+  `pkill -f` pattern that appears in the calling command matches the
+  wrapper (and `pkill` kills the session's shell): use `patter[n]`. Find
+  QEMU with `ps -C qemu-system-i386 -o pid=`, never `pgrep -x` (`comm`
+  is truncated at 15 characters). A deep `OUT=` makes the QMP socket
+  fail with `AF_UNIX path too long` and the run does nothing. Editing a
+  bash script under a running instance breaks that instance.
+- **`grep -c` prints `0` and exits 1**, so `$(grep -c x f || echo 0)`
+  is `0\n0`.
+- **The user's images are read-only.** Boot a qcow2 overlay or a copy;
+  while an overlay runs, the backing file is write-locked. Never two
+  TCG guests at once on one box: they starve each other and a slow run
+  reads as a failure.
+- **End a Win98 run with the ACPI power button** (`system_powerdown`):
+  keystrokes die in a modal dialog, and a machine that does not power
+  off leaves the FAT dirty, so the next boot is safe mode — no driver,
+  empty logs, exactly like the thing under test failing. A failed boot
+  does the same: let the safe-mode boot finish before the next means
+  anything.
+- **Win98 runs under TCG, not KVM** (the family's default). Under
+  `-accel kvm` Explorer dies at start ("illegal operation", then
+  *SHELL32.DLL is linked to missing export
+  SHLWAPI.DLL:GetFileAttributesA*), so there is no Start menu to drive.
+- **A bare `qemu-system-i386` has no 3D and opens no window.** QEMU is
+  built with no display, host-audio or extra backends (`configure-qemu.sh`,
+  the `no-optionals` check; `--disable-dsound` needed patch 23), so
+  pass-through is refused cleanly for want of a context provider, and
+  with no `-display` QEMU starts a VNC server on `localhost:5900`: look
+  with `-display vnc=:0`, play into `-audiodev none`.
+- **A game that "freezes" is often showing a message box you cannot
+  see.** The player falls back to the VGA surface after 1 s without a
+  presented 3D frame; headless, `SHOTS=` in the game harnesses shows the
+  box and `DRW_AFTER=` the stacks (XP).
+- **A glitch shorter than a second shows only in the player's own
+  frames** (`PLAYER=1 PLAYER_SHOT_EVERY=6`): QMP screendumps come once
+  a second and a headless console refreshes only when asked. A QMP
+  screendump shows the VGA surface, frozen while 3D presents.
+- **An API's own answer is not evidence; the device's is.** `mcicda`
+  answers `status mode` from the state it commanded (Win98 said
+  "stopped" while the drive played on), and a check that greps for a
+  *line* proves nothing about the value in it. Ask the device (a trace)
+  and the output (the wav, the pixels), and assert the value.
+- **Headless changes timing, not just output.** With no device window
+  DXVK's `Present` returns at once, so a busy-poll of a query starved
+  the thread that had to answer it; `Sleep(1)` between polls, and a
+  cold pipeline cache is the load that makes such a race show.
+- **A game that runs far too fast is presenting, not timing.** Era
+  titles pace by `Flip`, so a flip that never blocks is a missing frame
+  limiter. `d3dpt-vga: N page flips in 5.0 s` is the guest's real
+  frame rate; no line means it blits to the primary. `DDFLAGS=32768`
+  turns the vertical blank off for the A/B.
+- **KVM `-cpu host` breaks Max Payne's level loading** ("Corrupt JPEG
+  data": a CPUID-dispatched decoder); `-cpu pentium3` under KVM works.
+  Prefer an era CPU model for games.
+- **An XP game "crashes at startup" with `0xc0000142`**: a DLL of ours
+  returned FALSE from `DllMain`. Either qemu-3dfx's `OPENGL32.DLL` could
+  not open `\\.\MAPMEM` (FXPTL.SYS and the MAPMEM service missing —
+  SETUP's Glide component, as Administrator; OpenGL and WineD3D need it
+  too), or a `D3DPT\` DLL found no executor (`D3DPT_STATUS_NO_EXEC`), or
+  the protocol version differs (`d3dpt.log` names both).
+- **A benchmark inside a DOS `.COM` keeps its data off the code page**,
+  or self-modifying-code invalidation dominates the number.
 
-- **An interrupt a guest cannot acknowledge does not cost you that
-  interrupt, it costs you the line.** A device that holds its line until
-  the guest clears it — the hardware behaviour of a Sound Blaster's DSP
-  interrupt, and of an MPU-401's ACK — must never assert it for something
-  the guest has no status bit to read: the line stays high, the ISA PIC
-  is edge-triggered, and every later assertion is a level 1 into an
-  already-high line that the i8259 does not see. Nothing reports it. In
-  QEMU's `sb16` a DSP *reset* fabricated one such interrupt whenever
-  auto-init DMA was running, and the guest resetting the DSP is one that
-  has finished and masked its IRQ, so the edge sat latched and unowned in
-  the master PIC (`info pic`: `pic0 irr=20 imr=b8`) and Windows' VPICD
-  never unmasked IRQ 5 again — Duke Nukem 3D's SETUP played its sound
-  test once and refused ever after (patch 25, doc 20 §5.2, 2026-09-09).
-  The tell that it is not the device's own doing: ask the card, from the
-  monitor, what it thinks is pending (`o /b 0x224 0x82`, `i /b 0x225`) —
-  0x00 while the PIC holds a pending IRQ means the interrupt was never
-  the card's. **`info irq` counts rising edges only**, which is what makes
-  a lost interrupt visible at all: a count that stops climbing while the
-  device is still raising is this bug. And the two halves of a headless
-  diagnosis are `-d trace:pic_set_irq` for the line and
-  `trace-event-set-state` over QMP for `memory_region_ops_write` — turned
-  on for the ten seconds that matter, it prints every port byte the guest
-  wrote, interleaved with the line, which is the only way to see a driver
-  and a device disagreeing.
+### Windows guests
 
-- **`scripts/build.sh` only re-overlays what its stamp lists.** The
-  `qemu-prepare` stamp hashes a fixed set of directories, and a new
-  overlay has to be added to it: `libsynth/qemu` was not, so from M12
-  landing until 2026-09-09 editing `opl3.c` or `mpu401.c` and running
-  `scripts/build.sh` printed "patch queue, overlays and submodules
-  unchanged - skipping prepare" and rebuilt the *old* devices — a fix that
-  changes nothing, with no error anywhere. If a source edit seems to have
-  no effect, check that its directory is in the `stamp_stale` list before
-  believing the code; `scripts/build.sh -f` bypasses every stamp.
+- **Win98 must be an ACPI install**, or PCI hot-adds (USB tablet,
+  AC'97, NIC) are never seen and Device Manager shows "Plug and Play
+  BIOS". Setup compares F000:FFF5 with 12/01/99; `prepare-qemu.sh`
+  stamps the firmware 12/31/99 (the `bios-date` check), so a plain
+  `SETUP` installs ACPI. An older image is repaired in Device Manager
+  (`build-macos.md`), not reinstalled.
+- **"Windows protection error" on `d3dpt-vga`, fine on the Cirrus**: a
+  display driver built before 2026-09-12 wants the register set exactly
+  and refuses a newer adapter, and `*DisplayFallback=0` leaves no VGA.
+  Boot on the Cirrus, run the ISO's `SETUP /ALL`, switch back; newer
+  drivers accept any later register set (doc 15).
+- **`ExitWindowsEx` from a console program never returns on 9x** and
+  holds the Win16Mutex, so a worker thread makes it worse. Call it from
+  a process with no console: `SETUP` re-execs itself detached as `SETUP
+  /REBOOTNOW`. `rundll32 krnl386.exe,exitkernel` restarts with a dirty
+  FAT. The proof of a restart is a second SeaBIOS banner.
+- **Never overwrite a loaded 9x driver file in place**: KERNEL reloads
+  discarded segments from the new file at the old addresses. Stage it as
+  `NAME.EX_` and rename it through `WININIT.INI` on the restart
+  (`guest-tools/README.md`).
+- **An ISA device of ours must not sit on IRQ 9.** PIIX4 puts the ACPI
+  SCI there, so a line only the guest can lower is re-entered on every
+  `IRET` until #DF and a triple fault — a spontaneous reboot. DOS masks
+  IRQ 9 and never shows it. Prefer no interrupt line where none is
+  needed (doc 20 §5.1).
 
-- **`DYLD_LIBRARY_PATH=/opt/homebrew/lib` makes every macOS image decode
-  crash, and the player's first mouse grab is one.** ImageIO does not
-  compile its codecs in; it `dlopen`s them out of its own bundle as
-  `libGIF.dylib`, `libPng.dylib`, `libTIFF.dylib` and `libJPEG.dylib` — and
-  dyld searches `DYLD_LIBRARY_PATH` **by leaf name, ahead of the path the
-  image asked for**, so on a case-insensitive filesystem that directory
-  answers all four with Homebrew's `giflib` / `libpng` / `libtiff` /
-  `jpeg-turbo`. ImageIO then calls a plugin ABI into a stranger's library:
-  the GIF reader branches through a poisoned pointer and the process takes
-  `EXC_BAD_ACCESS (SIGBUS)`, `EXC_ARM_DA_ALIGN at 0xbad4007`, with
-  `IIO_Reader_GIF::parse` the only honest frame. It bit the **player** on
-  2026-09-08: winit hides a cursor by decoding a 16x16 transparent **GIF**
-  into an `NSCursor`, so `set_cursor_visible(false)` — Ctrl+Alt+G, or the
-  pointer moving over the image — killed a player started from a shell that
-  had exported the variable for DXVK. Two fixes, both in this commit: the
-  player builds its hidden pointer from raw RGBA
-  (`App::blank_cursor`, `NSBitmapImageRep`, no ImageIO on any path), and
-  `scripts/test.sh` / `tools/tcg-profile.sh` put only the loader's own keg
-  (`/opt/homebrew/opt/vulkan-loader/lib`) on `DYLD_LIBRARY_PATH`, which
-  shadows nothing. Diagnosis is three lines: `DYLD_PRINT_LIBRARIES=1`, and
-  a Homebrew `libgif`/`libtiff` in a process that reads no images is the
-  whole story. Unsetting the variable at runtime does **not** help — dyld
-  captured it at exec.
+### Devices and corruption
 
-- **Every Windows family stops a CD with a different command, and MCI's
-  own answer is not evidence.** Measured 2026-09-07 with
-  `tools/cdaudio-guest-test.sh`: XP stops with START STOP UNIT (`1b`) and
-  brackets each play with PAUSE/SEEK/PAUSE/PLAY, while **Win9x sends one
-  PLAY AUDIO MSF and two SEEKs for a whole play/pause/stop session** —
-  on 9x a seek *is* the stop (patch 54). What made this hard to see is
-  that `mcicda` answers `status mode` from the state it *commanded*, so
-  Win98 reported "stopped" while the drive played the rest of the disc
-  out. Ask the drive (the audio status in a `CDIMAGE_TRACE=1` run) and
-  the speaker (the audiodev's wav: 61 s of audio for a 4 s play) instead.
+- **An interrupt a guest cannot acknowledge costs the line, not one
+  interrupt.** On the edge-triggered i8259 every later assertion into
+  the held line is lost, silently (doc 20 §5.2). `info irq` counts
+  rising edges, so a count that stops while the device still raises is
+  this. Diagnose with `-d trace:pic_set_irq`, `trace-event-set-state
+  memory_region_ops_write` over QMP for the ten seconds that matter, and
+  the device's own status read from the monitor (`o` / `i`).
+- **A crash that moves from victim to victim is memory corruption —
+  A/B the TCG switches before the driver.** Win98 dying in `SETUP` was
+  patch 44's `uint16_t` TLB list wrapping; one lucky control cost an
+  evening. `-accel tcg,<switch>=off` per patch, repeat every control,
+  and catch the reset with `-action reboot=shutdown,shutdown=pause -d
+  cpu_reset`, reading the blue screen out of VRAM.
+- **A QMP medium change must pass `force`.** Without it a guest that
+  locked the tray (XP, for any open handle) gets an eject *request*, the
+  command is refused, and the swap lands whenever the guest lets go.
 
-- **A QMP medium change on a running guest must pass `force`.** Both
-  `blockdev-change-medium` and `eject` default to *asking*: if the guest
-  has locked the tray — XP does for every open handle on the mounted
-  volume — QEMU sends it an eject request, refuses the command and
-  leaves the old disc in the drive. The swap then happens whenever the
-  guest next releases the lock, which reads from the outside as "Insert
-  did nothing, and then the disc appeared when I closed the program"
-  (reported 2026-09-07, `launcher-core/src/control.rs`).
-- **Nothing inside `libdisc` may assert on a value a disc can hold.** It
-  is linked into QEMU behind a C ABI whose `catch_unwind` turns a panic
-  into `LIBDISC_EIO`, so an impossible address accepted when the medium
-  was opened surfaces much later as an I/O error on an unrelated
-  command — the panic text names `msf.rs`, never the folder or image
-  that caused it. Validate in the opener (`isodir` refuses a tree bigger
-  than the 99-minute MSF range), and let the arithmetic downstream
-  saturate.
+### Where the subsystem traps live
 
-- **`ExitWindowsEx` from a console process never returns on Windows 98**,
-  and nothing at all happens — fixed 2026-09-07 (`guest-tools/src/setup.c`).
-  `SETUP /ALL` on 9x stages the display driver and then says "restarting
-  Windows", and the machine simply stayed up: no shutdown, no dialog, an
-  untouched desktop five minutes later, `ExitWindowsEx(EWX_REBOOT |
-  EWX_FORCE, 0)` still not back. Measured on 4.10.2222 under TCG. The
-  thread stuck inside the call holds the **Win16Mutex**, so the obvious
-  repair makes it worse rather than better: calling on a worker thread
-  while the main thread pumps messages loses *both* threads, and the
-  process is then deaf to USER entirely — a pump cannot rescue a lock it
-  needs itself. What the console costs is the process's own message queue
-  (a console app's window belongs to the DOS box hosting it, not to it),
-  and the fix is therefore to make the call from a process that has no
-  console: `SETUP.EXE` re-execs itself as `SETUP /REBOOTNOW` with
-  `DETACHED_PROCESS`, that copy calls `ExitWindowsEx`, and the machine
-  restarts in ~20 s — no second binary on the ISO. **The near misses, so
-  nobody spends the day again:** `rundll32 shell32.dll,SHExitWindowsEx 2`
-  launches and does nothing; `rundll32 krnl386.exe,exitkernel` *does* bring
-  Windows down, but as a forced exit that leaves the FAT dirty and the next
-  boot in ScanDisk. NT was never affected and keeps its own path, which now
-  reports a refusal instead of printing the same sentence and stopping.
-  Guard: `REBOOT=1 tools/setup-guest-test.sh <image> win98` — the proof is
-  a second SeaBIOS banner on the debugcon, never a screendump.
-
-- **A green band across the top of Windows 98's shutdown screen was the
-  linear mode going off 12 ms late** — 2026-09-14 (doc 19 §35). The
-  display driver unregistered from the VDD before writing `ENABLE = 0`,
-  and the VDD starts restoring the VGA planes (VRAM offset 0, the top of
-  the frame) inside that call; a refresh in between put them into the
-  frame the adapter holds for 250 ms after `ENABLE` goes 0. Both the
-  driver and the mini-VDD (`DISPLAY_DRIVER_DISABLING`) now turn it off
-  first. **Only the player's own frames show a glitch this short**
-  (`PLAYER=1 PLAYER_SHOT_EVERY=6`): QMP screendumps come once a second
-  and a headless console refreshes only when asked.
-
-- **A blue screen that skips the screen switch is visible on `d3dpt-vga`**
-  — 2026-09-13 (`guest-tools/src/d3dptvid/w9x/d3dptvxd.c`, doc 19 §29).
-  The patch-44 corruption below put up its exception screens from VTDAPI's
-  timer event, and none showed: the VDD drew text mode with no screen
-  switch and told the mini-VDD nothing, so the adapter kept the frozen
-  desktop over the message. The mini-VDD now answers the VMM's
-  `Begin_Message_Mode` / `End_Message_Mode` control messages, which every
-  message screen sends to every VxD: `ENABLE` off on the first, back on on
-  the second if the first turned it off. Guard: `WHEN=event
-  tools/win98-bsod-test.sh <image>` (a VxD that faults from a timer
-  callback, `bsodvxd.c -DBSOD_TIMER`); `WHEN=init`, the default, is the
-  screen-switch kind it always tested.
-
-- **Windows 98 dying a few seconds into `SETUP.EXE`'s install was QEMU
-  patch 44, not the installer and not the display driver** — fixed
-  2026-09-12 (`patches/qemu/44-tlb-retire.patch`). The user's report
-  (the machine died at the "Restart Windows now (y/N)?" prompt, the band
-  of noise at the top that is a hidden text screen) survived the staging
-  change below, and reproduced headless on a copy of their image with no
-  window and so no stray input: on a fresh boot, with SETUP's install the
-  first real work, **7 of 9 runs died** — a fatal exception 05/0E whose
-  victim changed every time (VTDAPI's timer records called into a VM
-  handle, a CD-ROM driver's data run as code), then a recursive fault and
-  a triple fault, or a plain exit to real mode. On Windows' own Cirrus
-  too, which cleared our driver; a variant with no hardware cursor and one
-  with no logging hooks in the mini-VDD died as well. **Every run with
-  `-accel tcg,tlb-retire=off` survived** (all switches off, 42–44 off,
-  44 alone off), and the flaw was in the patch's flush, not its reuse
-  check: the list of TLB slots filled since the last flush was
-  `uint16_t`, a table grows to 2^20 entries and patch 16 never shrinks
-  it, so past 65,536 entries the indexes wrapped, a CR3 write (Windows 98
-  makes 2,400 a second) cleared the wrong slots, and translations that
-  should have died stayed live — stores went to whatever page they used
-  to hit. `uint32_t` now; **after the fix, three fresh boots with every
-  switch on at its shipped setting survived** the same run, 85 % of the
-  TLB refills served from the retired tables. What made it look like the
-  installer: SETUP's console keeps Windows switching between the System
-  VM and the DOS box while it copies from the CD, which is the busiest
-  TLB churn a Win98 desktop does; a run slowed by `-d int` survived, and
-  so did any where SETUP came late in a session. Doc: the patch README
-  row; the reproduction (a pause-on-reset QEMU, `-action
-  reboot=shutdown,shutdown=pause -d cpu_reset`, the blue screen read out
-  of VRAM) is the recipe for the next corruption like it.
-
-- **`SETUP /ALL` over an installed 9x display driver must not overwrite a
-  file of it in place** — 2026-09-12 (`guest-tools/src/setup.c`,
-  `stage_set`); kept on its own merits, but **it was not what crashed the
-  user's machine** (the entry above). User report: a reinstall from the ISO on a machine running
-  our driver died at the "Restart Windows now (y/N)?" prompt, with the band
-  of coloured noise across the top of the screen that is a VGA text page
-  under a linear frame buffer — a blue screen the image's older VxD could
-  not show. The reason an overwrite is dangerous on 9x is that one that
-  *succeeds* is worse than one that fails: a 16-bit `.DRV`'s code segments
-  are discardable and KERNEL reloads a discarded one from the file on disk,
-  and a ring-3 DLL's pages are demand-paged from its file the same way, so a
-  module whose file was replaced underneath it runs the new build's bytes at
-  the old build's addresses the next time a segment comes back in. The
-  `.DRV` and the VxD happen to be held open and refused the copy (doc 19
-  §28's measurement), which sent them through the boot-time rename already;
-  the DirectDraw HAL DLL is not held, and a DirectDraw application keeps it
-  loaded. Now the 9x driver step never copies over a file that is already
-  there: every one of the seven (four in `WINDOWS\INF`, three in `SYSTEM`)
-  is staged beside its target as `NAME.EX_` and put in `WININIT.INI`'s
-  `[rename]` section, which WININIT applies before the GUI on the restart
-  the step asks for anyway — the stage name carries the extension because
-  the INF and the `.DRV` share a base name in the INF folder. A first
-  install, with nothing there to be running, still copies outright.
-  Guard: `tools/setup-guest-test.sh <image> win98` runs `/ALL` twice and
-  requires the second to stage all seven and write the renames, and
-  `REBOOT=1` runs a second batch after the restart that requires every
-  staged copy gone and `WININIT.BAK` naming them.
-
-- **A busy-wait that starves the thread it is waiting for**: `d3dfeat9`'s
-  occlusion query, fixed 2026-09-07 (`guest-tools/src/d3dfeat9.c`). The
-  native oracle started answering `S_FALSE, 0 pixels` where the guest, on
-  the same DXVK, answered 21316 — the moment the native harness stopped
-  opening an SDL window (`win32_headless.h`, `CreateWindowA` → NULL, in
-  "no user interface at all"). `D3D9SwapChainEx::Present` returns
-  `D3D_OK` immediately with no device window, so nothing paces the
-  program: it recorded 300 frames as fast as it could while DXVK's CS
-  thread stayed behind, and at the poll `D3D9Query::m_resetCtr` was **299**
-  — 299 of its own queued `End`s not yet executed, and `GetQueryData`
-  returns S_FALSE for every one of them. The 100 000-iteration
-  `GetData(D3DGETDATA_FLUSH)` loop then made it worse rather than better:
-  a tight spin on a busy machine starves the very thread that has to run
-  those `End`s (it drained 37 of the 299 in 48 ms), and only the *first*
-  poll flushes anything — after that `considerFlush` sees no new chunk and
-  declines. `Sleep(1)` between polls fixes it outright: the backlog drains
-  in a few ms and the query resolves, cold pipeline cache or not, idle or
-  under 24 busy loops. The trigger that makes it deterministic is a **cold
-  DXVK pipeline cache** (`rm ~/.cache/dxvk/*.dxvk.bin`): 16 compiler
-  threads are exactly the load that starves the CS thread, which is why it
-  reproduced right after a DXVK rebuild and nowhere else. The executor was
-  never affected — it reads the backbuffer back every frame, and that
-  readback is the pacing the oracle has none of. Two lessons: a check that
-  only greps for a *line* proves nothing about the value in it
-  (`d3dfeat9-nat` passed throughout — only the guest-vs-native log diff
-  caught this, and the host check now requires `0x00000000` with a
-  non-zero count), and "headless" changes an API's timing, not just its
-  output.
-
-- **`macdeployqt` deploys by the directory, and Homebrew's Qt is one
-  shared directory** (fixed 2026-09-07, `scripts/package-macos.sh`). It
-  copies plugin *categories* and QML module *trees* whole, and every
-  installed `qt*` formula symlinks its own into one prefix, so the macOS
-  bundle for a launcher that imports `QtQuick`, Controls, Dialogs and
-  Layouts came out carrying `QtQuick.VirtualKeyboard`, `Scene2D`/`3D`,
-  `Pdf`, `Timeline` and `QtQml.StateMachine`, whose frameworks are in
-  formulae we do not have — the 34 `ERROR: Cannot resolve rpath
-  "@rpath/QtVirtualKeyboard.framework/…"` pairs it prints and continues
-  past. The staging now prunes what can never load (19 plugins and their
-  modules, 6 MB) and folds those pairs into one line. Two things that
-  cost the afternoon: a QML module's plugin under `Resources/qml` is a
-  **symlink** into `PlugIns`, not a copy, so "PlugIns/quick is a
-  duplicate, drop it" dangles all 58 and the launcher opens nothing; and
-  the same tool leaves what it *does* keep half-wired, because Homebrew's
-  libraries now reference `@rpath/…` where they used to name an absolute
-  path and there is then nothing for it to rewrite — `libqsvg`,
-  `libqsvgicon` and the multimedia plugin had only Homebrew's
-  `@loader_path/../../../../lib` (the *build directory* from
-  `Contents/PlugIns/…`) and resolved nowhere with `QtSvg.framework`
-  beside them, and `libbrotlicommon` kept its Homebrew install name. Both
-  are guarded by a new check: **no Mach-O may name an `@rpath` dependency
-  the bundle cannot resolve**, expanded as dyld expands it — the file's
-  own rpaths plus the loading executables', because dyld searches the
-  whole chain and a stricter rule fails plugins that work.
-
-- **A CD audio track that played on after the Stop button: a guest's stop
-  is `START STOP UNIT`, not `STOP PLAY/SCAN`** (fixed 2026-09-07, patch
-  51). XP's `mcicda` answers MCI's `stop` with `IOCTL_CDROM_STOP_AUDIO`,
-  and what comes out of cdrom.sys on the wire is `1b 00 00 00 00` — a
-  START STOP UNIT with start = 0 — never the 0x4e our drive was listening
-  to, which nothing in the whole trace of a play/pause/resume/stop session
-  ever sends (a `CDIMAGE_TRACE=1` run is what settled it; upstream's
-  `cmd_start_stop_unit` only ever looked at the eject bit). MMC-5 6.36
-  says a stop ends any play in progress, so both commands now end it.
-  The evidence had been sitting in `build/test/cdimage-xp/cdtest.log`
-  since the check was written — `mci "stop cd"` followed by `status cd
-  mode` → `"playing"` — because the XP check only required the tone in the
-  wav and read the mode line for the record; it now fails on it, and
-  `tools/atapi-guest-test.py` sends both stops.
-
-- **A guest test's boot wait was a sleep sized for the slowest machine
-  anyone had run it on** (fixed 2026-09-07, `tools/guestwait.sh`). Every
-  guest tool opened with `sleep $BOOT_WAIT` — 45 to 180 seconds, and 180
-  twice over in `setup-guest-test.sh`, which slept out a warm-up boot and
-  then the real one. Measured on the Air under TCG, fresh overlays: XP's
-  Run dialog took its first command at **~26 s** and Win98's at **~23 s**;
-  the adapter says `d3dpt-vga: linear mode on` **9 s** into an XP boot, and
-  the disks go quiet at **~33 s**. So the sleeps were wrong in both
-  directions — 15 to 20 minutes of padding across one pass of the guest
-  tools, more on the rig where KVM boots these in a fraction of the time
-  and the sleeps never changed, and still too short on a host that is busy
-  that day, which is exactly when a test should keep working. They are all
-  gone: `tools/guestwait.sh` waits for something the guest actually did and
-  the old `BOOT_WAIT` is only the cap on giving up. Its three signals, in
-  order of what they prove, are `gw_wait_log` / `gw_wait_count` (a line our
-  own device wrote — the mode switch, and *two* of them is the only honest
-  proof a machine restarted), `gw_wait_quiet` (QMP `query-blockstats`: the
-  disks stopped, for the cirrus machines with no serial line, and for a
-  warm-up boot whose whole point is that its shell may be dead), and
-  `gw_poke_until` — knock on the Run dialog until the guest runs something
-  and says so on COM1, which is the only one that proves a shell is there.
-  End to end on the Air, that is 36-46 s for XP and ~118 s for Win98 (whose
-  guest is ready at ~23 s: QMP is starved of the lock while the vCPU
-  translates a boot, so the knocking is slower than the guest) — against
-  sleeps of 45 and 180, and of a machine that actually answered.
-  **Not a screendump**, ever: `vga_draw_text` keeps drawing over a dead
-  machine (doc 19 §15). The knocking is the retry loop half these tools
-  already had, started at second zero instead of after a sleep long enough
-  to make the first try succeed. Two things that came out of the same work:
-  `xp-driver-test.sh` machines now have a serial line, because every
-  command it types ends by echoing a marker to COM1 — the scratch disk
-  cannot be asked anything while the guest runs, XP's lazy writer holds
-  small FAT writes for minutes — and `grep -c` prints `0` *and* exits 1, so
-  `$(grep -c x f || echo 0)` is the two-line string `0\n0` and every
-  arithmetic use of it is broken.
-
-- **`launcher-qt`'s Play button did nothing because the Qt build has no
-  player beside it** (fixed 2026-09-07). `player::player_binary()`'s
-  checkout answer was "the launcher's own directory", which was right for
-  the egui launcher of the day — both were workspace binaries in one
-  `target/<profile>` — and wrong for `launcher-qt`, which is deliberately
-  *not* in the root workspace (so `cargo build` never needs Qt 6) and so
-  builds into `launcher-qt/target/<profile>/`, where no player has ever
-  been. The spawn failed with ENOENT, `MachineModel::play` put the
-  message in `machines.status`, and that label is 320px wide and elides
-  from the right: the head of the message is the bundle's path, so the
-  window looked exactly like a button that isn't wired to anything. Two
-  fixes: `player_binary()` now falls back to the workspace's own
-  `target/<profile>/player` at the *same* profile when nothing is beside
-  the executable, and the status label got a tooltip carrying the whole
-  sentence. `launcher-qt --paths` is the one-line check — it prints the
-  player path the launcher will use.
-
-- **Esc in a Qt window's "Browse…" dialog closed the window too**
-  (user-reported on the disc shelf, fixed 2026-09-12). Every secondary
-  window binds Esc to `close()` with a `Shortcut` parented by the
-  `Window` itself, and that shortcut fires while the window's own file
-  dialog is up: on macOS the dialog is a sheet on that window and AppKit
-  offers a key to the window under a sheet as a key equivalent *before*
-  the sheet sees it, and Qt Quick blocks a shortcut behind a modal popup
-  only when it sits under an *item* (the non-native dialog's case). So
-  `PathField` publishes `browsing` (its dialog is visible) and the disc
-  shelf, the wizard and the shader editor disable their Esc shortcut
-  while any of their `PathField`s — or their `FolderDialog` — is open. A
-  new dialog in one of those windows has to join that `enabled:` line.
-
-- **`scripts/test.sh host` froze a 16 GB Mac** (user-reported, fixed
-  2026-09-13). Not the suite: `d3dfeat9-native` alone, whose loader thread
-  (`d9fe204`) made and released resources in a loop that never waited.
-  DXVK frees a released resource only once the frames that could have used
-  it are done, and at the dump frame the main thread stops presenting for
-  up to half a second of occlusion-query polling — the loader outran the
-  frees and the run hit a 17.8 GB footprint in five seconds (1.4 GB of it
-  resident: the rest is GPU memory, which on Apple Silicon is the same
-  RAM), then swapped for seven minutes at 0.7 fps. The loader is paced to
-  two rounds a frame now (doc 14). Measuring a DXVK program's memory on a
-  Mac: `/usr/bin/time -l`'s *peak memory footprint*, not RSS — and SIP
-  strips `DYLD_*` at every system binary, so put `env DYLD_LIBRARY_PATH=…`
-  last in the wrapper chain or DXVK finds no Vulkan loader and crashes.
-
-- **Esc did nothing in the shader editor opened by New profile…**
-  (user-reported, fixed 2026-09-13). Not focus: the editor had the
-  keyboard and its Esc was armed. Quick Controls installs its own
-  shortcut matcher, and it matches a `Qt.WindowShortcut` when the
-  shortcut's window `isActive()` — which a *transient* window reports
-  whenever its parent is, and every secondary window here is transient
-  for the launcher window. So with the editor open over the profile list,
-  both windows' Esc shortcuts matched; Qt calls two matches for one key
-  ambiguous and fires neither (`activatedAmbiguously`). Every other window
-  opens from the grid, which has no Esc of its own, so it was the only one
-  broken. The list's Esc now stands down while the editor is open, which
-  also stops an Esc meant for an editor file dialog (the editor's own Esc
-  disarmed) from closing the list behind it. **The rule: at most one
-  visible window may have an armed Esc** — a window opened over another
-  must disarm the one under it. The `escfocus` probe counts the matches
-  the way the matcher does and the `qt-esc` check wants exactly one;
-  `src/focus_window.cpp` is how the probe names the focus window, which
-  QML's `Window.active` cannot.
-
-- **Never replace a Quick Controls control's `background` (or
-  `contentItem`) in `launcher-qt`** (fixed 2026-09-13). `appearance.cpp`
-  keeps whatever style the platform names, and on macOS and Windows that is
-  the *native* style, which refuses the customization and prints "The
-  current style does not support customization of this control" for every
-  instance on every start. The four list boxes (machines, snapshots, disc
-  shelf, shader profiles) were `Frame`s with a `Rectangle` background and
-  are now the `Rectangle` itself, content inset a pixel. That exposed a
-  layout trap the `Frame` had been hiding: a nested `RowLayout` /
-  `ColumnLayout` has `Layout.fillHeight: true` by default, and one whose
-  children are all hidden has no maximum, so it shares the spare height
-  with the list box — evenly, when neither has an implicit height of its
-  own (measured: 212 px each; the `Frame` reported an implicit height,
-  which is likely why it never showed). The snapshots window's
-  status row did exactly that and the list stopped halfway down until a
-  status line capped the row (user-reported, fixed 2026-09-13,
-  `qt-snapshots`). **A row that can be empty beside a list box says
-  `Layout.fillHeight: false`.** A control drawn
-  by hand from `AbstractButton` (`Disclosure.qml`) is fine: it has no
-  native look to refuse with. Fonts the same way: name a family the
-  platform has (`WizardWindow.qml`'s TOML box picks Menlo / Consolas /
-  `monospace`), because a missing one costs a font-alias scan and a
-  `qt.qpa.fonts` warning.
-
-- **A curved preset that smears its edge pixels outwards is a device
-  feature we forgot to ask for, not the preset.** A slang preset's
-  default wrap mode is `clamp_to_border` with a transparent-black border
-  (RetroArch's own default), and librashader's wgpu runtime *silently*
-  substitutes `clamp_to_edge` when the device was opened without
-  `ADDRESS_MODE_CLAMP_TO_BORDER` — `samplers.rs`: "if the device doesn't
-  have clamp to border support, approximate it with clamp to edge". The
-  picture that comes out has the outermost row and column of the guest's
-  frame repeated forever over everything the curvature maps outside the
-  tube. `shader_chain::required_features(adapter)` is the one place that
-  says so, and the player and the launcher preview's headless device
-  both open with it (2026-09-06; so did the egui launcher's device while
-  it existed). The player prints
-  `[shader] clamp-to-border sampling: on|off` once at startup and names
-  which of the two reasons an "off" is, and the `mode-sweep` check fails
-  on the reason that is ours. A preset that draws its own black border
-  (crt-geom, the gizmo curvators) looked right either way, which is why
-  this survived so long.
-
-- **Win98 wants TCG, not KVM.** Booted with `-accel kvm -cpu pentium3`,
-  `~/vms/win98.qcow2` comes up with Explorer dead: first "this program has
-  performed an illegal operation", then, on every restart of the shell,
-  *"The SHELL32.DLL file is linked to missing export
-  SHLWAPI.DLL:GetFileAttributesA"*. No taskbar means no Start menu, which
-  means no Run dialog and no way to type into the guest at all. The same
-  overlay under TCG boots to a working desktop and runs the whole
-  `tools/setup-guest-test.sh win98` session (2026-09-06). It matches the
-  launcher's own per-family default (Win98 emulated, XP automatic), so
-  treat KVM + Win98 as unsupported rather than as something to debug.
-
-- **A game that runs far too fast is usually presenting, not timing.** A
-  title of the era paces itself by its flip chain, so a `Flip` that never
-  blocks is a missing frame limiter, not a clock bug (Moto Racer, 2026-09-05).
-  The QEMU log's `d3dpt-vga: N page flips in 5.0 s` line is the guest's real
-  frame rate; no line at all means the game blits to the primary instead of
-  flipping, which nothing in the display path can pace — that one is the
-  guest CPU. `DDFLAGS=32768` turns the vertical blank off for the A/B.
-- **A DirectX 6 title's flip chain reaches the display driver as its
-  primary alone** — `CreateSurfaceEx` for the root only; the back buffer
-  comes from the attach list (GTA 2, 2026-09-05: `render target handle 2
-  unknown`, half the frames showing the undrawn buffer). Its
-  `TEXTUREMAPBLEND` reaches a DX7 driver untranslated, chosen before any
-  texture is bound, so the executor re-maps it per texture — until the app
-  sets that *op* itself, and only that: its ARGs are not its ops (Crimson
-  Skies, 2026-09-09: `COLORARG2` after the blend ended the re-mapping and
-  the menu drew white silhouettes; doc 19 §28). And the
-  driver's Direct3D state must not live in the PDEV: a game's mode switch
-  back at exit replaces the PDEV before dxg's `ContextDestroyAll`, so a
-  context table there leaked every context on the host and the *next* run
-  of the game got `E_FAIL` from `CreateDevice` (doc 15 "A DirectX 6
-  title's flip chain").
-- Host toolchains: pinned 9.2.x needs `--disable-werror` (+ native-file
-  strip), `-fPIC` + `b_staticpic` for the shared lib, uv-managed Python 3.12
-  (3.14 breaks mkvenv), `MACOSX_DEPLOYMENT_TARGET` = running OS.
-- macOS link: `qemu_default_main` must exist — `embed/libqemu_embed.c`
-  defines it, since `system/main.c` is not in the shared library (cocoa.m
-  used to be the other caller; cocoa is disabled now). Plugin export list
-  hides symbols → our ld64 list; no XQuartz since patch 70 (2026-09-17: the
-  qemu-3dfx meson overlay hardcoded its link flags for a GLX backend nothing
-  called). Nothing optional is: no
-  display, no host audio, no extra network or block backend, guarded by
-  the `no-optionals` check.
-- Guest audio that gets laggier the longer XP runs, worse under load, was the
-  embed audiodev pacing (2026-09-04, `embed/embedaudio.c` header): the mixer
-  wrote at most one 10 ms tick per tick and never caught up after a stall, so
-  every late main-loop tick under TCG stayed queued in the guest's DMA
-  buffers. The cushion + wall-clock drop design replaced it.
-- **Sound that crackles, worse the bigger the host device's period**, was the
-  same pacing's next form (2026-09-10): topping the ring up to its target
-  every tick pulled a DMA card's guest ahead of wall time by up to a whole
-  device period at once — QEMU's sb16 and AC97 move the guest's play cursor
-  exactly as far as the mixer drains them, so the card played what the
-  driver had not written yet — and the surplus that followed was trimmed by
-  dropping whole ticks. The guest is now drained at its own clock's pace
-  with a small rate correction on the ring's *minimum*, and the player waits
-  for a device period plus the cushion before it plays (`embed/embedaudio.c`
-  header). `tools/audio-glitch-test.py` counts the clicks in a pure tone
-  through the player's simulated DAC, and the guest counts its own stale
-  reads: 12 and 922 clicks in 20 s at 2048 and 4096 frames before, none
-  after, 1024 through 4096. **Then Carmageddon crackled in races only**
-  (2026-09-11; menus fine): a 3D frame holds QEMU's main loop — Glide runs
-  under the big lock and OpenGLide's swap ends in `glFinish` — and the
-  audio tick with it. `STALL=` in the tool reproduces that with a QMP
-  `pmemsave` every 33 ms. Handing a stall's backlog out in one tick moved
-  the SB16's cursor ~25 ms past what the guest (held up as well) had
-  written (47 clicks at 10-14 ms stalls), and forgetting long stalls
-  drained the ring (223 at 18-22 ms). Now a backlog of up to 100 ms is
-  paid back over the ticks that follow, a device delivering at most three
-  ticks between two, and the player runs the audiodev at
-  `timer-period=5000` so more ticks fit between stalls: 0 and 1 clicks.
-  Note that `tick()` runs on every `AUD_write`, not once per mixer tick —
-  a DMA card writes from i8257's idle bottom half between ticks — so the
-  bound is on what a device may deliver, not on what is owed (a cap on the
-  owed total cut into the SB16's audio every tick). **And it still crackled,
-  because it was clipping** (2026-09-11, the same races, with the game's
-  CD audio playing): QEMU's mixer adds every voice at full scale — its
-  `sb16` stores the mixer's volume registers and applies none (Windows'
-  Volume Control sliders reach nothing), the CD drive plays at mode page
-  0x0E's full 0xff — and its s16 conversion saturates the sum. Effects over
-  CD music went past full scale on every peak. The embed audiodev now runs
-  `out.format=f32` (QEMU's float conversion does not saturate) and the
-  player's consumer has a look-ahead limiter (2 ms, player/src/audio.rs):
-  a loud `cd+sb16` (`CDAMP=16000`) was 200 000 clipped samples per 5 s,
-  and is now held at −2.4 dB with a clean tone; nothing under full scale
-  is touched. **And the SB16 applies its mixer volumes now** (patch 61,
-  same day): master × voice on its own voice, master × FM on the OPL3,
-  master × CD (and the 0x3C output switches) on the CD drive's audio, the
-  SB Pro registers mirrored onto the SB16 ones — so Windows' Volume
-  Control sliders work and the mix has the headroom the real card left;
-  the limiter stays for a guest whose sliders are all at the top. The
-  FM chip and the CD drive reach the card through a small registry in the
-  audio core (`audio_mixin_*`). The reset values are 0 dB with the CD on,
-  deliberately not a cold CT1745's −14 dB and muted CD, which would
-  silence CD music in every DOS game that never programs the mixer;
-  Windows' driver writes its own at boot. Guarded by the `sb-mixer`
-  check (FM, master and SB Pro FM at −12 dB, in QEMU's own wav) and
-  `CDVOL=` in `tools/audio-glitch-test.py cd`. Given a crackle report,
-  ask for the `[audio] device asks for N frames`, `qemu-embed: audio:` and
-  `[audio] the guest's mix went past full scale` lines first — a timing
-  fault and a level fault sound alike and read differently.
-- **A file dialog's extension filter is case-sensitive on Linux** — the XDG
-  portal, GTK and Qt's own dialog alike — so the disc shelf's "Browse…"
-  hid `GAME.CUE` behind a `*.cue` filter (user-reported 2026-09-11).
-  `launcher_core::browse::extensions` now hands the dialog
-  each extension in both cases (not a `[cC]` class: Windows and macOS
-  dialogs take none); `PathField.qml` hides the doubled list with
-  `HideNameFilterDetails`. The `qtshelf` check asks the real dialog object
-  for `*.CUE`. A mixed-case `.Cue` is still missed; "All files" finds it.
-- **No file dialog remembers where it was for us.** Qt's `FileDialog`
-  handed an empty `currentFolder` opens in the working directory, so
-  every empty field's "Browse…" — a new machine's, and the disc shelf's
-  adder, which empties itself after every disc — started over there
-  (user-reported 2026-09-12). `launcher_core::browse::remember` now keeps
-  the directory of every pick in `<data dir>/last-browse.txt`
-  (`LAUNCHER_BROWSE_MEMORY` overrides it) and `browse_start` falls back
-  to it, for both dialog kinds; Qt reaches it through a
-  `Browse` QObject (`launcher-qt/src/qt/browse.rs`), which also turns
-  paths into URLs with `QUrl` instead of QML's `"file://" + path`. The
-  `qtshelf` check requires the next empty field to open where its disc
-  was picked.
-- **A dialog's URL is not a path with `file://` in front.** QML turned
-  `selectedFile` into a path by stripping `file://` off `toString()`,
-  which keeps `[` and `]` percent-encoded: a disc named "Game [1996]"
-  went on the shelf as `Game %5B1996%5D.iso`, and a machine booting it
-  would not start (user-reported 2026-09-12). The core and QEMU were
-  never the problem — the same name goes through `--discs add`,
-  `--boot-disc` and our QEMU's `info block` intact. Every Qt dialog now
-  converts through `QUrl::toLocalFile` (`Browse.localPath`), the probe
-  takes the dialog's own road (`PathField.acceptUrl` with
-  `Browse.fileUrl`), and the `qtshelf` check picks `Game [1996].iso`.
-  A disc already shelved with `%5B` in its path has to be removed and
-  added again.
-- **A QML grid column needs its width pinned, not preferred.** The Qt
-  machine grid's buttons sat at a different x in every row (user-reported
-  2026-09-12): `Layout.preferredWidth` alone lets a `RowLayout` shrink or
-  grow a column by its text, and the Location path's `fillWidth` took
-  whatever was left. The Location column is gone (a bundle's path is
-  the Edit window's business), Name/Family/Shader are pinned with
-  minimum = preferred = maximum, and the buttons fill an unlabelled last
-  column.
-- `build-wrappers.sh` is `set -e` and writes the ISO last: a failing stage
-  leaves the previous ISO in place, so an ISO older than the sources means a
-  stage died, not that the change is missing. Homebrew's mingw is a symlink
-  in `/opt/homebrew/bin`, so `build-driver.sh` finds the DDK headers through
-  `-print-sysroot` (2026-09-04: the Air's ISO had been missing `DRIVER\` and
-  the `D3DPT\DDRAW.DLL` / `DINPUT.DLL` shims for that reason).
-- Guest wrappers: modern mingw-w64 links the UCRT (Win9x has none) and
-  qemu-3dfx compiles `-march=x86-64-v2`; the script forces msvcrt +
-  pentium3 and refuses anything else.
-- Win98 must be an ACPI install or PCI hot-adds are never detected (no USB
-  tablet, AC'97 or NIC; "Plug and Play BIOS" with a yellow ! in Device
-  Manager). Setup decides from the legacy BIOS date at F000:FFF5 against
-  the `ACPICheckDate` in its own machine.inf, **12/01/99**; SeaBIOS ships
-  06/23/99 and QEMU is on none of `BIOSINFO.INF`'s four `[GoodACPIBios]`
-  machines, so a plain `SETUP` installed PnP-BIOS. Since 2026-09-06
-  `prepare-qemu.sh` stamps every `pc-bios/bios*.bin` to **12/31/99** (doc
-  06 has the whole decision; the `bios-date` check guards it), and
-  **a plain `SETUP` now installs ACPI — user-confirmed 2026-09-07**. An
-  image installed before that is still PnP-BIOS: repair it through Device
-  Manager (PnP-BIOS→PCI Bus, build-macos.md), don't reinstall.
-- Never `exit()` the process while the QEMU thread is alive: QEMU registers
-  atexit handlers (`audio_cleanup`, exit notifiers) that then race
-  `qemu_cleanup` → `assertion failed: mutex->initialized` on macOS. The
-  player joins the QEMU thread after the event loop; headless dump paths use
-  `_exit`. The other direction too: a guest power-off returns from
-  `qemu_main_loop` while the UI thread still holds the handle — the QEMU
-  thread flags `stopped`, wakes the loop, and waits for `release()` before
-  `qemu_embed_destroy` (which frees the input mutex → same assert).
+- The WGL rule (a `wgl*ARB` call with no context faults): doc 12.
+- The Win98 display driver: the text page behind the linear frame
+  buffer (doc 19 §15), `pnpdrvr.drv` and the INF's `DelReg` (§16),
+  `__loadds` and 32-bit register access (§14, §18), the DOS box's
+  repaint (§29), Mode X for 320×200 (§30).
+- The XP driver's dxg rules, the DirectX 6 flip chain, untracked GDI
+  writes: doc 15.
+- The CD drive: how each Windows stops a CD (doc 17 §5.4); `libdisc`
+  never asserts on a disc's values (doc 17).
+- Qt front end traps (bindings, dialogs, Esc, native styles): doc 07.
+- x87 precision modes and the batteries: doc 13; SSE: doc 16.
+- A slang preset smearing its edges (`clamp_to_border`): doc 03.
+- `macdeployqt` and the macOS bundle: `build-macos.md` "The app".

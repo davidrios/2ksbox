@@ -1,699 +1,233 @@
 # Track: M7 — the XP display driver (doc 15, ADR-008)
 
-The handoff for a session that works on the real XP display driver: the
-`d3dpt-vga` adapter in QEMU, the miniport / display driver pair, its ISO
-folder and its tests. Read `docs/00-status.md` first for the global
-picture and the track rules, then this file, then doc 15.
+The track that gave XP a real display driver for our `d3dpt-vga`
+adapter: the QEMU device, the miniport / display DLL pair, their
+DirectDraw and Direct3D DDIs, the executor's half that runs the
+driver's records, and the tests. The design is doc 15; the Win98
+driver that shares its core is doc 19 and the M10 track; the protocol
+and the executor are doc 14. Read `docs/00-status.md` first for the
+global picture and the track rules.
 
-## Scope and files (this track owns them)
+## State
+
+M7 is **done** (roadmap `docs/08`), and the driver keeps evolving: each
+new DirectX 8 feature is a protocol bump made here. Today:
+
+- **M7a** — the framebuffer driver: the host's mode table in Display
+  Properties, the desktop straight from VRAM, unattended install
+  (`DRIVER\DRVINST.EXE`), 8 bpp palettized modes, the hardware cursor,
+  gamma ramps. Register set **v5** (`D3DPT_FB_VERSION`); a driver accepts
+  any adapter at or above its own version since 2026-09-12.
+- **M7b** — DirectDraw: VRAM surfaces, page flips paced by a vertical
+  blank, colour keys.
+- **M7c** — Direct3D from DirectX 3 execute buffers through the DirectX 8
+  DDI: hardware T&L, vs/ps 1.x, palettized and compressed textures,
+  video-memory vertex / index buffers, sixteen streams, cube and volume
+  textures, anisotropic filtering, full-screen multisampling. Protocol
+  **v13** (`D3DPT_PROTO_VERSION`).
+- Real titles on it: FIFA 2000, Max Payne, Diablo, Moto Racer 1997,
+  GTA 2, GTA Vice City (played by hand by the user); the user's daily
+  XP runs on it with no custom DLL anywhere. The keyboard shim
+  `D3DPT\DINPUT.DLL` is TCG-only medicine for FIFA 2000, per game by
+  decision (doc 15 "FIFA 2000 on the HAL").
+- The same `core/` runs Win98's driver (M10), and on a host below the
+  Vulkan floor the executor runs under Wine (M15, `EXEC=wine`) or on
+  Windows' own d3d9 (`d3d9=system`); with `no-exec=on` the driver keeps
+  DirectDraw and offers no Direct3D (doc 15).
+
+## Scope and files
+
+Owned by this track:
 
 - QEMU device: `d3dpt/hw/d3dpt_vga.c`, register set `d3dpt/d3dpt_fb.h`
-  (bump `D3DPT_FB_VERSION` on any change, and only ever by adding
-  registers: since 2026-09-12 the drivers accept any version at or above
-  their own, doc 15 "Newer register sets are accepted"),
-  the shared executor loader `d3dpt/hw/d3dpt_exec_load.[ch]`.
-- Guest driver: `guest-tools/src/d3dptvid/` — since the M10 split
-  (2026-09-07, doc 19 §19) the NT half is `nt/` (miniport `nt/d3dptvid.c`,
-  display driver `nt/d3dptdisp.c`, its INF and .def) over the
-  OS-independent `core/`, which is where the DP2 walker, the surface
-  table, the caps and the flip chain now live; also `kcrt.c`, `drvinst.c`, `setmode.c`, `ddtest.c`,
-  `d3d7test.c`, `ditest.c`, `dxttest.c`, `shtest.c`, `cktest.c`, `ebtest.c`, vendored DDK headers `ddk/` incl. the self-contained
-  `d3dnthal.h`), `guest-tools/build-driver.sh` (also run by
-  `build-wrappers.sh`, stages `DRIVER\` on the ISO).
-- Executor, M7c's half: `d3dpt/exec/d3dpt_exec_ddi.cpp` (the display
-  driver's records: VRAM surfaces, contexts, the DP2 interpreter,
-  readback) and `d3dpt/exec/d3dpt_exec_int.h` (state shared with the d3d9
-  half); `tools/d3dpt-dp2-test.cpp`.
-- Tests: `tools/xp-driver-test.sh`, `tools/xp-fifa-match.sh` + `tools/xp-fifa2000.bat`,
-  `tools/xp-diablo.sh`, `tools/xp-motoracer.sh`, `tools/qmpc.py` key map additions.
-- Docs: `docs/15-guest-display-driver.md`, this file, the M7 row of the
-  state table and the M7 line of "Next steps" in `docs/00-status.md`.
-- Shared with the M4 track (rebase first, edit minimally, say so in the
-  commit): `d3dpt/d3dpt_proto.h` (the M7c records live in it; bump the
-  version), `d3dpt/exec/d3dpt_exec.cpp` + `d3dpt_exec.h`, `d3dpt/hw/d3dpt_mm.c`,
-  `scripts/test.sh` (the `d3dpt-dp2` host check is M7's; a driver guest
-  stage is still to be added), `player/`, `CLAUDE.md`.
+  (a bump only ever **adds** registers; a change that reinterprets one
+  is a new `D3DPT_FB_MAGIC` — doc 15 "Newer register sets are
+  accepted"), the executor loader `d3dpt/hw/d3dpt_exec_load.[ch]`.
+- Guest driver, `guest-tools/src/d3dptvid/`: the NT layer `nt/`
+  (miniport `d3dptvid.c`, display DLL `d3dptdisp.c`, INF, `.def`) over
+  the OS-independent `core/` (DP2 walker, surface table, caps, flip
+  chain; shared with M10, doc 19 §19), `kcrt.c`, `drvinst.c`,
+  `setmode.c`, the vendored `ddk/`, and the test programs beside them
+  (`ddtest`, `d3d7test`, `ditest`, `dxttest`, `shtest`, `cktest`,
+  `ebtest`, `gammatest`, `zfilltest`, and the DX8 probes over
+  `d3d8probe.h`). Built by `guest-tools/build-driver.sh`, which
+  `build-wrappers.sh` runs to stage `DRIVER\` on the ISO.
+- Executor, the driver's half: `d3dpt/exec/d3dpt_exec_ddi.cpp` (VRAM
+  surfaces, contexts, the DP2 interpreter, readback) and
+  `d3dpt_exec_int.h`; `tools/d3dpt-dp2-test.cpp`.
+- Tests: `tools/xp-driver-test.sh`, `tools/xp-fifa-match.sh` +
+  `xp-fifa2000.bat`, `xp-diablo.sh`, `xp-motoracer.sh` +
+  `motoracer-state.py`, `xp-maxpayne.bat`, `xp-vicecity.sh`.
 
-## State (2026-09-04)
+Shared (rebase first, edit minimally, name the other track in the
+commit): `d3dpt/d3dpt_proto.h`, `d3dpt/exec/d3dpt_exec.cpp` /
+`d3dpt_exec.h` and `d3dpt/hw/d3dpt_mm.c` (M4), `core/` (M10), the
+remote executor files (M15), `scripts/test.sh`, `player/`.
 
-- **M7a done:** `-vga none -device d3dpt-vga` (+ `-accel kvm -cpu host` on
-  Linux), the host's mode table (42 modes) in Display Properties, desktop
-  straight from VRAM with no copy inside QEMU, no flash on mode switches,
-  unattended install (`DRIVER\DRVINST.EXE -reboot`), clean restart /
-  power-down paths.
-- **M7b first cut done:** DirectDraw HAL accepted by XP's dxg, surfaces in
-  VRAM, real page flips (OFFSET register), cached VRAM mappings; DDTEST:
-  640×480×16 exclusive chain 4762 fps, ×32 6383 fps, windowed HEL blit
-  305 fps (doc 15 has the table and the bisection findings).
-- **M7c first cut done (2026-09-04, branch `track/m7-d3d-ddi`):** the
-  DX7 non-T&L HAL. VRAM 128 MiB with the top 64 MiB as the command window
-  (register set v2: CMD_OFFSET, DOORBELL, D3D_STATUS), the executor shared
-  with the SysBus device, surfaces mirrored from VRAM by handle, contexts,
-  the DP2 token interpreter on DXVK, readback into VRAM at EndScene / Lock
-  / Flip. `D3D7TEST` on XP (KVM): HAL device enumerated, Z buffer, texture,
-  the reference scene at 640×480×32 renders at 2400 fps and its
-  frame is byte-identical to the host-side
-  `d3dpt-dp2-test` frame of the same DP2 tokens.
-- **FIFA 2000 renders on the HAL (2026-09-04, headless):** the game's
-  DX6 Thrash renderer (`THRASH\dx6z.dll`) unmodified, with the WineD3D
-  DLLs renamed out of its folder: intro at 640×480×16, title screen,
-  attract-mode match at 800×600×16 with textures, kits, crowd, HUD
-  (doc 15 "FIFA 2000 on the HAL"; screendumps in
-  `build/xp-driver-test/fifa/`). No unsupported token, no refused record,
-  no colour keying requested; the match blits instead of flipping. The
-  image is `~/vms/winxp-m7f.qcow2` (a copy of the user's `winxp-m7` with
-  the M7c driver reinstalled and the DLLs renamed).
-- **Played by hand (user, 2026-09-04): graphics clean, smooth; the
-  keyboard dead in the match under TCG.** Root cause and fix in doc 15
-  ("FIFA 2000 on the HAL"): the game's non-exclusive DirectInput keyboard
-  never updates in the match because its thread stops pumping messages;
-  `D3DPT\DINPUT.DLL` next to the EXE merges `GetAsyncKeyState` into the
-  state and logs the game's DirectInput use. **Confirmed by the user 2026-09-05 by A/B on a
-  Linux TCG run: keys with the DLL in place, dead keyboard again with it
-  moved away.** Decided with it (doc 15): the merge stays a per-game,
-  side-by-side DLL — not `system32`, not `AppInit_DLLs` — and the launcher
-  (M6) gets the job of staging it; the shim is now silent by default, with
-  the log and the sampler thread behind `D3DPT_DINPUT_LOG=1`. Tools that came out of it:
-  `DRIVER\DITEST.EXE`, the `qemu-embed: input:` statistics in the embed
-  library, `PLAYER_KEYS_HOLD`, the executor's `frames/s` line,
-  `xp-driver-test.sh`'s `bat` / `GAME_ISO` / `SHOTS` / `SHOT_KEYS`,
-  `qmpc.py click`.
-- **8 bpp palettized modes (2026-09-04 night, register set v3): Diablo
-  plays.** Device PALETTE block + c8 shadow, miniport palette-driven modes
-  + `SET_COLOR_REGISTERS`, GDI `GCAPS_PALMANAGED` / `DrvSetPalette`,
-  DirectDraw `DDPF_PALETTEINDEXED8`; two XP runtime rules found by
-  disassembly (doc 15 "8 bpp palettized modes"): `dwPalCaps` must be 0
-  and no palette callbacks (dxg drops the HAL otherwise; palettes go
-  through GDI on NT), and the HAL must keep offering Direct3D in every
-  mode (ddraw.dll fails a mode switch to a PDEV without it). `DDTEST 640
-  480 8` (palette rotated every frame, 1200 fps), `tools/xp-diablo.sh
-  install|play <image>` (installer, intro, menus, Tristram, screendumps).
-  `winxp-m7g` has Diablo installed at `C:\Diablo`; it and the user's
-  `winxp-m7` carry the v3 driver (installed 2026-09-05 00:50); `m7f` still
-  has v2, which refuses the v3 device: reinstall from the ISO first.
-- **Max Payne on the HAL with no wrapper DLL (2026-09-05, branch
-  `track/m7-fifa`):** XP's own d3d8.dll on our DX7-level DDI (no
-  `D3DCAPS8` answer = "DirectX 7 driver" to the DX8 runtime: software
-  vertex processing, the DX7 token set). Launcher, menu and the tutorial
-  level render (`tools/xp-maxpayne.bat`, `build/xp-driver-test/mp-hal3/`,
-  ~290 frames/s under KVM `-cpu pentium3`). Two executor bugs came out
-  (doc 15 "Max Payne on the HAL"): the inline-vertex tokens' payload and
-  the next token are DWORD-aligned by *offset* (the DX8 runtime puts
-  them at offset 2 mod 4 after an `INDEXEDTRIANGLELIST2`; the stream
-  desynchronised, and once the end was aligned the vertices were still
-  read 2 bytes early — the "black bands" across the alley), and a
-  garbage light index made DXVK throw `std::bad_alloc` through its own
-  statically linked unwinder — uncatchable, QEMU aborted; light indices
-  and transform ids are now validated before DXVK sees them. New
-  diagnostics: the token history on the first failure of a kind,
-  `D3DPT_DP2_TRACE=<flag file>` (one whole frame: a state snapshot, every
-  token with arguments, each draw's first vertices, every bound texture's
-  levels and the render target after every draw as image files),
-  `D3DPT_DDI_REREAD=1`, `D3DPT_DDI_NOFOG=1`, the driver's per-surface
-  registration lines. `tools/d3dpt-dp2-test.cpp` covers the misaligned
-  fan with the runtime's padding and the wild light / transform (the old
-  library fails both: parse error, then abort). `winxp-m7g` carries this
-  driver build (surface log lines); `cd.ini` in it points at D: now (the
-  batch rewrites it). Not played by hand yet; ZBIAS (47) maps to
-  DEPTHBIAS since 2026-09-05 evening (DXVK's d3d8 scale, −1/65535 a
-  step; the alley sets it to 0).
-- **The DirectX 8 DDI (2026-09-05, branch `track/m7-fifa`):** `GetDriverInfo2`
-  (`D3DCAPS8`, the DX8 format list), hardware T&L claimed (DX7 and DX8
-  caps; `ddflags=0x1000` withdraws it, `0x2000` keeps the DX7 face), the
-  DX8 token stream rewritten by the driver into self-contained draws
-  (`D3DPT_DP2_DRAW8`, protocol v6, v7 since the shaders: the runtime's buffers are guest memory),
-  TEXBLT in the driver, per-context DX8 state, state sets as d3d9 state
-  blocks, render-to-texture, MULTIPLYTRANSFORM, DXT pitches. D3DGAME8
-  through XP's own d3d8.dll with hardware vertex processing at ~575 fps
-  (`tools/xp-driver-test.sh <image> d3dgame8`), doc 15 "M7c — the DirectX 8
-  DDI" for the d3d8.dll findings (the HAL-info flag; `dwActualSize`
-  against the inner header; no `CLIPTLVERTS`; the FOURCC list; the
-  clipper's fans). No shaders yet (VS/PS 0.0). **Max Payne on this path
-  (2026-09-05, later that day):** the clipped fans were read from the
-  DP2 vertex buffer, which is a 10 × 32-byte dummy under d3d8.dll; the
-  runtime binds its clip buffer as stream 0 (`SETSTREAMSOURCE`) before
-  the `CLIPPEDTRIANGLEFAN` tokens and their offsets count into that
-  stream (doc 15, found in the disassembly). Read from stream 0 the
-  alley renders complete on the DX8 DDI (`build/xp-driver-test/mp-fan/`).
-- **The driver is the user's daily driver, on a stock guest (2026-09-05).**
-  They run the Linux host natively (KVM) with `-vga none -device d3dpt-vga`
-  on `~/vms/winxp-m7` (v3 driver) and report it working great, with **no
-  input issues and no custom DLLs anywhere** — no WineD3D set to rename out
-  of a game folder, no `D3DPT\DINPUT.DLL`, nothing next to any EXE. That is
-  the bar the driver now meets: an unmodified XP talking to the adapter
-  through our miniport and display DLL, and unmodified games on the HAL.
-  It also scopes the keyboard shim: the dead match keyboard is a **TCG-only**
-  symptom (doc 15 — the game's unpumped DirectInput hook only loses the race
-  when the guest is slow enough), so `DINPUT.DLL` is medicine for the Apple
-  Silicon path and for `xp-fifa-match.sh tcg`, not something in anyone's
-  normal path on a KVM host. One more reason it stays per-game rather than
-  system-wide.
-- **The flip chain has a vertical blank (2026-09-05).** The user reported
-  Moto Racer 1997 playing at several times its speed on the driver. Cause:
-  `DdFlip` wrote the OFFSET register and returned, `DdGetFlipStatus` always
-  said "done", so `Flip` never blocked — and a 1997 racer is paced by its
-  flip chain, not by a clock. Fixed on both sides (doc 15 "The flip chain's
-  vertical blank"): `FRAMES` is now periods of the mode's `HZ` off the host
-  clock rather than the display client's pull (so a headless run paces like
-  the player instead of falling back on the 50 ms bail-out at 20 fps), and
-  the driver holds the second flip of a double-buffered chain until it
-  moves. `DDTEST`'s three exclusive chains and `D3D7TEST` all report 60 fps
-  (the D3D7 frame is still byte-identical to `d3dpt-dp2-test`'s), the
-  windowed `Blt` path is untouched at 346 fps as on real hardware, and
-  `DDFLAGS=32768` (`DDF_NO_VSYNC`) restores the old throughput numbers to the
-  frame. The device logs `N page flips in 5.0 s` while flips happen: that is
-  a title's real frame rate, and no line at all means it blits to the
-  primary, which no vertical blank can pace. No `D3DPT_FB_VERSION` bump (the
-  register's contract is unchanged), so an installed v3 driver keeps working
-  against the new device — it just needs a reinstall from the ISO to get the
-  pacing. Not verified on a real title yet: **Moto Racer itself is the
-  outstanding check** (the user's box, `~/vms/winxp-m7` after a driver
-  reinstall).
-- **Moto Racer 1997 takes the HAL with protocol v8 — and is a DirectX 3
-  title (2026-09-05, `tools/xp-motoracer.sh`).** Headless with its
-  Alcohol MDS/MDF as D: (the cdimage driver) on `winxp-m7g`: the game
-  wants a 16 bpp desktop (`SETMODE 800 600 16` first), creates a Direct3D
-  context, 256×256 textures with colour keys and palettes, flips at 60/s —
-  and drew nothing through it: 0 draws in minutes, the menus' bikes and the
-  race's track missing while the game's own 2D (panels, panorama, HUD) is
-  there. It draws through `IDirect3DDevice::Execute` (execute buffers,
-  texture handles), which XP's `d3dim.dll` emulates on our DP2 driver, and
-  that path had never been exercised. `DRIVER\EBTEST.EXE`
-  (`guest-tools/src/d3dptvid/ebtest.c`, `xp-driver-test.sh <image> ebtest`,
-  `-rgb` = the same on the runtime's RGB device as the control) reproduces
-  it without the game; doc 15 "Execute buffers — the DirectX 3 path" has
-  the findings: (1) `dwMaxVertexCount` 65535 made every `Execute` fail with
-  `E_OUTOFMEMORY` before any token (the runtime sizes its TL vertex buffer
-  from the cap plus a page and refuses > 65535 vertices — found in the
-  d3dim.dll disassembly; the cap is 4096 now, `ddflags=0x40000` is the
-  repro); (2) the legacy path is a pass-through: an UNCLIPPED `Execute`
-  hands the execute buffer's own instruction stream to `DrawPrimitives2`
-  (`D3DHALDP2_EXECUTEBUFFER`), the driver consumes POINT / LINE /
-  TRIANGLE / STATERENDER / SPAN / EXIT and *bounces* everything else
-  (`PROCESSVERTICES` first of all) with `D3DERR_COMMAND_UNPARSED` +
-  `dwErrorOffset` so the runtime executes it and calls again — skipping
-  it left the TL vertex buffer empty; (3) the DX5 texture render states
-  (`TEXTUREHANDLE`, `TEXTUREMAPBLEND`, filters, address) arrive verbatim
-  on this path and the executor maps them onto stage 0 now. EBTEST passes
-  5/5 on `winxp-m7g`; `tools/d3dpt-dp2-test.cpp` covers the executor half.
-  **Moto Racer plays** (`tools/xp-motoracer.sh install|play`, `moto4/`:
-  name screen, showroom bike, the Speed Bay race with the palms keyed
-  out, 120 frames/s under KVM, ~175 draws a frame one triangle each — a
-  batching follow-up). **Played by hand by the user (2026-09-05 evening,
-  the player on `winxp-m7g`, the shadow executor): "works great", and
-  fast under TCG too** — the frame is the host GPU's, the guest only
-  builds execute buffers. The user's `winxp-m7` still needs the driver
-  reinstalled from the ISO.
-- **Untracked writes: the showroom's 2D panels (2026-09-05, evening).**
-  The bike-selection screen's header, arrows, features panel and
-  Start / Back were missing in *every* run, not one: the game draws them
-  with GDI through `GetDC` on the back buffer, which dxg serves without
-  any driver callback (no `DrvDeriveSurface`), so no `VRAM_DIRTY` ever
-  came and the executor's readback overwrote them each frame. The
-  executor now keeps a shadow of each render target's VRAM and compares
-  it before the frame's first draw (an unannounced write is uploaded)
-  and at the readback (pixels written since the draws are kept over the
-  host frame, and the target refreshed from VRAM before the next draw)
-  — doc 15 "Untracked writes"; `tools/d3dpt-dp2-test.cpp` covers both
-  paths. The panels and the race HUD's text show
-  (`build/xp-driver-test/moto9/bike2.png`, `race1.png`); the device log
-  counts the pixels (`N untracked guest pixels`). Found on the way: the
-  one-triangle draws cannot be batched (a `TEXTUREHANDLE` before every
-  draw, painter's order with Z off — doc 15), the item is closed; and
-  `xp-motoracer.sh play` had never reached the race on its own (the
-  title takes only the keyboard and runs into an attract demo when
-  idle, the name screen's Enter presses whichever letter the cursor was
-  on) — it drives the menus by `tools/motoracer-state.py` now, a
-  screendump classifier with a retry per screen.
-- **The hardware cursor (2026-09-05 evening, register set v4).** The
-  user's report from hand play: the mouse cursor flickers. GDI's software
-  pointer is painted into the GDI primary — one buffer of a flip chain,
-  so under a 60 Hz title it shows every other frame, and on the desktop
-  the scanout catches its erase. Now `DrvSetPointerShape` /
-  `DrvMovePointer` write the pointer (mono AND/XOR, colour through a
-  32 bpp engine bitmap, `SPS_ALPHA`) as a8r8g8b8 into the 16 KiB above
-  the DirectDraw heap and the CURSOR registers; the device hands it to
-  QEMU's console (`dpy_cursor_define` / `dpy_mouse_set`); the player,
-  which already received `on_cursor` / `on_mouse_set` from the embed
-  library and ignored them, shows the guest's shape as the host window's
-  cursor over the image (the USB tablet puts the host pointer where the
-  guest's is: no compositing, no latency; hidden when the guest hides it,
-  hidden as before for a guest without a hardware cursor). Pointers over
-  64×64 stay software. v4 refuses a v3 driver: every image needs
-  `install` from the ISO (`winxp-m7g` done; the user's `winxp-m7`
-  pending), QEMU rebuilt (prepare → ninja). Doc 15 "The hardware cursor".
-  Without the tablet (a relative mouse, the grab) the player composites
-  the sprite into the frame at the guest's position instead — the first
-  cut lacked that and showed no cursor at all in the game. **User-confirmed
-  the same evening: steady desktop cursor, present in Moto Racer's menus.**
-- **GTA Vice City plays on the DX8 DDI (user, 2026-09-05 evening).** The
-  first real DirectX 8 title through XP's own d3d8.dll on our driver
-  (`FLT-VCA` / `FLT-VCB` in the oldstuff folder, a May 2003 build):
-  installed and played by hand under TCG (`-cpu pentium3`, no KVM),
-  800×600×32 with a D24S8 depth buffer, "everything ok, water effects
-  and all". The log (`/tmp/player3.log`) has no unknown token, no
-  dropped state and no `dx8 draws skipped` line; the city runs 400–600
-  draws a frame over 3–4 DrawPrimitives2 calls at 20–30 frames/s, the
-  menus at 60. Slow-ish under TCG at 800×600: the cost is the guest CPU
-  (the game, the DX8 runtime, the driver copying every draw's vertices
-  into the window) — KVM first, then `D3DDEVCAPS_HWVERTEXBUFFER` (vertex
-  buffers in VRAM, written once, a handle and a range per draw) is the
-  driver-side win.
-- **Tried and dropped the same evening: blit / stretch caps** for FIFA
-  2000's 320×240 intro videos — `DDCAPS_BLT | BLTSTRETCH | …` with a
-  declining `DdBlt` broke DDTEST's colour fill (on XP `NOTHANDLED` is
-  E_NOTIMPL to the app, not a HEL fallback) and the game never blits its
-  movies anyway (doc 15 "Blit caps and the HEL"). Open: where the user
-  saw them full-screen.
-- **GTA 2 (DirectX 6, 640×480×16) glitched on its first run and crashed
-  on its second (user, 2026-09-05 evening) — three faults, all fixed**
-  (doc 15 "A DirectX 6 title's flip chain"): its flip chain reaches
-  `CreateSurfaceEx` as the primary alone, so the back buffer (handle 2)
-  was never registered and the host drew every frame into the front
-  buffer while the flips alternated the scanout; the Direct3D context
-  table sat in the PDEV, which the game's mode switch back at exit
-  replaced before dxg's `ContextDestroyAll`, so the context leaked on the
-  host and the next run's `CTX_CREATE` of the same handle was refused
-  (`E_FAIL` from `CreateDevice`); and its menu text drew as white boxes
-  because the DX6 runtime passes `TEXTUREMAPBLEND` through untranslated
-  and the executor had mapped it once, before any texture was bound. The
-  driver walks the attach list, keeps its contexts in a global table and
-  re-registers a target the host knows at another offset before every
-  readback; the host replaces a context re-created under an open handle
-  and re-maps the legacy blend per texture. Verified headless on an
-  overlay of `winxp-m7g` (three launches in one boot, the menu with its
-  text); **the driver must be reinstalled from the ISO in the user's
-  image**. Enter during the Bink intro movie crashes the game on XP's
-  inbox cirrus driver just the same (`VGA=cirrus` control): the game's,
-  not ours (doc 15). **User-confirmed the same night: GTA 2 works on
-  `winxp-m7g` with the reinstalled driver.**
-- Branch history: `worktree-luminous-dancing-cocke` (merged into main
-  2026-09-04), `track/m7-d3d-ddi` (M7c, merged into main 2026-09-04),
-  `track/m7-fifa` (FIFA on the HAL + the keyboard fix, merged into main
-  2026-09-04 evening; the 8 bpp work continues on it). New work: branch
-  `track/m7-<topic>` off main.
-- **Resuming here (2026-09-05, after the DX8 DDI session):** pull main,
-  then prepare → configure → ninja (protocol v8 is checked by the
-  device), `scripts/build-d3dpt-exec.sh`, `guest-tools/build-driver.sh`,
-  `guest-tools/build-wrappers.sh` (the ISO's DLLs speak v9),
-  `cargo build --release`. `winxp-m7g` carries the last driver build
-  (`install` it again after any driver change). State of the DX8 DDI:
-  0. **Video-memory vertex / index buffers (2026-09-05 night, protocol
-     v9; doc 15 "Vertex and index buffers in video memory").**
-     `D3DDEVCAPS_HWVERTEXBUFFER | HWINDEXBUFFER` in `D3DCAPS8`; the
-     runtime's `D3DPOOL_DEFAULT` buffers come out of dxg's linear heap
-     (the buffer callbacks hand it the block size), the MANAGED ones are
-     kept in step by `BUFFERBLT` (done in the driver; the token is 24
-     bytes, not the 20 its field list suggests), Lock / Unlock report the
-     written range (`VRAM_DIRTY_RANGE`), and a `DRAW8` names the buffer
-     and an offset (`D3DPT_DRAW8_VRAM_VB` / `VRAM_IB` in its flags)
-     instead of carrying the bytes; the host reads the range from VRAM.
-     `ddflags=0x100000` (`DDF_NO_HWVB`) is the A/B, and the number is
-     **GTA Vice City in the city** (`tools/xp-vicecity.sh play`, ~480
-     draws a frame, the game's frame limiter and the flip chain's
-     vertical blank both off): **KVM 360–375 frames/s with the buffers in
-     VRAM against 265–285 without; TCG 62–75 against 51–55.** The script
-     drives the menus by clicks (the pointer's position selects; Esc does
-     not skip the cutscenes, Space does) and every wait by the log's rate
-     lines, so it reaches the city under both accelerators; it needs the
-     play disc as D: (`VC_ISO`) and the frame limiter off in the image's
-     settings (Options / Display Setup; the session's overlay has it off,
-     `winxp-m7g` itself has it on). D3DGAME8's frame is
-     pixel-identical with and without it (only its fps bars differ);
-     both differ from the freshly regenerated native oracle at the
-     checker texels' edges (8692 pixels beyond the tolerance of 8, max
-     43 — a mip-filtering difference in the DX8 path that predates v9;
-     fixed 2026-09-11, state item 7). Two findings on the way: the runtime's vertex buffers arrive
-     *without* `DDSCAPS2_VERTEXBUFFER` in `ddsCapsEx` (the index buffers
-     do carry `INDEXBUFFER`), so the request's own caps decide; and
-     `lpDDVertex` is a dangling pointer under `USERMEMVERTICES` — the
-     driver's own debug line dereferenced it: STOP 0x8E.
-  1. **Works:** D3DGAME8 through XP's own d3d8.dll with hardware vertex
-     processing, render-to-texture and all (`tools/xp-driver-test.sh
-     ~/vms/winxp-m7g.qcow2 d3dgame8`, ~575 fps); its frame differs from
-     the native oracle only in the particles, which use the gradient
-     texture because the DXT1 one never reaches the driver (open item 3).
-     FIFA 2000 (attract-mode match) and D3D7TEST (frame == host frame)
-     are unchanged on the new driver. `scripts/test.sh host` green.
-  2. **Done (2026-09-05): Max Payne's clipped fans.** Their offsets are
-     byte offsets into stream 0, which the runtime rebinds to its own
-     clip buffer before the tokens (doc 15 "M7c — the DirectX 8 DDI",
-     the clipper bullet). The driver reads them from `w->vb` now; the
-     tutorial alley renders complete with hardware T&L
-     (`build/xp-driver-test/mp-fan/cmd-*.png`). Not played by hand yet.
-  3. **Done (2026-09-05): DXT textures on the DX8 path.** dxg sized the
-     video-memory surface from the (absent) bit count of a FOURCC format
-     and asked its heap for zero bytes; the new `DdCreateSurface` hands
-     it the block size (doc 15, the compressed-textures bullet).
-     `DRIVER\DXTTEST.EXE` (new) is the probe and the check: every format
-     × pool, readback of a textured quad. D3DGAME8's particles now use
-     the DXT1 disc like the native oracle.
-  4. **Done (2026-09-05 night, protocol v7): vertex and pixel shaders
-     1.x.** The caps claim vs 1.1 / ps 1.4, the driver forwards the seven
-     shader tokens and a DRAW8 under a shader carries the handle, the
-     executor keeps the shaders per context (DX8 declaration → d3d9
-     declaration + prepended `dcl`s, declaration-only = fixed function,
-     `D3DVSD_CONST`, the constants) and validates every function against
-     a vs 1.x / ps 1.x opcode table first — DXVK *asserts* on an unknown
-     opcode (an abort, QEMU dies), found by the host test's hostile case
-     (doc 15 "Vertex and pixel shaders 1.x"). `tools/d3dpt-dp2-test.cpp`
-     covers the whole set; `DRIVER\SHTEST.EXE` + `xp-driver-test.sh
-     <image> shtest` is the guest check through XP's own d3d8.dll
-     (9 cases, 0 failed on `winxp-m7g` under KVM; one finding on the
-     way: d3d8.dll refuses a declaration-only shader whose registers are
-     not in FVF order with `D3DERR_INVALIDCALL` before the driver sees
-     it). A protocol bump: QEMU (prepare → ninja), the
-     executor, the driver ISO and the guest-tools ISO all rebuilt;
-     `winxp-m7g` has the v7 driver installed.
-  5. **Done (2026-09-05 night, protocol v8): palettized textures and
-     colour keying**, the two caps Moto Racer 1997 wants (main's
-     diagnosis). P8 in both format lists, `TRANSPARENCY` / `ALPHAPALETTE`
-     in the texture caps, `DDCAPS_COLORKEY` + `DDCKEYCAPS_SRCBLT` with a
-     `SetColorKey` *and* a `Blt` surface callback (dxg drops the HAL for
-     the caps without a Blt callback; without the caps user-mode ddraw
-     never hands the key down; no `DDCAPS_BLT`, so the Blt is never
-     called — doc 15 has the four runs), the key sent by `DdSetColorKey`
-     and re-checked off dxg's `DD_SURFACE_LOCAL` when a
-     `TEXTURESTAGESTATE` binds the texture → `D3DPT_OP_VRAM_COLORKEY`;
-     the executor
-     takes the palettes from the DP2 `SETPALETTE` / `UPDATEPALETTE`
-     tokens, expands P8 and keyed textures to A8R8G8B8 (key = alpha 0),
-     forces the alpha test while render state 41 is on and overrides
-     stage 0's alpha op when the app's ignores the texture alpha (the
-     DX7 runtime's `TEXTUREMAPBLEND` emulation does exactly that for a
-     keyed 16-bit texture), and re-uploads bound textures whose palette
-     or VRAM changed before each draw (doc 15 "Palettized textures and
-     colour keying"). `tools/d3dpt-dp2-test.cpp` covers it;
-     `DRIVER\CKTEST.EXE` + `xp-driver-test.sh <image> cktest` is the guest
-     check (4 cases, 0 failed on `winxp-m7g` under KVM; with it D3D7TEST's
-     frame still equals the host test's, SHTEST 9/9, Diablo into Tristram
-     in the right colours, FIFA 2000's attract-mode match as before —
-     one observation from that run: with the vertical blank the match
-     *flips* at ~24/s (`119 page flips in 5.0 s`, 121 readbacks, ~145
-     DP2 calls per frame, each a synchronous doorbell round trip), so
-     the per-call round trip is what bounds a title that batches
-     little; it used to blit). `ddflags=0x10000` withdraws the caps for
-     an A/B. **Found on the way, in `DdFlip`:** on NT a flip exchanges the
-     two surfaces' *roles*, not their memory (handles keep their VRAM,
-     the PRIMARYSURFACE caps move, dxg re-issues `CreateSurfaceEx` for
-     both), and the M7c first cut re-registered them as if the memory had
-     swapped — the host rendered into the displayed buffer every other
-     frame since 2026-09-04 without any test noticing (doc 15 "A flip
-     does not move memory"). Fixed: `DdFlip` re-registers nothing. Moto
-     Racer itself is still the outstanding check (the user's box: does it
-     take the HAL now, and does it look right).
-  6. **Done (2026-09-05 afternoon): the DirectX 3 execute-buffer path.**
-     Moto Racer took the HAL with v8 and drew nothing; `EBTEST` and the
-     `d3dim.dll` disassembly found `dwMaxVertexCount` (65535 → every
-     `Execute` E_OUTOFMEMORY; 2048 now) and the pass-through protocol (the
-     raw `D3DOP_` stream under `D3DHALDP2_EXECUTEBUFFER`: consume 1 / 2 /
-     3 / 8 / 13 / 11, *bounce* the rest with `D3DERR_COMMAND_UNPARSED` +
-     `dwErrorOffset`), plus the DX5 texture render states mapped in the
-     executor. EBTEST 5/5, Moto Racer races (doc 15 "Execute buffers — the
-     DirectX 3 path"). **Both follow-ups closed the same evening:** the
-     showroom's 2D panels were GDI writes through `GetDC` the driver
-     never sees (the executor's target shadow catches them now, doc 15
-     "Untracked writes"), and the one-triangle draws are one texture
-     switch each in painter's order — nothing to batch. Played by hand
-     by the user the same evening: works great, fast under TCG as well.
-     (The attract demo's Esc menu looked like "EXT
-     DEMO / UIT DEMO / C NTINUE DEMO" in the screendumps: at 3× the
-     letters are there, drawn in a darker red as the hotkeys — the
-     game's own style, not a rendering fault.)
-  7. Then the small things the
-     runs showed: D3DGAME8's frame differed from the native oracle
-     along the checker texture's texel edges only (2026-09-05 night:
-     8.7 k pixels beyond tolerance 8, channel difference ≤ 43, the
-     particles now identical) — **fixed 2026-09-11**: d3d8.dll sends a
-     DX8 driver `D3DTEXF_*` filter values and the executor read them as
-     DX7's `D3DTFP_*`, so the trilinear filter was point-mipped; the
-     driver now rewrites an interface-4 context's `MAGFILTER` /
-     `MIPFILTER` (doc 15, the cube section), and D3DGAME8 is 618 pixels
-     beyond tolerance (max 11), inside the budget; `render target handle 3 unknown` once at start
-     (harmless), the two textures D3DGAME8 re-registers every frame
-     (kept by the executor, cheap), the `dp2 vertices at` debug lines
-     (first four calls only).
-- The tools of this session: `D3DPT_DP2_TRACE` (a whole frame with
-  states, vertices, texture and per-draw target dumps),
-  `D3DPT_DDI_REREAD`, `D3DPT_DDI_NOFOG`, the driver's surface log and
-  `dx8 draws skipped … why …` lines (bits: 1 shader, 2 no fvf, 4 no
-  stream, 8 stride < fvf, 16 vertex range, 32 index range, 64 prim; the
-  first skipped draw's parameters follow), `tools/xp-driver-test.sh
-  d3dgame8`, `tools/xp-maxpayne.bat`, and the M7c DX8 section of doc 15
-  with the six d3d8.dll / dxg findings.
+## Where the design lives
 
-## Build / run / test
+Doc 15 is the specification; its sections by topic:
+
+| Topic | Doc 15 section |
+|---|---|
+| adapter, miniport, mode table | "Shape (M7a)", "Building kernel-mode PE files with GCC" |
+| DirectDraw HAL, dxg's caps rules | "M7b — the DirectDraw DDI", "Blit caps and the HEL" |
+| flip pacing; a flip swaps roles, not memory | "The flip chain's vertical blank", "A DirectX 6 title's flip chain" |
+| 8 bpp, palettes, colour keys | "8 bpp palettized modes", "Palettized textures and colour keying" |
+| GDI writes into a Direct3D target | "Untracked writes" |
+| cursor, gamma | "The hardware cursor", "Gamma ramps" |
+| DX3 execute buffers | "Execute buffers — the DirectX 3 path" |
+| DX7 HAL, DX8 DDI, d3d8.dll's findings | "M7c — the Direct3D DDI", "M7c — the DirectX 8 DDI" |
+| shaders, VRAM buffers, streams, cubes, volumes, formats, MSAA | their own subsections under the DX8 DDI |
+| one probe per DX8 feature | "The DX8 feature probes" |
+
+## Build and test loop
 
 ```sh
-# after checkout or pull (the device lives in the d3dpt overlay: prepare is mandatory)
-scripts/prepare-qemu.sh && scripts/configure-qemu.sh
-ninja -C build/qemu qemu-system-i386 libqemu-embed-i386.so && cargo build --release
-guest-tools/build-driver.sh                     # -> guest-tools/out/d3dpt-driver.iso (DRIVER\ only, fast)
-# XP in the player on the driver (install once per image from the ISO first)
-target/release/player -- -L $PWD/qemu/pc-bios -accel kvm -cpu host -machine pc -m 512 \
-  -hda ~/vms/winxp-m7.qcow2 -cdrom guest-tools/out/d3dpt-driver.iso -vga none -device d3dpt-vga \
-  -net none -usb -device usb-tablet
-# headless loops (standalone QEMU, KVM, QMP-typed commands, logs pulled through a FAT scratch disk)
-tools/xp-driver-test.sh ~/vms/winxp-m7c.qcow2 install   # DRVINST from the ISO, reboot, desktop on the driver
-tools/xp-driver-test.sh ~/vms/winxp-m7c.qcow2 ddtest    # DirectDraw: caps, flip chains, windowed blit, fps
-tools/xp-driver-test.sh ~/vms/winxp-m7c.qcow2 modes     # SETMODE switches + the mode list
-tools/xp-driver-test.sh ~/vms/winxp-m7c.qcow2 d3d7      # D3D7TEST: the DX7 HAL scene, diffed against build/d3dpt-dp2-test's frame
-tools/xp-driver-test.sh ~/vms/winxp-m7g.qcow2 d3dgame8  # D3DGAME8 through XP's own d3d8.dll on the DX8 DDI, diffed against build/test/g9-native.bmp
-OUT=build/xp-driver-test/sh tools/xp-driver-test.sh ~/vms/winxp-m7g.qcow2 shtest   # SHTEST: shaders 1.x through d3d8.dll, "0 failed" in shtest.log is the pass
-OUT=build/xp-driver-test/ck tools/xp-driver-test.sh ~/vms/winxp-m7g.qcow2 cktest   # CKTEST: a P8 texture + palette, a colour-keyed texture through the DX7 HAL
-# (OUT= relative under build/: the QMP socket path must stay under 108 characters, and the worktree path is long)
-tools/xp-driver-test.sh ~/vms/winxp-m7c.qcow2 cmd 'D:\DRIVER\DDTEST.EXE 800 600 32 300'
-# a game: its disc as D: (the driver ISO moves to F:), a batch file staged as E:\RUN.BAT, a screendump every 5 s
-GAME_ISO=/mnt/data2/david/Downloads/oldstuff/FIFA2000.ISO SHOTS=24 tools/xp-driver-test.sh ~/vms/winxp-m7f.qcow2 bat tools/xp-fifa2000.bat
-# Max Payne through XP's own d3d8.dll on the DX7-level HAL (no wrapper DLL): launcher, menu, tutorial; ~4 min
-GAME_ISO="/mnt/data2/david/Downloads/oldstuff/Max Payne/DINO-MAP.iso" CPU=pentium3 SHOTS=30 SHOT_KEYS="2:ret,6:ret" \
-  tools/xp-driver-test.sh ~/vms/winxp-m7g.qcow2 bat tools/xp-maxpayne.bat
-# one frame of its DP2 stream in the QEMU log: export D3DPT_DP2_TRACE=$PWD/build/xp-driver-test/trace.flag before the
-# run and `touch` that file when the screendump shows the scene (D3DPT_DDI_REREAD=1 re-reads every texture at every bind)
-# a real match, driven over QMP (menus, side, kickoff) and a keyboard test in it (F2 / Esc / F12 taps + screendumps),
-# dinput_log.txt pulled from the image at the end; ~6 min under kvm, ~9 under tcg
-tools/xp-fifa-match.sh kvm ~/vms/winxp-m7g.qcow2      # or tcg
-# Diablo, the 8 bpp palettized title: installer (once per image), then the game into Tristram with screendumps (~2 min)
-tools/xp-diablo.sh install ~/vms/winxp-m7g.qcow2 && tools/xp-diablo.sh play ~/vms/winxp-m7g.qcow2
-# the same game in the player, by hand (the image above: driver reinstalled, WineD3D DLLs renamed)
-target/release/player -- -L $PWD/qemu/pc-bios -accel kvm -cpu host -machine pc -m 512 \
-  -hda ~/vms/winxp-m7f.qcow2 -cdrom /mnt/data2/david/Downloads/oldstuff/FIFA2000.ISO -vga none -device d3dpt-vga \
-  -net none -usb -device usb-tablet 2>&1 | tee fifa-player.log     # then Start menu → EA SPORTS → FIFA 2000
-build/d3dpt-dp2-test x.bmp                              # the same scene through the executor without a guest (host stage of scripts/test.sh)
+scripts/build.sh                         # QEMU, the executor, both driver ISOs
+guest-tools/build-driver.sh              # just the driver: guest-tools/out/d3dpt-driver.iso
+scripts/build-d3dpt-exec.sh              # after touching d3dpt/exec/
+build/d3dpt-dp2-test x.bmp               # the records through the executor, no guest (the d3dpt-dp2 check)
 ```
 
-- The executor: `scripts/build-d3dpt-exec.sh` after touching `d3dpt/exec/`
-  (both `.cpp` files); the device dlopens `build/d3dpt/libd3dpt_exec.so`
-  (`D3DPT_EXEC_LIB`) and DXVK from `build/dxvk` (`D3DPT_DXVK_LIB`). A
-  worktree without `build/dxvk` can symlink the main checkout's.
+A protocol bump needs QEMU, the executor and the guest-tools ISO rebuilt
+before any guest run (`scripts/build.sh` does all three); one side alone
+is `protocol mismatch` in the QEMU log and no Direct3D. XP loads the
+driver from `system32`, not the ISO, so **reinstall after every driver
+build**:
 
-- Outputs in `build/xp-driver-test/`: screendumps, the guest logs, and
-  the QEMU log whose `d3dpt-vga: guest: …` lines are the driver's debug
-  output (DEBUG register) and whose `scanout offset` lines are page flips.
-- Images (Linux box): `~/vms/winxp-m7.qcow2` is the user's own (driver
-  installed; never open it while their player holds it), `winxp-m7c` /
-  `winxp-m7d` are scratch copies with the driver installed;
-  `~/vms/winxp.qcow2` belongs to the M4 track (cirrus, untouched).
-  Reinstall the driver (`install`) after every driver rebuild: XP loads the
-  copy in `system32`, not the ISO's.
-- Bisection without reinstall: `-device d3dpt-vga,ddflags=N` (doc 15);
-  `0x20` = Direct3D off, `0x1000` no T&L, `0x2000` no DX8 face, `0x10000`
-  no colour keying, `0x40000` `dwMaxVertexCount` 65535 again (the DX3
-  E_OUTOFMEMORY repro), `0x80000` never call the runtime's
-  `D3DParseUnknownCommand`, `0x100000` no video-memory vertex buffers,
-  `0x200000` one vertex stream (`MaxStreams` 1, stream 0 alone in every
-  draw: before v10), `0x400000` no cube textures (before v11), `0x800000` no bump-map format
-  (V8U8, and L6V5U5 / X8L8V8U8 in the DX8 list; 2026-09-11), `0x1000000` no volume textures
-  (before v12), `0x2000000` no anisotropic filtering (`MaxAnisotropy` 1),
-  `0x4000000` none of FMTTEST's nine formats (L8 … DXT4) in the DX8
-  format list, `0x8000000` no multisampling (before v13), `0x10000000` no gamma ramp (before register set v5). The QEMU log's `d3dpt-vga: ddi: …` lines are the
-  executor's (unsupported states / tokens, once each), `batch N: error` a
-  refused record, `d3dptdisp: dp2 0x…` a DrawPrimitives2 the host failed.
+```sh
+tools/xp-driver-test.sh <image> install     # DRVINST from the ISO, restart, desktop on the driver
+tools/xp-driver-test.sh <image> ddtest      # DirectDraw at 8/16/32 bpp + windowed
+tools/xp-driver-test.sh <image> d3d7        # the DX7 HAL; frame must equal d3dpt-dp2-test's
+tools/xp-driver-test.sh <image> d3dgame8    # M4's scene through XP's d3d8.dll; diffed against the native oracle
+tools/xp-driver-test.sh <image> probes      # every DX8 feature probe in one boot
+OUT=build/xd/sh tools/xp-driver-test.sh <image> shtest   # also cktest, ebtest, gamma, modes
+tools/xp-driver-test.sh <image> cmd 'D:\DRIVER\DDTEST.EXE 800 600 32 300'
+```
 
-## Next steps, in order
+Keep `OUT=` short (the QMP socket path limit). Useful knobs:
+`DDFLAGS=`, `EXEC=wine`, `NO_EXEC=1`, `VGA=cirrus` (the inbox-driver
+control), `GAME_ISO=`, `SHOTS=`, `SHOT_KEYS=`, `CPU=pentium3`,
+`DRIVER_ISO=` (another build's driver), `KEEP=1`. Every tool and its
+options: `docs/testing.md`.
 
-1. **M7c, the rest:** FIFA 2000 plays, keyboard included — the user
-   confirmed `D3DPT\DINPUT.DLL` fixes it (2026-09-05), and the shim stays
-   per-game by decision (doc 15). Max Payne runs through XP's d3d8.dll on the DX7-level DDI
-   (tutorial level clean, now on the DX8 DDI with hardware T&L); play it
-   by hand (ZBIAS → DEPTHBIAS landed 2026-09-05 evening). Shaders 1.x landed
-   2026-09-05 (protocol v7; a title that uses them is the next check —
-   a DX8 game with vs 1.1 / ps 1.1 paths). Moto Racer 1997 ran its
-   software rasterizer (main, 2026-09-05) for want of palettized (P8)
-   textures and colour keying (`D3DPTEXTURECAPS_TRANSPARENCY`); both
-   landed the same night (protocol v8), and the DirectX 3 execute-buffer
-   path the next afternoon — **Moto Racer races on the HAL headless**
-   (`tools/xp-motoracer.sh play`), and **played by hand by the user the
-   same evening on `winxp-m7g`: works great, fast even without KVM** (the
-   showroom's 2D panels fixed first, doc 15 "Untracked writes"); the
-   user's own `winxp-m7` still needs the driver reinstalled from the ISO.
-   **GTA Vice City, the first DX8 title, plays (user, the same evening;
-   nothing refused, 400–600 draws a frame, 20–30 fps under TCG).**
-   **Video-memory vertex / index buffers landed the same night (protocol
-   v9, state item 0 above; `tools/xp-vicecity.sh play` is the headless
-   loop):** under KVM the city runs at 360–375 frames/s with them against
-   265–285 without (vertical blank and the game's frame limiter off; the
-   TCG pair is in state item 0). **More than one vertex stream landed
-   2026-09-11 (protocol v10, doc 15 "More than one vertex stream"):**
-   `MaxStreams` 16, a DRAW8 under a shader carries every bound stream,
-   the host interleaves the ones the declaration reads;
-   `ddflags=0x200000` is the A/B; SHTEST 13/13 in the guest (four
-   two-stream cases through d3d8.dll) and the host test's twelve new
-   cases; no title that needs it has been run yet — "Games to test, by
-   feature" below names the candidates. **Cube textures landed the same
-   day (protocol v11, doc 15 "Cube textures"):** plain, mip-mapped, DXT
-   and render-target cubes on the DX8 face, `ddflags=0x400000` the A/B;
-   3DMark2001 SE's Nature is the title check. On the way, and fixed
-   the same day: D3DGAME8's filtering difference — d3d8.dll's filter
-   values read with DirectX 7's numbering, now rewritten by the driver
-   for an interface-4 context (doc 15, the cube section; D3DGAME8 inside
-   its budget against the native oracle). **Volume textures landed the
-   same day (protocol v12, doc 15 "Volume textures"):** VOLTEST 4/4,
-   `ddflags=0x1000000` the A/B. **Full-screen multisampling landed the
-   same day (protocol v13, doc 15 "Multisampling"):** MSAATEST 2/2,
-   `ddflags=0x8000000` the A/B; windowed needs a driver blitter. **Gamma ramps landed the same day
-   (register set v5, doc 15 "Gamma ramps"):** `xp-driver-test.sh <image> gamma`
-   PASS on the screen itself (80 80 60 held, 80 80 80 back), `ddflags=0x10000000`
-   the A/B. Then what the next title asks for first
-   among: presenting the host frame through the player's 3D path instead of the per-frame
-   readback copy. A validator for SM2/3 bytecode on the d3d9 half (the
-   M4 track's `d3dpt_exec.cpp` hands guest bytecode straight to DXVK,
-   which asserts on garbage — see doc 15's shader section) is worth the
-   same treatment; not a v1 blocker (user decision, 2026-09-16: hostile
-   guest input is an accepted risk for now).
-2. Add a `driver` stage to `scripts/test.sh` (boot on `d3dpt-vga`, `modes`
-   + `ddtest` with expected numbers) once the M4 track's suite structure
-   is stable; until then `tools/xp-driver-test.sh` is the check.
-3. Small items: `DrvDeriveSurface` (GDI on DirectDraw surfaces; an
-   optimisation now, the executor's target shadow keeps GDI's writes), a
-   real vblank signal from the player's present, a real blitter behind
-   `DDCAPS_BLT` if a title ever needs the caps (doc 15 "Blit caps and the
-   HEL": a declined `DdBlt` is E_NOTIMPL to the app on XP), the mode
-   table fed from the player (M2), a macOS
-   run of the same image, more 8 bpp titles (StarCraft, Age of Empires,
-   Caesar 3: install + a `tools/xp-<game>.sh` each; Diablo's dungeon
-   levels), a RAM-backed palette page if a title animates the palette
-   faster than the MMIO writes allow.
+The game loops, each a script (details in `docs/testing.md`):
+`xp-fifa-match.sh kvm|tcg`, `xp-diablo.sh install|play`,
+`xp-motoracer.sh install|play`, `xp-vicecity.sh play`, and
+`GAME_ISO=… tools/xp-driver-test.sh <image> bat tools/xp-maxpayne.bat`
+(or `xp-fifa2000.bat`).
 
-## Games to test, by feature (for a session by hand; 2026-09-11)
+**Images.** Run on an overlay or copy of an XP image with the driver
+installed, never the user's own: `~/vms/winxp-m7.qcow2` is theirs.
+Sessions have kept scratch copies (`winxp-m7g` with Diablo and the
+game installs) — make one with `install` if none is at hand.
+`~/vms/winxp.qcow2` is M4's cirrus image.
 
-What each DX8-DDI feature still needs a real title for, and which title
-to reach for. **Before any of them:** the image's driver reinstalled from
-this build's ISO (`tools/xp-driver-test.sh <image> install`) and QEMU /
-the executor from the same build — a protocol bump on one side only is
-`protocol mismatch` in the QEMU log and no Direct3D at all. "Sure" =
-confirmed from a published source; "likely" = the engine is known to use
-the API that way, the title itself not checked; "guess" = memory only.
-Every row's evidence is the QEMU log first: `ddi: dp2: …` lines (what the
-host refused or skipped, once each) and the driver's `dx8 draws skipped`
-line.
+## Diagnostics
 
-| Feature | State | Title to try | What to look for | Pick |
-|---|---|---|---|---|
-| More than one vertex stream (v10) | landed, no title yet | **Unreal Tournament 2003 / 2004** (D3DDrv, the default renderer) | static meshes, terrain and characters complete; no `reads streams 0x…, the draw carried …` line; `ddflags=0x200000` (one stream) as the A/B | likely (UE2 draws through DX8.1 vertex streams) |
-| Vertex shaders 1.1 (v7) | landed, SHTEST only | **3DMark2001 SE** — the Vertex Shader feature test, then the four game tests; **Morrowind** (ships `.vso` vertex shader objects) | the scenes drawn, no `vertex shader … refused` / `not valid vs 1.x` lines | sure (3DMark), likely (Morrowind) |
-| Pixel shaders 1.1–1.4 (v7) | landed, SHTEST only | **3DMark2001 SE** Pixel Shader test and Advanced Pixel Shader (ps 1.4); **Morrowind** with pixel-shader water on | shaded water (off: it looks like milk); no `pixel shader … refused` lines | sure (3DMark PS test, Morrowind water), guess (Advanced PS = 1.4) |
-| Point sprites | claimed (`MaxPointSize` 64, a per-vertex size too since 2026-09-11), SPRTEST 4/4 | **3DMark2001 SE** Point Sprites test | particles as sized quads, not single pixels | sure |
-| DOT3 bump mapping | claimed (`D3DTEXOPCAPS_ALL`), BUMPTEST's DOT3 2/2 | **3DMark2001 SE** DOT3 Bump Mapping test | lit relief on the surface, not flat | sure |
-| Environment-mapped bump mapping (`BUMPENVMAP`, V8U8) | landed 2026-09-11 (V8U8 in both texture lists, `ddflags=0x800000` the A/B), BUMPTEST 4/4; the luminance variant's L6V5U5 / X8L8V8U8 in the DX8 list since the same day (with DXVK patch 07, which makes its luminance count), BUMPTEST 8/8 | **3DMark2001 SE** EMBM test; **C&C Renegade** water; **Dungeon Keeper 2**; **Expendable** (its EMBM patch may insist on a Matrox card) | today: the test says "not supported" or the effect is missing — the check once the formats land | sure (all four support EMBM) |
-| Cube maps (v11) | landed, CUBETEST only | **3DMark2001 SE** Nature (its water reflects through a cube map) | the water's reflection of the sky and trees; no `cube … not mirrored` line from the driver, no `ddi: cube texture … 0x…` failure from the host | sure |
-| Anisotropic filtering | claimed since 2026-09-11 (`MaxAnisotropy` 16 on both faces, `ddflags=0x2000000` the A/B), ANISTEST 1/1 | **UT2003 / 2004** (`LevelOfAnisotropy` in the ini) | today: no effect; after: sharper floors at a glancing angle | guess |
-| DX8 path by hand | headless only | **Max Payne** (tutorial and the first levels, hardware T&L) | nothing black or missing in the alley walls and ground (the clipped fans) | — |
-| Regression after v10 | — | **GTA Vice City** (`tools/xp-vicecity.sh play`), **D3DGAME8** (`xp-driver-test.sh d3dgame8`), **Moto Racer**, **FIFA 2000** | the same frames and rates as before | — |
+- The driver's debug output is the DEBUG register → the QEMU log
+  (`d3dpt-vga: guest: …`). No WinDbg, no serial KD.
+- `d3dpt-vga: ddi: …` lines are the executor's (unsupported states and
+  tokens, once each); `batch N: error` a refused record;
+  `d3dptdisp: dp2 0x…` a DrawPrimitives2 the host failed;
+  `dx8 draws skipped … why …` the driver's (bits: 1 shader, 2 no FVF,
+  4 no stream, 8 stride < FVF, 16 vertex range, 32 index range, 64
+  primitive); `N page flips in 5.0 s` a title's real frame rate
+  (none: it blits to the primary); `N untracked guest pixels` GDI writes
+  caught by the target shadow.
+- `D3DPT_DP2_TRACE=<flag file>` dumps one whole frame per `touch`:
+  states, tokens, each draw's vertices, texture levels and the render
+  target after every draw as `.ppm`. `D3DPT_DDI_REREAD=1` and
+  `D3DPT_DDI_NOFOG=1` rule out a stale host texture and fog.
+- `-device d3dpt-vga,ddflags=N` withdraws one feature at a time for an
+  A/B without a reinstall. The bits are `DDF_*` in
+  `core/d3dpt_core.h` (the NT driver reads the low half, the 9x one
+  `D9F_*`); the ones used most: `0x20` no Direct3D, `0x1000` no T&L,
+  `0x2000` a DX7 driver to d3d8.dll, `0x8000` no vertical blank, and one
+  per protocol feature from v9 on.
+- `ddraw.dll` and `dxg.sys` can be pulled out of an image (`qemu-img
+  convert` + `7z x`) and disassembled with `i686-w64-mingw32-objdump`
+  when the DDK documentation runs out — most of doc 15's rules came from
+  there.
 
-No candidate known for N- / RT-patches (TruForm): rare before DirectX 9,
-and not worth building until a title turns up that asks. None is known
-for volume textures either; they landed anyway on 2026-09-11 (protocol
-v12, VOLTEST 4/4), their probe already written.
+## Traps
 
-**Every row has a probe in `DRIVER\`** (doc 15 "The DX8 feature probes"):
-CUBETEST, STRMTEST, VOLTEST, FMTTEST, BUMPTEST, SPRTEST, ANISTEST,
-PATCHTST — `tools/xp-driver-test.sh <image> probes` runs all nine in one
-boot. A probe of a feature the driver lacks says `NOT OFFERED` and why,
-so a feature is built against a check that already exists: the day the
-caps claim it, its probe runs its cases. On 2026-09-11 CUBETEST,
-STRMTEST, BUMPTEST (DOT3) and SPRTEST passed; VOLTEST, FMTTEST, ANISTEST
-and PATCHTST were not offered (VOLTEST passes 5/5 since v12 and the DXT volumes and
-ANISTEST 1/1 since its caps were claimed, FMTTEST 9/9 since its nine
-formats were listed, all the same day), and EMBM and the per-vertex point size
-were skipped for want of a V8U8 format and `D3DFVFCAPS_PSIZE` — both
-added the same day, BUMPTEST and SPRTEST 4/4 with them. Only PATCHTST is
-still not offered. Run the
-probes before a title: a title that fails where its feature's probe
-passes is the title's business, and one whose probe fails is ours.
+The rules themselves are in doc 15 and CLAUDE.md; these are the ones a
+session meets first.
 
-## Gotchas of this track (details in doc 15)
+- Kernel mode with mingw-w64: miniport headers are `ntdef.h` +
+  `ddk/miniport.h`, never `ntddk.h`; GCC emits `memcpy`/`memset` calls
+  even freestanding (`kcrt.c`); `build-driver.sh` checks the import
+  lists.
+- dxg drops the whole HAL, silently, to `DDCAPS_NOHARDWARE` for
+  `DDCAPS_GDI`, palette caps, colour-key caps without a Blt callback, or
+  a mode without Direct3D. A device with `DRAWPRIMITIVES2EX` must answer
+  `GUID_Miscellaneous2Callbacks` with `GetDriverState`.
+- Never re-register the flip chain in `DdFlip`: on NT a flip exchanges
+  the surfaces' roles, not their memory.
+- The executor must never let DXVK throw or assert: its exceptions
+  abort QEMU through DXVK's own unwinder, and its shader compiler
+  asserts on an unknown opcode. Validate every index, count and shader
+  (`sm1_valid`) before the call.
+- Never claim `D3DPMISCCAPS_CLIPTLVERTS`; the runtime's clipped fans
+  are stream-0 draws into its own clip buffer.
+- XP SP3's driver-signing Logo dialog ignores every policy; DRVINST
+  presses it, one dialog per unsigned file, for as long as the install
+  runs.
+- Keys typed while a full-screen DirectDraw window is up are lost, and
+  the Run dialog truncates long lines silently: chain a test into one
+  short `cmd` line or stage `E:\RUN.BAT` (`bat`).
+- On macOS a standalone `qemu-system-i386` with no Vulkan loader on
+  `DYLD_LIBRARY_PATH` segfaults in DXVK at the guest's first Direct3D
+  request, which reads as "the guest never reached its shell";
+  `xp-driver-test.sh` sets the environment itself, as `scripts/test.sh`
+  does.
 
-- Kernel-mode with mingw-w64: miniport headers are `ntdef.h` +
-  `ddk/miniport.h` + `ntddvdeo.h` + `ddk/video.h`, never `ntddk.h`; the
-  display DLL takes `winddi.h` with the vendored `ddk/ddrawint.h`; GCC calls
-  `memcpy`/`memset` even freestanding (`kcrt.c`); `build-driver.sh` checks
-  the import lists (videoprt + the few ntoskrnl imports of the cached
-  mappings; win32k only for the DLL).
-- `EngModifySurface` needs `HOOK_SYNCHRONIZE`; `DDCAPS_GDI` in the caps
-  makes dxg drop the HAL; the register BAR must be a kernel mapping.
-- Direct3D: a device with `DRAWPRIMITIVES2EX` caps must answer
-  `GUID_Miscellaneous2Callbacks` *with* `GetDriverState`, or ddraw.dll
-  builds a HEL-only object (`DDCAPS_NOHARDWARE`, no error anywhere);
-  `DDBD_32` is 0x100 (the DDBD flags count down); `ddraw.dll` and
-  `dxg.sys` can be pulled out of the image (`qemu-img convert` + `7z x`)
-  and disassembled with `i686-w64-mingw32-objdump` when the DDK docs run
-  out (doc 15 has the two findings).
-- XP SP3's Logo dialog ignores every registry policy; DRVINST presses it.
-- Keys typed while a full-screen DirectDraw window is up are lost: one
-  chained `cmd /k a & b & c` line per test — and the Run dialog truncates
-  long lines silently (a `copy … E:\dd32.log` became `E:\dd`): anything
-  longer than a short chain goes through a staged `E:\RUN.BAT`.
-- Palettized DirectDraw on XP: `dwPalCaps` 0, no palette callbacks, and
-  Direct3D offered in every mode, or the HAL silently degrades to
-  `DDCAPS_NOHARDWARE` (doc 15 has the disassembly trail). The same for
-  `DDCAPS_COLORKEY` / `dwCKeyCaps` *without a Blt callback* (CKTEST
-  bisection): the driver keeps a `DdBlt` that is never called (no
-  `DDCAPS_BLT`) so dxg accepts the caps, and without the caps user-mode
-  ddraw never hands a texture's colour key down at all.
-- A flip on NT exchanges the two surfaces' roles, not their memory: each
-  handle keeps its VRAM, the PRIMARYSURFACE caps move, dxg re-issues
-  `CreateSurfaceEx` for both. Never re-register the chain in `DdFlip`.
-- The debugger is the DEBUG register → QEMU log. No WinDbg, no serial KD.
-- **On the Mac, a missing Vulkan loader is a QEMU crash, not a refused
-  context** (2026-09-11): standalone `qemu-system-i386` without
-  `DYLD_LIBRARY_PATH` on the loader's keg logs `err: Vulkan:
-  vkGetInstanceProcAddr not found` and then SIGSEGVs inside DXVK's
-  `LibraryFn` when the guest's driver first asks for Direct3D
-  (`d3dpt_exec_create` → `Direct3DCreate9`), which in the harness reads as
-  "the guest never reached its shell". `tools/xp-driver-test.sh` sets the
-  environment itself now, as `scripts/test.sh` does (SIP strips `DYLD_*`
-  from the caller's).
-- The DX8 runtime asks its `GetDriverInfo2` questions only with
-  `DDHALINFO_GETDRIVERINFO2` in the HAL info, and checks `dwActualSize`
-  against the size inside the GDI2 header (the outer one is stale). DX8
-  device state (vertex format, streams, indices) persists across
-  DrawPrimitives2 calls, by handle (buffers move on a DISCARD lock).
-  dxg's `lPitch` of a DXT surface is its linear size, and a FOURCC
-  surface needs its code in `DrvGetDirectDrawInfo`'s FOURCC list. Never
-  claim `D3DPMISCCAPS_CLIPTLVERTS`: the host does not clip
-  pre-transformed vertices; the runtime's clipped fans are stream-0
-  draws (it rebinds stream 0 to its own clip buffer first), and the DP2
-  call's vertex buffer is a dummy under d3d8.dll. A protocol bump (`D3DPT_PROTO_VERSION`) means QEMU (prepare →
-  ninja), the executor and the guest-tools ISO all rebuilt before any
-  guest run.
-- The executor must never let DXVK throw: its exceptions abort QEMU
-  (DXVK's own static unwinder vs the system personality routine), a
-  `try` in the executor does not help. Validate every index / count
-  before the call — and every shader's bytecode (`sm1_valid`): DXVK's
-  compiler asserts on an unknown opcode instead of failing the create. `pgrep -f '<image>'` matches the shell loop that
-  contains the pattern — use `pgrep -a qemu-system` to see guests.
-- Two harness bugs found 2026-09-05 while re-checking the keyboard fix, both
-  of which make a *tool* failure look like a *driver* failure:
-  `xp-fifa-match.sh` looked for the shim as `dinput.dll` while
-  `build-wrappers.sh` upper-cases the whole staged tree for 8.3, so after any
-  real build it staged nothing (`set -u`, no `-e`: silently) and the match
-  ignored every key; and its wait for the game's mode switch was an unbounded
-  `until`, so a QEMU that never started span for ever. Both fixed: the shim is
-  looked up under either name and its absence is a loud warning, and the wait
-  is bounded and prints `qemu.log` when it gives up.
-- Only one process may hold a guest image: QEMU takes a write lock and the
-  second one dies with `Failed to get "write" lock`. With tracks running in
-  parallel, check `pgrep -af qemu-system-i386` for the image before starting a
-  headless run — `winxp-m7g` in particular is shared by the FIFA and Max Payne
-  loops.
+## Next steps
+
+1. **An XP whose driver is refused shows black** on the adapter: the VGA
+   core in a chained 256-colour 800×600 mode (`sr4=0a gr5=50`) that
+   renders nothing, while BIOS text and mode 13h render. It blinds every
+   headless look at a failed install (found in M15, its track doc
+   step 3).
+2. **A `driver` stage in `scripts/test.sh`**: boot on `d3dpt-vga` and run
+   `d3d7` + `shtest` + `probes` from a snapshot, as the XP D3D stage does.
+   Until then `tools/xp-driver-test.sh` is the check.
+3. **Titles for the features that only probes have seen** (the table
+   below).
+4. Present the host frame through the player's 3D path instead of the
+   per-frame readback into VRAM.
+5. Small items, each when a title asks: `DrvDeriveSurface` (GDI on
+   DirectDraw surfaces, an optimisation now that the target shadow
+   exists), a real blitter behind `DDCAPS_BLT`, a vblank from the
+   player's present, the mode table fed from the player (M2), RT/N
+   patches (PATCHTST is the only probe still "not offered"), a RAM-backed
+   palette page for fast palette animation, more 8 bpp titles
+   (StarCraft, Age of Empires, Caesar 3).
+6. A bytecode validator for SM2/3 on M4's d3d9 half — not a v1 blocker
+   (user decision 2026-09-16: hostile guest input is an accepted risk).
+
+## Games to test, by feature
+
+Before any of them: the driver reinstalled from this build's ISO and
+QEMU and the executor from the same build. The evidence is the QEMU log
+first (`ddi:` lines, `dx8 draws skipped`), and each feature's probe in
+`DRIVER\` (doc 15 "The DX8 feature probes") runs before its title: a
+title that fails where its probe passes is the title's business.
+
+| Feature (probe) | Title | Look for |
+|---|---|---|
+| streams, v10 (STRMTEST) | Unreal Tournament 2003/2004 | meshes, terrain, characters whole; `ddflags=0x200000` the A/B |
+| vertex shaders 1.1 (SHTEST) | 3DMark2001 SE, Morrowind | no `vertex shader … refused` / `not valid vs 1.x` |
+| pixel shaders 1.1–1.4 (SHTEST) | 3DMark2001 SE PS tests, Morrowind water | water shaded, not milk |
+| point sprites (SPRTEST) | 3DMark2001 SE Point Sprites | sized particles |
+| DOT3, EMBM (BUMPTEST) | 3DMark2001 SE, C&C Renegade water, Dungeon Keeper 2 | relief, not flat |
+| cube maps, v11 (CUBETEST) | 3DMark2001 SE Nature | sky and trees in the water |
+| anisotropic (ANISTEST) | UT2003/2004 `LevelOfAnisotropy` | sharp floors at a grazing angle |
+| DX8 by hand | Max Payne, first levels | alley walls and ground whole |
+| regression | Vice City, D3DGAME8, Moto Racer, FIFA 2000 | same frames and rates |
+
+3DMark2001 SE has run its whole benchmark through the shared core on
+**Win98** (doc 19 §36–§39: Nature, the Pixel Shader ocean's cube map);
+on XP it has not been run.
