@@ -196,15 +196,31 @@ int main(int argc, char **argv) {
     lc_wizard_set_video(w, (size_t)video_index(w, "Cirrus"));
     check("on the Cirrus there is no such row", !lc_wizard_d3d9_applies(w), NULL);
     lc_wizard_set_video(w, (size_t)video_index(w, "d3dpt-vga"));
+    /* Only what this host can run is offered (2026-09-22): the system
+     * Direct3D 9 on Windows alone, so a note or a label here names no
+     * other OS. */
+#ifdef _WIN32
+    check("three entries on Windows", lc_wizard_d3d9_count(w) == 3, NULL);
     lc_wizard_set_d3d9(w, 2);
     d3d9 = lc_wizard_d3d9_label(w, lc_wizard_d3d9(w));
     check("the third entry is this PC's own Direct3D 9",
           d3d9 && strstr(d3d9, "own Direct3D 9") != NULL, d3d9);
+#else
+    check("two entries off Windows: the system Direct3D 9 is not offered",
+          lc_wizard_d3d9_count(w) == 2, NULL);
+    lc_wizard_set_d3d9(w, 1);
+    d3d9 = lc_wizard_d3d9_label(w, lc_wizard_d3d9(w));
+    check("the second entry is DXVK", d3d9 && strstr(d3d9, "DXVK") != NULL, d3d9);
+#endif
     lc_string_free(d3d9);
     check("...and it is not the default", !lc_wizard_d3d9_is_default(w), NULL);
     char *d3d9_note = lc_wizard_d3d9_note(w);
-    check("whose note says which hosts have one",
-          d3d9_note && strstr(d3d9_note, "Windows") != NULL, d3d9_note);
+    check("whose note names no other host's OS",
+          d3d9_note && strstr(d3d9_note, "Linux") == NULL && strstr(d3d9_note, "macOS") == NULL
+#ifndef _WIN32
+              && strstr(d3d9_note, "Windows") == NULL
+#endif
+          , d3d9_note);
     lc_string_free(d3d9_note);
     lc_wizard_choose_family(w, (size_t)win98);
     check("a picked one survives a family switch", !lc_wizard_d3d9_is_default(w), NULL);

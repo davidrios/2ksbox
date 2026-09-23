@@ -982,14 +982,17 @@ qtwizard_fields_check() { # the fields, family by family
     # object has not got is silent — no warning anywhere — and the combo
     # box simply comes up empty, which is how this row first shipped
     # (cxx-qt's auto camel-case had made it `d3D9Labels`). So the count
-    # and the text are asked of the *window*: three entries, one of them
-    # showing. Whether the row is there at all is the adapter's answer,
-    # and only the two Windows families start on ours.
+    # and the text are asked of the *window*: every entry this host can
+    # run (three on Windows, two elsewhere: the system Direct3D 9 is
+    # offered on Windows alone, 2026-09-22), one of them showing. Whether
+    # the row is there at all is the adapter's answer, and only the two
+    # Windows families start on ours.
     o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] wizard direct3d: //p')"
     shown="$(printf '%s' "$o" | sed -n 's/^shown \[\(.*\)\] of .*/\1/p')"
     n="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] of \([0-9]*\) .*/\1/p')"
     echo "  $f: direct3d $o"
-    [ "$n" = 3 ] || { echo "$f: the Direct3D combo has $n entries, not the model's three"; rc=1; }
+    case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) want=3 ;; *) want=2 ;; esac
+    [ "$n" = "$want" ] || { echo "$f: the Direct3D combo has $n entries, not the $want this host offers"; rc=1; }
     [ -n "$shown" ] || { echo "$f: the Direct3D combo shows nothing"; rc=1; }
     case "$f:$o" in
       win98:*"applies true"|xp:*"applies true") ;;

@@ -234,7 +234,8 @@ char *lc_wizard_video_warning(const LcWizard *w);
    automatic answer, DXVK, or — on a Windows host — Windows' own, which
    is what a host below DXVK's Vulkan 1.3 floor has instead of nothing
    (ADR-007's 2026-09-21 amendment). A host question, so the list is the
-   same three on every family; ask lc_wizard_d3d9_applies before drawing
+   the entries this host can run (three on Windows, two elsewhere), the
+   same on every family; ask lc_wizard_d3d9_applies before drawing
    the row, since only a machine with our own adapter has an executor to
    run anything on. */
 bool lc_wizard_d3d9_applies(const LcWizard *w);

@@ -270,30 +270,41 @@ impl D3d9 {
         match self {
             D3d9::Auto => "Automatic",
             D3d9::Dxvk => "DXVK (needs Vulkan 1.3)",
-            D3d9::System => "This PC's own Direct3D 9 (Windows hosts only)",
+            D3d9::System => "This PC's own Direct3D 9",
         }
     }
 
-    /// The one line under the picker: what this entry is for. Not a
-    /// front end's to write (ADR-014).
+    /// The one line under the picker: what this entry is for, on the
+    /// host this launcher runs on and no other (user, 2026-09-22: a
+    /// note that talks about Linux to someone on Windows is noise). Not
+    /// a front end's to write (ADR-014).
     pub fn note(self) -> &'static str {
         match self {
-            D3d9::Auto => {
-                "DXVK, and on a Windows host below Vulkan 1.3 this PC's own Direct3D 9 instead."
+            D3d9::Auto if cfg!(windows) => {
+                "DXVK, or this PC's own Direct3D 9 when it has no Vulkan 1.3 GPU."
             }
-            D3d9::Dxvk => "The tested path. A host below Vulkan 1.3 then has no Direct3D at all.",
+            D3d9::Auto => "DXVK, or through Wine on this host when it has no Vulkan 1.3 GPU.",
+            D3d9::Dxvk => "The tested path. Without a Vulkan 1.3 GPU there is no Direct3D at all.",
             D3d9::System => {
-                "Windows hosts only. Older cards draw well here; on Linux and macOS there is no such library and the machine falls back to DXVK."
+                "This PC's own Direct3D 9, whatever the card. Older cards draw well here; not the tested path."
             }
         }
     }
 }
 
-/// Everything the picker offers, on every host: a machine file is
-/// portable and a setting made on one host must survive a move to
-/// another (`effective_video`'s rule, one level up).
+/// What the picker offers: only what this host can run (user,
+/// 2026-09-22 — an entry for another OS is noise), so the system
+/// Direct3D 9 is listed on Windows alone. A machine file is still
+/// portable: a bundle saying `system` opened on a Linux or macOS host
+/// shows as Automatic and keeps its value until something else is
+/// picked (`effective_video`'s rule, one level up), and the executor
+/// falls back to DXVK for it there either way.
 pub fn d3d9_choices() -> &'static [D3d9] {
-    &D3d9::ALL
+    if cfg!(windows) {
+        &D3d9::ALL
+    } else {
+        &[D3d9::Auto, D3d9::Dxvk]
+    }
 }
 
 /// What a host gamepad does for this machine (M13,
