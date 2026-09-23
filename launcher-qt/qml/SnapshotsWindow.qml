@@ -19,7 +19,9 @@ Window {
     title: snapshots.title
     width: 800
     height: 500
-    minimumWidth: 560
+    // Wide enough for the columns below at their fixed widths plus the
+    // name column's floor, so a row never runs past the window's edge.
+    minimumWidth: 640
     minimumHeight: 320
     flags: Qt.Dialog
     // One at a time (`WizardWindow.qml`): a secondary window blocks the
@@ -41,15 +43,38 @@ Window {
     /// interaction, not to the machine.
     property string confirmRestore: ""
 
+    // One set of column widths for the header and every row (user
+    // report: they drifted apart on resize). Each row also holds the two
+    // buttons, which the header did not, so at a width where a row no
+    // longer fit the row's columns shrank and the header's stayed put.
+    // Now the three trailing columns are fixed, the name column takes
+    // whatever is left in both, and the header reserves the buttons'
+    // room: as much as the armed "Restore" needs, so arming a row moves
+    // nothing.
+    readonly property int columnSpacing: 10
+    readonly property int nameMinWidth: 60
+    readonly property int takenWidth: 150
+    readonly property int stateWidth: 80
+    readonly property int actionsWidth: restoreMetrics.implicitWidth + columnSpacing + deleteMetrics.implicitWidth
+
     /// Where the layout put things, for the `snapshots` probe and the
     /// `qt-snapshots` check: the list box should be the one item that
     /// grows, so a short one means something under the "New snapshot" row
-    /// took a share of the spare height.
+    /// took a share of the spare height; and the header's columns must
+    /// start where the first row's do, at any window width.
     function layoutReport() {
+        const first = list.itemAtIndex(0)
         return "window " + width + "x" + height
             + ", column h=" + bodyLayout.height
             + ", list y=" + list.y + " h=" + list.height
             + ", new-row y=" + newRow.y + " h=" + newRow.height
+            + ", header x=[" + columnsX(header, [headerName, headerTaken, headerState, headerActions]) + "]"
+            + ", row x=[" + (first ? first.columnsX() : "") + "]"
+    }
+
+    /// Each column's left edge in window coordinates, space-separated.
+    function columnsX(row, columns) {
+        return columns.map(c => Math.round(c.mapToItem(null, 0, 0).x)).join(" ")
     }
 
     // Runs only while a live job is in flight.
@@ -84,17 +109,41 @@ Window {
             // own look). A `ListView` of `ItemDelegate`s under a header row
             // of labels whose margins are a delegate's own padding, read off
             // an invisible one, so the columns line up under every style.
+            // The two hidden buttons are how wide a row's widest pair of
+            // buttons is under this style, for the reserved column.
             ItemDelegate { id: rowMetrics; visible: false }
+            Button { id: restoreMetrics; visible: false; text: qsTr("Discard current state?") }
+            Button { id: deleteMetrics; visible: false; text: qsTr("Delete") }
 
             RowLayout {
+                id: header
                 Layout.fillWidth: true
                 Layout.leftMargin: rowMetrics.leftPadding
                 Layout.rightMargin: rowMetrics.rightPadding
-                spacing: 10
-                Label { text: qsTr("Name"); font.bold: true; Layout.preferredWidth: 240 }
-                Label { text: qsTr("Taken"); font.bold: true; Layout.preferredWidth: 160 }
-                Label { text: qsTr("VM state"); font.bold: true; Layout.preferredWidth: 90 }
-                Item { Layout.fillWidth: true }
+                spacing: root.columnSpacing
+                Label {
+                    id: headerName
+                    text: qsTr("Name"); font.bold: true
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: root.nameMinWidth
+                }
+                Label {
+                    id: headerTaken
+                    text: qsTr("Taken"); font.bold: true
+                    Layout.minimumWidth: root.takenWidth
+                    Layout.maximumWidth: root.takenWidth
+                }
+                Label {
+                    id: headerState
+                    text: qsTr("VM state"); font.bold: true
+                    Layout.minimumWidth: root.stateWidth
+                    Layout.maximumWidth: root.stateWidth
+                }
+                Item {
+                    id: headerActions
+                    Layout.minimumWidth: root.actionsWidth
+                    Layout.maximumWidth: root.actionsWidth
+                }
             }
 
             MenuSeparator { Layout.fillWidth: true }
@@ -119,8 +168,12 @@ Window {
 
                     width: list.width
 
+                    function columnsX() {
+                        return root.columnsX(snapRow, [nameColumn, takenColumn, stateColumn, actions])
+                    }
+
                     contentItem: RowLayout {
-                        spacing: 10
+                        spacing: root.columnSpacing
 
                         // The tree: rows come in tree order (each root
                         // followed by its descendants), so the name is
@@ -130,7 +183,8 @@ Window {
                         // says so beside its name.
                         RowLayout {
                             id: nameColumn
-                            Layout.preferredWidth: 240
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: root.nameMinWidth
                             spacing: 6
                             Item { id: indent; Layout.preferredWidth: snapRow.depth * 18; visible: snapRow.depth > 0 }
                             Label {
@@ -151,33 +205,56 @@ Window {
                             }
                             Item { Layout.fillWidth: true }
                         }
-                        Label { text: snapRow.taken; Layout.preferredWidth: 160; opacity: 0.75 }
-                        Label { text: snapRow.vmState; Layout.preferredWidth: 90; opacity: 0.75 }
-                        Item { Layout.fillWidth: true }
+                        Label {
+                            id: takenColumn
+                            text: snapRow.taken
+                            elide: Text.ElideRight
+                            opacity: 0.75
+                            Layout.minimumWidth: root.takenWidth
+                            Layout.maximumWidth: root.takenWidth
+                        }
+                        Label {
+                            id: stateColumn
+                            text: snapRow.vmState
+                            elide: Text.ElideRight
+                            opacity: 0.75
+                            Layout.minimumWidth: root.stateWidth
+                            Layout.maximumWidth: root.stateWidth
+                        }
 
-                        Button {
-                            // A job in flight owns the guest's state;
-                            // a second one on top of it is refused by
-                            // QEMU anyway.
-                            enabled: !root.snapshots.busy
-                            text: root.confirmRestore === snapRow.name
-                                ? qsTr("Discard current state?")
-                                : qsTr("Restore")
-                            onClicked: {
-                                if (root.confirmRestore === snapRow.name) {
-                                    root.confirmRestore = ""
-                                    root.snapshots.revert(snapRow.name)
-                                } else {
-                                    root.confirmRestore = snapRow.name
+                        // The buttons keep to the right of their column;
+                        // an armed "Restore" grows into the room to their
+                        // left, which the header reserves too.
+                        RowLayout {
+                            id: actions
+                            spacing: root.columnSpacing
+                            Layout.minimumWidth: root.actionsWidth
+                            Layout.maximumWidth: root.actionsWidth
+                            Item { Layout.fillWidth: true }
+                            Button {
+                                // A job in flight owns the guest's state;
+                                // a second one on top of it is refused by
+                                // QEMU anyway.
+                                enabled: !root.snapshots.busy
+                                text: root.confirmRestore === snapRow.name
+                                    ? qsTr("Discard current state?")
+                                    : qsTr("Restore")
+                                onClicked: {
+                                    if (root.confirmRestore === snapRow.name) {
+                                        root.confirmRestore = ""
+                                        root.snapshots.revert(snapRow.name)
+                                    } else {
+                                        root.confirmRestore = snapRow.name
+                                    }
                                 }
                             }
-                        }
-                        Button {
-                            text: qsTr("Delete")
-                            enabled: !root.snapshots.busy
-                            onClicked: {
-                                root.confirmRestore = ""
-                                root.snapshots.dropSnapshot(snapRow.name)
+                            Button {
+                                text: qsTr("Delete")
+                                enabled: !root.snapshots.busy
+                                onClicked: {
+                                    root.confirmRestore = ""
+                                    root.snapshots.dropSnapshot(snapRow.name)
+                                }
                             }
                         }
                     }

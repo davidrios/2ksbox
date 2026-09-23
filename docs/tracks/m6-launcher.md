@@ -66,7 +66,9 @@ No clicking and no unit tests. Three layers, all in `scripts/test.sh host`:
   `xp:2` is the Display page). The screen runs its script, prints what
   the window *shows* and quits, with no GPU and no session;
   `LAUNCHER_QT_SHOT=<png>` (and `LAUNCHER_QT_DELAY=<ms>`) also grabs a
-  picture. A grab that never completes means another process, such as a
+  picture; `LAUNCHER_QT_SIZE=<w>x<h>` opens the `snapshots` window at
+  that size, for a layout that only goes wrong when resized. A grab
+  that never completes means another process, such as a
   running player, holds the GPU. Checks: `qt-wizard` (every family's
   fields as shown vs. the model, every page fits), `qt-close`, `qt-esc`,
   `qt-snapshots`, `qt-profile`, `qt-shelf`, `qt-firstrun`, `qt-clone`.

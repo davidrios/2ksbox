@@ -494,32 +494,43 @@ qtclone_check() { # the Qt "Clone…" window, driven (doc 07)
     }' || rc=1
   return $rc
 }
-qtsnapshots_check() { # the Qt snapshots window's first layout (doc 07)
-  local dir="$OUT/qtsnapshots" bin="launcher-qt/target/release/launcher-qt" img=build/qemu/qemu-img bundle o
+qtsnapshots_check() { # the Qt snapshots window's layout (doc 07)
+  local dir="$OUT/qtsnapshots" bin="launcher-qt/target/release/launcher-qt" img=build/qemu/qemu-img bundle o size hx rx
   rm -rf "$dir"; mkdir -p "$dir/library"
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" LAUNCHER_QEMU_IMG_BIN="$img" QT_QPA_PLATFORM=offscreen
   "$img" create -q -f qcow2 "$dir/disk.qcow2" 64M || { echo "qemu-img create failed"; return 1; }
+  "$img" snapshot -c one "$dir/disk.qcow2" || { echo "qemu-img snapshot failed"; return 1; }
   bundle="$(target/release/launcherx --new win98 Snap "$dir/disk.qcow2")" || { echo "--new failed"; return 1; }
-  # The window opened on a stopped machine with no snapshots, no status
-  # and no error: the list box is the one item that grows, so the "New
-  # snapshot" row must end at the bottom of the column, give or take the
-  # one spacing (8) above the empty status row. A nested layout fills by
-  # default, and the status row (both children hidden until there is a
-  # status) had no maximum, so it split the spare height with the list box
-  # and the list stopped halfway down the window.
-  o="$(timeout 120 env LAUNCHER_QT_SCREEN=snapshots LAUNCHER_QT_ARG="$bundle" LAUNCHER_QT_DELAY=300 \
-       "$bin" 2>&1 | sed -n 's/^\[diag\] snapshots layout: //p')"
-  [ -n "$o" ] || { echo "the probe printed no snapshots layout line"; return 1; }
-  echo "  $o"
-  printf '%s\n' "$o" | awk '{
-      for (i = 1; i <= NF; i++) {
-        if ($i ~ /^h=/ && col == "") { col = substr($i, 3); continue }
-        if ($i == "new-row") { ry = substr($(i+1), 3); rh = substr($(i+2), 3) }
-      }
-      sub(/,$/, "", col); sub(/,$/, "", ry); sub(/,$/, "", rh)
-      exit !(ry + rh >= col - 9)
-    }' || { echo "the \"New snapshot\" row does not end at the bottom: something below it took the list box's height"; return 1; }
+  # The window opened on a stopped machine with one snapshot, no status
+  # and no error, at its own size and then at its narrowest, where the
+  # rows (which also hold the two buttons) once squeezed their columns
+  # while the header kept its own (user report, 2026-09-23).
+  # - The list box is the one item that grows, so the "New snapshot" row
+  #   must end at the bottom of the column, give or take the one spacing
+  #   (8) above the empty status row. A nested layout fills by default,
+  #   and the status row (both children hidden until there is a status)
+  #   had no maximum, so it split the spare height with the list box and
+  #   the list stopped halfway down the window.
+  # - The header's column edges are the first row's, to the pixel.
+  for size in "" 640x320; do
+    o="$(timeout 120 env LAUNCHER_QT_SCREEN=snapshots LAUNCHER_QT_ARG="$bundle" LAUNCHER_QT_DELAY=300 \
+         LAUNCHER_QT_SIZE="$size" "$bin" 2>&1 | sed -n 's/^\[diag\] snapshots layout: //p')"
+    [ -n "$o" ] || { echo "the probe printed no snapshots layout line"; return 1; }
+    echo "  $o"
+    printf '%s\n' "$o" | awk '{
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^h=/ && col == "") { col = substr($i, 3); continue }
+          if ($i == "new-row") { ry = substr($(i+1), 3); rh = substr($(i+2), 3) }
+        }
+        sub(/,$/, "", col); sub(/,$/, "", ry); sub(/,$/, "", rh)
+        exit !(ry + rh >= col - 9)
+      }' || { echo "the \"New snapshot\" row does not end at the bottom: something below it took the list box's height"; return 1; }
+    hx="$(printf '%s\n' "$o" | sed -n 's/.*header x=\[\([^]]*\)\].*/\1/p')"
+    rx="$(printf '%s\n' "$o" | sed -n 's/.*row x=\[\([^]]*\)\].*/\1/p')"
+    [ -n "$hx" ] && [ "$hx" = "$rx" ] \
+      || { echo "the header's columns do not start where the first row's do"; return 1; }
+  done
   return 0
 }
 shaderdefaults_check() { # the first-run shader offer and its starter profiles (doc 07)

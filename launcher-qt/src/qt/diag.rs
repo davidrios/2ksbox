@@ -6,8 +6,10 @@
 //!
 //! `LAUNCHER_QT_SHOT=<file.png>` arms it, `LAUNCHER_QT_SCREEN=<name>`
 //! picks which window to open first, `LAUNCHER_QT_ARG=<value>` is that
-//! window's argument (a bundle path, a preset), and
-//! `LAUNCHER_QT_DELAY=<ms>` is how long to let it settle.
+//! window's argument (a bundle path, a preset),
+//! `LAUNCHER_QT_DELAY=<ms>` is how long to let it settle, and
+//! `LAUNCHER_QT_SIZE=<w>x<h>` opens the screen's window at that size
+//! instead of its own, for a layout that only goes wrong when resized.
 
 #[cxx_qt::bridge]
 pub mod ffi {
@@ -30,6 +32,8 @@ pub mod ffi {
         #[qproperty(QString, screen)]
         #[qproperty(QString, arg)]
         #[qproperty(i32, delay_ms)]
+        /// "" or "<w>x<h>" (`LAUNCHER_QT_SIZE`).
+        #[qproperty(QString, size)]
         type Diag = super::DiagRust;
 
         /// Report what the grab did, so a failed `saveToFile` is visible
@@ -68,6 +72,7 @@ pub struct DiagRust {
     screen: QString,
     arg: QString,
     delay_ms: i32,
+    size: QString,
 }
 
 fn env(name: &str) -> QString {
@@ -84,6 +89,7 @@ impl Default for DiagRust {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(600),
+            size: env("LAUNCHER_QT_SIZE"),
         }
     }
 }

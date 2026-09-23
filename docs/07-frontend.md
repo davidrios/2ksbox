@@ -729,7 +729,13 @@ Qt is a shared library, so every packager gained a job (ADR-015):
   hidden has no maximum and takes a share of the spare height (the
   snapshots list stopped halfway, `qt-snapshots`). A grid column sized
   by `Layout.preferredWidth` alone moves with its text, so pin minimum =
-  preferred = maximum and let one column take the spare width. Name a
+  preferred = maximum and let one column take the spare width. A header
+  row over a list of delegates must be laid out from the *same* widths
+  as a row, buttons included: the snapshots header had no buttons, so
+  at a width where a row no longer fit, the row's columns shrank and
+  the header's did not (`SnapshotsWindow.qml` reserves the armed
+  "Restore"'s room in the header; `qt-snapshots` compares the edges at
+  the window's narrowest). Name a
   font family the platform has (Menlo / Consolas / `monospace`), or pay
   for a font-alias scan and a warning.
 - **File dialogs.** An extension filter is case-sensitive on Linux, so

@@ -643,7 +643,15 @@ ApplicationWindow {
                     discs.openFor(diag.arg, machines.discLibraryPath(), false)
                 discShelfWindow.show(); break
             case "snapshots":
-                snapshots.openFor(diag.arg, false); snapshotsWindow.show(); break
+                // `LAUNCHER_QT_SIZE=<w>x<h>` opens it at that size, for
+                // the columns at a width other than the one it starts at.
+                snapshots.openFor(diag.arg, false)
+                if (diag.size !== "") {
+                    const wh = diag.size.split("x")
+                    snapshotsWindow.width = Number(wh[0])
+                    snapshotsWindow.height = Number(wh[1])
+                }
+                snapshotsWindow.show(); break
             case "profiles":
                 profiles.refresh(); shaderWindow.show(); break
             case "saveprofile":
