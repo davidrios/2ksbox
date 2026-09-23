@@ -267,6 +267,12 @@ machine's settings for games that want a real PS/2 mouse.
   needs the host, and everything else it does still beats the Cirrus.
   "In software (slow)" means a software Vulkan driver was found; a game
   may be faster the other way, so try both.
+- **The Windows key and Alt+Tab still go to the host, in the Flatpak on
+  sway** (and other wlroots compositors). The sandbox never gets the
+  protocol that hands shortcuts to a window, so the title says they are
+  the host's. Run the app under X11 instead, once:
+  `flatpak override --user --nosocket=wayland --socket=x11
+  com._2ksbox.Launcher`. GNOME and KDE may not need this.
 - **A black desktop or a stop after a display-adapter change.** Windows
   wants a driver for the new adapter. If the guest tools were installed
   before the change, Windows finds it on the next boot; otherwise switch

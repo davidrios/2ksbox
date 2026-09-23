@@ -390,6 +390,12 @@ to one subsystem lives in its design doc; pointers are at the end.
   differently. Pacing design: doc 11; `tools/audio-glitch-test.py`
   (`STALL=`, `CDAMP=`) reproduces both.
 
+- **Host shortcuts stay the host's in the Flatpak on sway.** The
+  sandbox's Wayland socket carries a security context and wlroots hides
+  the shortcut-inhibit protocol from it; the player says so on stderr.
+  A limitation by decision (2026-09-23), with the X11 override in
+  `development.md` "Flatpak" and the README. Doc 03 "Input path".
+
 ### Driving a guest headless
 
 - **Wait for the guest, never a clock.** `tools/guestwait.sh` waits for a

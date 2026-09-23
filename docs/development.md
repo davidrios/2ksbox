@@ -225,7 +225,9 @@ player [--shader <preset.slangp>] [--shader-params <k=v,...>]
   Windows side did: whether the raw-input registration was accepted, and
   what winit and Windows each thought about focus at every change. A
   shortcut that still reaches the host is nearly always a window that
-  was not in front. Design and measurements: doc 03 §"Input path",
+  was not in front. The one known exception is the Flatpak on a wlroots
+  compositor, where the sandbox never sees the inhibit protocol (doc 03,
+  "Flatpak" below). Design and measurements: doc 03 §"Input path",
   `player/src/kbcapture.rs`.
 - `qemu-embed: input:` lines on stderr report the embed input queue's
   drain latency, zero-length presses and drops, only when something is
@@ -485,6 +487,16 @@ whenever a dependency changes. Both manifests take their branch from the
 builder (`--default-branch=stable`, Flathub's), so an older `master`
 build stays installed beside a new one until it is uninstalled; the
 script names the branch in every ref.
+
+**Host shortcuts stay the host's on sway** and other wlroots
+compositors, a documented limitation (user decision, 2026-09-23): the
+sandbox's Wayland socket carries a security context and sway hides the
+shortcut-inhibit protocol from it (doc 03 "Input path" has the
+mechanism). The override is X11 over Xwayland for the whole app:
+
+```sh
+flatpak override --user --nosocket=wayland --socket=x11 com._2ksbox.Launcher
+```
 
 The app ships no Wine and no PE pair. Below the Vulkan floor they come
 from the app's add-on, `com._2ksbox.Launcher.Wine`

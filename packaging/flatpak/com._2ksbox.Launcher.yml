@@ -51,6 +51,10 @@ finish-args:
   # inside the sandbox tells the two apart.
   - --device=input
   # Wayland first, X11 as the fallback the player's winit build expects.
+  # On a wlroots compositor the sandbox's socket never offers the
+  # shortcut-inhibit protocol (doc 03 "Input path"), so host shortcuts
+  # stay the host's there; a documented limitation, with a user override
+  # to X11 (docs/development.md "Flatpak").
   - --socket=wayland
   - --socket=fallback-x11
   - --share=ipc

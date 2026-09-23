@@ -270,6 +270,18 @@ grab, so each windowing system gets its own:
 - **Wayland.** `zwp_keyboard_shortcuts_inhibit_manager_v1`, one inhibitor
   for the window's life. The compositor applies it only while the surface
   has focus, and its own `--inhibited` bindings are the user's way out.
+  **Not in the Flatpak on a wlroots compositor** (a limitation, user
+  decision 2026-09-23): Flatpak 1.15+ gives the sandbox a socket of its
+  own through `wp_security_context_v1`, and sway (1.12, `is_privileged`
+  in `sway/server.c`) hides the inhibit manager from such clients along
+  with layer-shell and screencopy. The player then says "the compositor
+  offers no keyboard-shortcuts-inhibit protocol" and the shortcuts stay
+  the host's. Binding the real socket into the sandbox is refused by
+  bubblewrap. The way round is the X11 path over Xwayland, which runs
+  outside the sandbox and asks the compositor on the grab's behalf:
+  `flatpak override --user --nosocket=wayland --socket=x11
+  com._2ksbox.Launcher`, at the price of the whole app under Xwayland.
+  GNOME and KDE decide this for themselves and were not checked.
 - **X11.** An active `XGrabKeyboard` while focused, which beats the window
   manager's passive grabs on Super.
 - **Windows.** The keyboard is registered for raw input with
