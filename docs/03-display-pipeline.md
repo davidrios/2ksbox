@@ -31,9 +31,8 @@ SyncMaster 753DFX has a delta dot trio at ≈0.20 mm (doc 09), not an
 aperture grille. It is derived from the tube's geometry and waits on doc
 09's photo pass. A Trinitron preset is still worth having as a style.
 
-Open (M2): overscan crop, the curated preset pack calibrated against the
-rig's photographs, and an answer for presets with no scanline-count
-parameter (below).
+Open (M2): an answer for presets with no scanline-count parameter
+(below).
 
 ## Pixel accuracy rules (all testable)
 

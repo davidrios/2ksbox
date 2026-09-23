@@ -58,9 +58,8 @@ Mode analysis (`player/src/mode.rs`, checked by `player
 --mode-sweep`), whole-pixel geometry recomputed only on surface
 changes, native screenshots (Ctrl+Alt+S). Design in doc 03.
 
-**Left:** overscan crop, the curated preset pack calibrated against the
-rig's CRT photos, presets with no resolution override, the player's own
-overlay controls (pause, snapshot, disc swap; doc 07).
+**Left:** presets with no resolution override, the player's own overlay
+controls (pause, snapshot, disc swap; doc 07).
 
 ## M3: 3D for Win98 and Glide
 

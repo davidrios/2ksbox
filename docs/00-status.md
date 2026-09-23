@@ -250,9 +250,8 @@ tracks, plus the items no track owns.
    `tools/glide-host-test.cpp`) and a Glide guest on the Air, a Windows
    Glide wrapper (M11's cross build has no stage), and fence-based sync
    instead of `glFinish`.
-5. **Display (M2, doc 03).** Overscan crop, the curated preset pack
-   calibrated against the rig's CRT photos, an answer for presets with no
-   resolution override. XP's mode table fed from the player and a present
+5. **Display (M2, doc 03).** An answer for presets with no resolution
+   override. XP's mode table fed from the player and a present
    signal in phase with its swapchain (M7). The player's own overlay
    controls (pause, snapshot, disc swap; doc 07).
 6. **Windows host (M11's leftovers).** Moto Racer's speed on the PC
