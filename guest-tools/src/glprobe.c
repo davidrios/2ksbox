@@ -13,10 +13,7 @@
  * It matters because the pass-through is reached by *name*: the first
  * opengl32.dll the loader finds is the one a program draws through, so a GL
  * title gets the pass-through only if a copy sits next to its EXE, or if the
- * one in the system folder is ours, which is what SETUP's "WineD3D as this
- * machine's DirectDraw" arranges (doc 19 §43). WineD3D on 9x needs that too:
- * it draws through whatever opengl32.dll it finds, and on Microsoft's it
- * comes up with no usable adapter at all.
+ * one in the system folder is ours.
  *
  * The pass-through refuses to load without the device mapper (FXMEMMAP.VXD
  * on 9x, the MAPMEM service on NT): its DllMain returns FALSE, and a program

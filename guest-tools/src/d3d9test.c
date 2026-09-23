@@ -1,8 +1,8 @@
 /*
  * d3d9test: the Direct3D 9 counterpart of wglgears for the guest-tools ISO.
  * Creates a HAL device on a window, prints the adapter identifier and a
- * few caps (so you can tell WineD3D-over-pass-through from the Microsoft
- * software path or a failure), then spins a colored triangle and reports
+ * few caps (so you can tell our device from the Microsoft software path
+ * or a failure), then spins a colored triangle and reports
  * the frame rate in the title bar and on the console every second.
  * Also reports the x87 control word after CreateDevice: D3D sets 24-bit
  * precision unless D3DCREATE_FPU_PRESERVE, which is the case our QEMU
@@ -10,8 +10,8 @@
  *
  * Build (mingw-w64, msvcrt, Pentium III floor as the rest of the ISO):
  *   i686-w64-mingw32-gcc -O2 -o d3d9test.exe d3d9test.c -ld3d9 -lgdi32 -luser32
- * It runs on whichever D3D9 is copied next to it (D3DPT\ or
- * WINED3D\D3D8-9\ from the ISO, SETUP /GAME 1 or 4).
+ * It runs on whichever D3D9 is next to it (D3DPT\ from the ISO, SETUP
+ * /GAME 1) or, with none, the system's.
  */
 #include <windows.h>
 #include <d3d9.h>

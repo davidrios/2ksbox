@@ -5,10 +5,11 @@
  * It answers one question: does the *host* have a Direct3D executor? The
  * adapter reports it in `D3DPT_FB_REG_D3D_STATUS`, which the display driver
  * reads anyway. A ring-3 program cannot read it, because the register page
- * is mapped only for the driver and its HAL. Creating a DirectDraw object
- * and reading the HAL caps is circular for the one program that needs the
- * answer *before* DirectDraw loads (`D3DPRE.EXE`, which decides whether
- * this session's DirectDraw should be WineD3D's).
+ * is mapped only for the driver and its HAL, and creating a DirectDraw
+ * object to read the HAL caps is circular for a program that needs the
+ * answer before DirectDraw loads. Its one user, the login helper that
+ * pointed 9x's DirectDraw at WineD3D-in-guest, went with that stack
+ * (ADR-018, M15 step 6); the escape stays as a diagnostic.
  *
  * Both sides run in the guest, so this header is the whole contract. Call
  * `ExtEscape` (or `Escape`) with this code and a `D3DPT_ESC_HOSTINFO`

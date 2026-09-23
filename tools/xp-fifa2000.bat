@@ -1,9 +1,10 @@
 @echo off
 rem FIFA 2000 on the d3dpt-vga Direct3D HAL (doc 15, M7c), run headless by
 rem   GAME_ISO=FIFA2000.ISO SHOTS=24 tools/xp-driver-test.sh <image> bat tools/xp-fifa2000.bat
-rem The game folder still carries the WineD3D set from the 2026-09-03 wine9x
-rem experiments (DDRAW.DLL / WINED3D.DLL / WINEDD.DLL next to the EXE and in
-rem THRASH\): renamed away so the game loads the system ddraw.dll -> our HAL.
+rem The game folder on that image still carries the WineD3D-in-guest set
+rem from the 2026-09-03 experiments (a stack retired by ADR-018, M15 step 6:
+rem DDRAW.DLL / WINED3D.DLL / WINEDD.DLL next to the EXE and in THRASH\).
+rem They are renamed away so the game loads the system ddraw.dll -> our HAL.
 rem The install path is the Brazilian XP's; the registry dump shows the
 rem renderer choice (Thrash Driver dx = THRASH\dx6z.dll, Hardware Acceleration 1).
 reg query "HKLM\Software\EA Sports\FIFA 2000" /s > E:\fifareg.txt

@@ -4,8 +4,8 @@ The guest-tools ISO holds everything a guest needs from us: the display
 drivers, the Glide / OpenGL / Direct3D wrappers, the installer, the
 disc-shelf program and the test programs. This file covers how the disc
 is built, what is on it and what `SETUP.EXE` does. The end-user text on
-the disc is `README-ISO.txt` (the root `README.TXT`),
-`README-WINED3D.txt` and `README-DRIVER.txt`. Test programs are in
+the disc is `README-ISO.txt` (the root `README.TXT`) and
+`README-DRIVER.txt`. Test programs are in
 `docs/testing.md`; the drivers' designs are docs 15 (XP) and 19 (9x).
 Era binaries are built, never committed (`out/` is git-ignored).
 
@@ -69,10 +69,6 @@ D3DPT\      per game: D3D8.DLL D3D9.DLL DDRAW.DLL DINPUT.DLL over the
             paravirtual device (doc 14)
 OPENGL\     per game: OPENGL32.DLL (the GL pass-through) and
             WRAPGL32.EXT, its extension-list cap
-WINED3D\    per game, whole folder: D3D8-9\ for DirectX 8/9, DDRAW\ for
-            DirectX 7 and older, each with WINED3D.DLL and OPENGL32.DLL;
-            SYSTEM9X\ (DDRAWME.DLL, D3DPRE.EXE) for the 9x machine-wide
-            install; README.TXT says which and when
 VOODOO2\    V2START.EXE, the start-up guard for 3dfx's Voodoo 2 driver
 CDSHELF\    CDSHELF.EXE (98/2000/XP), CDSHELF.COM (DOS)
 TESTS\      every test, benchmark and calibration program
@@ -80,13 +76,9 @@ TESTS\      every test, benchmark and calibration program
 
 **One folder per role, one copy of every file.** The folder a game's
 files are copied from decides its stack, so no name on the disc means two
-things: `D3D9.DLL` is ours in `D3DPT\` and Wine's in `WINED3D\D3D8-9\`,
-never in one folder. The one deliberate duplicate is WineD3D's: each of
-its folders carries the DLLs under the names a game loads plus
-`WINED3D.DLL` and our `OPENGL32.DLL`, so a user copies one folder from
-Explorer and renames nothing (user request). Without our `OPENGL32.DLL`
-beside it, WineD3D draws through Windows' software GL 1.1. The files are
-the same for 98 and XP.
+things, and each folder carries the DLLs under the names a game loads,
+so a user copies from Explorer and renames nothing (user request). The
+files are the same for 98 and XP.
 
 **The mapper is not optional.** `OPENGL32.DLL` and the `D3DPT\` DLLs reach
 the device through it and refuse to load without it (`0xc0000142` on NT).
@@ -127,7 +119,6 @@ number moves.
 | 4 | 4 | Test programs | `TESTS\` into `C:\2KSBOX`; off in the menu, on with `/ALL` |
 | 5 | | Sound Blaster 16 device names | only where a translation made an SB16 wave name too long for DirectX 9: a shorter one in the override `SB16.VXD` reads (doc 20 §5.3) |
 | 6 | | Voodoo 2 start-up guard | only with a 3dfx card. 3dfx's `Voodoo2` Run entry moves to `HKLM\SOFTWARE\2ksbox\Voodoo2` and `V2START.EXE` takes its place (doc 21 §11) |
-| 7 | | WineD3D as this machine's DirectDraw | wine9x's switcher as `DDRAWME.DLL`, the machine's own DirectDraw kept as `DDSYS.DLL`, the GL pass-through as the system `OPENGL32.DLL`, and `D3DPRE.EXE` in the Run key, which points `KnownDLLs\DDRAW` at WineD3D only on a host with no executor (doc 19 §43) |
 
 **File sets** (`/GAME <n> <dir>`) are copied next to one game, never into
 the system folder. Each set is self-contained, so two stacks never share
@@ -138,10 +129,8 @@ a folder.
 | 1 | Direct3D 8/9 on the paravirtual device (`D3D8.DLL D3D9.DLL DDRAW.DLL`) | `D3DPT\` |
 | 2 | DirectInput keyboard fix (`DINPUT.DLL`) | `D3DPT\` |
 | 3 | OpenGL pass-through (`OPENGL32.DLL WRAPGL32.EXT`) | `OPENGL\` |
-| 4 | WineD3D, Direct3D 8/9 | `WINED3D\D3D8-9\` |
-| 5 | WineD3D, DirectDraw and Direct3D up to 7 | `WINED3D\DDRAW\` |
-| 6 | Glide pass-through (`GLIDE*.DLL`) | `GLIDE\` |
-| 7 | DOS Glide pass-through (`GLIDE2X.OVL`) | `GLIDE\` |
+| 4 | Glide pass-through (`GLIDE*.DLL`) | `GLIDE\` |
+| 5 | DOS Glide pass-through (`GLIDE2X.OVL`) | `GLIDE\` |
 
 `DDRAW.DLL` in set 1 forwards to Windows' own and reports 256 MB of video
 memory, for launchers that ask DirectDraw rather than Direct3D (GTA Vice
@@ -188,58 +177,6 @@ Sets 6 and 7 put ours next to one game.
 `tools/setup-guest-test.sh <image> [xp|win98]` guards all of it in a real
 guest (`REBOOT=1` for the restart, `VOODOO=1` for the 3dfx card;
 `docs/testing.md`).
-
-## WineD3D (wine9x)
-
-Direct3D 8/9 and DirectDraw → OpenGL → the pass-through, from
-[JHRobotics/wine9x](https://github.com/JHRobotics/wine9x) (Wine 1.7.55
-with 9x/XP fixes, LGPL), pinned by commit in `build-wrappers.sh`. It is
-the guest-side fallback for a host with no Direct3D executor (ADR-013),
-retired in M15's last step and not before (ADR-018). `wined3d.dll`
-renders through the first `opengl32.dll` the loader finds, ours in the
-game folder. XP needs OpenGL 2.1 with BGRA from the host. Wine's
-d3d8/d3d9 set the x87 to 24-bit precision on `CreateDevice`, as native
-Direct3D does, which doc 13's PC=24 path covers.
-
-The disc offers the per-game install (sets 4 and 5) and, on 9x, the
-machine-wide DirectDraw (component 7), because on 9x a per-game folder
-reaches only the session's first DirectDraw program. wine9x's other
-system-wide switchers (`*_98` / `*_XP`, routing each EXE by
-`HKLM\Software\DDSwitcher`) left the disc by user decision, as a third
-way to install the same thing; they are still built in `out/wine9x/`,
-whose README has their steps.
-
-Build notes:
-
-- wine9x links the CRT through the same shim.
-- Its `pthread9x` sub-build hardcodes `ar`, which the script overrides
-  with the mingw one (macOS has BSD `ar`).
-- wine9x keeps its own `-march=pentium2`: with the shim's `pentium3`, GCC
-  emits a `memset` call into the CRT-less switcher DLLs. The ISA check
-  still covers every file on the disc.
-
-Our queue is `patches/wine9x/*.patch`, git-format diffs against the
-pinned commit:
-
-- `01-24bit-desktop-mode`. wined3d maps 24- and 32-bit desktops alike to
-  `B8G8R8X8` and so asks for 32 bpp on a 24-bit desktop. A driver without
-  32-bit modes (QEMU's Cirrus on XP at 800×600) refuses, and Wine 1.7.55
-  crashes in its own error path (`glsl_fragment_pipe_free` on a NULL
-  priv). Now a 24-bit desktop stays at 24 when the size matches, and a
-  failed 32-bpp switch retries at 24 (found with FIFA 2000; worth sending
-  upstream).
-- `02-debug-log-flush` flushes Wine's log per line, so a crash keeps the
-  tail (release builds compile logging out).
-
-**A debug build** keeps logs that survive a crash: a second wine9x
-checkout with the same patches, built with `SPEED= WINED3D_SILENT=` and
-the overrides in `build_wined3d`. Its `wined3d.dll` / `winedd.dll` /
-`ddraw_xp.dll` write `proc_<pid>_dwine.log` and `proc_<pid>_wined3d.log`
-into the game folder (`set WINEDEBUG=+ddraw,+d3d` for traces). Read them
-from a shut-down guest's qcow2 on the host (on macOS: `qemu-img convert
--O raw`, `hdiutil attach -readonly -nomount -imagekey
-diskimage-class=CRawDiskImage`, `diskutil mount readOnly`); Dr Watson's
-`drwtsn32.log` (UTF-16) names the faulting module.
 
 ## CDSHELF: the disc shelf from inside the machine
 
@@ -301,12 +238,12 @@ scripted `win98` pass is not recorded.
   `d3dgame9.log` / `d3dgame8.log` (`-log file`). The rig's BMPs are the
   goldens in `reference/d3d/`.
 - **`D3D9TEST.EXE`**, the D3D9 counterpart of wglgears: prints the adapter
-  name (WineD3D reports a GL-derived one), HAL caps, the x87 control word
+  name, HAL caps, the x87 control word
   after `CreateDevice` (`PC=24` expected) and a spinning triangle's fps;
   an optional frame count.
 - **`MODETEST.EXE`** prints the current desktop mode, the driver's mode
-  list and the result of the `ChangeDisplaySettingsEx` calls ddraw/wined3d
-  make. Run it when a full-screen game dies at start-up.
+  list and the result of the `ChangeDisplaySettingsEx` calls DirectDraw
+  and Direct3D make. Run it when a full-screen game dies at start-up.
 - **`WGLGEARS.EXE`**, Mesa's wglgears from qemu-3dfx's demos. Next to
   `OPENGL32.DLL` it is the zero-dependency GL pass-through check.
 

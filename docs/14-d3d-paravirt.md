@@ -9,9 +9,9 @@ through a command window in `d3dpt-vga`'s VRAM. Doc 04 has the 3D
 strategy as a whole, the M4 and M15 track docs the test loops,
 `docs/testing.md` the tools and `docs/development.md` the env knobs.
 
-WineD3D in the guest (the wine9x build on the guest-tools ISO) is the
-older fallback for hosts with no executor. ADR-018 retires it in M15's
-last step; until then nothing of it is removed.
+WineD3D in the guest (a wine9x build once on the guest-tools ISO) was
+the older fallback for hosts with no executor; ADR-018 retired it and
+M15 step 6 removed it (2026-09-23). Its numbers below are history.
 
 ## Why a device and not a better WineD3D
 
@@ -78,7 +78,7 @@ guest (XP / Win98)                      host (QEMU process)
   (M4 track).
 - **Fallback.** With no executor the device reports
   `D3DPT_STATUS_NO_EXEC`; without our DLLs a game loads Microsoft's d3d9
-  or WineD3D from its folder. Both stacks can coexist on one machine.
+  and gets its software device.
 
 ## The guest DLLs
 
@@ -295,8 +295,8 @@ track doc.
 
 QEMU links no executor: it `dlopen`s `libd3dpt_exec` by a search starting
 at `build/d3dpt`, and the executor `dlopen`s DXVK's `d3d9` the same way.
-A package with the player and not those two has guests that silently
-fall back to WineD3D, so every packager stages both or neither
+A package with the player and not those two has guests with no
+Direct3D, so every packager stages both or neither
 (`lib/2ksbox/libd3dpt_exec.so` + `libdxvk_d3d9.so.0`, the second under
 the soname the executor looks up). The remote library and the PE pair
 (`lib/2ksbox/wine/`) likewise go all or none. The Flatpak builds them in
@@ -381,15 +381,10 @@ its full-screen window (`tools/xp-game-test.sh`, M4 track).
 - **Host Vulkan.** MoltenVK lacks DXVK's required features; KosmicKrisp
   needs macOS 26. Below the Vulkan 1.3 floor the executor runs on the
   system d3d9 (Windows) or Wine (Linux, macOS), and with neither the
-  guest keeps WineD3D over the GL pass-through until M15's last step.
+  guest has no Direct3D pass-through.
 - **Doorbell cost under TCG.** Each doorbell is a TCG exit; batching per
   frame keeps it to a few. qemu-3dfx's 500+ fps wglgears on the Air bounds
   the transport.
 - **Lock-heavy games** (per-frame dynamic buffers) go through the window
   and DXVK's upload path; the DDI path keeps vertex buffers in VRAM (doc
   15, v9).
-- **The WineD3D-in-guest fallback's own defects** are parked by the wine9x
-  rule: FIFA 2000 on it draws the pitch as noise bands and flickers
-  (the front-buffer present fires on every `glFlush`). Its nine host lines
-  `program error: out of range indirect offset (+65)` are wined3d's own
-  ARB offset-limit probe and harmless.

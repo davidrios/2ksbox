@@ -78,23 +78,10 @@ impl HostGpu {
             HostGpu::SoftwareOnly => {
                 "Direct3D pass-through runs on a software Vulkan driver here. Expect it to be very slow."
             }
-            HostGpu::DeviceTooOld => "This GPU is below Vulkan 1.3, so 3D goes through OpenGL.",
-            HostGpu::NoDevice => "No Vulkan device found, so 3D goes through OpenGL.",
-            HostGpu::LoaderTooOld => "Vulkan on this host is older than 1.3, so 3D goes through OpenGL.",
-            HostGpu::NoLoader => "No Vulkan on this host, so 3D goes through OpenGL.",
-        }
-    }
-
-    /// The second line: where the other 3D path is, whether it is the
-    /// only one left or merely the faster one here. `None` when the host
-    /// has a real GPU and there is nothing to say.
-    pub fn advice(self) -> Option<&'static str> {
-        match self {
-            HostGpu::Accelerated => None,
-            HostGpu::SoftwareOnly => {
-                Some("The WineD3D set from the guest tools (SETUP /GAME) may be faster. Try both.")
-            }
-            _ => Some("Install the WineD3D set from the guest tools next to the game (SETUP /GAME)."),
+            HostGpu::DeviceTooOld => "This GPU is below Vulkan 1.3, so there is no Direct3D pass-through here.",
+            HostGpu::NoDevice => "No Vulkan device found, so there is no Direct3D pass-through here.",
+            HostGpu::LoaderTooOld => "Vulkan on this host is older than 1.3, so there is no Direct3D pass-through here.",
+            HostGpu::NoLoader => "No Vulkan on this host, so there is no Direct3D pass-through here.",
         }
     }
 }
@@ -117,9 +104,8 @@ pub enum D3dBackend {
     /// (`d3dpt-exec-host.exe`, `scripts/build-d3dpt-exec.sh --wine`).
     Wine,
     /// Nothing: no Vulkan 1.3, no system Direct3D 9 because this is not
-    /// Windows, and no Wine to run the executor on. The guest falls back
-    /// to WineD3D over the OpenGL pass-through, which needs no Vulkan
-    /// (doc 04), until track M15's last step retires it.
+    /// Windows, and no Wine to run the executor on. The guest has no
+    /// Direct3D pass-through; OpenGL and Glide still work (doc 04).
     None,
 }
 
@@ -256,7 +242,7 @@ impl HostGpu {
 
     /// The headline for the pass-through. On a Windows host below the bar
     /// it is not the Vulkan sentence: the answer there is yes, through
-    /// another library, and "3D goes through OpenGL" would be false.
+    /// another library, and "no Direct3D pass-through" would be false.
     pub fn d3d_headline(self) -> String {
         match self.backend() {
             D3dBackend::System if self.is_slow() => {
@@ -275,9 +261,9 @@ impl HostGpu {
         }
     }
 
-    /// The second line, the same way. A Windows host on its own
-    /// Direct3D 9 needs no WineD3D in the guest and is told what it
-    /// trades instead.
+    /// The second line, the same way: what a host on another back end
+    /// trades, or, with none, the Wine to install. `None` when the host
+    /// has a real GPU and there is nothing to say.
     pub fn d3d_advice(self) -> Option<String> {
         match self.backend() {
             D3dBackend::System => Some(
@@ -291,10 +277,8 @@ impl HostGpu {
             D3dBackend::Dxvk if self.is_slow() && wine().is_some() && exec_host().is_some() => Some(
                 "Direct3D through Wine may be faster here. To try it, add -global d3dpt-vga.exec=wine to the machine's extra QEMU arguments.".into(),
             ),
-            D3dBackend::None if !cfg!(windows) => {
-                Some(format!("{} {}", self.advice().unwrap_or(""), wine_install_hint()).trim().to_string())
-            }
-            _ => self.advice().map(str::to_string),
+            D3dBackend::None => Some(wine_install_hint().into()),
+            _ => None,
         }
     }
 

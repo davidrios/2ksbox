@@ -83,10 +83,10 @@ PKGS
     # the compilers, both names conf_wrapper and our scripts use, linking the
     # runtime above (-B for crt2.o / crtbegin.o, -L for the libraries). The
     # -L folders go *after* the caller's arguments: ld searches -L in command
-    # line order, and a build that names its own library folder must win.
-    # wine9x links pthread9x's libpthread.a with -L, and ahead of it Arch's
-    # winpthreads libpthread.a answered instead ("undefined reference to
-    # _msize_int", crt_locks_init ...). Any -L still precedes gcc's own.
+    # line order, and a build that names its own library folder must win
+    # (the wine9x build, since retired, lost its own libpthread.a to Arch's
+    # winpthreads that way: "undefined reference to _msize_int"). Any -L
+    # still precedes gcc's own.
     for _t in gcc i686-w64-mingw32-gcc; do
       printf '#!/bin/sh\nexec /mingw32/bin/%s -B"%s/gcc/" -B"%s/lib/" "$@" -L"%s/gcc" -L"%s/lib"\n' \
         "$_t" "$_rt" "$_rt" "$_rt" "$_rt" > "$_msys2_shims/$_t"

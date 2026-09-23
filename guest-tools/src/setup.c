@@ -11,7 +11,7 @@
  *   - things installed into Windows (system files, a driver, a service),
  *     the numbered list and `I`;
  *   - things copied next to one game's EXE (our D3D DLLs, the GL wrapper,
- *     WineD3D), `G`. Those are per-game by design, never system-wide, so
+ *     the Glide DLLs), `G`. Those are per-game by design, never system-wide, so
  *     an installer with only an install step would leave out half the ISO.
  *
  * A console program on purpose. It is the one interface Windows 98, XP
@@ -382,7 +382,7 @@ static void find_3dfx_nt(void)
  * whichever was copied last decided silently whether a game drew on the
  * card or on the pass-through. A SETUP /ALL run to update the display
  * driver took the card away from every Glide game. So they stay out of
- * it, and SETUP /GAME 6 puts the pass-through's next to one game. The 9x
+ * it, and SETUP /GAME 4 puts the pass-through's next to one game. The 9x
  * mapper is 3dfx's own binary (FXMEMMAP.VXD 4.10.01.0013, the Glide 2.42
  * one, same IOCTLs), so a copy already there serves our DLLs as well and
  * is left alone rather than downgraded; NT's FXPTL.SYS is qemu-3dfx's
@@ -402,7 +402,7 @@ static int step_glide(void)
     if (g_3dfx[0]) {
         say("    a 3dfx card is on this machine (%s)", g_3dfx);
         say("    GLIDE.DLL, GLIDE2X.DLL, GLIDE3X.DLL: left alone, 3dfx's driver brings the card's own");
-        say("    (SETUP /GAME 6 <dir> copies the pass-through Glide next to one game)");
+        say("    (SETUP /GAME 4 <dir> copies the pass-through Glide next to one game)");
     } else {
         bad = copy_set("GLIDE", g_sys, dlls);
     }
@@ -420,7 +420,7 @@ static int step_glide(void)
         else
             bad |= copy_set("GLIDE", g_sys, vxd);
         if (g_3dfx[0])
-            say("    GLIDE2X.OVL: left out of the Windows folder (SETUP /GAME 7 <dir> for one DOS game)");
+            say("    GLIDE2X.OVL: left out of the Windows folder (SETUP /GAME 5 <dir> for one DOS game)");
         else
             copy_set("GLIDE", g_win, ovl);
         return bad;
@@ -796,188 +796,6 @@ static int step_voodoo2_guard(void)
     return 0;
 }
 
-/* ------------------------------- WineD3D as the machine's DirectDraw (9x)
- *
- * On 9x the WineD3D copy of DDRAW.DLL next to a game reaches that game only
- * if it is the first program of the session to touch DirectDraw: Windows
- * keeps one module per name for the whole machine and DDHELP.EXE keeps
- * Windows' own ddraw.dll loaded once anything has used it, so the *second*
- * game a user starts is served that one whatever sits in its folder. On a
- * host with no Direct3D executor its 3D setup then lists no device at all
- * (doc 19 §42, measured both ways). Replacing the system file is not the
- * answer: System File Protection restores it at the next boot.
- *
- * What works is redirecting the name. wine9x's switcher goes in as
- * DDRAWME.DLL, the machine's own ddraw.dll is copied to DDSYS.DLL with the
- * name inside it changed (the switcher hands the callers that want real
- * DirectDraw to that one), and KnownDLLs\DDRAW points at the switcher. The
- * loader reads that per LoadLibrary rather than once at boot, so it takes
- * effect for every program started afterwards.
- *
- * Which way it should point is the *host's* business and changes between
- * runs, so the value is not written here: D3DPRE.EXE writes it at every
- * login, after asking the display driver whether this host has an executor
- * (doc 19 §43). On a host that has one it removes the value again, and the
- * machine is back on our own Direct3D with nothing to undo by hand. */
-#define D3DPRE_RUN_NAME "2ksbox WineD3D"
-
-/* WINDOWS\SYSTEM\DDSYS.DLL: this machine's own DirectDraw under another
- * name, with the "DDRAW.DLL" that follows "DDRAW16.DLL" inside it changed to
- * match (wine9x's ddreplacer.c does the same edit by hand). Without that
- * edit the copy registers its 16-bit services under the name the switcher
- * now answers to, and the registration reaches the wrong module. */
-static int make_ddsys(void)
-{
-    static const char pat[] = "DDRAW16.DLL\0DDRAW.DLL";   /* 21 bytes, NUL inside */
-    static const char to[] = "DDSYS.DLL";
-    char src[PATHBUF], dst[PATHBUF];
-    unsigned char *buf;
-    long size, i;
-    int found = 0;
-    FILE *f;
-
-    snprintf(dst, sizeof dst, "%s\\DDSYS.DLL", g_sys);
-    if (GetFileAttributesA(dst) != 0xffffffffu) {
-        say("    DDSYS.DLL is already there");
-        return 0;
-    }
-    snprintf(src, sizeof src, "%s\\DDRAW.DLL", g_sys);
-    if ((f = fopen(src, "rb")) == NULL) {
-        say("    %s: cannot read it", src);
-        return 1;
-    }
-    fseek(f, 0, SEEK_END);
-    size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (size <= 0 || (buf = (unsigned char *)malloc((size_t)size)) == NULL) {
-        say("    %s: %ld bytes, no memory for it", src, size);
-        fclose(f);
-        return 1;
-    }
-    if (fread(buf, 1, (size_t)size, f) != (size_t)size) {
-        say("    %s: short read", src);
-        free(buf);
-        fclose(f);
-        return 1;
-    }
-    fclose(f);
-    for (i = 0; i + (long)sizeof pat <= size; i++) {
-        if (memcmp(buf + i, pat, sizeof pat - 1) == 0) {
-            memcpy(buf + i + 12, to, sizeof to - 1);
-            found++;
-        }
-    }
-    if (!found) {
-        /* Either this is not a DirectDraw this edit knows, or DDRAW.DLL has
-         * already been replaced by something else. Either way, stop: a
-         * switcher with nothing to forward to takes DirectDraw away. */
-        say("    %s: the name to patch is not in it, so nothing was changed", src);
-        free(buf);
-        return 1;
-    }
-    if ((f = fopen(dst, "wb")) == NULL || fwrite(buf, 1, (size_t)size, f) != (size_t)size) {
-        say("    %s: cannot write it", dst);
-        if (f) fclose(f);
-        free(buf);
-        return 1;
-    }
-    fclose(f);
-    free(buf);
-    say("    DDSYS.DLL written from DDRAW.DLL (%ld bytes, %d name%s changed)",
-        size, found, found == 1 ? "" : "s");
-    return 0;
-}
-
-static int step_wined3d_sys(void)
-{
-    char src[PATHBUF], ours[PATHBUF];
-    HKEY run;
-    int bad = 0;
-
-    say("WineD3D as this machine's DirectDraw:");
-    /* The pass-through GL needs the device mapper, and this component
-     * makes it the machine's OpenGL. Without FXMEMMAP.VXD the wrapper's
-     * DllMain returns FALSE, and then *every* program that imports opengl32
-     * fails to start rather than falling back to Microsoft's software GL.
-     * `SETUP /ALL` installs the mapper first (it is component 2); a bare
-     * `/I` of this one on a machine without it would be a trap, so it stops
-     * instead. */
-    snprintf(src, sizeof src, "%s\\FXMEMMAP.VXD", g_sys);
-    if (GetFileAttributesA(src) == INVALID_FILE_ATTRIBUTES) {
-        say("    the device mapper is not installed: run \"Glide and the device");
-        say("    mapper\" first (SETUP /I 2, or SETUP /ALL). The OpenGL this");
-        say("    component installs does not load without it.");
-        return 1;
-    }
-    snprintf(src, sizeof src, "%sWINED3D\\SYSTEM9X\\DDRAWME.DLL", g_root);
-    bad |= copy_one(src, g_sys, "DDRAWME.DLL");
-    snprintf(src, sizeof src, "%sWINED3D\\SYSTEM9X\\D3DPRE.EXE", g_root);
-    bad |= copy_one(src, g_win, "D3DPRE.EXE");
-    /* what the switcher forwards to, out of the per-game folder's own copies
-     * so that the disc carries one of each file */
-    snprintf(src, sizeof src, "%sWINED3D\\DDRAW\\DDRAW.DLL", g_root);
-    bad |= copy_one(src, g_sys, "WINEDD.DLL");
-    snprintf(src, sizeof src, "%sWINED3D\\DDRAW\\WINED3D.DLL", g_root);
-    bad |= copy_one(src, g_sys, "WINED3D.DLL");
-    /* WineD3D draws through the first opengl32.dll the loader finds, and
-     * the one in the system folder is Microsoft's software GL, far too slow
-     * to play on. A machine-wide install has no game directory to put ours
-     * in front of it. Redirecting the *name* the way DDRAW is redirected
-     * does not work here: WineD3D then comes up with no GL adapter at all
-     * (`tex 1x1..0x0`, doc 19 §43). So the pass-through goes in as the
-     * system OPENGL32.DLL itself, staged and swapped on the restart because
-     * it may be loaded right now. Microsoft's is kept beside it as
-     * MSOGL32.DLL, and a second copy of ours as WGLPT32.DLL, which is what
-     * D3DPRE.EXE puts back if Windows ever restores the original.
-     *
-     * It is the right OpenGL for this machine either way. It is the same DLL
-     * the per-game "OpenGL pass-through" set copies, and a GL program on a
-     * 2ksbox machine wants the pass-through whether or not WineD3D is in
-     * play. */
-    snprintf(src, sizeof src, "%s\\MSOGL32.DLL", g_sys);
-    if (GetFileAttributesA(src) == INVALID_FILE_ATTRIBUTES) {
-        char msgl[PATHBUF];
-
-        snprintf(msgl, sizeof msgl, "%s\\OPENGL32.DLL", g_sys);
-        if (CopyFileA(msgl, src, TRUE)) {
-            say("    Microsoft's OPENGL32.DLL kept as MSOGL32.DLL");
-        }
-    }
-    snprintf(src, sizeof src, "%sWINED3D\\DDRAW\\OPENGL32.DLL", g_root);
-    bad |= copy_one(src, g_sys, "WGLPT32.DLL");
-    snprintf(src, sizeof src, "%sOPENGL\\WRAPGL32.EXT", g_root);
-    bad |= copy_one(src, g_sys, "WRAPGL32.EXT");
-    {
-        static const char *const gl[] = { "OPENGL32.DLL", NULL };
-
-        bad |= stage_set("OPENGL", g_sys, gl);
-    }
-    if (bad) {
-        return 1;
-    }
-    if (make_ddsys()) {
-        return 1;
-    }
-    if (RegCreateKeyExA(HKEY_LOCAL_MACHINE, RUN_KEY, 0, NULL, 0, KEY_READ | KEY_WRITE, NULL,
-                        &run, NULL) != ERROR_SUCCESS) {
-        say("    HKLM\\%s: cannot open it (error %lu)", RUN_KEY, (unsigned long)GetLastError());
-        return 1;
-    }
-    snprintf(ours, sizeof ours, "%s\\D3DPRE.EXE", g_win);
-    if (RegSetValueExA(run, D3DPRE_RUN_NAME, 0, REG_SZ, (BYTE *)ours, strlen(ours) + 1)
-            != ERROR_SUCCESS) {
-        say("    HKLM\\%s: cannot add \"%s\" (error %lu)", RUN_KEY, D3DPRE_RUN_NAME,
-            (unsigned long)GetLastError());
-        RegCloseKey(run);
-        return 1;
-    }
-    RegCloseKey(run);
-    say("    \"%s\" = %s: at each login it picks WineD3D's DirectDraw", D3DPRE_RUN_NAME, ours);
-    say("    when the host has no Direct3D, and Windows' own when it has one.");
-    say("    D3DPRE.LOG says which.");
-    return 0;
-}
-
 typedef struct {
     const char *label;
     const char *note;
@@ -995,8 +813,6 @@ static Component g_comp[MAX_COMPONENTS] = {
     { "Sound Blaster 16 device names",      "DirectX 9 fix, only if needed", 1, 0, 1, step_sb16_names, 0 },
     /* after it, for the same reason */
     { "Voodoo 2 start-up guard",            "only with a 3dfx card",         1, 0, 1, step_voodoo2_guard, 0 },
-    /* and after that one */
-    { "WineD3D as this machine's DirectDraw", "9x only; used on a host with no Direct3D", 1, 0, 1, step_wined3d_sys, 0 },
 };
 static int g_ncomp;
 
@@ -1006,11 +822,9 @@ static int g_ncomp;
  * set is self-contained (what a game needs to run on that stack and
  * nothing else), so two stacks can never end up in one folder. The files
  * are pairs, <name on the ISO> then <name it must have next to the EXE>.
- * No set renames anything: WineD3D's folders carry the
- * DLLs under the names a game loads, so copying a folder from Explorer
- * and running SETUP /GAME give the same result. They also carry
- * OPENGL32.DLL, because WineD3D draws through the first opengl32.dll the
- * loader finds and without ours that is Windows' software GL 1.1. */
+ * No set renames anything: the folders carry the DLLs under the names a
+ * game loads, so copying a folder from Explorer and running SETUP /GAME
+ * give the same result. */
 typedef struct {
     const char *label;
     const char *dir;
@@ -1025,12 +839,6 @@ static const GameSet g_sets[] = {
     { "OpenGL pass-through (OPENGL32.DLL WRAPGL32.EXT)",
       "OPENGL",  { "OPENGL32.DLL", "OPENGL32.DLL",
                    "WRAPGL32.EXT", "WRAPGL32.EXT", NULL } },
-    { "WineD3D, Direct3D 8/9 (D3D8.DLL D3D9.DLL WINED3D.DLL OPENGL32.DLL)",
-      "WINED3D\\D3D8-9", { "D3D8.DLL", "D3D8.DLL", "D3D9.DLL", "D3D9.DLL", "WINED3D.DLL", "WINED3D.DLL",
-                           "OPENGL32.DLL", "OPENGL32.DLL", NULL } },
-    { "WineD3D, DirectDraw and Direct3D up to 7 (DDRAW.DLL WINED3D.DLL OPENGL32.DLL)",
-      "WINED3D\\DDRAW",  { "DDRAW.DLL", "DDRAW.DLL", "WINED3D.DLL", "WINED3D.DLL",
-                           "OPENGL32.DLL", "OPENGL32.DLL", NULL } },
     /* The pass-through's Glide for one game, on a machine whose system
      * folder has 3dfx's (a 3dfx card: step_glide leaves those alone). They
      * reach the device through the mapper, which the Glide component still

@@ -1325,8 +1325,8 @@ DWORD __stdcall DriverInit(LPVOID ptr)
     h->cb32.GetDriverInfo        = (unsigned long)(ULONG_PTR)GetDriverInfo32;
 
     /* Direct3D is published only when there is one (doc 19 §40). `d3d_init`
-     * refuses on a host with no executor (`no-exec=on`, where the machine
-     * falls back to WineD3D in the guest). Every D3D callback in this file
+     * refuses on a host with no executor (`no-exec=on`, where a game gets
+     * the runtime's software device). Every D3D callback in this file
      * then refuses, and `d3d_global` stays zero because `d3d_caps_init` runs
      * inside `d3d_init`. The .drv reads the published pair to claim
      * DDCAPS_3D, DDSCAPS_3DDEVICE|TEXTURE|ZBUFFER|MIPMAP and the DXT

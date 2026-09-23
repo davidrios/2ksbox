@@ -25,7 +25,7 @@ The roadmap is doc 08.
 | 015 | The Qt front end is the shipped one | accepted; "keep `launcher/`" **reversed by 017** |
 | 016 | The Voodoo 2 is emulated beside the Glide pass-through | accepted |
 | 017 | The egui front end is retired | accepted |
-| 018 | Below the Vulkan floor, the executor runs on Wine on the host; WineD3D-in-guest retired | accepted, retirement pending (M15 step 6) |
+| 018 | Below the Vulkan floor, the executor runs on Wine on the host; WineD3D-in-guest retired | accepted, retirement done 2026-09-23 |
 | 019 | Two macOS builds: App Store 26+, community at Homebrew's floor | accepted |
 
 ## ADR-001: QEMU as the base (2026-08-31)
@@ -90,7 +90,8 @@ librashader, cpal) with QEMU in-process (ADR-002), plus a separate
 **Decision.** Thin guest `d3d9.dll` / `d3d8.dll` serialize the API into
 a shared-memory command stream; a host executor runs the same D3D9
 semantics natively (doc 14). Guest-side WineD3D (JHRobotics' wine9x)
-stays as the fallback and the DirectDraw / D3D ≤ 7 path.
+stays as the fallback and the DirectDraw / D3D ≤ 7 path *(retired by
+ADR-018; the DirectDraw / D3D ≤ 7 path is ADR-012's driver)*.
 
 **Why.** After two days of WineD3D-in-guest on XP (FIFA 2000), every fix
 was in a 2015 fork with no upstream, and WineD3D translates D3D → GL
@@ -191,7 +192,8 @@ reach it. DLLs have structural limits:
   shape, and its cost.
 
 **Kept.** The DLL device (Win98's path until ADR-012, and the executor's
-harness). WineD3D in the guest as the DX7 fallback.
+harness). WineD3D in the guest as the DX7 fallback *(retired by
+ADR-018)*.
 
 **Rejected.** WDDM (Vista/7/10) now: a D3D11 UMD is VBoxDX-sized.
 
@@ -347,8 +349,8 @@ licence to fork the register set.
   Wine on the host, and WineD3D-in-guest is retired in M15's last step
   (ADR-018). That supersedes points 1 and 3 below; point 2 stands.
 
-Until M15's last step, what this ADR says about the guest-side stack is
-still what a below-floor host with no Wine runs.
+What this ADR says about the guest-side stack is history: ADR-018
+retired it, and M15 step 6 removed it on 2026-09-23.
 
 **Decision as written.** The paravirtual device needs a **Vulkan 1.3
 device** on the host, because DXVK asks for exactly that
@@ -524,12 +526,15 @@ A Windows host's second choice is its own `system32\d3d9.dll` in process
 Design: doc 14 §"The executor on Wine, in another process"; steps:
 `docs/tracks/m15-wine-executor.md`.
 
-**WineD3D-in-guest is retired**: the ISO's `WINED3D\` folders, `SETUP
-/GAME 4`/`5`, `/I 7` with `D3DPRE.EXE` and the `DDRAWME`/`DDSYS`
-switcher, the wine9x build, and the launcher's advice pointing at them.
-The retirement is **sequenced**: M15's last step, in one commit, once
-the host path has drawn the reference scene within the rig budget and
-run a real game. Until then a below-floor host keeps what it has.
+**WineD3D-in-guest is retired**, and was removed on 2026-09-23 (M15
+step 6, one commit) once the host path had drawn the reference scene
+within the rig budget and run a real game on a real macOS 15: the ISO's
+`WINED3D\` folders, `SETUP /GAME 4`/`5`, `/I 7` with `D3DPRE.EXE` and
+the `DDRAWME`/`DDSYS` switcher, the wine9x build and its patch queue,
+the two test scripts, and the launcher's advice pointing at them. A
+below-floor host with no Wine now has no Direct3D pass-through; the
+driver keeps its DirectDraw half, and OpenGL and Glide still pass
+through.
 
 **Why.** UX, entirely. The fallback asked the user to copy a 2015 Wine
 (1.7.55) beside every game from a CD folder, an unsupported copy of

@@ -20,7 +20,7 @@ packaging, logs and licensing. Neighbours:
 |---|---|
 | x86 emulation | Exists: a QEMU fork, trimmed to what we use, with our own TCG fast paths (x87, SSE, SIMD, REP strings, same-value SMC, inline TB lookup); KVM / WHPX on x86 hosts |
 | Guest 3D | We build the paravirtual Direct3D device (`d3dpt`, a host executor on DXVK), qemu-3dfx's GL pass-through, OpenGLide as the host Glide wrapper, and an emulated Voodoo 2 (doc 21) |
-| Guest display drivers | We build `d3dpt-vga` drivers for XP (miniport + DX8 DDI, doc 15) and Win98 (mini-VDD + 16-bit driver, doc 19); WineD3D in the guest is the fallback |
+| Guest display drivers | We build `d3dpt-vga` drivers for XP (miniport + DX8 DDI, doc 15) and Win98 (mini-VDD + 16-bit driver, doc 19) |
 | Guest music | We build OPL3 and MPU-401 devices over `libsynth` (doc 20) |
 | CRT shaders | Exists: libretro slang presets through librashader (a library, not RetroArch) |
 | Player | We build it: in-process QEMU, wgpu + librashader, mode analysis, low-latency audio (Rust) |

@@ -383,8 +383,8 @@ with one, leaves `GLIDE*.DLL`, an existing `FXMEMMAP.VXD` and
 `GLIDE2X.OVL` alone. The mapper still goes in where there is none,
 because our Direct3D and OpenGL DLLs need it; qemu-3dfx's copy is 3dfx's
 own binary (4.10.01.0013), so either serves both. A title that should
-take the pass-through gets ours next to its EXE: `SETUP /GAME 6` (DLLs),
-`/GAME 7` (the DOS overlay). `VOODOO=1 tools/setup-guest-test.sh` checks
+take the pass-through gets ours next to its EXE: `SETUP /GAME 4` (DLLs),
+`/GAME 5` (the DOS overlay). `VOODOO=1 tools/setup-guest-test.sh` checks
 it on 98 and XP.
 
 **The PCI map.** On both 2D adapters SeaBIOS puts the BAR at

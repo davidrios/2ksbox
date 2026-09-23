@@ -44,8 +44,8 @@ media, licences and disc dumps.
 
 | Host | Requirements |
 |---|---|
-| Linux | An x86-64 machine. KVM for near-native XP (optional; Windows 98 is emulated on purpose). A GPU with Vulkan 1.3 for the fast Direct3D path. Without it, Direct3D runs through Wine on the host if Wine is installed, and otherwise through WineD3D inside the guest. |
-| macOS | Apple Silicon, macOS 15 or newer. Guests are emulated (no x86 virtualization on these Macs) and still run faster than a period PC. The fast Direct3D path needs macOS 26; on older releases Direct3D runs through Wine if it is installed, and otherwise through WineD3D inside the guest. |
+| Linux | An x86-64 machine. KVM for near-native XP (optional; Windows 98 is emulated on purpose). A GPU with Vulkan 1.3 for the fast Direct3D path. Without it, Direct3D runs through Wine on the host if Wine is installed; with neither, the guest has no Direct3D (OpenGL and Glide still work). |
+| macOS | Apple Silicon, macOS 15 or newer. Guests are emulated (no x86 virtualization on these Macs) and still run faster than a period PC. The fast Direct3D path needs macOS 26; on older releases Direct3D runs through Wine if it is installed, and with no Wine the guest has no Direct3D (OpenGL and Glide still work). |
 | Windows | 64-bit Windows 10 or 11. WHPX (the Windows Hypervisor Platform) accelerates XP when it is enabled. Without Vulkan 1.3, Direct3D runs on Windows' own Direct3D 9. |
 
 You also need install media for the guest operating system (your own
@@ -204,9 +204,9 @@ details, and a native build in MSYS2 for debugging, are in
 - **DirectX 9 games** want our `D3D9.DLL` next to the game's EXE:
   `SETUP /GAME 1 <game folder>`, or copy it from the disc's `D3DPT\`.
 - **When the host has no Direct3D for the guest** (no Vulkan 1.3 and no
-  Wine), copy the WineD3D set next to the game instead: `SETUP /GAME 4`
-  or `5`, or the whole `WINED3D\D3D8-9\` or `WINED3D\DDRAW\` folder
-  from Explorer. The disc's `WINED3D\README.TXT` says which a game wants.
+  Wine), the guest has none either: the 2ksbox adapter keeps its 2D and
+  DirectDraw, and OpenGL and Glide games still run. Installing Wine on
+  the host brings Direct3D back.
 - **Glide games** (3dfx) run two ways. The guest tools install a Glide
   that passes through to the host, the fast path for most titles (not
   yet on Windows hosts). For a Glide 3 title or one that carries its own
@@ -263,9 +263,9 @@ machine's settings for games that want a real PS/2 mouse.
   `2ksbox-debug.bat` in the package does both from a console window.
 - **The Direct3D note in the machine's settings** says what this host
   gives the guest's Direct3D. Without Vulkan 1.3 it is Wine on the host
-  (slower; the note names the Wine package if none is installed) or,
-  failing that, WineD3D inside the guest (see Playing games). None of
-  these is an error. Keep the 2ksbox adapter anyway: only its Direct3D
+  (slower; the note names the Wine package if none is installed), and
+  with no Wine there is no Direct3D. Neither is an error. Keep the
+  2ksbox adapter anyway: only its Direct3D
   needs the host, and everything else it does still beats the Cirrus.
   "In software (slow)" means a software Vulkan driver was found; a game
   may be faster the other way, so try both.

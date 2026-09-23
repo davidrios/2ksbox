@@ -4,7 +4,7 @@ Frames of the reference workloads (`D3DGAME9.EXE` / `D3DGAME8.EXE`,
 `guest-tools/src/`, doc 14) taken on the reference rig (doc 09): a
 Pentium 4 1.7 GHz with a GeForce 6200 (ForceWare `nv4_disp.dll`),
 Windows XP SP3 and an 85 Hz CRT. Every emulated Direct3D path (the
-paravirtual device on DXVK, the Wine executor, WineD3D in the guest) is
+paravirtual device on DXVK, and on the Wine executor) is
 diffed against them with `tools/bmpdiff.py`; the guest stage of
 `scripts/test.sh` does it with a budget (`D3D_GOLDEN_BUDGET`,
 `docs/testing.md`).

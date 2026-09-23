@@ -19,8 +19,8 @@ in `docs/testing.md`.
 
 ## Why a native driver instead of the wrapper stack
 
-- The Glide/WineD3D path needs files in each game's folder; the driver
-  needs nothing there. Windows' own `ddraw.dll`, `d3dim.dll` and
+- The Glide and OpenGL wrappers need files in each game's folder; the
+  driver needs nothing there. Windows' own `ddraw.dll`, `d3dim.dll` and
   `d3d8.dll` drive it, on 98 as on XP.
 - It is the only way a 9x title also gets an accelerated *desktop*:
   modes from our table, page flips that are register writes, no copy
@@ -214,8 +214,9 @@ ring-3 HAL links the core.
 - The test tools keep their own `-vga cirrus` machines, so the in-box
   driver stays exercised. `VGA=cirrus` on `tools/win98-game-test.sh` is
   the standard control.
-- The doc 04 Win98 title matrix (this driver against the Glide/WineD3D
-  stack, same image, same host) is still to be measured (track doc).
+- The doc 04 Win98 title matrix (this driver against the Glide and
+  Cirrus controls, same image, same host) is still to be measured (track
+  doc).
 
 ## Bringing up the three binaries
 
@@ -1129,7 +1130,7 @@ through `GetDriverInfo` for `GUID_DDMoreSurfaceCaps`. NT's dxg never asks
 for it; the 9x layer now answers. `ddflags=0x400000` (`DDF_NO_CUBE`)
 withholds it along with the cube caps. CUBETEST passes 9 of 9 on Win98.
 
-## No executor, and WineD3D as the fallback
+## No executor
 
 ### 40. `no-exec` on 9x: the HAL claimed a Direct3D it did not have
 
@@ -1177,105 +1178,60 @@ scheme and proved nothing in 12 minutes.
 text page, and the machine idles back into standby. The player does not
 report `SUSPEND`/`WAKEUP` (`player/src/qmp.rs::is_notable`).
 
-### 42. The WineD3D folder only works for the first DirectDraw program of the session
+### 42. On 9x a DLL beside a game reaches only the session's first DirectDraw program
 
 **On 9x the `DDRAW.DLL` beside a game is used only if that game is the
 first program in the Windows session to touch DirectDraw.** Win9x keeps
 one module per *name* machine-wide, and `DDHELP.EXE` keeps DirectDraw
 resident, so from the second DirectDraw program on the system serves
-`ddraw.dll` whatever is in the folder. Measured with one binary in one
-folder under `no-exec=on`: first in the session, `D3D7TEST` gets `Wine
-D3D7 T&L HAL` and renders; after `DDPROBE` ran from elsewhere, it gets
-this driver's `HAL caps 00000480 (no 3D)` and no HAL device. A title's
-3D setup offering no 3D adapter (FIFA 2000) is this. XP resolves by full
-path per process and does not have the problem, which is why
-`xp-fifa2000.bat` must rename those files *away*.
+`ddraw.dll` whatever is in the folder. Measured with the since-retired
+WineD3D-in-guest copy, one binary in one folder under `no-exec=on`:
+first in the session, `D3D7TEST` got `Wine D3D7 T&L HAL` and rendered;
+after `DDPROBE` ran from elsewhere, it got this driver's `HAL caps
+00000480 (no 3D)` and no HAL device. XP resolves by full path per
+process and does not have the problem, which is why `xp-fifa2000.bat`
+renames that image's leftover files *away*.
 
-Once reached, the stack works on 98: Wine's ddraw brings up a HAL on the
-GL pass-through, and `EBTEST` passes 5 of 5 through it. Two ways that
-don't: replacing `WINDOWS\SYSTEM\DDRAW.DLL` (System File Protection
-objects at the next login, which also blocks `WIN.INI`'s `run=`, and
-restores it from `SYSBCKUP`), and preloading Wine's copy at login (an
-app-directory module never becomes the machine's, even while resident).
-What works is redirecting the module *name* (§43).
-
-### 43. WineD3D as the machine's DirectDraw, decided at every login
-
-`SETUP /I 7` on 9x ("WineD3D as this machine's DirectDraw") installs the
-redirection, and `D3DPRE.EXE` in the Run key decides at every login
-which way it points.
-
-**The name.** `KnownDLLs` is read per `LoadLibrary`, so a value written
-mid-session holds for every program started after it:
+Two ways round it that don't work: replacing `WINDOWS\SYSTEM\DDRAW.DLL`
+(System File Protection objects at the next login, which also blocks
+`WIN.INI`'s `run=`, and restores it from `SYSBCKUP`), and preloading a
+copy at login (an app-directory module never becomes the machine's,
+even while resident). What works is redirecting the module *name*:
+`KnownDLLs` is read per `LoadLibrary`, so a value written mid-session
+holds for every program started after it:
 
 ```
 [HKLM\System\CurrentControlSet\Control\SessionManager\KnownDLLs]
 "DDRAW"="ddrawme.dll"
 ```
 
-**The files** (from `WINED3D\SYSTEM9X\` plus the per-game
-`WINED3D\DDRAW\` set, one copy of each on the disc):
+### 43. WineD3D as the machine's DirectDraw: removed
 
-| file in `WINDOWS\SYSTEM` | what it is |
-|---|---|
-| `DDRAWME.DLL` | wine9x's `ddraw_98.dll`, a switcher choosing per caller between WineD3D and the real DirectDraw |
-| `DDSYS.DLL` | this machine's own `DDRAW.DLL` with the `DDRAW.DLL` after `DDRAW16.DLL` inside it renamed (the `ddreplacer.c` edit, done by SETUP), so its 16-bit registration does not reach the switcher |
-| `WINEDD.DLL`, `WINED3D.DLL` | WineD3D |
-| `OPENGL32.DLL` | **our GL pass-through as the system OpenGL**; Microsoft's kept as `MSOGL32.DLL`, a spare of ours as `WGLPT32.DLL` for the helper to restore |
-
-**OpenGL is replaced, not redirected**, and unconditionally. WineD3D
-draws through the first `opengl32.dll` found, and a machine-wide install
-has no game folder to put ours first. Redirecting `OPENGL32` through
-`KnownDLLs` leaves WineD3D with no GL adapter (`HAL caps f5408668 (no
-3D)`). The pass-through *is* the accelerated GL on these machines in
-either mode, and our own Direct3D does not use GL. `GLPROBE.EXE`
-confirms it (`GL_RENDERER` is the host's card, never `GDI Generic`).
-SETUP stages the file and swaps it at the restart, since it may be
-loaded. SFP has not restored `opengl32.dll` in any run.
-
-**It depends on the device mapper.** The pass-through's `DllMain`
-returns FALSE without `FXMEMMAP.VXD`, so a program importing opengl32
-would not start. `SETUP /ALL` installs the mapper first (component 2),
-and a bare `/I 7` without it stops and says so.
-
-**Which way it points is the host's call, not the image's.** The same
-disk runs on a host with the executor one day and without it the next.
-`D3DPRE.EXE` asks the display driver through a private escape
+Until 2026-09-23 `SETUP /I 7` ("WineD3D as this machine's DirectDraw")
+used §42's redirection to make WineD3D-in-guest the whole 9x machine's
+DirectDraw: wine9x's switcher as `DDRAWME.DLL`, the machine's own
+`DDRAW.DLL` kept as `DDSYS.DLL` with the name inside it patched, the GL
+pass-through installed as the system `OPENGL32.DLL` (WineD3D draws
+through the first one the loader finds, and redirecting that name
+through `KnownDLLs` left it with no GL adapter), and `D3DPRE.EXE` in the
+Run key deciding at every login which way `KnownDLLs\DDRAW` pointed, by
+asking the driver whether the host had an executor. ADR-018 retired the
+stack and M15 step 6 removed all of it in one commit; the design and
+its test (`tools/wined3d-sys-test.sh`, three boots) are in the history
+before that commit. What stays is the driver's private escape
 (`D3DPT_ESC_HOSTINFO`, `d3dpt_esc.h`, answered from
-`D3DPT_FB_REG_D3D_STATUS`), because a program deciding about DirectDraw
-cannot ask DirectDraw. It writes the value when there is no executor,
-removes it when there is, and logs to `WINDOWS\D3DPRE.LOG`. A driver
-that is not ours answers nothing, which also means no executor.
+`D3DPT_FB_REG_D3D_STATUS`), a diagnostic for any program that must know
+before DirectDraw loads whether the host has an executor.
 
-**The check is `tools/wined3d-sys-test.sh`**, three boots on a raw copy:
+### 44. The frame a front-buffer flush presents
 
-1. install;
-2. `no-exec=on`, where a probe with no Wine DLLs of its own must find
-   `Wine D3D7 T&L HAL` *after* `DDPROBE` has loaded DirectDraw
-   (545.5 fps);
-3. the executor back, where the value must go and the probe be on ours.
-
-The third boot matters most: a switch that never switched back would
-leave every machine on WineD3D after one host without Vulkan. The batch
-waits for `D3DPRE.LOG` with `WAITFILE.EXE`, because the Run key and
-`WIN.INI`'s `run=` start together and under TCG the helper does not
-always win.
-
-All of this is WineD3D-in-guest, which ADR-018 retires in M15's last
-step, once the host Wine executor has run real games, and not before.
-
-### 44. The fallback drew nothing on Linux: the frame a front-buffer flush presents
-
-Under §43, FIFA 2000 (and §40's Moto Racer) played audio over a black
-screen. **Wine's ddraw presents the primary by drawing into `GL_FRONT`
-and flushing. It never swaps**, and the embed backend published frames
-only on a swap on Linux and Windows (macOS had the hooks). Mesa accepts
-`glDrawBuffer(GL_FRONT)` on a pbuffer with no error, so nothing
-complained. The buffer hooks are now shared in `embed/mglcntx_embed.c`
-(`install_buffer_hooks`); doc 12 has the design. On the game: 206
-frames with the hooks, 29 ending black without. `embed-3d`
-(`tools/embed-3d-test.c`) guards it with no guest.
-
-FIFA's pitch then draws black where the grass belongs: a WineD3D
-rendering defect of the kind `tools/xp-wined3d-test.sh` records on XP
-(`docs/testing.md`), not a presentation one.
+Under the retired fallback (§43), FIFA 2000 (and §40's Moto Racer)
+played audio over a black screen. **Wine's ddraw presents the primary by
+drawing into `GL_FRONT` and flushing. It never swaps**, and the embed
+backend published frames only on a swap on Linux and Windows (macOS had
+the hooks). Mesa accepts `glDrawBuffer(GL_FRONT)` on a pbuffer with no
+error, so nothing complained. The buffer hooks are now shared in
+`embed/mglcntx_embed.c` (`install_buffer_hooks`); doc 12 has the design.
+On the game: 206 frames with the hooks, 29 ending black without.
+`embed-3d` (`tools/embed-3d-test.c`) guards it with no guest, and any
+GL program that presents by a front-buffer flush needs it still.

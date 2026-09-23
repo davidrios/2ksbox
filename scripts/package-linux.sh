@@ -115,7 +115,7 @@ fi
 # The Direct3D executor and the DXVK it runs on (doc 14), found the same
 # way and staged together. The executor `dlopen`s DXVK by the name
 # `companions.rs` puts in `D3DPT_DXVK_LIB`, so one without the other is a
-# package whose XP guests fall back to WineD3D anyway. DXVK's real file
+# package whose guests have no Direct3D anyway. DXVK's real file
 # carries its full version; it is installed under the soname the executor
 # asks for, since nothing links it and only that name is looked up. No
 # Vulkan travels with the package; on Linux the system's driver is the
@@ -124,7 +124,7 @@ if [ -f build/d3dpt/libd3dpt_exec.so ] && [ -f build/dxvk/src/d3d9/libdxvk_d3d9.
   install -m755 build/d3dpt/libd3dpt_exec.so "$STAGE/lib/2ksbox/"
   install -m755 build/dxvk/src/d3d9/libdxvk_d3d9.so.0 "$STAGE/lib/2ksbox/libdxvk_d3d9.so.0"
 else
-  echo "package-linux.sh: no Direct3D executor (scripts/build.sh dxvk exec); packaging without it — XP Direct3D will fall back to WineD3D"
+  echo "package-linux.sh: no Direct3D executor (scripts/build.sh dxvk exec); packaging without it — guests get no Direct3D"
 fi
 # The same executor for a host below the Vulkan floor (ADR-018, track
 # M15): the library QEMU's loader opens when DXVK finds no device, and the
@@ -137,7 +137,7 @@ if [ -f build/d3dpt/libd3dpt_exec_remote.so ] && [ -f build/d3dpt/wine/d3dpt_exe
   mkdir -p "$STAGE/lib/2ksbox/wine"
   install -m644 build/d3dpt/wine/d3dpt_exec.dll build/d3dpt/wine/d3dpt-exec-host.exe "$STAGE/lib/2ksbox/wine/"
 else
-  echo "package-linux.sh: no executor for Wine (scripts/build-d3dpt-exec.sh --wine, mingw-w64); a host below Vulkan 1.3 gets WineD3D in the guest only"
+  echo "package-linux.sh: no executor for Wine (scripts/build-d3dpt-exec.sh --wine, mingw-w64); a host below Vulkan 1.3 gets no Direct3D"
 fi
 rm -rf "$STAGE/share/2ksbox/pc-bios"   # a re-run must replace it, not nest inside it
 cp -a qemu/pc-bios "$STAGE/share/2ksbox/pc-bios"

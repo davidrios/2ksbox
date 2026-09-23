@@ -25,8 +25,8 @@
  * There is a second backend, on Windows only: the system's own
  * Direct3D 9, for a host below DXVK's Vulkan 1.3 floor (ADR-013:
  * pre-Broadwell Intel, Kepler and older, TeraScale). There the
- * card's own D3D9 driver is the best thing on the machine and the only
- * other answer is WineD3D inside the guest. `D3DPT_D3D9` picks:
+ * card's own D3D9 driver is the best thing on the machine. `D3DPT_D3D9`
+ * picks:
  *
  *   auto (default)  DXVK, falling back to the system d3d9 when DXVK opens
  *                   no adapter at all. The launcher resolves `auto` ahead

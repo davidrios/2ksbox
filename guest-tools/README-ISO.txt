@@ -30,7 +30,7 @@ GLIDE\    the device mapper and the 3dfx Glide wrappers.
           A machine with the emulated Voodoo 2 gets its Glide from
           3dfx's own driver, under the same names. SETUP then leaves
           GLIDE*.DLL, an existing FXMEMMAP.VXD and GLIDE2X.OVL alone.
-          SETUP /GAME 6 (GLIDE*.DLL) or /GAME 7 (GLIDE2X.OVL) puts ours
+          SETUP /GAME 4 (GLIDE*.DLL) or /GAME 5 (GLIDE2X.OVL) puts ours
           next to one game that should use the pass-through instead of
           the card.
           GLIDE2X.OVL is on the disc only if the build had Open Watcom.
@@ -59,7 +59,7 @@ D3DPT\    Direct3D 8/9 through the paravirtual device, per game. Copy
           the game polls a non-exclusive DirectInput keyboard from a loop
           that never pumps messages (FIFA 2000's match). It merges what
           Windows reports pressed into the state. The log is d3dpt.log
-          next to the EXE. Never mix these with WINED3D\ in one folder.
+          next to the EXE.
 
 OPENGL\   OPENGL32.DLL, the OpenGL pass-through wrapper. Put it next to
           an OpenGL game's EXE (Quake 2 and the like). TESTS\WGLGEARS.EXE
@@ -73,20 +73,6 @@ OPENGL\   OPENGL32.DLL, the OpenGL pass-through wrapper. Put it next to
           delete the file to pass everything through.
           SETUP /GAME 3 copies both and never overwrites a WRAPGL32.EXT
           you have changed.
-
-WINED3D\  Direct3D -> OpenGL in the guest (wine9x @WINE9X@). It is the
-          fallback for what the two stacks above do not cover, and for a
-          host below Vulkan 1.3 that has no Wine installed (on a Windows
-          host, its own Direct3D 9 covers that case; elsewhere Wine
-          does). Per game, copy every file in ONE of these folders next
-          to the game's EXE. Explorer is fine, nothing needs renaming,
-          and the same files work on Windows 98 and XP:
-            D3D8-9\  DirectX 8 and 9 games
-            DDRAW\   DirectDraw and Direct3D 7 and older
-          Both hold OPENGL32.DLL on purpose. WineD3D draws through it,
-          and without it Windows' own software OpenGL is used instead.
-          SETUP /GAME 4 and /GAME 5 copy the same two folders.
-          WINED3D\README.TXT explains more.
 
 TESTS\    every test, benchmark and calibration program on the disc, one
           copy each. SETUP puts them in C:\2KSBOX. A test that must run

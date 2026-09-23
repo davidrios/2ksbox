@@ -95,11 +95,11 @@ Detail in each one's ADR (`docs/10-decisions.md`) or design doc.
     --host-check`; its sentence for the wizard is
     `wizard::Form::d3d9_note()` under the Direct3D picker (user
     decision; `graphics_note()` only for a front end with no picker).
-  - **WineD3D-in-guest is retired by ADR-018 but still present** as the
-    fallback until M15's last step removes it in one commit, after the
-    host path is measured. Never delete the `WINED3D\` ISO folder,
-    `SETUP /GAME`'s renames or docs 04/08's fallback rows on your own
-    account, and sink no more time into wine9x bugs.
+  - **WineD3D-in-guest is gone** (ADR-018, M15 step 6, 2026-09-23): no
+    wine9x build, no `WINED3D\` ISO folder, no `D3DPRE.EXE`. A host
+    below the floor with no Wine has no Direct3D pass-through, and its
+    guest keeps DirectDraw, OpenGL and Glide. Don't bring the guest stack
+    back.
 - **Glide is our own build of OpenGLide** (doc 12 §5,
   `third_party/openglide` + `patches/openglide/`, window-less layer in
   `glidept/`): qemu-3dfx only dispatches to a `libglide2x` it does not
@@ -144,8 +144,8 @@ Detail in each one's ADR (`docs/10-decisions.md`) or design doc.
   (`guest-tools/src/guestlog.h`): new guest code calls
   `guest_log_open()` / `guest_path()`, never a bare relative name; a
   harness sets `BOXLOG=<dir>` in the guest to redirect. Deliberate
-  exceptions: `WINDOWS\V2START.LOG`, `WINDOWS\D3DPRE.LOG` (login markers)
-  and the per-game guest DLLs' logs next to the game's EXE.
+  exceptions: `WINDOWS\V2START.LOG` (a login marker) and the per-game
+  guest DLLs' logs next to the game's EXE.
 - Guest binaries are msvcrt-linked and `-march=pentium3`.
 - **Never run `cargo fmt` over a package**: `player/src/` is not
   rustfmt-clean, and a package-wide format buries the diff. Write new

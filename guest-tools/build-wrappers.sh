@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Build qemu-3dfx guest wrappers (Windows DLLs) from the SAME
-# third_party/qemu-3dfx commit our QEMU fork is signed with, plus the
-# WineD3D wrapper set (JHRobotics' wine9x, a Wine 1.7.55 port for
-# 95/98/Me/XP, LGPL) and a Direct3D 9 smoke test, and stage them as a
+# third_party/qemu-3dfx commit our QEMU fork is signed with, plus our own
+# Direct3D DLLs, drivers and test programs, and stage them as a
 # guest-tools ISO. Needs: i686-w64-mingw32-gcc, gendef, xxd, shasum,
 # git, make, nasm; xorriso or genisoimage/mkisofs for the ISO.
 #   Linux (Arch):  pacman -S mingw-w64-gcc mingw-w64-tools xorriso
@@ -80,7 +79,6 @@ ensure_msvcrt_cc() {
   real="$(command -v i686-w64-mingw32-gcc || true)"
   case "$real" in "$bin"/*) echo "internal error: shim resolved to itself"; exit 1;; esac
   [ -n "$real" ] || { echo "need i686-w64-mingw32-gcc (mingw-w64)"; exit 1; }
-  REAL_CC="$real"
   [ -f "$(dirname "$(dirname "$real")")/i686-w64-mingw32/lib/libmsvcrt-os.a" ] || \
   [ -f "$(dirname "$real")/../i686-w64-mingw32/lib/libmsvcrt-os.a" ] || \
   [ -f "$(dirname "$real")/../lib/libmsvcrt-os.a" ] || \
@@ -110,43 +108,6 @@ check_crt() {  # fail loudly if anything still imports the UCRT api-sets
 # LF-only text as one line.
 crlf() { awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }'; }
 
-# WineD3D for the guests: wine9x builds wined3d.dll (Wine 1.7.55 with the
-# 9x/XP fixes) plus the DX interfaces wined8/wined9/winedd and per-OS
-# "switcher" ddraw/d3d8/d3d9 DLLs for a system-wide install. Only
-# ddraw_98.dll is staged on the disc (see WINED3D\ below); the rest are
-# built because wine9x's own README walks through them and they are one
-# `make` target away. wined3d links the CRT, so it gets the msvcrt
-# flags; not the shim's -march=pentium3 though, with which GCC emits a
-# memset call inside the CRT-less switcher DLLs (wine9x's own
-# -march=pentium2 is below our floor anyway, and the ISA check below covers
-# every file that does reach the disc). Its pthread9x sub-build hardcodes
-# the host `ar`, which is BSD ar on macOS.
-WINE9X_URL="https://github.com/JHRobotics/wine9x.git"
-WINE9X_REF="8ab16c6c0930efc1f9138eddda7b3114d7f31e62"   # main, 2026-09 (v1.7.55.45 + tray/HAL change)
-build_wined3d() {
-  local d="$OUT/wine9x"
-  if [ ! -d "$d/.git" ]; then
-    echo "==> cloning wine9x @ ${WINE9X_REF:0:7}"
-    git clone -q "$WINE9X_URL" "$d"
-  fi
-  ( cd "$d" && git fetch -q origin && git checkout -q -- . && git checkout -q "$WINE9X_REF" \
-    && git submodule update --init -q )
-  # our wine9x patch queue (patches/wine9x/*.patch, git-format, from pristine)
-  for p in "$ROOT"/patches/wine9x/*.patch; do
-    [ -e "$p" ] || continue
-    ( cd "$d" && git apply --check "$p" && git apply "$p" ) && echo "    wine9x: $(basename "$p") applied" \
-      || { echo "wine9x patch $(basename "$p") does not apply"; exit 1; }
-  done
-  cp "$d/config.mk-sample" "$d/config.mk"
-  echo "==> building wine9x (wined3d + DX interfaces + switchers)"
-  ( cd "$d" && make clean >/dev/null 2>&1; make -C pthread9x clean >/dev/null 2>&1
-    make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)" \
-      all d3d8_xp.dll d3d9_xp.dll ddraw_xp.dll d3d8_98.dll d3d9_98.dll ddraw_98.dll \
-      CC="$REAL_CC $MSVCRT_FLAGS" LD="$REAL_CC -mcrtdll=msvcrt-os" \
-      LIBSTATIC='i686-w64-mingw32-ar rcs -o $@' > "$d/build.log" 2>&1 ) \
-    || { echo "wine9x build failed, see $d/build.log"; tail -20 "$d/build.log"; exit 1; }
-}
-
 build_wrapper() {  # $1 = 3dfx | mesa
   local d="$FX/wrappers/$1/build"
   rm -rf "$d" && mkdir -p "$d"
@@ -156,15 +117,12 @@ build_wrapper() {  # $1 = 3dfx | mesa
 echo "==> qemu-3dfx commit $REV"
 build_wrapper 3dfx
 build_wrapper mesa
-build_wined3d
 
 # The ISO: one folder per role. Each stack owns a folder, so "copy this
-# next to the game" can never pick up the wrong D3D (the WineD3D DLLs carry
-# the same names ours do), and every test program lives in TESTS\. One
-# copy of every file, except WineD3D's: its folders are meant to be copied
-# whole from Explorer, so each carries what it needs (see WINED3D\ below).
+# next to the game" can never pick up the wrong DLL, and every test
+# program lives in TESTS\. One copy of every file.
 rm -rf "$OUT/iso"
-mkdir -p "$OUT/iso"/{GLIDE,OPENGL,D3DPT,TESTS,CDSHELF,VOODOO2} "$OUT/iso/WINED3D"/{D3D8-9,DDRAW}
+mkdir -p "$OUT/iso"/{GLIDE,OPENGL,D3DPT,TESTS,CDSHELF,VOODOO2}
 G="$FX/wrappers/3dfx/build"; M="$FX/wrappers/mesa/build"
 T="$OUT/iso/TESTS"
 
@@ -227,51 +185,9 @@ build_ovl
 # user edits, so SETUP /GAME never overwrites one already next to a game.
 cp "$M"/opengl32.dll "$OUT/iso/OPENGL/"
 cp "$ROOT/guest-tools/wrapgl32.ext" "$OUT/iso/OPENGL/WRAPGL32.EXT"
-# WINED3D\: one folder per kind of game, each copied whole next to the
-# game's EXE (user decision: renames were what a user would get wrong, and
-# copying a folder in Explorer needs no terminal). The DLLs carry the names
-# a game loads. wine9x's wined8/wined9/winedd *are* the D3D8/D3D9/DDRAW
-# interfaces, and the same files serve 98 and XP; only the system-wide
-# switchers differ per family. Each folder also has OPENGL32.DLL, because
-# wined3d draws through the first opengl32.dll the loader finds and
-# without ours that is Windows' own software GL 1.1. SETUP /GAME 4 and 5
-# copy the same two folders. wine9x's own system-wide install (the *_98 /
-# *_XP switcher DLLs, which replace files in the Windows system folder) is
-# left off the disc by user decision: it was a third way to do the same
-# thing and only made the folder confusing. The switchers are still built,
-# in out/wine9x, for anyone who wants that install by hand. README.TXT
-# says which folder a game wants and when to reach for either.
-W="$OUT/wine9x"; WD="$OUT/iso/WINED3D"
-cp "$W"/wined8.dll "$WD/D3D8-9/D3D8.DLL"
-cp "$W"/wined9.dll "$WD/D3D8-9/D3D9.DLL"
-cp "$W"/winedd.dll "$WD/DDRAW/DDRAW.DLL"
-for d in D3D8-9 DDRAW; do
-  cp "$W"/wined3d.dll "$WD/$d/WINED3D.DLL"
-  cp "$M"/opengl32.dll "$WD/$d/OPENGL32.DLL"
-done
-# SYSTEM9X\: the two files the *machine-wide* install needs that the
-# per-game folders do not (doc 19 §43, SETUP's "WineD3D as this machine's
-# DirectDraw"). Everything else that install puts in the system folder is
-# copied out of DDRAW\ above, so the disc still carries one of each file.
-# The switcher is wine9x's `ddraw_98.dll`: a DDRAW.DLL that decides per
-# caller between WineD3D and the real DirectDraw (which SETUP leaves in
-# place under the name DDSYS.DLL). It is not a third way to install the
-# same thing: on 9x a per-game folder reaches only the first DirectDraw
-# program of a session, so for the second game it is the only way.
-mkdir -p "$WD/SYSTEM9X"
-cp "$W"/ddraw_98.dll "$WD/SYSTEM9X/DDRAWME.DLL"
-echo "==> D3DPRE.EXE (the login helper that points DirectDraw either way)"
-i686-w64-mingw32-gcc -O2 -Wall -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcrt-os \
-  -march=pentium3 -mtune=generic -mwindows -I "$ROOT/guest-tools/src" \
-  -o "$WD/SYSTEM9X/D3DPRE.EXE" "$ROOT/guest-tools/src/d3dpre.c"
-
-sed "s/@WINE9X@/${WINE9X_REF:0:7}/" "$ROOT/guest-tools/README-WINED3D.txt" \
-  | crlf > "$WD/README.TXT"
-
 # D3DPT\: Direct3D 8/9 over our paravirtual device (doc 14), with
 # qemu-3dfx's fxlib device mapper (FXPTL.SYS / FXMEMMAP.VXD). Per game:
-# only the DLLs live here, so nothing in this folder can be confused with
-# the WineD3D set. d3d9_vtbl.h is generated from mingw's d3d9.h
+# only the DLLs live here. d3d9_vtbl.h is generated from mingw's d3d9.h
 # (gen_vtbl.py) and checked in.
 i686-w64-mingw32-gcc -O2 -Wall -shared -o "$OUT/iso/D3DPT/d3d9.dll" "$ROOT/guest-tools/src/d3dpt/d3d9.c" \
   "$FX/wrappers/fxlib/fxlibnt.c" "$FX/wrappers/fxlib/fxlib9x.c" -I"$FX/wrappers/fxlib" \
@@ -330,7 +246,7 @@ i686-w64-mingw32-gcc -O2 -o "$T/d3d9test.exe" "$ROOT/guest-tools/src/d3d9test.c"
 # system ddraw against D3DPT\DDRAW.DLL).
 i686-w64-mingw32-gcc -O2 -o "$T/ddvmtest.exe" "$ROOT/guest-tools/src/ddvmtest.c" -lddraw -ldxguid
 # Display-mode probe (guest-tools/src/modetest.c): current mode, mode list,
-# ChangeDisplaySettingsEx results for the switches ddraw/wined3d make.
+# ChangeDisplaySettingsEx results for the switches DirectDraw and Direct3D make.
 i686-w64-mingw32-gcc -O2 -o "$T/modetest.exe" "$ROOT/guest-tools/src/modetest.c" -luser32
 # GLIDETEST.EXE: Glide 2.x through the pass-through device (doc 12 §5) from
 # inside the guest. The guest half of tools/glide-host-test.cpp, drawing the
@@ -488,11 +404,11 @@ fi
 i686-w64-mingw32-gcc -O2 -Wall -o "$OUT/iso/setup.exe" "$ROOT/guest-tools/src/setup.c" \
   -ladvapi32 -luser32 -lwinmm
 
-# Every binary on the disc, however deep (WINED3D\ has folders of its own)
-# and whatever case it was staged in (those carry the names a game loads).
+# Every binary on the disc, however deep and whatever case it was staged
+# in (the per-game folders carry the names a game loads).
 while IFS= read -r f; do check_crt "$f"; check_isa "$f"; done \
   < <(find "$OUT/iso" -type f \( -iname '*.dll' -o -iname '*.exe' \))
-sed -e "s/@REV@/$REV/" -e "s/@WINE9X@/${WINE9X_REF:0:7}/" "$ROOT/guest-tools/README-ISO.txt" \
+sed -e "s/@REV@/$REV/" "$ROOT/guest-tools/README-ISO.txt" \
   | crlf > "$OUT/iso/README.TXT"
 # 8.3-safe upper-case names for Win9x
 ( cd "$OUT/iso" && find . -type f | while IFS= read -r f; do

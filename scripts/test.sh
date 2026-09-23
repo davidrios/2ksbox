@@ -262,13 +262,12 @@ host_check_probe() { # `launcherx --host-check` (ADR-013), on any host
   # into. Both loader variables are set, since which one is read depends
   # on how old the loader is. No Wine either (D3DPT_WINE naming a path
   # that does not exist means none, by the probe's rule). That is the host
-  # with no executor at all, so the answer is unavailable, pointed at
-  # WineD3D in the guest and at installing Wine.
+  # with no executor at all, so the answer is unavailable and the user is
+  # told to install Wine.
   o="$(VK_DRIVER_FILES=/nonexistent.json VK_ICD_FILENAMES=/nonexistent.json D3DPT_WINE=/nonexistent \
        target/release/launcherx --host-check 2>&1)" \
     && { echo "exit 0 with no Vulkan driver and no Wine"; rc=1; }
   case "$o" in *unavailable*) ;; *) echo "no Vulkan driver, no Wine, yet not reported unavailable"; echo "$o"; rc=1;; esac
-  case "$o" in *WineD3D*) ;; *) echo "no Vulkan driver, no Wine, yet not pointed at WineD3D"; echo "$o"; rc=1;; esac
   case "$o" in *"Install Wine"*) ;; *) echo "no Vulkan driver, no Wine, yet not told to install Wine"; echo "$o"; rc=1;; esac
   case "$o" in *"Wine: none found"*) ;; *) echo "the report does not say no Wine was found"; echo "$o"; rc=1;; esac
   # The same host with a Wine and the executor's Windows build (ADR-018,
@@ -2266,7 +2265,7 @@ host_stage() {
   # before a machine exists. The verdict itself is a property of the box,
   # so what is checked here is the part that has to hold on every box:
   # that a host with no Vulkan driver at all is reported unavailable,
-  # exits non-zero and is pointed at the WineD3D path, that a software
+  # exits non-zero and is told to install Wine, that a software
   # driver is warned about rather than refused, and that a report always
   # names the loader and the bar it was judged against.
   cargo build --release -p launcher-core --bin launcherx -q 2>"$OUT/host-check-build.log" \

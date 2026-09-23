@@ -22,12 +22,12 @@ is the index.
 | **M7** XP display driver | `tracks/m7-display-driver.md` | `d3dpt/hw/d3dpt_vga.c`, `d3dpt/hw/d3dpt_exec_load.[ch]`, `d3dpt/d3dpt_fb.h`, `d3dpt/exec/d3dpt_exec_ddi.cpp`, `guest-tools/src/d3dptvid/nt/`, `tools/xp-*.sh`, `tools/d3dpt-dp2-test.cpp`, doc 15 | Done through protocol v13 · a title for each probe-only DX8 feature, more 8 bpp titles, a driver stage in `scripts/test.sh` |
 | **M8** x87 / SSE fast paths | `tracks/m8-tcg-fastpaths.md` | patches 05, 06, 11, 12, `tools/x87-*`, `tools/sse-guest-test.py`, docs 13, 16 | Done · a real Direct3D workload with and without `*-fast=off` |
 | **M9** TCG on Apple Silicon | `tracks/m9-tcg-aarch64.md` | `tools/tcg-profile.*`, `tools/tcg-hot.py`, the TCG patches from 13 on | Done; optimization closed by user decision (2026-09-12) · patch 21's crash, binary32 at PC=24 slower than PC=53 on aarch64, the game tests uncapped on the Air |
-| **M10** Win98 display driver | `tracks/m10-win98-driver.md` | `guest-tools/src/d3dptvid/core/` and `w9x/`, `guest-tools/build-driver*.sh`, `setup.c`'s 9x role, `tools/win98-*.sh`, doc 19, ADR-012 | Active; steps 0–4 done, step 5 (real titles) under way · the doc 04 Win98 title matrix against the Glide / WineD3D control |
+| **M10** Win98 display driver | `tracks/m10-win98-driver.md` | `guest-tools/src/d3dptvid/core/` and `w9x/`, `guest-tools/build-driver*.sh`, `setup.c`'s 9x role, `tools/win98-*.sh`, doc 19, ADR-012 | Active; steps 0–4 done, step 5 (real titles) under way · the doc 04 Win98 title matrix against the Glide and Cirrus controls |
 | **M11** Windows host | `tracks/m11-windows-host.md` | `packaging/windows/`, `scripts/win-cross.sh`, `build-windows.sh`, `package-windows.sh`, `win-run.sh`, `embed/mglcntx_embed.c`'s WGL half, `build-windows.md` | Done; the zip runs guests on the user's PC · Moto Racer's speed there, the native MSYS2 build and its ISO run, live control, the installer |
 | **M12** music | `tracks/m12-music.md` | `libsynth/`, patches 60–61, `soundfonts/`, `bundle::Sound` / `Music`, `tools/midi-guest-test.py`, doc 20 | All stages landed · capture Win98's failing MIDI run, a host MIDI port |
 | **M13** gamepads | `tracks/m13-gamepads.md` | `player/src/pad.rs`, `gamepad/`, patches 26–27, `bundle::Pad`, `tools/pad-guest-test.py` | Done · a real controller on the key mapping, the USB pad on Win98 FE / Me |
 | **M14** Voodoo 2 device | `tracks/m14-voodoo2.md` | `voodoo/`, patch 62 and the Voodoo patches after it, `tools/voodoo-guest-test.py`, `scripts/sync-86box-voodoo.sh`, doc 21 | Active on `main` · a second Glide game after one has quit, a client left on a dead ring, the Air and Windows builds |
-| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Active, steps 1–5 done: the community app passed on a real macOS 15 (user, 2026-09-23) · step 6, retire WineD3D-in-guest in one commit; step 7, the Flatpak's Wine add-on (decided 2026-09-23, an extension of the app); the spike's host tests on the rig's Linux Wine |
+| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Steps 1–6 done: the community app passed on a real macOS 15 and WineD3D-in-guest was removed (2026-09-23) · step 7, the Flatpak's Wine add-on (decided 2026-09-23, an extension of the app); the spike's host tests on the rig's Linux Wine |
 | Everything else (Glide on macOS / Windows, M2's leftovers) | "Next steps" below | | as listed |
 
 Rules: work on `main` or on a branch `track/<name>-<topic>` off it,
@@ -55,7 +55,6 @@ unmerged). The Mac pulls `main`.
 | Direct3D executor (doc 14) | Protocol v13, one decoder, four D3D9s. DXVK (native and on Windows) is the default and the golden reference. Below the Vulkan 1.3 floor: Windows' own `d3d9.dll` (`D3DPT_D3D9`, ADR-007's second amendment) or Wine's on a Linux / macOS host (`exec=wine`, ADR-018, M15). `no-exec=on` models a host with no executor. |
 | XP display driver (doc 15) | `d3dpt-vga`, register set v5. DirectDraw and a DirectX 8 DDI with hardware T&L, shaders 1.x, palettes, colour keys, VRAM buffers, 16 streams, cube / volume textures, MSAA, gamma. FIFA 2000, Max Payne, Vice City, Moto Racer and Diablo play. |
 | Win98 display driver (doc 19) | The same core under a 9x layer; the default adapter for a new Win98 machine. The DirectX 3–8 checks pass as on XP, and a 2ksbox Win98 runs DirectX 9.0c. Crimson Skies, 3DMark 99 / 2001 SE, Carmageddon (Mode X), Blood in a DOS box. Blue screens and power-down show. |
-| WineD3D in the guest | Still shipped as the fallback (`WINED3D\` on the ISO, `SETUP /GAME 4`/`5`, `/I 7`). Retired in M15's last step and not before (ADR-018). |
 | CD-ROM (docs 05, 17) | `libdisc` behind the `cdimage` driver: cue/bin, CCD, MDS, ISO and `isodir:` folders, L-EC, subchannel, CD-DA, a DVD profile past 80 minutes, the disc shelf from inside the guest (patch 52, `CDSHELF`; the listing names the disc in the drive from the medium itself, boot disc included). SafeDisc 1.x's band read is the negative control; SafeDisc 2.x and ProtectCD never read theirs. |
 | Music (doc 20) | OPL3 and MPU-401 (no IRQ line) on SoundFont GM or the user's MT-32 ROMs. The SB16 applies its mixer (patch 61). Open: Win98's own MIDI through our port loses instruments. |
 | Gamepads (M13) | USB HID pad (patch 26), gameport (patch 27), key mapping. Done. |
@@ -180,17 +179,6 @@ live in its track doc; fixed things leave this list.
   §5.3; dxdiag is the evidence so far). The user's `claude98` still needs
   `SETUP /I 5` from a current ISO and a restart.
 
-- **WineD3D-in-guest, parked by the wine9x rule** until M15's last
-  step retires it (ADR-018). FIFA 2000 under the 9x fallback draws the
-  pitch black under the players and lines (doc 19 §44). XP's device
-  mapper sometimes fails to install (`tools/xp-wined3d-test.sh` on
-  `winxp-m7.qcow2`, 2 of 3 runs): INSTDRV
-  printed nothing and left no MAPMEM service (`sc`: 1060), so
-  `OPENGL32.DLL` could not load. Not an address clash (`info mtree`).
-  When the service is missing, the harness now reruns INSTDRV to COM1
-  with its exit code. The frame's two rendering defects (checker bands,
-  the grid blue; 153,633 pixels on both adapters) stay parked.
-
 - **Display Properties in Win98 under TCG faults RUNDLL32.** Upstream
   QEMU issue 1964; cosmetic, and KVM is not affected (doc 06).
 
@@ -224,8 +212,7 @@ live in its track doc; fixed things leave this list.
 - **Below the Vulkan floor: no real-user numbers.** Nobody has measured
   how many users are below DXVK's Vulkan 1.3 bar, or whether on such a
   host software Vulkan (lavapipe, "available, in software (slow)") beats
-  the Wine executor or WineD3D in the guest (ADR-013/018, `launcherx
-  --host-check`).
+  the Wine executor (ADR-013/018, `launcherx --host-check`).
 
 - **3D hand-off sync is `glFinish`** on both platforms. A fence would let
   the vCPU go on while the blit drains (doc 12).
@@ -236,16 +223,15 @@ Each track's own order is in its track doc. This is the order across
 tracks, plus the items no track owns.
 
 1. **M15, the Direct3D fallback on Wine** (ADR-018,
-   `tracks/m15-wine-executor.md` "Steps"). Step 5 passed: the packaged
-   community app on a real macOS 15 (the floor, `build-macos.md`) runs
-   the game through the Wine executor, user-confirmed on 2026-09-23 ("works
-   wonderfully"); no frame rate was written down. Next is step 6:
-   WineD3D-in-guest removed in one commit. Then step 7, the Flatpak's
-   Wine as an add-on extension of the app (decided 2026-09-23; the shape
-   is in the track doc). Also the spike's two host tests on the rig's
-   Linux Wine. A
-   Windows host below the floor is not part of this; it already runs its
-   own `system32\d3d9.dll`.
+   `tracks/m15-wine-executor.md` "Steps"). Steps 1–6 are done: the
+   packaged community app on a real macOS 15 (the floor, `build-macos.md`)
+   runs the game through the Wine executor, user-confirmed on 2026-09-23
+   ("works wonderfully"; no frame rate was written down), and
+   WineD3D-in-guest was removed the same day. Left: step 7, the
+   Flatpak's Wine as an add-on extension of the app (decided 2026-09-23;
+   the shape is in the track doc), and the spike's two host tests on the
+   rig's Linux Wine. A Windows host below the floor is not part of this;
+   it already runs its own `system32\d3d9.dll`.
 2. **The measurements doc 22 still owes** (user decision, 2026-09-15).
    The Ryzen half of §6.2's games, including 3DMark2001 SE's high-detail
    Car Chase and Lobby as the benchmark for patch 47's inexact mode (+47 %
@@ -283,7 +269,7 @@ tracks, plus the items no track owns.
    Direct3D 7 `GetDC` failure, the Air and the Windows build, Diablo II's
    numbers, patches 64 and 71 upstream.
 8. **M10, Win98 driver** (its track doc, "Next steps"): the doc 04 Win98
-   title matrix against the Glide / WineD3D control, Total Annihilation's
+   title matrix against the Glide and Cirrus controls, Total Annihilation's
    exit from a skirmish, Crimson Skies' half-drawn QUIT button and
    partial depth fills (doc 19 §28, §34), the command-window lock (§36),
    the ACPI standby resume (§41).
@@ -472,8 +458,8 @@ to one subsystem lives in its design doc; pointers are at the end.
 - **An XP game "crashes at startup" with `0xc0000142`**: a DLL of ours
   returned FALSE from `DllMain`. Either qemu-3dfx's `OPENGL32.DLL` could
   not open `\\.\MAPMEM` (FXPTL.SYS and the MAPMEM service missing:
-  install SETUP's Glide component as Administrator; OpenGL and WineD3D
-  need it too), a `D3DPT\` DLL found no executor
+  install SETUP's Glide component as Administrator; OpenGL needs it
+  too), a `D3DPT\` DLL found no executor
   (`D3DPT_STATUS_NO_EXEC`), or the protocol version differs (`d3dpt.log`
   names both).
 - **A benchmark inside a DOS `.COM` keeps its data off the code page**,

@@ -1,7 +1,7 @@
 /*
  * modetest: what does the display driver let ChangeDisplaySettingsEx do?
- * Prints the current mode, the mode list, then tries the switches Wine's
- * ddraw/wined3d and DirectDraw itself make (fullscreen re-set of the
+ * Prints the current mode, the mode list, then tries the switches
+ * DirectDraw and Direct3D runtimes make (fullscreen re-set of the
  * current mode, 640x480x16, 800x600x16/32, 1024x768x16) and prints the
  * DISP_CHANGE_* return code of each. Restores the desktop at the end.
  * Build: i686-w64-mingw32-gcc -O2 -o modetest.exe modetest.c -luser32
@@ -77,7 +77,7 @@ int main(void)
     }
     printf(" (%d)\n", n);
     fflush(stdout);
-    try_mode("current, CDS_FULLSCREEN (wined3d)", cur.dmPelsWidth, cur.dmPelsHeight, cur.dmBitsPerPel, 0, CDS_FULLSCREEN);
+    try_mode("current, CDS_FULLSCREEN (no freq)", cur.dmPelsWidth, cur.dmPelsHeight, cur.dmBitsPerPel, 0, CDS_FULLSCREEN);
     try_mode("current, CDS_FULLSCREEN + freq", cur.dmPelsWidth, cur.dmPelsHeight, cur.dmBitsPerPel, cur.dmDisplayFrequency, CDS_FULLSCREEN);
     try_mode("current, flags 0", cur.dmPelsWidth, cur.dmPelsHeight, cur.dmBitsPerPel, 0, 0);
     try_mode("640x480x16, CDS_FULLSCREEN", 640, 480, 16, 0, CDS_FULLSCREEN);

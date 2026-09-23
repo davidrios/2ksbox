@@ -73,23 +73,13 @@ host can run.
 
 ## Fallbacks and alternatives
 
-- **WineD3D in the guest, still shipped, being retired** (ADR-018). Until
-  M15's last step it is what a host below Vulkan 1.3 with no executor
-  runs: wine9x (Wine 1.7.55 with 9x/XP fixes) over the GL pass-through,
-  from the ISO's `WINED3D\` folders (`SETUP /GAME 4` for Direct3D 8/9,
-  `/GAME 5` for DirectDraw and Direct3D ≤7, and on 9x `/I 7`, WineD3D as
-  the machine's DirectDraw through `D3DPRE.EXE`). M15
-  (`docs/tracks/m15-wine-executor.md`) replaces it with the executor on
-  Wine on the host and removes these rows, the ISO folder and the SETUP
-  components in one commit, after the host path has drawn the reference
-  scene and run a game.
-  - To test this row on a host with Vulkan, `-global
-    d3dpt-vga.no-exec=on` (doc 15) makes the adapter report no executor,
-    so the guest driver offers no Direct3D. `tools/xp-wined3d-test.sh`
-    hides the host's Vulkan instead (`VK_DRIVER_FILES=/nonexistent.json`)
-    when the launcher's probe and note are part of the question;
-    `tools/wined3d-sys-test.sh` covers the 9x system-wide install
-    (`docs/testing.md`).
+- **A host with no executor** (no Vulkan 1.3, and on Linux / macOS no
+  Wine) gives the guest no Direct3D: the driver keeps its DirectDraw
+  half, a game gets the runtime's software device, and OpenGL and Glide
+  still pass through. `-global d3dpt-vga.no-exec=on` (doc 15) models
+  such a host on any box. WineD3D in the guest (wine9x, Wine 1.7.55 over
+  the GL pass-through from the ISO) was the fallback here until ADR-018
+  retired it and M15 step 6 removed it (2026-09-23).
 - **The Cirrus adapter** with Windows' in-box driver: plain 2D, no
   acceleration, the control for any display-driver question.
 - **SoftGPU** (software 3D in the guest, from the wine9x author) would

@@ -620,8 +620,8 @@ impl Form {
     /// the executor on its own Direct3D 9, Linux and macOS on Wine's when
     /// a Wine and the executor's Windows build are there
     /// (`host_gpu::D3dBackend`). Only a host with none of these
-    /// (`D3dBackend::None`) has no executor, and its guest falls back to
-    /// WineD3D over the OpenGL pass-through.
+    /// (`D3dBackend::None`) has no executor, and its guest has no
+    /// Direct3D pass-through at all.
     ///
     /// On that last host with our adapter picked, the note also says to
     /// keep it. The guest driver asks the host for an executor before it

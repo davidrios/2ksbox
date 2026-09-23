@@ -140,7 +140,7 @@ glidept/         OpenGLide's window-less platform layer
 voodoo/          86Box's Voodoo 2 (verbatim), its shim, the QEMU device
 cdshelf/         the in-guest disc shelf protocol
 guest-tools/     the guest-tools ISO: drivers, guest DLLs, SETUP.EXE, tests
-patches/         our patch queues: qemu, openglide, dxvk, seabios, wine9x
+patches/         our patch queues: qemu, openglide, dxvk, seabios
 qemu/            submodule: QEMU v9.2.4, prepared by scripts/prepare-qemu.sh
 third_party/     qemu-3dfx, dxvk, openglide, slang-shaders; khronos headers
 firmware/        our VGA BIOS builds (VBE 4F09h)

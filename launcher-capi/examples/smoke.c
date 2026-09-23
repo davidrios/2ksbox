@@ -137,7 +137,7 @@ int main(int argc, char **argv) {
      * Vulkan driver; on a host with one the line must be absent. */
     bool gfx_warning = false;
     char *gfx = lc_wizard_graphics_note(w, &gfx_warning);
-    int no_vulkan = gfx && strstr(gfx, "goes through OpenGL") != NULL;
+    int no_vulkan = gfx && strstr(gfx, "no Direct3D pass-through here") != NULL;
     int keep = gfx && strstr(gfx, "Keep the 2ksbox adapter") != NULL;
     check(no_vulkan ? "no Vulkan: keep our adapter, it says"
                     : "Vulkan: nothing about keeping the adapter",

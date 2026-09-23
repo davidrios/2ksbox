@@ -151,8 +151,7 @@ device shares, so both devices answer the same.
   form's Extra QEMU arguments, or `NO_EXEC=1 tools/xp-driver-test.sh`).
   The driver keeps its whole DirectDraw half (modes, flip chain, cursor,
   gamma, palette) and offers no Direct3D, so a game falls back to the
-  runtime's software device or to WineD3D staged next to it (`SETUP
-  /GAME 4`, doc 04). The loader refuses before it opens the executor
+  runtime's software device (doc 04). The loader refuses before it opens the executor
   library, so it tries no backend. The QEMU log says `d3dpt: no-exec=on:
   no Vulkan 1.3 device on this host`, the driver `d3dptdisp: no
   Direct3D executor on the host`. **Do not use `ddflags=0x20`**

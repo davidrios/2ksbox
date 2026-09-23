@@ -1,7 +1,7 @@
 /*
  * d3dgame9: the Direct3D 9 reference workload (doc 14 P0a). Scene and
  * options in d3dgame.h. Golden on the rig (P4 + GeForce 6200) first; then
- * WineD3D-in-guest and the paravirtual device are diffed against its BMPs.
+ * the paravirtual device on every back end is diffed against its BMPs.
  *
  * Build: i686-w64-mingw32-gcc -O2 -o d3dgame9.exe d3dgame9.c -ld3d9 -lgdi32 -luser32
  */

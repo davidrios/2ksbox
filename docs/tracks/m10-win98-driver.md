@@ -27,9 +27,8 @@ Steps 0–4 are done; step 5, real titles, is where the work is.
   blue screens (§29), monitor power-down (§41), the shutdown screen
   (§35), DirectDraw's own Mode X for 320×200 titles (§30).
 - **No executor** (`no-exec=on`): the HAL keeps DirectDraw and offers no
-  Direct3D (§40). WineD3D can then be the machine's DirectDraw, chosen
-  by `D3DPRE.EXE` at every login (§42, §43). That goes in M15's last
-  step with the rest of WineD3D-in-guest, not before.
+  Direct3D (§40). The 9x rule that a DLL beside a game reaches only the
+  session's first DirectDraw program is §42.
 - **Titles**: Total Annihilation, LEGO Island, Carmageddon, Blood (DOS
   box), Crimson Skies (§28, §34), Diablo II (§33), 3DMark 99, 3DMark2001
   SE's whole benchmark (§36–§39).
@@ -71,7 +70,7 @@ needed no adapter change, so a change would be a finding),
 | the HAL: publication, HALINFO validation, the shared arena | §20–§23 |
 | DirectDraw and Direct3D DDIs | §24, §25 |
 | titles and screen switches | §26–§39 |
-| no executor, WineD3D as the fallback | §40, §42–§44 |
+| no executor, 9x's one DirectDraw per session, the front-buffer flush | §40, §42–§44 |
 | monitor power-down | §41 |
 
 ## Build and test loop
@@ -180,7 +179,7 @@ The guest's:
 ## Next steps
 
 1. **The doc 04 title matrix.** Run the same Win98 titles through this
-   driver and the Glide/WineD3D control to learn which is faster, which
+   driver and the Glide and Cirrus controls to learn which is faster, which
    is correct, and what the launcher should default to.
 2. **Total Annihilation's exit from inside a skirmish** crashes (user
    report; exiting from the main menu is clean).
@@ -191,5 +190,3 @@ The guest's:
 4. **ACPI standby.** On resume nothing reprograms the adapter and the
    screen is a blank VGA text page; the player does not report
    `SUSPEND`/`WAKEUP` (§41).
-5. WineD3D-in-guest (§42–§44) goes in M15's last step, after the host
-   Wine executor is measured on real games.

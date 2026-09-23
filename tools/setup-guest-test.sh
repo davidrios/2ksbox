@@ -59,7 +59,7 @@
 # regedit /s from the floppy) before the install, and after it exports both
 # keys: the entry must have moved to HKLM\SOFTWARE\2ksbox\Voodoo2 and
 # V2START.EXE taken its place (doc 21 §11), and the second `/ALL` must find
-# it moved already. Every run also copies `/GAME 6` (the pass-through's
+# it moved already. Every run also copies `/GAME 4` (the pass-through's
 # Glide for one game) into C:\2KSBOX.
 #
 # Env: OUT=dir (default build/setup-test), BOOT_WAIT=s (cap, 300),
@@ -163,7 +163,7 @@ MARKS=("$SYSDIR\\GLIDE2X.DLL|MARK-GLIDE2X" "$SYSDIR\\GLIDE3X.DLL|MARK-GLIDE3X")
   echo 'echo ==== per-game set 3 (OpenGL) > COM1'
   setup_line '/GAME 3 C:\2KSBOX'
   echo 'echo ==== per-game set 6 (Glide pass-through) > COM1'
-  setup_line '/GAME 6 C:\2KSBOX'
+  setup_line '/GAME 4 C:\2KSBOX'
   if [ -n "${VOODOO:-}" ]; then
     # FIND prints a matching line only if the marker is still the file's
     # content; a copy of ours in its place prints just the file's name

@@ -32,20 +32,21 @@ instead (ADR-007's second amendment).
 - Shared, not edited: `d3dpt/exec/d3dpt_exec.cpp` needs nothing for Wine
   (the `system` branch's hidden window and executor-owned scene are what
   wined3d wants); `d3dpt/d3dpt_proto.h`.
-- **Not this track's until step 6:** all of WineD3D-in-guest (the wine9x
-  build in `guest-tools/build-wrappers.sh`, `patches/wine9x/`, the ISO's
-  `WINED3D\` folders, `SETUP /GAME 4`/`5` and `/I 7`,
+- **Removed in step 6** (2026-09-23): all of WineD3D-in-guest (the
+  wine9x build in `guest-tools/build-wrappers.sh`, `patches/wine9x/`,
+  the ISO's `WINED3D\` folders, `SETUP /GAME 4`/`5` and `/I 7`,
   `guest-tools/src/d3dpre.c`, `tools/xp-wined3d-test.sh`,
-  `tools/wined3d-sys-test.sh`, doc 19 §42–44). It stays the running
-  fallback for a below-floor host with no Wine.
+  `tools/wined3d-sys-test.sh`). A below-floor host with no Wine has no
+  Direct3D pass-through.
 
 ## State
 
 Built and working end to end on the M1 Air, and accepted (step 5) on a
 real macOS 15: the user ran the packaged community app there on
 2026-09-23 and reported that it "works wonderfully". No frame rate was
-written down for that run. Step 6 is next. Measured numbers are in doc
-14 under the Wine section.
+written down for that run. Step 6, the removal of WineD3D-in-guest,
+landed the same day. Measured numbers are in doc 14 under the Wine
+section.
 
 - **Host tests.** `d3dpt-dp2-test` and `d3dpt-exec-test` through the
   child are byte-identical to in-process DXVK, under Rosetta (WineHQ
@@ -198,13 +199,15 @@ Numbered as ADR-018, doc 07 and CLAUDE.md cite them.
    wonderfully". The frame rate of that run was not written down; if it
    is ever wanted, it is the harness's count (`tools/tcg-fps.py`) on
    that volume against the Air's 22.6.
-6. **Retire WineD3D-in-guest, in one commit**, now that 5 has passed. It removes
-   the ISO's `WINED3D\` folders and README, `SETUP /GAME 4`/`5`, `/I 7`
-   with `D3DPRE.EXE` and the `DDRAWME`/`DDSYS` switcher, the wine9x build
-   and `patches/wine9x/`, `tools/xp-wined3d-test.sh` and
-   `wined3d-sys-test.sh`, the launcher's WineD3D advice, doc 04's rows,
-   doc 19 §42–44's status, and CLAUDE.md's sentence about never deleting
-   the `WINED3D\` ISO folder.
+6. **Retire WineD3D-in-guest, in one commit.** Done on 2026-09-23: the
+   ISO's `WINED3D\` folders and README, `SETUP /GAME 4`/`5` (the Glide
+   sets are `/GAME 4` and `5` now), `/I 7` with `D3DPRE.EXE` and the
+   `DDRAWME`/`DDSYS` switcher, the wine9x build and `patches/wine9x/`,
+   `tools/xp-wined3d-test.sh` and `wined3d-sys-test.sh`, the launcher's
+   WineD3D advice (a host with none is told to install Wine), doc 04's
+   row, doc 19 §42–44 and CLAUDE.md's sentence. The 9x driver's
+   `D3DPT_ESC_HOSTINFO` escape, which only the helper asked, stays as a
+   diagnostic.
 7. **The Flatpak's Wine add-on** (user decision, 2026-09-23: "go with
    the extension"). Flathub refuses a second listing of the same app, so
    there is no DXVK app beside a Wine app; and inside the sandbox the app
@@ -243,7 +246,5 @@ Numbered as ADR-018, doc 07 and CLAUDE.md cite them.
   down.
 - Every claim about a frame comes from a BMP in `build/` diffed with
   `tools/bmpdiff.py`.
-- The guest-side WineD3D stack is not touched before step 6, and step 6
-  is one commit.
 - One TCG guest at a time; end scripted Win98 runs with the ACPI power
   button (CLAUDE.md).

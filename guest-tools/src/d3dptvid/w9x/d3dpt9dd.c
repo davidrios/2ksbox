@@ -520,7 +520,8 @@ static BOOL BuildHalInfo(void)
 
     /* The Direct3D half, all of it or none. None when the DLL published no
      * D3D (a host with no executor, `no-exec=on`, doc 19 §40), where this
-     * driver is DirectDraw only and the guest's WineD3D does Direct3D. The
+     * driver is DirectDraw only and a game gets the runtime's software
+     * device. The
      * FourCC list belongs to it: those are the texture formats the
      * executor decodes, and the NT driver offers them only with Direct3D
      * too (`p->core.d3d ? 6 : 0`). */

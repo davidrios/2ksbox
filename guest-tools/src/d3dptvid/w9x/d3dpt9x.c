@@ -1119,11 +1119,10 @@ LONG WINAPI __loadds Control(LPVOID lpDevice, UINT function,
         }
         /* everything else the DIB Engine answers for us */
     }
-    /* What the host can do, for a program that has to decide before it
+    /* What the host can do, for a program that has to know before it
      * loads DirectDraw. It returns the adapter's own `D3D_STATUS`, which is
      * `D3DPT_STATUS_NO_EXEC` on a host with no executor or one started with
-     * `no-exec=on`. `D3DPRE.EXE` asks this at login and switches the
-     * machine's DirectDraw to WineD3D's, or back (doc 19 §43). */
+     * `no-exec=on` (`d3dpt_esc.h`). */
     if (function == D3DPT_ESC_HOSTINFO && lpOutput != 0) {
         D3DPT_ESC_HOSTINFO_T FAR *hi = (D3DPT_ESC_HOSTINFO_T FAR *)lpOutput;
 

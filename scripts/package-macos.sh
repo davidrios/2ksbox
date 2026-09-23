@@ -163,7 +163,7 @@ if [ "$COMMUNITY" = 1 ]; then
     mkdir -p "$C/lib/2ksbox/wine"
     install -m644 build/d3dpt/wine/d3dpt_exec.dll build/d3dpt/wine/d3dpt-exec-host.exe "$C/lib/2ksbox/wine/"
   else
-    warn "no executor for Wine (scripts/build-d3dpt-exec.sh --wine, mingw-w64); a Mac below Vulkan 1.3 gets WineD3D in the guest only"
+    warn "no executor for Wine (scripts/build-d3dpt-exec.sh --wine, mingw-w64); a Mac below Vulkan 1.3 gets no Direct3D"
   fi
 fi
 

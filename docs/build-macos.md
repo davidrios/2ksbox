@@ -324,8 +324,8 @@ Wine and never gets a pre-26 version.
 Below macOS 26 KosmicKrisp loads but reports no GPU
 (`vkEnumeratePhysicalDevices` fails), so the community build runs the
 same executor on the user's Wine (`2ksbox --host-check` says "runs through Wine on this
-host", exit 0). A Mac with no Wine falls back to WineD3D in the guest
-until M15's last step retires that path. **No package ships a Wine**;
+host", exit 0). A Mac with no Wine has no Direct3D pass-through. **No
+package ships a Wine**;
 the launcher's note says which to install:
 
 - Homebrew's Wine casks are disabled (not notarized), so the options are

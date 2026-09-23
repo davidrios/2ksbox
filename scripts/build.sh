@@ -37,8 +37,7 @@
 # as "the guest will not boot", not as "you forgot a command".
 #
 # With everything up to date a run takes a couple of seconds thanks to the
-# stamps below, and needs no network (a `guest` stage that runs fetches
-# wine9x).
+# stamps below, and needs no network.
 #
 # `launcher-qt/` stays its own cargo workspace (ADR-015), so a plain
 # `cargo build` at the root never needs Qt 6. The `rust` stage, the test
@@ -361,14 +360,13 @@ fi
 # --- guest ------------------------------------------------------------
 # The guest-tools ISO carries the D3DPT guest DLLs, so a protocol bump
 # makes it stale exactly as it does the executor. build-wrappers.sh also
-# calls build-driver.sh, so the XP display driver rides along. It fetches
-# wine9x, so the stamp is what lets an unchanged tree build offline.
+# calls build-driver.sh, so the XP display driver rides along.
 GUEST_STALE=""
 if want guest; then
   # the stamp is computed before the tool check, so a host that cannot
   # build the ISO can still say whether the one it has is out of date
   if STAMP_GITS="third_party/qemu-3dfx" \
-     stamp_stale guest-tools guest-tools/src patches/wine9x d3dpt/d3dpt_proto.h \
+     stamp_stale guest-tools guest-tools/src d3dpt/d3dpt_proto.h \
        d3dpt/d3dpt_fb.h cdshelf/cdshelf_proto.h \
        guest-tools/build-wrappers.sh guest-tools/build-driver.sh \
        guest-tools/build-driver9x.sh; then

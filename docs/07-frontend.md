@@ -236,8 +236,8 @@ The fields, and why each is what it is:
     (`lib/2ksbox/wine/d3dpt-exec-host.exe`): "runs through Wine on this
     host", slower than a Vulkan GPU;
   - neither: a plain note naming the Wine to install (in the Flatpak,
-    the app's Wine add-on, M15 step 7), and WineD3D in the guest until
-    M15's last step.
+    the app's Wine add-on, M15 step 7); that guest has no Direct3D
+    pass-through.
 
   While our adapter is picked on a host with no executor, the note adds
   "Keep the 2ksbox adapter anyway. Only its Direct3D needs Vulkan.".

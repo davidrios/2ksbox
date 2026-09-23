@@ -64,8 +64,8 @@ esac
 # which is what building on the PC is for, and diffutils, which a bare MSYS2
 # lacks: QEMU's meson requires `diff` (tests/qapi-schema) and prepare-qemu.sh
 # keeps meson files' mtimes with `cmp`. The second half is the guest-tools
-# ISO's: the i686 toolchain, gendef, and what qemu-3dfx's and wine9x's
-# builds call (make, which, xxd from vim, shasum from perl, nasm), plus
+# ISO's: the i686 toolchain, gendef, and what qemu-3dfx's build calls
+# (make, which, xxd from vim, shasum from perl, nasm), plus
 # xorriso. Not here: Rust, which is rustup's own installer with the GNU
 # host, and Open Watcom, which is a snapshot to unpack (both in
 # docs/build-windows.md).

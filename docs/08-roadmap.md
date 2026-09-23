@@ -164,9 +164,8 @@ screens and power-down, and `d3dpt-vga` as the Win98 default. Step 5,
 real titles (§26 on), is under way: Crimson Skies, 3DMark 99 / 2001 SE,
 Carmageddon in Mode X, Blood in a DOS box.
 
-**Left:** the doc 04 Win98 title matrix against the Glide / WineD3D
-control, and the track doc's next steps. WineD3D-in-guest stays the
-fallback until M15's last step.
+**Left:** the doc 04 Win98 title matrix against the Glide and Cirrus
+controls, and the track doc's next steps.
 
 ## M11: Windows host
 
@@ -225,9 +224,9 @@ transport, the guest on XP and Win98, the launcher's third verdict and
 the packages (the macOS community build carries the Wine pair, and no
 package ships a Wine).
 
-**Left:** step 5, a real game on a below-floor host (the community app
-on a real macOS 15); then step 6, WineD3D-in-guest removed in one commit
-and the Flatpak's Wine decided.
+**Done 2026-09-23:** step 5, the community app on a real macOS 15
+(user-confirmed), and step 6, WineD3D-in-guest removed in one commit.
+**Left:** the Flatpak's Wine (the user's, on Linux).
 
 ## Post-v1 candidates
 

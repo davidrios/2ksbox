@@ -1017,8 +1017,8 @@ static Property d3dpt_vga_properties[] = {
     /* no-exec=on: this host is below ADR-013's Vulkan 1.3 floor. Every
      * d3dpt device then reports D3DPT_STATUS_NO_EXEC, the display driver
      * keeps its DirectDraw half and offers no Direct3D, and a game falls
-     * back the way it does on such a host (the runtime's software device,
-     * or WineD3D staged next to it). Testing knob only: it is how a host
+     * back the way it does on such a host (the runtime's software
+     * device). Testing knob only: it is how a host
      * we cannot borrow is met from one that has Vulkan. It refuses before
      * the executor library is opened, so `d3d9=` below is not read and no
      * backend is picked: a *Windows* host below the floor
