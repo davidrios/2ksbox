@@ -16,7 +16,11 @@
 #   build/d3dpt/wine/d3dpt_exec.dll + d3dpt-exec-host.exe   the pair the Wine process runs
 #   build/wine/wine-staging-*-osx64.tar.xz               WineHQ's macOS build (x86_64)
 #   build/test/dp2-test.bmp, build/test/exec-test.bmp     the DXVK frames (the oracle)
-# and, on this macOS, Rosetta: `softwareupdate --install-rosetta --agree-to-license`.
+# and, on this macOS, Rosetta: `softwareupdate --install-rosetta --agree-to-license`
+# (a fresh install has none; no sudo needed). A bare install has no python3
+# either — /usr/bin/python3 is the Command Line Tools' stub, which asks to
+# install them — so the diff runs on `$PYTHON`, else a python3 that answers,
+# else uv's own CPython from the checkout owner's home on the other volume.
 #
 # It unpacks Wine beside the tarball if that has not been done, keeps its
 # prefix in build/wine-prefix-<macOS version>, runs both host tests through
@@ -42,6 +46,14 @@ if [ -z "$wine" ]; then
   echo "unpacking $tar"; (cd build/wine && tar xJf "$(basename "$tar")")
   for w in build/wine/Wine*.app/Contents/Resources/wine/bin/wine; do [ -x "$w" ] && wine="$w"; done
 fi
+py="${PYTHON:-}"
+if [ -z "$py" ]; then
+  if python3 -c '' 2>/dev/null; then py=python3
+  else for p in "$ROOT"/../../.local/share/uv/python/cpython-3.1*-macos-aarch64-none/bin/python3; do
+    if [ -x "$p" ] && "$p" -c "" 2>/dev/null; then py="$p"; fi; done
+  fi
+fi
+[ -n "$py" ] || { echo "no working python3 (the CLT stub does not count): PYTHON=<interpreter>"; exit 1; }
 OUT="build/macos-$ver"; mkdir -p "$OUT"
 export D3DPT_WINE="$PWD/$wine" D3DPT_EXEC_LIB="$PWD/build/d3dpt/libd3dpt_exec_remote.dylib"
 export D3DPT_WINEPREFIX="$PWD/build/wine-prefix-$ver" D3DPT_REMOTE_DIR="$PWD/$OUT"
@@ -52,7 +64,7 @@ build/d3dpt-dp2-test "$OUT/dp2.bmp" > "$OUT/dp2.log" 2>&1 || { echo "dp2 test fa
 build/d3dpt-exec-test "$OUT/exec.bmp" 120 60 > "$OUT/exec.log" 2>&1 || { echo "exec test failed:"; tail -5 "$OUT/exec.log"; rc=1; }
 grep -ho 'GL_RENDERER "[^"]*"' "$OUT"/*.log | sort -u | head -2
 grep -h "Using the .* renderer\|d3dpt-exec-host: exec: d3d9\|suitable pixel format\|frames," "$OUT"/*.log | sort -u | head -6
-[ -f "$OUT/dp2.bmp" ] && python3 tools/bmpdiff.py build/test/dp2-test.bmp "$OUT/dp2.bmp" --tolerance 8 -o "$OUT/dp2-diff.bmp" || rc=1
-[ -f "$OUT/exec.bmp" ] && python3 tools/bmpdiff.py build/test/exec-test.bmp "$OUT/exec.bmp" --tolerance 8 -o "$OUT/exec-diff.bmp" || rc=1
+[ -f "$OUT/dp2.bmp" ] && "$py" tools/bmpdiff.py build/test/dp2-test.bmp "$OUT/dp2.bmp" --tolerance 8 -o "$OUT/dp2-diff.bmp" || rc=1
+[ -f "$OUT/exec.bmp" ] && "$py" tools/bmpdiff.py build/test/exec-test.bmp "$OUT/exec.bmp" --tolerance 8 -o "$OUT/exec-diff.bmp" || rc=1
 [ $rc = 0 ] && echo "PASS on macOS $ver: both frames match the DXVK frames" || echo "FAIL on macOS $ver (logs and diff images in $OUT)"
 exit $rc

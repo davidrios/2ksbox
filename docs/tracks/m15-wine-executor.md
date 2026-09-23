@@ -313,6 +313,18 @@ guest there comes with the packaged community build (step 4). The VM
 keeps its use for the launcher and package flow, where the GPU does not
 matter. Logs of the VM run in `build/macvm/spike/`.
 
+**Run on the second volume, 2026-09-22 (macOS 15.8, the Air): PASS.**
+Both host tests through `libd3dpt_exec_remote` and the child under
+WineHQ 11.17 on Rosetta, wined3d's GL renderer on `GL_RENDERER "Apple
+M1"` — the real GPU — and both frames **byte-identical** to the DXVK
+frames taken on macOS 26 (0 of 307200 pixels, max difference 0); the
+exec test 120 frames at 328 fps (553 on 26 through the same child, 929
+in process). A bare 15 install lacks two things the script now names:
+Rosetta (`softwareupdate --install-rosetta --agree-to-license`, no sudo)
+and a Python — `/usr/bin/python3` is the Command Line Tools' stub — so
+the diff falls back to uv's CPython from the other volume's home. Logs
+and diffs in `build/macos-15.8/`.
+
 ```sh
 scripts/build.sh                                  # the native stack, libd3dpt_exec_remote, and with mingw the PE pair in build/d3dpt/wine/
 scripts/test.sh host                              # exec-wine: the two host tests through the remote executor (SKIP without a Wine)
@@ -534,9 +546,12 @@ links dynamically where the Fedora cross image's does not):
    of the same game on `base98-us` is no test either, since that machine
    has a Voodoo 2 and the game takes the card the moment it starts (its
    software renderer into the Voodoo's frame buffer, zero triangles), on
-   either executor. **Left: the acceptance on a real macOS 14/15**, the
-   second APFS volume with `tools/macos-wine-spike-local.sh` first and
-   the community build after — a reboot of the Mac, the user's to do.
+   either executor. **On a real macOS 15 (2026-09-22, the second APFS
+   volume): the host tests pass** — `tools/macos-wine-spike-local.sh`,
+   both frames byte-identical to DXVK's on the Apple M1's own GL through
+   Rosetta, 328 fps. **Left: the community build there** — a guest in
+   the packaged `--community` app on macOS 15, since QEMU in a checkout
+   links Homebrew and does not run on that volume.
 6. **Retire WineD3D-in-guest**, in one commit, once 3 and 5 pass:
    the ISO's `WINED3D\` folders and README, `SETUP /GAME 4`/`5`, `/I 7`
    with `D3DPRE.EXE` and the `DDRAWME`/`DDSYS` switcher,
