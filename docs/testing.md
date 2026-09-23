@@ -75,7 +75,7 @@ Environment: `WINXP_IMG` (`~/vms/winxp.qcow2`), `GUEST_ISO` (newest
 | `sb16-irq` | a DSP reset over auto-init DMA raises no IRQ 5 edge; each silence block exactly one (patch 25) |
 | `bios-date` | F000:FFF5 as a guest reads it is ≥ 12/01/99, Win98's `ACPICheckDate` (doc 06) |
 | `machine-map` | `info mtree` of a PC machine: the `mesapt` and `d3dpt` pass-through regions are there and no Glide one is (patch 74, ADR-020) |
-| `no-optionals` | no disabled library is linked, named in a binary, or present as a QAPI audio enumerator |
+| `no-optionals` | no disabled library (libpng and libjpeg among them) is linked, named in a binary, or present as a QAPI audio enumerator; on a Mac, no Homebrew path in any load command of `libqemu-embed`, `qemu-system-i386` or `qemu-img`, whose libraries are our own static builds (`build-macos.md` "The libraries") |
 | `icons` | `scripts/gen-icons.sh --check` |
 | `package` | `scripts/package-linux.sh --no-tar` (or `package-macos.sh --no-sign --no-dmg` on a Mac) |
 | `package-x86_64` | on an Apple Silicon Mac that has made the Intel build (`scripts/build.sh --x86_64`): `package-macos.sh --x86_64 --no-sign --no-dmg`, the same staging and checks under Rosetta, every Mach-O required to be x86_64; skipped where that build does not exist |

@@ -96,7 +96,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```sh
 xcode-select --install
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install ninja meson pkg-config glib pixman gnu-sed uv libslirp
+brew install ninja meson pkg-config gnu-sed uv   # build tools; QEMU's libraries are built from source by the build
 brew install qt                              # the launcher
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```

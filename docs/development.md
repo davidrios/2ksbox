@@ -67,7 +67,9 @@ Also: [testing](testing.md), [macOS](build-macos.md),
 
 `scripts/build.sh` is the one command, and the one to run after every
 `git pull`; it redoes only what changed. `--help` lists the stages
-(`qemu rust qt dxvk exec guest`). Naming stages builds only those,
+(`deps qemu rust qt dxvk exec guest`; `deps` is macOS only, QEMU's
+libraries built from source, [build-macos.md](build-macos.md) "The
+libraries"). Naming stages builds only those,
 `--test` follows with `scripts/test.sh host`, and a stage whose tools
 are missing is skipped with the reason in the closing summary. What it
 runs, for driving one stage by hand:

@@ -74,6 +74,7 @@ Stages, player options and packagers: `docs/development.md`. Test tools:
 scripts/build.sh           # after every pull: everything, only what changed
                            # (-f re-runs every prepare, --test adds test.sh host)
 scripts/build.sh --x86_64  # on the Air: the Intel build, under Rosetta, into build/x86_64
+                           # (macOS: the deps stage builds QEMU's libraries from source, build/deps/<arch>)
                            # (then package-macos.sh --x86_64; build-macos.md "The Intel build")
 scripts/test.sh            # host stage; `all` adds the guests (before any
                            # commit touching QEMU, embed, the D3D device, guest DLLs)
@@ -232,7 +233,9 @@ tracks, plus the items no track owns.
    in as WIP and the next step is the user's decision to drop Homebrew:
    build the app's libraries by hand for both architectures, and lower
    the community build's floor to the lowest macOS that allows
-   (`build-macos.md` "The Intel build").
+   (`build-macos.md` "The Intel build"). **QEMU's libraries are ours
+   since 2026-09-23** (`scripts/build-deps.sh`, static, `build-macos.md`
+   "The libraries"); Qt is next, and the floor moves after it.
 2. **The measurements doc 22 still owes** (user decision, 2026-09-15).
    The Ryzen half of §6.2's games, including 3DMark2001 SE's high-detail
    Car Chase and Lobby as the benchmark for patch 47's inexact mode (+47 %

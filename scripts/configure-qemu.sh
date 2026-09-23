@@ -192,6 +192,23 @@ elif [ "$(uname -s)" = Darwin ]; then
   fi
   EXTRA_CFLAGS="$EXTRA_CFLAGS -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET -Werror=unguarded-availability-new"
   echo "==> MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
+  # The libraries are ours (scripts/build-deps.sh, docs/build-macos.md "The
+  # libraries"): glib, pixman, libslirp and zstd built from source for this
+  # architecture and the floor, as static archives under build/deps/<arch>.
+  # pkg-config sees that prefix and the SDK's own .pc files and nothing
+  # else, so no Homebrew library is found by accident (libpng, say, which
+  # auto-detection would link and the app would then have to carry). The
+  # prefix holds archives only, and its .pc files carry their private
+  # link lines publicly (build-deps.sh), so a plain `pkg-config --libs`
+  # is the whole static link. Not meson's prefer_static: QEMU's
+  # meson.build turns that into `-static`, which macOS cannot link
+  # ("library 'crt0.o' not found").
+  DEPS="$ROOT/build/deps/$(uname -m)"
+  [ -f "$DEPS/lib/pkgconfig/glib-2.0.pc" ] || {
+    echo "no $DEPS/lib/pkgconfig/glib-2.0.pc: scripts/build-deps.sh first (scripts/build.sh runs it)"; exit 1; }
+  export PKG_CONFIG_LIBDIR="$DEPS/lib/pkgconfig:$(xcrun --show-sdk-path)/usr/lib/pkgconfig"
+  unset PKG_CONFIG_PATH
+  echo "==> libraries: $DEPS (static)"
 fi
 # No QEMU user interface at all. The player is the front end. It embeds
 # QEMU, the embed library appends `-display none` itself
@@ -235,7 +252,11 @@ fi
 # Auto-detection makes the build depend on which libraries the machine
 # happened to have, which is how the Flatpak and the Mac would end up with
 # a different libqemu-embed from this box's. brlapi is a braille chardev
-# nothing here opens.
+# nothing here opens. libpng and libjpeg go too: the one PNG QEMU can
+# write is `screendump`'s `format: png`, and every tool here takes the
+# PPM and converts it itself (tools/qmpc.py), while VNC's JPEG encoding
+# serves a viewer nothing scripted opens. Both were two more libraries in
+# every package for nothing.
 "$ROOT/qemu/configure" \
   --python="$PYTHON" \
   --disable-werror \
@@ -266,6 +287,8 @@ fi
   --disable-rbd \
   --disable-glusterfs \
   --disable-blkio \
+  --disable-png \
+  --disable-vnc-jpeg \
   --extra-cflags="$EXTRA_CFLAGS" \
   ${CFG[@]+"${CFG[@]}"} \
   --target-list=i386-softmmu,x86_64-softmmu \

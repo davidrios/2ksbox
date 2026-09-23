@@ -2148,7 +2148,7 @@ no_optionals_check() { # the artefacts link only what we chose
   # reached for SDL3 through LoadLibrary on a user's PC, where no
   # import-table walk could have seen it.
   local rc=0 f
-  local names="build/qemu/libqemu-embed-i386.$SO build/qemu/qemu-system-i386"
+  local names="build/qemu/libqemu-embed-i386.$SO build/qemu/qemu-system-i386 build/qemu/qemu-img"
   names="$names build/dxvk/src/d3d9/libdxvk_d3d9.$SO$([ "$SO" = so ] && echo .0)"
   names="$names build/win/qemu/libqemu-embed-i386.dll build/win/qemu/qemu-system-i386.exe"
   # displays (Cocoa is a framework, matched by name in the same list)
@@ -2159,6 +2159,8 @@ no_optionals_check() { # the artefacts link only what we chose
   linked="$linked"'|libxdp|libbpf|libvdeplug|libcurl|libssh|libiscsi|libnfs|librbd|librados|libglusterfs|libblkio'
   # braille
   linked="$linked"'|libbrlapi'
+  # PNG screendumps and VNC's JPEG: every tool takes the PPM (tools/qmpc.py)
+  linked="$linked"'|libpng|libjpeg'
   # loaded by name at run time: the SDL DLLs, which is the case that bit
   local loaded='SDL[23][-.0-9]*\.(so|dll|dylib)'
   # compiled in: QAPI generates one AUDIODEV_DRIVER_<X> enumerator per
@@ -2178,6 +2180,12 @@ no_optionals_check() { # the artefacts link only what we chose
         if [ "$OS" = Darwin ]; then
           otool -L "$f" 2>/dev/null | grep -qE "$linked" \
             && { echo "$f links a library we disabled"; otool -L "$f" | grep -E "$linked" | sed 's/^/    /'; rc=1; frc=1; }
+          # On a Mac QEMU's libraries are ours and static (scripts/
+          # build-deps.sh, docs/build-macos.md "The libraries"), so a
+          # Homebrew path in a load command is a library the app would
+          # have to carry, and the configure that found it went wrong.
+          otool -L "$f" 2>/dev/null | grep -qE '^\s*(/opt/homebrew|/usr/local)/' \
+            && { echo "$f links a Homebrew library"; otool -L "$f" | grep -E '^\s*(/opt/homebrew|/usr/local)/' | sed 's/^/    /'; rc=1; frc=1; }
         else
           ldd "$f" 2>/dev/null | grep -qE "$linked" \
             && { echo "$f links a library we disabled"; ldd "$f" | grep -E "$linked" | sed 's/^/    /'; rc=1; frc=1; }
