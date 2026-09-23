@@ -734,10 +734,13 @@ impl Form {
     /// setting is *not*: not a smoothing filter with a taste to it, but
     /// the dither arithmetically undone, so nothing that was drawn sharp
     /// comes back soft — and that it costs main-loop time per frame,
-    /// which is the reason it is not simply always on.
+    /// which is the reason it is not simply always on. Nothing without
+    /// the card: the greyed box beside the card's own says enough, and a
+    /// sentence explaining a setting that cannot be reached was noise
+    /// (user, 2026-09-22).
     pub fn voodoo2_undither_notes(&self) -> &'static [&'static str] {
         if !self.voodoo2 {
-            &["Needs the Voodoo 2: it undoes that card's own dither."]
+            &[]
         } else if self.voodoo2_undither {
             &[
                 "The card stores 16-bit colour through a dither pattern. This puts the original colour back by inverting that pattern, so skies, shading and light pools come out smooth instead of speckled.",

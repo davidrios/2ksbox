@@ -610,6 +610,7 @@ Window {
                             }
                             Label {
                                 Layout.fillWidth: true
+                                visible: root.wizard.voodoo2UnditherNote !== ""
                                 text: root.wizard.voodoo2UnditherNote
                                 wrapMode: Text.Wrap
                                 font.pixelSize: 11
