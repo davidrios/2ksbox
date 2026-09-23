@@ -528,6 +528,25 @@ ApplicationWindow {
                           + wizard.open + ", visible=" + wizardWindow.visible
                           + ", modal left=" + modalLeft)
                 break
+            case "wizardscroll":
+                // Where the form opens: at the top for a new machine and
+                // for a different one than last time, where it was left
+                // for the same one again (`WizardWindow.onVisibleChanged`).
+                // A machine to edit comes first, through the create path
+                // below; `LAUNCHER_QT_ARG=<disk>` names an existing disk
+                // where `/dev/null` is not one. The steps are
+                // `wizardScroll`: each open has to be shown and laid out
+                // before its scroll position means anything.
+                wizard.openFresh()
+                wizard.chooseFamily(1)
+                wizard.name = "scroll probe"
+                wizard.existingDisk = true
+                wizard.diskPath = diag.arg !== "" ? diag.arg : "/dev/null"
+                diag.note("wizardscroll submit -> " + wizard.submit() + " " + wizard.savedPath())
+                machines.refresh()
+                wizardScroll.bundle = wizard.savedPath()
+                wizardScroll.start()
+                return   // `wizardScroll` ends the run
             case "create":
                 // `LAUNCHER_QT_ARG=[<family>:]<name>` — the whole create
                 // path, ending on the refreshed grid, so the run is only a
@@ -711,6 +730,32 @@ ApplicationWindow {
                       + ", text=" + firstRunResultDialog.text
                       + " | " + firstRunResultDialog.informativeText.replace(/\n/g, " "))
             grabTimer.restart()
+        }
+    }
+
+    // The `wizardscroll` probe's steps, one per beat: open, then read or
+    // move the scroll position once the window has been laid out, then
+    // close through the same path the title bar's button takes.
+    Timer {
+        id: wizardScroll
+        property string bundle
+        property int step: 0
+        interval: diag.delayMs
+        repeat: true
+        onTriggered: {
+            const at = (what) => diag.note("wizardscroll " + what + ": y=" + wizardWindow.scrollY())
+            switch (step++) {
+            case 0: wizard.openEdit(bundle); break
+            case 1: wizardWindow.scrollTo(240); at("edit scrolled"); wizardWindow.close(); break
+            case 2: wizard.openEdit(bundle); break
+            case 3: at("same again"); wizardWindow.close(); break
+            case 4: wizard.openFresh(); break
+            case 5: at("fresh after edit"); wizardWindow.scrollTo(240); wizardWindow.close(); break
+            case 6: wizard.openFresh(); break
+            case 7: at("fresh again"); wizardWindow.close(); break
+            case 8: wizard.openEdit(bundle); break
+            case 9: at("edit after fresh"); wizardWindow.close(); stop(); grabTimer.restart(); break
+            }
         }
     }
 

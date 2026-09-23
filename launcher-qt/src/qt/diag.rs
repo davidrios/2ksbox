@@ -26,8 +26,8 @@ pub mod ffi {
         /// Empty unless `LAUNCHER_QT_SHOT` is set, which is what QML
         /// checks to decide whether any of this is happening at all.
         #[qproperty(QString, shot_path)]
-        /// "", "wizard", "create", "closebox", "adddisc", "pickdisc", "discs",
-        /// "snapshots", "profiles", "editor" (`Main.qml`).
+        /// "", "wizard", "wizardscroll", "create", "closebox", "adddisc",
+        /// "pickdisc", "discs", "snapshots", "profiles", "editor" (`Main.qml`).
         #[qproperty(QString, screen)]
         #[qproperty(QString, arg)]
         #[qproperty(i32, delay_ms)]

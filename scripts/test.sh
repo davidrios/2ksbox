@@ -39,8 +39,10 @@
 #                  bound to a property whose name QML never resolved came up
 #                  empty with no warning anywhere (the Direct3D row) — all
 #                  disagreements between the control and the model that
-#                  nothing which asks the model would ever notice (only if a
-#                  launcher-qt has been built)
+#                  nothing which asks the model would ever notice; then where
+#                  the form *opens*: at the top for a new machine and for a
+#                  different one than last time, where it was left for the
+#                  same one again (only if a launcher-qt has been built)
 #   qt-close       the title bar's close button on a Qt dialog: the close event
 #                  delivered the way the window system delivers it must reach
 #                  the wizard window exactly once and leave no modal window
@@ -896,6 +898,28 @@ qtfirstrun_check() { # the Qt first-run offer, driven (doc 07)
   return $rc
 }
 qtwizard_check() { # what the Qt wizard's memory field *shows* (doc 07)
+  qtwizard_fields_check || return 1
+  # Where the form opens (2026-09-22, user report): a ScrollView keeps
+  # its position across a hide and a show, so editing one machine after
+  # another opened the second wherever the first was left. The window
+  # starts at the top for a new machine and for a different one than it
+  # last showed, and keeps its place when the same one is reopened.
+  local rc=0 out y
+  out="$(timeout 120 env LAUNCHER_QT_SCREEN=wizardscroll LAUNCHER_QT_DELAY=250 \
+         launcher-qt/target/release/launcher-qt 2>&1)"
+  printf '%s\n' "$out" | sed -n 's/^\[diag\] wizardscroll /  /p'
+  at() { printf '%s\n' "$out" | sed -n "s/^\[diag\] wizardscroll $1: y=\([0-9.]*\).*/\1/p"; }
+  y="$(at 'edit scrolled')"
+  [ -n "$y" ] && [ "${y%.*}" -gt 0 ] || { echo "the probe could not scroll the form (y=$y)"; return 1; }
+  [ "$(at 'same again')" = "$y" ] || { echo "reopening the same machine did not keep its scroll position ($(at 'same again') vs $y)"; rc=1; }
+  for step in 'fresh after edit' 'fresh again' 'edit after fresh'; do
+    y="$(at "$step")"
+    [ "${y%.*}" = 0 ] || { echo "$step: the form did not open at the top (y=$y)"; rc=1; }
+  done
+  return $rc
+}
+
+qtwizard_fields_check() { # the fields, family by family
   local rc=0 dir="$OUT/qtwizard" bin="launcher-qt/target/release/launcher-qt" f o out shown model lo hi n all step line
   rm -rf "$dir"; mkdir -p "$dir/library"
   # A scratch library, never the user's own — the window lists it on the

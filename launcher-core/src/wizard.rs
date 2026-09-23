@@ -352,6 +352,14 @@ impl Form {
         self.editing.is_some()
     }
 
+    /// The bundle being edited, `None` for a new machine — the form's
+    /// identity, for a front end that keeps something per machine (the
+    /// Qt window keeps its scroll position while the same machine is
+    /// reopened and starts at the top for another, 2026-09-22).
+    pub fn bundle_path(&self) -> Option<&Path> {
+        self.editing.as_ref().map(|e| e.bundle_path.as_path())
+    }
+
     /// "Edit machine" or "New machine" — the window's own title.
     pub fn title(&self) -> &'static str {
         if self.is_editing() {

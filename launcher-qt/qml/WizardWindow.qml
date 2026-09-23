@@ -86,6 +86,12 @@ Window {
             extraQemuArgsField.mapToItem(fields, 0, 0).y - flick.height / 2))
     }
 
+    /// Where the form is scrolled to, and a way to scroll it — the
+    /// `wizardscroll` probe's (`Main.qml`): whether opening another
+    /// machine starts at the top and reopening the same one does not.
+    function scrollY() { return formScroll.contentItem.contentY }
+    function scrollTo(y) { formScroll.contentItem.contentY = y }
+
     /// What the emulation-optimization boxes are *showing*, as a mask in
     /// the model's own bit order (`optimizationsMask`), and a way to click
     /// one box and each of the three shortcuts beside them. `click()` is
@@ -117,7 +123,23 @@ Window {
     // Closing the window *is* cancelling the form: the flag drives the
     // window in both directions (`Main.qml`), so clearing it here keeps
     // the two from disagreeing after a close from the title bar.
-    onVisibleChanged: if (!visible && wizard.open) wizard.open = false
+    //
+    // Opening it starts the form at the top unless it is the same machine
+    // as last time: a ScrollView keeps its position across a hide and
+    // show, so editing one machine after another used to open the second
+    // wherever the first was left (user, 2026-09-22). A new machine is
+    // never "the same", so creating always starts at the top.
+    property string lastOpened: ""
+    onVisibleChanged: {
+        if (!visible) {
+            if (wizard.open) wizard.open = false
+            return
+        }
+        const opened = wizard.editing ? wizard.bundlePath : ""
+        if (opened === "" || opened !== lastOpened)
+            formScroll.contentItem.contentY = 0
+        lastOpened = opened
+    }
 
     // Esc is Cancel, the way every other dialog on the desktop behaves.
     // It goes through `close()` rather than hiding the window, because

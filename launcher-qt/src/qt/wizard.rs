@@ -38,6 +38,10 @@ pub mod ffi {
         #[qproperty(bool, open)]
         #[qproperty(bool, editing)]
         #[qproperty(QString, title)]
+        /// The bundle being edited, "" for a new machine: the form's
+        /// identity, which the window compares with the last one it
+        /// showed to decide whether to start at the top.
+        #[qproperty(QString, bundle_path)]
         /// An index into `family_labels()`, because that is what a QML
         /// `ComboBox` deals in. Same for `accel`, `cpu_speed` and `boot`.
         #[qproperty(i32, family)]
@@ -366,6 +370,7 @@ pub struct WizardRust {
     open: bool,
     editing: bool,
     title: QString,
+    bundle_path: QString,
     family: i32,
     family_note: QString,
     name: QString,
@@ -730,6 +735,7 @@ impl ffi::Wizard {
             open,
             editing,
             title,
+            bundle_path,
             family,
             family_note,
             name,
@@ -763,6 +769,7 @@ impl ffi::Wizard {
             let note = f.accel_note();
             open = f.open;
             editing = f.is_editing();
+            bundle_path = f.bundle_path().map(|p| qs(p.display())).unwrap_or_default();
             title = QString::from(f.title());
             family = index_of(&Family::ALL, f.family());
             family_note = qs_opt(f.family_note());
@@ -849,6 +856,7 @@ impl ffi::Wizard {
         }
         self.as_mut().set_editing(editing);
         self.as_mut().set_title(title);
+        self.as_mut().set_bundle_path(bundle_path);
         self.as_mut().set_family(family);
         self.as_mut().set_family_note(family_note);
         self.as_mut().set_name(name);
