@@ -19,4 +19,13 @@ typedef struct BlockDriverState BlockDriverState;
  */
 libdisc *cdimage_disc(BlockDriverState *bs);
 
+/*
+ * The host path the medium in `bs` was opened from: a cdimage's image
+ * file, an isodir's directory (no `isodir:` prefix), or the file under a
+ * medium that is not ours. NULL with no medium. Same rules as above: from
+ * under the BQL, never cached. The disc shelf (patch 52) compares it with
+ * its entries to say which disc is in the drive.
+ */
+const char *cdimage_medium_path(BlockDriverState *bs);
+
 #endif

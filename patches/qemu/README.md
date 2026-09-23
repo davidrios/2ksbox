@@ -69,6 +69,13 @@ regenerates 12. The recipe:
 3. Put M's payload back by hand on top and diff it against the N-only tree
    to regenerate M.
 
+The same can be done away from `qemu/` when N's edit does not disturb
+M's hunks: in a scratch directory holding only the files N touches
+(`git -C qemu show HEAD:<file>`), `git apply -p1 --include=<file>...`
+the patches before N, copy that tree, apply N, apply your edit, diff the
+two copies for the new N, then `git apply --check` each later patch on
+the result. Prepare twice afterwards is still the proof.
+
 Files from an overlay (`block/cdimage.c`, `include/block/cdimage.h`,
 `include/block/libdisc.h`, `hw/3dfx`, `hw/d3dpt`, …) are edited in the
 repo, never in a patch. The exception is 86Box's vendored Voodoo sources,
@@ -650,9 +657,12 @@ drive without it answers ILLEGAL REQUEST. The opcode is `CONDDATA`
 because LOAD/EJECT through SPTI or ASPI leave the byte count at zero. A
 disc the host cannot open is refused with 02/3A up front. The medium
 change runs from a bottom half, so the tray moves after the command
-returns, as on a real drive. Protocol `cdshelf/cdshelf_proto.h` (bump
-`CDSHELF_PROTO_VERSION` on change). **Test:** `tools/atapi-guest-test.py`.
-**Drop:** never.
+returns, as on a real drive. Which entry is in the drive is read off the
+medium itself on every listing (`cdimage_medium_path`, by inode), so the
+bundle's boot disc and a disc the launcher inserted over QMP are marked
+like one the guest loaded. Protocol `cdshelf/cdshelf_proto.h` (bump
+`CDSHELF_PROTO_VERSION` on change). **Test:** `tools/atapi-guest-test.py`,
+`tools/cdshelf-guest-test.sh`. **Drop:** never.
 
 ### 53-atapi-dvd-profile
 A cdimage medium longer than an 80-minute CD (`CD_MAX_SECTORS`) reports

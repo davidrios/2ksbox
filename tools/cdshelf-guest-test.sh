@@ -8,7 +8,8 @@
 #   tools/cdshelf-guest-test.sh ~/vms/winxp.qcow2 xp
 #   tools/cdshelf-guest-test.sh ~/vms/win98.qcow2 win98
 #
-# The machine boots with an EMPTY tray and a shelf of two discs: a generated
+# The machine boots with the test ISO in the drive, the way a bundle with a
+# boot disc starts, and a shelf of two discs: a generated
 # ISO with two files on it, and a path that does not exist. The guest then
 # lists the shelf, loads the ISO, reads its files through Windows' own file
 # system driver (`dir` and `type`, the proof the tray really changed, not
@@ -82,7 +83,7 @@ cat > "$OUT/RUN.BAT" <<'BAT'
 @echo off
 A:
 cd \
-echo ==== list, empty tray > COM1
+echo ==== list, the boot disc in the drive > COM1
 CDSHELF.EXE list > COM1
 echo ==== load 0 > COM1
 CDSHELF.EXE 0 > COM1
@@ -149,7 +150,7 @@ else
 fi
 "$QEMU" -L "$ROOT/qemu/pc-bios" "${ACCEL[@]}" -machine pc "${HW[@]}" \
   -hda "$OVL" -fda "$FLOPPY" -boot c \
-  -drive if=none,id=cd0,media=cdrom \
+  -drive "if=none,id=cd0,media=cdrom,file=$ISO" \
   -device "ide-cd,bus=ide.1,id=ide1-cd0,drive=cd0,shelf=$SHELF" \
   -usb -device usb-tablet -display none \
   -qmp "unix:$SOCK,server,nowait" -serial "file:$LOG" -monitor none > "$QLOG" 2>&1 &
@@ -190,6 +191,10 @@ want() {  # a line that must be in the output
   if grep -qF "$1" "$LOG"; then echo "PASS  $2"; else echo "FAIL  $2 (missing: $1)"; fails=$((fails + 1)); fi
 }
 after() { sed -n "/$1/,\$p" "$LOG"; }
+before() { sed -n "1,/$1/p" "$LOG"; }
+want_before() {  # marker, needle, name: only what came before the marker counts
+  if before "$1" | grep -qF "$2"; then echo "PASS  $3"; else echo "FAIL  $3 (missing before $1: $2)"; fails=$((fails + 1)); fi
+}
 want_after() {  # marker, needle, name: only what came after the marker counts
   if after "$1" | grep -qF "$2"; then echo "PASS  $3"; else echo "FAIL  $3 (missing after $1: $2)"; fails=$((fails + 1)); fi
 }
@@ -199,6 +204,9 @@ unwanted_after() {
 echo "----"
 want "CDSHELFDONE" "the batch ran to the end"
 want "Shelf test disc" "the shelf was listed"
+# the disc the machine booted with was never LOADed by the guest; the
+# listing must still say it is the one in the drive
+want_before "==== load 0" "Shelf test disc  [in the drive]" "the boot disc is shown in the drive"
 want "[missing on the host]" "the unreachable disc is flagged"
 want "loading slot 0: Shelf test disc" "the load names the disc"
 want "the disc is in the drive." "the drive reported the new medium"

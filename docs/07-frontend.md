@@ -333,7 +333,8 @@ The fields, and why each is what it is:
   ISO) answers a disc-2 prompt without leaving the game: a window on
   Windows, a key-per-disc menu in DOS, and verbs for scripts. In the
   window Insert is grey while a disc is in the drive (user decision); the
-  verbs swap in one step. The channel is a vendor ATAPI command on the
+  verbs swap in one step. The drive names the disc in it from the medium
+  itself, so the boot disc and one the launcher inserted count too. The channel is a vendor ATAPI command on the
   machine's own drive (opcode 0xD0, patch 52, `cdshelf/cdshelf_proto.h`),
   which DOS, Win98 and XP can all send (PIO, ASPI, SPTI) with no extra
   driver; a machine with no shelf answers ILLEGAL REQUEST. The launcher publishes the

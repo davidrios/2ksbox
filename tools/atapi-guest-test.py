@@ -128,6 +128,13 @@ def read10(lba, n):
 # label is longer than the protocol's 64 bytes (it must come back truncated, not
 # split across the next entry) and slot 3's file does not exist (it must be
 # listed, flagged MISSING, rather than silently dropped).
+#
+# The boot disc is the drive's `file=` at start-up, never LOADed by the guest,
+# and the first listing must still report slot 0 as the disc in the drive: the
+# drive works that out from the medium itself. It is passed under a different
+# spelling (BOOT_DISC) so that only the file's identity, not its name, can match.
+# Slots 1 and 2 are one file under two labels, so both are "in the drive" when
+# either is loaded.
 SHELF_VERSION = 1
 SHELF_HDR = 12
 SHELF_ENTRY = 68
@@ -136,6 +143,7 @@ SHELF_NO_SLOT = 0xFFFF
 SHELF_FLAG_LOADED = 0x01
 SHELF_FLAG_MISSING = 0x02
 LONG_LABEL = "A label longer than the protocol's sixty-four bytes, which must come back truncated"
+BOOT_DISC = os.path.join(DISC_DIR, ".", "lec.cue")
 SHELF_DISCS = [
     ("Selftest disc", DISC),
     ("Mixed disc", TOC_DISC),
@@ -261,10 +269,11 @@ TESTS = [
     # the disc shelf (patch 52). Listing first, then a real medium change and
     # back again. The sequence has to end on slot 0 (the disc every test above
     # expects), because the whole table runs a second time at the other BCL.
-    ("cdshelf header only", cdshelf(0, alloc=SHELF_HDR), ("shelf", 0, None)),
-    ("cdshelf list", cdshelf(0, alloc=SHELF_HDR + 4 * SHELF_ENTRY), ("shelf", 4, None)),
-    ("cdshelf list one entry", cdshelf(0, alloc=SHELF_HDR + SHELF_ENTRY), ("shelf", 1, None)),
-    ("cdshelf list partial entry", cdshelf(0, alloc=SHELF_HDR + SHELF_ENTRY + 40), ("shelf", 1, None)),
+    # the boot disc is in the drive without any LOAD (see SHELF_DISCS)
+    ("cdshelf header only", cdshelf(0, alloc=SHELF_HDR), ("shelf", 0, 0)),
+    ("cdshelf list", cdshelf(0, alloc=SHELF_HDR + 4 * SHELF_ENTRY), ("shelf", 4, 0)),
+    ("cdshelf list one entry", cdshelf(0, alloc=SHELF_HDR + SHELF_ENTRY), ("shelf", 1, 0)),
+    ("cdshelf list partial entry", cdshelf(0, alloc=SHELF_HDR + SHELF_ENTRY + 40), ("shelf", 1, 0)),
     ("cdshelf list alloc below the header", cdshelf(0, alloc=4), ("len", 4)),
     ("cdshelf bad subcommand", cdshelf(0x7F), ("err", 5, 0x24, 0)),
     ("cdshelf load past the end", cdshelf(1, slot=4), ("err", 5, 0x24, 0)),
@@ -721,7 +730,7 @@ def run_qemu(img, log, done=b"DONE", qemu_log="qemu.log", env=None):
         *(["-accel", ",".join(["tcg"] + tcg)] if tcg else []),
         "-L", os.path.join(ROOT, "qemu/pc-bios"), "-display", "none", "-net", "none",
         "-fda", img, "-boot", "a", "-serial", "file:" + log, "-monitor", "none",
-        "-drive", "if=none,id=cd0,media=cdrom,file=" + DISC,
+        "-drive", "if=none,id=cd0,media=cdrom,file=" + BOOT_DISC,
         # id= so a shelf LOAD has something to address the medium change to,
         # shelf= so the vendor opcode answers at all (patch 52)
         "-device", "ide-cd,bus=ide.1,id=%s,drive=cd0,audiodev=w0,shelf=%s" % (CD_ID, SHELF),
@@ -826,7 +835,10 @@ def check_shelf(name, data, count, loaded):
         flags, label_len = e[2], e[3]
         want_label = SHELF_DISCS[i][0][:SHELF_LABEL_MAX].encode()
         want_flags = SHELF_FLAG_MISSING if not os.path.exists(SHELF_DISCS[i][1]) else 0
-        if loaded is not None and loaded == i:
+        # every entry that is the loaded disc's file carries LOADED, not
+        # just the slot the header names (slots 1 and 2 share a file)
+        if loaded is not None and loaded != SHELF_NO_SLOT and not want_flags \
+                and os.path.samefile(SHELF_DISCS[i][1], SHELF_DISCS[loaded][1]):
             want_flags |= SHELF_FLAG_LOADED
         if slot != i:
             out.append("%s: entry %d says slot %d" % (name, i, slot))
@@ -1001,15 +1013,20 @@ def check_cdshelf(text):
                 return
         failures.append("CDSHELF.COM run %d: no line for %r" % (i + 1, label))
 
-    # the plain listing: our drive, every label, the truncation and the flags
+    # the plain listing: our drive, every label, the truncation and the flags;
+    # the boot disc (slot 0, never LOADed) is the one in the drive
     want(0, "secondary master (170h)", "%d discs." % len(SHELF_DISCS),
          "[missing on the host]", LONG_LABEL[:SHELF_LABEL_MAX])
-    unwanted(0, "[in the drive]", LONG_LABEL[:SHELF_LABEL_MAX + 1])
+    unwanted(0, "Mixed disc  [in the drive]", LONG_LABEL[:SHELF_LABEL_MAX + 1])
     for i, (label, _) in enumerate(SHELF_DISCS):
         want(0, "%3d  %s" % (i, label[:SHELF_LABEL_MAX]))
-    # a load, seen by the program itself and then in the next listing
+    loaded_line(0, "Selftest disc")
+    # a load, seen by the program itself and then in the next listing; the
+    # long-labelled entry is the same file, so it is in the drive too
     want(1, "loading slot 1: Mixed disc", "the disc is in the drive.")
     loaded_line(2, "Mixed disc")
+    loaded_line(2, LONG_LABEL[:SHELF_LABEL_MAX])
+    unwanted(2, "Selftest disc  [in the drive]")
     want(3, "the drive is empty.")
     unwanted(4, "[in the drive]")
     want(5, "loading slot 0: Selftest disc", "the disc is in the drive.")

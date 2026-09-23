@@ -40,6 +40,7 @@
 typedef struct BDRVCdimageState {
     libdisc *disc;
     uint32_t sectors;       /* lead-out LBA of the last session */
+    char *path;             /* the host file or directory `disc` was opened from */
 } BDRVCdimageState;
 
 static BlockDriver bdrv_cdimage;
@@ -74,6 +75,7 @@ static int cdimage_open_disc(BlockDriverState *bs, const char *path, Error **err
         error_setg(errp, "%s: %s: empty disc", bs->drv->format_name, path);
         return -EINVAL;
     }
+    s->path = g_strdup(path);
     bs->total_sectors = (int64_t)s->sectors * CDIMAGE_SECTOR / BDRV_SECTOR_SIZE;
     return 0;
 }
@@ -238,12 +240,13 @@ static void cdimage_close(BlockDriverState *bs)
 
     libdisc_close(s->disc);
     s->disc = NULL;
+    g_free(s->path);
+    s->path = NULL;
 }
 
-libdisc *cdimage_disc(BlockDriverState *bs)
+/* The cdimage or isodir node under `bs`, or NULL when the medium is not ours. */
+static BlockDriverState *cdimage_node(BlockDriverState *bs)
 {
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
-
     if (!bs) {
         return NULL;
     }
@@ -260,7 +263,42 @@ libdisc *cdimage_disc(BlockDriverState *bs)
     if (!bs || (bs->drv != &bdrv_cdimage && bs->drv != &bdrv_isodir)) {
         return NULL;
     }
-    return ((BDRVCdimageState *)bs->opaque)->disc;
+    return bs;
+}
+
+libdisc *cdimage_disc(BlockDriverState *bs)
+{
+    GRAPH_RDLOCK_GUARD_MAINLOOP();
+
+    bs = cdimage_node(bs);
+    return bs ? ((BDRVCdimageState *)bs->opaque)->disc : NULL;
+}
+
+const char *cdimage_medium_path(BlockDriverState *bs)
+{
+    BlockDriverState *ours;
+
+    GRAPH_RDLOCK_GUARD_MAINLOOP();
+
+    if (!bs) {
+        return NULL;
+    }
+    ours = cdimage_node(bs);
+    if (ours) {
+        return ((BDRVCdimageState *)ours->opaque)->path;
+    }
+    /*
+     * Not ours (a plain ISO the raw driver took): the file at the bottom
+     * of the chain is the medium. A protocol node has no `file`.
+     */
+    bs = bdrv_skip_filters(bs);
+    while (bs && bs->file) {
+        bs = bdrv_skip_filters(bs->file->bs);
+    }
+    if (!bs) {
+        return NULL;
+    }
+    return bs->exact_filename[0] ? bs->exact_filename : bs->filename;
 }
 
 static BlockDriver bdrv_cdimage = {
