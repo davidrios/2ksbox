@@ -138,7 +138,13 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   the pass-through is a set of Windows DLLs. The sentence is the shared form's (`graphics_note()`), like every
   other note under a row, so the Qt build and the C ABI cannot drift; `launcher --host-check` is the same answer in full, for a
   support question or a script (`launcher-core/src/host_gpu.rs`; the
-  `host-check` check in `scripts/test.sh`). **On Windows that line has a
+  `host-check` check in `scripts/test.sh`). **Since 2026-09-22 the Qt form
+  shows that answer under the Direct3D picker** rather than as a line of
+  its own under the adapter (user: "out of place" beside the picker it
+  answers, and saying the same thing twice): `d3d9_note()` carries the
+  host's headline and advice for the Automatic entry, orange for the
+  software-Vulkan case, and `graphics_note()` stays for a front end with
+  no such picker (the C smoke reads it). **On Windows that line has a
   third answer since 2026-09-21** (ADR-007's second amendment): a host
   below the bar there runs the same executor on the system's own
   Direct3D 9, so the note says "runs on this PC's own Direct3D 9" rather

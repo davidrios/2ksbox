@@ -561,13 +561,19 @@ Window {
                                 }
                                 Item { Layout.fillWidth: true }
                             }
+                            // The host's own answer is in this note (ADR-013): what
+                            // this host runs the pass-through on, and orange only for
+                            // the software Vulkan driver, the case that runs and
+                            // disappoints. It was a line of its own under the adapter
+                            // until 2026-09-22 (user: out of place beside the picker).
                             Label {
                                 Layout.fillWidth: true
                                 visible: root.wizard.d3d9Applies
                                 text: root.wizard.d3d9Note
                                 wrapMode: Text.Wrap
                                 font.pixelSize: 11
-                                opacity: 0.75
+                                color: root.wizard.d3d9Warning ? "#c88200" : palette.windowText
+                                opacity: root.wizard.d3d9Warning ? 1.0 : 0.75
                             }
 
                             // --- the Voodoo 2 -------------------------------------------
@@ -608,20 +614,6 @@ Window {
                                 wrapMode: Text.Wrap
                                 font.pixelSize: 11
                                 opacity: 0.75
-                            }
-
-                            // --- the host's 3D (ADR-013) --------------------------------
-                            // Stated, not chosen: the host settles which 3D stack a guest
-                            // gets. Empty on a DOS machine. Orange only for the software
-                            // Vulkan driver, the case that runs and disappoints.
-                            Label {
-                                Layout.fillWidth: true
-                                visible: root.wizard.graphicsNote !== ""
-                                text: root.wizard.graphicsNote
-                                wrapMode: Text.Wrap
-                                font.pixelSize: 11
-                                color: root.wizard.graphicsWarning ? "#c88200" : palette.windowText
-                                opacity: root.wizard.graphicsWarning ? 1.0 : 0.75
                             }
 
                             RowLayout {

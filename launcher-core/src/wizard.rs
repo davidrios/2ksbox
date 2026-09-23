@@ -935,18 +935,29 @@ impl Form {
 
     /// The line under the picker: what the entry in the field means
     /// here, and — for `Auto`, the only one that asks the host anything
-    /// — what this host will actually do with it.
-    pub fn d3d9_note(&self) -> String {
-        let mut note = self.d3d9.note().to_string();
-        if self.d3d9 == D3d9::Auto && cfg!(windows) {
-            note.push('\n');
-            note.push_str(if self.host_gpu.d3d_available() && !self.host_gpu.is_slow() {
-                "On this PC that is DXVK: it has a Vulkan 1.3 GPU."
-            } else {
-                "On this PC that is its own Direct3D 9: DXVK has no Vulkan 1.3 GPU to run on here."
-            });
+    /// — what this host will actually do with it: the host's own
+    /// headline and advice (`host_gpu`), which the Qt form used to show
+    /// as a line of its own under the display adapter until 2026-09-22
+    /// (user: out of place beside this picker, which is the one it
+    /// answers). `graphics_note()` still carries that line for a front
+    /// end with no Direct3D picker. Orange only for the software Vulkan
+    /// driver, the case that runs and disappoints.
+    pub fn d3d9_note(&self) -> AccelNote {
+        let mut text = self.d3d9.note().to_string();
+        let mut warning = false;
+        if self.d3d9 == D3d9::Auto {
+            text.push_str("\nHere: ");
+            text.push_str(&self.host_gpu.d3d_headline());
+            if self.host_gpu.backend() == host_gpu::D3dBackend::None {
+                text.push_str("\nKeep the 2ksbox adapter anyway. Only its Direct3D needs Vulkan.");
+            }
+            if let Some(advice) = self.host_gpu.d3d_advice() {
+                text.push('\n');
+                text.push_str(&advice);
+            }
+            warning = self.host_gpu.is_slow();
         }
-        note
+        AccelNote { text, warning }
     }
 
     /// An adapter this family does not offer is refused rather than

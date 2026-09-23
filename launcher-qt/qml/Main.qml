@@ -490,6 +490,10 @@ ApplicationWindow {
                 diag.note("wizard direct3d: shown [" + wizardWindow.shownD3d9
                           + "] of " + wizardWindow.shownD3d9Count
                           + " model " + wizard.d3d9 + " applies " + wizard.d3d9Applies)
+                // ...and the sentence under it, which since 2026-09-22 carries
+                // the host's own answer (it was a line of its own before).
+                diag.note("wizard direct3d note: [" + wizard.d3d9Note.replace(/\n/g, " | ")
+                          + "] warning " + wizard.d3d9Warning)
                 Qt.callLater(wizardWindow.revealExtraQemuArgs)
                 break
             case "optall":

@@ -63,8 +63,6 @@ pub mod ffi {
         #[qproperty(QString, accel_note)]
         #[qproperty(bool, accel_warning)]
         #[qproperty(bool, accel_is_default)]
-        #[qproperty(QString, graphics_note)]
-        #[qproperty(bool, graphics_warning)]
         /// The display adapter: an index into `video_labels`, which is
         /// a *property* and not an invokable like the other label lists
         /// because this one changes with the family — Windows chooses
@@ -101,6 +99,8 @@ pub mod ffi {
         #[qproperty(QStringList, d3d9_labels, cxx_name = "d3d9Labels")]
         #[qproperty(bool, d3d9_is_default, cxx_name = "d3d9IsDefault")]
         #[qproperty(QString, d3d9_note, cxx_name = "d3d9Note")]
+        /// Orange: the host's Direct3D runs on software Vulkan.
+        #[qproperty(bool, d3d9_warning, cxx_name = "d3d9Warning")]
         /// The sound card and what is on the MIDI port (doc 20 §6), the
         /// same shape as the adapter above and for the same reason:
         /// each family offers a different list. `soundfont` and
@@ -394,7 +394,6 @@ pub struct WizardRust {
     accel_note: QString,
     accel_warning: bool,
     accel_is_default: bool,
-    graphics_note: QString,
     video: i32,
     video_applies: bool,
     video_labels: QStringList,
@@ -406,6 +405,7 @@ pub struct WizardRust {
     d3d9_labels: QStringList,
     d3d9_is_default: bool,
     d3d9_note: QString,
+    d3d9_warning: bool,
     sound: i32,
     sound_labels: QStringList,
     sound_is_default: bool,
@@ -425,7 +425,6 @@ pub struct WizardRust {
     pad_is_default: bool,
     pad_note: QString,
     pad_warning: QString,
-    graphics_warning: bool,
     network: bool,
     network_note: QString,
     seamless_mouse: bool,
@@ -772,9 +771,8 @@ impl ffi::Wizard {
         let (voodoo2, voodoo2_note);
         let (voodoo2_undither, voodoo2_undither_enabled, voodoo2_undither_note);
         let (extra_qemu_args, extra_qemu_args_note, extra_qemu_args_warning);
-        let (graphics_note, graphics_warning);
         let (video, video_applies, video_labels, video_is_default, video_note, video_warning);
-        let (d3d9, d3d9_applies, d3d9_labels, d3d9_is_default, d3d9_note);
+        let (d3d9, d3d9_applies, d3d9_labels, d3d9_is_default, d3d9_note, d3d9_warning);
         let (sound, sound_labels, sound_is_default, sound_note, sound_warning);
         let (music, music_labels, music_is_default, music_note);
         let (soundfont, soundfont_applies, mt32_roms, mt32_roms_applies);
@@ -808,9 +806,6 @@ impl ffi::Wizard {
             accel_is_default = f.accel_is_default();
             // Empty on a DOS or Other machine, neither of which has any
             // Direct3D to place.
-            let graphics = f.graphics_note();
-            graphics_warning = graphics.as_ref().is_some_and(|n| n.warning);
-            graphics_note = qs(graphics.map(|n| n.text).unwrap_or_default());
             video = index_of(f.video_choices(), f.video());
             video_applies = f.video_applies();
             video_labels = labels(f.video_choices().iter().map(|v| v.label()));
@@ -821,7 +816,9 @@ impl ffi::Wizard {
             d3d9_applies = f.d3d9_applies();
             d3d9_labels = labels(f.d3d9_choices().iter().map(|d| d.label()));
             d3d9_is_default = f.d3d9_is_default();
-            d3d9_note = qs(f.d3d9_note());
+            let n = f.d3d9_note();
+            d3d9_note = qs(n.text);
+            d3d9_warning = n.warning;
             sound = index_of(f.sound_choices(), f.sound());
             sound_labels = labels(f.sound_choices().iter().map(|c| c.label()));
             sound_is_default = f.sound_is_default();
@@ -894,7 +891,6 @@ impl ffi::Wizard {
         self.as_mut().set_accel_note(accel_note);
         self.as_mut().set_accel_warning(accel_warning);
         self.as_mut().set_accel_is_default(accel_is_default);
-        self.as_mut().set_graphics_note(graphics_note);
         self.as_mut().set_video_applies(video_applies);
         // The list before the index into it, like the memory range
         // before the value that has to fit in it.
@@ -908,6 +904,7 @@ impl ffi::Wizard {
         self.as_mut().set_d3d9(d3d9);
         self.as_mut().set_d3d9_is_default(d3d9_is_default);
         self.as_mut().set_d3d9_note(d3d9_note);
+        self.as_mut().set_d3d9_warning(d3d9_warning);
         // The lists before the indices into them, as everywhere else.
         self.as_mut().set_sound_labels(sound_labels);
         self.as_mut().set_sound(sound);
@@ -929,7 +926,6 @@ impl ffi::Wizard {
         self.as_mut().set_pad_is_default(pad_is_default);
         self.as_mut().set_pad_note(pad_note);
         self.as_mut().set_pad_warning(pad_warning);
-        self.as_mut().set_graphics_warning(graphics_warning);
         self.as_mut().set_network(network);
         self.as_mut().set_network_note(network_note);
         self.as_mut().set_seamless_mouse(seamless_mouse);

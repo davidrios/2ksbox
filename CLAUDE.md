@@ -147,8 +147,12 @@ backend later.
   says WineD3D may beat it. Deciding for the user which of two working
   stacks is too slow was the mistake; warn and let the box answer. The
   probe is `launcher-core/src/host_gpu.rs` / `launcher --host-check`, and
-  its sentence for the wizard is the shared `wizard::Form::graphics_note()`,
-  never a front end's own. **Such a host is met from one that has Vulkan
+  its sentence for the wizard is the shared form's, never a front end's
+  own: `wizard::Form::d3d9_note()` puts it under the Direct3D picker
+  (since 2026-09-22, user decision — the separate `graphics_note()` line
+  under the adapter was "out of place" beside the picker it answers;
+  `graphics_note()` stays for a front end with no such picker, the C
+  smoke among them). **Such a host is met from one that has Vulkan
   with one flag**: `-global d3dpt-vga.no-exec=on` (the machine form's
   Extra-QEMU-arguments spelling; `-device d3dpt-vga,no-exec=on` by hand,
   `NO_EXEC=1 tools/xp-driver-test.sh`) makes every d3dpt device report

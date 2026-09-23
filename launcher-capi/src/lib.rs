@@ -1007,7 +1007,7 @@ pub unsafe extern "C" fn lc_wizard_reset_d3d9(w: *mut LcWizard) {
 /// `w` must be a live handle.
 #[no_mangle]
 pub unsafe extern "C" fn lc_wizard_d3d9_note(w: *const LcWizard) -> *mut c_char {
-    out(handle!(w, std::ptr::null_mut()).0.d3d9_note())
+    out(handle!(w, std::ptr::null_mut()).0.d3d9_note().text)
 }
 
 /// "Changing this machine's adapter is a hardware change", or "" — set
