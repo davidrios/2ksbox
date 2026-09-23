@@ -265,7 +265,10 @@ The fields, and why each is what it is:
   21 §12) is on the same line: disabled without the card
   (`voodoo2_undither_enabled()`), turned off with it, written only where
   there is a device. It costs ~1.4 ms of the main loop per presented
-  frame, hence a choice. The notes are `voodoo2_notes()`.
+  frame, hence a choice. The notes are `voodoo2_notes()`; with the box on
+  the second line says the card does nothing until a real Voodoo 2
+  driver (3dfx's own, the user's download; the disc carries none) is
+  installed in the guest (user request, 2026-09-23).
 - **Sound card and music** are per-family lists (`bundle::Sound`,
   `bundle::Music`, doc 20 §6). The FM chip comes with the card that
   carried one.

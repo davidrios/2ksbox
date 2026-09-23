@@ -742,16 +742,21 @@ impl Form {
 
     /// One checkbox: is there a 3dfx Voodoo 2 in the machine (doc 21).
     /// The sentences carry what the name does not say: the card is a
-    /// second display device that needs 3dfx's own driver in the guest,
-    /// and it is the only Glide a machine has (ADR-020). With the box
-    /// off, they say Glide games have no card.
+    /// second display device that does nothing until a real 3dfx Voodoo2
+    /// driver is installed in the guest (the user's own download; the
+    /// guest tools disc carries none, doc 21 §10), and it is the only
+    /// Glide a machine has (ADR-020). The driver line is its own sentence
+    /// on its own line, so it is read before the first boot rather than
+    /// found after a game shows no card. With the box off, they say
+    /// Glide games have no card.
     pub fn voodoo2_notes(&self) -> &'static [&'static str] {
         if self.voodoo2 {
             &[
-                "Adds a 3dfx Voodoo 2 next to the display adapter. The guest needs 3dfx's own Voodoo2 driver. Glide games then render on the emulated chip, in software on the host CPU, at 640×480 to 800×600.",
+                "Adds a 3dfx Voodoo 2 next to the display adapter. Glide games then render on the emulated chip, in software on the host CPU, at 640×480 to 800×600.",
+                "The card does nothing until a real Voodoo 2 driver is installed in the guest: 3dfx's own Voodoo2 driver, your own download. The guest tools disc does not carry one.",
             ]
         } else {
-            &["No Voodoo 2. Glide games (3dfx) find no card on this machine; turn it on for them."]
+            &["No Voodoo 2. Glide games (3dfx) find no card on this machine. Turn it on for them, then install 3dfx's own Voodoo2 driver in the guest."]
         }
     }
 
