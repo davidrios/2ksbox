@@ -9,10 +9,9 @@
 // around them come from the palette. Half a theme is worse than either.
 //
 // So the launcher was made a **light-mode application**, on every
-// platform and whatever the desktop is set to: the colour scheme is
-// requested and the palette is handed over to match the controls, rather
-// than accepted from a system that may be dark. That is still the rule
-// on Linux and macOS.
+// platform and whatever the desktop is set to: the colour scheme was
+// requested and a palette handed over to match the controls, rather
+// than accepted from a system that may be dark.
 //
 // **Windows follows the desktop since 2026-09-22** (user decision), on
 // Qt's own Windows 11 style. The style Qt resolves there by itself is
@@ -26,9 +25,24 @@
 // rather than `alternateBase` for the same reason: Windows' dark palette
 // derives that role from the accent colour.
 //
-// `LAUNCHER_QT_SCHEME=light|dark|system` overrides the default on any
-// platform, and `QT_QUICK_CONTROLS_STYLE` still names any style — which
-// is how the old look is compared against the new one. The start-up log
+// **And so does everywhere else since 2026-09-23** (user decision), once
+// the half theme was understood. A Quick Controls style takes its
+// palette from the *platform theme* (`QQuickTheme`, which never reads
+// `QGuiApplication::palette()`), while a plain `Window` or `Rectangle`
+// reads the application palette — so a palette handed to the application
+// reaches the surfaces and never the controls, and forcing light on a
+// dark desktop *made* the mix it was meant to prevent, the moment a
+// platform theme with a dark scheme was in the process. On this
+// checkout's sway session that was the day `main.rs` asked for the XDG
+// portal theme (for the desktop's file dialogs): its scheme is the
+// portal's, Fusion drew dark controls on the forced-light windows, and
+// the text was unreadable. With nothing handed over both halves read the
+// same theme: Fusion is a whole theme in either scheme, and macOS's style
+// follows the system appearance itself.
+//
+// `LAUNCHER_QT_SCHEME=light|dark` forces a scheme on any platform (`system`
+// is the default), and `QT_QUICK_CONTROLS_STYLE` still names any style —
+// which is how one look is compared against another. The start-up log
 // says which style and which colours a run actually got, because a
 // report of "it came up the wrong colour" is otherwise unanswerable.
 #include <QtCore/QByteArray>
@@ -58,12 +72,13 @@ extern "C" void launcher_qt_choose_style() {
         QQuickStyle::setStyle(QStringLiteral("Fusion"));
 }
 
-// 0 = the desktop's own, 1 = light (the default), 2 = dark.
+// 0 = the desktop's own (the default), 1 = light, 2 = dark.
 //
-// Both halves are needed. `setColorScheme` is a *request* to the
-// platform — Windows honours it, this checkout's Wayland session and the
-// offscreen plugin ignore it — and the palette is what the controls and
-// surfaces actually read. Asking and telling.
+// For a forced scheme both halves are needed. `setColorScheme` is a
+// *request* to the platform — Windows honours it, this checkout's
+// Wayland session and the offscreen plugin ignore it — and the palette
+// is what the surfaces read (the controls read the theme's, the header:
+// a forced scheme is a comparison, not a look).
 extern "C" void launcher_qt_set_scheme(int scheme) {
     if (scheme == 0) {
         QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Unknown);

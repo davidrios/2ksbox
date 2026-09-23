@@ -522,14 +522,28 @@ which is what to send when the launcher itself did not come up. On
 Windows, where the launcher is a windowed program with no stdout at all,
 `2ksbox-debug.bat` in the package does that for you.
 
-On Windows the Qt front end draws in **Qt's Windows 11 style
-(FluentWinUI3) and follows the desktop's light or dark mode** (2026-09-22);
-`QT_QUICK_CONTROLS_STYLE=Windows` is the look it had before. On Linux and
-macOS it draws in **light colours whatever the desktop is set to** — those
-Quick Controls styles paint controls light and take only the surfaces
-around them from the palette, so a dark system palette gets you half a
-theme. `LAUNCHER_QT_SCHEME=system|light|dark` overrides either default;
-`launcher.log` records the style and the colours a run actually got.
+The Qt front end **follows the desktop's light or dark mode** on every
+platform (Windows since 2026-09-22, on Qt's Windows 11 style, FluentWinUI3;
+Linux and macOS since 2026-09-23, on Fusion and the macOS style). It used to
+force light colours off Windows, and that was the cause of the mixed look
+it was meant to prevent: a Quick Controls style draws its controls in the
+*platform theme's* palette and a palette handed to the application reaches
+only the surfaces around them. `LAUNCHER_QT_SCHEME=light|dark` forces a
+scheme for a comparison, `QT_QUICK_CONTROLS_STYLE=Windows` is the look
+Windows had before, and `launcher.log` records the style and the colours a
+run actually got.
+
+On Linux the launcher asks for the **XDG desktop portal platform theme**
+(`QT_QPA_PLATFORMTHEME=xdgdesktopportal`, set in `main.rs` when the
+variable is empty). Qt picks a platform theme by `XDG_CURRENT_DESKTOP` —
+KDE's, GTK's for the GNOME family, the portal's only inside a Flatpak —
+and a session it matches nothing to (sway, any plain window manager) gets
+one with no file dialog and no colour scheme, so `FileDialog` drew Qt's own
+picker and the window came up light on a dark desktop. The portal theme
+wraps the theme Qt would have picked for everything else and defers to it
+when the bus has no file chooser, so it costs nothing on KDE or GNOME. Set
+the variable yourself to compare (`gtk3`, `kde`, or an empty value for
+Qt's choice).
 
 ## Licensing, for packagers
 

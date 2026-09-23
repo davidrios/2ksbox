@@ -2,8 +2,10 @@
 //
 // Typing directly is still allowed (a path the user already knows, or one
 // on a mount the picker can't reach); the button is a convenience, not
-// the only way in. `FileDialog` is Qt's own, which on Linux is the XDG
-// desktop portal, with no extra dependency.
+// the only way in. `FileDialog` is Qt's own, which is the desktop's:
+// NSOpenPanel, IFileDialog, and on Linux whatever the platform theme
+// offers — `main.rs` asks for the XDG desktop portal's there, because a
+// session Qt matches no theme to gets Qt's own picker instead.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

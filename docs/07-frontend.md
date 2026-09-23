@@ -901,7 +901,7 @@ existed, in brackets):
 
 | | Qt (`launcher-qt/`) |
 |---|---|
-| the file dialog | `QtQuick.Dialogs`, declarative (egui had none and used `rfd`) |
+| the file dialog | `QtQuick.Dialogs`, declarative (egui had none and used `rfd`); the desktop's own through Qt's platform theme, which on Linux `main.rs` names as the XDG portal's, since a session Qt matches no theme to otherwise gets Qt's own picker (2026-09-23) |
 | when to redraw | a `Timer` per thing being watched, off when idle (egui: every frame, the model read inline) |
 | "the list changed" | `beginResetModel` / `dataChanged` |
 | a destructive restore | a dialog (egui: the row's button became "Discard current state?") |

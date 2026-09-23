@@ -109,6 +109,21 @@ fn main() {
         }
     }
 
+    // The desktop's own file dialogs and colour scheme on Linux come
+    // through a *platform theme*, and Qt picks one by `XDG_CURRENT_DESKTOP`:
+    // KDE gets its own, the GNOME family gtk3, and the XDG desktop portal
+    // only inside a Flatpak or a Snap. A session that matches nothing —
+    // sway, or any other plain window manager — gets a theme with no
+    // dialog and no scheme, so `FileDialog` drew Qt's own picker and the
+    // window came up light on a dark desktop (2026-09-23). Asking for the
+    // portal theme by name is safe on every desktop: it wraps the theme
+    // Qt would have picked (KDE's, GTK's) for everything else, and it
+    // defers to that one when the bus has no file chooser. Set before the
+    // application exists, which is when Qt reads it.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("QT_QPA_PLATFORMTHEME").map_or(true, |v| v.is_empty()) {
+        std::env::set_var("QT_QPA_PLATFORMTHEME", "xdgdesktopportal");
+    }
     // Before the application exists, because a style cannot be chosen
     // after one has been used. Windows and macOS keep their own; the
     // rest get Fusion instead of Basic (`src/appearance.cpp`).
@@ -126,20 +141,18 @@ fn main() {
     // SAFETY: a pointer and a length into a `'static` slice, read and
     // copied into a QImage before the call returns.
     unsafe { twoksbox_set_window_icon(png.as_ptr(), png.len() as i32) };
-    // Windows follows the desktop's light or dark mode, on Qt's Windows
-    // 11 style, which has a whole theme for each. Everywhere else it is
-    // light whatever the desktop is set to: those styles paint their
-    // controls light and take only the surfaces around them from the
-    // palette, so a dark system palette gets you half a theme
-    // (`src/appearance.cpp`). `LAUNCHER_QT_SCHEME=system|light|dark`
-    // overrides either default.
+    // The desktop's light or dark mode, on every platform (2026-09-23,
+    // user decision; it was light-only off Windows before). What the
+    // controls are drawn in is the *platform theme's* palette, which a
+    // palette handed to the application never reaches — so the one way
+    // the windows and the controls agree is to hand over nothing and let
+    // both read the theme (`src/appearance.cpp`). `LAUNCHER_QT_SCHEME=
+    // light|dark` forces one, for a comparison.
     unsafe {
         launcher_qt_set_scheme(match std::env::var("LAUNCHER_QT_SCHEME").as_deref() {
-            Ok("system") => 0,
             Ok("light") => 1,
             Ok("dark") => 2,
-            _ if cfg!(windows) => 0,
-            _ => 1,
+            _ => 0,
         })
     };
     // What actually took, not what was asked for: the style a report

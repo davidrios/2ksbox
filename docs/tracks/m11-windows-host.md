@@ -384,8 +384,9 @@ light-only rule is gone on Windows, and both halves changed (user
 decision): `appearance.cpp` names FluentWinUI3 on Windows unless
 `QT_QUICK_CONTROLS_STYLE` does, and `main.rs` defaults the scheme to
 the desktop's there (`LAUNCHER_QT_SCHEME=light` is the old behaviour;
-Linux and macOS stay light, their styles being the ones with the
-problem). The log line is now
+Linux and macOS stayed light for a day more — since 2026-09-23 every
+platform follows the desktop, the half theme having turned out to be the
+forced palette's own doing: `appearance.cpp`'s header). The log line is now
 
     [start] style FluentWinUI3, scheme dark, window #202020, base #1e1e1e
 
