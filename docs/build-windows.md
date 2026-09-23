@@ -288,8 +288,13 @@ comes from Partner Center: reserve the name `2ksbox` there, and its
 `MSIX_PUBLISHER`, `MSIX_PUBLISHER_DISPLAY`); an upload whose values
 differ is refused. Without them the script fills in a development
 identity (`CN=2ksbox-dev`) that installs only sideloaded. The version is
-four numbers, `Cargo.toml`'s plus `.0`: the Store keeps the fourth for
-itself and each upload must be higher than the last accepted one.
+four numbers, `Cargo.toml`'s plus a fourth. For a Store identity it is
+`.0`: the Store keeps that number for itself and each upload must be
+higher than the last accepted one. For the development identity it
+counts up on every pack (`build/win/package/msix-revision`), because
+Windows refuses to install a package whose version it already has, and
+a development package is installed over and over; only the newest
+package is kept in the folder.
 
 **A sideload**, to run the package as the Store would install it. The
 Store signs its own uploads, so an upload stays unsigned; a sideload is

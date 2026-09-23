@@ -7,7 +7,11 @@
 #   scripts/package-msix.sh <staged-package> --pfx cert.pfx [--pfx-password P]
 #                                                       # ... and sign, for a sideload
 #   --out DIR                       default build/win/package
-#   --version A.B.C.D               default Cargo.toml's version + ".0"
+#   --version A.B.C.D               default Cargo.toml's version, then ".0" for a
+#                                   Store identity and a revision that counts up
+#                                   per pack (build/win/package/msix-revision)
+#                                   for the development one, since Windows will
+#                                   not install a version it already has
 #   --identity NAME                 Partner Center's package identity name
 #   --publisher "CN=..."            Partner Center's publisher
 #   --publisher-display NAME        Partner Center's publisher display name
@@ -78,7 +82,20 @@ fi
 case "$PUBLISHER" in CN=*) ;; *) echo "package-msix.sh: the publisher is a certificate subject (CN=...)" >&2; exit 2 ;; esac
 
 if [ -z "$VERSION" ]; then
-  VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1).0"
+  base="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+  if [ "$dev" = 1 ]; then
+    # A development package is installed over and over on one PC, and
+    # Windows refuses a package whose version it already has, so each
+    # pack takes the next revision. The counter lives beside the
+    # packages, outside the layout this script recreates.
+    mkdir -p "$OUT"
+    rev=$(( $(cat "$OUT/msix-revision" 2>/dev/null || echo 0) + 1 ))
+    printf '%s\n' "$rev" > "$OUT/msix-revision"
+    VERSION="$base.$rev"
+  else
+    # The Store keeps the fourth number for itself: 0 on every upload.
+    VERSION="$base.0"
+  fi
 fi
 case "$VERSION" in
   *[!0-9.]*|*..*|.*|*.) bad=1 ;;
@@ -133,7 +150,11 @@ export MSYS2_ARG_CONV_EXCL="*"
 wpath() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
 
 MSIX="$OUT/$NAME.msix"
-rm -f "$MSIX"
+# Only the newest package is kept (and the signed copy
+# scripts/win-sideload.ps1 makes of it): with a revision in the name, a
+# pile of older ones would otherwise build up and the sideload script's
+# "newest" would be a matter of timestamps.
+rm -f "$OUT"/2ksbox-*-windows-x64*.msix
 "$MAKEAPPX" pack /o /d "$(wpath "$LAYOUT")" /p "$(wpath "$MSIX")" > "$OUT/makeappx.log" 2>&1 \
   || { cat "$OUT/makeappx.log" >&2; echo "package-msix.sh: makeappx failed (see above)" >&2; exit 1; }
 [ -s "$MSIX" ] || { echo "package-msix.sh: makeappx wrote no package" >&2; exit 1; }
