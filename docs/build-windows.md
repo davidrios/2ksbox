@@ -16,6 +16,7 @@ Names and the install layout are in doc 07.
 scripts/win-cross.sh --build      # once: the cross container (~5 min, ~3 GB)
 scripts/build-windows.sh          # qemu, rust, qt, exec, guest-tools
 scripts/package-windows.sh        # the zip, checked under wine
+scripts/package-windows.sh --msix # ... and the Store's MSIX layout ("The Store package")
 ```
 
 The artefact is `build/win/package/2ksbox-<version>-windows-x86_64.zip`.
@@ -238,6 +239,90 @@ to open a window offscreen. Under wine the window grab is a report, not
 a verdict (wine's Qt 6 is not the target's); the last word is
 `2ksbox-debug.bat` on a real PC.
 
+## The Store package
+
+The Microsoft Store takes a Win32 app as an **MSIX**, which is the
+staged folder above plus a manifest and four logos, so the Store package
+is the zip's contents and nothing more. `scripts/package-msix.sh
+<staged>` writes that layout under `build/win/package/msix/` and packs
+it; `package-windows.sh --msix` runs it after the zip's checks.
+
+- `packaging/windows/AppxManifest.xml.in` is the manifest: a full-trust
+  desktop app (`runFullTrust`, because the launcher spawns the player and
+  QEMU runs in-process) with `internetClient` for the first-run preset
+  download, on Windows 10 2004 and later, x64.
+- `packaging/windows/Assets/` holds the logos at the sizes the Store
+  checks (44, 50, 150, 310×150), derived from the master by
+  `scripts/gen-icons.sh` like every other icon.
+- `2ksbox-debug.bat` is left out: an installed package's folder is
+  read-only. The launcher's log is where it always is.
+
+Packing needs `makeappx.exe`, which is the Windows SDK's, so a Linux host
+stops at the layout and the pack happens on the PC (Git Bash or MSYS2,
+the SDK installed; the script finds the newest one under `Windows
+Kits`). `makeappx` validates the manifest and every path it names, so a
+pack that succeeds is structurally what the Store's upload check
+accepts.
+
+```sh
+scripts/package-msix.sh build/win/package/2ksbox-<version>-windows-x86_64
+```
+
+**Identity.** An MSIX carries the publisher's identity, and the Store's
+comes from Partner Center: reserve the name `2ksbox` there, and its
+*Product identity* page gives the package name, the publisher
+(`CN=<GUID>`) and the publisher display name. Pass them as `--identity`,
+`--publisher`, `--publisher-display` (or `MSIX_IDENTITY`,
+`MSIX_PUBLISHER`, `MSIX_PUBLISHER_DISPLAY`); an upload whose values
+differ is refused. Without them the script fills in a development
+identity (`CN=2ksbox-dev`) that installs only sideloaded. The version is
+four numbers, `Cargo.toml`'s plus `.0`: the Store keeps the fourth for
+itself and each upload must be higher than the last accepted one.
+
+**A sideload**, to run the package as the Store would install it. The
+Store signs its own uploads, so an upload stays unsigned; a sideload is
+signed with a certificate whose subject equals the manifest's publisher
+and which the PC trusts. Once, in an administrator PowerShell:
+
+```powershell
+$c = New-SelfSignedCertificate -Type Custom -Subject "CN=2ksbox-dev" -KeyUsage DigitalSignature `
+  -FriendlyName "2ksbox dev" -CertStoreLocation Cert:\CurrentUser\My `
+  -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+Export-PfxCertificate -Cert $c -FilePath dev.pfx -Password (ConvertTo-SecureString dev -AsPlainText -Force)
+Export-Certificate -Cert $c -FilePath dev.cer
+Import-Certificate -FilePath dev.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
+```
+
+Then `scripts/package-msix.sh <staged> --pfx dev.pfx --pfx-password
+dev` and `Add-AppxPackage <the .msix>`. `Get-AppxPackage 2ksbox.dev |
+Remove-AppxPackage` removes it. The Windows App Certification Kit runs
+against the installed package (`appcert.exe test -appxpackagepath
+<msix> -reportoutputpath report.xml`), and certification runs the same
+checks, so run it before an upload.
+
+**What differs from the zip.** A packaged app's writes to `%APPDATA%`
+are **virtualised**: the launcher's `%APPDATA%\2ksbox` is really
+`%LOCALAPPDATA%\Packages\<family>\LocalCache\Roaming\2ksbox`, the
+package's own. A library the zip build made is read through, but a write
+copies the file into the package's copy (copy-on-write: a disk image
+diverges at its first write), and **an uninstall removes the package's
+copy, machines and images included**. The `unvirtualizedResources`
+capability would share the real directory instead, but Microsoft
+reserves it for its partners' games (it "could compromise the system's
+ability to uninstall cleanly"), so it is not declared. The open item is
+a library outside `AppData` for the packaged build, which the launcher
+would have to pick by package identity.
+
+**The submission**, once the package uploads: the listing's text and
+screenshots, the age-rating questionnaire, free pricing, a privacy-policy
+URL (mandatory because of `internetClient`; a page in the repository is
+enough), and, on the submission-options page, one sentence per
+restricted capability on why the app needs it (`runFullTrust`: a Win32
+launcher that starts a player process with an in-process emulator).
+Microsoft lets the listing carry the app's own licence terms, and its
+policy permits open-source apps; whether GPL-2 QEMU and 86Box go up
+under Store terms is the same question ADR-019 leaves to the user.
+
 ## Acceleration
 
 Windows' hardware acceleration is **WHPX** (Windows Hypervisor
@@ -267,8 +352,11 @@ emulated regardless.
 - **No Glide wrapper.** The cross build has no glide stage (`player
   --companions` says "(not shipped)"). Glide games on the Voodoo 2 use
   3dfx's own Glide on the emulated card.
-- **No installer** beside the zip (doc 07 wants one; QEMU's
-  `mingw32-nsis` recipe is within the image's reach).
+- **No installer** beside the zip for users outside the Store (doc 07
+  wants one; QEMU's `mingw32-nsis` recipe is within the image's reach).
+  The MSIX is one, but only through the Store or a trusted certificate.
+- **The Store package has not been uploaded**, and its library dies
+  with its uninstall ("The Store package").
 - **No Windows check that boots a guest**, in the shape of
   `tools/xp-driver-test.sh`.
 

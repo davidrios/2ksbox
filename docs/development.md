@@ -505,7 +505,9 @@ Cross-built from Linux in a Fedora mingw-w64 container
 (`scripts/win-cross.sh --build`, `scripts/build-windows.sh`,
 `scripts/package-windows.sh`): `2ksbox.exe` (the Qt launcher),
 `2ksbox-player.exe`, `libqemu-embed-i386.dll`, the executor with DXVK,
-`qemu-img.exe`, firmware and guest tools in one portable folder.
+`qemu-img.exe`, firmware and guest tools in one portable folder. The
+same folder packs as an MSIX for the Microsoft Store
+(`scripts/package-msix.sh`, on a PC with the Windows SDK).
 Details: [build-windows.md](build-windows.md).
 
 ## Diagnostics and logs

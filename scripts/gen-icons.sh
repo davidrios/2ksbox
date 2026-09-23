@@ -25,6 +25,15 @@
 #   2ksbox.ico       Windows: 16/32/48/256 in one file, which is what a
 #                    shortcut and an .exe resource both want
 #
+# and, under `packaging/windows/Assets/`, the four logos an MSIX manifest
+# names (`scripts/package-msix.sh`), at the exact sizes the Store checks:
+#
+#   Square44x44Logo   44x44    the taskbar, the Start list: the icon whole
+#   StoreLogo         50x50    the Store listing and the installer
+#   Square150x150Logo 150x150  the Start tile: the icon at three quarters,
+#   Wide310x150Logo   310x150  centred, because Windows paints the tile's
+#                              background behind it (BackgroundColor)
+#
 # Nothing is ever scaled *up*. The master is first padded with
 # transparency to 512x512, centred, and every size is a downscale of that.
 # Padding rather than resizing keeps the drawing at its native size in the
@@ -71,14 +80,32 @@ for s in "${SIZES[@]}"; do render "$s" "$out/2ksbox-$s.png"; done
 ico_inputs=(); for s in "${ICO_SIZES[@]}"; do ico_inputs+=("$out/2ksbox-$s.png"); done
 magick "${ico_inputs[@]}" "$out/2ksbox.ico"
 
+# The Store logos: the icon drawn at `icon` pixels on a transparent
+# `w`x`h` canvas, centred.
+ASSETS=packaging/windows/Assets
+aout=$ASSETS
+[ "$check" = 1 ] && { aout=$out/Assets; mkdir -p "$aout"; }
+logo() { # name, w, h, icon
+  magick "$pad" -background none -colorspace sRGB -resize "${4}x${4}" \
+    -gravity center -extent "${2}x${3}" -strip "PNG32:$aout/$1.png"
+}
+logo Square44x44Logo   44  44  44
+logo StoreLogo         50  50  50
+logo Square150x150Logo 150 150 112
+logo Wide310x150Logo   310 150 112
+
 if [ "$check" = 1 ]; then
   rc=0
-  for f in "$out"/*; do
+  for f in "$out"/*.png "$out"/*.ico; do
     n=$(basename "$f")
     cmp -s "$f" "$DIR/$n" || { echo "gen-icons.sh: $DIR/$n is out of date"; rc=1; }
+  done
+  for f in "$aout"/*.png; do
+    n=$(basename "$f")
+    cmp -s "$f" "$ASSETS/$n" || { echo "gen-icons.sh: $ASSETS/$n is out of date"; rc=1; }
   done
   [ $rc = 0 ] && echo "gen-icons.sh: every size matches the master"
   exit $rc
 fi
 
-echo "gen-icons.sh: wrote $DIR/2ksbox-{$(IFS=,; echo "${SIZES[*]}")}.png and 2ksbox.ico"
+echo "gen-icons.sh: wrote $DIR/2ksbox-{$(IFS=,; echo "${SIZES[*]}")}.png, 2ksbox.ico and $ASSETS/*.png"

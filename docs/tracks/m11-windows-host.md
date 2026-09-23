@@ -23,7 +23,8 @@ keeps scope, test loop, traps and open items. The design:
   MINGW64), the `--windows` mode of `scripts/configure-qemu.sh` and
   `scripts/build-d3dpt-exec.sh`, `scripts/win-run.sh`,
   `packaging/windows/qmake-host.c`, `guest-tools/msys2-i686.sh`.
-- Package: `scripts/package-windows.sh`.
+- Package: `scripts/package-windows.sh`; the Store's MSIX: `scripts/package-msix.sh`,
+  `packaging/windows/AppxManifest.xml.in`, `packaging/windows/Assets/`.
 - The Qt reproducer `tools/qtmin/` (its README has the `__once_proxy`
   diagnosis); the fix is `launcher-qt/src/once_proxy.cpp`.
 - Windows branches of shared code: `embed/mglcntx_embed.c` (WGL) and
@@ -43,6 +44,7 @@ scripts/win-cross.sh --build          # once, and after a Dockerfile change
 scripts/build-windows.sh              # qemu rust qt exec guest (cross)
 scripts/build-windows.sh rust         # one stage (stages are positional)
 scripts/package-windows.sh            # the zip, then its checks under wine
+scripts/package-windows.sh --msix     # ... and the Store MSIX layout, packed on the PC
 ```
 
 `package-windows.sh` gives the Windows evidence `scripts/test.sh` cannot,

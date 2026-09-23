@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The MSIX manifest of the Windows package (docs/build-windows.md, "The
+  Store package"). `scripts/package-msix.sh` fills the @…@ fields and
+  drops the result at the root of a copy of the staged package, so every
+  path below is relative to that root: the flat one-folder layout doc 07
+  describes, with `2ksbox.exe` at the top and `Assets\` beside it.
+
+  Identity is the Store's, not ours: Name and Publisher come from the
+  app reserved in Partner Center, and an upload whose values differ is
+  refused. The defaults the script fills in are for a sideloaded build
+  signed with a test certificate (whose subject must equal Publisher).
+
+  Version has four parts. The Store keeps the fourth for itself, so it
+  is 0 on every upload, and each upload's version must be higher than
+  the last accepted one.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity
+    Name="@IDENTITY_NAME@"
+    Publisher="@PUBLISHER@"
+    Version="@VERSION@"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>2ksbox</DisplayName>
+    <PublisherDisplayName>@PUBLISHER_DISPLAY_NAME@</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Run Windows 98, Windows XP and DOS as vintage boxes with 3D, CD-ROM and music.</Description>
+  </Properties>
+
+  <!-- Desktop only: the package is an x64 Win32 tree. 19041 is
+       Windows 10 2004, the oldest release whose MSIX runtime and WHPX
+       the package has been considered on; nothing older is claimed. -->
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <!-- A full-trust (medium integrity) Win32 application: the launcher
+         starts the player as a child, the player runs QEMU in-process,
+         and both open the user's disk images wherever they are. Nothing
+         here is brokered. -->
+    <Application Id="Launcher" Executable="2ksbox.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="2ksbox"
+        Description="Windows 98, XP and DOS as native vintage boxes"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <!-- internetClient: the first-run preset download (doc 07). It is what
+       makes a privacy-policy URL mandatory in the Store listing.
+       runFullTrust: every packaged Win32 app declares it; the submission
+       form asks for one sentence on why (the Applications comment above).
+       No unvirtualizedResources: Microsoft reserves it for its partners'
+       games, so the Store build's %APPDATA%\2ksbox is the package's own
+       (docs/build-windows.md, "The Store package"). -->
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

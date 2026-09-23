@@ -6,6 +6,8 @@
 #   scripts/package-windows.sh                 # stage, check, zip
 #   scripts/package-windows.sh --no-zip        # leave the staged tree only
 #   scripts/package-windows.sh --with-shaders  # include the preset collection
+#   scripts/package-windows.sh --msix          # ... and the Store's MSIX layout
+#                                              #     (scripts/package-msix.sh)
 #   scripts/package-windows.sh --out DIR       # default build/win/package
 #
 # `2ksbox.exe` is `launcher-qt`, the Qt 6 / QML launcher (ADR-015), and
@@ -48,11 +50,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-ZIP=1 SHADERS=0 OUT="$ROOT/build/win/package"
+ZIP=1 SHADERS=0 MSIX=0 OUT="$ROOT/build/win/package"
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-zip) ZIP=0; shift ;;
     --with-shaders) SHADERS=1; shift ;;
+    --msix) MSIX=1; shift ;;
     --out) OUT=$2; shift 2 ;;
     -h|--help) sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "package-windows.sh: unknown argument: $1" >&2; exit 2 ;;
@@ -545,5 +548,13 @@ if [ "$ZIP" = 1 ]; then
       "${archive%.zip}" "$OUT" "$NAME"
   fi
   du -h "$archive" | sed 's/^/zip     /'
+fi
+# The same tree as an MSIX layout for the Store (docs/build-windows.md,
+# "The Store package"). Only after the checks: the MSIX is the zip's
+# contents and no more, so the zip's evidence is its evidence. A Linux
+# host has no makeappx, so this stops at the layout and says how to
+# finish on a PC.
+if [ "$MSIX" = 1 ]; then
+  scripts/package-msix.sh "$STAGE" --out "$OUT"
 fi
 echo "package: $STAGE"

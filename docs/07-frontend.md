@@ -624,7 +624,7 @@ Qt is a shared library, so every packager gained a job (ADR-015):
 | Linux tarball (`scripts/package-linux.sh`) | not carried: a dependency on `qt6-base` + `qt6-declarative`, named by `install.sh` when the loader cannot find them |
 | Flatpak (`packaging/flatpak/`) | the runtime **is** Qt: `org.kde.Platform` 6.10, the same freedesktop base |
 | macOS (`scripts/package-macos.sh`) | `macdeployqt` before our own dylib closure, with `-qmldir=launcher-qt/qml` |
-| Windows (`scripts/package-windows.sh`) | staged by hand: DLLs through the import walk, plus `plugins/`, `qml/` and a `qt.conf`; there is no cross `windeployqt` |
+| Windows (`scripts/package-windows.sh`, and its MSIX through `package-msix.sh`) | staged by hand: DLLs through the import walk, plus `plugins/`, `qml/` and a `qt.conf`; there is no cross `windeployqt` |
 
 - **Our QML is compiled into the binary as a Qt resource**
   (`build.rs`'s `QmlModule`), so an installed launcher needs no `qml/`
@@ -828,13 +828,17 @@ screenshots) needs somewhere to host them.
   (ADR-019)**. Recipe and reasoning: `docs/build-macos.md` ("The app",
   "The floor").
 - **Windows.** A portable zip, cross-built from Linux
-  (`scripts/package-windows.sh`, `docs/build-windows.md`). Hardware
-  acceleration is WHPX, stated beside the picker, with TCG as the
-  fallback.
+  (`scripts/package-windows.sh`, `docs/build-windows.md`), and the same
+  tree as an MSIX for the Microsoft Store (`scripts/package-msix.sh`,
+  `packaging/windows/AppxManifest.xml.in`; `build-windows.md` "The Store
+  package"). Hardware acceleration is WHPX, stated beside the picker,
+  with TCG as the fallback.
 
 **Open:** Flathub (hosted screenshots on 2ksbox.com, and the manifest's
 sources as git rather than a local directory), the AppImage (asked for,
-not started), and a Windows installer.
+not started), a Windows installer for users outside the Store, and the
+Store upload itself (a Partner Center identity, and a library outside
+`AppData` so an uninstall keeps the user's machines).
 
 ## Out of scope for v1
 
