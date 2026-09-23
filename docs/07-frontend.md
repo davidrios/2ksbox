@@ -735,6 +735,10 @@ The product is **2ksbox** and the application ID
 **`com._2ksbox.Launcher`** (ADR-011, which says which name goes where
 and why the underscore). The data directory `~/.local/share/2ksbox` was
 moved once from `win98-xp-virt` (`launcher-core/src/paths.rs::data_dir`).
+On Windows it is `%APPDATA%\2ksbox\data`, except from an installed MSIX,
+where Windows would virtualise `AppData` and delete it on uninstall: a
+launcher with package identity (`paths::packaged()`) keeps the library
+at `%USERPROFILE%\2ksbox` (`build-windows.md`, "The Store package").
 
 ### The install layout
 
@@ -837,8 +841,7 @@ screenshots) needs somewhere to host them.
 **Open:** Flathub (hosted screenshots on 2ksbox.com, and the manifest's
 sources as git rather than a local directory), the AppImage (asked for,
 not started), a Windows installer for users outside the Store, and the
-Store upload itself (a Partner Center identity, and a library outside
-`AppData` so an uninstall keeps the user's machines).
+Store upload itself (a Partner Center identity).
 
 ## Out of scope for v1
 

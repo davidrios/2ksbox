@@ -253,10 +253,11 @@ tracks, plus the items no track owns.
    clang-built QEMU there. The native MSYS2 build run (`scripts/win-run.sh
    launcher`, a machine, the Windows-built ISO in a guest). Live control
    over Winsock AF_UNIX on a real PC. The Store upload (a Partner
-   Center identity; a library outside `AppData`, because an MSIX's
-   uninstall takes its virtualised `%APPDATA%` with it) and an installer
-   for users outside the Store. Zero-copy frames through a DXGI shared
-   handle. A Windows check that boots a guest.
+   Center identity; the packaged library at `%USERPROFILE%\2ksbox`,
+   2026-09-23, has been checked with `LAUNCHER_PACKAGED=1` only, not
+   from an installed package) and an installer for users outside the
+   Store. Zero-copy frames through a DXGI shared handle. A Windows check
+   that boots a guest.
 7. **M14, Voodoo 2** (its track doc, "Open, in order"): the glitched
    second Glide game, a client resuming on a dead ring, DxDiag's
    Direct3D 7 `GetDC` failure, the Air and the Windows build, Diablo II's

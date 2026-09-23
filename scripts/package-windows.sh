@@ -387,6 +387,20 @@ if command -v wine >/dev/null; then
     done <<< "$resolved"
   fi
 
+  # The library an *installed MSIX* would use (docs/build-windows.md,
+  # "The Store package"): outside AppData, at the profile root, or an
+  # uninstall takes the user's machines with it. `LAUNCHER_PACKAGED=1`
+  # is the launcher's own switch for answering as a packaged build.
+  packaged=$(cd "$STAGE" && env -i HOME="$scratch" WINEPREFIX="$WINEPREFIX" WINEDEBUG=-all \
+      PATH="$PATH" LAUNCHER_PACKAGED=1 wine 2ksbox.exe --paths 2>/dev/null | awk '$1 == "library" { print }' || true)
+  case "$packaged" in
+    *"\\2ksbox (packaged)")
+      echo "library        packaged build: $(printf '%s' "$packaged" | sed 's/^library *//')" ;;
+    *)
+      echo "package-windows.sh: a packaged launcher would keep its library at ${packaged:-(nothing printed)}, not <profile>\\2ksbox" >&2
+      fail=1 ;;
+  esac
+
   # The libraries QEMU `LoadLibrary`s by name rather than through an
   # import table: here, the Direct3D executor and the DXVK `d3d9` it runs
   # on. Nothing above can see them, which is how the Linux packages once

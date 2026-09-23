@@ -301,7 +301,7 @@ another.
 | `scripts/package-macos.sh` | the app: the dylib closure rewritten to `@rpath`, then every image the loader touches under `DYLD_PRINT_LIBRARIES=1` must be inside the app; `LSMinimumSystemVersion` measured; `package` on a Mac (`docs/build-macos.md` "The app") |
 | `scripts/package-flatpak.sh` | the offline Flatpak build against `org.kde.Sdk` 6.10, then the installed app's `--paths` and `--companions` in its sandbox; regenerate `packaging/flatpak/cargo-sources.json` with `scripts/gen-flatpak-cargo-sources.sh` after any dependency change; `FLATPAK_BUILD_DIR` |
 | `scripts/gen-icons.sh [--check]` | every icon size derived from `packaging/icon/2ksbox.png`, the Store's four logos (`packaging/windows/Assets/`) included; `icons` |
-| `scripts/package-msix.sh <staged> [--pfx …]` | the Windows package as an MSIX: `makeappx` validates the manifest and every path it names, and with `--pfx` the package is signed for a sideload; on Linux the layout only (`build-windows.md` "The Store package") |
+| `scripts/package-msix.sh <staged> [--pfx …]` | the Windows package as an MSIX: `makeappx` validates the manifest and every path it names, and with `--pfx` the package is signed for a sideload; on Linux the layout only (`build-windows.md` "The Store package"). `package-windows.sh`'s wine checks also run the staged launcher with `LAUNCHER_PACKAGED=1`, and its `library` line must be `<profile>\2ksbox (packaged)`, outside the AppData an uninstall deletes |
 | `tools/qtmin/` | the smallest cross-built cxx-qt binary in three rungs, for "which layer faults before `main`" on Windows (answer in its README) |
 | `tools/gpl-scan.py`, `tools/third-party-notices.py` | GPL-2.0-only QEMU files (after a QEMU bump, ADR-010) and the crate licence listing |
 

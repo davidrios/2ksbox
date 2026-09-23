@@ -512,12 +512,14 @@ Details: [build-windows.md](build-windows.md).
 
 ## Diagnostics and logs
 
-- `launcher --paths` prints where this build looks for each companion;
-  ask for it first when something says a file is missing. `launcher
-  --diagnose` adds this host's 3D and files it in `launcher.log` (beside
-  the machine library), which is what to send when the launcher did not
-  come up. On Windows, where the launcher has no stdout,
-  `2ksbox-debug.bat` in the package does that.
+- `launcher --paths` prints where this build looks for each companion
+  and where the library is (`library …`; `(packaged)` from an installed
+  MSIX, whose library is `%USERPROFILE%\2ksbox`, and `LAUNCHER_PACKAGED=1`
+  makes any build answer as one); ask for it first when something says a
+  file is missing. `launcher --diagnose` adds this host's 3D and files it
+  in `launcher.log` (beside the machine library), which is what to send
+  when the launcher did not come up. On Windows, where the launcher has
+  no stdout, `2ksbox-debug.bat` in the package does that.
 - Every Play writes the full player command line to `launcher.log` as
   `[player] …`, quoted for pasting back into a shell.
 - The Qt front end follows the desktop's light or dark mode. On Windows

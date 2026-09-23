@@ -776,6 +776,15 @@ fn paths_text() -> String {
     }
     .ok();
     writeln!(s, "checkout     {}", crate::paths::checkout(".").display()).ok();
+    // The library: where machines, discs and profiles go. A packaged
+    // (MSIX) launcher keeps it outside the virtualised AppData
+    // (`paths::data_dir`), which is the one thing this line exists to show.
+    match crate::paths::data_dir() {
+        Some(dir) if crate::paths::packaged() => writeln!(s, "library      {} (packaged)", dir.display()),
+        Some(dir) => writeln!(s, "library      {}", dir.display()),
+        None => writeln!(s, "library      (no home directory)"),
+    }
+    .ok();
     writeln!(s, "player       {}", player::player_binary().display()).ok();
     writeln!(s, "qemu-img     {}", player::qemu_img_binary().display()).ok();
     writeln!(s, "pc-bios      {}", player::pc_bios_dir().display()).ok();

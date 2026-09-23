@@ -92,7 +92,8 @@ pc-bios\  guest-tools\  shaders\  tools\  doc\  plugins\  qml\  qt.conf
 
 `launcher-core/src/paths.rs` takes the executable's directory as the
 prefix, with `pc-bios\` as the marker. User data lives in
-`%APPDATA%\2ksbox\data`.
+`%APPDATA%\2ksbox\data` (from an installed MSIX, `%USERPROFILE%\2ksbox`;
+"The Store package").
 
 **Both programs are windowed** (`windows_subsystem = "windows"`), or a
 double-click opens a black terminal. So the package provides:
@@ -300,18 +301,26 @@ against the installed package (`appcert.exe test -appxpackagepath
 <msix> -reportoutputpath report.xml`), and certification runs the same
 checks, so run it before an upload.
 
-**What differs from the zip.** A packaged app's writes to `%APPDATA%`
-are **virtualised**: the launcher's `%APPDATA%\2ksbox` is really
-`%LOCALAPPDATA%\Packages\<family>\LocalCache\Roaming\2ksbox`, the
-package's own. A library the zip build made is read through, but a write
-copies the file into the package's copy (copy-on-write: a disk image
-diverges at its first write), and **an uninstall removes the package's
-copy, machines and images included**. The `unvirtualizedResources`
-capability would share the real directory instead, but Microsoft
+**What differs from the zip: the library is `%USERPROFILE%\2ksbox`.**
+A packaged app's writes to `%APPDATA%` are **virtualised**: they land
+in `%LOCALAPPDATA%\Packages\<family>\LocalCache\Roaming`, the package's
+own copy, and **an uninstall deletes that copy**, which for the zip's
+layout would be the user's machines and their disks. The
+`unvirtualizedResources` capability would turn that off, but Microsoft
 reserves it for its partners' games (it "could compromise the system's
-ability to uninstall cleanly"), so it is not declared. The open item is
-a library outside `AppData` for the packaged build, which the launcher
-would have to pick by package identity.
+ability to uninstall cleanly"), so it is not declared. Instead the
+launcher asks Windows whether it runs with package identity
+(`GetCurrentPackageFullName`, `paths::packaged()`) and, when it does,
+keeps the library at the profile root, `%USERPROFILE%\2ksbox`, as
+VirtualBox keeps `VirtualBox VMs` there: not virtualised, not synced by
+OneDrive as `Documents` is, and untouched by an uninstall. `2ksbox.exe
+--paths` (and `--diagnose`'s copy in `launcher.log`) prints it as
+`library … (packaged)`; `LAUNCHER_PACKAGED=1` makes a plain build answer
+the same, for a check without an install. `launcher.log` and
+`player.log` move with it. A library the zip build made in
+`%APPDATA%\2ksbox\data` is not adopted (a rename out of a virtualised
+directory is not a rename): copy its `machines`, `discs.toml` and
+`shader-profiles` into `%USERPROFILE%\2ksbox` by hand.
 
 **The submission**, once the package uploads: the listing's text and
 screenshots, the age-rating questionnaire, free pricing, a privacy-policy
@@ -355,8 +364,9 @@ emulated regardless.
 - **No installer** beside the zip for users outside the Store (doc 07
   wants one; QEMU's `mingw32-nsis` recipe is within the image's reach).
   The MSIX is one, but only through the Store or a trusted certificate.
-- **The Store package has not been uploaded**, and its library dies
-  with its uninstall ("The Store package").
+- **The Store package has not been uploaded**, and its packaged library
+  location has only been checked with `LAUNCHER_PACKAGED=1`, not from an
+  installed package ("The Store package").
 - **No Windows check that boots a guest**, in the shape of
   `tools/xp-driver-test.sh`.
 
@@ -479,7 +489,8 @@ which first sources `guest-tools/msys2-i686.sh`, the whole port:
 ## Running it there
 
 Unzip anywhere and run `2ksbox.exe`; machines, `discs.toml`, shader
-profiles and downloaded presets live in `%APPDATA%\2ksbox\data`. When
+profiles and downloaded presets live in `%APPDATA%\2ksbox\data` (a Store
+install keeps them in `%USERPROFILE%\2ksbox` instead). When
 something misbehaves, run `2ksbox-debug.bat` and send
 `2ksbox-debug.log`. `PLAYER_KEYBOARD_LOG=1`
 adds the keyboard capture's decisions to `player.log`.

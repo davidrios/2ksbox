@@ -145,9 +145,10 @@ pub fn checkout(rel: &str) -> PathBuf {
 
 /// The user's own directory: `machines/`, `discs.toml`, `shader-profiles/`
 /// and a downloaded preset collection (`~/.local/share/2ksbox` on Linux,
-/// `~/Library/Application Support/2ksbox` on macOS, `%APPDATA%\2ksbox` on
-/// Windows). `None` only where the platform has no home directory at all,
-/// which every caller answers with a bare relative path.
+/// `~/Library/Application Support/2ksbox` on macOS, `%APPDATA%\2ksbox\data`
+/// on Windows, and `%USERPROFILE%\2ksbox` when the launcher runs as an
+/// installed MSIX, below). `None` only where the platform has no home
+/// directory at all, which every caller answers with a bare relative path.
 ///
 /// It was `win98-xp-virt` until the repository took the product's name
 /// (ADR-011), so an existing library is **moved once** here, the first
@@ -156,14 +157,71 @@ pub fn checkout(rel: &str) -> PathBuf {
 /// upgrades finds their machines where they left them. One who has both
 /// directories (two versions run side by side) keeps both and is told
 /// which one is in use; nothing is merged.
+///
+/// **A packaged launcher keeps its library outside `AppData`.** Windows
+/// virtualises a packaged app's `%APPDATA%`: every write lands in the
+/// package's private copy, and an uninstall deletes that copy, which
+/// here would be the user's machines and their disks. The Store refuses
+/// the capability that turns the virtualisation off, so the library goes
+/// to the profile root instead, `%USERPROFILE%\2ksbox`, as VirtualBox
+/// keeps its `VirtualBox VMs` there: neither virtualised nor synced by
+/// OneDrive, and untouched by an uninstall. The zip's library is not
+/// adopted (a rename out of a virtualised directory is not a rename);
+/// `docs/build-windows.md` "The Store package" says what to copy.
 pub fn data_dir() -> Option<&'static Path> {
     static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
     DIR.get_or_init(|| {
+        if packaged() {
+            return Some(directories::BaseDirs::new()?.home_dir().join(NAME));
+        }
         let dir = directories::ProjectDirs::from("", "", NAME)?.data_dir().to_path_buf();
         migrate_data_dir(&dir);
         Some(dir)
     })
     .as_deref()
+}
+
+/// Whether this process runs with package identity, i.e. out of an
+/// installed MSIX (`docs/build-windows.md`, "The Store package"). Asked
+/// of Windows through `GetCurrentPackageFullName`, which answers
+/// `APPMODEL_ERROR_NO_PACKAGE` for a plain executable and a length (or
+/// `ERROR_INSUFFICIENT_BUFFER`, since no buffer is offered) for a
+/// packaged one. `LAUNCHER_PACKAGED=1` answers yes without a package, so
+/// the packaged layout can be checked from a checkout or under wine.
+/// Never true elsewhere.
+pub fn packaged() -> bool {
+    static PACKAGED: OnceLock<bool> = OnceLock::new();
+    *PACKAGED.get_or_init(|| {
+        if std::env::var_os("LAUNCHER_PACKAGED").is_some_and(|v| v == "1") {
+            return true;
+        }
+        package_identity()
+    })
+}
+
+#[cfg(windows)]
+fn package_identity() -> bool {
+    // Declared by hand rather than through a Windows bindings crate: one
+    // kernel32 call is not worth a dependency the Flatpak's offline build
+    // would have to vendor for a Linux build that never makes it.
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentPackageFullName(length: *mut u32, name: *mut u16) -> i32;
+    }
+    const ERROR_SUCCESS: i32 = 0;
+    const ERROR_INSUFFICIENT_BUFFER: i32 = 122;
+    let mut len: u32 = 0;
+    // SAFETY: a null buffer with a zero length is the documented way to
+    // ask only for the required length; nothing is written.
+    let rc = unsafe { GetCurrentPackageFullName(&mut len, std::ptr::null_mut()) };
+    // Anything else (APPMODEL_ERROR_NO_PACKAGE, 15700, above all) is a
+    // plain executable.
+    rc == ERROR_INSUFFICIENT_BUFFER || rc == ERROR_SUCCESS
+}
+
+#[cfg(not(windows))]
+fn package_identity() -> bool {
+    false
 }
 
 /// The `win98-xp-virt` → `2ksbox` move, done once. Every failure is only

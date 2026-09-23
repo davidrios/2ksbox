@@ -305,7 +305,10 @@ names the desktop entry, the icon, the Wayland `app_id`, and the
 Flatpak and AppStream ID.
 
 **The data directory.** The library is `~/.local/share/2ksbox`, runtime
-files under `$XDG_RUNTIME_DIR/2ksbox`. `paths.rs::data_dir()` migrates
+files under `$XDG_RUNTIME_DIR/2ksbox`. (On Windows `%APPDATA%\2ksbox\data`,
+and from an installed MSIX `%USERPROFILE%\2ksbox`, outside the
+`AppData` an uninstall deletes; 2026-09-23, `build-windows.md` "The
+Store package".) `paths.rs::data_dir()` migrates
 the old directory once, by a **rename in the same parent** (atomic),
 **only when the new name is absent** (two present get a stderr line and
 neither is touched), and **never fatally** (a failed move is a warning
