@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Build the Windows artefacts, in dependency order, from a Linux host --
-# the counterpart of scripts/build.sh, which builds for the host it runs
-# on. Everything happens inside the cross container
+# Build the Windows artefacts from a Linux host, in dependency order. This
+# is the Windows counterpart of scripts/build.sh, which builds for the host
+# it runs on. Everything runs inside the cross container
 # (scripts/win-cross.sh, packaging/windows/Dockerfile) except the guest
-# tools and the packaging step, which are host-side by nature.
+# tools and the packaging step, which run on the host.
 #
-# On Windows itself, in MSYS2's MINGW64 shell, the same stages build
-# natively, for debugging on the PC: the same compilers, C runtime and
-# Rust target as the cross image, so a build here is the build that
-# ships. The guest-tools ISO builds there too, with MSYS2's i686 toolchain
-# (guest-tools/msys2-i686.sh); the package stays on Linux. Run what was
+# In MSYS2's MINGW64 shell on Windows the same stages build natively, for
+# debugging on the PC. They use the cross image's compilers, C runtime and
+# Rust target, so a native build is the build that ships. The guest-tools
+# ISO builds there too, with MSYS2's i686 toolchain
+# (guest-tools/msys2-i686.sh). Packaging stays on Linux. Run what was
 # built with scripts/win-run.sh.
 #
 #   scripts/build-windows.sh                everything this host can build
@@ -23,26 +23,26 @@
 #           qemu-img.exe, qemu-io.exe, libqemu-embed-i386.dll, into
 #           build/win/qemu (with libdisc built for windows-gnu first)
 #   rust    cargo build --release --target x86_64-pc-windows-gnu: the
-#           player, launcher-core, discx. After `qemu`, because the
-#           player links the embed DLL out of build/win/qemu.
+#           player, launcher-core, discx. Runs after `qemu`, because the
+#           player links the embed DLL from build/win/qemu.
 #   qt      cargo build in launcher-qt/ (its own workspace): the Qt 6 /
-#           QML launcher, the one every package ships (ADR-015).
-#           Cross-compiled like everything else — the image carries the
-#           mingw Qt to link against and the native Qt of the same
-#           version for moc/rcc/qmltyperegistrar.
+#           QML launcher that every package ships (ADR-015). Cross-compiled
+#           like the rest. The image carries the mingw Qt to link against
+#           and a native Qt of the same version for moc, rcc and
+#           qmltyperegistrar.
 #   exec    DXVK's d3d9.dll into build/win/dxvk (configure-dxvk.sh
 #           --windows), then build-d3dpt-exec.sh --windows: d3dpt_exec.dll,
 #           the Direct3D executor (doc 14). The package ships DXVK as
-#           dxvk_d3d9.dll and the executor runs on nothing else — the same
-#           d3d9 as every other host (2026-09-17).
-#   guest   guest-tools/build-wrappers.sh: the guest-tools ISO. Host-side
-#           and host-independent -- the ISO is 32-bit guest code, the same
-#           file the Linux package ships -- so a default run builds it only
-#           when there is not one already; naming the stage rebuilds it
-#           (a driver changed).
+#           dxvk_d3d9.dll, the executor's default. D3DPT_D3D9=system (or
+#           auto, when DXVK opens no adapter) runs it on Windows' own
+#           system32\d3d9.dll instead.
+#   guest   guest-tools/build-wrappers.sh: the guest-tools ISO. It is
+#           32-bit guest code, the same file the Linux package ships, so
+#           a default run builds it only when there is none yet. Naming
+#           the stage rebuilds it (after a driver change).
 #
 # docs/build-windows.md is the prose; docs/tracks/m11-windows-host.md is
-# the track. Nothing here writes to build/qemu or target/release: a
+# the track. Nothing here writes to build/qemu or target/release, so a
 # checkout holds a Linux build and a Windows build side by side.
 set -euo pipefail
 
@@ -85,7 +85,7 @@ while [ $# -gt 0 ]; do
       [ -n "$NATIVE" ] || { echo "build-windows.sh: --msys2-deps is for MSYS2's MINGW64 shell on Windows" >&2; exit 2; }
       pacman -S --needed "${MSYS2_PACKAGES[@]}"
       exit ;;
-    -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     qemu|rust|qt|exec|guest) STAGES+=("$1"); shift ;;
     *) echo "build-windows.sh: unknown argument '$1' (try --help)" >&2; exit 2 ;;
   esac

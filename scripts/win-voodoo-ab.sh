@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the base98-br machine's player by hand with one Voodoo 2 property
-# changed, for an A/B the launcher has no switch for (MSYS2's MINGW64
-# shell, like scripts/win-run.sh, which this calls):
+# changed, for an A/B the launcher has no switch for. Runs in MSYS2's
+# MINGW64 shell and calls scripts/win-run.sh.
 #
 #   scripts/win-voodoo-ab.sh ramfifo=off     the command ring back to MMIO
 #   scripts/win-voodoo-ab.sh recompiler=off  86Box's interpreter
@@ -11,15 +11,14 @@
 #
 #   scripts/win-voodoo-ab.sh vga:full-frames=on   whole frames, no dirty spans
 #
-# And `no-voodoo` leaves the card out of the machine altogether, which is
-# how a picture drawn by the guest's 2D side is told from one the Voodoo
-# had a hand in:
+# `no-voodoo` leaves the card out of the machine, to tell a picture the
+# guest's 2D side drew from one the Voodoo touched:
 #
 #   scripts/win-voodoo-ab.sh no-voodoo
 #
-# The machine is the launcher's own (its bundle's disk, its guest-tools
-# ISO); close the launcher's window for that machine first, or the disk's
-# write lock will refuse this one. A player started from a shell prints to
+# The machine is the launcher's own (its bundle's disk and guest-tools
+# ISO). Close the launcher's window for that machine first, or the disk's
+# write lock refuses this run. A player started from a shell prints to
 # that shell (only the launcher redirects it), so this tees the run into
 # build/win-voodoo-ab.log. %APPDATA%\2ksbox\data\player.log has nothing
 # from these runs.
@@ -27,7 +26,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROP="${1:-}"
-[ -n "$PROP" ] || { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ -n "$PROP" ] || { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 DATA="$(cygpath "$APPDATA")/2ksbox/data"
 M="$DATA/machines/base98-br"

@@ -2,19 +2,19 @@
 
 How SSE float, MMX and SSE integer instructions run as inline host code
 under TCG instead of helper calls: patch 11 (SSE/SSE2 float), patch 12
-(MMX / SSE integer and permutes), and the later patches 36 and 39 that
-removed two stalls. Doc 13 is the x87 counterpart, whose slow-block
-machinery this shares. Doc 22 measures the queue, and
-`docs/tracks/m8-tcg-fastpaths.md` holds the track record.
+(MMX / SSE integer and permutes), and patches 36 and 39, which removed
+two stalls. Doc 13 is the x87 counterpart, whose slow-block machinery
+this shares; doc 22 measures the queue; `docs/tracks/m8-tcg-fastpaths.md`
+holds the track record.
 
 Stock QEMU runs nearly every SSE instruction as a helper:
 `helper_addps_xmm` loops over four lanes of `float32_add`. Once the
 inexact flag is sticky that is softfloat's hardfloat path, a host
 operation wrapped in classification checks inside a call frame with
-three pointer arguments. Direct3D-era game code uses SSE for exactly
-the work that runs every frame: D3DX vector and matrix routines are
-packed SSE, compiled scalar math and float-to-int conversions are `ss`
-instructions, and era blitters, mixers and codecs are MMX.
+three pointer arguments. Direct3D-era games use SSE for the work that
+runs every frame: D3DX vector and matrix routines are packed SSE,
+compiled scalar math and float-to-int conversions are `ss` instructions,
+and era blitters, mixers and codecs are MMX.
 
 Files: `target/i386/tcg/sse-fast.c.inc` (instruction logic, slow
 blocks, the packed vector path), `sse-fast-lane.c.inc` (scalar lanes in
@@ -27,42 +27,41 @@ A TB is translated with `TB_FLAG_SSE_FAST` (bit 31) when
 
 - `env->sse_fast_mode` is set: MXCSR has RC = nearest, FTZ and DAZ off,
   all six exceptions masked, and the CPU property `sse-fast` is on
-  (default; `-cpu pentium3,sse-fast=off` is the control). Kept by
-  `update_mxcsr_status()`, i.e. every `cpu_set_mxcsr` caller;
+  (default; `-cpu pentium3,sse-fast=off` is the control). Every
+  `cpu_set_mxcsr` caller keeps it current through
+  `update_mxcsr_status()`;
 - the precision (inexact) flag is already set in `env->sse_status`.
 
-The second condition keeps the inline code flag-exact without computing
-a residual per lane, as the x87 path has to while PE is clear. With the
-inexact flag sticky, an admissible operation on the host can only raise
-PE, which is invisible, so the only thing to verify is that nothing else
-would have been raised. That is a classification of the result (or, for
-compares, of the operands), one unsigned compare per lane. It is exactly
-the gate of softfloat's own hardfloat path (`can_use_fpu`), so the
-helper path and this one agree on when the host FPU is acceptable. A
-thread's MXCSR gets PE within its first few float operations and never
-loses it (Windows saves and restores MXCSR across context switches with
-`fxsave`/`fxrstor`, flags included).
+The second condition keeps the inline code flag-exact without the
+per-lane residual the x87 path computes while PE is clear. With PE
+sticky, an admissible host operation can only raise PE, which is
+invisible, so the code only has to verify that nothing else would have
+been raised: one unsigned compare per lane on the result (on the
+operands, for compares). That is exactly the gate of softfloat's own
+hardfloat path (`can_use_fpu`), so the helper path and this one agree on
+when the host FPU is acceptable. A thread's MXCSR gets PE within its
+first few float operations and never loses it (Windows saves and
+restores MXCSR, flags included, with `fxsave`/`fxrstor`).
 
 Consequences for the translator:
 
-- `ldmxcsr`, `fxrstor` and `xrstor` end the TB (they can change MXCSR or
-  clear the flags; the flag is a TB flag and a chained successor must
-  not carry a stale one).
+- `ldmxcsr`, `fxrstor` and `xrstor` end the TB: they can change MXCSR
+  or clear the flags, and a chained successor must not carry a stale TB
+  flag.
 - A TB translated without the flag emits, after each helper that may
-  raise PE, a check at the end of the instruction (`sses_helper_done`,
-  emitted by the decoder after the register and flags write-back): if
-  the fast mode applies now, exit to the next instruction. Without it a
-  loop translated before its first inexact result would keep running
-  the helpers through its direct TB chain. It must follow the
-  write-back: an earlier version exited before it and `cvttss2si` lost
-  its EAX.
-- A runtime guard at the first inlined instruction of a fast TB
+  raise PE, a check at the end of the instruction (`sses_helper_done`):
+  if the fast mode applies now, exit to the next instruction. Without it
+  a loop translated before its first inexact result would keep running
+  the helpers through its direct TB chain. The check must follow the
+  register and flags write-back; an earlier version exited before it and
+  `cvttss2si` lost its EAX.
+- A runtime guard at a fast TB's first inlined instruction
   (`sses_guard`: mode byte and flag word) re-executes from a correctly
   translated block if the state does not match. With the exits above it
   cannot fire; it costs four instructions per TB.
-- Slow-path counters: `info registers` prints `SSE-fast slow paths:
-  guard= handover= helper= cvt/comis=`. A workload whose helper or
-  cvt/comis count grows by millions is running on the slow path (an
+- `info registers` prints the slow-path counters `SSE-fast slow paths:
+  guard= handover= helper= cvt/comis=`. A helper or cvt/comis count that
+  grows by millions means the workload is on the slow path (an
   out-of-range `cvttss2si` loop once cost 2× the helper this way).
 
 ## Fast conditions
@@ -77,19 +76,18 @@ QEMU's result differs from the host's (NaN payload rules):
 | add, sub, sqrt (ps/pd/ss/sd) | result exponent field not all ones | no NaN operand, no infinity, no overflow; a tiny add/sub result is exact (both operands are multiples of the smallest denormal) and sqrt cannot underflow |
 | mul, div, cvtsd2ss | result exponent field in [2, max−1], or an exact zero because a factor / the dividend is zero | excludes NaN, inf, overflow, division by zero and any underflow whether tininess is detected before or after rounding (a result that rounded up into field 1 is tiny before rounding) |
 | rcp, rsqrt (ps/ss) | normal result | the helpers restore the flags, so only the value matters |
-| min, max, cmp (8 predicates), comis, ucomis | no NaN operand | NaN would need QEMU's NaN selection and IE; how the compare itself is done depends on the host (below) |
+| min, max, cmp (8 predicates), comis, ucomis | no NaN operand | NaN would need QEMU's NaN selection and IE; the compare itself depends on the host (below) |
 | cvt(t)ss2si, cvt(t)sd2si | \|x\| < 2^31 − 1/2 | the host conversion is exact for both roundings; softfloat returns 0x80000000 with IE otherwise |
 | cvtsi2ss, cvtsi2sd | always | only PE |
 | cvtss2sd | result not NaN/inf | an SNaN input raises IE |
 
 Everything else takes the instruction's slow block: the unmodified
-helper sequence out of line, then a TB exit to the next instruction,
-exactly as doc 13's x87 shadows do (the two share the slow-block array
-and emitter). Nothing is written before the check (all lanes are
-computed and checked, one branch, then the stores), so the helper re-runs
-on intact operands. Legacy SSE encodings only; VEX forms take the
-helpers. A TB with more than 94 inlined x87 + SSE instructions falls
-back to helpers for the rest.
+helper sequence out of line, then a TB exit to the next instruction, as
+doc 13's x87 shadows do (the two share the slow-block array and
+emitter). All lanes are computed and checked before anything is stored,
+so the helper re-runs on intact operands. Legacy SSE encodings only; VEX
+forms take the helpers. A TB with more than 94 inlined x87 + SSE
+instructions falls back to helpers for the rest.
 
 ## Two code shapes
 
@@ -99,9 +97,9 @@ aarch64 `fadd.4s` etc., x86-64 `vaddps`/`vaddpd`), with the checks built
 from TCG's integer vector ops (`shli`, `cmp`, `and`, `sub`, `andc`,
 `sari`, `bitsel`). The lane mask is all-ones or all-zeros per lane and
 the branch tests it with `vec_allsign_i32` (patch 39: `vpmovmskb` + `xor`
-on x86-64, `cmlt #0` / `uminv` / `umov` / `eor` on aarch64); before
-that op it went through `env->sses_scratch` and two 64-bit loads, a
-store-to-load dependency in front of every SSE op's branch, which is
+on x86-64, `cmlt #0` / `uminv` / `umov` / `eor` on aarch64). Before that
+op the mask went through `env->sses_scratch` and two 64-bit loads, a
+store-to-load dependency in front of every SSE op's branch; that is
 still the fallback on a backend without it. A packed `mulps` is ~25 host
 instructions on the M1 including constant materialization (~100 with
 four scalar lanes in general registers, ~130 for the helper).
@@ -111,21 +109,21 @@ with the scalar opcodes `add_f32` .. `sqrt_f32` (i32 temps living in
 vector registers, as doc 13's `add_f64` on i64), `cvt_i32_f32/f64`,
 `cvt(t)_f32/f64_i32` (aarch64 `scvtf`, `fcvtns`, `fcvtzs`; x86-64
 `vcvtsi2ss`, `vcvtss2si`, `vcvttss2si` and the sd forms). A scalar
-`mulss` is ~20 host instructions; the vector shape was tried for
-scalars and lost to the memory round trips it needs for lane 0.
+`mulss` is ~20 host instructions; the vector shape lost for scalars to
+the memory round trips it needs for lane 0.
 
 **Memory operands (patch 36).** A 16-byte operand used to be loaded with
-`qemu_ld_i128`, which is two 8-byte loads on a guest without AVX (every
-era CPU model), and written into `env` with two 8-byte stores. The
-inline op's 16-byte vector load of it then could not be store-forwarded
-and waited for both. The pair is now assembled in the vector unit (each half
-dup'ed, merged with `SIMD_TBL_MASK64LO`) and written with one `st_vec`;
+`qemu_ld_i128`, two 8-byte loads on a guest without AVX (every era CPU
+model), and written into `env` with two 8-byte stores, so the inline
+op's 16-byte vector load could not be store-forwarded and waited for
+both. The pair is now assembled in the vector unit (each half dup'ed,
+merged with `SIMD_TBL_MASK64LO`) and written with one `st_vec`, with the
 same guest access, alignment check and fault. It is behind `sse-fast`.
 
 **min / max / cmp** on aarch64 are an integer compare of total-order
 keys: a 16–18-op transform (fold −0 into +0, flip negative magnitudes)
 so `cmp_vec` sees a monotonic order. The x86-64 backend uses native
-instructions instead ("The x86-64 backend").
+instructions instead (below).
 
 ## Patch 12: the integer and permutation instructions
 
@@ -155,27 +153,25 @@ Legacy encodings only (VEX forms, ymm, `pmuludq`, SSSE3 stay on
 helpers); hosts without `tbl_vec` use a bit-spreading / lane-store
 fallback kept in the file.
 
-Two traps from this patch:
+Two traps:
 
 - **Anything that feeds the vector path must produce its result as one
-  vector store.** A first version wrote the shuffles as four 32-bit
-  lane stores; the next instruction's 128-bit load of that register
-  stalled on the M1 (no store-to-load forwarding across several smaller
-  stores), and the transform kernel got *slower* than with the helper.
-  That is why `tbl_vec` exists, and patch 36 is the same lesson.
-- **`decode->immediate` is sign-extended** (0xB1 arrives as −79): table
-  indices must mask it. The on/off battery caught it on the first
-  memory-operand form with a high immediate.
+  vector store.** Shuffles written as four 32-bit lane stores made the
+  next instruction's 128-bit load of that register stall on the M1 (no
+  store-to-load forwarding across several smaller stores), and the
+  transform kernel got *slower* than with the helper. That is why
+  `tbl_vec` exists; patch 36 is the same lesson.
+- **`decode->immediate` is sign-extended** (0xB1 arrives as −79), so
+  table indices must mask it.
 
 ## The x86-64 backend
 
-The codegen was written on aarch64. Its first x86-64 run was
-bit-identical but slower in places, because x86-64 lacks aarch64's cheap
-bitfield insert (`BFI`/`SBFX`), so the SWAR packs reached only
-3–3.9×. Where the host speaks the guest's ISA, it now uses native
-instructions through four groups of generic TCG vector opcodes; they are
-x86-64 only (the `TCG_TARGET_HAS_*` macros are 0 on aarch64, where the
-portable code stays):
+The codegen was written on aarch64. On x86-64 it was bit-identical but
+slower in places: x86-64 lacks aarch64's cheap bitfield insert
+(`BFI`/`SBFX`), so the SWAR packs reached only 3–3.9×. Where the host
+speaks the guest's ISA, four groups of generic TCG vector opcodes now
+emit native instructions. They are x86-64 only (the `TCG_TARGET_HAS_*`
+macros are 0 on aarch64, where the portable code stays):
 
 | Opcodes | x86-64 instructions | Gate |
 |---|---|---|
@@ -193,12 +189,12 @@ portable code stays):
   MMX form, so the two 4-word operands are concatenated into one
   register and narrowed against itself, keeping the low half. The
   concatenation is `dup_i64_vec` + `bitsel_vec` against a lane mask
-  (`SIMD_TBL_MASK64LO` in `env->simd_tbl`); a first version went through
-  `env->sses_scratch`, two GP stores reloaded as one vector load, which
-  is the forwarding stall again.
+  (`SIMD_TBL_MASK64LO` in `env->simd_tbl`); going through
+  `env->sses_scratch` (two GP stores reloaded as one vector load) hit the
+  forwarding stall again.
 - **`psadbw`** uses the register-only `umax_vec`/`umin_vec`/`sub_vec`.
-  The memory-based `tcg_gen_gvec_*` forms are built for long vectors;
-  with them `psadbw` was slower than the helper it replaced.
+  The memory-based `tcg_gen_gvec_*` forms are built for long vectors and
+  made `psadbw` slower than the helper it replaced.
 
 Effect on the DOS bench (below): packed chain 8.1× → 10.0×, MMX chain
 1.4× → 2.1×, the isolated clamp+cmp kernel 6.5× (the Air gets
@@ -207,20 +203,20 @@ Effect on the DOS bench (below): packed chain 8.1× → 10.0×, MMX chain
 ## Verification
 
 `tools/sse-guest-test.py` (the `sse-guest` check): a DOS program enables
-SSE in real mode (CR4.OSFXSR) and runs its instruction sequences. They
-cover all of the table above, memory-operand forms, `cmpps` with every predicate,
-a 4-op packed chain, a 7-op scalar chain with a conversion round trip, a
+SSE in real mode (CR4.OSFXSR) and runs its instruction sequences: all of
+the table above, memory-operand forms, `cmpps` with every predicate, a
+4-op packed chain, a 7-op scalar chain with a conversion round trip, a
 mixed x87/SSE block that exercises dirty x87 shadows across an SSE
 slow-block exit, a 120-instruction block that overflows the slow-block
 array, the SSE2 double forms under `-cpu pentium3,+sse2`, and patch 12's
 integer battery (MMX and XMM forms, memory operands, self-operands,
 chains, a mixed x87/MMX sequence). Each runs over every pair of 47
-single and 33 double edge-case values (zeros, denormals, min/max, 2^31 boundaries,
-infinities, quiet and signalling NaNs), under MXCSR 1FA0 (inline mode),
-1F80 (flags clear: the hand-over path) and 3FA0 (round down: helpers).
-Every lane and MXCSR are printed. **546,425 result lines identical**
-with the switches on and off, on aarch64 and x86-64. The x87 battery
-(doc 13) must pass too: the slow blocks are shared.
+single and 33 double edge-case values (zeros, denormals, min/max, 2^31
+boundaries, infinities, quiet and signalling NaNs), under MXCSR 1FA0
+(inline mode), 1F80 (flags clear: the hand-over path) and 3FA0 (round
+down: helpers), printing every lane and MXCSR. **546,425 result lines
+identical** with the switches on and off, on aarch64 and x86-64. The x87
+battery (doc 13) must pass too, since the slow blocks are shared.
 
 ## Performance
 
@@ -234,11 +230,11 @@ iterations, BIOS ticks. On the M1 Air after patch 11:
 
 That is ~1.2 ns per packed op inline (bound by the latency of the
 dependent NEON chain; the checks overlap in the out-of-order window)
-against ~14 ns for the helper, and ~2.7 ns per scalar op against ~10 ns;
-the scalar path pays the general-register moves of its checks.
-Memory-operand forms add the TLB lookup either way (a first version of
-this kernel with memory operands showed 1.3× because those dominated),
-so a real loop sees less than the ratio.
+against ~14 ns for the helper, and ~2.7 ns per scalar op against ~10 ns,
+where the scalar path pays the general-register moves of its checks.
+Memory-operand forms add the TLB lookup on both paths (the same kernel
+with memory operands showed only 1.3×), so a real loop sees less than
+the ratio.
 
 Register-only ratios over the helpers with both patches, per host:
 
@@ -253,32 +249,24 @@ kernels (packed transform, packed normalize with `rsqrtps`, a scalar
 chain with `comiss`, clamp + `cmpps` (the "clamp+cmp" kernel) and
 `cvttss2si`/`cvtsi2ss`), the transform and normalize again in plain C
 pinned to x87 at PC=53 (doc 13's path), an MMX blend, and a
-denormal-decay kernel that shows the slow-path cost; it prints ns per op
+denormal-decay kernel that shows the slow-path cost. It prints ns per op
 and a mean "SSE score". `tools/xp-ssebench.sh` runs it in XP headlessly
 per `-cpu` configuration and prints the slow-path counters around the
-run. `reference/benchmarks/README.md` has the full tables, the rig's
-row and the measurement pitfalls. Against the rig (the rig's time ÷
-ours; all `check` values identical to the rig's):
+run.
 
-| Kernel | Air | x86-64 box |
-|---|---|---|
-| packed transform | 61 % | 49 % |
-| packed normalize | 97 % | 89 % |
-| scalar chain | 105 % | 116 % |
-| clamp+cmp | 34 % | 43 % |
-| convert | 109 % | 130 % |
-| C transform (x87) | 18 % | 16 % |
-| C normalize (x87) | 87 % | 99 % |
-| MMX blend | 107 % | 122 % |
-
-Clamp+cmp is not register-only: each iteration does an aligned 16-byte
-load and store (two softmmu TLB lookups) and a `movmskps`, which still
-goes through `helper_movmskps_xmm`. On XP on the Air, `sse-fast=on`
-against `off`: packed transform 7.4×, normalize 6.3×, scalar chain
-3.3×, clamp+cmp 4.4×, convert 3.2×; the denormal kernel runs at 0.6× of
-the helper (the price of a check that fails on every operation; doc 22
-§5.3 measures the same). Doc 22 §5 has these kernels against pristine
-QEMU.
+Against the rig (the rig's time ÷ ours, Air / x86-64 box), with every
+`check` value identical to the rig's: normalize, scalar chain, convert,
+C normalize and MMX blend land at 87–130 %, the packed transform at
+61 % / 49 %, and the two outliers are clamp+cmp (34 % / 43 %) and the
+x87 C transform (18 % / 16 %). `reference/benchmarks/README.md` has the full
+per-kernel table, the rig's row and the measurement pitfalls. Clamp+cmp
+is not register-only: each iteration does an aligned 16-byte load and
+store (two softmmu TLB lookups) and a `movmskps`, which still goes
+through `helper_movmskps_xmm`. On XP on the Air, `sse-fast=on` against
+`off`: packed transform 7.4×, normalize 6.3×, scalar chain 3.3×,
+clamp+cmp 4.4×, convert 3.2×; the denormal kernel runs at 0.6× of the
+helper, the price of a check that fails on every operation (doc 22 §5.3
+measures the same). Doc 22 §5 has these kernels against pristine QEMU.
 
 ## Follow-ups
 
@@ -301,5 +289,5 @@ QEMU.
 - **Barriers.** Every guest memory access carries a `dmb` because the
   pc machine's `max_cpus` is above 1 (`-smp 1,maxcpus=1` turns them
   off). The memory-operand bench showed no difference on the M1; 7-Zip
-  read 2–10 % faster without them, and dropping them by default needs an
+  read 2–10 % faster without them. Dropping them by default needs an
   audit (M9 track, "Open").

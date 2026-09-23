@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Install this package into a prefix, or just tell you that you don't have
-# to. The extracted tree is already relocatable — `bin/2ksbox` finds the
-# player, qemu-img, the firmware and the guest-tools ISO relative to its
-# own location (doc 07's install layout) — so running it from wherever it
-# was unpacked works. This script is for the rest: a desktop entry and an
-# icon, so the launcher is in the applications menu.
+# Install this package into a prefix.
+#
+# You don't have to. The unpacked tree runs from wherever it is, because
+# `bin/2ksbox` finds the player, qemu-img, the firmware and the
+# guest-tools ISO relative to its own location. Installing adds a desktop
+# entry and an icon, so the launcher shows up in the applications menu.
 #
 #   ./install.sh                 # into ~/.local (no root)
 #   ./install.sh --prefix /opt/2ksbox

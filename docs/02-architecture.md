@@ -5,23 +5,18 @@ it, the threads, the languages and the repository. The embed API itself
 is doc 11, the display pipeline doc 03, the launcher and packaging
 doc 07, and the rationale for every decision doc 10.
 
-## Decisions (locked; rationale in doc 10)
-
-1. **QEMU runs in-process** with the display (ADR-002).
-2. **Standalone Rust player + companion launcher**, no RetroArch/libretro
-   (ADR-005 supersedes ADR-003).
-3. **Rust where possible**; C only inside QEMU/qemu-3dfx and in
-   guest-side code (ADR-004).
+Three locked decisions shape it: QEMU runs in-process with the
+display (ADR-002), a standalone Rust player plus a launcher with no
+RetroArch/libretro (ADR-005), and Rust wherever possible (ADR-004).
 
 ## Why in-process
 
-For gaming latency, framebuffer, input and audio must not cross a
-process boundary. Linking QEMU as a library gives zero-copy framebuffer
-access (display listener → GPU texture), direct input injection and one
-clock domain for pacing. We accept the costs. There is one VM per
-hosting process (QEMU's global state and incomplete cleanup), a QEMU
-fork to maintain (needed anyway for qemu-3dfx, the CD backend and our
-devices), and GPL-2.0 for everything that links it.
+Framebuffer, input and audio must not cross a process boundary. Linking
+QEMU as a library gives zero-copy framebuffer access, direct input
+injection and one clock for pacing. The costs: one VM per process
+(QEMU's global state and incomplete cleanup), a QEMU fork to maintain
+(needed anyway for qemu-3dfx, the CD backend and our devices), and
+GPL-2.0 for everything that links it.
 
 ## Component map
 
@@ -55,37 +50,27 @@ devices), and GPL-2.0 for everything that links it.
 ```
 
 - **A machine bundle** is a directory with `machine.toml` and usually
-  its disk; discs are on a shelf shared by every machine. The launcher
-  creates and edits bundles and translates one into the player's
-  command line; the player runs a QEMU command line and knows nothing
-  of bundles (doc 07).
-- One VM per player process. The launcher keeps the library UI away
-  from a crashed guest and runs several machines at once. For live
-  control (snapshots, disc swaps) the launcher speaks QMP to a second
-  monitor socket it adds at spawn, so neither binary has an IPC channel
-  of its own (doc 07, "How the launcher reaches a running machine").
+  its disk; discs sit on a shelf shared by every machine. The launcher
+  turns a bundle into the player's command line; the player runs a QEMU
+  command line and knows nothing of bundles (doc 07).
+- One VM per player process, so a crashed guest never takes the library
+  down and several machines run at once. For live control (snapshots,
+  disc swaps) the launcher speaks QMP to a second monitor socket it adds
+  at spawn; neither binary has an IPC channel of its own (doc 07, "How
+  the launcher reaches a running machine").
 
 ## The embed boundary: `libqemu_embed.h`
 
-A small C API on the QEMU fork (`embed/`, doc 11), currently **v8**:
-
-- lifecycle: create from a plain `qemu-system` command line, run,
-  destroy; VM start / pause / reset / powerdown / shutdown;
-- display: a listener with surface + dirty-rect callbacks for 2D, and
-  for 3D a copied frame or a zero-copy ring (dma-buf on Linux, IOSurface
-  on macOS);
-- input: keyboard qcodes, relative and absolute pointer, the gamepad
-  (v8);
-- audio: a caller-owned SPSC ring installed before init (the `embed`
-  audiodev);
-- the display refresh pull interval;
-- `qemu_embed_socket_to_fd()` (v7), so the QMP socket crosses a CRT
-  boundary on Windows.
-
-Media, snapshots and status go over QMP. The Rust bindings are
-hand-written in the `qemu-embed` crate: the API is ours and small,
-`qemu_embed_api_version()` guards drift, and no libclang is needed.
-The player never reaches past this header.
+A small C API on the QEMU fork (`embed/`, **v8**; the version history
+and every call are doc 11): lifecycle from a plain `qemu-system`
+command line, VM control, a 2D display listener and a 3D frame copy or
+zero-copy ring (dma-buf on Linux, IOSurface on macOS), keyboard,
+pointer and gamepad input, a caller-owned audio ring, and
+`qemu_embed_socket_to_fd()` for the QMP socket on Windows. Media,
+snapshots and status go over QMP. The Rust bindings in the
+`qemu-embed` crate are hand-written (no libclang), and
+`qemu_embed_api_version()` guards drift. The player never reaches past
+this header.
 
 ## Language policy (ADR-004)
 
@@ -104,11 +89,10 @@ The player never reaches past this header.
 ## Graphics stack
 
 wgpu (Metal on macOS, Vulkan/D3D12 elsewhere) with **librashader's wgpu
-runtime** for the RetroArch slang shader ecosystem, wrapped in the
-`shader-chain` crate that the player and the launcher's preview share.
-Versions are coupled: librashader pins a wgpu major (0.12 → wgpu 30),
-and the workspace follows librashader's pin, not the newest wgpu.
-Geometry updates are strictly event-driven (`Gpu::guest_surface_changed`,
+runtime** for slang shaders, wrapped in the `shader-chain` crate that
+the player and the launcher's preview share. librashader pins a wgpu
+major (0.12 → wgpu 30) and the workspace follows that pin, not the
+newest wgpu. Geometry updates are event-driven (`Gpu::guest_surface_changed`,
 `Gpu::resize`).
 
 ## Threading model
@@ -116,12 +100,11 @@ Geometry updates are strictly event-driven (`Gpu::guest_surface_changed`,
 - **QEMU main loop + vCPU threads**, QEMU-managed (MTTCG where TCG
   runs).
 - **Render thread:** wgpu, librashader, present. The display listener
-  (QEMU's main loop) only publishes "surface updated + dirty rect" into
-  a triple-buffered handoff, or a ring slot index for 3D; the render
-  thread uploads and draws. QEMU never blocks on vsync; a slow host frame
-  repeats the last guest frame.
-- **Audio thread:** real time. cpal drains the ring QEMU's mixer fills.
-- **Event thread:** winit. It forwards input to QEMU without waiting.
+  (QEMU's main loop) only publishes a dirty rect into a triple-buffered
+  handoff, or a ring slot index for 3D. QEMU never blocks on vsync; a
+  slow host frame repeats the last guest frame.
+- **Audio thread:** real time; cpal drains the ring QEMU's mixer fills.
+- **Event thread:** winit; forwards input to QEMU without waiting.
 
 Rule: no QEMU-owned thread waits on the GPU; no render or audio thread
 takes a QEMU lock.
@@ -172,12 +155,11 @@ docs/            design documents and tracks
 
 ## Open questions
 
-- **Host 3D texture sharing:** zero-copy on Linux (dma-buf imported
-  into wgpu through Vulkan) and macOS (IOSurface as a Metal texture),
-  doc 12 §4. Windows still takes the CPU-copied frame; a DXGI shared
-  handle is open (M11).
-- **In-process QMP** (settled): a `socketpair` (a loopback pair on
-  Windows), standard QMP JSON, no filesystem path (doc 11).
-- **QEMU cadence:** pinned to v9.2.4 plus a patch queue; QEMU is built
-  with only what is used (the `no-optionals` check, CLAUDE.md). A
-  rebase to a newer QEMU has not been scheduled.
+- **Host 3D texture sharing on Windows:** Linux and macOS are
+  zero-copy (doc 12 §4); Windows still takes the CPU-copied frame, and
+  a DXGI shared handle is open (M11).
+- **QEMU cadence:** pinned to v9.2.4 plus a patch queue, built with only
+  what is used (the `no-optionals` check). No rebase is scheduled.
+
+In-process QMP is settled: a `socketpair` (a loopback pair on Windows),
+standard QMP JSON, no filesystem path (doc 11).

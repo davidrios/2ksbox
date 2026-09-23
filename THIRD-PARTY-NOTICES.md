@@ -33,6 +33,12 @@ pins
 `scripts/build-vgabios.sh`. That tree plus those patches is the
 corresponding source.
 
+The Voodoo 2 device (`-device voodoo2`) links 86Box's Voodoo emulation
+(https://github.com/86Box/86Box, **GPL-2.0-or-later**, derived from
+Sarah Walker's PCem), copied verbatim into `voodoo/86box/`. The files
+keep their authors' headers, and `voodoo/86box/UPSTREAM` names the
+commit.
+
 ## The music engines
 
 The **OPL3, General MIDI and MT-32 engines** are crates linked into QEMU
@@ -100,7 +106,7 @@ For how those interact with the player's GPL-2.0-only status, see
 
 ## Crates, by declared licence
 
-### `player` — 340 third-party crates
+### `player`: 340 third-party crates
 
 **MIT OR Apache-2.0** (151): `ahash`, `allocator-api2`, `android-activity`, `android_system_properties`, `arc-swap`, `arrayvec`, `as-raw-xcb-connection`, `ash`, `bitflags`, `bumpalo`, `cc`, `cfg-if`, `chacha20`, `core-foundation`, `core-foundation-sys`, `core-graphics`, `core-graphics-types`, `cpufeatures`, `crc`, `crc-catalog`, `crc32fast`, `crossbeam-deque`, `crossbeam-epoch`, `crossbeam-utils`, `dasp_sample`, `dirs-next`, `dirs-sys-next`, `document-features`, `either`, `errno`, `fdeflate`, `find-msvc-tools`, `fixedbitset`, `flate2`, `futures-core`, `futures-task`, `futures-util`, `getrandom`, `glob`, `glslang`, `glslang-sys`, `gpu-allocator`, `half`, `hashbrown`, `hermit-abi`, `image`, `itoa`, `jni`, `jni-macros`, `jni-sys`, `jni-sys-macros`, `jobserver`, `js-sys`, `libc`, `litrs`, `lock_api`, `log`, `memmap2`, `naga`, `naga-types`, `ndk`, `ndk-context`, `ndk-sys`, `num-derive`, `num-traits`, `once_cell`, `parking_lot`, `parking_lot_core`, `percent-encoding`, `petgraph`, `pkg-config`, `png`, `presser`, `proc-macro-crate`, `proc-macro2`, `profiling`, `quote`, `rand`, `rand_core`, `range-alloc`, `raw-window-metal`, `rayon`, `rayon-core`, `regex`, `regex-automata`, `regex-syntax`, `renderdoc-sys`, `rustc_version`, `rustversion`, `scopeguard`, `semver`, `serde`, `serde_core`, `serde_derive`, `serde_json`, `shlex`, `simdutf8`, `smallvec`, `smol_str`, `spirv-cross-sys`, `spirv-cross2`, `spirv-cross2-derive`, `static_assertions`, `syn`, `thiserror`, `thiserror-impl`, `toml_datetime`, `toml_edit`, `toml_parser`, `ttf-parser`, `unicode-segmentation`, `unicode-width`, `unty`, `wasm-bindgen`, `wasm-bindgen-futures`, `wasm-bindgen-macro`, `wasm-bindgen-macro-support`, `wasm-bindgen-shared`, `web-sys`, `web-time`, `wgpu`, `wgpu-core`, `wgpu-core-deps-apple`, `wgpu-core-deps-emscripten`, `wgpu-core-deps-windows-linux-android`, `wgpu-hal`, `wgpu-naga-bridge`, `wgpu-types`, `windows`, `windows-collections`, `windows-core`, `windows-future`, `windows-implement`, `windows-interface`, `windows-link`, `windows-numerics`, `windows-result`, `windows-strings`, `windows-sys`, `windows-targets`, `windows-threading`, `windows_aarch64_gnullvm`, `windows_aarch64_msvc`, `windows_i686_gnu`, `windows_i686_gnullvm`, `windows_i686_msvc`, `windows_x86_64_gnu`, `windows_x86_64_gnullvm`, `windows_x86_64_msvc`, `x11rb`, `x11rb-protocol`
 
@@ -164,7 +170,7 @@ For how those interact with the player's GPL-2.0-only status, see
 
 **MPL-2.0+** (1): `smartstring`
 
-### `launcher-qt` — 272 third-party crates
+### `launcher-qt`: 272 third-party crates
 
 **MIT OR Apache-2.0** (158): `allocator-api2`, `android_system_properties`, `anyhow`, `arc-swap`, `arrayvec`, `ash`, `base64`, `bitflags`, `bumpalo`, `cc`, `cfg-if`, `chacha20`, `clang-format`, `cpufeatures`, `crc`, `crc-catalog`, `crc32fast`, `crossbeam-deque`, `crossbeam-epoch`, `crossbeam-utils`, `cxx`, `cxx-build`, `cxx-gen`, `cxx-qt`, `cxx-qt-build`, `cxx-qt-gen`, `cxx-qt-lib`, `cxx-qt-macro`, `cxxbridge-flags`, `cxxbridge-macro`, `directories`, `dirs-next`, `dirs-sys`, `dirs-sys-next`, `document-features`, `either`, `errno`, `fdeflate`, `find-msvc-tools`, `fixedbitset`, `flate2`, `futures-core`, `futures-task`, `futures-util`, `getrandom`, `glob`, `glslang`, `glslang-sys`, `gpu-allocator`, `half`, `hashbrown`, `http`, `httparse`, `image`, `indoc`, `itoa`, `jni-sys`, `jni-sys-macros`, `jobserver`, `js-sys`, `libc`, `link-cplusplus`, `litrs`, `lock_api`, `log`, `naga`, `naga-types`, `ndk-sys`, `num-derive`, `num-traits`, `once_cell`, `parking_lot`, `parking_lot_core`, `percent-encoding`, `petgraph`, `pkg-config`, `png`, `presser`, `proc-macro2`, `profiling`, `qt-build-utils`, `quote`, `rand`, `rand_core`, `range-alloc`, `raw-window-metal`, `rayon`, `rayon-core`, `regex`, `regex-automata`, `regex-syntax`, `renderdoc-sys`, `rustls-pki-types`, `rustversion`, `scopeguard`, `scratch`, `semver`, `serde`, `serde_core`, `serde_derive`, `serde_json`, `serde_spanned`, `shlex`, `smallvec`, `spirv-cross-sys`, `spirv-cross2`, `spirv-cross2-derive`, `static_assertions`, `syn`, `tar`, `thiserror`, `thiserror-impl`, `toml`, `toml_datetime`, `toml_parser`, `toml_writer`, `unicode-segmentation`, `unicode-width`, `unty`, `ureq`, `ureq-proto`, `utf8-zero`, `wasm-bindgen`, `wasm-bindgen-futures`, `wasm-bindgen-macro`, `wasm-bindgen-macro-support`, `wasm-bindgen-shared`, `web-sys`, `wgpu`, `wgpu-core`, `wgpu-core-deps-apple`, `wgpu-core-deps-emscripten`, `wgpu-core-deps-windows-linux-android`, `wgpu-hal`, `wgpu-naga-bridge`, `wgpu-types`, `windows`, `windows-collections`, `windows-core`, `windows-future`, `windows-implement`, `windows-interface`, `windows-link`, `windows-numerics`, `windows-result`, `windows-strings`, `windows-sys`, `windows-targets`, `windows-threading`, `windows_aarch64_gnullvm`, `windows_aarch64_msvc`, `windows_i686_gnu`, `windows_i686_gnullvm`, `windows_i686_msvc`, `windows_x86_64_gnu`, `windows_x86_64_gnullvm`, `windows_x86_64_msvc`, `xattr`
 

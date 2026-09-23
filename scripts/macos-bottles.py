@@ -2,23 +2,25 @@
 """Put the floor's Homebrew bottles in a staged 2ksbox.app.
 
     scripts/macos-bottles.py <app>/Contents <floor> <bottle tag> <cache dir>
-    scripts/macos-bottles.py build/macos/2ksbox.app/Contents 14.0 arm64_sonoma build/macos-bottles
+    scripts/macos-bottles.py build/macos/2ksbox.app/Contents 15.0 arm64_sequoia build/macos-bottles
+
+The floor and tag come from scripts/macos-floor.sh (and its --tag).
 
 Homebrew pours the bottle built for the macOS it runs on, so every library
-`package-macos.sh` copied out of it on a macOS 26 Mac is a macOS 26 build,
-and the app would refuse to start anywhere older. Homebrew also publishes
-the same version built on each older macOS it supports (the tag names
-it: `arm64_sonoma` is macOS 14), and this puts those in its place. Only
-the files that need it are replaced, since a bottle whose own build
-system chose a lower target (Qt's base, glib) is already fine.
+`package-macos.sh` copied from it on a macOS 26 Mac is a macOS 26 build,
+and the app would refuse to start on anything older. Homebrew also
+publishes the same version built on each older macOS it supports (the
+tag names it: `arm64_sequoia` is macOS 15), and this script swaps those
+in. It replaces only the files that need it, since a bottle whose own
+build system chose a lower target (Qt's base, glib) is already fine.
 
 A staged file is matched to the Homebrew file it was copied from by its
-LC_UUID, which the install-name rewrites and ad-hoc signatures of the
-staging do not touch. The older build of that same file is then fetched
-from Homebrew's registry (ghcr.io, cached under <cache dir>), copied over
-it, and given the staged file's install name, dependencies and rpaths,
-so what the staging did to the file it replaces carries across. It does
-not sign; the packager's own pass does that next.
+LC_UUID, which the staging's install-name rewrites and ad-hoc signatures
+do not touch. The script fetches the older build of that file from
+Homebrew's registry (ghcr.io, cached under <cache dir>), copies it over
+the staged one and gives it the staged file's install name, dependencies
+and rpaths, so the staging's changes carry across. It does not sign.
+The packager's own signing pass runs next.
 
 Exits non-zero when a bottle for the tag does not exist, when the
 installed version is not the one Homebrew has bottles of (brew upgrade),

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The Windows package (M11, docs/build-windows.md): stage everything a
-# stranger needs into one folder, check that the staged launcher really
-# resolves its companions *inside* it, and roll a zip.
+# Build the Windows package (docs/build-windows.md). Stage everything a
+# user needs into one folder, check that the staged launcher resolves its
+# companions inside that folder, and roll a zip.
 #
 #   scripts/package-windows.sh                 # stage, check, zip
 #   scripts/package-windows.sh --no-zip        # leave the staged tree only
@@ -9,26 +9,27 @@
 #   scripts/package-windows.sh --out DIR       # default build/win/package
 #
 # `2ksbox.exe` is `launcher-qt`, the Qt 6 / QML launcher (ADR-015), and
-# the Qt runtime it needs travels with it: the DLLs, the platform plugin
-# and the QML module trees, none of which Windows has.
+# the package carries the Qt runtime it needs: the DLLs, the platform
+# plugin and the QML module trees, none of which Windows has.
 #
-# Run it from the host (not inside scripts/win-cross.sh): the checks want
-# wine, which the cross image has no reason to carry. It builds nothing —
-# scripts/build-windows.sh does that, and says so if an artefact is missing.
+# Run it on the host, not inside scripts/win-cross.sh, because the checks
+# need wine and the cross image does not carry it. It builds nothing.
+# scripts/build-windows.sh does that, and this script says so if an
+# artefact is missing.
 #
-# A Windows package is **one folder**, not a Unix prefix: the executables
-# at the top, every DLL beside them (which is exactly where the loader
-# looks, so no rpath and no PATH), the data directories under it. The
-# launcher knows both shapes (launcher-core/src/paths.rs).
+# A Windows package is one folder, not a Unix prefix. The executables sit
+# at the top with every DLL beside them, which is where the loader looks
+# (no rpath, no PATH), and the data directories under them. The launcher
+# knows both shapes (launcher-core/src/paths.rs).
 #
 #   2ksbox.exe                  the launcher
 #   2ksbox-player.exe           the player
 #   qemu-img.exe                ours, patched
 #   libqemu-embed-i386.dll      QEMU as a library, what the player runs
 #   d3dpt_exec.dll              the Direct3D executor (doc 14)
-#   dxvk_d3d9.dll               DXVK's d3d9, what the executor runs on --
-#                               renamed, so it is never mistaken for
-#                               Windows' own d3d9.dll
+#   dxvk_d3d9.dll               DXVK's d3d9, the executor's default,
+#                               renamed so it is never mistaken for
+#                               Windows' own d3d9.dll (D3DPT_D3D9=system)
 #   *.dll                       the mingw and Qt 6 runtimes those need
 #   plugins\                    Qt's platform plugin and friends
 #   qml\                        the QtQuick module trees the views import
@@ -41,8 +42,8 @@
 #   2ksbox.ico                  the application icon, for a shortcut
 #                               (the .exes carry it as a resource too)
 #   2ksbox-debug.bat            runs the launcher from a console and
-#                               keeps its exit code, the one thing a
-#                               silent start-up failure still has
+#                               keeps its exit code, the only trace a
+#                               silent start-up failure leaves
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -53,7 +54,7 @@ while [ $# -gt 0 ]; do
     --no-zip) ZIP=0; shift ;;
     --with-shaders) SHADERS=1; shift ;;
     --out) OUT=$2; shift 2 ;;
-    -h|--help) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "package-windows.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done

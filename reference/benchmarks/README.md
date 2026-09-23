@@ -2,8 +2,8 @@
 
 XP-on-Apple-Silicon performance as a fraction of the real rig (doc 09:
 Pentium 4 1.7 GHz + GeForce 6200), from the same binaries run the same
-way. It is the M1 exit criterion of doc 08 and the in-app expectation of
-doc 06. This file keeps the rig comparisons of the x87 and SSE work (docs 13
+way: the M1 exit criterion of doc 08 and the in-app expectation of doc
+06. This file keeps the rig comparisons of the x87 and SSE work (docs 13
 and 16). The full evaluation of the patch queue, with a reproducible
 harness, per-switch runs and the 3D workloads, is doc 22.
 
@@ -19,8 +19,7 @@ harness, per-switch runs and the 3D workloads, is doc 22.
 
 Run everything twice and keep the best, with nothing else on the host.
 macOS sometimes parks the vCPU thread on an efficiency core for a whole
-run, a uniform ~2×, so compare within one boot's pair rather than across
-boots.
+run (a uniform ~2×), so compare within one boot's pair, not across boots.
 
 The Air runs XP in the player:
 
@@ -31,12 +30,12 @@ PLAYER_LATENCY=1 target/release/player --shader third_party/slang-shaders/crt/cr
   -cdrom ~/vms/bench.iso
 ```
 
-Runs up to 2026-09-03 used `-vga std`, which XP drives as 640×480×16
-VGA; that does not matter to Super PI and 7-Zip. The benchmark goes in on
-an ISO (`hdiutil makehybrid -iso -joliet` on macOS, `mkisofs -J -r` on
-Linux). The rig runs the same files from a CD-R on its XP partition, and
-results come back through `tools/upload-server.py` (a plain upload form on port
-8000 that IE6 can use, saving into `build/uploads/`). `SSEBENCH.EXE` runs
+Runs up to 2026-09-03 used `-vga std` (640×480×16 VGA under XP), which
+does not matter to Super PI and 7-Zip. The benchmark goes in on an ISO
+(`hdiutil makehybrid -iso -joliet` on macOS, `mkisofs -J -r` on Linux).
+The rig runs the same files from a CD-R on its XP partition, and results
+come back through `tools/upload-server.py` (an upload form on port 8000
+that IE6 can use, saving into `build/uploads/`). `SSEBENCH.EXE` runs
 headless in XP through `tools/xp-ssebench.sh` (`docs/testing.md`), with
 `-iter 20` at x87 PC=53.
 
@@ -53,15 +52,13 @@ headless in XP through `tools/xp-ssebench.sh` (`docs/testing.md`), with
 - **Integer and memory (7-Zip).** The emulated XP is 1.3–2× a P4 1.7,
   so a 2.2–3 GHz P4 or an early Athlon 64.
 - **x87 (Super PI).** On softfloat it is 21 % of the rig, Pentium II
-  300–400 MHz territory, and that is what FP-heavy game code and
-  software renderers hit. Patch 06 brings it to parity; `x87-fast=off` on the
-  same build reproduces softfloat pace (0:35 after loop 1), so the whole
-  gain is the patch. 7-Zip and boot were not re-run (integer path
-  untouched).
+  300–400 MHz territory, which is what FP-heavy game code and software
+  renderers hit. Patch 06 brings it to parity; `x87-fast=off` on the same
+  build reproduces softfloat pace (0:35 after loop 1), so the whole gain
+  is the patch. 7-Zip and boot were not re-run (integer path untouched).
 - Boot is disk and interrupt bound; the host SSD hides the rest.
-- M9's patch 14 (macOS W^X state tracked per thread) took a Super
-  PI run from 1:36.2 to 1:25.3 under the profiler
-  (`docs/tracks/m9-tcg-aarch64.md`).
+- Patch 14 (macOS W^X state per thread) took a Super PI run from 1:36.2
+  to 1:25.3 under the profiler (`docs/tracks/m9-tcg-aarch64.md`).
 
 In-app wording (doc 06): integer speed of a fast P4, floating-point
 parity with the rig; without patch 06 the FP half is Pentium II class.
@@ -82,9 +79,8 @@ and ~10 in the helpers. On the Air the MMX chain is 0.55 s against 1.98
 (3.6×) and the `SSEBENCHC` clamp+cmp kernel 0.33 s against 2.86 (8.7×).
 On the x86-64 box, with its native `fmin_vec` / `fmax_vec` / `fcmp_vec`
 / `mulsh_vec` / `*narrow_vec` opcodes (`docs/tracks/m8-tcg-fastpaths.md`),
-the gains are packed 10.0×, MMX 2.1×, clamp+cmp 6.5×. Loops with memory
-operands gain less, because the TLB lookup per operand is the same on
-both paths.
+packed gains 10.0×, MMX 2.1×, clamp+cmp 6.5×. Loops with memory operands
+gain less: the TLB lookup per operand is the same on both paths.
 
 `SSEBENCH.EXE` in XP, ns per op (lower is better), all 2026-09-04:
 
@@ -106,32 +102,32 @@ The rig's log is `rig-2026-09-04/ssebench.log` (three runs, same mean;
 SSE score 2.28 ns per op against the Air's 3.17). Every `check` value on
 both hosts is identical to the rig's, so the inline paths reproduce the
 P4 bit for bit on these kernels. The `sse-fast=off` rows leave patch 12
-on (`simd-fast` is its own switch), hence the MMX blend stays fast.
+on (`simd-fast` is its own switch), so the MMX blend stays fast.
 
-What the table says:
+Reading the table:
 
 - Patch 11 makes the SSE kernels 3.2–7.4× faster, packed code most;
   patch 06 makes the x87 kernels 10–12× faster; each switch touches only
   its own kernels.
 - Patch 12 (MMX / SSE integer and permutes inline, `tbl_vec`) takes MMX
-  blend 0.80 → 0.41, the packed transform's four `shufps` 2.38 → 2.10 per op,
-  normalize 2.41 → 2.03. Scalar lane stores for the shuffles were
+  blend 0.80 → 0.41, the packed transform's four `shufps` 2.38 → 2.10 per
+  op, normalize 2.41 → 2.03. Scalar lane stores for the shuffles were
   *slower* than the helper (the next vector load stalled behind four
   small stores), hence the table-lookup opcode.
 - **clamp+cmp is the outlier** (34 % of the rig on the Air, 43 % on
-  x86-64). The XP loop does an aligned 16-byte load and store (two
-  softmmu lookups) and a `movmskps`, still QEMU's helper, per iteration,
-  so the gap is memory operands and `movmskps`, not `minps` / `maxps` /
-  `cmpps` (M8 track, "What stayed open").
+  x86-64). Per iteration the XP loop does an aligned 16-byte load and
+  store (two softmmu lookups) and a `movmskps`, still QEMU's helper; the
+  gap is those, not `minps` / `maxps` / `cmpps` (M8 track, "What stayed
+  open").
 - **The x87 C transform is the other** (16–18 %). A P4 pipelines plain
-  `fmul` / `fadd` at 0.74 ns per op, and the shadow-double translator
-  costs ~4. The expensive ops (`fsqrt` / `fdiv` in normalize, Super PI) are at
-  parity, so it is cheap-op throughput.
+  `fmul` / `fadd` at 0.74 ns per op; the shadow-double translator costs
+  ~4. The expensive ops (`fsqrt` / `fdiv` in normalize, Super PI) are at
+  parity, so the gap is cheap-op throughput.
 - The denormal kernel is the slow path by design (every multiply leaves
   the TB, 0.6× the plain helper); the P4's own denormal penalty is 1552
   ns per op, 19× slower than the emulated slow path.
 
-Pitfalls that cost time building the benchmark:
+Benchmark pitfalls:
 
 - Keep kernel values in range. The first `convert` kernel overflowed
   past 2^31, so nearly every `cvttss2si` took the slow path (11.8M exits

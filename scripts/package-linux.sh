@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The Linux package (M6 step 6, doc 07's install layout): stage everything
-# a stranger needs into one relocatable tree, check that the staged
-# launcher really resolves its companions *inside* it, and roll a tarball.
+# Build the Linux package (install layout in doc 07). Stage everything a
+# user needs into one relocatable tree, check that the staged launcher
+# resolves its companions inside that tree, and roll a tarball.
 #
 #   scripts/package-linux.sh                 # build, stage, check, tar
 #   scripts/package-linux.sh --no-build      # use target/release as it is
@@ -10,39 +10,37 @@
 #   scripts/package-linux.sh --out DIR       # default build/package
 #   scripts/package-linux.sh --prefix DIR    # stage straight into DIR
 #
-# `--prefix` stages the layout directly into an existing prefix instead of
-# a versioned subdirectory, and rolls no tarball: it is how the Flatpak
-# (packaging/flatpak/) fills `/app`, since an install prefix and the
-# staged tree are the same shape. It never deletes the destination.
+# `--prefix` stages the layout straight into an existing prefix instead of
+# a versioned subdirectory, and rolls no tarball. The Flatpak
+# (packaging/flatpak/) fills `/app` this way, since an install prefix and
+# the staged tree have the same shape. It never deletes the destination.
 #
-# It does not build QEMU: build/qemu (libqemu-embed-i386.so + qemu-img)
-# and qemu/pc-bios must already be there, per CLAUDE.md's build order.
-# The guest-tools ISO is included when guest-tools/out has one.
+# It does not build QEMU. build/qemu (libqemu-embed-i386.so + qemu-img)
+# and qemu/pc-bios must already be there (scripts/build.sh). The
+# guest-tools ISO is included when guest-tools/out has one.
 #
-# The launcher is `launcher-qt` (ADR-015, 2026-09-07): Qt 6 / QML is the
-# front end the project ships, over `launcher-core`. Qt itself is
-# **not** in the tarball -- it is ~38 MB of shared libraries, QML modules
-# and plugins that every distribution already packages, and a tarball
-# that carried its own would still have to match the host's Wayland,
-# OpenGL and fontconfig stacks. So this package depends on the system's
-# `qt6-base` + `qt6-declarative` (+ `qt6-quickcontrols2`), which the check
-# below states plainly by listing what the staged launcher resolves. The
-# Flatpak is the build for a host that has none: it gets Qt from
-# `org.kde.Platform` (packaging/flatpak/).
+# The launcher is `launcher-qt`, the Qt 6 / QML front end over
+# `launcher-core` (ADR-015). Qt itself is not in the tarball. It is
+# ~38 MB of shared libraries, QML modules and plugins that every
+# distribution packages, and a bundled copy would still have to match the
+# host's Wayland, OpenGL and fontconfig stacks. So the package depends on
+# the system's `qt6-base` + `qt6-declarative` (+ `qt6-quickcontrols2`),
+# and the check below lists what the staged launcher resolves. For a host
+# with no Qt 6 there is the Flatpak, which gets Qt from `org.kde.Platform`.
 #
 # The layout, relative to the tree's root (= an install prefix):
 #   bin/2ksbox                        the launcher (Qt 6, ADR-015)
 #   bin/2ksbox-player                 the player
 #   lib/2ksbox/libqemu-embed-i386.so
 #   lib/2ksbox/libglide2x.so          the Glide wrapper, when one is built
-#   lib/2ksbox/libd3dpt_exec.so       the Direct3D executor, and the DXVK
-#   lib/2ksbox/libdxvk_d3d9.so.0        it runs on — both or neither
-#   lib/2ksbox/libd3dpt_exec_remote.so  the same executor in another process, on
-#   lib/2ksbox/wine/d3dpt_exec.dll        Wine (ADR-018): the library QEMU opens
-#   lib/2ksbox/wine/d3dpt-exec-host.exe   below the Vulkan floor and the pair it
-#                                         runs there — all three or none; no Wine
-#                                         travels with the package
-#   libexec/2ksbox/qemu-img           ours, patched — kept off PATH
+#   lib/2ksbox/libd3dpt_exec.so       the Direct3D executor and the DXVK
+#   lib/2ksbox/libdxvk_d3d9.so.0        it runs on (both or neither)
+#   lib/2ksbox/libd3dpt_exec_remote.so  the executor in another process, on
+#   lib/2ksbox/wine/d3dpt_exec.dll        Wine (ADR-018). QEMU opens the .so
+#   lib/2ksbox/wine/d3dpt-exec-host.exe   below the Vulkan floor, and it runs
+#                                         the .dll/.exe pair there. All three
+#                                         or none; the package ships no Wine
+#   libexec/2ksbox/qemu-img           ours, patched, kept off PATH
 #   share/2ksbox/pc-bios/             QEMU firmware (the player's -L)
 #   share/2ksbox/guest-tools/         the guest-tools ISO
 #   share/2ksbox/shaders/             presets, with --with-shaders
@@ -52,10 +50,10 @@
 #   install.sh                        copy the above into a prefix
 #
 # `2ksbox` is the product (2ksbox.com); `com._2ksbox.Launcher` is the
-# application ID the desktop entry, the icon and the Wayland app_id carry
-# (a name segment may not start with a digit, and flatpak rejects
+# application ID the desktop entry, the icon and the Wayland app_id carry.
+# A name segment may not start with a digit and flatpak rejects
 # `com.2ksbox...`, so the leading digit is escaped, as `7-zip.org` gets
-# `org._7zip...`). Everything else carries the product name: the
+# `org._7zip...`. Everything else carries the product name, including the
 # repository, the docs and the user's data directory (moved once by
 # `launcher-core/src/paths.rs::data_dir`).
 set -euo pipefail
@@ -70,7 +68,7 @@ while [ $# -gt 0 ]; do
     --with-shaders) SHADERS=1; shift ;;
     --out) OUT=$2; shift 2 ;;
     --prefix) PREFIX=$2; TAR=0; shift 2 ;;
-    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
     *) echo "package-linux.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build everything, in dependency order, so nobody has to remember the
-# order or the per-platform flags:
+# Build everything this host can build, in dependency order, with the
+# per-platform flags:
 #
 #   scripts/build.sh                 everything this host can build
 #   scripts/build.sh qemu rust       only those stages
@@ -13,23 +13,22 @@
 #           libqemu-embed-i386.{so,dylib}
 #   rust    cargo build --release: player, libdisc/discx, launcher-core
 #           (with its `launcherx` verb binary), qemu-embed, shader-chain.
-#           After `qemu`, because the player links libqemu-embed out of
-#           build/qemu. Then `cargo check --release --workspace` for the
-#           one non-default member, `launcher-capi`: maintained, built
-#           by nobody (Cargo.toml).
+#           Runs after `qemu`, because the player links libqemu-embed from
+#           build/qemu. Then `cargo check --release --workspace` keeps the
+#           one non-default member, `launcher-capi`, compiling.
 #   qt      cargo build --release in launcher-qt/ (its own workspace):
-#           the Qt 6 / QML launcher, which is the one every package ships
-#           (ADR-015). Needs Qt 6 development files; SKIPped without them,
-#           and then this host can build no package.
+#           the Qt 6 / QML launcher that every package ships (ADR-015).
+#           Needs Qt 6 development files. Without them the stage is
+#           skipped and this host can build no package.
 #   dxvk    prepare-dxvk.sh -> configure-dxvk.sh -> ninja
-#   exec    build-d3dpt-exec.sh: libd3dpt_exec, the D3D executor. After
-#           `dxvk`, whose headers it compiles against.
+#   exec    build-d3dpt-exec.sh: libd3dpt_exec, the D3D executor. Runs
+#           after `dxvk`, whose headers it compiles against.
 #   glide   prepare-openglide.sh -> build-glide.sh: libglide2x, the
 #           host-side Glide wrapper hw/3dfx dlopens (doc 12 §5).
-#   guest   guest-tools/build-wrappers.sh: the guest-tools ISO (which
-#           calls build-driver.sh for the XP display driver too)
+#   guest   guest-tools/build-wrappers.sh: the guest-tools ISO (it also
+#           calls build-driver.sh for the XP display driver)
 #
-# A stage whose tools are missing is SKIPped with the reason, or fails if
+# A stage whose tools are missing is skipped with the reason, or fails if
 # it was named on the command line. The summary at the end lists what
 # this host built and what it could not.
 #
@@ -42,9 +41,8 @@
 # wine9x).
 #
 # `launcher-qt/` stays its own cargo workspace (ADR-015), so a plain
-# `cargo build` at the root never needs Qt 6. That lets the `rust` stage,
-# the test suite and a Mac or CI checkout work on a host with no Qt. Only
-# the `qt` stage needs it.
+# `cargo build` at the root never needs Qt 6. The `rust` stage, the test
+# suite and a Mac or CI checkout then work on a host with no Qt.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -58,13 +56,13 @@ FORCE=""
 STAGES=()
 
 usage() {
-  sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
   cat <<EOF
 
 Options:
   -j N            parallel jobs for ninja and cargo (default: auto)
   -f, --force     re-run every prepare and configure step, ignoring the
-                  stamps -- the escape hatch when a tree was edited by hand
+                  stamps (use it after editing a tree by hand)
   -t, --test      run scripts/test.sh host when the build succeeds
   -h, --help      this text
 EOF

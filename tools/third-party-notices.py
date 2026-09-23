@@ -34,7 +34,7 @@ for binary in sys.argv[2:]:
             continue
         lic[p.get("license") or "(see the crate's own licence file)"].add(p["name"])
     total = sum(len(v) for v in lic.values())
-    print("\n### `%s` — %d third-party crates\n" % (binary, total))
+    print("\n### `%s`: %d third-party crates\n" % (binary, total))
     for k in sorted(lic, key=lambda k: (-len(lic[k]), k)):
         names = ", ".join("`%s`" % n for n in sorted(lic[k]))
         print("**%s** (%d): %s\n" % (k, len(lic[k]), names))

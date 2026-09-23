@@ -2,9 +2,8 @@
 
 Run Windows 98, Windows XP and DOS the way the machines of the era did.
 Period 3D games run accelerated on your GPU, the picture goes through a
-CRT shader instead of being a blurry stretched rectangle, and the CD-ROM
-drive is faithful enough to run raw dumps of the discs you own, copy
-protection included.
+CRT shader instead of a blurry stretched rectangle, and the CD-ROM drive
+runs raw dumps of the discs you own, copy protection included.
 
 Built on a patched QEMU. Runs on Linux, Windows and macOS (Apple Silicon).
 Free software, GPL-2.0.
@@ -13,8 +12,8 @@ Free software, GPL-2.0.
 
 - **A machine library, not a command line.** The launcher creates a
   Windows 98, Windows XP, DOS or "Other" (BeOS, a period Linux, OS/2)
-  machine from a short wizard, with sane defaults for each family. Each
-  machine opens in its own player window.
+  machine from a short wizard with defaults for each family. Each machine
+  opens in its own player window.
 - **Real 3D in the guest.** DirectX 1 up to 9 through our own
   paravirtual display adapter and driver, Glide and OpenGL passed through
   to the host, and an emulated 3dfx Voodoo 2 running 3dfx's own driver
@@ -22,23 +21,20 @@ Free software, GPL-2.0.
   Vice City, Max Payne and Need for Speed: Porsche Unleashed all run.
 - **A CRT on your monitor.** The guest's own framebuffer, at its native
   resolution and aspect (320×200 included), through a libretro slang
-  shader chain. You manage shader profiles in the launcher with a live
-  preview.
+  shader chain, with shader profiles and a live preview in the launcher.
 - **Your discs.** cue/bin, CloneCD, Alcohol, ISO, and any folder on your
-  disk served as a CD. Every machine shares one disc shelf, and you can
-  swap discs while a machine runs, from the launcher or from inside the
-  guest. CD audio plays.
+  disk served as a CD. Every machine shares one disc shelf; swap discs
+  while a machine runs, from the launcher or from inside the guest. CD
+  audio plays.
 - **Music.** A Sound Blaster 16 with a real OPL3, and an MPU-401 with
   General MIDI (a bank is included) or a Roland MT-32 (bring your own
   ROMs).
 - **Gamepads.** Your PlayStation, Xbox or Switch controller reaches the
   guest as a generic USB controller or a DOS gameport joystick.
-- **Snapshots and clones.** Named snapshots of a machine ("fresh
-  install", "drivers in", "before game X") and one-click copies of a
-  whole machine.
+- **Snapshots and clones.** Named snapshots ("fresh install", "before
+  game X") and one-click copies of a whole machine.
 - **DOS at period speed.** A DOS machine's processor is throttled to a
-  chosen rate, so speed-sensitive games run as they were meant to (not
-  yet widely tested).
+  chosen rate for speed-sensitive games (not yet widely tested).
 
 Not the goal: cycle-accurate emulation of specific chipsets (that is
 86Box and PCem), modern guests, or piracy. Use only your own install
@@ -49,7 +45,7 @@ media, licences and disc dumps.
 | Host | Requirements |
 |---|---|
 | Linux | An x86-64 machine. KVM for near-native XP (optional; Windows 98 is emulated on purpose). A GPU with Vulkan 1.3 for the fast Direct3D path. Without it, Direct3D runs through Wine on the host if Wine is installed, and otherwise through WineD3D inside the guest. |
-| macOS | Apple Silicon, macOS 15 or newer. Guests are emulated (these Macs have no x86 virtualization) and still run faster than a period PC. The fast Direct3D path needs macOS 26. On older releases Direct3D runs through Wine if it is installed, and otherwise through WineD3D inside the guest. |
+| macOS | Apple Silicon, macOS 15 or newer. Guests are emulated (no x86 virtualization on these Macs) and still run faster than a period PC. The fast Direct3D path needs macOS 26; on older releases Direct3D runs through Wine if it is installed, and otherwise through WineD3D inside the guest. |
 | Windows | 64-bit Windows 10 or 11. WHPX (the Windows Hypervisor Platform) accelerates XP when it is enabled. Without Vulkan 1.3, Direct3D runs on Windows' own Direct3D 9. |
 
 You also need install media for the guest operating system (your own
@@ -58,17 +54,16 @@ your own discs.
 
 ## Getting 2ksbox
 
-There are no downloadable packages yet, so today you build 2ksbox from
-source. The build is one command once the tools are installed, and it
-produces the same launcher, player and guest-tools disc as a packaged
-release.
+There are no downloadable packages yet, so build 2ksbox from source.
+Once the tools are installed the build is one command, and it produces
+the same launcher, player and guest-tools disc as a packaged release.
 
 ## Building from source
 
 ### 1. Install the tools
 
-**Linux.** The project is developed on Arch. The Debian/Ubuntu column
-was checked on Debian 12 and 13 and on Ubuntu 24.04 and 26.04.
+**Linux.** Developed on Arch; the Debian/Ubuntu column was checked on
+Debian 12 and 13 and Ubuntu 24.04 and 26.04.
 
 | Purpose | Arch | Debian / Ubuntu |
 |---|---|---|
@@ -87,9 +82,9 @@ disc is built minus those two, and a Windows 98 machine then has no
 display driver.
 
 Then install Rust and uv from their own installers. uv provides the
-Python version QEMU's build wants. Any system Python 3.8 to 3.13 works
-too if you set `QEMU_PYTHON` to it. Ubuntu 26.04's system Python is
-3.14, which QEMU's build refuses, so there uv is required.
+Python QEMU's build wants; a system Python 3.8 to 3.13 works too with
+`QEMU_PYTHON` set to it. Ubuntu 26.04's system Python is 3.14, which
+QEMU's build refuses, so there uv is required.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -112,7 +107,7 @@ for the Direct3D executor on macOS 26 (the recipe is in
 [docs/build-macos.md](docs/build-macos.md)).
 
 **Windows.** The Windows build is made *on a Linux machine* with podman
-or docker installed, and copied over as a zip. See step 5.
+or docker and copied over as a zip (step 5).
 
 ### 2. Get the source
 
@@ -130,14 +125,13 @@ If you cloned without submodules, run
 scripts/build.sh
 ```
 
-That builds everything this machine has the tools for, in order: QEMU,
-the Rust programs, the launcher, the Direct3D executor, the Glide wrapper
-and the guest-tools disc. The first build takes about fifteen minutes and
-several gigabytes. Later ones redo only what changed. The summary at the
-end lists every stage as built or skipped and, for a skipped one, which
-tool was missing. A skipped optional stage means a missing feature (no
-Direct3D executor, no guest tools disc), not a broken build. Install the
-tool and run the command again.
+That builds everything this machine has the tools for: QEMU, the Rust
+programs, the launcher, the Direct3D executor, the Glide wrapper and the
+guest-tools disc. The first build takes about fifteen minutes and several
+gigabytes; later ones redo only what changed. The closing summary lists
+every stage as built or skipped, with the missing tool for a skipped
+one. A skipped optional stage means a missing feature, not a broken
+build: install the tool and run the command again.
 
 Check two lines in the summary:
 
@@ -153,16 +147,16 @@ After every `git pull`, run `scripts/build.sh` again.
 launcher-qt/target/release/launcher-qt
 ```
 
-Nothing has to be installed. The launcher finds the player, QEMU, the
-firmware and the guest-tools disc in the checkout it was built from.
-Machines, discs and profiles go under your user data directory
+Nothing has to be installed: the launcher finds the player, QEMU, the
+firmware and the guest-tools disc in its checkout. Machines, discs and
+profiles go under your user data directory
 (`~/.local/share/2ksbox` on Linux, `~/Library/Application Support/2ksbox`
 on macOS).
 
 ### 5. Windows
 
-The Windows build is a cross build on a Linux machine with podman (or
-docker), in a container the first command makes:
+The Windows build is a cross build on Linux, in a podman (or docker)
+container the first command makes:
 
 ```sh
 scripts/win-cross.sh --build      # once: the cross container (~5 min, ~3 GB)
@@ -178,24 +172,21 @@ details, and a native build in MSYS2 for debugging, are in
 ## First run
 
 1. **Shader presets.** The first time the launcher starts with no
-   shader collection, it offers to download libretro's. Say yes. The
-   CRT look is the point, and the starter profiles are made from it. A
-   source checkout already has the collection, so it will not ask.
+   shader collection, it offers to download libretro's. Say yes: the
+   starter profiles are made from it. A source checkout already has it.
 2. **Create a machine.** *New machine* walks through family (Windows 98,
    Windows XP, DOS, Other), name, memory, processor, acceleration,
-   networking, pointer, disk size and install media. The defaults are
-   what the family wants, and you can change everything later from the
-   machine's settings.
+   networking, pointer, disk size and install media. The defaults suit
+   the family; change anything later in the machine's settings.
 3. **Install the operating system.** Point the install media at your
-   Windows CD image and start the machine. Windows installs as it would
-   on a PC of the time.
+   Windows CD image and start the machine.
 4. **Install the guest tools.** Open the disc shelf, press *Add
    guest-tools ISO*, and put it in the machine's CD drive. Inside the
    guest, run `SETUP.EXE` from that drive (`D:\SETUP.EXE /ALL` from the
-   Run box installs everything this Windows can use), then restart. This
-   installs the display driver, the Glide wrapper, the OpenGL
-   pass-through and the disc-shelf program. `SETUP /LIST` shows what is
-   on the disc, and the disc's `README.TXT` explains every folder.
+   Run box installs everything this Windows can use: the display driver,
+   the Glide wrapper, the OpenGL pass-through, the disc-shelf program),
+   then restart. `SETUP /LIST` shows what is on the disc; its
+   `README.TXT` explains every folder.
 5. **Take a snapshot.** *Snapshots…* on the machine. "Fresh install" is
    the one you will keep coming back to, especially on Windows 98.
 
@@ -206,11 +197,10 @@ details, and a native build in MSYS2 for debugging, are in
   installs, swap discs from the launcher or from inside the guest with
   `CDSHELF.EXE` (a DOS box has `CDSHELF.COM`), which the guest tools
   install.
-- **DirectX 1 up to 8 games** run through the display driver once it is
-  installed. There is nothing to copy per game. On Windows 98, install
-  DirectX 7 or later in the guest first (9.0c is the one to use). The
-  DirectX 6.1 that comes with 98 SE gets the desktop and DirectDraw but
-  no Direct3D.
+- **DirectX 1 up to 8 games** run through the display driver, nothing to
+  copy per game. On Windows 98, install DirectX 7 or later first (9.0c
+  is the one to use); 98 SE's own DirectX 6.1 gets DirectDraw but no
+  Direct3D.
 - **DirectX 9 games** want our `D3D9.DLL` next to the game's EXE:
   `SETUP /GAME 1 <game folder>`, or copy it from the disc's `D3DPT\`.
 - **When the host has no Direct3D for the guest** (no Vulkan 1.3 and no
@@ -219,22 +209,21 @@ details, and a native build in MSYS2 for debugging, are in
   from Explorer. The disc's `WINED3D\README.TXT` says which a game wants.
 - **Glide games** (3dfx) run two ways. The guest tools install a Glide
   that passes through to the host, the fast path for most titles (not
-  yet on Windows hosts). For the rest, a Glide 3 title or one that
-  carries its own Glide, turn on the Voodoo 2 in the machine's settings
-  and install 3dfx's own Voodoo 2 driver in the guest.
+  yet on Windows hosts). For a Glide 3 title or one that carries its own
+  Glide, turn on the Voodoo 2 in the machine's settings and install
+  3dfx's own Voodoo 2 driver in the guest.
 - **OpenGL games** (Quake II and friends) get `OPENGL32.DLL` next to the
   game's EXE: `SETUP /GAME 3 <game folder>`, or copy the disc's
   `OPENGL\` folder.
 - **Speed.** On an M1 Mac or a Ryzen 5700X the emulated machine is
-  roughly a 1.7 GHz Pentium 4 (circa 2001). The graphics were tested on
-  the M1 and on an RX 9060 XT with the Ryzen, and both ran era games at
-  comfortable frame rates. The launcher's *Emulation optimizations*
-  switches ship at the settings that measured best. They are there for
-  troubleshooting, not tuning.
+  roughly a 1.7 GHz Pentium 4 (circa 2001), and both the M1 and an
+  RX 9060 XT with the Ryzen ran era games at comfortable frame rates.
+  The *Emulation optimizations* switches ship at the settings that
+  measured best; they are for troubleshooting, not tuning.
 - **Too fast, too slow, or wrong colours** usually means the game wants
-  something the machine's settings offer: a slower processor on a DOS
-  machine, a different display adapter, a sound card the game knows. The
-  wizard explains each choice next to it.
+  another setting: a slower processor on a DOS machine, a different
+  display adapter, a sound card it knows. The wizard explains each
+  choice.
 
 ## Day to day
 
@@ -255,8 +244,8 @@ machine's settings for games that want a real PS/2 mouse.
 
 - **Shader profiles…** names a preset plus your parameter overrides, with
   a live preview against a screenshot. A machine picks a profile by name.
-- **Clone…** on a machine copies it whole, its disk and snapshots
-  included, under a new name.
+- **Clone…** copies a machine whole, disk and snapshots, under a new
+  name.
 - **Gamepads.** A machine's settings choose whether a pad appears in the
   guest as a USB controller (Windows 98 SE, Me and XP see it with no
   driver) or a DOS gamepad.
@@ -272,20 +261,18 @@ machine's settings for games that want a real PS/2 mouse.
   this host's 3D, and writes it to `launcher.log` beside the machine
   library. Attach that log to a bug report. On Windows,
   `2ksbox-debug.bat` in the package does both from a console window.
-- **The Direct3D note in the machine's settings.** It says what this
-  host gives the guest's Direct3D. Without Vulkan 1.3 it is Wine on the
-  host (slower, and the note names the Wine package to install if there
-  is none) or, failing that, WineD3D inside the guest (see Playing
-  games). None of these is an error. Keep the 2ksbox adapter anyway.
-  Only its Direct3D needs the host, and everything else it does still
-  works, which the Cirrus cannot match. "In software (slow)" means a
-  software Vulkan driver was found. A game may be faster the other way,
-  so try both.
-- **The guest shows a black desktop or stops after a display-adapter
-  change.** Windows wants a driver for the new adapter. If the guest
-  tools were installed before the change, Windows finds it on the next
-  boot. Otherwise switch back, run `SETUP /ALL` in the guest, and switch
-  again.
+- **The Direct3D note in the machine's settings** says what this host
+  gives the guest's Direct3D. Without Vulkan 1.3 it is Wine on the host
+  (slower; the note names the Wine package if none is installed) or,
+  failing that, WineD3D inside the guest (see Playing games). None of
+  these is an error. Keep the 2ksbox adapter anyway: only its Direct3D
+  needs the host, and everything else it does still beats the Cirrus.
+  "In software (slow)" means a software Vulkan driver was found; a game
+  may be faster the other way, so try both.
+- **A black desktop or a stop after a display-adapter change.** Windows
+  wants a driver for the new adapter. If the guest tools were installed
+  before the change, Windows finds it on the next boot; otherwise switch
+  back, run `SETUP /ALL` in the guest, and switch again.
 
 ## Documentation
 

@@ -1,18 +1,17 @@
 # 0. Status and how to resume (updated 2026-09-23)
 
-The handoff for a new session: which tracks exist and who owns what,
-where each area stands today, the everyday commands, the open threads,
-the next steps and the gotchas that cost a day each. It holds current
-state only. A fixed thing leaves it for its design doc and the commit
-log. Decisions are in doc 10, the milestone plan in doc 08, every test
-tool in `docs/testing.md`, and the build stages, player options and
-logs in `docs/development.md`.
+The handoff for a new session: the tracks and what each owns, where each
+area stands, the everyday commands, open threads, next steps and the
+gotchas that cost a day each. Current state only; a fixed thing moves to
+its design doc and the commit log. Decisions are in doc 10, the
+milestone plan in doc 08, test tools in `docs/testing.md`, build stages,
+player options and logs in `docs/development.md`.
 
 ## Tracks (pick one per session)
 
-Work runs as parallel tracks, one session each, so the handoffs stay
-separate. Each track doc has its scope, owned files, state, test loop
-and ordered next steps. This table is the index.
+Work runs as parallel tracks, one session each. Each track doc has its
+scope, owned files, state, test loop and ordered next steps. This table
+is the index.
 
 | Track | Doc | Owns | State · next |
 |---|---|---|---|
@@ -28,50 +27,49 @@ and ordered next steps. This table is the index.
 | **M12** music | `tracks/m12-music.md` | `libsynth/`, patches 60–61, `soundfonts/`, `bundle::Sound` / `Music`, `tools/midi-guest-test.py`, doc 20 | All stages landed · capture Win98's failing MIDI run, a host MIDI port |
 | **M13** gamepads | `tracks/m13-gamepads.md` | `player/src/pad.rs`, `gamepad/`, patches 26–27, `bundle::Pad`, `tools/pad-guest-test.py` | Done · a real controller on the key mapping, the USB pad on Win98 FE / Me |
 | **M14** Voodoo 2 device | `tracks/m14-voodoo2.md` | `voodoo/`, patch 62 and the Voodoo patches after it, `tools/voodoo-guest-test.py`, `scripts/sync-86box-voodoo.sh`, doc 21 | Active on `main` · a second Glide game after one has quit, a client left on a dead ring, the Air and Windows builds |
-| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Active, steps 1–4 done; the community app for macOS 15 is rebuilt with the realize-crash fix (DXVK patch 09) and the launcher probing the app's own Vulkan · FIFA 2000 into a match from that app on macOS 15, then retire WineD3D-in-guest (step 6) |
+| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Active, steps 1–4 done; the macOS 15 community app rebuilt with the realize-crash fix and the launcher probing its own Vulkan · FIFA 2000 into a match from that app, then retire WineD3D-in-guest (step 6) |
 | Everything else (Glide on macOS / Windows, M2's leftovers) | "Next steps" below | | as listed |
 
-Rules: work on `main` or a branch `track/<name>-<topic>` off it, rebased
-on `main` before pushing and merged when green. Shared files
+Rules: work on `main` or on a branch `track/<name>-<topic>` off it,
+rebased on `main` before pushing and merged when green. Edit shared files
 (`d3dpt/d3dpt_proto.h`, `d3dpt/exec/`, `scripts/test.sh`, `player/`,
-`CLAUDE.md`, this doc) are edited minimally, and the commit message
-names the track. In this doc a track edits its own row here, its own
-"Where things stand" row and its own lines under "Next steps".
-Everything else about it lives in its track doc. A merged track's
-branch and worktree are deleted. Branches still on the remote:
-`track/m10-win98-driver` and `voodoo2-mmio-holes` (merged),
-`track/m9-hwmmu` (the hardware-MMU gauge, parked), `m14-glide3`
-(abandoned, tagged `m14-glide3-abandoned`) and `track/m14-voodoo2-sli`
-(an SLI pair and the Voodoo 3's screen filter, unmerged). The Mac pulls
-`main`.
+`CLAUDE.md`, this doc) minimally and name the track in the commit
+message. In this doc a track edits only its own row here, its "Where
+things stand" row and its lines under "Next steps"; everything else goes
+in its track doc. A merged track's branch and worktree are deleted.
+Branches still on the remote: `track/m10-win98-driver` and
+`voodoo2-mmio-holes` (merged), `track/m9-hwmmu` (the hardware-MMU gauge,
+parked), `m14-glide3` (abandoned, tagged `m14-glide3-abandoned`) and
+`track/m14-voodoo2-sli` (an SLI pair and the Voodoo 3's screen filter,
+unmerged). The Mac pulls `main`.
 
 ## Where things stand
 
 | Area | State |
 |---|---|
-| QEMU | v9.2.4 + qemu-3dfx (`d00e858`) + our queue, patches 01–73 (`patches/qemu/README.md`). Built with only what we use: no display, host-audio, extra network or network-block backends (the `no-optionals` check). The Windows QEMU is built with clang (patch 68). The Mac build needs no XQuartz (patch 70). |
-| Emulated CPU (TCG) | x87 shadows at PC=24/53/64 (doc 13), SSE and SIMD inline (doc 16), the M9 queue (REP, same-value SMC, soft immediates, inline TB lookup, TLB work). Doc 22: the default is 2.34x geomean over pristine 9.2.4 on the Air, all switches off 0.97x. Every patch has an off switch in the machine form. `pinned-regs` (patch 21, doc 18) is not offered because it still crashes XP. The hardware-MMU design gauges at 1.1–1.2x and is parked (user decision, 2026-09-16). |
-| Player | QEMU in-process (`libqemu-embed`, embed API v8), wgpu + librashader CRT chain, mode analysis (doc 03), the embed audiodev (f32, paced to the guest's clock, limiter; doc 11), guest hardware cursor as the window cursor, gamepads, host modifier keys as the host reads them, Alt+F4 asks. Options: `docs/development.md`. |
-| OpenGL / Glide pass-through | In the player on Linux (EGL), macOS (CGL) and Windows (WGL, doc 12 "The WGL rule"). Zero-copy: dma-buf ring on Linux (it repairs a slot that stops being written through), IOSurface on macOS. Glide 2 through our OpenGLide build (doc 12 §5). The only evidence on games is headless (Rayman 2, Carmageddon DOS). No Windows Glide wrapper. The Glide 3 wrapper was abandoned for the Voodoo 2 device. |
-| Voodoo 2 (doc 21) | `-device voodoo2`, 86Box's chip. 3dfx's own Win98 driver runs Quake II, UT and NFS Porsche on it (the user, by hand). FIFA 2000's and Carmageddon's FIFO hangs are fixed (doc 21 §11, §13). 8 MB board by default (`texmem=2`), command FIFO in guest RAM (`ramfifo=on`, Quake II 41 → 147.5 fps). Open: a second game after one quits sometimes starts glitched. |
-| Direct3D executor (doc 14) | Protocol v13, one decoder, four D3D9s. DXVK natively and on Windows is the default and what goldens are taken with. Below the Vulkan 1.3 floor it runs on Windows' own `d3d9.dll` (`D3DPT_D3D9`, ADR-007's second amendment) or on Wine's on a Linux / macOS host (`exec=wine`, ADR-018, M15). `no-exec=on` models a host with no executor at all. |
+| QEMU | v9.2.4 + qemu-3dfx (`d00e858`) + our patches 01–73 (`patches/qemu/README.md`). Built without display, host-audio, extra network or network-block backends (the `no-optionals` check). Windows QEMU is built with clang (patch 68); the Mac build needs no XQuartz (patch 70). |
+| Emulated CPU (TCG) | x87 shadows at PC=24/53/64 (doc 13), SSE and SIMD inline (doc 16), the M9 queue (REP, same-value SMC, soft immediates, inline TB lookup, TLB work). Default is 2.34x geomean over pristine 9.2.4 on the Air, all switches off 0.97x (doc 22). Every patch has an off switch in the machine form except `pinned-regs` (patch 21, doc 18), not offered: it crashes XP. The hardware-MMU design (1.1–1.2x) is parked (user decision, 2026-09-16). |
+| Player | QEMU in-process (`libqemu-embed`, embed API v8), wgpu + librashader CRT chain, mode analysis (doc 03), the embed audiodev (f32, paced to the guest's clock, limiter; doc 11), guest cursor as the window cursor, gamepads, host modifier keys, Alt+F4 asks. Options: `docs/development.md`. |
+| OpenGL / Glide pass-through | In the player on Linux (EGL), macOS (CGL) and Windows (WGL, doc 12 "The WGL rule"). Zero-copy: dma-buf ring on Linux (repairs a slot that stops being written through), IOSurface on macOS. Glide 2 through our OpenGLide build (doc 12 §5); game evidence is headless only (Rayman 2, Carmageddon DOS). No Windows Glide wrapper. Glide 3 wrapper abandoned for the Voodoo 2 device. |
+| Voodoo 2 (doc 21) | `-device voodoo2`, 86Box's chip. 3dfx's own Win98 driver runs Quake II, UT and NFS Porsche (the user, by hand). FIFA 2000's and Carmageddon's FIFO hangs fixed (doc 21 §11, §13). 8 MB board by default (`texmem=2`), command FIFO in guest RAM (`ramfifo=on`, Quake II 41 → 147.5 fps). Open: a second game after one quits sometimes starts glitched. |
+| Direct3D executor (doc 14) | Protocol v13, one decoder, four D3D9s. DXVK (native and on Windows) is the default and the golden reference. Below the Vulkan 1.3 floor: Windows' own `d3d9.dll` (`D3DPT_D3D9`, ADR-007's second amendment) or Wine's on a Linux / macOS host (`exec=wine`, ADR-018, M15). `no-exec=on` models a host with no executor. |
 | XP display driver (doc 15) | `d3dpt-vga`, register set v5. DirectDraw and a DirectX 8 DDI with hardware T&L, shaders 1.x, palettes, colour keys, VRAM buffers, 16 streams, cube / volume textures, MSAA, gamma. FIFA 2000, Max Payne, Vice City, Moto Racer and Diablo play. |
-| Win98 display driver (doc 19) | The same core under a 9x layer, and the default adapter for a new Win98 machine. The DirectX 3–8 checks pass as on XP, and a 2ksbox Win98 runs DirectX 9.0c. Crimson Skies, 3DMark 99 / 2001 SE, Carmageddon (Mode X), Blood in a DOS box. Blue screens and power-down show. |
+| Win98 display driver (doc 19) | The same core under a 9x layer; the default adapter for a new Win98 machine. The DirectX 3–8 checks pass as on XP, and a 2ksbox Win98 runs DirectX 9.0c. Crimson Skies, 3DMark 99 / 2001 SE, Carmageddon (Mode X), Blood in a DOS box. Blue screens and power-down show. |
 | WineD3D in the guest | Still shipped as the fallback (`WINED3D\` on the ISO, `SETUP /GAME 4`/`5`, `/I 7`). Retired in M15's last step and not before (ADR-018). |
-| CD-ROM (docs 05, 17) | `libdisc` behind the `cdimage` driver: cue/bin, CCD, MDS, ISO and `isodir:` folders, L-EC, subchannel, CD-DA, a DVD profile past 80 minutes, the disc shelf from inside the guest (patch 52, `CDSHELF`). SafeDisc 1.x's band read is the negative control. SafeDisc 2.x and ProtectCD never read theirs. |
+| CD-ROM (docs 05, 17) | `libdisc` behind the `cdimage` driver: cue/bin, CCD, MDS, ISO and `isodir:` folders, L-EC, subchannel, CD-DA, a DVD profile past 80 minutes, the disc shelf from inside the guest (patch 52, `CDSHELF`). SafeDisc 1.x's band read is the negative control; SafeDisc 2.x and ProtectCD never read theirs. |
 | Music (doc 20) | OPL3 and MPU-401 (no IRQ line) on SoundFont GM or the user's MT-32 ROMs. The SB16 applies its mixer (patch 61). Open: Win98's own MIDI through our port loses instruments. |
 | Gamepads (M13) | USB HID pad (patch 26), gameport (patch 27), key mapping. Done. |
-| Guest machines (doc 06) | Four families: Win98, XP, DOS, Other. Win98 / XP start on `d3dpt-vga`, DOS / Other on `std`. No network card by default. Win98 is TCG with `hpet=off`, and the BIOS date stamp makes Win98 install ACPI. DOS paces with `-icount …,align=on`. |
-| Guest tools (`guest-tools/README.md`) | One ISO. `SETUP.EXE` installs what this Windows can use, and every program logs to `C:\2KSBOX` (`BOXLOG=` overrides). |
-| Launcher (doc 07) | `launcher-qt` over `launcher-core` (also `launcherx`, `launcher-capi`). The machine form is a settings window with a page per section. Every picker in it is the model's rows through the style's own combo box. The Direct3D picker shows only what this host runs. Extra QEMU arguments, clone, first-run preset download. Window text is short and plain (user rule). |
-| Packages | Linux tarball, Flatpak (`org.kde.Platform` 6.10), macOS app in two builds (ADR-019: App Store 26+, community with the Wine pair at Homebrew's floor, 15.0), Windows zip (cross build; the native MSYS2 build is for debugging). Every package opens a real window offscreen. |
+| Guest machines (doc 06) | Four families: Win98, XP, DOS, Other. Win98 / XP start on `d3dpt-vga`, DOS / Other on `std`. No network card by default. Win98 is TCG with `hpet=off`; the BIOS date stamp makes it install ACPI. DOS paces with `-icount …,align=on`. |
+| Guest tools (`guest-tools/README.md`) | One ISO. `SETUP.EXE` installs what this Windows can use; every program logs to `C:\2KSBOX` (`BOXLOG=` overrides). |
+| Launcher (doc 07) | `launcher-qt` over `launcher-core` (also `launcherx`, `launcher-capi`). The machine form is a settings window, a page per section, every picker the style's own combo box over the model's rows; the Direct3D picker shows only what this host runs. Extra QEMU arguments, clone, first-run preset download. Window text is short and plain (user rule). |
+| Packages | Linux tarball, Flatpak (`org.kde.Platform` 6.10), macOS app in two builds (ADR-019: App Store 26+, community with the Wine pair at Homebrew's floor, 15.0), Windows zip (cross build; native MSYS2 build for debugging). Every packager opens a real window offscreen. |
 | Tests | `scripts/test.sh host` (~30 s) / `all` (+ XP and DOS guests). Integration only, local only; `docs/testing.md`. |
-| Guest images | Outside the repo and read-only for a session: `~/vms/win98.qcow2`, `winxp.qcow2`, `winxp-m7*.qcow2`, `scratch.img` (E: in XP), and the launcher library's machines (`~/.local/share/2ksbox/machines/`: `base98-br`, `base98-us`, `claude98`, `win98-2`, …). Boot an overlay or a copy. |
+| Guest images | Outside the repo, read-only for a session: `~/vms/win98.qcow2`, `winxp.qcow2`, `winxp-m7*.qcow2`, `scratch.img` (E: in XP), and the launcher library's machines (`~/.local/share/2ksbox/machines/`: `base98-br`, `base98-us`, `claude98`, `win98-2`, …). Boot an overlay or a copy. |
 
 ## Build / run cheat sheet
 
-The stages, the player's options and the packagers are in
-`docs/development.md`, the test tools in `docs/testing.md`.
+Stages, player options and packagers: `docs/development.md`. Test tools:
+`docs/testing.md`.
 
 ```sh
 scripts/build.sh           # after every pull: everything, only what changed
@@ -104,81 +102,62 @@ CDIMAGE_TRACE=1 build/qemu/qemu-system-i386 … -cdrom game.cue   # every ATAPI 
 #   -device ide-cd,bus=ide.1,id=ide1-cd0,drive=cd0,audiodev=embed0
 ```
 
-A bare `qemu-system-i386` needs `-L qemu/pc-bios` by hand (the other
-traps of running it bare are under "Driving a guest headless"). The DOS
-batteries fetch the FreeDOS floppy themselves. On a Mac they need
-`brew install nasm mtools`.
+A bare `qemu-system-i386` needs `-L qemu/pc-bios` by hand (its other
+traps are under "Driving a guest headless"). The DOS batteries fetch the
+FreeDOS floppy themselves; on a Mac they need `brew install nasm
+mtools`.
 
 ## Open threads
 
-What is known to be unfinished or unexplained across tracks. A track's
-own open items live in its track doc, and fixed things leave this list.
+Unfinished or unexplained things across tracks. A track's own open items
+live in its track doc; fixed things leave this list.
 
 - **GL and Glide on a Windows host.** The OpenGL pass-through runs there
-  (`GLPROBE.EXE` in `base98-br` reads the host's own renderer since the
-  WGL fix, doc 12 "The WGL rule"), but no game has run on it yet.
-  GLQuake is the user's next try. The Glide wrapper has no Windows build
-  at all (doc 12 "Order"; `glide` is "(not shipped)" in the package).
+  (`GLPROBE.EXE` in `base98-br` reads the host's renderer since the WGL
+  fix, doc 12 "The WGL rule"), but no game has run on it. GLQuake is the
+  user's next try. The Glide wrapper has no Windows build (doc 12
+  "Order"; the package lists `glide` as "(not shipped)").
 
 - **Windows' own Direct3D 9 is unproved on the hosts it is for.** Both
-  oracles pass on both backends and match byte for byte, but only on an
-  RTX 3090 that will never take this path (ADR-007's second amendment,
-  M11). The next gaps will be in pre-Broadwell Intel, Kepler and
-  TeraScale drivers. `D3DPT_D3D9=system` on any Windows host looks for
-  them, and the next step is a real title on a real such host.
+  oracles match byte for byte on both backends, but only on an RTX 3090
+  (ADR-007's second amendment). Expect gaps in pre-Broadwell Intel,
+  Kepler and TeraScale drivers; next is a real title on such a host with
+  `D3DPT_D3D9=system`.
 
-- **Win98's ACPI standby does not come back** (doc 19 §41). The idle
-  timer's step after the monitor blank suspends the whole VM. The vCPU
-  stops and input piles up in the embed queue (512 events, 151 dropped,
-  20 s late on the user's run). On the wake the screen is a blank
-  720x400 VGA text page because nothing reprograms the adapter after the
-  resume, so the machine idles straight back into standby. The player
-  logs nothing, since `player/src/qmp.rs::is_notable` lists neither
-  `SUSPEND` nor `WAKEUP`.
+- **Win98's ACPI standby does not come back** (doc 19 §41). Standby
+  suspends the VM, input piles up in the embed queue (512 events, 151
+  dropped, 20 s late on the user's run), and on wake nothing reprograms
+  the adapter, so a blank text page idles back into standby.
 
 - **The zero-copy ring's frozen slot has no known cause.** `zc_probe()`
-  finds and remakes a slot that stops being written through (GLQuake is
-  clean with one repair), but why it happens is open. Doc 12 §4 lists
-  everything measured not to be it. What is left is mesapt's own
-  host-side path (texture uploads, the vertex-array cache, mapped
-  buffers).
+  repairs it; doc 12 §4 has what was ruled out and the suspects left.
 
 - **3DMark 99 on the Windows PC: two threads** (M14/M11, `base98-br`,
-  `scripts/win-voodoo-ab.sh`, log `build/win-voodoo-ab.log`. The FIFO
+  `scripts/win-voodoo-ab.sh`, log `build/win-voodoo-ab.log`; the FIFO
   hangs are fixed, doc 21 §9).
-  - *A garbled loading screen*, seen once and not reproduced (usually the
-    Fill Rate one). It is the 800x600 desktop on `d3dpt-vga`, not a
-    Voodoo frame, in stale bands. `vga:full-frames=on` does not change
-    it, and no flips or executor batches run meanwhile, so the guest
-    wrote those bytes itself. Next: which blit draws that background and
-    where it reads from.
+  - *A garbled loading screen*, seen once, usually the Fill Rate one. It
+    is the 800x600 desktop on `d3dpt-vga` in stale bands, not a Voodoo
+    frame. `vga:full-frames=on` does not change it, and no flips or
+    executor batches run meanwhile, so the guest wrote those bytes. Next:
+    which blit draws that background and where it reads from.
   - *The whole machine 3x slower after some guest restarts*, with no
-    Voodoo at all (`no-voodoo`): 46.3, 46.7, 62.4, **15.0**, 37.8 fps
-    across restarts in one player run, everything slower by the same
-    factor. Not a context leak, the ring falling back to MMIO, or audio
-    or input stalls. `d3dpt-vga` now reports `N batches in 5.0 s, M ms
-    of them in the executor`, and the script passes `-msg
-    timestamp=on`. A flat host share with the rate halved points at the
-    guest or the vCPU. Also worth checking inside Windows (Performance
-    tab: a file system not "32-bit" after hard resets) and the host's
-    own CPU use.
-
-- **Moto Racer's speed on the PC** (M11). It is slow in the menus and
-  the software race with the CPU at 5 % (one of 24 threads, so
-  CPU-bound). Not reproduced on Linux, 15.6 ms waits included. The
-  clang-built QEMU (patch 68) answers the measured gap but has not run
-  on the PC yet. The user's log also shows 640x480 at **8 bits** with no
-  page flips, which no run here has covered.
+    Voodoo (`no-voodoo`): 46.3, 46.7, 62.4, **15.0**, 37.8 fps across
+    restarts in one player run, everything slower by the same factor. Not
+    a context leak, the ring falling back to MMIO, or audio or input
+    stalls. `d3dpt-vga` reports `N batches in 5.0 s, M ms of them in the
+    executor`, and the script passes `-msg timestamp=on`. A flat host
+    share with the rate halved points at the guest or the vCPU. Also
+    check inside Windows (Performance tab: a file system not "32-bit"
+    after hard resets) and the host's CPU use.
 
 - **`GetSwapChain` is a stub** in the guest D3D9 DLL (doc 14, "A review of
   the guest DLLs").
 
-- **The NT side of the 3DMark2001 fixes is not re-run** (doc 19 §38).
-  Q8W8V8U8 as FOURCC 63 changed both families, but `xp-driver-test.sh
-  install` installed no driver at all on a `winxp-m7` overlay (HEAD's
-  driver and the one before alike), so BUMPTEST on XP is unmeasured.
-  That failure matches the DRVINST Logo-dialog watcher fixed since (it
-  now lives as long as the install call). Re-run with a current DRVINST.
+- **The NT side of the 3DMark2001 fixes is not re-run** (doc 19 §38):
+  `xp-driver-test.sh install` installed no driver on a `winxp-m7`
+  overlay (HEAD's and the previous driver alike), so BUMPTEST on XP is
+  unmeasured. It matches the DRVINST Logo-dialog watcher bug fixed since;
+  re-run with a current DRVINST.
 
 - **A fault inside a DDI callback leaks the command-window lock** and
   freezes the session until the process dies (doc 19 §36). Accepted for
@@ -190,101 +169,66 @@ own open items live in its track doc, and fixed things leave this list.
   tools/setup-guest-test.sh` on `~/vms/win98.qcow2`). All seven copies
   are staged and logged, but the INI read right after holds the four
   `INF\` renames and zero or one of the three `SYSTEM\` ones. Unknown
-  whether the 9x profile cache had not flushed yet (the restart would
-  still apply them; `REBOOT=1` says) or the renames are lost. That
-  image's `SYSTEM\GLIDE*.DLL` and `FXMEMMAP.VXD` are read-only
-  leftovers, so its three Voodoo marker checks fail regardless.
+  whether the 9x profile cache had not flushed yet (`REBOOT=1` shows if
+  the restart still applies them) or the renames are lost. That image's
+  `SYSTEM\GLIDE*.DLL` and `FXMEMMAP.VXD` are read-only leftovers, so its
+  three Voodoo marker checks fail regardless.
 
-- **Proved by probes, not yet by a title:** the display-driver core's
-  cut of long non-indexed draws (doc 19 §32; no probe draws 90,000
-  vertices), and the SB16 wave-name fix with a DirectSound *game* (doc
-  20 §5.3; dxdiag is the evidence so far). The user's own `claude98`
-  still needs `SETUP /I 5` from a current ISO and a restart.
+- **Proved by probes, not yet by a title:** the display-driver core's cut
+  of long non-indexed draws (doc 19 §32; no probe draws 90,000
+  vertices), and the SB16 wave-name fix with a DirectSound *game* (doc 20
+  §5.3; dxdiag is the evidence so far). The user's `claude98` still needs
+  `SETUP /I 5` from a current ISO and a restart.
 
-- **Parked, WineD3D's own rendering** (the wine9x rule; ADR-018 retires
-  the path in M15's last step). FIFA 2000 under the 9x fallback draws
-  the pitch black under the players and lines (doc 19 §44).
+- **WineD3D-in-guest, parked by the wine9x rule** until M15's last
+  step retires it (ADR-018). FIFA 2000 under the 9x fallback draws the
+  pitch black under the players and lines (doc 19 §44). XP's device
+  mapper sometimes fails to install (`tools/xp-wined3d-test.sh` on
+  `winxp-m7.qcow2`, 2 of 3 runs): INSTDRV
+  printed nothing and left no MAPMEM service (`sc`: 1060), so
+  `OPENGL32.DLL` could not load. Not an address clash (`info mtree`).
+  When the service is missing, the harness now reruns INSTDRV to COM1
+  with its exit code. The frame's two rendering defects (checker bands,
+  the grid blue; 153,633 pixels on both adapters) stay parked.
 
-- **WineD3D-in-guest: XP's device mapper sometimes fails to install.**
-  On `winxp-m7.qcow2`, `tools/xp-wined3d-test.sh` failed to install the
-  mapper in 2 of 3 runs. INSTDRV printed nothing and left no MAPMEM
-  service (`sc`: 1060), so `OPENGL32.DLL` could not load, D3DGAME9 sat
-  behind an error box and XP ignored the power button. It is not an
-  address clash (`info mtree`). When the service is missing, the harness
-  now reruns INSTDRV straight to COM1 with its exit code, so the next
-  failure will say why. The frame's two WineD3D rendering defects
-  (checker bands, the grid blue instead of height-coloured; 153,633
-  pixels on both adapters) are parked by the wine9x rule. The whole path
-  retires in M15's last step (ADR-018).
+- **Display Properties in Win98 under TCG faults RUNDLL32.** Upstream
+  QEMU issue 1964; cosmetic, and KVM is not affected (doc 06).
 
-- **The Mac community app has not played a game on its floor.** The app
-  targets Homebrew's floor, `LSMinimumSystemVersion` 15.0
-  (`docs/build-macos.md` "The floor"), and the M15 spike passed on a real
-  macOS 15 (a second APFS volume; a VM has no OpenGL for Wine). The
-  app's first start there crashed at the adapter's realize, in DXVK's
-  `Direct3DCreate9`, before the guest ran an instruction. DXVK patch 09
-  and the executor's once-per-library rule fix it, and the
-  `exec-no-device` check holds it (the M15 track doc's gotchas,
-  `patches/dxvk/README.md`). The packaged launcher there also said
-  `Vulkan loader: not present`. It now probes the app's own loader and
-  ICD (`build-macos.md` "The app"). With both fixes the packaged player
-  booted the XP machine to its desktop on the Wine executor, and
-  `build/macos-community/` is rebuilt. What is left is FIFA 2000 into a
-  match from it on the 15 volume: M15 step 5
-  (`docs/tracks/m15-wine-executor.md`).
+- **On the Cirrus, a VESA picture comes out in swapped blocks** (the user,
+  in Duke Nukem 3D). The colours were the missing 4F09h, now fixed. Ruled
+  out:
+  - The chain-4 bug: in VBE modes both adapters map 0xA0000 as a RAM
+    alias, so writes never reach `vga_mem_writeb`.
+  - The window granularity: the Cirrus's 16 KiB is the hardware's, and
+    `tools/vga-dirty-guest-test.py vesa cirrus` passes (`GRAN64=1`
+    assumes 64 KiB, as the A/B).
 
-- **x87 at PC=24 on aarch64 trails PC=53.** On the Air the
-  single-precision loop (`X87BEN2S`) takes 0.49 s at PC=24 against 0.38 s
-  at PC=53. On the Ryzen both take 0.33 s. This has not been profiled
-  (`docs/tracks/m9-tcg-aarch64.md`, next steps item 1). The user closed
-  the Win98 3D optimization work itself on 2026-09-12: both of 3DMark
-  99's game tests hit the 60 Hz cap on the Ryzen and on the Air.
-
-- **Display Properties in Win98 under TCG faults RUNDLL32.** This is
-  upstream QEMU issue 1964. It is cosmetic, and KVM is not affected
-  (doc 06).
-
-- **On the Cirrus, a VESA picture comes out in blocks that have swapped
-  places.** The user saw this in Duke Nukem 3D. The colours were the
-  missing 4F09h, which is fixed. The blocks are not explained. Two
-  causes are ruled out:
-  - The chain-4 bug is not it. In VBE modes both adapters map 0xA0000 as
-    a RAM alias, so writes never reach `vga_mem_writeb`.
-  - The window granularity is not wrong. The Cirrus's 16 KiB is the
-    hardware's, and `tools/vga-dirty-guest-test.py vesa cirrus` passes.
-    `GRAN64=1` makes the test assume 64 KiB, as the A/B.
-
-  The untested hypothesis is Build's own Cirrus SVGA driver. It banks
-  through GR9/GRB directly and may disagree with
-  `cirrus_update_bank_ptr` about GR0B bit 5. The next step is a test that
-  drives those registers both ways round, or a log of the game's own
-  register writes.
+  Untested hypothesis: Build's own Cirrus SVGA driver banks through
+  GR9/GRB directly and may disagree with `cirrus_update_bank_ptr` about
+  GR0B bit 5. Next: a test that drives those registers both ways round,
+  or a log of the game's register writes.
 
 - **Protected discs against the EDC-first cooked read: argued, not
-  measured.** Test on the rig with `discx scan`. On FIFA 2002, Age of
-  Mythology disc 1 and Settlers 3 CD01, every L-EC failure must land in
-  *unreadable*, and FIFA 2002 must still reach its menus
-  (`docs/tracks/m5-cdrom-backend.md`, doc 17 §2.5).
-  `LIBDISC_NO_CORRECT=1` is the A/B.
+  measured.** Re-run `discx scan` on the rig's protected dumps
+  (`docs/tracks/m5-cdrom-backend.md` has the checks, doc 17 §2.5;
+  `LIBDISC_NO_CORRECT=1` is the A/B).
 
 - **The CD-ROM drive has no speed model.** It advertises 4x, `SET CD
   SPEED` does nothing, and a whole-disc read runs at hundreds of MB/s.
   `throttling.bps-read=` holds back a `.iso` but not a libdisc image.
-  `tools/cd-rate-guest-test.py` shows that the bytes do not depend on the
-  read rate. Still untested: whether a title that paces itself on CD
-  reads minds a drive that is 100 times too fast. Testing that needs a
-  `speed=` on `ide-cd` that both drivers honour
-  (`docs/tracks/m5-cdrom-backend.md`).
+  `tools/cd-rate-guest-test.py` shows the bytes do not depend on the read
+  rate. Untested: whether a title that paces itself on CD reads minds a
+  drive 100 times too fast. That needs a `speed=` on `ide-cd` both
+  drivers honour (`docs/tracks/m5-cdrom-backend.md`).
 
-- **Below the Vulkan floor: no measurements from real users.** Nobody
-  has measured how many users are below DXVK's Vulkan 1.3 bar. On such a
-  host, nobody has measured whether software Vulkan (lavapipe, which the
-  probe accepts as "available, in software (slow)") beats the Wine
-  executor or WineD3D in the guest (ADR-013/018, `launcherx --host-check`).
+- **Below the Vulkan floor: no real-user numbers.** Nobody has measured
+  how many users are below DXVK's Vulkan 1.3 bar, or whether on such a
+  host software Vulkan (lavapipe, "available, in software (slow)") beats
+  the Wine executor or WineD3D in the guest (ADR-013/018, `launcherx
+  --host-check`).
 
-- **3D hand-off sync is `glFinish`.** Every hand-off to the frontend
-  waits in `glFinish`, on both platforms. A fence would let the vCPU go
-  on while the blit drains (doc 12).
+- **3D hand-off sync is `glFinish`** on both platforms. A fence would let
+  the vCPU go on while the blit drains (doc 12).
 
 ## Next steps, in order
 
@@ -292,66 +236,59 @@ Each track's own order is in its track doc. This is the order across
 tracks, plus the items no track owns.
 
 1. **M15, the Direct3D fallback on Wine** (ADR-018,
-   `tracks/m15-wine-executor.md`). A guest in the packaged community app
-   on a real macOS 15. The app (with the realize crash fixed) and
-   `build/xp-mac15.qcow2` are built. The run needs the Mac booted into
-   the other volume, which is the user's to do. Also the spike's two
-   host tests on the rig's Linux Wine. Then step 6: WineD3D-in-guest
-   removed in one commit (the ISO's `WINED3D\`, `SETUP /GAME 4`/`5`,
-   `/I 7` with `D3DPRE.EXE`, the wine9x build and its tests, doc 04's
-   rows, CLAUDE.md's sentence), and the Flatpak's Wine decided. A
-   Windows host below the floor is not part of this, since it already
-   runs its own `system32\d3d9.dll`.
+   `tracks/m15-wine-executor.md` "Steps"). The packaged community app
+   boots XP to its desktop on a real macOS 15 (the floor,
+   `build-macos.md`). Step 5: FIFA 2000 into a match there; the app and
+   `build/xp-mac15.qcow2` are built, and booting the Mac into that volume
+   is the user's to do. Also the spike's two host tests on the rig's
+   Linux Wine. Then step 6: WineD3D-in-guest removed in one commit, and
+   the Flatpak's Wine decided. A Windows host below the floor is not part
+   of this; it already runs its own `system32\d3d9.dll`.
 2. **The measurements doc 22 still owes** (user decision, 2026-09-15).
    The Ryzen half of §6.2's games, including 3DMark2001 SE's high-detail
-   Car Chase and Lobby as the benchmark for patch 47's inexact mode
-   (+47 % and +15 % on the Air). The helper-reach question on x86-64,
-   where it is the *always* case (`call [rip+pool]` from a PIE or a
-   Windows EXE): a Linux / Win32 variant of patch 63 as the A/B through
-   `tools/specbench`. Three QEMU builds from one tree behind a meson
-   option (switches removed / hardwired on / switchable) to price the
-   switches themselves; later, "all off plus one switch". Not worth
-   chasing: `bl` reach on the Mac (2 %).
+   Car Chase and Lobby as the benchmark for patch 47's inexact mode (+47 %
+   and +15 % on the Air). Helper reach on x86-64, where it is the
+   *always* case (`call [rip+pool]` from a PIE or a Windows EXE): a Linux
+   / Win32 variant of patch 63 as the A/B through `tools/specbench`.
+   Three QEMU builds from one tree behind a meson option (switches
+   removed / hardwired on / switchable) to price the switches; later,
+   "all off plus one switch". Not worth chasing: `bl` reach on the Mac
+   (2 %).
 3. **Patch 21 (`pinned-regs`)** crashes XP under Super PI with seven or
    eight registers pinned (a bugcheck with auto-restart;
    `tools/specbench/run.sh <image> pinned` reproduces it; doc 18 open
    item 1). It is off and not in the machine form (user decision,
    2026-09-16: 1.1–1.2x at best), so fixing it is optional.
 4. **Glide pass-through (M3, doc 12 §5).** The user has never had it
-   work by hand, so a hand run of a Glide title is owed. The headless
-   Rayman 2 and Carmageddon runs are its only evidence on games, and no
-   Glide game has run on the DOS family. Then a macOS `glide-host` check
-   (the CGL side of `tools/glide-host-test.cpp`) and a Glide guest on
-   the Air, a Windows Glide wrapper (M11's cross build has no stage),
-   and fence-based sync instead of `glFinish`.
+   work by hand, so a hand run of a Glide title is owed; no Glide game has
+   run on the DOS family. Then a macOS `glide-host` check (the CGL side of
+   `tools/glide-host-test.cpp`) and a Glide guest on the Air, a Windows
+   Glide wrapper (M11's cross build has no stage), and fence-based sync
+   instead of `glFinish`.
 5. **Display (M2, doc 03).** Overscan crop, the curated preset pack
-   calibrated against the rig's CRT photos, an answer for presets with
-   no resolution override. XP's mode table fed from the player and a
-   present signal in phase with its swapchain (M7). The player's own
-   overlay controls (pause, snapshot, disc swap; doc 07).
-6. **Windows host (M11's leftovers).** Moto Racer's speed on the PC and
-   the first clang-built QEMU there. The native MSYS2 build run
-   (`scripts/win-run.sh launcher`, a machine, the Windows-built ISO in a
-   guest). Live control over Winsock AF_UNIX on a real PC. The
-   installer. Zero-copy frames through a DXGI shared handle. A Windows
-   check that boots a guest.
-7. **M14, Voodoo 2.** The glitched second Glide game after one quits
-   (not re-checked since the ring fixes of 2026-09-17..21). A Glide
-   client resuming on a dead ring (FIFA 2000's close). DxDiag's
-   Direct3D 7 test failing at `GetDC`. The Air (86Box's ARM64
-   recompiler, the `voodoo-guest` check there, the numbers) and the
-   Windows build. Diablo II's numbers. Patches 64 and 71 upstream.
-8. **M10, Win98 driver.** The doc 04 Win98 title matrix against the
-   Glide / WineD3D control. Total Annihilation's exit from inside a
-   skirmish. Crimson Skies' half-drawn QUIT button and partial depth
-   fills (doc 19 §28, §34). The command-window lock a fault in a HAL
-   callback can leave held (§36). The VGA text page after an ACPI
-   standby resume (§41).
-9. **M12, music.** One run of dxdiag's music test on Win98 with both
-   `LIBSYNTH_MIDI_LOG` and `LIBSYNTH_OPL_LOG` set (doc 20 §7.2). Both
-   synths lose instruments there while Microsoft's software synth does
-   not. Then "MPU-401 Compatible" from Add New Hardware, and a host MIDI
-   port (doc 20 §8).
+   calibrated against the rig's CRT photos, an answer for presets with no
+   resolution override. XP's mode table fed from the player and a present
+   signal in phase with its swapchain (M7). The player's own overlay
+   controls (pause, snapshot, disc swap; doc 07).
+6. **Windows host (M11's leftovers).** Moto Racer's speed on the PC
+   (CPU-bound, not reproduced on Linux; M11 track doc) and the first
+   clang-built QEMU there. The native MSYS2 build run (`scripts/win-run.sh
+   launcher`, a machine, the Windows-built ISO in a guest). Live control
+   over Winsock AF_UNIX on a real PC. The installer. Zero-copy frames
+   through a DXGI shared handle. A Windows check that boots a guest.
+7. **M14, Voodoo 2** (its track doc, "Open, in order"): the glitched
+   second Glide game, a client resuming on a dead ring, DxDiag's
+   Direct3D 7 `GetDC` failure, the Air and the Windows build, Diablo II's
+   numbers, patches 64 and 71 upstream.
+8. **M10, Win98 driver** (its track doc, "Next steps"): the doc 04 Win98
+   title matrix against the Glide / WineD3D control, Total Annihilation's
+   exit from a skirmish, Crimson Skies' half-drawn QUIT button and
+   partial depth fills (doc 19 §28, §34), the command-window lock (§36),
+   the ACPI standby resume (§41).
+9. **M12, music.** One dxdiag music run on Win98 with
+   `LIBSYNTH_MIDI_LOG` and `LIBSYNTH_OPL_LOG` set (doc 20 §7.2). Then
+   "MPU-401 Compatible" from Add New Hardware, the step Win98 needs
+   before it plays MIDI to the port, and a host MIDI port (doc 20 §8).
 10. **M6, launcher and packages.** An AppImage (6b′), the Windows
     installer (6d), the shader preview as a `QQuickRhiItem` (doc 07),
     screenshots for a Flathub submission, `CDSHELF.EXE`'s Win98 (ASPI)
@@ -360,69 +297,68 @@ tracks, plus the items no track owns.
     as a second SafeDisc 2 title. SecuROM (needs DPM in `mds.rs`).
     Multisession. CHD. Win98's CD Player by ear. M5g: a guest-side check
     of the stale-file rule.
-12. **The finished tracks' leftovers.** M4: a D3D8/9 game by hand on
-    the DLL path, its stubs, a decoder thread. M7: a shader title, a
+12. **The finished tracks' leftovers.** M4: a D3D8/9 game by hand on the
+    DLL path, its stubs, a decoder thread. M7: a shader title, a
     split-stream title, 3DMark2001's Nature for cubes, StarCraft / Age of
     Empires on 8 bpp, a driver stage in `scripts/test.sh`, something
-    better than a black screen when a guest's driver refuses the
-    adapter. M8: a Direct3D title with and without `*-fast=off`. M9: the
-    Air's game tests uncapped (`DDFLAGS=32768`), binary32 at PC=24 on
-    aarch64.
+    better than a black screen when a guest's driver refuses the adapter.
+    M8: a Direct3D title with and without `*-fast=off`. M9: the Air's game
+    tests uncapped (`DDFLAGS=32768`), binary32 at PC=24 on aarch64 (0.49 s
+    against PC=53's 0.38 s on the Air, not profiled).
 
 ## Gotchas
 
-Cross-cutting traps, each as symptom → cause → rule. A trap that
-belongs to one subsystem lives in its design doc. The pointers are at
-the end.
+Cross-cutting traps, each as symptom → cause → rule. A trap that belongs
+to one subsystem lives in its design doc; pointers are at the end.
 
 ### Building
 
 - **Two builds must never share the `qemu/` tree at once.**
   `build-windows.sh` re-applies the patch queue while
-  `package-flatpak.sh` copies the same tree, and the copy fails deep in
-  QEMU's compile with a header neither build uses. The *outputs*
-  (`build/qemu`, `build/win/qemu`) are separate; the sources are not.
+  `package-flatpak.sh` copies the tree, and the copy fails deep in the
+  compile with a header neither build uses. The outputs (`build/qemu`,
+  `build/win/qemu`) are separate; the sources are not.
 - **A build belongs to one checkout.** Never point `QEMU_BIN` or any
-  other `*_BIN` at another checkout's artefacts, configure into its
-  `build/`, or run its scripts. That tests someone else's patch queue,
-  and meson's recorded source path makes the other build compile *your*
-  sources from then on (check `build/qemu/meson-logs/`'s "Source dir").
-  Moving a checkout invalidates `build/` too: `scripts/build.sh -f`.
+  `*_BIN` at another checkout's artefacts, configure into its `build/`,
+  or run its scripts. That tests someone else's patch queue, and meson's
+  recorded source path makes the other build compile *your* sources from
+  then on (check `build/qemu/meson-logs/`' "Source dir"). Moving a
+  checkout invalidates `build/` too: `scripts/build.sh -f`.
 - **A source edit with no effect: is its directory in the stamp?**
   `scripts/build.sh` skips `prepare-qemu.sh` when the hashed inputs of
-  `stamp_stale qemu-prepare …` are unchanged, and an overlay missing
-  from that list rebuilds the *old* file silently (`libsynth/qemu` was).
-  `-f` bypasses every stamp.
+  `stamp_stale qemu-prepare …` are unchanged, so an overlay missing from
+  that list rebuilds the *old* file silently (`libsynth/qemu` was). `-f`
+  bypasses every stamp.
 - **Removing a patch to A/B it leaves its edits behind.**
   `prepare-qemu.sh` restores only files a *current* patch touches, so a
-  dropped patch's changes to other files (and its new files) survive.
-  Check first whether the patch has an off switch. If not, `git
-  checkout` those files in `qemu/` and re-prepare.
+  dropped patch's changes to other files, and its new files, survive.
+  Use the patch's off switch if it has one; otherwise `git checkout`
+  those files in `qemu/` and re-prepare.
 - **`configure`: "found no usable distlib".** pip 26 vendors
   `distlib.scripts` but not `distlib.version`, which QEMU 9.2's `mkvenv`
   imports. Install the real `distlib` for that interpreter. Python is
-  uv's 3.12. 3.14 works only with the real `distlib` (MSYS2).
+  uv's 3.12; 3.14 works only with the real `distlib` (MSYS2).
 - **An ISO older than its sources means a stage died.**
   `build-wrappers.sh` is `set -e` and writes the ISO last. On a Mac,
   Homebrew's mingw is a symlink, so `build-driver.sh` finds the DDK
   headers through `-print-sysroot`.
-- **Guest binaries are msvcrt and `-march=pentium3`.** Modern mingw
-  links the UCRT, which 9x lacks and XP never loads, and qemu-3dfx
-  compiles for `x86-64-v2`. The scripts force and check both. Define
-  `PSAPI_VERSION 1`, or `psapi.h` binds Windows 7's `K32*` exports and
-  XP's loader stops the process in a hard-error box before `DllMain`.
+- **Guest binaries are msvcrt and `-march=pentium3`.** Modern mingw links
+  the UCRT, which 9x lacks and XP never loads, and qemu-3dfx compiles for
+  `x86-64-v2`; the scripts force and check both. Define `PSAPI_VERSION
+  1`, or `psapi.h` binds Windows 7's `K32*` exports and XP's loader stops
+  the process in a hard-error box before `DllMain`.
 - **Host toolchain.** QEMU 9.2 needs `--disable-werror`, `-fPIC` and
   `b_staticpic` for the shared library. On macOS every stage targets
-  Homebrew's floor (`scripts/macos-floor.sh`, 15.0 today). A hand-run
+  Homebrew's floor (`scripts/macos-floor.sh`, 15.0 today); a hand-run
   cargo needs `MACOSX_DEPLOYMENT_TARGET` exported, and a `cargo clean`
   after the floor rises (`build.sh` does both). The macOS link needs
-  `qemu_default_main`, which `embed/libqemu_embed.c` defines, and our
-  ld64 export list.
+  `qemu_default_main` (defined in `embed/libqemu_embed.c`) and our ld64
+  export list.
 - **Windows: `Unable to create index.lock: File exists`, the lock gone
   when you look.** A scanner holds the lock of the git that just exited.
-  `prepare-qemu.sh` runs every git through `qgit`, which retries on
-  that and nothing else. A retrying wrapper must pass git's stdout
-  through (`2>&1 >&3` inside `{ } 3>&1`) or `ls-files` returns nothing.
+  `prepare-qemu.sh` runs every git through `qgit`, which retries on that
+  and nothing else. A retrying wrapper must pass git's stdout through
+  (`2>&1 >&3` inside `{ } 3>&1`) or `ls-files` returns nothing.
 
 ### Running on a Mac
 
@@ -430,7 +366,7 @@ the end.
   decode** (`SIGBUS` at `0xbad4007` in `IIO_Reader_GIF`). dyld searches
   it by leaf name first, and on a case-insensitive disk it answers
   ImageIO's `libGIF` / `libPng` / `libTIFF` / `libJPEG` with Homebrew's.
-  Put only `/opt/homebrew/opt/vulkan-loader/lib` there. Unsetting it at
+  Put only `/opt/homebrew/opt/vulkan-loader/lib` there; unsetting it at
   run time is too late. `DYLD_PRINT_LIBRARIES=1` shows it.
 - **A benchmark a third slower than the last is a far launch.** TCG's
   code buffer 8 GiB from the helpers turns every helper call into
@@ -444,92 +380,90 @@ the end.
   wrapper chain. A producer that never waits outruns DXVK's deferred
   frees (a 16 GB Mac swapped for minutes; doc 14).
 - **Never call `gl*` / `CGL*` / `IOSurface*` by link in the embed
-  backend.** The symbol can bind to a GLX library that silently no-ops.
+  backend.** The symbol can bind to a GLX library that silently no-ops;
   `dlsym` from the OpenGL.framework handle.
 
 ### The player and the QEMU thread
 
 - **Never `exit()` while the QEMU thread is alive.** QEMU's atexit
   handlers race `qemu_cleanup` (`mutex->initialized` on macOS). The
-  player joins the thread, and headless paths use `_exit`. A guest
-  power-off ends the loop while the UI still holds the handle, hence
-  the stop / release handshake before `qemu_embed_destroy`.
+  player joins the thread; headless paths use `_exit`. A guest power-off
+  ends the loop while the UI still holds the handle, hence the stop /
+  release handshake before `qemu_embed_destroy`.
 - **An occluded window gets no swapchain image.** Per-frame work that
   must not stall (importing zero-copy slots) runs on the wake event.
-- **A crackle report: ask for the lines first.** `[audio] device asks
-  for N frames`, `qemu-embed: audio:` and `[audio] the guest's mix went
-  past full scale`. A timing fault and a clipping fault sound alike and
-  read differently. The pacing design is in doc 11, and
-  `tools/audio-glitch-test.py` (`STALL=`, `CDAMP=`) reproduces both.
+- **A crackle report: ask for the lines first.** `[audio] device asks for
+  N frames`, `qemu-embed: audio:` and `[audio] the guest's mix went past
+  full scale`. A timing fault and a clipping fault sound alike and read
+  differently. Pacing design: doc 11; `tools/audio-glitch-test.py`
+  (`STALL=`, `CDAMP=`) reproduces both.
 
 ### Driving a guest headless
 
-- **Wait for the guest, never a clock.** `tools/guestwait.sh` waits for
-  a line our device wrote, QMP block stats going quiet, or a knock on
-  the Run dialog answered on COM1 (`docs/testing.md`, "Driving a
-  guest"). `BOOT_WAIT` and friends are caps on giving up. A screendump
-  is never evidence of life, because `vga_draw_text` draws over a dead
-  machine.
+- **Wait for the guest, never a clock.** `tools/guestwait.sh` waits for a
+  line our device wrote, QMP block stats going quiet, or a knock on the
+  Run dialog answered on COM1 (`docs/testing.md`, "Driving a guest").
+  `BOOT_WAIT` and friends are caps on giving up. A screendump is never
+  evidence of life: `vga_draw_text` draws over a dead machine.
 - **A frozen first frame with a blinking caret is a guest with no timer
   interrupt**, not a hung emulator. `info registers` twice (EIP
-  unchanged), `info pic` (an unmasked `irr` bit with `isr=00`),
-  `info lapic` (`LVT0 masked`). Win98's restart was this (patch 22).
-- **A "hung" Win98 desktop may be idle and unrepainted**: EIP moving
-  with `HLT=1` across two `info registers`. `hang.txt` from
+  unchanged), `info pic` (an unmasked `irr` bit with `isr=00`), `info
+  lapic` (`LVT0 masked`). Win98's restart was this (patch 22).
+- **A "hung" Win98 desktop may be idle and unrepainted**: EIP moving with
+  `HLT=1` across two `info registers`. `hang.txt` from
   `win98-game-test.sh` has it.
-- **XP's lazy writer holds small FAT writes for minutes.** A harness
-  asks COM1, not the scratch disk, whether a command finished.
+- **XP's lazy writer holds small FAT writes for minutes.** A harness asks
+  COM1, not the scratch disk, whether a command finished.
 - **Four shell traps that read as the test failing.** A `pgrep -f` /
   `pkill -f` pattern that appears in the calling command matches the
   wrapper (and `pkill` kills the session's shell); use `patter[n]`. Find
-  QEMU with `ps -C qemu-system-i386 -o pid=`, never `pgrep -x` (`comm`
-  is truncated at 15 characters). A deep `OUT=` makes the QMP socket
-  fail with `AF_UNIX path too long` and the run does nothing. Editing a
-  bash script under a running instance breaks that instance.
-- **`grep -c` prints `0` and exits 1**, so `$(grep -c x f || echo 0)`
-  is `0\n0`.
-- **The user's images are read-only.** Boot a qcow2 overlay or a copy.
-  While an overlay runs, the backing file is write-locked. Never run two
-  TCG guests at once on one box. They starve each other and a slow run
+  QEMU with `ps -C qemu-system-i386 -o pid=`, never `pgrep -x` (`comm` is
+  truncated at 15 characters). A deep `OUT=` makes the QMP socket fail
+  with `AF_UNIX path too long` and the run does nothing. Editing a bash
+  script under a running instance breaks that instance.
+- **`grep -c` prints `0` and exits 1**, so `$(grep -c x f || echo 0)` is
+  `0\n0`.
+- **The user's images are read-only.** Boot a qcow2 overlay or a copy;
+  while an overlay runs, the backing file is write-locked. Never run two
+  TCG guests at once on one box: they starve each other and a slow run
   reads as a failure.
 - **End a Win98 run with the ACPI power button** (`system_powerdown`).
-  Keystrokes die in a modal dialog, and a machine that does not power
-  off leaves the FAT dirty, so the next boot is safe mode: no driver,
-  empty logs, exactly like the thing under test failing. A failed boot
-  does the same. Let the safe-mode boot finish before trusting the next
-  run.
-- **Win98 runs under TCG, not KVM** (the family's default). Under
-  `-accel kvm` Explorer dies at start ("illegal operation", then
-  *SHELL32.DLL is linked to missing export
-  SHLWAPI.DLL:GetFileAttributesA*), so there is no Start menu to drive.
+  Keystrokes die in a modal dialog, and a machine that does not power off
+  leaves the FAT dirty, so the next boot is safe mode: no driver, empty
+  logs, exactly like the thing under test failing. A failed boot does the
+  same; let the safe-mode boot finish before trusting the next run.
+- **Win98 runs under TCG, not KVM** (the family's default). Under `-accel
+  kvm` Explorer dies at start ("illegal operation", then *SHELL32.DLL is
+  linked to missing export SHLWAPI.DLL:GetFileAttributesA*), so there is
+  no Start menu to drive.
 - **A bare `qemu-system-i386` has no 3D and opens no window.** QEMU is
   built with no display, host-audio or extra backends (`configure-qemu.sh`,
   the `no-optionals` check; `--disable-dsound` needed patch 23), so
-  pass-through is refused cleanly for want of a context provider. With
-  no `-display`, QEMU starts a VNC server on `localhost:5900`. Look with
+  pass-through is refused for want of a context provider. With no
+  `-display`, QEMU starts a VNC server on `localhost:5900`. Look with
   `-display vnc=:0`, and play into `-audiodev none`.
 - **A game that "freezes" is often showing a message box you cannot
   see.** The player falls back to the VGA surface after 1 s without a
   presented 3D frame. Headless, `SHOTS=` in the game harnesses shows the
   box and `DRW_AFTER=` the stacks (XP).
 - **A glitch shorter than a second shows only in the player's own
-  frames** (`PLAYER=1 PLAYER_SHOT_EVERY=6`). QMP screendumps come once
-  a second, and a headless console refreshes only when asked. A QMP
-  screendump shows the VGA surface, frozen while 3D presents.
+  frames** (`PLAYER=1 PLAYER_SHOT_EVERY=6`). QMP screendumps come once a
+  second, a headless console refreshes only when asked, and a screendump
+  shows the VGA surface, frozen while 3D presents.
 - **An API's own answer is not evidence; the device's is.** `mcicda`
   answers `status mode` from the state it commanded (Win98 said
   "stopped" while the drive played on), and a check that greps for a
   *line* proves nothing about the value in it. Ask the device (a trace)
   and the output (the wav, the pixels), and assert the value.
 - **Headless changes timing, not just output.** With no device window
-  DXVK's `Present` returns at once, so a busy-poll of a query starved
-  the thread that had to answer it. Put `Sleep(1)` between polls. A cold
+  DXVK's `Present` returns at once, so a busy-poll of a query starved the
+  thread that had to answer it. Put `Sleep(1)` between polls. A cold
   pipeline cache is the load that makes such a race show.
-- **A game that runs far too fast is presenting, not timing.** Era
-  titles pace by `Flip`, so a flip that never blocks is a missing frame
-  limiter. `d3dpt-vga: N page flips in 5.0 s` is the guest's real
-  frame rate, and no line means it blits to the primary.
-  `DDFLAGS=32768` turns the vertical blank off for the A/B.
+- **A game that runs far too fast is presenting, not timing.** Era titles
+  pace by `Flip`, so a flip that never blocks is a missing frame limiter.
+  `d3dpt-vga: N page flips in 5.0 s` is the guest's real frame rate; no
+  line means it blits to the primary. `DDFLAGS=32768` turns the vertical
+  blank off for the A/B.
 - **KVM `-cpu host` breaks Max Payne's level loading** ("Corrupt JPEG
   data": a CPUID-dispatched decoder). `-cpu pentium3` under KVM works.
   Prefer an era CPU model for games.
@@ -537,28 +471,28 @@ the end.
   returned FALSE from `DllMain`. Either qemu-3dfx's `OPENGL32.DLL` could
   not open `\\.\MAPMEM` (FXPTL.SYS and the MAPMEM service missing:
   install SETUP's Glide component as Administrator; OpenGL and WineD3D
-  need it too), or a `D3DPT\` DLL found no executor
-  (`D3DPT_STATUS_NO_EXEC`), or the protocol version differs
-  (`d3dpt.log` names both).
+  need it too), a `D3DPT\` DLL found no executor
+  (`D3DPT_STATUS_NO_EXEC`), or the protocol version differs (`d3dpt.log`
+  names both).
 - **A benchmark inside a DOS `.COM` keeps its data off the code page**,
   or self-modifying-code invalidation dominates the number.
 
 ### Windows guests
 
-- **Win98 must be an ACPI install**, or PCI hot-adds (USB tablet,
-  AC'97, NIC) are never seen and Device Manager shows "Plug and Play
-  BIOS". Setup compares F000:FFF5 with 12/01/99. `prepare-qemu.sh`
-  stamps the firmware 12/31/99 (the `bios-date` check), so a plain
-  `SETUP` installs ACPI. An older image is repaired in Device Manager
-  (`build-macos.md`), not reinstalled.
+- **Win98 must be an ACPI install**, or PCI hot-adds (USB tablet, AC'97,
+  NIC) are never seen and Device Manager shows "Plug and Play BIOS".
+  Setup compares F000:FFF5 with 12/01/99; `prepare-qemu.sh` stamps the
+  firmware 12/31/99 (the `bios-date` check), so a plain `SETUP` installs
+  ACPI. Repair an older image in Device Manager (`build-macos.md`), don't
+  reinstall.
 - **"Windows protection error" on `d3dpt-vga`, fine on the Cirrus.** A
   display driver built before 2026-09-12 wants the register set exactly
   and refuses a newer adapter, and `*DisplayFallback=0` leaves no VGA.
   Boot on the Cirrus, run the ISO's `SETUP /ALL`, switch back. Newer
   drivers accept any later register set (doc 15).
 - **`ExitWindowsEx` from a console program never returns on 9x** and
-  holds the Win16Mutex, so a worker thread makes it worse. Call it from
-  a process with no console: `SETUP` re-execs itself detached as `SETUP
+  holds the Win16Mutex; a worker thread makes it worse. Call it from a
+  process with no console: `SETUP` re-execs itself detached as `SETUP
   /REBOOTNOW`. `rundll32 krnl386.exe,exitkernel` restarts with a dirty
   FAT. The proof of a restart is a second SeaBIOS banner.
 - **Never overwrite a loaded 9x driver file in place.** KERNEL reloads
@@ -574,19 +508,18 @@ the end.
 ### Devices and corruption
 
 - **An interrupt a guest cannot acknowledge costs the line, not one
-  interrupt.** On the edge-triggered i8259 every later assertion into
-  the held line is lost, silently (doc 20 §5.2). `info irq` counts
-  rising edges, so a count that stops while the device still raises is
-  this. Diagnose with `-d trace:pic_set_irq`, `trace-event-set-state
+  interrupt.** On the edge-triggered i8259 every later assertion into the
+  held line is lost silently (doc 20 §5.2). `info irq` counts rising
+  edges, so a count that stops while the device still raises is this.
+  Diagnose with `-d trace:pic_set_irq`, `trace-event-set-state
   memory_region_ops_write` over QMP for the ten seconds that matter, and
   the device's own status read from the monitor (`o` / `i`).
-- **A crash that moves from victim to victim is memory corruption. A/B
-  the TCG switches before the driver.** Win98 dying in `SETUP` was
-  patch 44's `uint16_t` TLB list wrapping, and one lucky control cost an
-  evening. Use `-accel tcg,<switch>=off` per patch, repeat every
-  control, and catch the reset with `-action
-  reboot=shutdown,shutdown=pause -d cpu_reset`, reading the blue screen
-  out of VRAM.
+- **A crash that moves from victim to victim is memory corruption: A/B
+  the TCG switches before the driver.** Win98 dying in `SETUP` was patch
+  44's `uint16_t` TLB list wrapping, and one lucky control cost an
+  evening. Use `-accel tcg,<switch>=off` per patch, repeat every control,
+  and catch the reset with `-action reboot=shutdown,shutdown=pause -d
+  cpu_reset`, reading the blue screen out of VRAM.
 - **A QMP medium change must pass `force`.** Without it a guest that
   locked the tray (XP, for any open handle) gets an eject *request*, the
   command is refused, and the swap lands whenever the guest lets go.
@@ -594,14 +527,14 @@ the end.
 ### Where the subsystem traps live
 
 - The WGL rule (a `wgl*ARB` call with no context faults): doc 12.
-- The Win98 display driver: the text page behind the linear frame
-  buffer (doc 19 §15), `pnpdrvr.drv` and the INF's `DelReg` (§16),
-  `__loadds` and 32-bit register access (§14, §18), the DOS box's
-  repaint (§29), Mode X for 320×200 (§30).
+- The Win98 display driver: the text page behind the linear frame buffer
+  (doc 19 §15), `pnpdrvr.drv` and the INF's `DelReg` (§16), `__loadds`
+  and 32-bit register access (§14, §18), the DOS box's repaint (§29),
+  Mode X for 320×200 (§30).
 - The XP driver's dxg rules, the DirectX 6 flip chain, untracked GDI
   writes: doc 15.
-- The CD drive: how each Windows stops a CD (doc 17 §5.4), and
-  `libdisc` never asserting on a disc's values (doc 17).
+- The CD drive: how each Windows stops a CD (doc 17 §5.4), and `libdisc`
+  never asserting on a disc's values (doc 17).
 - Qt front end traps (bindings, dialogs, Esc, native styles): doc 07.
 - x87 precision modes and the batteries: doc 13. SSE: doc 16.
 - A slang preset smearing its edges (`clamp_to_border`): doc 03.

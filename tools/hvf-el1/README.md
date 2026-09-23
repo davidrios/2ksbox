@@ -2,8 +2,8 @@
 
 Measures whether TCG's Arm output could run inside a Hypervisor.framework
 VM whose stage-1 tables mirror the x86 guest's page tables, so that a
-guest load is one host load. The design, the numbers and the verdict
-(feasible, then abandoned for the time being by user decision) are in
+guest load is one host load. The numbers and the verdict (feasible, then
+abandoned for the time being by user decision) are in
 `docs/tracks/m9-tcg-aarch64.md`, "The HVF EL1 probe" and "Gauging the
 gain". This file says what the probe does and how to run it.
 
@@ -28,13 +28,12 @@ measures:
   uses, and the same kernels natively in the host for the baseline;
 - running code the host wrote, self-patching without a W^X toggle, and
   the latency of a host-thread kick to the guest's IRQ handler;
-- the `rep movsd` blit loop of a 2D game (`exp_movs` / `native_movs`).
-  It runs TCG's loop transcribed from a `-d out_asm` log, with pinned
-  registers, with direct window accesses, and as a per-page-run copy.
-  Each runs with `env` both in the identity map and in the window,
-  because a store to block-mapped
-  memory followed by one through a 4 KiB page costs ~2 ns extra per pair
-  in the VM (the `diag3` lines).
+- the `rep movsd` blit loop of a 2D game (`exp_movs` / `native_movs`):
+  TCG's loop transcribed from a `-d out_asm` log, with pinned registers,
+  with direct window accesses, and as a per-page-run copy. Each runs with
+  `env` both in the identity map and in the window, because a store to
+  block-mapped memory followed by one through a 4 KiB page costs ~2 ns
+  extra per pair in the VM (the `diag3` lines).
 
 ```sh
 tools/hvf-el1/build.sh                     # payload + host, signed with hv.entitlements
@@ -43,11 +42,11 @@ build/hvf-el1/hvf-el1 x --native-only      # only the host baseline
 ```
 
 It runs on macOS on Apple Silicon only (`kern.hv_support`), takes ~2 s,
-and must be alone on the machine. Output is `key: value` lines. Reference
-runs from the M1 Air are
-`results-m1air-2026-09-05.txt` and `results-movs-m1air-2026-09-05.txt`.
-It is a measurement, not a regression guard, so it is not in
-`scripts/test.sh`. On a guest fault the host prints the vCPU state and
-the guest's `ESR_EL1` / `FAR_EL1` / `ELR_EL1`; `llvm-objdump -d` on
+and must be alone on the machine. Output is `key: value` lines; the M1
+Air's reference runs are `results-m1air-2026-09-05.txt` and
+`results-movs-m1air-2026-09-05.txt`. It is a measurement, not a
+regression guard, so it is not in `scripts/test.sh`. On a guest fault the
+host prints the vCPU state and the guest's `ESR_EL1` / `FAR_EL1` /
+`ELR_EL1`; `llvm-objdump -d` on
 `build/hvf-el1/payload/aarch64-unknown-none/release/payload` maps the
 addresses.

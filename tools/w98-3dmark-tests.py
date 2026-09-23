@@ -2,27 +2,27 @@
 """Place a 3DMark 99 run's rate lines by test (tools/w98-3dmark.sh).
 
 The executor's `ddi: N frames/s` and the device's `N page flips in X s`
-lines are windows on their own clocks: a line prints on the first frame
-5 s after the previous one, so a window with no frames in it (a test's
-loading screen, the "Synthetic CPU 3D Speed" test, which presents about
-two frames a second) stretches until the next frame and its "frames/s" is
-a count over mostly empty time. On 2026-09-11/12 a 14 s window of that
-kind was read as "the first-person test" for a whole day; the test itself
-had been at the 60 Hz cap all along (docs/tracks/m9-tcg-aarch64.md, the
-"Win98 3D" correction).
+lines cover windows on their own clocks. A line prints on the first frame
+5 s after the previous one, so a window with no frames in it stretches
+until the next frame, and its "frames/s" counts over mostly empty time.
+That happens on a test's loading screen and in the "Synthetic CPU 3D
+Speed" test, which presents about two frames a second. Such a 14 s
+window was once misread as the first-person test, which had been at the
+60 Hz cap all along (docs/tracks/m9-tcg-aarch64.md, the "Win98 3D"
+correction).
 
-So the tests are told from the screen instead: w98-3dmark.sh screendumps
-every 5 s after the Benchmark click into tests/t<secs>.png, and this
-classifies each one by pixels -- 3DMark's "Now testing" splash (the orange
-logo block and the blue banner), the score dialog (the project window's
-grey under the dialog's blue title bar), or a game frame (anything else).
-The first-person test is known by the green frame counter it draws
-top-left, the race is the run of game frames right before it (the two
-load too fast for a splash shot to separate them), and a rate line counts
+So this script tells the tests apart from the screen. w98-3dmark.sh
+screendumps every 5 s after the Benchmark click into tests/t<secs>.png,
+and this classifies each shot by pixels as 3DMark's "Now testing" splash
+(the orange logo block and the blue banner), the score dialog (the
+project window's grey under the dialog's blue title bar), or a game frame
+(anything else). The first-person test draws a green frame counter
+top-left. The race is the run of game frames right before it, since the
+two load too fast for a splash shot to separate them. A rate line counts
 for a test only when its whole window lies inside that test's shots. A
-run of shots survives one missing shot (a screendump that failed), and
-the longest run with the counter is the first-person test.
-Written to tests.txt.
+run of shots survives one missing shot (a failed screendump), and the
+longest run with the counter is the first-person test. The result goes
+to tests.txt.
 
     tools/w98-3dmark-tests.py classify <shot.png.ppm>   -> fp | game | splash | score | other
     tools/w98-3dmark-tests.py report <run dir>          -> <run dir>/tests.txt, also printed

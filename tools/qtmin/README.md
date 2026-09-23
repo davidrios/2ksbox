@@ -2,10 +2,9 @@
 
 A reproducer for the Windows build (M11, `docs/tracks/m11-windows-host.md`).
 `launcher-qt.exe` cross-built for Windows used to fault on a call to
-address 0 **before `main`**, under Wine and on a real PC alike. Nothing of
-the launcher's own had run, so the question was which of cxx-qt's layers
-puts a static initialiser there. Each cargo feature adds one layer; the
-rung that stops printing `qtmin: main` names it.
+address 0 **before `main`**, under Wine and on a real PC alike. Each
+cargo feature adds one of cxx-qt's layers; the rung that stops printing
+`qtmin: main` names the layer whose static initialiser faults.
 
 | rung | `--features` | what it adds |
 |---|---|---|
@@ -21,10 +20,9 @@ cd build/win/package/2ksbox-0.0.1-windows-x86_64
 env -u DISPLAY -u WAYLAND_DISPLAY WINEDEBUG=-all wine qtmin.exe --no-gui
 ```
 
-`--no-gui` stops before `QGuiApplication`, since with no display the only
-question is whether `main` was reached. It is a console program on
-purpose, so the answer goes to stdout and to `qtmin.log` beside the
-executable.
+`--no-gui` stops before `QGuiApplication`, since the only question is
+whether `main` was reached. It is a console program, so the answer goes
+to stdout and to `qtmin.log` beside the executable.
 
 ## The answer: two emutls registries
 
@@ -42,8 +40,8 @@ winedbg` and `objdump`:
 3. emutls keys its storage per libgcc, and there are two: rustc links
    libgcc statically into the exe for `x86_64-pc-windows-gnu`, while
    `libstdc++-6.dll` uses `libgcc_s_seh-1.dll`'s. The proxy reads a slot
-   the exe never wrote, finds `NULL` and calls it. That is the `rip=0`
-   with a return address inside `pthread_once` in every crash dump.
+   the exe never wrote, finds `NULL` and calls it: the `rip=0` with a
+   return address inside `pthread_once` in every crash dump.
 
 ## The fix
 
@@ -56,15 +54,15 @@ extern "C" void __once_proxy() { std::__once_call(); }
 ```
 
 The linker prefers a local definition over an import, so the proxy that
-runs reads `__once_call` through *this* module's emutls, the registry
+runs reads `__once_call` through this module's emutls, the registry
 `call_once` wrote to. It is libstdc++'s own implementation
 (`src/c++11/mutex.cc`). With it all three rungs reach `main`, and the Qt
 launcher passes every check of `package-windows.sh`.
 
 What does **not** work:
 
-- `-C link-arg=-static-libstdc++`. Something on the link line still asks
+- `-C link-arg=-static-libstdc++`: something on the link line still asks
   for the DLL, and the exe keeps importing `__once_proxy`.
-- `-C link-self-contained=no` and `-C link-arg=-shared-libgcc`. rustc
+- `-C link-self-contained=no` and `-C link-arg=-shared-libgcc`: rustc
   links libgcc statically for this target regardless, so there are still
-  two registries. The fix makes that harmless instead of fighting it.
+  two registries.

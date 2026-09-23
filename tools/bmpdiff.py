@@ -5,14 +5,14 @@
                      [--tolerance N] [--max-over N]
 
 Prints the number of differing pixels, the largest channel difference and
-the bounding box of the differences; writes an amplified difference image
-with -o. --mask ignores a rectangle (top-left origin, like the screen) —
-the d3dgame frame-time HUD sits at 0,368,270,112 in a 640x480 frame
-(deterministic since 2026-09-03 in -frames mode, so masking it is only
-needed for the first rig captures). Exit status 1 when pixels differ by
-more than --tolerance (default 0), unless --max-over allows that many
-(the native DXVK frame sits ~1090 pixels from the GeForce golden at
-tolerance 8: a regression budget, not equality). Pure Python, no Pillow.
+the bounding box of the differences. -o writes an amplified difference
+image. --mask ignores a rectangle (top-left origin, like the screen). The
+d3dgame frame-time HUD sits at 0,368,270,112 in a 640x480 frame; it is
+deterministic in -frames mode, so only the first rig captures need it
+masked. Exits 1 when pixels differ by more than --tolerance (default 0),
+unless --max-over allows that many. The native DXVK frame sits ~1090
+pixels from the GeForce golden at tolerance 8, so --max-over is a
+regression budget, not equality. Pure Python, no Pillow.
 """
 import argparse
 import struct

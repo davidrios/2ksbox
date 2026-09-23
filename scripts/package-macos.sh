@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The macOS app (doc 07's "signed .app, JIT entitlement, notarized"):
-# stage everything a stranger's Mac needs into one bundle that depends on
+# Build the macOS app (doc 07: signed .app, JIT entitlement, notarized).
+# Stage everything a user's Mac needs into one bundle that depends on
 # nothing but the system, sign it for Developer ID, notarize it and roll a
 # disk image.
 #
@@ -12,57 +12,51 @@
 #   scripts/package-macos.sh --identity NAME      # default: the one Developer ID Application
 #   scripts/package-macos.sh --keychain-profile P # notarytool credentials (default: 2ksbox-notary)
 #   scripts/package-macos.sh --out DIR            # default build/macos
-#   scripts/package-macos.sh --community          # ADR-019's community build: carries the
-#                                                 # Direct3D executor for Wine (M15) — the App
-#                                                 # Store build never starts Wine
+#   scripts/package-macos.sh --community          # ADR-019's community build, which carries
+#                                                 # the Direct3D executor for Wine (M15). The
+#                                                 # App Store build never starts Wine
 #
-# Notarization needs credentials stored once, and they are not this
-# script's to invent:
+# Notarization needs credentials, stored once by you:
 #   xcrun notarytool store-credentials 2ksbox-notary \
 #       --apple-id <you@example.com> --team-id <TEAMID> --password <app-specific-password>
 #
-# What is different here from the Linux package (scripts/package-linux.sh),
-# and why there are two scripts rather than one with a switch:
+# How this differs from the Linux package (scripts/package-linux.sh), and
+# why it is a second script rather than a switch:
 #
-# * **Nothing may come from outside the bundle.** A Linux package leans on
-#   the distribution for glib, pixman, zstd and the rest; a Mac has none
-#   of them, and the machine that will run this has no Homebrew, no
-#   XQuartz and no Vulkan. So the whole non-system dylib closure is copied
-#   in and every install name rewritten to @rpath. That is the bulk of
-#   this script.
-# * **Qt travels with the app, and `macdeployqt` is what puts it there.**
-#   The launcher is `launcher-qt` (ADR-015), so the bundle needs the Qt
-#   frameworks, the cocoa platform plugin and the QtQuick QML module tree
-#   — and only the first of those three is in a load command, which is
-#   why the closure below would never have found the other two. Qt's own
-#   deployment tool is the supported way to collect them, so it runs
-#   first and the closure runs over what it leaves. Our QML is compiled
-#   into the binary as a Qt resource, so `macdeployqt` is pointed at
-#   `launcher-qt/qml` to find the imports: without `-qmldir` its import
-#   scanner sees no QML at all and deploys no modules. What it collects
-#   is then pruned and rewired — it deploys whole plugin categories and
-#   QML module trees out of Homebrew's one shared Qt prefix, and leaves
-#   both what we never asked for and stale Homebrew rpaths behind. The
-#   two passes after it say why in full.
-# * **The bundle *is* the prefix.** `Contents` has the same
-#   `lib/libexec/share` shape a Unix prefix has — `launcher_core::paths`
-#   finds it by the same `share/2ksbox` marker — with `MacOS/` in the part
-#   `bin/` plays elsewhere, because that is the one directory macOS will
-#   launch an executable from.
-# * **Signing is inside-out and the floor is Homebrew's.** Every Mach-O is
-#   signed before the thing containing it. The oldest macOS the app runs
-#   on is the oldest Homebrew supports (scripts/macos-floor.sh), which
-#   scripts/build.sh builds everything of ours for; the Homebrew libraries
-#   copied in are this Mac's bottles, so the ones above the floor are
-#   swapped for the floor's builds (scripts/macos-bottles.py), and then
-#   LSMinimumSystemVersion is measured from what the bundle carries and
-#   any file still above the floor fails the package.
+# * Nothing may come from outside the bundle. A Linux package relies on
+#   the distribution for glib, pixman, zstd and the rest. A Mac has none
+#   of them, and the Mac that runs the app has no Homebrew, no XQuartz and
+#   no Vulkan. So the script copies in the whole non-system dylib closure
+#   and rewrites every install name to @rpath. That is most of the script.
+# * `macdeployqt` puts Qt in the app. The launcher is `launcher-qt`
+#   (ADR-015), so the bundle needs the Qt frameworks, the cocoa platform
+#   plugin and the QtQuick QML module tree. Only the frameworks appear in
+#   a load command, so the closure would never find the other two.
+#   `macdeployqt` runs first and the closure runs over what it leaves. Our
+#   QML is compiled into the binary as a Qt resource, so `-qmldir` points
+#   `macdeployqt` at `launcher-qt/qml` to find the imports. Without it the
+#   import scanner sees no QML and deploys no modules. The two passes
+#   after it prune and rewire what it collects, because it deploys whole
+#   plugin categories and QML module trees from Homebrew's shared Qt
+#   prefix and leaves stale Homebrew rpaths behind.
+# * The bundle is the prefix. `Contents` has the `lib/libexec/share`
+#   shape of a Unix prefix, and `launcher_core::paths` finds it by the same
+#   `share/2ksbox` marker. `MacOS/` takes the place of `bin/`, because it
+#   is the one directory macOS launches an executable from.
+# * Signing goes inside-out and the floor is Homebrew's. Every Mach-O is
+#   signed before the thing that contains it. The oldest macOS the app
+#   runs on is the oldest Homebrew supports (scripts/macos-floor.sh), and
+#   scripts/build.sh builds everything of ours for it. The Homebrew
+#   libraries copied in are this Mac's bottles, so the ones above the
+#   floor are swapped for the floor's builds (scripts/macos-bottles.py).
+#   LSMinimumSystemVersion is then measured from what the bundle carries,
+#   and any file still above the floor fails the package.
 #
-# It does not build QEMU, DXVK or the Glide wrapper. Per CLAUDE.md's build
-# order those come from `scripts/build.sh`; what is missing is reported by
-# name rather than quietly left out, except the three optional companions
-# (Glide, the Direct3D executor, Vulkan), each of which is a warning and a
-# guest that has one fewer accelerated path.
+# It does not build QEMU, DXVK or the Glide wrapper. Those come from
+# `scripts/build.sh`. The script reports anything missing by name instead
+# of leaving it out quietly. The three optional companions (Glide, the
+# Direct3D executor, Vulkan) are only a warning each, and cost the guest
+# one accelerated path.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -81,7 +75,7 @@ while [ $# -gt 0 ]; do
     --keychain-profile) PROFILE=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
     --community) COMMUNITY=1; shift ;;
-    -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,59p' "$0"; exit 0 ;;
     *) echo "package-macos.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done

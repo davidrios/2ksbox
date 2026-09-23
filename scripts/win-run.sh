@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Run the native Windows build out of the checkout, in MSYS2's MINGW64
-# shell (docs/build-windows.md, "Building on Windows"). A package gets all
-# of this from being one folder; a checkout keeps the same files in
-# build/win/ and target/, so here it is said out loud.
+# Run the native Windows build from the checkout, in MSYS2's MINGW64
+# shell (docs/build-windows.md, "Building on Windows"). A package finds
+# everything because it is one folder. A checkout keeps the same files in
+# build/win/ and target/, so this script points each program at them.
 #
 #   scripts/win-run.sh launcher [args...]   the Qt launcher (2ksbox.exe in a package)
 #   scripts/win-run.sh player [args...]     the player (2ksbox-player.exe)
@@ -11,10 +11,10 @@
 #   GDB=1 scripts/win-run.sh player ...     any of them under gdb
 #
 # What it sets, each only when the caller has not:
-#   PATH                  build/win/qemu first, for libqemu-embed-i386.dll;
-#                         the mingw runtime and Qt come from /mingw64/bin,
+#   PATH                  build/win/qemu first, for libqemu-embed-i386.dll.
+#                         The mingw runtime and Qt come from /mingw64/bin,
 #                         already on this shell's PATH
-#   LAUNCHER_PLAYER_BIN   the launcher is built into launcher-qt/target/, and
+#   LAUNCHER_PLAYER_BIN   the launcher is built into launcher-qt/target/ and
 #                         looks beside itself and in target/<profile>, where
 #                         a --target build never puts the player
 #   D3DPT_EXEC_LIB        QEMU's own search is relative to the working directory
@@ -22,8 +22,8 @@
 #                         it, dxvk_d3d9.dll (never plain d3d9.dll, which is
 #                         Windows' own), so the build is copied to that name
 #
-# The launcher is a windowed program and writes nothing to this terminal:
-# its log is %APPDATA%\2ksbox\data\launcher.log, and a machine's is
+# The launcher is a windowed program and writes nothing to this terminal.
+# Its log is %APPDATA%\2ksbox\data\launcher.log, and a machine's is
 # player.log beside it.
 set -euo pipefail
 

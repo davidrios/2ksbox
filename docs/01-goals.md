@@ -6,58 +6,49 @@ the decisions doc 10.
 
 ## Vision
 
-A Windows 98 or Windows XP machine that behaves like the real thing
-around 1998 to 2005. Games install from your own disc dumps, copy
-protection included. Direct3D and Glide titles run accelerated. The
-picture looks like a shadow-mask CRT fed by a VGA card, not a blurry
-stretched rectangle in a window.
+A Windows 98 or XP machine that behaves like the real thing around
+1998 to 2005. Games install from your own disc dumps, copy protection
+included. Direct3D and Glide titles run accelerated. The picture looks
+like a shadow-mask CRT fed by a VGA card, not a blurry stretched
+rectangle in a window.
 
 ## Goals
 
-1. **Cross-platform, open source.** Linux, Windows, macOS. Apple Silicon
-   is a first-class target, not a port. Everything in the stack is open
-   source, which ruled out VMware. VirtualBox was ruled out on
-   capability: it has had no 3D for pre-Win7 guests since 6.1.
+1. **Cross-platform, open source.** Linux, Windows, macOS, with Apple
+   Silicon a first-class target. Open source ruled out VMware.
+   VirtualBox has had no 3D for pre-Win7 guests since 6.1.
 2. **Real guest 3D**, host-accelerated, on Win98 and XP. Direct3D goes
-   through our paravirtual device and its host executor (DXVK, or the
-   host's own Direct3D 9 or Wine below the Vulkan floor). Glide goes
-   through the OpenGLide host wrapper or an emulated Voodoo 2. OpenGL
-   goes through the qemu-3dfx pass-through.
-3. **Pixel-accurate, period-accurate video.** The player captures the
-   raw guest framebuffer before any scaling and presents it with the
-   correct aspect (non-square modes like 320×200 included), integer
-   scaling and a CRT shader chain (libretro slang shaders through
-   librashader on wgpu).
+   through our paravirtual device and its host executor (doc 14). Glide
+   goes through OpenGLide or an emulated Voodoo 2. OpenGL goes through
+   the qemu-3dfx pass-through.
+3. **Pixel-accurate video.** The player captures the raw guest
+   framebuffer before scaling and presents it with the correct aspect
+   (non-square modes like 320×200 included), integer scaling and a CRT
+   shader chain (libretro slang shaders through librashader on wgpu).
 4. **A faithful CD-ROM drive.** Raw dumps (cue/bin, CCD, MDS, ISO) mount
-   as a drive that behaves like period hardware: CD-DA, subchannel data,
-   error behaviour, raw TOC. A host folder mounts as a disc (`isodir:`).
-   Era copy protection passes its checks because the drive is faithful.
-   Nothing is patched or bypassed.
-5. **Low latency.** This is for games. QEMU runs in-process with the
-   front end, and the display, input and audio paths are built to add
-   as little latency as possible (doc 03).
+   as a drive with CD-DA, subchannel data, period error behaviour and a
+   raw TOC. A host folder mounts as a disc (`isodir:`). Copy protection
+   passes because the drive is faithful; nothing is patched.
+5. **Low latency.** QEMU runs in-process with the front end, and the
+   display, input and audio paths are built for latency (doc 03).
 6. **UTM-style UX.** A machine library, guided creation for four
    families (Win98, XP, DOS, Other), sane defaults, a one-click
-   guest-tools disc. Nobody should need to write a 40-flag QEMU command
-   line. It ships as a player (one machine per window) and a launcher
-   (doc 07).
+   guest-tools disc, no 40-flag QEMU command lines. It ships as a player
+   (one machine per window) and a launcher (doc 07).
 
 ## Non-goals
 
-- **Cycle-accurate vintage hardware.** 86Box and PCem do that well. We
-  target a fast machine of the era, not chip-accurate timing. The one
-  concession is that a DOS machine's processor is throttled to a
-  calibrated instruction rate (doc 06).
+- **Cycle-accurate hardware.** 86Box and PCem do that. We target a fast
+  machine of the era. The one concession: a DOS machine's processor is
+  throttled to a calibrated instruction rate (doc 06).
 - **Modern guests.** Win9x/Me, 2000/XP, DOS and period alternatives
-  (BeOS, a period Linux, OS/2). Not modern Windows or Linux, and not a
-  general-purpose VM manager competing with virt-manager or UTM.
-- **Bypassing or stripping DRM.** The CD pillar makes protected
-  originals work by being faithful. No-CD patches, key generators and
-  activation workarounds are out of scope. Users supply their own media,
-  licences and dumps.
+  (BeOS, a period Linux, OS/2) only. Not a general-purpose VM manager
+  competing with virt-manager or UTM.
+- **Bypassing DRM.** No-CD patches, key generators and activation
+  workarounds are out of scope. Users supply their own media, licences
+  and dumps.
 - **Integration features** (shared folders beyond a folder disc,
-  clipboard sync). These are later nice-to-haves, not pillars (doc 07's
-  out of scope).
+  clipboard sync). Later nice-to-haves (doc 07's out of scope).
 
 ## The pillars
 

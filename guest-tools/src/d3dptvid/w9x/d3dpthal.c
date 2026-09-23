@@ -20,7 +20,7 @@
  * arena above 2 GiB, which 9x maps into every process, so the linear
  * addresses in the block are ordinary pointers here. This DLL writes the
  * DOORBELL register directly, as the XP driver does from kernel mode
- * (doc 19 §8, the first of the two options).
+ * (doc 19 §8).
  *
  * Freestanding with no CRT, like the XP driver and `vmhal9x`, so no runtime
  * gets loaded into every game.

@@ -3,18 +3,19 @@
 This is the XP guest side of doc 14. Instead of DLL copies in each game
 folder, a Windows display driver pair owns the adapter and speaks the
 DirectDraw and Direct3D DDIs into the doc 14 transport and executor.
-ADR-008 (doc 10) has the why and this doc has the how. The Win98 driver
+ADR-008 (doc 10) has the why; this doc has the how, for whoever works on
+the driver, the adapter or the executor's DDI path. The Win98 driver
 shares the OS-independent `core/` described here (doc 19 §19 has the 9x
-specifics). The protocol and the executor are doc 14, and the track's
-loop and open work are in `docs/tracks/m7-display-driver.md`. Every test
-tool named here is described in `docs/testing.md`.
+specifics). The track's loop and open work are in
+`docs/tracks/m7-display-driver.md`, and every test tool named here is in
+`docs/testing.md`.
 
-The driver came in three stages, which still name the parts. **M7a** is
-the framebuffer driver, **M7b** the DirectDraw DDI, **M7c** the Direct3D
-DDI (a DirectX 7 HAL, grown into a DirectX 8 DDI with hardware T&L).
-The current register set is **v5** (`D3DPT_FB_VERSION`) and the protocol
-**v13** (`D3DPT_PROTO_VERSION`). FIFA 2000, Max Payne, Diablo, Moto Racer
-1997, GTA 2 and GTA Vice City run on it with no DLL in their folders.
+The driver came in three stages, which still name the parts: **M7a** the
+framebuffer driver, **M7b** the DirectDraw DDI, **M7c** the Direct3D DDI
+(a DirectX 7 HAL, grown into a DirectX 8 DDI with hardware T&L). The
+register set is **v5** (`D3DPT_FB_VERSION`) and the protocol **v13**
+(`D3DPT_PROTO_VERSION`). FIFA 2000, Max Payne, Diablo, Moto Racer 1997,
+GTA 2 and GTA Vice City run on it with no DLL in their folders.
 
 ## Shape (M7a)
 
@@ -36,47 +37,47 @@ The sources are in `guest-tools/src/d3dptvid/`. The NT layer `nt/`
 (miniport `d3dptvid.c`, display DLL `d3dptdisp.c`, INF) sits over `core/`
 (DP2 walker, surface table, caps, flip chain), which Win98 shares.
 
-- **The adapter is a real VGA.** It is QEMU's standard VGA core with the
-  Bochs VBE ports. SeaBIOS' `vgabios-stdvga.bin` boots it (the ROM takes
-  BAR 0 as the LFB for any vendor id), and XP's inbox `vga.sys` runs the
+- **The adapter is a real VGA**: QEMU's standard VGA core with the Bochs
+  VBE ports. SeaBIOS' `vgabios-stdvga.bin` boots it (the ROM takes BAR 0
+  as the LFB for any vendor id), and XP's inbox `vga.sys` runs the
   desktop at 800×600×4 before our driver is installed. Blue screens and
   shutdown text work because `HwResetHw` returns FALSE and videoprt's
-  int10 puts the core back into mode 3. The vendor/device id is 1234:3d00
-  (the QEMU/Bochs pseudo vendor, our device id), matched as
+  int10 puts the core back into mode 3. The id is 1234:3d00 (the
+  QEMU/Bochs pseudo vendor, our device id), matched as
   `PCI\VEN_1234&DEV_3D00`.
 - **The register BAR is the paravirtual part** (`d3dpt/d3dpt_fb.h`, one
-  header for the device and both drivers). The host owns the **mode
-  table**. The miniport reads MODE_COUNT and walks MODE_SEL →
-  MODE_W/H/BPP/HZ, so the host decides what Display Properties offers.
-  The table is a static list of 7 sizes (640×480 to 1600×1200) × {60, 75,
-  85} Hz × {8, 16, 32} bpp = 63 modes. A mode switch writes
-  WIDTH/HEIGHT/BPP/PITCH/OFFSET and ENABLE = 1. ENABLE = 0 hands the
-  console back to the VGA core. DEBUG takes one character per write, and
-  the device prints whole lines to the QEMU log (`d3dpt-vga: guest: …`).
-  That is the only debugger the kernel code has, and it is enough.
+  header for the device and both drivers). The host owns the mode table:
+  the miniport reads MODE_COUNT and walks MODE_SEL → MODE_W/H/BPP/HZ, so
+  the host decides what Display Properties offers. The table is a static
+  list of 7 sizes (640×480 to 1600×1200) × {60, 75, 85} Hz × {8, 16, 32}
+  bpp = 63 modes. A mode switch writes WIDTH/HEIGHT/BPP/PITCH/OFFSET and
+  ENABLE = 1; ENABLE = 0 hands the console back to the VGA core. DEBUG
+  takes one character per write, and the device prints whole lines to
+  the QEMU log (`d3dpt-vga: guest: …`). It is the kernel code's only
+  debugger, and enough.
 - **No copy inside QEMU.** While ENABLE is set, the device creates its
-  `DisplaySurface` *over the VRAM bytes* at the guest's offset and pitch
+  `DisplaySurface` over the VRAM bytes at the guest's offset and pitch
   (`qemu_create_displaysurface_from`). Dirty lines come from the memory
   dirty log (`DIRTY_MEMORY_VGA`, as in `bochs-display`), and the embed
   listener hands that pointer plus the dirty rectangles to the player.
   The listener takes one format, so 8 and 16 bpp modes (and a 32 bpp one
   under a gamma ramp) are converted per dirty span into an x8r8g8b8
   shadow. The player's upload of the dirty rectangle is the one copy
-  left. A zero-copy path from guest RAM to the GPU is impossible with a
+  left; zero-copy from guest RAM to the GPU is impossible with a
   host-visible-only import (M3's dma-buf ring is for host-rendered 3D).
   `-device d3dpt-vga,full-frames=on` converts the whole frame every
-  refresh instead. It is the A/B for a picture in stale bands (an open
-  thread in `docs/00-status.md`).
+  refresh, the A/B for a picture in stale bands (an open thread in
+  `docs/00-status.md`).
 - **Mode switches do not flash.** A switch is RESET then SET_MODE a few ms
   apart. After ENABLE goes 0 the device holds the last linear frame for
   250 ms of wall-clock time before it shows the VGA core
-  (`D3DPT_FB_VGA_GRACE_MS`). Counted in refreshes instead, the hold lasted
-  45 s headless, where an idle console refreshes every 3 s. The miniport
+  (`D3DPT_FB_VGA_GRACE_MS`). Counted in refreshes, the hold lasted 45 s
+  headless, where an idle console refreshes every 3 s. The miniport
   zeroes the new mode's frame buffer unless `VIDEO_MODE_NO_ZERO_MEMORY`
   is set. A 16 bpp desktop's held frame is the shadow copy, so VGA writes
   to VRAM offset 0 before ENABLE goes 0 land in it (doc 19 §35). While
   the linear mode is off, the device logs the VGA core's mode registers
-  once per change (`d3dpt-vga: vga core cr1=… sr4=…`). That is how a
+  once per change (`d3dpt-vga: vga core cr1=… sr4=…`), which is how a
   headless run tells Mode X, mode 13h and a text-mode blue screen apart.
 - **The display driver has the DDK "framebuf" shape.** `DrvEnablePDEV`
   picks the miniport mode that matches the DEVMODE and fills
@@ -92,14 +93,13 @@ The sources are in `guest-tools/src/d3dptvid/`. The NT layer `nt/`
   `INSTALLFLAG_FORCE` for the hardware id (what `devcon update` does).
   XP SP3 shows the "has not passed Windows Logo testing" dialog anyway,
   because the stored policy is hash-protected and only the Control Panel
-  changes it. The dialog comes **once per unsigned file** (the miniport,
-  then the display DLL after its copy, minutes apart under TCG). A
-  watcher thread in DRVINST presses each dialog's first button for as
-  long as the install call runs (`alt+c` by hand). `SETMODE.EXE [w h bpp
-  [hz]]` lists or switches modes for scripts. After the restart XP starts
-  at 640×480×32@60 and remembers what is set.
+  changes it. It comes once per unsigned file, minutes apart under TCG,
+  and a watcher thread in DRVINST presses each one's first button
+  (`alt+c` by hand). `SETMODE.EXE [w h bpp [hz]]` lists or switches modes
+  for scripts. After the restart XP starts at 640×480×32@60 and remembers
+  what is set.
 - XP runs far faster under **KVM** (`-accel kvm -cpu pentium3`) than
-  under TCG. Linux hosts should use KVM. TCG is the Apple Silicon path.
+  under TCG; Linux hosts should use it. TCG is the Apple Silicon path.
 
 ### The register set and its versions
 
@@ -111,21 +111,20 @@ The sources are in `guest-tools/src/d3dptvid/`. The NT layer `nt/`
 | 4 | the hardware cursor: CURSOR_* |
 | 5 | gamma: the GAMMA block (0x800), GAMMA_ENABLE (0xb4), `CAP_GAMMA` |
 
-The BAR has `valid.min_access_size = 4`, so every access is 32-bit. That
-matters to the 16-bit 9x driver (doc 19).
+The BAR has `valid.min_access_size = 4`, so every access is 32-bit,
+which matters to the 16-bit 9x driver (doc 19).
 
 ### Newer register sets are accepted
 
-The miniport, the 9x display driver and the mini-VDD accept **any
-version at or above their own**, and compare `D3DPT_FB_MAGIC` exactly.
-Each version has only added registers and a CAP bit and reinterpreted
-nothing, so a newer adapter is the old one plus registers the driver
-never touches. `d3dpt_fb.h` states the rule: a bump only adds, and a
-change that must reinterpret a register gets a new MAGIC. This is what
-lets an installed guest survive a QEMU update.
+The miniport, the 9x display driver and the mini-VDD accept any version
+at or above their own and compare `D3DPT_FB_MAGIC` exactly. Each version
+has only added registers and a CAP bit, so a newer adapter is the old one
+plus registers the driver never touches. `d3dpt_fb.h` states the rule: a
+bump only adds, and a change that must reinterpret a register gets a new
+MAGIC. This lets an installed guest survive a QEMU update.
 
 Drivers built before 2026-09-12 want the exact version. On XP such a
-driver refuses the adapter and the desktop comes up on plain VGA. A
+driver refuses the adapter and the desktop comes up on plain VGA; a
 Windows 98 image whose `SYSTEM.INI` says `*DisplayFallback=0` dies at
 boot with "Windows protection error". Boot such a machine on the Cirrus
 once and run the ISO's `SETUP /ALL`. `-device d3dpt-vga,fb-version=N`
@@ -143,39 +142,38 @@ is checked.
 | `fb-version=N` | the register set version reported |
 | `full-frames=on` | whole-frame conversion every refresh |
 
-The executor properties model hosts, not devices. The adapter only
-hands them to the loader (`d3dpt/hw/d3dpt_exec_load.c`), which doc 14's
-SysBus device shares, so both devices answer the same.
+The executor properties model hosts, not devices. The adapter only hands
+them to the loader (`d3dpt/hw/d3dpt_exec_load.c`), which doc 14's SysBus
+device shares, so both devices answer the same.
 
 - **`no-exec=on`** models a Linux or macOS host below the Vulkan 1.3
-  floor *with no Wine*. Set it with `-global d3dpt-vga.no-exec=on` in the
-  machine form's Extra QEMU arguments, or `NO_EXEC=1
-  tools/xp-driver-test.sh`. The driver keeps its whole DirectDraw half
-  (modes, flip chain, cursor, gamma, palette) and offers no Direct3D. A
-  game then falls back as it would on such a host, to the runtime's
-  software device or to WineD3D staged next to it (`SETUP /GAME 4`, doc
-  04). The loader refuses **before it opens the executor library**, so it
-  never reads `d3d9=` and tries no backend. The QEMU log says `d3dpt:
-  no-exec=on: no Vulkan 1.3 device on this host` and the driver says
-  `d3dptdisp: no Direct3D executor on the host`. **Do not use
-  `ddflags=0x20`** (`DDF_NO_D3D`) for this. That bit makes the *driver*
-  decide and never reads D3D_STATUS, so it proves nothing about the path
-  a real below-floor user takes. The 9x counterpart is doc 19 §40.
-- **`exec=wine`** models a Linux or macOS host below the floor that has
-  Wine. The guest sees READY as on any other host. On a host with Vulkan
-  it is the A/B (`EXEC=wine tools/xp-driver-test.sh`).
-- **`d3d9=`** reaches the executor as `D3DPT_D3D9`. An explicit
-  `D3DPT_D3D9` in the environment wins, which is how the two backends are
-  compared on one Windows host. The machine form's **Direct3D** row
-  writes it and resolves `auto` from the launcher's own Vulkan probe. The
-  log names the library opened and the adapter that answered.
+  floor with no Wine (`-global d3dpt-vga.no-exec=on` in the machine
+  form's Extra QEMU arguments, or `NO_EXEC=1 tools/xp-driver-test.sh`).
+  The driver keeps its whole DirectDraw half (modes, flip chain, cursor,
+  gamma, palette) and offers no Direct3D, so a game falls back to the
+  runtime's software device or to WineD3D staged next to it (`SETUP
+  /GAME 4`, doc 04). The loader refuses before it opens the executor
+  library, so it tries no backend. The QEMU log says `d3dpt: no-exec=on:
+  no Vulkan 1.3 device on this host`, the driver `d3dptdisp: no
+  Direct3D executor on the host`. **Do not use `ddflags=0x20`**
+  (`DDF_NO_D3D`) for this: that bit makes the driver decide without
+  reading D3D_STATUS, so it proves nothing about a real below-floor
+  host. The 9x counterpart is doc 19 §40.
+- **`exec=wine`** models a below-floor host that has Wine; the guest
+  sees READY. On a host with Vulkan it is the A/B (`EXEC=wine
+  tools/xp-driver-test.sh`).
+- **`d3d9=`** reaches the executor as `D3DPT_D3D9`; an explicit
+  `D3DPT_D3D9` in the environment wins, which is how the two backends
+  are compared on one Windows host (doc 14 "The executor and its
+  Direct3D 9"). The log names the library opened and the adapter that
+  answered.
 
 ## Building kernel-mode PE files with GCC
 
-`guest-tools/build-driver.sh` builds the drivers. `build-wrappers.sh`
-also runs it and stages the result as `DRIVER\` on the ISO. mingw-w64
-ships the DDK headers and import libraries under its permissive
-licence, and **nothing from Microsoft's DDK is used**.
+`guest-tools/build-driver.sh` builds the drivers; `build-wrappers.sh`
+runs it and stages the result as `DRIVER\` on the ISO. mingw-w64 ships
+the DDK headers and import libraries under its permissive licence, and
+nothing from Microsoft's DDK is used.
 
 - Flags are `-nostdlib -shared -ffreestanding -fno-stack-protector
   -mno-stack-arg-probe -fno-asynchronous-unwind-tables`, subsystem native,
@@ -184,8 +182,8 @@ licence, and **nothing from Microsoft's DDK is used**.
   display DLL, exported undecorated through a .def with `--kill-at`.
   `-lgcc` supplies helpers.
 - The miniport links `libvideoprt.a` plus the few ntoskrnl imports of the
-  cached VRAM mappings (below). The display DLL links **only**
-  `libwin32k.a`. The build script fails on any other import.
+  cached VRAM mappings (below). The display DLL links only `libwin32k.a`.
+  The build script fails on any other import.
 - GCC emits `memcpy`/`memset` calls for struct copies even when
   freestanding, and neither port driver exports them. `kcrt.c` carries
   byte loops, compiled with `-fno-tree-loop-distribute-patterns` so GCC
@@ -193,23 +191,23 @@ licence, and **nothing from Microsoft's DDK is used**.
 - Header sets do not mix. The miniport takes `ntdef.h`, `dderror.h`,
   `devioctl.h`, `ddk/miniport.h`, `ntddvdeo.h`, `ddk/video.h`, and
   **not** `ntddk.h`, which conflicts with `miniport.h`. Leave
-  `_WIN32_WINNT` at the default, since with `0x0501` mingw's `wdm.h` does
-  not compile. The display DLL takes `windef.h`, `wingdi.h`, `winddi.h`,
+  `_WIN32_WINNT` at the default: with `0x0501` mingw's `wdm.h` does not
+  compile. The display DLL takes `windef.h`, `wingdi.h`, `winddi.h`,
   `devioctl.h`, `ntddvdeo.h`.
 - mingw's `winddi.h` includes `ddrawint.h` and `d3dnthal.h`, which mingw
   does not ship. `guest-tools/src/d3dptvid/ddk/` vendors ReactOS'
-  public-domain `ddrawint.h` (+ `dvp.h`) and a **self-contained
-  `d3dnthal.h`**. The DDK's version pulls in the user-mode `windows.h`
-  through `d3dtypes.h`/`d3dcaps.h`, so ours spells out the few Direct3D
-  types the DDI structures use with the DDK's layouts. Hand-transcribed
-  constants are where this goes wrong silently. The `DDBD_*` bit-depth
-  flags count *down* (`DDBD_16` 0x400, `DDBD_24` 0x200, `DDBD_32` 0x100).
-  Having them the other way made `CreateDevice` fail with
-  `DDERR_INVALIDPIXELFORMAT` at 32 bpp only, because the runtime checks
-  the target against `dwDeviceRenderBitDepth`. Only the host interprets
-  the DP2 token layouts (`d3dpt/exec/d3dpt_exec_ddi.cpp`).
-- The drivers keep the same `-march=pentium3` floor and ISA/UCRT checks
-  as the wrappers.
+  public-domain `ddrawint.h` (+ `dvp.h`) and a self-contained
+  `d3dnthal.h`: the DDK's pulls in the user-mode `windows.h` through
+  `d3dtypes.h`/`d3dcaps.h`, so ours spells out the few Direct3D types the
+  DDI structures use, with the DDK's layouts. Hand-transcribed constants
+  are where this goes wrong silently. The `DDBD_*` bit-depth flags count
+  down (`DDBD_16` 0x400, `DDBD_24` 0x200, `DDBD_32` 0x100); the other way
+  round, `CreateDevice` failed with `DDERR_INVALIDPIXELFORMAT` at 32 bpp
+  only, because the runtime checks the target against
+  `dwDeviceRenderBitDepth`. Only the host interprets the DP2 token
+  layouts (`d3dpt/exec/d3dpt_exec_ddi.cpp`).
+- The drivers keep the wrappers' `-march=pentium3` floor and ISA/UCRT
+  checks.
 
 ## The DirectDraw DDI (M7b)
 
@@ -218,21 +216,21 @@ This is what `ddraw.dll` → `dxg.sys` sees behind the display driver.
 - **The primary is a device surface GDI still draws on.** The driver
   calls `EngCreateDeviceSurface` + `EngModifySurface(hsurf, hdev,
   HOOK_SYNCHRONIZE, MS_NOTSYSTEMMEMORY, dhsurf, pvScan0 = VRAM, pitch)`
-  with a no-op `DrvSynchronizeSurface`. `HOOK_SYNCHRONIZE` is required.
-  Without it win32k refuses the `EngModifySurface`. The driver tries the
-  variants in order and logs the one that took. An engine bitmap is the
-  desktop-only fallback.
+  with a no-op `DrvSynchronizeSurface`. Without `HOOK_SYNCHRONIZE`
+  win32k refuses the `EngModifySurface`. The driver tries the variants in
+  order and logs the one that took; an engine bitmap is the desktop-only
+  fallback.
 - **VRAM behind the primary is one linear heap.** `DrvGetDirectDrawInfo`
-  reports it as `VIDMEM_ISLINEAR`, with `fpStart` at the primary size
-  rounded to 4 KiB, ending 16 KiB below the command window, where the
-  cursor image lives. dxg's heap manager places every DirectDraw surface
-  and the driver never allocates.
+  reports it as `VIDMEM_ISLINEAR`, from the primary size rounded to 4 KiB
+  up to 16 KiB below the command window, where the cursor image lives.
+  dxg's heap manager places every DirectDraw surface; the driver never
+  allocates.
 - **The callbacks.**
   - `DdMapMemory` maps VRAM into the game's process through the
     miniport's `IOCTL_VIDEO_SHARE_VIDEO_MEMORY`.
   - `DdCanCreateSurface` accepts the formats the host mirrors.
-  - `DdFlip` writes the target's VRAM offset into OFFSET once. It is a
-    real page flip and copies nothing.
+  - `DdFlip` writes the target's VRAM offset into OFFSET once: a real
+    page flip that copies nothing.
   - `DdWaitForVerticalBlank`, `DdGetFlipStatus` and
     `GetVerticalBlankStatus` run on FRAMES (next section).
   - `DdGetBltStatus` always answers done.
@@ -244,22 +242,21 @@ This is what `ddraw.dll` → `dxg.sys` sees behind the display driver.
   - `GetDriverInfo` answers `GUID_NTCallbacks` (SetExclusiveMode,
     FlipToGDISurface) and the Direct3D GUIDs, and refuses the rest.
 - **Mappings are cached, not write-combined.** videoprt's
-  `VideoPortMapMemory` maps frame buffers uncached or write-combined.
-  That suits a PCI aperture, but this VRAM is RAM, and reads from such a
-  mapping run at tens of MB/s. GDI scrolls, the HEL's copies and every
-  `Lock` read all do such reads. The miniport therefore maps VRAM itself,
-  with `MmMapIoSpace(MmCached)` for the kernel view GDI draws through and
-  a cached view of `\Device\PhysicalMemory` (`ZwMapViewOfSection`, what
-  videoprt does inside minus `PAGE_NOCACHE`) for DirectDraw's user-mode
-  `Lock`. The register BAR stays an uncached videoprt mapping. QEMU reads
-  guest RAM coherently, so a cached guest mapping is correct under KVM
-  and TCG. With it DDTEST's windowed offscreen → primary `Blt` went from
-  29.9 to 305 fps, and the 16 bpp flip chain from 31 fps (uncached) to
-  thousands.
+  `VideoPortMapMemory` maps frame buffers uncached or write-combined,
+  which suits a PCI aperture, but this VRAM is RAM, and GDI scrolls,
+  the HEL's copies and every `Lock` read from such a mapping at tens of
+  MB/s. The miniport therefore maps VRAM itself:
+  `MmMapIoSpace(MmCached)` for the kernel view GDI draws through, and a
+  cached view of `\Device\PhysicalMemory` (`ZwMapViewOfSection`, what
+  videoprt does minus `PAGE_NOCACHE`) for DirectDraw's user-mode `Lock`.
+  The register BAR stays an uncached videoprt mapping. QEMU reads guest
+  RAM coherently, so a cached mapping is correct under KVM and TCG. DDTEST's
+  windowed offscreen → primary `Blt` went from 29.9 to 305 fps, and the
+  16 bpp flip chain from 31 fps to thousands.
 - **Test.** `DRIVER\DDTEST.EXE [w h bpp] [frames] [-windowed]` logs the
   caps, then runs an exclusive flip chain (Lock/Unlock pattern + `Blt`
   colour fill + `Flip`) or a windowed offscreen surface blitted to the
-  primary. It reports fps and writes `ddtest.log` and a `.bmp`. `tools/
+  primary, and writes fps to `ddtest.log` plus a `.bmp`. `tools/
   xp-driver-test.sh <image> ddtest` runs 8, 16, 32 bpp and windowed.
   Every surface reports `VIDEOMEMORY | LOCALVIDMEM`, and the QEMU log
   shows `scanout offset 0 -> 614400 -> 0 …` per flip.
@@ -267,11 +264,10 @@ This is what `ddraw.dll` → `dxg.sys` sees behind the display driver.
 ### dxg's caps rules
 
 dxg validates the HAL after enabling it. On any of the following it
-drops the **whole** HAL with no message anywhere: `GetCaps` answers
+drops the whole HAL with no message anywhere: `GetCaps` answers
 `DDCAPS_NOHARDWARE`, surfaces go to system memory, and there is no
-Direct3D. Each rule came from `ddflags` bisection (one boot per variant,
-read from DDTEST and the QEMU log) and from disassembling the image's
-`dxg.sys` / `ddraw.dll` (pulled out with `qemu-img convert` + `7z`).
+Direct3D. The rules came from `ddflags` bisection and from disassembling
+the image's `dxg.sys` / `ddraw.dll` ("Debugging the driver").
 
 - `DDCAPS_GDI` in `dwCaps` (`ddflags=0x10` is the repro), and likewise
   `DDCAPS_BANKSWITCHED` and `DDSCAPS_MODEX`.
@@ -281,24 +277,24 @@ read from DDTEST and the QEMU log) and from disassembling the image's
   colour keying"; `ddflags=0x20000`).
 - Direct3D appearing or disappearing across a mode switch, which makes
   the object rebuild after `SetDisplayMode` fail. The driver therefore
-  offers Direct3D in every mode, 8 bpp included. The runtime refuses
+  offers Direct3D in every mode, 8 bpp included; the runtime refuses
   `CreateDevice` on a palettized primary by itself.
 - A device claiming `DRAWPRIMITIVES2EX` or `HWTRANSFORMANDLIGHT` without
   a `GetDriverState` callback ("The Direct3D DDI (M7c)").
 
-`dwCaps` also claims **no blit caps** (`DDCAPS_BLT` and friends). The
-HEL does every blit in user mode on the cached VRAM mapping. "Blit caps
-and the HEL" explains why that is not a choice.
+`dwCaps` also claims no blit caps (`DDCAPS_BLT` and friends): the HEL
+does every blit in user mode on the cached VRAM mapping. "Blit caps and
+the HEL" explains why that is not a choice.
 
 ### The flip chain's vertical blank
 
-Titles of the era pace themselves by the flip chain. On a real card the
-second `Flip` of a double-buffered chain cannot be set up until the
-first has been scanned out, and that wait, not a timer in the game,
-holds a 1997 racer at 60 frames a second. Without it Moto Racer ran
-several times too fast and DDTEST's chains ran at thousands of fps.
-**A game that runs far too fast is missing a frame limiter. It is not a
-clock bug.**
+Titles of the era pace themselves by the flip chain: on a real card the
+second `Flip` of a double-buffered chain waits until the first has been
+scanned out, and that wait, not a timer in the game, holds a 1997 racer
+at 60 frames a second. Without it Moto Racer ran several times too
+fast.
+**A game that runs far too fast is missing a frame limiter, not a clock
+bug.**
 
 - **The device (`d3dpt_vga.c`, `FRAMES`)** counts periods of the mode's
   `HZ` since `ENABLE`, on the host clock (60 Hz if `HZ` is unset). It
@@ -310,13 +306,13 @@ clock bug.**
   `DDERR_WASSTILLDRAWING`, and `DdGetFlipStatus` answers
   `DDERR_WASSTILLDRAWING` for both `DDGFS_CANFLIP` and
   `DDGFS_ISFLIPDONE`. Every wait is bounded at 50 ms, so a device that
-  stops counting cannot stop the guest. The waits pause between polls,
+  stops counting cannot stop the guest, and pauses between polls,
   because the register read and XP's performance counter are both exits.
 - **`GetVerticalBlankStatus`** (`WaitForVerticalBlank(DDWAITVB_I_TESTVB)`)
   must sometimes say yes, or a title's `while (!in_vb)
   GetVerticalBlankStatus(&in_vb);` never ends. The adapter has no beam
   position, so `vb_test` says yes once a frame, to the first question
-  after `FRAMES` moved. `while (!in_vb)` then ends at the next frame and
+  after `FRAMES` moved: `while (!in_vb)` ends at the next frame and
   `while (in_vb)` at the next question. DDTEST and `ddprobe` count the
   answers in a 500 ms loop (about 30 at 60 Hz).
 
@@ -324,73 +320,72 @@ With the vertical blank, DDTEST's 8/16/32 bpp chains and `D3D7TEST` run
 at 60 fps, and D3D7TEST's frame is still byte-identical to the host
 oracle. A windowed blit to the primary is not a flip and is not
 throttled, as on real hardware. `ddflags=0x8000` (`DDF_NO_VSYNC`) makes
-flips complete instantly. It is the A/B for a suspect title and how
-throughput is measured (DDTEST 640×480 under KVM: 3846 fps at 16 bpp,
-4762 at 32, 1132 at 8 with a palette every frame).
+flips complete instantly: the A/B for a suspect title and how throughput
+is measured (DDTEST 640×480 under KVM: 3846 fps at 16 bpp, 4762 at 32,
+1132 at 8 with a palette every frame).
 
-While flips happen, the device prints the guest's real frame rate every
-5 s (`d3dpt-vga: 299 page flips in 5.0 s (59.6/s)`). The flips
-themselves drive the line, so headless and player runs agree. **If no
-such line appears while a game runs, the game blits to the primary
-instead of flipping.** The vertical blank cannot pace it, and if it runs
-too fast the cause is the guest CPU, not the display path. `FRAMES` is a
-clock, not the player's present. A game gets the refresh it asked for,
-but not in phase with the host's swapchain (open item).
+While flips happen, the device prints the guest's frame rate every 5 s
+(`d3dpt-vga: 299 page flips in 5.0 s (59.6/s)`). The flips drive the
+line, so headless and player runs agree. **If no such line appears while
+a game runs, the game blits to the primary instead of flipping**; the
+vertical blank cannot pace it, and if it runs too fast the cause is the
+guest CPU, not the display path. `FRAMES` is a clock, not the player's
+present: a game gets the refresh it asked for, but not in phase with the
+host's swapchain (open item).
 
 ### A DirectX 6 title's flip chain
 
 GTA 2 (1999, `IDirectDraw4` / `IDirect3D3`, 640×480×16) exposed these
-flip-chain rules. All of them apply to every title.
+rules; all of them apply to every title.
 
 - **A flip swaps roles, not memory.** `DdFlip` gets `lpSurfCurr` (front)
   and `lpSurfTarg` (back), and the driver scans out `Targ`'s memory.
-  Afterwards dxg does *not* exchange the two objects' `fpVidMem`. The
+  Afterwards dxg does not exchange the two objects' `fpVidMem`: the
   handles keep their VRAM, `DDSCAPS_PRIMARYSURFACE` moves to the object
   now displayed, and the application's `back` pointer means the other
   object. dxg tells the driver with a `CreateSurfaceEx` pair (same
   offsets, swapped caps), and the runtime's `SETRENDERTARGET` alternates
   the handle (2, 1, 2, 1 …) to match. **Never re-register the chain in
-  `DdFlip`.** A first cut swapped the offsets there. From the second
-  frame on, the host then rendered into the *displayed* buffer on
-  alternate frames, and a `Lock` of the back buffer found black or the
-  previous frame. A golden compare of identical frames cannot see this.
-  `DdFlip` logs its first eight calls (`d3dptdisp: flip curr H at OFF
-  targ H at OFF`). Should a runtime ever swap memory, `DdFlip` and a
-  `DdLock` of a target re-register a surface the host knows at another
-  offset (`d3d_register_moved`, silent). The host drops a moved surface's
-  shadow ("Untracked writes") so the first readback is whole.
+  `DdFlip`.** Swapping the offsets there made the host render into the
+  displayed buffer on alternate frames, and a `Lock` of the back buffer
+  found black or the previous frame; a golden compare of identical frames
+  cannot see this. `DdFlip` logs its first eight calls (`d3dptdisp: flip
+  curr H at OFF targ H at OFF`). Should a runtime ever swap memory,
+  `DdFlip` and a `DdLock` of a target re-register a surface the host
+  knows at another offset (`d3d_register_moved`, silent), and the host
+  drops a moved surface's shadow ("Untracked writes") so the first
+  readback is whole.
 - **The back buffer may never be announced.** A DirectX 7 interface's
-  chain gets one `CreateSurfaceEx` per member. GTA 2's DX6 chain arrived
+  chain gets one `CreateSurfaceEx` per member; GTA 2's DX6 chain arrived
   as its root alone, so the host did not know `SETRENDERTARGET 2` and
   every other frame showed the buffer nobody drew. `DdCreateSurfaceEx`
-  now walks the surface's attach list (`d3d_register_chain`: the ring of
-  a flip chain and an attached Z buffer, while mip levels stay with their
+  walks the surface's attach list (`d3d_register_chain`: the ring of a
+  flip chain and an attached Z buffer, while mip levels stay with their
   texture) and registers each member the host does not know, or knows at
   another offset. `D3dContextCreate` and `D3dSetRenderTarget` do the same
-  for their targets. The DDK samples walk the list for the same reason.
+  for their targets, as the DDK samples do.
 - **Contexts outlive their PDEV.** A game's exclusive mode switch gives
-  GDI a new PDEV, and its switch back gives another, *before* dxg's
-  `ContextDestroyAll` arrives. With the context table in the PDEV, no
-  `CTX_DESTROY` reached the host. The next run's `CTX_CREATE` of handle 1
-  came back `BAD_HANDLE`, and `CreateDevice` failed on the game's second
-  start. The table and its count are now globals, like the surface
-  table, and the host replaces a context re-created under an open handle
-  (`ddi: context N still open, replaced`).
+  GDI a new PDEV, and its switch back another, before dxg's
+  `ContextDestroyAll` arrives. With the context table in the PDEV no
+  `CTX_DESTROY` reached the host, and `CreateDevice` failed on the game's
+  second start (`CTX_CREATE` of handle 1 → `BAD_HANDLE`). The table and
+  its count are globals, like the surface table, and the host replaces a
+  context re-created under an open handle (`ddi: context N still open,
+  replaced`).
 - **The white menu text: the legacy blend.** GTA 2 picks its blend once
   with the DirectX 5 `TEXTUREMAPBLEND` render state (`MODULATEALPHA`),
-  *before* it binds any texture. The DX6 runtime passes the state to a
-  DX7 driver unchanged instead of translating it into stage states.
-  Mapped once, it meant "no texture, the diffuse alone", and the glyph
-  textures bound later drew as white boxes. The executor now keeps the
-  legacy blend in effect as two flags, `legacy_cop` / `legacy_aop`.
-  `TEXTUREMAPBLEND` / `TEXTUREHANDLE` set both. The app's own `COLOROP`
-  ends the first and its `ALPHAOP` the second. Its ARGs end neither
-  (Crimson Skies sets `COLORARG2 = DIFFUSE` after the blend, doc 19
-  §28). Every bind of stage 0's texture re-evaluates the halves still in
-  effect. `d3dpt-dp2-test` covers both orders.
-- Not ours: pressing Enter during GTA 2's Bink intro kills the game
-  (`c0000095` in `binkw32!BinkGetSummary`). It does the same on XP's
-  inbox Cirrus driver with no Direct3D. Skip the intro at the logos.
+  before it binds any texture. The DX6 runtime passes the state to a DX7
+  driver unchanged instead of translating it into stage states. Mapped
+  once, it meant "no texture, the diffuse alone", and the glyphs drew as
+  white boxes. The executor keeps the legacy blend in effect as two
+  flags, `legacy_cop` / `legacy_aop`: `TEXTUREMAPBLEND` / `TEXTUREHANDLE`
+  set both, the app's own `COLOROP` ends the first and its `ALPHAOP` the
+  second, and its ARGs end neither (Crimson Skies sets `COLORARG2 =
+  DIFFUSE` after the blend, doc 19 §28). Every bind of stage 0's texture
+  re-evaluates the halves still in effect. `d3dpt-dp2-test` covers both
+  orders.
+- Not ours: Enter during GTA 2's Bink intro kills the game (`c0000095`
+  in `binkw32!BinkGetSummary`) on the Cirrus too. Skip it at the logos.
 
 ### 8 bpp palettized modes
 
@@ -402,10 +397,10 @@ offered at 8 bpp. Four layers take part.
   block (x8r8g8b8, 0x400..0x7fc). The scanout is a pixman `c8` view of
   VRAM through a `pixman_indexed_t` built from the registers, converted
   into the shadow per dirty span. A palette write repaints the whole
-  frame at the next refresh. Each entry write is one MMIO exit, so a
-  full 256-entry animation costs about 0.5 ms under KVM. That is fine
-  for 20–30 palette updates a second. A RAM-backed palette page is the
-  optimisation if a title needs more.
+  frame at the next refresh. Each entry write is one MMIO exit, so a full
+  256-entry animation costs about 0.5 ms under KVM, fine for 20–30
+  palette updates a second; a RAM-backed palette page is the fix if a
+  title needs more.
 - **Miniport.** 8 bpp entries carry `VIDEO_MODE_PALETTE_DRIVEN |
   VIDEO_MODE_MANAGED_PALETTE`, 8 bits per gun.
   `IOCTL_VIDEO_SET_COLOR_REGISTERS` writes the block.
@@ -426,23 +421,23 @@ offered at 8 bpp. Four layers take part.
 - **Test.** `DDTEST 640 480 8 300` rotates a four-ramp palette by one
   entry per frame and writes `ddtest.bmp` through the palette.
   `tools/xp-diablo.sh install|play` takes the retail Diablo from its
-  installer to Tristram at 640×480×8, palette-cycled title flames
-  included. The dungeon, sound and TCG timing have not been run.
+  installer to Tristram at 640×480×8 (dungeon, sound and TCG timing not
+  run).
 
 A 320×200 game on Win98 wants DirectDraw's own Mode X, not a driver
-mode, which is why no 320-wide mode is listed (doc 19 §30).
+mode, so no 320-wide mode is listed (doc 19 §30).
 
 ### The hardware cursor
 
-Without pointer hooks, GDI paints a software pointer into VRAM. It
-erases and redraws it around every drawing operation, always into the
-GDI primary. Under a flip chain that is one buffer of the two, so the
-pointer blinks every other frame in a full-screen title. Register set
-v4 adds the sprite every card of the era had.
+Without pointer hooks, GDI paints a software pointer into VRAM, erasing
+and redrawing it around every drawing operation, always into the GDI
+primary. Under a flip chain that is one buffer of the two, so the
+pointer blinks every other frame in a full-screen title. Register set v4
+adds the sprite every card of the era had.
 
 - **Driver.** `DrvSetPointerShape` takes GDI's pointer (a 1 bpp AND/XOR
   mask, or a colour surface with a translation object; `SPS_ALPHA` marks
-  32 bpp with alpha). It writes it as a8r8g8b8 into the 16 KiB above the
+  32 bpp with alpha), writes it as a8r8g8b8 into the 16 KiB above the
   DirectDraw heap, then writes CURSOR_ADDR / W / H / HOT_X / HOT_Y and
   CURSOR_DEFINE. For monochrome pointers, AND 1 + XOR 0 is transparent,
   AND 0 is black or white by XOR, and AND 1 + XOR 1 ("invert") becomes
@@ -452,41 +447,38 @@ v4 adds the sprite every card of the era had.
   GDI keeps those. `DrvMovePointer` writes CURSOR_X / Y and
   CURSOR_ENABLE (x = −1 hides). The driver sets `GCAPS_ASYNCMOVE`, and
   `DrvAssertMode(FALSE)` hides the sprite before the VGA text.
-- **Device.** CURSOR_DEFINE reads the image into a `QEMUCursor` and
-  passes it to `dpy_cursor_define`. X / Y / ENABLE writes become
-  `dpy_mouse_set`. Nothing is composited, so a QMP screendump shows no
-  cursor, as with a real sprite. The log has the first defines and moves.
-  The device reports the sprite hidden whenever ENABLE is 0 (every ENABLE
-  write re-runs `fb_cursor_move`), and a reset drops the shape. A VGA
-  screen has no hardware cursor, and without this the player drew
-  Windows' pointer over full-screen DOS games, XP's full-screen console
-  and blue screens (doc 19 §29). **Never call `dpy_cursor_define(con,
-  NULL)`.** QEMU's console takes a reference on the cursor
-  unconditionally (`cursor_ref`), so NULL segfaults the player. "No
-  cursor" is a hidden 1×1 transparent one (`fb_cursor_clear`).
-- **Player.** With the USB tablet, the host window's cursor *is* the
-  guest's shape while over the image (no compositing, no latency), and
-  it hides when the guest hides it. With a relative mouse (PS/2, the
-  player's grab) the host pointer is nowhere near the guest's, so the
-  player composites the sprite into the frame, and a move alone
-  republishes the frame. The headless dump takes that path, so a
-  `PLAYER_DUMP_OUT` frame shows the cursor. A guest without a hardware
-  cursor (Cirrus, vga.sys) keeps the software pointer in the frame.
+- **Device.** CURSOR_DEFINE reads the image into a `QEMUCursor` for
+  `dpy_cursor_define`; X / Y / ENABLE writes become `dpy_mouse_set`.
+  Nothing is composited, so a QMP screendump shows no cursor, as with a
+  real sprite. The log has the first defines and moves. The device
+  reports the sprite hidden whenever ENABLE is 0 (every ENABLE write
+  re-runs `fb_cursor_move`), so the player draws no Windows pointer over
+  full-screen DOS games, XP's console or blue screens (doc 19 §29), and
+  a reset drops the shape. **Never call
+  `dpy_cursor_define(con, NULL)`**: QEMU's console takes a reference on
+  the cursor unconditionally (`cursor_ref`), so NULL segfaults the
+  player. "No cursor" is a hidden 1×1 transparent one
+  (`fb_cursor_clear`).
+- **Player.** With the USB tablet, the host window's cursor takes the
+  guest's shape over the image and hides when the guest hides it. With a
+  relative mouse (PS/2, the player's grab) the player composites the
+  sprite into the frame, and a move alone republishes it; the headless
+  dump takes that path, so a `PLAYER_DUMP_OUT` frame shows the cursor. A
+  guest without a hardware cursor (Cirrus, vga.sys) keeps the software
+  pointer in the frame.
 - **Hidden behind a flip chain.** Windows keeps its pointer enabled
   behind an exclusive-mode game that never hides it, and its arrow was
-  drawn over Moto Racer's own. The adapter therefore hides the sprite
-  from a flip chain's first page flip, whatever CURSOR_ENABLE says
-  (`cur_flip_hidden`). A page-flipping game draws its own pointer, and
+  drawn over Moto Racer's own. The adapter hides the sprite from a flip
+  chain's first page flip, whatever CURSOR_ENABLE says
+  (`cur_flip_hidden`); a page-flipping game draws its own pointer, and
   the first flip would wipe GDI's anyway. The sprite comes back at the
-  next mode set, **or** after 2 s of guest time with no flip while the
-  desktop's page is on screen. The second rule exists because a game
-  running at the desktop's own mode sets no mode on the way out
-  (DirectDraw calls SetMode only for a change), which left the pointer
-  hidden for good after 3DMark 99. A game idle on its other page stays
-  hidden. One idle on the desktop's page (a loading screen) shows the
-  pointer until its next flip. While a Voodoo 2 has the monitor the
+  next mode set, or after 2 s of guest time with no flip while the
+  desktop's page is on screen, since a game at the desktop's own mode
+  sets no mode on the way out (3DMark 99 left the pointer hidden for
+  good). A game idle on its other page stays hidden; a loading screen on
+  the desktop's page shows the pointer until its next flip. While a Voodoo 2 has the monitor the
   cursor is hidden too (patch 66). The adapter does all this, so both
-  driver families get it, and the `voodoo-guest-d3dpt` check guards it.
+  driver families get it; the `voodoo-guest-d3dpt` check guards it.
 
 ### Gamma ramps
 
@@ -498,18 +490,18 @@ Register set v5 adds a ramp where a RAMDAC would have one.
   run never makes. The ramp is applied per dirty span to the shadow the
   8/16 bpp modes convert into. A 32 bpp mode moves onto a shadow only
   while the ramp changes anything, so the identity ramp GDI loads at
-  every mode set costs no copy. VRAM never holds ramped pixels.
-  `GetFrontBuffer` and every readback see the pixels as drawn, while a
+  every mode set costs no copy. VRAM never holds ramped pixels:
+  `GetFrontBuffer` and every readback see the pixels as drawn, a
   screendump and the player see the ramp. The log says `gamma ramp on` /
   `off`, and a reset turns it off.
 - **The XP driver** implements `DrvIcmSetDeviceGammaRamp` with
-  `GCAPS2_CHANGEGAMMARAMP`. GDI's `SetDeviceGammaRamp`, DirectDraw's
-  gamma control and Direct3D 8's `SetGammaRamp` all arrive there. It
-  writes the high byte of each of the three 256-word ramps, then
+  `GCAPS2_CHANGEGAMMARAMP`, where GDI's `SetDeviceGammaRamp`,
+  DirectDraw's gamma control and Direct3D 8's `SetGammaRamp` all arrive.
+  It writes the high byte of each of the three 256-word ramps, then
   `GAMMA_ENABLE`, and claims `DDCAPS2_PRIMARYGAMMA`. The core claims
   `D3DCAPS2_FULLSCREENGAMMA` only when its layer loads ramps
-  (`d3dpt_core.gamma`). Windows 98's layer has no ramp path yet.
-  `ddflags=0x10000000` (`DDF_NO_GAMMA`) takes it out. The GDI cap then
+  (`d3dpt_core.gamma`); Windows 98's layer has no ramp path yet.
+  `ddflags=0x10000000` (`DDF_NO_GAMMA`) takes it out; the GDI cap then
   stays and its entry refuses.
 - **Test.** `GAMMATEST` holds a mild ramp over a mid-grey frame (blue at
   3/4, because GDI range-checks ramps). `tools/xp-driver-test.sh <image>
@@ -518,42 +510,40 @@ Register set v5 adds a ramp where a RAMDAC would have one.
 
 ### Untracked writes by GDI on a DirectDraw surface
 
-The driver and executor agree on a contract. `VRAM_DIRTY` announces the
-guest's writes to a render target's VRAM (sent from `DdUnlock` and from
-the driver's own copies). The host uploads a dirty target before drawing
-and reads the host frame back into VRAM at EndScene, Lock and Flip. Two
-kinds of guest write never pass through `DdLock` / `DdUnlock`.
+`VRAM_DIRTY` announces the guest's writes to a render target's VRAM
+(from `DdUnlock` and the driver's own copies). The host uploads a dirty
+target before drawing and reads the host frame back into VRAM at
+EndScene, Lock and Flip. Two kinds of guest write never pass through
+`DdLock` / `DdUnlock`:
 
 - **`GetDC` on a DirectDraw surface** is `NtGdiDdGetDC` → dxg, which
   builds a GDI surface over the DirectDraw surface's memory. dxg asks a
-  driver that exports `DrvDeriveSurface` for that surface. Ours does not,
+  driver that exports `DrvDeriveSurface` for that surface; ours does not,
   so GDI's `TextOut` / `BitBlt` write straight into VRAM with no driver
   callback on either side.
-- **The engine's software cursor** is painted into the primary (576
-  pixels per move at 24×24). In a flip chain that is the next frame's
-  back buffer.
+- **The engine's software cursor**, painted into the primary (576 pixels
+  per move at 24×24). In a flip chain that is the next frame's back
+  buffer.
 
-Moto Racer draws every 2D panel of its bike-selection screen and its
-HUD's text the first way. The readback of the host frame overwrote them
-every frame, so the screen showed the bike and nothing else, while a
-click on the invisible Start button still worked. `DrvDeriveSurface`
-would not fix it. GDI does not say when it is done with a derived
-surface, so a readback could overtake a `TextOut` in progress. Instead
-the executor keeps a **shadow of each render target's VRAM** as of the
-last moment host and VRAM agreed (after every upload and readback), and
-uses it twice a frame.
+Moto Racer draws its menu panels and HUD text the first way, and the
+readback overwrote them every frame. `DrvDeriveSurface` would not
+fix it: GDI does not say when it is done with a derived surface, so a
+readback could overtake a `TextOut` in progress. Instead the executor
+keeps a shadow of each render target's VRAM as of the last moment host
+and VRAM agreed (after every upload and readback), and uses it twice a
+frame:
 
 1. Before the frame's first draw (`bind_ctx`), it compares a target that
    is not dirty with its shadow. A difference is an unannounced guest
-   write, and the target is uploaded as if it had been announced.
+   write, and the target is uploaded as if announced.
 2. At the readback, pixels that differ from the shadow are the guest's
-   writes since the draws began. They are **kept over the host frame**,
-   and the target is marked dirty so the next frame starts from them.
+   writes since the draws began. They are kept over the host frame, and
+   the target is marked dirty so the next frame starts from them.
 
 A full-target `Clear` skips the check as it skips the upload. The cost
 is one `memcmp` of the target per frame (per row first, per pixel only
 on rows that differ) and, while a title writes after its scene, one
-upload per frame. Moto Racer stays at 120 frames/s under KVM. The device
+upload per frame; Moto Racer stays at 120 frames/s under KVM. The device
 log counts these writes (`ddi: … N untracked guest pixels in 5.0 s`,
 plus the first eight events). `DrvDeriveSurface` stays on the list as an
 optimisation, not a correctness item.
@@ -570,28 +560,23 @@ blitter (copy, colour fill, stretch, source colour key, ROP) in the
 display DLL or on the host. The HEL's user-mode copies on cached VRAM
 are fast enough for the 2D titles tried so far, so the driver claims
 none. The `Blt` callback is still registered, because colour-key caps
-need one. Without `DDCAPS_BLT` nothing reaches it, and it logs any call
+need one; without `DDCAPS_BLT` nothing reaches it, and it logs any call
 with its rectangles. `DDF_CKEY_NOBLTCB` leaves it out. Windowed
 multisampling is the one feature that waits on a blitter
 ("Multisampling").
 
-FIFA 2000's intro videos play at 320×240 in the middle of the 640×480
-mode. The caps are not the cause. With blit caps claimed nothing
-blitted at all, since the game writes decoded frames through `Lock`.
-This stays open until someone sees the videos full-screen on a known
-configuration.
 
 ## The Direct3D DDI (M7c)
 
 This is the DX7 HAL behind the display driver, on the doc 14 protocol
 and executor. The adapter's top 64 MiB of VRAM is a command window in
-exactly the SysBus device's layout (`d3dpt_proto.h`: header page,
-records, return area), so the guest encoder `d3dpt_enc.h` and
-`d3dpt_exec_submit` work unchanged. DOORBELL submits the window, and the
-host runs the batch synchronously inside the write. D3D_STATUS says
-whether the host has an executor (reading it loads the library).
-CMD_OFFSET says where the window is. The executor library is loaded
-once per process, and each device has its own instance.
+the SysBus device's layout (`d3dpt_proto.h`: header page, records,
+return area), so the guest encoder `d3dpt_enc.h` and `d3dpt_exec_submit`
+work unchanged. DOORBELL submits the window, and the host runs the batch
+synchronously inside the write. D3D_STATUS says whether the host has an
+executor (reading it loads the library); CMD_OFFSET says where the
+window is. The executor library is loaded once per process, and each
+device has its own instance.
 
 ```
 guest (XP)                                      host
@@ -622,7 +607,7 @@ guest (XP)                                      host
   target, and in `DdFlip` before the OFFSET write, so flips, HEL blits,
   GDI and screenshots see it. It skips the copy when nothing was drawn
   since the last one. A full `Clear` of the target skips the upload of
-  stale VRAM. A partial one, or a draw onto a HEL-blitted background,
+  stale VRAM; a partial one, or a draw onto a HEL-blitted background,
   uploads it first. Per frame that is one `GetRenderTargetData` + memcpy
   (1.2 MB at 640×480×32).
 - **DrawPrimitives2** copies the runtime's command buffer and vertices
@@ -641,11 +626,11 @@ guest (XP)                                      host
     TEXBLT and palettes.
 
   A malformed stream answers `D3DERR_COMMAND_UNPARSED` with
-  `dwErrorOffset`. An out-of-range vertex reference skips the primitive.
+  `dwErrorOffset`; an out-of-range vertex reference skips the primitive.
   The DX7-only states without a d3d9 twin (4, 10, 30, 33, 40:
   TEXTUREPERSPECTIVE, LINEPATTERN, ZVISIBLE, STIPPLEDALPHA,
-  EDGEANTIALIAS…) are logged once and dropped. ZBIAS (47) is mapped.
-  Each of its 0..16 steps is DEPTHBIAS −1/65535, the scale DXVK's own d3d8
+  EDGEANTIALIAS…) are logged once and dropped. ZBIAS (47) is mapped:
+  each of its 0..16 steps is DEPTHBIAS −1/65535, the scale DXVK's own d3d8
   layer uses (`d8caps::ZBIAS_SCALE`).
 - **Caps.**
   - `lpD3DGlobalDriverData`: FLOATTLVERTEX, DRAWPRIMITIVES2 + 2EX,
@@ -667,17 +652,16 @@ guest (XP)                                      host
   `hwCaps.dwDevCaps & (D3DDEVCAPS_DRAWPRIMITIVES2EX |
   D3DDEVCAPS_HWTRANSFORMANDLIGHT)`. If either bit is set it requires a
   non-NULL `GetDriverState`, and otherwise builds the HEL-only object, so
-  the whole HAL is gone. Neither the DDK docs nor the samples say so.
-  `DdGetDriverState` answers DD_OK with the buffer untouched. The same
-  disassembly showed three more rules. User-mode ddraw probes a mangled
-  `GUID_DDStereoMode` that the driver must *refuse*. `dxg.sys` drops
-  Callbacks3 when the driver refuses the ParseUnknownCommand query. No
-  answer may exceed `dwExpectedSize`, because the runtime checks guard
+  the whole HAL is gone (the DDK does not say so). `DdGetDriverState` answers DD_OK with the buffer untouched. Three more
+  rules from the same disassembly: user-mode ddraw probes a mangled
+  `GUID_DDStereoMode` that the driver must refuse; `dxg.sys` drops
+  Callbacks3 when the driver refuses the ParseUnknownCommand query; and
+  no answer may exceed `dwExpectedSize`, because the runtime checks guard
   words after the buffer.
 - **Texture sizes.** `dwTextureCaps` claims `D3DPTEXTURECAPS_POW2 |
-  NONPOW2CONDITIONAL` (and D3DCAPS8 with it), which is a GeForce's
-  answer. Crimson Skies branches on `POW2`, and with it absent the game
-  never made its menu's string textures (doc 19 §34). `ddflags=0x2`
+  NONPOW2CONDITIONAL` (and D3DCAPS8 with it), a GeForce's answer.
+  Crimson Skies branches on `POW2`, and without it the game never made
+  its menu's string textures (doc 19 §34). `ddflags=0x2`
   (`DDF_TEX_ANYSIZE`) is the A/B.
 - **A Z buffer written through a Lock.** Some titles reset depth by
   writing the Z buffer, and the HEL performs an application's depth fill
@@ -688,9 +672,9 @@ guest (XP)                                      host
   clear (`ZFILLTEST.EXE`, doc 19 §34).
 - **Tests.** `tools/d3dpt-dp2-test.cpp` (the `d3dpt-dp2` host check)
   registers a target, a Z buffer and a texture in malloc'ed VRAM, sends
-  the D3D7TEST scene as the DP2 tokens the runtime would emit, and checks
-  pixels. It also feeds hostile records that the executor must refuse
-  without dying. Every executor fix since has a case there.
+  the D3D7TEST scene as the DP2 tokens the runtime would emit, checks
+  pixels, and feeds hostile records the executor must refuse without
+  dying; every executor fix has a case there.
   `DRIVER\D3D7TEST.EXE` draws the same scene through `IDirect3DDevice7`,
   and `tools/xp-driver-test.sh <image> d3d7` diffs its BMP against the
   host test's: 0 of 307200 pixels differ. The runtime batches a whole
@@ -705,9 +689,9 @@ prints the first eight formats it refuses:
 
     d3dpt-vga: guest: d3dptdisp: refused pixel format, flags 0x00000020 fourcc 0x00000000 bits 0x00000008 …
 
-`flags` bit 5 with 8 bits is `DDPF_PALETTEINDEXED8`. Read it together
-with the context line. `d3dptdisp: d3d context 1 …` means the game took
-the HAL, and no context line means it never got that far.
+`flags` bit 5 with 8 bits is `DDPF_PALETTEINDEXED8`. Read it with the
+context line: `d3dptdisp: d3d context 1 …` means the game took the HAL,
+and no context line means it never got that far.
 
 ### Palettized textures and colour keying
 
@@ -718,7 +702,7 @@ Protocol v8 gives a 1997 title the following.
   `dwTextureCaps` carries `D3DPTEXTURECAPS_TRANSPARENCY` and
   `ALPHAPALETTE`, masked out of `D3DCAPS8.TextureCaps`, where bit 3 means
   nothing. DirectDraw carries `DDCAPS_COLORKEY` with `dwCKeyCaps =
-  DDCKEYCAPS_SRCBLT`, a `SetColorKey` callback **and a `Blt` callback**.
+  DDCKEYCAPS_SRCBLT`, a `SetColorKey` callback and a `Blt` callback.
   CKTEST settled that shape in four runs:
   1. caps + `SetColorKey`, no `Blt`: dxg drops the whole HAL
      (`ddflags=0x20000` is the repro);
@@ -733,24 +717,23 @@ Protocol v8 gives a 1997 title the following.
 - **The key arrives two ways, and the driver keeps both.**
   `DdSetColorKey` sends `D3DPT_OP_VRAM_COLORKEY` (handle, low, high,
   on/off) when the app sets it. The DP2 walk also checks every
-  `TEXTURESTAGESTATE` that binds a texture. It reads the surface's
+  `TEXTURESTAGESTATE` that binds a texture: it reads the surface's
   `DDRAWISURF_HASCKEYSRCBLT` / `ddckCKSrcBlt` off the `DD_SURFACE_LOCAL`
-  that the surface table remembers, and sends the record ahead of the
-  DP2 record when it differs from what the host was told. That covers a
-  key set before the surface was mirrored. Key values are the surface's
-  own pixel values (0xf81f for magenta in R5G6B5, an index for P8) and
-  form an inclusive range.
+  the surface table remembers, and sends the record ahead of the DP2
+  record when it differs from what the host was told. That covers a key
+  set before the surface was mirrored. Key values are the surface's own
+  pixel values (0xf81f for magenta in R5G6B5, an index for P8) and form
+  an inclusive range.
 - **Palettes never touch the driver.** A texture's palette reaches the
   host inside the DP2 stream as `SETPALETTE` (palette handle, flags with
   `DDRAWIPAL_ALPHA` 0x2000 when `peFlags` are alpha, surface handle) and
-  `UPDATEPALETTE` (handle, start, count, entries). DX7 and DX8 use the
-  same two tokens.
+  `UPDATEPALETTE` (handle, start, count, entries), in DX7 and DX8 alike.
 - **The host expands both to A8R8G8B8.** DXVK has no P8 and a key needs
   alpha, so a P8 or keyed texture's host object is A8R8G8B8.
   `upload_texture` converts texel by texel: the palette colour, alpha
   from `peFlags` for an alpha palette, a grey ramp when no palette is
   set, and alpha 0 inside the key range. A palette update dirties every
-  texture that uses it. A key change releases the host object when its
+  texture that uses it; a key change releases the host object when its
   format changes. A bound texture can change under the runtime (a
   palette edit, a `Lock`), and the runtime re-sends `TEXTUREMAP` only on
   a `SetTexture`, so every draw first re-uploads dirty bound stages
@@ -758,14 +741,14 @@ Protocol v8 gives a 1997 title the following.
 - **Keying is alpha 0 plus the alpha test, with one override.** While
   `COLORKEYENABLE` (41) is on and stage 0's texture has a key, the
   executor forces the alpha test on (`GREATEREQUAL 1`) unless the app
-  runs its own. Stage 0's alpha op becomes `SELECTARG1 TEXTURE` when the
-  app's alpha pipeline does not read the texture. The override is needed
-  because the DX7 runtime's `TEXTUREMAPBLEND` emulation sets `ALPHAOP =
-  SELECTARG2 DIFFUSE` for any format without alpha, which is every keyed
-  R5G6B5 / P8 texture, and an alpha test cannot see a key the pipeline
-  threw away. The app's states come back the moment the key stops
-  applying. The cost is that a title that keys *and* fades by diffuse
-  alpha in one draw loses the fade (rare under the DX7 SDK's semantics).
+  runs its own, and makes stage 0's alpha op `SELECTARG1 TEXTURE` when
+  the app's alpha pipeline does not read the texture. The override is
+  needed because the DX7 runtime's `TEXTUREMAPBLEND` emulation sets
+  `ALPHAOP = SELECTARG2 DIFFUSE` for any format without alpha (every
+  keyed R5G6B5 / P8 texture), and an alpha test cannot see a key the
+  pipeline threw away. The app's states come back the moment the key
+  stops applying. A title that keys and fades by diffuse alpha in one
+  draw loses the fade (rare under the DX7 SDK's semantics).
 - **Tests.** `d3dpt-dp2-test` covers a P8 texture through a palette, an
   entry changed under a bound texture, a keyed checker with 41 on and
   off, the app's own alpha test winning, and hostile palettes.
@@ -775,51 +758,50 @@ Protocol v8 gives a 1997 title the following.
 ### Execute buffers (the DirectX 3 path)
 
 Moto Racer (1997) took the HAL with v8's caps and drew nothing through
-it: **0 draws** over minutes of play. It ships with DirectX 3 and draws
-through **`IDirect3DDevice::Execute`**. That means execute buffers of
-`D3DOP_*` instructions (`STATERENDER`, `PROCESSVERTICES`, `TRIANGLE`,
-`EXIT`), textures bound by `D3DRENDERSTATE_TEXTUREHANDLE`, and the
-viewport cleared through a background material. XP's `d3dim.dll` (the
-DX3–6 runtime; `d3dim700.dll` is only `IDirect3D7`) runs that on a
-DrawPrimitives2 driver. `DRIVER\EBTEST.EXE` does what such a title does
-and logs every HRESULT. `-rgb` runs it on the runtime's RGB software
-device as the control. The path needs the following, all found in
-`d3dim.dll`'s disassembly (XP SP3).
+it. It ships with DirectX 3 and draws through `IDirect3DDevice::Execute`:
+execute buffers of `D3DOP_*` instructions (`STATERENDER`,
+`PROCESSVERTICES`, `TRIANGLE`, `EXIT`), textures bound by
+`D3DRENDERSTATE_TEXTUREHANDLE`, and the viewport cleared through a
+background material. XP's `d3dim.dll` (the DX3–6 runtime; `d3dim700.dll`
+is only `IDirect3D7`) runs that on a DrawPrimitives2 driver.
+`DRIVER\EBTEST.EXE` does what such a title does and logs every HRESULT;
+`-rgb` runs it on the runtime's RGB software device as the control. The
+path needs the following, all from `d3dim.dll`'s disassembly (XP SP3).
 
 - **`dwMaxVertexCount` must be 4096.** The Execute core sizes its TL
   vertex buffer as `max(dwVertexCount clamped to 4096, dwMaxVertexCount)
   × 32` bytes + 0x400, and the vertex buffer constructor refuses more
-  than 0xffff vertices. It reports every failure there as
-  `E_OUTOFMEMORY`. A cap of 65535 is one page over, so every `Execute`
-  failed with 0x8007000E before a token reached the driver. 4096 is the
-  runtime's own clamp. `dwMaxBufferSize` stays 0 (unlimited).
-  `ddflags=0x40000` (`DDF_EB_MAXVERT_65535`) is the repro. The DX5+
-  interfaces never consult the field.
+  than 0xffff vertices, reporting it as `E_OUTOFMEMORY`. A cap of 65535
+  is one page over, so every `Execute` failed with 0x8007000E before a
+  token reached the driver. 4096 is the runtime's own clamp.
+  `dwMaxBufferSize` stays 0 (unlimited). `ddflags=0x40000`
+  (`DDF_EB_MAXVERT_65535`) is the repro. The DX5+ interfaces never
+  consult the field.
 - **The path is a pass-through with a bounce, not a translation.** In
   the UNCLIPPED mode the core hands every run of driver instructions to
-  `DrawPrimitives2` **as they are**. `dwFlags` is
-  `D3DHALDP2_EXECUTEBUFFER` (0x2), `lpDDCommands` the app's execute
-  buffer, `dwCommandOffset` the current instruction, and `lpDDVertex` the
-  runtime's TL buffer. The `D3DOP_*` opcodes share the DP2 numbering
-  where the payloads match. `POINT` / `LINE` / `TRIANGLE` / `STATERENDER`
-  (1 / 2 / 3 / 8) are `POINTS` / `INDEXEDLINELIST` / the legacy 8-byte
-  `INDEXEDTRIANGLELIST` / `RENDERSTATE`, which is why the DP2 enumeration
-  skips 4–7 and 9–14. The driver consumes those, `SPAN` (13, skipped)
-  and `EXIT` (11). Every other opcode belongs to the runtime, above all
-  `PROCESSVERTICES` (9), and also the matrix / light opcodes 4–7,
-  `TEXTURELOAD`, `BRANCHFORWARD` and `SETSTATUS`. The driver ends the
-  call before such an opcode with `D3DERR_COMMAND_UNPARSED` (0x88760BB8)
-  and its offset in `dwErrorOffset`. The runtime catches up its state
-  mirror, executes the instruction itself (a `PROCESSVERTICES` fills the
-  TL buffer) and calls again from the next one. **Skipping** opcode 9
-  instead makes `Execute` succeed with an all-zero TL buffer. `walk`
-  bounces and logs the first eight (`d3dptdisp: execute buffer: opcode 9
-  x1 bounced to the runtime at 0x34`). A call that starts on a runtime
-  instruction bounces with no host round trip. The runtime's
-  `D3DParseUnknownCommand` answers `COMMAND_UNPARSED` for these too, but
-  it is not the mechanism (`ddflags=0x80000` never calls it). No caps
-  steer any of this, and a CLIPPED `Execute` never reaches the
-  pass-through. The runtime transforms it and emits ordinary DP2 draws.
+  `DrawPrimitives2` as they are: `dwFlags` is `D3DHALDP2_EXECUTEBUFFER`
+  (0x2), `lpDDCommands` the app's execute buffer, `dwCommandOffset` the
+  current instruction, and `lpDDVertex` the runtime's TL buffer. The
+  `D3DOP_*` opcodes share the DP2 numbering where the payloads match:
+  `POINT` / `LINE` / `TRIANGLE` / `STATERENDER` (1 / 2 / 3 / 8) are
+  `POINTS` / `INDEXEDLINELIST` / the legacy 8-byte `INDEXEDTRIANGLELIST`
+  / `RENDERSTATE`, which is why the DP2 enumeration skips 4–7 and 9–14.
+  The driver consumes those, `SPAN` (13, skipped) and `EXIT` (11). Every
+  other opcode belongs to the runtime: `PROCESSVERTICES` (9) above all,
+  the matrix / light opcodes 4–7, `TEXTURELOAD`, `BRANCHFORWARD` and
+  `SETSTATUS`. The driver ends the call before such an opcode with
+  `D3DERR_COMMAND_UNPARSED` (0x88760BB8) and its offset in
+  `dwErrorOffset`. The runtime catches up its state mirror, executes the
+  instruction itself (a `PROCESSVERTICES` fills the TL buffer) and calls
+  again from the next one. **Skipping** opcode 9 instead makes `Execute`
+  succeed with an all-zero TL buffer. `walk` bounces and logs the first
+  eight (`d3dptdisp: execute buffer: opcode 9 x1 bounced to the runtime
+  at 0x34`); a call that starts on a runtime instruction bounces with no
+  host round trip. The runtime's `D3DParseUnknownCommand` answers
+  `COMMAND_UNPARSED` for these too, but it is not the mechanism
+  (`ddflags=0x80000` never calls it). No caps steer any of this, and a
+  CLIPPED `Execute` never reaches the pass-through: the runtime
+  transforms it and emits ordinary DP2 draws.
 - **The DirectX 5 texture render states** arrive as the app wrote them,
   where the DX6+ runtimes turn them into stage states. The executor maps
   them (`legacy_render_state`):
@@ -836,57 +818,50 @@ device as the control. The path needs the following, all found in
   The legacy-blend flags of "A DirectX 6 title's flip chain" apply.
 
 EBTEST passes its five cases (Clear, flat, textured, keyed, CLIPPED),
-and **Moto Racer plays**. The name screen, showroom and race with its
-colour-keyed palms and buildings run at 120 frames/s under KVM (four DP2
-calls and about 175 draws a frame). TCG is fast too, because a DX3
-title's guest side only builds execute buffers. Its one-triangle draws
-cannot be batched. The game sorts polygons back to front and switches
-texture per polygon, and consecutive triangles under one texture
-already arrive as one `D3DOP_TRIANGLE` entry. The 356 draws a frame
-cost DXVK nothing measurable. Each `Execute` is one DP2 call per run of
-driver instructions plus one bounce per runtime instruction, each a
-doorbell round trip. Batching can wait for a title that shows the cost.
+and Moto Racer plays, colour-keyed palms included, at 120 frames/s under
+KVM (four DP2 calls and about 175 draws a frame); TCG is fast too,
+because a DX3 title's guest side only builds execute buffers. Its
+one-triangle draws cannot be batched (it sorts back to front and
+switches texture per polygon) and cost DXVK nothing measurable. Each
+`Execute` costs one doorbell round trip per run of driver instructions
+plus one per bounce; batching waits for a title that shows the cost.
 `tools/xp-motoracer.sh` drives the game, which insists on a 16 bpp
 desktop.
 
 ### FIFA 2000 on the HAL
 
-FIFA 2000 was the first DX7-era title here, formerly parked on WineD3D.
-With no DLL in the folder, its own DirectX renderer (`THRASH\dx6z.dll`)
-runs on the HAL unmodified: the EA intro, the title and the attract-mode
-match at 800×600×16. The match does not page-flip. It blits its back
-buffer to the primary, so every frame is a READBACK plus a HEL blit.
-`tools/xp-fifa2000.bat` and `tools/xp-fifa-match.sh kvm|tcg <image>`
-drive it.
+With no DLL in the folder, FIFA 2000's own DirectX renderer
+(`THRASH\dx6z.dll`) runs on the HAL unmodified: the EA intro, the title
+and the attract-mode match at 800×600×16. The match does not page-flip;
+it blits its back buffer to the primary, so every frame is a READBACK
+plus a HEL blit. `tools/xp-fifa2000.bat` and `tools/xp-fifa-match.sh
+kvm|tcg <image>` drive it.
 
 **The match ignores the keyboard under TCG.** FIFA's keyboard is a
 `DISCL_NONEXCLUSIVE | DISCL_FOREGROUND` DirectInput device polled with
-`GetDeviceState`. On XP a low-level hook feeds such a device. The hook
-runs on the thread that created the device, and only while that thread
-services its message queue, which the match loop does rarely. A fast
-guest (KVM) keeps up. A TCG guest stretches the gaps and the hook falls
-behind, so the device reports no key while `GetAsyncKeyState` in the
-same process sees every one. Ruled out: the emulator's input path
-(`DRIVER\DITEST.EXE` sees every key under TCG, and the embed library's
+`GetDeviceState`. On XP a low-level hook feeds such a device, and it runs
+only while the creating thread services its message queue, which the
+match loop does rarely. Under TCG the hook falls behind: the device
+reports no key while `GetAsyncKeyState` sees every one. Ruled out: the
+emulator's input path (`DRIVER\DITEST.EXE` sees every key, and the
 `qemu-embed: input:` statistics are clean), `LowLevelHooksTimeout`, and
 the frame rate.
 
 The fix is `D3DPT\DINPUT.DLL` next to the EXE (`SETUP /GAME 2`), a
 forwarding shim that sets every key `GetAsyncKeyState` reports pressed
-in the returned keyboard state. An A/B on a TCG run confirmed it: keys
-with the DLL, none without. A KVM host needs nothing. The shim is silent
-by default. `D3DPT_DINPUT_LOG=1` adds `dinput_log.txt` (devices,
+in the returned keyboard state; a KVM host needs nothing. The shim is
+silent by default; `D3DPT_DINPUT_LOG=1` adds `dinput_log.txt` (devices,
 cooperative level, poll rate, every key) through a sampler thread that
 costs real time under TCG. `tools/xp-fifa2000.bat` turns it on when
 `E:\DILOG` is staged.
 
 **The shim goes next to the game, never system-wide** (user decision).
-Replacing `system32\dinput.dll` fights Windows File Protection, and a
-forwarding shim cannot share its target's name in one directory.
-`AppInit_DLLs` would load it into every GUI process. The merge is also
-a lie. `GetAsyncKeyState` is system-wide, so a foreground device that
-has correctly gone quiet would report keys again. That lie is worth
-telling FIFA's match loop, not every process.
+Replacing `system32\dinput.dll` fights Windows File Protection, a
+forwarding shim cannot share its target's name in one directory, and
+`AppInit_DLLs` would load it into every GUI process. The merge is also a
+lie: `GetAsyncKeyState` is system-wide, so a foreground device that has
+correctly gone quiet would report keys again. That lie is worth telling
+FIFA's match loop, not every process.
 
 FIFA's own quirks: its front-end menus need a mouse button held about
 1 s, Esc skips the intro, and the kickoff starts by itself after about a
@@ -895,7 +870,7 @@ minute. In the match F1–F4 are cameras, Esc pauses and F12 exits.
 ### Max Payne on the HAL: XP's own d3d8.dll on a DX7 driver
 
 XP's d3d8.dll treats a driver without a `D3DCAPS8` answer as a "DirectX
-7 driver". It does the vertex processing itself and feeds the DX7 token
+7 driver": it does the vertex processing itself and feeds the DX7 token
 set through DrawPrimitives2. Max Payne runs that way with no wrapper DLL
 (`ddflags=0x2000` gives d3d8.dll that face; `tools/xp-maxpayne.bat`,
 about 290 frames/s at 800×600×16 under KVM `-cpu pentium3`). It exposed
@@ -903,18 +878,18 @@ two rules.
 
 - **`…_IMM` tokens are DWORD-aligned, before and after.** After the
   `D3DHAL_DP2COMMAND` of `TRIANGLEFAN_IMM` / `LINELIST_IMM`, round the
-  offset up to 4, then read the token's header and the vertices. Round
-  up again for the next command. The DDK's perm3 sample does the same.
-  The DX8 runtime's legacy path starts such tokens at 2 mod 4 every frame
-  (after an `INDEXEDTRIANGLELIST2` with an even count). Aligning only the
-  end parsed, but read vertices two bytes early. The result was one
-  garbage fan per frame, clipped to the screen as **black bands across
-  the alley**. `d3dpt-dp2-test` sends such a fan with the runtime's 0xcc
-  padding. The executor logs the token history with every first failure
-  of a kind (`ddi: dp2: tokens before it (offset:op x count): …`).
+  offset up to 4, then read the token's header and the vertices; round
+  up again for the next command, as the DDK's perm3 sample does. The DX8
+  runtime's legacy path starts such tokens at 2 mod 4 every frame (after
+  an `INDEXEDTRIANGLELIST2` with an even count). Aligning only the end
+  read vertices two bytes early: one garbage fan per frame, clipped to
+  the screen as black bands across the alley. `d3dpt-dp2-test` sends
+  such a fan with the runtime's 0xcc padding. The executor logs the
+  token history with every first failure of a kind (`ddi: dp2: tokens
+  before it (offset:op x count): …`).
 - **DXVK's exceptions abort QEMU, so validate before calling.** A garbage
   `LightEnable` index made DXVK grow its light array to about 2³² and
-  throw `std::bad_alloc`, which cannot be caught. DXVK carries its own
+  throw `std::bad_alloc`, which cannot be caught: DXVK carries its own
   statically linked unwinder, and the system `__gxx_personality_v0`
   `abort()`s when handed its context. The interpreter drops light
   indices ≥ 1024 and transform ids outside VIEW / PROJECTION /
@@ -926,9 +901,9 @@ two rules.
 To d3d8.dll the driver is a DirectX 8 driver: `D3DCAPS8` with hardware
 T&L, the DX8 token stream, render-to-texture and state sets. D3DGAME8
 (doc 14's DX8 reference scene) runs through XP's own d3d8.dll with
-**hardware vertex processing** and no wrapper DLL
+hardware vertex processing and no wrapper DLL
 (`tools/xp-driver-test.sh <image> d3dgame8`, diffed against the native
-oracle). The pieces follow.
+oracle).
 
 - **`GetDriverInfo2`.** With `DDHALINFO_GETDRIVERINFO2` in the HAL info,
   the runtime sends `GUID_DDStereoMode` queries whose data starts with a
@@ -936,13 +911,13 @@ oracle). The pieces follow.
   driver answers `DXVERSION` (0x802), `GETD3DCAPS8` (212 bytes),
   `GETFORMATCOUNT` / `GETFORMAT` (`DDPF_D3DFORMAT` entries, with the
   D3DFORMAT in `dwFourCC` and the `D3DFORMAT_OP_*` in the `dwRBitMask`
-  slot), and refuses the rest. It also refuses a real stereo query,
-  which lacks the magic. `d3d8.dll`'s disassembly showed two traps.
-  Without the HAL-info flag the runtime never asks and stays on the DX7
-  path. And the runtime checks `dwActualSize` against the size *inside*
-  the GDI2 header while leaving the outer `dwExpectedSize` at the
-  previous query's 24 bytes. An answer clamped to the outer size makes it
-  drop the driver (`CreateDevice` answers `D3DERR_NOTAVAILABLE`).
+  slot), and refuses the rest, including a real stereo query, which
+  lacks the magic. Two traps from `d3d8.dll`'s disassembly: without the
+  HAL-info flag the runtime never asks and stays on the DX7 path; and
+  the runtime checks `dwActualSize` against the size inside the GDI2
+  header while leaving the outer `dwExpectedSize` at the previous
+  query's 24 bytes, so an answer clamped to the outer size makes it drop
+  the driver (`CreateDevice` answers `D3DERR_NOTAVAILABLE`).
   `ddflags=0x2000` (`DDF_NO_DX8`) keeps the DX7 face.
 - **The caps.** `D3DCAPS8` is the DX7 caps in DX8 form plus
   `HWTRANSFORMANDLIGHT`, `PUREDEVICE`, 16-bit indices, 4096² textures, 8
@@ -950,10 +925,10 @@ oracle). The pieces follow.
   is also in the DX7 `D3DDEVICEDESC`, with the transform and lighting
   caps, lights, clip planes and blend matrices. The executor maps
   SETTRANSFORM / MULTIPLYTRANSFORM / SETLIGHT / SETMATERIAL onto DXVK's
-  fixed function, and `ddflags=0x1000` withdraws it. **Never claim
+  fixed function; `ddflags=0x1000` withdraws it. **Never claim
   `D3DPMISCCAPS_CLIPTLVERTS`.** With it the runtime stops clipping
   pre-transformed vertices and hands the driver polygons that cross the
-  camera plane, which the host rasterizes as garbage. Max Payne
+  camera plane, which the host rasterizes as garbage: Max Payne
   transforms on the CPU even on a T&L device, and its alley walls came
   out as flat panels at wrong depths.
 - **The tokens.** The DX8 draws name vertex and index buffers by surface
@@ -973,30 +948,30 @@ oracle). The pieces follow.
   - The DX7 tokens pass through, with inline-vertex ones re-padded for
     their new offset.
 
-  Pass 1 measures and blits, and pass 2 writes. **The state persists
-  between calls**, because the runtime sends bindings only on change.
-  The driver keeps it as handles and resolves them at every call,
-  because a `Lock` with DISCARD gives a buffer new memory and dxg reports
-  that with another `CreateSurfaceEx`. A user-memory stream holds
-  `dwVertexLength` vertices of the token's stride, not of
-  `dwVertexSize`. The driver's `dx8 draws skipped … why` line names
-  skipped draws (bits: 1 shader, 2 no FVF, 4 no stream, 8 stride < FVF,
-  16 vertex range, 32 index range, 64 primitive).
+  Pass 1 measures and blits, pass 2 writes. **The state persists between
+  calls**, because the runtime sends bindings only on change. The driver
+  keeps it as handles and resolves them at every call, because a `Lock`
+  with DISCARD gives a buffer new memory and dxg reports that with
+  another `CreateSurfaceEx`. A user-memory stream holds `dwVertexLength`
+  vertices of the token's stride, not of `dwVertexSize`. The driver's
+  `dx8 draws skipped … why` line names skipped draws (bits: 1 shader, 2
+  no FVF, 4 no stream, 8 stride < FVF, 16 vertex range, 32 index range,
+  64 primitive).
 - **State sets** (`STATESET`) record into d3d9 state blocks.
   **Render-to-texture:** a texture with 3DDEVICE caps is a default-pool
   render-target texture whose level 0 is the target. The d3d8-only
-  render states 153, 164, 172, 173 are dropped. The rest share d3d9's
+  render states 153, 164, 172, 173 are dropped; the rest share d3d9's
   numbering.
 - **Compressed textures need a `DdCreateSurface` that sizes them.** dxg
   sizes a video-memory surface from its bit count, which a FOURCC format
-  lacks, so a DXT texture asked for zero bytes. A `D3DPOOL_DEFAULT` one
+  lacks, so a DXT texture asked for zero bytes: a `D3DPOOL_DEFAULT` one
   failed with `D3DERR_OUTOFVIDEOMEMORY`, and a MANAGED one's video copy
   failed silently at the first draw and left the previous texture bound.
   For a `DDPF_FOURCC` DXT surface the callback sets `dwBlockSizeX` to the
   linear size, `dwBlockSizeY` to 1, `fpVidMem =
-  DDHAL_PLEASEALLOC_BLOCKSIZE` and `dwLinearSize`. That is why dxg's
-  "pitch" of a DXT surface is its linear size. It returns `NOTHANDLED`
-  for everything else. DirectDraw creates a FOURCC surface only when the
+  DDHAL_PLEASEALLOC_BLOCKSIZE` and `dwLinearSize` (hence dxg's "pitch" of
+  a DXT surface is its linear size), and returns `NOTHANDLED` for
+  everything else. DirectDraw creates a FOURCC surface only when the
   code is in the driver's FOURCC list (`DrvGetDirectDrawInfo`'s
   `pdwFourCC`, read by the kernel, not d3d8.dll). A FOURCC-style entry
   in the GDI2 format list makes `CreateTexture` fail, because d3d8.dll
@@ -1008,7 +983,7 @@ oracle). The pieces follow.
   (58: FirstVertexOffset, dwEdgeFlags, PrimitiveCount). d3d8.dll keeps
   its own clip stream (a `D3DPOOL_DEFAULT`, `D3DUSAGE_DYNAMIC` vertex
   buffer), copies the fan in at the current FVF's stride, and first
-  emits `SETSTREAMSOURCE` for stream 0 with that buffer. So
+  emits `SETSTREAMSOURCE` for stream 0 with that buffer, so
   `FirstVertexOffset` is a byte offset into stream 0 as bound. The DP2
   call's own vertex pointer is a 10 × 32-byte dummy on the DX8 path
   (only `DrawPrimitiveUP` swaps a user pointer in). Reading fans from
@@ -1016,15 +991,14 @@ oracle). The pieces follow.
 - **Filter numbering.** d3d8.dll hands a DirectX 8 driver its own
   `D3DTEXF_*` values for `MAGFILTER` / `MIPFILTER` (NONE 0, POINT 1,
   LINEAR 2, ANISOTROPIC 3, the cubics 4 and 5). The DX7 runtime sends
-  `D3DTFG_*` (ANISOTROPIC 5) and `D3DTFP_*` (NONE 1, POINT 2, LINEAR 3).
-  `MINFILTER` agrees. The executor reads the DX7 numbering, so the
-  driver rewrites a d3d8.dll context's two states as it copies them
+  `D3DTFG_*` (ANISOTROPIC 5) and `D3DTFP_*` (NONE 1, POINT 2, LINEAR 3);
+  `MINFILTER` agrees. The executor reads the DX7 numbering, so the driver
+  rewrites a d3d8.dll context's two states as it copies them
   (`tss_dx8_filter`). It tells runtimes apart by `ContextCreate`'s
-  `dwhContext` *on input*, which is the interface version: **4**
-  d3d8.dll, **3** DirectX 7, **0** the execute-buffer path (`iface` on
-  the `d3d context` line). Before this rewrite every DX8 trilinear
-  filter drew point-mipped (D3DGAME8: 11163 pixels off the oracle, 618
-  after).
+  `dwhContext` on input, which is the interface version: **4** d3d8.dll,
+  **3** DirectX 7, **0** the execute-buffer path (`iface` on the `d3d
+  context` line). Without the rewrite every DX8 trilinear filter drew
+  point-mipped (D3DGAME8: 11163 pixels off the oracle, 618 with it).
 
 Each protocol feature below has a `ddflags` A/B bit, a `d3dpt-dp2-test`
 section (including hostile records) and a guest probe.
@@ -1040,10 +1014,10 @@ four pixel-shader equivalents.
 
 - **The driver stays out of it.** The shader tokens pass through the
   walk. A DRAW8 under a shader carries the handle in its `fvf` field
-  with the stream's stride, and only the host knows what a vertex is.
+  with the stream's stride; only the host knows what a vertex is.
 - **The executor** keeps shaders per context by handle.
   `CREATEVERTEXSHADER` converts the `D3DVSD_*` declaration to
-  `D3DVERTEXELEMENT9`s. `REG`'s register names the usage by the DX8
+  `D3DVERTEXELEMENT9`s: `REG`'s register names the usage by the DX8
   convention (0 position, 3 normal, 5 diffuse, 7.. texcoords), `SKIP`
   and `CONST` runs are remembered, and tessellator and `EXT` tokens are
   skipped. It records the bytes it reads of each stream, and puts one
@@ -1057,17 +1031,16 @@ four pixel-shader equivalents.
   with one log line.
 - **The bytecode is validated before DXVK sees it.** On an unknown
   opcode DXVK's compiler logs `No layout known for opcode` and then
-  *asserts*, which aborts and takes QEMU with it. `sm1_valid` walks the
-  tokens against a table of the vs 1.x / ps 1.x opcodes with their
-  operand counts (`DEF` carries four raw floats, `COMMENT` its length,
-  `PHASE` exists only in ps 1.4) and checks every register against the
-  stage's file sizes. It refuses anything else, and the handle stays
-  unknown. The DX8 runtime validates shaders itself, so a real guest
-  never gets there.
+  asserts, which aborts QEMU. `sm1_valid` walks the tokens against a
+  table of the vs 1.x / ps 1.x opcodes with their operand counts (`DEF`
+  carries four raw floats, `COMMENT` its length, `PHASE` exists only in
+  ps 1.4) and checks every register against the stage's file sizes. It
+  refuses anything else, and the handle stays unknown. The DX8 runtime
+  validates shaders itself, so a real guest never gets there.
 - **Test.** `DRIVER\SHTEST.EXE` runs through XP's d3d8.dll with
   hand-assembled shaders (mingw has no D3DX) and reads back every draw
   (`xp-driver-test.sh <image> shtest`). A declaration-only shader must
-  list its registers in FVF order, because d3d8.dll itself refuses a
+  list its registers in FVF order, because d3d8.dll refuses a
   colour-before-position layout.
 
 ### Vertex and index buffers in video memory
@@ -1075,7 +1048,7 @@ four pixel-shader equivalents.
 Protocol v9. With `D3DDEVCAPS_HWVERTEXBUFFER` / `HWINDEXBUFFER` (DDI-only
 bits of `D3DCAPS8.DevCaps`), the runtime asks for its `D3DPOOL_DEFAULT`
 buffers in video memory and keeps a MANAGED buffer's video copy in step
-with `BUFFERBLT` tokens. A draw can then *name* the buffer instead of
+with `BUFFERBLT` tokens. A draw can then name the buffer instead of
 copying it through the window. `ddflags=0x100000` (`DDF_NO_HWVB`) keeps
 every buffer in system memory, the A/B.
 
@@ -1085,13 +1058,12 @@ every buffer in system memory, the A/B.
   the `CreateSurfaceEx` that follows registers a `D3DPT_VS_BUFFER`
   surface (no host object; the host reads it from VRAM). Command buffers
   stay in system memory. `DDSCAPS_EXECUTEBUFFER` is 0x00800000 (the
-  DDKs' `DDSCAPS_RESERVED2`). A transcription as 0x800 once broke a
-  case.
+  DDKs' `DDSCAPS_RESERVED2`); a transcription as 0x800 once broke a case.
 - **Filling.** `D3dUnlockD3DBuffer` reports the locked range with
   `VRAM_DIRTY_RANGE`. The driver does `BUFFERBLT` itself in pass 1 and
   reports the range the same way. **The `BUFFERBLT` token is 24 bytes**,
-  not the 20 its field list suggests, because a sixth dword follows the
-  `D3DRANGE`. Sized at 20, the stream desynchronised after the first
+  not the 20 its field list suggests: a sixth dword follows the
+  `D3DRANGE`, and sized at 20 the stream desynchronised after the first
   blit. `DISCARD` / `NOOVERWRITE` need nothing, since every earlier draw
   ran inside its doorbell write. The host keeps no copy, so the ranges
   are only counted (`N buffer writes of M KiB` in the 5 s line).
@@ -1101,12 +1073,12 @@ every buffer in system memory, the A/B.
   Inline and VRAM sources mix in one draw. The clip stream is a
   default-pool buffer, so clipped fans come from VRAM too.
 - **The numbers** (GTA Vice City, `tools/xp-vicecity.sh play`, about 480
-  draws a frame at 800×600×32, with the game's limiter and the vertical
-  blank off): **360–375 frames/s** under KVM against **265–285** with
-  every draw's vertices copied, and **62–75** against **51–55** under
-  TCG. The removed cost is the guest's memcpys. RenderWare rewrites
-  330–430 MiB of buffers per 5 s at that rate, which is why the host
-  reads them at each draw rather than mirroring them.
+  draws a frame at 800×600×32, the game's limiter and the vertical blank
+  off): **360–375 frames/s** under KVM against **265–285** with every
+  draw's vertices copied, and **62–75** against **51–55** under TCG. The
+  removed cost is the guest's memcpys. RenderWare rewrites 330–430 MiB
+  of buffers per 5 s, so the host reads them at each draw rather than
+  mirroring them.
 
 ### More than one vertex stream
 
@@ -1114,8 +1086,8 @@ Protocol v10. `MaxStreams` is 16, what the era's T&L parts claim.
 `ddflags=0x200000` (`DDF_ONE_STREAM`) sets it back to 1, the A/B.
 
 - **Driver.** The context keeps all sixteen bindings. A draw under a
-  shader handle carries, after stream 0 and the indices, **every other
-  bound stream whose range is there**, because the driver does not parse
+  shader handle carries, after stream 0 and the indices, every other
+  bound stream whose range is there, because the driver does not parse
   declarations. A stale binding costs an 8-byte reference when it is a
   VRAM buffer and a copy when it is not. One vertex number indexes every
   stream, so stream *n*'s range starts at stream 0's first vertex at
@@ -1126,8 +1098,8 @@ Protocol v10. `MaxStreams` is 16, what the era's T&L parts claim.
   increasing, stride, its own VRAM flag), each followed by bytes or
   `{handle, offset}`.
 - **Executor.** It parses every entry before anything can skip the draw.
-  A declaration that reads more than stream 0 is drawn **interleaved**.
-  The streams it reads are copied into one vertex, and a copy of the
+  A declaration that reads more than stream 0 is drawn interleaved: the
+  streams it reads are copied into one vertex, and a copy of the
   declaration with every element moved into stream 0 at its stream's
   base is bound (cached per shader per stride set, eight at most). So
   the host holds no vertex buffers and every DRAW8 takes the same `…UP`
@@ -1144,14 +1116,13 @@ Protocol v11. The caps are `D3DPTEXTURECAPS_CUBEMAP | MIPCUBEMAP`, cube
 filter caps equal to the 2D ones, and `D3DFORMAT_OP_CUBETEXTURE` on
 every RGB and DXT format (not P8). A render-target format is a
 render-target cube too. `ddflags=0x400000` (`DDF_NO_CUBE`). **This is
-the DX8 face only.** User-mode DirectDraw creates a DirectX 7 cube
+the DX8 face only**: user-mode DirectDraw creates a DirectX 7 cube
 against `GUID_DDMoreSurfaceCaps`, which this driver does not answer.
 
 - **What the runtime builds.** Six surfaces. The root is +X's level 0
   (`DDSCAPS2_CUBEMAP | CUBEMAP_POSITIVEX`), and the other faces hang off
-  its attach list, each with its own mip chain. The old attach walk left
-  out mip-mapped faces and would have registered a one-level cube's
-  faces as a flip chain.
+  its attach list, each with its own mip chain, so the flip-chain
+  attach walk does not fit it.
 - **Driver** (`core/core_surf.c`). `d3dpt_os_attached_all` (both layers)
   lists every attachment. `cube_faces` finds the six from the root, and
   `d3d_register_cube` puts every face in the table under its own handle.
@@ -1185,13 +1156,13 @@ only.
 - **What the runtime builds.** One DirectDraw surface per level,
   `DDSCAPS2_VOLUME` with the depth in `dwCaps4`'s low word, each through
   its own `DdCreateSurface`. It fills a video-memory volume by locking
-  **the whole level** and writing slice n at n × the slice pitch
-  (upload, `LockBox` and `UpdateTexture` alike). No `VOLUMEBLT` has been
-  seen, though the driver handles one like a TEXBLT.
+  the whole level and writing slice n at n × the slice pitch (upload,
+  `LockBox` and `UpdateTexture` alike). No `VOLUMEBLT` has been seen,
+  though the driver handles one like a TEXBLT.
 - **The slice pitch trap.** `DD_SURFACE_GLOBAL.dwBlockSizeY` is a union
   with `lSlicePitch`. Asked for as one block of `size × 1` (the DXT
   recipe), the slice pitch came out 1 and the runtime wrote every slice
-  a byte apart. Setting it later in `CreateSurfaceEx` reaches only the
+  a byte apart; setting it later in `CreateSurfaceEx` reaches only the
   kernel's copy. The driver asks for the block as **`depth` × `pitch ×
   rows`**, whose height is the slice pitch the runtime then uses.
   `DdCreateSurface` sizes rows by format (`fmt_row_bytes`, `surf_rows`:
@@ -1207,12 +1178,12 @@ only.
 
 ### Anisotropic filtering
 
-This needed caps only, since the executor already mapped the filters
-and passed `MAXANISOTROPY`. Both faces claim `MINFANISOTROPIC |
-MAGFANISOTROPIC` (cube and volume caps copy them),
-`D3DPRASTERCAPS_ANISOTROPY` and a maximum of 16. `ddflags=0x2000000`
-(`DDF_NO_ANISO`). ANISTEST draws receding stripes. Far-row contrast is 0
-under trilinear and 252 under ×16.
+Caps only, since the executor already mapped the filters and passed
+`MAXANISOTROPY`. Both faces claim `MINFANISOTROPIC | MAGFANISOTROPIC`
+(cube and volume caps copy them), `D3DPRASTERCAPS_ANISOTROPY` and a
+maximum of 16. `ddflags=0x2000000` (`DDF_NO_ANISO`). ANISTEST draws
+receding stripes; far-row contrast is 0 under trilinear and 252 under
+×16.
 
 ### The rest of DX8's texture formats
 
@@ -1222,28 +1193,28 @@ textures in the DX8 list (32 slots). `ddflags=0x4000000`
 
 - **Driver.** `pf_format` knows d3d8.dll's pixel formats for them
   (`DDPF_LUMINANCE` by mask, `DDPF_ALPHA` alone at 8 bits, the 3-3-2
-  masks). It reads them through the RGB names of the union slots
-  because the 9x DDK has no luminance names. DXT2/DXT4 are in both
-  families' FOURCC lists, since DirectDraw checks that list first.
-  `fmt_row_bytes` sizes all of them, and V8U8 too, whose managed
-  `TEXBLT` used to copy rows of zero bytes.
+  masks), read through the RGB names of the union slots because the 9x
+  DDK has no luminance names. DXT2/DXT4 are in both families' FOURCC
+  lists, since DirectDraw checks that list first. `fmt_row_bytes` sizes
+  all of them, and V8U8 too, whose managed `TEXBLT` used to copy rows of
+  zero bytes.
 - **Host.** At device creation the executor asks `CheckDeviceFormat`
   about each format once and expands any refused one to A8R8G8B8 at
   upload, as it does P8 (`host_lacks`, `texel_argb`). The log says which
   (`ddi: no host texture format 52 27 29: expanded to A8R8G8B8 at
-  upload` under KosmicKrisp). **X4R4G4B4 is always expanded.** DXVK
-  creates it as `VK_FORMAT_A4R4G4B4_UNORM_PACK16` with no swizzle, so the
-  X nibble samples as alpha, and a texture written with it 0 draws
-  transparent. DX7's X4R4G4B4 surfaces are included.
+  upload` under KosmicKrisp). **X4R4G4B4 is always expanded**, DX7's
+  X4R4G4B4 surfaces included: DXVK creates it as
+  `VK_FORMAT_A4R4G4B4_UNORM_PACK16` with no swizzle, so the X nibble
+  samples as alpha, and a texture written with it 0 draws transparent.
 - **Bump maps.** V8U8 is in both lists (the DX8 one as `TEXTURE |
   BUMPMAP`, the DX7 one as a `DDPF_BUMPDUDV` format for DX6/7 EMBM
   titles). L6V5U5 and X8L8V8U8 are in the DX8 one, mapped from
   `DDPF_BUMPDUDV | DDPF_BUMPLUMINANCE` by mask (the luminance mask sits
   in the `dwBBitMask` slot). `ddflags=0x800000` (`DDF_NO_BUMP`) takes
-  them all out. The host needs nothing but sizes. DXVK does the op, and
-  the bump matrix is an ordinary stage state. DXVK's fixed function never
+  them all out. The host needs only sizes: DXVK does the op, and the
+  bump matrix is an ordinary stage state. DXVK's fixed function never
   applied the luminance (a shadowed variable in `sampleTexture`, and the
-  luminance read from the wrong texel). `patches/dxvk/07` fixes it, with
+  luminance read from the wrong texel); `patches/dxvk/07` fixes it, with
   a `d3dpt-dp2-test` case that fails on unpatched DXVK.
 - **Q8W8V8U8 is a FOURCC surface.** It has no DDPIXELFORMAT, so d3d8.dll
   creates it as a FOURCC surface whose code is the D3DFORMAT (63).
@@ -1272,7 +1243,7 @@ n − 1 for n samples). `ddflags=0x8000000` (`DDF_NO_MSAA`).
   Nothing is uploaded into one, since Direct3D 8 locks no multisampled
   surface.
 - **Full screen only.** With blt types claimed, d3d8.dll made a windowed
-  multisampled device whose `Present` drew nothing. A windowed `Present`
+  multisampled device whose `Present` drew nothing: a windowed `Present`
   of a multisampled back buffer is a driver blt, and there is no blitter
   ("Blit caps and the HEL"). A flip needs nothing new.
 - **Test.** MSAATEST, a full-screen 640×480×16 4-sample device, reads
@@ -1307,7 +1278,7 @@ or FAIL.
 
 `-device d3dpt-vga,ddflags=N` (the adapter's DDFLAGS register; `DDFLAGS=`
 in `tools/xp-driver-test.sh`) switches driver behaviour with no
-reinstall. The bits are `DDF_*` in `core/d3dpt_core.h`. The 9x layer's
+reinstall. The bits are `DDF_*` in `core/d3dpt_core.h`; the 9x layer's
 own are `D9F_*` (doc 19).
 
 | Bit | Name | Effect |
@@ -1342,19 +1313,15 @@ own are `D9F_*` (doc 19).
 
 - **The DEBUG register** → the QEMU log (`d3dpt-vga: guest: d3dptdisp:
   …`) is the driver's only output. No kernel debugger is used.
-- **`D3DPT_DP2_TRACE=<flag file>`** in QEMU's environment. `touch` the
+- **`D3DPT_DP2_TRACE=<flag file>`** in QEMU's environment: `touch` the
   file when the screen shows the scene in question, and the executor
-  logs one whole frame, from the next readback to the one after. The log
-  holds a snapshot of every render and stage state so far, every token
-  with its arguments (dropped states marked), each bound texture's
-  format and the mean of its VRAM texels, and every draw's first three
-  vertices. The executor also writes every bound texture's levels
-  (`tex-<handle>-l<n>.ppm`, `-a.pgm`) and the target after every draw
-  (`draw-<n>.ppm`) next to the flag file, then removes the flag file.
-  Counting pixels per `draw-<n>.ppm` names the draw that paints an
-  artefact. A readback with no draw before it does not end the frame
-  (`readback of N with no draw, the frame goes on`), because Crimson
-  Skies reads its target back after every target switch.
+  logs one whole frame (states, tokens, textures, first vertices) and
+  writes each bound texture's levels and the target after every draw as
+  `.ppm` next to the flag file, then removes it. `docs/testing.md` lists
+  what it dumps; counting pixels per `draw-<n>.ppm` names the draw that
+  paints an artefact. A readback with no draw before it does not end the
+  frame (`readback of N with no draw, the frame goes on`), because
+  Crimson Skies reads its target back after every target switch.
 - **`D3DPT_DDI_REREAD=1`** re-reads every texture from VRAM at every bind
   (to tell a stale host copy from VRAM the guest never wrote).
   **`D3DPT_DDI_NOFOG=1`** forces fog off.
@@ -1379,7 +1346,9 @@ own are `D9F_*` (doc 19).
 - **BUMPTEST's Q8W8V8U8 cases on XP** are unmeasured, because the
   install on a `winxp-m7` overlay failed when they were new
   (`docs/00-status.md`).
-- FIFA 2000's videos at 320×240 ("Blit caps and the HEL"). A RAM-backed
+- FIFA 2000's intro videos play at 320×240 in the middle of the 640×480
+  mode. Blit caps are not the cause: with them claimed nothing blitted,
+  since the game writes decoded frames through `Lock`. A RAM-backed
   palette page if a title animates faster than MMIO allows. More 8 bpp
   titles (StarCraft, Age of Empires, Caesar 3).
 - The two `640×480×4 / 800×600×4 @ 1 Hz` entries in the mode list are

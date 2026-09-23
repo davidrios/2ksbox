@@ -1,12 +1,11 @@
 # Track M4: the paravirtual Direct3D device (doc 14, ADR-006/007)
 
-The DLL path for Direct3D 8/9 is the SysBus `d3dpt` device, the decoder and
+The DLL path for Direct3D 8/9: the SysBus `d3dpt` device, the decoder and
 executor over DXVK, and the guest `d3d9.dll` / `d3d8.dll`. The milestone
 closed on 2026-09-04 (P0–P4, `docs/08-roadmap.md`). This doc keeps the
-track's scope, its test loop and what stayed open. The design, the protocol
-and the per-milestone numbers are in doc 14. On XP the M7 display driver
-(doc 15, ADR-008) replaced the per-game DLLs; the DLLs remain the Win98 path
-and the executor's harness.
+track's scope, test loop and open items; the design, protocol and numbers
+are in doc 14. On XP the M7 display driver (doc 15, ADR-008) replaced the
+per-game DLLs, which remain the Win98 path and the executor's harness.
 
 ## Scope and files
 
@@ -16,22 +15,18 @@ and the executor's harness.
   - `d3dpt/exec/` (`libd3dpt_exec`; the Wine host program is M15's)
   - `d3dpt/hw/d3dpt_mm.c` + `d3dpt_exec_load.c` (patch 40)
   - the presenter in `embed/embedfx.c`
-- Guest DLLs: `guest-tools/src/d3dpt/`.
-  - `d3d9.c` and `d3d8.c`, which wraps d3d9.
-  - The vtable generators `gen_vtbl.py` / `gen_vtbl8.py`.
-  - The `DDRAW.DLL` and `DINPUT.DLL` shims.
+- Guest DLLs in `guest-tools/src/d3dpt/`: `d3d9.c`, `d3d8.c` (wraps d3d9),
+  the vtable generators `gen_vtbl.py` / `gen_vtbl8.py`, and the `DDRAW.DLL`
+  and `DINPUT.DLL` shims.
 - Test programs: `guest-tools/src/d3d9test.c`, `d3dfeat9.c`, `d3dgame9.c`
   and `d3dgame8.c`, built into the ISO by `guest-tools/build-wrappers.sh`.
 - DXVK: `third_party/dxvk` + `patches/dxvk/`, `scripts/*dxvk*` and
   `scripts/build-d3dpt-exec.sh`.
-- Host tests:
-  - `tools/d3dpt-exec-test.cpp`
-  - `tools/d3dgame9-native.cpp`, `tools/d3dfeat9-native.cpp`
-  - `tools/bmpdiff.py`
-  - the rig goldens in `reference/d3d/`
-- Shared with M7 and M15: `d3dpt_proto.h`, `d3dpt/exec/` and
-  `d3dpt/hw/`. Rebase first, edit minimally, and name the track in the
-  commit.
+- Host tests: `tools/d3dpt-exec-test.cpp`, `tools/d3dgame9-native.cpp`,
+  `tools/d3dfeat9-native.cpp`, `tools/bmpdiff.py` and the rig goldens in
+  `reference/d3d/`.
+- Shared with M7 and M15: `d3dpt_proto.h`, `d3dpt/exec/` and `d3dpt/hw/`.
+  Rebase first, edit minimally, and name the track in the commit.
 
 ## Test loop
 
@@ -41,14 +36,13 @@ scripts/test.sh       # host checks: d3dpt-exec, d3dgame9-nat, d3dfeat9-nat
 scripts/test.sh all   # + the guest stage: XP on the device
 ```
 
-- **Guest stage.** It boots `~/vms/winxp.qcow2` read-only (`snapshot=on`)
-  and runs `DDVMTEST`, `D3DGAME9`, `D3DGAME8` and `D3DFEAT9`. Checks:
-  - D3DGAME9 and D3DGAME8 are pixel-identical to the native frame outside
-    the HUD, and within `D3D_GOLDEN_BUDGET` of the rig golden;
-  - D3DFEAT9 is byte-identical to the native frame, with the same query
-    and getter lines.
-- **After a protocol bump,** rebuild the executor and the ISO. Otherwise
-  the suite fails with `protocol mismatch` or a guest that never attaches.
+- **Guest stage.** Boots `~/vms/winxp.qcow2` with `snapshot=on` and runs
+  `DDVMTEST`, `D3DGAME9`, `D3DGAME8` and `D3DFEAT9`. D3DGAME9/8 must be
+  pixel-identical to the native frame outside the HUD and within
+  `D3D_GOLDEN_BUDGET` of the rig golden; D3DFEAT9 must be byte-identical to
+  the native frame, with the same query and getter lines.
+- **After a protocol bump,** rebuild the executor and the ISO, or the
+  suite fails with `protocol mismatch` or a guest that never attaches.
 - Tool detail is in `docs/testing.md`; the env knobs
   (`D3DPT_DUMP_DIR`/`D3DPT_DUMP_EVERY`, the guest's `d3dpt_trace.on`) in
   `docs/development.md`.
@@ -56,7 +50,7 @@ scripts/test.sh all   # + the guest stage: XP on the device
 ### A game on the device
 
 `tools/xp-game-test.sh` runs a game headless. Discs go on the player's IDE
-slots (`CDS=`). `FRESH_DLLS=1` puts the ISO's DLLs next to the EXE.
+slots (`CDS=`); `FRESH_DLLS=1` puts the ISO's DLLs next to the EXE.
 
 | Option | What it catches |
 |---|---|
@@ -66,34 +60,25 @@ slots (`CDS=`). `FRESH_DLLS=1` puts the ISO's DLLs next to the EXE.
 | `PAGEHEAP=1` | heap overruns, faulting where they happen |
 | `TRACE=1` | the DLL's call trace |
 
-A game that "freezes" has so far always been a message box behind its
-full-screen window, and KVM `-cpu host` breaks Max Payne's level loading;
-both are in `docs/00-status.md` "Gotchas".
+A "frozen" game and KVM `-cpu host` breaking Max Payne are in
+`docs/00-status.md` "Gotchas".
 
 ## What stayed open
 
-- **The DLL path's stubs.** Each one logs `not implemented` once.
-  - Palettized (P8) textures: Vice City's menu background is grey noise.
-    The plan is to expand P8 to A8R8G8B8 on upload in the guest DLL and
-    re-upload when the palette changes.
-  - Volume textures and swap-chain objects.
-  - `GetFrontBuffer` (Max Payne calls it) and `ProcessVertices`.
-  - `LockRect` on render targets and depth surfaces (refused; doc 14
-    has the full stub list).
-  - The lost-device protocol.
-
-  These matter for Win98 titles; XP titles go through the display
+- **The DLL path's stubs** (doc 14 has the list): P8 textures (Vice City's
+  menu background is grey noise; plan: expand to A8R8G8B8 on upload in the
+  guest DLL, re-upload on a palette change), volume textures, swap-chain
+  objects, `GetFrontBuffer` (Max Payne calls it), `ProcessVertices`,
+  `LockRect` on render targets and depth surfaces, and the lost-device
+  protocol. They matter for Win98 titles; XP titles go through the display
   driver's DDI.
 - **Hand play in the player.** Max Payne's tutorial level and Vice City's
-  menu were reached headless. Playability by hand (input, fps, sound) was
-  never recorded on this path.
-- **Performance, when a game asks for it:**
-  - zero-copy present through DXVK's Vulkan interop, instead of
-    GetRenderTargetData;
-  - Present pacing against the player's vsync;
-  - a decoder thread off the vCPU (doc 14 defers it until a measurement
-    asks).
-
-  Measure first with `PLAYER_LATENCY=1`.
+  menu were reached headless; input, fps and sound by hand were never
+  recorded on this path.
+- **Performance, when a game asks for it:** zero-copy present through
+  DXVK's Vulkan interop instead of GetRenderTargetData, Present pacing
+  against the player's vsync, and a decoder thread off the vCPU (doc 14
+  defers it until a measurement asks). Measure first with
+  `PLAYER_LATENCY=1`.
 - **A real-workload x87/SSE number.** A D3D title with and without
-  `-cpu pentium3,x87-fast=off,sse-fast=off`. This is shared with M8.
+  `-cpu pentium3,x87-fast=off,sse-fast=off`. Shared with M8.
