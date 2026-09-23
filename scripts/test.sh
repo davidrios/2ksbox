@@ -969,6 +969,14 @@ qtwizard_fields_check() { # the fields, family by family
     model="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] model \[\(.*\)\]$/\1/p')"
     [ "$shown" = '-name "typed args"' ] || { echo "$f: the extra-arguments field lost what was typed (shows: $shown)"; rc=1; }
     [ "$model" = '-name "typed args"' ] || { echo "$f: the model lost the typed extra arguments (holds: $model)"; rc=1; }
+    # Every page fits the window as it opens (2026-09-22): the height is
+    # sized to the tallest page, so a page that grows past it is a form
+    # that scrolls where it never did.
+    o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] wizard pages: //p')"
+    [ -n "$o" ] || { echo "$f: the wizard printed no pages line"; rc=1; }
+    over="$(printf '%s\n' "$o" | awk -F', ' '{ room = $1; sub(/^room /, "", room); sub(/ of.*/, "", room)
+        for (i = 2; i <= NF; i++) { split($i, a, " "); if (a[2] + 0 > room + 0) printf "%s %s > %s ", a[1], a[2], room } }')"
+    [ -z "$over" ] || { echo "$f: a page is taller than the window's room for it: $over"; rc=1; }
     # The Direct3D row (ADR-007's 2026-09-21 amendment), and a third
     # shape of the same class: a QML binding that names a property the
     # object has not got is silent — no warning anywhere — and the combo

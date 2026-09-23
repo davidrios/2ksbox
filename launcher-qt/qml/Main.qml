@@ -494,6 +494,10 @@ ApplicationWindow {
                 // the host's own answer (it was a line of its own before).
                 diag.note("wizard direct3d note: [" + wizard.d3d9Note.replace(/\n/g, " | ")
                           + "] warning " + wizard.d3d9Warning)
+                // What the window's height has to hold: each page's content
+                // against the room a page gets (user, 2026-09-22: the
+                // default was too tall even for the longest page).
+                diag.note("wizard pages: " + wizardWindow.pageReport())
                 Qt.callLater(wizardWindow.revealExtraQemuArgs)
                 break
             case "optall":

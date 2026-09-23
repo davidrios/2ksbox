@@ -94,6 +94,19 @@ Window {
     /// (`Main.qml`): whether opening another machine starts on the first
     /// page at the top and reopening the same one does not.
     function currentPage() { return pages.children[pages.currentIndex] }
+    /// Every page's content height beside the room the window gives a
+    /// page, so the default height can be sized to the tallest page
+    /// rather than guessed (the `wizard` probe prints it).
+    function pageReport() {
+        const names = root.wizard.sectionLabels()
+        let out = "room " + Math.round(pages.height) + " of window " + height
+        for (let i = 0; i < pages.children.length; i++) {
+            const p = pages.children[i]
+            if (p.column)
+                out += ", " + names[i].toLowerCase() + " " + Math.round(p.column.implicitHeight)
+        }
+        return out
+    }
     function scrollY() { return currentPage().contentItem.contentY }
     function scrollTo(y) { currentPage().contentItem.contentY = y }
     function expandOptimizations() { optimizationsExpander.expanded = true }
@@ -118,10 +131,16 @@ Window {
     }
 
     title: wizard.title
+    // Sized to the tallest page, not guessed: `pageReport()` measured the
+    // pages at 293 (System with its optimizations closed, Display) with 70
+    // of chrome around them on the PC (2026-09-22, user: 600 was too
+    // tall even for the longest page); the `qt-wizard` check keeps every
+    // page inside the room this leaves. The System page open scrolls,
+    // by design.
     width: 820
-    height: 600
+    height: 440
     minimumWidth: 640
-    minimumHeight: 440
+    minimumHeight: 400
     flags: Qt.Dialog
     modality: Qt.ApplicationModal
     color: palette.window
