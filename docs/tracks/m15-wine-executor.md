@@ -325,6 +325,36 @@ and a Python — `/usr/bin/python3` is the Command Line Tools' stub — so
 the diff falls back to uv's CPython from the other volume's home. Logs
 and diffs in `build/macos-15.8/`.
 
+**The community app on that macOS** (step 5's last half; the package is
+built on the 26 side, since the packager needs Homebrew, `macdeployqt`
+and the Vulkan SDK, and run on the 15 side, where QEMU from the checkout
+does not load). Built 2026-09-22: `scripts/package-macos.sh --community
+--no-sign --no-dmg --out build/macos-community` — the app carries
+`libd3dpt_exec_remote.dylib` and `wine/d3dpt_exec.dll` +
+`d3dpt-exec-host.exe` beside DXVK and KosmicKrisp, every check passes,
+minimum macOS 15.0 (Homebrew's floor moved: `docs/build-macos.md`).
+`build/xp-mac15.qcow2` is `build/xp.qcow2` flattened (`qemu-img convert`):
+the winxp-m7 image with the current driver installed and FIFA 2000 on it,
+self-contained because an overlay's absolute backing path
+(`/Users/david/vms/…`) does not exist on the other boot. Then, booted into
+"macOS 15", in a Terminal there:
+
+```sh
+cd "/Volumes/Macintosh HD - Data/Users/david/work/win-98-xp-virt"
+cp -R "build/wine/Wine Staging.app" /Applications/     # once: a packaged app finds Wine in /Applications, on PATH or in D3DPT_WINE only
+build/macos-community/2ksbox.app/Contents/MacOS/2ksbox --host-check
+#   must answer "runs through Wine on this host (Wine 11.17, OpenGL)" and exit 0:
+#   KosmicKrisp does not load below 26, so DXVK finds no device and the third verdict is the one
+open build/macos-community/2ksbox.app
+#   a Windows XP machine over a copy of build/xp-mac15.qcow2, Direct3D on "auto" (the form's note
+#   under the picker must be the Wine sentence); start it, FIFA 2000 into a match — the QEMU log
+#   must say "exec: Direct3D executor in another process (Wine), ready" and the match must draw
+```
+
+The pass is the match drawn through the child on the M1's GL with the
+packaged pair, no checkout path in the process; the frame rate against
+the Air's 22.6 frames/s under the harness is the number to write down.
+
 ```sh
 scripts/build.sh                                  # the native stack, libd3dpt_exec_remote, and with mingw the PE pair in build/d3dpt/wine/
 scripts/test.sh host                              # exec-wine: the two host tests through the remote executor (SKIP without a Wine)
@@ -549,9 +579,13 @@ links dynamically where the Fedora cross image's does not):
    either executor. **On a real macOS 15 (2026-09-22, the second APFS
    volume): the host tests pass** — `tools/macos-wine-spike-local.sh`,
    both frames byte-identical to DXVK's on the Apple M1's own GL through
-   Rosetta, 328 fps. **Left: the community build there** — a guest in
-   the packaged `--community` app on macOS 15, since QEMU in a checkout
-   links Homebrew and does not run on that volume.
+   Rosetta, 328 fps (the user confirmed the run, 2026-09-22). **Left:
+   the community build there** — a guest in the packaged `--community`
+   app on macOS 15, since QEMU in a checkout links Homebrew and does not
+   run on that volume. The app and the image are built
+   (`build/macos-community/`, `build/xp-mac15.qcow2`) and the recipe is
+   in the test loop above; the run wants the Mac booted into the other
+   volume, which is the user's to do.
 6. **Retire WineD3D-in-guest**, in one commit, once 3 and 5 pass:
    the ISO's `WINED3D\` folders and README, `SETUP /GAME 4`/`5`, `/I 7`
    with `D3DPRE.EXE` and the `DDRAWME`/`DDSYS` switcher,

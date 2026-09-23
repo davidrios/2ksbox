@@ -111,7 +111,9 @@ ninja -C build/qemu qemu-system-i386 qemu-system-x86_64
 
 `configure-qemu.sh` sets `MACOSX_DEPLOYMENT_TARGET` to **Homebrew's floor**,
 the oldest macOS Homebrew supports (`scripts/macos-floor.sh`; 14.0 as of
-2026-09-12, and a preset value wins), and passes it as
+2026-09-12, **15.0 since Homebrew dropped Sonoma on 2026-09-10** — a
+`brew update` after that date moves every build here — and a preset value
+wins), and passes it as
 `-mmacosx-version-min` together with `-Werror=unguarded-availability-new`.
 Every build targets the floor, local ones too, so the tree you test is the
 tree the app ships ("The floor", below, has why). The error flag is what
@@ -592,7 +594,13 @@ bundle with no QtQuick in it passes everything and opens nothing.
 The app runs down to **the oldest macOS Homebrew supports**: 14.0 (Sonoma)
 as of 2026-09-12, the `HOMEBREW_MACOS_OLDEST_SUPPORTED` in Homebrew's own
 `brew.sh` that `scripts/macos-floor.sh` reads (user decision, 2026-09-12:
-follow Homebrew's floor). It cannot sensibly go lower, because the app
+follow Homebrew's floor). **It is 15.0 (Sequoia) since 2026-09-22 on the
+Air**: Homebrew set the value to 15 on 2026-09-10 (`brew.sh` commit
+85ceb6ae), the `brew update` that brought it in was that day's, and the
+first package after it — the community build of 2026-09-22 — swapped 114
+files from `arm64_sequoia` bottles and measured `LSMinimumSystemVersion`
+15.0. ADR-019's "14.0 floor" is the value of its day; the rule is the
+same. It cannot sensibly go lower, because the app
 carries Homebrew's libraries — glib, pixman, libslirp, zstd, libpng,
 jpeg-turbo, Qt — and Homebrew publishes each version built on every macOS
 it supports and on none older. Following it also means moving with it:

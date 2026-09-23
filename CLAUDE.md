@@ -95,7 +95,9 @@ backend later.
 - Everything open source; Apple Silicon must work (TCG), not just x86 hosts.
   **Two macOS builds** (ADR-019, 2026-09-22): the **App Store** build is
   macOS 26+ on Apple Silicon only (DXVK + KosmicKrisp, nothing of Wine,
-  no Rosetta); the **community** build keeps the 14.0 floor, carries the
+  no Rosetta); the **community** build keeps Homebrew's floor (14.0 when
+  ADR-019 was written, 15.0 since Homebrew dropped Sonoma on 2026-09-10 —
+  the number follows `brew update`), carries the
   M15 Wine executor, is a Developer ID DMG from the same
   `scripts/package-macos.sh` (`--community`), and *permits* Intel Macs —
   permitted, untested: no row claims Intel until an Intel Mac has run the
@@ -383,7 +385,8 @@ stale copy links the player against an old library (`undefined symbol
 _qemu_embed_…`; `qemu-embed/build.rs` warns). `configure-qemu.sh` must run
 again whenever meson files changed (keeps `werror` off). On macOS every
 stage targets **Homebrew's floor**, the oldest macOS Homebrew supports
-(`scripts/macos-floor.sh`, 14.0; user decision 2026-09-12, Apple Silicon
+(`scripts/macos-floor.sh`, 14.0 then, 15.0 since Homebrew's 2026-09-10
+change; user decision 2026-09-12, Apple Silicon
 only): `build.sh` exports `MACOSX_DEPLOYMENT_TARGET` (so does `test.sh`) and
 cleans a cargo workspace it is about to build whose binary was linked for a
 newer one, QEMU and DXVK take it as a flag (QEMU

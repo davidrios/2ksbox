@@ -347,9 +347,12 @@ done < <(find "$C/PlugIns" -type f -name '*.dylib' 2>/dev/null)
 LIBDIR="$C/lib/2ksbox"
 # A library's own install name is the first line `otool -L` prints and no
 # dependency: Qt's framework binaries keep Homebrew's, which loads nothing.
+# A universal library (the LunarG loader) answers `otool -D` once per
+# architecture, under a header line each; one id is wanted, not a
+# two-line string awk warns about.
 external() {
   local id
-  id=$(otool -D "$1" | tail -n +2)
+  id=$(otool -D "$1" | grep -v ':$' | sort -u | head -1)
   otool -L "$1" | tail -n +2 | awk -v id="$id" '$1 != id {print $1}' | grep -E '^(/opt/|/usr/local/)' || true
 }
 
