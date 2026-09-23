@@ -58,7 +58,7 @@ BOOT_WAIT="${BOOT_WAIT:-300}"; WARM="${WARM:-20}"; SECS="${SECS:-30}"
 VGA_ARGS=(-vga cirrus)
 # DDFLAGS: the adapter's bisection register (d3dpt/hw/d3dpt_vga.c); 32 = DDF_NO_D3D,
 # i.e. a DirectDraw-only driver, which is how a title is put on its own software renderer
-[ "${VGA:-cirrus}" = d3dpt ] && VGA_ARGS=(-vga none -device "d3dpt-vga,ddflags=${DDFLAGS:-0}")
+[ "${VGA:-cirrus}" = d3dpt ] && VGA_ARGS=(-vga none -device "d3dpt-vga,ddflags=${DDFLAGS:-0}${EXEC:+,exec=$EXEC}")   # EXEC=wine: the executor in another process (M15), the A/B
 # the game discs and the sound card, as under the player (tools/xp-game-test.sh's CDS=)
 SND_ARGS=(-audiodev none,id=snd0); [ "${SND:-${CDS:+1}}" = 1 ] && SND_ARGS+=(-device AC97,audiodev=snd0)
 # IDE slots: the disk is ide.0/0, CDROM (-cdrom = index 2) ide.1/0; the CDS discs take the two slave slots

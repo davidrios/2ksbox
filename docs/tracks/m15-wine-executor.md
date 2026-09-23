@@ -515,6 +515,28 @@ links dynamically where the Fedora cross image's does not):
    measure, but the *user* of this path is on macOS 14/15, so a run
    on one of those (a VM of macOS 15 on the Air, or a borrowed machine)
    is the acceptance, with Moto Racer and FIFA 2000 as the titles.
+   **The Air's A/B, 2026-09-23** (the XP overlay of `winxp-m7`, which
+   has both games, under TCG): **FIFA 2000 plays a match on the Wine
+   executor** — `EXEC=wine tools/xp-fifa-match.sh tcg build/xp.qcow2`
+   from the desktop through the menus to the kick-off and every key of
+   the match answered (tower and TV cameras, the pause menu, the exit
+   dialog), at **22.6 frames/s** in the match against 19.0 in process on
+   KosmicKrisp (the harness got the `EXEC=` knob, the macOS Vulkan
+   environment and the mtools scratch disk for this: it was Linux-only).
+   The frames are the game's, stadium shadow and all; the two runs are
+   at different moments, so no pixel diff, and the executor logged
+   nothing dropped or refused on either. Moto Racer through
+   `PERFMAP=0 EXEC=wine tools/xp-moto-race.sh build/xp.qcow2 <name>`
+   (the profiler runner has the knob now) raced at 60 flips/s with **0
+   draws** on both: that image's Moto Racer is set to its software
+   renderer, doc 22's workload, so it exercised the flip chain's
+   readbacks through the child (298/s) and not Direct3D — the Win98 run
+   of the same game on `base98-us` is no test either, since that machine
+   has a Voodoo 2 and the game takes the card the moment it starts (its
+   software renderer into the Voodoo's frame buffer, zero triangles), on
+   either executor. **Left: the acceptance on a real macOS 14/15**, the
+   second APFS volume with `tools/macos-wine-spike-local.sh` first and
+   the community build after — a reboot of the Mac, the user's to do.
 6. **Retire WineD3D-in-guest**, in one commit, once 3 and 5 pass:
    the ISO's `WINED3D\` folders and README, `SETUP /GAME 4`/`5`, `/I 7`
    with `D3DPRE.EXE` and the `DDRAWME`/`DDSYS` switcher,

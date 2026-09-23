@@ -16,10 +16,28 @@
 # outdir (default build/xp-driver-test/fifa-match-<mode>): the screendumps,
 # qemu.log (the executor's frames/s lines), and dinput_log.txt pulled from
 # the image afterwards with 7z (the game never exits on its own).
-# Env: FIFA_ISO (default /mnt/data2/david/Downloads/oldstuff/FIFA2000.ISO).
+# Env: FIFA_ISO (default /mnt/data2/david/Downloads/oldstuff/FIFA2000.ISO),
+# EXEC=wine (the executor in another process on Wine, M15: the A/B on a host
+# with Vulkan).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/tools/guestwait.sh"
+if [ "$(uname -s)" = Darwin ]; then
+  # scripts/test.sh's macOS run environment: DXVK dlopens the Vulkan loader
+  # by leaf name, and a DYLD_* variable handed to this script is stripped by
+  # SIP at the #!/usr/bin/env exec. Without it the first Direct3D context
+  # takes QEMU down (DXVK calls the loader it never found: SIGSEGV in
+  # LibraryFn, "vkGetInstanceProcAddr not found" just before). The loader's
+  # own keg only, never all of /opt/homebrew/lib (doc 00's ImageIO gotcha).
+  VKLIB=/opt/homebrew/opt/vulkan-loader/lib
+  [ -d "$VKLIB" ] || VKLIB=/opt/homebrew/lib
+  export DYLD_LIBRARY_PATH="$VKLIB${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+  if [ -z "${VK_ICD_FILENAMES:-}" ]; then
+    for f in "$HOME"/VulkanSDK/*/macOS/share/vulkan/icd.d/libkosmickrisp_icd.json; do
+      [ -f "$f" ] && export VK_ICD_FILENAMES="$f"
+    done
+  fi
+fi
 MODE="${1:?kvm|tcg}"; IMG="${2:?image.qcow2}"; OUT="${3:-$ROOT/build/xp-driver-test/fifa-match-$MODE}"
 FIFA_ISO="${FIFA_ISO:-/mnt/data2/david/Downloads/oldstuff/FIFA2000.ISO}"
 ISO="$ROOT/guest-tools/out/d3dpt-driver.iso"
@@ -27,9 +45,25 @@ ISO="$ROOT/guest-tools/out/d3dpt-driver.iso"
 mkdir -p "$OUT"
 SCRATCH="$OUT/scratch.img"
 if [ ! -f "$SCRATCH" ]; then
-  truncate -s 64M "$SCRATCH"
-  printf 'label: dos\nstart=2048, type=0c\n' | sfdisk -q "$SCRATCH"
-  mkfs.fat -F 32 --offset 2048 "$SCRATCH" >/dev/null
+  dd if=/dev/null of="$SCRATCH" bs=1 seek=$((64 * 1048576)) 2>/dev/null
+  if command -v sfdisk >/dev/null && command -v mkfs.fat >/dev/null; then
+    printf 'label: dos\nstart=2048, type=0c\n' | sfdisk -q "$SCRATCH"
+    mkfs.fat -F 32 --offset 2048 "$SCRATCH" >/dev/null
+  else
+    # the Mac has neither: the partition table by hand and mtools inside it,
+    # tools/xp-cdimage-test.sh's recipe (-H 2048, the hidden-sectors field =
+    # the partition's start, or XP does not mount the volume at all)
+    python3 - "$SCRATCH" <<'MBR'
+import struct, sys
+start, total = 2048, 64 * 2048
+mbr = bytearray(512)
+mbr[0x1be:0x1be + 16] = struct.pack('<B3sB3sII', 0x00, b'\xfe\xff\xff', 0x0c, b'\xfe\xff\xff', start, total - start)
+mbr[510:512] = b'\x55\xaa'
+with open(sys.argv[1], 'r+b') as f:
+    f.write(bytes(mbr))
+MBR
+    mformat -i "$SCRATCH@@1048576" -F -H 2048 -T $((64 * 2048 - 2048)) ::
+  fi
 fi
 sed 's/\r$//; s/$/\r/' "$ROOT/tools/xp-fifa2000.bat" > "$OUT/RUN.BAT"
 mcopy -o -i "$SCRATCH@@1048576" "$OUT/RUN.BAT" ::/RUN.BAT
@@ -53,11 +87,15 @@ fi
 SOCK="/tmp/xp-fifa-$$.sock"; rm -f "$SOCK"      # short: a Unix socket path is limited to ~100 chars
 trap 'rm -f "$SOCK"' EXIT
 if [ "$MODE" = kvm ]; then ACCEL=(-accel kvm -cpu host); SLOW=1; else ACCEL=(-cpu pentium3); SLOW=3; fi
-export D3DPT_EXEC_LIB="${D3DPT_EXEC_LIB:-$ROOT/build/d3dpt/libd3dpt_exec.so}"
-export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.so.0}"
+case "$(uname -s)" in Darwin) SO=dylib; DXVK_SO=0.dylib;; *) SO=so; DXVK_SO=so.0;; esac
+export D3DPT_EXEC_LIB="${D3DPT_EXEC_LIB:-$ROOT/build/d3dpt/libd3dpt_exec.$SO}"
+export D3DPT_DXVK_LIB="${D3DPT_DXVK_LIB:-$ROOT/build/dxvk/src/d3d9/libdxvk_d3d9.$DXVK_SO}"
+# EXEC=wine: the executor in another process on Wine (M15, ADR-018) -- on a
+# host with Vulkan the A/B, on one below the floor what the user gets
+VGA_ARGS=(-vga none -device "d3dpt-vga${EXEC:+,exec=$EXEC}")
 "$ROOT/build/qemu/qemu-system-i386" -L "$ROOT/qemu/pc-bios" "${ACCEL[@]}" -machine pc -m 512 \
   -hda "$IMG" -hdb "$SCRATCH" -cdrom "$FIFA_ISO" -drive "file=$ISO,media=cdrom,if=ide,index=3,readonly=on" \
-  -vga none -device d3dpt-vga -net none -usb -device usb-tablet -display none \
+  "${VGA_ARGS[@]}" -net none -usb -device usb-tablet -display none \
   -qmp "unix:$SOCK,server,nowait" -serial none -monitor none > "$OUT/qemu.log" 2>&1 &
 QPID=$!
 Q() { python3 "$ROOT/tools/qmpc.py" "$SOCK" "$@"; }
