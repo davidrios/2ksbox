@@ -939,7 +939,8 @@ checked against the other side of its boundary:
 - **Long non-indexed draws are cut** into pieces of at most 0x10000
   vertices (lists on a primitive, strips overlapping, triangle strips on
   an even triangle; a fan still skips). The caps allow 0xffff primitives
-  and the host used to skip such a draw whole.
+  and the host used to skip such a draw whole. Confirmed by a title
+  (user, 2026-09-23).
 - Stream 0's stride is bounded at 1024. TEXBLT rectangles on mip levels
   round up, and a DXT rectangle starts at its block. A DP2
   `SETRENDERTARGET` becomes the context's readback target.

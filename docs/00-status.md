@@ -173,12 +173,6 @@ live in its track doc; fixed things leave this list.
   `SYSTEM\GLIDE*.DLL` and `FXMEMMAP.VXD` are read-only leftovers, so its
   three Voodoo marker checks fail regardless.
 
-- **Proved by probes, not yet by a title:** the display-driver core's cut
-  of long non-indexed draws (doc 19 §32; no probe draws 90,000
-  vertices), and the SB16 wave-name fix with a DirectSound *game* (doc 20
-  §5.3; dxdiag is the evidence so far). The user's `claude98` still needs
-  `SETUP /I 5` from a current ISO and a restart.
-
 - **On the Cirrus, a VESA picture comes out in swapped blocks** (the user,
   in Duke Nukem 3D). The colours were the missing 4F09h, now fixed. Ruled
   out:

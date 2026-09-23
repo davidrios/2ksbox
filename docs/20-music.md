@@ -240,7 +240,8 @@ key of every devnode driven by `sb16.vxd`: "wave" dropped ("Entrada de
 som da SB16", 28 with the port), else cut at a word to 25 characters.
 Then it asks for the restart the VxD needs; a machine whose names fit
 is told "nothing to do". After the restart WAVECAPS reads `"Entrada de
-som da SB16 [220]" nul_at=28` and dxdiag stays up.
+som da SB16 [220]" nul_at=28` and dxdiag stays up. DirectSound games
+run with it too (user, 2026-09-23).
 `tools/setup-guest-test.sh` requires the component's line on Win98.
 
 ## 6. What a machine offers
