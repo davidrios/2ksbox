@@ -186,6 +186,14 @@ pub mod ffi {
         #[qinvokable]
         fn open_edit(self: Pin<&mut Wizard>, bundle_path: &QString);
 
+        /// Cancel, or the window closed: put the form away. Through the
+        /// model, never `wizard.open = false` on the property: that
+        /// leaves the form's own flag up, and the next republish (a
+        /// profile rescan when the profile list closes) raised the
+        /// property again and showed the window (doc 07).
+        #[qinvokable]
+        fn dismiss(self: Pin<&mut Wizard>);
+
         /// Pick the family, moving whatever nobody has chosen (memory,
         /// the accelerator, the processor, the NIC) to that family's own
         /// default with it.
@@ -511,6 +519,10 @@ impl ffi::Wizard {
         self.as_mut().scan_profiles();
         self.as_mut().rust_mut().form.open_edit_path(path);
         self.publish();
+    }
+
+    fn dismiss(self: Pin<&mut Self>) {
+        self.edit(|form| form.open = false);
     }
 
     fn scan_profiles(self: Pin<&mut Self>) {

@@ -712,6 +712,20 @@ ApplicationWindow {
                     return   // `firstRunSettle` grabs when it is done
                 }
                 break
+            case "profilesclose":
+                // The wizard opened once and cancelled, then the profile
+                // list opened and closed: the list's close rescans the
+                // wizard's profiles, a republish, and a wizard put away by
+                // writing its `open` *property* (its form's own flag still
+                // up) came back with it (user report, 2026-09-23). Every
+                // step here is synchronous, so the answer is immediate.
+                wizard.openFresh(); profiles.refresh()
+                wizardWindow.close()
+                diag.note("profilesclose after cancel: open=" + wizard.open + ", visible=" + wizardWindow.visible)
+                profiles.refresh(); shaderWindow.show()
+                shaderWindow.close()
+                diag.note("profilesclose after list: open=" + wizard.open + ", visible=" + wizardWindow.visible)
+                break
             case "escfocus":
                 // New profile… from the profile list, and whether Esc can
                 // close the editor it opens: the editor has to have the

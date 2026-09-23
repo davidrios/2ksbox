@@ -37,7 +37,9 @@ Window {
 
     // Closing the window is cancelling the edit; the flag drives the
     // window in both directions from `Main.qml`.
-    onVisibleChanged: if (!visible && editor.open) editor.open = false
+    // Through the model, never `editor.open = false` on the property
+    // (see `WizardWindow.qml`).
+    onVisibleChanged: if (!visible && editor.open) editor.dismiss()
 
     // Esc is Cancel, as in every other dialog on the desktop. It goes
     // through `close()` rather than hiding the window, because that runs
@@ -350,7 +352,7 @@ Window {
                 }
                 Button {
                     text: qsTr("Cancel")
-                    onClicked: root.editor.open = false
+                    onClicked: root.editor.dismiss()
                 }
                 Item { Layout.fillWidth: true }
             }

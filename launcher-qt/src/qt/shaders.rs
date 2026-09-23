@@ -131,6 +131,11 @@ pub mod ffi {
         #[qinvokable]
         fn new_profile(self: Pin<&mut ShaderEditor>);
 
+        /// Cancel, or the window closed: put the editor away through the
+        /// model, never by writing the `open` property (see `Wizard`).
+        #[qinvokable]
+        fn dismiss(self: Pin<&mut ShaderEditor>);
+
         #[qinvokable]
         fn edit(self: Pin<&mut ShaderEditor>, path: &QString);
 
@@ -344,6 +349,11 @@ impl ffi::ShaderEditor {
     fn new_profile(mut self: Pin<&mut Self>) {
         self.as_mut().with_rows(|e| e.new_profile());
         self.as_mut().rust_mut().preview = None;
+        self.publish();
+    }
+
+    fn dismiss(mut self: Pin<&mut Self>) {
+        self.as_mut().rust_mut().model.open = false;
         self.publish();
     }
 

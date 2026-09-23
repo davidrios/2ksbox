@@ -553,6 +553,14 @@ of them:
    `new_profile` and `edit`, where the model is deliberately newer). The
    `saveprofile` and `qt-wizard` probes type with `insert`, as a key
    press does.
+6. **A window puts itself away through the model, never by writing the
+   `open` property.** `wizard.open = false` changed the property and
+   left the form's own flag up, so the next republish (closing the
+   profile list rescans the wizard's profiles) raised the property again
+   and showed the wizard over nothing (user report, 2026-09-23). Every
+   flag-driven window's Cancel and `visibleChanged` call its model's
+   `dismiss()`; `qt-profilesclose` closes the list after a cancelled
+   wizard and wants it to stay down.
 
 ### What the front end still owns
 

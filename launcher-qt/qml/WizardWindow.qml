@@ -159,7 +159,11 @@ Window {
     onVisibleChanged: {
         if (!visible) {
             lastSection = wizard.section
-            if (wizard.open) wizard.open = false
+            // Through the model (`dismiss`), never `wizard.open = false`
+            // on the property: that left the form's own flag up, and the
+            // profile list's close (a profile rescan, so a republish)
+            // raised the property again and this window with it.
+            if (wizard.open) wizard.dismiss()
             return
         }
         const opened = wizard.editing ? wizard.bundlePath : ""
@@ -943,7 +947,7 @@ Window {
                 Item { Layout.fillWidth: true }
                 Button {
                     text: qsTr("Cancel")
-                    onClicked: root.wizard.open = false
+                    onClicked: root.wizard.dismiss()
                 }
                 Button {
                     text: root.wizard.editing ? qsTr("Save") : qsTr("Create")

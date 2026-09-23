@@ -824,6 +824,26 @@ qtesc_check() { # Esc reaches the shader editor opened from the profile list (do
     || { echo "Esc in the editor is not one armed shortcut in the focused window: $o"; return 1; }
   return 0
 }
+qtprofilesclose_check() { # closing the profile list must not bring the wizard back (doc 07)
+  local dir="$OUT/qtprofilesclose" bin="launcher-qt/target/release/launcher-qt" o
+  rm -rf "$dir"; mkdir -p "$dir/library" "$dir/profiles"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
+  # The wizard window used to put itself away by writing the `open`
+  # property, which left the form's own flag up. Closing the profile list
+  # rescans the wizard's profiles, a republish, which raised the property
+  # again and showed the wizard (user report, 2026-09-23). The window now
+  # goes through `dismiss()`, and this asks after both closes.
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=profilesclose LAUNCHER_QT_DELAY=250 "$bin" 2>&1 \
+       | sed -n 's/^\[diag\] profilesclose //p')"
+  [ -n "$o" ] || { echo "the probe printed no profilesclose line"; return 1; }
+  printf '  %s\n' "$o"
+  printf '%s' "$o" | grep -q "after cancel: open=false, visible=false" \
+    || { echo "the wizard did not go away on Cancel"; return 1; }
+  printf '%s' "$o" | grep -q "after list: open=false, visible=false" \
+    || { echo "closing the profile list brought the wizard back"; return 1; }
+  return 0
+}
 qtprofile_check() { # the Qt shader-profile windows, driven (doc 07)
   local rc=0 dir="$OUT/qtprofile" bin="launcher-qt/target/release/launcher-qt" o list shown
   rm -rf "$dir"; mkdir -p "$dir/library" "$dir/profiles"
@@ -2262,6 +2282,7 @@ host_stage() {
     run_check qt-wizard qt-wizard.log qtwizard_check || true
     run_check qt-close qt-close.log qtclose_check || true
     run_check qt-esc qt-esc.log qtesc_check || true
+    run_check qt-profilesclose qt-profilesclose.log qtprofilesclose_check || true
     run_check qt-profile qt-profile.log qtprofile_check || true
     run_check qt-shelf qt-shelf.log qtshelf_check || true
     run_check qt-firstrun qt-firstrun.log qtfirstrun_check || true
@@ -2275,6 +2296,7 @@ host_stage() {
     skip qt-wizard "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-close "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-esc "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
+    skip qt-profilesclose "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-profile "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-shelf "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
     skip qt-firstrun "needs launcher-qt/target/release/launcher-qt (scripts/build.sh qt)"
