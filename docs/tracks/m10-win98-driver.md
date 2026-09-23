@@ -178,15 +178,13 @@ The guest's:
 
 ## Next steps
 
-1. **The doc 04 title matrix.** Run the same Win98 titles through this
-   driver and the Glide and Cirrus controls to learn which is faster, which
-   is correct, and what the launcher should default to.
-2. **Total Annihilation's exit from inside a skirmish** crashes (user
-   report; exiting from the main menu is clean).
-3. **A fault inside a HAL callback leaks `cmd_lock`** and freezes the
+The doc 04 title matrix, Total Annihilation's exit from a skirmish and
+Crimson Skies' QUIT button are done (user, 2026-09-23).
+
+1. **A fault inside a HAL callback leaks `cmd_lock`** and freezes the
    session until the process dies (§36). Accepted for v1 (user
    decision); an unwind that releases it would turn the next such bug
    into one failed call.
-4. **ACPI standby.** On resume nothing reprograms the adapter and the
+2. **ACPI standby.** On resume nothing reprograms the adapter and the
    screen is a blank VGA text page; the player does not report
    `SUSPEND`/`WAKEUP` (§41).

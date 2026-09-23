@@ -163,8 +163,7 @@ screens and power-down, and `d3dpt-vga` as the Win98 default. Step 5,
 real titles (§26 on), is under way: Crimson Skies, 3DMark 99 / 2001 SE,
 Carmageddon in Mode X, Blood in a DOS box.
 
-**Left:** the doc 04 Win98 title matrix against the Glide and Cirrus
-controls, and the track doc's next steps.
+**Left:** the track doc's next steps.
 
 ## M11: Windows host
 

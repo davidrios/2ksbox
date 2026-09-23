@@ -215,8 +215,7 @@ ring-3 HAL links the core.
   driver stays exercised. `VGA=cirrus` on `tools/win98-game-test.sh` is
   the standard control.
 - The doc 04 Win98 title matrix (this driver against the Glide and
-  Cirrus controls, same image, same host) is still to be measured (track
-  doc).
+  Cirrus controls, same image, same host) is done (user, 2026-09-23).
 
 ## Bringing up the three binaries
 
@@ -839,8 +838,8 @@ switch the VDD also calls `RESTORE_REGISTERS`, `ACCESS_VGA_MEMORY_MODE`,
 which needs an answer.
 
 Total Annihilation's reported crash on exit did not reproduce from its
-main menu; an exit from inside a skirmish is still unexercised (track
-doc).
+main menu, and its exit from inside a skirmish is fixed too (user,
+2026-09-23).
 
 ### 30. Carmageddon: a heap overrun at 16→8 bpp, and DirectDraw's own Mode X
 

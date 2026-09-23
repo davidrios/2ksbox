@@ -22,7 +22,7 @@ is the index.
 | **M7** XP display driver | `tracks/m7-display-driver.md` | `d3dpt/hw/d3dpt_vga.c`, `d3dpt/hw/d3dpt_exec_load.[ch]`, `d3dpt/d3dpt_fb.h`, `d3dpt/exec/d3dpt_exec_ddi.cpp`, `guest-tools/src/d3dptvid/nt/`, `tools/xp-*.sh`, `tools/d3dpt-dp2-test.cpp`, doc 15 | Done through protocol v13 · a title for each probe-only DX8 feature, more 8 bpp titles, a driver stage in `scripts/test.sh` |
 | **M8** x87 / SSE fast paths | `tracks/m8-tcg-fastpaths.md` | patches 05, 06, 11, 12, `tools/x87-*`, `tools/sse-guest-test.py`, docs 13, 16 | Done · a real Direct3D workload with and without `*-fast=off` |
 | **M9** TCG on Apple Silicon | `tracks/m9-tcg-aarch64.md` | `tools/tcg-profile.*`, `tools/tcg-hot.py`, the TCG patches from 13 on | Done; optimization closed by user decision (2026-09-12) · patch 21's crash, binary32 at PC=24 slower than PC=53 on aarch64, the game tests uncapped on the Air |
-| **M10** Win98 display driver | `tracks/m10-win98-driver.md` | `guest-tools/src/d3dptvid/core/` and `w9x/`, `guest-tools/build-driver*.sh`, `setup.c`'s 9x role, `tools/win98-*.sh`, doc 19, ADR-012 | Active; steps 0–4 done, step 5 (real titles) under way · the doc 04 Win98 title matrix against the Glide and Cirrus controls |
+| **M10** Win98 display driver | `tracks/m10-win98-driver.md` | `guest-tools/src/d3dptvid/core/` and `w9x/`, `guest-tools/build-driver*.sh`, `setup.c`'s 9x role, `tools/win98-*.sh`, doc 19, ADR-012 | Active; steps 0–4 done, step 5 (real titles) under way · the ACPI standby resume |
 | **M11** Windows host | `tracks/m11-windows-host.md` | `packaging/windows/`, `scripts/win-cross.sh`, `build-windows.sh`, `package-windows.sh`, `win-run.sh`, `embed/mglcntx_embed.c`'s WGL half, `build-windows.md` | Done; the zip runs guests on the user's PC · Moto Racer's speed there, the native MSYS2 build and its ISO run, live control, the installer |
 | **M12** music | `tracks/m12-music.md` | `libsynth/`, patches 60–61, `soundfonts/`, `bundle::Sound` / `Music`, `tools/midi-guest-test.py`, doc 20 | All stages landed · capture Win98's failing MIDI run, a host MIDI port |
 | **M13** gamepads | `tracks/m13-gamepads.md` | `player/src/pad.rs`, `gamepad/`, patches 26–27, `bundle::Pad`, `tools/pad-guest-test.py` | Done · a real controller on the key mapping, the USB pad on Win98 FE / Me |
@@ -264,11 +264,8 @@ tracks, plus the items no track owns.
    second Glide game, a client resuming on a dead ring, DxDiag's
    Direct3D 7 `GetDC` failure, the Air and the Windows build, Diablo II's
    numbers, patches 64 and 71 upstream.
-8. **M10, Win98 driver** (its track doc, "Next steps"): the doc 04 Win98
-   title matrix against the Glide and Cirrus controls, Total Annihilation's
-   exit from a skirmish, Crimson Skies' half-drawn QUIT button and
-   partial depth fills (doc 19 §28, §34), the command-window lock (§36),
-   the ACPI standby resume (§41).
+8. **M10, Win98 driver** (its track doc, "Next steps"): the
+   command-window lock (§36), the ACPI standby resume (§41).
 9. **M12, music.** One dxdiag music run on Win98 with
    `LIBSYNTH_MIDI_LOG` and `LIBSYNTH_OPL_LOG` set (doc 20 §7.2). Then
    "MPU-401 Compatible" from Add New Hardware, the step Win98 needs
