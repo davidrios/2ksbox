@@ -179,9 +179,6 @@ live in its track doc; fixed things leave this list.
   §5.3; dxdiag is the evidence so far). The user's `claude98` still needs
   `SETUP /I 5` from a current ISO and a restart.
 
-- **Display Properties in Win98 under TCG faults RUNDLL32.** Upstream
-  QEMU issue 1964; cosmetic, and KVM is not affected (doc 06).
-
 - **On the Cirrus, a VESA picture comes out in swapped blocks** (the user,
   in Duke Nukem 3D). The colours were the missing 4F09h, now fixed. Ruled
   out:

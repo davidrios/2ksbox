@@ -52,7 +52,9 @@ New Hardware, then calibrate), and the form says so.
 - 9.2.4's TCG needs the upstream LSS fix (patch 01, issue 2987), or 98
   faults with exception 0D on first boot.
 - TCG has faulted RUNDLL32 in Display Properties since 7.2 (issue 1964).
-  Cosmetic; KVM/WHPX are unaffected.
+  The user has not seen it on our build for a long time (2026-09-23);
+  the cause of the change is unknown. Cosmetic; KVM/WHPX were never
+  affected.
 - qemu-3dfx's 3D needs a context provider, which the player registers
   and a bare `qemu-system-i386` does not (doc 12).
 
