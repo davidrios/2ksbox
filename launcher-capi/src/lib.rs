@@ -102,6 +102,13 @@ macro_rules! handle_mut {
     };
 }
 
+/// The package's own Vulkan driver named to the loader
+/// (`host_gpu::announce_driver`): the front end's `main`, before threads.
+#[no_mangle]
+pub extern "C" fn lc_announce_driver() {
+    launcher_core::host_gpu::announce_driver();
+}
+
 // --- the machine library ---------------------------------------------
 
 pub struct LcMachines(machines::Machines);

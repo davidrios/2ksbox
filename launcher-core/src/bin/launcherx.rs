@@ -21,6 +21,7 @@ fn main() {
     // the way to the window would vanish. This one is a console program
     // whose every run is somebody watching, and installing it would
     // append to the launcher's own crash log 60 times per test run.
+    launcher_core::host_gpu::announce_driver();
     let mut args = std::env::args().skip(1);
     let Some(verb) = args.next() else {
         eprintln!("usage: launcherx <verb> [args]   (the launcher's toolkit-free verbs; see launcher-core/src/cli.rs)");

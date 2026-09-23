@@ -286,7 +286,14 @@ The fields, and why each is what it is:
   note — the guest half of the pass-through is Windows DLLs. `launcher
   --host-check` is the full answer for a script or support question
   (exit 0 through Wine); `--paths` prints the Wine and the pair as
-  `wine` and `wine-host`.
+  `wine` and `wine-host`, and the Vulkan the probe ran on as `vulkan`
+  and `vulkan-icd`. The probe runs on the package's own Vulkan where the
+  package carries one (the macOS app: `host_gpu::shipped_loader` opened
+  by full path, the app's ICD named by `host_gpu::announce_driver`,
+  every front end's first call in `main` — `lc_announce_driver` in the C
+  API), the system's otherwise; before 2026-09-23 it asked dyld for
+  `libvulkan.dylib` by leaf name, and the packaged launcher on a Mac
+  without Homebrew answered "not present" while the player ran DXVK.
 - **The Voodoo 2** ("Emulated 3dfx Voodoo 2", `voodoo2`; doc 21) sits
   under the adapter, as the card sat beside a 2D card: on, the machine
   gets `-device voodoo2,addr=0x05` and nothing else changes. Off unless

@@ -125,6 +125,15 @@ pub fn resource(installed: &str, checkout_rel: &str) -> PathBuf {
     }
 }
 
+/// A file the package shipped, or `None` — in a checkout, or in a
+/// package rolled without it. For the companions that exist only as a
+/// package's own copy (the macOS app's Vulkan loader and driver, which
+/// stock macOS lacks), where a checkout's answer is "the system's".
+pub fn shipped(installed: &str) -> Option<PathBuf> {
+    let path = install_prefix()?.join(in_prefix(installed));
+    path.is_file().then_some(path)
+}
+
 /// `rel` in the workspace checkout this binary was built from. A Windows
 /// binary built from a Linux checkout (docs/build-windows.md) finds
 /// QEMU's own artefacts under `build/win/qemu`, since that checkout holds

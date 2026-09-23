@@ -70,7 +70,11 @@ run.
   with the executor rebuilt on the 15 side the packaged player boots the
   XP machine to its desktop on the Wine executor through the packaged
   pair (`linear mode on (800x600x16)` at 25 s, `Direct3D executor in
-  another process (Wine), ready`).
+  another process (Wine), ready`). The launcher found beside it probing
+  on no Vulkan at all is fixed with it (`host_gpu::probe` opens the
+  app's own loader by path and `announce_driver` names the app's ICD;
+  `package-macos.sh` checks both; status doc, Open threads), and
+  `build/macos-community/` is rebuilt with both fixes.
 
 ## Rejected alternatives
 
@@ -230,9 +234,10 @@ Numbered as ADR-018, doc 07 and CLAUDE.md cite them.
    `Direct3DCreate9` on a DXVK whose constructor had thrown; Traps —
    fixed by DXVK patch 09 and the executor's once-per-library rule), and
    with the executor rebuilt on the 15 side the packaged player boots the
-   machine to XP's desktop on the Wine executor. Left: the package
-   rebuilt with the fix on the 26 side, and FIFA 2000 into a match from
-   the launcher there, with its frame rate.
+   machine to XP's desktop on the Wine executor. The package is rebuilt
+   with the fix on the 26 side, the launcher probing on the app's own
+   Vulkan with it (State). Left: FIFA 2000 into a match from the
+   launcher there, with its frame rate.
 6. **Retire WineD3D-in-guest, in one commit**, once 5 passes: the ISO's
    `WINED3D\` folders and README, `SETUP /GAME 4`/`5`, `/I 7` with
    `D3DPRE.EXE` and the `DDRAWME`/`DDSYS` switcher, the wine9x build and

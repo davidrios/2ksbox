@@ -542,6 +542,40 @@ while read -r what path; do
   case "$path" in "$APP"|"$APP"/*) ;; *) echo "package-macos.sh: $what resolved outside the app: $path" >&2; fail=1 ;; esac
 done <<< "$resolved"
 
+# The launcher's own Vulkan, which the closure above never loaded: the
+# probe behind the Direct3D picker opens the app's loader by its full
+# path and names the app's driver to it (launcher-core/src/host_gpu.rs,
+# 2026-09-23), where a leaf-name dlopen found nothing in an app that ships
+# `libvulkan.1.dylib` only — the community app on macOS 15 said "Vulkan
+# loader: not present" beside the copy its executor was running on. So
+# ask the staged launcher, from `/` with nothing in the environment, and
+# require its report to say the loader is the app's, the loader to have
+# been the app's file, and nothing loaded from outside the app for it.
+# The verdict itself is this Mac's (a Mac below 26 has a loader and no
+# GPU behind it), so it is printed, not required.
+if [ -f "$C/lib/2ksbox/libvulkan.1.dylib" ]; then
+  hc=$(cd / && env -i HOME="$scratch" LAUNCHER_LIBRARY_DIR="$scratch/machines" \
+    DYLD_PRINT_LIBRARIES=1 "$C/MacOS/2ksbox" --host-check 2>&1 || true)
+  report=$(printf '%s\n' "$hc" | grep -v '^dyld\[' || true)
+  case "$report" in
+    *"Vulkan loader: "*"(the app's own)"*) ;;
+    *) printf '%s\n' "$report" | sed 's/^/  /' >&2
+       echo "package-macos.sh: the staged launcher did not probe on the app's own Vulkan loader" >&2; fail=1 ;;
+  esac
+  vkloaded=$(printf '%s\n' "$hc" | sed -n 's|^dyld\[[0-9]*\]: <[^>]*> ||p')
+  case "$vkloaded" in
+    *"$C/lib/2ksbox/libvulkan.1.dylib"*) ;;
+    *) echo "package-macos.sh: the staged launcher's --host-check never loaded the app's libvulkan" >&2; fail=1 ;;
+  esac
+  outside=$(printf '%s\n' "$vkloaded" | grep -v -e "^$APP/" -e '^/usr/lib/' -e '^/System/' || true)
+  if [ -n "$outside" ]; then
+    printf '%s\n' "$outside" | sed 's/^/  /' >&2
+    echo "package-macos.sh: the staged launcher's --host-check loaded the above from outside the app" >&2
+    fail=1
+  fi
+  echo "host-check     $(printf '%s\n' "$report" | sed -n 's/^Direct3D pass-through: //p' | head -1)"
+fi
+
 # What the *loader* actually did, which is the question a friend's Mac
 # will ask. Not one image outside the app and the system may be loaded:
 # an installed app has no build/qemu, so the @loader_path rpath

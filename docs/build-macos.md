@@ -302,7 +302,18 @@ its own, found through DXVK patch 06 (`@loader_path` ahead of bare leaf
 names). `player/src/companions.rs` sets `QEMU_GLIDE_LIB`,
 `D3DPT_EXEC_LIB`, `D3DPT_DXVK_LIB` and `VK_DRIVER_FILES` when an
 installed player finds them unset, since each `dlopen` search otherwise
-starts in a `build/` directory a package does not have.
+starts in a `build/` directory a package does not have. The launcher's
+own probe (the sentence under the Direct3D picker, `--host-check`) is
+the third consumer: since 2026-09-23 it opens the app's
+`lib/2ksbox/libvulkan.1.dylib` by full path
+(`launcher_core::host_gpu::shipped_loader`) and names the app's ICD to
+it at `main` (`host_gpu::announce_driver`), because a leaf-name
+`dlopen("libvulkan.dylib")` finds nothing in this app and the loader
+reads its driver list from the environment and system directories only
+— the community app on macOS 15 said "Vulkan loader: not present"
+beside the copy its executor was running on. The packager requires the
+staged launcher's `--host-check` to load the app's loader and say "the
+app's own".
 
 **The checks are the point of the script:**
 
@@ -342,7 +353,8 @@ Both come from the same script; `--community` adds
 with mingw-w64 (ADR-018, doc 14). The App Store build carries nothing
 of Wine and never gets a pre-26 version.
 
-Below macOS 26 there is no KosmicKrisp, so DXVK finds no device. The
+Below macOS 26 KosmicKrisp loads but reports no GPU (it needs Metal on
+26; `vkEnumeratePhysicalDevices` fails), so DXVK finds no device. The
 community build then runs the same executor on the user's Wine
 (`launcher --host-check`: "runs through Wine on this host", exit 0); a
 Mac with no Wine falls back to WineD3D in the guest, until M15's last

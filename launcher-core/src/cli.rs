@@ -796,6 +796,19 @@ fn paths_text() -> String {
         }
         .ok();
     }
+    // The Vulkan the probe and the executor run on: the package's own
+    // loader and driver where the package carries them (the macOS app),
+    // the system's everywhere else.
+    match crate::host_gpu::shipped_loader() {
+        Some(p) => writeln!(s, "vulkan       {}", p.display()),
+        None => writeln!(s, "vulkan       (the system's loader)"),
+    }
+    .ok();
+    match crate::host_gpu::shipped_icd() {
+        Some(p) => writeln!(s, "vulkan-icd   {}", p.display()),
+        None => writeln!(s, "vulkan-icd   (the system's drivers)"),
+    }
+    .ok();
     writeln!(s, "machines     {}", library::default_dir().display()).ok();
     writeln!(s, "discs        {}", disc_library::default_path().display()).ok();
     writeln!(s, "profiles     {}", shader_library::default_dir().display()).ok();

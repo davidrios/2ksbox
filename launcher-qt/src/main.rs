@@ -86,6 +86,9 @@ fn main() {
     // never reached `main`, which is its own answer
     // (`launcher_core::fatal`).
     launcher_core::fatal::install("qt");
+    // The package's own Vulkan driver, named to the loader before a
+    // thread exists (`host_gpu::announce_driver`'s one rule).
+    launcher_core::host_gpu::announce_driver();
     // Debug verbs first, before a GUI exists. They are
     // `launcher_core::cli`'s, so this binary answers every one `launcherx`
     // does, identically — `--paths`, `--discs`, `--snapshots`,

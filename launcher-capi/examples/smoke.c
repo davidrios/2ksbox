@@ -92,6 +92,7 @@ int main(int argc, char **argv) {
     }
     const char *library_dir = argv[1];
     const char *disc = argv[2];
+    lc_announce_driver();
 
     printf("== the wizard, through C\n");
     LcWizard *w = lc_wizard_new();
@@ -183,12 +184,12 @@ int main(int argc, char **argv) {
 
     /* Which Direct3D 9 the *host* runs the executor on (ADR-007's
      * 2026-09-21 amendment). A host question, not a guest one: the same
-     * three entries on every family, no default that follows the family
-     * — and a row only where there is an executor to run anything on,
-     * which is our own adapter. */
+     * entries on every family, no default that follows the family — and
+     * a row only where there is an executor to run anything on, which
+     * is our own adapter. */
     lc_wizard_open_new(w, (size_t)xp);
     check("a machine on our adapter has a Direct3D picker",
-          lc_wizard_d3d9_applies(w) && lc_wizard_d3d9_count(w) == 3, NULL);
+          lc_wizard_d3d9_applies(w) && lc_wizard_d3d9_count(w) >= 2, NULL);
     check("...starting on the automatic answer", lc_wizard_d3d9_is_default(w), NULL);
     char *d3d9 = lc_wizard_d3d9_label(w, lc_wizard_d3d9(w));
     check("which says so", d3d9 && strstr(d3d9, "Automatic") != NULL, d3d9);

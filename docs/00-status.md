@@ -28,7 +28,7 @@ and ordered next steps; this table is the index.
 | **M12** music | `tracks/m12-music.md` | `libsynth/`, patches 60–61, `soundfonts/`, `bundle::Sound` / `Music`, `tools/midi-guest-test.py`, doc 20 | All stages landed · capture Win98's failing MIDI run, a host MIDI port |
 | **M13** gamepads | `tracks/m13-gamepads.md` | `player/src/pad.rs`, `gamepad/`, patches 26–27, `bundle::Pad`, `tools/pad-guest-test.py` | Done · a real controller on the key mapping, the USB pad on Win98 FE / Me |
 | **M14** Voodoo 2 device | `tracks/m14-voodoo2.md` | `voodoo/`, patch 62 and the Voodoo patches after it, `tools/voodoo-guest-test.py`, `scripts/sync-86box-voodoo.sh`, doc 21 | Active on `main` · a second Glide game after one has quit, a client left on a dead ring, the Air and Windows builds |
-| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Active, steps 1–4 done; the community app's first start on macOS 15 crashed at the adapter's realize and is fixed (2026-09-23, DXVK patch 09) · a game in that app on macOS 15, then retire WineD3D-in-guest (step 6) |
+| **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Active, steps 1–4 done; the community app's first start on macOS 15 crashed at the adapter's realize and is fixed (2026-09-23, DXVK patch 09), the launcher probes on the app's own Vulkan, the package is rebuilt · FIFA 2000 into a match from that app on macOS 15, then retire WineD3D-in-guest (step 6) |
 | Everything else (Glide on macOS / Windows, M2's leftovers) | "Next steps" below | — | as listed |
 
 Rules: work on `main` or a branch `track/<name>-<topic>` off it, rebased
@@ -234,15 +234,27 @@ own open items live in its track doc; fixed things leave this list.
   (`d3dpt_exec.cpp`, `refused`), and the `exec-no-device` check holds it.
   With the executor rebuilt on the 15 side the packaged player booted
   the XP machine to its desktop on the Wine executor through the
-  packaged pair. Found beside it, open: the packaged *launcher* there
-  says `Vulkan loader: not present` beside the app's own loader —
-  `ash::Entry::load()` asks dyld for `libvulkan.dylib` by leaf name, the
-  app ships `libvulkan.1.dylib`, and the launcher has no rpath into
-  `lib/2ksbox`; the verdict came out right on 15 regardless (Wine), but
-  the App Store build on a Mac without Homebrew would say Direct3D is
-  unavailable while the player runs DXVK. What is left is the package
-  rebuilt with the fix on the 26 side and FIFA 2000 into a match from it
-  on the 15 volume: M15 step 5 (`docs/tracks/m15-wine-executor.md`).
+  packaged pair. Found beside it and fixed the same day: the packaged
+  *launcher* there said `Vulkan loader: not present` beside the app's
+  own loader — `ash::Entry::load()` asks dyld for `libvulkan.dylib` by
+  leaf name, the app ships `libvulkan.1.dylib`, and even found, that
+  loader would have enumerated nothing, since it reads its driver list
+  from `VK_DRIVER_FILES` and system directories only and just the
+  *player* set the variable. The verdict came out right on 15 regardless
+  (Wine), but the App Store build on a Mac without Homebrew would have
+  said Direct3D is unavailable while the player ran DXVK. Fixed in the
+  core, not with an rpath (a leaf name reaching the right file through
+  the calling image's rpaths is what the crash above was made of):
+  `host_gpu::probe` opens the package's own loader by full path
+  (`paths::shipped`), `host_gpu::announce_driver` — every front end's
+  first call in `main`, before a thread exists; `lc_announce_driver` in
+  the C API — names the app's ICD as `VK_DRIVER_FILES` when both loader
+  variables are unset, `--host-check` says "(the app's own)", `--paths`
+  has `vulkan` and `vulkan-icd` rows, and `package-macos.sh` requires
+  the staged launcher's `--host-check` to load the app's `libvulkan`
+  and say so. `build/macos-community/` is rebuilt with both fixes. What
+  is left is FIFA 2000 into a match from it on the 15 volume: M15 step 5
+  (`docs/tracks/m15-wine-executor.md`).
 
 - **x87 at PC=24 on aarch64 trails PC=53.** On the Air the
   single-precision loop (`X87BEN2S`) takes 0.49 s at PC=24 against 0.38 s
@@ -304,9 +316,10 @@ tracks, and the items no track owns.
 
 1. **M15, the Direct3D fallback on Wine** (ADR-018,
    `tracks/m15-wine-executor.md`). A guest in the packaged community app
-   on a real macOS 15 — the app and `build/xp-mac15.qcow2` are built,
-   the run needs the Mac booted into the other volume (the user's to
-   do); the spike's two host tests on the rig's Linux Wine. Then step 6:
+   on a real macOS 15 — the app (rebuilt 2026-09-23 with the realize
+   crash fixed) and `build/xp-mac15.qcow2` are built, the run needs the
+   Mac booted into the other volume (the user's to do); the spike's two
+   host tests on the rig's Linux Wine. Then step 6:
    WineD3D-in-guest removed in one commit (the ISO's `WINED3D\`, `SETUP
    /GAME 4`/`5`, `/I 7` with `D3DPRE.EXE`, the wine9x build and its
    tests, doc 04's rows, CLAUDE.md's sentence), and the Flatpak's Wine

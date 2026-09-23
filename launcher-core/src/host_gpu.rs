@@ -352,7 +352,70 @@ pub struct Probe {
     pub gpu: HostGpu,
     /// The loader's own version, `None` when there is no loader.
     pub loader: Option<(u32, u32, u32)>,
+    /// Whether that loader is the package's own copy rather than the
+    /// system's ([`shipped_loader`]).
+    pub own_loader: bool,
     pub devices: Vec<Device>,
+}
+
+/// The Vulkan loader this package carries, when it carries one. Stock
+/// macOS has no Vulkan, so the app ships the LunarG loader beside the
+/// executor's KosmicKrisp (`scripts/package-macos.sh`); a Linux package
+/// ships none, the distribution's is the right one. `None` in a checkout.
+pub fn shipped_loader() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        crate::paths::shipped("lib/2ksbox/libvulkan.1.dylib")
+    } else {
+        None
+    }
+}
+
+/// The ICD manifest naming the driver the package carries, the file the
+/// player's `companions::announce` hands QEMU's process as
+/// `VK_DRIVER_FILES`. Same rule, same file.
+pub fn shipped_icd() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        crate::paths::shipped("share/2ksbox/vulkan/icd.d/driver.json")
+    } else {
+        None
+    }
+}
+
+/// Point the loader at the driver the package ships, the way the player
+/// does for QEMU's process: `VK_DRIVER_FILES` when the caller left both
+/// loader variables unset. The loader has no other door — it reads its
+/// driver list from the environment and a handful of system directories
+/// none of which an app bundle owns — so without this the app's own
+/// loader, opened by [`probe`], enumerates no device on a Mac that has
+/// nothing of Vulkan installed and the launcher says Direct3D is
+/// unavailable while the player runs DXVK (2026-09-23, the community app
+/// on macOS 15). **Every front end calls this first thing in `main`**,
+/// before a thread exists: writing the environment beside another
+/// thread's `getenv` is the one race Rust's `set_var` cannot lock out.
+pub fn announce_driver() {
+    if std::env::var_os("VK_DRIVER_FILES").is_some() || std::env::var_os("VK_ICD_FILENAMES").is_some() {
+        return;
+    }
+    let Some(icd) = shipped_icd() else { return };
+    // SAFETY: the caller's contract above — main, before any thread.
+    unsafe { std::env::set_var("VK_DRIVER_FILES", icd) };
+}
+
+/// The loader to probe: the package's own by its full path when it ships
+/// one, the system's `libvulkan` otherwise. `Entry::load()` alone asks
+/// dyld for `libvulkan.dylib` by leaf name, which reaches the app's copy
+/// only through an rpath of the calling image and under a name the app
+/// does not use — measured 2026-09-23 on macOS 15: the packaged launcher
+/// reported "Vulkan loader: not present" beside the copy the executor
+/// was running on.
+///
+/// # Safety
+/// As `Entry::load`: a library on the search path runs its initialisers.
+unsafe fn load_entry() -> Result<(ash::Entry, bool), ash::LoadingError> {
+    if let Some(path) = shipped_loader() {
+        return unsafe { ash::Entry::load_from(path) }.map(|e| (e, true));
+    }
+    unsafe { ash::Entry::load() }.map(|e| (e, false))
 }
 
 fn split(v: u32) -> (u32, u32, u32) {
@@ -370,13 +433,14 @@ pub fn probe() -> Probe {
     let none = |gpu| Probe {
         gpu,
         loader: None,
+        own_loader: false,
         devices: Vec::new(),
     };
 
-    // SAFETY: `Entry::load` dlopens the loader; unsafe because a hostile
+    // SAFETY: `load_entry` dlopens the loader; unsafe because a hostile
     // `libvulkan` on the search path could do anything. Same call the
     // player and every other Vulkan app make.
-    let entry = match unsafe { ash::Entry::load() } {
+    let (entry, own_loader) = match unsafe { load_entry() } {
         Ok(e) => e,
         Err(_) => return none(HostGpu::NoLoader),
     };
@@ -425,6 +489,7 @@ pub fn probe() -> Probe {
                     HostGpu::LoaderTooOld
                 },
                 loader: Some(loader),
+                own_loader,
                 devices: Vec::new(),
             }
         }
@@ -470,6 +535,7 @@ pub fn probe() -> Probe {
     Probe {
         gpu,
         loader: Some(loader),
+        own_loader,
         devices,
     }
 }
@@ -492,6 +558,7 @@ pub fn report_text(p: &Probe) -> String {
     }
     s.push('\n');
     match p.loader {
+        Some((a, b, c)) if p.own_loader => s.push_str(&format!("Vulkan loader: {a}.{b}.{c} (the app's own)\n")),
         Some((a, b, c)) => s.push_str(&format!("Vulkan loader: {a}.{b}.{c}\n")),
         None => s.push_str("Vulkan loader: not present\n"),
     }

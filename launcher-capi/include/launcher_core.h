@@ -45,6 +45,11 @@ void lc_string_free(char *s);
  * your binary, not about a checkout. NULL for an unknown name. */
 char *lc_path(const char *what);
 bool lc_kvm_available(void);
+/* First thing in main, before any thread: names the Vulkan driver this
+   package ships to the loader (the macOS app carries its own; stock
+   macOS has none), so the host's 3D answers below come from it. A no-op
+   in a checkout or where VK_DRIVER_FILES / VK_ICD_FILENAMES is set. */
+void lc_announce_driver(void);
 
 /* --- the machine library ------------------------------------------ */
 
