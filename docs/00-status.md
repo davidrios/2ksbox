@@ -252,9 +252,10 @@ tracks, plus the items no track owns.
    launcher`, a machine, the Windows-built ISO in a guest). Live control
    over Winsock AF_UNIX on a real PC. The Store upload (a Partner
    Center identity; the packaged library at `%USERPROFILE%\2ksbox`,
-   2026-09-23, has been checked with `LAUNCHER_PACKAGED=1` only:
-   `scripts/win-sideload.ps1` installs the package and checks it from
-   there, one UAC prompt) and an installer for users outside the
+   2026-09-23, has been checked with `LAUNCHER_PACKAGED=1` only; the
+   package installs and runs on the PC through
+   `scripts/win-sideload.ps1`, whose `-Check` reads the location back
+   from the installed app) and an installer for users outside the
    Store. Zero-copy frames through a DXGI shared handle. A Windows check
    that boots a guest.
 7. **M14, Voodoo 2** (its track doc, "Open, in order"): the glitched

@@ -3,25 +3,31 @@
 #
 #   powershell -ExecutionPolicy Bypass -File scripts/win-sideload.ps1 [<file.msix>]
 #   ... -NoInstall      sign only: everything that needs no administrator
+#   ... -Check          after installing, start the installed launcher's
+#                       --diagnose with package identity and read back
+#                       where it put the library
 #   ... -Remove         uninstall the package; the library stays
 #
 # The Store signs its own uploads, so scripts/package-msix.sh leaves the
 # package unsigned, and Windows installs nothing unsigned. This script
 # makes a certificate whose subject is the manifest's Publisher (the one
 # thing Windows checks the signature against), trusts it on this machine,
-# signs a copy of the package, installs it, and then runs the installed
-# launcher's `--diagnose` *with package identity* to read back where it
-# put the library: outside AppData, or an uninstall would take the user's
-# machines (paths::packaged()). The one step that needs an administrator
-# is trusting the certificate (LocalMachine\TrustedPeople), and it is
-# done once, through a UAC prompt, in a shell of its own.
+# signs a copy of the package and installs it; the app is then in the
+# Start menu. With -Check it also runs the installed launcher's
+# `--diagnose` *with package identity* and reads back where it put the
+# library: outside AppData, or an uninstall would take the user's
+# machines (paths::packaged()). Off by default: it starts the app, which
+# an install does not need (user). The one step that needs an
+# administrator is trusting the certificate (LocalMachine\TrustedPeople),
+# and it is done once, through a UAC prompt, in a shell of its own.
 #
 # The default package is the newest build/win/package/*.msix. Nothing
 # here touches the zip's library in %APPDATA%.
 param(
   [string]$Msix,
   [switch]$NoInstall,
-  [switch]$Remove
+  [switch]$Remove,
+  [switch]$Check
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -116,6 +122,7 @@ $pkg = Get-AppxPackage -Name $name
 if (-not $pkg) { throw 'win-sideload: installed, but Get-AppxPackage does not list it' }
 "installed      $($pkg.PackageFullName)"
 "               $($pkg.InstallLocation)"
+if (-not $Check) { "               2ksbox is in the Start menu (-Check reads back where it keeps its library)"; exit 0 }
 
 # --- the check: where does the installed launcher keep its library? -----
 # `--diagnose` files `--paths`' answer in launcher.log beside the library,
@@ -123,12 +130,15 @@ if (-not $pkg) { throw 'win-sideload: installed, but Get-AppxPackage does not li
 # whether the launcher knew it was packaged. Run through
 # Invoke-CommandInDesktopPackage so the process has package identity, as
 # a Start-menu launch has; an .exe run by path out of WindowsApps does not
-# always get it.
+# always get it. The command is the executable's full path: the cmdlet
+# resolves a bare name against the caller's directory, not the package's,
+# and a bare `2ksbox.exe` gave "could not find 2ksbox.exe".
 $lib = Join-Path $env:USERPROFILE '2ksbox'
 $log = Join-Path $lib 'launcher.log'
 $before = 0
 if (Test-Path $log) { $before = (Get-Content $log | Measure-Object -Line).Lines }
-Invoke-CommandInDesktopPackage -PackageFamilyName $pkg.PackageFamilyName -AppId $appId -Command '2ksbox.exe' -Args '--diagnose'
+$exe = Join-Path $pkg.InstallLocation '2ksbox.exe'
+Invoke-CommandInDesktopPackage -PackageFamilyName $pkg.PackageFamilyName -AppId $appId -Command $exe -Args '--diagnose'
 $line = $null
 $deadline = (Get-Date).AddSeconds(60)
 while ((Get-Date) -lt $deadline) {

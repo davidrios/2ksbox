@@ -303,6 +303,7 @@ and which the PC trusts. `scripts/win-sideload.ps1` does all of it:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/win-sideload.ps1            # newest build/win/package/*.msix
+powershell -ExecutionPolicy Bypass -File scripts/win-sideload.ps1 -Check     # ... and read back where it keeps its library
 powershell -ExecutionPolicy Bypass -File scripts/win-sideload.ps1 -NoInstall # sign only, no administrator
 powershell -ExecutionPolicy Bypass -File scripts/win-sideload.ps1 -Remove    # uninstall; the library stays
 ```
@@ -310,13 +311,16 @@ powershell -ExecutionPolicy Bypass -File scripts/win-sideload.ps1 -Remove    # u
 It reads the identity out of the package, makes (once) a certificate in
 the user's store with that publisher as its subject, trusts it in
 `LocalMachine\TrustedPeople` through one UAC prompt (the only step that
-needs an administrator), signs a copy (`*-sideload.msix`), installs it,
-and then runs the installed launcher's `--diagnose` **with package
-identity** (`Invoke-CommandInDesktopPackage`) and reads the `library`
-line back out of the `launcher.log` it wrote: the line must end in
-`(packaged)` and the log must be under `%USERPROFILE%\2ksbox`, or the
-script fails. `package-msix.sh --pfx` is the same signing for a PFX of
-your own. The Windows App Certification Kit runs against the installed
+needs an administrator), signs a copy (`*-sideload.msix`) and installs
+it; the app is then in the Start menu. With `-Check` it also runs the
+installed launcher's `--diagnose` **with package identity**
+(`Invoke-CommandInDesktopPackage`, given the executable's full path: a
+bare name resolves against the caller's directory) and reads the
+`library` line back out of the `launcher.log` it wrote: the line must
+end in `(packaged)` and the log must be under `%USERPROFILE%\2ksbox`,
+or the script fails. The check is off by default because it starts the
+app, which an install does not need (user). `package-msix.sh --pfx` is
+the same signing for a PFX of your own. The Windows App Certification Kit runs against the installed
 package (`appcert.exe test -appxpackagepath <msix> -reportoutputpath
 report.xml`), and certification runs the same checks, so run it before
 an upload.
@@ -382,10 +386,10 @@ emulated regardless.
 - **No installer** beside the zip for users outside the Store (doc 07
   wants one; QEMU's `mingw32-nsis` recipe is within the image's reach).
   The MSIX is one, but only through the Store or a trusted certificate.
-- **The Store package has not been uploaded**, and its packaged library
-  location has been checked with `LAUNCHER_PACKAGED=1` and the sideload
-  script's sign-only mode, not yet from an installed package
-  (`scripts/win-sideload.ps1` does that; it needs one UAC prompt).
+- **The Store package has not been uploaded.** It installs and runs on
+  the PC through `scripts/win-sideload.ps1` (2026-09-23); its packaged
+  library location has been checked with `LAUNCHER_PACKAGED=1`, not yet
+  read back from the installed package (`win-sideload.ps1 -Check`).
 - **No Windows check that boots a guest**, in the shape of
   `tools/xp-driver-test.sh`.
 
