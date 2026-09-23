@@ -408,6 +408,54 @@ clone_check() { # "Clone…", from the model to a disk our QEMU reads (doc 07)
   fi
   return $rc
 }
+snaptree_check() { # the snapshot window's tree (doc 07): the launcher's own record over a qcow2, which keeps none
+  local rc=0 dir="$OUT/snaptree" img=build/qemu/qemu-img bundle disk copy o want
+  rm -rf "$dir"; mkdir -p "$dir/library"
+  export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
+  export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" LAUNCHER_QEMU_IMG_BIN="$img"
+  bundle="$(target/release/launcherx --wizard-new xp Tree 1 2>/dev/null | tail -1)"
+  [ -f "$bundle" ] || { echo "--wizard-new made no bundle"; return 1; }
+  disk="$(dirname "$bundle")/disk.qcow2"
+  # The window's rows as the CLI prints them: the name set in by its
+  # depth, and the last column "current" / "no record" / nothing.
+  tree() { target/release/launcherx --snapshots "$1" 2>/dev/null | grep -v '^\[snapshots\]' | awk -F'\t' '{ printf "%s%s%s|", $2, ($5 == "" ? "" : " "), $5 }'; }
+  op() { target/release/launcherx --snapshots "$bundle" "$@" >/dev/null 2>&1 || { echo "--snapshots $* failed"; return 1; }; }
+  # a; b from a; back to a and c from a: b and c are siblings under a, and
+  # the disk now descends from c. The flat list would read a, b, c.
+  op take a && op take b && op restore a && op take c || return 1
+  want="a|  b|  c current|"
+  o="$(tree "$bundle")"; [ "$o" = "$want" ] || { echo "after a, b, restore a, c: got $o, wanted $want"; rc=1; }
+  [ -f "$(dirname "$bundle")/snapshots.toml" ] || { echo "no snapshots.toml beside the bundle"; rc=1; }
+  # d from c goes a level deeper; deleting c moves d up under a and the
+  # present state stays d's.
+  op take d || return 1
+  want="a|  b|  c|    d current|"
+  o="$(tree "$bundle")"; [ "$o" = "$want" ] || { echo "after d: got $o, wanted $want"; rc=1; }
+  op delete c || return 1
+  want="a|  b|  d current|"
+  o="$(tree "$bundle")"; [ "$o" = "$want" ] || { echo "after deleting c: got $o, wanted $want"; rc=1; }
+  # The clone carries the tree (every file beside the bundle is copied).
+  copy="$(target/release/launcherx --clone "$bundle" 2>&1)" || { echo "--clone failed: $copy"; return 1; }
+  o="$(tree "$copy")"; [ "$o" = "$want" ] || { echo "the clone's tree: got $o, wanted $want"; rc=1; }
+  # Outside the launcher: a snapshot deleted by hand takes its record with
+  # it on the next read, and one taken by hand has none, so it sits at the
+  # top level marked so, with the note under the list.
+  $img snapshot -d b "$disk" && $img snapshot -c e "$disk" || { echo "qemu-img could not edit the disk"; return 1; }
+  want="a|  d current|e no record|"
+  o="$(tree "$bundle")"; [ "$o" = "$want" ] || { echo "after qemu-img -d b, -c e: got $o, wanted $want"; rc=1; }
+  o="$(target/release/launcherx --snapshots "$bundle" 2>/dev/null)"
+  case "$o" in *"[snapshots] One of these was taken before"*) ;; *) echo "no note about the snapshot with no record:"; echo "$o"; rc=1;; esac
+  # Restoring one with no record makes it a root that the next take
+  # hangs under, so the tree grows from there rather than staying flat.
+  op restore e && op take f || return 1
+  want="a|  d|e|  f current|"
+  o="$(tree "$bundle")"; [ "$o" = "$want" ] || { echo "after restore e, f: got $o, wanted $want"; rc=1; }
+  # Deleting the snapshot the disk descends from moves that up too.
+  op delete f || return 1
+  want="a|  d|e current|"
+  o="$(tree "$bundle")"; [ "$o" = "$want" ] || { echo "after deleting f: got $o, wanted $want"; rc=1; }
+  return $rc
+}
 qtclone_check() { # the Qt "Clone…" window, driven (doc 07)
   local rc=0 dir="$OUT/qtclone" bin="launcher-qt/target/release/launcher-qt" bundle o saved
   rm -rf "$dir"; mkdir -p "$dir/library"
@@ -2162,6 +2210,9 @@ host_stage() {
   if [ -x target/release/launcherx ] && [ -x build/qemu/qemu-img ] && [ -x build/qemu/qemu-io ]; then
     run_check clone clone.log clone_check || true
   else skip clone "needs target/release/launcherx, build/qemu/qemu-img and qemu-io"; fi
+  if [ -x target/release/launcherx ] && [ -x build/qemu/qemu-img ]; then
+    run_check snapshot-tree snapshot-tree.log snaptree_check || true
+  else skip snapshot-tree "needs target/release/launcherx and build/qemu/qemu-img"; fi
   # The first-run shader offer and the starter profiles behind it. Needs
   # the preset collection to check what a "yes" writes, so it is skipped
   # on a checkout without the submodule rather than downloading 50 MB

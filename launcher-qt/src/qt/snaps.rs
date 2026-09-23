@@ -38,6 +38,10 @@ pub mod ffi {
         #[qproperty(bool, busy)]
         #[qproperty(QString, status)]
         #[qproperty(QString, error)]
+        /// A line under the list, or "": the model's word on snapshots
+        /// it has no record of, which sit at the top level without
+        /// being roots.
+        #[qproperty(QString, note)]
         type SnapshotModel = super::SnapshotModelRust;
 
         #[qinvokable]
@@ -98,6 +102,8 @@ use std::pin::Pin;
 const ROLE_NAME: i32 = 0;
 const ROLE_DATE: i32 = 1;
 const ROLE_SIZE: i32 = 2;
+const ROLE_DEPTH: i32 = 3;
+const ROLE_CURRENT: i32 = 4;
 
 #[derive(Default)]
 pub struct SnapshotModelRust {
@@ -108,6 +114,7 @@ pub struct SnapshotModelRust {
     busy: bool,
     status: QString,
     error: QString,
+    note: QString,
 
     /// The window's state machine. Everything above is a projection.
     model: Snapshots,
@@ -126,6 +133,8 @@ impl ffi::SnapshotModel {
             ROLE_NAME => QVariant::from(&qs(&snap.name)),
             ROLE_DATE => QVariant::from(&qs(snap.date_label())),
             ROLE_SIZE => QVariant::from(&qs(snap.size_label())),
+            ROLE_DEPTH => QVariant::from(&(snap.depth as i32)),
+            ROLE_CURRENT => QVariant::from(&snap.current),
             _ => QVariant::default(),
         }
     }
@@ -135,6 +144,8 @@ impl ffi::SnapshotModel {
         roles.insert(ROLE_NAME, QByteArray::from("name"));
         roles.insert(ROLE_DATE, QByteArray::from("taken"));
         roles.insert(ROLE_SIZE, QByteArray::from("vmState"));
+        roles.insert(ROLE_DEPTH, QByteArray::from("depth"));
+        roles.insert(ROLE_CURRENT, QByteArray::from("current"));
         roles
     }
 
@@ -189,7 +200,7 @@ impl ffi::SnapshotModel {
     /// The model, onto the properties, each through its own setter (see
     /// the header of `main.rs`).
     fn publish(mut self: Pin<&mut Self>) {
-        let (count, open, title, running, busy, status, error);
+        let (count, open, title, running, busy, status, error, note);
         {
             let m = &self.rust().model;
             count = m.snapshots().len() as i32;
@@ -199,6 +210,7 @@ impl ffi::SnapshotModel {
             busy = m.job_pending();
             status = qs_opt(m.status());
             error = qs_opt(m.error());
+            note = qs_opt(m.note().as_deref());
         }
         self.as_mut().set_count(count);
         self.as_mut().set_title(title);
@@ -206,6 +218,7 @@ impl ffi::SnapshotModel {
         self.as_mut().set_busy(busy);
         self.as_mut().set_status(status);
         self.as_mut().set_error(error);
+        self.as_mut().set_note(note);
         // Last: `open` is what `Main.qml` shows the window on, so
         // everything its first frame draws is current by then.
         self.as_mut().set_open(open);

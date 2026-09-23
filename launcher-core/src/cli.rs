@@ -720,8 +720,28 @@ pub fn print_snapshots(window: &snaps::Snapshots) {
     if let Some(err) = window.error() {
         eprintln!("[snapshots] {err}");
     }
+    // The tree as the window draws it: the name indented by its depth,
+    // and a last column marking the snapshot the disk's present state
+    // descends from (`current`) or one with no record (`no record`).
     for snap in window.snapshots() {
-        println!("{}\t{}\t{}\t{}", snap.id, snap.name, snap.date_label(), snap.size_label());
+        let mark = if snap.current {
+            "current"
+        } else if snap.recorded {
+            ""
+        } else {
+            "no record"
+        };
+        println!(
+            "{}\t{}{}\t{}\t{}\t{mark}",
+            snap.id,
+            "  ".repeat(snap.depth),
+            snap.name,
+            snap.date_label(),
+            snap.size_label()
+        );
+    }
+    if let Some(note) = window.note() {
+        println!("[snapshots] {note}");
     }
 }
 

@@ -17,7 +17,7 @@ Window {
     property Item grabItem: body
 
     title: snapshots.title
-    width: 740
+    width: 800
     height: 500
     minimumWidth: 560
     minimumHeight: 320
@@ -91,7 +91,7 @@ Window {
                 Layout.leftMargin: rowMetrics.leftPadding
                 Layout.rightMargin: rowMetrics.rightPadding
                 spacing: 10
-                Label { text: qsTr("Name"); font.bold: true; Layout.preferredWidth: 180 }
+                Label { text: qsTr("Name"); font.bold: true; Layout.preferredWidth: 240 }
                 Label { text: qsTr("Taken"); font.bold: true; Layout.preferredWidth: 160 }
                 Label { text: qsTr("VM state"); font.bold: true; Layout.preferredWidth: 90 }
                 Item { Layout.fillWidth: true }
@@ -114,13 +114,43 @@ Window {
                     required property string name
                     required property string taken
                     required property string vmState
+                    required property int depth
+                    required property bool current
 
                     width: list.width
 
                     contentItem: RowLayout {
                         spacing: 10
 
-                        Label { text: snapRow.name; elide: Text.ElideRight; Layout.preferredWidth: 180 }
+                        // The tree: rows come in tree order (each root
+                        // followed by its descendants), so the name is
+                        // set in by its depth and a child carries a
+                        // branch mark. The row the disk's present state
+                        // descends from — where the next snapshot goes —
+                        // says so beside its name.
+                        RowLayout {
+                            id: nameColumn
+                            Layout.preferredWidth: 240
+                            spacing: 6
+                            Item { id: indent; Layout.preferredWidth: snapRow.depth * 18; visible: snapRow.depth > 0 }
+                            Label {
+                                text: (snapRow.depth > 0 ? "└ " : "") + snapRow.name
+                                elide: Text.ElideRight
+                                // As wide as the name, up to what the column
+                                // leaves after the indent and the tag, so the
+                                // tag sits right after the name.
+                                Layout.maximumWidth: nameColumn.width - (indent.visible ? indent.width + 6 : 0)
+                                    - (currentTag.visible ? currentTag.width + 6 : 0)
+                            }
+                            Label {
+                                id: currentTag
+                                visible: snapRow.current
+                                text: qsTr("current")
+                                font.italic: true
+                                opacity: 0.6
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
                         Label { text: snapRow.taken; Layout.preferredWidth: 160; opacity: 0.75 }
                         Label { text: snapRow.vmState; Layout.preferredWidth: 90; opacity: 0.75 }
                         Item { Layout.fillWidth: true }
@@ -159,6 +189,17 @@ Window {
                     opacity: 0.7
                     text: qsTr("No snapshots yet.")
                 }
+            }
+
+            // The model's word on snapshots it has no record of (taken by
+            // hand, or before the launcher kept the tree): they are at the
+            // top level without being roots.
+            Label {
+                Layout.fillWidth: true
+                visible: root.snapshots.note !== ""
+                text: root.snapshots.note
+                wrapMode: Text.Wrap
+                opacity: 0.75
             }
 
             RowLayout {

@@ -18,6 +18,11 @@
 //! * `reload` never clears `error`. A failed operation reports and then
 //!   re-reads, and a successful re-read must not wipe the report; when
 //!   it did, a failed live restore looked like it had worked.
+//! * The rows are a tree (`snapshots::Lineage`, the file beside the
+//!   bundle): a take records the snapshot the disk descended from, a
+//!   restore moves that pointer, and every read reconciles the file
+//!   against the disk. `note` says when a snapshot has no record and so
+//!   sits at the top level without being a root.
 //!
 //! The front end still owns when `poll` is called (Qt runs a `Timer`
 //! that stops when there is no job) and how a destructive restore is
@@ -25,7 +30,7 @@
 
 use crate::bundle::Machine;
 use crate::control::{self, Control};
-use crate::snapshots::{create, delete, list, restore, Snapshot};
+use crate::snapshots::{arrange, create, delete, list, restore, Lineage, Snapshot};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -43,7 +48,11 @@ pub struct Snapshots {
     bundle_dir: Option<PathBuf>,
     machine_name: String,
     disk: PathBuf,
+    /// The rows, in tree order (`snapshots::arrange`).
     list: Vec<Snapshot>,
+    /// The tree's record, loaded with the window and saved on every
+    /// change.
+    lineage: Lineage,
     error: Option<String>,
     status: Option<String>,
     /// Whether this machine's player is up. Everything branches on it.
@@ -52,6 +61,9 @@ pub struct Snapshots {
     /// guest has to be resumed once it finishes (a load runs on a
     /// stopped VM).
     job: Option<String>,
+    /// What the job is doing (its QMP verb and tag), for the lineage
+    /// once it has concluded.
+    job_op: Option<(String, String)>,
     resume_after_job: bool,
     next_job: u64,
     last_poll: Option<Instant>,
@@ -59,15 +71,22 @@ pub struct Snapshots {
 
 impl Snapshots {
     pub fn open_for(&mut self, machine: &Machine, bundle_dir: PathBuf, running: bool) {
+        let (lineage, lineage_err) = Lineage::load(&bundle_dir);
         *self = Snapshots {
             open: true,
             bundle_dir: Some(bundle_dir),
             machine_name: machine.name.clone(),
             disk: machine.disk.clone(),
+            lineage,
             running,
             ..Default::default()
         };
         self.refresh();
+        // A tree file that cannot be read is worth a line: the rows are
+        // there, flat, and the next take starts a new record.
+        if let Some(e) = lineage_err {
+            self.error = Some(e);
+        }
     }
 
     /// The same, from a bundle path, for a front end that addresses its
@@ -95,8 +114,35 @@ impl Snapshots {
         self.bundle_dir.as_deref()
     }
 
+    /// The rows, in tree order: each root followed by its descendants,
+    /// with `depth` saying how far in to draw a row.
     pub fn snapshots(&self) -> &[Snapshot] {
         &self.list
+    }
+
+    /// A line under the list when it needs one: a snapshot the launcher
+    /// has no record of is drawn at the top level, and that must not be
+    /// read as "taken from a fresh disk".
+    pub fn note(&self) -> Option<String> {
+        let unrecorded = self.list.iter().filter(|s| !s.recorded).count();
+        if unrecorded == 0 {
+            return None;
+        }
+        Some(if unrecorded == self.list.len() {
+            "The launcher records which snapshot each one is taken from. These were taken before it did, \
+             or by hand, so they are listed in order without a tree; the ones taken from now on are placed \
+             under the snapshot the machine was last restored to or took."
+                .to_string()
+        } else if unrecorded == 1 {
+            "One of these was taken before the launcher recorded where a snapshot is taken from, or by hand, \
+             and so is at the top level whatever it descends from."
+                .to_string()
+        } else {
+            format!(
+                "{unrecorded} of these were taken before the launcher recorded where a snapshot is taken from, \
+                 or by hand, and so are at the top level whatever they descend from."
+            )
+        })
     }
 
     pub fn error(&self) -> Option<&str> {
@@ -126,6 +172,7 @@ impl Snapshots {
         }
         self.running = running;
         self.job = None;
+        self.job_op = None;
         self.refresh();
     }
 
@@ -148,7 +195,13 @@ impl Snapshots {
         };
         match result {
             Ok(list) => {
-                self.list = list;
+                // The file follows the disk, never the other way round:
+                // a snapshot deleted by hand takes its record with it.
+                let changed = self.lineage.reconcile(&list);
+                self.list = arrange(list, &self.lineage);
+                if changed {
+                    self.save_lineage()?;
+                }
                 Ok(())
             }
             Err(e) => {
@@ -158,18 +211,44 @@ impl Snapshots {
         }
     }
 
+    fn save_lineage(&self) -> Result<(), String> {
+        let dir = self.bundle_dir.as_deref().ok_or("no machine open")?;
+        self.lineage.save(dir).map_err(|e| format!("saving the snapshot tree: {e}"))
+    }
+
+    /// Fold what an operation did into the tree, once the list has been
+    /// re-read (the disk assigns the id and the date). `verb` is the QMP
+    /// job's or, offline, the same word for the same operation.
+    fn record(&mut self, verb: &str, name: &str) -> Result<(), String> {
+        let snap = match verb {
+            "snapshot-save" => Lineage::newest(&self.list, name),
+            "snapshot-load" => Lineage::target(&self.list, name),
+            // A delete is the reconciliation's: the record goes with
+            // the snapshot and its children move up.
+            _ => None,
+        };
+        let Some(snap) = snap.cloned() else { return Ok(()) };
+        match verb {
+            "snapshot-save" => self.lineage.took(&snap),
+            _ => self.lineage.restored(&snap),
+        }
+        self.list = arrange(std::mem::take(&mut self.list), &self.lineage);
+        self.save_lineage()
+    }
+
     /// Re-read and make the result the window's current message, for
     /// opening the window or when the machine started or stopped.
     fn refresh(&mut self) {
         self.error = self.reload().err();
     }
 
-    /// Run one offline operation and fold its result into the state.
-    fn run(&mut self, what: &str, result: Result<(), String>) {
+    /// Run one offline operation and fold its result into the state,
+    /// the tree included.
+    fn run(&mut self, verb: &str, name: &str, what: &str, result: Result<(), String>) {
         match result {
             Ok(()) => {
                 self.status = Some(what.to_string());
-                self.error = self.reload().err();
+                self.error = self.reload().and_then(|()| self.record(verb, name)).err();
             }
             Err(e) => {
                 self.status = None;
@@ -187,7 +266,7 @@ impl Snapshots {
             return self.start_job("snapshot-save", name, false);
         }
         let r = create(&self.disk, name).map_err(|e| e.to_string());
-        self.run(&format!("took \u{201c}{name}\u{201d}"), r);
+        self.run("snapshot-save", name, &format!("took \u{201c}{name}\u{201d}"), r);
     }
 
     pub fn drop_snapshot(&mut self, name: &str) {
@@ -195,7 +274,7 @@ impl Snapshots {
             return self.start_job("snapshot-delete", name, false);
         }
         let r = delete(&self.disk, name).map_err(|e| e.to_string());
-        self.run(&format!("deleted \u{201c}{name}\u{201d}"), r);
+        self.run("snapshot-delete", name, &format!("deleted \u{201c}{name}\u{201d}"), r);
     }
 
     pub fn revert(&mut self, name: &str) {
@@ -203,7 +282,7 @@ impl Snapshots {
             return self.start_job("snapshot-load", name, true);
         }
         let r = restore(&self.disk, name).map_err(|e| e.to_string());
-        self.run(&format!("restored \u{201c}{name}\u{201d}"), r);
+        self.run("snapshot-load", name, &format!("restored \u{201c}{name}\u{201d}"), r);
     }
 
     /// Start a live snapshot job (`command` is the QMP verb) and leave
@@ -226,11 +305,13 @@ impl Snapshots {
         match result {
             Ok(()) => {
                 self.job = Some(job_id);
+                self.job_op = Some((command.to_string(), tag.to_string()));
                 self.resume_after_job = resume_after;
                 self.error = None;
                 self.status = Some(format!("{command} \u{201c}{tag}\u{201d}\u{2026}"));
             }
             Err(e) => {
+                self.job_op = None;
                 self.resume_after_job = false;
                 self.status = None;
                 self.error = Some(e);
@@ -282,6 +363,7 @@ impl Snapshots {
             return;
         }
         self.job = None;
+        let op = self.job_op.take();
         let resume = std::mem::take(&mut self.resume_after_job);
         let result = self.control().and_then(|mut c| {
             c.dismiss_job(&job_id)?;
@@ -293,7 +375,13 @@ impl Snapshots {
         // The job's own error wins over anything the tidy-up hit.
         let outcome = error.map(Err).unwrap_or(result);
         let reload = self.reload();
-        match outcome.and(reload) {
+        // The tree follows only a job that succeeded: a failed load
+        // left the disk where it was.
+        let recorded = match (&outcome, &op) {
+            (Ok(()), Some((verb, tag))) => self.record(verb, tag),
+            _ => Ok(()),
+        };
+        match outcome.and(reload).and(recorded) {
             Ok(()) => {
                 self.status = Some("done".into());
                 self.error = None;

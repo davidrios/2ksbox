@@ -1612,6 +1612,39 @@ pub unsafe extern "C" fn lc_snapshots_size_label(s: *const LcSnapshots, row: usi
     }
 }
 
+/// How far down the tree the row sits, 0 for a root: the rows come in
+/// tree order, each root followed by its descendants, so drawing every
+/// name indented by its depth draws the tree.
+///
+/// # Safety
+/// `s` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_snapshots_depth(s: *const LcSnapshots, row: usize) -> usize {
+    handle!(s, 0).0.snapshots().get(row).map(|snap| snap.depth).unwrap_or(0)
+}
+
+/// Whether the disk's present state descends from this row's snapshot,
+/// which is where the next one taken goes. At most one row.
+///
+/// # Safety
+/// `s` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_snapshots_is_current(s: *const LcSnapshots, row: usize) -> bool {
+    handle!(s, false).0.snapshots().get(row).map(|snap| snap.current).unwrap_or(false)
+}
+
+/// A line to put under the list, or "" when none is needed: it says
+/// when a snapshot has no record of its parent (taken by hand, or before
+/// the launcher kept one) and so sits at the top level without being a
+/// root.
+///
+/// # Safety
+/// `s` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_snapshots_note(s: *const LcSnapshots) -> *mut c_char {
+    out_opt(handle!(s, std::ptr::null_mut()).0.note().as_deref())
+}
+
 /// # Safety
 /// `s` must be a live handle; `name` NUL-terminated.
 #[no_mangle]
