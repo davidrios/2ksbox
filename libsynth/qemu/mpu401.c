@@ -257,9 +257,9 @@ static void mpu401_callback(void *opaque, int free)
 }
 
 /* The General MIDI bank we ship, relative to a source tree: the last
- * candidate below, and the same shape as the Glide wrapper's
- * `build/glide/libglide2x.so` (patch 33): a build tree needs no
- * environment at all, and a package's player sets the variable. */
+ * candidate below, and the same shape as the Direct3D executor's
+ * `build/d3dpt/libd3dpt_exec.so`: a build tree needs no environment at
+ * all, and a package's player sets the variable. */
 #define LIBSYNTH_SF2_IN_TREE "soundfonts/TimGM6mb.sf2"
 
 /* `synth=` and the file or directory it needs.

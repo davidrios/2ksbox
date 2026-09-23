@@ -1070,10 +1070,10 @@ pub struct Machine {
     /// A 3dfx Voodoo 2 on the PCI bus (`-device voodoo2`: 86Box's
     /// emulation of the chip, doc 21, M14) beside whatever 2D adapter
     /// the machine has. It borrows the monitor from that adapter's
-    /// console, as the card borrowed it through a cable. Beside the
-    /// Glide pass-through, not instead of it (ADR-016): a game draws on
-    /// whichever `glide2x.dll` it loads, 3dfx's or the guest tools'.
-    /// The guest needs 3dfx's own Voodoo2 driver. Off unless picked, on
+    /// console, as the card borrowed it through a cable. It is the one
+    /// Glide on a 2ksbox machine (ADR-020): a game draws on 3dfx's own
+    /// `glide2x.dll`, and the guest needs 3dfx's own Voodoo2 driver. Off
+    /// unless picked, on
     /// every family, so no machine grows a card by being read by a newer
     /// launcher.
     #[serde(default)]
@@ -1575,7 +1575,7 @@ impl Machine {
     ///
     /// The bank for a General MIDI port is named here **only when the
     /// user chose one**. The one we ship is a companion of the player's,
-    /// found by the player's own rule like the Glide wrapper, so a
+    /// found by the player's own rule like the Direct3D executor, so a
     /// package that moves does not invalidate every machine file in the
     /// library.
     fn audio_args(&self) -> Vec<String> {
@@ -1732,8 +1732,8 @@ impl Machine {
             // The 1994 PC: the same chipset and the SB16 doc 06 already
             // puts on the Win98 machine "for DOS boxes/games", one of the
             // two standard adapters for its VGA and VESA modes, and
-            // nothing else. 3D reaches DOS through qemu-3dfx's GLIDE2X.OVL
-            // or the Voodoo 2 card above.
+            // nothing else. 3D reaches DOS through the Voodoo 2 card
+            // above, with the game's own GLIDE2X.OVL.
             //
             // The adapter is a choice here too (`video_choices`), and the
             // only family where it is not a driver question: a DOS title

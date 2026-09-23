@@ -2,7 +2,7 @@
 
 How a guest's 3D reaches the host GPU: which path serves which API on
 which Windows, what backs each one with and without Vulkan 1.3, and what
-counts as done. The paths are designed elsewhere: the GL / Glide context
+counts as done. The paths are designed elsewhere: the GL context
 provider in doc 12, the paravirtual Direct3D device and its executor in
 doc 14, the XP and 9x display drivers in docs 15 and 19, the Voodoo 2 in
 doc 21. The guest-tools ISO's layout is `guest-tools/README.md`.
@@ -12,17 +12,15 @@ doc 21. The guest-tools ISO's layout is `guest-tools/README.md`.
 We don't write GPU emulators for the era's APIs. Guest 3D leaves through
 API pass-through and paravirtual devices:
 
-- **OpenGL and Glide** go through qemu-3dfx's wrappers and devices. The
-  host draws them with its own OpenGL, Glide through our build of
-  OpenGLide (doc 12 §5).
+- **OpenGL** goes through qemu-3dfx's wrapper and device. The host draws
+  it with its own OpenGL (doc 12).
 - **Direct3D 3–9 and DirectDraw** go through our display adapter,
   `d3dpt-vga`. Its driver writes the DDIs into a command window that a
   native host executor runs on a real Direct3D 9 (docs 14, 15, 19).
 - **One chip is emulated**: a Voodoo 2 (`-device voodoo2`, 86Box's code,
-  ADR-016, doc 21) for Glide titles the wrapper cannot reach (Glide 3,
-  statically linked Glide, LFB tricks). It runs 3dfx's own driver at a
-  software rasteriser's speed beside the pass-through, which stays the
-  fast path for what it covers. OpenGL has no chip equivalent.
+  ADR-016, doc 21), the one Glide on a machine (ADR-020). It runs 3dfx's
+  own driver and the game's own Glide 2 or 3 at a software rasteriser's
+  speed. OpenGL has no chip equivalent.
 
 That gives Win98 and XP host acceleration on every platform we ship,
 Apple Silicon included.
@@ -31,7 +29,7 @@ Apple Silicon included.
 
 | API | Win98 | Windows XP |
 |---|---|---|
-| Glide 2 / 3 | qemu-3dfx wrapper → OpenGLide (Glide 2; `GLIDE2X.OVL` for DOS games); or the Voodoo 2 device with 3dfx's driver (Glide 2 and 3) | the same (few titles care) |
+| Glide 2 / 3 | the Voodoo 2 device with 3dfx's driver and the game's own Glide (a DOS game brings its own `GLIDE2X.OVL`) | the same (few titles care) |
 | OpenGL | qemu-3dfx GL pass-through (`OPENGL32.DLL`) | the same |
 | DirectDraw, Direct3D 3–7 | `d3dpt-vga`'s driver (doc 19); below the Vulkan floor, see "Fallbacks" | `d3dpt-vga`'s driver (doc 15); the same |
 | Direct3D 8 / 9 | the driver's DirectX 8 DDI under Windows' own runtime, or the per-game `D3DPT\` DLLs (doc 14); the same fallbacks | the same |
@@ -75,8 +73,8 @@ host can run.
 
 - **A host with no executor** (no Vulkan 1.3, and on Linux / macOS no
   Wine) gives the guest no Direct3D: the driver keeps its DirectDraw
-  half, a game gets the runtime's software device, and OpenGL and Glide
-  still pass through. `-global d3dpt-vga.no-exec=on` (doc 15) models
+  half, a game gets the runtime's software device, OpenGL still passes
+  through and the Voodoo 2 still works. `-global d3dpt-vga.no-exec=on` (doc 15) models
   such a host on any box. WineD3D in the guest (wine9x, Wine 1.7.55 over
   the GL pass-through from the ISO) was the fallback here until ADR-018
   retired it and M15 step 6 removed it (2026-09-23).
@@ -96,7 +94,7 @@ inside the guest).
 | Guest | Planned | Where it stands |
 |---|---|---|
 | Win98 GL | Quake 2 | GLQuake on the pass-through (Linux, in the player); Quake II's MiniGL on the Voodoo 2 (by hand) |
-| Win98 Glide | Unreal | UT on the Voodoo 2 (by hand); Rayman 2 and Carmageddon (DOS) on OpenGLide, headless |
+| Win98 Glide | Unreal | UT on the Voodoo 2 (by hand) |
 | Win98 D3D | Forsaken or Incoming (D3D6) | neither run; 3DMark 99 / 2001 SE, Crimson Skies, Moto Racer on the 9x driver (doc 19) |
 | XP GL | Quake 3 | not run |
 | XP D3D8 | Max Payne | plays on the DX8 DDI with no DLL in the game folder (doc 15) |

@@ -8,8 +8,7 @@
 #   macOS:         brew install mingw-w64 xorriso
 #   Windows:       MSYS2's MINGW64 shell, scripts/build-windows.sh --msys2-deps
 #                  (msys2-i686.sh sets up the rest; docs/build-windows.md)
-# GLIDE2X.OVL (the DOS Glide binding) needs Open Watcom and is skipped
-# with a note without it; the DJGPP DXEs are skipped outright.
+# The DJGPP DXEs are skipped outright.
 set -euo pipefail
 # A step that fails without a word of its own (a check that exits after
 # printing to a stdout nobody shows) still says where it stopped.
@@ -122,60 +121,16 @@ build_wrapper mesa
 # next to the game" can never pick up the wrong DLL, and every test
 # program lives in TESTS\. One copy of every file.
 rm -rf "$OUT/iso"
-mkdir -p "$OUT/iso"/{GLIDE,OPENGL,D3DPT,TESTS,CDSHELF,VOODOO2}
+mkdir -p "$OUT/iso"/{MAPPER,OPENGL,D3DPT,TESTS,CDSHELF,VOODOO2}
 G="$FX/wrappers/3dfx/build"; M="$FX/wrappers/mesa/build"
 T="$OUT/iso/TESTS"
 
-# GLIDE\: the device mapper (FXMEMMAP.VXD on 9x, FXPTL.SYS + INSTDRV on
-# NT) and the Glide wrappers. One folder for both families: the DLLs are
-# the same files, only the directory they are copied into differs, and
-# SETUP.EXE knows which is which.
-cp "$G"/glide.dll "$G"/glide2x.dll "$G"/glide3x.dll "$G"/fxmemmap.vxd \
-   "$G"/fxptl.sys "$G"/instdrv.exe "$OUT/iso/GLIDE/"
-# GLIDE2X.OVL, the DOS binding of the same device (doc 12 §5). A DOS/4GW
-# game's Glide stub loads this overlay by name and resolves its 126
-# upper-case entry points from it (Carmageddon's 3DFX.EXE carries exactly
-# that import table). The overlay maps the pass-through device itself
-# through DPMI 0x800, so it serves a pure DOS machine and a Win9x DOS box
-# alike. Upstream installs it in C:\WINDOWS, SETUP.EXE does the same on 9x,
-# and a DOS machine copies it next to the game or onto its PATH. It is an
-# LE overlay only Open Watcom can build (the toolchain the 98 display
-# driver already needs, found the same way build-driver9x.sh finds it), so
-# a host without Watcom still gets an ISO, minus this file, with a note.
-# Built in a copy: the upstream Makefile writes into the submodule's own
-# source directory.
-build_ovl() {
-  local w="${WATCOM:-$HOME/.local/opt/open-watcom}" bin bins d
-  # The snapshot holds every host's binaries side by side, so the directory
-  # is picked by host, never by what exists: binl64 is -x on a Mac too.
-  case "$(uname -s)/$(uname -m)" in
-    Darwin/arm64)   bins=armo64 ;;
-    Darwin/x86_64)  bins=bino64 ;;
-    MINGW*|MSYS*)   bins="binnt64 binnt" ;;
-    *)              bins="binl64 binl" ;;
-  esac
-  for bin in $bins; do [ -x "$w/$bin/wcc386" ] && break; done
-  if [ ! -x "$w/$bin/wcc386" ]; then
-    echo "note: GLIDE2X.OVL (DOS Glide) is NOT on this ISO — no Open Watcom at $w (WATCOM=)" >&2
-    return 0
-  fi
-  # The overlay's device header, which only scripts/prepare-qemu.sh puts in
-  # qemu/. The qemu stage of build.sh / build-windows.sh runs it first.
-  [ -f "$ROOT/qemu/hw/3dfx/g2xfuncs.h" ] || {
-    echo "GLIDE2X.OVL needs the prepared QEMU tree (qemu/hw/3dfx): run scripts/prepare-qemu.sh first" >&2
-    exit 1; }
-  d="$OUT/ovl-build"; rm -rf "$d"; mkdir -p "$d"
-  cp "$FX"/wrappers/3dfx/ovl/glideovl.c "$FX"/wrappers/3dfx/ovl/glideovl.lnk \
-     "$FX"/wrappers/3dfx/ovl/clib.h "$d/"
-  printf '#define __REV__ "%s-"\n' "$REV" > "$d/stamp.h"
-  ( cd "$d" && WATCOM="$w" PATH="$w/$bin:$PATH" INCLUDE="$w/h" \
-      wcc386 -I"$ROOT/qemu/hw/3dfx" -I"$FX/wrappers/3dfx/src" \
-             -zq -we -6s -ohtx -bd -fpi87 -fo=glideovl.obj glideovl.c \
-      && WATCOM="$w" PATH="$w/$bin:$PATH" wlink @glideovl.lnk ) > "$d/build.log" 2>&1 \
-    || { echo "GLIDE2X.OVL build failed, see $d/build.log"; tail -5 "$d/build.log"; exit 1; }
-  cp "$d/glide2x.ovl" "$OUT/iso/GLIDE/"
-}
-build_ovl
+# MAPPER\: the device mapper (FXMEMMAP.VXD on 9x, FXPTL.SYS + INSTDRV on
+# NT), which OPENGL32.DLL and the D3DPT DLLs reach the pass-through device
+# through. It comes out of qemu-3dfx's 3dfx wrapper build, whose Glide DLLs
+# are not staged: the Glide pass-through is retired (ADR-020), and a Glide
+# game runs on the emulated Voodoo 2 with 3dfx's own driver (doc 21).
+cp "$G"/fxmemmap.vxd "$G"/fxptl.sys "$G"/instdrv.exe "$OUT/iso/MAPPER/"
 # OPENGL\: the GL pass-through wrapper, per game, with the settings file
 # the wrapper reads from the game's own folder. It ships with a year cap on
 # the extension string: a modern host reports thousands of characters of
@@ -210,19 +165,6 @@ i686-w64-mingw32-gcc -O2 -Wall -shared -D__MSVCRT_VERSION__=0x700 -mcrtdll=msvcr
   -o "$OUT/iso/D3DPT/dinput.dll" "$ROOT/guest-tools/src/d3dpt/dinput.c" "$ROOT/guest-tools/src/d3dpt/dinput.def" \
   -static-libgcc -Wl,--kill-at -Wl,--enable-stdcall-fixup -ldxguid
 
-# GLIDETEST and DITHTEST below include OpenGLide's copy of the Glide SDK
-# header, which is C++ until patches/openglide/03-sdk-header-in-c.patch
-# (upstream `#include <cstdint>`). scripts/build.sh prepares that tree before
-# this script runs, but a checkout that builds only the ISO (Windows,
-# docs/build-windows.md) has a pristine one.
-# Prepared only when unpatched: a re-prepare hands the Glide wrapper's build
-# fresh mtimes.
-if ! grep -q '2ksbox' "$ROOT/third_party/openglide/sdk2_3dfx.h" 2>/dev/null; then
-  [ -f "$ROOT/third_party/openglide/Glide.cpp" ] || \
-    git -C "$ROOT" submodule update --init --depth 1 third_party/openglide
-  "$ROOT/scripts/prepare-openglide.sh"
-fi
-
 # TESTS\: every test, benchmark and calibration program, one copy each.
 # Which stack a test runs on is decided by what is copied next to it, not
 # by which folder it came from. SETUP.EXE's /GAME does that.
@@ -248,23 +190,17 @@ i686-w64-mingw32-gcc -O2 -o "$T/ddvmtest.exe" "$ROOT/guest-tools/src/ddvmtest.c"
 # Display-mode probe (guest-tools/src/modetest.c): current mode, mode list,
 # ChangeDisplaySettingsEx results for the switches DirectDraw and Direct3D make.
 i686-w64-mingw32-gcc -O2 -o "$T/modetest.exe" "$ROOT/guest-tools/src/modetest.c" -luser32
-# GLIDETEST.EXE: Glide 2.x through the pass-through device (doc 12 §5) from
-# inside the guest. The guest half of tools/glide-host-test.cpp, drawing the
-# same scene and checking its own pixels back through grLfbLock. Links
-# against qemu-3dfx's own GLIDE2X import library; the SDK header is
-# OpenGLide's copy of the 3Dfx Glide 2.4 one, which is what both wrappers
-# implement. Run it next to (or with) the installed GLIDE2X.DLL.
-i686-w64-mingw32-gcc -O2 -o "$T/glidetest.exe" "$ROOT/guest-tools/src/glidetest.c" \
-  -I"$ROOT/third_party/openglide" -L"$G" -lglide2x -luser32
 # DITHTEST.EXE: what repeated alpha blending does to a 16-bit frame buffer
 # (doc 21 §9): a grey that dithers in every channel, blended onto itself
 # 1 to 128 times per column, so the dither the chip should subtract on a
 # blend read-back accumulates where it is not subtracted. 86Box's
 # interpreter subtracts it and neither of its recompilers does, so run it with
-# `-device voodoo2,recompiler=on` and `=off` and compare. Same Glide 2.x
-# link as GLIDETEST, so it runs on 3dfx's own DLL on a machine with the card.
+# `-device voodoo2,recompiler=on` and `=off` and compare. A Glide 2.x
+# program against qemu-3dfx's GLIDE2X import library and our own subset of
+# the Glide 2.4 header (guest-tools/src/glide2sdk.h), run on 3dfx's own
+# DLL on a machine with the card.
 i686-w64-mingw32-gcc -O2 -o "$T/dithtest.exe" "$ROOT/guest-tools/src/dithtest.c" \
-  -I"$ROOT/third_party/openglide" -L"$G" -lglide2x -luser32
+  -I"$ROOT/guest-tools/src" -L"$G" -lglide2x -luser32
 # GL smoke test: Mesa's wglgears, ships in qemu-3dfx's demos. Run it next to
 # OPENGL32.DLL inside the guest; the title/console shows the renderer.
 i686-w64-mingw32-gcc -O2 -o "$T/wglgears.exe" "$FX/wrappers/mesa/demos/wglgears.c" \

@@ -24,7 +24,7 @@ GPL-2.0 for everything that links it.
 ┌───────────────────────── player process (Rust) ──────────────────────┐
 │  ┌──────────── QEMU fork (C, libqemu-embed-i386) ─────────────────┐  │
 │  │  TCG + our fast paths / KVM / WHPX                             │  │
-│  │  qemu-3dfx: Glide → OpenGLide, OpenGL pass-through             │  │
+│  │  qemu-3dfx: OpenGL pass-through                                │  │
 │  │  d3dpt-vga + Direct3D executor (DXVK / system d3d9 / Wine)     │  │
 │  │  voodoo2 (86Box's chip), opl3 + mpu401 → libsynth              │  │
 │  │  ATAPI raw-CD device ──► libdisc (Rust staticlib, C API)       │  │
@@ -80,8 +80,8 @@ this header.
   with a C API for QEMU's ATAPI device), `libsynth` (the music engines,
   doc 20), `gamepad`, and host-side tools.
 - **C/C++:** our QEMU patches and devices (embed, `d3dpt/`, `voodoo/`,
-  `hw/audio` opl3/mpu401), the Direct3D executor, the `glidept` OpenGLide
-  platform layer, and the test harnesses in `tools/`.
+  `hw/audio` opl3/mpu401), the Direct3D executor, and the test
+  harnesses in `tools/`.
 - **Era C and assembly** for the guest side: the XP and Win9x display
   drivers, the guest DLLs, and the guest-tools programs.
 - Python (uv-managed) for test drivers and helpers.
@@ -136,13 +136,12 @@ libdisc/         CD-ROM model, image formats, C API, discx
 libsynth/        OPL3 / General MIDI / MT-32 engines, synthx
 gamepad/         the abstract gamepad (Rust) and the guest pad devices (qemu/)
 d3dpt/           Direct3D protocol, the d3dpt-vga device, the executor
-glidept/         OpenGLide's window-less platform layer
 voodoo/          86Box's Voodoo 2 (verbatim), its shim, the QEMU device
 cdshelf/         the in-guest disc shelf protocol
 guest-tools/     the guest-tools ISO: drivers, guest DLLs, SETUP.EXE, tests
-patches/         our patch queues: qemu, openglide, dxvk, seabios
+patches/         our patch queues: qemu, dxvk, seabios
 qemu/            submodule: QEMU v9.2.4, prepared by scripts/prepare-qemu.sh
-third_party/     qemu-3dfx, dxvk, openglide, slang-shaders; khronos headers
+third_party/     qemu-3dfx, dxvk, slang-shaders; khronos headers
 firmware/        our VGA BIOS builds (VBE 4F09h)
 soundfonts/      the shipped General MIDI bank
 shaders/         our own CRT presets (the rig's monitor)

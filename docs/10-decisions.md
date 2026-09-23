@@ -23,10 +23,11 @@ The roadmap is doc 08.
 | 013 | Below the Vulkan 1.3 floor, no DXVK device; no second executor | accepted, amended; points 1 and 3 **superseded by 018** |
 | 014 | One launcher library, front ends draw it | accepted; "two front ends" **ended by 017** |
 | 015 | The Qt front end is the shipped one | accepted; "keep `launcher/`" **reversed by 017** |
-| 016 | The Voodoo 2 is emulated beside the Glide pass-through | accepted |
+| 016 | The Voodoo 2 is emulated beside the Glide pass-through | accepted; "beside" superseded by 020 |
 | 017 | The egui front end is retired | accepted |
 | 018 | Below the Vulkan floor, the executor runs on Wine on the host; WineD3D-in-guest retired | accepted, retirement done 2026-09-23 |
 | 019 | Two macOS builds: App Store 26+, community at Homebrew's floor | accepted |
+| 020 | The Glide pass-through is removed; the Voodoo 2 is the only Glide | accepted |
 
 ## ADR-001: QEMU as the base (2026-08-31)
 
@@ -475,14 +476,14 @@ the vendored files (doc 21).
 own Glide, so Glide 3, LFB tricks and statically linked Glide 2 work
 with no translation for a game to find a hole in.
 
-**What it does not replace.** qemu-3dfx's Glide half (`hw/3dfx` +
-OpenGLide) stays as the fast path, because the host GPU draws, where the
-chip is a software rasterizer on host cores. The machine form picks.
+**What it does not replace** *(as written; the Glide half of this
+paragraph is superseded by ADR-020)*. qemu-3dfx's Glide half (`hw/3dfx`
++ OpenGLide) stays as the fast path, because the host GPU draws, where
+the chip is a software rasterizer on host cores. The machine form picks.
 Its OpenGL half (`hw/mesa`) serves GLQuake, Quake II, Half-Life GL and
 wglgears, which a Voodoo 2 reaches only through 3dfx's MiniGL at
-rasterizer speed. Never propose retiring `hw/3dfx`, `hw/mesa` or
-OpenGLide on the strength of this device. Direct3D (docs 14/15) is a
-third thing.
+rasterizer speed. Never propose retiring `hw/mesa` on the strength of
+this device. Direct3D (docs 14/15) is a third thing.
 
 **Costs accepted.** Every register write is an MMIO trap with a BQL
 round trip; mitigations only where the profile asks. The command FIFO in
@@ -536,8 +537,8 @@ within the rig budget and run a real game on a real macOS 15: the ISO's
 the `DDRAWME`/`DDSYS` switcher, the wine9x build and its patch queue,
 the two test scripts, and the launcher's advice pointing at them. A
 below-floor host with no Wine now has no Direct3D pass-through; the
-driver keeps its DirectDraw half, and OpenGL and Glide still pass
-through.
+driver keeps its DirectDraw half, OpenGL still passes through and the
+Voodoo 2 still works.
 
 **Why.** UX, entirely. The fallback asked the user to copy a 2015 Wine
 (1.7.55) beside every game from a CD folder, an unsupported copy of
@@ -551,7 +552,7 @@ not refuse what Windows' did.
 point 3 (one executor on a second D3D9, not a second executor). ADR-013's
 point 2 gains a third answer, "Direct3D through Wine on the host", and
 "install Wine" where there is none. The Vulkan 1.3 floor stays the floor
-of the DXVK back end; the GL and Glide paths are untouched.
+of the DXVK back end; the GL path and the Voodoo 2 are untouched.
 
 **Rejected.** A native wined3d `.so` (there is none; it is a PE
 module). An executor of our own over GL/Metal/wgpu (a second D3D9
@@ -606,3 +607,45 @@ review asks. The store's licensing question (GPL-2 QEMU and 86Box under
 store terms; UTM ships there, and the FSF says it cannot) is the user's
 to weigh. The data directory and disc shelf under the sandbox
 (security-scoped bookmarks) are M6's work.
+
+## ADR-020: The Glide pass-through is removed; the emulated Voodoo 2 is the only Glide (2026-09-23)
+
+**Decision** (user decision: "remove the glide passthrough. running the
+emulated voodoo 2 card is a much better experience"). qemu-3dfx's Glide
+pass-through is gone from 2ksbox: the OpenGLide submodule and its patch
+queue, `glidept/` (the window-less platform layer), `scripts/build-glide.sh`
+and the `glide` build stage, patch 33 (the host-ops handshake), the embed
+provider's Glide half, the guest `GLIDE*.DLL` and the DOS `GLIDE2X.OVL`,
+SETUP's Glide sets, `GLIDETEST.EXE`, the `glide-host` check and
+`tools/glide-guest-test.sh`, and the packagers' `libglide2x` staging.
+Patch 74 takes `hw/3dfx` out of the QEMU build and off the PC machine
+(the directory is still overlaid because qemu-3dfx's `sign_commit` stamps
+a file in it). **A Glide game, Windows or DOS, runs on the emulated
+Voodoo 2 with 3dfx's own driver and its own Glide** (ADR-016, doc 21).
+The OpenGL pass-through (`hw/mesa`) and the device mapper it and the
+Direct3D DLLs share are untouched; the ISO's `GLIDE\` folder is now
+`MAPPER\`, SETUP's component 2 is "The device mapper", and the Glide
+game sets are gone (the sets are 1–3).
+
+**Why.** The card is complete by construction (Glide 2 and 3, static
+links, every LFB trick) where the wrapper covered Glide 2 alone and
+needed a patch per title; the user plays on the card and never had the
+wrapper work by hand; and the wrapper's cost was real: a submodule with
+a patch queue, a platform layer, a QEMU patch, two checks, a build stage
+on three platforms (none of them Windows) and a folder of guest DLLs
+whose names collide with 3dfx's own. What the wrapper had over the chip
+was speed on the host GPU, which the user did not miss.
+
+**Supersedes** ADR-016's "beside the Glide pass-through, not instead of
+it" and doc 12 §5; ADR-016's device and its verbatim-vendoring rule
+stand. The stacks the OpenGLide patch README listed as not taken (a
+guest-side Glide→OpenGL wrapper over the GL pass-through, nGlide /
+dgVoodoo2 over our Direct3D, a Glide 3 layer in OpenGLide) stay not
+taken, for the same reasons and now also because the card covers them.
+
+**Rejected.** Keeping `hw/3dfx` compiled with no wrapper (a device that
+only refuses, and a `glidept` MMIO region on every machine for nothing).
+Keeping the OpenGLide checkout for its Glide SDK header alone:
+`DITHTEST.EXE`, the Voodoo 2's dither probe, now compiles against
+`guest-tools/src/glide2sdk.h`, a subset of the Glide 2.4 ABI written from
+the public reference.

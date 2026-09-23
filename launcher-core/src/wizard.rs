@@ -486,7 +486,7 @@ impl Form {
             "For an era OS other than Windows or DOS: BeOS, a period Linux, OS/2. \
              Standard hardware these systems have drivers for: a VESA VGA, an RTL8139 network card \
              and an ES1370 sound card.\n\
-             No 3D: the display driver and the Direct3D and Glide pass-through are Windows-only.",
+             No 3D: the display driver and the Direct3D and OpenGL pass-through are Windows-only.",
         )
     }
 
@@ -743,17 +743,15 @@ impl Form {
     /// One checkbox: is there a 3dfx Voodoo 2 in the machine (doc 21).
     /// The sentences carry what the name does not say: the card is a
     /// second display device that needs 3dfx's own driver in the guest,
-    /// and a Glide game picks the chip or the pass-through by which
-    /// `glide2x.dll` it loads. With the box off, they say Glide still
-    /// works.
+    /// and it is the only Glide a machine has (ADR-020). With the box
+    /// off, they say Glide games have no card.
     pub fn voodoo2_notes(&self) -> &'static [&'static str] {
         if self.voodoo2 {
             &[
                 "Adds a 3dfx Voodoo 2 next to the display adapter. The guest needs 3dfx's own Voodoo2 driver. Glide games then render on the emulated chip, in software on the host CPU, at 640×480 to 800×600.",
-                "The Glide pass-through still works too. A game uses whichever glide2x.dll it loads: 3dfx's from the system folder, or the guest tools' next to the game.",
             ]
         } else {
-            &["No Voodoo 2. Glide games use the pass-through wrapper from the guest tools, rendered on the host GPU."]
+            &["No Voodoo 2. Glide games (3dfx) find no card on this machine; turn it on for them."]
         }
     }
 

@@ -6,9 +6,8 @@
 # Never run this at the same time as `scripts/build-windows.sh`. Both use
 # the one `qemu/` tree. The Windows build re-applies the patch queue while
 # flatpak-builder copies the tree into its sandbox, the copy comes out half
-# patched, and QEMU's compile fails on a header neither build uses
-# (`hw/3dfx/glidept_mm.c: hw/core/sysbus.h: No such file`). Run one, then
-# the other.
+# patched, and QEMU's compile fails deep inside on a header neither build
+# uses (`hw/core/sysbus.h: No such file`). Run one, then the other.
 #
 # The runtime is `org.kde.Platform`, because the launcher is Qt 6 / QML
 # (ADR-015) and KDE's runtime carries Qt. The first build downloads the
@@ -108,8 +107,8 @@ smoke() {
   else
     echo "==> no Wine add-on installed (--no-wine): Direct3D below the Vulkan floor is off in this app"
   fi
-  # The three companions QEMU dlopens by name: the Glide wrapper, the
-  # Direct3D executor and the DXVK it runs on. They are in no import table,
+  # The companions QEMU dlopens by name: the Direct3D executor, the DXVK
+  # it runs on and the remote library. They are in no import table,
   # so nothing above would notice their absence. The packaged *player*
   # knows where they should be (`player/src/companions.rs`), and
   # `--companions` prints what it resolved. Inside the sandbox the answer
@@ -120,7 +119,7 @@ smoke() {
   comp=$(flatpak run --user --command=2ksbox-player "$APPID//$BRANCH" --companions) || return 1
   echo "$comp"
   while read -r what path; do
-    case "$what" in glide|d3dpt-exec|dxvk|d3dpt-remote) ;; *) continue ;; esac
+    case "$what" in d3dpt-exec|dxvk|d3dpt-remote) ;; *) continue ;; esac
     case "$path" in
       /app/*) ;;
       "(not"*) echo "package-flatpak.sh: the app ships no $what (its build step failed, or staged nothing)" >&2; fail=1 ;;

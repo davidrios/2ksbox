@@ -1,13 +1,14 @@
 # Track M14: the Voodoo 2 device
 
 86Box's 3dfx Voodoo 2 emulation as a QEMU PCI device, `-device voodoo2`,
-beside qemu-3dfx's Glide and OpenGL pass-through, never replacing it. Doc
+the machine's only Glide since ADR-020 removed the Glide pass-through
+(2026-09-23), beside qemu-3dfx's OpenGL pass-through. Doc
 21 is the design and holds what was learned (why a chip, the shim,
 threads and timers, the display path, the RAM command FIFO, the login
 helper, the stranded client, the dither, the ring's ordering). This file
 is the working state: scope, test loop, traps, open items. ADR-016 is the
-decision; `patches/openglide/README.md` "Emulating the chip instead" is
-the argument it opened on. The track runs on `main`.
+decision, ADR-020 the one that made the chip the only Glide. The track
+runs on `main`.
 
 ## Scope and files
 
@@ -20,7 +21,7 @@ the argument it opened on. The track runs on `main`.
 - `scripts/prepare-qemu.sh` (the overlay), `scripts/sync-86box-voodoo.sh`.
 - `tools/voodoo-guest-test.py` and its four checks in `scripts/test.sh`.
 - `guest-tools/src/v2start.c` (`SETUP /I 6`, the login-helper guard) and
-  SETUP's "leave a 3dfx card's Glide alone" rule (doc 21 §10).
+  SETUP's "leave a 3dfx card's mapper alone" rule (doc 21 §10).
 - The form's "Emulated 3dfx Voodoo 2" checkbox (`voodoo2` in the bundle,
   `-device voodoo2,addr=0x05`), shared with M6.
 
@@ -147,5 +148,5 @@ first refused write dumps the FIFO state and the last 64 accesses.
   `scripts/sync-86box-voodoo.sh` must keep working.
 - Every claim about a game or a driver comes from a run with its log and
   screendump in `build/`.
-- The pass-through (qemu-3dfx's Glide wrapper and OpenGL) is not retired
-  by this device and is not this track's to touch.
+- The OpenGL pass-through (qemu-3dfx's `hw/mesa`) is not retired by this
+  device and is not this track's to touch.

@@ -52,11 +52,11 @@
 #   LSMinimumSystemVersion is then measured from what the bundle carries,
 #   and any file still above the floor fails the package.
 #
-# It does not build QEMU, DXVK or the Glide wrapper. Those come from
-# `scripts/build.sh`. The script reports anything missing by name instead
-# of leaving it out quietly. The three optional companions (Glide, the
-# Direct3D executor, Vulkan) are only a warning each, and cost the guest
-# one accelerated path.
+# It does not build QEMU or DXVK. Those come from `scripts/build.sh`. The
+# script reports anything missing by name instead of leaving it out
+# quietly. The optional companions (the Direct3D executor, Vulkan, the
+# Wine pair) are only a warning each, and cost the guest one accelerated
+# path.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -137,11 +137,6 @@ fi
 # that begins in a checkout's build/ directory, so the packaged player
 # names them through the environment instead (player/src/companions.rs);
 # all this has to do is put them where that expects.
-if [ -f build/glide/libglide2x.dylib ]; then
-  install -m755 build/glide/libglide2x.dylib "$C/lib/2ksbox/"
-else
-  warn "no build/glide/libglide2x.dylib (scripts/build-glide.sh); Glide games will not run"
-fi
 
 D3D=1
 if [ -f build/d3dpt/libd3dpt_exec.dylib ] && [ -f build/dxvk/src/d3d9/libdxvk_d3d9.0.dylib ]; then
@@ -383,7 +378,7 @@ for f in "$LIBDIR"/*.dylib "$C/libexec/2ksbox/qemu-img" "$C/MacOS/2ksbox" "$C/Ma
 done
 # Our own libraries kept an absolute or build-tree id; @rpath is what the
 # things loading them ask for.
-for leaf in libqemu-embed-i386.dylib libglide2x.dylib libd3dpt_exec.dylib libd3dpt_exec_remote.dylib libdxvk_d3d9.0.dylib libvulkan.1.dylib libvulkan_kosmickrisp.dylib; do
+for leaf in libqemu-embed-i386.dylib libd3dpt_exec.dylib libd3dpt_exec_remote.dylib libdxvk_d3d9.0.dylib libvulkan.1.dylib libvulkan_kosmickrisp.dylib; do
   [ -f "$LIBDIR/$leaf" ] || continue
   install_name_tool -id "@rpath/$leaf" "$LIBDIR/$leaf" 2>/dev/null || true
   install_name_tool -add_rpath "@loader_path" "$LIBDIR/$leaf" 2>/dev/null || true

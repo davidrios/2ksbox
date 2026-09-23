@@ -134,10 +134,9 @@ Modeled as a ~1994 PC: the same board, a Sound Blaster, and nothing else.
 | Gamepad | none (gameport at 0x201, key mapping) | no USB stack. A DOS game reads the port by arming four one-shots and counting, so the count depends on guest speed; unpaced, an untouched axis wanders by half. Another reason this family is paced |
 | Boot | floppy + `boot` on the machine | a DOS machine usually boots from one |
 
-**3D.** No OpenGL or Direct3D (Windows DLLs). A Glide 2 game can run
-through qemu-3dfx's `GLIDE2X.OVL` put next to it (doc 12 §5; untried on
-this family), and the Voodoo 2 checkbox gives a DOS game a real card for
-its own Glide (doc 21).
+**3D.** No OpenGL or Direct3D (Windows DLLs). The Voodoo 2 checkbox
+gives a DOS Glide game a real card for its own `GLIDE2X.OVL` (doc 21;
+untried on this family).
 
 ### Why a rate control, and what it costs
 
@@ -203,8 +202,8 @@ in-box driver on a nineties system.
 | Pointer | PS/2 only | an absolute USB pointer needs the guest's HID stack *and* its windowing system to agree, which an unconfigured era XFree86 or BeOS doesn't, and no guest tools can fix; the checkbox turns it on |
 | Gamepad | none (USB HID pad, key mapping) | driven by the guest's own USB stack; no gameport, whose address we can't tell an unknown OS |
 
-No 3D and no guest tools: the Direct3D pass-through, the Glide guest
-half and our display drivers are Windows components, and `SETUP.EXE` is
+No 3D and no guest tools: the Direct3D and OpenGL pass-through and our
+display drivers are Windows components, and `SETUP.EXE` is
 a Win32 console program. The `family-other` check holds this family's
 machine line.
 

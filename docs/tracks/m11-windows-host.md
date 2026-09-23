@@ -135,5 +135,3 @@ Kept here:
 6. **A Windows check that boots a guest**, shaped like
    `tools/xp-driver-test.sh`: drive it over QMP, pull the artefacts, diff
    a frame.
-7. **No Glide wrapper on Windows.** The cross build has no glide stage, so
-   `player --companions` reports it "(not shipped)".

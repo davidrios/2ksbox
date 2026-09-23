@@ -307,7 +307,7 @@ The title bar's close button does not ask.
 
 ## 3D and the pipeline
 
-Guest 3D (qemu-3dfx's GL and Glide, the Direct3D executor, the Voodoo
+Guest 3D (qemu-3dfx's GL, the Direct3D executor, the Voodoo
 2's VGA-surface frames) goes through the same librashader chain as 2D.
 The target is zero-copy: IOSurface on macOS, dma-buf into Vulkan on
 Linux (doc 12 §4). Windows, and a Linux host without the Vulkan

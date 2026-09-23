@@ -9,29 +9,29 @@ were written for; nothing in the guest is ours. This doc covers the
 device's mechanisms and the trap behind each, for anyone changing
 `voodoo/` or debugging a Glide title on the card.
 
-The decision is ADR-016 (doc 10), opened by `patches/openglide/README.md`
-§"Emulating the chip instead". Track state, test loop and open items are
-in `docs/tracks/m14-voodoo2.md`, the test tools in `docs/testing.md`, and
-the Glide pass-through beside the chip in doc 12 §5.
+The decisions are ADR-016 and ADR-020 (doc 10). Track state, test loop
+and open items are in `docs/tracks/m14-voodoo2.md`, the test tools in
+`docs/testing.md`.
 
-## 1. Why a chip, when there is a pass-through
+## 1. Why a chip, and why it is the only Glide
 
-Doc 12 §5 gives a Glide game a *wrapper*: qemu-3dfx's `hw/3dfx` carries
-the guest's Glide calls to the host, where our OpenGLide build turns them
-into OpenGL. The host GPU draws, so it is fast, but only as complete as
-the wrapper. Glide 3 is missing (62 entry points), each of the era's LFB
-tricks needs a patch (`05-lfb-locked-swap` for Carmageddon), and a title
-with Glide linked statically cannot be reached.
+A Glide game once had a choice: qemu-3dfx's `hw/3dfx` carried the
+guest's Glide calls to the host, where our OpenGLide build turned them
+into OpenGL (doc 12 §5). The host GPU drew, so it was fast, but only as
+complete as the wrapper: Glide 3 was missing (62 entry points), each of
+the era's LFB tricks needed a patch, and a title with Glide linked
+statically could not be reached. Nobody ever played a title on it by
+hand, and the user found the card a much better experience, so ADR-020
+removed the pass-through on 2026-09-23. **The Voodoo 2 is now the only
+Glide on a 2ksbox machine.**
 
 The chip is **complete by construction**: Glide 2 and 3, the DOS
 overlay, static links, every LFB and texture-format corner. It costs a
 software rasterizer at a Voodoo 2's own limits (800×600, 16-bit, 256×256
 textures) and a vCPU trap per guest access to the card outside RAM (§9).
 
-**It does not replace qemu-3dfx.** Its Glide half (`hw/3dfx`, the guest
-`GLIDE2X.DLL`/`.OVL`, OpenGLide) stands beside the chip: the wrapper for
-speed, the chip for fidelity, and the machine form picks. Its OpenGL half
-(`hw/mesa`, the guest `opengl32.dll`) serves GLQuake, Half-Life in GL
+**It does not replace qemu-3dfx's OpenGL half.** `hw/mesa` and the guest
+`opengl32.dll` serve GLQuake, Half-Life in GL
 mode and wglgears, which a Voodoo 2 covers only through 3dfx's MiniGL/ICD
 at rasterizer speed. The Direct3D device (docs 14/15) is a third path.
 
@@ -370,27 +370,25 @@ Nothing is ours. The card wants **3dfx's Voodoo2 reference drivers**
 (Win9x: the `3dfxV2` package, drivers 3.02/3.03, with `glide2x.dll` and
 `glide3x.dll`; XP: the last 3dfx reference driver or the community's),
 the user's own downloads, never in the repository or the guest-tools
-ISO. A DOS Glide game carries its own `GLIDE2X.OVL`, 3dfx's: same name
-as qemu-3dfx's, but it talks to the chip, not to `hw/3dfx`. 3dfx's
-driver finds the card by scanning PCI for `121a:0002` and reading
-`initEnable`; no pass-through cable is needed.
+ISO. A DOS Glide game carries its own `GLIDE2X.OVL`, 3dfx's, which
+talks to the chip. 3dfx's driver finds the card by scanning PCI for
+`121a:0002` and reading `initEnable`; no pass-through cable is needed.
 
 **Our guest tools stay out of its way.** 3dfx's driver installs
-`GLIDE2X.DLL` / `GLIDE3X.DLL` / `FXMEMMAP.VXD` in the system folder,
-qemu-3dfx's wrappers' names. SETUP looks for a *present* 3dfx PCI device
-(9x: the devnode tree in `HKEY_DYN_DATA`; NT: `CM_Locate_DevNode`) and,
-with one, leaves `GLIDE*.DLL`, an existing `FXMEMMAP.VXD` and
-`GLIDE2X.OVL` alone. The mapper still goes in where there is none,
-because our Direct3D and OpenGL DLLs need it; qemu-3dfx's copy is 3dfx's
-own binary (4.10.01.0013), so either serves both. A title that should
-take the pass-through gets ours next to its EXE: `SETUP /GAME 4` (DLLs),
-`/GAME 5` (the DOS overlay). `VOODOO=1 tools/setup-guest-test.sh` checks
-it on 98 and XP.
+`GLIDE2X.DLL` / `GLIDE3X.DLL` / `FXMEMMAP.VXD` in the system folder; the
+last is the device mapper our Direct3D and OpenGL DLLs also need
+(qemu-3dfx's copy is 3dfx's own binary, 4.10.01.0013, so either serves
+both). SETUP looks for a *present* 3dfx PCI device (9x: the devnode
+tree in `HKEY_DYN_DATA`; NT: `CM_Locate_DevNode`) and, with one, leaves
+an existing `FXMEMMAP.VXD` alone rather than downgrade it; the disc
+carries no Glide of its own (ADR-020). `VOODOO=1
+tools/setup-guest-test.sh` checks it on 98 and XP.
 
 **The PCI map.** On both 2D adapters SeaBIOS puts the BAR at
-`0xfd000000`, clear of the fixed pass-through windows (Glide
-`0xfb000000`–`0xfb7fffff` and `0xfbdff000`, Mesa
-`0xea000000`–`0xefffefff`, d3dpt `0xd8000000`–`0xdfffefff`). Nothing
+`0xfd000000`, clear of the fixed pass-through windows (Mesa
+`0xea000000`–`0xefffefff`, d3dpt `0xd8000000`–`0xdfffefff`; the Glide
+device's, `0xfb000000`–`0xfb7fffff` and `0xfbdff000`, is no longer on
+the machine). Nothing
 reserves those windows, so a guest that moved the BAR could overlap
 them; an ACPI Win98 keeps the firmware's placement.
 
@@ -419,7 +417,7 @@ Run by hand on `base98-br` with 3dfx's Win98 driver:
   `voodoo2` (a `.reg` through `regedit /s`) is the whole switch: the menu
   at ~50 fps against Direct3D's 30.
 - **Porsche's green tyre smoke is the game's, not the chip's**: green
-  under Glide on the chip and on the pass-through, unchanged by
+  under Glide on the chip (and it was on the retired pass-through), unchanged by
   `recompiler=off`, not green in Direct3D at 32-bit. Period reports give
   32-bit colour as the cure, which a Voodoo 2 lacks. Don't debug it
   again.

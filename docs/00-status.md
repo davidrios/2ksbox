@@ -28,7 +28,7 @@ is the index.
 | **M13** gamepads | `tracks/m13-gamepads.md` | `player/src/pad.rs`, `gamepad/`, patches 26–27, `bundle::Pad`, `tools/pad-guest-test.py` | Done · a real controller on the key mapping, the USB pad on Win98 FE / Me |
 | **M14** Voodoo 2 device | `tracks/m14-voodoo2.md` | `voodoo/`, patch 62 and the Voodoo patches after it, `tools/voodoo-guest-test.py`, `scripts/sync-86box-voodoo.sh`, doc 21 | Active on `main` · a second Glide game after one has quit, a client left on a dead ring, the Air and Windows builds |
 | **M15** Direct3D executor on Wine | `tracks/m15-wine-executor.md` | `d3dpt/exec/d3dpt_exec_host.c`, `d3dpt_exec_remote.c`, `d3dpt_remote.h`, the loader's library choice, `build-d3dpt-exec.sh --wine`, `player/src/companions.rs`, `launcher-core/src/host_gpu.rs` | Steps 1–7 done: the community app passed on a real macOS 15, WineD3D-in-guest was removed, and the Flatpak's Wine add-on `com._2ksbox.Launcher.Wine` was built and checked in the sandbox (2026-09-23) · a game through the add-on on a below-floor host; the spike's host tests on the rig's Linux Wine |
-| Everything else (Glide on macOS / Windows, M2's leftovers) | "Next steps" below | | as listed |
+| Everything else (M2's leftovers) | "Next steps" below | | as listed |
 
 Rules: work on `main` or on a branch `track/<name>-<topic>` off it,
 rebased on `main` before pushing and merged when green. Edit shared files
@@ -50,8 +50,8 @@ unmerged). The Mac pulls `main`.
 | QEMU | v9.2.4 + qemu-3dfx (`d00e858`) + our patches 01–73 (`patches/qemu/README.md`). Built without display, host-audio, extra network or network-block backends (the `no-optionals` check). Windows QEMU is built with clang (patch 68); the Mac build needs no XQuartz (patch 70). |
 | Emulated CPU (TCG) | x87 shadows at PC=24/53/64 (doc 13), SSE and SIMD inline (doc 16), the M9 queue (REP, same-value SMC, soft immediates, inline TB lookup, TLB work). Default is 2.34x geomean over pristine 9.2.4 on the Air, all switches off 0.97x (doc 22). Every patch has an off switch in the machine form except `pinned-regs` (patch 21, doc 18), not offered: it crashes XP. The hardware-MMU design (1.1–1.2x) is parked (user decision, 2026-09-16). |
 | Player | QEMU in-process (`libqemu-embed`, embed API v8), wgpu + librashader CRT chain, mode analysis (doc 03), the embed audiodev (f32, paced to the guest's clock, limiter; doc 11), guest cursor as the window cursor, gamepads, host modifier keys, Alt+F4 asks. Options: `docs/development.md`. |
-| OpenGL / Glide pass-through | In the player on Linux (EGL), macOS (CGL) and Windows (WGL, doc 12 "The WGL rule"). Zero-copy: dma-buf ring on Linux (repairs a slot that stops being written through), IOSurface on macOS. Glide 2 through our OpenGLide build (doc 12 §5); game evidence is headless only (Rayman 2, Carmageddon DOS). No Windows Glide wrapper. Glide 3 wrapper abandoned for the Voodoo 2 device. |
-| Voodoo 2 (doc 21) | `-device voodoo2`, 86Box's chip. 3dfx's own Win98 driver runs Quake II, UT and NFS Porsche (the user, by hand). FIFA 2000's and Carmageddon's FIFO hangs fixed (doc 21 §11, §13). 8 MB board by default (`texmem=2`), command FIFO in guest RAM (`ramfifo=on`, Quake II 41 → 147.5 fps). Open: a second game after one quits sometimes starts glitched. |
+| OpenGL pass-through | In the player on Linux (EGL), macOS (CGL) and Windows (WGL, doc 12 "The WGL rule"). Zero-copy: dma-buf ring on Linux (repairs a slot that stops being written through), IOSurface on macOS. The Glide pass-through was removed on 2026-09-23 (ADR-020): Glide is the Voodoo 2's. |
+| Voodoo 2 (doc 21) | `-device voodoo2`, 86Box's chip, the machine's only Glide (ADR-020). 3dfx's own Win98 driver runs Quake II, UT and NFS Porsche (the user, by hand). FIFA 2000's and Carmageddon's FIFO hangs fixed (doc 21 §11, §13). 8 MB board by default (`texmem=2`), command FIFO in guest RAM (`ramfifo=on`, Quake II 41 → 147.5 fps). Open: a second game after one quits sometimes starts glitched. |
 | Direct3D executor (doc 14) | Protocol v13, one decoder, four D3D9s. DXVK (native and on Windows) is the default and the golden reference. Below the Vulkan 1.3 floor: Windows' own `d3d9.dll` (`D3DPT_D3D9`, ADR-007's second amendment) or Wine's on a Linux / macOS host (`exec=wine`, ADR-018, M15). `no-exec=on` models a host with no executor. |
 | XP display driver (doc 15) | `d3dpt-vga`, register set v5. DirectDraw and a DirectX 8 DDI with hardware T&L, shaders 1.x, palettes, colour keys, VRAM buffers, 16 streams, cube / volume textures, MSAA, gamma. FIFA 2000, Max Payne, Vice City, Moto Racer and Diablo play. |
 | Win98 display driver (doc 19) | The same core under a 9x layer; the default adapter for a new Win98 machine. The DirectX 3–8 checks pass as on XP, and a 2ksbox Win98 runs DirectX 9.0c. Crimson Skies, 3DMark 99 / 2001 SE, Carmageddon (Mode X), Blood in a DOS box. Blue screens and power-down show. |
@@ -111,11 +111,10 @@ mtools`.
 Unfinished or unexplained things across tracks. A track's own open items
 live in its track doc; fixed things leave this list.
 
-- **GL and Glide on a Windows host.** The OpenGL pass-through runs there
+- **GL on a Windows host.** The OpenGL pass-through runs there
   (`GLPROBE.EXE` in `base98-br` reads the host's renderer since the WGL
   fix, doc 12 "The WGL rule"), but no game has run on it. GLQuake is the
-  user's next try. The Glide wrapper has no Windows build (doc 12
-  "Order"; the package lists `glide` as "(not shipped)").
+  user's next try.
 
 - **Windows' own Direct3D 9 is unproved on the hosts it is for.** Both
   oracles match byte for byte on both backends, but only on an RTX 3090
@@ -239,12 +238,10 @@ tracks, plus the items no track owns.
    `tools/specbench/run.sh <image> pinned` reproduces it; doc 18 open
    item 1). It is off and not in the machine form (user decision,
    2026-09-16: 1.1–1.2x at best), so fixing it is optional.
-4. **Glide pass-through (M3, doc 12 §5).** The user has never had it
-   work by hand, so a hand run of a Glide title is owed; no Glide game has
-   run on the DOS family. Then a macOS `glide-host` check (the CGL side of
-   `tools/glide-host-test.cpp`) and a Glide guest on the Air, a Windows
-   Glide wrapper (M11's cross build has no stage), and fence-based sync
-   instead of `glFinish`.
+4. **OpenGL pass-through (M3, doc 12).** Fence-based sync instead of
+   `glFinish`, and a game on a Windows host (GLQuake). The Glide
+   pass-through is gone (ADR-020, 2026-09-23); a Glide game on the DOS
+   family runs on the Voodoo 2 and has not been tried.
 5. **Display (M2, doc 03).** An answer for presets with no resolution
    override. XP's mode table fed from the player and a present
    signal in phase with its swapchain (M7). The player's own overlay
@@ -451,7 +448,7 @@ to one subsystem lives in its design doc; pointers are at the end.
 - **An XP game "crashes at startup" with `0xc0000142`**: a DLL of ours
   returned FALSE from `DllMain`. Either qemu-3dfx's `OPENGL32.DLL` could
   not open `\\.\MAPMEM` (FXPTL.SYS and the MAPMEM service missing:
-  install SETUP's Glide component as Administrator; OpenGL needs it
+  install SETUP's device-mapper component as Administrator; OpenGL needs it
   too), a `D3DPT\` DLL found no executor
   (`D3DPT_STATUS_NO_EXEC`), or the protocol version differs (`d3dpt.log`
   names both).

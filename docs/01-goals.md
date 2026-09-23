@@ -19,8 +19,8 @@ rectangle in a window.
    VirtualBox has had no 3D for pre-Win7 guests since 6.1.
 2. **Real guest 3D**, host-accelerated, on Win98 and XP. Direct3D goes
    through our paravirtual device and its host executor (doc 14). Glide
-   goes through OpenGLide or an emulated Voodoo 2. OpenGL goes through
-   the qemu-3dfx pass-through.
+   runs on an emulated Voodoo 2 (doc 21). OpenGL goes through the
+   qemu-3dfx pass-through.
 3. **Pixel-accurate video.** The player captures the raw guest
    framebuffer before scaling and presents it with the correct aspect
    (non-square modes like 320×200 included), integer scaling and a CRT

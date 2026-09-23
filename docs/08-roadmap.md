@@ -16,7 +16,7 @@ M3/M4.
 | M0 | Foundation | done | doc 02 |
 | M1 | Architecture validation | done | docs 02, 11 |
 | M2 | Pixel accuracy and input | done, leftovers | doc 03 |
-| M3 | 3D for Win98 and Glide | done, leftovers | doc 12 |
+| M3 | 3D for Win98 (OpenGL) | done, leftovers | doc 12 |
 | M4 | Paravirtual Direct3D device | done | doc 14 · `m4-d3d-device.md` |
 | M5 | CD-ROM backend, folder discs | done | docs 05, 17 · `m5-cdrom-backend.md`, `m5-dirdisc.md` |
 | M6 | Launcher and packaging | shipped, continues | doc 07 · `m6-launcher.md` |
@@ -61,17 +61,15 @@ changes, native screenshots (Ctrl+Alt+S). Design in doc 03.
 **Left:** presets with no resolution override, the player's own overlay
 controls (pause, snapshot, disc swap; doc 07).
 
-## M3: 3D for Win98 and Glide
+## M3: 3D for Win98 (OpenGL)
 
 qemu-3dfx's GL pass-through renders into the player's window-less
-context (EGL, CGL, WGL), zero-copy on Linux and macOS (doc 12). Glide 2
-goes through our OpenGLide build (doc 12 §5, patch 33, `glidept/`)
-because qemu-3dfx ships no host Glide library. `GLIDETEST.EXE` passes
-in a guest.
+context (EGL, CGL, WGL), zero-copy on Linux and macOS (doc 12). The
+Glide half of this milestone, our OpenGLide build behind qemu-3dfx's
+Glide device, was removed on 2026-09-23 (ADR-020): Glide is the emulated
+Voodoo 2's (M14).
 
-**Left:** a Glide title by hand (the evidence is headless: Rayman 2,
-Carmageddon DOS), a macOS `glide-host` check and a Glide guest on the
-Air, a Windows Glide wrapper, fence sync instead of `glFinish`.
+**Left:** fence sync instead of `glFinish`, a GL game on a Windows host.
 
 ## M4: Paravirtual Direct3D device
 
@@ -175,7 +173,7 @@ PC, where guests run.
 
 **Left:** Moto Racer's speed on the PC, live control over AF_UNIX, the
 Windows-built ISO in a guest, an installer, DXGI zero-copy, a check that
-boots a guest, a Windows Glide wrapper (the track doc).
+boots a guest (the track doc).
 
 ## M12: Music
 
@@ -205,7 +203,7 @@ FE / Me.
 ## M14: The Voodoo 2 device (active)
 
 ADR-016, doc 21. 86Box's Voodoo 2, vendored verbatim under `voodoo/`,
-as `-device voodoo2` beside (never instead of) the Glide pass-through. 3dfx's own driver runs Quake II, Unreal Tournament, NFS
+as `-device voodoo2`, the machine's only Glide since ADR-020 removed the pass-through. 3dfx's own driver runs Quake II, Unreal Tournament, NFS
 Porsche, FIFA 2000 and Carmageddon. The command FIFO lives in guest RAM
 (`ramfifo=on`, Quake II 41 → 147.5 fps). The 8 MB board is the default.
 
@@ -237,7 +235,7 @@ a host MIDI port for a real module (doc 20 §8), QEMU in its own process
 | Risk | State |
 |---|---|
 | GL → wgpu interop | Resolved: zero-copy rings on Linux and macOS (embed API v5/v6). |
-| Host-side Glide | Resolved: our OpenGLide build (doc 12 §5), and the Voodoo 2 device beside it. |
+| Host-side Glide | Resolved: the Voodoo 2 device (doc 21); the OpenGLide wrapper was built, then removed (ADR-020). |
 | Apple's GL deprecation | Watched. ANGLE or Zink is the escape hatch. |
 | XP on TCG on Apple Silicon | Addressed: integer beyond the P4 1.7, x87 at its speed (M1, M8, M9). |
 | Hosts below DXVK's Vulkan floor | Addressed: Windows' own d3d9 (ADR-007), Wine on the host (ADR-018). |

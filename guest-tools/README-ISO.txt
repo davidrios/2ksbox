@@ -15,25 +15,16 @@ them somewhere else:  set BOXLOG=E:\
 
 What is on the disc, if you would rather do it by hand:
 
-GLIDE\    the device mapper and the 3dfx Glide wrappers.
-          Windows 98/Me: GLIDE.DLL GLIDE2X.DLL GLIDE3X.DLL FXMEMMAP.VXD
-                         -> C:\WINDOWS\SYSTEM, GLIDE2X.OVL -> C:\WINDOWS
-          DOS games:     GLIDE2X.OVL next to the game's EXE (or on the
-                         PATH). A DOS/4GW Glide game loads it by name.
-                         It needs no driver, from DOS or a 98 DOS box.
-          2000/XP:       GLIDE*.DLL -> system32, FXPTL.SYS ->
-                         system32\drivers, then run INSTDRV.EXE as
-                         Administrator.
-          OPENGL32.DLL and D3DPT\ reach the device through the mapper.
-          Without it they refuse to load (0xc0000142 / "failed to
-          initialize" on 2000/XP).
-          A machine with the emulated Voodoo 2 gets its Glide from
-          3dfx's own driver, under the same names. SETUP then leaves
-          GLIDE*.DLL, an existing FXMEMMAP.VXD and GLIDE2X.OVL alone.
-          SETUP /GAME 4 (GLIDE*.DLL) or /GAME 5 (GLIDE2X.OVL) puts ours
-          next to one game that should use the pass-through instead of
-          the card.
-          GLIDE2X.OVL is on the disc only if the build had Open Watcom.
+MAPPER\   the device mapper. OPENGL32.DLL and D3DPT\ reach the host
+          through it; without it they refuse to load (0xc0000142 /
+          "failed to initialize" on 2000/XP).
+          Windows 98/Me: FXMEMMAP.VXD -> C:\WINDOWS\SYSTEM
+          2000/XP:       FXPTL.SYS -> system32\drivers, then run
+                         INSTDRV.EXE as Administrator.
+          A machine with the emulated Voodoo 2 has 3dfx's own copy of
+          FXMEMMAP.VXD from 3dfx's driver; SETUP leaves it alone. Glide
+          games run on that card with 3dfx's driver; there is no Glide
+          on this disc.
 
 DRIVER\   the 2000/XP display driver for the paravirtual adapter. Boot
           the machine with -vga none -device d3dpt-vga, then run

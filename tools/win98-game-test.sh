@@ -99,14 +99,12 @@
 #                       driver. A glitch that is there too is not ours.
 #   PLAYER=1            run the machine inside the player instead of a bare
 #                       QEMU. Only the player carries a 3D context provider
-#                       (doc 12, patches 30/33): a bare qemu-system-i386
-#                       registers none, so a Glide or OpenGL title's
-#                       grSstWinOpen fails by design and the guest falls back
-#                       to software. A Glide run under the plain harness
-#                       tests nothing (tools/glide-guest-test.sh has the same
-#                       rule). The player opens a real window on this desktop;
-#                       the wrapper's own log goes to OUT/wrapper.log and the
-#                       player shoots the guest's frame every PLAYER_SHOT_EVERY
+#                       (doc 12, patch 30): a bare qemu-system-i386
+#                       registers none, so an OpenGL title's context is
+#                       refused by design and the guest falls back to
+#                       software. An OpenGL run under the plain harness
+#                       tests nothing. The player opens a real window on
+#                       this desktop and shoots the guest's frame every PLAYER_SHOT_EVERY
 #                       guest frames (300) into shots/2ksbox-NNNN.png, the
 #                       only way to see a 3D frame headless, since a QMP
 #                       screendump shows the VGA surface, frozen while the 3D
@@ -350,9 +348,6 @@ if [ "${PLAYER:-0}" = 1 ]; then
   # is never borrowed). The embed library appends -display none itself.
   PLAYER_BIN="$ROOT/target/release/player"
   [ -x "$PLAYER_BIN" ] || { echo "no player at $PLAYER_BIN (cargo build --release)"; exit 1; }
-  [ -f "$ROOT/build/glide/libglide2x.so" ] || echo "note: no build/glide/libglide2x.so (scripts/build-glide.sh) — Glide will be refused"
-  export QEMU_GLIDE_LIB="${QEMU_GLIDE_LIB:-$ROOT/build/glide/libglide2x.so}"
-  export GLIDE_HOST_LOG="${GLIDE_HOST_LOG:-$OUT/wrapper.log}"
   export PLAYER_SHOT_DIR="$OUT/shots" PLAYER_SHOT_EVERY="${PLAYER_SHOT_EVERY:-300}" PLAYER_AUDIO_NULL=1
   "$PLAYER_BIN" -- "${MACHINE[@]}" > "$OUT/qemu.log" 2>&1 &
 else
@@ -553,14 +548,8 @@ echo "=== the 16-bit driver and the VxD (port 0xE9), last 20"
 tail -20 "$OUT/dbg.log" 2>/dev/null | sed 's/^/   /'
 if [ "${PLAYER:-0}" = 1 ]; then
   echo
-  echo "=== Glide, through the player's 3D provider (glidept: = the dispatcher, wrapper.log = OpenGLide)"
-  grep -a -i -E "glidept|glide2x|3dfx" "$OUT/qemu.log" 2>/dev/null | grep -v -i d3dpt | head -10 | sed 's/^/   /'
-  if [ -s "$OUT/wrapper.log" ]; then
-    echo "   wrapper.log: $(wc -l < "$OUT/wrapper.log") lines; $(grep -a -c -i "grSstWinOpen" "$OUT/wrapper.log") grSstWinOpen"
-    grep -a -i -E "error|fail|unsupported|not implemented" "$OUT/wrapper.log" | sort | uniq -c | sort -rn | head -8 | sed 's/^/   /'
-  else
-    echo "   wrapper.log: empty — the wrapper was never loaded (no grGlideInit reached the host)"
-  fi
+  echo "=== OpenGL, through the player's 3D provider (mesapt: = the dispatcher)"
+  grep -a -i -E "mesapt|3dfx" "$OUT/qemu.log" 2>/dev/null | grep -v -i d3dpt | head -10 | sed 's/^/   /'
   echo "   player shots (the guest's frame, 3D included): $(ls "$OUT/shots"/2ksbox-*.png 2>/dev/null | wc -l)"
 fi
 echo

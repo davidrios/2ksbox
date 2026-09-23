@@ -1,7 +1,7 @@
 # guest-tools
 
 The guest-tools ISO holds everything a guest needs from us: the display
-drivers, the Glide / OpenGL / Direct3D wrappers, the installer, the
+drivers, the OpenGL and Direct3D wrappers, the installer, the
 disc-shelf program and the test programs. This file covers how the disc
 is built, what is on it and what `SETUP.EXE` does. The end-user text on
 the disc is `README-ISO.txt` (the root `README.TXT`) and
@@ -26,10 +26,10 @@ mismatch means no acceleration.
   (`GENDEF_FORCE_BUILD=1` forces that path).
 - **Open Watcom v2** for the two formats mingw cannot make: the Win98
   display driver (a 16-bit NE `.drv` and a ring-0 LE `.vxd`,
-  `build-driver9x.sh`) and the DOS Glide overlay `GLIDE2X.OVL`. The build
-  looks in `WATCOM=`, then `~/.local/opt/open-watcom` (the CI release's
-  `ow-snapshot.tar.xz`, which carries every host's binaries). Without it
-  the ISO is built minus those files, and the build says so.
+  `build-driver9x.sh`). The build looks in `WATCOM=`, then
+  `~/.local/opt/open-watcom` (the CI release's `ow-snapshot.tar.xz`,
+  which carries every host's binaries). Without it the ISO is built minus
+  those files, and the build says so.
 - **The XP driver** is `build-driver.sh` (doc 15). Its failure stops the
   ISO build.
 - **On Windows**, `scripts/build-windows.sh guest` builds the disc in
@@ -56,9 +56,8 @@ shows LF-only text as one line.
 ```
 SETUP.EXE   the installer (below; guest-tools/src/setup.c)
 README.TXT  README-ISO.txt with the commit stamped in
-GLIDE\      the device mapper and Glide: GLIDE.DLL GLIDE2X.DLL
-            GLIDE3X.DLL, FXMEMMAP.VXD (9x), FXPTL.SYS + INSTDRV.EXE
-            (2000/XP), GLIDE2X.OVL (DOS; needs Open Watcom)
+MAPPER\     the device mapper: FXMEMMAP.VXD (9x), FXPTL.SYS +
+            INSTDRV.EXE (2000/XP)
 DRIVER\     the 2000/XP display driver for d3dpt-vga (D3DPTVID.SYS,
             D3DPTDISP.DLL, D3DPTVID.INF, DRVINST.EXE) and its test
             programs; README.TXT
@@ -114,7 +113,7 @@ number moves.
 | `/I` 9x | `/I` NT | Component | What it does |
 |---|---|---|---|
 | 1 | 1 | Display adapter driver | NT: `DRVINST.EXE` on `DRIVER\D3DPTVID.INF`. 9x: the four `DRIVER9X\` files into `WINDOWS\INF` (and the three binaries into `SYSTEM`), where PnP installs them on the next boot (doc 19 §16). Restart required |
-| 2 | 2 | Glide and the device mapper | `GLIDE*.DLL` into the system folder; 9x: `FXMEMMAP.VXD`, and `GLIDE2X.OVL` into `WINDOWS` for DOS-box games; NT: `FXPTL.SYS` and the `MAPMEM` service, checked running afterwards |
+| 2 | 2 | The device mapper | 9x: `FXMEMMAP.VXD` into the system folder (left alone where 3dfx's driver put one); NT: `FXPTL.SYS` and the `MAPMEM` service, checked running afterwards |
 | 3 | 3 | Disc shelf tool | `CDSHELF.EXE` into `WINDOWS`, on both families' search path |
 | 4 | 4 | Test programs | `TESTS\` into `C:\2KSBOX`; off in the menu, on with `/ALL` |
 | 5 | | Sound Blaster 16 device names | only where a translation made an SB16 wave name too long for DirectX 9: a shorter one in the override `SB16.VXD` reads (doc 20 §5.3) |
@@ -129,8 +128,6 @@ a folder.
 | 1 | Direct3D 8/9 on the paravirtual device (`D3D8.DLL D3D9.DLL DDRAW.DLL`) | `D3DPT\` |
 | 2 | DirectInput keyboard fix (`DINPUT.DLL`) | `D3DPT\` |
 | 3 | OpenGL pass-through (`OPENGL32.DLL WRAPGL32.EXT`) | `OPENGL\` |
-| 4 | Glide pass-through (`GLIDE*.DLL`) | `GLIDE\` |
-| 5 | DOS Glide pass-through (`GLIDE2X.OVL`) | `GLIDE\` |
 
 `DDRAW.DLL` in set 1 forwards to Windows' own and reports 256 MB of video
 memory, for launchers that ask DirectDraw rather than Direct3D (GTA Vice
@@ -140,13 +137,11 @@ messages (FIFA 2000's match, doc 15); `D3DPT_DINPUT_LOG=1` adds its log.
 Both are per game by decision, never system-wide.
 
 **A machine with a 3dfx card** (the emulated Voodoo 2, doc 21) gets its
-Glide from 3dfx's driver under the same names. SETUP finds the card in
-the live devnode tree (`HKEY_DYN_DATA` on 9x, `CM_Locate_DevNode` on NT),
-not the registry's history, and component 2 then leaves `GLIDE*.DLL`, an
-`FXMEMMAP.VXD` already there (3dfx's own binary, same IOCTLs) and
-`GLIDE2X.OVL` alone. Otherwise whichever copy came last would silently
-decide whether every Glide game drew on the card or the pass-through.
-Sets 6 and 7 put ours next to one game.
+Glide from 3dfx's driver; nothing on the disc is Glide (ADR-020). SETUP
+finds the card in the live devnode tree (`HKEY_DYN_DATA` on 9x,
+`CM_Locate_DevNode` on NT), not the registry's history, and component 2
+then leaves an `FXMEMMAP.VXD` already there (3dfx's own binary, same
+IOCTLs) alone rather than downgrade it.
 
 ### On Windows 98/Me
 

@@ -753,7 +753,7 @@ checkout it was built from (`target/`, `build/qemu`, `qemu/pc-bios`,
 <prefix>/bin/2ksbox                            the launcher
 <prefix>/bin/2ksbox-player                     the player
 <prefix>/lib/2ksbox/libqemu-embed-i386.so
-<prefix>/lib/2ksbox/…                          Glide wrapper, D3D executor + DXVK, wine/
+<prefix>/lib/2ksbox/…                          D3D executor + DXVK, wine/
 <prefix>/libexec/2ksbox/qemu-img               ours, patched, kept off PATH
 <prefix>/share/2ksbox/pc-bios/                 QEMU firmware (the player's -L)
 <prefix>/share/2ksbox/guest-tools/             the guest-tools ISO

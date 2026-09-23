@@ -418,7 +418,6 @@ if command -v wine >/dev/null; then
         *) echo "package-windows.sh: $file is staged but the player answered ${got:-nothing}" >&2; fail=1 ;;
       esac
     done <<EOF
-glide       glide2x.dll
 d3dpt-exec  d3dpt_exec.dll
 dxvk        dxvk_d3d9.dll
 EOF

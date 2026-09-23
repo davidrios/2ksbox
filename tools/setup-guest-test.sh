@@ -45,9 +45,9 @@
 # name the driver files.
 #
 # VOODOO=1 puts the emulated Voodoo 2 on the machine (`-device voodoo2`,
-# doc 21), whose driver is 3dfx's own and brings a Glide under the names
-# the pass-through's wrappers have. With a 3dfx card present SETUP must
-# leave those names alone: before the install the batch writes a marker
+# doc 21), whose driver is 3dfx's own and brings its Glide and, on 9x, a
+# device mapper under the name ours has. With a 3dfx card present SETUP
+# must leave those alone: before the install the batch writes a marker
 # file under each of them (GLIDE2X.DLL and GLIDE3X.DLL in the system
 # folder; on 9x FXMEMMAP.VXD and WINDOWS\GLIDE2X.OVL too) standing in for
 # 3dfx's copies, and every marker must still be there after `/ALL`. No
@@ -59,8 +59,7 @@
 # regedit /s from the floppy) before the install, and after it exports both
 # keys: the entry must have moved to HKLM\SOFTWARE\2ksbox\Voodoo2 and
 # V2START.EXE taken its place (doc 21 §11), and the second `/ALL` must find
-# it moved already. Every run also copies `/GAME 4` (the pass-through's
-# Glide for one game) into C:\2KSBOX.
+# it moved already.
 #
 # Env: OUT=dir (default build/setup-test), BOOT_WAIT=s (cap, 300),
 # WARMUP_WAIT=s (cap, 300), NO_WARMUP=1, NO_KVM=1, FORCE_KVM=1 (Win98 under
@@ -162,8 +161,6 @@ MARKS=("$SYSDIR\\GLIDE2X.DLL|MARK-GLIDE2X" "$SYSDIR\\GLIDE3X.DLL|MARK-GLIDE3X")
   fi
   echo 'echo ==== per-game set 3 (OpenGL) > COM1'
   setup_line '/GAME 3 C:\2KSBOX'
-  echo 'echo ==== per-game set 6 (Glide pass-through) > COM1'
-  setup_line '/GAME 4 C:\2KSBOX'
   if [ -n "${VOODOO:-}" ]; then
     # FIND prints a matching line only if the marker is still the file's
     # content; a copy of ours in its place prints just the file's name
@@ -187,10 +184,8 @@ MARKS=("$SYSDIR\\GLIDE2X.DLL|MARK-GLIDE2X" "$SYSDIR\\GLIDE3X.DLL|MARK-GLIDE3X")
   echo 'dir C:\2KSBOX\WGLGEARS.EXE > COM1'
   echo 'dir C:\2KSBOX\OPENGL32.DLL > COM1'
   if [ "$FAMILY" = win98 ]; then
-    echo 'dir %windir%\SYSTEM\GLIDE2X.DLL > COM1'
     echo 'dir %windir%\SYSTEM\FXMEMMAP.VXD > COM1'
   else
-    echo 'dir %windir%\system32\GLIDE2X.DLL > COM1'
     echo 'dir %windir%\system32\drivers\FXPTL.SYS > COM1'
     echo 'net start MAPMEM > COM1'
   fi
@@ -418,7 +413,6 @@ if [ -n "${REBOOT:-}" ]; then
 fi
 if [ -n "${VOODOO:-}" ]; then
   want 'a 3dfx card is on this machine (PCI\VEN_121A&DEV_0002' "SETUP found the Voodoo 2"
-  want "left alone, the card's Glide comes with 3dfx's driver" "SETUP left the system Glide DLLs to 3dfx's driver"
   for m in "${MARKS[@]}"; do
     want "${m#*|}" "3dfx's ${m%%|*} (a marker) survived /ALL"
   done
@@ -433,11 +427,10 @@ if [ -n "${VOODOO:-}" ]; then
     want 'V2KEY.REG: 1' "3dfx's helper command is kept under HKLM\SOFTWARE\2ksbox\Voodoo2"
   fi
 else
-  want "GLIDE2X.DLL ->" "SETUP copied the Glide wrappers"
+  never "GLIDE2X.DLL ->" "SETUP installs no Glide (ADR-020)"
   never "a 3dfx card is on this machine" "no 3dfx card was seen on a machine without one"
   [ "$FAMILY" = win98 ] && want "no 3dfx card on this machine; nothing to do" "no Voodoo 2 guard without a 3dfx card"
 fi
-want 'GLIDE2X.DLL -> C:\2KSBOX' "per-game set 6 put the pass-through's Glide next to a game"
 want "CDSHELF.EXE ->" "SETUP copied the disc shelf tool"
 want "WGLGEARS.EXE" "the test programs are in C:\\2KSBOX (Windows' own dir)"
 want "OPENGL32.DLL" "the per-game set landed in C:\\2KSBOX (Windows' own dir)"

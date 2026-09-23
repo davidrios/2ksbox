@@ -15,9 +15,9 @@ Free software, GPL-2.0.
   machine from a short wizard with defaults for each family. Each machine
   opens in its own player window.
 - **Real 3D in the guest.** DirectX 1 up to 9 through our own
-  paravirtual display adapter and driver, Glide and OpenGL passed through
-  to the host, and an emulated 3dfx Voodoo 2 running 3dfx's own driver
-  for the games nothing else covers. Quake II, Unreal Tournament, GTA
+  paravirtual display adapter and driver, OpenGL passed through to the
+  host, and an emulated 3dfx Voodoo 2 running 3dfx's own driver for
+  Glide games. Quake II, Unreal Tournament, GTA
   Vice City, Max Payne and Need for Speed: Porsche Unleashed all run.
 - **A CRT on your monitor.** The guest's own framebuffer, at its native
   resolution and aspect (320×200 included), through a libretro slang
@@ -44,8 +44,8 @@ media, licences and disc dumps.
 
 | Host | Requirements |
 |---|---|
-| Linux | An x86-64 machine. KVM for near-native XP (optional; Windows 98 is emulated on purpose). A GPU with Vulkan 1.3 for the fast Direct3D path. Without it, Direct3D runs through Wine on the host if Wine is installed; with neither, the guest has no Direct3D (OpenGL and Glide still work). |
-| macOS | Apple Silicon, macOS 15 or newer. Guests are emulated (no x86 virtualization on these Macs) and still run faster than a period PC. The fast Direct3D path needs macOS 26; on older releases Direct3D runs through Wine if it is installed, and with no Wine the guest has no Direct3D (OpenGL and Glide still work). |
+| Linux | An x86-64 machine. KVM for near-native XP (optional; Windows 98 is emulated on purpose). A GPU with Vulkan 1.3 for the fast Direct3D path. Without it, Direct3D runs through Wine on the host if Wine is installed; with neither, the guest has no Direct3D (OpenGL and the Voodoo 2 still work). |
+| macOS | Apple Silicon, macOS 15 or newer. Guests are emulated (no x86 virtualization on these Macs) and still run faster than a period PC. The fast Direct3D path needs macOS 26; on older releases Direct3D runs through Wine if it is installed, and with no Wine the guest has no Direct3D (OpenGL and the Voodoo 2 still work). |
 | Windows | 64-bit Windows 10 or 11. WHPX (the Windows Hypervisor Platform) accelerates XP when it is enabled. Without Vulkan 1.3, Direct3D runs on Windows' own Direct3D 9. |
 
 You also need install media for the guest operating system (your own
@@ -75,7 +75,7 @@ Debian 12 and 13 and Ubuntu 24.04 and 26.04.
 | Guest tools disc (optional) | `mingw-w64-gcc nasm xorriso` | `gcc-mingw-w64-i686 nasm xorriso` |
 
 The guest tools disc also needs **Open Watcom v2** for the Windows 98
-display driver and the DOS Glide overlay. Unpack the `ow-snapshot.tar.xz`
+display driver. Unpack the `ow-snapshot.tar.xz`
 of its [latest CI release](https://github.com/open-watcom/open-watcom-v2)
 into `~/.local/opt/open-watcom`, or point `WATCOM` at it. Without it the
 disc is built minus those two, and a Windows 98 machine then has no
@@ -126,8 +126,8 @@ scripts/build.sh
 ```
 
 That builds everything this machine has the tools for: QEMU, the Rust
-programs, the launcher, the Direct3D executor, the Glide wrapper and the
-guest-tools disc. The first build takes about fifteen minutes and several
+programs, the launcher, the Direct3D executor and the guest-tools
+disc. The first build takes about fifteen minutes and several
 gigabytes; later ones redo only what changed. The closing summary lists
 every stage as built or skipped, with the missing tool for a skipped
 one. A skipped optional stage means a missing feature, not a broken
@@ -184,7 +184,7 @@ details, and a native build in MSYS2 for debugging, are in
    guest-tools ISO*, and put it in the machine's CD drive. Inside the
    guest, run `SETUP.EXE` from that drive (`D:\SETUP.EXE /ALL` from the
    Run box installs everything this Windows can use: the display driver,
-   the Glide wrapper, the OpenGL pass-through, the disc-shelf program),
+   the device mapper, the OpenGL pass-through, the disc-shelf program),
    then restart. `SETUP /LIST` shows what is on the disc; its
    `README.TXT` explains every folder.
 5. **Take a snapshot.** *Snapshots…* on the machine. "Fresh install" is
@@ -205,13 +205,11 @@ details, and a native build in MSYS2 for debugging, are in
   `SETUP /GAME 1 <game folder>`, or copy it from the disc's `D3DPT\`.
 - **When the host has no Direct3D for the guest** (no Vulkan 1.3 and no
   Wine), the guest has none either: the 2ksbox adapter keeps its 2D and
-  DirectDraw, and OpenGL and Glide games still run. Installing Wine on
-  the host brings Direct3D back.
-- **Glide games** (3dfx) run two ways. The guest tools install a Glide
-  that passes through to the host, the fast path for most titles (not
-  yet on Windows hosts). For a Glide 3 title or one that carries its own
-  Glide, turn on the Voodoo 2 in the machine's settings and install
-  3dfx's own Voodoo 2 driver in the guest.
+  DirectDraw, and OpenGL games and the Voodoo 2 still run. Installing
+  Wine on the host brings Direct3D back.
+- **Glide games** (3dfx) run on the emulated Voodoo 2: turn it on in the
+  machine's settings and install 3dfx's own Voodoo 2 driver in the guest.
+  The game then uses its own Glide against a real card.
 - **OpenGL games** (Quake II and friends) get `OPENGL32.DLL` next to the
   game's EXE: `SETUP /GAME 3 <game folder>`, or copy the disc's
   `OPENGL\` folder.

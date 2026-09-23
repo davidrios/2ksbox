@@ -32,7 +32,6 @@
 #   bin/2ksbox                        the launcher (Qt 6, ADR-015)
 #   bin/2ksbox-player                 the player
 #   lib/2ksbox/libqemu-embed-i386.so
-#   lib/2ksbox/libglide2x.so          the Glide wrapper, when one is built
 #   lib/2ksbox/libd3dpt_exec.so       the Direct3D executor and the DXVK
 #   lib/2ksbox/libdxvk_d3d9.so.0        it runs on (both or neither)
 #   lib/2ksbox/libd3dpt_exec_remote.so  the executor in another process, on
@@ -100,18 +99,6 @@ install -m755 launcher-qt/target/release/launcher-qt "$STAGE/bin/2ksbox"
 install -m755 target/release/player "$STAGE/bin/2ksbox-player"
 install -m755 build/qemu/libqemu-embed-i386.so "$STAGE/lib/2ksbox/"
 install -m755 build/qemu/qemu-img "$STAGE/libexec/2ksbox/"
-# The Glide wrapper (doc 12 §5). qemu-3dfx's `hw/3dfx` only *dispatches*.
-# At `grGlideInit` it dlopens a `libglide2x` and looks up 183 entry points,
-# and the search that finds `build/glide` in a checkout finds nothing in a
-# package. Without this file an installed guest silently has no Glide and
-# `grSstWinOpen` fails. `player/src/companions.rs` names the packaged copy
-# to QEMU through `QEMU_GLIDE_LIB`; the check below asks the staged player
-# whether it found this one.
-if [ -f build/glide/libglide2x.so ]; then
-  install -m755 build/glide/libglide2x.so "$STAGE/lib/2ksbox/"
-else
-  echo "package-linux.sh: no build/glide/libglide2x.so (scripts/build.sh glide); packaging without Glide — 3dfx titles will not run"
-fi
 # The Direct3D executor and the DXVK it runs on (doc 14), found the same
 # way and staged together. The executor `dlopen`s DXVK by the name
 # `companions.rs` puts in `D3DPT_DXVK_LIB`, so one without the other is a
@@ -240,8 +227,8 @@ case "$sf2" in
   *) echo "package-linux.sh: the bank is staged but the player answered ${sf2:-nothing}" >&2; fail=1 ;;
 esac
 
-# The companions QEMU dlopens late by name: the Glide wrapper, the
-# Direct3D executor, its DXVK and the Wine executor, where built. They are
+# The companions QEMU dlopens late by name: the Direct3D executor, its
+# DXVK and the Wine executor, where built. They are
 # in no import table, so `ldd` above says nothing about them. The staged
 # player's own rule (`player/src/companions.rs`) does, and `--companions`
 # prints what it resolved. Ask the binary rather than restate the layout:
@@ -266,7 +253,7 @@ while read -r what file; do
   esac
   # Each of these links the system's own GL / Vulkan stack, like every
   # other such program on the host; an unresolvable one fails deep inside
-  # QEMU ("Glide pass-through off", "Direct3D pass-through off") and
+  # QEMU ("Direct3D pass-through off") and
   # nowhere a user would look. The PE program is Wine's to load, not ldd's.
   case "$file" in *.exe) continue ;; esac
   missing=$(ldd "$STAGE/lib/2ksbox/$file" | grep 'not found' || true)
@@ -276,7 +263,6 @@ while read -r what file; do
     fail=1
   fi
 done <<EOF
-glide       libglide2x.so
 d3dpt-exec  libd3dpt_exec.so
 dxvk        libdxvk_d3d9.so.0
 d3dpt-remote libd3dpt_exec_remote.so

@@ -281,8 +281,8 @@ int main(int argc, char **argv) {
      * the checkbox says what a Glide game does either way. */
     check("no Voodoo 2 unless picked", !lc_wizard_voodoo2(w), NULL);
     char *voodoo = lc_wizard_voodoo2_note(w);
-    check("...and off says Glide still has the pass-through",
-          voodoo && strstr(voodoo, "pass-through") != NULL, voodoo);
+    check("...and off says Glide games find no card",
+          voodoo && strstr(voodoo, "find no card") != NULL, voodoo);
     lc_string_free(voodoo);
     lc_wizard_choose_voodoo2(w, true);
     check("picking the Voodoo 2 takes", lc_wizard_voodoo2(w), NULL);

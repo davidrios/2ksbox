@@ -105,7 +105,8 @@ pub enum D3dBackend {
     Wine,
     /// Nothing: no Vulkan 1.3, no system Direct3D 9 because this is not
     /// Windows, and no Wine to run the executor on. The guest has no
-    /// Direct3D pass-through; OpenGL and Glide still work (doc 04).
+    /// Direct3D pass-through; OpenGL still passes through, and Glide is
+    /// the emulated Voodoo 2's (doc 04).
     None,
 }
 

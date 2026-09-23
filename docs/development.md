@@ -19,7 +19,7 @@ packaging, logs and licensing. Neighbours:
 | Piece | Status |
 |---|---|
 | x86 emulation | Exists: a QEMU fork, trimmed to what we use, with our own TCG fast paths (x87, SSE, SIMD, REP strings, same-value SMC, inline TB lookup); KVM / WHPX on x86 hosts |
-| Guest 3D | We build the paravirtual Direct3D device (`d3dpt`, a host executor on DXVK), qemu-3dfx's GL pass-through, OpenGLide as the host Glide wrapper, and an emulated Voodoo 2 (doc 21) |
+| Guest 3D | We build the paravirtual Direct3D device (`d3dpt`, a host executor on DXVK), qemu-3dfx's GL pass-through, and an emulated Voodoo 2 for Glide (doc 21) |
 | Guest display drivers | We build `d3dpt-vga` drivers for XP (miniport + DX8 DDI, doc 15) and Win98 (mini-VDD + 16-bit driver, doc 19) |
 | Guest music | We build OPL3 and MPU-401 devices over `libsynth` (doc 20) |
 | CRT shaders | Exists: libretro slang presets through librashader (a library, not RetroArch) |
@@ -30,8 +30,8 @@ packaging, logs and licensing. Neighbours:
 
 Authentic-hardware emulation (a real S3, cycle-accurate chipsets) is
 86Box's territory and out of scope. The exception is the Voodoo 2,
-vendored verbatim from 86Box because only a real chip runs Glide 3 and
-statically linked Glide titles (ADR-016).
+vendored verbatim from 86Box because only a real chip runs every Glide
+title, and it is the machine's only Glide (ADR-016, ADR-020).
 
 ## Design docs
 
@@ -47,7 +47,7 @@ statically linked Glide titles (ADR-016).
 9. [Reference hardware rig](09-reference-hardware.md)
 10. [Decision records (ADRs)](10-decisions.md)
 11. [M1 embed API design](11-m1-embed-api.md)
-12. [M3 window-less GL and Glide context provider design](12-m3-context-provider.md)
+12. [M3 window-less GL context provider design](12-m3-context-provider.md)
 13. [x87 shadow doubles: the FPU stack as host doubles in TCG](13-x87-inline-tcg.md)
 14. [Paravirtual Direct3D device for XP and Win98](14-d3d-paravirt.md)
 15. [A real XP display driver: d3dpt-vga, miniport + Direct3D DDI](15-guest-display-driver.md)
@@ -67,7 +67,7 @@ Also: [testing](testing.md), [macOS](build-macos.md),
 
 `scripts/build.sh` is the one command, and the one to run after every
 `git pull`; it redoes only what changed. `--help` lists the stages
-(`qemu rust qt dxvk exec glide guest`). Naming stages builds only those,
+(`qemu rust qt dxvk exec guest`). Naming stages builds only those,
 `--test` follows with `scripts/test.sh host`, and a stage whose tools
 are missing is skipped with the reason in the closing summary. What it
 runs, for driving one stage by hand:
@@ -81,8 +81,6 @@ cargo check --release --workspace          # launcher-capi, the one non-default 
 (cd launcher-qt && cargo build --release)  # the Qt launcher; its own workspace
 # Direct3D pass-through (doc 14):
 scripts/prepare-dxvk.sh && scripts/configure-dxvk.sh && ninja -C build/dxvk && scripts/build-d3dpt-exec.sh
-# Glide pass-through (doc 12 §5):
-scripts/prepare-openglide.sh && scripts/build-glide.sh
 # the guest-tools ISO (SETUP.EXE, the guest DLLs, both display drivers):
 guest-tools/build-wrappers.sh
 ```
@@ -338,24 +336,13 @@ Diagnostics:
   after 1 s without a presented frame if the guest drew on it (an error
   box, a movie, a crashed game): `[display] no 3D frame for …`.
 - `player --companions` prints what `player/src/companions.rs` resolved
-  for the Glide wrapper, the executor, DXVK and the Wine pair; it is the
-  packagers' check.
-
-### Glide pass-through (doc 12 §5)
-
-The guest's `GLIDE2X.DLL` reaches a host wrapper QEMU dlopens at
-`grGlideInit`; qemu-3dfx ships none, so ours is OpenGLide. QEMU finds it
-at `QEMU_GLIDE_LIB`, else `build/glide/libglide2x.so`, else on the
-loader's path, and logs `glidept: wrapper <path>`. It renders into the
-same window-less context as the GL pass-through, so Glide frames go
-through the shader chain. `GLIDE_HOST_LOG=<path|->` turns on its log.
-Guest side: `GLIDE\` on the ISO (`SETUP.EXE` installs it).
+  for the executor, DXVK and the Wine pair; it is the packagers' check.
 
 ### OpenGL pass-through (doc 12)
 
 The guest's `OPENGL32.DLL` (`OPENGL\` on the ISO, `SETUP /GAME 3`) is
-qemu-3dfx's wrapper; it reaches the device through the mapper the Glide
-component installs. It reads **`WRAPGL32.EXT` from the game's own
+qemu-3dfx's wrapper; it reaches the device through the mapper SETUP's
+component 2 installs (`MAPPER\` on the ISO). It reads **`WRAPGL32.EXT` from the game's own
 folder**, shipped beside it with `ExtensionsYear,1997`: a modern host's
 extension string runs to thousands of characters, and a 1990s title
 copies it into a fixed buffer (GLQuake's is 4096 bytes; it returns into
@@ -461,7 +448,7 @@ scripts/package-linux.sh --with-shaders   # + the ~80 MB preset collection
 
 It stages the launcher, the player, the embed library, our `qemu-img`,
 the firmware, the guest-tools ISO and the libraries QEMU `dlopen`s
-(Glide wrapper, executor + DXVK, the Wine pair) into one relocatable
+(executor + DXVK, the Wine pair) into one relocatable
 prefix, checks that everything resolves inside it from a scrubbed
 environment (`docs/testing.md`), and rolls a tarball. **Qt 6 is not in
 it**: it needs the distribution's `qt6-base` and `qt6-declarative`
@@ -506,8 +493,8 @@ Direct3D note says so on a below-floor host.
 ### macOS (`2ksbox.app` / `.dmg`)
 
 `scripts/package-macos.sh` on Apple Silicon bundles the whole non-system
-dylib closure, Qt through `macdeployqt`, the Glide wrapper, and the
-executor with the LunarG loader and KosmicKrisp, then signs with the
+dylib closure, Qt through `macdeployqt`, and the executor with the
+LunarG loader and KosmicKrisp, then signs with the
 hardened runtime and the JIT entitlement, notarizes and staples.
 `--community` is ADR-019's community build, which adds the Wine pair.
 Details: [build-macos.md](build-macos.md), "The app".

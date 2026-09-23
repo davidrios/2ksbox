@@ -60,8 +60,8 @@ including in the shell a launcher starts from.
 
 ### Open Watcom, for the Win98 display driver
 
-The 16-bit `.drv`, the ring-0 `.vxd` (doc 19) and `GLIDE2X.OVL` build
-with Open Watcom. Its snapshot has an arm64 macOS set (`armo64`) beside
+The 16-bit `.drv` and the ring-0 `.vxd` (doc 19) build with Open
+Watcom. Its snapshot has an arm64 macOS set (`armo64`) beside
 Linux's `binl64`; `build-driver9x.sh` picks by `uname`.
 
 ```sh
@@ -111,24 +111,6 @@ Mac specifics of the stages:
   headers. `build-wrappers.sh` is `set -e` and writes the ISO last, so
   an ISO older than its sources means a stage died.
 
-### The Glide wrapper
-
-`scripts/prepare-openglide.sh && scripts/build-glide.sh` builds
-`build/glide/libglide2x.dylib` (doc 12 §5). OpenGLide includes
-`<GL/gl.h>` and `<GL/glext.h>`. macOS has no `GL/` directory, and
-XQuartz's would bind the wrapper to GLX, which never sees a CGL context.
-`glidept/host/macos/GL/` holds a forwarding `gl.h` and a `glext.h` with
-what Apple's 2003 header lacks (seventeen `PFNGL…PROC` typedefs,
-`APIENTRY`, four enums that only have to compile). To check the binding:
-
-```sh
-otool -L build/glide/libglide2x.dylib                      # OpenGL.framework and libSystem only
-nm -gU build/glide/libglide2x.dylib | grep -c '_gr\|_gu'   # 120
-```
-
-The `glide-host` check does not run on a Mac (it drives the embed
-backend through EGL).
-
 ## Running a guest
 
 **A bare `qemu-system-i386` has no display, audio backend or 3D**; the
@@ -140,8 +122,8 @@ is refused and keeps running.
 ```sh
 build/qemu/qemu-system-i386 --version        # 9.2.4
 printf 'info mtree\nquit\n' | build/qemu/qemu-system-i386 -machine pc -display none \
-    -monitor stdio -net none 2>/dev/null | grep -E 'glidept|glidelfb|glideshm|mesapt'
-# expect the four pass-through MMIO regions
+    -monitor stdio -net none 2>/dev/null | grep -E 'mesapt|glidept'
+# expect the Mesa pass-through region and no glidept one (patch 74)
 ```
 
 The player, as a machine runs it (`launcherx --print-args` prints the
@@ -272,8 +254,8 @@ has its `Info.plist` (it reads `CFBundleExecutable`), into `Frameworks`,
 **The Vulkan driver** is the one companion no load command names. The
 app carries the LunarG loader and KosmicKrisp with its own ICD manifest,
 found through DXVK patch 06 (`@loader_path` ahead of bare leaf names).
-An installed player sets `QEMU_GLIDE_LIB`, `D3DPT_EXEC_LIB`,
-`D3DPT_DXVK_LIB` and `VK_DRIVER_FILES` when unset
+An installed player sets `D3DPT_EXEC_LIB`, `D3DPT_DXVK_LIB` and
+`VK_DRIVER_FILES` when unset
 (`player/src/companions.rs`); each `dlopen` search otherwise starts in a
 `build/` directory. The launcher's probe (`--host-check`) opens the
 app's `lib/2ksbox/libvulkan.1.dylib` by full path

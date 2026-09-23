@@ -33,9 +33,9 @@
  *   DITHTEST -close      close Glide at the end (3dfx's can wedge there)
  *
  * Built by guest-tools/build-wrappers.sh into TESTS\ on the guest ISO.
- * It is a Glide 2.x program like GLIDETEST.EXE, so it runs on whatever
- * GLIDE2X.DLL the machine has: 3dfx's own driver on a machine with the
- * emulated Voodoo 2, which is the point here.
+ * It is a Glide 2.x program, so it runs on whatever GLIDE2X.DLL the
+ * machine has: 3dfx's own driver on a machine with the emulated Voodoo 2,
+ * which is the point here (the Glide pass-through is gone, ADR-020).
  */
 #include <windows.h>
 #include <stdarg.h>
@@ -43,7 +43,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "sdk2_glide.h"
+#include "glide2sdk.h"
 #include "guestlog.h"
 
 #define COLUMNS 8

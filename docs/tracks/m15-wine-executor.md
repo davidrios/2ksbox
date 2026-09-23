@@ -201,7 +201,7 @@ Numbered as ADR-018, doc 07 and CLAUDE.md cite them.
    that volume against the Air's 22.6.
 6. **Retire WineD3D-in-guest, in one commit.** Done on 2026-09-23: the
    ISO's `WINED3D\` folders and README, `SETUP /GAME 4`/`5` (the Glide
-   sets are `/GAME 4` and `5` now), `/I 7` with `D3DPRE.EXE` and the
+   sets took those numbers, then left with ADR-020), `/I 7` with `D3DPRE.EXE` and the
    `DDRAWME`/`DDSYS` switcher, the wine9x build and `patches/wine9x/`,
    `tools/xp-wined3d-test.sh` and `wined3d-sys-test.sh`, the launcher's
    WineD3D advice (a host with none is told to install Wine), doc 04's

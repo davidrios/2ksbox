@@ -74,13 +74,13 @@ Environment: `WINXP_IMG` (`~/vms/winxp.qcow2`), `GUEST_ISO` (newest
 | `sb-mixer` | the SB16's FM, master and SB Pro FM volumes at −12 dB come out 12 dB down (patch 61) |
 | `sb16-irq` | a DSP reset over auto-init DMA raises no IRQ 5 edge; each silence block exactly one (patch 25) |
 | `bios-date` | F000:FFF5 as a guest reads it is ≥ 12/01/99, Win98's `ACPICheckDate` (doc 06) |
+| `machine-map` | `info mtree` of a PC machine: the `mesapt` and `d3dpt` pass-through regions are there and no Glide one is (patch 74, ADR-020) |
 | `no-optionals` | no disabled library is linked, named in a binary, or present as a QAPI audio enumerator |
 | `icons` | `scripts/gen-icons.sh --check` |
 | `package` | `scripts/package-linux.sh --no-tar` (or `package-macos.sh --no-sign --no-dmg` on a Mac) |
 | `capi` | `launcher-capi/examples/smoke.c`, a C front end over the shared models |
 | `preview-anim` | the shader preview: a still preset is one picture at any frame, an animated one is not |
 | `embed-3d` | `tools/embed-3d-test.c` (Linux) |
-| `glide-host` | `tools/glide-host-test.cpp` |
 | `d3dpt-exec`, `d3dpt-dp2` | `tools/d3dpt-exec-test.cpp`, `tools/d3dpt-dp2-test.cpp` |
 | `exec-wine` | the same two tests through the Wine executor; frames must equal the in-process ones |
 | `exec-no-device` | the dp2 test with both Vulkan loader variables at a missing file, so DXVK's constructor throws out of `Direct3DCreate9`; it must end in the test's own exit 77, never a signal (DXVK patch 09, the executor's once-per-library rule) |
@@ -244,13 +244,10 @@ another.
 | `tools/xp-game-test.sh <image> "<dir>" <exe> [name]` | a game on the M4 DLL device headless: `CDS=a.iso:b.iso`, `FRESH_DLLS=1`, `TRACE=1`, `KEYS=8:ret,25:esc`, `SHOTS=n` (message boxes you cannot otherwise see), `DUMP_EVERY=n`, `DRW_AFTER=s` (Dr. Watson: every thread's stack; `stacks <log>` prints them), `PAGEHEAP=1`, `CPU=pentium3`, `QEMU_EXTRA=`, `NO_ATTACH=1` (a run that expects no D3D device) |
 | `tools/macvm-wine-spike.sh`, `tools/macos-wine-spike-local.sh` | the Wine executor on a pre-26 macOS: in a UTM VM (no GL: Apple's paravirtual GPU is Metal-only) and on a second macOS volume on the same Mac; frames diffed against DXVK's |
 
-## Glide, OpenGL and the Voodoo 2
+## OpenGL and the Voodoo 2
 
 | Tool | Proves / runs |
 |---|---|
-| `tools/glide-host-test.cpp` | our `libglide2x` loaded by `hw/3dfx`'s dispatcher on a window-less context: a clear, a triangle (corners prove the upper-left origin), and an LFB write lock held across a swap (openglide patch 05); `GLIDE_TEST_BMP=`, `GLIDE_HOST_LOG=`; `glide-host` |
-| `TESTS\GLIDETEST.EXE` | Glide 2.x through the whole chain from inside the guest, checked by its own `grLfbLock` reads: clear, triangle, re-clear, close/reopen; `-res N`, `-hold N` |
-| `tools/glide-guest-test.sh <image>` | GLIDETEST in Win98 **in the player** (a bare QEMU has no 3D provider), verdict off COM1; `PACKAGE=<tree>` runs a package's player with no `QEMU_GLIDE_LIB` |
 | `TESTS\GLPROBE.EXE` | whose OpenGL a program gets: `GL_RENDERER` (`GDI Generic` is Microsoft's), a clear read back, 120 frames; `C:\GLPROBE.LOG` |
 | `tools/voodoo-guest-test.py` | the Voodoo 2 device with no 3dfx code (doc 21): a FreeDOS program finds `121a:0002`, runs the init sequence, LFB fill, swap; the command FIFO as Glide drives it (JMP, read-pointer reads; under `ramfifo=on` only the device's packet walk can draw the frames); the dither phase (one 4x4 tile, patch 64; `RECOMP=off` interpreter, `DITHER_SUB=off` must fail); the partial packet (the read pointer never passes what was written); the swapped pair and its wrap (doc 21 §13); the teardown (status idle after the FIFO is switched off mid-ring); the stranded client (`FIFO_OFF_REGS=on` the control, doc 21 §11). The host's screendumps are the verdict. `VGA=d3dpt` also checks the hand-back to our adapter and the hardware cursor hidden while the Voodoo has the monitor (patch 66). `voodoo-guest`, `-mmiofifo` (`RAMFIFO=off`), `-d3dpt`, `-undither` (`UNDITHER=on`: one flat (130,130,130)) |
 
@@ -312,7 +309,7 @@ Local only; each works on a raw copy or overlay of an image.
 
 | Tool | Runs |
 |---|---|
-| `tools/win98-game-test.sh <image> <name>` | a game on the Win98 driver: `GUEST_CMD=` as `C:\RUN.BAT` started by WIN.INI `run=` (a DOS game needs `cd` first; a second Windows program needs `start /w` before the first), `CDS=`, `SHOTS=`, `KEYS=`/`CLICKS=`, `JIGGLE=1`, `DUMP_EVERY=`/`TRACE=1`, `VGA=cirrus`, `STAGE=`, `PULL=`, `TEXT_AT=`, `EXTRA=`, `MUSIC=gm\|mt32\|none`, `NO_DRIVER=1`. **`PLAYER=1`** runs it in the player, the only way to run a Glide or OpenGL title (wrapper log in `OUT/wrapper.log`, frames every `PLAYER_SHOT_EVERY`). It builds the machine `launcherx --print-args` gives, sound card included (Total Annihilation quits without one, which reads like a driver failure); with a `voodoo2` it waits out 3dfx's login helper (`V2START.LOG`, `VOODOO_WAIT=`). Ends with the power button; a machine that ignores it gets `OUT/hang.txt` (`info registers` twice, `info pic`/`lapic`). With `EXTRA=-perfmap` delete `/tmp/perf-<pid>.map` afterwards (it grows by gigabytes) |
+| `tools/win98-game-test.sh <image> <name>` | a game on the Win98 driver: `GUEST_CMD=` as `C:\RUN.BAT` started by WIN.INI `run=` (a DOS game needs `cd` first; a second Windows program needs `start /w` before the first), `CDS=`, `SHOTS=`, `KEYS=`/`CLICKS=`, `JIGGLE=1`, `DUMP_EVERY=`/`TRACE=1`, `VGA=cirrus`, `STAGE=`, `PULL=`, `TEXT_AT=`, `EXTRA=`, `MUSIC=gm\|mt32\|none`, `NO_DRIVER=1`. **`PLAYER=1`** runs it in the player, the only way to run an OpenGL title (frames every `PLAYER_SHOT_EVERY`). It builds the machine `launcherx --print-args` gives, sound card included (Total Annihilation quits without one, which reads like a driver failure); with a `voodoo2` it waits out 3dfx's login helper (`V2START.LOG`, `VOODOO_WAIT=`). Ends with the power button; a machine that ignores it gets `OUT/hang.txt` (`info registers` twice, `info pic`/`lapic`). With `EXTRA=-perfmap` delete `/tmp/perf-<pid>.map` afterwards (it grows by gigabytes) |
 | `tools/w98-3dmark.sh <name> [perf\|whole]` | 3DMark 99 end to end; `tests.txt` places every rate line by the test on screen (read a test's rate there only); `whole` + `tools/tcg-perf-cut.py`, `JIT_SNAPS=`, `PAGES=` + `tools/tcg-form-weights.py`, `QEMU_TCG_OPTS=`, `TABLET=0` |
 | `tools/w98-3dmark2001.sh <name>` | 3DMark2001 SE's Benchmark and its detail pages (`details-NN.png`); `CPU=pentium3,x87-pc64-as-53=on` the inexact switch's A/B |
 | `tools/w98-blood.sh <name>` (+ `w98-blood-fps.py`) | Blood in a DOS box, fps from VBE page flips (`FRESH=1` each run) |

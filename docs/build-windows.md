@@ -363,9 +363,6 @@ emulated regardless.
   answers 10047), so it has never run. `live control off: …` in
   `launcher.log` means the trial bind failed and the machine ran
   without it.
-- **No Glide wrapper.** The cross build has no glide stage (`player
-  --companions` says "(not shipped)"). Glide games on the Voodoo 2 use
-  3dfx's own Glide on the emulated card.
 - **No installer** beside the zip for users outside the Store (doc 07
   wants one; QEMU's `mingw32-nsis` recipe is within the image's reach).
   The MSIX is one, but only through the Store or a trusted certificate.
@@ -482,10 +479,7 @@ which first sources `guest-tools/msys2-i686.sh`, the whole port:
   `guest-tools/tools/i686-runtime/`; the i686 `gcc` shims link them with
   `-B`/`-L`, and headers stay MSYS2's. MSYS2's i686 gcc must be 16.2.0,
   or the script says to re-pin.
-- Open Watcom runs from `binnt64`. `build-wrappers.sh` prepares
-  OpenGLide's Glide SDK header itself when it finds it unpatched, and
-  `GLIDE2X.OVL` needs `qemu/hw/3dfx` from the `qemu` stage's
-  `prepare-qemu.sh` (its absence is named).
+- Open Watcom runs from `binnt64`.
 - Paths need no conversion (MSYS2 rewrites `/c/…` arguments and
   environment lists like Watcom's `INCLUDE` for a native program); only
   Watcom's `@file` gets `cygpath -m`.

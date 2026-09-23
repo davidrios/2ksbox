@@ -3,11 +3,10 @@
 //!
 //! Several of the things a guest can use are `dlopen`ed by QEMU itself,
 //! late, by a search that starts at `build/…` in the checkout this binary
-//! was built from (`hw/3dfx/glide2x_impl.c`, `d3dpt/hw/d3dpt_exec_load.c`).
-//! A package has no checkout, so each of them names an environment
-//! variable as its first candidate, and this module fills those in:
+//! was built from (`d3dpt/hw/d3dpt_exec_load.c`). A package has no
+//! checkout, so each of them names an environment variable as its first
+//! candidate, and this module fills those in:
 //!
-//! * `QEMU_GLIDE_LIB`, our OpenGLide build (doc 12 §5).
 //! * `D3DPT_EXEC_LIB`, the Direct3D executor (doc 14).
 //! * `D3DPT_DXVK_LIB`, the DXVK `d3d9` the executor runs on, which it
 //!   `dlopen`s in turn and which is not named like the others.
@@ -88,8 +87,7 @@ fn set_if_unset_and_present(var: &str, path: PathBuf) {
 }
 
 /// The names `--companions` prints, in the order this module sets them.
-const VARS: [(&str, &str); 8] = [
-    ("glide", "QEMU_GLIDE_LIB"),
+const VARS: [(&str, &str); 7] = [
     ("d3dpt-exec", "D3DPT_EXEC_LIB"),
     ("dxvk", "D3DPT_DXVK_LIB"),
     ("d3dpt-remote", "D3DPT_EXEC_REMOTE_LIB"),
@@ -147,7 +145,6 @@ pub fn announce() {
         let name = if cfg!(windows) { format!("{stem}.{ext}") } else { format!("lib{stem}.{ext}") };
         in_prefix(&prefix, &format!("lib/2ksbox/{name}"))
     };
-    set_if_unset_and_present("QEMU_GLIDE_LIB", dylib("glide2x"));
     set_if_unset_and_present("D3DPT_EXEC_LIB", dylib("d3dpt_exec"));
     // The other process's library and program (never on Windows, whose
     // fallback is its own Direct3D 9 in process).

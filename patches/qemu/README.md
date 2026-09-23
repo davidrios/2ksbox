@@ -13,7 +13,8 @@ The test tools named here are in `docs/testing.md`.
 `scripts/prepare-qemu.sh` redoes everything on each run;
 `scripts/build.sh` skips it while its inputs hash the same (`-f` forces it).
 
-1. **Overlays.** Prepare rsyncs in qemu-3dfx's `hw/3dfx` and `hw/mesa`;
+1. **Overlays.** Prepare rsyncs in qemu-3dfx's `hw/3dfx` (copied for
+   `sign_commit`, not built: patch 74) and `hw/mesa`;
    `embed/` → `qemu/embed/`; `d3dpt/hw/` → `hw/d3dpt/` with the protocol
    headers; `voodoo/` → `hw/voodoo/`; `libsynth/qemu/` → `hw/audio/`
    (`opl3.c`, `mpu401.c`); `libdisc/qemu/` → `block/cdimage.c` and
@@ -431,8 +432,10 @@ qemu-3dfx's eleven UI entry points (`mesa_*`, `glide_*`) dispatch through
 a `QemuFxUiOps` table (`ui/fxui.c`) any frontend can register; the embed
 library registers its window-less provider (`embed/embedfx.c`). With no
 provider, contexts are refused and the VM keeps running. SDL's half is
-gone with `--disable-sdl`. **Drop:** upstream
-qemu-3dfx grows a provider seam.
+gone with `--disable-sdl`. The `glide_*` entries are unreferenced since
+patch 74 took `hw/3dfx` out of the build; they stay so this patch keeps
+applying as one piece. **Drop:** upstream qemu-3dfx grows a provider
+seam.
 
 ### 31-mesa-ctx-weak
 `hw/mesa/mglcntx_linux.c`'s exports are weak, so `embed/mglcntx_embed.c`
@@ -449,19 +452,6 @@ selection in meson.
 `MesaGLSetFunc(fenum, fn)` swaps one guest-dispatch entry; the macOS
 embed backend redirects `glBindFramebuffer(…, 0)` to its stand-in FBO.
 **Drop:** upstream exposes the table.
-
-### 33-glide-host-ops
-Glide renders into the frontend's context instead of a window of its own
-(doc 12 §5). `hw/3dfx` `dlopen`s a host `libglide2x` at `grGlideInit`;
-`QemuFxUiOps::glide_host_ops` returns the `GlideHostOps` table
-(`glidept/glide_host.h`) and `init_glide2x` hands it to the wrapper's
-optional `setHostOps` before anything can open a window. The library is
-found as `QEMU_GLIDE_LIB`, then `build/glide/libglide2x.so`, then the
-loader's path, then `/usr/local/lib` (the build tree first, because a
-distribution's OpenGLide has no `setHostOps` and would open a window).
-The NULL-handle check now precedes the `setConfig` lookups, which had
-`dlsym`ed the whole process. Without the hook, upstream's behaviour. **Test:** the `glide-host`
-check. **Drop:** upstream qemu-3dfx grows a window-less provider.
 
 ### 34-pit-overdue-irq
 **A DOS game's clock ran at twice real time.** `irq_timer` raises the
@@ -829,3 +819,13 @@ and allocates one only when it has no size (a wrong size is refused).
 (`memory_region_init_ram_from_fd`) when the executor runs in another
 process (ADR-018, doc 14), so the guest's VRAM and command window are the
 bytes that process maps. No change for any other VGA. **Drop:** never.
+
+### 74-no-glidept
+qemu-3dfx's Glide pass-through device (`hw/3dfx`, a dispatcher to a host
+`libglide2x`) is not built and not on the machine: the `subdir` and
+`glidept_mm_init()` the overlay's own patch adds are removed, `hw/mesa`
+stays. 2ksbox retired the Glide pass-through for the emulated Voodoo 2
+(ADR-020, doc 21), so no host wrapper exists for the device to load. The
+overlay directory is still copied in because `sign_commit` stamps a file
+in it. **Test:** the `machine-map` check (`info mtree` has `mesapt`
+and `d3dpt` and no `glidept`). **Drop:** never.

@@ -1,12 +1,13 @@
 # 12. Window-less GL context provider for qemu-3dfx (M3)
 
-qemu-3dfx renders guest OpenGL and Glide with host OpenGL, and upstream
-assumes an SDL window to do it in. The embed library has no window: the
-player owns the screen (doc 03) and QEMU is built `--disable-sdl`. This
-doc covers the offscreen context that replaces the window and hands its
-frames to the player's shader chain, the zero-copy ring (§4), the Glide
-wrapper (§5) and the Windows WGL rule. The Direct3D path is doc 14; the
-Voodoo 2's frames go through the ordinary VGA surface (doc 21).
+qemu-3dfx renders guest OpenGL with host OpenGL, and upstream assumes
+an SDL window to do it in. The embed library has no window: the player
+owns the screen (doc 03) and QEMU is built `--disable-sdl`. This doc
+covers the offscreen context that replaces the window and hands its
+frames to the player's shader chain, the zero-copy ring (§4) and the
+Windows WGL rule. The Direct3D path is doc 14; Glide is the emulated
+Voodoo 2, whose frames go through the ordinary VGA surface (doc 21).
+§5 records the Glide pass-through this provider once also served.
 
 ## State
 
@@ -14,7 +15,6 @@ Voodoo 2's frames go through the ordinary VGA surface (doc 21).
 |---|---|---|---|
 | GL context | EGL surfaceless, pbuffer as FBO 0 | CGL, an FBO stands in for FBO 0 | WGL pbuffer |
 | Frames to the player | dma-buf ring (zero-copy) | IOSurface ring (zero-copy) | readback |
-| Glide wrapper | built, `glide-host` check, games run | builds, never run | no build |
 
 Verified: Win98 wglgears in the player runs at 575–600 fps on Linux
 through the ring (420–450 by readback), the Air reports `GL 2.1 Metal /
@@ -45,7 +45,8 @@ shape we replaced.
   `mesa_{prepare,release}_window`, `mesa_renderer_stat`,
   `mesa_gui_fullscreen`, `mesa_cursor_define`, `mesa_mouse_warp`,
   `glide_{prepare,release}_window`, `glide_window_stat`,
-  `glide_gui_fullscreen`, `glide_renderer_stat`. In the handshake the
+  `glide_gui_fullscreen`, `glide_renderer_stat` (the five `glide_*` are
+  unreferenced since patch 74, §5). In the handshake the
   vCPU calls `mesa_prepare_window(msaa, alpha, 0, cwnd_fn)`, the
   provider must call `cwnd_fn(swnd, nwnd, opaque)`, which sets
   `wnd_ready`, and the guest spins on MMIO `0xFB8` until then.
@@ -62,11 +63,6 @@ shape we replaced.
 - **3D-active signalling** is `graphic_hw_passthrough(con, on)`, which
   makes `graphic_hw_update` skip the VGA device and tells no display
   listener, so the embed API gets an explicit edge.
-- **Glide presents inside a third-party wrapper** that makes its own
-  context on the window handle, and qemu-3dfx does not contain it.
-  `hw/3dfx` `dlopen`s a `libglide2x` and looks up 183 entry points, and
-  upstream ships that library to donors only. So §5 is two problems:
-  an open host-side Glide, and making it draw without a window.
 
 ## Design
 
@@ -97,7 +93,7 @@ shape we replaced.
    `renderer_stat` keeps `graphic_hw_passthrough` and raises the embed
    callback.
 4. **The embed API's 3D callbacks and the zero-copy ring** (below).
-5. **Glide** through our own OpenGLide build (below).
+5. **Glide** through our own OpenGLide build: retired (§5).
 
 ### 4. Frames to the player
 
@@ -165,81 +161,29 @@ activation callbacks and orientation, and draws several frames per
 slot, requiring each slot's own memory to follow them. One blit per
 slot only proves the ring was wired: a bad slot's first blit does land.
 
-### 5. Glide
+### 5. Glide: the pass-through, retired
 
-The wrapper is **OpenGLide** (LGPL, `third_party/openglide`, pinned at
-`ad9a3dd`), with a patch queue (`patches/openglide/README.md`) and a
-window-less platform layer in `glidept/`, built by
-`scripts/build-glide.sh` into `build/glide/libglide2x.so`
-(`QEMU_GLIDE_LIB`). It is the code upstream's own wrapper derives from,
-so `glidewnd.c`'s `WRAPPER_FLAG_*` already means something to it. It
-provides 121 of the 183 entry points `hw/3dfx` looks up, all of Glide
-2.x. Glide 3 and the Voodoo3 `Ext` set are not there and will not be:
-Glide 3 titles run on the emulated Voodoo 2 (doc 21), and the Glide 3
-layer written for this wrapper was abandoned (tag
-`m14-glide3-abandoned`).
+Until 2026-09-23 this provider also served qemu-3dfx's Glide device
+(`hw/3dfx`, a dispatcher that `dlopen`s a host `libglide2x` and looks up
+183 entry points; upstream ships that library to donors only). Ours was
+**OpenGLide** (LGPL) with a window-less platform layer (`glidept/`), a
+patch queue and `scripts/build-glide.sh`; patch 33 reversed upstream's
+handshake and handed the wrapper *this* context through a `GlideHostOps`
+table, so `grBufferSwap` published a frame as a GL swap does. It ran
+Rayman 2 and Carmageddon's DOS build headless, and no user ever played a
+title on it by hand.
 
-- **The handshake is reversed.** Upstream hands the wrapper a window and
-  the wrapper makes a context on it. Patch 33 instead hands the wrapper
-  *our* context through `QemuFxUiOps::glide_host_ops` → `GlideHostOps`
-  (`glidept/glide_host.h`: `begin` / `present` / `end` / `get_proc`),
-  passed to the wrapper's optional `setHostOps` export at load. A wrapper
-  without the symbol, or a display with no `glide_host_ops`, behaves as
-  upstream. OpenGLide's own windowing seam is four functions with four
-  call sites, which `glidept/host/window.cpp` replaces.
-- The context is `embed_gl_fx_begin`'s, separate from the Mesa `ctx[0]`
-  (a guest can hold both), on the same offscreen drawable resized to the
-  Glide resolution. `grBufferSwap` reaches `publish_frame` as
-  `MGLSwapBuffers` does, so the ring and the shader chain come free.
-- `glide_gui_fullscreen` returns 1 on purpose. It stops `glidewnd.c`
-  upscaling a 640×480 game to the desktop's width (the CRT presets are
-  calibrated for the guest's mode, doc 03) and silences the wrapper's
-  stderr fps counter.
-- **Two OpenGLide fixes games needed.** `04-lfb-origin`: `grLfbLock`
-  never filled `lfbInfo->origin`, which the dispatcher caches for a Glide
-  2.11 title's `grLfbBegin`. `05-lfb-locked-swap`: Carmageddon locks the
-  back buffer once and uses the LFB as its frame buffer for the whole
-  front end, and OpenGLide drew a write buffer only in `grLfbUnlock`,
-  which such a game never calls (black frames and one `LFB locked on
-  buffer swap` in the log). `grBufferSwap` draws it now, the lock kept.
-- **DOS Glide** goes through qemu-3dfx's own `GLIDE2X.OVL`
-  (`wrappers/3dfx/ovl`, an LE overlay the game's Glide stub loads by name
-  and resolves 126 entry points from). It maps the pass-through device
-  itself through DPMI 0x800, so it needs no VxD and serves pure DOS and a
-  9x DOS box alike. `guest-tools/build-wrappers.sh` builds it with Open
-  Watcom. `SETUP.EXE` copies it to the Windows folder on 9x (on the
-  PATH); a DOS machine puts it next to the game. A Glide 2 game linked
-  statically (a few 1996 titles) is the one kind it cannot serve.
-- **The wrapper builds on macOS**, linked against `OpenGL.framework`
-  alone, but nothing runs it there; `glide-host` is the EGL path and
-  stays Linux-only. A forwarding `<GL/gl.h>` / `<GL/glext.h>` in
-  `glidept/host/macos/` is on the include path on Darwin only, because
-  the framework's headers live under `OpenGL/` and the only `GL/` a Mac
-  may have is XQuartz's.
-- **Only a package check notices it missing.** `hw/3dfx` finds it by
-  `dlopen` name, so no linker or `ldd` check sees it, and the guest's
-  `grGlideInit` just finds nothing. `package-linux.sh` stages it into
-  `lib/2ksbox/` (the Flatpak builds it against the runtime's libGL), the
-  macOS app carries it, and the packaged player names it through
-  `QEMU_GLIDE_LIB` in `player/src/companions.rs`. `player --companions`
-  and `PACKAGE=<tree> tools/glide-guest-test.sh` are the checks.
-
-Two guest-side stacks were not taken, Glide to GL over the
-`OPENGL32.DLL` pass-through and Glide to Direct3D over docs 14/15; the
-reasons are in `patches/openglide/README.md`.
-
-**What has run** (the tools are in `docs/testing.md`). The `glide-host`
-check and `GLIDETEST.EXE` in Win98 in the player pass. **Rayman 2**
-plays from its language menu into the first level at 640×480 on a
-`d3dpt-vga` Win98 machine, and the desktop comes back after each switch
-between our display driver and the Glide device. Its `GXSetup.exe` must
-write `ubi.ini`: the game refuses a hand-written one (`Graphics Dll not
-found, run install`, probably over the `Choose=1` marker, not proved).
-A QMP screendump shows only the empty desktop while Glide presents, so
-Glide frames are shot with `PLAYER_SHOT_EVERY`. **Carmageddon's
-`3DFX.EXE`** (DOS/4GW) from a Win98 DOS box reaches its 640×480 main
-menu; no race was reached headless, because scripted keys landed during
-the DOS build's minutes of text mode.
+**ADR-020 removed all of it** (user decision: the emulated Voodoo 2 is
+"a much better experience"): the submodule, the patch queue, `glidept/`,
+patch 33, the guest `GLIDE*.DLL` and `GLIDE2X.OVL`, the embed provider's
+Glide half and the two Glide checks. Patch 74 keeps `hw/3dfx` out of the
+QEMU build (its directory is still overlaid because `sign_commit` stamps
+a file in it), so a machine has no `glidept` MMIO region and the UI
+table's five `glide_*` entries are unreferenced defaults. A Glide game,
+Windows or DOS, runs on the Voodoo 2 with 3dfx's own driver and the
+game's own Glide (doc 21). The design and its tests are in the history
+before that commit (`tools/glide-host-test.cpp`, `GLIDETEST.EXE`,
+`tools/glide-guest-test.sh`).
 
 ## The two moments a frame is presented
 
@@ -293,13 +237,7 @@ NVIDIA 616.64`) and unloads cleanly.
 ## Order
 
 vtable patch → embed provider on Linux with readback → dma-buf import →
-macOS CGL/IOSurface → Glide → the Windows WGL backend. Open:
+macOS CGL/IOSurface → the Windows WGL backend. Open:
 
 - fence-based sync instead of `glFinish`, on both zero-copy platforms;
 - the frozen ring slot's cause (§4);
-- a Glide wrapper build for Windows (M11's cross build has no stage;
-  `glide` is "(not shipped)" in that package), and a macOS `glide-host`
-  check plus a Glide guest on the Air;
-- hand play of a Glide title (every run above is headless), and a Glide
-  game on the **DOS family** proper: a FreeDOS machine with the overlay
-  next to the game, where DOS/4GW's DPMI host is not Windows'.

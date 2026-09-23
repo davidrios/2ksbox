@@ -4,7 +4,8 @@ An open-source, cross-platform stack that runs Windows 98 / XP (and DOS
 and other era OSes) as "native vintage boxes": a patched QEMU (qemu-3dfx
 for 3D) **in-process** in a Rust player with a CRT shader chain, a Qt
 launcher over a shared Rust library, and our own devices and guest
-drivers for Direct3D, Glide, CD-ROM and music.
+drivers for Direct3D, CD-ROM and music, and an emulated Voodoo 2 for
+Glide.
 
 ## Start here
 
@@ -100,20 +101,19 @@ Detail in each one's ADR (`docs/10-decisions.md`) or design doc.
   - **WineD3D-in-guest is gone** (ADR-018, M15 step 6, 2026-09-23): no
     wine9x build, no `WINED3D\` ISO folder, no `D3DPRE.EXE`. A host
     below the floor with no Wine has no Direct3D pass-through, and its
-    guest keeps DirectDraw, OpenGL and Glide. Don't bring the guest stack
-    back.
-- **Glide is our own build of OpenGLide** (doc 12 §5,
-  `third_party/openglide` + `patches/openglide/`, window-less layer in
-  `glidept/`): qemu-3dfx only dispatches to a `libglide2x` it does not
-  ship. Don't propose nGlide or dgVoodoo2 (closed, D3D-targeted). DOS
-  Glide games use qemu-3dfx's `GLIDE2X.OVL` (Open Watcom). A statically
-  linked Glide 2 game is the one kind it cannot serve.
-- **A real Voodoo 2 is emulated too** (ADR-016, doc 21). `-device
-  voodoo2` is 86Box's code vendored **verbatim** under `voodoo/86box/`;
-  never edit those files (`scripts/sync-86box-voodoo.sh` refreshes them).
-  The 8 MB board (`texmem=2`) is the default. It **does not replace
-  qemu-3dfx**: never propose retiring the Glide wrapper or the OpenGL
-  pass-through.
+    guest keeps DirectDraw, OpenGL and the Voodoo 2. Don't bring the
+    guest stack back.
+- **Glide is the emulated Voodoo 2, and nothing else** (ADR-016,
+  ADR-020, doc 21). `-device voodoo2` is 86Box's code vendored
+  **verbatim** under `voodoo/86box/`; never edit those files
+  (`scripts/sync-86box-voodoo.sh` refreshes them). The 8 MB board
+  (`texmem=2`) is the default. The guest runs 3dfx's own driver and the
+  game's own Glide; a DOS Glide game brings its own `GLIDE2X.OVL`. **The
+  Glide pass-through (qemu-3dfx's `hw/3dfx` + our OpenGLide build) was
+  removed on 2026-09-23** (user decision: the card is "a much better
+  experience"); `hw/3dfx` is overlaid for `sign_commit` but not built
+  (patch 74). Don't propose nGlide, dgVoodoo2 or a new wrapper. **The
+  OpenGL pass-through (`hw/mesa`) stays**; never propose retiring it.
 - **The display adapter is our `d3dpt-vga` + real drivers** (ADR-008,
   ADR-012; doc 15 for XP, doc 19 for 9x), the default on both Windows
   families (`bundle::video_choices`; Cirrus one pick away). Register set
@@ -161,7 +161,7 @@ Detail in each one's ADR (`docs/10-decisions.md`) or design doc.
 
 ```sh
 git clone --recurse-submodules --shallow-submodules <repo>
-scripts/build.sh          # everything: qemu, rust, qt, dxvk, executor, glide, guest ISO
+scripts/build.sh          # everything: qemu, rust, qt, dxvk, executor, guest ISO
 scripts/build.sh --test   # ... then the host test stage
 ```
 
@@ -231,7 +231,7 @@ lock"), so sequence those runs.
 Session-safety traps, in full:
 
 - **A build belongs to one checkout and is never shared**: `build/qemu`,
-  `target/`, DXVK, the executor, the Glide wrapper, the ISO, the driver
+  `target/`, DXVK, the executor, the ISO, the driver
   binaries. Never borrow another checkout's outputs, point `QEMU_BIN` /
   `QEMU_IMG` (or any `*_BIN`) at one, configure into one, or run a script
   from another checkout's directory. A borrowed build is someone else's

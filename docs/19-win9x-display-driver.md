@@ -19,8 +19,8 @@ in `docs/testing.md`.
 
 ## Why a native driver instead of the wrapper stack
 
-- The Glide and OpenGL wrappers need files in each game's folder; the
-  driver needs nothing there. Windows' own `ddraw.dll`, `d3dim.dll` and
+- The OpenGL wrapper needs a file in each game's folder; the driver
+  needs nothing there. Windows' own `ddraw.dll`, `d3dim.dll` and
   `d3d8.dll` drive it, on 98 as on XP.
 - It is the only way a 9x title also gets an accelerated *desktop*:
   modes from our table, page flips that are register writes, no copy

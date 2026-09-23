@@ -10,8 +10,8 @@
  *
  *   - things installed into Windows (system files, a driver, a service),
  *     the numbered list and `I`;
- *   - things copied next to one game's EXE (our D3D DLLs, the GL wrapper,
- *     the Glide DLLs), `G`. Those are per-game by design, never system-wide, so
+ *   - things copied next to one game's EXE (our D3D DLLs, the GL wrapper),
+ *     `G`. Those are per-game by design, never system-wide, so
  *     an installer with only an install step would leave out half the ISO.
  *
  * A console program on purpose. It is the one interface Windows 98, XP
@@ -305,12 +305,11 @@ static int run_logged(const char *cmdline)
 /* A 3dfx card on this machine's PCI bus (the emulated Voodoo 2,
  * `-device voodoo2`, doc 21, or any other 3dfx board) as its hardware
  * ID ("PCI\VEN_121A&DEV_0002&..."), or empty. Its driver is 3dfx's own and
- * brings a Glide under the very names the pass-through's wrappers have
- * (GLIDE2X.DLL, GLIDE3X.DLL, FXMEMMAP.VXD), so step_glide must know.
+ * brings its own device mapper under the name ours has (FXMEMMAP.VXD), so
+ * step_mapper must know, and the Voodoo 2 start-up guard is for it alone.
  *
  * Only a device that is *present* counts: both families keep the registry
- * entry of a card that has been taken out, and a machine that lost its
- * Voodoo should get the pass-through's Glide again. 9x has the live
+ * entry of a card that has been taken out. 9x has the live
  * devnode tree in HKEY_DYN_DATA; NT has CM_Locate_DevNode, which finds
  * only present devnodes in its normal mode. cfgmgr32 is loaded at run
  * time, as nothing else here needs it. */
@@ -371,68 +370,46 @@ static void find_3dfx_nt(void)
     if (cm) FreeLibrary(cm);
 }
 
-/* Glide and the device mapper. The mapper is the part that matters even
- * to someone who never runs a Glide game: OPENGL32.DLL and our D3D DLLs
- * reach the device through it, and without it they refuse to load
- * (0xc0000142 on NT). 9x has it as a VxD that only needs to be in
- * SYSTEM; NT as a kernel driver a service must point at.
+/* The device mapper: OPENGL32.DLL and our D3D DLLs reach the pass-through
+ * device through it, and without it they refuse to load (0xc0000142 on
+ * NT). 9x has it as a VxD that only needs to be in SYSTEM; NT as a kernel
+ * driver a service must point at.
  *
- * On a machine with a 3dfx card the Glide DLLs are not ours to install:
- * the system folder's GLIDE2X.DLL is what every Glide game loads, and
- * whichever was copied last decided silently whether a game drew on the
- * card or on the pass-through. A SETUP /ALL run to update the display
- * driver took the card away from every Glide game. So they stay out of
- * it, and SETUP /GAME 4 puts the pass-through's next to one game. The 9x
- * mapper is 3dfx's own binary (FXMEMMAP.VXD 4.10.01.0013, the Glide 2.42
- * one, same IOCTLs), so a copy already there serves our DLLs as well and
- * is left alone rather than downgraded; NT's FXPTL.SYS is qemu-3dfx's
- * own name and installed as always. */
-static int step_glide(void)
+ * The 9x mapper is 3dfx's own binary (FXMEMMAP.VXD 4.10.01.0013, the Glide
+ * 2.42 one, same IOCTLs), so on a machine with a 3dfx card (the emulated
+ * Voodoo 2, doc 21) the copy 3dfx's driver put there serves our DLLs as
+ * well and is left alone rather than downgraded; NT's FXPTL.SYS is
+ * qemu-3dfx's own name and installed as always. Glide itself is not ours
+ * to install: a Glide game runs on the Voodoo 2 with 3dfx's driver
+ * (ADR-020). */
+static int step_mapper(void)
 {
-    static const char *const dlls[] = { "GLIDE.DLL", "GLIDE2X.DLL", "GLIDE3X.DLL", NULL };
     static const char *const vxd[] = { "FXMEMMAP.VXD", NULL };
-    static const char *const ovl[] = { "GLIDE2X.OVL", NULL };
     static const char *const sys[] = { "FXPTL.SYS", NULL };
     char drivers[PATHBUF], cmd[PATHBUF * 2], path[PATHBUF];
     SC_HANDLE scm, svc;
     SERVICE_STATUS st;
     int bad = 0, running;
 
-    say("Glide and the device mapper:");
-    if (g_3dfx[0]) {
+    say("The device mapper:");
+    if (g_3dfx[0])
         say("    a 3dfx card is on this machine (%s)", g_3dfx);
-        say("    GLIDE.DLL, GLIDE2X.DLL, GLIDE3X.DLL: left alone, 3dfx's driver brings the card's own");
-        say("    (SETUP /GAME 4 <dir> copies the pass-through Glide next to one game)");
-    } else {
-        bad = copy_set("GLIDE", g_sys, dlls);
-    }
     if (!g_nt) {
-        /* 9x also gets the DOS binding of the device: a DOS/4GW game run
-         * from a DOS box loads GLIDE2X.OVL by name off the PATH, and the
-         * Windows folder is on it (qemu-3dfx's own instruction). Missing
-         * from a disc built without Open Watcom, which is worth a line in
-         * the log but not a failed Glide install. With a 3dfx card it
-         * stays out of the PATH too: a DOS game on the card wants 3dfx's
-         * overlay, and ours there would win over one the game lacks. */
         snprintf(path, sizeof path, "%s\\FXMEMMAP.VXD", g_sys);
         if (g_3dfx[0] && GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
             say("    FXMEMMAP.VXD: already there, left alone (3dfx's driver brings its own)");
         else
-            bad |= copy_set("GLIDE", g_sys, vxd);
-        if (g_3dfx[0])
-            say("    GLIDE2X.OVL: left out of the Windows folder (SETUP /GAME 5 <dir> for one DOS game)");
-        else
-            copy_set("GLIDE", g_win, ovl);
+            bad = copy_set("MAPPER", g_sys, vxd);
         return bad;
     }
 
     snprintf(drivers, sizeof drivers, "%s\\drivers", g_sys);
-    bad |= copy_set("GLIDE", drivers, sys);
+    bad |= copy_set("MAPPER", drivers, sys);
     if (bad) return bad;
     /* INSTDRV registers the MAPMEM service on FXPTL.SYS and starts it. Its
      * exit code also covers a 3dfx-specific probe that has nothing to do
      * with us, so the service itself is what we check afterwards. */
-    snprintf(cmd, sizeof cmd, "\"%s\"", iso(path, "GLIDE\\INSTDRV.EXE"));
+    snprintf(cmd, sizeof cmd, "\"%s\"", iso(path, "MAPPER\\INSTDRV.EXE"));
     run_logged(cmd);
     scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_CONNECT);
     svc = scm ? OpenServiceA(scm, "MAPMEM", SERVICE_QUERY_STATUS) : NULL;
@@ -806,7 +783,7 @@ typedef struct {
 
 static Component g_comp[MAX_COMPONENTS] = {
     { "Display adapter driver (d3dpt-vga)", "needs a restart",              1, 1, 1, step_driver,  0 },
-    { "Glide and the device mapper",        "also needed by OPENGL32.DLL",  1, 1, 1, step_glide,   0 },
+    { "The device mapper",                  "needed by OPENGL32.DLL and the D3DPT DLLs", 1, 1, 1, step_mapper, 0 },
     { "Disc shelf tool",                    "CDSHELF.EXE in the Windows folder", 1, 1, 1, step_cdshelf, 0 },
     { "Test programs",                      "in C:\\2KSBOX",                1, 1, 0, step_tests,   0 },
     /* last, so no earlier component's /I number moves */
@@ -839,15 +816,6 @@ static const GameSet g_sets[] = {
     { "OpenGL pass-through (OPENGL32.DLL WRAPGL32.EXT)",
       "OPENGL",  { "OPENGL32.DLL", "OPENGL32.DLL",
                    "WRAPGL32.EXT", "WRAPGL32.EXT", NULL } },
-    /* The pass-through's Glide for one game, on a machine whose system
-     * folder has 3dfx's (a 3dfx card: step_glide leaves those alone). They
-     * reach the device through the mapper, which the Glide component still
-     * installs. Last, so no earlier set's number moves. */
-    { "Glide pass-through (GLIDE.DLL GLIDE2X.DLL GLIDE3X.DLL)",
-      "GLIDE",   { "GLIDE.DLL", "GLIDE.DLL", "GLIDE2X.DLL", "GLIDE2X.DLL",
-                   "GLIDE3X.DLL", "GLIDE3X.DLL", NULL } },
-    { "DOS Glide pass-through (GLIDE2X.OVL)",
-      "GLIDE",   { "GLIDE2X.OVL", "GLIDE2X.OVL", NULL } },
 };
 #define NSETS ((int)(sizeof g_sets / sizeof g_sets[0]))
 

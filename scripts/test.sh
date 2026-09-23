@@ -1970,6 +1970,27 @@ d3d9_backend_check() { # the machine form's Direct3D picker, from a combo box to
   return $rc
 }
 
+machine_map_check() { # the pass-through regions a PC machine carries
+  # qemu-3dfx's overlay wires two pass-through devices into the machine;
+  # patch 74 leaves the Glide one out of the build (ADR-020: Glide is the
+  # Voodoo 2's). A tree that lost that patch grows a `glidept` region back
+  # and nothing else notices, since no guest of ours asks for it. `mesapt`
+  # and `d3dpt` must still be there, or the same tree lost the overlay.
+  local out
+  out="$(printf '%s\n' '{"execute":"qmp_capabilities"}' \
+        '{"execute":"human-monitor-command","arguments":{"command-line":"info mtree"}}' \
+        '{"execute":"quit"}' \
+        | timeout 30 build/qemu/qemu-system-i386 -L qemu/pc-bios -machine pc -m 64 \
+            -display none -S -qmp stdio -net none 2>&1)" \
+    || { echo "QEMU refused to start"; echo "$out" | tail -3; return 1; }
+  local rc=0 r
+  for r in mesapt d3dpt; do
+    case "$out" in *"): $r"*) echo "$r region present" ;; *) echo "no $r region on the machine"; rc=1 ;; esac
+  done
+  case "$out" in *glidept*|*glidelfb*|*glideshm*) echo "a Glide pass-through region is on the machine (patch 74 lost?)"; rc=1 ;; *) echo "no Glide pass-through region (patch 74)" ;; esac
+  return $rc
+}
+
 bios_date_check() { # the legacy BIOS date, as a guest reads it out of a real QEMU
   # Windows 98 installs ACPI (and so enumerates the PCI bus at all) only
   # when the date at F000:FFF5 is at least the ACPICheckDate its own
@@ -2364,6 +2385,7 @@ host_stage() {
   # not of the file, because the file is only half the path.
   if [ -x build/qemu/qemu-system-i386 ] && [ -d qemu/pc-bios ]; then
     run_check bios-date bios-date.log bios_date_check || true
+    run_check machine-map machine-map.log machine_map_check || true
   else
     skip bios-date "needs build/qemu/qemu-system-i386"
   fi
@@ -2460,21 +2482,6 @@ host_stage() {
     skip embed-3d "Linux with build/qemu/libqemu-embed-i386.so only"
   fi
 
-  # Glide pass-through without a guest: the real host-side wrapper, loaded
-  # by hw/3dfx's own dispatcher, rendering into the window-less context.
-  # Linux (EGL) only, one VM per process, like embed-3d above.
-  if [ "$OS" = Linux ] && [ -f build/qemu/libqemu-embed-i386.so ] \
-     && [ -f build/glide/libglide2x.so ]; then
-    if c++ -O1 -std=c++17 -w -Iembed -Ithird_party/openglide -Iqemu/hw/3dfx \
-         -o build/glide-host-test tools/glide-host-test.cpp \
-         -Lbuild/qemu -lqemu-embed-i386 -Wl,-rpath,"$ROOT/build/qemu" -ldl; then
-      QEMU_GLIDE_LIB="$ROOT/build/glide/libglide2x.so" \
-        GLIDE_TEST_BMP="$OUT/glide-frame.bmp" \
-        run_check glide-host glide-host.log build/glide-host-test || true
-    else FAIL+=(glide-host); echo "  FAIL glide-host (build)"; fi
-  else
-    skip glide-host "Linux with build/glide/libglide2x.so only (scripts/build-glide.sh)"
-  fi
 
   # decoder + executor without a guest
   if [ -f "$D3DPT_EXEC_LIB" ] && [ -f "$D3DPT_DXVK_LIB" ]; then
