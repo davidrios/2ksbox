@@ -140,7 +140,9 @@ ApplicationWindow {
         // column is pinned (minimum = preferred = maximum): a preferred
         // width alone lets the RowLayout shrink or grow a column by its
         // text, which put every row's buttons somewhere else (user-
-        // reported, 2026-09-12). The buttons take the unlabelled rest.
+        // reported, 2026-09-12). The shader column takes whatever width
+        // is left, so the buttons sit against the right edge whatever the
+        // window's width (user, 2026-09-22), and `shader` is its minimum.
         QtObject {
             id: cols
             readonly property int name: 190
@@ -171,9 +173,8 @@ ApplicationWindow {
             }
             Label {
                 text: qsTr("Shader"); font.bold: true
-                Layout.minimumWidth: cols.shader; Layout.preferredWidth: cols.shader; Layout.maximumWidth: cols.shader
+                Layout.minimumWidth: cols.shader; Layout.fillWidth: true
             }
-            Item { Layout.fillWidth: true }
         }
 
         MenuSeparator { Layout.fillWidth: true }
@@ -216,12 +217,11 @@ ApplicationWindow {
                     Label {
                         text: machineRow.shader
                         elide: Text.ElideRight
-                        Layout.minimumWidth: cols.shader; Layout.preferredWidth: cols.shader; Layout.maximumWidth: cols.shader
+                        Layout.minimumWidth: cols.shader; Layout.fillWidth: true
                     }
 
                     RowLayout {
                         spacing: 6
-                        Layout.fillWidth: true
 
                         Label {
                             text: qsTr("Running")
@@ -266,7 +266,6 @@ ApplicationWindow {
                             onClicked: cloner.openFor(machines.bundlePath(machineRow.index),
                                                       machines.isRunning(machineRow.index))
                         }
-                        Item { Layout.fillWidth: true }
                     }
                 }
             }
