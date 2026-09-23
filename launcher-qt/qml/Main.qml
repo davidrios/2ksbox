@@ -528,9 +528,10 @@ ApplicationWindow {
                           + ", modal left=" + modalLeft)
                 break
             case "wizardscroll":
-                // Where the form opens: at the top for a new machine and
-                // for a different one than last time, where it was left
-                // for the same one again (`WizardWindow.onVisibleChanged`).
+                // Where the form opens: its first page at the top for a
+                // new machine and for a different one than last time,
+                // where it was left — page and scroll — for the same one
+                // again (`WizardWindow.onVisibleChanged`).
                 // A machine to edit comes first, through the create path
                 // below; `LAUNCHER_QT_ARG=<disk>` names an existing disk
                 // where `/dev/null` is not one. The steps are
@@ -742,14 +743,20 @@ ApplicationWindow {
         interval: diag.delayMs
         repeat: true
         onTriggered: {
-            const at = (what) => diag.note("wizardscroll " + what + ": y=" + wizardWindow.scrollY())
+            const at = (what) => diag.note("wizardscroll " + what + ": section=" + wizard.section
+                                            + " y=" + wizardWindow.scrollY())
+            // The System page with the optimizations open is the one page
+            // taller than the window, so it is where a scroll can be seen.
+            const scrollDown = () => {
+                wizard.chooseSection(1); wizardWindow.expandOptimizations(); wizardWindow.scrollTo(240)
+            }
             switch (step++) {
             case 0: wizard.openEdit(bundle); break
-            case 1: wizardWindow.scrollTo(240); at("edit scrolled"); wizardWindow.close(); break
+            case 1: scrollDown(); at("edit scrolled"); wizardWindow.close(); break
             case 2: wizard.openEdit(bundle); break
             case 3: at("same again"); wizardWindow.close(); break
             case 4: wizard.openFresh(); break
-            case 5: at("fresh after edit"); wizardWindow.scrollTo(240); wizardWindow.close(); break
+            case 5: at("fresh after edit"); scrollDown(); wizardWindow.close(); break
             case 6: wizard.openFresh(); break
             case 7: at("fresh again"); wizardWindow.close(); break
             case 8: wizard.openEdit(bundle); break

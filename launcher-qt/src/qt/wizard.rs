@@ -42,6 +42,8 @@ pub mod ffi {
         /// identity, which the window compares with the last one it
         /// showed to decide whether to start at the top.
         #[qproperty(QString, bundle_path)]
+        /// An index into `section_labels()`: the page on show.
+        #[qproperty(i32, section)]
         /// An index into `family_labels()`, because that is what a QML
         /// `ComboBox` deals in. Same for `accel`, `cpu_speed` and `boot`.
         #[qproperty(i32, family)]
@@ -184,6 +186,8 @@ pub mod ffi {
         /// default with it.
         #[qinvokable]
         fn choose_family(self: Pin<&mut Wizard>, family: i32);
+        #[qinvokable]
+        fn choose_section(self: Pin<&mut Wizard>, section: i32);
 
         /// Set the memory, clamped to the family's range, and remember
         /// that it was chosen so a later family switch can't rewrite it.
@@ -313,6 +317,9 @@ pub mod ffi {
         /// than retyped in QML.
         #[qinvokable]
         fn family_labels(self: &Wizard) -> QStringList;
+        /// The form's pages, in order — the sidebar's entries.
+        #[qinvokable]
+        fn section_labels(self: &Wizard) -> QStringList;
 
         #[qinvokable]
         fn accel_labels(self: &Wizard) -> QStringList;
@@ -361,7 +368,7 @@ use cxx_qt_lib::{QString, QStringList};
 use launcher_core::browse::name_filter;
 use launcher_core::bundle::{Accel, Boot, CpuSpeed, Family, Optimization};
 use launcher_core::library;
-use launcher_core::wizard::{Form, DISK_FILTER, FLOPPY_FILTER, MEDIA_FILTER, SOUNDFONT_FILTER};
+use launcher_core::wizard::{Form, Section, DISK_FILTER, FLOPPY_FILTER, MEDIA_FILTER, SOUNDFONT_FILTER};
 use std::path::PathBuf;
 use std::pin::Pin;
 
@@ -371,6 +378,7 @@ pub struct WizardRust {
     editing: bool,
     title: QString,
     bundle_path: QString,
+    section: i32,
     family: i32,
     family_note: QString,
     name: QString,
@@ -477,6 +485,12 @@ impl ffi::Wizard {
     fn open_edit(mut self: Pin<&mut Self>, bundle_path: &QString) {
         let path = PathBuf::from(bundle_path.to_string());
         self.as_mut().rust_mut().form.open_edit_path(path);
+        self.publish();
+    }
+
+    fn choose_section(mut self: Pin<&mut Self>, section: i32) {
+        let s = *Section::ALL.get(section.max(0) as usize).unwrap_or(&Section::General);
+        self.as_mut().rust_mut().form.choose_section(s);
         self.publish();
     }
 
@@ -638,6 +652,10 @@ impl ffi::Wizard {
         self.rust().form.saved_path().map(|p| qs(p.display())).unwrap_or_default()
     }
 
+    fn section_labels(&self) -> QStringList {
+        labels(Form::section_labels().into_iter())
+    }
+
     fn family_labels(&self) -> QStringList {
         labels(Family::ALL.iter().map(|f| f.label()))
     }
@@ -736,6 +754,7 @@ impl ffi::Wizard {
             editing,
             title,
             bundle_path,
+            section,
             family,
             family_note,
             name,
@@ -770,6 +789,7 @@ impl ffi::Wizard {
             open = f.open;
             editing = f.is_editing();
             bundle_path = f.bundle_path().map(|p| qs(p.display())).unwrap_or_default();
+            section = index_of(&Section::ALL, f.section);
             title = QString::from(f.title());
             family = index_of(&Family::ALL, f.family());
             family_note = qs_opt(f.family_note());
@@ -857,6 +877,7 @@ impl ffi::Wizard {
         self.as_mut().set_editing(editing);
         self.as_mut().set_title(title);
         self.as_mut().set_bundle_path(bundle_path);
+        self.as_mut().set_section(section);
         self.as_mut().set_family(family);
         self.as_mut().set_family_note(family_note);
         self.as_mut().set_name(name);

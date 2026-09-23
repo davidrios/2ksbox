@@ -46,6 +46,47 @@ pub const SOUNDFONT_FILTER: Filter<'static> = ("SoundFont banks", &["sf2"]);
 /// three file fields; the constant itself belongs to the shelf.
 pub const MEDIA_FILTER: Filter<'static> = DISC_FILTER;
 
+/// The pages the form is shown on — a settings window's sidebar, as
+/// VirtualBox's and UTM's (user request, 2026-09-22: one long form had
+/// outgrown its window). Which field sits on which page is the view's
+/// business; the pages themselves, their names and their order are the
+/// form's, so every front end offers the same ones in the same order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Section {
+    #[default]
+    General,
+    System,
+    Display,
+    Audio,
+    Input,
+    Network,
+    Storage,
+}
+
+impl Section {
+    pub const ALL: [Section; 7] = [
+        Section::General,
+        Section::System,
+        Section::Display,
+        Section::Audio,
+        Section::Input,
+        Section::Network,
+        Section::Storage,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Section::General => "General",
+            Section::System => "System",
+            Section::Display => "Display",
+            Section::Audio => "Audio",
+            Section::Input => "Input",
+            Section::Network => "Network",
+            Section::Storage => "Storage",
+        }
+    }
+}
+
 /// What editing an existing bundle needs to preserve: the fields this
 /// form doesn't expose, so a quick edit can't silently discard them.
 struct EditTarget {
@@ -202,12 +243,16 @@ pub struct Form {
     /// every window opened in one session pays for it once.
     host_gpu: host_gpu::HostGpu,
     editing: Option<EditTarget>,
+    /// The page on show. Every open starts on the first; a front end
+    /// that puts a reopened machine back on its page does so itself.
+    pub section: Section,
 }
 
 impl Default for Form {
     fn default() -> Self {
         Form {
             open: false,
+            section: Section::General,
             name: String::new(),
             floppy: String::new(),
             boot: Boot::default(),
@@ -350,6 +395,15 @@ impl Form {
 
     pub fn is_editing(&self) -> bool {
         self.editing.is_some()
+    }
+
+    /// The pages, in order, for a sidebar.
+    pub fn section_labels() -> Vec<&'static str> {
+        Section::ALL.iter().map(|s| s.label()).collect()
+    }
+
+    pub fn choose_section(&mut self, section: Section) {
+        self.section = section;
     }
 
     /// The bundle being edited, `None` for a new machine — the form's

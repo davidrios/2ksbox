@@ -104,6 +104,8 @@ typedef struct LcWizard LcWizard;
  * indices as lc_wizard_optimization_* below. */
 #define LC_LABEL_OPTIMIZATION      4u
 #define LC_LABEL_OPTIMIZATION_NOTE 5u
+/* The form's pages (a settings window's sidebar), in order. */
+#define LC_LABEL_SECTION           6u
 char *lc_wizard_label(uint32_t kind, size_t index);
 
 LcWizard *lc_wizard_new(void);
@@ -204,6 +206,11 @@ char *lc_wizard_extra_qemu_args_note(const LcWizard *w, bool *warning);
 size_t lc_wizard_boot(const LcWizard *w);
 void lc_wizard_set_boot(LcWizard *w, size_t boot);
 char *lc_wizard_boot_note(const LcWizard *w);
+/* The page on show: an index into LC_LABEL_SECTION. Every open starts on
+ * the first; a front end that puts a reopened machine back on its page
+ * remembers that itself. */
+size_t lc_wizard_section(const LcWizard *w);
+void lc_wizard_choose_section(LcWizard *w, size_t section);
 
 /* The display adapter. Its list is per family — Windows chooses between
    our own adapter and the one Windows has an in-box driver for, an

@@ -391,6 +391,7 @@ pub extern "C" fn lc_wizard_label(kind: u32, index: usize) -> *mut c_char {
         3 => Boot::ALL.get(index).map(|v| v.label()),
         4 => Optimization::ALL.get(index).map(|v| v.label()),
         5 => Optimization::ALL.get(index).map(|v| v.note()),
+        6 => wizard::Section::ALL.get(index).map(|v| v.label()),
         _ => None,
     };
     match label {
@@ -816,6 +817,23 @@ pub unsafe extern "C" fn lc_wizard_voodoo2_note(w: *const LcWizard) -> *mut c_ch
 #[no_mangle]
 pub unsafe extern "C" fn lc_wizard_boot(w: *const LcWizard) -> usize {
     index_of(&Boot::ALL, handle!(w, 0).0.boot)
+}
+
+/// The page on show, an index into `LC_LABEL_SECTION`.
+///
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_section(w: *const LcWizard) -> usize {
+    index_of(&wizard::Section::ALL, handle!(w, 0).0.section)
+}
+
+/// # Safety
+/// `w` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn lc_wizard_choose_section(w: *mut LcWizard, section: usize) {
+    let s = *wizard::Section::ALL.get(section).unwrap_or(&wizard::Section::General);
+    handle_mut!(w, ()).0.choose_section(s);
 }
 
 /// # Safety

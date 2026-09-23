@@ -53,10 +53,20 @@ Two Rust apps (ADR-005): the **player** runs one machine in one window; the
   last, so a clone still copying (or failed, whose folder is removed) is
   never in the grid. `launcherx --clone <machine.toml> [name]` is the same
   model headless; `lc_machines_clone` the same in C.
-- **Guided creation:** family (Win98/XP/DOS/Other) → name → memory → processor →
-  acceleration →
-  networking → the pointer → disk size → install media → bundle from the
-  reference definitions (doc 06). Never a QEMU command line, and since
+- **Guided creation:** one settings window with a sidebar of sections and
+  a page each, the way VirtualBox's and UTM's are laid out (2026-09-22,
+  user request — the one long scrolling form had outgrown its window):
+  General (family, name), System (memory, processor, acceleration, the
+  emulation optimizations, extra QEMU arguments), Display (adapter,
+  Direct3D, the Voodoo 2, the host's 3D, the shader profile), Audio (the
+  sound card, music, SoundFont, MT-32 ROMs), Input (gamepad, the
+  pointer), Network, Storage (disk, install media, floppy, boot order).
+  The sections and their order are the shared form's
+  (`wizard::Section`, `lc_wizard_label(LC_LABEL_SECTION, …)`); which
+  field sits on which page is the front end's. The form opens on its
+  first page at the top for a new machine or a different one than last
+  time, and where it was left for the same one reopened. The bundle comes
+  from the reference definitions (doc 06). Never a QEMU command line, and since
   2026-09-16 (user decision) no raw-TOML box either: the form's fields
   are the way to edit a machine, and a hand edit is the file itself. The disk size starts at the family's own
   (`bundle::default_disk_size_gb`: 10 GB for Win98 and Other, 20 GB for XP,
