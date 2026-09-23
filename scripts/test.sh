@@ -956,7 +956,11 @@ qtwizard_fields_check() { # the fields, family by family
     # field writes the model *property* alone, so a verb that republishes
     # the form without catching it up first puts the form's own (empty)
     # name back, and the name disappears from a window that never asked
-    # it to (2026-09-08).
+    # it to (2026-09-08). The page switch is such a verb too, and was the
+    # one left going around the catch-up (2026-09-23: the name vanished on
+    # a click on "System" and back), so the probe pages away and back
+    # before the family (whose own verb catches the form up) and reads
+    # the field after both.
     o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] wizard name: //p')"
     shown="$(printf '%s' "$o" | sed -n 's/^shown \[\(.*\)\] model \[.*\]$/\1/p')"
     model="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] model \[\(.*\)\]$/\1/p')"

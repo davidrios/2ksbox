@@ -487,10 +487,15 @@ impl ffi::Wizard {
         self.publish();
     }
 
-    fn choose_section(mut self: Pin<&mut Self>, section: i32) {
+    /// Through `edit` like every other verb, although the page is not a
+    /// field of the machine: it republishes the form, and a republish
+    /// that has not caught up with the text fields writes the form's
+    /// stale, empty name back over what was typed (user, 2026-09-23:
+    /// "machine name is not preserved when switching categories" — this
+    /// was the one verb that went around `pull`).
+    fn choose_section(self: Pin<&mut Self>, section: i32) {
         let s = *Section::ALL.get(section.max(0) as usize).unwrap_or(&Section::General);
-        self.as_mut().rust_mut().form.choose_section(s);
-        self.publish();
+        self.edit(|form| form.choose_section(s));
     }
 
     fn choose_family(self: Pin<&mut Self>, family: i32) {

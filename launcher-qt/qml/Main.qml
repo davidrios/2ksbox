@@ -470,6 +470,13 @@ ApplicationWindow {
                 // empty name back over what was typed (user, 2026-09-08).
                 wizardWindow.typeName("Typed name")
                 wizardWindow.typeExtraQemuArgs('-name "typed args"')
+                // A page away and back first, the way the sidebar does
+                // it: the page switch is a verb too, and it was the one
+                // that republished the form without catching it up (user,
+                // 2026-09-23: the name vanished on a click on "System" and
+                // back). It has to come *before* the family, whose own
+                // verb catches the form up and would hide it.
+                wizard.chooseSection(1); wizard.chooseSection(0)
                 if (families.indexOf(diag.arg) >= 0)
                     wizard.chooseFamily(families.indexOf(diag.arg))
                 // What the memory field ended up showing, beside what the
