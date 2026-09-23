@@ -602,6 +602,15 @@ user's download for nothing. Splitting costs one packager flag.
 September 2027). No row claims Intel until an Intel Mac runs the
 reference scene.
 
+*Addendum (2026-09-23, user: "the intel version is obviously macos 15
+only").* The Intel app is made on the Apple Silicon Mac under Rosetta
+against an Intel Homebrew (`scripts/build.sh --x86_64`,
+`package-macos.sh --x86_64`; `build-macos.md` "The Intel build"). It is
+the community build and nothing else, and it carries **no Vulkan**:
+KosmicKrisp exists only as arm64 and MoltenVK is refused, so no DXVK
+and no in-process executor either. Its Direct3D is the executor on
+native x86_64 Wine, and a Mac with no Wine has none.
+
 **What stays open.** The store build adds the sandbox and whatever
 review asks. The store's licensing question (GPL-2 QEMU and 86Box under
 store terms; UTM ships there, and the FSF says it cannot) is the user's

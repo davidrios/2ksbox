@@ -2455,6 +2455,20 @@ host_stage() {
     skip package "Linux or macOS with build/qemu (libqemu-embed, qemu-img) and qemu/pc-bios only"
   fi
 
+  # The Intel app made on this Apple Silicon Mac (scripts/build.sh
+  # --x86_64, docs/build-macos.md "The Intel build"): the same staging and
+  # checks under Rosetta, where every Mach-O must be x86_64 and the loader
+  # must find them all inside the app. Only when that build exists; a Mac
+  # that never made it is not a failure.
+  if [ "$OS" = Darwin ] && [ "$ARCH" = arm64 ]; then
+    if [ -f build/x86_64/qemu/libqemu-embed-i386.dylib ] && [ -x launcher-qt/target/x86_64-apple-darwin/release/launcher-qt ] \
+       && [ -x /usr/local/bin/brew ]; then
+      run_check package-x86_64 package-x86_64.log scripts/package-macos.sh --x86_64 --no-build --no-sign --no-dmg --out "$OUT/package-x86_64" || true
+    else
+      skip package-x86_64 "no Intel build (scripts/build.sh --x86_64, with the Intel Homebrew)"
+    fi
+  fi
+
   # the C ABI (doc 07): `launcher-core` is a library, and this proves it is
   # usable as one. A C program creates a DOS machine through the shared
   # wizard, puts a disc on the shelf and reads both back. It is the only

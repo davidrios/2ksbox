@@ -61,7 +61,7 @@ unmerged). The Mac pulls `main`.
 | Guest machines (doc 06) | Four families: Win98, XP, DOS, Other. Win98 / XP start on `d3dpt-vga`, DOS / Other on `std`. No network card by default. Win98 is TCG with `hpet=off`; the BIOS date stamp makes it install ACPI. DOS paces with `-icount …,align=on`. |
 | Guest tools (`guest-tools/README.md`) | One ISO. `SETUP.EXE` installs what this Windows can use; every program logs to `C:\2KSBOX` (`BOXLOG=` overrides). |
 | Launcher (doc 07) | `launcher-qt` over `launcher-core` (also `launcherx`, `launcher-capi`). The machine form is a settings window, a page per section, every picker the style's own combo box over the model's rows; the Direct3D picker shows only what this host runs. Extra QEMU arguments, clone, first-run preset download. The snapshot window is a tree (2026-09-23): a qcow2 records no parent, so the launcher writes each take and restore to `snapshots.toml` beside the bundle and reconciles it against the disk on every read; snapshots it has no record of sit at the top level. Window text is short and plain (user rule). |
-| Packages | Linux tarball, Flatpak (`org.kde.Platform` 6.10), macOS app in two builds (ADR-019: App Store 26+, community with the Wine pair at Homebrew's floor, 15.0), Windows zip (cross build; native MSYS2 build for debugging) and, from 2026-09-23, the same tree as a Microsoft Store MSIX (`scripts/package-msix.sh`, packed on the PC; not yet uploaded, `build-windows.md` "The Store package"). Every packager opens a real window offscreen. |
+| Packages | Linux tarball, Flatpak (`org.kde.Platform` 6.10), macOS app in two builds (ADR-019: App Store 26+, community with the Wine pair at Homebrew's floor, 15.0; from 2026-09-23 the community app for Intel Macs too, made on the Air under Rosetta against an Intel Homebrew, `scripts/build.sh --x86_64` + `package-macos.sh --x86_64`, untested on an Intel Mac; `build-macos.md` "The Intel build"), Windows zip (cross build; native MSYS2 build for debugging) and, from 2026-09-23, the same tree as a Microsoft Store MSIX (`scripts/package-msix.sh`, packed on the PC; not yet uploaded, `build-windows.md` "The Store package"). Every packager opens a real window offscreen. |
 | Tests | `scripts/test.sh host` (~30 s) / `all` (+ XP and DOS guests). Integration only, local only; `docs/testing.md`. |
 | Guest images | Outside the repo, read-only for a session: `~/vms/win98.qcow2`, `winxp.qcow2`, `winxp-m7*.qcow2`, `scratch.img` (E: in XP), and the launcher library's machines (`~/.local/share/2ksbox/machines/`: `base98-br`, `base98-us`, `claude98`, `win98-2`, …). Boot an overlay or a copy. |
 
@@ -73,6 +73,8 @@ Stages, player options and packagers: `docs/development.md`. Test tools:
 ```sh
 scripts/build.sh           # after every pull: everything, only what changed
                            # (-f re-runs every prepare, --test adds test.sh host)
+scripts/build.sh --x86_64  # on the Air: the Intel build, under Rosetta, into build/x86_64
+                           # (then package-macos.sh --x86_64; build-macos.md "The Intel build")
 scripts/test.sh            # host stage; `all` adds the guests (before any
                            # commit touching QEMU, embed, the D3D device, guest DLLs)
 
@@ -222,7 +224,15 @@ tracks, plus the items no track owns.
    track doc has the shape). Left: a game through the add-on on a
    below-floor host, and the spike's two host tests on the rig's Linux
    Wine. A Windows host below the floor is not part of this; it already
-   runs its own `system32\d3d9.dll`.
+   runs its own `system32\d3d9.dll`. The Intel app (ADR-019, made on
+   the Air since 2026-09-23, `build-macos.md` "The Intel build") stays
+   "untested" on the release page until an Intel Mac has run the
+   reference scene; nobody here has one. **Blocked on 2026-09-23**:
+   Homebrew's installer refuses Intel Macs, so the `--x86_64` plumbing is
+   in as WIP and the next step is the user's decision to drop Homebrew:
+   build the app's libraries by hand for both architectures, and lower
+   the community build's floor to the lowest macOS that allows
+   (`build-macos.md` "The Intel build").
 2. **The measurements doc 22 still owes** (user decision, 2026-09-15).
    The Ryzen half of §6.2's games, including 3DMark2001 SE's high-detail
    Car Chase and Lobby as the benchmark for patch 47's inexact mode (+47 %

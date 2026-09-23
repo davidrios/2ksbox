@@ -14,6 +14,14 @@
 # directories are independent, so one checkout holds a Linux build and a
 # Windows build at once.
 #
+# On an Apple Silicon Mac the Intel build (scripts/build.sh --x86_64,
+# docs/build-macos.md "The Intel build") runs this whole script under
+# Rosetta, and that is how it is recognised (sysctl.proc_translated): it
+# configures into build/x86_64/qemu against the Rust staticlibs built for
+# x86_64-apple-darwin, with the Intel Homebrew's Python, so uname, the
+# compiler and meson all answer x86_64 without being told. On an Intel Mac
+# nothing runs translated and the build is the plain native one.
+#
 # On Windows itself, in MSYS2's MINGW64 shell, the same build is native
 # (docs/build-windows.md, "Building on Windows"): --windows is implied, no
 # cross prefix, and MSYS2's own Python rather than uv's. A python.org
@@ -42,9 +50,14 @@ case "${MSYSTEM:-}" in
   *) echo "MSYS2 $MSYSTEM shell: build from the MINGW64 one (docs/build-windows.md)"; exit 1 ;;
 esac
 
+ROSETTA=""
+[ "$(uname -s)" = Darwin ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ] && ROSETTA=1
 if [ -n "$WINDOWS" ]; then
   BUILD="${WIN_QEMU_BUILD:-$ROOT/build/win/qemu}"
   CARGO_TARGET=x86_64-pc-windows-gnu
+elif [ -n "$ROSETTA" ]; then
+  BUILD="$ROOT/build/x86_64/qemu"
+  CARGO_TARGET=x86_64-apple-darwin
 else
   BUILD="$ROOT/build/qemu"
   CARGO_TARGET=""
@@ -76,6 +89,21 @@ elif not (3, 8) <= v <= (3, 13):
 if [ -n "${QEMU_PYTHON:-}" ]; then
   PYTHON="$QEMU_PYTHON"
   check_python QEMU_PYTHON
+elif [ -n "$ROSETTA" ]; then
+  # uv's interpreter is an arm64 binary, and meson takes the machine it
+  # runs on for the build machine, so an arm64 Python configures an arm64
+  # QEMU into the Intel build's directory. The Intel Homebrew's Python is
+  # x86_64 (its meson brings one).
+  PYTHON=""
+  for v in 3.13 3.12 3.11 3.10 3.9; do
+    p="/usr/local/opt/python@$v/bin/python$v"
+    [ -x "$p" ] && { PYTHON="$p"; break; }
+  done
+  [ -n "$PYTHON" ] || {
+    echo "no Intel Homebrew Python under /usr/local/opt/python@3.*: arch -x86_64 brew install python@3.13 (docs/build-macos.md, 'The Intel build')"; exit 1; }
+  check_python "the Intel Homebrew's python"
+  [ "$("$PYTHON" -c 'import platform; print(platform.machine())')" = x86_64 ] || {
+    echo "$PYTHON is not an x86_64 interpreter"; exit 1; }
 elif [ -n "$NATIVE" ]; then
   PYTHON=/mingw64/bin/python3
   [ -x "$PYTHON.exe" ] || [ -x "$PYTHON" ] || {

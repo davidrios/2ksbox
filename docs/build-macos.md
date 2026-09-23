@@ -201,6 +201,7 @@ JIT entitlement (doc 07) for a Mac with nothing installed:
 scripts/package-macos.sh                       # build, stage, check, sign, notarize, dmg
 scripts/package-macos.sh --no-sign --no-dmg    # the staging and its checks alone, ~20 s
 scripts/package-macos.sh --community           # ADR-019's community build (below)
+scripts/package-macos.sh --x86_64 --no-notarize # the Intel app, from scripts/build.sh --x86_64 (below)
 ```
 
 `--no-build`, `--no-notarize`, `--identity`, `--keychain-profile` and
@@ -293,7 +294,7 @@ retries.
 
 | | App Store | Community |
 |---|---|---|
-| macOS | 26+, Apple Silicon | Homebrew's floor (15.0 today); Intel permitted, untested |
+| macOS | 26+, Apple Silicon | Homebrew's floor (15.0 today); Intel permitted, untested ("The Intel build" below) |
 | Direct3D | DXVK on KosmicKrisp | the same, plus the executor on Wine below Vulkan 1.3 |
 | Distribution | App Store | Developer ID DMG (`--community`) |
 
@@ -326,6 +327,84 @@ the launcher's note says which to install:
 The community build permits Intel, untested, because its Wine is
 x86_64 on both architectures (ADR-019 has the reasons). No doc claims
 Intel until an Intel Mac has run the reference scene.
+
+### The Intel build
+
+**Status (2026-09-23): not buildable as written.** The recipe below
+needs an Intel Homebrew, and Homebrew's installer now refuses one
+("Homebrew on macOS is only supported on Apple Silicon processors!",
+Homebrew 7.0.6's `install.sh`), so the `--x86_64` plumbing is checked in
+as work in progress. User decision the same day: depending on Homebrew
+at all was a mistake; the app's libraries are to be built by hand, for
+both architectures, and the community build is then to target the
+lowest macOS that allows, not Homebrew's floor. The plumbing (the
+Rosetta re-run, the per-architecture directories, the architecture
+check) stays, and the Homebrew lines below are what the by-hand build
+replaces.
+
+The Intel app is the community build and nothing else: macOS 15 (the
+floor), no App Store version, and **no Vulkan at all**, since KosmicKrisp
+exists only as arm64 and MoltenVK is refused (ADR-007). So it carries no
+loader, no ICD, no DXVK and no in-process executor; its Direct3D is the
+executor on Wine (native x86_64 Wine there, no Rosetta), and a Mac with
+no Wine has none. It is made on the Apple Silicon Mac, under Rosetta,
+against a second Homebrew:
+
+```sh
+# once: the Intel Homebrew at /usr/local (the installer needs sudo), and
+# what the build takes from it. uv, mingw-w64 and xorriso stay the
+# native ones: an arm64 program runs from a Rosetta shell, and the guest
+# ISO it makes is the same file
+arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+arch -x86_64 /usr/local/bin/brew install ninja meson pkg-config glib pixman gnu-sed libslirp qt python@3.13
+
+scripts/build.sh --x86_64                          # qemu, rust, qt, exec (dxvk is skipped); ~40 min
+scripts/package-macos.sh --x86_64 --no-notarize    # build/macos-x86_64/2ksbox-<version>-macos-x86_64.dmg
+scripts/package-macos.sh --x86_64 --no-sign --no-dmg   # the staging and its checks alone
+                                                   # (scripts/test.sh's package-x86_64 check)
+```
+
+How it works, so it stays one build and not a second tree of scripts:
+
+- `--x86_64` re-runs the script as an x86_64 process (`arch -x86_64`)
+  with `/usr/local/bin` first on `PATH`, and that is all. Under Rosetta
+  `uname -m`, Apple's compiler, and the Intel Homebrew's meson, ninja,
+  pkg-config and Python all answer x86_64 without being told, and
+  `arch -x86_64 scripts/build.sh` is the same build.
+- Every script that has a build directory recognises the translated
+  process (`sysctl.proc_translated`) and keeps to `build/x86_64/` and
+  `target/x86_64-apple-darwin/` beside the native build's
+  (`configure-qemu.sh`, `build-d3dpt-exec.sh`, `qemu-embed/build.rs`,
+  `build.sh`, `package-macos.sh`), the way the Windows cross build keeps
+  `build/win/`. The `qemu/` and `third_party/dxvk` trees and their
+  prepare stamps are shared, so the two builds run one after the other,
+  never at once.
+- `configure-qemu.sh` takes the Intel Homebrew's Python, not uv's: meson
+  takes the machine its interpreter runs on for the build machine, and
+  uv's is arm64.
+- cargo is never translated (rustup's toolchain is arm64) and simply
+  cross-compiles with `--target x86_64-apple-darwin`; `cc` adds
+  `-arch x86_64` for that target, and `cxx-qt-build` finds the Intel Qt
+  through the `qmake6` on `PATH`.
+- The bottle tag has the architecture in it: `scripts/macos-floor.sh
+  --tag` says `sequoia` where the native build says `arm64_sequoia`,
+  and `macos-bottles.py` swaps in the Intel bottles. Homebrew has Intel
+  at tier 3 since 7.0.0 (bottles frozen, support ending September 2027),
+  so the swap works while every formula the app carries still has an
+  Intel bottle of the installed version.
+- The packager checks the architecture of every Mach-O in the app
+  beside the floor: a file that is not `x86_64` (an arm64 KosmicKrisp,
+  say) fails the package. On an Intel Mac itself nothing is translated,
+  and the same scripts make its native app with the same checks.
+
+What the Air can and cannot prove: the staged app's own checks run under
+Rosetta (the loader's image list, the offscreen window, `--host-check`,
+the wizard), and the app can be opened under Rosetta for a look. TCG's
+x86-64 backend and the Voodoo 2's SSE2 rasteriser are the Linux rig's
+every day. But Rosetta translates the JIT's output and says nothing about
+speed, and no Intel Mac is among the test machines, so the DMG goes on
+the release page labelled untested until one has run the reference scene
+(ADR-019).
 
 ### The floor
 

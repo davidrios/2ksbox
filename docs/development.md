@@ -122,6 +122,12 @@ What each stage needs to know:
   ([build-macos.md](build-macos.md), "The floor").
 - A build belongs to one checkout. Never borrow another's `build/`,
   `target/` or `*_BIN` (00-status, "Building").
+- **`--x86_64` on an Apple Silicon Mac is the Intel build**, under
+  Rosetta with the Intel Homebrew, into `build/x86_64/` and
+  `target/x86_64-apple-darwin/` beside the native build's; the `dxvk`
+  stage is skipped there (no Vulkan on an Intel Mac) and the `exec` stage
+  builds only the executor on Wine ([build-macos.md](build-macos.md),
+  "The Intel build").
 
 The player with no launcher:
 
@@ -497,7 +503,11 @@ dylib closure, Qt through `macdeployqt`, and the executor with the
 LunarG loader and KosmicKrisp, then signs with the
 hardened runtime and the JIT entitlement, notarizes and staples.
 `--community` is ADR-019's community build, which adds the Wine pair.
-Details: [build-macos.md](build-macos.md), "The app".
+`--x86_64` (after `scripts/build.sh --x86_64`) is the Intel app, made on
+the same Mac under Rosetta against an Intel Homebrew: always the
+community build, with no Vulkan, into `build/macos-x86_64`.
+Details: [build-macos.md](build-macos.md), "The app" and "The Intel
+build".
 
 ### Windows (`.zip`)
 

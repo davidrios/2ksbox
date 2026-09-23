@@ -9,6 +9,12 @@
 #   scripts/build-d3dpt-exec.sh --wine      the PE pair only
 #   scripts/build-d3dpt-exec.sh --windows   cross to build/win/d3dpt/d3dpt_exec.dll
 #
+# Under Rosetta on an Apple Silicon Mac (scripts/build.sh --x86_64, the
+# Intel build; docs/build-macos.md "The Intel build") the output is
+# build/x86_64/d3dpt, and only the out-of-process library and the PE pair
+# are built: no Vulkan driver exists for an Intel Mac (ADR-019), so the
+# in-process executor could never open a device there.
+#
 # --windows compiles the same two files against mingw's own <windows.h> and
 # <d3d9.h> instead of DXVK's native stand-ins for them, and loads DXVK's
 # d3d9.dll at run time under the name the package gives it,
@@ -39,15 +45,24 @@ fi
 # d3dpt-exec-host.exe), for a host that has mingw and wants just those.
 WINE_ONLY=0; [ "${1:-}" = "--wine" ] && WINE_ONLY=1
 
-OUT="$ROOT/build/d3dpt"; mkdir -p "$OUT"
+OUT="$ROOT/build/d3dpt"
+IN_PROCESS=1
+if [ "$(uname -s)" = Darwin ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then
+  OUT="$ROOT/build/x86_64/d3dpt"; IN_PROCESS=0
+fi
+mkdir -p "$OUT"
 DX="$ROOT/third_party/dxvk/include/native"
 if [ "$(uname -s)" = Darwin ]; then LIB="$OUT/libd3dpt_exec.dylib"; RLIB="$OUT/libd3dpt_exec_remote.dylib"; SHARED=(-dynamiclib -install_name "$LIB"); RSHARED=(-dynamiclib -install_name "$RLIB"); else LIB="$OUT/libd3dpt_exec.so"; RLIB="$OUT/libd3dpt_exec_remote.so"; SHARED=(-shared); RSHARED=(-shared); fi
 CXX="${CXX:-c++}"
 CC="${CC:-cc}"
 if [ $WINE_ONLY = 0 ]; then
-  "$CXX" -std=c++17 -O2 -fPIC -fvisibility=hidden -Wall -Wno-unused-function "${SHARED[@]}" -o "$LIB" \
-    "$ROOT/d3dpt/exec/d3dpt_exec.cpp" "$ROOT/d3dpt/exec/d3dpt_exec_ddi.cpp" -I"$DX" -I"$DX/windows" -I"$DX/directx" -ldl
-  echo "==> $LIB"
+  if [ $IN_PROCESS = 1 ]; then
+    "$CXX" -std=c++17 -O2 -fPIC -fvisibility=hidden -Wall -Wno-unused-function "${SHARED[@]}" -o "$LIB" \
+      "$ROOT/d3dpt/exec/d3dpt_exec.cpp" "$ROOT/d3dpt/exec/d3dpt_exec_ddi.cpp" -I"$DX" -I"$DX/windows" -I"$DX/directx" -ldl
+    echo "==> $LIB"
+  else
+    echo "==> the Intel build: no in-process executor (no Vulkan on an Intel Mac)"
+  fi
   # The same API over a child process on Wine (docs/tracks/m15-wine-executor.md,
   # ADR-018): what a host below DXVK's Vulkan 1.3 floor runs Direct3D on.
   # Plain C over POSIX, no DXVK headers; QEMU opens it after the in-process

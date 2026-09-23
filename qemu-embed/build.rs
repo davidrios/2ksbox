@@ -5,9 +5,19 @@ use std::path::PathBuf;
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     // The Windows cross build keeps its own QEMU build directory so one
-    // checkout can hold both (scripts/win-cross.sh, docs/build-windows.md).
-    let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
-    let default = manifest.join(if windows { "../build/win/qemu" } else { "../build/qemu" });
+    // checkout can hold both (scripts/win-cross.sh, docs/build-windows.md),
+    // and so does the Intel build made on an Apple Silicon Mac
+    // (scripts/build.sh --x86_64, docs/build-macos.md "The Intel build").
+    // On an Intel Mac itself the x86_64 target is the native one.
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let default = manifest.join(if target_os == "windows" {
+        "../build/win/qemu"
+    } else if target_os == "macos" && target_arch == "x86_64" && cfg!(target_arch = "aarch64") {
+        "../build/x86_64/qemu"
+    } else {
+        "../build/qemu"
+    });
     let dir = std::env::var("QEMU_EMBED_LIB_DIR")
         .map(PathBuf::from)
         .unwrap_or(default);

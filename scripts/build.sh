@@ -5,6 +5,9 @@
 #   scripts/build.sh                 everything this host can build
 #   scripts/build.sh qemu rust       only those stages
 #   scripts/build.sh --test          everything, then scripts/test.sh host
+#   scripts/build.sh --x86_64        on an Apple Silicon Mac: the Intel build,
+#                                    under Rosetta with the Intel Homebrew
+#                                    (docs/build-macos.md, "The Intel build")
 #
 # Stages, in the order they must run:
 #
@@ -51,9 +54,11 @@ JOBS=()
 RUN_TEST=""
 FORCE=""
 STAGES=()
+X86_64=""
+ARGS=("$@")
 
 usage() {
-  sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'
   cat <<EOF
 
 Options:
@@ -61,6 +66,7 @@ Options:
   -f, --force     re-run every prepare and configure step, ignoring the
                   stamps (use it after editing a tree by hand)
   -t, --test      run scripts/test.sh host when the build succeeds
+  --x86_64        the Intel build, on an Apple Silicon Mac (see above)
   -h, --help      this text
 EOF
 }
@@ -71,11 +77,45 @@ while [ $# -gt 0 ]; do
     -j*) JOBS=(-j "${1#-j}"); shift ;;
     -f|--force) FORCE=1; shift ;;
     -t|--test) RUN_TEST=1; shift ;;
+    --x86_64) X86_64=1; shift ;;
     -h|--help) usage; exit 0 ;;
     qemu|rust|qt|dxvk|exec|guest) STAGES+=("$1"); shift ;;
     *) echo "build.sh: unknown argument '$1' (try --help)" >&2; exit 2 ;;
   esac
 done
+
+# --- the Intel build on an Apple Silicon Mac ----------------------------
+# ADR-019's community build for Intel Macs, made on this one under Rosetta
+# (docs/build-macos.md, "The Intel build"): the whole script re-runs itself
+# as an x86_64 process with the Intel Homebrew (/usr/local) first on PATH.
+# From there on nothing is told the architecture: uname, the compiler,
+# the Intel Homebrew's meson, ninja and pkg-config all answer x86_64, and
+# every stage script recognises the translated process
+# (sysctl.proc_translated) and keeps to its own directories, build/x86_64
+# and target/x86_64-apple-darwin, beside the native build's. So `arch
+# -x86_64 scripts/build.sh` is the same build; the flag only spares the
+# typing. An Intel Mac never runs translated and builds natively.
+ROSETTA=""
+if [ "$(uname -s)" = Darwin ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then
+  ROSETTA=1
+fi
+if [ -n "$X86_64" ] && [ -z "$ROSETTA" ]; then
+  [ "$(uname -s)" = Darwin ] || { echo "build.sh: --x86_64 is the Intel build of the macOS app; this is not a Mac" >&2; exit 1; }
+  [ -x /usr/local/bin/brew ] || {
+    echo "build.sh: --x86_64 needs the Intel Homebrew at /usr/local (docs/build-macos.md, 'The Intel build')" >&2; exit 1; }
+  exec arch -x86_64 /usr/bin/env PATH="/usr/local/bin:$PATH" "$0" "${ARGS[@]}"
+fi
+# Where this build's outputs go, and the cargo target that puts them
+# there. The native build's are the defaults every doc names.
+QB=build/qemu; TD=target/release; QTD=launcher-qt/target/release; CT=()
+if [ -n "$ROSETTA" ]; then
+  [ -x /usr/local/bin/brew ] || {
+    echo "build.sh: an x86_64 build needs the Intel Homebrew at /usr/local (docs/build-macos.md, 'The Intel build')" >&2; exit 1; }
+  case ":$PATH:" in *:/usr/local/bin:*) ;; *) export PATH="/usr/local/bin:$PATH" ;; esac
+  QB=build/x86_64/qemu; TD=target/x86_64-apple-darwin/release
+  QTD=launcher-qt/target/x86_64-apple-darwin/release; CT=(--target x86_64-apple-darwin)
+  echo "==> the Intel build, under Rosetta: $QB, $TD (brew: $(command -v brew))"
+fi
 
 EXPLICIT=""
 if [ ${#STAGES[@]} -eq 0 ]; then
@@ -146,14 +186,14 @@ if [ "$(uname -s)" = Darwin ]; then
   # rustc's default, 11.0). A workspace this run will not rebuild is left
   # alone, since cleaning it would leave no binary at all (`build.sh guest`
   # once took the player with it).
-  for spec in rust:target/release/player qt:launcher-qt/target/release/launcher-qt; do
+  for spec in "rust:$TD/player" "qt:$QTD/launcher-qt"; do
     bin=${spec#*:}
     want "${spec%%:*}" && [ -f "$bin" ] || continue
     built=$(otool -l "$bin" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
     if [ -n "$built" ] && [ "$(printf '%s\n' "$built" "$MACOSX_DEPLOYMENT_TARGET" | sort -V | tail -1)" != "$MACOSX_DEPLOYMENT_TARGET" ]; then
       ws=${bin%%target/*}; ws=${ws:-.}
       echo "==> $bin was built for macOS $built: cargo clean --release in $ws"
-      (cd "$ws" && cargo clean --release)
+      (cd "$ws" && cargo clean --release ${CT[@]+"${CT[@]}"})
     fi
   done
 fi
@@ -188,37 +228,37 @@ if want qemu; then
     # command line.
     slirp_pkg=""; have pkg-config && pkg-config --exists slirp && slirp_pkg=1
     slirp_built=""
-    grep -q '^#define CONFIG_SLIRP' build/qemu/config-host.h 2>/dev/null && slirp_built=1
+    grep -q '^#define CONFIG_SLIRP' "$QB/config-host.h" 2>/dev/null && slirp_built=1
 
     # configure resets meson options and is slow, so only when needed.
     # prepare-qemu.sh deliberately preserves meson.build mtimes when the
     # content is unchanged, which is what makes this comparison meaningful.
     needs_configure=""
     [ -n "$FORCE" ] && needs_configure=1
-    [ -f build/qemu/build.ninja ] || needs_configure=1
+    [ -f "$QB/build.ninja" ] || needs_configure=1
     # libslirp installed since the last configure: configure again, or
     # installing it would look like it had done nothing.
-    [ -n "$slirp_pkg" ] && [ -z "$slirp_built" ] && [ -f build/qemu/build.ninja ] && needs_configure=1
+    [ -n "$slirp_pkg" ] && [ -z "$slirp_built" ] && [ -f "$QB/build.ninja" ] && needs_configure=1
     for f in qemu/meson.build qemu/hw/3dfx/meson.build qemu/hw/mesa/meson.build; do
-      if [ -f "$f" ] && [ -f build/qemu/build.ninja ] && [ "$f" -nt build/qemu/build.ninja ]; then
+      if [ -f "$f" ] && [ -f "$QB/build.ninja" ] && [ "$f" -nt "$QB/build.ninja" ]; then
         needs_configure=1
       fi
     done
     # Configured for another macOS: configure-qemu.sh passes the target as
     # a compiler flag, so configuring again is what recompiles for it.
-    if [ "$(uname -s)" = Darwin ] && [ -f build/qemu/config-meson.cross ] \
-       && ! grep -q -- "'-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET'" build/qemu/config-meson.cross; then
+    if [ "$(uname -s)" = Darwin ] && [ -f "$QB/config-meson.cross" ] \
+       && ! grep -q -- "'-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET'" "$QB/config-meson.cross"; then
       needs_configure=1
     fi
     if [ -n "$needs_configure" ]; then
-      if [ -z "${QEMU_PYTHON:-}" ] && ! have uv; then
+      if [ -z "${QEMU_PYTHON:-}" ] && [ -z "$ROSETTA" ] && ! have uv; then
         skip qemu "configure needs uv (or QEMU_PYTHON=<python 3.8-3.13>)" || true
       else
         say "qemu: configure"
         scripts/configure-qemu.sh
       fi
     else
-      echo "    build/qemu is configured and no meson file moved - skipping configure"
+      echo "    $QB is configured and no meson file moved - skipping configure"
     fi
 
     if [ -z "$slirp_pkg" ]; then
@@ -228,7 +268,7 @@ if want qemu; then
       esac
     fi
 
-    if [ -f build/qemu/build.ninja ]; then
+    if [ -f "$QB/build.ninja" ]; then
       # block/cdimage.c links libdisc's Rust staticlib (patch 50), and meson
       # takes it from target/release, which the rust stage below writes too
       # late for this link. So build that crate here. Otherwise a pull that
@@ -239,10 +279,10 @@ if want qemu; then
       # a `cargo clean` above for a new macOS target removed both.
       if have cargo; then
         say "qemu: cargo build --release -p libdisc -p libsynth (linked into qemu)"
-        cargo build --release -p libdisc -p libsynth ${JOBS[@]+"${JOBS[@]}"}
+        cargo build --release -p libdisc -p libsynth ${CT[@]+"${CT[@]}"} ${JOBS[@]+"${JOBS[@]}"}
       fi
       say "qemu: ninja"
-      ninja -C build/qemu ${JOBS[@]+"${JOBS[@]}"} \
+      ninja -C "$QB" ${JOBS[@]+"${JOBS[@]}"} \
         qemu-system-i386 qemu-img qemu-io "libqemu-embed-i386.$SO"
       BUILT+=(qemu)
     fi
@@ -257,12 +297,15 @@ if want rust; then
   if ! have cargo; then skip rust "no cargo" || true
   else
     say "rust: cargo build --release (default members)"
-    cargo build --release ${JOBS[@]+"${JOBS[@]}"}
+    cargo build --release ${CT[@]+"${CT[@]}"} ${JOBS[@]+"${JOBS[@]}"}
     # The member that is not a default member (Cargo.toml):
     # `launcher-capi`, a cdylib + staticlib of the whole launcher that
-    # nothing installs. Checked rather than built, so it cannot rot.
-    say "rust: cargo check --release --workspace (launcher-capi)"
-    cargo check --release --workspace ${JOBS[@]+"${JOBS[@]}"}
+    # nothing installs. Checked rather than built, so it cannot rot. Once
+    # per checkout: the Intel build of it would prove nothing more.
+    if [ -z "$ROSETTA" ]; then
+      say "rust: cargo check --release --workspace (launcher-capi)"
+      cargo check --release --workspace ${JOBS[@]+"${JOBS[@]}"}
+    fi
     BUILT+=(rust)
   fi
 fi
@@ -282,14 +325,18 @@ if want qt; then
     esac
   else
     say "qt: cargo build --release (launcher-qt)"
-    ( cd launcher-qt && cargo build --release ${JOBS[@]+"${JOBS[@]}"} )
+    ( cd launcher-qt && cargo build --release ${CT[@]+"${CT[@]}"} ${JOBS[@]+"${JOBS[@]}"} )
     BUILT+=(qt)
   fi
 fi
 
 # --- dxvk -------------------------------------------------------------
 if want dxvk; then
-  if ! have meson || ! have ninja; then skip dxvk "needs meson and ninja" || true
+  # No Vulkan driver exists for an Intel Mac (ADR-019: KosmicKrisp is Apple
+  # Silicon only, MoltenVK refused), so the Intel build has no DXVK; its
+  # Direct3D is the executor on Wine, which the exec stage builds.
+  if [ -n "$ROSETTA" ]; then skip dxvk "no Vulkan on an Intel Mac (ADR-019); Direct3D is the executor on Wine" || true
+  elif ! have meson || ! have ninja; then skip dxvk "needs meson and ninja" || true
   elif ! have glslangValidator && ! have glslang; then
     skip dxvk "needs glslang (vulkan-headers, vulkan-loader, glslang)" || true
   else
@@ -322,7 +369,13 @@ fi
 # Compiles against third_party/dxvk's native headers; the DXVK library
 # itself is dlopened at runtime, so this needs the tree prepared, not built.
 if want exec; then
-  if [ ! -f third_party/dxvk/include/native/windows/windows_base.h ]; then
+  if [ -n "$ROSETTA" ]; then
+    # Only the out-of-process library and the PE pair (build-d3dpt-exec.sh
+    # under Rosetta), which need no DXVK headers.
+    say "exec: libd3dpt_exec_remote (the executor on Wine; the Intel build)"
+    scripts/build-d3dpt-exec.sh
+    BUILT+=(exec)
+  elif [ ! -f third_party/dxvk/include/native/windows/windows_base.h ]; then
     skip exec "third_party/dxvk not prepared (run the dxvk stage first)" || true
   else
     say "exec: libd3dpt_exec (the D3D decoder + DXVK executor)"
@@ -407,5 +460,9 @@ if [ -n "$RUN_TEST" ]; then
 fi
 
 echo
-echo "    next: scripts/test.sh        (host stage, ~30 s)"
-echo "          scripts/test.sh all    (adds the XP and DOS guests, ~2 min)"
+if [ -n "$ROSETTA" ]; then
+  echo "    next: scripts/package-macos.sh --x86_64 --no-sign --no-dmg   (stage and check the Intel app)"
+else
+  echo "    next: scripts/test.sh        (host stage, ~30 s)"
+  echo "          scripts/test.sh all    (adds the XP and DOS guests, ~2 min)"
+fi

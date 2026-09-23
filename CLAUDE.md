@@ -66,7 +66,10 @@ Detail in each one's ADR (`docs/10-decisions.md`) or design doc.
   --community`, Developer ID DMG) keeps Homebrew's floor (15.0 now; the
   number follows `brew update`, `scripts/macos-floor.sh`), carries the M15
   Wine executor, and permits Intel Macs untested; no row claims Intel
-  until one has run the reference scene.
+  until one has run the reference scene. The Intel app is made on the
+  Air under Rosetta against an Intel Homebrew (`scripts/build.sh
+  --x86_64`, `package-macos.sh --x86_64`), community only, no Vulkan
+  at all; `docs/build-macos.md` "The Intel build".
 - **Direct3D 8/9 is our own paravirtual device** (ADR-006, doc 14):
   guest serializer DLLs / display-driver DDI + a native host executor.
   `d3dpt/d3dpt_proto.h` is the one header for guest, device and executor.

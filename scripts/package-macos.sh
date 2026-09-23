@@ -15,6 +15,16 @@
 #   scripts/package-macos.sh --community          # ADR-019's community build, which carries
 #                                                 # the Direct3D executor for Wine (M15). The
 #                                                 # App Store build never starts Wine
+#   scripts/package-macos.sh --x86_64             # on an Apple Silicon Mac: the Intel app, from
+#                                                 # scripts/build.sh --x86_64 (build/x86_64,
+#                                                 # target/x86_64-apple-darwin) into
+#                                                 # build/macos-x86_64. Always the community
+#                                                 # build, and with no Vulkan at all: no driver
+#                                                 # exists for an Intel Mac (ADR-019), so its
+#                                                 # Direct3D is the executor on Wine, and Wine
+#                                                 # there is native x86_64. Untested until an
+#                                                 # Intel Mac has run the reference scene
+#                                                 # (docs/build-macos.md, "The Intel build")
 #
 # Notarization needs credentials, stored once by you:
 #   xcrun notarytool store-credentials 2ksbox-notary \
@@ -62,9 +72,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 [ "$(uname -s)" = Darwin ] || { echo "package-macos.sh: macOS only" >&2; exit 1; }
 
-BUILD=1 SIGN=1 NOTARIZE=1 DMG=1 OUT="$ROOT/build/macos"
-COMMUNITY=0
+BUILD=1 SIGN=1 NOTARIZE=1 DMG=1 OUT=""
+COMMUNITY=0 X86_64=""
 IDENTITY="" PROFILE="2ksbox-notary"
+ARGS=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) BUILD=0; shift ;;
@@ -75,13 +86,45 @@ while [ $# -gt 0 ]; do
     --keychain-profile) PROFILE=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
     --community) COMMUNITY=1; shift ;;
-    -h|--help) sed -n '2,59p' "$0"; exit 0 ;;
+    --x86_64) X86_64=1; shift ;;
+    -h|--help) sed -n '2,69p' "$0"; exit 0 ;;
     *) echo "package-macos.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+# The Intel app on an Apple Silicon Mac: the same re-run under Rosetta as
+# scripts/build.sh --x86_64, and the same recognition of it. From there on
+# `uname -m` says x86_64, so the bottle tag, the DMG's name and the
+# architecture check below all come out Intel's without being told, and
+# on an Intel Mac itself nothing is translated and the same lines make its
+# native app.
+ROSETTA=""
+[ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ] && ROSETTA=1
+if [ -n "$X86_64" ] && [ -z "$ROSETTA" ]; then
+  [ -x /usr/local/bin/brew ] || {
+    echo "package-macos.sh: --x86_64 needs the Intel Homebrew at /usr/local (docs/build-macos.md, 'The Intel build')" >&2; exit 1; }
+  exec arch -x86_64 /usr/bin/env PATH="/usr/local/bin:$PATH" "$0" "${ARGS[@]}"
+fi
+ARCH=$(uname -m)
+# This build's inputs: the native build's directories, or the Intel
+# build's beside them (scripts/build.sh --x86_64).
+QB=build/qemu TD=target/release QTD=launcher-qt/target/release D3DPT=build/d3dpt DXVK=build/dxvk CT=()
+if [ -n "$ROSETTA" ]; then
+  [ -x /usr/local/bin/brew ] || {
+    echo "package-macos.sh: the Intel app needs the Intel Homebrew at /usr/local (docs/build-macos.md, 'The Intel build')" >&2; exit 1; }
+  case ":$PATH:" in *:/usr/local/bin:*) ;; *) export PATH="/usr/local/bin:$PATH" ;; esac
+  QB=build/x86_64/qemu TD=target/x86_64-apple-darwin/release
+  QTD=launcher-qt/target/x86_64-apple-darwin/release D3DPT=build/x86_64/d3dpt DXVK=build/x86_64/dxvk
+  CT=(--target x86_64-apple-darwin)
+  OUT="${OUT:-$ROOT/build/macos-x86_64}"
+fi
+OUT="${OUT:-$ROOT/build/macos}"
+# The Intel app is the community build and nothing else (ADR-019): the
+# App Store build is Apple Silicon only.
+if [ "$ARCH" = x86_64 ]; then COMMUNITY=1; fi
 # Absolute, whatever was typed: the checks below `cd /` before they run the
 # staged binaries, and a relative --out broke there.
 case "$OUT" in /*) ;; *) OUT="$PWD/$OUT" ;; esac
+echo "arch           $ARCH${ROSETTA:+ (under Rosetta: the Intel app, from $QB and $TD)}${COMMUNITY:+, the community build}"
 
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 APP="$OUT/2ksbox.app"
@@ -89,8 +132,8 @@ C="$APP/Contents"
 
 need() { [ -e "$1" ] || { echo "package-macos.sh: missing $1${2:+ ($2)}" >&2; exit 1; }; }
 warn() { echo "package-macos.sh: $*" >&2; }
-need build/qemu/libqemu-embed-i386.dylib "scripts/configure-qemu.sh && ninja -C build/qemu libqemu-embed-i386.dylib"
-need build/qemu/qemu-img "ninja -C build/qemu qemu-img"
+need "$QB/libqemu-embed-i386.dylib" "scripts/configure-qemu.sh && ninja -C $QB libqemu-embed-i386.dylib"
+need "$QB/qemu-img" "ninja -C $QB qemu-img"
 need qemu/pc-bios "scripts/prepare-qemu.sh"
 
 # The macOS the app is for: Homebrew's floor, which scripts/build.sh built
@@ -102,22 +145,22 @@ export MACOSX_DEPLOYMENT_TARGET
 FLOOR=$MACOSX_DEPLOYMENT_TARGET
 
 if [ "$BUILD" = 1 ]; then
-  cargo build --release -p player
+  cargo build --release -p player ${CT[@]+"${CT[@]}"}
   # Its own cargo workspace (ADR-015), so its own build command. That
   # boundary keeps Qt 6 off a plain `cargo build`.
-  ( cd launcher-qt && cargo build --release )
+  ( cd launcher-qt && cargo build --release ${CT[@]+"${CT[@]}"} )
 fi
-need launcher-qt/target/release/launcher-qt "scripts/build.sh qt"
-need target/release/player
+need "$QTD/launcher-qt" "scripts/build.sh qt"
+need "$TD/player"
 
 # --- stage -----------------------------------------------------------
 rm -rf "$APP"
 mkdir -p "$C"/{MacOS,Resources,lib/2ksbox,libexec/2ksbox,share/2ksbox,share/doc/2ksbox}
 
-install -m755 launcher-qt/target/release/launcher-qt "$C/MacOS/2ksbox"
-install -m755 target/release/player   "$C/MacOS/2ksbox-player"
-install -m755 build/qemu/libqemu-embed-i386.dylib "$C/lib/2ksbox/"
-install -m755 build/qemu/qemu-img "$C/libexec/2ksbox/"
+install -m755 "$QTD/launcher-qt" "$C/MacOS/2ksbox"
+install -m755 "$TD/player"   "$C/MacOS/2ksbox-player"
+install -m755 "$QB/libqemu-embed-i386.dylib" "$C/lib/2ksbox/"
+install -m755 "$QB/qemu-img" "$C/libexec/2ksbox/"
 cp -a qemu/pc-bios "$C/share/2ksbox/pc-bios"
 install -m644 COPYING THIRD-PARTY-NOTICES.md README.md "$C/share/doc/2ksbox/"
 
@@ -139,9 +182,15 @@ fi
 # all this has to do is put them where that expects.
 
 D3D=1
-if [ -f build/d3dpt/libd3dpt_exec.dylib ] && [ -f build/dxvk/src/d3d9/libdxvk_d3d9.0.dylib ]; then
-  install -m755 build/d3dpt/libd3dpt_exec.dylib "$C/lib/2ksbox/"
-  install -m755 build/dxvk/src/d3d9/libdxvk_d3d9.0.dylib "$C/lib/2ksbox/"
+if [ "$ARCH" = x86_64 ]; then
+  # No Vulkan driver exists for an Intel Mac (ADR-019: KosmicKrisp is
+  # arm64 only, MoltenVK refused), so the in-process executor, DXVK and
+  # the loader stay out; the pair below is the Intel app's Direct3D.
+  echo "direct3d       the executor on Wine only (no Vulkan driver exists for an Intel Mac)"
+  D3D=0
+elif [ -f "$D3DPT/libd3dpt_exec.dylib" ] && [ -f "$DXVK/src/d3d9/libdxvk_d3d9.0.dylib" ]; then
+  install -m755 "$D3DPT/libd3dpt_exec.dylib" "$C/lib/2ksbox/"
+  install -m755 "$DXVK/src/d3d9/libdxvk_d3d9.0.dylib" "$C/lib/2ksbox/"
 else
   warn "no Direct3D executor (scripts/build-d3dpt-exec.sh); XP Direct3D will fall back"
   D3D=0
@@ -153,10 +202,13 @@ fi
 # touches. The App Store build is macOS 26+ with KosmicKrisp and never
 # starts Wine, so it carries none of this.
 if [ "$COMMUNITY" = 1 ]; then
-  if [ -f build/d3dpt/libd3dpt_exec_remote.dylib ] && [ -f build/d3dpt/wine/d3dpt_exec.dll ] && [ -f build/d3dpt/wine/d3dpt-exec-host.exe ]; then
-    install -m755 build/d3dpt/libd3dpt_exec_remote.dylib "$C/lib/2ksbox/"
+  if [ -f "$D3DPT/libd3dpt_exec_remote.dylib" ] && [ -f "$D3DPT/wine/d3dpt_exec.dll" ] && [ -f "$D3DPT/wine/d3dpt-exec-host.exe" ]; then
+    install -m755 "$D3DPT/libd3dpt_exec_remote.dylib" "$C/lib/2ksbox/"
     mkdir -p "$C/lib/2ksbox/wine"
-    install -m644 build/d3dpt/wine/d3dpt_exec.dll build/d3dpt/wine/d3dpt-exec-host.exe "$C/lib/2ksbox/wine/"
+    install -m644 "$D3DPT/wine/d3dpt_exec.dll" "$D3DPT/wine/d3dpt-exec-host.exe" "$C/lib/2ksbox/wine/"
+  elif [ "$ARCH" = x86_64 ]; then
+    echo "package-macos.sh: no executor for Wine in $D3DPT (scripts/build.sh --x86_64 exec, mingw-w64), and it is the Intel app's only Direct3D" >&2
+    exit 1
   else
     warn "no executor for Wine (scripts/build-d3dpt-exec.sh --wine, mingw-w64); a Mac below Vulkan 1.3 gets no Direct3D"
   fi
@@ -462,6 +514,20 @@ done)
 if [ -n "$above" ]; then
   printf '%s\n' "$above" >&2
   echo "package-macos.sh: the above need a newer macOS than the floor, $FLOOR" >&2
+  fail=1
+fi
+
+# And the architecture: every Mach-O carries this build's, which is the
+# Mac's under Rosetta as well. A file that does not was taken from the
+# other build (an arm64 KosmicKrisp in the Intel app, say), and the
+# loader on the other Mac answers that with "no suitable image found".
+wrong=$(machos | while read -r f; do
+  archs=$(lipo -archs "$f" 2>/dev/null || true)
+  case " $archs " in *" $ARCH "*) ;; *) echo "  ${archs:-?}  ${f#"$C/"}" ;; esac
+done)
+if [ -n "$wrong" ]; then
+  printf '%s\n' "$wrong" >&2
+  echo "package-macos.sh: the above are not $ARCH" >&2
   fail=1
 fi
 

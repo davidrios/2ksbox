@@ -5,6 +5,8 @@
 #
 #   scripts/macos-floor.sh                 15.0
 #   scripts/macos-floor.sh --tag [15.0]    arm64_sequoia, Homebrew's bottle tag
+#                                          (sequoia on Intel, and in the Rosetta
+#                                          shell scripts/build.sh --x86_64 runs in)
 #
 # Why Homebrew's (docs/build-macos.md, "The floor"): the app carries
 # Homebrew's libraries, and Homebrew publishes a bottle of each for every
@@ -36,7 +38,11 @@ case "${1:-}" in
     # Homebrew's own name for the release, not a table of ours: a new
     # macOS is a new codename, and brew is what knows it.
     name=$(brew ruby -e "puts MacOSVersion.new('$major').to_sym")
-    echo "arm64_$name"
+    # Apple Silicon bottles are tagged `arm64_<codename>`, Intel ones by the
+    # bare codename. `uname -m` says x86_64 in a Rosetta shell too, which is
+    # where the Intel build is made on an Apple Silicon Mac
+    # (docs/build-macos.md, "The Intel build").
+    case "$(uname -m)" in arm64) echo "arm64_$name" ;; *) echo "$name" ;; esac
     ;;
   '') floor ;;
   *) echo "usage: macos-floor.sh [--tag [version]]" >&2; exit 2 ;;

@@ -10,8 +10,8 @@ Homebrew pours the bottle built for the macOS it runs on, so every library
 `package-macos.sh` copied from it on a macOS 26 Mac is a macOS 26 build,
 and the app would refuse to start on anything older. Homebrew also
 publishes the same version built on each older macOS it supports (the
-tag names it: `arm64_sequoia` is macOS 15), and this script swaps those
-in. It replaces only the files that need it, since a bottle whose own
+tag names it: `arm64_sequoia` is macOS 15 on Apple Silicon, `sequoia`
+macOS 15 on Intel), and this script swaps those in. It replaces only the files that need it, since a bottle whose own
 build system chose a lower target (Qt's base, glib) is already fine.
 
 A staged file is matched to the Homebrew file it was copied from by its
@@ -130,9 +130,11 @@ def fetch_bottle(formula, tag, cache):
     entries = [m for m in index.get("manifests", [])
                if tag in m.get("annotations", {}).get("org.opencontainers.image.ref.name", "").split(".")]
     if not entries:
+        # The tags of this architecture: Intel's carry no prefix.
+        arm = tag.startswith("arm64_")
         have = sorted({t for m in index.get("manifests", [])
                        for t in m.get("annotations", {}).get("org.opencontainers.image.ref.name", "").split(".")
-                       if t.startswith("arm64_")})
+                       if t.startswith("arm64_") == arm})
         die("Homebrew publishes no %s bottle of %s %s (it has %s): its floor has moved past this one, "
             "so scripts/macos-floor.sh should say so after `brew update`" % (tag, name, pkgver, ", ".join(have)))
     digest = entries[0]["annotations"]["sh.brew.bottle.digest"]
