@@ -722,9 +722,11 @@ impl Form {
         self.voodoo2_undither = undither && self.voodoo2;
     }
 
-    /// The sentence under the pair. It says the setting is not a
-    /// smoothing filter but the dither arithmetically undone, so nothing
-    /// drawn sharp comes back soft, and that it costs main-loop time per
+    /// The sentence under the pair. The box is named after the Voodoo3's
+    /// "22-bit" scanout filter, the thing a user of the era knows, so the
+    /// first sentence says what that filter was for and the second how
+    /// this one differs: not a blur but the dither arithmetically undone,
+    /// so nothing drawn sharp comes back soft, at a main-loop cost per
     /// frame, which is why it is not always on. Without the card there
     /// is no sentence: the greyed box beside the card's own says enough.
     pub fn voodoo2_undither_notes(&self) -> &'static [&'static str] {
@@ -732,11 +734,11 @@ impl Form {
             &[]
         } else if self.voodoo2_undither {
             &[
-                "Undoes the card's 16-bit dither pattern, so skies and shading come out smooth instead of speckled.",
-                "Textures and edges stay exactly as drawn. Costs about 1.4 ms per frame on the host.",
+                "Like the Voodoo3's 22-bit filter, this removes the 16-bit dither the chip stores its picture with, so skies and shading come out smooth instead of speckled.",
+                "Unlike that filter it is exact, not a blur: the dither pattern is inverted, so textures and edges stay as drawn. Costs about 1.4 ms per frame on the host.",
             ]
         } else {
-            &["The card's 16-bit dither pattern is shown as the chip wrote it."]
+            &["The picture is shown as a Voodoo 2 showed it: the chip's 16-bit dither pattern, unfiltered."]
         }
     }
 

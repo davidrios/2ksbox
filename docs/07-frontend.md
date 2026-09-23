@@ -261,11 +261,14 @@ The fields, and why each is what it is:
   under the adapter. When on, the machine gets `-device
   voodoo2,addr=0x05` and nothing else changes. It is off unless picked,
   on every family, because a card with no guest driver is a New Hardware
-  wizard on every boot. **"Undo its dither"** (`voodoo2_undither`, doc
-  21 §12) is on the same line: disabled without the card
+  wizard on every boot. **"Voodoo3 undither filter"** (`voodoo2_undither`,
+  doc 21 §12) is on the same line: disabled without the card
   (`voodoo2_undither_enabled()`), turned off with it, written only where
-  there is a device. It costs ~1.4 ms of the main loop per presented
-  frame, hence a choice. The notes are `voodoo2_notes()`; with the box on
+  there is a device. It is named after the Voodoo3's "22-bit" scanout
+  filter, the thing a user of the era knows, and its notes
+  (`voodoo2_undither_notes()`) say how it differs: exact, not a blur
+  (user rename, 2026-09-23). It costs ~1.4 ms of the main loop per
+  presented frame, hence a choice. The notes are `voodoo2_notes()`; with the box on
   the second line says the card does nothing until a real Voodoo 2
   driver (3dfx's own, the user's download; the disc carries none) is
   installed in the guest (user request, 2026-09-23).

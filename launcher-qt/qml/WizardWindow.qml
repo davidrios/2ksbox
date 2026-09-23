@@ -594,9 +594,9 @@ Window {
 
                             // --- the Voodoo 2 -------------------------------------------
                             // Two checkboxes on one line: the card beside the display
-                            // adapter (doc 21), and the card's own dither undone at
-                            // scanout (doc 21 §12), which is a property of that card and
-                            // so belongs next to it rather than under a heading of its
+                            // adapter (doc 21), and the "Voodoo3 undither filter", the card's
+                            // own dither undone at scanout (doc 21 §12), a property of that card
+                            // that belongs next to it rather than under a heading of its
                             // own. Whether the second can be answered at all is the
                             // form's to say, not this file's. The sentences are the
                             // shared form's too.
@@ -610,7 +610,7 @@ Window {
                                     onToggled: root.wizard.chooseVoodoo2(checked)
                                 }
                                 CheckBox {
-                                    text: qsTr("Undo its dither")
+                                    text: qsTr("Voodoo3 undither filter")
                                     enabled: root.wizard.voodoo2UnditherEnabled
                                     checked: root.wizard.voodoo2Undither
                                     onToggled: root.wizard.chooseVoodoo2Undither(checked)

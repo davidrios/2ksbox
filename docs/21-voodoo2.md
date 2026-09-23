@@ -544,7 +544,9 @@ a non-zero threshold to **`maxRgbDelta`** (0x230, `SST_scrFilter`, with
 until 3dfx's driver programs it. It is kept as what the hardware looked
 like.
 
-**`undither=on`** (`voodoo/undither.c`, ours) inverts the dither. The
+**`undither=on`** (`voodoo/undither.c`, ours; the launcher's "Voodoo3
+undither filter" checkbox, named after the Voodoo3's "22-bit" filter
+that users know the idea by, doc 07) inverts the dither. The
 matrix is the table the rasterizer dithered with
 (`86box/vid_voodoo_dither.h`, indexed by `(real_y & 3, x & 3)`), and for
 a linear non-SLI buffer the phase at scanout is `(y & 3, x & 3)`, known
