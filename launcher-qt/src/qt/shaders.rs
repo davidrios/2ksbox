@@ -62,19 +62,6 @@ pub mod ffi {
         fn path_at(self: &ProfileModel, row: i32) -> QString;
 
         #[qinvokable]
-        fn id_at(self: &ProfileModel, row: i32) -> QString;
-
-        /// The profile's display name. A plain invokable rather than
-        /// making QML reach through `index()`/`data()` for one string.
-        #[qinvokable]
-        fn name_at(self: &ProfileModel, row: i32) -> QString;
-
-        /// The row whose id matches, or -1 — for the wizard's profile
-        /// combo, which has to show the machine's saved choice.
-        #[qinvokable]
-        fn row_of_id(self: &ProfileModel, id: &QString) -> i32;
-
-        #[qinvokable]
         fn delete_at(self: Pin<&mut ProfileModel>, row: i32);
     }
 
@@ -271,23 +258,6 @@ impl ffi::ProfileModel {
 
     fn path_at(&self, row: i32) -> QString {
         self.entries.get(row as usize).map(|e| qs(e.path.display())).unwrap_or_default()
-    }
-
-    fn id_at(&self, row: i32) -> QString {
-        self.entries.get(row as usize).map(|e| qs(shader_library::id_of(&e.path))).unwrap_or_default()
-    }
-
-    fn name_at(&self, row: i32) -> QString {
-        self.entries.get(row as usize).map(|e| qs(&e.profile.name)).unwrap_or_default()
-    }
-
-    fn row_of_id(&self, id: &QString) -> i32 {
-        let id = id.to_string();
-        self.entries
-            .iter()
-            .position(|e| shader_library::id_of(&e.path) == id)
-            .map(|i| i as i32)
-            .unwrap_or(-1)
     }
 
     fn delete_at(self: Pin<&mut Self>, row: i32) {

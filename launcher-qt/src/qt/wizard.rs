@@ -167,7 +167,14 @@ pub mod ffi {
         #[qproperty(QString, floppy)]
         #[qproperty(i32, boot)]
         #[qproperty(QString, boot_note)]
-        /// The chosen shader profile's id, or "" for the app default.
+        /// The shader profile picker, the shape of the sound card's:
+        /// the rows are the model's (`Form::shader_profile_labels`, the
+        /// app default first), the index is which of them this machine
+        /// names, and the id is published for anything that wants the
+        /// value rather than the row ("" for the app default).
+        #[qproperty(QStringList, shader_profile_labels)]
+        #[qproperty(i32, shader_profile_index)]
+        #[qproperty(bool, shader_profile_is_default)]
         #[qproperty(QString, shader_profile)]
         #[qproperty(QString, error)]
         type Wizard = super::WizardRust;
@@ -282,6 +289,17 @@ pub mod ffi {
         #[qinvokable]
         fn reset_music(self: Pin<&mut Wizard>);
 
+        /// The shader profile as a row of `shaderProfileLabels`, with
+        /// the same reset. `refresh_profiles` rescans the library, for
+        /// a profile saved or deleted while the form is open; opening
+        /// the form scans it anyway.
+        #[qinvokable]
+        fn choose_shader_profile(self: Pin<&mut Wizard>, row: i32);
+        #[qinvokable]
+        fn reset_shader_profile(self: Pin<&mut Wizard>);
+        #[qinvokable]
+        fn refresh_profiles(self: Pin<&mut Wizard>);
+
         /// The two files behind the MIDI port. Invokable rather than a
         /// writable property for the reason `set_floppy_path` is: what
         /// the form shows under the picker depends on them.
@@ -368,6 +386,7 @@ use cxx_qt_lib::{QString, QStringList};
 use launcher_core::browse::name_filter;
 use launcher_core::bundle::{Accel, Boot, CpuSpeed, Family, Optimization};
 use launcher_core::library;
+use launcher_core::shader_library::{self, ProfileEntry};
 use launcher_core::wizard::{Form, Section, DISK_FILTER, FLOPPY_FILTER, MEDIA_FILTER, SOUNDFONT_FILTER};
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -450,11 +469,18 @@ pub struct WizardRust {
     floppy: QString,
     boot: i32,
     boot_note: QString,
+    shader_profile_labels: QStringList,
+    shader_profile_index: i32,
+    shader_profile_is_default: bool,
     shader_profile: QString,
     error: QString,
 
     /// The form. Everything above is a projection of it.
     form: Form,
+    /// The profile library as last scanned (opening the form, and
+    /// `refresh_profiles`): the shader picker's rows are these, through
+    /// `Form::shader_profile_labels`.
+    profiles: Vec<ProfileEntry>,
 }
 
 /// Index <-> enum, in the order each enum's own `ALL` lists it, which is
@@ -477,14 +503,37 @@ fn labels(items: impl IntoIterator<Item = &'static str>) -> QStringList {
 
 impl ffi::Wizard {
     fn open_fresh(mut self: Pin<&mut Self>) {
+        self.as_mut().scan_profiles();
         self.as_mut().rust_mut().form.open_fresh();
         self.publish();
     }
 
     fn open_edit(mut self: Pin<&mut Self>, bundle_path: &QString) {
         let path = PathBuf::from(bundle_path.to_string());
+        self.as_mut().scan_profiles();
         self.as_mut().rust_mut().form.open_edit_path(path);
         self.publish();
+    }
+
+    fn scan_profiles(self: Pin<&mut Self>) {
+        self.rust_mut().profiles = shader_library::scan(&shader_library::default_dir());
+    }
+
+    /// A rescan while the form is open is an edit like any other: the
+    /// republish it ends in must not write the form's stale name back
+    /// over what was typed (`edit`).
+    fn refresh_profiles(mut self: Pin<&mut Self>) {
+        self.as_mut().scan_profiles();
+        self.edit(|_| {});
+    }
+
+    fn choose_shader_profile(self: Pin<&mut Self>, row: i32) {
+        let row = row.max(0) as usize;
+        self.edit_with_profiles(|form, profiles| form.choose_shader_profile(profiles, row));
+    }
+
+    fn reset_shader_profile(self: Pin<&mut Self>) {
+        self.edit(Form::reset_shader_profile);
     }
 
     /// Through `edit` like every other verb, although the page is not a
@@ -715,16 +764,26 @@ impl ffi::Wizard {
         self.publish();
     }
 
+    /// `edit` for the verb whose answer is a row of the profile library.
+    fn edit_with_profiles(mut self: Pin<&mut Self>, change: impl FnOnce(&mut Form, &[ProfileEntry])) {
+        self.as_mut().pull();
+        {
+            let mut this = self.as_mut().rust_mut();
+            let this = &mut *this;
+            change(&mut this.form, &this.profiles);
+        }
+        self.publish();
+    }
+
     /// The plain, two-way-bound text fields, back into the form. A QML
     /// `TextField` writes its property and nothing else, so this catches
     /// the form up before anything reads it.
     fn pull(mut self: Pin<&mut Self>) {
-        let (name, disk_path, install_media, floppy, shader_profile, extra_qemu_args) = (
+        let (name, disk_path, install_media, floppy, extra_qemu_args) = (
             self.name.to_string(),
             self.disk_path.to_string(),
             self.install_media.to_string(),
             self.floppy.to_string(),
-            self.shader_profile.to_string(),
             self.extra_qemu_args.to_string(),
         );
         let (existing_disk, disk_size_gb) = (self.existing_disk, self.disk_size_gb);
@@ -733,7 +792,6 @@ impl ffi::Wizard {
         form.disk_path = disk_path;
         form.install_media = install_media;
         form.floppy = floppy;
-        form.shader_profile = Some(shader_profile).filter(|p| !p.is_empty());
         form.extra_qemu_args = extra_qemu_args;
         form.existing_disk = existing_disk;
         form.disk_size_gb = disk_size_gb.max(1) as u32;
@@ -784,9 +842,10 @@ impl ffi::Wizard {
         let (pad, pad_applies, pad_labels, pad_is_default, pad_note, pad_warning);
         let (optimizations_mask, optimizations_summary, optimizations_note, optimizations_are_default, optimizations_all_off, optimizations_all_on);
         let (existing_disk, disk_path, disk_size_gb, install_media, floppy, boot, boot_note);
-        let (shader_profile, error);
+        let (shader_profile_labels, shader_profile_index, shader_profile_is_default, shader_profile, error);
         {
             let f = &self.rust().form;
+            let profiles = &self.rust().profiles;
             let range = f.ram_range();
             let note = f.accel_note();
             open = f.open;
@@ -873,6 +932,11 @@ impl ffi::Wizard {
             floppy = qs(&f.floppy);
             boot = index_of(&Boot::ALL, f.boot);
             boot_note = qs_opt(f.boot_note());
+            shader_profile_labels = Form::shader_profile_labels(profiles)
+                .into_iter()
+                .fold(QStringList::default(), |mut l, s| { l.append(qs(s)); l });
+            shader_profile_index = f.shader_profile_index(profiles) as i32;
+            shader_profile_is_default = f.shader_profile_is_default();
             shader_profile = f.shader_profile.as_deref().map(qs).unwrap_or_default();
             error = qs_opt(f.error.as_deref());
         }
@@ -956,6 +1020,9 @@ impl ffi::Wizard {
         self.as_mut().set_floppy(floppy);
         self.as_mut().set_boot(boot);
         self.as_mut().set_boot_note(boot_note);
+        self.as_mut().set_shader_profile_labels(shader_profile_labels);
+        self.as_mut().set_shader_profile_index(shader_profile_index);
+        self.as_mut().set_shader_profile_is_default(shader_profile_is_default);
         self.as_mut().set_shader_profile(shader_profile);
         self.as_mut().set_error(error);
         self.as_mut().set_open(open);

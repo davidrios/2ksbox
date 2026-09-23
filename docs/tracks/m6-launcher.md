@@ -67,7 +67,8 @@ host`:
   `create`, `closebox`, `clone`, `adddisc`, `pickdisc`, `discs`,
   `snapshots`, `profiles`, `saveprofile`, `firstrun`, `escfocus`,
   `editor`; cases in `launcher-qt/qml/Main.qml`) and
-  `LAUNCHER_QT_ARG=<its argument>`. Without `LAUNCHER_QT_SHOT` the screen
+  `LAUNCHER_QT_ARG=<its argument>` (`wizard` takes `<family>[:<page>]`,
+  so `xp:2` photographs the Display page). Without `LAUNCHER_QT_SHOT` the screen
   runs its script, prints what the window *shows* and quits — no GPU, no
   session. With `LAUNCHER_QT_SHOT=<png>` (and `LAUNCHER_QT_DELAY=<ms>`) it
   also grabs a picture; offscreen works (the `package` check depends on

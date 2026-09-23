@@ -33,8 +33,13 @@ use crate::bundle::{
     Sound, Video,
 };
 use crate::disc_library::DISC_FILTER;
+use crate::shader_library::{self, ProfileEntry};
 use crate::{host_gpu, library, player};
 use std::path::{Path, PathBuf};
+
+/// The shader picker's first row, and the "Shader" column's word for a
+/// machine that names no profile (`machines::Machines::shader_label`).
+pub const SHADER_DEFAULT_LABEL: &str = "(default)";
 
 pub const DISK_FILTER: Filter<'static> = ("Disk images", &["qcow2", "img", "raw"]);
 pub const FLOPPY_FILTER: Filter<'static> = ("Floppy images", &["img", "ima", "vfd", "flp"]);
@@ -1066,6 +1071,49 @@ impl Form {
     pub fn reset_music(&mut self) {
         self.music = bundle::default_music(self.family);
         self.music_chosen = false;
+    }
+
+    /// The shader picker's rows: the app default first, then every
+    /// profile of the library by name, in `shader_library::scan`'s
+    /// order. A front end hands the same `profiles` to the three verbs
+    /// below, so a row is a profile and nothing has to translate between
+    /// an index and an id in the widget. The Qt front end kept that
+    /// translation in the window until 2026-09-23, with a delegate of
+    /// its own to do it, and that was the one combo box in the form
+    /// that did not look like the others.
+    pub fn shader_profile_labels(profiles: &[ProfileEntry]) -> Vec<String> {
+        std::iter::once(SHADER_DEFAULT_LABEL.to_string())
+            .chain(profiles.iter().map(|e| e.profile.name.clone()))
+            .collect()
+    }
+
+    /// The row the form's `shader_profile` is on: 0 for the app default,
+    /// and 0 too for an id no profile of `profiles` has any more (a
+    /// profile deleted after a machine picked it plays as the default,
+    /// `shader_library::find`, so that is what the picker shows).
+    pub fn shader_profile_index(&self, profiles: &[ProfileEntry]) -> usize {
+        self.shader_profile
+            .as_deref()
+            .and_then(|id| profiles.iter().position(|e| shader_library::id_of(&e.path) == id))
+            .map_or(0, |i| i + 1)
+    }
+
+    pub fn shader_profile_is_default(&self) -> bool {
+        self.shader_profile.is_none()
+    }
+
+    /// Row `index` of `shader_profile_labels(profiles)`; a row past the
+    /// end is ignored, as `choose_sound` ignores a card the family lacks.
+    pub fn choose_shader_profile(&mut self, profiles: &[ProfileEntry], index: usize) {
+        if index == 0 {
+            self.shader_profile = None;
+        } else if let Some(entry) = profiles.get(index - 1) {
+            self.shader_profile = Some(shader_library::id_of(&entry.path));
+        }
+    }
+
+    pub fn reset_shader_profile(&mut self) {
+        self.shader_profile = None;
     }
 
     /// Whether the SoundFont field is worth showing at all.

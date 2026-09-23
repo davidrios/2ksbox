@@ -39,7 +39,6 @@ Window {
 
     // Typed, not `var` — see `ShaderProfilesWindow.qml`.
     required property Wizard wizard
-    required property ProfileModel profiles
 
     signal saved()
 
@@ -76,6 +75,10 @@ Window {
     /// slip is a failing check.
     readonly property alias shownD3d9: d3d9Combo.currentText
     readonly property alias shownD3d9Count: d3d9Combo.count
+    /// The shader profile combo, the same way: its rows come from the
+    /// model since 2026-09-23, so a misspelt property empties it too.
+    readonly property alias shownShaderProfile: profileBox.currentText
+    readonly property alias shownShaderProfileCount: profileBox.count
 
     /// The same for the extra QEMU arguments, which is bound the same way,
     /// plus a scroll to it so a screenshot shows it.
@@ -636,37 +639,30 @@ Window {
                                 opacity: 0.75
                             }
 
+                            // --- the shader profile -------------------------------------
+                            // The same shape as every picker above: the rows are the
+                            // model's (the app default first, then the library by
+                            // name), the choice is a row, and the style draws the
+                            // list. It had a delegate and a row-to-id translation of
+                            // its own until 2026-09-23, and was the one combo box in
+                            // the form that looked unlike the rest.
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 8
                                 Label { text: qsTr("Shader profile"); Layout.minimumWidth: 150 }
                                 ComboBox {
                                     id: profileBox
-                                    Layout.fillWidth: true
-                                    // Index 0 is "(default)"; the profiles follow it, so a
-                                    // row in `profiles` is at index+1 here.
-                                    model: root.profiles.count + 1
-                                    displayText: currentIndex === 0
-                                        ? qsTr("(default)")
-                                        : root.profiles.nameAt(currentIndex - 1)
-                                    currentIndex: {
-                                        const row = root.profiles.rowOfId(root.wizard.shaderProfile)
-                                        return row < 0 ? 0 : row + 1
-                                    }
-                                    delegate: ItemDelegate {
-                                        required property int index
-                                        width: profileBox.width
-                                        text: index === 0
-                                            ? qsTr("(default)")
-                                            : root.profiles.nameAt(index - 1)
-                                        onClicked: {
-                                            profileBox.currentIndex = index
-                                            root.wizard.shaderProfile =
-                                                index === 0 ? "" : root.profiles.idAt(index - 1)
-                                            profileBox.popup.close()
-                                        }
-                                    }
+                                    Layout.preferredWidth: 260
+                                    model: root.wizard.shaderProfileLabels
+                                    currentIndex: root.wizard.shaderProfileIndex
+                                    onActivated: root.wizard.chooseShaderProfile(currentIndex)
                                 }
+                                Button {
+                                    text: qsTr("Default")
+                                    enabled: !root.wizard.shaderProfileIsDefault
+                                    onClicked: root.wizard.resetShaderProfile()
+                                }
+                                Item { Layout.fillWidth: true }
                             }
                     }
 

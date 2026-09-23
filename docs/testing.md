@@ -58,7 +58,7 @@ Environment: `WINXP_IMG` (`~/vms/winxp.qcow2`), `GUEST_ISO` (newest
 | `dirshelf`, `shelforder` | a folder on the disc shelf and on the boot drive; the shelf is one list in one order |
 | `clone`, `qt-clone` | **Clone…** gives a machine with its own disk copy, snapshots kept, the original untouched; refused while the machine runs (doc 07) |
 | `shader-defaults` | the first-run shader offer without a toolkit |
-| `qt-wizard`, `qt-close`, `qt-esc`, `qt-profile`, `qt-shelf`, `qt-firstrun`, `qt-snapshots` | real Qt windows driven offscreen: what the controls *show* agrees with the shared model; close/Esc reach exactly one window; the form opens where it should (only with a built `launcher-qt`) |
+| `qt-wizard`, `qt-close`, `qt-esc`, `qt-profile`, `qt-shelf`, `qt-firstrun`, `qt-snapshots` | real Qt windows driven offscreen: what the controls *show* agrees with the shared model (the shader profile combo among them: the app default and two planted profiles, the default showing); close/Esc reach exactly one window; the form opens where it should (only with a built `launcher-qt`) |
 | `host-check` | `launcher --host-check`: no Vulkan reported unavailable, software Vulkan warned not refused, loader and floor always named (ADR-013/018) |
 | `optimizations` | the form's emulation switches land on `-cpu` / `-accel tcg` and our QEMU accepts all fourteen flipped; an untouched machine emits nothing; `pinned-regs` never reaches the command line |
 | `pointer` | "Seamless mouse": Windows gets `-usb -device usb-tablet`, DOS neither; toggling removes/restores both |

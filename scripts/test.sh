@@ -931,6 +931,12 @@ qtwizard_fields_check() { # the fields, family by family
   # way up. Offscreen, so a check never throws a window on the desktop.
   export LAUNCHER_LIBRARY_DIR="$dir/library" LAUNCHER_DISC_LIBRARY="$dir/discs.toml"
   export LAUNCHER_SHADER_PROFILES_DIR="$dir/profiles" QT_QPA_PLATFORM=offscreen
+  # Two profiles in the scratch library, for the shader picker below: a
+  # profile is a name and a preset path, and the path is not opened
+  # until a machine runs with it.
+  mkdir -p "$dir/profiles"
+  printf 'name = "Aperture"\npreset = "crt/crt-aperture.slangp"\n\n[params]\n' > "$dir/profiles/aperture.toml"
+  printf 'name = "Lottes"\npreset = "crt/crt-lottes.slangp"\n\n[params]\n' > "$dir/profiles/lottes.toml"
   # The model is right and the control disagrees is a whole class of Qt
   # bug (a spin box bounds the value it is handed against the range it
   # has at that moment, and does not revisit it when the range widens),
@@ -1003,6 +1009,17 @@ qtwizard_fields_check() { # the fields, family by family
       dos:*"applies false"|other:*"applies false") ;;
       *) echo "$f: the Direct3D row's visibility does not follow the adapter: $o"; rc=1;;
     esac
+    # The shader profile combo, whose rows are the model's since
+    # 2026-09-23 (it was the one picker with a delegate of its own, and
+    # looked it): the app default and the two profiles planted above, the
+    # default showing on a new machine.
+    o="$(printf '%s\n' "$out" | sed -n 's/^\[diag\] wizard shader: //p')"
+    shown="$(printf '%s' "$o" | sed -n 's/^shown \[\(.*\)\] of .*/\1/p')"
+    n="$(printf '%s' "$o" | sed -n 's/^shown \[.*\] of \([0-9]*\) .*/\1/p')"
+    echo "  $f: shader $o"
+    [ "$n" = 3 ] || { echo "$f: the shader profile combo has $n entries, not the default and the two profiles"; rc=1; }
+    [ "$shown" = "(default)" ] || { echo "$f: a new machine's shader profile combo shows [$shown], not the default"; rc=1; }
+    case "$o" in *"model 0 default true") ;; *) echo "$f: the model does not say the default: $o"; rc=1;; esac
   done
   # The optimization shortcuts beside boxes that were clicked by hand
   # (user, 2026-09-12: "Turn all on / off does nothing" after three boxes

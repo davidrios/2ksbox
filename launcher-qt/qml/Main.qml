@@ -372,7 +372,6 @@ ApplicationWindow {
     WizardWindow {
         id: wizardWindow
         wizard: wizard
-        profiles: profiles
         onSaved: machines.refresh()
     }
 
@@ -404,7 +403,9 @@ ApplicationWindow {
         id: shaderWindow
         profiles: profiles
         editor: editor
-        onChanged: machines.refresh()
+        // The form's own picker lists the library too (a machine being
+        // edited while a profile is deleted must not go on offering it).
+        onChanged: { wizard.refreshProfiles(); machines.refresh() }
     }
 
     ShaderEditorWindow {
@@ -413,6 +414,7 @@ ApplicationWindow {
         profilesDir: machines.profileDir()
         onChanged: {
             profiles.refresh()
+            wizard.refreshProfiles()
             machines.refresh()
         }
     }
@@ -454,7 +456,7 @@ ApplicationWindow {
             switch (diag.screen) {
             case "wizard":
                 wizard.openFresh(); profiles.refresh(); wizardWindow.show()
-                // `LAUNCHER_QT_ARG=<win98|xp|dos|other>` exercises the one piece
+                // `LAUNCHER_QT_ARG=<win98|xp|dos|other>[:<page>]` exercises the one piece
                 // of form behaviour a screenshot can actually prove:
                 // switching family moves the memory, processor,
                 // acceleration and networking defaults with it, but only
@@ -463,6 +465,11 @@ ApplicationWindow {
                 // order `familyLabels()` hands the combo box, so the two
                 // cannot get out of step.
                 const families = ["win98", "xp", "dos", "other"]
+                // The page the shot is of, as a section index after a
+                // colon (`xp:2` is the Display page), for looking at one
+                // row of the form rather than always its first page.
+                const wizardArg = diag.arg.split(":")
+                diag.arg = wizardArg[0]
                 // Typed *before* the family moves, because the order is
                 // the bug: a text field writes the model property and
                 // nothing else, so a verb that republishes the form
@@ -501,11 +508,21 @@ ApplicationWindow {
                 // the host's own answer (it was a line of its own before).
                 diag.note("wizard direct3d note: [" + wizard.d3d9Note.replace(/\n/g, " | ")
                           + "] warning " + wizard.d3d9Warning)
+                // The shader profile combo, whose rows come from the model
+                // the same way since 2026-09-23: the app default and then
+                // the library, one of them showing.
+                diag.note("wizard shader: shown [" + wizardWindow.shownShaderProfile
+                          + "] of " + wizardWindow.shownShaderProfileCount
+                          + " model " + wizard.shaderProfileIndex
+                          + " default " + wizard.shaderProfileIsDefault)
                 // What the window's height has to hold: each page's content
                 // against the room a page gets (user, 2026-09-22: the
                 // default was too tall even for the longest page).
                 diag.note("wizard pages: " + wizardWindow.pageReport())
-                Qt.callLater(wizardWindow.revealExtraQemuArgs)
+                if (wizardArg.length > 1)
+                    wizard.chooseSection(parseInt(wizardArg[1]))
+                else
+                    Qt.callLater(wizardWindow.revealExtraQemuArgs)
                 break
             case "optall":
                 // The optimization shortcuts beside boxes somebody already

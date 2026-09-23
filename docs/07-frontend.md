@@ -429,6 +429,17 @@ so does a path longer than `sun_path`.
   `shader_profile` wins over its raw `shader` path (the hand-edit escape
   hatch); both become the player's `--shader` / `--shader-params` at
   spawn, and the player skips an unknown parameter with a log line.
+- **The form's picker is the same shape as every other picker**
+  (2026-09-23): `Form::shader_profile_labels` is its rows — the app
+  default (`SHADER_DEFAULT_LABEL`, the grid's word too) and then the
+  library by name — `shader_profile_index` the row a machine is on (0
+  for a profile that no longer exists, which is what the machine plays
+  with), `choose_shader_profile` / `reset_shader_profile` the verbs, and
+  the "Default" button beside it. The Qt window used to keep a delegate
+  and a row-to-id translation of its own for this one combo box, and
+  it was the one in the form that did not look like the rest; it now
+  rescans the library when a profile is saved or deleted while the form
+  is open (`refreshProfiles`).
 - **Where presets come from** (`shader_source::presets_dir()`):
   `LAUNCHER_SHADERS_DIR` if set (then nothing else), else the checkout's
   `third_party/slang-shaders`, else a downloaded copy in the data
@@ -742,7 +753,13 @@ Qt is a shared library, so every packager gained a job (ADR-015):
   `d3D9Labels`, and QML cannot tell a binding names a missing property —
   the Direct3D row shipped as a label over an empty combo; the D3D9
   properties name their `cxx_name` and `qt-wizard` asks the combo's
-  count and text.
+  count and text. **A combo box with a `delegate` of its own is drawn
+  by that delegate, not by the style**: the shader profile picker had
+  one (a bare `ItemDelegate`, to map rows to ids in the window), so its
+  list had no highlight, no hover and no bold current row while every
+  other picker's did (user, 2026-09-23: "why does the shader combo box
+  look different from all the rest?"). The rows come from the model
+  now, like every other picker's, and `qt-wizard` asks that combo too.
 - **Text fields are two-way bound, so every verb that republishes the
   form pulls them first** (it goes through `edit`). `choose_section`
   once did not, and a page switch wrote the form's stale empty name over
