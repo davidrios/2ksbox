@@ -743,6 +743,11 @@ Qt is a shared library, so every packager gained a job (ADR-015):
   the Direct3D row shipped as a label over an empty combo; the D3D9
   properties name their `cxx_name` and `qt-wizard` asks the combo's
   count and text.
+- **Text fields are two-way bound, so every verb that republishes the
+  form pulls them first** (it goes through `edit`). `choose_section`
+  once did not, and a page switch wrote the form's stale empty name over
+  what the user had typed; `qt-wizard` pages away and back before it
+  reads the name.
 - **Esc.** Each secondary window binds Esc to `close()` with a
   `Shortcut`, which fired while that window's own file dialog was up (on
   macOS the dialog is a sheet and AppKit offers the key to the window
