@@ -851,6 +851,8 @@ ApplicationWindow {
         onTriggered: {
             if (snapshotsWindow.visible)
                 diag.note("snapshots layout: " + snapshotsWindow.layoutReport())
+            if (cloneWindow.visible)
+                diag.note("clone layout: " + cloneWindow.layoutReport())
             if (diag.shotPath === "") {   // driven, not photographed
                 Qt.quit()
                 return

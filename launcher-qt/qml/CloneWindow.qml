@@ -28,11 +28,27 @@ Window {
     }
     function clickClone() { cloneButton.click() }
 
+    /// Where the layout put things, for the `qt-clone` probe: the window
+    /// is as tall as its content, so its height and the layout's must agree.
+    function layoutReport() {
+        return "window " + width + "x" + height + ", layout h=" + bodyLayout.height
+            + " implicit=" + bodyLayout.implicitHeight + ", min=" + minimumHeight + " max=" + maximumHeight
+    }
+
     title: cloner.title
     width: 560
-    height: 280
     minimumWidth: 420
-    minimumHeight: 240
+    // As tall as what it shows and no taller: a note, the name and two
+    // buttons most of the time, the progress bar or a warning when there
+    // is one. A fixed height left a band of nothing above the buttons.
+    // The minimum and maximum are bound to the content, not to `height`:
+    // the platform assigns a height at show, which breaks a binding on
+    // it, and a min and max bound to that would then pin the window at
+    // whatever it was before the layout had its size.
+    readonly property int contentHeight: bodyLayout.height + 2 * bodyLayout.x
+    height: contentHeight
+    minimumHeight: contentHeight
+    maximumHeight: contentHeight
     flags: Qt.Dialog
     modality: Qt.ApplicationModal
     color: palette.window
@@ -55,8 +71,12 @@ Window {
         color: palette.window
 
         ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 14
+            id: bodyLayout
+            // Sized by its content, not anchored to fill: the window follows
+            // the layout, so the layout cannot follow the window.
+            x: 14
+            y: 14
+            width: parent.width - 2 * x
             spacing: 10
 
             Label {
@@ -113,8 +133,6 @@ Window {
                 color: "#d04040"
                 wrapMode: Text.Wrap
             }
-
-            Item { Layout.fillHeight: true }
 
             RowLayout {
                 Layout.fillWidth: true

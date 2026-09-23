@@ -478,6 +478,21 @@ qtclone_check() { # the Qt "Clone…" window, driven (doc 07)
   saved="$(printf '%s' "$o" | sed -n 's/.*saved \(.*\), grid.*/\1/p')"
   grep -qx 'name = "Typed twin"' "$saved" 2>/dev/null || { echo "no bundle called Typed twin at '$saved'"; rc=1; }
   cmp -s "$dir/disk.img" "$(dirname "$saved")/disk.img" || { echo "the clone has no copy of the disk"; rc=1; }
+  # Then the window left open (`;show`) and measured: it is as tall as its
+  # content and no taller. It used to be a fixed 280 with a band of nothing
+  # above the buttons (user nag, 2026-09-23), and a first fix bound the
+  # size limits to the window's own height, which the platform breaks at
+  # show, so the window stayed at the 28 it was before the layout had a
+  # size.
+  o="$(timeout 120 env LAUNCHER_QT_SCREEN=clone LAUNCHER_QT_ARG="$bundle;show" LAUNCHER_QT_DELAY=300 \
+       "$bin" 2>&1 | sed -n 's/^\[diag\] clone layout: //p')"
+  [ -n "$o" ] || { echo "the probe printed no clone layout line"; return 1; }
+  printf '  %s\n' "$o"
+  printf '%s' "$o" | awk '{
+      split($2, wh, "x"); sub("h=", "", $4); h = wh[2] + 0; l = $4 + 0
+      if (h != l + 28) { print "the window is " h " tall over a layout of " l ": not sized to its content"; exit 1 }
+      if (h < 60 || h > 220) { print "the window is " h " tall: not a note, a name and two buttons"; exit 1 }
+    }' || rc=1
   return $rc
 }
 qtsnapshots_check() { # the Qt snapshots window's first layout (doc 07)

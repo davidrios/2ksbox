@@ -55,7 +55,7 @@ Environment: `WINXP_IMG` (`~/vms/winxp.qcow2`), `GUEST_ISO` (newest
 | `cdimage` | the `cdimage` block driver (patch 50) through QEMU's block layer |
 | `dirdisc` | a folder served as `isodir:` reads back identical through xorriso/bsdtar, qemu-img and SeaBIOS's ATAPI probe (M5g) |
 | `dirshelf`, `shelforder` | a folder on the disc shelf and on the boot drive; the shelf is one list in one order |
-| `clone`, `qt-clone` | **Clone…** gives a machine with its own disk copy and snapshots, the original untouched; refused while the machine runs (doc 07) |
+| `clone`, `qt-clone` | **Clone…** gives a machine with its own disk copy and snapshots, the original untouched; refused while the machine runs (doc 07); the Qt window is as tall as its content (`;show` and the layout line) |
 | `snapshot-tree` | the snapshot window's tree over a real qcow2 (doc 07): take, restore, take again gives siblings, not a line; a delete moves the branch up; a snapshot deleted or taken by hand is dropped from the record or shown at the top level; the clone carries the tree |
 | `shader-defaults` | the first-run shader offer without a toolkit |
 | `qt-wizard`, `qt-close`, `qt-esc`, `qt-profile`, `qt-shelf`, `qt-firstrun`, `qt-snapshots` | real Qt windows driven offscreen: what the controls show agrees with the shared model (the shader profile combo shows the default among the app default and two planted profiles); close/Esc reach exactly one window; the form opens where it should (needs a built `launcher-qt`) |
